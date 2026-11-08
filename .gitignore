@@ -1,0 +1,5 @@
+/build/
+/out/
+/.runtime/
+/CMakeUserPresets.json
+/.cache/

@@ -1,0 +1,18 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 28, "patch": 0},
+  "configurePresets": [
+    {"name": "windows", "generator": "Visual Studio 17 2022", "architecture": "x64", "binaryDir": "${sourceDir}/build/windows", "cacheVariables": {"BUILD_TESTING": "ON"}},
+    {"name": "ninja-debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/ninja-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON"}}
+  ],
+  "buildPresets": [
+    {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug"},
+    {"name": "windows-release", "configurePreset": "windows", "configuration": "Release"},
+    {"name": "ninja-debug", "configurePreset": "ninja-debug"}
+  ],
+  "testPresets": [
+    {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug", "output": {"outputOnFailure": true}},
+    {"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "ninja-debug", "configurePreset": "ninja-debug", "output": {"outputOnFailure": true}}
+  ]
+}

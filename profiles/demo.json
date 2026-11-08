@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "plugin_directory": "../plugins",
+  "foundation": "../resources/foundation.txt",
+  "owner": "local-owner",
+  "model": "model.scripted",
+  "channel": "channel.simulator",
+  "memory": "memory.minimal",
+  "allowed_actions": ["action.add"],
+  "allowed_effects": ["read"],
+  "max_turns": 4,
+  "plugins": [
+    {"manifest": "dfy_model_scripted.json", "config": {"action": "action.add", "arguments": {"a": 6, "b": 7}}},
+    {"manifest": "dfy_channel_simulator.json", "config": {"actor": "local-owner", "delivery_mode": "sent"}},
+    {"manifest": "dfy_memory_minimal.json", "config": {"seed_persona": "我会保留来源，区分计划、执行与实际交付。"}},
+    {"manifest": "dfy_action_add.json", "config": {}}
+  ]
+}

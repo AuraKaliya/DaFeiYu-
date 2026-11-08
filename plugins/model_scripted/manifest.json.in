@@ -1,0 +1,5 @@
+{
+  "id": "dafeiyu.model.scripted", "version": "0.1.0", "abi_version": 1,
+  "library": "@LIBRARY@", "requires": [],
+  "services": [{"id": "model.scripted", "kind": "model", "version": 1}]
+}

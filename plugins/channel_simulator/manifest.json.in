@@ -1,0 +1,5 @@
+{
+  "id": "dafeiyu.channel.simulator", "version": "0.1.0", "abi_version": 1,
+  "library": "@LIBRARY@", "requires": [],
+  "services": [{"id": "channel.simulator", "kind": "channel", "version": 1}]
+}

@@ -1,0 +1,5 @@
+{
+  "id": "dafeiyu.memory.minimal", "version": "0.1.0", "abi_version": 1,
+  "library": "@LIBRARY@", "requires": [],
+  "services": [{"id": "memory.minimal", "kind": "memory", "version": 1}]
+}

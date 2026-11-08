@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.28)
+project(external_dafeiyu_plugin LANGUAGES CXX)
+find_package(dafeiyu 0.1 CONFIG REQUIRED)
+add_library(external MODULE plugin.cpp)
+target_link_libraries(external PRIVATE dafeiyu::plugin_sdk)
+set_target_properties(external PROPERTIES PREFIX "")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/external.json" CONTENT
+  "{\"id\":\"external.example\",\"version\":\"0.1.0\",\"abi_version\":1,\"library\":\"$<TARGET_FILE_NAME:external>\",\"requires\":[],\"services\":[{\"id\":\"action.double\",\"kind\":\"action\",\"version\":1,\"effects\":\"read\",\"input_schema\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"integer\",\"minimum\":-100,\"maximum\":100}}}}]}\n")
+install(TARGETS external LIBRARY DESTINATION plugins RUNTIME DESTINATION plugins)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/external.json" DESTINATION plugins)
