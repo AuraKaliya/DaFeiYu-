@@ -1,30 +1,39 @@
 #include <dafeiyu/plugin.hpp>
+#include <thread>
 using namespace dfy::sdk;
-class ScriptedModel {
+class ScriptedModel : public Plugin {
     Json config_;
 public:
     static constexpr auto id = "dafeiyu.model.scripted";
-    static constexpr auto version = "0.1.0";
-    ScriptedModel(Host host, Json config) : config_(std::move(config)) {
-        if (!config_.at("action").is_string() || !config_.at("arguments").is_object()) throw std::runtime_error("SCRIPT_CONFIG_INVALID");
-        host.provide("model.scripted");
-    }
-    void start() {}
-    void stop() {}
-    void invoke(const Call& call, const Output& output) {
+    static constexpr auto version = "0.2.0";
+    ScriptedModel(Host host, Json config) : Plugin(host), config_(std::move(config)) { host.provide("model.scripted"); }
+    void on_event(const Json& event) {
+        if (event.at("type") != "call") return;
+        const Call call(event);
         if (call.method != "generate") throw std::runtime_error("METHOD_UNSUPPORTED");
-        call.checkpoint();
-        if (call.input.at("results").empty()) {
-            output.emit({{"type", "tool_call"}, {"action", config_.at("action")}, {"arguments", config_.at("arguments")}});
-        } else {
-            const auto& outcome = call.input.at("results").back().at("outcome");
-            const bool okay = outcome.at("status") == "succeeded";
-            std::string text = okay ? "大肥鱼：示例动作的计算结果是 " + outcome.at("data").at("sum").dump() + "。" : "大肥鱼：动作未成功，保留失败记录。";
-            text += " 本轮使用记忆版本 " + call.input.at("memory").at("revision").dump() + "。";
-            output.emit({{"type", "text_delta"}, {"text", text}});
-            output.emit({{"type", "final"}, {"text", text}, {"goal", okay ? "met" : "unmet"}});
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(config_.value("delay_ms", 0));
+        while (std::chrono::steady_clock::now() < until) {
+            if (host.cancelled(call.id)) { host.fail(call.id, error("CANCELLED", "cancelled")); return; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        output.emit({{"type", "usage"}, {"source", "scripted"}, {"input_tokens", nullptr}, {"output_tokens", nullptr}});
+        const auto text = call.input.at("input").at("text").get<std::string>();
+        Json results = Json::array();
+        for (const auto& result : call.input.at("results")) if (result.at("intent_revision") == call.input.at("intent_revision")) results.push_back(result);
+        Json decision;
+        if (results.empty() && call.input.at("purpose") != "verify") {
+            std::string action = config_.value("action", std::string("action.add"));
+            Json arguments = config_.value("arguments", Json{{"a", 6}, {"b", 7}});
+            if (text.starts_with("search:")) { action = "action.search"; arguments = {{"query", text.substr(7)}, {"options", {{"limit", 2}}}}; }
+            if (text.starts_with("background:")) { action = "action.background"; arguments = {{"value", 21}}; }
+            if (text.starts_with("remember:")) { action = "action.remember"; arguments = {{"persona", text.substr(9)}}; }
+            if (text.starts_with("unknown:")) { action = "action.write_demo"; arguments = {{"value", text.substr(8)}}; }
+            decision = {{"type", "tool_call"}, {"action", action}, {"arguments", arguments}};
+        } else {
+            const auto result = results.empty() ? Json::object() : results.back().at("outcome");
+            const auto answer = call.input.at("purpose") == "verify" ? "已复核本轮结果。" : "大肥鱼：" + result.value("data", Json::object()).dump();
+            decision = {{"type", "final"}, {"text", answer}, {"goal", result.value("status", std::string{}) == "succeeded" ? "met" : "uncertain"}};
+        }
+        host.complete(call.id, {{"events", Json::array({decision, {{"type", "usage"}, {"input_tokens", nullptr}, {"output_tokens", nullptr}}})}});
     }
 };
 DFY_PLUGIN(ScriptedModel)

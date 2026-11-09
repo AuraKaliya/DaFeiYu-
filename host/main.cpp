@@ -1,5 +1,4 @@
-#include <dafeiyu/core.hpp>
-#include <atomic>
+#include "control.hpp"
 #include <csignal>
 #include <iostream>
 #include <map>
@@ -9,66 +8,58 @@
 #define NOMINMAX
 #include <windows.h>
 #endif
-
 namespace {
-std::atomic<bool> interrupted{false};
-static_assert(std::atomic<bool>::is_always_lock_free);
-void interrupt_handler(int) { interrupted.store(true, std::memory_order_relaxed); }
-int run(const std::vector<std::string>& args) {
-    if (args.size() < 2 || args[1] == "--help") {
-        std::cout << "dafeiyu <run|resume|status|events|plugins> [--profile FILE] --state DIR\n"
-                     "  run --request-id ID [--message TEXT] [--pause-after-action]\n"
-                     "  resume/status/events --request-id ID\n";
-        return args.size() < 2 ? 2 : 0;
-    }
-    const auto command = args[1];
-    if (command != "run" && command != "resume" && command != "status" && command != "events" && command != "plugins") throw std::runtime_error("UNKNOWN_COMMAND");
-    std::map<std::string, std::string> options;
-    bool pause = false;
-    for (size_t i = 2; i < args.size(); ++i) {
-        if (args[i] == "--pause-after-action") { pause = true; continue; }
-        if (args[i] != "--profile" && args[i] != "--state" && args[i] != "--request-id" && args[i] != "--message") throw std::runtime_error("UNKNOWN_OPTION");
-        if (i + 1 >= args.size() || options.contains(args[i])) throw std::runtime_error("INVALID_OPTION");
-        const auto key = args[i++];
-        options.emplace(key, args[i]);
-    }
-    if (!options.contains("--state")) throw std::runtime_error("STATE_DIRECTORY_REQUIRED");
-    const auto state = dfy::sdk::path_from_utf8(options.at("--state"));
-    const auto request = options.contains("--request-id") ? options.at("--request-id") : std::string{};
-    if (command != "plugins" && request.empty()) throw std::runtime_error("REQUEST_ID_REQUIRED");
-    dfy::Json result;
-    if (command == "status" || command == "events") {
-        dfy::Store store(state);
-        result = command == "status" ? store.find(request) : store.events(request);
-        if (result.is_null()) throw std::runtime_error("REQUEST_NOT_FOUND");
-    } else {
-        const auto profile = options.contains("--profile") ? dfy::sdk::path_from_utf8(options.at("--profile")) :
-            std::filesystem::absolute(dfy::sdk::path_from_utf8(args.front())).parent_path().parent_path() / "profiles" / "demo.json";
-        dfy::Runtime runtime(dfy::Profile::open(profile), state);
-        std::stop_source cancellation;
-        std::signal(SIGINT, interrupt_handler);
-        std::jthread monitor([&](std::stop_token stop) {
-            while (!stop.stop_requested()) {
-                if (interrupted.load(std::memory_order_relaxed)) { cancellation.request_stop(); return; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
-        dfy::RunOptions run_options;
-        run_options.stop = cancellation.get_token();
-        run_options.pause_after_action = pause;
-        run_options.observer = [](std::string_view type) { std::cerr << "[dafeiyu] " << type << '\n'; };
-        if (command == "plugins") result = runtime.plugins();
-        else if (command == "resume") result = runtime.resume(request, run_options);
-        else result = runtime.submit(request, options.contains("--message") ? options.at("--message") : "请运行示例加法任务。", run_options);
-    }
-    std::cout << result.dump(2, ' ', false, dfy::Json::error_handler_t::replace) << '\n';
-    if (result.is_object() && result.value("execution", std::string{}) == "failed") return 1;
-    if (result.is_object() && result.value("execution", std::string{}) == "cancelled") return 3;
-    return 0;
-}
+std::atomic<bool> interrupted{};
+void interrupt(int) { interrupted.store(true); }
 int entry(const std::vector<std::string>& args) {
-    try { return run(args); }
-    catch (const std::exception& error) { std::cerr << dfy::Json{{"error", error.what()}}.dump(-1, ' ', false, dfy::Json::error_handler_t::replace) << '\n'; return 1; }
+    try {
+        if (args.size() < 2 || args[1] == "--help") {
+            std::cout << "dafeiyu serve --state DIR [--profile FILE]\n"
+                         "dafeiyu request COMMAND --state DIR [--json JSON] [--command-id ID]\n"
+                         "dafeiyu demo --state DIR [--profile FILE] [--message TEXT]\n";
+            return 0;
+        }
+        std::map<std::string, std::string> options;
+        size_t begin = args[1] == "request" ? 3 : 2;
+        if (args[1] == "request" && args.size() < 3) throw std::runtime_error("COMMAND_REQUIRED");
+        for (size_t i = begin; i < args.size(); i += 2) {
+            if (i + 1 == args.size() || options.contains(args[i])) throw std::runtime_error("ARGUMENT_INVALID");
+            options.emplace(args[i], args[i + 1]);
+        }
+        if (!options.contains("--state")) throw std::runtime_error("STATE_REQUIRED");
+        const auto state = dfy::sdk::path_from_utf8(options.at("--state"));
+        if (args[1] == "request") {
+            const auto input = options.contains("--json") ? dfy::Json::parse(options.at("--json")) : dfy::Json::object();
+            const auto result = dfy::host::send(state, args[2], input, options.contains("--command-id") ? options.at("--command-id") : "");
+            std::cout << result.dump(2) << '\n'; return 0;
+        }
+        const auto profile_path = options.contains("--profile") ? dfy::sdk::path_from_utf8(options.at("--profile")) :
+            std::filesystem::absolute(dfy::sdk::path_from_utf8(args.front())).parent_path().parent_path() / "profiles" / "demo.json";
+        dfy::InstanceRuntime runtime(dfy::Profile::open(profile_path), state);
+        if (args[1] == "serve") {
+            std::signal(SIGINT, interrupt); std::signal(SIGTERM, interrupt);
+            std::cerr << "[dafeiyu] instance online\n";
+            dfy::host::serve(runtime, state, interrupted); return 0;
+        }
+        if (args[1] != "demo") throw std::runtime_error("COMMAND_UNKNOWN");
+        const auto key = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        const auto input = runtime.request("input.accept", {{"key", key}, {"text", options.contains("--message") ? options.at("--message") : "运行示例加法任务"}});
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto receipt = runtime.request("input.get", {{"id", input.at("id")}});
+            if (!receipt.at("run_id").is_null()) {
+                const auto run = runtime.request("run.get", {{"id", receipt.at("run_id")}});
+                if (run.at("execution") == "completed" || run.at("execution") == "failed" || run.at("execution") == "cancelled") {
+                    dfy::Json summary;
+                    for (const auto* field : {"id", "execution", "phase", "delivery", "goal", "answer", "results", "error", "model_attempts", "strategy_steps"})
+                        if (run.contains(field)) summary[field] = run.at(field);
+                    std::cout << summary.dump(2) << '\n'; return run.at("execution") == "completed" ? 0 : 1;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        throw std::runtime_error("DEMO_TIMEOUT");
+    } catch (const std::exception& error) { std::cerr << dfy::Json{{"error", error.what()}}.dump() << '\n'; return 1; }
 }
 }
 #ifdef _WIN32
@@ -76,9 +67,6 @@ int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) args.push_back(dfy::sdk::path_text(std::filesystem::path(argv[i])));
-    std::wstring executable(32768, L'\0');
-    const auto size = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
-    if (size && size < executable.size()) { executable.resize(size); args[0] = dfy::sdk::path_text(std::filesystem::path(executable)); }
     return entry(args);
 }
 #else

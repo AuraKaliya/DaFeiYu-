@@ -1,0 +1,77 @@
+{
+  "id": "test.probe",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [
+    {
+      "binding": "memory",
+      "contract": "dafeiyu.memory",
+      "version": 1
+    }
+  ],
+  "services": [
+    {
+      "id": "fixture.probe",
+      "contract": "test.probe",
+      "version": 1,
+      "methods": {
+        "execute": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "memory"
+        },
+        "readiness": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "fixture.action",
+      "revision": 1,
+      "description": "Test fixture",
+      "service": "fixture.probe",
+      "method": "execute",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "output": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "effects": "read",
+      "resource": "memory"
+    }
+  ]
+}

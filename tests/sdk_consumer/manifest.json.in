@@ -1,0 +1,71 @@
+{
+  "id": "external.example",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "action.double",
+      "contract": "external.double",
+      "version": 1,
+      "methods": {
+        "execute": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": -100,
+                "maximum": 100
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "action.double",
+      "revision": 1,
+      "description": "Double a number",
+      "service": "action.double",
+      "method": "execute",
+      "input": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "integer",
+            "minimum": -100,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "effects": "read",
+      "resource": "instance"
+    }
+  ]
+}

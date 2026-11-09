@@ -1,59 +1,72 @@
-# 插件 SDK v0.1
+# 插件 SDK 0.2 · ABI 2
 
-## ABI 与生命周期
+## 二进制入口与生命周期
 
-`dafeiyu/abi.h` 为 C 兼容二进制接口；宿主、四个示例插件和 `plugin.hpp` 封装均用 C++20 编写。唯一导出入口为 `dfy_plugin_query`，通过 ABI 版本与 struct_size 验证后得到 create/start/invoke/stop/destroy 函数表。ABI、服务接口、插件发行版本与持久 schema 版本分别管理。
+唯一导出为 dfy_plugin_query。宿主检查 ABI、struct_size、插件身份与发行版本，得到 create/start/on_event/quiesce/stop/destroy 函数表。当前只支持 ABI 2，无 ABI 1 适配器。
 
-本版以同平台、同架构、相同 SDK 和匹配工具链构建为支持基线；不承诺任意编译器二进制兼容。不得跨边界传递 STL 对象、异常或需要对方释放的内存。字符串为 UTF-8 指针+长度；call、input、context、sink 及 emit 参数只在对应同步调用期间有效。host 表与其中数据目录/实例字符串直到插件 destroy 前有效。
+跨模块只传递 C 函数表、UTF-8 指针与长度、整数和借用回调。调用返回前输入已复制；字符串及错误 sink 不可保留。host 表直到 destroy 前有效。同平台、同架构、相同 SDK 与匹配工具链是支持基线。
 
-使用 `DFY_PLUGIN(MyPlugin)` 导出 C++ 适配器。构造函数中调用 `host.provide(service_id)` 注册清单声明的服务。start 成功前不暴露能力。stop 必须停止接纳新工作、收束已有资源；destroy 必须不抛异常。C++ 适配器在所有 ABI 入口截获异常。构造失败由 RAII 回收成员；start 部分失败仍会收到 stop。
+生命周期和 on_event 在每插件的宿主执行线程串行运行。start 成功且声明与注册一致后，服务和动作才发布。失败会 stop/destroy 并撤销注册；optional 插件失败可使实例 degraded，必需插件启动失败则拒绝上线。stop 必须收束插件工作线程，destroy 必须不抛异常。
 
-插件不得在 DllMain 内做复杂初始化，也不得保留 output 回调、在 invoke 返回后继续输出或在卸载后运行自己的线程。v1 同步接口中的 deadline/cancellation 是协作式的，使用 `call.checkpoint()` 响应。已经发生的副作用要先返回回执，不能用事后取消覆盖。
+## 清单与服务
 
-所有注册由宿主按插件实例持有；v1 不提供动态撤销单个服务或热重载，停止实例时统一撤销。`requires` 是服务 ID，不是插件加载顺序；宿主验证缺失依赖和环。当前宿主只允许一个服务 ID 的一个提供方。
+清单包含 id、version、abi_version、library、requires、services，以及可选 actions、activities、discovery_prefix。模块路径必须位于插件目录内。requires 使用命名绑定、契约 ID 与版本，profile 将绑定解析为唯一服务。
 
-## 清单
+services 每项包含 id、contract、version、methods。每个方法描述 input/output schema、effects 和 resource，可声明查询方法 query。领域契约 ID 可扩展，核心不枚举所有领域名称；相同契约与版本的方法定义必须一致。
 
-每个模块有相邻 JSON 清单：id、version、abi_version、library、requires、services。library 必须解析在插件目录内。插件导出的 ID 与发行版本必须与清单一致；服务的 kind 和 version 也必须受宿主支持。清单声明、实际注册必须一致。
+effects 为 read、local-write 或 external-write。resource 是保守的资源域；写动作与子调用必须在允许域内。写方法使用 ActionOutcome 报告效果；渠道交付使用单独的 sent/not-sent/unknown 回执。read 声明并不提供 OS 沙箱，提供方必须如实实现。
 
-`services[].kind` 支持 model/channel/memory/action。action 额外声明 effects、input_schema；effects 为 read/local-write/external-write。描述能力不授予权限，实例 profile 独立控制 allowed_actions 与 allowed_effects。
+actions 定义模型可见 ID、说明、revision、服务方法绑定、输入输出、效果及资源域。静态动作由清单发布；发现型插件可在 create/start 使用 Host.action 注册获准命名空间中的动作。普通运行阶段不允许动态注册。activities 声明活动身份、版本和所属 ActivityProvider 服务，profile 提供部署策略。
 
-输入 schema v1 是 JSON Schema 的明确受限子集：根为 type=object、additionalProperties=false、properties、required；字段只支持 integer/string/boolean，integer 可声明 minimum/maximum。其它关键字或类型在加载阶段拒绝。内置示例为 `plugins/action_add/`。
+配置选择项包含 manifest、revision、config，可显式声明 required=false、输入主体映射、允许观察的事实或可提交的核心命令。config 应保存非敏感行为参数和凭据引用；变更行为时更新 revision，宿主也比较配置指纹。
 
-## 方法
+## 事件式调用
 
-### model.generate
+on_event 收到 call 时包含 call_id、service、method、input 与描述性 context。插件可立即 complete/fail，也可发起 request 后返回，在 reply 事件中继续。不能阻塞等待同一执行线程上的 reply。
 
-输入：foundation、memory、input、results、actions、turn。依次输出带 type 的 JSON 事件。支持 text_delta、usage，以及恰好一个 tool_call 或 final。
+| SDK 方法 | 语义 |
+|---|---|
+| provide、action | 启动期服务与发现型动作注册 |
+| complete、fail、progress | 报告当前票据的结果、结构化错误或可丢弃进度 |
+| request | 按声明的命名依赖发起服务调用，以 reply 返回 |
+| input | 提交平台输入，以 input_receipt 表示已持久接纳 |
+| register_job、job_result | 启动前登记后台工作，随后提交终态与接收 job_receipt |
+| subscribe、acknowledge | 事实投递及提交消费结果后的游标确认 |
+| command、command_receipt | 提交获准的行为/活动命令，或查询当前操作的命令回执 |
+| read_state | 读取调用所属 Run 或行为状态的副本 |
+| cancelled | 查询调用是否取消或过期 |
 
-- tool_call：action 为服务 ID，arguments 为对象。
-- final：text 为最终文本；goal 可为 met/partial/unmet/uncertain，省略保持 uncertain。
-- usage：用量事实或未知值；脚本模型不估算真实供应商 token。
+post 返回 OK 只表示已复制进队列。input、Job 和管理修改必须以相应持久回执为依据。BUSY 表示入口背压，CLOSED 表示资格或生命周期已结束。普通进度不具有崩溃恢复保证；尚无远程实时进度界面。
 
-宿主限制每次调用最多 256 个输出事件、合计 1 MiB。invoke 返回失败或取消时不会使用不完整模型决策。当前只保存完整返回后的事件，不把硬崩溃前尚未提交的流声称为持久事实。
+宿主按回调所属插件和有效 call_id 签发的作用域路由请求。JSON context 不能转授权限。普通只读调用不得生成未计量模型请求；模型由策略提案进入核心流程。嵌套写入登记子操作，以 parent operation + request key 去重；相同步骤键不能对应不同计划。
 
-### action.readiness / action.execute
+## 主要契约
 
-readiness 返回一个 `{available, reason?}` 对象；不授予权限。execute 输入通过清单 schema 校验，输出一个对象：status、effects、coverage、data、sources、receipts。三项状态的取值见 `sdk` 及 `core/runtime.cpp`；动作结果、覆盖范围与外部副作用分别表达。
+| 契约 | 方法 |
+|---|---|
+| dafeiyu.model | generate，返回 events 数组，其中恰好一个 tool_call 或 final 候选 |
+| dafeiyu.strategy | propose、review_finish，返回提案及候选策略状态，或复核 accept |
+| dafeiyu.channel | deliver、query_delivery，输入包含稳定 id 和不可变计划 |
+| dafeiyu.memory | snapshot、validate、retrieve、commit_change、query_change |
+| dafeiyu.context | collect，贡献项包含 source、revision、scope、content 和可选 expires_at |
+| dafeiyu.activity | evaluate_trigger、on_settlement |
+| 动作服务 | execute、可选 readiness；写服务提供 query_operation 或明确 query 方法 |
+| 后台工作服务 | query_job、reattach_job、cancel_job，使用原工作键与提供方绑定 |
 
-### memory.snapshot / memory.validate
+模型、策略与一般领域方法的 JSON 业务结构分别约定；ABI 版本和契约版本独立。策略可返回 request_model、invoke_action、wait、finish，复核可 accept 或返回非结束提案。核心执行预算、授权和结束检查，插件不直接写 Run 状态。
 
-snapshot 返回 revision、instance_id、persona、sources。validate 接收已保存快照，返回 `{valid: bool}`。最小插件只在新库中写入 seed_persona，重启或配置变化不覆盖已有版本；尚无成长提交方法。
+ActionOutcome 包含 status、effects、coverage、data、sources、receipts。效果为 none、confirmed 或 unknown；未知写效果进入核对。后台移交使用 type=job_started 与 job_id，既不等于业务成功，也不释放 Job 的结果通道。
 
-### channel.ingest / channel.deliver / channel.query_delivery
+## Schema 子集
 
-ingest 输入 request_id/text，返回 request_id/text/actor/conversation；核心验证 actor 是否为 profile 的模拟 owner。该接口只用于本地模拟，不具备真实平台认证。
-
-deliver 接收稳定的 id/target/text，返回 id/status 和已发送时的 receipt_id。status 为 sent/not-sent/unknown。相同 ID 的不同计划必须拒绝。query_delivery 按 id 返回持久回执，无法确认时返回 unknown。未知效果绝不能按“没有查到回执”转换为“可以重发”。
+支持空 schema（任意 JSON）、object、array、string、integer、number、boolean、null；支持 properties、required、布尔 additionalProperties、items、enum、minimum/maximum、minItems/maxItems、minLength/maxLength。字符串长度按 UTF-8 码点计数。schema 深度最多 16，值校验深度最多 32；不支持的关键字在注册时拒绝。
 
 ## 独立编译
 
-先安装宿主 SDK，在独立 CMake 工程中：
-
 ```cmake
-find_package(dafeiyu 0.1 CONFIG REQUIRED)
+find_package(dafeiyu 0.2 CONFIG REQUIRED)
 add_library(my_plugin MODULE plugin.cpp)
 target_link_libraries(my_plugin PRIVATE dafeiyu::plugin_sdk)
 ```
 
-SDK 导出头文件与 nlohmann_json 依赖；不要求链接核心或复制核心状态。`tests/sdk_consumer/` 包含完整清单、CMake 和 C++ 代码，并由分发测试独立编译和加载。
+从 sdk::Plugin 继承，构造期间 provide 声明的服务，实现 on_event，并用 DFY_PLUGIN(MyPlugin) 导出。完整独立例子见 ../tests/sdk_consumer/；跨插件异步组合见 ../plugins/action_search/，带子操作的记忆提交见 ../plugins/action_remember/，受控命令见 ../plugins/action_behavior/。

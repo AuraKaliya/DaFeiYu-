@@ -1,0 +1,49 @@
+{
+  "id": "dafeiyu.strategy.default",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "strategy.default",
+      "contract": "dafeiyu.strategy",
+      "version": 1,
+      "methods": {
+        "propose": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        },
+        "review_finish": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": []
+}

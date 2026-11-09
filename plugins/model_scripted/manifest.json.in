@@ -1,5 +1,33 @@
 {
-  "id": "dafeiyu.model.scripted", "version": "0.1.0", "abi_version": 1,
-  "library": "@LIBRARY@", "requires": [],
-  "services": [{"id": "model.scripted", "kind": "model", "version": 1}]
+  "id": "dafeiyu.model.scripted",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "model.scripted",
+      "contract": "dafeiyu.model",
+      "version": 1,
+      "methods": {
+        "generate": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": []
 }

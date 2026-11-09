@@ -35,7 +35,7 @@ Database::Database(const std::filesystem::path& path) {
     }
     try {
         sqlite3_busy_timeout(db_, 5000);
-        exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;");
+        exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     } catch (...) { sqlite3_close(db_); db_ = nullptr; throw; }
 }
 Database::~Database() { if (db_) sqlite3_close(db_); }
@@ -54,9 +54,9 @@ void Database::verify_identity(std::string_view instance, std::string_view compo
     {
         auto read = prepare("SELECT instance, component, version FROM identity WHERE id=1");
         if (read.step()) {
-            if (read.column(0) != instance || read.column(1) != component || read.column(2) != "1") throw std::runtime_error("STORAGE_IDENTITY_OR_VERSION_MISMATCH");
+            if (read.column(0) != instance || read.column(1) != component || read.column(2) != "2") throw std::runtime_error("STORAGE_IDENTITY_OR_VERSION_MISMATCH");
         } else {
-            auto insert = prepare("INSERT INTO identity VALUES(1,?,?,1)");
+            auto insert = prepare("INSERT INTO identity VALUES(1,?,?,2)");
             insert.bind(1, instance).bind(2, component).step();
         }
     }

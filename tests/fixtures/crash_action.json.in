@@ -1,5 +1,0 @@
-{
-  "id":"test.crash-action","version":"0.1.0","abi_version":1,"library":"@LIBRARY@","requires":[],
-  "services":[{"id":"action.add","kind":"action","version":1,"effects":"local-write",
-    "input_schema":{"type":"object","additionalProperties":false,"properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"]}}]
-}

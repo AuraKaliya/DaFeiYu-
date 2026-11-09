@@ -32,12 +32,11 @@ try {
             Invoke-Checked $cmakePath @('--preset', 'windows', '-DBUILD_TESTING=ON')
             Invoke-Checked $cmakePath @('--build', '--preset', $preset, '--parallel', '4')
         }
-        'test' { Invoke-Checked $ctestPath @('--preset', $preset, '--parallel', '4') }
+        'test' { Invoke-Checked $ctestPath @('--preset', $preset, '--parallel', '1') }
         'install' { Invoke-Checked $cmakePath @('--install', 'build/windows', '--config', $Configuration, '--prefix', 'out/dafeiyu') }
         'demo' {
             $executable = Join-Path $projectRoot "build\windows\run\$Configuration\bin\dafeiyu.exe"
-            $requestId = 'demo-' + [guid]::NewGuid().ToString('N')
-            Invoke-Checked $executable @('run', '--state', '.runtime/demo', '--request-id', $requestId)
+            Invoke-Checked $executable @('demo', '--state', '.runtime/demo-v2')
         }
     }
 } finally { Pop-Location }

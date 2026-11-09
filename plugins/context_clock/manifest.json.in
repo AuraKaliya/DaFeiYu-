@@ -1,0 +1,33 @@
+{
+  "id": "dafeiyu.context.clock",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "context.clock",
+      "contract": "dafeiyu.context",
+      "version": 1,
+      "methods": {
+        "collect": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": []
+}

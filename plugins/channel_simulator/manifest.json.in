@@ -1,5 +1,50 @@
 {
-  "id": "dafeiyu.channel.simulator", "version": "0.1.0", "abi_version": 1,
-  "library": "@LIBRARY@", "requires": [],
-  "services": [{"id": "channel.simulator", "kind": "channel", "version": 1}]
+  "id": "dafeiyu.channel.simulator",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "channel.simulator",
+      "contract": "dafeiyu.channel",
+      "version": 1,
+      "methods": {
+        "deliver": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "external-write",
+          "resource": "channel",
+          "query": "query_delivery"
+        },
+        "query_delivery": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": []
 }

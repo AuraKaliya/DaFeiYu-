@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(dafeiyu VERSION 0.1.0 LANGUAGES C CXX)
+project(dafeiyu VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

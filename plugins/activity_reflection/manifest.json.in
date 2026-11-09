@@ -1,0 +1,56 @@
+{
+  "id": "dafeiyu.activity.reflection",
+  "version": "0.2.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "activity.reflection",
+      "contract": "dafeiyu.activity",
+      "version": 1,
+      "methods": {
+        "evaluate_trigger": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        },
+        "on_settlement": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": [],
+  "activities": [
+    {
+      "id": "reflection",
+      "service": "activity.reflection",
+      "definition_revision": 1
+    }
+  ]
+}

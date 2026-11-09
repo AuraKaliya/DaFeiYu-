@@ -1,1 +1,0 @@
-{"id":"zz.test.fail","version":"0.1.0","abi_version":1,"library":"@LIBRARY@","requires":["memory.minimal"],"services":[{"id":"test.fail","kind":"memory","version":1}]}

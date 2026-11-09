@@ -1,10 +1,9 @@
-#include <dafeiyu/core.hpp>
-#include <dafeiyu/action_schema.hpp>
-#include <algorithm>
-#include <fstream>
-#include <map>
-#include <regex>
-#include <set>
+#include "plugins.hpp"
+#include <condition_variable>
+#include <deque>
+#include <future>
+#include <mutex>
+#include <thread>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -14,211 +13,337 @@
 #endif
 
 namespace dfy {
-std::string read_text(const Path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) throw std::runtime_error("FILE_OPEN: " + sdk::path_text(path));
-    const auto size = std::filesystem::file_size(path);
-    if (size > 4 * 1024 * 1024) throw std::runtime_error("FILE_TOO_LARGE");
-    std::string text(static_cast<size_t>(size), '\0');
-    if (!file.read(text.data(), static_cast<std::streamsize>(text.size()))) throw std::runtime_error("FILE_READ");
-    return text;
-}
-Json read_json(const Path& path) { return Json::parse(read_text(path)); }
 namespace {
-bool valid_id(const std::string& id) {
-    static const std::regex pattern("[a-z][a-z0-9._-]{0,79}");
-    return std::regex_match(id, pattern);
+bool valid_name(const std::string& value) {
+    if (value.empty() || value.size() > 120 || value.front() < 'a' || value.front() > 'z') return false;
+    return std::all_of(value.begin(), value.end(), [](const unsigned char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-'; });
 }
-Path child_path(const Path& parent, const std::string& name) {
-    const auto root = std::filesystem::canonical(parent);
-    const auto path = std::filesystem::canonical(root / sdk::path_from_utf8(name));
-    const auto relative = path.lexically_relative(root);
-    if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") throw std::runtime_error("PLUGIN_PATH_ESCAPE");
-    return path;
-}
+class Worker {
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::deque<std::function<void()>> work_;
+    bool closing_{};
+    std::thread thread_;
+public:
+    Worker() : thread_([this] {
+        for (;;) {
+            std::function<void()> task;
+            { std::unique_lock lock(mutex_); changed_.wait(lock, [&] { return closing_ || !work_.empty(); });
+              if (work_.empty() && closing_) return; task = std::move(work_.front()); work_.pop_front(); }
+            task();
+        }
+    }) {}
+    ~Worker() { { std::lock_guard lock(mutex_); closing_ = true; } changed_.notify_one(); thread_.join(); }
+    void post(std::function<void()> task) {
+        { std::lock_guard lock(mutex_); require(!closing_, "WORKER_CLOSED"); require(work_.size() < 1024, "WORKER_BUSY"); work_.push_back(std::move(task)); }
+        changed_.notify_one();
+    }
+    void sync(std::function<void()> task) {
+        auto job = std::make_shared<std::packaged_task<void()>>(std::move(task)); auto future = job->get_future();
+        post([job] { (*job)(); }); future.get();
+    }
+};
 struct Library {
 #ifdef _WIN32
-    HMODULE handle{};
-    explicit Library(const Path& file) : handle(LoadLibraryExW(file.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) {
-        if (!handle) throw std::runtime_error("PLUGIN_LOAD: " + std::to_string(GetLastError()));
-    }
-    ~Library() { if (handle) FreeLibrary(handle); }
-    dfy_query_fn query() { return reinterpret_cast<dfy_query_fn>(GetProcAddress(handle, "dfy_plugin_query")); }
+    HMODULE handle;
+    explicit Library(const Path& path) : handle(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) { require(handle != nullptr, "PLUGIN_LOAD"); }
+    ~Library() { FreeLibrary(handle); }
+    dfy_query_fn query() const { return reinterpret_cast<dfy_query_fn>(GetProcAddress(handle, "dfy_plugin_query")); }
 #else
-    void* handle{};
-    explicit Library(const Path& file) : handle(dlopen(file.c_str(), RTLD_NOW | RTLD_LOCAL)) {
-        if (!handle) throw std::runtime_error(std::string("PLUGIN_LOAD: ") + dlerror());
-    }
-    ~Library() { if (handle) dlclose(handle); }
-    dfy_query_fn query() { return reinterpret_cast<dfy_query_fn>(dlsym(handle, "dfy_plugin_query")); }
+    void* handle;
+    explicit Library(const Path& path) : handle(dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL)) { require(handle != nullptr, "PLUGIN_LOAD"); }
+    ~Library() { dlclose(handle); }
+    dfy_query_fn query() const { return reinterpret_cast<dfy_query_fn>(dlsym(handle, "dfy_plugin_query")); }
 #endif
 };
-struct Collector {
-    std::vector<Json> values;
-    size_t bytes{};
-    std::string error;
-    static int32_t DFY_CALL emit(void* user, dfy_bytes value) noexcept {
-        auto& self = *static_cast<Collector*>(user);
-        try {
-            if (self.values.size() >= 256 || value.size > 1024 * 1024 - self.bytes) throw std::runtime_error("OUTPUT_LIMIT");
-            self.bytes += static_cast<size_t>(value.size);
-            self.values.push_back(Json::parse(sdk::text(value)));
-            return DFY_OK;
-        } catch (const std::exception& e) { self.error = e.what(); return DFY_ERROR; }
-        catch (...) { self.error = "OUTPUT_INVALID"; return DFY_ERROR; }
+Path child(const Path& directory, const std::string& name) {
+    const auto root = std::filesystem::canonical(directory);
+    const auto path = std::filesystem::canonical(root / sdk::path_from_utf8(name));
+    const auto relative = path.lexically_relative(root);
+    require(!relative.empty() && !relative.is_absolute() && *relative.begin() != "..", "PLUGIN_PATH_ESCAPE");
+    return path;
+}
+struct Errors {
+    Json value;
+    static int32_t DFY_CALL emit(void* raw, dfy_bytes text) noexcept {
+        try { static_cast<Errors*>(raw)->value = Json::parse(sdk::text(text)); return DFY_OK; } catch (...) { return DFY_ERROR; }
     }
     dfy_sink sink() { return {this, emit}; }
-    std::string message() const { return error.empty() ? (values.empty() ? "PLUGIN_FAILURE" : values.back().dump()) : error; }
 };
-struct Cancellation {
-    std::stop_token stop;
-    std::chrono::steady_clock::time_point deadline;
-    static int32_t DFY_CALL check(void* raw) noexcept {
-        const auto& self = *static_cast<Cancellation*>(raw);
-        return self.stop.stop_requested() || std::chrono::steady_clock::now() >= self.deadline;
-    }
-};
+struct Control { bool cancelled{}; SteadyClock::time_point deadline; };
 struct Loaded {
-    Json manifest;
+    Json manifest, selected, action_definitions = Json::array();
+    std::string id, data, instance, status{"discovered"}, diagnostic;
     std::unique_ptr<Library> library;
+    Worker worker;
     dfy_plugin_api api{};
     dfy_host_api host{};
-    std::string data_path, instance_id;
-    std::set<std::string> registered;
-    bool registering = true;
-    bool started = false;
     void* object{};
-    ~Loaded() {
-        if (object) { if (started) api.stop(object); api.destroy(object); }
-    }
-    static int32_t DFY_CALL provide(void* user, dfy_bytes id) noexcept {
-        auto& self = *static_cast<Loaded*>(user);
+    bool registering{true}, started{};
+    std::set<std::string> registrations;
+    std::mutex mutex;
+    bool closed{};
+    std::map<uint64_t, Control> calls;
+    std::set<std::string> jobs;
+    PluginRuntime::Receiver receive;
+    static int32_t DFY_CALL registration(void* raw, dfy_bytes kind, dfy_bytes body) noexcept {
+        auto& self = *static_cast<Loaded*>(raw);
         try {
-            const auto name = sdk::text(id);
-            if (!self.registering || self.registered.contains(name)) return DFY_ERROR;
-            for (const auto& service : self.manifest.at("services")) {
-                if (service.at("id") == name) { self.registered.insert(name); return DFY_OK; }
+            if (!self.registering) return DFY_CLOSED;
+            auto value = Json::parse(sdk::text(body));
+            if (sdk::text(kind) == "service") {
+                const auto name = value.get<std::string>();
+                for (const auto& service : self.manifest.at("services")) if (service.at("id") == name)
+                    return self.registrations.insert(name).second ? DFY_OK : DFY_ERROR;
+            } else if (sdk::text(kind) == "action") {
+                const auto prefix = self.manifest.value("discovery_prefix", std::string{});
+                require(!prefix.empty() && value.at("id").get<std::string>().starts_with(prefix), "DISCOVERY_SCOPE_DENIED");
+                self.action_definitions.push_back(value); return DFY_OK;
             }
-        } catch (...) {}
+        } catch (...) { return DFY_ERROR; }
         return DFY_ERROR;
     }
-};
-}
-struct PluginManager::Impl {
-    std::vector<std::unique_ptr<Loaded>> loaded;
-    std::map<std::string, std::pair<Loaded*, Json>> services;
-};
-PluginManager::PluginManager() : impl_(std::make_unique<Impl>()) {}
-PluginManager::~PluginManager() { shutdown(); }
-void PluginManager::shutdown() noexcept {
-    impl_->services.clear();
-    while (!impl_->loaded.empty()) impl_->loaded.pop_back();
-}
-size_t PluginManager::service_count() const { return impl_->services.size(); }
-void PluginManager::load(const Path& directory, const Path& data, const std::string& instance, const Json& selection) {
-    if (!impl_->loaded.empty()) throw std::runtime_error("PLUGINS_ALREADY_LOADED");
-    struct Pending { Json manifest, config; Path path; };
-    std::map<std::string, Pending> pending;
-    std::map<std::string, std::string> owners;
-    for (const auto& selected : selection) {
-        const auto manifest = read_json(child_path(directory, selected.at("manifest").get<std::string>()));
-        const auto id = manifest.at("id").get<std::string>();
-        if (!valid_id(id) || manifest.at("abi_version") != DFY_ABI_VERSION || pending.contains(id)) throw std::runtime_error("PLUGIN_MANIFEST_INVALID");
-        if (!manifest.at("version").is_string() || !manifest.at("requires").is_array() || !manifest.at("services").is_array()) throw std::runtime_error("PLUGIN_MANIFEST_INVALID");
-        for (const auto& service : manifest.at("services")) {
-            const auto name = service.at("id").get<std::string>();
-            const auto kind = service.at("kind").get<std::string>();
-            if (!valid_id(name) || owners.contains(name) || service.at("version") != 1 ||
-                (kind != "model" && kind != "channel" && kind != "memory" && kind != "action")) throw std::runtime_error("SERVICE_MANIFEST_INVALID");
-            if (kind == "action") {
-                sdk::validate_action_schema(service.at("input_schema"));
-                const auto effect = service.at("effects").get<std::string>();
-                if (effect != "read" && effect != "local-write" && effect != "external-write") throw std::runtime_error("ACTION_EFFECT_INVALID");
+    static int32_t DFY_CALL post(void* raw, dfy_bytes bytes) noexcept {
+        auto& self = *static_cast<Loaded*>(raw);
+        try {
+            auto value = Json::parse(sdk::text(bytes));
+            { std::lock_guard lock(self.mutex);
+              if (self.closed) return DFY_CLOSED;
+              const auto type = value.at("type").get<std::string>();
+              if (type == "complete" || type == "progress" || type == "request_service" || type == "register_job" ||
+                  type == "submit_command" || type == "query_command" || type == "read_state") {
+                  if (!self.calls.contains(value.at("call_id").get<uint64_t>())) return DFY_CLOSED;
+              }
+              if (type == "job_result" && !self.jobs.contains(value.at("job_id").get<std::string>())) return DFY_ERROR;
             }
-            owners.emplace(name, id);
-        }
-        pending.emplace(id, Pending{manifest, selected.value("config", Json::object()), child_path(directory, manifest.at("library").get<std::string>())});
+            return self.receive({self.id, std::move(value)});
+        } catch (...) { return DFY_ERROR; }
     }
-    for (const auto& [id, plugin] : pending) for (const auto& dependency : plugin.manifest.at("requires")) {
-        if (!owners.contains(dependency.get<std::string>())) throw std::runtime_error("PLUGIN_DEPENDENCY_MISSING: " + id);
+    static int32_t DFY_CALL cancelled(void* raw, uint64_t call) noexcept {
+        auto& self = *static_cast<Loaded*>(raw);
+        std::lock_guard lock(self.mutex);
+        const auto found = self.calls.find(call);
+        return found == self.calls.end() || found->second.cancelled || SteadyClock::now() >= found->second.deadline;
     }
-    std::vector<std::string> order;
-    std::set<std::string> ready;
-    auto remaining = pending;
-    while (!remaining.empty()) {
-        auto next = std::find_if(remaining.begin(), remaining.end(), [&](const auto& item) {
-            for (const auto& requirement : item.second.manifest.at("requires")) if (!ready.contains(requirement.get<std::string>())) return false;
-            return true;
-        });
-        if (next == remaining.end()) throw std::runtime_error("PLUGIN_DEPENDENCY_CYCLE");
-        order.push_back(next->first);
-        for (const auto& service : next->second.manifest.at("services")) ready.insert(service.at("id").get<std::string>());
-        remaining.erase(next);
+    void close() {
+        if (!object) return;
+        worker.sync([&] { api.quiesce(object); api.stop(object); api.destroy(object); object = nullptr; });
+        { std::lock_guard lock(mutex); closed = true; calls.clear(); jobs.clear(); }
+        status = "stopped";
     }
-    try {
-        for (const auto& id : order) {
-            const auto& source = pending.at(id);
-            auto plugin = std::make_unique<Loaded>();
-            plugin->manifest = source.manifest;
-            plugin->library = std::make_unique<Library>(source.path);
-            auto query = plugin->library->query();
-            plugin->api.struct_size = sizeof(dfy_plugin_api);
-            if (!query || query(DFY_ABI_VERSION, &plugin->api) != DFY_OK || plugin->api.struct_size < sizeof(dfy_plugin_api) ||
-                plugin->api.abi_version != DFY_ABI_VERSION || !plugin->api.plugin_id || id != plugin->api.plugin_id ||
-                !plugin->api.plugin_version || source.manifest.at("version") != plugin->api.plugin_version ||
-                !plugin->api.create || !plugin->api.start || !plugin->api.invoke || !plugin->api.stop || !plugin->api.destroy)
-                throw std::runtime_error("PLUGIN_ABI_OR_IDENTITY_MISMATCH");
-            const auto path = std::filesystem::absolute(data / id);
-            std::filesystem::create_directories(path);
-            plugin->data_path = sdk::path_text(path);
-            plugin->instance_id = instance;
-            plugin->host = {sizeof(dfy_host_api), DFY_ABI_VERSION, plugin.get(), sdk::bytes(plugin->data_path), sdk::bytes(plugin->instance_id), Loaded::provide};
-            Collector errors;
-            const auto config = source.config.dump();
-            if (plugin->api.create(&plugin->host, sdk::bytes(config), &plugin->object, errors.sink()) != DFY_OK || !plugin->object)
-                throw std::runtime_error("PLUGIN_CREATE: " + errors.message());
-            plugin->registering = false;
-            if (plugin->registered.size() != source.manifest.at("services").size()) throw std::runtime_error("PLUGIN_REGISTRATION_INCOMPLETE");
-            // Even a partially started plugin receives stop before destruction.
-            plugin->started = true;
-            if (plugin->api.start(plugin->object, errors.sink()) != DFY_OK) throw std::runtime_error("PLUGIN_START: " + errors.message());
-            impl_->loaded.push_back(std::move(plugin));
-        }
-        for (const auto& plugin : impl_->loaded) for (auto service : plugin->manifest.at("services")) {
-            service["plugin_id"] = plugin->manifest.at("id");
-            service["plugin_version"] = plugin->manifest.at("version");
-            impl_->services.emplace(service.at("id").get<std::string>(), std::make_pair(plugin.get(), service));
-        }
-    } catch (...) { shutdown(); throw; }
+    ~Loaded() { try { close(); } catch (...) {} }
+};
+void validate_method(const Json& method) {
+    sdk::validate_schema(method.at("input")); sdk::validate_schema(method.at("output"));
+    require(includes(Json::array({"read", "local-write", "external-write"}), method.at("effects")), "METHOD_EFFECT_INVALID");
+    require(method.at("resource").is_string(), "METHOD_RESOURCE_INVALID");
 }
-Json PluginManager::catalog() const {
+}
+struct PluginRuntime::Impl {
+    Profile profile;
+    Path state;
+    std::string instance;
+    Receiver receive;
+    std::map<std::string, std::unique_ptr<Loaded>> plugins;
+    std::map<std::string, Json> services, action_map;
+    std::vector<std::string> order;
+    bool draining{};
+    Impl(const Profile& p, Path s, std::string i, Receiver r) : profile(p), state(std::move(s)), instance(std::move(i)), receive(std::move(r)) {}
+};
+PluginRuntime::PluginRuntime(const Profile& profile, const Path& state, const std::string& instance, Receiver receive)
+    : impl_(std::make_unique<Impl>(profile, state, instance, std::move(receive))) {}
+PluginRuntime::~PluginRuntime() { stop(); }
+void PluginRuntime::start() {
+    std::map<std::string, Json> contracts;
+    for (const auto& selected : impl_->profile.data.at("plugins")) {
+        auto plugin = std::make_unique<Loaded>();
+        plugin->manifest = read_json(child(impl_->profile.plugins, selected.at("manifest")));
+        plugin->selected = selected; plugin->id = plugin->manifest.at("id");
+        require(plugin->manifest.at("abi_version") == DFY_ABI_VERSION, "PLUGIN_ABI_UNSUPPORTED");
+        require(valid_name(plugin->id), "PLUGIN_ID_INVALID");
+        require(!impl_->plugins.contains(plugin->id), "PLUGIN_DUPLICATE");
+        plugin->receive = impl_->receive; plugin->instance = impl_->instance;
+        plugin->data = sdk::path_text(std::filesystem::absolute(impl_->state / "plugins" / sdk::path_from_utf8(plugin->id)));
+        std::filesystem::create_directories(sdk::path_from_utf8(plugin->data));
+        for (auto service : plugin->manifest.at("services")) {
+            const auto id = service.at("id").get<std::string>();
+            require(valid_name(id) && valid_name(service.at("contract")), "SERVICE_ID_INVALID");
+            require(service.at("version").get<int>() > 0 && !service.at("methods").empty(), "CONTRACT_VERSION_INVALID");
+            require(!impl_->services.contains(id), "SERVICE_DUPLICATE");
+            const auto key = service.at("contract").get<std::string>() + "@" + std::to_string(service.at("version").get<int>());
+            for (const auto& [name, method] : service.at("methods").items()) { (void)name; validate_method(method); }
+            if (contracts.contains(key)) require(contracts.at(key) == service.at("methods"), "CONTRACT_CONFLICT");
+            else contracts.emplace(key, service.at("methods"));
+            service["plugin_id"] = plugin->id; service["plugin_version"] = plugin->manifest.at("version");
+            service["config_revision"] = selected.at("revision");
+            service["config_fingerprint"] = fingerprint(selected.value("config", Json::object()).dump());
+            impl_->services.emplace(id, service);
+        }
+        plugin->action_definitions = plugin->manifest.value("actions", Json::array());
+        impl_->plugins.emplace(plugin->id, std::move(plugin));
+    }
+    for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) { (void)name; require(impl_->services.contains(target.get<std::string>()), "BINDING_MISSING"); }
+    std::set<std::string> remaining, ready_plugins;
+    for (const auto& [id, plugin] : impl_->plugins) { (void)plugin; remaining.insert(id); }
+    while (!remaining.empty()) {
+        auto chosen = remaining.end();
+        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+            bool ready = true;
+            for (const auto& dep : impl_->plugins.at(*it)->manifest.at("requires")) {
+                const auto target = service(binding(dep.at("binding")));
+                require(target.at("contract") == dep.at("contract") && target.at("version") == dep.at("version"), "DEPENDENCY_CONTRACT");
+                if (!ready_plugins.contains(target.at("plugin_id").get<std::string>())) ready = false;
+            }
+            if (ready) { chosen = it; break; }
+        }
+        require(chosen != remaining.end(), "DEPENDENCY_CYCLE");
+        impl_->order.push_back(*chosen); ready_plugins.insert(*chosen); remaining.erase(chosen);
+    }
+    for (const auto& id : impl_->order) {
+        auto& plugin = *impl_->plugins.at(id);
+        try {
+            for (const auto& dep : plugin.manifest.at("requires")) require(ready(binding(dep.at("binding"))), "DEPENDENCY_NOT_READY");
+            plugin.library = std::make_unique<Library>(child(impl_->profile.plugins, plugin.manifest.at("library")));
+            const auto query = plugin.library->query(); plugin.api.struct_size = sizeof(dfy_plugin_api);
+            require(query && query(DFY_ABI_VERSION, &plugin.api) == DFY_OK && plugin.api.struct_size == sizeof(dfy_plugin_api) &&
+                plugin.api.abi_version == DFY_ABI_VERSION && plugin.api.plugin_id && plugin.api.plugin_version &&
+                id == plugin.api.plugin_id && plugin.manifest.at("version") == plugin.api.plugin_version &&
+                plugin.api.create && plugin.api.start && plugin.api.on_event && plugin.api.quiesce && plugin.api.stop && plugin.api.destroy, "PLUGIN_ABI_INVALID");
+            plugin.host = {sizeof(dfy_host_api), DFY_ABI_VERSION, &plugin, sdk::bytes(plugin.data), sdk::bytes(plugin.instance),
+                Loaded::registration, Loaded::post, Loaded::cancelled};
+            plugin.status = "starting";
+            plugin.worker.sync([&] {
+                Errors errors; const auto config = plugin.selected.value("config", Json::object()).dump();
+                require(plugin.api.create(&plugin.host, sdk::bytes(config), &plugin.object, errors.sink()) == DFY_OK && plugin.object, "PLUGIN_CREATE:" + errors.value.dump());
+                plugin.started = true;
+                require(plugin.api.start(plugin.object, errors.sink()) == DFY_OK, "PLUGIN_START:" + errors.value.dump());
+                require(plugin.registrations.size() == plugin.manifest.at("services").size(), "REGISTRATION_INCOMPLETE");
+                plugin.registering = false;
+            });
+            std::map<std::string, Json> staged_actions;
+            for (auto action : plugin.action_definitions) {
+                const auto action_id = action.at("id").get<std::string>();
+                require(valid_name(action_id), "ACTION_ID_INVALID");
+                require(!impl_->action_map.contains(action_id) && !staged_actions.contains(action_id), "ACTION_NAME_CONFLICT");
+                require(owner(action.at("service")) == id, "ACTION_OWNER");
+                const auto method_info = method(action.at("service"), action.value("method", std::string("execute")));
+                sdk::validate_schema(action.at("input")); sdk::validate_schema(action.at("output"));
+                require(action.at("input") == method_info.at("input") && action.at("output") == method_info.at("output") &&
+                    action.at("effects") == method_info.at("effects") && action.at("resource") == method_info.at("resource"), "ACTION_CONTRACT_MISMATCH");
+                action["plugin_id"] = id; staged_actions.emplace(action_id, action);
+            }
+            impl_->action_map.insert(staged_actions.begin(), staged_actions.end());
+            plugin.status = "ready";
+        } catch (const std::exception& error) {
+            plugin.diagnostic = error.what(); plugin.close(); plugin.status = "failed";
+            if (plugin.selected.value("required", true)) { stop(); throw; }
+        }
+    }
+}
+void PluginRuntime::quiesce() {
+    if (impl_->draining) return;
+    impl_->draining = true;
+    for (const auto& id : impl_->order) {
+        auto& p = *impl_->plugins.at(id);
+        if (p.object) p.worker.post([&p] { p.api.quiesce(p.object); });
+        std::lock_guard lock(p.mutex);
+        for (auto& [ticket, control] : p.calls) { (void)ticket; control.cancelled = true; }
+    }
+}
+void PluginRuntime::stop() {
+    if (!impl_) return;
+    quiesce();
+    for (auto it = impl_->order.rbegin(); it != impl_->order.rend(); ++it) impl_->plugins.at(*it)->close();
+}
+Json PluginRuntime::catalog() const {
     Json result = Json::array();
-    for (const auto& [id, entry] : impl_->services) { (void)id; result.push_back(entry.second); }
+    for (const auto& [id, plugin] : impl_->plugins) result.push_back({{"id", id}, {"status", plugin->status}, {"error", plugin->diagnostic}, {"services", plugin->manifest.at("services")}});
     return result;
 }
-Json PluginManager::describe(const std::string& service) const {
-    const auto found = impl_->services.find(service);
-    if (found == impl_->services.end()) throw std::runtime_error("SERVICE_UNAVAILABLE: " + service);
-    return found->second.second;
+Json PluginRuntime::actions() const { Json values = Json::array(); for (const auto& [id, action] : impl_->action_map) { (void)id; values.push_back(action); } return values; }
+Json PluginRuntime::activities() const {
+    Json values = Json::array(); std::set<std::string> names;
+    for (const auto& [id, plugin] : impl_->plugins) {
+        if (plugin->status != "ready") continue;
+        for (auto definition : plugin->manifest.value("activities", Json::array())) {
+            require(valid_name(definition.at("id")) && names.insert(definition.at("id").get<std::string>()).second, "ACTIVITY_REGISTRATION_CONFLICT");
+            require(owner(definition.at("service")) == id && service(definition.at("service")).at("contract") == "dafeiyu.activity", "ACTIVITY_OWNER_INVALID");
+            definition["plugin_id"] = id; values.push_back(definition);
+        }
+    }
+    return values;
 }
-std::vector<Json> PluginManager::call(const std::string& service, const std::string& method, const Json& input,
-    const Json& context, std::stop_token stop, std::chrono::milliseconds timeout) {
-    describe(service);
-    auto& plugin = *impl_->services.at(service).first;
-    Cancellation cancellation{stop, std::chrono::steady_clock::now() + timeout};
-    if (Cancellation::check(&cancellation)) throw sdk::Cancelled{};
-    const auto encoded = input.dump(), scope = context.dump();
-    dfy_call call{sizeof(dfy_call), sdk::bytes(service), sdk::bytes(method), sdk::bytes(encoded), sdk::bytes(scope), &cancellation, Cancellation::check};
-    Collector output;
-    const auto status = plugin.api.invoke(plugin.object, &call, output.sink());
-    if (status == DFY_CANCELLED) throw sdk::Cancelled{};
-    if (status != DFY_OK || !output.error.empty()) throw std::runtime_error("PLUGIN_CALL: " + output.message());
-    // A late result can contain a confirmed side effect; return it before cancellation admission.
-    return output.values;
+Json PluginRuntime::service(const std::string& id) const { require(impl_->services.contains(id), "SERVICE_MISSING:" + id); return impl_->services.at(id); }
+Json PluginRuntime::action(const std::string& id) const { require(impl_->action_map.contains(id), "ACTION_MISSING:" + id); return impl_->action_map.at(id); }
+Json PluginRuntime::method(const std::string& id, const std::string& name) const { const auto descriptor = service(id); require(descriptor.at("methods").contains(name), "METHOD_MISSING"); return descriptor.at("methods").at(name); }
+std::string PluginRuntime::binding(const std::string& name) const { require(impl_->profile.data.at("bindings").contains(name), "BINDING_MISSING"); return impl_->profile.data.at("bindings").at(name); }
+std::string PluginRuntime::owner(const std::string& id) const { return service(id).at("plugin_id"); }
+bool PluginRuntime::ready(const std::string& id) const { return impl_->plugins.at(owner(id))->status == "ready"; }
+bool PluginRuntime::dependency(const std::string& id, const std::string& name) const {
+    for (const auto& dep : impl_->plugins.at(id)->manifest.at("requires")) if (dep.at("binding") == name) return true;
+    return false;
 }
-Json PluginManager::one(const std::string& service, const std::string& method, const Json& input, const Json& context, std::stop_token stop) {
-    const auto values = call(service, method, input, context, stop);
-    if (values.size() != 1) throw std::runtime_error("EXPECTED_ONE_PLUGIN_RESULT");
-    return values.front();
+Json PluginRuntime::selection(const std::string& id) const { return impl_->plugins.at(id)->selected; }
+Json PluginRuntime::snapshot(const Json& action_ids) const {
+    Json result{{"owner", impl_->profile.data.at("owner")}, {"bindings", Json::object()}, {"services", Json::object()}, {"actions", Json::object()}};
+    std::set<std::string> needed;
+    for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) {
+        if (name == "model" || name == "memory" || name == "channel" || name == "strategy" || name.starts_with("context.")) {
+            result["bindings"][name] = target; needed.insert(target.get<std::string>());
+        }
+    }
+    for (const auto& id : action_ids) {
+        Json info;
+        if (impl_->action_map.contains(id.get<std::string>())) info = action(id);
+        else for (const auto& [owner_id, plugin] : impl_->plugins) {
+            for (auto declared : plugin->manifest.value("actions", Json::array())) if (declared.at("id") == id) {
+                declared["plugin_id"] = owner_id; info = declared;
+            }
+        }
+        require(!info.is_null(), "PROFILE_ACTION_UNDECLARED");
+        result["actions"][id.get<std::string>()] = info; needed.insert(info.at("service").get<std::string>());
+    }
+    while (result.at("services").size() < needed.size()) {
+        const auto batch = needed;
+        for (const auto& id : batch) {
+            if (result.at("services").contains(id)) continue;
+            result["services"][id] = service(id);
+            for (const auto& dep : impl_->plugins.at(owner(id))->manifest.at("requires")) {
+                const auto name = dep.at("binding").get<std::string>(); const auto target = binding(name);
+                result["bindings"][name] = target; needed.insert(target);
+            }
+        }
+    }
+    return result;
 }
+bool PluginRuntime::matches(const Json& snapshot_value) const {
+    if (snapshot_value.at("owner") != impl_->profile.data.at("owner")) return false;
+    for (const auto& [id, info] : snapshot_value.at("services").items()) {
+        if (!impl_->services.contains(id)) return false;
+        auto current = service(id), saved = info;
+        current.erase("description"); saved.erase("description");
+        if (current != saved) return false;
+    }
+    return true;
+}
+void PluginRuntime::invoke(uint64_t call, const std::string& id, const std::string& name, const Json& input, const Json& context, SteadyClock::time_point deadline) {
+    require(!impl_->draining && ready(id), "SERVICE_NOT_READY");
+    auto& p = *impl_->plugins.at(owner(id));
+    { std::lock_guard lock(p.mutex); require(p.calls.size() < 256, "PLUGIN_CALL_LIMIT"); p.calls.emplace(call, Control{false, deadline}); }
+    send(p.id, {{"type", "call"}, {"call_id", call}, {"service", id}, {"method", name}, {"input", input}, {"context", context}});
+}
+void PluginRuntime::send(const std::string& id, const Json& event) {
+    auto& p = *impl_->plugins.at(id); require(p.object != nullptr, "PLUGIN_NOT_RUNNING");
+    p.worker.post([&p, event] {
+        Errors errors; const auto body = event.dump();
+        if (p.api.on_event(p.object, sdk::bytes(body), errors.sink()) != DFY_OK) {
+            const auto error = errors.value.is_null() ? sdk::error("PLUGIN_EVENT_FAILURE") : errors.value;
+            if (event.value("type", std::string{}) == "call") (void)p.receive({p.id, {{"type", "complete"}, {"call_id", event.at("call_id")}, {"error", error}}});
+            else (void)p.receive({p.id, {{"type", "plugin_error"}, {"error", error}}});
+        }
+    });
+}
+void PluginRuntime::cancel(uint64_t call) { for (auto& [id, p] : impl_->plugins) { (void)id; std::lock_guard lock(p->mutex); if (p->calls.contains(call)) p->calls.at(call).cancelled = true; } }
+void PluginRuntime::release(uint64_t call) { for (auto& [id, p] : impl_->plugins) { (void)id; std::lock_guard lock(p->mutex); p->calls.erase(call); } }
+void PluginRuntime::allow_job(const std::string& plugin, const std::string& job) { auto& p = *impl_->plugins.at(plugin); std::lock_guard lock(p.mutex); p.jobs.insert(job); }
 }

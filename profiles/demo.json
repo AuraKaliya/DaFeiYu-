@@ -1,18 +1,160 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugin_directory": "../plugins",
   "foundation": "../resources/foundation.txt",
   "owner": "local-owner",
-  "model": "model.scripted",
-  "channel": "channel.simulator",
-  "memory": "memory.minimal",
-  "allowed_actions": ["action.add"],
-  "allowed_effects": ["read"],
-  "max_turns": 4,
+  "bindings": {
+    "model": "model.scripted",
+    "channel": "channel.simulator",
+    "memory": "memory.minimal",
+    "strategy": "strategy.default",
+    "search": "search.primary",
+    "context.clock": "context.clock",
+    "reflection": "activity.reflection"
+  },
+  "allowed_actions": [
+    "action.add",
+    "action.search",
+    "action.remember",
+    "action.background",
+    "action.write_demo",
+    "action.behavior"
+  ],
+  "allowed_effects": [
+    "read",
+    "local-write"
+  ],
+  "resources": [
+    "*"
+  ],
+  "limits": {
+    "model_attempts": 8,
+    "strategy_steps": 24,
+    "call_timeout_ms": 10000,
+    "max_jobs": 16,
+    "max_inbox": 256,
+    "shutdown_ms": 2000,
+    "context_bytes": 262144
+  },
+  "activities": [
+    {
+      "id": "reflection",
+      "binding": "reflection",
+      "interval_ms": 300000,
+      "enabled": true,
+      "allowed_modes": [
+        "available"
+      ],
+      "actions": [
+        "action.remember"
+      ],
+      "delivery_policy": "none",
+      "conversation": "internal:reflection",
+      "misfire": "coalesce"
+    }
+  ],
   "plugins": [
-    {"manifest": "dfy_model_scripted.json", "config": {"action": "action.add", "arguments": {"a": 6, "b": 7}}},
-    {"manifest": "dfy_channel_simulator.json", "config": {"actor": "local-owner", "delivery_mode": "sent"}},
-    {"manifest": "dfy_memory_minimal.json", "config": {"seed_persona": "我会保留来源，区分计划、执行与实际交付。"}},
-    {"manifest": "dfy_action_add.json", "config": {}}
+    {
+      "manifest": "dfy_model_scripted.json",
+      "revision": "1",
+      "config": {
+        "action": "action.add",
+        "arguments": {
+          "a": 6,
+          "b": 7
+        },
+        "delay_ms": 0
+      }
+    },
+    {
+      "manifest": "dfy_strategy_default.json",
+      "revision": "1",
+      "config": {
+        "verify": false
+      }
+    },
+    {
+      "manifest": "dfy_channel_simulator.json",
+      "revision": "1",
+      "config": {
+        "delivery_mode": "sent"
+      },
+      "accept_inputs": true,
+      "principals": {
+        "local-owner": "local-owner"
+      }
+    },
+    {
+      "manifest": "dfy_memory_minimal.json",
+      "revision": "1",
+      "config": {
+        "seed_persona": "我会保留来源，区分计划、执行与实际交付。"
+      }
+    },
+    {
+      "manifest": "dfy_search_primary.json",
+      "revision": "1",
+      "config": {
+        "service": "search.primary",
+        "label": "primary"
+      }
+    },
+    {
+      "manifest": "dfy_search_secondary.json",
+      "revision": "1",
+      "config": {
+        "service": "search.secondary",
+        "label": "secondary"
+      }
+    },
+    {
+      "manifest": "dfy_action_add.json",
+      "revision": "1",
+      "config": {}
+    },
+    {
+      "manifest": "dfy_action_search.json",
+      "revision": "1",
+      "config": {}
+    },
+    {
+      "manifest": "dfy_action_remember.json",
+      "revision": "1",
+      "config": {}
+    },
+    {
+      "manifest": "dfy_action_background.json",
+      "revision": "1",
+      "config": {
+        "delay_ms": 100
+      }
+    },
+    {
+      "manifest": "dfy_action_write_demo.json",
+      "revision": "1",
+      "config": {}
+    },
+    {
+      "manifest": "dfy_activity_reflection.json",
+      "revision": "1",
+      "config": {}
+    },
+    {
+      "manifest": "dfy_context_clock.json",
+      "revision": "1",
+      "config": {},
+      "observe": [
+        "operation.settled"
+      ]
+    },
+    {
+      "manifest": "dfy_action_behavior.json",
+      "revision": "1",
+      "commands": [
+        "behavior.set",
+        "activity.set"
+      ],
+      "config": {}
+    }
   ]
 }
