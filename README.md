@@ -1,90 +1,85 @@
-# 大肥鱼常驻 Harness · 0.2.0
+# 大肥鱼架构验证工程 0.4.0
 
-C++20 常驻核心、版本化 C ABI 和独立插件 SDK。核心维护身份、调度、授权、状态与恢复；插件提供决策策略、模型、渠道、记忆、上下文、动作及领域能力。
+C++20 核心、版本化 C ABI 和独立插件 SDK。当前工作集中在架构边界与最小验证，暂不扩展业务插件。
 
-这一版面向框架验证。模型和渠道使用可重复的模拟实现；搜索有两个可替换的本地提供方。当前协议为 ABI 2、profile 2、存储 2，不保留旧接口适配、旧 CLI 或数据迁移器。
+核心维护身份、调度、授权、状态和恢复；SDK 提供无运行状态的契约与公开视图；五个最小示例角色完成确定性闭环；服务组合和故障场景位于测试夹具中。
 
-## 构建与测试
+## 构建范围
 
-需要 CMake 3.28+、C++20 编译器。Windows 使用 Visual Studio 2022 的 C++ 工具链；仓库脚本会查找其 CMake，不修改系统 PATH。
+需要 CMake 3.28+ 和 C++20 编译器。Windows 使用 Visual Studio 2022 的 C++ 工具链；脚本会查找本机 CMake。原生依赖仍为固定版本的 nlohmann/json 和 SQLite。
+
+| 配置 | 内容 | 安装结果 |
+|---|---|---|
+| 默认 CMake 配置 | Host、核心、SDK | 不带示例模块与默认 profile |
+| DFY_BUILD_EXAMPLES=ON | 额外构建最小示例 | 五个模块、minimal profile、固定底色 |
+| BUILD_TESTING=ON | 额外构建契约测试和隔离夹具 | 夹具不安装 |
+| windows 开发预设 | 示例与测试均启用 | 安装仍只包含核心、SDK和最小示例 |
+
+普通构建默认关闭示例和测试。Windows 脚本的默认模式也为 Core：
 
 ```powershell
-.\scripts\windows.ps1 -Action build
-.\scripts\windows.ps1 -Action test
 .\scripts\windows.ps1 -Action build -Configuration Release
-.\scripts\windows.ps1 -Action test -Configuration Release
+.\scripts\windows.ps1 -Action install -Configuration Release
 ```
 
-也可以使用 windows-debug、windows-release 和 ninja-debug 预设。依赖固定版本的 nlohmann/json 与 SQLite，下载时校验 SHA-256。实际验证范围见[验证记录](docs/validation.md)。Windows 本地测试默认串行，避免同时创建大量 FULL 同步数据库造成 I/O 争用。
+输出在 build/windows-core 和 out/dafeiyu-core-v4。核心安装没有默认插件配置；启动业务实例需要显式提供自己的 profile。
 
-## 常驻运行
-
-在第一个终端启动实例：
+## 最小示例
 
 ```powershell
-$app = '.\build\windows\run\Debug\bin\dafeiyu.exe'
-& $app serve --state '.runtime\resident-v2'
+.\scripts\windows.ps1 -Action build -Mode Minimal
+.\scripts\windows.ps1 -Action demo -Mode Minimal
+.\scripts\windows.ps1 -Action install -Mode Minimal
 ```
 
-在另一个终端向在线实例提交命令：
+最小组合位于 examples/minimal，配置位于 profiles/minimal.json，只包含脚本模型、默认策略、模拟渠道、只读记忆快照和加法动作。脚本固定计算 6 + 7，不理解自然语言，不调用真实平台，不默认启动周期活动、后台工作或记忆写入。
+
+常驻示例与单次 demo 使用同一个运行时：
 
 ```powershell
-$app = '.\build\windows\run\Debug\bin\dafeiyu.exe'
-& $app request health --state '.runtime\resident-v2'
-& $app request input.accept --state '.runtime\resident-v2' --json '{"key":"task-1","text":"search:harness"}'
-& $app request run.list --state '.runtime\resident-v2'
-& $app request events --state '.runtime\resident-v2'
-& $app request host.shutdown --state '.runtime\resident-v2'
+$app = '.\build\windows-minimal\run\Debug\bin\dafeiyu.exe'
+& $app serve --state '.runtime\minimal-v4'
+# 在另一个终端提交或查询：
+& $app request input.accept --state '.runtime\minimal-v4' --json '{"key":"task-1","text":"运行最小闭环"}'
+& $app request run.list --state '.runtime\minimal-v4'
+& $app request host.shutdown --state '.runtime\minimal-v4'
 ```
 
-input.accept 返回持久接纳记录；通过 input.get 的 id 查询关联 Run，再用 run.get 查询任务。相同来源键与正文返回原记录，不会创建第二项任务。任务结束后实例及插件继续运行。
+管理入口仍使用本地文件邮箱，受状态目录权限保护。已受理命令和输入以持久回执为准；重试管理修改时使用同一个 --command-id。执行、目标评价和交付分别记录。
 
-管理入口使用状态目录下的本地文件邮箱，适合当前单机框架；请求和响应使用原子改名发布，实例启动有独立 epoch。客户端不打开核心数据库，不争抢实例锁。它依赖目录的操作系统访问权限，仅面向本机受信用户。
-
-需要重试可能已提交的管理修改时，显式使用同一个 --command-id。核心会返回原命令回执；相同 ID 的不同参数会被拒绝。控制请求超时不表示修改未发生。
-
-## 示例能力
+## 测试与分发
 
 ```powershell
-& $app demo --state '.runtime\demo-v2'
-& $app demo --state '.runtime\demo-v2' --message 'search:插件契约'
-& $app demo --state '.runtime\demo-v2' --message 'remember:先记录来源，再核对执行结果'
-& $app demo --state '.runtime\demo-v2' --message 'background:计算'
+.\scripts\windows.ps1 -Action build -Mode Test
+.\scripts\windows.ps1 -Action test -Mode Test
 ```
 
-demo 是使用相同实例运行时的单次验证入口，完成后关闭实例。普通文本运行加法示例；search:、remember:、background: 是脚本模型的测试语法，不代表自然语言理解。unknown: 用于演示无法确认的写效果，任务会等待核对。
+开发预设 windows 的构建目录为 build/windows。夹具输出在 tests/runtime，最小示例输出在 run，两者分开；每个场景从最小 profile 加入自己需要的提供方，不再加载全部旧示例。分发测试在新安装目录检查模块清单，并独立编译和执行 SDK 消费插件。
 
-修改 profile 中的 search 绑定即可选择 search.secondary，搜索动作的代码不变。strategy_default 的 verify 配置开启结束前复核，会通过同一模型调用流程再取一次结果。
+另有 windows-core、windows-minimal、windows-tests 预设分别验证“仅核心”“仅示例”“测试开启且示例不安装”。这些目录互相独立。旧构建或安装目录可能仍有历史文件，发布验证应使用新的安装目录。
 
-默认注册“整理经历”活动，每五分钟评估一次，经相同的策略与操作流程提交记忆，不对外发送。此示例提交固定配置的候选，用于验证流程；真实经历理解需要模型插件。activity.set 调整启停策略；behavior.set 支持 available、focused、quiet、resting 和到期时间。两类修改都要求 expected_revision，暂停状态跨重启保留。
+若首次依赖下载受网络影响，可通过 FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON 和 FETCHCONTENT_SOURCE_DIR_SQLITE_SOURCE 指向对应固定版本的已解包源目录；不会修改依赖版本或校验规则。
 
-## 管理命令
+## 核心与 SDK
 
-| 命令 | 用途 |
-|---|---|
-| health、plugins | 实例健康、行为、服务与动作目录 |
-| input.accept、input.get | 持久输入及接纳回执 |
-| run.list、run.get、run.steer | 任务查询与关联任务的补充输入 |
-| run.cancel、run.resume | 取消或显式接续；未结束的原生调用不被强制卸载 |
-| behavior.set、activity.list、activity.set | 行为模式和活动策略 |
-| policy.set | 修订动作、效果、资源授权；撤销在调用前重新检查 |
-| operation.list、operation.query、operation.reconcile | 操作证据、原身份查询和带证据的人工核对 |
-| job.list、job.cancel | 后台执行状态和取消请求 |
-| events | 按游标、Run、类型分页读取已提交事实 |
-| host.shutdown | 停止接纳、收束调用并关闭实例 |
+- dafeiyu::contracts 提供数据类型、schema、内建服务定义和 RunView，不包含插件运行对象。
+- dafeiyu::plugin_sdk 在契约之上提供 ABI 和插件作者封装。
+- 核心公共头文件仅依赖数据契约；SQLite 与插件执行封装是私有依赖。
+- 内建服务使用 SDK 的统一定义，错误槽位、必需方法或契约版本在 ready 前拒绝。
+- 策略与插件 read_state(run) 获取 RunView，不读取完整的核心持久投影。
 
-## SDK 与项目审阅
+独立插件使用 find_package(dafeiyu 0.4 CONFIG REQUIRED) 与 dafeiyu::plugin_sdk。C ABI 仍为版本 2；profile 与核心存储升级为版本 3，渠道与策略契约为版本 3，RunView 为版本 2，其余内建契约及插件私有库仍为版本 2。旧实验接口没有适配层；旧核心数据库拒绝打开并保留原数据，演示使用新的 minimal-v4 目录。
 
-```powershell
-.\scripts\windows.ps1 -Action install
-```
+渠道实例和账号在 profile 的插件 channels 字段声明，输入必须标明其来源服务。接纳时保存会话与交付绑定，恢复不改投默认渠道。子调用记录父关系、收窄后的许可和继承期限；limits.nested_calls 是持久的 Run 级调用次数上限，硬重启不清零。取消后保留已派发工作的实际结果，不恢复原业务资格。
 
-安装包含宿主、示例插件、清单、profile、头文件和 CMake package。独立插件使用 find_package(dafeiyu 0.2 CONFIG REQUIRED) 与 dafeiyu::plugin_sdk；[独立工程](tests/sdk_consumer/CMakeLists.txt)实际被安装测试构建并执行，不链接核心。
+## 文档
 
-- [实际架构与模块职责](docs/architecture.md)
-- [ABI 2 和插件开发协议](docs/plugin-sdk.md)
-- [目标设计与阶段边界](docs/resident-runtime-design.md)
+- [收敛设计与实施状态](docs/architecture-convergence.md)
+- [实际架构](docs/architecture.md)
+- [SDK 契约与插件开发](docs/plugin-sdk.md)
 - [验证记录](docs/validation.md)
+- [v0.2 评审依据](docs/architecture-review-v0.2.md)
+- [长期常驻设计参考](docs/resident-runtime-design.md)
 - [第三方依赖](THIRD_PARTY.md)
 
-当前没有真实模型/平台适配、MCP 或 Skills 桥接、子 Agent、动态热替换和进程隔离。原生插件是受信同进程代码；逻辑权限、超时与协作取消不构成操作系统沙箱。后续扩展应从现有契约接入，并补上对应行为验证。
+本轮已补齐渠道归属与 Run 内调用树的权限、截止时间、取消和共享调用额度。实例/会话级 Scope 注册释放、范围化订阅、动作封装、策略失败路由、内部状态所有权与调度索引仍按评审继续处理。默认示例仍只有五个角色，没有新增业务插件。

@@ -1,4 +1,5 @@
 #include "context.hpp"
+#include "capabilities.hpp"
 namespace dfy {
 ContextAssembler::ContextAssembler(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy, const Profile& profile)
     : store_(store), plugins_(plugins), calls_(calls), policy_(policy), timeout_(profile.data.at("limits").at("call_timeout_ms")),
@@ -22,8 +23,10 @@ void ContextAssembler::assemble(const Json& run, const Json& proposal, std::func
         require(run.at("bindings").at("actions").contains(name.get<std::string>()), "ACTION_DIRECTORY_DENIED");
         const auto& action = run.at("bindings").at("actions").at(name.get<std::string>());
         if (!includes(current.at("actions"), name) || !includes(current.at("effects"), action.at("effects")) || !plugins_.ready(action.at("service"))) continue;
-        if ((!includes(current.at("resources"), "*") && !includes(current.at("resources"), action.at("resource"))) ||
-            (!includes(run.at("grants").at("resources"), "*") && !includes(run.at("grants").at("resources"), action.at("resource")))) continue;
+        bool allowed = true;
+        for (const auto& resource : resources_of(action))
+            if (!permits(current.at("resources"), resource) || !permits(run.at("grants").at("resources"), resource)) allowed = false;
+        if (!allowed) continue;
         work->request["actions"].push_back(action);
     }
     const auto memory = run.at("bindings").at("bindings").at("memory").get<std::string>();

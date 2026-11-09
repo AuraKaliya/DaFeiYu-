@@ -48,16 +48,16 @@ void Database::exec(std::string_view sql) {
         throw std::runtime_error(message);
     }
 }
-void Database::verify_identity(std::string_view instance, std::string_view component) {
+void Database::verify_identity(std::string_view instance, std::string_view component, int schema_version) {
     Transaction tx(*this);
     exec("CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), instance TEXT NOT NULL, component TEXT NOT NULL, version INTEGER NOT NULL)");
     {
         auto read = prepare("SELECT instance, component, version FROM identity WHERE id=1");
         if (read.step()) {
-            if (read.column(0) != instance || read.column(1) != component || read.column(2) != "2") throw std::runtime_error("STORAGE_IDENTITY_OR_VERSION_MISMATCH");
+            if (read.column(0) != instance || read.column(1) != component || read.column(2) != std::to_string(schema_version)) throw std::runtime_error("STORAGE_IDENTITY_OR_VERSION_MISMATCH");
         } else {
-            auto insert = prepare("INSERT INTO identity VALUES(1,?,?,2)");
-            insert.bind(1, instance).bind(2, component).step();
+            auto insert = prepare("INSERT INTO identity VALUES(1,?,?,?)");
+            insert.bind(1, instance).bind(2, component).bind(3, std::to_string(schema_version)).step();
         }
     }
     tx.commit();

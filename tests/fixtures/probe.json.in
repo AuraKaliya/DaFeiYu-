@@ -1,12 +1,17 @@
 {
   "id": "test.probe",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [
     {
       "binding": "memory",
       "contract": "dafeiyu.memory",
+      "version": 2
+    },
+    {
+      "binding": "memory.changes",
+      "contract": "test.memory.changes",
       "version": 1
     }
   ],

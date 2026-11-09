@@ -1,8 +1,4 @@
 add_executable(dafeiyu main.cpp control.cpp)
 target_link_libraries(dafeiyu PRIVATE dafeiyu::core dfy_warnings)
 set_target_properties(dafeiyu PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/run/$<CONFIG>/bin")
-file(READ ${PROJECT_SOURCE_DIR}/profiles/demo.json demo_profile)
-file(READ ${PROJECT_SOURCE_DIR}/resources/foundation.txt foundation_text)
-file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/run/$<CONFIG>/profiles/demo.json" CONTENT "${demo_profile}")
-file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/run/$<CONFIG>/resources/foundation.txt" CONTENT "${foundation_text}")
 install(TARGETS dafeiyu RUNTIME DESTINATION bin)

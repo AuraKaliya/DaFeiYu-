@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <random>
 #include <sstream>
+#include <limits>
 
 namespace dfy {
 int64_t now_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -32,6 +33,9 @@ bool includes(const Json& values, const Json& value) { return std::find(values.b
 bool terminal(const Json& run) { return includes(Json::array({"completed", "failed", "cancelled"}), run.at("execution")); }
 Json failure(const std::exception& error) {
     const std::string code = error.what();
+    if (code == "CALL_DEADLINE_EXCEEDED") return sdk::error(code, "deadline", "none", true);
+    if (code == "PARENT_CALL_CLOSED") return sdk::error(code, "cancelled");
+    if (code == "NESTED_CALL_BUDGET_EXHAUSTED") return sdk::error(code, "budget");
     const bool denied = code.find("DENIED") != std::string::npos;
     return sdk::error(code.substr(0, 2048), denied ? "permission" : "protocol");
 }
@@ -44,13 +48,14 @@ void validate_outcome(const Json& value) {
 Profile Profile::open(const Path& file) {
     const auto path = std::filesystem::absolute(file);
     auto data = read_json(path);
-    require(data.at("schema_version") == 2, "PROFILE_VERSION_UNSUPPORTED");
+    require(data.at("schema_version") == 3, "PROFILE_VERSION_UNSUPPORTED");
     require(!data.at("owner").get<std::string>().empty(), "PROFILE_OWNER");
     require(data.at("bindings").is_object() && data.at("plugins").is_array(), "PROFILE_SERVICES");
     for (const auto* name : {"model", "memory", "channel", "strategy"}) require(data.at("bindings").contains(name), "PROFILE_BINDING_MISSING");
     require(data.at("allowed_actions").is_array() && data.at("allowed_effects").is_array(), "PROFILE_GRANTS");
-    for (const auto* name : {"model_attempts", "strategy_steps", "call_timeout_ms", "max_jobs", "max_inbox", "shutdown_ms"})
-        require(data.at("limits").at(name).is_number_integer() && data.at("limits").at(name).get<int64_t>() > 0, "PROFILE_LIMIT");
+    for (const auto* name : {"model_attempts", "strategy_steps", "call_timeout_ms", "nested_calls", "max_jobs", "max_inbox", "shutdown_ms"})
+        require(data.at("limits").at(name).is_number_integer() && data.at("limits").at(name).get<int64_t>() > 0 &&
+            data.at("limits").at(name).get<int64_t>() <= std::numeric_limits<int>::max(), "PROFILE_LIMIT");
     require(data.at("limits").at("max_jobs").get<int>() <= 256, "PROFILE_JOB_LIMIT");
     for (const auto& plugin : data.at("plugins")) require(!plugin.at("revision").get<std::string>().empty(), "CONFIG_REVISION_REQUIRED");
     return {data, path.parent_path() / sdk::path_from_utf8(data.at("plugin_directory").get<std::string>()),

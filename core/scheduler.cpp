@@ -5,6 +5,7 @@ void Scheduler::start() {
         const auto id = definition.at("id").get<std::string>();
         require(definition.at("interval_ms").get<int64_t>() > 0 && definition.at("actions").is_array(), "ACTIVITY_DEFINITION_INVALID");
         require(definition.at("delivery_policy") == "none" || definition.at("delivery_policy") == "reply", "ACTIVITY_DELIVERY_INVALID");
+        if (definition.at("delivery_policy") == "reply") (void)plugins_.channel_binding(plugins_.binding(definition.at("reply_channel")));
         require(includes(Json::array({"skip", "coalesce"}), definition.at("misfire")), "ACTIVITY_MISFIRE_UNSUPPORTED");
         const auto service = plugins_.service(plugins_.binding(definition.at("binding")));
         require(service.at("contract") == "dafeiyu.activity", "ACTIVITY_CONTRACT_INVALID");
@@ -36,6 +37,7 @@ void Scheduler::trigger(Json activity, const std::string& key, const Json& fact)
     evaluating_.insert(id);
     CallScope scope; scope.role = "activity"; scope.bindings = profile_.data.at("bindings");
     scope.grants = store_.get("system", "policy");
+    scope.nested_limit = profile_.data.at("limits").at("nested_calls");
     try {
         calls_.request(plugins_.binding(definition.at("binding")), "evaluate_trigger",
             {{"occurrence_id", occurrence_id}, {"fact", fact}, {"behavior", behavior_.state()}}, scope,
@@ -54,7 +56,8 @@ void Scheduler::trigger(Json activity, const std::string& key, const Json& fact)
                     if (decision == "propose") {
                         Json input{{"text", result.result.at("text")}, {"actor", profile_.data.at("owner")}, {"conversation", definition.at("conversation")},
                             {"activity", id}, {"delivery_policy", definition.at("delivery_policy")}, {"auto_depth", 1}};
-                        const auto receipt = inbox_.accept("activity", occurrence_id, input);
+                        const auto reply_service = definition.at("delivery_policy") == "reply" ? plugins_.binding(definition.at("reply_channel")) : std::string{};
+                        const auto receipt = inbox_.accept_activity(id, occurrence_id, input, reply_service);
                         occurrence_value["input_id"] = receipt.at("id");
                     }
                     occurrence_value["state"] = decision;

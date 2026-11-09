@@ -1,0 +1,99 @@
+{
+  "model_scripted": {
+    "manifest": "dfy_fixture_model_scripted.json",
+    "revision": "1",
+    "config": {
+      "action": "action.add",
+      "arguments": {
+        "a": 6,
+        "b": 7
+      },
+      "delay_ms": 0
+    }
+  },
+  "channel_simulator": {
+    "manifest": "dfy_fixture_channel_simulator.json",
+    "revision": "1",
+    "config": {
+      "delivery_mode": "sent"
+    },
+    "accept_inputs": true,
+    "principals": {
+      "local-owner": "local-owner"
+    },
+    "channels": {
+      "channel.simulator": {
+        "account": "simulation-account",
+        "instance": "simulator.primary",
+        "allow_reply": true
+      }
+    }
+  },
+  "memory_minimal": {
+    "manifest": "dfy_fixture_memory_minimal.json",
+    "revision": "1",
+    "config": {
+      "seed_persona": "我会保留来源，区分计划、执行与实际交付。"
+    }
+  },
+  "search_primary": {
+    "manifest": "dfy_fixture_search_primary.json",
+    "revision": "1",
+    "config": {
+      "service": "search.primary",
+      "label": "primary"
+    }
+  },
+  "search_secondary": {
+    "manifest": "dfy_fixture_search_secondary.json",
+    "revision": "1",
+    "config": {
+      "service": "search.secondary",
+      "label": "secondary"
+    }
+  },
+  "action_search": {
+    "manifest": "dfy_fixture_action_search.json",
+    "revision": "1",
+    "config": {}
+  },
+  "action_remember": {
+    "manifest": "dfy_fixture_action_remember.json",
+    "revision": "1",
+    "config": {}
+  },
+  "action_background": {
+    "manifest": "dfy_fixture_action_background.json",
+    "revision": "1",
+    "config": {
+      "delay_ms": 100
+    }
+  },
+  "action_write_demo": {
+    "manifest": "dfy_fixture_action_write_demo.json",
+    "revision": "1",
+    "config": {}
+  },
+  "activity_reflection": {
+    "manifest": "dfy_fixture_activity_reflection.json",
+    "revision": "1",
+    "config": {}
+  },
+  "context_clock": {
+    "manifest": "dfy_fixture_context_clock.json",
+    "revision": "1",
+    "config": {},
+    "observe": [
+      "operation.settled"
+    ]
+  },
+  "action_behavior": {
+    "manifest": "dfy_fixture_action_behavior.json",
+    "revision": "1",
+    "commands": [
+      "behavior.set",
+      "activity.set"
+    ],
+    "config": {}
+  }
+}

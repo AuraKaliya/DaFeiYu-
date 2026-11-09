@@ -2,7 +2,9 @@ param(
     [ValidateSet('configure', 'build', 'test', 'install', 'demo')]
     [string]$Action = 'build',
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+    [ValidateSet('Core', 'Minimal', 'Test')]
+    [string]$Mode = 'Core'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,7 +19,11 @@ if (-not $cmakePath) {
 }
 if (-not $cmakePath) { throw 'CMake not found. Install CMake 3.28+ or the Visual Studio CMake tools.' }
 $ctestPath = Join-Path (Split-Path -Parent $cmakePath) 'ctest.exe'
-$preset = 'windows-' + $Configuration.ToLowerInvariant()
+if ($Action -eq 'test' -and -not $PSBoundParameters.ContainsKey('Mode')) { $Mode = 'Test' }
+if ($Action -eq 'demo' -and -not $PSBoundParameters.ContainsKey('Mode')) { $Mode = 'Minimal' }
+$configurePreset = switch ($Mode) { 'Core' { 'windows-core' }; 'Minimal' { 'windows-minimal' }; 'Test' { 'windows' } }
+$binaryDirectory = switch ($Mode) { 'Core' { 'build/windows-core' }; 'Minimal' { 'build/windows-minimal' }; 'Test' { 'build/windows' } }
+$installDirectory = switch ($Mode) { 'Core' { 'out/dafeiyu-core-v4' }; 'Minimal' { 'out/dafeiyu-minimal-v4' }; 'Test' { 'out/dafeiyu-test-build-v4' } }
 
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
@@ -27,16 +33,20 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
 Push-Location -LiteralPath $projectRoot
 try {
     switch ($Action) {
-        'configure' { Invoke-Checked $cmakePath @('--preset', 'windows', '-DBUILD_TESTING=ON') }
+        'configure' { Invoke-Checked $cmakePath @('--preset', $configurePreset) }
         'build' {
-            Invoke-Checked $cmakePath @('--preset', 'windows', '-DBUILD_TESTING=ON')
-            Invoke-Checked $cmakePath @('--build', '--preset', $preset, '--parallel', '4')
+            Invoke-Checked $cmakePath @('--preset', $configurePreset)
+            Invoke-Checked $cmakePath @('--build', $binaryDirectory, '--config', $Configuration, '--parallel', '4')
         }
-        'test' { Invoke-Checked $ctestPath @('--preset', $preset, '--parallel', '1') }
-        'install' { Invoke-Checked $cmakePath @('--install', 'build/windows', '--config', $Configuration, '--prefix', 'out/dafeiyu') }
+        'test' {
+            if ($Mode -ne 'Test') { throw 'Tests require -Mode Test.' }
+            Invoke-Checked $ctestPath @('--test-dir', $binaryDirectory, '-C', $Configuration, '--parallel', '1', '--output-on-failure')
+        }
+        'install' { Invoke-Checked $cmakePath @('--install', $binaryDirectory, '--config', $Configuration, '--prefix', $installDirectory) }
         'demo' {
-            $executable = Join-Path $projectRoot "build\windows\run\$Configuration\bin\dafeiyu.exe"
-            Invoke-Checked $executable @('demo', '--state', '.runtime/demo-v2')
+            if ($Mode -eq 'Core') { throw 'The core-only build has no example profile. Use -Mode Minimal.' }
+            $executable = Join-Path $projectRoot "$binaryDirectory/run/$Configuration/bin/dafeiyu.exe"
+            Invoke-Checked $executable @('demo', '--state', '.runtime/minimal-v4')
         }
     }
 } finally { Pop-Location }

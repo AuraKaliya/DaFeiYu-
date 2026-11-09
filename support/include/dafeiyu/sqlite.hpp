@@ -26,7 +26,7 @@ public:
     Database& operator=(const Database&) = delete;
     void exec(std::string_view sql);
     Statement prepare(std::string_view sql) { return Statement(db_, sql); }
-    void verify_identity(std::string_view instance, std::string_view component);
+    void verify_identity(std::string_view instance, std::string_view component, int schema_version = 2);
 };
 class Transaction {
     Database& db_;

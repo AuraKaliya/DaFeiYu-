@@ -3,6 +3,11 @@
 #include <fstream>
 #include <random>
 #include <thread>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 namespace dfy::host {
 namespace {
 std::string nonce() {
@@ -12,9 +17,30 @@ std::string nonce() {
     return result;
 }
 Json read(const Path& file) {
+#ifdef _WIN32
+    // Publication by rename can still hold DELETE access after the name becomes visible.
+    struct FileHandle {
+        HANDLE value;
+        ~FileHandle() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } handle{CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (handle.value == INVALID_HANDLE_VALUE) throw std::runtime_error("CONTROL_READ: " + std::to_string(GetLastError()));
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(handle.value, &size) || size.QuadPart < 0 || size.QuadPart > 1024 * 1024) throw std::runtime_error("CONTROL_MESSAGE_SIZE");
+    std::string body(static_cast<size_t>(size.QuadPart), '\0');
+    size_t offset = 0;
+    while (offset < body.size()) {
+        DWORD received{};
+        if (!ReadFile(handle.value, body.data() + offset, static_cast<DWORD>(body.size() - offset), &received, nullptr) || received == 0)
+            throw std::runtime_error("CONTROL_READ: " + std::to_string(GetLastError()));
+        offset += received;
+    }
+    return Json::parse(body);
+#else
     if (std::filesystem::file_size(file) > 1024 * 1024) throw std::runtime_error("CONTROL_MESSAGE_TOO_LARGE");
     std::ifstream stream(file, std::ios::binary); if (!stream) throw std::runtime_error("CONTROL_READ");
     return Json::parse(stream);
+#endif
 }
 void write(const Path& target, const Json& value) {
     auto temporary = target; temporary += ".tmp-" + nonce();

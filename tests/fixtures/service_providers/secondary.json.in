@@ -1,0 +1,55 @@
+{
+  "id": "dafeiyu.search.secondary",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "search.secondary",
+      "contract": "example.search",
+      "version": 1,
+      "methods": {
+        "query": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  }
+                },
+                "required": [
+                  "limit"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "query",
+              "options"
+            ],
+            "additionalProperties": false
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "web"
+        }
+      }
+    }
+  ],
+  "actions": []
+}

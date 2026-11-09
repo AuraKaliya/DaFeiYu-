@@ -1,0 +1,80 @@
+{
+  "schema_version": 3,
+  "plugin_directory": "../plugins",
+  "foundation": "../resources/foundation.txt",
+  "owner": "local-owner",
+  "bindings": {
+    "model": "model.scripted",
+    "strategy": "strategy.default",
+    "channel": "channel.simulator",
+    "memory": "memory.minimal"
+  },
+  "allowed_actions": [
+    "action.add"
+  ],
+  "allowed_effects": [
+    "read"
+  ],
+  "resources": [
+    "instance"
+  ],
+  "limits": {
+    "model_attempts": 8,
+    "strategy_steps": 24,
+    "call_timeout_ms": 10000,
+    "max_jobs": 16,
+    "max_inbox": 256,
+    "shutdown_ms": 2000,
+    "context_bytes": 262144,
+    "nested_calls": 64
+  },
+  "activities": [],
+  "plugins": [
+    {
+      "manifest": "dfy_model_scripted.json",
+      "revision": "1",
+      "config": {
+        "action": "action.add",
+        "arguments": {
+          "b": 7,
+          "a": 6
+        }
+      }
+    },
+    {
+      "manifest": "dfy_strategy_default.json",
+      "revision": "1",
+      "config": {
+        "verify": false
+      }
+    },
+    {
+      "manifest": "dfy_channel_simulator.json",
+      "principals": {
+        "local-owner": "local-owner"
+      },
+      "accept_inputs": true,
+      "revision": "1",
+      "config": {},
+      "channels": {
+        "channel.simulator": {
+          "account": "simulation-account",
+          "instance": "simulator.primary",
+          "allow_reply": true
+        }
+      }
+    },
+    {
+      "manifest": "dfy_memory_minimal.json",
+      "revision": "1",
+      "config": {
+        "seed_persona": "我会保留来源，区分计划、执行与实际交付。"
+      }
+    },
+    {
+      "manifest": "dfy_action_add.json",
+      "revision": "1",
+      "config": {}
+    }
+  ]
+}

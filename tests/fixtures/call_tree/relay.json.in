@@ -1,0 +1,55 @@
+{
+  "id": "test.call-tree.relay",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [
+    {
+      "binding": "tree.leaf",
+      "contract": "test.call-tree.leaf",
+      "version": 1
+    }
+  ],
+  "services": [
+    {
+      "id": "tree.relay",
+      "contract": "test.call-tree.relay",
+      "version": 1,
+      "methods": {
+        "read": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "alpha"
+        },
+        "escape": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "alpha"
+        }
+      }
+    }
+  ],
+  "actions": []
+}

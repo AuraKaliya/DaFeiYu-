@@ -2,17 +2,24 @@
   "version": 6,
   "cmakeMinimumRequired": {"major": 3, "minor": 28, "patch": 0},
   "configurePresets": [
-    {"name": "windows", "generator": "Visual Studio 17 2022", "architecture": "x64", "binaryDir": "${sourceDir}/build/windows", "cacheVariables": {"BUILD_TESTING": "ON"}},
-    {"name": "ninja-debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/ninja-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON"}}
+    {"name": "windows", "generator": "Visual Studio 17 2022", "architecture": "x64", "binaryDir": "${sourceDir}/build/windows", "cacheVariables": {"BUILD_TESTING": "ON", "DFY_BUILD_EXAMPLES": "ON"}},
+    {"name": "windows-core", "inherits": "windows", "binaryDir": "${sourceDir}/build/windows-core", "cacheVariables": {"BUILD_TESTING": "OFF", "DFY_BUILD_EXAMPLES": "OFF"}},
+    {"name": "windows-minimal", "inherits": "windows", "binaryDir": "${sourceDir}/build/windows-minimal", "cacheVariables": {"BUILD_TESTING": "OFF", "DFY_BUILD_EXAMPLES": "ON"}},
+    {"name": "windows-tests", "inherits": "windows", "binaryDir": "${sourceDir}/build/windows-tests", "cacheVariables": {"BUILD_TESTING": "ON", "DFY_BUILD_EXAMPLES": "OFF"}},
+    {"name": "ninja-debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/ninja-debug", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON", "DFY_BUILD_EXAMPLES": "ON"}}
   ],
   "buildPresets": [
     {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug"},
     {"name": "windows-release", "configurePreset": "windows", "configuration": "Release"},
+    {"name": "windows-core", "configurePreset": "windows-core", "configuration": "Release"},
+    {"name": "windows-minimal", "configurePreset": "windows-minimal", "configuration": "Debug"},
+    {"name": "windows-tests", "configurePreset": "windows-tests", "configuration": "Debug"},
     {"name": "ninja-debug", "configurePreset": "ninja-debug"}
   ],
   "testPresets": [
     {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug", "output": {"outputOnFailure": true}},
     {"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "windows-tests", "configurePreset": "windows-tests", "configuration": "Debug", "output": {"outputOnFailure": true}},
     {"name": "ninja-debug", "configurePreset": "ninja-debug", "output": {"outputOnFailure": true}}
   ]
 }

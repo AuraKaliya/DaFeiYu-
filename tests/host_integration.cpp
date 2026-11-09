@@ -1,4 +1,5 @@
 #include "../host/control.hpp"
+#include "profiles/scenario.hpp"
 #include <dafeiyu/sqlite.hpp>
 #include <chrono>
 #include <fstream>
@@ -67,7 +68,7 @@ template<class Fn> Json wait(Fn fn, int timeout = 20000) {
     throw std::runtime_error("integration timeout");
 }
 Json& config(Json& profile, const std::string& name) {
-    for (auto& plugin : profile["plugins"]) if (plugin.at("manifest") == "dfy_" + name + ".json") return plugin["config"];
+    for (auto& plugin : profile["plugins"]) if (plugin.at("manifest") == "dfy_" + name + ".json" || plugin.at("manifest") == "dfy_fixture_" + name + ".json") return plugin["config"];
     throw std::runtime_error("config missing");
 }
 int64_t count(const Path& path, const std::string& table) {
@@ -78,10 +79,19 @@ void test(const std::string& mode, const Path& executable, const Path& original,
     const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const Path directory = root / (mode + "-" + suffix); std::filesystem::create_directories(directory);
     const Path state = directory / dfy::sdk::path_from_utf8("常驻 实例"), profile_path = directory / "profile.json";
-    std::ifstream source(original); Json profile = Json::parse(source);
+    Json profile = dfy::test::scenario(dfy::Profile::open(original), original.parent_path() / "catalog.json", "host." + mode).data;
     profile["plugin_directory"] = dfy::sdk::path_text(std::filesystem::absolute(original.parent_path() / dfy::sdk::path_from_utf8(profile.at("plugin_directory").get<std::string>())));
     profile["foundation"] = dfy::sdk::path_text(std::filesystem::absolute(original.parent_path() / dfy::sdk::path_from_utf8(profile.at("foundation").get<std::string>())));
     profile["activities"] = Json::array();
+    if (mode == "call_budget") {
+        profile["bindings"]["tree.relay"] = "tree.relay"; profile["bindings"]["tree.leaf"] = "tree.leaf";
+        profile["allowed_actions"] = Json::array({"fixture.tree.read"});
+        profile["resources"] = Json::array({"instance", "alpha", "beta"}); profile["limits"]["nested_calls"] = 1;
+        config(profile, "model_scripted") = {{"action", "fixture.tree.read"}, {"arguments", Json::object()}};
+        for (const auto* role : {"root", "relay", "leaf"}) profile["plugins"].push_back({
+            {"manifest", "dfy_fixture_tree_" + std::string(role) + ".json"}, {"revision", "1"},
+            {"config", std::string(role) == "root" ? Json{{"mode", "budget"}, {"hold_result_ms", 5000}} : Json::object()}});
+    }
     if (mode == "delivery") config(profile, "channel_simulator")["settlement_delay_ms"] = 5000;
     if (mode == "job") config(profile, "action_background")["delay_ms"] = 5000;
     if (mode == "resident") config(profile, "model_scripted")["delay_ms"] = 300;
@@ -104,6 +114,18 @@ void test(const std::string& mode, const Path& executable, const Path& original,
     {
         Process host(executable, profile_path, state);
         identity = online().at("instance_id");
+#ifdef _WIN32
+        if (mode == "control_sharing") {
+            const auto endpoint = state / "control/endpoint.json";
+            const auto held = CreateFileW(endpoint.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            check(held != INVALID_HANDLE_VALUE, "fixture open with delete access");
+            try { check(send("health").at("state") == "running", "published endpoint readable during rename handle lifetime"); }
+            catch (...) { CloseHandle(held); throw; }
+            CloseHandle(held);
+            send("host.shutdown"); host.wait_exit(); return;
+        }
+#endif
         const auto text = mode == "action" ? "unknown:write" : mode == "job" ? "background:work" : "demo";
         id = submit("first", text);
         if (mode == "resident") {
@@ -117,6 +139,9 @@ void test(const std::string& mode, const Path& executable, const Path& original,
                 wait([&] { return count(state / "plugins/dafeiyu.channel.simulator/channel.sqlite3", "deliveries") == 1 ? Json(true) : Json{}; });
             } else if (mode == "action") {
                 wait([&] { return count(state / "plugins/dafeiyu.action.write-demo/effects.sqlite3", "effects") == 1 ? Json(true) : Json{}; });
+            } else if (mode == "call_budget") {
+                wait([&] { const auto page = send("events", {{"run_id", id}, {"types", Json::array({"call.budget_reserved"})}});
+                    return page.at("events").size() == 1 ? Json(true) : Json{}; });
             } else {
                 wait([&] { auto jobs = send("job.list"); return !jobs.empty() && count(state / "plugins/dafeiyu.action.background/jobs.sqlite3", "work") == 1 ? Json(true) : Json{}; });
             }
@@ -142,6 +167,11 @@ void test(const std::string& mode, const Path& executable, const Path& original,
         } else {
             auto run = finish(id);
             if (mode == "delivery") check(count(state / "plugins/dafeiyu.channel.simulator/channel.sqlite3", "deliveries") == 1, "delivery replayed");
+            else if (mode == "call_budget") {
+                check(run.at("results").at(0).at("outcome").at("data").at("error").at("code") == "NESTED_CALL_BUDGET_EXHAUSTED", "budget reset after crash");
+                const auto page = send("events", {{"run_id", id}, {"types", Json::array({"call.budget_reserved"})}});
+                check(page.at("events").size() == 1, "second dispatch bypassed persisted budget");
+            }
             else check(send("job.list").size() == 1 && run.at("results").at(0).at("outcome").at("data").at("value") == 42, "job identity or result lost");
         }
         send("host.shutdown"); host.wait_exit();

@@ -1,0 +1,15 @@
+{
+  "id": "dafeiyu.strategy.default",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "strategy.default",
+      "contract": "dafeiyu.strategy",
+      "version": 3
+    }
+  ],
+  "actions": []
+}

@@ -1,31 +1,15 @@
 #pragma once
 #include <dafeiyu/abi.h>
-#include <nlohmann/json.hpp>
-#include <filesystem>
+#include <dafeiyu/value.hpp>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace dfy::sdk {
-using Json = nlohmann::json;
 inline dfy_bytes bytes(std::string_view value) { return {value.data(), value.size()}; }
 inline std::string text(dfy_bytes value) {
     if (value.size > 4 * 1024 * 1024 || (!value.data && value.size)) throw std::runtime_error("INVALID_ABI_BYTES");
     return value.size ? std::string(value.data, static_cast<size_t>(value.size)) : std::string{};
-}
-inline std::string path_text(const std::filesystem::path& path) {
-    const auto utf8 = path.u8string();
-    return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
-}
-inline std::filesystem::path path_from_utf8(std::string_view value) {
-    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()), value.size()));
-}
-inline Json error(std::string code, std::string category = "protocol", std::string effects = "none", bool retryable = false) {
-    return {{"code", code}, {"category", category}, {"effects", effects}, {"retryable", retryable}, {"message", code}};
-}
-inline Json outcome(Json data, std::string effects = "none", std::string status = "succeeded") {
-    return {{"status", status}, {"effects", effects}, {"coverage", "complete"}, {"data", std::move(data)},
-        {"sources", Json::array()}, {"receipts", Json::array()}};
 }
 struct Call {
     uint64_t id;
@@ -55,10 +39,12 @@ public:
     void complete(uint64_t call, const Json& result) const { send({{"type", "complete"}, {"call_id", call}, {"result", result}}); }
     void fail(uint64_t call, const Json& failure) const { send({{"type", "complete"}, {"call_id", call}, {"error", failure}}); }
     void progress(uint64_t call, const Json& value) const { (void)post({{"type", "progress"}, {"call_id", call}, {"value", value}}); }
-    void request(uint64_t parent, std::string key, std::string binding, std::string method, const Json& input) const {
-        send({{"type", "request_service"}, {"call_id", parent}, {"key", key}, {"binding", binding}, {"method", method}, {"input", input}});
+    void request(uint64_t parent, std::string key, std::string binding, std::string method, const Json& input, int timeout_ms = 0) const {
+        Json message{{"type", "request_service"}, {"call_id", parent}, {"key", key}, {"binding", binding}, {"method", method}, {"input", input}};
+        if (timeout_ms > 0) message["timeout_ms"] = timeout_ms;
+        send(message);
     }
-    void input(std::string key, const Json& value) const { send({{"type", "post_input"}, {"key", key}, {"input", value}}); }
+    void input(std::string channel, std::string key, const Json& value) const { send({{"type", "post_input"}, {"channel", channel}, {"key", key}, {"input", value}}); }
     void register_job(uint64_t parent, std::string key, std::string work_key) const {
         send({{"type", "register_job"}, {"call_id", parent}, {"key", key}, {"work_key", work_key}});
     }

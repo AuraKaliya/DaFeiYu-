@@ -1,6 +1,7 @@
 #pragma once
 #include "common.hpp"
 #include <memory>
+#include <optional>
 
 namespace dfy {
 struct PluginMessage { std::string plugin; Json body; };
@@ -25,7 +26,9 @@ public:
     bool ready(const std::string& service) const;
     bool dependency(const std::string& plugin, const std::string& binding) const;
     Json selection(const std::string& plugin) const;
-    Json snapshot(const Json& action_ids) const;
+    Json channels() const;
+    Json channel_binding(const std::string& service) const;
+    Json snapshot(const Json& action_ids, std::optional<std::string> channel = std::nullopt) const;
     bool matches(const Json& snapshot) const;
     void invoke(uint64_t call, const std::string& service, const std::string& method, const Json& input, const Json& context, SteadyClock::time_point deadline);
     void send(const std::string& plugin, const Json& event);

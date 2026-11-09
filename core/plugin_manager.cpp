@@ -1,4 +1,7 @@
 #include "plugins.hpp"
+#include <dafeiyu/plugin.hpp>
+#include <dafeiyu/contracts.hpp>
+#include "capabilities.hpp"
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -137,6 +140,7 @@ void validate_method(const Json& method) {
     sdk::validate_schema(method.at("input")); sdk::validate_schema(method.at("output"));
     require(includes(Json::array({"read", "local-write", "external-write"}), method.at("effects")), "METHOD_EFFECT_INVALID");
     require(method.at("resource").is_string(), "METHOD_RESOURCE_INVALID");
+    validate_permissions(method);
 }
 }
 struct PluginRuntime::Impl {
@@ -166,6 +170,7 @@ void PluginRuntime::start() {
         plugin->data = sdk::path_text(std::filesystem::absolute(impl_->state / "plugins" / sdk::path_from_utf8(plugin->id)));
         std::filesystem::create_directories(sdk::path_from_utf8(plugin->data));
         for (auto service : plugin->manifest.at("services")) {
+            service = sdk::contracts::resolve_service(std::move(service));
             const auto id = service.at("id").get<std::string>();
             require(valid_name(id) && valid_name(service.at("contract")), "SERVICE_ID_INVALID");
             require(service.at("version").get<int>() > 0 && !service.at("methods").empty(), "CONTRACT_VERSION_INVALID");
@@ -182,7 +187,20 @@ void PluginRuntime::start() {
         plugin->action_definitions = plugin->manifest.value("actions", Json::array());
         impl_->plugins.emplace(plugin->id, std::move(plugin));
     }
-    for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) { (void)name; require(impl_->services.contains(target.get<std::string>()), "BINDING_MISSING"); }
+    for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) {
+        require(impl_->services.contains(target.get<std::string>()), "BINDING_MISSING");
+        sdk::contracts::validate_role(name, impl_->services.at(target.get<std::string>()));
+    }
+    for (const auto& activity : impl_->profile.data.value("activities", Json::array())) {
+        const auto binding_name = activity.at("binding").get<std::string>();
+        require(impl_->profile.data.at("bindings").contains(binding_name), "ACTIVITY_BINDING_MISSING");
+        sdk::contracts::validate_role("activity", impl_->services.at(impl_->profile.data.at("bindings").at(binding_name).get<std::string>()));
+    }
+    std::set<std::string> channel_instances;
+    for (const auto& entry : channels()) {
+        const auto identity = channel_binding(entry.at("id"));
+        require(channel_instances.insert(identity.at("instance").get<std::string>()).second, "CHANNEL_INSTANCE_DUPLICATE");
+    }
     std::set<std::string> remaining, ready_plugins;
     for (const auto& [id, plugin] : impl_->plugins) { (void)plugin; remaining.insert(id); }
     while (!remaining.empty()) {
@@ -228,8 +246,10 @@ void PluginRuntime::start() {
                 require(owner(action.at("service")) == id, "ACTION_OWNER");
                 const auto method_info = method(action.at("service"), action.value("method", std::string("execute")));
                 sdk::validate_schema(action.at("input")); sdk::validate_schema(action.at("output"));
+                validate_permissions(action);
                 require(action.at("input") == method_info.at("input") && action.at("output") == method_info.at("output") &&
-                    action.at("effects") == method_info.at("effects") && action.at("resource") == method_info.at("resource"), "ACTION_CONTRACT_MISMATCH");
+                    action.at("effects") == method_info.at("effects") && action.at("resource") == method_info.at("resource") && resources_of(action) == resources_of(method_info) &&
+                    delegation_of(action) == delegation_of(method_info), "ACTION_CONTRACT_MISMATCH");
                 action["plugin_id"] = id; staged_actions.emplace(action_id, action);
             }
             impl_->action_map.insert(staged_actions.begin(), staged_actions.end());
@@ -284,11 +304,31 @@ bool PluginRuntime::dependency(const std::string& id, const std::string& name) c
     return false;
 }
 Json PluginRuntime::selection(const std::string& id) const { return impl_->plugins.at(id)->selected; }
-Json PluginRuntime::snapshot(const Json& action_ids) const {
+Json PluginRuntime::channels() const {
+    Json result = Json::array();
+    for (const auto& [id, value] : impl_->services) { (void)id; if (value.at("contract") == "dafeiyu.channel") result.push_back(value); }
+    return result;
+}
+Json PluginRuntime::channel_binding(const std::string& id) const {
+    const auto info = service(id);
+    require(info.at("contract") == "dafeiyu.channel", "CHANNEL_CONTRACT_INVALID");
+    const auto selected = selection(owner(id));
+    require(selected.contains("channels") && selected.at("channels").contains(id), "CHANNEL_IDENTITY_REQUIRED");
+    const auto& identity = selected.at("channels").at(id);
+    const auto instance = identity.at("instance").get<std::string>(), account = identity.at("account").get<std::string>();
+    require(!instance.empty() && instance.size() <= 160 && !account.empty() && account.size() <= 160, "CHANNEL_IDENTITY_INVALID");
+    return {{"service", id}, {"plugin", owner(id)}, {"instance", instance}, {"account", account},
+        {"provider_version", info.at("plugin_version")}, {"config_revision", info.at("config_revision")}, {"config_fingerprint", info.at("config_fingerprint")}};
+}
+Json PluginRuntime::snapshot(const Json& action_ids, std::optional<std::string> channel) const {
     Json result{{"owner", impl_->profile.data.at("owner")}, {"bindings", Json::object()}, {"services", Json::object()}, {"actions", Json::object()}};
     std::set<std::string> needed;
     for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) {
         if (name == "model" || name == "memory" || name == "channel" || name == "strategy" || name.starts_with("context.")) {
+            if (name == "channel" && channel.has_value()) {
+                if (!channel->empty()) { result["bindings"][name] = *channel; needed.insert(*channel); }
+                continue;
+            }
             result["bindings"][name] = target; needed.insert(target.get<std::string>());
         }
     }

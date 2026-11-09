@@ -1,4 +1,5 @@
 #include "policy.hpp"
+#include "capabilities.hpp"
 namespace dfy {
 PolicyGate::PolicyGate(StateStore& store, const Profile& profile) : store_(store) {
     auto policy = store_.get("system", "policy");
@@ -30,31 +31,31 @@ bool resource_allowed(const Json& grants, const std::string& resource) {
     for (const auto& item : grants.at("resources")) if (item == "*" || item == resource) return true;
     return false;
 }
-int effect_rank(const std::string& effect) { return effect == "read" ? 0 : effect == "local-write" ? 1 : 2; }
 }
 void PolicyGate::action(const Json& run, const Json& descriptor, const Json& input) {
     const auto policy = current(); const auto& grants = run.at("grants");
     require(includes(grants.at("actions"), descriptor.at("id")) && includes(policy.at("actions"), descriptor.at("id")), "ACTION_DENIED");
     require(includes(grants.at("effects"), descriptor.at("effects")) && includes(policy.at("effects"), descriptor.at("effects")), "EFFECT_DENIED");
-    require(resource_allowed(grants, descriptor.at("resource")) && resource_allowed(policy, descriptor.at("resource")), "RESOURCE_DENIED");
+    for (const auto& resource : resources_of(descriptor))
+        require(resource_allowed(grants, resource) && resource_allowed(policy, resource), "RESOURCE_DENIED");
     sdk::validate_value(descriptor.at("input"), input);
 }
 void PolicyGate::method(const CallScope& scope, const Json& descriptor) {
     const auto effects = descriptor.at("effects").get<std::string>();
-    require(effect_rank(effects) <= effect_rank(scope.effects), "NESTED_EFFECT_DENIED");
-    if (effects == "read") {
-        const auto policy = current();
-        require(resource_allowed(scope.grants, descriptor.at("resource")) && resource_allowed(policy, descriptor.at("resource")), "RESOURCE_DENIED");
-        return;
-    }
-    require(!scope.operation.empty(), "OPERATION_HANDLE_REQUIRED");
-    require(scope.resource == descriptor.at("resource").get<std::string>(), "NESTED_RESOURCE_DENIED");
     const auto policy = current();
+    if (!scope.root_action.empty()) require(includes(policy.at("actions"), scope.root_action), "NESTED_ACTION_REVOKED");
+    require(includes(scope.delegation.at("effects"), effects), "NESTED_EFFECT_DENIED");
+    if (effects != "read") require(!scope.operation.empty(), "OPERATION_HANDLE_REQUIRED");
     require(includes(scope.grants.at("effects"), effects) && includes(policy.at("effects"), effects), "EFFECT_DENIED");
-    require(resource_allowed(scope.grants, descriptor.at("resource")) && resource_allowed(policy, descriptor.at("resource")), "RESOURCE_DENIED");
+    for (const auto& resource : resources_of(descriptor)) {
+        require(permits(scope.delegation.at("resources"), resource), "NESTED_RESOURCE_DENIED");
+        if (effects != "read") require(permits(scope.delegation.at("write_resources"), resource), "NESTED_RESOURCE_DENIED");
+        require(resource_allowed(scope.grants, resource) && resource_allowed(policy, resource), "RESOURCE_DENIED");
+    }
 }
 void PolicyGate::delivery(const Json& run, const Json& plan) {
-    require(run.at("delivery_policy") == "reply" && plan.at("target") == run.at("conversation"), "DELIVERY_TARGET_DENIED");
+    require(run.at("delivery_policy") == "reply" && !run.at("delivery_binding").is_null(), "DELIVERY_TARGET_DENIED");
+    require(plan.at("binding") == run.at("delivery_binding") && plan.at("target") == run.at("delivery_binding").at("target"), "DELIVERY_TARGET_DENIED");
     require(run.at("actor").is_string(), "DELIVERY_ACTOR_DENIED");
     require(plan.at("intent_revision") == run.at("intent_revision"), "DELIVERY_INTENT_CHANGED");
 }

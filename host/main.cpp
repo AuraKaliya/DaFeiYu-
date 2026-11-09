@@ -34,7 +34,8 @@ int entry(const std::vector<std::string>& args) {
             std::cout << result.dump(2) << '\n'; return 0;
         }
         const auto profile_path = options.contains("--profile") ? dfy::sdk::path_from_utf8(options.at("--profile")) :
-            std::filesystem::absolute(dfy::sdk::path_from_utf8(args.front())).parent_path().parent_path() / "profiles" / "demo.json";
+            std::filesystem::absolute(dfy::sdk::path_from_utf8(args.front())).parent_path().parent_path() / "profiles" / "minimal.json";
+        if (!std::filesystem::exists(profile_path)) throw std::runtime_error("PROFILE_REQUIRED: use --profile FILE or build with DFY_BUILD_EXAMPLES=ON");
         dfy::InstanceRuntime runtime(dfy::Profile::open(profile_path), state);
         if (args[1] == "serve") {
             std::signal(SIGINT, interrupt); std::signal(SIGTERM, interrupt);

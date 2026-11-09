@@ -2,6 +2,8 @@
 
 设计日期：2026 年 11 月 9 日。重构起点：大肥鱼 v0.1.0，提交 `e687fb1`。本轮实现版本：v0.2.0。参考版本：本地 DeepSeek Harness，提交 `ce7073d5`。
 
+当前阶段的建设范围已收敛到[核心 SDK 最小示例与测试夹具的设计](architecture-convergence.md)。本文保留常驻运行的长期目标；其中的业务能力、自动反思、复杂活动和委派设想不构成当前开发范围。v0.2 已有功能与后续归类调整分别以实际架构和收敛设计为准。
+
 大肥鱼以一个长期在线的实例运行。程序启动后恢复同一身份、人格版本和未完成工作，启动配置中已启用的服务，并持续接收消息和处理主动活动。大肥鱼可以调整专注、安静、休息等内部行为状态，程序与已启用服务继续运行。
 
 本文定义目标模块、逻辑接口、状态归属和运行流程，包含后续扩展目标。按照本轮开发要求，直接采用 ABI 2、profile 2 和存储 2，不保留旧协议、旧 CLI 或旧数据兼容层。已经实现的模块与明确边界以 [实际架构](architecture.md) 和 [当前 SDK](plugin-sdk.md) 为准，验证结果见 [验证记录](validation.md)。
@@ -705,7 +707,7 @@ flowchart TD
 | core/store.cpp | 保留事务写入与实例锁，增加输入、策略、行为、活动、子操作、Job 和恢复记录 |
 | sdk/include/dafeiyu/abi.h | 只提供当前 ABI 2 的生命周期、注册与复制式投递接口 |
 | sdk/include/dafeiyu/plugin.hpp | 提供注册句柄、作用域、异步票据和结构化错误的 C++ 封装 |
-| profiles/demo.json | 当前 profile 2 的行为策略、活动定义、服务绑定和预算；旧格式明确拒绝 |
+| profiles/minimal.json | 当前最小组合仅装配必要角色；活动与扩展场景在 tests/profiles 中独立配置 |
 | plugins | 保留四个示例；增加默认与复核策略、可替换搜索服务及动作、后台 Job、活动与管理示例 |
 
 建议的核心实现组织为 `instance`、`behavior`、`inbox`、`scheduler`、`run`、`context`、`policy`、`operations`、`plugins`、`store`。按职责增长逐步拆文件，不要求立即建立十个独立库。

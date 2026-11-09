@@ -1,5 +1,6 @@
 #pragma once
 #include "run.hpp"
+#include "conversations.hpp"
 namespace dfy {
 class InboxRouter {
     StateStore& store_;
@@ -7,11 +8,16 @@ class InboxRouter {
     PolicyGate& policy_;
     BehaviorController& behavior_;
     RunExecutor& runs_;
+    Conversations& conversations_;
     const Profile& profile_;
+    Json accept_bound(const std::string& source, const std::string& key, Json input, const Json& route);
 public:
-    InboxRouter(StateStore& store, PluginRuntime& plugins, PolicyGate& policy, BehaviorController& behavior, RunExecutor& runs, const Profile& profile)
-        : store_(store), plugins_(plugins), policy_(policy), behavior_(behavior), runs_(runs), profile_(profile) {}
-    Json accept(const std::string& source, const std::string& key, Json input);
+    InboxRouter(StateStore& store, PluginRuntime& plugins, PolicyGate& policy, BehaviorController& behavior, RunExecutor& runs, Conversations& conversations, const Profile& profile)
+        : store_(store), plugins_(plugins), policy_(policy), behavior_(behavior), runs_(runs), conversations_(conversations), profile_(profile) {}
+    Json accept_local(const std::string& key, Json input, const std::string& channel = {});
+    Json accept_channel(const std::string& plugin, const std::string& channel, const std::string& key, Json input);
+    Json accept_activity(const std::string& id, const std::string& key, Json input, const std::string& channel = {});
+    Json steer_local(const std::string& key, const Json& run, const std::string& text);
     void route();
 };
 class Scheduler {

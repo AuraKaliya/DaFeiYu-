@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 project(external_dafeiyu_plugin LANGUAGES CXX)
-find_package(dafeiyu 0.2 CONFIG REQUIRED)
+find_package(dafeiyu 0.4 CONFIG REQUIRED)
 add_library(external MODULE plugin.cpp)
 target_link_libraries(external PRIVATE dafeiyu::plugin_sdk)
 set_target_properties(external PROPERTIES PREFIX "")

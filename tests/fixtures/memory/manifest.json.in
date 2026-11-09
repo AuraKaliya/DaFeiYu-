@@ -1,0 +1,67 @@
+{
+  "id": "dafeiyu.memory.minimal",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "memory.minimal",
+      "contract": "dafeiyu.memory",
+      "version": 2
+    },
+    {
+      "id": "memory.changes",
+      "methods": {
+        "query_change": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        },
+        "commit_change": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "persona": {
+                "type": "string",
+                "maxLength": 65536
+              }
+            },
+            "required": [
+              "expected_revision",
+              "persona"
+            ],
+            "additionalProperties": false
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "local-write",
+          "resource": "memory",
+          "query": "query_change"
+        }
+      },
+      "contract": "test.memory.changes",
+      "version": 1
+    }
+  ],
+  "actions": []
+}

@@ -1,0 +1,177 @@
+{
+  "id": "test.call-tree.root",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [
+    {
+      "binding": "tree.relay",
+      "contract": "test.call-tree.relay",
+      "version": 1
+    },
+    {
+      "binding": "tree.leaf",
+      "contract": "test.call-tree.leaf",
+      "version": 1
+    }
+  ],
+  "services": [
+    {
+      "id": "tree.root",
+      "contract": "test.call-tree.root",
+      "version": 1,
+      "methods": {
+        "execute_read": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "alpha",
+          "resources": [
+            "alpha",
+            "beta"
+          ],
+          "delegates": {
+            "effects": [
+              "read"
+            ],
+            "resources": [
+              "alpha",
+              "beta"
+            ]
+          }
+        },
+        "execute_write": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "external-write",
+          "resource": "alpha",
+          "resources": [
+            "alpha",
+            "beta"
+          ],
+          "delegates": {
+            "effects": [
+              "read",
+              "local-write",
+              "external-write"
+            ],
+            "resources": [
+              "alpha",
+              "beta"
+            ]
+          },
+          "query": "query_operation"
+        },
+        "query_operation": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "fixture.tree.read",
+      "revision": 1,
+      "description": "Read-only call-tree fixture",
+      "service": "tree.root",
+      "method": "execute_read",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "output": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "effects": "read",
+      "resource": "alpha",
+      "resources": [
+        "alpha",
+        "beta"
+      ],
+      "delegates": {
+        "effects": [
+          "read"
+        ],
+        "resources": [
+          "alpha",
+          "beta"
+        ]
+      }
+    },
+    {
+      "id": "fixture.tree.write",
+      "revision": 1,
+      "description": "Composite call-tree fixture",
+      "service": "tree.root",
+      "method": "execute_write",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "output": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "effects": "external-write",
+      "resource": "alpha",
+      "resources": [
+        "alpha",
+        "beta"
+      ],
+      "delegates": {
+        "effects": [
+          "read",
+          "local-write",
+          "external-write"
+        ],
+        "resources": [
+          "alpha",
+          "beta"
+        ]
+      },
+      "query": "query_operation"
+    }
+  ]
+}

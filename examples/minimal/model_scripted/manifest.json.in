@@ -1,0 +1,15 @@
+{
+  "id": "dafeiyu.model.scripted",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "model.scripted",
+      "contract": "dafeiyu.model",
+      "version": 2
+    }
+  ],
+  "actions": []
+}

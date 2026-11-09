@@ -1,4 +1,6 @@
 #include <dafeiyu/core.hpp>
+#include <dafeiyu/contracts.hpp>
+#include "profiles/scenario.hpp"
 #include <dafeiyu/schema.hpp>
 #include <dafeiyu/sqlite.hpp>
 #include <chrono>
@@ -38,7 +40,8 @@ Json phase(InstanceRuntime& instance, const std::string& id, const std::string& 
     return wait([&] { auto run = instance.request("run.get", {{"id", id}}); return run.at("phase") == name ? run : Json{}; });
 }
 Json& config(Profile& profile, const std::string& name) {
-    for (auto& item : profile.data.at("plugins")) if (item.at("manifest") == "dfy_" + name + ".json") return item["config"];
+    const auto manifest = dfy::test::manifest_name(profile, name);
+    for (auto& item : profile.data.at("plugins")) if (item.at("manifest") == manifest) return item["config"];
     throw std::runtime_error("Plugin config missing");
 }
 Json all_events(InstanceRuntime& instance, const std::string& run = {}) {
@@ -60,9 +63,9 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
     if (name == "loop") {
         InstanceRuntime instance(profile, state);
         const auto first = finish(instance, submit(instance, "one"));
-        const auto second = finish(instance, submit(instance, "two", "search:harness"));
+        const auto second = finish(instance, submit(instance, "two", "another deterministic input"));
         check(first.at("results").at(0).at("outcome").at("data").at("sum") == 13, "addition");
-        check(second.at("results").at(0).at("outcome").at("data").at("provider") == "primary", "composed search");
+        check(second.at("results").at(0).at("outcome").at("data").at("sum") == 13, "second minimal task");
         check(instance.request("health").at("state") == "running", "resident after tasks");
     } else if (name == "dedup") {
         InstanceRuntime instance(profile, state);
@@ -196,14 +199,15 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
             check(failed, "optional failure visible");
         }
     } else if (name == "schema") {
-        auto schema = read(profile.plugins / "dfy_action_search.json").at("actions").at(0).at("input");
+        auto schema = read(profile.plugins / dfy::test::manifest_name(profile, "action_search")).at("actions").at(0).at("input");
         dfy::sdk::validate_schema(schema);
         dfy::sdk::validate_value(schema, {{"query", "q"}, {"options", {{"limit", 2}}}});
         rejects([&] { dfy::sdk::validate_value(schema, {{"query", "q"}, {"options", {{"limit", "two"}}}}); }, "VALUE_TYPE");
         schema["oneOf"] = Json::array(); rejects([&] { dfy::sdk::validate_schema(schema); }, "SCHEMA_KEYWORD");
     } else if (name == "contract_conflict" || name == "abi_reject" || name == "dependency_cycle") {
         const auto selected = name == "contract_conflict" ? "search_secondary" : "action_add";
-        auto manifest = read(profile.plugins / ("dfy_" + std::string(selected) + ".json"));
+        const auto original_manifest = dfy::test::manifest_name(profile, selected);
+        auto manifest = read(profile.plugins / original_manifest);
         if (name == "contract_conflict") manifest["services"][0]["methods"]["query"]["resource"] = "different";
         if (name == "abi_reject") manifest["abi_version"] = 1;
         if (name == "dependency_cycle") {
@@ -211,15 +215,18 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
             manifest["requires"] = Json::array({{{"binding", "self"}, {"contract", "example.add"}, {"version", 1}}});
         }
         const auto file = profile.plugins / ("test-" + state.filename().string() + ".json"); write(file, manifest);
-        for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == "dfy_" + std::string(selected) + ".json") plugin["manifest"] = file.filename().string();
+        for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == original_manifest) plugin["manifest"] = file.filename().string();
         rejects([&] { InstanceRuntime instance(profile, state); }, name == "contract_conflict" ? "CONTRACT_CONFLICT" : name == "abi_reject" ? "ABI_UNSUPPORTED" : "DEPENDENCY_CYCLE");
         std::filesystem::remove(file);
     } else if (name == "instance_lock") {
         InstanceRuntime instance(profile, state);
         rejects([&] { InstanceRuntime duplicate(profile, state); }, "INSTANCE_LOCK");
-    } else if (name == "storage_version") {
-        { dfy::Database db(state / "core.sqlite3"); db.exec("CREATE TABLE identity(id INTEGER PRIMARY KEY,instance TEXT,component TEXT,version INTEGER);INSERT INTO identity VALUES(1,'old','core',1)"); }
+    } else if (name == "storage_version" || name == "storage_v2") {
+        const auto version = name == "storage_v2" ? "2" : "1";
+        { dfy::Database db(state / "core.sqlite3"); db.exec(std::string("CREATE TABLE identity(id INTEGER PRIMARY KEY,instance TEXT,component TEXT,version INTEGER);INSERT INTO identity VALUES(1,'old','core',") + version + ")"); }
         rejects([&] { InstanceRuntime instance(profile, state); }, "VERSION_MISMATCH");
+        dfy::Database db(state / "core.sqlite3"); auto query = db.prepare("SELECT version FROM identity"); query.step();
+        check(query.column(0) == version, "legacy storage was modified");
     } else if (name == "behavior_plugin") {
         config(profile, "model_scripted") = {{"action", "action.behavior"}, {"arguments", {{"expected_revision", 1}, {"mode", "focused"}}}};
         InstanceRuntime instance(profile, state); (void)finish(instance, submit(instance, "behavior"));
@@ -239,7 +246,9 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
     } else if (name == "channel_input") {
         config(profile, "channel_simulator")["inputs"] = Json::array({{{"key", "platform-message"}, {"text", "demo"}}});
         InstanceRuntime instance(profile, state);
-        const auto id = wait([&] { auto input = instance.request("input.get", {{"id", "dafeiyu.channel.simulator:platform-message"}}); return !input.is_null() && !input.at("run_id").is_null() ? input.at("run_id") : Json{}; });
+        const auto input_id = wait([&] { for (const auto& event : all_events(instance))
+            if (event.at("type") == "input.accepted" && event.at("payload").at("key") == "platform-message") return event.at("payload").at("id"); return Json{}; });
+        const auto id = wait([&] { auto input = instance.request("input.get", {{"id", input_id}}); return !input.at("run_id").is_null() ? input.at("run_id") : Json{}; });
         (void)finish(instance, id);
     } else if (name == "command_receipt") {
         InstanceRuntime instance(profile, state);
@@ -252,12 +261,54 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         { InstanceRuntime instance(profile, state); id = submit(instance, "unknown", "unknown:write");
           wait([&] { auto run = instance.request("run.get", {{"id", id}}); return run.at("wait_reason").is_object() && run.at("wait_reason").value("type", std::string{}) == "effects" ? run : Json{}; }); }
         if (name == "binding_change") {
-            for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == "dfy_action_write_demo.json") plugin["revision"] = "2";
+            for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == dfy::test::manifest_name(profile, "action_write_demo")) plugin["revision"] = "2";
         } else if (name == "config_change") config(profile, "action_write_demo")["unknown"] = false;
         else config(profile, "search_secondary")["label"] = "unused changed provider";
         InstanceRuntime instance(profile, state);
         if (name == "unrelated_config") instance.request("run.resume", {{"id", id}});
         else rejects([&] { instance.request("run.resume", {{"id", id}}); }, "BINDING_CHANGED");
+    } else if (name == "minimal") {
+        InstanceRuntime instance(profile, state);
+        check(instance.request("plugins").at("plugins").size() == 5, "minimal has five roles");
+        check(instance.request("plugins").at("actions").size() == 1, "one example action");
+        check(instance.request("activity.list").empty() && instance.request("job.list").empty(), "no automatic activities or jobs");
+        check(instance.request("run.list").empty(), "no inference without input");
+        const auto result = finish(instance, submit(instance, "minimal"));
+        check(result.at("delivery") == "sent", "minimal delivery");
+        check(instance.request("health").at("policy").at("effects") == Json::array({"read"}), "read-only action grants");
+        for (const auto& service : result.at("bindings").at("services"))
+            if (service.at("contract") == "dafeiyu.memory") check(!service.at("methods").contains("commit_change"), "snapshot contract has no write method");
+    } else if (name == "role_mismatch") {
+        profile.data["bindings"]["strategy"] = "model.scripted";
+        rejects([&] { InstanceRuntime instance(profile, state); }, "BINDING_CONTRACT_MISMATCH");
+    } else if (name == "method_mismatch" || name == "contract_version") {
+        const auto original = dfy::test::manifest_name(profile, "model_scripted");
+        auto manifest = read(profile.plugins / original);
+        if (name == "method_mismatch") manifest["services"][0]["methods"] = Json::object();
+        else manifest["services"][0]["version"] = 999;
+        const auto file = profile.plugins / ("test-" + state.filename().string() + ".json"); write(file, manifest);
+        for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == original) plugin["manifest"] = file.filename().string();
+        rejects([&] { InstanceRuntime instance(profile, state); }, name == "method_mismatch" ? "BUILTIN_CONTRACT_METHODS" : "BUILTIN_CONTRACT_VERSION");
+        std::filesystem::remove(file);
+    } else if (name == "run_view") {
+        InstanceRuntime instance(profile, state); const auto id = submit(instance, "view"); (void)finish(instance, id);
+        int views = 0;
+        for (const auto& event : all_events(instance, id)) if (event.at("type") == "strategy.request") {
+            const auto& view = event.at("payload").at("run");
+            dfy::sdk::validate_value(dfy::sdk::contracts::run_view_schema(), view);
+            for (const auto* field : {"bindings", "grants", "limits", "active_operation", "request", "foundation", "strategy_state"})
+                check(!view.contains(field), std::string("private storage leaked: ") + field);
+            check(dfy::sdk::RunView::from_json(view).to_json() == view, "public view round trip"); ++views;
+        }
+        check(views > 0, "strategy received versioned views");
+    } else if (name == "context_subscription") {
+        InstanceRuntime instance(profile, state); const auto result = finish(instance, submit(instance, "context"));
+        check(!result.at("request").at("context").empty(), "context fixture contributed material");
+        wait([&] {
+            dfy::Database db(state / "plugins/dafeiyu.context.clock/observations.sqlite3");
+            auto count = db.prepare("SELECT COUNT(*) FROM seen"); count.step();
+            return std::stoi(count.column(0)) >= 2 ? Json(true) : Json{};
+        });
     } else throw std::runtime_error("Unknown case " + name);
     (void)work;
 }
@@ -269,7 +320,8 @@ int main(int argc, char** argv) {
         const auto suffix = std::to_string(Clock::now().time_since_epoch().count());
         const Path state = work / (std::string(argv[1]) + "-" + suffix);
         std::filesystem::create_directories(state);
-        run_case(argv[1], Profile::open(dfy::sdk::path_from_utf8(argv[2])), state, work);
+        const auto profile_path = dfy::sdk::path_from_utf8(argv[2]);
+        run_case(argv[1], dfy::test::scenario(Profile::open(profile_path), profile_path.parent_path() / "catalog.json", argv[1]), state, work);
         std::cout << "PASS " << argv[1] << '\n'; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -1,0 +1,139 @@
+{
+  "id": "dafeiyu.action.behavior",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "action.behavior",
+      "contract": "example.behavior",
+      "version": 1,
+      "methods": {
+        "execute": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "available",
+                  "focused",
+                  "quiet",
+                  "resting"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "effective_until": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "expected_revision",
+              "mode"
+            ],
+            "additionalProperties": false
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "local-write",
+          "resource": "instance",
+          "query": "query_operation"
+        },
+        "readiness": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        },
+        "query_operation": {
+          "input": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "effects": "read",
+          "resource": "instance"
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "action.behavior",
+      "revision": 1,
+      "description": "Set the instance behavior with an expected revision",
+      "service": "action.behavior",
+      "method": "execute",
+      "input": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "available",
+              "focused",
+              "quiet",
+              "resting"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "effective_until": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "expected_revision",
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": true
+      },
+      "effects": "local-write",
+      "resource": "instance",
+      "query": "query_operation"
+    }
+  ]
+}

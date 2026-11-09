@@ -36,7 +36,7 @@ InstanceLock::~InstanceLock() = default;
 StateStore::StateStore(const Path& directory) : lock_(directory), db_(directory / "core.sqlite3") {
     db_.exec("CREATE TABLE IF NOT EXISTS identity(id INTEGER PRIMARY KEY CHECK(id=1),instance TEXT NOT NULL,component TEXT NOT NULL,version INTEGER NOT NULL)");
     { auto query = db_.prepare("SELECT instance FROM identity WHERE id=1"); instance_ = query.step() ? query.column(0) : identifier(); }
-    db_.verify_identity(instance_, "core");
+    db_.verify_identity(instance_, "core", 3);
     db_.exec("CREATE TABLE IF NOT EXISTS objects(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));"
              "CREATE TABLE IF NOT EXISTS facts(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,type TEXT NOT NULL,run TEXT NOT NULL,body TEXT NOT NULL);"
              "CREATE INDEX IF NOT EXISTS facts_run_seq ON facts(run,seq);"

@@ -1,4 +1,6 @@
 #include "inbox.hpp"
+#include "run_view.hpp"
+#include <dafeiyu/abi.h>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -15,6 +17,7 @@ public:
     CallRouter calls;
     PolicyGate policy;
     BehaviorController behavior;
+    Conversations conversations;
     OperationCoordinator operations;
     ContextAssembler context;
     RunExecutor runs;
@@ -22,11 +25,11 @@ public:
     Scheduler scheduler;
     Engine(const Profile& profile, const Path& path, PluginRuntime::Receiver receive)
         : profile_(profile), store(path), plugins(profile, path, store.instance_id(), std::move(receive)), calls(plugins, store),
-          policy(store, profile), behavior(store), operations(store, plugins, calls, policy, profile),
+          policy(store, profile), behavior(store), conversations(store, plugins, profile), operations(store, plugins, calls, policy, conversations, profile),
           context(store, plugins, calls, policy, profile), runs(store, plugins, calls, policy, operations, context, profile),
-          inbox(store, plugins, policy, behavior, runs, profile), scheduler(store, plugins, calls, behavior, inbox, runs, profile) {}
+          inbox(store, plugins, policy, behavior, runs, conversations, profile), scheduler(store, plugins, calls, behavior, inbox, runs, profile) {}
     void start() {
-        plugins.start(); (void)plugins.snapshot(profile_.data.at("allowed_actions")); scheduler.start(); operations.recover(); runs.recover();
+        plugins.start(); conversations.start(); (void)plugins.snapshot(profile_.data.at("allowed_actions")); scheduler.start(); operations.recover(); runs.recover();
         store.atomic([&] { store.event("instance.started", {{"instance_id", store.instance_id()}}); });
     }
     Json command(const std::string& name, const Json& args) {
@@ -37,8 +40,8 @@ public:
                 {"plugins", catalog}, {"calls", calls.active()}, {"policy", policy.current()}};
         }
         if (name == "plugins") return {{"plugins", plugins.catalog()}, {"actions", plugins.actions()}};
-        if (name == "input.accept") return inbox.accept("local", args.at("key"), {{"text", args.at("text")}, {"actor", profile_.data.at("owner")},
-            {"conversation", args.value("conversation", std::string("local"))}, {"delivery_policy", "reply"}});
+        if (name == "input.accept") return inbox.accept_local(args.at("key"), {{"text", args.at("text")},
+            {"conversation", args.value("conversation", std::string("local"))}}, args.value("channel", std::string{}));
         if (name == "input.get") return store.get("input", args.at("id"));
         if (name == "run.get") return store.get("run", args.at("id"));
         if (name == "run.list") return store.all("run");
@@ -46,7 +49,7 @@ public:
         if (name == "run.resume") return runs.resume(args.at("id"));
         if (name == "run.steer") {
             auto run = store.get("run", args.at("id")); require(!run.is_null(), "RUN_MISSING");
-            return inbox.accept("local", args.at("key"), {{"run_id", run.at("id")}, {"text", args.at("text")}, {"actor", profile_.data.at("owner")}, {"conversation", run.at("conversation")}});
+            return inbox.steer_local(args.at("key"), run, args.at("text"));
         }
         if (name == "behavior.set") return behavior.transition(args);
         if (name == "policy.set") return policy.revise(args);
@@ -93,7 +96,7 @@ public:
                 if (type == "read_state") {
                     const auto object = body.at("object").get<std::string>();
                     require(object == "run" || object == "behavior", "STATE_SCOPE_DENIED");
-                    result = object == "run" ? store.get("run", parent.scope.run) : behavior.state();
+                    result = object == "run" ? make_run_view(store.get("run", parent.scope.run), store.get("call_budget", "run:" + parent.scope.run)).to_json() : behavior.state();
                 } else {
                     require(!parent.scope.operation.empty(), "COMMAND_OPERATION_REQUIRED");
                     const auto receipt_id = parent.scope.operation + ":command:" + key;
@@ -113,13 +116,7 @@ public:
             if (type == "plugin_error") { store.atomic([&] { store.event("plugin.error", body.at("error"), {}, message.plugin); }); return; }
             const auto selection = plugins.selection(message.plugin);
             if (type == "post_input") {
-                require(selection.value("accept_inputs", false), "INPUT_SOURCE_DENIED");
-                const auto input = body.at("input");
-                const auto principal = input.at("actor").get<std::string>();
-                require(selection.at("principals").contains(principal), "INPUT_PRINCIPAL_DENIED");
-                auto normalized = input; normalized["actor"] = selection.at("principals").at(principal);
-                normalized.erase("activity"); normalized.erase("auto_depth"); normalized["delivery_policy"] = "reply";
-                const auto receipt = inbox.accept(message.plugin, body.at("key"), normalized);
+                const auto receipt = inbox.accept_channel(message.plugin, body.at("channel"), body.at("key"), body.at("input"));
                 plugins.send(message.plugin, {{"type", "input_receipt"}, {"key", body.at("key")}, {"result", receipt}});
                 return;
             }

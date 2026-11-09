@@ -1,0 +1,22 @@
+{
+  "id": "dafeiyu.activity.reflection",
+  "version": "0.4.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "requires": [],
+  "services": [
+    {
+      "id": "activity.reflection",
+      "contract": "dafeiyu.activity",
+      "version": 2
+    }
+  ],
+  "actions": [],
+  "activities": [
+    {
+      "id": "reflection",
+      "service": "activity.reflection",
+      "definition_revision": 1
+    }
+  ]
+}

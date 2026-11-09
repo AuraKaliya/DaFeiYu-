@@ -1,4 +1,5 @@
 #include "run.hpp"
+#include "run_view.hpp"
 namespace dfy {
 RunExecutor::RunExecutor(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy,
     OperationCoordinator& operations, ContextAssembler& context, const Profile& profile)
@@ -36,7 +37,8 @@ void RunExecutor::strategy(Json run, bool review) {
     run["strategy_steps"] = run.at("strategy_steps").get<int>() + 1;
     const auto decision = id + ":decision:" + std::to_string(run.at("strategy_steps").get<int>());
     run["phase"] = review ? "reviewing" : "deciding"; run["execution"] = "running";
-    Json request{{"decision_id", decision}, {"trigger", run.value("trigger", std::string("ready"))}, {"run", run}, {"state", run.at("strategy_state")}};
+    Json request{{"decision_id", decision}, {"trigger", run.value("trigger", std::string("ready"))},
+        {"run", make_run_view(run, store_.get("call_budget", "run:" + id)).to_json()}, {"state", run.at("strategy_state")}};
     if (review) request["candidate"] = run.at("proposal");
     save(run, "strategy.request", request); busy_.insert(id);
     try {
@@ -172,7 +174,8 @@ void RunExecutor::advance(Json run) {
         } else if (phase == "delivery") {
             if (run.at("delivery_policy") == "none") { complete(run); return; }
             if (run.at("active_operation").is_null()) {
-                const Json plan{{"target", run.at("conversation")}, {"text", run.at("proposal").value("text", std::string{})}, {"intent_revision", run.at("intent_revision")}};
+                const Json plan{{"target", run.at("external_conversation")}, {"text", run.at("proposal").value("text", std::string{})},
+                    {"intent_revision", run.at("intent_revision")}, {"binding", run.at("delivery_binding")}};
                 run["active_operation"] = operations_.deliver(run, plan); run["execution"] = "waiting"; run["delivery"] = "sending";
                 run["wait_reason"] = {{"type", "delivery"}}; save(run, "run.delivery_wait");
             } else {
@@ -194,7 +197,8 @@ void RunExecutor::advance(Json run) {
         }
     } catch (const std::exception& error) {
         const std::string reason = error.what();
-        fail(id, failure(error), reason == "BINDING_CHANGED" || reason.find("UNRESOLVED") != std::string::npos || reason.find("NOT_READY") != std::string::npos);
+        fail(id, failure(error), reason == "BINDING_CHANGED" || reason.starts_with("DELIVERY_AUTHORITY_") || reason == "DELIVERY_BINDING_CHANGED" ||
+            reason.find("UNRESOLVED") != std::string::npos || reason.find("NOT_READY") != std::string::npos);
     }
 }
 void RunExecutor::recover() {
