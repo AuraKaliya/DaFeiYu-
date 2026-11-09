@@ -7,34 +7,8 @@
   "services": [
     {
       "id": "action.double",
-      "contract": "external.double",
-      "version": 1,
-      "methods": {
-        "execute": {
-          "input": {
-            "type": "object",
-            "properties": {
-              "value": {
-                "type": "integer",
-                "minimum": -100,
-                "maximum": 100
-              }
-            },
-            "required": [
-              "value"
-            ],
-            "additionalProperties": false
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        }
-      }
+      "contract": "dafeiyu.action-executor",
+      "version": 1
     }
   ],
   "actions": [

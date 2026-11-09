@@ -15,6 +15,7 @@ dfy_add_plugin(dfy_fixture_action_write_demo unknown_effect/plugin.cpp unknown_e
 dfy_add_plugin(dfy_fixture_activity_reflection wakeup/plugin.cpp wakeup/manifest.json.in OUTPUT_ROOT "${fixture_root}")
 dfy_add_plugin(dfy_fixture_context_clock context_subscription/plugin.cpp context_subscription/manifest.json.in OUTPUT_ROOT "${fixture_root}")
 dfy_add_plugin(dfy_fixture_action_behavior command/plugin.cpp command/manifest.json.in OUTPUT_ROOT "${fixture_root}")
+dfy_add_plugin(dfy_fixture_scopes scopes/plugin.cpp scopes/manifest.json.in OUTPUT_ROOT "${fixture_root}")
 set(tree_node 0)
 foreach(role IN ITEMS root relay leaf)
   math(EXPR tree_node "${tree_node}+1")

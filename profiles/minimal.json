@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "plugin_directory": "../plugins",
   "foundation": "../resources/foundation.txt",
   "owner": "local-owner",
@@ -26,7 +26,11 @@
     "max_inbox": 256,
     "shutdown_ms": 2000,
     "context_bytes": 262144,
-    "nested_calls": 64
+    "nested_calls": 64,
+    "max_scopes": 128,
+    "max_registrations": 256,
+    "scope_calls": 128,
+    "reconcile_ms": 1000
   },
   "activities": [],
   "plugins": [

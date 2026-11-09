@@ -41,7 +41,7 @@ Json finished(InstanceRuntime& host, const std::string& run) {
 }
 void check_delivery(InstanceRuntime& host, const Json& run, const std::string& service) {
     bool found = false;
-    for (const auto& operation : host.request("operation.list")) if (operation.at("run_id") == run.at("id") && operation.at("kind") == "delivery") {
+    for (const auto& operation : host.request("operation.list").value("items", Json::array())) if (operation.at("run_id") == run.at("id") && operation.at("kind") == "delivery") {
         found = true; check(operation.at("descriptor").at("service") == service, "wrong delivery provider");
         check(operation.at("input").at("target") == "room-7", "lost external conversation id");
         check(operation.at("input").at("binding") == run.at("delivery_binding"), "delivery binding changed");
@@ -74,7 +74,7 @@ void execute(const std::string& name, Profile profile, const Path& state) {
           else {
               const auto run = wait([&] { auto value = host.request("run.get", {{"id", id}}); return value.at("error").is_null() ? Json{} : value; });
               check(run.at("error").at("code") == (name == "account_change" || name == "rename_generation" ? "DELIVERY_BINDING_CHANGED" : "DELIVERY_AUTHORITY_CHANGED"), run.at("error").dump());
-              for (const auto& op : host.request("operation.list")) check(op.at("kind") != "delivery", "revoked route dispatched");
+              for (const auto& op : host.request("operation.list").value("items", Json::array())) check(op.at("kind") != "delivery", "revoked route dispatched");
           }
         }
         if (name == "authorization_generation" || name == "rename_generation") {
@@ -82,14 +82,14 @@ void execute(const std::string& name, Profile profile, const Path& state) {
             channel(profile)["channels"]["channel.second"]["instance"] = "second";
             InstanceRuntime host(profile, state); host.request("run.resume", {{"id", id}});
             wait([&] { auto value = host.request("run.get", {{"id", id}}); return value.at("execution") == "waiting" ? value : Json{}; });
-            for (const auto& op : host.request("operation.list")) check(op.at("kind") != "delivery", "old permission revived after regrant");
+            for (const auto& op : host.request("operation.list").value("items", Json::array())) check(op.at("kind") != "delivery", "old permission revived after regrant");
         }
     } else if (name == "foreign_channel") {
         channel(profile)["config"]["inputs"] = Json::array({{{"key", "forged"}, {"channel", "model.scripted"}, {"conversation", "room-7"}, {"text", "bad"}}});
         InstanceRuntime host(profile, state);
         const auto rejected = wait([&] { for (const auto& e : events(host)) if (e.at("type") == "plugin.request_rejected") return e.at("payload"); return Json{}; });
         check(rejected.at("error").at("code") == "INPUT_CHANNEL_OWNER_DENIED", rejected.dump());
-        check(host.request("run.list").empty(), "foreign service created a run");
+        check(host.request("run.list").value("items", Json::array()).empty(), "foreign service created a run");
     } else if (name == "cross_channel_steer") {
         std::string id;
         { InstanceRuntime host(profile, state); host.request("input.accept", {{"key", "original"}, {"text", "first"}, {"conversation", "room-7"}});

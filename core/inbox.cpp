@@ -29,58 +29,49 @@ Json InboxRouter::accept_bound(const std::string& source, const std::string& key
     const auto identity = source + ":" + key;
     auto previous = store_.get("input", identity);
     if (!previous.is_null()) { require(previous.at("input") == input && previous.at("route") == route, "INPUT_KEY_CONFLICT"); return previous; }
-    size_t pending = 0;
-    for (const auto& item : store_.all("input")) if (item.at("state") == "accepted") ++pending;
+    const size_t pending = store_.pending_input_count();
     require(pending < profile_.data.at("limits").at("max_inbox").get<size_t>(), "INBOX_FULL");
     Json value{{"id", identity}, {"source", source}, {"key", key}, {"input", input}, {"route", route}, {"state", "accepted"}, {"received_at", now_ms()}, {"run_id", nullptr}};
     store_.atomic([&] {
-        if (store_.get("conversation", route.at("id")).is_null()) store_.put("conversation", route.at("id"), route.at("key"));
-        store_.put("input", identity, value); store_.event("input.accepted", value);
+        value["conversation_generation"] = conversations_.ensure(route).at("generation");
+        writer_.put("input", identity, value); writer_.event("input.accepted", value, {}, "core", {}, route.at("id"));
     }); return value;
 }
 void InboxRouter::route() {
-    for (auto input : store_.all("input")) {
+    for (auto input : store_.pending_inputs(profile_.data.at("limits").at("max_inbox"))) {
         if (input.at("state") != "accepted") continue;
         try {
         const auto& payload = input.at("input");
+        const auto conversation = store_.get("conversation", input.at("route").at("id"));
+        require(conversation.at("state") == "open" && conversation.at("generation") == input.at("conversation_generation"), "CONVERSATION_CLOSED");
         const auto activity = payload.value("activity", std::string{});
         if (activity.empty() && !behavior_.user_ready()) continue;
         if (!activity.empty()) {
             const auto state = store_.get("activity", activity);
-            if (state.is_null() || !state.at("enabled").get<bool>() || !includes(state.at("definition").at("allowed_modes"), behavior_.state().at("mode"))) continue;
+            if (state.is_null() || !behavior_.activity_policy(activity).at("enabled").get<bool>() || !includes(state.at("definition").at("allowed_modes"), behavior_.state().at("mode"))) continue;
         }
         if (payload.contains("run_id")) {
             auto target = store_.get("run", payload.at("run_id"));
             require(!target.is_null() && target.at("actor") == payload.at("actor") && target.at("conversation_key") == input.at("route").at("key"), "STEER_SCOPE_DENIED");
             store_.atomic([&] { (void)runs_.steer(target.at("id"), payload); input["state"] = "consumed"; input["run_id"] = target.at("id");
-                store_.put("input", input.at("id"), input); store_.event("input.consumed", input, target.at("id")); });
+                writer_.put("input", input.at("id"), input); writer_.event("input.consumed", input, target.at("id")); });
             continue;
         }
-        const auto id = identifier();
         auto grants = policy_.current();
         if (!activity.empty()) {
             const auto definition = store_.get("activity", activity).at("definition");
             Json actions = Json::array(); for (const auto& action : definition.at("actions")) if (includes(grants.at("actions"), action)) actions.push_back(action);
             grants["actions"] = actions;
         }
-        const auto& route = input.at("route");
-        const std::string channel = route.at("delivery").is_null() ? "" : route.at("delivery").at("channel").at("service").get<std::string>();
-        Json run{{"id", id}, {"input_id", input.at("id")}, {"input", payload}, {"actor", payload.at("actor")}, {"conversation", route.at("id")},
-            {"conversation_key", route.at("key")}, {"external_conversation", payload.at("conversation")}, {"delivery_binding", route.at("delivery")},
-            {"activity", activity}, {"execution", "queued"}, {"phase", "decision"}, {"revision", 1}, {"intent_revision", 1},
-            {"bindings", plugins_.snapshot(grants.at("actions"), channel)}, {"grants", grants}, {"limits", profile_.data.at("limits")},
-            {"foundation", profile_.foundation}, {"persona", nullptr}, {"strategy_state", Json::object()}, {"strategy_steps", 0}, {"model_attempts", 0},
-            {"results", Json::array()}, {"candidate", nullptr}, {"proposal", nullptr}, {"request", nullptr}, {"active_operation", nullptr}, {"wait_reason", nullptr},
-            {"delivery_policy", payload.value("delivery_policy", std::string("reply"))}, {"delivery", "none"}, {"goal", "uncertain"}, {"goal_origin", "none"},
-            {"created_at", now_ms()}, {"trigger", "run_ready"}, {"auto_depth", payload.value("auto_depth", 0)}, {"error", nullptr}};
         store_.atomic([&] {
+            const auto id = runs_.create(input, grants);
             input["state"] = "consumed"; input["run_id"] = id;
-            store_.put("input", input.at("id"), input); store_.put("run", id, run);
-            store_.event("input.consumed", input, id); store_.event("run.accepted", run, id);
+            writer_.put("input", input.at("id"), input);
+            writer_.event("input.consumed", input, id);
         });
         } catch (const std::exception& error) {
             input["state"] = "rejected"; input["error"] = failure(error);
-            store_.save("input", input.at("id"), input, "input.rejected", input);
+            writer_.save("input", input.at("id"), input, "input.rejected", input);
         }
     }
 }

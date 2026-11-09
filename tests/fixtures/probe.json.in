@@ -1,6 +1,6 @@
 {
   "id": "test.probe",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [
@@ -18,42 +18,11 @@
   "services": [
     {
       "id": "fixture.probe",
-      "contract": "test.probe",
+      "contract": "dafeiyu.action-executor",
       "version": 1,
-      "methods": {
-        "execute": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "memory"
-        },
-        "readiness": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        }
-      }
+      "capabilities": [
+        "readiness"
+      ]
     }
   ],
   "actions": [

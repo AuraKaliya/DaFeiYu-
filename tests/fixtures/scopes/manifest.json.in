@@ -1,0 +1,16 @@
+{
+  "id": "test.scopes",
+  "version": "0.5.0",
+  "abi_version": 2,
+  "library": "@LIBRARY@",
+  "discovery_prefix": "fixture.",
+  "requires": [{"binding": "memory", "contract": "dafeiyu.memory", "version": 2}],
+  "services": [
+    {"id": "fixture.context.bootstrap", "contract": "dafeiyu.context", "version": 2},
+    {"id": "fixture.context.extra", "contract": "dafeiyu.context", "version": 2},
+    {"id": "fixture.executor", "contract": "dafeiyu.action-executor", "version": 1},
+    {"id": "fixture.model.primary", "contract": "dafeiyu.model", "version": 2},
+    {"id": "fixture.model.backup", "contract": "dafeiyu.model", "version": 2},
+    {"id": "fixture.strategy", "contract": "dafeiyu.strategy", "version": 4}
+  ]
+}

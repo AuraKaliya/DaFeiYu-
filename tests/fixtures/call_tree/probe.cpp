@@ -11,7 +11,7 @@ class TreeNode : public Plugin {
     std::map<uint64_t, int> steps_;
 public:
     static constexpr auto id = "test.call-tree.root";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     TreeNode(Host host, Json config) : Plugin(host), config_(std::move(config)) { host.provide("tree.root"); }
     void on_event(const Json& event) {
         const auto mode = config_.value("mode", std::string("budget"));
@@ -35,7 +35,7 @@ public:
         if (event.at("type") != "call") return;
         const Call call(event);
         if (call.method == "query_operation") { host.complete(call.id, outcome(Json::object(), "unknown", "unknown")); return; }
-        if (call.method != "execute_read" && call.method != "execute_write") throw std::runtime_error("TREE_METHOD_INVALID");
+        if (call.method != "execute") throw std::runtime_error("TREE_METHOD_INVALID");
         steps_[call.id] = 0;
         if (mode == "channel_bypass") host.request(call.id, "bypass", "channel", "deliver", Json::object());
         else if (mode == "readonly_hop") host.request(call.id, "relay", "tree.relay", "read", Json::object());
@@ -56,7 +56,7 @@ public:
 class TreeNode : public Plugin {
 public:
     static constexpr auto id = "test.call-tree.relay";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     TreeNode(Host host, const Json&) : Plugin(host) { host.provide("tree.relay"); }
     void on_event(const Json& event) {
         if (event.at("type") == "reply") {
@@ -72,7 +72,7 @@ class TreeNode : public Plugin {
     dfy::Database db_;
 public:
     static constexpr auto id = "test.call-tree.leaf";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     TreeNode(Host host, const Json&) : Plugin(host), db_(host.data_directory() / "effects.sqlite3") {
         db_.verify_identity(host.instance_id(), id);
         db_.exec("CREATE TABLE IF NOT EXISTS effects(id TEXT PRIMARY KEY, resource TEXT, plan TEXT, result TEXT)");

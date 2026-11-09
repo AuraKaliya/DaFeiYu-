@@ -13,25 +13,30 @@ void Scheduler::start() {
         for (const auto& registration : plugins_.activities())
             if (registration.at("id") == id && registration.at("service") == service.at("id")) registered = true;
         require(registered, "ACTIVITY_NOT_REGISTERED");
+        definitions_[id] = definition;
+        behavior_.ensure_activity(id, definition.at("enabled"));
         auto value = store_.get("activity", id);
         if (value.is_null()) {
-            value = {{"id", id}, {"definition", definition}, {"enabled", definition.at("enabled")}, {"policy_revision", 1},
+            value = {{"id", id}, {"definition", definition}, {"state", "registered"},
                 {"next_due", now_ms() + definition.at("interval_ms").get<int64_t>()}, {"cursor", store_.sequence()}};
-            store_.save("activity", id, value, "activity.registered", value);
-        } else require(value.at("definition") == definition, "ACTIVITY_DEFINITION_CHANGED");
+            writer_.save("activity", id, value, "activity.registered", value);
+        } else { require(value.at("definition") == definition, "ACTIVITY_DEFINITION_CHANGED");
+            if (value.at("state") != "registered") { value["state"] = "registered"; writer_.save("activity", id, value, "activity.restored"); } }
+    }
+    for (auto value : store_.all("activity")) if (!definitions_.contains(value.at("id").get<std::string>()) && value.at("state") != "retired") {
+        value["state"] = "retired"; value["next_due"] = 0; writer_.save("activity", value.at("id"), value, "activity.retired");
     }
 }
 void Scheduler::trigger(Json activity, const std::string& key, const Json& fact) {
     const auto id = activity.at("id").get<std::string>();
     if (evaluating_.contains(id)) return;
-    for (const auto& input : store_.all("input")) if (input.at("state") == "accepted" && input.at("input").value("activity", std::string{}) == id) return;
-    for (const auto& run : store_.all("run")) if (run.at("activity") == id && !terminal(run)) return;
+    if (store_.active_activity_work(id)) return;
     const auto& definition = activity.at("definition");
     const auto occurrence_id = id + ":" + key;
     auto occurrence = store_.get("occurrence", occurrence_id);
     if (occurrence.is_null()) {
         occurrence = {{"id", occurrence_id}, {"activity", id}, {"key", key}, {"fact", fact}, {"state", "pending"}};
-        store_.save("occurrence", occurrence_id, occurrence, "activity.triggered", occurrence);
+        writer_.save("occurrence", occurrence_id, occurrence, "activity.triggered", occurrence);
     }
     if (occurrence.at("state") != "pending") return;
     evaluating_.insert(id);
@@ -45,12 +50,17 @@ void Scheduler::trigger(Json activity, const std::string& key, const Json& fact)
             [this, id, occurrence_id, definition](const Completion& result) {
                 if (result.late) return;
                 evaluating_.erase(id);
-                if (!result.error.is_null()) return;
-                auto current = store_.get("activity", id);
-                if (!current.at("enabled").get<bool>() || !includes(definition.at("allowed_modes"), behavior_.state().at("mode"))) return;
+                if (!result.error.is_null()) {
+                    auto value = store_.get("occurrence", occurrence_id); value["retry_at"] = now_ms() + definition.at("interval_ms").get<int64_t>();
+                    writer_.save("occurrence", occurrence_id, value, "activity.trigger_deferred", result.error); return;
+                }
+                if (!behavior_.activity_policy(id).at("enabled").get<bool>() || !includes(definition.at("allowed_modes"), behavior_.state().at("mode"))) return;
                 auto occurrence_value = store_.get("occurrence", occurrence_id);
                 const auto decision = result.result.at("decision").get<std::string>();
-                if (decision == "defer") return;
+                if (decision == "defer") {
+                    occurrence_value["retry_at"] = now_ms() + definition.at("interval_ms").get<int64_t>();
+                    writer_.save("occurrence", occurrence_id, occurrence_value, "activity.trigger_deferred"); return;
+                }
                 require(decision == "skip" || decision == "propose", "ACTIVITY_DECISION_INVALID");
                 store_.atomic([&] {
                     if (decision == "propose") {
@@ -61,76 +71,71 @@ void Scheduler::trigger(Json activity, const std::string& key, const Json& fact)
                         occurrence_value["input_id"] = receipt.at("id");
                     }
                     occurrence_value["state"] = decision;
-                    store_.put("occurrence", occurrence_id, occurrence_value); store_.event("activity.evaluated", occurrence_value);
+                    writer_.put("occurrence", occurrence_id, occurrence_value); writer_.event("activity.evaluated", occurrence_value);
                 });
             });
     } catch (const std::exception&) { evaluating_.erase(id); }
 }
+Json Scheduler::activity_views() {
+    Json result = Json::array();
+    for (const auto& [id, definition] : definitions_) {
+        (void)definition; auto value = store_.get("activity", id); const auto policy = behavior_.activity_policy(id);
+        value["enabled"] = policy.at("enabled"); value["policy_revision"] = policy.at("policy_revision"); result.push_back(std::move(value));
+    }
+    return result;
+}
+int64_t Scheduler::next_wakeup() {
+    auto next = store_.next_wakeup();
+    const auto expiry = behavior_.state().at("effective_until").get<int64_t>();
+    if (expiry > 0 && (next == 0 || expiry < next)) next = expiry;
+    return next;
+}
 void Scheduler::tick() {
     behavior_.tick();
-    for (auto activity : store_.all("activity")) {
+    Json allowed = Json::array();
+    const auto mode = behavior_.state().at("mode");
+    for (const auto& [id, definition] : definitions_)
+        if (behavior_.activity_policy(id).at("enabled") == true && includes(definition.at("allowed_modes"), mode)) allowed.push_back(id);
+    for (auto activity : store_.due_activities(now_ms())) {
         const auto& definition = activity.at("definition");
-        const auto interval = definition.at("interval_ms").get<int64_t>();
-        if (now_ms() >= activity.at("next_due").get<int64_t>()) {
-            const auto due = activity.at("next_due").get<int64_t>();
-            if (definition.at("misfire") == "skip" && now_ms() - due >= interval) {
-                activity["next_due"] = now_ms() + interval; store_.save("activity", activity.at("id"), activity, "activity.missed");
-            } else {
-                bool pending = false;
-                for (const auto& occurrence : store_.all("occurrence"))
-                    if (occurrence.at("activity") == activity.at("id") && occurrence.at("state") == "pending") pending = true;
-                if (pending) {
-                    activity["next_due"] = now_ms() + interval;
-                    store_.save("activity", activity.at("id"), activity, "activity.coalesced");
-                } else {
-                const auto occurrence_id = activity.at("id").get<std::string>() + ":" + std::to_string(due);
-                Json occurrence{{"id", occurrence_id}, {"activity", activity.at("id")}, {"key", std::to_string(due)}, {"fact", {{"due", due}}}, {"state", "pending"}};
-                activity["next_due"] = now_ms() + interval;
-                store_.atomic([&] { store_.put("activity", activity.at("id"), activity); store_.put("occurrence", occurrence_id, occurrence); store_.event("activity.due", occurrence); });
-                }
-            }
+        const auto interval = definition.at("interval_ms").get<int64_t>(), due = activity.at("next_due").get<int64_t>();
+        activity["next_due"] = now_ms() + interval;
+        if (definition.at("misfire") == "skip" && now_ms() - due >= interval) {
+            writer_.save("activity", activity.at("id"), activity, "activity.missed"); continue;
         }
-        if (activity.at("enabled").get<bool>() && includes(definition.at("allowed_modes"), behavior_.state().at("mode"))) {
-            for (const auto& occurrence : store_.all("occurrence")) {
-                if (occurrence.at("activity") == activity.at("id") && occurrence.at("state") == "pending") {
-                    trigger(activity, occurrence.at("key"), occurrence.at("fact")); break;
-                }
-            }
+        if (store_.pending_activity_occurrence(activity.at("id"))) {
+            writer_.save("activity", activity.at("id"), activity, "activity.coalesced"); continue;
         }
+        const auto occurrence_id = activity.at("id").get<std::string>() + ":" + std::to_string(due);
+        Json occurrence{{"id", occurrence_id}, {"activity", activity.at("id")}, {"key", std::to_string(due)}, {"fact", {{"due", due}}}, {"state", "pending"}};
+        store_.atomic([&] { writer_.put("activity", activity.at("id"), activity); writer_.put("occurrence", occurrence_id, occurrence); writer_.event("activity.due", occurrence); });
+    }
+    for (const auto& id : allowed) {
+        const auto pending = store_.pending_occurrences(id);
+        if (!pending.empty()) trigger(store_.get("activity", id), pending[0].at("key"), pending[0].at("fact"));
     }
     inbox_.route();
-    auto candidates = store_.all("run");
-    // Already-issued operations settle regardless of behavior mode; only new decisions are gated.
-    for (const auto& run : candidates) if (runs_.runnable(run) && (run.at("phase") == "action" || run.at("phase") == "delivery")) runs_.advance(run);
+    for (const auto& run : store_.ready_runs(now_ms(), 64, 1)) if (runs_.runnable(run)) runs_.advance(run);
     if (!runs_.busy()) {
-        for (bool activity : {false, true}) {
-            bool dispatched = false;
-            for (const auto& run : store_.all("run")) {
-                if (!runs_.runnable(run) || (run.at("activity") != "") != activity || run.at("phase") == "action" || run.at("phase") == "delivery") continue;
-                if (!activity && !behavior_.user_ready()) continue;
-                if (activity) {
-                    const auto definition = store_.get("activity", run.at("activity"));
-                    if (!definition.at("enabled").get<bool>() || !includes(definition.at("definition").at("allowed_modes"), behavior_.state().at("mode"))) continue;
-                }
-                runs_.advance(run); dispatched = true; break;
-            }
-            if (dispatched) break;
-        }
+        auto ready = behavior_.user_ready() ? store_.ready_runs(now_ms(), 64, 2) : Json::array();
+        if (ready.empty()) ready = store_.ready_runs(now_ms(), 64, 3, allowed);
+        for (const auto& run : ready) if (runs_.runnable(run)) { runs_.advance(run); break; }
     }
-    for (auto run : store_.all("run")) {
-        if (!terminal(run) || run.at("activity") == "" || run.value("activity_notified", false) || notifying_.contains(run.at("id").get<std::string>())) continue;
+    for (const auto& run : store_.activity_feedback()) {
+        const auto id = run.at("id").get<std::string>();
+        if (notifying_.contains(id)) continue;
+        if (!definitions_.contains(run.at("activity").get<std::string>())) { runs_.feedback_completed(id, {{"status", "provider-retired"}}); continue; }
         const auto activity = store_.get("activity", run.at("activity"));
-        notifying_.insert(run.at("id").get<std::string>());
+        notifying_.insert(id);
         try {
-            calls_.request(plugins_.binding(activity.at("definition").at("binding")), "on_settlement", {{"run", run}}, run_scope(run, "activity_feedback"),
-                profile_.data.at("limits").at("call_timeout_ms"), [this, id = run.at("id").get<std::string>()](const Completion& result) {
+            calls_.request(plugins_.binding(activity.at("definition").at("binding")), "on_settlement",
+                {{"activity_id", run.at("activity")}, {"run", runs_.view(id)}}, run_scope(run, "activity_feedback"),
+                profile_.data.at("limits").at("call_timeout_ms"), [this, id](const Completion& result) {
                     if (result.late) return;
                     notifying_.erase(id);
-                    if (!result.error.is_null()) return;
-                    auto current = store_.get("run", id); current["activity_notified"] = true;
-                    store_.save("run", id, current, "activity.settled", result.result, id);
+                    runs_.feedback_completed(id, result.error.is_null() ? result.result : Json{{"error", result.error}});
                 });
-        } catch (const std::exception&) { notifying_.erase(run.at("id").get<std::string>()); }
+        } catch (const std::exception& error) { notifying_.erase(id); runs_.feedback_completed(id, {{"error", failure(error)}}); }
     }
 }
 }

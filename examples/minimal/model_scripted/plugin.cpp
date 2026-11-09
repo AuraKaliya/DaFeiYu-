@@ -4,7 +4,7 @@ class ScriptedModel : public Plugin {
     Json config_;
 public:
     static constexpr auto id = "dafeiyu.model.scripted";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     ScriptedModel(Host host, Json config) : Plugin(host), config_(std::move(config)) { host.provide("model.scripted"); }
     void on_event(const Json& event) {
         if (event.at("type") != "call") return;

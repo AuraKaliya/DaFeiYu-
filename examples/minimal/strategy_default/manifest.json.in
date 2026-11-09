@@ -1,6 +1,6 @@
 {
   "id": "dafeiyu.strategy.default",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [],
@@ -8,7 +8,7 @@
     {
       "id": "strategy.default",
       "contract": "dafeiyu.strategy",
-      "version": 3
+      "version": 4
     }
   ],
   "actions": []

@@ -5,7 +5,7 @@ class Strategy : public Plugin {
     bool verify_;
 public:
     static constexpr auto id = "dafeiyu.strategy.default";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Strategy(Host host, const Json& config) : Plugin(host), verify_(config.value("verify", false)) { host.provide("strategy.default"); }
     void on_event(const Json& event) {
         if (event.at("type") != "call") return;
@@ -22,7 +22,8 @@ public:
         const auto view = RunView::from_json(call.input.at("run"));
         const auto& candidate = view.candidate;
         Json proposal{{"type", "request_model"}, {"purpose", "respond"}};
-        if (!candidate.is_null()) {
+        if (view.observation.value("kind", std::string{}) == "model_failed") proposal = {{"type", "wait"}, {"condition", {{"type", "user"}}}};
+        else if (!candidate.is_null()) {
             if (candidate.at("type") == "tool_call") proposal = {{"type", "invoke_action"}, {"action", candidate.at("action")}, {"arguments", candidate.at("arguments")}};
             else proposal = {{"type", "finish"}, {"text", candidate.at("text")}, {"goal", candidate.value("goal", std::string("uncertain"))}};
         }

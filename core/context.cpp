@@ -1,56 +1,60 @@
 #include "context.hpp"
 #include "capabilities.hpp"
 namespace dfy {
-ContextAssembler::ContextAssembler(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy, const Profile& profile)
-    : store_(store), plugins_(plugins), calls_(calls), policy_(policy), timeout_(profile.data.at("limits").at("call_timeout_ms")),
+ContextAssembler::ContextAssembler(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy, ScopeManager& scopes, const Profile& profile)
+    : store_(store), plugins_(plugins), calls_(calls), policy_(policy), scopes_(scopes), timeout_(profile.data.at("limits").at("call_timeout_ms")),
       budget_(profile.data.at("limits").value("context_bytes", size_t{262144})) {}
 void ContextAssembler::assemble(const Json& run, const Json& proposal, std::function<void(const Completion&)> done) {
     struct Assembly {
-        Json request, run;
-        std::vector<std::pair<std::string, std::string>> steps;
+        Json request, run, requested_actions;
+        std::vector<std::tuple<std::string, std::string, std::string>> steps;
         size_t next{};
         bool finished{};
         std::function<void(const Completion&)> done;
     };
     auto work = std::make_shared<Assembly>();
-    work->run = run; work->done = std::move(done);
+    work->run = run; work->requested_actions = proposal.value("actions", run.at("grants").at("actions")); work->done = std::move(done);
     work->request = {{"foundation", run.at("foundation")}, {"persona", run.at("persona")}, {"input", run.at("input")},
         {"results", run.at("results")}, {"memory", Json::array()}, {"context", Json::array()}, {"actions", Json::array()},
         {"behavior", store_.get("system", "behavior")}, {"purpose", proposal.value("purpose", std::string("respond"))},
         {"strategy_state", run.at("strategy_state")}, {"intent_revision", run.at("intent_revision")}};
-    const auto current = policy_.current();
-    for (const auto& name : proposal.value("actions", run.at("grants").at("actions"))) {
-        require(run.at("bindings").at("actions").contains(name.get<std::string>()), "ACTION_DIRECTORY_DENIED");
-        const auto& action = run.at("bindings").at("actions").at(name.get<std::string>());
-        if (!includes(current.at("actions"), name) || !includes(current.at("effects"), action.at("effects")) || !plugins_.ready(action.at("service"))) continue;
-        bool allowed = true;
-        for (const auto& resource : resources_of(action))
-            if (!permits(current.at("resources"), resource) || !permits(run.at("grants").at("resources"), resource)) allowed = false;
-        if (!allowed) continue;
-        work->request["actions"].push_back(action);
-    }
     const auto memory = run.at("bindings").at("bindings").at("memory").get<std::string>();
-    work->steps.emplace_back(memory, run.at("persona").is_null() ? "snapshot" : "validate");
-    work->steps.emplace_back(memory, "retrieve");
+    work->steps.emplace_back(memory, run.at("persona").is_null() ? "snapshot" : "validate", "");
+    work->steps.emplace_back(memory, "retrieve", "");
     for (const auto& [name, service] : run.at("bindings").at("bindings").items())
-        if (name.starts_with("context.")) work->steps.emplace_back(service.get<std::string>(), "collect");
+        if (name.starts_with("context.")) work->steps.emplace_back(service.get<std::string>(), "collect", "");
+    for (const auto& [service, token] : scopes_.contexts(run)) work->steps.emplace_back(service, "collect", token);
     // Continuations hold a weak reference to themselves; no persistent callback cycle.
     auto next = std::make_shared<std::function<void()>>();
     std::weak_ptr<std::function<void()>> weak = next;
     *next = [this, work, weak] {
         if (work->finished) return;
         if (work->next == work->steps.size()) {
+            const auto current = policy_.current();
+            for (const auto& name : work->requested_actions) {
+                require(work->run.at("bindings").at("actions").contains(name.get<std::string>()), "ACTION_DIRECTORY_DENIED");
+                const auto& action = work->run.at("bindings").at("actions").at(name.get<std::string>());
+                if (!includes(current.at("actions"), name) || !includes(current.at("effects"), action.at("effects")) || !plugins_.ready(action.at("service"))) continue;
+                bool allowed = true;
+                for (const auto& resource : resources_of(action))
+                    if (!permits(current.at("resources"), resource) || !permits(work->run.at("grants").at("resources"), resource)) allowed = false;
+                if (!allowed) continue;
+                try { (void)scopes_.action_registration(action, work->run); } catch (const std::exception&) { continue; }
+                work->request["actions"].push_back(action);
+            }
             work->finished = true;
             if (work->request.dump().size() > budget_) work->done({{}, sdk::error("CONTEXT_BUDGET", "budget")});
             else work->done({work->request, {}});
             return;
         }
-        const auto [service, method] = work->steps.at(work->next++);
+        const auto [service, method, registration] = work->steps.at(work->next++);
         Json input{{"text", work->run.at("input").at("text")}, {"scope", work->run.at("conversation")}, {"budget", budget_}};
         if (method == "validate") input = work->run.at("persona");
         auto continuation = weak.lock();
+        if (!registration.empty() && !scopes_.registration_active(registration)) { (*continuation)(); return; }
         try {
-            calls_.request(service, method, input, run_scope(work->run, "context"), timeout_,
+            auto scope = run_scope(work->run, "context"); scope.registration_id = registration;
+            calls_.request(service, method, input, scope, timeout_,
                 [work, method, continuation](const Completion& result) {
                     if (work->finished || result.late) return;
                     if (!result.error.is_null()) { work->finished = true; work->done(result); return; }

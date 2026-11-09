@@ -177,7 +177,7 @@ void PluginRuntime::start() {
             require(!impl_->services.contains(id), "SERVICE_DUPLICATE");
             const auto key = service.at("contract").get<std::string>() + "@" + std::to_string(service.at("version").get<int>());
             for (const auto& [name, method] : service.at("methods").items()) { (void)name; validate_method(method); }
-            if (contracts.contains(key)) require(contracts.at(key) == service.at("methods"), "CONTRACT_CONFLICT");
+            if (contracts.contains(key) && !sdk::contracts::builtins().contains(service.at("contract"))) require(contracts.at(key) == service.at("methods"), "CONTRACT_CONFLICT");
             else contracts.emplace(key, service.at("methods"));
             service["plugin_id"] = plugin->id; service["plugin_version"] = plugin->manifest.at("version");
             service["config_revision"] = selected.at("revision");
@@ -244,12 +244,9 @@ void PluginRuntime::start() {
                 require(valid_name(action_id), "ACTION_ID_INVALID");
                 require(!impl_->action_map.contains(action_id) && !staged_actions.contains(action_id), "ACTION_NAME_CONFLICT");
                 require(owner(action.at("service")) == id, "ACTION_OWNER");
-                const auto method_info = method(action.at("service"), action.value("method", std::string("execute")));
-                sdk::validate_schema(action.at("input")); sdk::validate_schema(action.at("output"));
-                validate_permissions(action);
-                require(action.at("input") == method_info.at("input") && action.at("output") == method_info.at("output") &&
-                    action.at("effects") == method_info.at("effects") && action.at("resource") == method_info.at("resource") && resources_of(action) == resources_of(method_info) &&
-                    delegation_of(action) == delegation_of(method_info), "ACTION_CONTRACT_MISMATCH");
+                require(service(action.at("service")).at("contract") == "dafeiyu.action-executor" && action.value("method", std::string("execute")) == "execute", "ACTION_EXECUTOR_REQUIRED");
+                validate_method(action);
+                require(action.at("revision").is_number_integer() && action.at("revision").get<int>() > 0, "ACTION_REVISION_INVALID");
                 action["plugin_id"] = id; staged_actions.emplace(action_id, action);
             }
             impl_->action_map.insert(staged_actions.begin(), staged_actions.end());
@@ -304,6 +301,21 @@ bool PluginRuntime::dependency(const std::string& id, const std::string& name) c
     return false;
 }
 Json PluginRuntime::selection(const std::string& id) const { return impl_->plugins.at(id)->selected; }
+bool PluginRuntime::plugin_ready(const std::string& id) const { const auto found = impl_->plugins.find(id); return found != impl_->plugins.end() && found->second->status == "ready"; }
+Json PluginRuntime::plugin_snapshot(const std::string& plugin) const {
+    Json result{{"owner", impl_->profile.data.at("owner")}, {"bindings", Json::object()}, {"services", Json::object()}, {"actions", Json::object()}};
+    std::set<std::string> needed;
+    for (const auto& [id, info] : impl_->services) if (info.at("plugin_id") == plugin) needed.insert(id);
+    for (const auto& dep : impl_->plugins.at(plugin)->manifest.at("requires")) { const auto name = dep.at("binding").get<std::string>(); result["bindings"][name] = binding(name); needed.insert(binding(name)); }
+    while (result["services"].size() < needed.size()) {
+        const auto batch = needed;
+        for (const auto& id : batch) if (!result["services"].contains(id)) {
+            result["services"][id] = service(id);
+            for (const auto& dep : impl_->plugins.at(owner(id))->manifest.at("requires")) { const auto name = dep.at("binding").get<std::string>(); result["bindings"][name] = binding(name); needed.insert(binding(name)); }
+        }
+    }
+    return result;
+}
 Json PluginRuntime::channels() const {
     Json result = Json::array();
     for (const auto& [id, value] : impl_->services) { (void)id; if (value.at("contract") == "dafeiyu.channel") result.push_back(value); }
@@ -324,7 +336,7 @@ Json PluginRuntime::snapshot(const Json& action_ids, std::optional<std::string> 
     Json result{{"owner", impl_->profile.data.at("owner")}, {"bindings", Json::object()}, {"services", Json::object()}, {"actions", Json::object()}};
     std::set<std::string> needed;
     for (const auto& [name, target] : impl_->profile.data.at("bindings").items()) {
-        if (name == "model" || name == "memory" || name == "channel" || name == "strategy" || name.starts_with("context.")) {
+        if (name == "model" || name == "memory" || name == "channel" || name == "strategy" || name.starts_with("context.") || name.starts_with("model.")) {
             if (name == "channel" && channel.has_value()) {
                 if (!channel->empty()) { result["bindings"][name] = *channel; needed.insert(*channel); }
                 continue;

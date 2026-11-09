@@ -85,7 +85,17 @@
     "config": {},
     "observe": [
       "operation.settled"
-    ]
+    ],
+    "scope_permissions": {
+      "instance": {
+        "resources": [
+          "instance"
+        ],
+        "registrations": [
+          "subscription"
+        ]
+      }
+    }
   },
   "action_behavior": {
     "manifest": "dfy_fixture_action_behavior.json",

@@ -1,4 +1,4 @@
-# 大肥鱼架构验证工程 0.4.0
+# 大肥鱼架构验证工程 0.5.0
 
 C++20 核心、版本化 C ABI 和独立插件 SDK。当前工作集中在架构边界与最小验证，暂不扩展业务插件。
 
@@ -22,7 +22,7 @@ C++20 核心、版本化 C ABI 和独立插件 SDK。当前工作集中在架构
 .\scripts\windows.ps1 -Action install -Configuration Release
 ```
 
-输出在 build/windows-core 和 out/dafeiyu-core-v4。核心安装没有默认插件配置；启动业务实例需要显式提供自己的 profile。
+输出在 build/windows-core 和 out/dafeiyu-core-v5。核心安装没有默认插件配置；启动业务实例需要显式提供自己的 profile。
 
 ## 最小示例
 
@@ -38,11 +38,11 @@ C++20 核心、版本化 C ABI 和独立插件 SDK。当前工作集中在架构
 
 ```powershell
 $app = '.\build\windows-minimal\run\Debug\bin\dafeiyu.exe'
-& $app serve --state '.runtime\minimal-v4'
+& $app serve --state '.runtime\minimal-v5'
 # 在另一个终端提交或查询：
-& $app request input.accept --state '.runtime\minimal-v4' --json '{"key":"task-1","text":"运行最小闭环"}'
-& $app request run.list --state '.runtime\minimal-v4'
-& $app request host.shutdown --state '.runtime\minimal-v4'
+& $app request input.accept --state '.runtime\minimal-v5' --json '{"key":"task-1","text":"运行最小闭环"}'
+& $app request run.list --state '.runtime\minimal-v5'
+& $app request host.shutdown --state '.runtime\minimal-v5'
 ```
 
 管理入口仍使用本地文件邮箱，受状态目录权限保护。已受理命令和输入以持久回执为准；重试管理修改时使用同一个 --command-id。执行、目标评价和交付分别记录。
@@ -68,7 +68,7 @@ $app = '.\build\windows-minimal\run\Debug\bin\dafeiyu.exe'
 - 内建服务使用 SDK 的统一定义，错误槽位、必需方法或契约版本在 ready 前拒绝。
 - 策略与插件 read_state(run) 获取 RunView，不读取完整的核心持久投影。
 
-独立插件使用 find_package(dafeiyu 0.4 CONFIG REQUIRED) 与 dafeiyu::plugin_sdk。C ABI 仍为版本 2；profile 与核心存储升级为版本 3，渠道与策略契约为版本 3，RunView 为版本 2，其余内建契约及插件私有库仍为版本 2。旧实验接口没有适配层；旧核心数据库拒绝打开并保留原数据，演示使用新的 minimal-v4 目录。
+独立插件使用 find_package(dafeiyu 0.5 CONFIG REQUIRED) 与 dafeiyu::plugin_sdk。C ABI 仍为版本 2；profile 与核心存储为版本 4，策略契约为版本 4，渠道与活动契约为版本 3，RunView 为版本 3，动作执行器契约为版本 1，其余内建契约及插件私有库仍为版本 2。旧实验接口没有适配层；旧核心数据库拒绝打开并保留原数据，演示使用新的 minimal-v5 目录。
 
 渠道实例和账号在 profile 的插件 channels 字段声明，输入必须标明其来源服务。接纳时保存会话与交付绑定，恢复不改投默认渠道。子调用记录父关系、收窄后的许可和继承期限；limits.nested_calls 是持久的 Run 级调用次数上限，硬重启不清零。取消后保留已派发工作的实际结果，不恢复原业务资格。
 
@@ -82,4 +82,4 @@ $app = '.\build\windows-minimal\run\Debug\bin\dafeiyu.exe'
 - [长期常驻设计参考](docs/resident-runtime-design.md)
 - [第三方依赖](THIRD_PARTY.md)
 
-本轮已补齐渠道归属与 Run 内调用树的权限、截止时间、取消和共享调用额度。实例/会话级 Scope 注册释放、范围化订阅、动作封装、策略失败路由、内部状态所有权与调度索引仍按评审继续处理。默认示例仍只有五个角色，没有新增业务插件。
+本轮补齐实例/会话/Run/Call Scope、注册释放、范围化订阅、统一动作执行封装、策略失败路由、活动反馈视图、内部状态写入所有权与索引调度。管理列表返回带 cursor 的分页；run.view 返回公开视图，run.get 保留本地管理诊断投影。默认示例仍只有五个角色，没有新增业务插件。

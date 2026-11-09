@@ -8,7 +8,7 @@ public:
         if (event.at("type") != "call") return;
         const dfy::sdk::Call call(event);
         if (call.method != "execute") throw std::runtime_error("METHOD_UNSUPPORTED");
-        const int value = call.input.at("value");
+        const int value = dfy::sdk::ActionInvocation(call).arguments.at("value");
         if (value < -100 || value > 100) throw std::runtime_error("VALUE_RANGE");
         host.complete(call.id, dfy::sdk::outcome({{"value", value * 2}}));
     }

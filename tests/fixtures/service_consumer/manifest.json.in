@@ -1,6 +1,6 @@
 {
   "id": "dafeiyu.action.search",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [
@@ -13,64 +13,11 @@
   "services": [
     {
       "id": "action.search",
-      "contract": "example.search-action",
+      "contract": "dafeiyu.action-executor",
       "version": 1,
-      "methods": {
-        "execute": {
-          "input": {
-            "type": "object",
-            "properties": {
-              "query": {
-                "type": "string",
-                "maxLength": 65536
-              },
-              "options": {
-                "type": "object",
-                "properties": {
-                  "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 10
-                  }
-                },
-                "required": [
-                  "limit"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "required": [
-              "query",
-              "options"
-            ],
-            "additionalProperties": false
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "web"
-        },
-        "readiness": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        }
-      }
+      "capabilities": [
+        "readiness"
+      ]
     }
   ],
   "actions": [

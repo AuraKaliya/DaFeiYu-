@@ -5,7 +5,7 @@ class Remember : public Plugin {
     std::map<uint64_t, Json> inputs_;
 public:
     static constexpr auto id = "dafeiyu.action.remember";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Remember(Host host, const Json&) : Plugin(host) { host.provide("action.remember"); }
     void on_event(const Json& event) {
         if (event.at("type") == "reply") {
@@ -18,7 +18,8 @@ public:
             return;
         }
         if (event.at("type") != "call") return;
-        const Call call(event);
+        Call call(event);
+        if (call.method == "execute" || call.method == "readiness" || call.method == "query_operation") { const ActionInvocation action(call); call.input = action.arguments; if (call.method == "query_operation") call.input["id"] = action.operation_id; }
         if (call.method == "readiness") host.complete(call.id, {{"available", true}});
         else if (call.method == "execute") { inputs_[call.id] = call.input; host.request(call.id, "snapshot", "memory", "snapshot", Json::object()); }
         else if (call.method == "query_operation") host.request(call.id, "query", "memory.changes", "query_change", {{"id", call.input.at("id").get<std::string>() + ":commit"}});

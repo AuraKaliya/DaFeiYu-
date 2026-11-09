@@ -26,6 +26,8 @@ public:
     bool ready(const std::string& service) const;
     bool dependency(const std::string& plugin, const std::string& binding) const;
     Json selection(const std::string& plugin) const;
+    bool plugin_ready(const std::string& plugin) const;
+    Json plugin_snapshot(const std::string& plugin) const;
     Json channels() const;
     Json channel_binding(const std::string& service) const;
     Json snapshot(const Json& action_ids, std::optional<std::string> channel = std::nullopt) const;

@@ -4,7 +4,7 @@ class Probe : public Plugin {
     Json config_;
 public:
     static constexpr auto id = "test.probe";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Probe(Host host, Json config) : Plugin(host), config_(std::move(config)) { host.provide("fixture.probe"); }
     void start() { if (config_.value("fail_start", false)) throw std::runtime_error("FIXTURE_START_FAILURE"); }
     void on_event(const Json& event) {

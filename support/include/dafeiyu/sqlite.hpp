@@ -16,6 +16,8 @@ public:
     Statement& bind(int index, std::string_view value);
     bool step();
     std::string column(int index) const;
+    int fullscan_steps() const { return sqlite3_stmt_status(stmt_, SQLITE_STMTSTATUS_FULLSCAN_STEP, 0); }
+    int vm_steps() const { return sqlite3_stmt_status(stmt_, SQLITE_STMTSTATUS_VM_STEP, 0); }
 };
 class Database {
     sqlite3* db_{};

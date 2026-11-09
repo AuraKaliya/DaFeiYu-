@@ -1,12 +1,12 @@
 #include "policy.hpp"
 #include "capabilities.hpp"
 namespace dfy {
-PolicyGate::PolicyGate(StateStore& store, const Profile& profile) : store_(store) {
+PolicyGate::PolicyGate(StateStore& store, const Profile& profile) : store_(store), writer_(store.claim("policy", {"system/policy"})) {
     auto policy = store_.get("system", "policy");
     Json configured{{"actions", profile.data.at("allowed_actions")}, {"effects", profile.data.at("allowed_effects")},
         {"resources", profile.data.value("resources", Json::array({"*"}))}};
     if (policy.is_null()) {
-        configured["revision"] = 1; store_.save("system", "policy", configured, "policy.created");
+        configured["revision"] = 1; writer_.save("system", "policy", configured, "policy.created");
     } else {
         const auto original = policy;
         // Deployment configuration can remove grants; persisted revocations never disappear on restart.
@@ -16,7 +16,7 @@ PolicyGate::PolicyGate(StateStore& store, const Profile& profile) : store_(store
             policy[field] = intersection;
         }
         if (policy != original) policy["revision"] = policy.at("revision").get<int>() + 1;
-        store_.save("system", "policy", policy, "policy.restored");
+        writer_.save("system", "policy", policy, "policy.restored");
     }
 }
 Json PolicyGate::current() { return store_.get("system", "policy"); }
@@ -24,7 +24,7 @@ Json PolicyGate::revise(const Json& command) {
     auto value = current(); require(value.at("revision") == command.at("expected_revision"), "POLICY_REVISION_CONFLICT");
     for (const auto* field : {"actions", "effects", "resources"}) if (command.contains(field)) { require(command.at(field).is_array(), "POLICY_INVALID"); value[field] = command.at(field); }
     value["revision"] = value.at("revision").get<int>() + 1;
-    store_.save("system", "policy", value, "policy.changed", value); return value;
+    writer_.save("system", "policy", value, "policy.changed", value); return value;
 }
 namespace {
 bool resource_allowed(const Json& grants, const std::string& resource) {
@@ -59,8 +59,8 @@ void PolicyGate::delivery(const Json& run, const Json& plan) {
     require(run.at("actor").is_string(), "DELIVERY_ACTOR_DENIED");
     require(plan.at("intent_revision") == run.at("intent_revision"), "DELIVERY_INTENT_CHANGED");
 }
-BehaviorController::BehaviorController(StateStore& store) : store_(store) {
-    if (store_.get("system", "behavior").is_null()) store_.save("system", "behavior",
+BehaviorController::BehaviorController(StateStore& store) : store_(store), writer_(store.claim("behavior", {"system/behavior", "activity_policy"})) {
+    if (store_.get("system", "behavior").is_null()) writer_.save("system", "behavior",
         {{"mode", "available"}, {"revision", 1}, {"effective_until", 0}}, "behavior.created");
 }
 Json BehaviorController::state() { return store_.get("system", "behavior"); }
@@ -71,13 +71,17 @@ Json BehaviorController::transition(const Json& input) {
     require(until == 0 || until > now_ms(), "BEHAVIOR_EXPIRY_INVALID");
     value = {{"mode", input.at("mode")}, {"revision", value.at("revision").get<int>() + 1},
         {"effective_until", until}, {"reason", input.value("reason", std::string{})}};
-    store_.save("system", "behavior", value, "behavior.changed", value); return value;
+    writer_.save("system", "behavior", value, "behavior.changed", value); return value;
 }
 Json BehaviorController::activity(const std::string& id, bool enabled, int revision) {
-    auto value = store_.get("activity", id); require(!value.is_null(), "ACTIVITY_MISSING");
+    auto value = activity_policy(id); require(!value.is_null(), "ACTIVITY_MISSING");
     require(value.at("policy_revision") == revision, "ACTIVITY_REVISION_CONFLICT");
     value["enabled"] = enabled; value["policy_revision"] = revision + 1;
-    store_.save("activity", id, value, "activity.policy_changed", value); return value;
+    writer_.save("activity_policy", id, value, "activity.policy_changed", value); return value;
+}
+Json BehaviorController::activity_policy(const std::string& id) { return store_.get("activity_policy", id); }
+void BehaviorController::ensure_activity(const std::string& id, bool enabled) {
+    if (activity_policy(id).is_null()) writer_.save("activity_policy", id, {{"id", id}, {"enabled", enabled}, {"policy_revision", 1}}, "activity.policy_created");
 }
 void BehaviorController::tick() {
     auto value = state();

@@ -143,7 +143,7 @@ void test(const std::string& mode, const Path& executable, const Path& original,
                 wait([&] { const auto page = send("events", {{"run_id", id}, {"types", Json::array({"call.budget_reserved"})}});
                     return page.at("events").size() == 1 ? Json(true) : Json{}; });
             } else {
-                wait([&] { auto jobs = send("job.list"); return !jobs.empty() && count(state / "plugins/dafeiyu.action.background/jobs.sqlite3", "work") == 1 ? Json(true) : Json{}; });
+                wait([&] { auto jobs = send("job.list").value("items", Json::array()); return !jobs.empty() && count(state / "plugins/dafeiyu.action.background/jobs.sqlite3", "work") == 1 ? Json(true) : Json{}; });
             }
             host.kill();
             // A crashed process cannot remove its endpoint. A client must wait for the next epoch.
@@ -159,7 +159,7 @@ void test(const std::string& mode, const Path& executable, const Path& original,
             auto behavior = send("health").at("behavior");
             send("behavior.set", {{"expected_revision", behavior.at("revision")}, {"mode", "available"}});
             const auto next = submit("queued", "search:after restart"); finish(next);
-            check(send("run.list").size() == 2, "resident task count");
+            check(send("run.list").value("items", Json::array()).size() == 2, "resident task count");
         } else if (mode == "action") {
             auto blocked = wait([&] { auto run = send("run.get", {{"id", id}}); return run.at("execution") == "waiting" ? run : Json{}; });
             check(blocked.at("model_attempts") == 1, "unknown write replayed");
@@ -172,7 +172,7 @@ void test(const std::string& mode, const Path& executable, const Path& original,
                 const auto page = send("events", {{"run_id", id}, {"types", Json::array({"call.budget_reserved"})}});
                 check(page.at("events").size() == 1, "second dispatch bypassed persisted budget");
             }
-            else check(send("job.list").size() == 1 && run.at("results").at(0).at("outcome").at("data").at("value") == 42, "job identity or result lost");
+            else check(send("job.list").value("items", Json::array()).size() == 1 && run.at("results").at(0).at("outcome").at("data").at("value") == 42, "job identity or result lost");
         }
         send("host.shutdown"); host.wait_exit();
     }

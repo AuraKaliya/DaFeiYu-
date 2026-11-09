@@ -1,6 +1,6 @@
 {
   "id": "test.call-tree.root",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [
@@ -18,87 +18,11 @@
   "services": [
     {
       "id": "tree.root",
-      "contract": "test.call-tree.root",
+      "contract": "dafeiyu.action-executor",
       "version": 1,
-      "methods": {
-        "execute_read": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "alpha",
-          "resources": [
-            "alpha",
-            "beta"
-          ],
-          "delegates": {
-            "effects": [
-              "read"
-            ],
-            "resources": [
-              "alpha",
-              "beta"
-            ]
-          }
-        },
-        "execute_write": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "external-write",
-          "resource": "alpha",
-          "resources": [
-            "alpha",
-            "beta"
-          ],
-          "delegates": {
-            "effects": [
-              "read",
-              "local-write",
-              "external-write"
-            ],
-            "resources": [
-              "alpha",
-              "beta"
-            ]
-          },
-          "query": "query_operation"
-        },
-        "query_operation": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        }
-      }
+      "capabilities": [
+        "query"
+      ]
     }
   ],
   "actions": [
@@ -107,7 +31,7 @@
       "revision": 1,
       "description": "Read-only call-tree fixture",
       "service": "tree.root",
-      "method": "execute_read",
+      "method": "execute",
       "input": {
         "type": "object",
         "properties": {},
@@ -141,7 +65,7 @@
       "revision": 1,
       "description": "Composite call-tree fixture",
       "service": "tree.root",
-      "method": "execute_write",
+      "method": "execute",
       "input": {
         "type": "object",
         "properties": {},

@@ -1,5 +1,8 @@
 #include "inbox.hpp"
 #include "run_view.hpp"
+#include "scopes.hpp"
+#include "subscriptions.hpp"
+#include "commands.hpp"
 #include <dafeiyu/abi.h>
 #include <condition_variable>
 #include <deque>
@@ -13,38 +16,49 @@ class Engine {
     const Profile& profile_;
 public:
     StateStore store;
+    StateWriter diagnostics;
     PluginRuntime plugins;
     CallRouter calls;
     PolicyGate policy;
     BehaviorController behavior;
     Conversations conversations;
+    ScopeManager scopes;
     OperationCoordinator operations;
+    JobCoordinator jobs;
     ContextAssembler context;
     RunExecutor runs;
     InboxRouter inbox;
     Scheduler scheduler;
+    Subscriptions subscriptions;
+    CommandLedger commands;
     Engine(const Profile& profile, const Path& path, PluginRuntime::Receiver receive)
-        : profile_(profile), store(path), plugins(profile, path, store.instance_id(), std::move(receive)), calls(plugins, store),
-          policy(store, profile), behavior(store), conversations(store, plugins, profile), operations(store, plugins, calls, policy, conversations, profile),
-          context(store, plugins, calls, policy, profile), runs(store, plugins, calls, policy, operations, context, profile),
-          inbox(store, plugins, policy, behavior, runs, conversations, profile), scheduler(store, plugins, calls, behavior, inbox, runs, profile) {}
+        : profile_(profile), store(path), diagnostics(store.claim("instance", {})), plugins(profile, path, store.instance_id(), std::move(receive)), calls(plugins, store),
+          policy(store, profile), behavior(store), conversations(store, plugins, profile), scopes(store, plugins, calls, policy, conversations, profile), operations(store, plugins, calls, policy, conversations, scopes, profile),
+          jobs(store, plugins, calls, operations, profile),
+          context(store, plugins, calls, policy, scopes, profile), runs(store, plugins, calls, policy, operations, jobs, context, profile),
+          inbox(store, plugins, policy, behavior, runs, conversations, profile), scheduler(store, plugins, calls, behavior, inbox, runs, profile), subscriptions(store, scopes, plugins), commands(store) {
+        calls.scope_valid = [this](const CallScope& call) { return (call.scope_id.empty() || scopes.valid(call.scope_id)) && (call.registration_id.empty() || scopes.registration_active(call.registration_id)); };
+        scopes.released = [this](const Json& registration) { subscriptions.release(registration); };
+    }
     void start() {
-        plugins.start(); conversations.start(); (void)plugins.snapshot(profile_.data.at("allowed_actions")); scheduler.start(); operations.recover(); runs.recover();
-        store.atomic([&] { store.event("instance.started", {{"instance_id", store.instance_id()}}); });
+        plugins.start(); conversations.start(); (void)plugins.snapshot(profile_.data.at("allowed_actions")); scheduler.start(); scopes.restore(); subscriptions.restore(); operations.recover(); jobs.recover(); runs.recover();
+        store.atomic([&] { diagnostics.event("instance.started", {{"instance_id", store.instance_id()}}); });
     }
     Json command(const std::string& name, const Json& args) {
         if (name == "health") {
             const auto catalog = plugins.catalog(); bool degraded = false;
             for (const auto& plugin : catalog) if (plugin.at("status") != "ready") degraded = true;
             return {{"instance_id", store.instance_id()}, {"state", "running"}, {"health", degraded ? "degraded" : "ready"}, {"behavior", behavior.state()},
-                {"plugins", catalog}, {"calls", calls.active()}, {"policy", policy.current()}};
+                {"plugins", catalog}, {"calls", calls.active()}, {"policy", policy.current()}, {"scopes", scopes.metrics()}, {"queries", store.metrics()}};
         }
         if (name == "plugins") return {{"plugins", plugins.catalog()}, {"actions", plugins.actions()}};
         if (name == "input.accept") return inbox.accept_local(args.at("key"), {{"text", args.at("text")},
             {"conversation", args.value("conversation", std::string("local"))}}, args.value("channel", std::string{}));
         if (name == "input.get") return store.get("input", args.at("id"));
         if (name == "run.get") return store.get("run", args.at("id"));
-        if (name == "run.list") return store.all("run");
+        if (name == "run.list") return store.page("run", args.value("cursor", uint64_t{0}), args.value("limit", size_t{100}));
+        if (name == "run.view") return runs.view(args.at("id"));
+        if (name == "conversation.close") { runs.cancel_conversation(args.at("id")); const auto result = conversations.close(args.at("id")); scopes.refresh(); return result; }
         if (name == "run.cancel") return runs.cancel(args.at("id"));
         if (name == "run.resume") return runs.resume(args.at("id"));
         if (name == "run.steer") {
@@ -53,32 +67,24 @@ public:
         }
         if (name == "behavior.set") return behavior.transition(args);
         if (name == "policy.set") return policy.revise(args);
-        if (name == "activity.list") return store.all("activity");
+        if (name == "activity.list") return scheduler.activity_views();
         if (name == "activity.set") return behavior.activity(args.at("id"), args.at("enabled"), args.at("expected_revision"));
-        if (name == "operation.list") return store.all("operation");
+        if (name == "operation.list") return store.page("operation", args.value("cursor", uint64_t{0}), args.value("limit", size_t{100}));
         if (name == "operation.query") { operations.query(args.at("id")); return {{"accepted", true}}; }
         if (name == "operation.reconcile") return operations.reconcile(args);
-        if (name == "job.list") return store.all("job");
+        if (name == "job.list") return store.page("job", args.value("cursor", uint64_t{0}), args.value("limit", size_t{100}));
         if (name == "job.cancel") {
             auto job = store.get("job", args.at("id")); require(!job.is_null(), "JOB_MISSING");
-            operations.cancel_jobs(job.at("run_id")); return {{"accepted", true}};
+            jobs.cancel_jobs(job.at("run_id")); return {{"accepted", true}};
         }
         if (name == "events") return store.events(args.value("after", uint64_t{0}), args.value("limit", size_t{100}), args.value("run_id", std::string{}), args.value("types", Json::array()));
         if (name == "host.shutdown") return {{"accepted", true}};
         throw std::runtime_error("COMMAND_UNKNOWN");
     }
     Json execute(const std::string& name, Json args) {
-        const auto key = args.value("_command_id", identifier()); args.erase("_command_id");
-        static const std::set<std::string> mutations{"input.accept", "run.cancel", "run.resume", "run.steer", "behavior.set", "policy.set", "activity.set", "operation.reconcile", "job.cancel"};
+        static const std::set<std::string> mutations{"input.accept", "run.cancel", "run.resume", "run.steer", "behavior.set", "policy.set", "activity.set", "operation.reconcile", "job.cancel", "conversation.close"};
         if (!mutations.contains(name)) return command(name, args);
-        auto previous = store.get("command", key);
-        if (!previous.is_null()) {
-            require(previous.at("name") == name && previous.at("arguments") == args, "COMMAND_ID_CONFLICT");
-            return previous.at("result");
-        }
-        Json result;
-        store.atomic([&] { result = command(name, args); store.put("command", key, {{"id", key}, {"name", name}, {"arguments", args}, {"result", result}}); });
-        return result;
+        return commands.execute(name, std::move(args), [&](const Json& arguments) { return command(name, arguments); });
     }
     void message(const PluginMessage& message) {
         const auto& body = message.body;
@@ -86,9 +92,22 @@ public:
         try {
             if (type == "complete") { calls.complete(message); return; }
             if (type == "request_service") { operations.nested(message); return; }
-            if (type == "register_job") { operations.register_job(message); return; }
-            if (type == "job_result") { operations.job_result(message); return; }
+            if (type == "register_job") { jobs.register_job(message); return; }
+            if (type == "job_result") { jobs.job_result(message); return; }
             if (type == "progress") return;
+            if (type == "request_scoped") { scopes.request(message); return; }
+            if (type == "ack_facts") { subscriptions.acknowledge(message.plugin, body); return; }
+            if (type == "open_scope" || type == "close_scope" || type == "register_scoped" || type == "release_registration" || type == "subscribe" || type == "read_scoped") {
+                Json result;
+                if (type == "open_scope") result = scopes.open(message.plugin, body);
+                else if (type == "close_scope") result = scopes.close(message.plugin, body.at("scope_id"));
+                else if (type == "register_scoped") result = scopes.register_resource(message.plugin, body.at("scope_id"), body.at("key"), body.at("kind"), body.at("value"));
+                else if (type == "release_registration") result = scopes.release(message.plugin, body.at("registration_id"));
+                else if (type == "subscribe") result = subscriptions.subscribe(message.plugin, body);
+                else result = scopes.read_state(message.plugin, body.at("scope_id"), body.at("object"));
+                plugins.send(message.plugin, {{"type", "scope_reply"}, {"key", body.at("key")}, {"result", result}, {"error", nullptr}});
+                return;
+            }
             if (type == "read_state" || type == "submit_command" || type == "query_command") {
                 const auto parent = calls.owned(message.plugin, body.at("call_id"));
                 const auto key = body.at("key").get<std::string>(); require(!key.empty() && key.size() <= 100, "COMMAND_KEY_INVALID");
@@ -113,59 +132,38 @@ public:
                 plugins.send(message.plugin, {{"type", "reply"}, {"call_id", parent.id}, {"key", key}, {"result", result}, {"error", nullptr}});
                 return;
             }
-            if (type == "plugin_error") { store.atomic([&] { store.event("plugin.error", body.at("error"), {}, message.plugin); }); return; }
-            const auto selection = plugins.selection(message.plugin);
+            if (type == "plugin_error") { store.atomic([&] { diagnostics.event("plugin.error", body.at("error"), {}, message.plugin); }); return; }
             if (type == "post_input") {
                 const auto receipt = inbox.accept_channel(message.plugin, body.at("channel"), body.at("key"), body.at("input"));
                 plugins.send(message.plugin, {{"type", "input_receipt"}, {"key", body.at("key")}, {"result", receipt}});
                 return;
             }
-            const auto subscription_id = message.plugin + ":" + body.at("key").get<std::string>();
-            if (type == "subscribe") {
-                require(body.at("types").is_array() && !body.at("types").empty(), "SUBSCRIPTION_FILTER_REQUIRED");
-                for (const auto& event : body.at("types")) require(includes(selection.value("observe", Json::array()), event), "SUBSCRIPTION_DENIED");
-                auto subscription = store.get("subscription", subscription_id);
-                if (subscription.is_null()) {
-                    subscription = {{"id", subscription_id}, {"plugin", message.plugin}, {"key", body.at("key")}, {"types", body.at("types")},
-                        {"cursor", 0}, {"sent", 0}, {"pending", nullptr}};
-                    store.save("subscription", subscription_id, subscription, "subscription.created");
-                } else require(subscription.at("types") == body.at("types"), "SUBSCRIPTION_CHANGED");
-                return;
-            }
-            if (type == "ack_facts") {
-                auto subscription = store.get("subscription", subscription_id);
-                require(!subscription.is_null() && subscription.at("plugin") == message.plugin, "SUBSCRIPTION_OWNER_DENIED");
-                require(body.at("sequence") == subscription.at("sent"), "SUBSCRIPTION_ACK_GAP");
-                subscription["cursor"] = body.at("sequence"); subscription["pending"] = nullptr;
-                store.atomic([&] { store.put("subscription", subscription_id, subscription); }); return;
-            }
             throw std::runtime_error("HOST_MESSAGE_UNKNOWN");
         } catch (const std::exception& error) {
-            store.atomic([&] { store.event("plugin.request_rejected", {{"request", body}, {"error", failure(error)}}, {}, message.plugin); });
+            store.atomic([&] { diagnostics.event("plugin.request_rejected", {{"request", body}, {"error", failure(error)}}, {}, message.plugin); });
             if (body.contains("key")) {
-                try { plugins.send(message.plugin, {{"type", "reply"}, {"key", body.at("key")}, {"call_id", body.value("call_id", uint64_t{0})}, {"result", nullptr}, {"error", failure(error)}}); }
+                const auto reply_type = type == "request_scoped" ? "scoped_reply" :
+                    type == "open_scope" || type == "close_scope" || type == "register_scoped" || type == "release_registration" || type == "subscribe" || type == "read_scoped" ? "scope_reply" : "reply";
+                try { plugins.send(message.plugin, {{"type", reply_type}, {"key", body.at("key")}, {"call_id", body.value("call_id", uint64_t{0})},
+                    {"scope_id", body.value("scope_id", std::string{})}, {"result", nullptr}, {"error", failure(error)}}); }
                 catch (const std::exception&) { /* Failure remains observable in the core event log. */ }
             }
         }
     }
-    void subscriptions() {
-        for (auto subscription : store.all("subscription")) {
-            try {
-                const auto selection = plugins.selection(subscription.at("plugin"));
-                bool authorized = true;
-                for (const auto& type : subscription.at("types")) if (!includes(selection.value("observe", Json::array()), type)) authorized = false;
-                if (!authorized) continue;
-                if (!subscription.at("pending").is_null()) continue;
-                auto page = store.events(subscription.at("cursor"), 32, {}, subscription.at("types"));
-                if (page.at("cursor") == subscription.at("cursor")) continue;
-                if (page.at("events").empty()) { subscription["cursor"] = page.at("cursor"); store.atomic([&] { store.put("subscription", subscription.at("id"), subscription); }); continue; }
-                subscription["sent"] = page.at("cursor"); subscription["pending"] = page;
-                store.atomic([&] { store.put("subscription", subscription.at("id"), subscription); });
-                plugins.send(subscription.at("plugin"), {{"type", "facts"}, {"key", subscription.at("key")}, {"page", page}});
-            } catch (const std::exception& error) { store.atomic([&] { store.event("subscription.unavailable", failure(error)); }); }
-        }
+    void tick() {
+        calls.tick();
+        for (const auto& change : store.take_changes()) if (change.kind == "operation") runs.operation_changed(change.id);
+        for (const auto& operation : store.unobserved_operations()) runs.operation_changed(operation.at("id"));
+        scopes.refresh(); scheduler.tick(); scopes.refresh(); subscriptions.tick();
     }
-    void tick() { calls.tick(); scheduler.tick(); subscriptions(); }
+    SteadyClock::time_point wakeup() {
+        if (store.changed()) return SteadyClock::now();
+        const auto due = scheduler.next_wakeup();
+        auto deadline = SteadyClock::now() + std::chrono::milliseconds(profile_.data.at("limits").at("reconcile_ms").get<int>());
+        if (due > now_ms()) deadline = std::min(deadline, SteadyClock::now() + std::chrono::milliseconds(due - now_ms()));
+        return std::min(deadline, calls.next_deadline());
+    }
+
 };
 struct Command {
     std::string name;
@@ -204,8 +202,8 @@ struct InstanceRuntime::Impl {
         std::deque<PluginMessage> incoming;
         {
             std::lock_guard lock(mutex);
-            if (commands_allowed) requests.swap(commands);
-            incoming.swap(messages);
+            if (commands_allowed) for (size_t count = 0; !commands.empty() && count < 64; ++count) { requests.push_back(std::move(commands.front())); commands.pop_front(); }
+            for (size_t count = 0; !messages.empty() && count < 64; ++count) { incoming.push_back(std::move(messages.front())); messages.pop_front(); }
             for (auto& [key, value] : terminals) { (void)key; incoming.push_back(std::move(value)); }
             terminals.clear();
         }
@@ -223,18 +221,17 @@ struct InstanceRuntime::Impl {
         try {
             Engine engine(profile, path, [this](PluginMessage value) { return post(std::move(value)); });
             engine.start();
-            // Unacknowledged fact pages are replayed after restart.
-            for (auto sub : engine.store.all("subscription")) { sub["pending"] = nullptr; engine.store.atomic([&] { engine.store.put("subscription", sub.at("id"), sub); }); }
             ready.set_value(); announced = true;
             for (;;) {
                 receive(engine, true);
                 { std::lock_guard lock(mutex); if (closing) break; }
                 engine.tick();
                 std::unique_lock lock(mutex);
-                changed.wait_for(lock, std::chrono::milliseconds(10), [&] { return closing || !commands.empty() || !messages.empty() || !terminals.empty(); });
+                changed.wait_until(lock, engine.wakeup(), [&] { return closing || !commands.empty() || !messages.empty() || !terminals.empty(); });
             }
-            engine.store.atomic([&] { engine.store.event("instance.draining", Json::object()); });
-            for (const auto& run : engine.store.all("run")) engine.operations.cancel_jobs(run.at("id"));
+            engine.store.atomic([&] { engine.diagnostics.event("instance.draining", Json::object()); });
+            engine.scopes.shutdown();
+            for (const auto& run : engine.store.active_runs()) engine.jobs.cancel_jobs(run.at("id"));
             engine.calls.cancel_all(); engine.plugins.quiesce();
             const auto deadline = SteadyClock::now() + std::chrono::milliseconds(profile.data.at("limits").at("shutdown_ms").get<int>());
             while (engine.calls.active() && SteadyClock::now() < deadline) {
@@ -243,7 +240,7 @@ struct InstanceRuntime::Impl {
             }
             engine.plugins.stop(); // A native module is never unloaded while its code still executes.
             receive(engine, false);
-            engine.store.atomic([&] { engine.store.event("instance.stopped", Json::object()); });
+            engine.store.atomic([&] { engine.diagnostics.event("instance.stopped", Json::object()); });
         } catch (...) {
             if (!announced) ready.set_exception(std::current_exception());
             std::lock_guard lock(mutex);

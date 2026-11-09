@@ -48,12 +48,12 @@ void validate_outcome(const Json& value) {
 Profile Profile::open(const Path& file) {
     const auto path = std::filesystem::absolute(file);
     auto data = read_json(path);
-    require(data.at("schema_version") == 3, "PROFILE_VERSION_UNSUPPORTED");
+    require(data.at("schema_version") == 4, "PROFILE_VERSION_UNSUPPORTED");
     require(!data.at("owner").get<std::string>().empty(), "PROFILE_OWNER");
     require(data.at("bindings").is_object() && data.at("plugins").is_array(), "PROFILE_SERVICES");
     for (const auto* name : {"model", "memory", "channel", "strategy"}) require(data.at("bindings").contains(name), "PROFILE_BINDING_MISSING");
     require(data.at("allowed_actions").is_array() && data.at("allowed_effects").is_array(), "PROFILE_GRANTS");
-    for (const auto* name : {"model_attempts", "strategy_steps", "call_timeout_ms", "nested_calls", "max_jobs", "max_inbox", "shutdown_ms"})
+    for (const auto* name : {"model_attempts", "strategy_steps", "call_timeout_ms", "nested_calls", "max_jobs", "max_inbox", "shutdown_ms", "max_scopes", "max_registrations", "scope_calls", "reconcile_ms"})
         require(data.at("limits").at(name).is_number_integer() && data.at("limits").at(name).get<int64_t>() > 0 &&
             data.at("limits").at(name).get<int64_t>() <= std::numeric_limits<int>::max(), "PROFILE_LIMIT");
     require(data.at("limits").at("max_jobs").get<int>() <= 256, "PROFILE_JOB_LIMIT");

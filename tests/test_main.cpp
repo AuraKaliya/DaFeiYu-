@@ -74,7 +74,7 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         check(one.at("id") == two.at("id"), "same input identity");
         rejects([&] { instance.request("input.accept", {{"key", "same"}, {"text", "different"}}); }, "INPUT_KEY_CONFLICT");
         (void)finish(instance, submit(instance, "same"));
-        check(instance.request("run.list").size() == 1, "one run");
+        check(instance.request("run.list").value("items", Json::array()).size() == 1, "one run");
     } else if (name == "restart_inbox" || name == "mode_expiry") {
         std::string identity;
         {
@@ -103,7 +103,7 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         check(result.at("results").at(0).at("outcome").at("data").at("revision") == 2, "memory changed");
         check(result.at("persona").at("revision") == 1, "run persona binding stable");
         auto next = finish(instance, submit(instance, "next")); check(next.at("persona").at("revision") == 2, "new run adopts new persona");
-        auto operations = instance.request("operation.list");
+        auto operations = instance.request("operation.list").value("items", Json::array());
         bool child = false; for (const auto& operation : operations) if (operation.at("kind") == "service" && operation.at("parent") != "") child = true;
         check(child, "nested write has child operation");
     } else if (name == "unknown_effect") {
@@ -112,9 +112,9 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         auto blocked = wait([&] { auto run = instance.request("run.get", {{"id", id}}); return run.at("wait_reason").is_object() && run.at("wait_reason").value("type", std::string{}) == "effects" ? run : Json{}; });
         check(blocked.at("model_attempts") == 1, "unknown stops model continuation");
         const auto second = submit(instance, "second", "unknown:two");
-        wait([&] { auto run = instance.request("run.get", {{"id", second}}); return !run.at("error").is_null() ? run : Json{}; });
-        check(instance.request("operation.list").size() == 1, "new run cannot bypass resource restriction");
-        auto operation = instance.request("operation.list").at(0);
+        wait([&] { auto run = instance.request("run.get", {{"id", second}}); return !run.at("error").is_null() && run.at("execution") == "waiting" ? run : Json{}; });
+        check(instance.request("operation.list").value("items", Json::array()).size() == 1, "new run cannot bypass resource restriction");
+        auto operation = instance.request("operation.list").value("items", Json::array()).at(0);
         instance.request("operation.reconcile", {{"id", operation.at("id")}, {"expected_revision", operation.at("revision")},
             {"reason", "fixture inspected"}, {"evidence", "stored local record"}, {"result", dfy::sdk::outcome({{"stored", true}}, "confirmed")}});
         (void)finish(instance, id);
@@ -129,7 +129,7 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
             (void)finish(instance, id);
         } else if (name == "cancel") {
             auto result = instance.request("run.cancel", {{"id", id}}); check(result.at("execution") == "cancelled", "cancel terminal");
-            std::this_thread::sleep_for(std::chrono::milliseconds(50)); check(instance.request("operation.list").empty(), "cancel before action");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50)); check(instance.request("operation.list").value("items", Json::array()).empty(), "cancel before action");
         } else if (name == "steer") {
             instance.request("run.steer", {{"id", id}, {"key", "followup"}, {"text", "search:steered"}});
             auto result = finish(instance, id); check(result.at("intent_revision") == 2, "intent revised");
@@ -139,12 +139,12 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
             instance.request("policy.set", {{"expected_revision", policy.at("revision")}, {"actions", Json::array()}});
             auto result = wait([&] { auto run = instance.request("run.get", {{"id", id}}); return run.at("execution") == "failed" ? run : Json{}; });
             check(result.at("error").at("code") == "ACTION_DENIED", "revocation checked at dispatch");
-            check(instance.request("operation.list").empty(), "no operation started");
+            check(instance.request("operation.list").value("items", Json::array()).empty(), "no operation started");
         }
     } else if (name == "deadline") {
         config(profile, "model_scripted")["delay_ms"] = 1000; profile.data["limits"]["call_timeout_ms"] = 100;
         InstanceRuntime instance(profile, state); auto id = submit(instance, "timeout");
-        auto result = wait([&] { auto run = instance.request("run.get", {{"id", id}}); return !run.at("error").is_null() ? run : Json{}; });
+        auto result = wait([&] { auto run = instance.request("run.get", {{"id", id}}); return !run.at("error").is_null() && run.at("execution") == "waiting" ? run : Json{}; });
         check(result.at("execution") == "waiting" && result.at("error").at("category") == "deadline", "deadline distinct from cancellation");
     } else if (name == "budget") {
         profile.data["limits"]["model_attempts"] = 1;
@@ -155,11 +155,11 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         config(profile, "action_background")["delay_ms"] = name == "job_early" ? 0 : 10000;
         InstanceRuntime instance(profile, state); auto id = submit(instance, "background", "background:work");
         if (name == "job") {
-            wait([&] { auto jobs = instance.request("job.list"); return jobs.empty() ? Json{} : jobs; });
+            wait([&] { auto jobs = instance.request("job.list").value("items", Json::array()); return jobs.empty() ? Json{} : jobs; });
             auto next = finish(instance, submit(instance, "interactive"));
             check(next.at("execution") == "completed", "job yields decision slot");
             instance.request("run.cancel", {{"id", id}});
-            wait([&] { auto job = instance.request("job.list").at(0); return job.at("state") == "completed" ? job : Json{}; });
+            wait([&] { auto job = instance.request("job.list").value("items", Json::array()).at(0); return job.at("state") == "completed" ? job : Json{}; });
         } else {
             auto result = finish(instance, id); check(result.at("results").at(0).at("outcome").at("data").at("value") == 42, "early job result");
         }
@@ -167,11 +167,14 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         profile.data["activities"] = Json::array({{{"id", "reflection"}, {"binding", "reflection"}, {"interval_ms", 100}, {"enabled", false},
             {"allowed_modes", Json::array({"available"})}, {"actions", Json::array({"action.remember"})}, {"delivery_policy", "none"}, {"conversation", "internal"}, {"misfire", "coalesce"}}});
         InstanceRuntime instance(profile, state);
-        check(instance.request("run.list").empty(), "paused activity does not infer");
+        check(instance.request("run.list").value("items", Json::array()).empty(), "paused activity does not infer");
         instance.request("activity.set", {{"id", "reflection"}, {"enabled", true}, {"expected_revision", 1}});
-        auto result = wait([&] { for (const auto& run : instance.request("run.list")) if (run.at("activity") == "reflection" && run.at("execution") == "completed") return run; return Json{}; });
+        auto result = wait([&] { for (const auto& run : instance.request("run.list").value("items", Json::array())) if (run.at("activity") == "reflection" && run.at("execution") == "completed") return run; return Json{}; });
         instance.request("activity.set", {{"id", "reflection"}, {"enabled", false}, {"expected_revision", 2}});
         check(result.at("delivery") == "none", "internal activity does not deliver");
+        wait([&] { for (const auto& event : all_events(instance, result.at("id"))) if (event.at("type") == "activity.settled") {
+            check(event.at("payload").value("acknowledged", false) && event.at("payload").at("view_version") == 3, "activity did not receive public RunView"); return Json(true);
+        } return Json{}; });
         (void)finish(instance, submit(instance, "user"));
     } else if (name == "duplicate_terminal" || name == "nested_denied" || name == "forged_scope") {
         add_probe(profile, {{"mode", name == "nested_denied" ? "nested" : name == "forged_scope" ? "forge" : "duplicate"}});
@@ -212,7 +215,7 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         if (name == "abi_reject") manifest["abi_version"] = 1;
         if (name == "dependency_cycle") {
             profile.data["bindings"]["self"] = "action.add";
-            manifest["requires"] = Json::array({{{"binding", "self"}, {"contract", "example.add"}, {"version", 1}}});
+            manifest["requires"] = Json::array({{{"binding", "self"}, {"contract", "dafeiyu.action-executor"}, {"version", 1}}});
         }
         const auto file = profile.plugins / ("test-" + state.filename().string() + ".json"); write(file, manifest);
         for (auto& plugin : profile.data["plugins"]) if (plugin.at("manifest") == original_manifest) plugin["manifest"] = file.filename().string();
@@ -221,8 +224,8 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
     } else if (name == "instance_lock") {
         InstanceRuntime instance(profile, state);
         rejects([&] { InstanceRuntime duplicate(profile, state); }, "INSTANCE_LOCK");
-    } else if (name == "storage_version" || name == "storage_v2") {
-        const auto version = name == "storage_v2" ? "2" : "1";
+    } else if (name == "storage_version" || name == "storage_v2" || name == "storage_v3") {
+        const auto version = name == "storage_v3" ? "3" : name == "storage_v2" ? "2" : "1";
         { dfy::Database db(state / "core.sqlite3"); db.exec(std::string("CREATE TABLE identity(id INTEGER PRIMARY KEY,instance TEXT,component TEXT,version INTEGER);INSERT INTO identity VALUES(1,'old','core',") + version + ")"); }
         rejects([&] { InstanceRuntime instance(profile, state); }, "VERSION_MISMATCH");
         dfy::Database db(state / "core.sqlite3"); auto query = db.prepare("SELECT version FROM identity"); query.step();
@@ -271,8 +274,8 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         InstanceRuntime instance(profile, state);
         check(instance.request("plugins").at("plugins").size() == 5, "minimal has five roles");
         check(instance.request("plugins").at("actions").size() == 1, "one example action");
-        check(instance.request("activity.list").empty() && instance.request("job.list").empty(), "no automatic activities or jobs");
-        check(instance.request("run.list").empty(), "no inference without input");
+        check(instance.request("activity.list").empty() && instance.request("job.list").value("items", Json::array()).empty(), "no automatic activities or jobs");
+        check(instance.request("run.list").value("items", Json::array()).empty(), "no inference without input");
         const auto result = finish(instance, submit(instance, "minimal"));
         check(result.at("delivery") == "sent", "minimal delivery");
         check(instance.request("health").at("policy").at("effects") == Json::array({"read"}), "read-only action grants");
@@ -296,7 +299,7 @@ void run_case(const std::string& name, Profile profile, const Path& state, const
         for (const auto& event : all_events(instance, id)) if (event.at("type") == "strategy.request") {
             const auto& view = event.at("payload").at("run");
             dfy::sdk::validate_value(dfy::sdk::contracts::run_view_schema(), view);
-            for (const auto* field : {"bindings", "grants", "limits", "active_operation", "request", "foundation", "strategy_state"})
+            for (const auto* field : {"bindings", "grants", "limits", "request", "foundation", "strategy_state"})
                 check(!view.contains(field), std::string("private storage leaked: ") + field);
             check(dfy::sdk::RunView::from_json(view).to_json() == view, "public view round trip"); ++views;
         }

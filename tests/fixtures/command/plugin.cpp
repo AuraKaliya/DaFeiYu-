@@ -3,7 +3,7 @@ using namespace dfy::sdk;
 class BehaviorAction : public Plugin {
 public:
     static constexpr auto id = "dafeiyu.action.behavior";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     BehaviorAction(Host host, const Json&) : Plugin(host) { host.provide("action.behavior"); }
     void on_event(const Json& event) {
         if (event.at("type") == "reply") {
@@ -13,7 +13,8 @@ public:
             return;
         }
         if (event.at("type") != "call") return;
-        const Call call(event);
+        Call call(event);
+        if (call.method == "execute" || call.method == "readiness" || call.method == "query_operation") { const ActionInvocation action(call); call.input = action.arguments; if (call.method == "query_operation") call.input["id"] = action.operation_id; }
         if (call.method == "readiness") host.complete(call.id, {{"available", true}});
         else if (call.method == "execute") host.command(call.id, "change", "behavior.set", call.input);
         else if (call.method == "query_operation") host.command_receipt(call.id, "change");

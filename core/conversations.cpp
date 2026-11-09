@@ -1,5 +1,20 @@
 #include "conversations.hpp"
 namespace dfy {
+Json Conversations::ensure(const Json& route) {
+    const auto id = route.at("id").get<std::string>();
+    auto value = store_.get("conversation", id);
+    if (value.is_null()) value = {{"id", id}, {"key", route.at("key")}, {"state", "open"}, {"generation", 1}};
+    else if (value.at("state") == "closed") { value["state"] = "open"; value["generation"] = value.at("generation").get<int>() + 1; }
+    else return value;
+    store_.atomic([&] { writer_.put("conversation", id, value); writer_.event("conversation.opened", value, {}, "core", {}, id); });
+    return value;
+}
+Json Conversations::close(const std::string& id) {
+    auto value = store_.get("conversation", id); require(!value.is_null(), "CONVERSATION_MISSING");
+    if (value.at("state") != "closed") { value["state"] = "closed"; value["generation"] = value.at("generation").get<int>() + 1;
+        store_.atomic([&] { writer_.put("conversation", id, value); writer_.event("conversation.closed", value, {}, "core", {}, id); }); }
+    return value;
+}
 void Conversations::start() {
     std::set<std::string> current, retired_services;
     for (const auto& service : plugins_.channels()) current.insert(plugins_.channel_binding(service.at("id")).at("instance").get<std::string>());
@@ -9,7 +24,7 @@ void Conversations::start() {
         retired_services.insert(identity.at("service").get<std::string>());
         saved["generation"] = saved.at("generation").get<int>() + 1;
         saved["policy"] = {{"retired", true}, {"identity", identity}};
-        store_.save("channel_authority", saved.at("id"), saved, "channel.authority_retired", saved);
+        writer_.save("channel_authority", saved.at("id"), saved, "channel.authority_retired", saved);
     }
     for (const auto& service : plugins_.channels()) {
         const auto channel = plugins_.channel_binding(service.at("id"));
@@ -22,7 +37,7 @@ void Conversations::start() {
         else if (saved.at("policy") != policy || retired_services.contains(service.at("id").get<std::string>())) {
             saved["generation"] = saved.at("generation").get<int>() + 1; saved["policy"] = policy;
         }
-        store_.save("channel_authority", key, saved, "channel.authority_loaded", saved);
+        writer_.save("channel_authority", key, saved, "channel.authority_loaded", saved);
     }
 }
 Json Conversations::bind(const std::string& service, const std::string& target, Json authorization, const Json& reply_reference) {
@@ -74,7 +89,8 @@ void Conversations::authorize(const Json& delivery) {
         require(saved.at("policy").at("principals").contains(principal) && saved.at("policy").at("principals").at(principal) == authorization.at("actor"), "DELIVERY_AUTHORITY_DENIED");
     } else if (authorization.at("kind") == "activity") {
         const auto activity = store_.get("activity", authorization.at("activity"));
-        require(!activity.is_null() && activity.at("enabled") == true && fingerprint(activity.at("definition").dump()) == authorization.at("definition").get<std::string>(), "DELIVERY_AUTHORITY_CHANGED");
+        require(!activity.is_null() && store_.get("activity_policy", authorization.at("activity")).at("enabled") == true &&
+            fingerprint(activity.at("definition").dump()) == authorization.at("definition").get<std::string>(), "DELIVERY_AUTHORITY_CHANGED");
     } else require(authorization.at("kind") == "local-owner", "DELIVERY_AUTHORITY_DENIED");
 }
 }

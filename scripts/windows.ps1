@@ -23,7 +23,7 @@ if ($Action -eq 'test' -and -not $PSBoundParameters.ContainsKey('Mode')) { $Mode
 if ($Action -eq 'demo' -and -not $PSBoundParameters.ContainsKey('Mode')) { $Mode = 'Minimal' }
 $configurePreset = switch ($Mode) { 'Core' { 'windows-core' }; 'Minimal' { 'windows-minimal' }; 'Test' { 'windows' } }
 $binaryDirectory = switch ($Mode) { 'Core' { 'build/windows-core' }; 'Minimal' { 'build/windows-minimal' }; 'Test' { 'build/windows' } }
-$installDirectory = switch ($Mode) { 'Core' { 'out/dafeiyu-core-v4' }; 'Minimal' { 'out/dafeiyu-minimal-v4' }; 'Test' { 'out/dafeiyu-test-build-v4' } }
+$installDirectory = switch ($Mode) { 'Core' { 'out/dafeiyu-core-v5' }; 'Minimal' { 'out/dafeiyu-minimal-v5' }; 'Test' { 'out/dafeiyu-test-build-v5' } }
 
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
@@ -46,7 +46,7 @@ try {
         'demo' {
             if ($Mode -eq 'Core') { throw 'The core-only build has no example profile. Use -Mode Minimal.' }
             $executable = Join-Path $projectRoot "$binaryDirectory/run/$Configuration/bin/dafeiyu.exe"
-            Invoke-Checked $executable @('demo', '--state', '.runtime/minimal-v4')
+            Invoke-Checked $executable @('demo', '--state', '.runtime/minimal-v5')
         }
     }
 } finally { Pop-Location }

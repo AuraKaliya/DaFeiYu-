@@ -20,8 +20,9 @@ inline Json run_view_schema() {
     return object({{"schema_version", {{"type", "integer"}, {"enum", Json::array({RunView::schema_version})}}},
         {"id", text}, {"revision", integer}, {"intent_revision", integer}, {"execution", text}, {"phase", text}, {"goal", text}, {"delivery", text},
         {"input", input}, {"conversation_key", conversation}, {"candidate", Json::object()}, {"results", array()}, {"persona", Json::object()}, {"admitted_actions", array(text)},
+        {"observation", object(Json::object(), Json::array(), true)}, {"model_bindings", array(text)}, {"error", Json::object()}, {"wait_reason", Json::object()}, {"active_operation", Json::object()}, {"activity_id", text}, {"goal_origin", text},
         {"budget", object({{"model_attempts", counter}, {"strategy_steps", counter}, {"nested_calls", counter}}, Json::array({"model_attempts", "strategy_steps", "nested_calls"}))}},
-        Json::array({"schema_version", "id", "revision", "intent_revision", "execution", "phase", "goal", "delivery", "input", "conversation_key", "candidate", "results", "persona", "admitted_actions", "budget"}));
+        Json::array({"schema_version", "id", "revision", "intent_revision", "execution", "phase", "goal", "delivery", "input", "conversation_key", "candidate", "results", "persona", "admitted_actions", "budget", "observation", "model_bindings", "error", "wait_reason", "active_operation", "activity_id", "goal_origin"}));
 }
 struct Definition { int version; Json methods; };
 inline const std::map<std::string, Definition>& builtins() {
@@ -44,12 +45,14 @@ inline const std::map<std::string, Definition>& builtins() {
         auto deliver = method(delivery_input, receipt, "external-write", "channel"); deliver["query"] = "query_delivery";
         return std::map<std::string, Definition>{
             {"dafeiyu.model", {2, {{"generate", method(record, object({{"events", array()}}, Json::array({"events"})))}}}},
-            {"dafeiyu.strategy", {3, {{"propose", method(strategy_request, strategy_result)}, {"review_finish", method(review_request, strategy_result)}}}},
+            {"dafeiyu.strategy", {4, {{"propose", method(strategy_request, strategy_result)}, {"review_finish", method(review_request, strategy_result)}}}},
             {"dafeiyu.channel", {3, {{"deliver", deliver}, {"query_delivery", method(record, receipt)}}}},
             {"dafeiyu.memory", {2, {{"snapshot", method(record, persona)}, {"validate", method(persona, object({{"valid", boolean}}, Json::array({"valid"})))},
                 {"retrieve", method(record, items)}}}},
             {"dafeiyu.context", {2, {{"collect", method(record, items)}}}},
-            {"dafeiyu.activity", {2, {{"evaluate_trigger", method(record, record)}, {"on_settlement", method(record, record)}}}}
+            {"dafeiyu.activity", {3, {{"evaluate_trigger", method(record, record)}, {"on_settlement", method(object({{"activity_id", text}, {"run", run_view_schema()}}, Json::array({"activity_id", "run"})), record)}}}},
+            {"dafeiyu.action-executor", {1, {{"execute", method(object({{"action_id", text}, {"definition_revision", integer}, {"arguments", record}, {"operation_id", text}},
+                Json::array({"action_id", "definition_revision", "arguments", "operation_id"})), record)}}}}
         };
     }();
     return definitions;
@@ -59,13 +62,24 @@ inline Json resolve_service(Json service) {
     const auto found = builtins().find(service.at("contract").get<std::string>());
     if (found == builtins().end()) return service;
     if (service.at("version") != found->second.version) throw std::runtime_error("BUILTIN_CONTRACT_VERSION");
-    if (service.contains("methods") && service.at("methods") != found->second.methods) throw std::runtime_error("BUILTIN_CONTRACT_METHODS");
-    service["methods"] = found->second.methods;
+    auto methods = found->second.methods;
+    if (service.at("contract") == "dafeiyu.action-executor") {
+        const auto record = object(Json::object(), Json::array(), true);
+        for (const auto& capability : service.value("capabilities", Json::array())) {
+            if (capability == "readiness") methods["readiness"] = method(methods.at("execute").at("input"), object({{"available", {{"type", "boolean"}}}}, Json::array({"available"})));
+            else if (capability == "query") methods["query_operation"] = method(methods.at("execute").at("input"), record);
+            else if (capability == "jobs") for (const auto* name : {"query_job", "reattach_job", "cancel_job"}) methods[name] = method(record, record);
+            else throw std::runtime_error("ACTION_CAPABILITY_UNSUPPORTED");
+        }
+    }
+    if (service.contains("methods") && service.at("methods") != methods) throw std::runtime_error("BUILTIN_CONTRACT_METHODS");
+    service["methods"] = methods;
     return service;
 }
 inline void validate_role(std::string_view role, const Json& service) {
     std::string contract;
     if (role == "model" || role == "strategy" || role == "channel" || role == "memory") contract = "dafeiyu." + std::string(role);
+    else if (role.starts_with("model.")) contract = "dafeiyu.model";
     else if (role.starts_with("context.")) contract = "dafeiyu.context";
     else if (role == "activity") contract = "dafeiyu.activity";
     else return;

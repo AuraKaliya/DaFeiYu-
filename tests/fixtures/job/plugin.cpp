@@ -40,7 +40,7 @@ class Background : public Plugin {
     }
 public:
     static constexpr auto id = "dafeiyu.action.background";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Background(Host host, const Json& config) : Plugin(host), path_(host.data_directory() / "jobs.sqlite3"), db_(path_), delay_(config.value("delay_ms", 100)) {
         db_.verify_identity(host.instance_id(), id); db_.exec("CREATE TABLE IF NOT EXISTS work(id TEXT PRIMARY KEY,body TEXT NOT NULL)");
         host.provide("action.background");
@@ -60,7 +60,8 @@ public:
             host.complete(call, {{"type", "job_started"}, {"job_id", key}}); return;
         }
         if (event.at("type") != "call") return;
-        const Call call(event);
+        Call call(event);
+        if (call.method == "execute" || call.method == "readiness" || call.method == "query_operation") { const ActionInvocation action(call); call.input = action.arguments; if (call.method == "query_operation") call.input["id"] = action.operation_id; }
         if (call.method == "readiness") host.complete(call.id, {{"available", true}});
         else if (call.method == "execute") {
             pending_[call.id] = call.input;

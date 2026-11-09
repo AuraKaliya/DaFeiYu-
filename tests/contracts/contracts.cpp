@@ -24,6 +24,8 @@ int main() {
             {"conversation_key", {{"instance", "instance"}, {"channel_instance", "channel"}, {"account", "account"}, {"external_id", "room"}}},
             {"grants", {{"actions", Json::array({"action.add"})}}}, {"model_attempts", 0}, {"strategy_steps", 1},
             {"limits", {{"model_attempts", 8}, {"strategy_steps", 24}, {"nested_calls", 64}}}};
+        state["observation"] = {{"kind", "run_ready"}}; state["error"] = nullptr; state["wait_reason"] = nullptr; state["active_operation"] = nullptr; state["activity"] = ""; state["goal_origin"] = "none";
+        state["bindings"] = {{"bindings", {{"model", "model.scripted"}}}};
         const auto first = dfy::make_run_view(state).to_json();
         state["internal_scheduler"] = {{"unpublished_field", 123}};
         state["input"]["private_field"] = "changed internal input";

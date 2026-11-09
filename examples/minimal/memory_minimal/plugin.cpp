@@ -11,7 +11,7 @@ class Memory : public Plugin {
     }
 public:
     static constexpr auto id = "dafeiyu.memory.minimal";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Memory(Host host, const Json& config) : Plugin(host), db_(host.data_directory() / "memory.sqlite3"), instance_(host.instance_id()) {
         db_.verify_identity(instance_, id);
         db_.exec("CREATE TABLE IF NOT EXISTS revisions(revision INTEGER PRIMARY KEY,body TEXT NOT NULL)");

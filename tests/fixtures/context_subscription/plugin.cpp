@@ -6,19 +6,20 @@ class ClockContext : public Plugin {
     dfy::Database db_;
 public:
     static constexpr auto id = "dafeiyu.context.clock";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     ClockContext(Host host, const Json&) : Plugin(host), db_(host.data_directory() / "observations.sqlite3") {
         db_.verify_identity(host.instance_id(), id);
         db_.exec("CREATE TABLE IF NOT EXISTS seen(id TEXT PRIMARY KEY)");
         host.provide("context.clock");
     }
-    void start() { host.subscribe("operations", Json::array({"operation.settled"})); }
+    void start() { host.open_scope("observer", "instance"); }
     void on_event(const Json& event) {
+        if (event.at("type") == "scope_restored" || (event.at("type") == "scope_reply" && event.at("key") == "observer" && event.at("error").is_null())) { host.subscribe(event.at("result").at("id"), "operations", Json::array({"operation.settled"})); return; }
         if (event.at("type") == "facts") {
             { dfy::Transaction transaction(db_);
               for (const auto& fact : event.at("page").at("events")) { auto insert = db_.prepare("INSERT OR IGNORE INTO seen VALUES(?)"); insert.bind(1, fact.at("id").get<std::string>()).step(); }
               transaction.commit(); }
-            host.acknowledge("operations", event.at("page").at("cursor")); return;
+            host.acknowledge(event.at("registration_id"), event.at("page").at("cursor")); return;
         }
         if (event.at("type") != "call") return;
         const Call call(event);

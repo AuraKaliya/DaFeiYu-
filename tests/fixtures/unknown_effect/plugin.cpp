@@ -6,7 +6,7 @@ class WriteDemo : public Plugin {
     bool unknown_;
 public:
     static constexpr auto id = "dafeiyu.action.write-demo";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     WriteDemo(Host host, const Json& config) : Plugin(host), db_(host.data_directory() / "effects.sqlite3"), unknown_(config.value("unknown", true)) {
         db_.verify_identity(host.instance_id(), id);
         db_.exec("CREATE TABLE IF NOT EXISTS effects(id TEXT PRIMARY KEY,input TEXT NOT NULL)");
@@ -14,7 +14,8 @@ public:
     }
     void on_event(const Json& event) {
         if (event.at("type") != "call") return;
-        const Call call(event);
+        Call call(event);
+        if (call.method == "execute" || call.method == "readiness" || call.method == "query_operation") { const ActionInvocation action(call); call.input = action.arguments; if (call.method == "query_operation") call.input["id"] = action.operation_id; }
         if (call.method == "readiness") { host.complete(call.id, {{"available", true}}); return; }
         if (call.method == "execute") {
             const auto operation = call.context.at("operation_id").get<std::string>();

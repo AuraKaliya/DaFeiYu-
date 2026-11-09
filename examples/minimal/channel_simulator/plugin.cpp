@@ -5,7 +5,7 @@ class Channel : public Plugin {
     dfy::Database db_;
 public:
     static constexpr auto id = "dafeiyu.channel.simulator";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Channel(Host host, const Json&) : Plugin(host), db_(host.data_directory() / "channel.sqlite3") {
         db_.verify_identity(host.instance_id(), id);
         db_.exec("CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,plan TEXT NOT NULL,result TEXT NOT NULL)");

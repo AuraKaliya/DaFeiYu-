@@ -1,62 +1,17 @@
 {
   "id": "dafeiyu.action.add",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "abi_version": 2,
   "library": "@LIBRARY@",
   "requires": [],
   "services": [
     {
       "id": "action.add",
-      "contract": "example.add",
+      "contract": "dafeiyu.action-executor",
       "version": 1,
-      "methods": {
-        "execute": {
-          "input": {
-            "type": "object",
-            "properties": {
-              "a": {
-                "type": "integer",
-                "minimum": -1000000,
-                "maximum": 1000000
-              },
-              "b": {
-                "type": "integer",
-                "minimum": -1000000,
-                "maximum": 1000000
-              }
-            },
-            "required": [
-              "a",
-              "b"
-            ],
-            "additionalProperties": false
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        },
-        "readiness": {
-          "input": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "output": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "effects": "read",
-          "resource": "instance"
-        }
-      }
+      "capabilities": [
+        "readiness"
+      ]
     }
   ],
   "actions": [

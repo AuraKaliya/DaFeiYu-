@@ -18,6 +18,15 @@ struct Call {
     explicit Call(const Json& event) : id(event.at("call_id")), service(event.at("service")), method(event.at("method")),
         input(event.at("input")), context(event.at("context")) {}
 };
+struct ActionInvocation {
+    std::string action_id, operation_id;
+    int definition_revision;
+    Json arguments;
+    explicit ActionInvocation(const Call& call) : action_id(call.input.at("action_id")), operation_id(call.input.at("operation_id")),
+        definition_revision(call.input.at("definition_revision")), arguments(call.input.at("arguments")) {
+        if (operation_id != call.context.at("operation_id").get<std::string>() || operation_id.empty()) throw std::runtime_error("ACTION_OPERATION_MISMATCH");
+    }
+};
 class Host {
     dfy_host_api api_;
 public:
@@ -51,8 +60,24 @@ public:
     void job_result(std::string job, uint64_t sequence, const Json& value) const {
         send({{"type", "job_result"}, {"job_id", job}, {"sequence", sequence}, {"result", value}});
     }
-    void subscribe(std::string key, const Json& types) const { send({{"type", "subscribe"}, {"key", key}, {"types", types}}); }
-    void acknowledge(std::string key, uint64_t sequence) const { send({{"type", "ack_facts"}, {"key", key}, {"sequence", sequence}}); }
+    void open_scope(std::string key, std::string kind, uint64_t parent = 0) const {
+        send({{"type", "open_scope"}, {"key", key}, {"kind", kind}, {"call_id", parent}});
+    }
+    void close_scope(std::string key, std::string scope) const { send({{"type", "close_scope"}, {"key", key}, {"scope_id", scope}}); }
+    void register_scoped(std::string scope, std::string key, std::string kind, const Json& value) const {
+        send({{"type", "register_scoped"}, {"scope_id", scope}, {"key", key}, {"kind", kind}, {"value", value}});
+    }
+    void release(std::string key, std::string registration) const { send({{"type", "release_registration"}, {"key", key}, {"registration_id", registration}}); }
+    void request_scoped(std::string scope, std::string key, std::string binding, std::string method, const Json& input, int timeout_ms = 0) const {
+        Json message{{"type", "request_scoped"}, {"scope_id", scope}, {"key", key}, {"binding", binding}, {"method", method}, {"input", input}};
+        if (timeout_ms > 0) message["timeout_ms"] = timeout_ms;
+        send(message);
+    }
+    void subscribe(std::string scope, std::string key, const Json& types, const Json& filter = Json::object()) const {
+        send({{"type", "subscribe"}, {"scope_id", scope}, {"key", key}, {"types", types}, {"filter", filter}});
+    }
+    void acknowledge(std::string registration, uint64_t sequence) const { send({{"type", "ack_facts"}, {"registration_id", registration}, {"sequence", sequence}}); }
+    void read_scoped(std::string scope, std::string key, std::string object) const { send({{"type", "read_scoped"}, {"scope_id", scope}, {"key", key}, {"object", object}}); }
     void command(uint64_t parent, std::string key, std::string name, const Json& arguments) const {
         send({{"type", "submit_command"}, {"call_id", parent}, {"key", key}, {"command", name}, {"arguments", arguments}});
     }

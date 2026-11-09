@@ -37,12 +37,10 @@ void execute(const std::string& name, Profile profile, const Path& state) {
     if (name == "delegate_write_escape" || name == "channel_bypass") {
         std::ifstream source(profile.plugins / "dfy_fixture_tree_root.json"); auto manifest = Json::parse(source);
         const auto required = name == "delegate_write_escape" ? Json::array({"alpha"}) : Json::array({"alpha", "beta", "channel"});
-        manifest["services"][0]["methods"]["execute_write"]["resources"] = required;
         manifest["actions"][1]["resources"] = required;
         if (name == "channel_bypass") {
             profile.data["resources"].push_back("channel");
             manifest["requires"].push_back({{"binding", "channel"}, {"contract", "dafeiyu.channel"}, {"version", 3}});
-            manifest["services"][0]["methods"]["execute_write"]["delegates"]["resources"] = required;
             manifest["actions"][1]["delegates"]["resources"] = required;
         }
         const auto filename = "tree-" + state.filename().string() + ".json";
@@ -57,7 +55,7 @@ void execute(const std::string& name, Profile profile, const Path& state) {
             event.at("payload").at("service") == "tree.leaf") return Json(true); return Json{}; });
         host.request("policy.set", {{"expected_revision", host.request("health").at("policy").at("revision")}, {"actions", Json::array()}});
     } else if (name == "revoke_resource") {
-        wait([&] { for (const auto& op : host.request("operation.list")) if (op.at("kind") == "service" && op.at("state") == "settled") return Json(true); return Json{}; });
+        wait([&] { for (const auto& op : host.request("operation.list").value("items", Json::array())) if (op.at("kind") == "service" && op.at("state") == "settled") return Json(true); return Json{}; });
         host.request("policy.set", {{"expected_revision", host.request("health").at("policy").at("revision")}, {"resources", Json::array({"instance", "alpha"})}});
     }
     Json run;
@@ -76,14 +74,14 @@ void execute(const std::string& name, Profile profile, const Path& state) {
         const auto expected = name == "revoke_action" ? "NESTED_ACTION_REVOKED" : name == "delegate_write_escape" ? "NESTED_RESOURCE_DENIED" : "RESOURCE_DENIED";
         check(outcome.at("data").at("error").at("code") == expected, outcome.dump());
         check(outcome.at("effects") == (name == "revoke_action" ? "none" : "confirmed"), "prior confirmed effect was lost");
-        int written = 0; for (const auto& op : host.request("operation.list")) if (op.at("kind") == "service") ++written;
+        int written = 0; for (const auto& op : host.request("operation.list").value("items", Json::array())) if (op.at("kind") == "service") ++written;
         check(written == (name == "revoke_action" ? 0 : 1), "revoked write was dispatched");
     } else if (name == "readonly_hop" || name == "resource_escape") {
         const auto error = run.at("results")[0].at("outcome").at("data").at("error").at("code");
         check(error == (name == "readonly_hop" ? "NESTED_EFFECT_DENIED" : "NESTED_RESOURCE_DENIED"), error.dump());
     } else if (name == "composite") {
         int confirmed = 0;
-        for (const auto& op : host.request("operation.list")) if (op.at("kind") == "service" && op.at("result").at("effects") == "confirmed") ++confirmed;
+        for (const auto& op : host.request("operation.list").value("items", Json::array())) if (op.at("kind") == "service" && op.at("result").at("effects") == "confirmed") ++confirmed;
         check(confirmed == 2, "composite resources did not both settle");
     } else if (name == "budget") {
         check(run.at("results")[0].at("outcome").at("data").at("error").at("code") == "NESTED_CALL_BUDGET_EXHAUSTED", "shared budget not enforced");
@@ -105,7 +103,7 @@ void execute(const std::string& name, Profile profile, const Path& state) {
         check(child && ended, "child lifetime was not bounded by parent");
     } else if (name == "late_write") {
         bool confirmed = false, late = false;
-        for (const auto& op : host.request("operation.list")) if (op.at("kind") == "service") confirmed = op.at("state") == "settled" && op.at("result").at("effects") == "confirmed";
+        for (const auto& op : host.request("operation.list").value("items", Json::array())) if (op.at("kind") == "service") confirmed = op.at("state") == "settled" && op.at("result").at("effects") == "confirmed";
         for (const auto& e : trajectory) if (e.at("type") == "call.late" && e.at("payload").at("method") == "write_alpha") late = true;
         check(confirmed && late, "late write receipt was lost");
         check(host.request("run.get", {{"id", id}}).at("execution") == "waiting", "late receipt resumed business implicitly");

@@ -1,6 +1,12 @@
 #include "operations.hpp"
 #include "capabilities.hpp"
 namespace dfy {
+namespace {
+Json invocation(const Json& descriptor, const Json& input, const std::string& operation) {
+    return {{"action_id", descriptor.at("id")}, {"definition_revision", descriptor.at("revision")}, {"arguments", input}, {"operation_id", operation}};
+}
+Json read_descriptor(Json descriptor) { descriptor["effects"] = "read"; descriptor.erase("delegates"); return descriptor; }
+}
 CallScope run_scope(const Json& run, std::string role, std::string operation) {
     CallScope scope;
     scope.run = run.at("id"); scope.operation = std::move(operation); scope.role = std::move(role);
@@ -8,12 +14,12 @@ CallScope run_scope(const Json& run, std::string role, std::string operation) {
     scope.nested_limit = run.at("limits").at("nested_calls");
     return scope;
 }
-OperationCoordinator::OperationCoordinator(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy, Conversations& conversations, const Profile& profile)
-    : store_(store), plugins_(plugins), calls_(calls), policy_(policy), conversations_(conversations),
-      timeout_(profile.data.at("limits").at("call_timeout_ms")), max_jobs_(profile.data.at("limits").at("max_jobs")) {}
+OperationCoordinator::OperationCoordinator(StateStore& store, PluginRuntime& plugins, CallRouter& calls, PolicyGate& policy, Conversations& conversations, ScopeManager& scopes, const Profile& profile)
+    : store_(store), writer_(store.claim("operations", {"operation"})), plugins_(plugins), calls_(calls), policy_(policy), conversations_(conversations), scopes_(scopes),
+      timeout_(profile.data.at("limits").at("call_timeout_ms")) {}
 void OperationCoordinator::blocked(const Json& descriptor, const std::string& except) {
     if (descriptor.at("effects") == "read") return;
-    for (const auto& operation : store_.all("operation"))
+    for (const auto& operation : store_.unknown_operations(resources_of(descriptor)))
         if (operation.at("id") != except && operation.at("state") == "unknown")
             for (const auto& resource : resources_of(descriptor))
                 if (includes(resources_of(operation.at("descriptor")), resource)) throw std::runtime_error("RESOURCE_EFFECT_UNRESOLVED");
@@ -29,7 +35,7 @@ Json OperationCoordinator::prepare(const Json& run, const Json& descriptor, cons
     blocked(descriptor);
     operation = {{"id", id}, {"run_id", run.at("id")}, {"intent_revision", run.at("intent_revision")}, {"parent", parent},
         {"kind", kind}, {"descriptor", descriptor}, {"input", input}, {"state", "prepared"}, {"revision", 1}, {"result", nullptr}, {"job_id", nullptr}};
-    store_.save("operation", id, operation, "operation.prepared", operation, run.at("id"));
+    writer_.save("operation", id, operation, "operation.prepared", operation, run.at("id"));
     return operation;
 }
 void OperationCoordinator::dispatch(Json operation, CallScope scope, Done done) {
@@ -40,16 +46,17 @@ void OperationCoordinator::dispatch(Json operation, CallScope scope, Done done) 
     blocked(descriptor, id);
     scope.operation = id; scope.effects = descriptor.at("effects"); scope.resource = descriptor.at("resource");
     auto input = operation.at("input");
+    if (operation.at("kind") == "action") { input = invocation(descriptor, input, id); scope.action_definition = descriptor; }
     // Operation identity is host metadata; domain input schemas describe only business parameters.
     operation["state"] = "running"; operation["revision"] = operation.at("revision").get<int>() + 1;
-    store_.save("operation", id, operation, "operation.started", operation, operation.at("run_id"));
+    writer_.save("operation", id, operation, "operation.started", operation, operation.at("run_id"));
     try {
         calls_.request(descriptor.at("service"), descriptor.value("method", std::string("execute")), input, scope, timeout_,
             [this, id, done](const Completion& value) { settle(id, value, done); });
     } catch (const std::exception& error) {
         auto failed = store_.get("operation", id); failed["state"] = "settled"; failed["error"] = failure(error);
         failed["result"] = sdk::outcome({{"error", failed.at("error")}}, "none", "failed");
-        store_.save("operation", id, failed, "operation.not_dispatched", failed.at("error"), scope.run);
+        writer_.save("operation", id, failed, "operation.not_dispatched", failed.at("error"), scope.run);
         if (done) done(failed, {{}, failure(error)});
     }
 }
@@ -57,7 +64,7 @@ void OperationCoordinator::settle(const std::string& id, const Completion& compl
     auto operation = store_.get("operation", id);
     if (operation.is_null()) return;
     if (operation.at("state") == "settled") {
-        store_.atomic([&] { store_.event("operation.additional_evidence", {{"result", completion.result}, {"error", completion.error}}, operation.at("run_id")); });
+        store_.atomic([&] { writer_.event("operation.additional_evidence", {{"result", completion.result}, {"error", completion.error}}, operation.at("run_id")); });
         if (done) done(operation, completion);
         return;
     }
@@ -67,7 +74,7 @@ void OperationCoordinator::settle(const std::string& id, const Completion& compl
         require(!job.is_null() && job.at("operation_id") == id, "JOB_HANDOFF_INVALID");
         if (job.at("state") != "completed") {
             operation["state"] = "job"; operation["job_id"] = job.at("id");
-            store_.save("operation", id, operation, "operation.job_handoff", job, operation.at("run_id"));
+            writer_.save("operation", id, operation, "operation.job_handoff", job, operation.at("run_id"));
         }
         if (done) done(store_.get("operation", id), completion);
         return;
@@ -84,17 +91,18 @@ void OperationCoordinator::settle(const std::string& id, const Completion& compl
         } else {
             result = completion.result;
             validate_outcome(result);
+            if (operation.at("kind") == "action") sdk::validate_value(descriptor.at("output"), result);
         }
     } catch (const std::exception& error) {
         result = sdk::outcome({{"error", failure(error)}}, descriptor.at("effects") == "read" ? "none" : "unknown", "failed");
     }
-    for (const auto& child : store_.all("operation")) if (child.at("parent") == id) {
+    for (const auto& child : store_.child_operations(id)) {
         if (child.at("state") != "settled") result["effects"] = "unknown";
         else if (result.at("effects") == "none" && child.at("result").at("effects") == "confirmed") result["effects"] = "confirmed";
     }
     operation["state"] = result.at("effects") == "unknown" ? "unknown" : "settled";
     operation["result"] = result; operation["revision"] = operation.at("revision").get<int>() + 1;
-    store_.save("operation", id, operation, operation.at("state") == "unknown" ? "operation.unknown" : "operation.settled", operation, operation.at("run_id"));
+    writer_.save("operation", id, operation, operation.at("state") == "unknown" ? "operation.unknown" : "operation.settled", operation, operation.at("run_id"));
     if (done) done(operation, completion);
 }
 std::string OperationCoordinator::action(const Json& run, const Json& descriptor, const Json& input, const std::string& key) {
@@ -103,17 +111,19 @@ std::string OperationCoordinator::action(const Json& run, const Json& descriptor
     const auto id = operation.at("id").get<std::string>();
     auto scope = run_scope(run, "action", id);
     scope.root_action = descriptor.at("id");
+    scope.registration_id = scopes_.action_registration(descriptor, run);
     if (operation.at("state") == "prepared") {
         const auto methods = plugins_.service(descriptor.at("service")).at("methods");
         if (methods.contains("readiness")) {
-            calls_.request(descriptor.at("service"), "readiness", {{"input", input}}, scope, timeout_,
+            auto readiness_scope = scope; readiness_scope.action_definition = read_descriptor(descriptor);
+            calls_.request(descriptor.at("service"), "readiness", invocation(descriptor, input, id), readiness_scope, timeout_,
                 [this, operation, scope](const Completion& readiness) {
                     if (readiness.late) return;
                     if (!readiness.error.is_null() || !readiness.result.value("available", false)) {
                         Completion failed{{}, readiness.error.is_null() ? sdk::error("ACTION_UNAVAILABLE", "unavailable") : readiness.error};
                         auto value = store_.get("operation", operation.at("id"));
                         value["state"] = "settled"; value["result"] = sdk::outcome({{"error", failed.error}}, "none", "failed");
-                        store_.save("operation", value.at("id"), value, "operation.unavailable", failed.error, scope.run); return;
+                        writer_.save("operation", value.at("id"), value, "operation.unavailable", failed.error, scope.run); return;
                     }
                     auto current_run = store_.get("run", scope.run);
                     if (terminal(current_run) || current_run.at("intent_revision") != scope.intent) return;
@@ -143,6 +153,7 @@ void OperationCoordinator::nested(const PluginMessage& message) {
     const auto method = message.body.at("method").get<std::string>();
     auto descriptor = plugins_.method(service, method);
     require(plugins_.service(service).at("contract") != "dafeiyu.model", "MODEL_SCHEDULING_REQUIRED");
+    require(plugins_.service(service).at("contract") != "dafeiyu.action-executor", "ACTION_DISPATCH_REQUIRED");
     if (plugins_.service(service).at("contract") == "dafeiyu.channel") {
         require(method != "deliver", "CHANNEL_DELIVERY_COORDINATOR_REQUIRED");
         if (method == "query_delivery") {
@@ -165,6 +176,7 @@ void OperationCoordinator::nested(const PluginMessage& message) {
         plugins_.send(source, {{"type", "reply"}, {"key", key}, {"call_id", ticket}, {"result", value.result}, {"error", value.error}});
     };
     auto child_scope = parent.scope; child_scope.parent_call = parent.id; child_scope.role = "service";
+    child_scope.action_definition = nullptr;
     const auto requested_timeout = message.body.value("timeout_ms", timeout_);
     require(requested_timeout > 0, "CALL_TIMEOUT_INVALID");
     const auto child_timeout = std::min(timeout_, requested_timeout);
@@ -181,52 +193,6 @@ void OperationCoordinator::nested(const PluginMessage& message) {
         });
     }
 }
-void OperationCoordinator::register_job(const PluginMessage& message) {
-    const auto parent = calls_.owned(message.plugin, message.body.at("call_id"));
-    require(!parent.scope.operation.empty() && parent.scope.role == "action", "JOB_SCOPE_DENIED");
-    auto operation = store_.get("operation", parent.scope.operation);
-    require(operation.at("descriptor").at("service") == parent.service && operation.at("state") == "running", "JOB_OPERATION_OWNER_DENIED");
-    const auto work = message.body.at("work_key").get<std::string>();
-    require(!work.empty() && work.size() <= 128, "JOB_WORK_KEY_INVALID");
-    const auto id = parent.scope.operation + ":job:" + fingerprint(work);
-    auto job = store_.get("job", id);
-    if (!job.is_null()) require(job.at("work_key") == work && job.at("plugin") == message.plugin, "JOB_REGISTRATION_CONFLICT");
-    if (job.is_null()) {
-        size_t count = 0; for (const auto& item : store_.all("job")) if (item.at("state") != "completed") ++count;
-        require(count < static_cast<size_t>(max_jobs_), "JOB_LIMIT");
-        require(operation.at("job_id").is_null(), "OPERATION_ALREADY_HAS_JOB");
-        job = {{"id", id}, {"run_id", parent.scope.run}, {"operation_id", parent.scope.operation}, {"plugin", message.plugin},
-            {"service", parent.service}, {"work_key", work}, {"state", "registered"}, {"sequence", 0}, {"result", nullptr}, {"cancel_requested", false}};
-        operation["job_id"] = id;
-        store_.atomic([&] { store_.put("job", id, job); store_.put("operation", parent.scope.operation, operation); store_.event("job.registered", job, parent.scope.run); });
-    }
-    plugins_.allow_job(message.plugin, id);
-    plugins_.send(message.plugin, {{"type", "reply"}, {"call_id", parent.id}, {"key", message.body.at("key")}, {"result", job}, {"error", nullptr}});
-}
-void OperationCoordinator::job_result(const PluginMessage& message) {
-    const auto id = message.body.at("job_id").get<std::string>(); auto job = store_.get("job", id);
-    require(!job.is_null() && job.at("plugin") == message.plugin, "JOB_OWNER_DENIED");
-    const auto sequence = message.body.at("sequence").get<uint64_t>(); require(sequence > 0, "JOB_SEQUENCE_INVALID");
-    if (job.at("state") == "completed") require(job.at("sequence") == sequence && job.at("result") == message.body.at("result"), "JOB_TERMINAL_CONFLICT");
-    else {
-        validate_outcome(message.body.at("result"));
-        job["state"] = "completed"; job["sequence"] = sequence; job["result"] = message.body.at("result");
-        store_.atomic([&] {
-            store_.put("job", id, job); settle(job.at("operation_id"), {job.at("result"), {}});
-            store_.event("job.completed", job, job.at("run_id"));
-        });
-    }
-    plugins_.send(message.plugin, {{"type", "job_receipt"}, {"job_id", id}, {"sequence", sequence}});
-}
-void OperationCoordinator::cancel_jobs(const std::string& run_id) {
-    for (auto job : store_.all("job")) {
-        if (job.at("run_id") != run_id || job.at("state") == "completed" || job.at("cancel_requested") == true) continue;
-        job["cancel_requested"] = true; store_.save("job", job.at("id"), job, "job.cancel_requested", job, run_id);
-        auto run = store_.get("run", run_id);
-        try { calls_.request(job.at("service"), "cancel_job", job, run_scope(run, "job_control", job.at("operation_id")), timeout_, [](const Completion&) {}); }
-        catch (const std::exception& error) { store_.atomic([&] { store_.event("job.cancel_unavailable", failure(error), run_id); }); }
-    }
-}
 void OperationCoordinator::query(const std::string& id) {
     auto operation = store_.get("operation", id); require(!operation.is_null(), "OPERATION_MISSING");
     const auto& descriptor = operation.at("descriptor");
@@ -234,36 +200,21 @@ void OperationCoordinator::query(const std::string& id) {
     auto run = store_.get("run", operation.at("run_id"));
     require(plugins_.matches(run.at("bindings")), "BINDING_CHANGED");
     if (operation.at("kind") == "delivery") conversations_.validate_identity(operation.at("input").at("binding"));
-    calls_.request(descriptor.at("service"), query_method, {{"id", id}, {"input", operation.at("input")}}, run_scope(run, "reconcile", id), timeout_,
+    auto scope = run_scope(run, "reconcile", id);
+    auto query_input = Json{{"id", id}, {"input", operation.at("input")}};
+    if (operation.at("kind") == "action") { scope.action_definition = read_descriptor(descriptor); query_input = invocation(descriptor, operation.at("input"), id); }
+    calls_.request(descriptor.at("service"), query_method, query_input, scope, timeout_,
         [this, id](const Completion& result) { if (result.error.is_null()) settle(id, result); });
 }
 void OperationCoordinator::recover() {
-    for (auto operation : store_.all("operation")) {
+    for (auto operation : store_.recoverable_operations()) {
         if (operation.at("state") != "running" && operation.at("state") != "job") continue;
         if (!operation.at("job_id").is_null()) continue;
         operation["state"] = operation.at("descriptor").at("effects") == "read" ? "prepared" : "unknown";
-        store_.save("operation", operation.at("id"), operation, "operation.interrupted", operation, operation.at("run_id"));
+        writer_.save("operation", operation.at("id"), operation, "operation.interrupted", operation, operation.at("run_id"));
         if (operation.at("state") == "unknown") { try { query(operation.at("id")); } catch (const std::exception&) { /* Original binding may be unavailable. Keep unresolved. */ } }
     }
-    for (auto job : store_.all("job")) {
-        if (job.at("state") == "completed") continue;
-        auto run = store_.get("run", job.at("run_id"));
-        try {
-            require(plugins_.matches(run.at("bindings")), "BINDING_CHANGED");
-            plugins_.allow_job(job.at("plugin"), job.at("id"));
-            calls_.request(job.at("service"), "query_job", job, run_scope(run, "job_recovery", job.at("operation_id")), timeout_,
-                [this, job, run](const Completion& result) {
-                    if (result.late) return;
-                    if (result.error.is_null() && result.result.value("state", std::string{}) == "completed") {
-                        job_result({job.at("plugin"), {{"job_id", job.at("id")}, {"sequence", 1}, {"result", result.result.at("result")}}});
-                    } else if (result.error.is_null() && result.result.value("state", std::string{}) == "running") {
-                        calls_.request(job.at("service"), "reattach_job", job, run_scope(run, "job_recovery", job.at("operation_id")), timeout_, [](const Completion&) {});
-                    } else {
-                        settle(job.at("operation_id"), {{}, sdk::error("JOB_INTERRUPTED", "unavailable", "unknown")});
-                    }
-                });
-        } catch (const std::exception&) { /* Leave the registered work for explicit reconciliation. */ }
-    }
+
 }
 Json OperationCoordinator::reconcile(const Json& command) {
     auto value = store_.get("operation", command.at("id"));
@@ -271,7 +222,13 @@ Json OperationCoordinator::reconcile(const Json& command) {
     require(value.at("revision") == command.at("expected_revision"), "OPERATION_REVISION_CONFLICT");
     require(!command.at("reason").get<std::string>().empty() && !command.at("evidence").get<std::string>().empty(), "RECONCILIATION_EVIDENCE_REQUIRED");
     validate_outcome(command.at("result")); require(command.at("result").at("effects") != "unknown", "RECONCILIATION_UNRESOLVED");
-    store_.atomic([&] { store_.event("operation.reconciliation", command, value.at("run_id")); settle(value.at("id"), {command.at("result"), {}}); });
+    store_.atomic([&] { writer_.event("operation.reconciliation", command, value.at("run_id")); settle(value.at("id"), {command.at("result"), {}}); });
     return store_.get("operation", value.at("id"));
 }
+void OperationCoordinator::attach_job(const std::string& operation_id, const std::string& job_id) {
+    auto value = store_.get("operation", operation_id); require(!value.is_null() && value.at("state") == "running", "JOB_OPERATION_NOT_RUNNING");
+    require(value.at("job_id").is_null() || value.at("job_id") == job_id, "OPERATION_ALREADY_HAS_JOB");
+    value["job_id"] = job_id; writer_.save("operation", operation_id, value, "operation.job_registered", {{"job_id", job_id}}, value.at("run_id"));
+}
+
 }

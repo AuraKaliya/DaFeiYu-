@@ -7,7 +7,7 @@ class Channel : public Plugin {
     Json config_;
 public:
     static constexpr auto id = "dafeiyu.channel.simulator";
-    static constexpr auto version = "0.4.0";
+    static constexpr auto version = "0.5.0";
     Channel(Host host, Json config) : Plugin(host), db_(host.data_directory() / "channel.sqlite3"), config_(std::move(config)) {
         db_.verify_identity(host.instance_id(), id);
         db_.exec("CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,plan TEXT NOT NULL,result TEXT NOT NULL)");
