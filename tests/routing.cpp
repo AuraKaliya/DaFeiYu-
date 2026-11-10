@@ -3,109 +3,224 @@
 #include <iostream>
 #include <thread>
 using namespace dfy;
+
 namespace {
-void check(bool condition, const std::string& message) { if (!condition) throw std::runtime_error(message); }
-template<class Fn> Json wait(Fn fn) {
+// 在测试条件不成立时抛出携带失败原因的异常。
+void check(bool condition, const std::string& message) {
+    if (!condition)
+        throw std::runtime_error(message);
+}
+
+// 轮询测试条件直到取得有效结果，超时则报告失败。
+// 步骤：计算截止时间 → 重复执行条件并短暂等待 → 返回有效结果或报告超时。
+template <class Fn> Json wait(Fn fn) {
     const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-    while (std::chrono::steady_clock::now() < end) { auto result = fn(); if (!result.is_null()) return result; std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+
+    while (std::chrono::steady_clock::now() < end) {
+        auto result = fn();
+        if (!result.is_null())
+            return result;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
     throw std::runtime_error("ROUTING_TIMEOUT");
 }
+
+// 分页读取实例事实日志，供渠道路由断言使用。
 Json events(InstanceRuntime& host) {
-    Json all = Json::array(); uint64_t after = 0;
-    for (;;) { const auto page = host.request("events", {{"after", after}, {"limit", 200}});
-        for (const auto& event : page.at("events")) all.push_back(event);
-        if (page.at("cursor") == after) return all; after = page.at("cursor"); }
+    Json all = Json::array();
+    uint64_t after = 0;
+    for (;;) {
+        const auto page = host.request("events", {{"after", after}, {"limit", 200}});
+        for (const auto& event : page.at("events"))
+            all.push_back(event);
+        if (page.at("cursor") == after)
+            return all;
+        after = page.at("cursor");
+    }
 }
+
+// 取得测试配置中的模拟渠道插件配置。
 Json& channel(Profile& profile) {
-    for (auto& item : profile.data["plugins"]) if (item.at("manifest") == "dfy_fixture_channel_dual.json") return item;
+    for (auto& item : profile.data["plugins"])
+        if (item.at("manifest") == "dfy_fixture_channel_dual.json")
+            return item;
     throw std::runtime_error("CHANNEL_CONFIG_MISSING");
 }
+
+// 构造具有两个独立渠道身份和账号的测试配置。
 Profile dual(Profile profile) {
-    for (auto& item : profile.data["plugins"]) if (item.at("manifest") == "dfy_channel_simulator.json") {
-        item["manifest"] = "dfy_fixture_channel_dual.json";
-        item["config"] = {{"services", Json::array({"channel.simulator", "channel.second"})}};
-        item["channels"] = {{"channel.simulator", {{"instance", "first"}, {"account", "account-a"}, {"allow_reply", true}}},
-            {"channel.second", {{"instance", "second"}, {"account", "account-b"}, {"allow_reply", true}}}};
-    }
+    for (auto& item : profile.data["plugins"])
+        if (item.at("manifest") == "dfy_channel_simulator.json") {
+            item["manifest"] = "dfy_fixture_channel_dual.json";
+            item["config"] = {{"services", Json::array({"channel.simulator", "channel.second"})}};
+            item["channels"] = {
+                {"channel.simulator", {{"instance", "first"}, {"account", "account-a"}, {"allow_reply", true}}},
+                {"channel.second", {{"instance", "second"}, {"account", "account-b"}, {"allow_reply", true}}}};
+        }
     return profile;
 }
+
+// 等待指定输入接收并返回其关联的运行任务标识。
 std::string run_for(InstanceRuntime& host, const std::string& key) {
-    const auto input = wait([&] { for (const auto& event : events(host))
-        if (event.at("type") == "input.accepted" && event.at("payload").at("key") == key) return event.at("payload"); return Json{}; });
-    return wait([&] { const auto current = host.request("input.get", {{"id", input.at("id")}}); return current.at("run_id"); }).get<std::string>();
+    const auto input = wait([&] {
+        for (const auto& event : events(host))
+            if (event.at("type") == "input.accepted" && event.at("payload").at("key") == key)
+                return event.at("payload");
+        return Json{};
+    });
+
+    return wait([&] {
+        const auto current = host.request("input.get", {{"id", input.at("id")}});
+        return current.at("run_id");
+    }).get<std::string>();
 }
+
+// 等待指定运行任务完成，并在任务失败时报告其错误。
 Json finished(InstanceRuntime& host, const std::string& run) {
-    return wait([&] { const auto state = host.request("run.get", {{"id", run}});
-        if (state.at("execution") == "failed") throw std::runtime_error(state.at("error").dump());
-        return state.at("execution") == "completed" ? state : Json{}; });
+    return wait([&] {
+        const auto state = host.request("run.get", {{"id", run}});
+        if (state.at("execution") == "failed")
+            throw std::runtime_error(state.at("error").dump());
+        return state.at("execution") == "completed" ? state : Json{};
+    });
 }
+
+// 核对交付操作使用预期渠道、外部目标和原任务回复绑定。
 void check_delivery(InstanceRuntime& host, const Json& run, const std::string& service) {
     bool found = false;
-    for (const auto& operation : host.request("operation.list").value("items", Json::array())) if (operation.at("run_id") == run.at("id") && operation.at("kind") == "delivery") {
-        found = true; check(operation.at("descriptor").at("service") == service, "wrong delivery provider");
-        check(operation.at("input").at("target") == "room-7", "lost external conversation id");
-        check(operation.at("input").at("binding") == run.at("delivery_binding"), "delivery binding changed");
-    }
+    for (const auto& operation : host.request("operation.list").value("items", Json::array()))
+        if (operation.at("run_id") == run.at("id") && operation.at("kind") == "delivery") {
+            found = true;
+            check(operation.at("descriptor").at("service") == service, "wrong delivery provider");
+            check(operation.at("input").at("target") == "room-7", "lost external conversation id");
+            check(operation.at("input").at("binding") == run.at("delivery_binding"), "delivery binding changed");
+        }
+
     check(found, "no delivery operation");
 }
+
+// 验证多渠道会话隔离、授权代次及交付路由约束。
+// 步骤：构造场景配置 → 注入渠道输入或变更身份授权 → 查询任务及交付记录 → 断言隔离或拒绝行为。
 void execute(const std::string& name, Profile profile, const Path& state) {
     profile = dual(std::move(profile));
     if (name == "two_channels") {
-        channel(profile)["config"]["inputs"] = Json::array({
-            {{"key", "one"}, {"channel", "channel.simulator"}, {"conversation", "room-7"}, {"text", "first"}},
-            {{"key", "two"}, {"channel", "channel.second"}, {"conversation", "room-7"}, {"text", "second"}}});
+        channel(profile)["config"]["inputs"] = Json::array(
+            {{{"key", "one"}, {"channel", "channel.simulator"}, {"conversation", "room-7"}, {"text", "first"}},
+                {{"key", "two"}, {"channel", "channel.second"}, {"conversation", "room-7"}, {"text", "second"}}});
+
         InstanceRuntime host(profile, state);
         const auto first = finished(host, run_for(host, "one")), second = finished(host, run_for(host, "two"));
+
         check(first.at("conversation") != second.at("conversation"), "channel namespaces collided");
-        check(first.at("conversation_key").at("account") == "account-a" && second.at("conversation_key").at("account") == "account-b", "account identity lost");
-        check_delivery(host, first, "channel.simulator"); check_delivery(host, second, "channel.second");
-    } else if (name == "queued_route" || name == "account_change" || name == "authorization_generation" || name == "rename_generation") {
+        check(first.at("conversation_key").at("account") == "account-a" &&
+                  second.at("conversation_key").at("account") == "account-b",
+            "account identity lost");
+        check_delivery(host, first, "channel.simulator");
+        check_delivery(host, second, "channel.second");
+    } else if (name == "queued_route" || name == "account_change" || name == "authorization_generation" ||
+               name == "rename_generation") {
         profile.data["bindings"]["channel"] = "channel.second";
-        { InstanceRuntime host(profile, state); host.request("behavior.set", {{"expected_revision", 1}, {"mode", "resting"}});
-          host.request("input.accept", {{"key", "queued"}, {"text", "queued input"}, {"conversation", "room-7"}}); }
-        profile.data["bindings"]["channel"] = "channel.simulator";
-        if (name == "account_change") channel(profile)["channels"]["channel.second"]["account"] = "another-account";
-        if (name == "authorization_generation") channel(profile)["channels"]["channel.second"]["allow_reply"] = false;
-        if (name == "rename_generation") channel(profile)["channels"]["channel.second"]["instance"] = "renamed";
-        std::string id;
-        { InstanceRuntime host(profile, state); host.request("behavior.set", {{"expected_revision", 2}, {"mode", "available"}});
-          id = run_for(host, "queued");
-          if (name == "queued_route") check_delivery(host, finished(host, id), "channel.second");
-          else {
-              const auto run = wait([&] { auto value = host.request("run.get", {{"id", id}}); return value.at("error").is_null() ? Json{} : value; });
-              check(run.at("error").at("code") == (name == "account_change" || name == "rename_generation" ? "DELIVERY_BINDING_CHANGED" : "DELIVERY_AUTHORITY_CHANGED"), run.at("error").dump());
-              for (const auto& op : host.request("operation.list").value("items", Json::array())) check(op.at("kind") != "delivery", "revoked route dispatched");
-          }
+        {
+            InstanceRuntime host(profile, state);
+            host.request("behavior.set", {{"expected_revision", 1}, {"mode", "resting"}});
+            host.request("input.accept", {{"key", "queued"}, {"text", "queued input"}, {"conversation", "room-7"}});
         }
+
+        profile.data["bindings"]["channel"] = "channel.simulator";
+        if (name == "account_change")
+            channel(profile)["channels"]["channel.second"]["account"] = "another-account";
+        if (name == "authorization_generation")
+            channel(profile)["channels"]["channel.second"]["allow_reply"] = false;
+        if (name == "rename_generation")
+            channel(profile)["channels"]["channel.second"]["instance"] = "renamed";
+
+        std::string id;
+        {
+            InstanceRuntime host(profile, state);
+            host.request("behavior.set", {{"expected_revision", 2}, {"mode", "available"}});
+            id = run_for(host, "queued");
+            if (name == "queued_route")
+                check_delivery(host, finished(host, id), "channel.second");
+            else {
+                const auto run = wait([&] {
+                    auto value = host.request("run.get", {{"id", id}});
+                    return value.at("error").is_null() ? Json{} : value;
+                });
+                check(run.at("error").at("code") == (name == "account_change" || name == "rename_generation"
+                                                            ? "DELIVERY_BINDING_CHANGED"
+                                                            : "DELIVERY_AUTHORITY_CHANGED"),
+                    run.at("error").dump());
+                for (const auto& op : host.request("operation.list").value("items", Json::array()))
+                    check(op.at("kind") != "delivery", "revoked route dispatched");
+            }
+        }
+
         if (name == "authorization_generation" || name == "rename_generation") {
             channel(profile)["channels"]["channel.second"]["allow_reply"] = true;
             channel(profile)["channels"]["channel.second"]["instance"] = "second";
-            InstanceRuntime host(profile, state); host.request("run.resume", {{"id", id}});
-            wait([&] { auto value = host.request("run.get", {{"id", id}}); return value.at("execution") == "waiting" ? value : Json{}; });
-            for (const auto& op : host.request("operation.list").value("items", Json::array())) check(op.at("kind") != "delivery", "old permission revived after regrant");
+            InstanceRuntime host(profile, state);
+            host.request("run.resume", {{"id", id}});
+            wait([&] {
+                auto value = host.request("run.get", {{"id", id}});
+                return value.at("execution") == "waiting" ? value : Json{};
+            });
+            for (const auto& op : host.request("operation.list").value("items", Json::array()))
+                check(op.at("kind") != "delivery", "old permission revived after regrant");
         }
     } else if (name == "foreign_channel") {
-        channel(profile)["config"]["inputs"] = Json::array({{{"key", "forged"}, {"channel", "model.scripted"}, {"conversation", "room-7"}, {"text", "bad"}}});
+        channel(profile)["config"]["inputs"] = Json::array(
+            {{{"key", "forged"}, {"channel", "model.scripted"}, {"conversation", "room-7"}, {"text", "bad"}}});
+
         InstanceRuntime host(profile, state);
-        const auto rejected = wait([&] { for (const auto& e : events(host)) if (e.at("type") == "plugin.request_rejected") return e.at("payload"); return Json{}; });
+        const auto rejected = wait([&] {
+            for (const auto& e : events(host))
+                if (e.at("type") == "plugin.request_rejected")
+                    return e.at("payload");
+            return Json{};
+        });
+
         check(rejected.at("error").at("code") == "INPUT_CHANNEL_OWNER_DENIED", rejected.dump());
         check(host.request("run.list").value("items", Json::array()).empty(), "foreign service created a run");
     } else if (name == "cross_channel_steer") {
         std::string id;
-        { InstanceRuntime host(profile, state); host.request("input.accept", {{"key", "original"}, {"text", "first"}, {"conversation", "room-7"}});
-          id = run_for(host, "original"); (void)finished(host, id); }
-        channel(profile)["config"]["inputs"] = Json::array({{{"key", "cross"}, {"channel", "channel.second"}, {"conversation", "room-7"}, {"text", "steer"}, {"run_id", id}}});
+        {
+            InstanceRuntime host(profile, state);
+            host.request("input.accept", {{"key", "original"}, {"text", "first"}, {"conversation", "room-7"}});
+            id = run_for(host, "original");
+            (void)finished(host, id);
+        }
+
+        channel(profile)["config"]["inputs"] = Json::array({{{"key", "cross"}, {"channel", "channel.second"},
+            {"conversation", "room-7"}, {"text", "steer"}, {"run_id", id}}});
         InstanceRuntime host(profile, state);
-        const auto rejected = wait([&] { for (const auto& e : events(host)) if (e.at("type") == "input.rejected" && e.at("payload").at("key") == "cross") return e.at("payload"); return Json{}; });
+
+        const auto rejected = wait([&] {
+            for (const auto& e : events(host))
+                if (e.at("type") == "input.rejected" && e.at("payload").at("key") == "cross")
+                    return e.at("payload");
+            return Json{};
+        });
         check(rejected.at("error").at("code") == "STEER_SCOPE_DENIED", rejected.dump());
         check(host.request("run.get", {{"id", id}}).at("intent_revision") == 1, "foreign channel changed intent");
-    } else throw std::runtime_error("UNKNOWN_ROUTING_CASE");
+    } else
+        throw std::runtime_error("UNKNOWN_ROUTING_CASE");
 }
 }
+
+// 解析路由测试参数，创建隔离状态目录并执行指定场景。
 int main(int argc, char** argv) {
-    try { if (argc != 4) return 2;
-        const auto state = sdk::path_from_utf8(argv[3]) / (std::string(argv[1]) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    try {
+        if (argc != 4)
+            return 2;
+        const auto state =
+            sdk::path_from_utf8(argv[3]) /
+            (std::string(argv[1]) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         execute(argv[1], Profile::open(sdk::path_from_utf8(argv[2])), state);
-        std::cout << "PASS " << argv[1] << '\n'; return 0;
-    } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+        std::cout << "PASS " << argv[1] << '\n';
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
 }

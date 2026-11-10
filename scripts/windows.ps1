@@ -25,6 +25,7 @@ $configurePreset = switch ($Mode) { 'Core' { 'windows-core' }; 'Minimal' { 'wind
 $binaryDirectory = switch ($Mode) { 'Core' { 'build/windows-core' }; 'Minimal' { 'build/windows-minimal' }; 'Test' { 'build/windows' } }
 $installDirectory = switch ($Mode) { 'Core' { 'out/dafeiyu-core-v5' }; 'Minimal' { 'out/dafeiyu-minimal-v5' }; 'Test' { 'out/dafeiyu-test-build-v5' } }
 
+# 执行构建工具或示例程序，并将非零退出码转换为脚本失败。
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Program exited with code $LASTEXITCODE" }

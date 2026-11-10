@@ -19,7 +19,7 @@ if(DFY_BUILD_EXAMPLES)
   install(FILES ${PROJECT_SOURCE_DIR}/resources/foundation.txt DESTINATION resources)
 endif()
 
-# Tests get their own runtime layout; it never augments the example's plugin directory.
+# 测试使用独立运行目录，避免向示例插件目录混入测试模块。
 if(BUILD_TESTING)
   set(test_root "${PROJECT_BINARY_DIR}/tests/runtime/$<CONFIG>")
   if(DFY_BUILD_EXAMPLES)

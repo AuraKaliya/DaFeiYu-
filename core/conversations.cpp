@@ -1,96 +1,165 @@
 #include "conversations.hpp"
+
 namespace dfy {
+// 确保会话处于打开状态，重新打开时递增会话代次。
+// 步骤：读取会话 → 按新建或重新打开确定代次 → 事务保存状态及打开事实。
 Json Conversations::ensure(const Json& route) {
     const auto id = route.at("id").get<std::string>();
     auto value = store_.get("conversation", id);
-    if (value.is_null()) value = {{"id", id}, {"key", route.at("key")}, {"state", "open"}, {"generation", 1}};
-    else if (value.at("state") == "closed") { value["state"] = "open"; value["generation"] = value.at("generation").get<int>() + 1; }
-    else return value;
-    store_.atomic([&] { writer_.put("conversation", id, value); writer_.event("conversation.opened", value, {}, "core", {}, id); });
+    if (value.is_null())
+        value = {{"id", id}, {"key", route.at("key")}, {"state", "open"}, {"generation", 1}};
+    else if (value.at("state") == "closed") {
+        value["state"] = "open";
+        value["generation"] = value.at("generation").get<int>() + 1;
+    } else
+        return value;
+
+    store_.atomic([&] {
+        writer_.put("conversation", id, value);
+        writer_.event("conversation.opened", value, {}, "core", {}, id);
+    });
     return value;
 }
+
+// 关闭会话并递增代次，使已有会话作用域失效。
 Json Conversations::close(const std::string& id) {
-    auto value = store_.get("conversation", id); require(!value.is_null(), "CONVERSATION_MISSING");
-    if (value.at("state") != "closed") { value["state"] = "closed"; value["generation"] = value.at("generation").get<int>() + 1;
-        store_.atomic([&] { writer_.put("conversation", id, value); writer_.event("conversation.closed", value, {}, "core", {}, id); }); }
+    auto value = store_.get("conversation", id);
+    require(!value.is_null(), "CONVERSATION_MISSING");
+    if (value.at("state") != "closed") {
+        value["state"] = "closed";
+        value["generation"] = value.at("generation").get<int>() + 1;
+        store_.atomic([&] {
+            writer_.put("conversation", id, value);
+            writer_.event("conversation.closed", value, {}, "core", {}, id);
+        });
+    }
     return value;
 }
+
+// 恢复渠道授权记录，并为撤销或变更后的渠道更新授权代次。
+// 步骤：收集当前渠道 → 退役已移除的渠道授权 → 比较并保存当前渠道身份与权限。
 void Conversations::start() {
     std::set<std::string> current, retired_services;
-    for (const auto& service : plugins_.channels()) current.insert(plugins_.channel_binding(service.at("id")).at("instance").get<std::string>());
+    for (const auto& service : plugins_.channels())
+        current.insert(plugins_.channel_binding(service.at("id")).at("instance").get<std::string>());
+
     for (auto saved : store_.all("channel_authority")) {
-        if (current.contains(saved.at("id").get<std::string>()) || saved.at("policy").value("retired", false)) continue;
+        if (current.contains(saved.at("id").get<std::string>()) || saved.at("policy").value("retired", false))
+            continue;
         const auto identity = saved.at("policy").at("identity");
         retired_services.insert(identity.at("service").get<std::string>());
         saved["generation"] = saved.at("generation").get<int>() + 1;
         saved["policy"] = {{"retired", true}, {"identity", identity}};
         writer_.save("channel_authority", saved.at("id"), saved, "channel.authority_retired", saved);
     }
+
     for (const auto& service : plugins_.channels()) {
         const auto channel = plugins_.channel_binding(service.at("id"));
         const auto selected = plugins_.selection(channel.at("plugin"));
-        const auto policy = Json{{"identity", channel}, {"owner", profile_.data.at("owner")}, {"principals", selected.value("principals", Json::object())},
-            {"accept_inputs", selected.value("accept_inputs", false)}, {"allow_reply", selected.at("channels").at(service.at("id").get<std::string>()).value("allow_reply", true)}};
+        const auto policy = Json{{"identity", channel}, {"owner", profile_.data.at("owner")},
+            {"principals", selected.value("principals", Json::object())},
+            {"accept_inputs", selected.value("accept_inputs", false)},
+            {"allow_reply",
+                selected.at("channels").at(service.at("id").get<std::string>()).value("allow_reply", true)}};
         const auto key = channel.at("instance").get<std::string>();
+
         auto saved = store_.get("channel_authority", key);
-        if (saved.is_null()) saved = {{"id", key}, {"generation", 1}, {"policy", policy}};
+        if (saved.is_null())
+            saved = {{"id", key}, {"generation", 1}, {"policy", policy}};
         else if (saved.at("policy") != policy || retired_services.contains(service.at("id").get<std::string>())) {
-            saved["generation"] = saved.at("generation").get<int>() + 1; saved["policy"] = policy;
+            saved["generation"] = saved.at("generation").get<int>() + 1;
+            saved["policy"] = policy;
         }
         writer_.save("channel_authority", key, saved, "channel.authority_loaded", saved);
     }
 }
-Json Conversations::bind(const std::string& service, const std::string& target, Json authorization, const Json& reply_reference) {
+
+// 构造包含渠道身份和授权代次的会话路由及回复绑定。
+// 步骤：校验目标与渠道 → 读取授权代次 → 构造会话标识及交付描述。
+Json Conversations::bind(
+    const std::string& service, const std::string& target, Json authorization, const Json& reply_reference) {
     require(!target.empty() && target.size() <= 2048, "CONVERSATION_TARGET_INVALID");
+
     const auto channel = plugins_.channel_binding(service);
     const auto policy = store_.get("channel_authority", channel.at("instance"));
     require(!policy.is_null(), "CHANNEL_AUTHORITY_UNAVAILABLE");
     authorization["generation"] = policy.at("generation");
+
     sdk::ConversationKey key{store_.instance_id(), channel.at("instance"), channel.at("account"), target};
     sdk::DeliveryBinding delivery{channel, authorization, target, reply_reference};
     return {{"id", key.id()}, {"key", key.to_json()}, {"delivery", delivery.to_json()}};
 }
+
+// 为本地所有者输入绑定指定或默认回复渠道。
 Json Conversations::local(const std::string& target, const std::string& service) {
     return bind(service.empty() ? plugins_.binding("channel") : service, target,
         {{"kind", "local-owner"}, {"actor", profile_.data.at("owner")}}, nullptr);
 }
+
+// 校验渠道输入来源，并绑定映射到实例所有者的回复身份。
+// 步骤：核对服务归属及输入权限 → 验证渠道主体映射 → 构造回复路由。
 Json Conversations::channel(const std::string& plugin, const std::string& service, const Json& input) {
-    require(plugins_.owner(service) == plugin && plugins_.service(service).at("contract") == "dafeiyu.channel", "INPUT_CHANNEL_OWNER_DENIED");
+    require(plugins_.owner(service) == plugin && plugins_.service(service).at("contract") == "dafeiyu.channel",
+        "INPUT_CHANNEL_OWNER_DENIED");
     const auto selected = plugins_.selection(plugin);
     require(selected.value("accept_inputs", false), "INPUT_SOURCE_DENIED");
+
     const auto principal = input.at("actor").get<std::string>();
-    require(selected.at("principals").contains(principal) && selected.at("principals").at(principal) == profile_.data.at("owner"), "INPUT_PRINCIPAL_DENIED");
-    return bind(service, input.at("conversation"), {{"kind", "channel"}, {"principal", principal}, {"actor", profile_.data.at("owner")}},
+    require(selected.at("principals").contains(principal) &&
+                selected.at("principals").at(principal) == profile_.data.at("owner"),
+        "INPUT_PRINCIPAL_DENIED");
+    return bind(service, input.at("conversation"),
+        {{"kind", "channel"}, {"principal", principal}, {"actor", profile_.data.at("owner")}},
         input.value("reply_reference", Json{}));
 }
+
+// 为活动创建可回复的渠道会话或仅供内部使用的会话。
 Json Conversations::activity(const std::string& id, const std::string& target, const std::string& reply_service) {
     if (!reply_service.empty()) {
         const auto activity = store_.get("activity", id);
-        return bind(reply_service, target, {{"kind", "activity"}, {"actor", profile_.data.at("owner")}, {"activity", id},
-            {"definition", fingerprint(activity.at("definition").dump())}}, nullptr);
+        return bind(reply_service, target,
+            {{"kind", "activity"}, {"actor", profile_.data.at("owner")}, {"activity", id},
+                {"definition", fingerprint(activity.at("definition").dump())}},
+            nullptr);
     }
     sdk::ConversationKey key{store_.instance_id(), "internal:" + id, "internal", target};
     return {{"id", key.id()}, {"key", key.to_json()}, {"delivery", nullptr}};
 }
+
+// 校验持久化交付绑定是否仍匹配当前渠道身份。
 void Conversations::validate_identity(const Json& delivery) const {
-    require(delivery.is_object() && delivery.at("channel") == plugins_.channel_binding(delivery.at("channel").at("service")), "DELIVERY_BINDING_CHANGED");
+    require(delivery.is_object() &&
+                delivery.at("channel") == plugins_.channel_binding(delivery.at("channel").at("service")),
+        "DELIVERY_BINDING_CHANGED");
 }
+
+// 校验回复绑定的当前授权，阻止失效渠道或旧代次继续交付。
+// 步骤：验证渠道身份及授权代次 → 检查回复权限与所有者 → 按渠道、活动或本地来源复核授权。
 void Conversations::authorize(const Json& delivery) {
-    if (delivery.is_null()) return;
+    if (delivery.is_null())
+        return;
     validate_identity(delivery);
+
     const auto& authorization = delivery.at("authorization");
     const auto saved = store_.get("channel_authority", delivery.at("channel").at("instance"));
     require(!saved.is_null() && saved.at("generation") == authorization.at("generation"), "DELIVERY_AUTHORITY_CHANGED");
     require(!saved.at("policy").value("retired", false), "DELIVERY_AUTHORITY_CHANGED");
-    require(saved.at("policy").at("allow_reply") == true && authorization.at("actor") == profile_.data.at("owner"), "DELIVERY_AUTHORITY_DENIED");
+    require(saved.at("policy").at("allow_reply") == true && authorization.at("actor") == profile_.data.at("owner"),
+        "DELIVERY_AUTHORITY_DENIED");
+
     if (authorization.at("kind") == "channel") {
         require(saved.at("policy").at("accept_inputs") == true, "DELIVERY_AUTHORITY_DENIED");
         const auto principal = authorization.at("principal").get<std::string>();
-        require(saved.at("policy").at("principals").contains(principal) && saved.at("policy").at("principals").at(principal) == authorization.at("actor"), "DELIVERY_AUTHORITY_DENIED");
+        require(saved.at("policy").at("principals").contains(principal) &&
+                    saved.at("policy").at("principals").at(principal) == authorization.at("actor"),
+            "DELIVERY_AUTHORITY_DENIED");
     } else if (authorization.at("kind") == "activity") {
         const auto activity = store_.get("activity", authorization.at("activity"));
-        require(!activity.is_null() && store_.get("activity_policy", authorization.at("activity")).at("enabled") == true &&
-            fingerprint(activity.at("definition").dump()) == authorization.at("definition").get<std::string>(), "DELIVERY_AUTHORITY_CHANGED");
-    } else require(authorization.at("kind") == "local-owner", "DELIVERY_AUTHORITY_DENIED");
+        require(!activity.is_null() &&
+                    store_.get("activity_policy", authorization.at("activity")).at("enabled") == true &&
+                    fingerprint(activity.at("definition").dump()) == authorization.at("definition").get<std::string>(),
+            "DELIVERY_AUTHORITY_CHANGED");
+    } else
+        require(authorization.at("kind") == "local-owner", "DELIVERY_AUTHORITY_DENIED");
 }
 }
