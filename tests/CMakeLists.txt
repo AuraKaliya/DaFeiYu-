@@ -32,14 +32,20 @@ target_link_libraries(dfy_plugin_registry_tests PRIVATE dfy_plugins dfy_build_op
 add_executable(dfy_plugin_config_tests plugin_config.cpp)
 target_link_libraries(dfy_plugin_config_tests PRIVATE dfy_plugins dfy_build_options nlohmann_json::nlohmann_json)
 
+# ABI 消费者仅依赖 SDK，不继承本体字符集选项；运行时按导出名查询纯 C 示例 DLL。
+add_executable(dfy_sdk_tests sdk_abi.cpp)
+target_link_libraries(dfy_sdk_tests PRIVATE dfy_sdk)
+target_compile_definitions(dfy_sdk_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_dependencies(dfy_sdk_tests dfy_query_example)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
-  dfy_plugin_registry_tests dfy_plugin_config_tests PROPERTIES FOLDER "Tests")
+  dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/model_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/agent_session.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/events.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_registry.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_config.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi.cpp")
 source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${PROJECT_SOURCE_DIR}/model/client.cpp" "${PROJECT_SOURCE_DIR}/agent/session.cpp"
   "${PROJECT_SOURCE_DIR}/app/chat.cpp")
@@ -53,5 +59,6 @@ add_test(NAME events.bus COMMAND dfy_events_tests)
 add_test(NAME plugins.manifest COMMAND dfy_plugin_manifest_tests "${CMAKE_CURRENT_BINARY_DIR}/manifest/$<CONFIG>")
 add_test(NAME plugins.registry COMMAND dfy_plugin_registry_tests "${CMAKE_CURRENT_BINARY_DIR}/registry/$<CONFIG>")
 add_test(NAME plugins.config COMMAND dfy_plugin_config_tests "${CMAKE_CURRENT_BINARY_DIR}/plugin-config/$<CONFIG>")
-set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest plugins.registry plugins.config
+add_test(NAME sdk.abi COMMAND dfy_sdk_tests "$<TARGET_FILE:dfy_query_example>")
+set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest plugins.registry plugins.config sdk.abi
   PROPERTIES TIMEOUT 15)

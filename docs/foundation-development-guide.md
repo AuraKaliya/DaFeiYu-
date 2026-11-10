@@ -8,7 +8,7 @@
 
 | 已有能力 | 代码入口 | 当前边界 |
 |---|---|---|
-| VS2022、C++20、CMake 与职责分组 | [根构建](../CMakeLists.txt)、[预设](../CMakePresets.json) | 已有 App、Agent、Model、Platform、Plugins 和可选 Tests 目标；SDK 尚未建设 |
+| VS2022、C++20、CMake 与职责分组 | [根构建](../CMakeLists.txt)、[预设](../CMakePresets.json) | 已有 App、Agent、Model、Platform、SDK、Plugins 和可选 Tests 目标；查询样例以 C11 编译 |
 | DeepSeek / Qwen 配置与同步调用 | [模型接口](../model/include/dafeiyu/model_client.hpp)、[调用实现](../model/client.cpp) | 非流式、关闭思考；密钥取自环境变量；消息正文总量上限 1 MiB |
 | HTTPS 传输 | [WinHTTP 实现](../platform/winhttp.cpp) | Windows；分阶段超时；不跟随重定向；成功响应正文上限 8 MiB |
 | 最小 Agent | [Session](../agent/session.cpp) | 单线程同步；成功后成对提交问答，失败保留原历史；四类事件及同步重入保护已实现 |
@@ -17,7 +17,8 @@
 | 插件清单 | [清单接口](../plugins/runtime/include/dafeiyu/plugin_manifest.hpp) | 版本 1 格式、描述字段和包内文件校验；不扫描目录或加载 DLL |
 | 插件发现 | [Registry](../plugins/runtime/include/dafeiyu/plugin_registry.hpp) | 单层扫描、坏包隔离、全部 ID 冲突拒绝、只读快照与显式刷新；不加载 DLL |
 | 插件配置 | [配置接口](../plugins/runtime/include/dafeiyu/plugin_config.hpp) | 默认配置与独立用户设置按顶层键覆盖，输出只读 JSON 文本快照；不创建插件实例 |
-| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 模型配置、调用协议、会话、事件、清单、发现、插件配置七类测试；成功模型回答使用替身验证 |
+| C ABI 契约 | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约说明](plugin-abi.md) | Windows x64 v1 类型与函数表、纯 C 查询 DLL；宿主加载与生命周期待建 |
+| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 七类原有测试及真实 DLL 查询共八项；成功模型回答使用替身验证 |
 
 真实 DeepSeek / Qwen 成功回答及多轮联通仍待有效凭据验证。此前真实 HTTPS 的 HTTP 401 检查只验证鉴权失败路径，不能替代成功调用验收。
 
@@ -29,9 +30,11 @@
 
 第 04 步实现提交：`f54eb65`（`feat: 建立插件发现与只读注册表`）。当次 VS2022 Debug、Release 构建及六项离线 CTest 通过，验证了坏包隔离、多包 ID 冲突、增删刷新、快照存活及根目录故障恢复；未加载 DLL 或接入终端管理命令。
 
-第 05 步实现提交：`feat: 合并插件默认配置与独立用户设置`（本记录随该提交发布，可用 `git log --oneline -- plugins/runtime/config.cpp` 定位）。VS2022 Debug、Release 构建及七项离线 CTest 通过，验证了顶层覆盖、插件隔离、只读快照、文件和 JSON 边界；未加载 DLL 或改动模型配置。
+第 05 步实现提交：`aab1213`（`feat: 合并插件默认配置与独立用户设置`）。当次 VS2022 Debug、Release 构建及七项离线 CTest 通过，验证了顶层覆盖、插件隔离、只读快照、文件和 JSON 边界；未加载 DLL 或改动模型配置。
 
-**下一次开发只做第 06 步：C ABI 契约。** 先审查 SDK 头文件、契约说明及最小查询 DLL，不合并完整加载器或实例生命周期。
+第 06 步实现提交：`feat: 定义插件 C ABI 与最小查询 DLL`（本记录随该提交发布，可用 `git log --oneline -- sdk/` 定位）。VS2022 Debug、Release 构建及八项离线 CTest 通过，C11 DLL 与 C++20 宿主验证了布局和实际导出查询；另通过 Debug 宿主查询 Release DLL。未实现宿主生产加载器或插件生命周期。
+
+**下一次开发只做第 07 步：DLL 加载查询。** 在 Platform 封装受控加载和模块引用，不合并实例生命周期或终端管理入口。
 
 ## 2. 基础建设完成的范围
 
@@ -168,9 +171,11 @@ flowchart LR
 
 ### 4.3 C ABI 与平台加载
 
-第 06 步先审查 ABI 文档和头文件，再写完整加载器。首版推荐一个带版本的查询入口，以及实例创建、启动、停止、销毁和事件回调所需的最小函数表；名称以当次审查为准。
+第 06 步已提供 [ABI v1 契约](plugin-abi.md)和 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。固定查询入口为 `dfy_plugin_query`，声明实例创建、启动、停止、销毁、事件回调以及宿主订阅、取消和诊断服务。Windows x64 的结构布局、调用约定、版本协商、错误缓冲所有权及生命周期规则已定稿，等待本次审查；宿主实现仍按第 07～10 步建设。
 
-ABI 必须写清：
+当前纯 C 示例只验证查询，`create` 返回不支持且不产生实例；测试中的 DLL 加载仅用于已知样例的 ABI 验证，不代替生产加载器。配置与事件使用借用视图，错误文本使用调用方持有的 256 字节缓冲，所有接口均禁止异常跨越边界。
+
+契约中已明确以下约束，后续实现须逐项遵守：
 
 - 导出名、C 链接、调用约定、架构、ABI 版本、结构体大小及对齐方式、必需函数指针；宿主在创建实例前完成兼容性检查。
 - 边界使用固定宽度整数、字节视图和不透明句柄；不传 STL 容器、C++ 对象、异常或宿主内部指针。
@@ -224,7 +229,7 @@ Windows 的 `FreeLibrary` 处理模块引用计数，不能代替宿主的活动
 | 03 插件清单（已实现） | [解析器](../plugins/runtime/manifest.cpp)及版本 1 契约；实现提交见第 1 节 | `plugins.manifest` 验证合法包、缺失与重复字段、错误版本、路径越界和实际链接；全过程不加载 DLL |
 | 04 发现与注册表（已实现） | [Registry](../plugins/runtime/registry.cpp) 扫描根目录并返回只读快照；实现提交见第 1 节 | `plugins.registry` 验证空目录、坏包隔离、全部 ID 冲突拒绝、增删和描述变更、快照存活及扫描故障恢复 |
 | 05 插件配置（已实现） | [配置读取](../plugins/runtime/config.cpp)合并包默认值与独立用户设置；实现提交见第 1 节 | `plugins.config` 验证缺省、顶层覆盖、嵌套替换、显式空值、非法文件、路径链接、配置隔离和快照保持 |
-| 06 C ABI 契约 | SDK 头文件、契约说明、最小查询 DLL | 头文件可由 C 和 C++ 消费；类型、长度、所有权、调用约定、版本和资源生命周期明确 |
+| 06 C ABI 契约（已实现） | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约](plugin-abi.md)和最小查询 DLL；实现提交见第 1 节 | C11 / C++20 布局检查及 `sdk.abi` 实际查询通过；线程、长度、所有权、版本和生命周期规则明确 |
 | 07 DLL 加载查询 | Platform 模块所有权封装和受控加载 | 中文路径、缺失文件、依赖缺失、架构不匹配、导出缺失、ABI 不兼容均可诊断；查询失败释放本次取得的模块引用 |
 | 08 实例生命周期 | 创建、启动、停止、销毁和失败回收 | 配置正确传入；启动失败清理；成功只产生一个实例；停止失败保留模块；先不暴露终端加载入口 |
 | 09 忙碌保护与卸载 | 活动调用保护、关闭入口、资源归属和卸载流程 | 执行中拒绝；空闲时按顺序释放；失败不强制释放；重复卸载、重新加载行为明确 |

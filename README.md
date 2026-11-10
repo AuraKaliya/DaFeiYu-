@@ -2,9 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：插件配置
+## 当前审查点：插件 C ABI 契约
 
-新增 [插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)，合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
+新增 [SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL。已验证 C/C++ 接口布局及实际 DLL 查询；宿主加载器、实例生命周期和事件桥接仍留待后续审查点。
+
+[插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
 
 [插件目录注册表](plugins/runtime/include/dafeiyu/plugin_registry.hpp)支持显式扫描根目录，隔离坏包和重复 ID，并返回包含描述、诊断和变更记录的只读快照。当前不加载 DLL，也未接入终端管理命令。
 
@@ -28,14 +30,17 @@ dafeiyu
 ├── Platform
 │   ├── dfy_events
 │   └── dfy_http
+├── SDK
+│   └── dfy_sdk
 ├── Plugins
-│   └── dfy_plugins
+│   ├── dfy_plugins
+│   └── dfy_query_example
 └── CMakePredefinedTargets
     ├── ALL_BUILD
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests` 和 `Tests/dfy_plugin_config_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests`、`Tests/dfy_plugin_config_tests` 和 `Tests/dfy_sdk_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -217,7 +222,17 @@ ctest --preset windows-tests
 
 配置测试覆盖空配置、单侧配置、覆盖顺序、嵌套对象及数组替换、显式 `null`、插件隔离、快照保持、BOM、大小与嵌套边界、重复键、缺失默认文件、过期描述及真实路径链接拒绝。
 
-本次阅读顺序：[配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp) → [读取与合并](plugins/runtime/config.cpp) → [配置测试](tests/plugin_config.cpp)。下一审查点为第 06 步：C ABI 契约。
+配置阅读顺序：[配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp) → [读取与合并](plugins/runtime/config.cpp) → [配置测试](tests/plugin_config.cpp)。
+
+## 插件 C ABI
+
+首版 SDK 面向 Windows x64，头文件可由 C11 和 C++20 消费，仅包含固定宽度整数、UTF-8 字节视图、不透明句柄和函数表。查询入口固定为 `dfy_plugin_query`，接口表明确大小、ABI 版本和架构。错误文本写入调用方持有的固定缓冲区，避免跨模块分配和释放。调用线程、借用期、资源归属、失败恢复及订阅规则见 [完整契约](docs/plugin-abi.md)。
+
+`dfy_query_example` 只提供查询验证，创建实例会明确返回 `DFY_UNSUPPORTED`；它没有可安装运行的 observer 包，也不实现插件生命周期。普通 Debug / Release 构建会生成该 DLL，本体不链接或加载它。
+
+`sdk.abi` 使用 C++ 测试宿主按导出名加载纯 C DLL，检查版本拒绝、完整函数表、重复查询和错误缓冲区寿命，并释放本次模块引用。C/C++ 消费者分别验证布局及头文件打包设置恢复，均只依赖 SDK，不继承本体字符集选项。另已使用 Debug 测试宿主查询 Release DLL，验证该组合下的 ABI 与错误输出。
+
+本次阅读顺序：[ABI 契约](docs/plugin-abi.md) → [公开头文件](sdk/include/dafeiyu/plugin_abi.h) → [查询示例](plugins/examples/query/query.c) → [查询测试](tests/sdk_abi.cpp)。下一审查点为第 07 步：DLL 加载查询。
 
 ## 旧工程归档
 

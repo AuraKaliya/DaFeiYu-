@@ -1,7 +1,10 @@
-# 确定工程与语言基线：所有自有目标使用标准 C++20，不启用编译器扩展。
+# 确定语言基线：本体使用 C++20，SDK 查询示例使用 C11 验证 C 兼容性。
 cmake_minimum_required(VERSION 3.28)
-project(dafeiyu LANGUAGES CXX)
+project(dafeiyu LANGUAGES C CXX)
 
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -16,13 +19,15 @@ target_compile_options(dfy_build_options INTERFACE
   "$<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive-;/utf-8>"
   "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>")
 
-# 装配运行模块：准备第三方依赖，再加入已实现的基础设施、模型、会话、插件运行时和应用。
+# 装配工程：准备第三方依赖，再加入 SDK、已实现的运行模块和最小查询示例。
 include(cmake/Dependencies.cmake)
+add_subdirectory(sdk)
 add_subdirectory(platform)
 add_subdirectory(events)
 add_subdirectory(model)
 add_subdirectory(agent)
 add_subdirectory(plugins/runtime)
+add_subdirectory(plugins/examples/query)
 add_subdirectory(app)
 
 # 按需启用离线测试，普通构建不生成测试目标。
