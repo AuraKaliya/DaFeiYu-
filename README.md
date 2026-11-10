@@ -2,9 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：构建骨架与 VS 分组
+## 当前审查点：模型配置读取与校验
 
-当前只有一个可执行目标 `dafeiyu`，入口位于 [app/main.cpp](app/main.cpp)。启动后显示提示，输入 `/exit` 或结束标准输入即可退出；其他非空输入会收到未知命令提示。模型调用在后续审查点实现。
+当前支持 DeepSeek、Qwen 的模型配置离线检查。配置读取位于独立的 [Model 模块](model/config.cpp)，公开数据类型见 [model_config.hpp](model/include/dafeiyu/model_config.hpp)，App 只负责命令行与结果展示。
+
+本阶段不读取环境变量中的密钥，也不发起网络请求；检查成功不代表凭据、模型访问权限、端点地域或服务可用性已经验证。
 
 VS 解决方案当前按实际目标分组：
 
@@ -14,12 +16,14 @@ dafeiyu
 │   └── dafeiyu
 │       └── Source
 │           └── main.cpp
+├── Model
+│   └── dfy_model
 └── CMakePredefinedTargets
     ├── ALL_BUILD
     └── ZERO_CHECK
 ```
 
-Agent、Model、Platform、SDK、Plugins、Tests、ThirdParty 分组随对应功能和目标逐步加入，不预建空库。根构建仅引用 `app/`。
+测试预设额外显示 `Tests/dfy_model_config_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 ## 构建与运行
 
@@ -33,7 +37,44 @@ cmake --build --preset windows-debug
 
 在 VS2022 中打开 `build/rebuild/windows/dafeiyu.sln`；默认启动项目为 `dafeiyu`。Release 构建使用 `cmake --build --preset windows-release`，产物位于 `build/rebuild/windows/bin/Release/`。
 
-新预设使用独立的 `build/rebuild/windows/`，避免复用旧工程缓存和解决方案。构建不需要下载第三方依赖。
+新预设使用独立的 `build/rebuild/windows/`，避免复用旧工程缓存和解决方案。首次配置会下载并校验固定版本的 JSON 依赖，参见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+## 模型配置
+
+一份 JSON 文件描述当前选用的一个模型服务。分别提供 [DeepSeek 示例](config/deepseek.example.json)和 [Qwen 示例](config/qwen.example.json)，可复制为同目录的 `*.local.json` 后修改，本地副本已加入 Git 忽略规则。示例仅含环境变量名称，不含密钥。
+
+| 字段 | 校验规则 |
+|---|---|
+| `provider` | 必填，`deepseek` 或 `qwen` |
+| `base_url` | 必填，`https://域名[:端口][/前缀]`；域名和路径使用示例中的 ASCII 形式；端口为 1～65535；拒绝用户信息、查询参数、片段和未替换的占位符 |
+| `model` | 必填非空文本，不限制模型名称清单，避免模型升级时修改程序 |
+| `api_key_env` | 必填环境变量名称，格式为 `[A-Za-z_][A-Za-z0-9_]*`；本阶段仅验证名称 |
+| `timeout_ms` | 可选整数，范围 1～600000，缺省为 60000 毫秒 |
+
+文本字段不能含 ASCII 空白或控制字符；拒绝重复字段、未知字段、错误类型和非法 JSON。基址会去掉尾部斜杠，应填写接口前缀，不要包含 `/chat/completions`。错误提示定位字段或错误类别，不回显配置原文。
+
+Qwen 示例使用百炼北京地域仍受支持的通用域名；使用其他地域或业务空间专属域名时，请按官方控制台调整 `base_url`，并在真正调用时使用对应地域的密钥。模型名称均可自行修改，离线检查不会查询供应商模型目录。
+
+在项目根目录验证示例：
+
+```powershell
+.\build\rebuild\windows\bin\Debug\dafeiyu.exe --check-config config/deepseek.example.json
+.\build\rebuild\windows\bin\Debug\dafeiyu.exe --check-config config/qwen.example.json
+```
+
+检查成功返回 0，配置或命令行错误返回 1。不带参数时仍进入最小终端，输入 `/exit` 或结束标准输入退出。
+
+## 验证配置规则
+
+测试使用隔离构建目录和生成的配置文件，不需要 API Key 或网络模型服务：
+
+```powershell
+cmake --preset windows-tests
+cmake --build --preset windows-tests
+ctest --preset windows-tests
+```
+
+测试覆盖两个服务示例、可配置模型与密钥引用、默认超时、超时上下界、地址规范化、错误字段、重复字段、无效地址和文件读取错误。
 
 ## 旧工程归档
 

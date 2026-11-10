@@ -15,6 +15,14 @@
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
       }
+    },
+    {
+      "name": "windows-tests",
+      "inherits": "windows",
+      "binaryDir": "${sourceDir}/build/rebuild/windows-tests",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -27,6 +35,19 @@
       "name": "windows-release",
       "configurePreset": "windows",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-tests",
+      "configurePreset": "windows-tests",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-tests",
+      "configurePreset": "windows-tests",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
     }
   ]
 }

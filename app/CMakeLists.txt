@@ -1,8 +1,6 @@
 add_executable(dafeiyu main.cpp)
 
-target_compile_options(dafeiyu PRIVATE
-  "$<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive-;/utf-8>"
-  "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>")
+target_link_libraries(dafeiyu PRIVATE dfy_model dfy_build_options)
 
 set_target_properties(dafeiyu PROPERTIES
   FOLDER "App"

@@ -3,3 +3,4 @@
 /.runtime/
 /CMakeUserPresets.json
 /.cache/
+/config/*.local.json
