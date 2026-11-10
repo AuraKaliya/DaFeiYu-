@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：单次完整文本调用
+## 当前审查点：最小 Agent 终端流程
 
-当前支持 DeepSeek、Qwen 的配置检查和单次完整文本调用。App 负责文件输入与结果展示，独立 [Model 模块](model/client.cpp)负责供应商协议，[Platform 模块](platform/winhttp.cpp)通过 Windows WinHTTP 执行 HTTPS 请求。
+当前支持 DeepSeek、Qwen 的配置检查、单次调用和终端多轮问答。App 负责终端输入与展示，[Agent 会话](agent/session.cpp)维护当前上下文，[Model 模块](model/client.cpp)负责供应商协议，[Platform 模块](platform/winhttp.cpp)执行 HTTPS 请求。
 
-公开入口为 [load_config](model/include/dafeiyu/model_config.hpp) 和 [complete](model/include/dafeiyu/model_client.hpp)：前者离线校验配置，后者使用已校验的配置，在调用时读取密钥并同步返回完整 UTF-8 文本。当前尚未加入 Agent 会话循环。
+Agent 通过独立的 [模型消息与调用接口](model/include/dafeiyu/model_client.hpp)同步请求完整文本，不处理供应商 JSON 或网络。会话只在完整回答成功后成对保存用户与助手消息，失败保持原上下文；本阶段没有工具循环和持久化记忆。
 
 VS 解决方案当前按实际目标分组：
 
@@ -15,7 +15,9 @@ dafeiyu
 ├── App
 │   └── dafeiyu
 │       └── Source
-│           └── main.cpp
+│           └── main.cpp / chat.cpp / chat.hpp / console.hpp
+├── Agent
+│   └── dfy_agent
 ├── Model
 │   └── dfy_model
 ├── Platform
@@ -25,7 +27,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests` 和 `Tests/dfy_model_client_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests` 和 `Tests/dfy_agent_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 ## 构建与运行
 
@@ -73,7 +75,6 @@ Qwen 示例使用百炼北京地域仍受支持的通用域名；使用其他地
 ```powershell
 $env:DEEPSEEK_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'DeepSeek API Key' -AsSecureString)).Password
 [IO.File]::WriteAllText((Join-Path $PWD 'build/提示词.txt'), '请用一句话介绍你自己。', [Text.UTF8Encoding]::new($false))
-chcp 65001 > $null
 .\build\rebuild\windows\bin\Debug\dafeiyu.exe --complete config/deepseek.example.json 'build/提示词.txt'
 ```
 
@@ -85,7 +86,24 @@ Qwen 使用同一入口，将环境变量改为 `DASHSCOPE_API_KEY`，配置改�
 
 `--check-config` 仍完全离线；其成功不代表凭据、模型权限、地域或服务可用性已经验证。
 
-## 验证配置与调用协议
+## 启动 Agent 终端会话
+
+在当前进程环境中设置相应 API Key 后，运行以下任一命令：
+
+```powershell
+.\build\rebuild\windows\bin\Debug\dafeiyu.exe --chat config/deepseek.example.json
+.\build\rebuild\windows\bin\Debug\dafeiyu.exe --chat config/qwen.example.json
+```
+
+每行普通文本触发一轮同步请求：携带本会话此前成功的问答，等待完整回答，再保存本轮上下文并展示。空白行忽略；`/clear` 清空上下文但保留模型配置；`/exit` 或输入结束退出；其他以 `/` 开头的内容按未知命令处理，不发送给模型。一次输入为一行，多行提示词仍可使用 `--complete` 文件入口。
+
+模型调用失败时显示错误，继续等待输入，失败提问不写入历史。会话消息正文总量（历史加本轮提问）上限为 1 MiB，超过时在联网前拒绝，不自动裁剪；可用 `/clear` 开始新上下文。供应商的 token 上限仍由服务校验。历史仅保存在进程内，退出即丢弃，也不会跨会话共享。
+
+当前为单线程同步流程，等待模型响应期间不处理新输入，命令在请求结束后处理。正常 `/exit` 或输入结束返回 0，即使之前某轮请求失败；启动配置错误或输入输出故障返回 1。
+
+Windows 控制台在运行期间临时切换 UTF-8，正常退出时恢复原编码；管道和文件重定向仍要求 UTF-8 字节。`--chat` 的输出包含提示符和状态提示，需要只获取回答文本时使用 `--complete`。
+
+## 验证配置、调用与会话
 
 测试使用隔离构建目录和生成的配置文件，不需要 API Key 或网络模型服务：
 
@@ -97,7 +115,9 @@ ctest --preset windows-tests
 
 配置测试覆盖两个服务示例、字段边界、地址规范化和非法文件。调用测试用替身传输验证供应商参数隔离、UTF-8 消息、凭据与超时传递、完整回答、HTTP 错误、超时传播、截断与畸形响应，以及非法输入在联网前被拒绝。离线测试不验证真实供应商凭据、模型可用性或 WinHTTP 网络连接；真实联通需使用自己的有效密钥运行上述命令。
 
-本次阅读顺序：公开模型接口 → `model/client.cpp` → `platform/winhttp.cpp` → `app/main.cpp` → `tests/model_client.cpp`。后续审查点为最小 Agent 终端流程。
+会话测试替代模型服务，验证成功问答的消息顺序、失败回滚、清空、独立会话，以及终端命令、中文输入、错误后继续和流故障。新增模型协议测试验证历史消息的角色映射与内容总量边界。
+
+本次阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/agent_session.cpp)。后续审查点为最小事件机制。
 
 ## 旧工程归档
 

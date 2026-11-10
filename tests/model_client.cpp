@@ -23,7 +23,7 @@ void check(bool condition, const char* reason) {
 
 // 验证调用被拒绝且错误不包含服务正文或测试凭据。
 // 步骤：执行预期失败的请求 → 核对错误类别 → 检查敏感内容隔离。
-void rejects(const std::string& input, const std::string& expected) {
+void rejects(const auto& input, const std::string& expected) {
     try {
         (void)dfy::model::complete(config, input);
     } catch (const std::runtime_error& error) {
@@ -73,6 +73,25 @@ int main() {
                       : sent.at("enable_thinking") == false && !sent.contains("thinking"),
                 "provider options mixed");
         }
+
+        using dfy::model::Role;
+        using Messages = std::vector<dfy::model::Message>;
+        const Messages history{{Role::user, "第一问"}, {Role::assistant, "第一答"}, {Role::user, prompt}};
+        (void)dfy::model::complete(config, history);
+        check(sent.at("messages") ==
+                  Json::array({{{"role", "user"}, {"content", "第一问"}},
+                      {{"role", "assistant"}, {"content", "第一答"}}, {{"role", "user"}, {"content", prompt}}}),
+            "conversation order or roles changed");
+        (void)dfy::model::complete(config,
+            Messages{{Role::user, std::string(512 * 1024, 'x')}, {Role::assistant, std::string(512 * 1024, 'y')}});
+        (void)dfy::model::complete(
+            config, Messages{{Role::user, "提问"}, {Role::assistant, " "}, {Role::user, "继续"}});
+        check(sent.at("messages").at(1).at("content") == " ", "assistant whitespace was changed");
+        const auto before_messages = calls;
+        rejects(Messages{}, "messages:");
+        rejects(Messages{{static_cast<Role>(42), "invalid"}}, "unsupported role");
+        rejects(Messages{{Role::user, std::string(1024 * 1024, 'x')}, {Role::assistant, "y"}}, "total content");
+        check(calls == before_messages, "invalid conversation reached network");
 
         for (unsigned status : {302u, 400u, 401u, 403u, 429u, 500u, 503u}) {
             reply = {status, "private-test-token"};

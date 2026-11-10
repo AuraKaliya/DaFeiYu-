@@ -1,3 +1,7 @@
+#include "chat.hpp"
+#ifdef _WIN32
+#include "console.hpp"
+#endif
 #include <dafeiyu/model_config.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <fstream>
@@ -28,10 +32,14 @@ std::string read_prompt(const std::filesystem::path& path) {
     return text;
 }
 
-// 分派配置检查、单次模型调用与最小终端入口，并统一报告错误。
-// 步骤：检查启动参数并执行相应操作 → 读取终端命令 → 返回退出状态。
+// 分派配置检查、单次调用与 Agent 会话，并统一报告启动错误。
+// 步骤：准备控制台编码 → 按参数启动检查或调用流程 → 返回退出状态。
 int run(const std::vector<std::filesystem::path>& args) {
     try {
+#ifdef _WIN32
+        const dfy::app::Utf8Console console;
+#endif
+
         if (args.size() == 3 && args[1] == "--check-config") {
             const auto config = dfy::model::load_config(args[2]);
             std::cout << "Configuration valid: " << config.provider << " / " << config.model
@@ -44,8 +52,12 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
+        if (args.size() == 3 && args[1] == "--chat") {
+            dfy::agent::Session session(dfy::model::load_config(args[2]));
+            return dfy::app::chat(session, std::cin, std::cout, std::cerr);
+        }
         if (args.size() != 1) {
-            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE]\n";
+            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG]\n";
             return 1;
         }
 

@@ -4,18 +4,41 @@
 #include <algorithm>
 #include <cstdlib>
 #include <stdexcept>
+#include <utility>
 
 namespace dfy::model {
-// 读取运行时凭据并调用 DeepSeek 或 Qwen，只有正常结束的完整文本才作为成功返回。
-// 步骤：检查输入并构造服务请求 → 读取密钥 → 调用 HTTPS 接口 → 检查状态与响应内容。
+// 将单次提示词包装为一条用户消息，复用统一的模型调用流程。
 std::string complete(const Config& config, const std::string& prompt) {
+    return complete(config, std::vector<Message>{{Role::user, prompt}});
+}
+
+// 读取运行时凭据并调用 DeepSeek 或 Qwen，只有正常结束的完整文本才作为成功返回。
+// 步骤：检查消息与内容总量并构造请求 → 读取密钥 → 调用 HTTPS 接口 → 检查状态与响应内容。
+std::string complete(const Config& config, const std::vector<Message>& messages) {
     using Json = nlohmann::json;
-    if (prompt.find_first_not_of(" \t\r\n") == std::string::npos || prompt.size() > 1024 * 1024) {
-        throw std::runtime_error("prompt: expected nonblank UTF-8 text within 1 MiB");
+    if (messages.empty()) {
+        throw std::runtime_error("messages: expected at least one message");
+    }
+    auto serialized = Json::array();
+    std::size_t content_size = 0;
+    for (const auto& message : messages) {
+        if (message.role != Role::user && message.role != Role::assistant) {
+            throw std::runtime_error("messages: unsupported role");
+        }
+        if (message.content.empty() ||
+            (message.role == Role::user && message.content.find_first_not_of(" \t\r\n") == std::string::npos) ||
+            message.content.size() > 1024 * 1024) {
+            throw std::runtime_error("prompt: expected nonblank UTF-8 text within 1 MiB");
+        }
+        content_size += message.content.size();
+        if (content_size > 1024 * 1024) {
+            throw std::runtime_error("messages: total content exceeds 1 MiB");
+        }
+        serialized.push_back(
+            {{"role", message.role == Role::user ? "user" : "assistant"}, {"content", message.content}});
     }
 
-    Json request{{"model", config.model}, {"stream", false},
-        {"messages", Json::array({{{"role", "user"}, {"content", prompt}}})}};
+    Json request{{"model", config.model}, {"stream", false}, {"messages", std::move(serialized)}};
     if (config.provider == "deepseek") {
         request["thinking"] = {{"type", "disabled"}};
     } else if (config.provider == "qwen") {

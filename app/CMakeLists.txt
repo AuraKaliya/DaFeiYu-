@@ -1,6 +1,7 @@
-add_executable(dafeiyu main.cpp)
+add_executable(dafeiyu main.cpp chat.cpp chat.hpp console.hpp)
 
-target_link_libraries(dafeiyu PRIVATE dfy_model dfy_build_options)
+target_link_libraries(dafeiyu PRIVATE dfy_agent dfy_build_options)
+target_compile_definitions(dafeiyu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 set_target_properties(dafeiyu PROPERTIES
   FOLDER "App"
@@ -8,4 +9,5 @@ set_target_properties(dafeiyu PROPERTIES
   VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:dafeiyu>")
 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "Source"
-  FILES "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp")
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/chat.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/chat.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/console.hpp")

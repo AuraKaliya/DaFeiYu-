@@ -18,3 +18,15 @@ source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp" "${PROJECT_SOURCE_DIR}/model/client.cpp")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
 set_tests_properties(model.complete PROPERTIES TIMEOUT 15)
+
+# 编译真实会话和终端流程，仅用测试模型替代外部服务调用。
+add_executable(dfy_agent_tests agent_session.cpp
+  "${PROJECT_SOURCE_DIR}/agent/session.cpp" "${PROJECT_SOURCE_DIR}/app/chat.cpp")
+target_include_directories(dfy_agent_tests PRIVATE "${PROJECT_SOURCE_DIR}/agent/include"
+  "${PROJECT_SOURCE_DIR}/model/include" "${PROJECT_SOURCE_DIR}/app")
+target_link_libraries(dfy_agent_tests PRIVATE dfy_build_options)
+set_target_properties(dfy_agent_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${PROJECT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/agent_session.cpp"
+  "${PROJECT_SOURCE_DIR}/agent/session.cpp" "${PROJECT_SOURCE_DIR}/app/chat.cpp")
+add_test(NAME agent.session COMMAND dfy_agent_tests)
+set_tests_properties(agent.session PROPERTIES TIMEOUT 15)
