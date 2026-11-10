@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：受控 DLL 加载（07a）
+## 当前审查点：DLL 加载查询（第 07 步整体完成）
 
-新增 [平台动态库接口](platform/include/dafeiyu/dynamic_library.hpp)，封装受控加载、导出查找及单次模块引用的释放。第 07 步按审查成本拆为 07a 平台封装和 07b ABI 查询校验；本次只交付 07a，尚未装配到插件运行时或终端。
+新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
-[SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL 已验证 C/C++ 布局及实际查询。生产代码的 ABI 查询校验、实例生命周期和事件桥接仍留待后续审查点。
+[SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL 已验证 C/C++ 布局及实际查询。实例生命周期、忙碌保护和事件桥接仍留待后续审查点。
 
 [插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
 
@@ -45,7 +45,7 @@ dafeiyu
 
 测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests`、`Tests/dfy_plugin_config_tests` 和 `Tests/dfy_sdk_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
-加载器测试另外提供 `Tests/dfy_library_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
+加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -254,11 +254,25 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 私有依赖应与主 DLL 放在同一目录并使用唯一文件名；不启用当前目录或 PATH 的额外文件搜索，仍遵循 Windows 的已加载模块等规则，不承诺同进程内任意同名库隔离。关闭只释放本对象取得的引用，不能据此断言其他引用已释放或模块已完全卸载，参见 [FreeLibrary](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary)。
 
-导出查找失败时，引用仍由对象管理；异常退出其作用域会触发释放。借用地址、活动调用和未来插件实例都必须在关闭前结束。本步不实现停止插件、忙碌保护或 ABI 检查，不能代替后续安全卸载流程。
+导出查找失败时，引用仍由对象管理；异常退出其作用域会触发释放。借用地址、活动调用和未来插件实例都必须在关闭前结束。平台封装不处理插件停止或忙碌保护，ABI 校验由下述 `PluginModule` 完成；两者都不替代后续实例安全卸载流程。
 
 `platform.library` 使用真实 DLL 验证中文路径、多个持有者、重复关闭、异常退出释放、缺失文件与导出、真实 x86 架构不匹配和无效映像；同时验证只有工作目录中的依赖不会被拾取，同目录依赖可正常加载，并检查最后一份测试引用释放后模块不再存在。
 
-本次阅读顺序：[平台接口](platform/include/dafeiyu/dynamic_library.hpp) → [实现](platform/library.cpp) → [加载测试](tests/dynamic_library.cpp) → [夹具构建](tests/fixtures/library/CMakeLists.txt)。下一审查点为 07b：ABI 查询与兼容性校验。
+平台加载阅读顺序：[接口](platform/include/dafeiyu/dynamic_library.hpp) → [实现](platform/library.cpp) → [加载测试](tests/dynamic_library.cpp) → [夹具构建](tests/fixtures/library/CMakeLists.txt)。
+
+## ABI 查询与模块持有
+
+`plugins::PluginModule(manifest)` 接收清单或注册表中的包描述。在执行 DLL 代码前拒绝宿主不支持的声明 ABI，重新读取清单并要求描述保持一致；清单或入口定位变化时应先刷新目录。通过平台加载器取得模块后，调用固定导出 `dfy_plugin_query`，请求与清单一致的 ABI v1。
+
+查询校验依次检查错误长度、返回状态、成功结果、表大小、ABI 版本、架构、保留字段及全部必需函数。查询返回非零状态时不解引用其表指针，也不回显模块的错误正文；成功必须返回非空表和零错误长度。先确认表大小，再访问其余字段；只有全部通过后才复制函数表到宿主内存。
+
+构造成功后，`api()` 返回只读接口副本，函数地址仍依赖对象持有的 DLL 引用。`close()` 成功后使接口失效，重复关闭无操作；释放失败保留接口及引用供重试。构造失败或正常析构时，由平台成员回收本次引用，不影响其他持有者。调用方须在关闭前结束所有借用及调用，本步不调用 `create`、`start`、`stop` 或 `destroy`，也不替代实例停止和忙碌保护。
+
+`plugins.module` 使用真实 DLL 覆盖 16 种查询结果，包括成功、状态失败、空表、大小过小或过大、版本及架构不匹配、非零保留字段、四个必需函数分别缺失、错误长度越界及成功时附带错误。还验证了失败状态附带无效表指针时不读取该指针、未知状态码、过期清单、声明 ABI 不支持、缺失导出、关闭与重新加载。测试分别持有控制端和被测引用，确认失败后无引用残留且未调用实例生命周期函数。
+
+上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
+
+本次阅读顺序：[模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成，下一审查点为第 08 步：实例生命周期。
 
 ## 旧工程归档
 

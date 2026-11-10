@@ -18,8 +18,9 @@
 | 插件清单 | [清单接口](../plugins/runtime/include/dafeiyu/plugin_manifest.hpp) | 版本 1 格式、描述字段和包内文件校验；不扫描目录或加载 DLL |
 | 插件发现 | [Registry](../plugins/runtime/include/dafeiyu/plugin_registry.hpp) | 单层扫描、坏包隔离、全部 ID 冲突拒绝、只读快照与显式刷新；不加载 DLL |
 | 插件配置 | [配置接口](../plugins/runtime/include/dafeiyu/plugin_config.hpp) | 默认配置与独立用户设置按顶层键覆盖，输出只读 JSON 文本快照；不创建插件实例 |
-| C ABI 契约 | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约说明](plugin-abi.md) | Windows x64 v1 类型与函数表、纯 C 查询 DLL；生产 ABI 查询校验与生命周期待建 |
-| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 原有八项及平台加载测试共九项；包含真实 x64 依赖 DLL 和 Win32 拒绝夹具 |
+| 插件模块查询 | [PluginModule](../plugins/runtime/include/dafeiyu/plugin_module.hpp) | 复核清单、受控加载和 ABI 校验，失败回收本次引用；不创建实例 |
+| C ABI 契约 | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约说明](plugin-abi.md) | Windows x64 v1 类型与函数表、纯 C 查询 DLL；实例生命周期待建 |
+| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 平台加载与 ABI 查询在内共十项；包含真实 x64 依赖、Win32 拒绝及故障查询 DLL |
 
 真实 DeepSeek / Qwen 成功回答及多轮联通仍待有效凭据验证。此前真实 HTTPS 的 HTTP 401 检查只验证鉴权失败路径，不能替代成功调用验收。
 
@@ -35,9 +36,11 @@
 
 第 06 步实现提交：`91ca301`（`feat: 定义插件 C ABI 与最小查询 DLL`）。当次 VS2022 Debug、Release 构建及八项离线 CTest 通过，C11 DLL 与 C++20 宿主验证了布局和实际导出查询；另通过 Debug 宿主查询 Release DLL。
 
-第 07 步拆为 07a 平台加载封装和 07b ABI 查询校验。07a 实现提交：`feat: 封装受控 DLL 加载与模块引用`（本记录随该提交发布，可用 `git log --oneline -- platform/library.cpp` 定位）。VS2022 Debug、Release 构建及九项离线 CTest 通过，真实 DLL 验证了中文路径、引用归属、依赖搜索、缺失导出及架构不匹配。已处理加载失败弹窗造成的阻塞，并验证线程错误模式恢复。
+第 07 步已整体完成，按 07a 与 07b 分别提交。07a 提交：`34cd195`（`feat: 封装受控 DLL 加载与模块引用`）；当次 Debug、Release 构建及九项离线 CTest 通过，验证了中文路径、引用归属、依赖搜索、缺失导出、架构拒绝及线程错误模式恢复。
 
-**下一次开发只做 07b：ABI 查询与兼容性校验。** 复用平台模块引用，检查查询入口、清单 ABI 与返回表；不合并实例生命周期或终端管理入口。
+07b 实现提交：`feat: 完成插件 ABI 查询与兼容性校验`（本记录随该提交发布，可用 `git log --oneline -- plugins/runtime/module.cpp` 定位）。Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
+
+**下一次开发只做第 08 步：实例生命周期。** 实现创建、启动、停止、销毁和失败回收，不合并终端管理入口；复杂部分继续拆分审查。
 
 ## 2. 基础建设完成的范围
 
@@ -63,10 +66,10 @@ flowchart LR
     App["App：入口与宿主装配"] --> Agent["Agent：Session"]
     Agent --> Model["Model：模型协议"]
     Model --> HTTP["Platform：WinHTTP"]
-    App --> Manager["插件管理器（发现已建，装配与生命周期待建）"]
+    App --> Manager["插件运行时（基础已建，装配与生命周期待建）"]
     Agent --> Events["事件系统（已接入会话）"]
     Manager --> Events
-    Manager --> Loader["Platform：动态库加载器（待建）"]
+    Manager --> Loader["Platform：动态库加载器"]
     Loader -. "动态加载" .-> Plugin["可选 DLL 插件包（待建）"]
     Events -. "宿主适配后的 C ABI 回调" .-> Plugin
 ```
@@ -174,9 +177,9 @@ flowchart LR
 
 ### 4.3 C ABI 与平台加载
 
-第 06 步已提供 [ABI v1 契约](plugin-abi.md)和 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。固定查询入口为 `dfy_plugin_query`，声明实例创建、启动、停止、销毁、事件回调以及宿主订阅、取消和诊断服务。Windows x64 的结构布局、调用约定、版本协商、错误缓冲所有权及生命周期规则已定稿，等待本次审查；宿主实现仍按第 07～10 步建设。
+第 06 步已提供 [ABI v1 契约](plugin-abi.md)和 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。固定查询入口为 `dfy_plugin_query`，声明实例创建、启动、停止、销毁、事件回调以及宿主订阅、取消和诊断服务。Windows x64 的结构布局、调用约定、版本协商、错误缓冲所有权及生命周期规则已明确；模块查询已实现，实例和桥接继续按第 08～10 步建设。
 
-当前纯 C 示例只验证查询，`create` 返回不支持且不产生实例；SDK 测试中的加载用于已知样例的 ABI 验证。07a 已提供独立平台加载封装，07b 再把受控加载与 ABI 校验串联。配置与事件使用借用视图，错误文本使用调用方持有的 256 字节缓冲，所有接口均禁止异常跨越边界。
+当前纯 C 示例只验证查询，`create` 返回不支持且不产生实例；SDK 测试中的加载用于已知样例的 ABI 验证。07a 提供独立平台封装，07b 的 `PluginModule` 已将受控加载与 ABI 校验串联。配置与事件使用借用视图，错误文本使用调用方持有的 256 字节缓冲，所有接口均禁止异常跨越边界。
 
 契约中已明确以下约束，后续实现须逐项遵守：
 
@@ -189,7 +192,9 @@ flowchart LR
 
 平台实现使用规范化后的 DLL 完整路径，并控制依赖库搜索范围；不能假设入口用了绝对路径，其依赖 DLL 就只会从同一目录解析。首版先限定依赖布局，使用唯一的私有依赖文件名，避免承诺同进程内任意同名库版本隔离。参见 [Windows DLL 搜索顺序](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)。
 
-07a 的 `DynamicLibrary` 要求绝对 `.dll` 路径，以 DLL 所在目录与 System32 作为文件系统依赖搜索范围，加载期间临时抑制当前线程的系统错误对话框并恢复原模式。它只拥有一次模块引用，可显式关闭或在作用域退出时尽力释放；关闭失败保留句柄供重试，导出查找失败不会自行清空仍被对象持有的引用。调用方必须保证所有借用地址及调用在关闭前结束，ABI 校验失败的自动回收由 07b 的持有对象负责实现。
+07a 的 `DynamicLibrary` 要求绝对 `.dll` 路径，以 DLL 所在目录与 System32 作为文件系统依赖搜索范围，加载期间临时抑制当前线程的系统错误对话框并恢复原模式。它只拥有一次模块引用，可显式关闭或在作用域退出时尽力释放；关闭失败保留句柄供重试，导出查找失败不会自行清空仍被对象持有的引用。
+
+07b 的 `PluginModule` 在加载前复核清单并拒绝不支持的 ABI。查询后先检查返回状态和错误长度，失败状态不读取其表指针或错误正文；成功时检查非空表、零错误长度、精确表大小、版本、架构、保留字段和全部函数。通过后保存只读表副本，构造失败由平台成员回收本次引用。显式关闭成功后接口失效，失败保留状态；调用方必须保证所有借用及调用在关闭前结束，本步不创建或停止实例，也不隔离违反 C ABI 内存约定的原生故障。
 
 业务初始化和清理放在显式生命周期函数中，`DllMain` 保持最小；Windows 会在加载器锁下执行它，不适合承载完整插件初始化。参见 [DLL 开发约束](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices)。
 
@@ -236,7 +241,7 @@ Windows 的 `FreeLibrary` 处理模块引用计数，不能代替宿主的活动
 | 05 插件配置（已实现） | [配置读取](../plugins/runtime/config.cpp)合并包默认值与独立用户设置；实现提交见第 1 节 | `plugins.config` 验证缺省、顶层覆盖、嵌套替换、显式空值、非法文件、路径链接、配置隔离和快照保持 |
 | 06 C ABI 契约（已实现） | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约](plugin-abi.md)和最小查询 DLL；实现提交见第 1 节 | C11 / C++20 布局检查及 `sdk.abi` 实际查询通过；线程、长度、所有权、版本和生命周期规则明确 |
 | 07a 平台 DLL 加载（已实现） | [平台封装](../platform/library.cpp)及真实 DLL 夹具；实现提交见第 1 节 | `platform.library` 验证中文路径、引用归属、重复关闭、导出缺失、依赖搜索、真实架构不匹配和错误模式恢复 |
-| 07b ABI 查询校验 | 持有平台模块并查询、校验插件接口表 | 校验清单 ABI、查询状态、表大小、架构及必需函数；查询或兼容性失败不留下本次模块引用 |
+| 07b ABI 查询校验（已实现） | [PluginModule](../plugins/runtime/module.cpp) 持有平台模块并校验接口表；第 07 步整体完成 | `plugins.module` 验证清单、查询状态、表大小、版本、架构、必需函数及关闭；查询或兼容性失败不留下本次模块引用 |
 | 08 实例生命周期 | 创建、启动、停止、销毁和失败回收 | 配置正确传入；启动失败清理；成功只产生一个实例；停止失败保留模块；先不暴露终端加载入口 |
 | 09 忙碌保护与卸载 | 活动调用保护、关闭入口、资源归属和卸载流程 | 执行中拒绝；空闲时按顺序释放；失败不强制释放；重复卸载、重新加载行为明确 |
 | 10 事件桥接示例 | 宿主事件到 SDK 回调的适配；独立 observer 包 | 加载后收到通知；卸载后不再调用；回调期间卸载被拒绝；失败初始化无残留订阅；插件不修改模型输出 |
