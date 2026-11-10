@@ -30,3 +30,10 @@ source_group(TREE "${PROJECT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/age
   "${PROJECT_SOURCE_DIR}/agent/session.cpp" "${PROJECT_SOURCE_DIR}/app/chat.cpp")
 add_test(NAME agent.session COMMAND dfy_agent_tests)
 set_tests_properties(agent.session PROPERTIES TIMEOUT 15)
+
+add_executable(dfy_events_tests events.cpp)
+target_link_libraries(dfy_events_tests PRIVATE dfy_events dfy_build_options)
+set_target_properties(dfy_events_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/events.cpp")
+add_test(NAME events.bus COMMAND dfy_events_tests)
+set_tests_properties(events.bus PROPERTIES TIMEOUT 15)

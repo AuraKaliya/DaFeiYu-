@@ -2,7 +2,9 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：最小 Agent 终端流程
+## 当前审查点：独立同步事件基础
+
+新增独立的 [事件模块](events/include/dafeiyu/events.hpp)，支持按所有者订阅、取消和同步通知。当前由离线测试验证分发契约；Agent 尚未接入事件，终端行为保持如下。
 
 当前支持 DeepSeek、Qwen 的配置检查、单次调用和终端多轮问答。App 负责终端输入与展示，[Agent 会话](agent/session.cpp)维护当前上下文，[Model 模块](model/client.cpp)负责供应商协议，[Platform 模块](platform/winhttp.cpp)执行 HTTPS 请求。
 
@@ -21,13 +23,14 @@ dafeiyu
 ├── Model
 │   └── dfy_model
 ├── Platform
+│   ├── dfy_events
 │   └── dfy_http
 └── CMakePredefinedTargets
     ├── ALL_BUILD
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests` 和 `Tests/dfy_agent_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests` 和 `Tests/dfy_events_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 ## 构建与运行
 
@@ -117,7 +120,21 @@ ctest --preset windows-tests
 
 会话测试替代模型服务，验证成功问答的消息顺序、失败回滚、清空、独立会话，以及终端命令、中文输入、错误后继续和流故障。新增模型协议测试验证历史消息的角色映射与内容总量边界。
 
-本次阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/agent_session.cpp)。后续审查点为最小事件机制。
+会话阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/agent_session.cpp)。
+
+## 独立同步事件基础
+
+`dfy_events` 只依赖标准库，不依赖 Agent、模型、网络或 DLL。每个 `Bus` 独立保存订阅，单线程同步发布；每个订阅者接收全部事件，可按 `Kind` 自行选择处理。事件只含种类、会话标识和回合标识，当前只定义数据类型，标识分配及会话触发规则在下一步实现。
+
+- `subscribe` 接收调用方分配的非零所有者标识和非空回调，返回本总线内不复用的订阅标识。以后不同插件实例应使用不同所有者标识。
+- `unsubscribe` 返回是否取消了有效订阅；`unsubscribe_owner` 返回该所有者被取消的有效订阅数。未知、重复或零标识不会取消其他订阅。
+- 按注册顺序通知；分发中新订阅下次生效，被取消而尚未调用的订阅本次立即跳过。当前回调可以取消自身并继续执行，取消项在本次发布结束前集中销毁；空闲时取消立即销毁。
+- `publish` 返回固定大小的报告，不传播回调异常。同一总线嵌套发布返回 `reentrant` 且不通知；正常遍历返回 `completed`，成功数和失败数分别统计，失败时记录首个失败订阅及其所有者，不保存异常对象或文本。
+- 事件引用只在回调内有效；总线须活到发布结束，回调对象的析构不得重入总线。取消保证不再调用，不能将取消数量等同于回调资源已释放或 DLL 可安全卸载。
+
+事件测试覆盖空总线、非法订阅、顺序与回调状态保持、独立总线、重复取消、所有者隔离、分发中增删、自取消资源生命周期、不同异常隔离、嵌套发布拒绝及错误后继续使用。
+
+本次阅读顺序：[事件接口](events/include/dafeiyu/events.hpp) → [分发实现](events/bus.cpp) → [契约测试](tests/events.cpp)。下一审查点为第 02 步：会话事件及同步重入保护。
 
 ## 旧工程归档
 
