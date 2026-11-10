@@ -1,85 +1,34 @@
-# 大肥鱼架构验证工程 0.5.0
+# 大肥鱼
 
-C++20 核心、版本化 C ABI 和独立插件 SDK。当前工作集中在架构边界与最小验证，暂不扩展业务插件。
+项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-核心维护身份、调度、授权、状态和恢复；SDK 提供无运行状态的契约与公开视图；五个最小示例角色完成确定性闭环；服务组合和故障场景位于测试夹具中。
+## 当前审查点：旧工程归档
 
-## 构建范围
+- 旧工程基线为 `f7a4fddf4272e8d5295db86584c8d13d44077232`。
+- 该基线的全部 130 个受版本管理文件已原样保存到 [Old](Old/README.md)，包括旧配置、示例、测试和设计记录。
+- 根目录保留忽略规则和通用中文注释规范；旧版本的对应文件也保存在 `Old/` 中。
+- 旧构建缓存和运行数据保留在原位置，未归入版本控制。旧缓存包含原源码路径，应使用新的构建目录验证归档工程。
+- 本次仅完成归档和重建约定记录，尚未创建新根工程的 CMake 目标。`Old/` 默认不参与后续新工程构建。
 
-需要 CMake 3.28+ 和 C++20 编译器。Windows 使用 Visual Studio 2022 的 C++ 工具链；脚本会查找本机 CMake。原生依赖仍为固定版本的 nlohmann/json 和 SQLite。
+阅读旧实现请从 [旧 README](Old/README.md) 或 [旧架构说明](Old/docs/architecture.md) 开始；旧设计不作为新框架的强制需求。
 
-| 配置 | 内容 | 安装结果 |
-|---|---|---|
-| 默认 CMake 配置 | Host、核心、SDK | 不带示例模块与默认 profile |
-| DFY_BUILD_EXAMPLES=ON | 额外构建最小示例 | 五个模块、minimal profile、固定底色 |
-| BUILD_TESTING=ON | 额外构建契约测试和隔离夹具 | 夹具不安装 |
-| windows 开发预设 | 示例与测试均启用 | 安装仍只包含核心、SDK和最小示例 |
+## 已确定的新基线
 
-普通构建默认关闭示例和测试。Windows 脚本的默认模式也为 Core：
+1. Agent 只依赖独立模型接口；默认 Provider 随程序发布，空插件目录也能运行。
+2. 首批覆盖 DeepSeek 和 Qwen 模型服务，先实现一次性完整文本响应。供应商差异留在模型层，端点、模型名称和凭据引用可配置。
+3. 参考 pi 的模型层、Agent 核心和扩展层分工，不直接移植其完整功能集。
+4. 基础设施包含运行时插件管理和最小事件系统；插件采用同进程可信 DLL 与 C ABI，忙碌时拒绝卸载。
+5. 插件定义及默认配置随包发布，用户配置按插件分开，运行时信息汇总在内存中。
+6. 记忆、工作等本体固有能力在基础框架通过审查后逐项添加。
 
-```powershell
-.\scripts\windows.ps1 -Action build -Configuration Release
-.\scripts\windows.ps1 -Action install -Configuration Release
-```
+DeepSeek 和阿里云百炼 Qwen 都提供兼容的 Chat Completions 接口，可复用基础请求与响应处理；具体兼容边界在接入阶段逐项验证。Qwen 的服务地域、端点和凭据须匹配，届时通过配置明确选择，不将地址或模型版本写死在 Agent 中。
 
-输出在 build/windows-core 和 out/dafeiyu-core-v5。核心安装没有默认插件配置；启动业务实例需要显式提供自己的 profile。
+- [DeepSeek 官方接口说明](https://api-docs.deepseek.com/)
+- [Qwen 官方 Chat 接口兼容说明](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
+- [本次参考的 pi 版本](https://github.com/earendil-works/pi/tree/b2aabe02966a6b4528c7498a3bb406c14396932d)
 
-## 最小示例
+## 后续审查顺序
 
-```powershell
-.\scripts\windows.ps1 -Action build -Mode Minimal
-.\scripts\windows.ps1 -Action demo -Mode Minimal
-.\scripts\windows.ps1 -Action install -Mode Minimal
-```
+归档 → 新构建骨架与 VS 分组 → 模型配置 → 单次真实调用 → 最小 Agent 终端流程 → 事件机制 → 插件发现 → SDK 与加载 → 安全卸载 → 本地包管理 → 联通验收。
 
-最小组合位于 examples/minimal，配置位于 profiles/minimal.json，只包含脚本模型、默认策略、模拟渠道、只读记忆快照和加法动作。脚本固定计算 6 + 7，不理解自然语言，不调用真实平台，不默认启动周期活动、后台工作或记忆写入。
-
-常驻示例与单次 demo 使用同一个运行时：
-
-```powershell
-$app = '.\build\windows-minimal\run\Debug\bin\dafeiyu.exe'
-& $app serve --state '.runtime\minimal-v5'
-# 在另一个终端提交或查询：
-& $app request input.accept --state '.runtime\minimal-v5' --json '{"key":"task-1","text":"运行最小闭环"}'
-& $app request run.list --state '.runtime\minimal-v5'
-& $app request host.shutdown --state '.runtime\minimal-v5'
-```
-
-管理入口仍使用本地文件邮箱，受状态目录权限保护。已受理命令和输入以持久回执为准；重试管理修改时使用同一个 --command-id。执行、目标评价和交付分别记录。
-
-## 测试与分发
-
-```powershell
-.\scripts\windows.ps1 -Action build -Mode Test
-.\scripts\windows.ps1 -Action test -Mode Test
-```
-
-开发预设 windows 的构建目录为 build/windows。夹具输出在 tests/runtime，最小示例输出在 run，两者分开；每个场景从最小 profile 加入自己需要的提供方，不再加载全部旧示例。分发测试在新安装目录检查模块清单，并独立编译和执行 SDK 消费插件。
-
-另有 windows-core、windows-minimal、windows-tests 预设分别验证“仅核心”“仅示例”“测试开启且示例不安装”。这些目录互相独立。旧构建或安装目录可能仍有历史文件，发布验证应使用新的安装目录。
-
-若首次依赖下载受网络影响，可通过 FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON 和 FETCHCONTENT_SOURCE_DIR_SQLITE_SOURCE 指向对应固定版本的已解包源目录；不会修改依赖版本或校验规则。
-
-## 核心与 SDK
-
-- dafeiyu::contracts 提供数据类型、schema、内建服务定义和 RunView，不包含插件运行对象。
-- dafeiyu::plugin_sdk 在契约之上提供 ABI 和插件作者封装。
-- 核心公共头文件仅依赖数据契约；SQLite 与插件执行封装是私有依赖。
-- 内建服务使用 SDK 的统一定义，错误槽位、必需方法或契约版本在 ready 前拒绝。
-- 策略与插件 read_state(run) 获取 RunView，不读取完整的核心持久投影。
-
-独立插件使用 find_package(dafeiyu 0.5 CONFIG REQUIRED) 与 dafeiyu::plugin_sdk。C ABI 仍为版本 2；profile 与核心存储为版本 4，策略契约为版本 4，渠道与活动契约为版本 3，RunView 为版本 3，动作执行器契约为版本 1，其余内建契约及插件私有库仍为版本 2。旧实验接口没有适配层；旧核心数据库拒绝打开并保留原数据，演示使用新的 minimal-v5 目录。
-
-渠道实例和账号在 profile 的插件 channels 字段声明，输入必须标明其来源服务。接纳时保存会话与交付绑定，恢复不改投默认渠道。子调用记录父关系、收窄后的许可和继承期限；limits.nested_calls 是持久的 Run 级调用次数上限，硬重启不清零。取消后保留已派发工作的实际结果，不恢复原业务资格。
-
-## 文档
-
-- [收敛设计与实施状态](docs/architecture-convergence.md)
-- [实际架构](docs/architecture.md)
-- [SDK 契约与插件开发](docs/plugin-sdk.md)
-- [验证记录](docs/validation.md)
-- [v0.2 评审依据](docs/architecture-review-v0.2.md)
-- [长期常驻设计参考](docs/resident-runtime-design.md)
-- [第三方依赖](THIRD_PARTY.md)
-
-本轮补齐实例/会话/Run/Call Scope、注册释放、范围化订阅、统一动作执行封装、策略失败路由、活动反馈视图、内部状态写入所有权与索引调度。管理列表返回带 cursor 的分页；run.view 返回公开视图，run.get 保留本地管理诊断投影。默认示例仍只有五个角色，没有新增业务插件。
+这些是逐次审查点，复杂步骤继续拆分。每次只提交一个可审查的功能点，完成后停止，等待用户审查再继续。开发及注释要求见 [AGENTS.md](AGENTS.md)。
