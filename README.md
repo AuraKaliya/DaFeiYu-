@@ -2,7 +2,9 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：DLL 加载查询（第 07 步整体完成）
+## 当前进度：第 07 步完成，异步事件流方案待讨论
+
+已确认下一方向为“整个宿主与插件的事件订阅统一采用异步事件流”。当前实现仍为同步通知；DSH、pi 的分析、建议方案及尚未确认的问题已记录在 [异步事件流分析与待讨论问题](docs/async-event-stream-review.md)。继续第 08 步前，先对齐事件交付、取消和资源回收规则。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -272,7 +274,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-本次阅读顺序：[模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成，下一审查点为第 08 步：实例生命周期。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成；当前下一审查点为异步事件流设计讨论，第 08 步的实施顺序待讨论结果确认。
 
 ## 旧工程归档
 
@@ -297,7 +299,7 @@ DeepSeek 和阿里云百炼 Qwen 都提供兼容的 Chat Completions 接口，�
 
 - [DeepSeek 官方接口说明](https://api-docs.deepseek.com/)
 - [Qwen 官方 Chat 接口兼容说明](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
-- [本次参考的 pi 版本](https://github.com/earendil-works/pi/tree/b2aabe02966a6b4528c7498a3bb406c14396932d)
+- [初始基线参考的 pi 版本](https://github.com/earendil-works/pi/tree/b2aabe02966a6b4528c7498a3bb406c14396932d)
 
 ## 后续审查顺序
 

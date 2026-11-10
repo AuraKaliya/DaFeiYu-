@@ -2,6 +2,8 @@
 
 本契约对应 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。头文件、[纯 C 查询 DLL](../plugins/examples/query/query.c)、[C++ 查询测试](../tests/sdk_abi.cpp)及 [PluginModule 查询校验](../plugins/runtime/module.cpp)已实现。宿主服务、实例生命周期、活动调用计数和事件桥接尚未实现；相关条款是后续实现必须满足的约定，不表示现有宿主已支持插件运行。
 
+后续方向已确定为宿主与插件统一采用异步事件流，见 [分析与待讨论问题](async-event-stream-review.md)。本文继续记录 v1 已有布局与同步订阅契约；新流接口、取消和关闭语义仍待审查，后续生命周期实现须先核对该讨论的定稿结果。
+
 ## 平台、导出与布局
 
 - 首版仅支持 Windows x64，使用 VS2022 的 C11、C++20 验证。其他架构在头文件中拒绝，未承诺其他工具链兼容。
