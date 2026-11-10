@@ -9,12 +9,12 @@ target_include_directories(dfy_model_client_tests PRIVATE
 target_link_libraries(dfy_model_client_tests PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
 target_compile_definitions(dfy_model_client_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# 编译真实会话和终端流程，仅用测试模型替代外部服务调用。
+# 编译真实会话、事件和终端流程，仅用测试模型替代外部服务调用。
 add_executable(dfy_agent_tests agent_session.cpp
   "${PROJECT_SOURCE_DIR}/agent/session.cpp" "${PROJECT_SOURCE_DIR}/app/chat.cpp")
 target_include_directories(dfy_agent_tests PRIVATE "${PROJECT_SOURCE_DIR}/agent/include"
   "${PROJECT_SOURCE_DIR}/model/include" "${PROJECT_SOURCE_DIR}/app")
-target_link_libraries(dfy_agent_tests PRIVATE dfy_build_options)
+target_link_libraries(dfy_agent_tests PRIVATE dfy_events dfy_build_options)
 
 # 事件测试直接链接独立总线，不引入模型或平台传输。
 add_executable(dfy_events_tests events.cpp)

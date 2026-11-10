@@ -4,6 +4,7 @@
 #endif
 #include <dafeiyu/model_config.hpp>
 #include <dafeiyu/model_client.hpp>
+#include <dafeiyu/events.hpp>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -53,7 +54,8 @@ int run(const std::vector<std::filesystem::path>& args) {
             return 0;
         }
         if (args.size() == 3 && args[1] == "--chat") {
-            dfy::agent::Session session(dfy::model::load_config(args[2]));
+            dfy::events::Bus events;
+            dfy::agent::Session session(dfy::model::load_config(args[2]), events);
             return dfy::app::chat(session, std::cin, std::cout, std::cerr);
         }
         if (args.size() != 1) {

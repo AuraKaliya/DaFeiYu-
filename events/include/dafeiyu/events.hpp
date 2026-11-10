@@ -44,6 +44,8 @@ class Bus {
     std::size_t unsubscribe_owner(OwnerId owner) noexcept;
     // 按注册顺序通知，事件引用仅在回调内有效；拒绝同一总线嵌套发布并汇总回调异常。
     PublishResult publish(Event event) noexcept;
+    // 查询是否正在同步分发，供业务入口在修改状态前拒绝嵌套通知。
+    bool publishing() const noexcept { return publishing_; }
 
   private:
     struct Subscription {
