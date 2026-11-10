@@ -16,8 +16,7 @@ VS 解决方案当前按实际目标分组：
 dafeiyu
 ├── App
 │   └── dafeiyu
-│       └── Source
-│           └── main.cpp / chat.cpp / chat.hpp / console.hpp
+│       └── main.cpp / chat.cpp / chat.hpp / console.hpp
 ├── Agent
 │   └── dfy_agent
 ├── Model
@@ -31,6 +30,8 @@ dafeiyu
 ```
 
 测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests` 和 `Tests/dfy_events_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+
+各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
 ## 构建与运行
 
