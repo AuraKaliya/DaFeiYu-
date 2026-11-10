@@ -2,9 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：插件发现与注册表
+## 当前审查点：插件配置
 
-新增 [插件目录注册表](plugins/runtime/include/dafeiyu/plugin_registry.hpp)，显式扫描根目录，隔离坏包和重复 ID，并返回包含描述、诊断和变更记录的只读快照。当前不加载 DLL，也未接入终端管理命令。
+新增 [插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)，合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
+
+[插件目录注册表](plugins/runtime/include/dafeiyu/plugin_registry.hpp)支持显式扫描根目录，隔离坏包和重复 ID，并返回包含描述、诊断和变更记录的只读快照。当前不加载 DLL，也未接入终端管理命令。
 
 [Agent 会话](agent/session.cpp)已接入独立的 [事件模块](events/include/dafeiyu/events.hpp)，发布问答开始、成功、失败和清空通知。通知用于观察生命周期，观察者失败不会改变模型结果；终端入口创建宿主总线，当前不注册观察者。
 
@@ -33,7 +35,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests` 和 `Tests/dfy_plugin_registry_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests` 和 `Tests/dfy_plugin_config_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -171,7 +173,7 @@ ctest --preset windows-tests
 | `entry` | 必填包内相对文件路径，最多 1024 字节，扩展名须为 `.dll`（不区分大小写） |
 | `default_config` | 可省略；提供时须为包内相对文件路径，最多 1024 字节 |
 
-文本不允许空串、纯 ASCII 空格或 ASCII 控制字符。路径支持中文、空格和子目录；拒绝绝对路径、`.` / `..` 分量、Windows 特殊字符、保留设备名及以点或空格结尾的分量。包目录、清单及引用文件路径不接受符号链接或目录联接；入口和已声明的默认配置必须是现有普通文件。默认配置内容在第 05 步读取，DLL 的结构、导出和 ABI 在后续加载步骤检查。
+文本不允许空串、纯 ASCII 空格或 ASCII 控制字符。路径支持中文、空格和子目录；拒绝绝对路径、`.` / `..` 分量、Windows 特殊字符、保留设备名及以点或空格结尾的分量。包目录、清单及引用文件路径不接受符号链接或目录联接；入口和已声明的默认配置必须是现有普通文件。默认配置内容由下述配置接口读取，DLL 的结构、导出和 ABI 在后续加载步骤检查。
 
 路径校验反映读取当时的文件状态，不保证防止并发替换；后续安装和加载应重新核对边界。单包解析不检查跨包 ID 冲突，由下述注册表处理；输入目录名不必等于 ID。宿主模型调用不依赖该模块。
 
@@ -197,7 +199,25 @@ ctest --preset windows-tests
 
 发现测试覆盖缺失和空目录、坏包隔离、链接拒绝、保留目录、多个同 ID 包、冲突解除、显式更新及新增移除、旧快照存活和根目录故障恢复。
 
-本次阅读顺序：[注册表接口](plugins/runtime/include/dafeiyu/plugin_registry.hpp) → [刷新实现](plugins/runtime/registry.cpp) → [发现测试](tests/plugin_registry.cpp)。下一审查点为第 05 步：插件配置。
+注册表阅读顺序：[注册表接口](plugins/runtime/include/dafeiyu/plugin_registry.hpp) → [刷新实现](plugins/runtime/registry.cpp) → [发现测试](tests/plugin_registry.cpp)。
+
+## 插件配置快照
+
+`plugins::load_config(manifest, user_data_root)` 接收清单或注册表提供的描述，以及宿主指定的非空用户数据根目录。先重新校验清单及引用文件；描述发生变化时要求刷新目录，避免沿用旧 ID 或旧配置路径。相对用户根路径在本次调用时转为绝对路径，App 后续装配时应按程序位置确定默认根目录。
+
+| 来源 | 规则 |
+|---|---|
+| 包默认配置 | 读取清单声明的 `default_config`；未声明时为 `{}`，声明后缺失则报错 |
+| 用户配置 | 读取 `<user_data_root>/plugins/<id>/settings.json`；目录或文件尚不存在时为 `{}`，不自动创建 |
+| 合并结果 | 先取默认对象，再用用户对象的同名顶层键覆盖；嵌套对象、数组整体替换，`null` 保留为值 |
+
+每份文件须为 UTF-8 JSON 对象（支持 BOM），含 BOM 最多 64 KiB，容器嵌套最多 64 层。拒绝任何对象层级内的重复键、无效 JSON、错误根类型及过深结构；错误不回显配置内容。宿主不限制插件自有字段，字段含义待插件初始化时自行校验。用户路径逐段检查目录与普通文件，拒绝符号链接、目录联接、错误文件类型及越出预期目录的定位。
+
+结果为 `shared_ptr<const EffectiveConfig>`，保存插件 ID 和合并后的 UTF-8 JSON 对象文本，公开接口不依赖 JSON 库。重新读取产生新快照，成功或失败都不修改旧快照。注册表仍只保存包描述，刷新不会自动读取配置；未来加载实例将持有自己的配置快照，暂不提供在线配置回调。默认与用户文件之间的读取不构成文件系统事务，仍需避免并发替换。
+
+配置测试覆盖空配置、单侧配置、覆盖顺序、嵌套对象及数组替换、显式 `null`、插件隔离、快照保持、BOM、大小与嵌套边界、重复键、缺失默认文件、过期描述及真实路径链接拒绝。
+
+本次阅读顺序：[配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp) → [读取与合并](plugins/runtime/config.cpp) → [配置测试](tests/plugin_config.cpp)。下一审查点为第 06 步：C ABI 契约。
 
 ## 旧工程归档
 
