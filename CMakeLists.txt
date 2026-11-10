@@ -16,12 +16,13 @@ target_compile_options(dfy_build_options INTERFACE
   "$<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive-;/utf-8>"
   "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>")
 
-# 装配运行模块：准备第三方依赖，再加入已实现的基础设施、模型、会话和应用。
+# 装配运行模块：准备第三方依赖，再加入已实现的基础设施、模型、会话、插件运行时和应用。
 include(cmake/Dependencies.cmake)
 add_subdirectory(platform)
 add_subdirectory(events)
 add_subdirectory(model)
 add_subdirectory(agent)
+add_subdirectory(plugins/runtime)
 add_subdirectory(app)
 
 # 按需启用离线测试，普通构建不生成测试目标。

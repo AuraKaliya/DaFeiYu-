@@ -2,7 +2,9 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：会话事件及同步重入保护
+## 当前审查点：插件清单格式与解析
+
+新增 [插件运行时清单接口](plugins/runtime/include/dafeiyu/plugin_manifest.hpp)，离线读取单个目录包的 `plugin.json`，校验描述字段及包内文件路径。当前不扫描目录、不加载 DLL，也未接入终端管理命令。
 
 [Agent 会话](agent/session.cpp)已接入独立的 [事件模块](events/include/dafeiyu/events.hpp)，发布问答开始、成功、失败和清空通知。通知用于观察生命周期，观察者失败不会改变模型结果；终端入口创建宿主总线，当前不注册观察者。
 
@@ -24,12 +26,14 @@ dafeiyu
 ├── Platform
 │   ├── dfy_events
 │   └── dfy_http
+├── Plugins
+│   └── dfy_plugins
 └── CMakePredefinedTargets
     ├── ALL_BUILD
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests` 和 `Tests/dfy_events_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests` 和 `Tests/dfy_plugin_manifest_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -151,7 +155,29 @@ ctest --preset windows-tests
 
 事件测试覆盖空总线、非法订阅、顺序与回调状态保持、独立总线、重复取消、所有者隔离、分发中增删、自取消资源生命周期、不同异常隔离、嵌套发布拒绝及错误后继续使用。
 
-事件基础阅读顺序：[事件接口](events/include/dafeiyu/events.hpp) → [分发实现](events/bus.cpp) → [契约测试](tests/events.cpp)。本次从上述会话接口、实现和会话测试开始审查；下一审查点为第 03 步：插件清单格式与解析。
+事件基础阅读顺序：[事件接口](events/include/dafeiyu/events.hpp) → [分发实现](events/bus.cpp) → [契约测试](tests/events.cpp)。
+
+## 插件清单
+
+`plugins::load_manifest(目录)` 只读取该目录中的 `plugin.json`，返回不依赖 JSON 类型的包描述和规范化绝对路径。清单使用 UTF-8（支持 BOM），总大小含 BOM 最多 64 KiB；拒绝重复字段、未知字段、错误类型及无效 JSON。完整目录示例见 [开发指导](docs/foundation-development-guide.md)。
+
+| 字段 | 当前规则 |
+|---|---|
+| `manifest_version` | 必填整数，固定为 `1` |
+| `id` | 必填，最多 64 字节；格式 `[a-z][a-z0-9]*([._-][a-z0-9]+)*`，拒绝 Windows 保留设备名 |
+| `name` | 必填 UTF-8 文本，最多 256 字节 |
+| `version` | 必填 UTF-8 文本，最多 64 字节；仅作描述，不作版本依赖求解 |
+| `abi_version` | 必填整数，范围 1～4294967295；此处只记录，兼容性留待加载阶段检查 |
+| `entry` | 必填包内相对文件路径，最多 1024 字节，扩展名须为 `.dll`（不区分大小写） |
+| `default_config` | 可省略；提供时须为包内相对文件路径，最多 1024 字节 |
+
+文本不允许空串、纯 ASCII 空格或 ASCII 控制字符。路径支持中文、空格和子目录；拒绝绝对路径、`.` / `..` 分量、Windows 特殊字符、保留设备名及以点或空格结尾的分量。包目录、清单及引用文件路径不接受符号链接或目录联接；入口和已声明的默认配置必须是现有普通文件。默认配置内容在第 05 步读取，DLL 的结构、导出和 ABI 在后续加载步骤检查。
+
+路径校验反映读取当时的文件状态，不保证防止并发替换；后续安装和加载应重新核对边界。此时尚不检查不同包的 ID 冲突，也不要求输入目录名等于 ID。宿主模型调用不依赖该模块。
+
+清单测试创建真实文件、文件符号链接和目录符号链接，运行账户需具备创建链接权限；测试入口是普通文本文件，解析无需可加载的 DLL。测试覆盖字段与长度边界、中文路径、版本、文件缺失及越界和链接拒绝。
+
+本次阅读顺序：[清单接口](plugins/runtime/include/dafeiyu/plugin_manifest.hpp) → [解析实现](plugins/runtime/manifest.cpp) → [清单测试](tests/plugin_manifest.cpp)。下一审查点为第 04 步：发现与注册表。
 
 ## 旧工程归档
 
