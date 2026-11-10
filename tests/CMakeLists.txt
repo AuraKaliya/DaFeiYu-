@@ -24,13 +24,17 @@ target_link_libraries(dfy_events_tests PRIVATE dfy_events dfy_build_options)
 add_executable(dfy_plugin_manifest_tests plugin_manifest.cpp)
 target_link_libraries(dfy_plugin_manifest_tests PRIVATE dfy_plugins dfy_build_options nlohmann_json::nlohmann_json)
 
+# 发现测试在隔离目录中增删包，验证刷新、冲突和快照的生命周期。
+add_executable(dfy_plugin_registry_tests plugin_registry.cpp)
+target_link_libraries(dfy_plugin_registry_tests PRIVATE dfy_plugins dfy_build_options nlohmann_json::nlohmann_json)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
-  PROPERTIES FOLDER "Tests")
+  dfy_plugin_registry_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/model_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/agent_session.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/events.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_registry.cpp")
 source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${PROJECT_SOURCE_DIR}/model/client.cpp" "${PROJECT_SOURCE_DIR}/agent/session.cpp"
   "${PROJECT_SOURCE_DIR}/app/chat.cpp")
@@ -42,4 +46,5 @@ add_test(NAME model.complete COMMAND dfy_model_client_tests)
 add_test(NAME agent.session COMMAND dfy_agent_tests)
 add_test(NAME events.bus COMMAND dfy_events_tests)
 add_test(NAME plugins.manifest COMMAND dfy_plugin_manifest_tests "${CMAKE_CURRENT_BINARY_DIR}/manifest/$<CONFIG>")
-set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest PROPERTIES TIMEOUT 15)
+add_test(NAME plugins.registry COMMAND dfy_plugin_registry_tests "${CMAKE_CURRENT_BINARY_DIR}/registry/$<CONFIG>")
+set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest plugins.registry PROPERTIES TIMEOUT 15)

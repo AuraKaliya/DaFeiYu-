@@ -2,9 +2,9 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：插件清单格式与解析
+## 当前审查点：插件发现与注册表
 
-新增 [插件运行时清单接口](plugins/runtime/include/dafeiyu/plugin_manifest.hpp)，离线读取单个目录包的 `plugin.json`，校验描述字段及包内文件路径。当前不扫描目录、不加载 DLL，也未接入终端管理命令。
+新增 [插件目录注册表](plugins/runtime/include/dafeiyu/plugin_registry.hpp)，显式扫描根目录，隔离坏包和重复 ID，并返回包含描述、诊断和变更记录的只读快照。当前不加载 DLL，也未接入终端管理命令。
 
 [Agent 会话](agent/session.cpp)已接入独立的 [事件模块](events/include/dafeiyu/events.hpp)，发布问答开始、成功、失败和清空通知。通知用于观察生命周期，观察者失败不会改变模型结果；终端入口创建宿主总线，当前不注册观察者。
 
@@ -33,7 +33,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests` 和 `Tests/dfy_plugin_manifest_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests` 和 `Tests/dfy_plugin_registry_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -173,11 +173,31 @@ ctest --preset windows-tests
 
 文本不允许空串、纯 ASCII 空格或 ASCII 控制字符。路径支持中文、空格和子目录；拒绝绝对路径、`.` / `..` 分量、Windows 特殊字符、保留设备名及以点或空格结尾的分量。包目录、清单及引用文件路径不接受符号链接或目录联接；入口和已声明的默认配置必须是现有普通文件。默认配置内容在第 05 步读取，DLL 的结构、导出和 ABI 在后续加载步骤检查。
 
-路径校验反映读取当时的文件状态，不保证防止并发替换；后续安装和加载应重新核对边界。此时尚不检查不同包的 ID 冲突，也不要求输入目录名等于 ID。宿主模型调用不依赖该模块。
+路径校验反映读取当时的文件状态，不保证防止并发替换；后续安装和加载应重新核对边界。单包解析不检查跨包 ID 冲突，由下述注册表处理；输入目录名不必等于 ID。宿主模型调用不依赖该模块。
 
 清单测试创建真实文件、文件符号链接和目录符号链接，运行账户需具备创建链接权限；测试入口是普通文本文件，解析无需可加载的 DLL。测试覆盖字段与长度边界、中文路径、版本、文件缺失及越界和链接拒绝。
 
-本次阅读顺序：[清单接口](plugins/runtime/include/dafeiyu/plugin_manifest.hpp) → [解析实现](plugins/runtime/manifest.cpp) → [清单测试](tests/plugin_manifest.cpp)。下一审查点为第 04 步：发现与注册表。
+清单阅读顺序：[清单接口](plugins/runtime/include/dafeiyu/plugin_manifest.hpp) → [解析实现](plugins/runtime/manifest.cpp) → [清单测试](tests/plugin_manifest.cpp)。
+
+## 插件发现与注册表
+
+`Registry(root)` 固定非空根目录的绝对路径，初始快照为空；只有显式调用 `refresh()` 才扫描。注册表采用单线程操作，不创建目录、不递归发现，也不执行插件代码。缺失或空根目录产生空结果；根目录为文件、链接或扫描失败时抛出错误，保留上一次完整快照。
+
+只检查根目录的直接子项：忽略普通文件，点开头的子项及其子树保留给宿主暂存用途。其余子项按路径排序，分别调用清单解析器；坏包、链接或不可读子项记录独立诊断，不妨碍有效包被发现。所有有效清单按 ID 检查冲突，同一 ID 的全部冲突包都被排除并各自记录诊断，不选择扫描顺序中的第一个包。
+
+`snapshot()` 返回 `shared_ptr<const Catalog>`，包含以下内容；旧快照可保留到刷新之后，也可在注册表销毁后继续读取：
+
+| 字段 | 含义 |
+|---|---|
+| `packages` | 按 ID 排序的有效且无冲突的包描述 |
+| `diagnostics` | 按候选路径排序的坏包及冲突原因；成功刷新时替换，不累计历史错误 |
+| `changes` | 相对上一次成功刷新的可用目录差异，按 ID 排序，类型为新增、移除或描述变更 |
+
+首次发现有效包记为新增；未变化的刷新产生空差异。包失效或新增同 ID 冲突会使原可用 ID 记为移除，修复后重新记为新增。描述变更只比较清单字段与规范化路径，不比较 DLL、默认配置文件内容或修改时间；每次仍会重新校验引用文件是否存在且位于包内。目录信息与未来加载实例的状态分开保存，当前快照不含 DLL 句柄或有效配置。
+
+发现测试覆盖缺失和空目录、坏包隔离、链接拒绝、保留目录、多个同 ID 包、冲突解除、显式更新及新增移除、旧快照存活和根目录故障恢复。
+
+本次阅读顺序：[注册表接口](plugins/runtime/include/dafeiyu/plugin_registry.hpp) → [刷新实现](plugins/runtime/registry.cpp) → [发现测试](tests/plugin_registry.cpp)。下一审查点为第 05 步：插件配置。
 
 ## 旧工程归档
 
