@@ -2,13 +2,46 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：旧工程归档
+## 当前审查点：构建骨架与 VS 分组
+
+当前只有一个可执行目标 `dafeiyu`，入口位于 [app/main.cpp](app/main.cpp)。启动后显示提示，输入 `/exit` 或结束标准输入即可退出；其他非空输入会收到未知命令提示。模型调用在后续审查点实现。
+
+VS 解决方案当前按实际目标分组：
+
+```text
+dafeiyu
+├── App
+│   └── dafeiyu
+│       └── Source
+│           └── main.cpp
+└── CMakePredefinedTargets
+    ├── ALL_BUILD
+    └── ZERO_CHECK
+```
+
+Agent、Model、Platform、SDK、Plugins、Tests、ThirdParty 分组随对应功能和目标逐步加入，不预建空库。根构建仅引用 `app/`。
+
+## 构建与运行
+
+需要 CMake 3.28 或更新版本，以及安装了 C++ 桌面开发工具的 VS2022。在项目根目录执行：
+
+```powershell
+cmake --preset windows
+cmake --build --preset windows-debug
+.\build\rebuild\windows\bin\Debug\dafeiyu.exe
+```
+
+在 VS2022 中打开 `build/rebuild/windows/dafeiyu.sln`；默认启动项目为 `dafeiyu`。Release 构建使用 `cmake --build --preset windows-release`，产物位于 `build/rebuild/windows/bin/Release/`。
+
+新预设使用独立的 `build/rebuild/windows/`，避免复用旧工程缓存和解决方案。构建不需要下载第三方依赖。
+
+## 旧工程归档
 
 - 旧工程基线为 `f7a4fddf4272e8d5295db86584c8d13d44077232`。
 - 该基线的全部 130 个受版本管理文件已原样保存到 [Old](Old/README.md)，包括旧配置、示例、测试和设计记录。
 - 根目录保留忽略规则和通用中文注释规范；旧版本的对应文件也保存在 `Old/` 中。
 - 旧构建缓存和运行数据保留在原位置，未归入版本控制。旧缓存包含原源码路径，应使用新的构建目录验证归档工程。
-- 本次仅完成归档和重建约定记录，尚未创建新根工程的 CMake 目标。`Old/` 默认不参与后续新工程构建。
+- `Old/` 不参与新根工程构建；如需验证旧工程，应将 `Old/` 作为独立 CMake 源码目录。
 
 阅读旧实现请从 [旧 README](Old/README.md) 或 [旧架构说明](Old/docs/architecture.md) 开始；旧设计不作为新框架的强制需求。
 
