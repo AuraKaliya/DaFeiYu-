@@ -1,11 +1,35 @@
 #include <dafeiyu/model_config.hpp>
+#include <dafeiyu/model_client.hpp>
+#include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
-// 根据启动参数校验模型配置，或进入最小终端入口。
-// 步骤：分派配置检查与参数错误 → 读取终端命令 → 返回退出状态或报告配置错误。
+// 读取有大小限制的提示词文件，兼容 UTF-8 BOM 并保留正文换行。
+// 步骤：打开文件 → 有界读取并检查错误 → 去除编码签名。
+std::string read_prompt(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("prompt: cannot open file");
+    }
+
+    std::string text(1024 * 1024 + 4, '\0');
+    file.read(text.data(), static_cast<std::streamsize>(text.size()));
+    text.resize(static_cast<std::size_t>(file.gcount()));
+    if (file.bad()) {
+        throw std::runtime_error("prompt: cannot read file");
+    }
+
+    if (text.starts_with("\xEF\xBB\xBF")) {
+        text.erase(0, 3);
+    }
+    return text;
+}
+
+// 分派配置检查、单次模型调用与最小终端入口，并统一报告错误。
+// 步骤：检查启动参数并执行相应操作 → 读取终端命令 → 返回退出状态。
 int run(const std::vector<std::filesystem::path>& args) {
     try {
         if (args.size() == 3 && args[1] == "--check-config") {
@@ -14,8 +38,14 @@ int run(const std::vector<std::filesystem::path>& args) {
                       << "\nCredentials and service availability have not been checked.\n";
             return 0;
         }
+        if (args.size() == 4 && args[1] == "--complete") {
+            const auto config = dfy::model::load_config(args[2]);
+            const auto prompt = read_prompt(args[3]);
+            std::cout << dfy::model::complete(config, prompt) << '\n';
+            return 0;
+        }
         if (args.size() != 1) {
-            std::cerr << "Usage: dafeiyu [--check-config FILE]\n";
+            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE]\n";
             return 1;
         }
 

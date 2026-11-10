@@ -14,6 +14,7 @@ target_compile_options(dfy_build_options INTERFACE
   "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>")
 
 include(cmake/Dependencies.cmake)
+add_subdirectory(platform)
 add_subdirectory(model)
 add_subdirectory(app)
 
