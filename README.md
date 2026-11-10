@@ -2,9 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前审查点：插件 C ABI 契约
+## 当前审查点：受控 DLL 加载（07a）
 
-新增 [SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL。已验证 C/C++ 接口布局及实际 DLL 查询；宿主加载器、实例生命周期和事件桥接仍留待后续审查点。
+新增 [平台动态库接口](platform/include/dafeiyu/dynamic_library.hpp)，封装受控加载、导出查找及单次模块引用的释放。第 07 步按审查成本拆为 07a 平台封装和 07b ABI 查询校验；本次只交付 07a，尚未装配到插件运行时或终端。
+
+[SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL 已验证 C/C++ 布局及实际查询。生产代码的 ABI 查询校验、实例生命周期和事件桥接仍留待后续审查点。
 
 [插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
 
@@ -29,7 +31,8 @@ dafeiyu
 │   └── dfy_model
 ├── Platform
 │   ├── dfy_events
-│   └── dfy_http
+│   ├── dfy_http
+│   └── dfy_library
 ├── SDK
 │   └── dfy_sdk
 ├── Plugins
@@ -41,6 +44,8 @@ dafeiyu
 ```
 
 测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests`、`Tests/dfy_plugin_config_tests` 和 `Tests/dfy_sdk_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+
+加载器测试另外提供 `Tests/dfy_library_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
@@ -232,7 +237,28 @@ ctest --preset windows-tests
 
 `sdk.abi` 使用 C++ 测试宿主按导出名加载纯 C DLL，检查版本拒绝、完整函数表、重复查询和错误缓冲区寿命，并释放本次模块引用。C/C++ 消费者分别验证布局及头文件打包设置恢复，均只依赖 SDK，不继承本体字符集选项。另已使用 Debug 测试宿主查询 Release DLL，验证该组合下的 ABI 与错误输出。
 
-本次阅读顺序：[ABI 契约](docs/plugin-abi.md) → [公开头文件](sdk/include/dafeiyu/plugin_abi.h) → [查询示例](plugins/examples/query/query.c) → [查询测试](tests/sdk_abi.cpp)。下一审查点为第 07 步：DLL 加载查询。
+ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/include/dafeiyu/plugin_abi.h) → [查询示例](plugins/examples/query/query.c) → [查询测试](tests/sdk_abi.cpp)。
+
+## 受控 DLL 加载
+
+`platform::DynamicLibrary` 独立于 HTTP、SDK 和插件业务逻辑，按单线程使用，只拥有一次 Windows 模块引用。构造要求绝对 `.dll` 路径且不能含内嵌 NUL；加载前规范化路径并确认是普通 `.dll` 文件。上层仍负责清单、包边界及可信来源检查。
+
+| 操作 | 当前行为 |
+|---|---|
+| 构造 | 以规范化完整路径加载，文件系统依赖搜索配置为 DLL 所在目录与 System32 |
+| `symbol(name)` | 按非空、无内嵌 NUL 的名称取得导出地址，调用方必须按真实函数签名转换；本步不校验 ABI |
+| `close()` | 释放对象持有的这一份引用，成功后不再允许查找；重复关闭无操作，失败保留句柄并抛错 |
+| 析构 | 正常或异常离开作用域时尽力释放本次引用，不抛出异常；需要释放诊断时先显式关闭 |
+
+加载期间临时设置当前线程的错误模式，避免系统加载错误对话框阻塞流程，正常或异常退出均恢复原模式。加载、导出查找和释放错误保留 Win32 错误号，常见缺失依赖、错误架构或无效映像、缺失导出有明确类别。搜索配置与线程错误模式分别依据 [LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw) 和 [SetThreadErrorMode](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-setthreaderrormode)。
+
+私有依赖应与主 DLL 放在同一目录并使用唯一文件名；不启用当前目录或 PATH 的额外文件搜索，仍遵循 Windows 的已加载模块等规则，不承诺同进程内任意同名库隔离。关闭只释放本对象取得的引用，不能据此断言其他引用已释放或模块已完全卸载，参见 [FreeLibrary](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-freelibrary)。
+
+导出查找失败时，引用仍由对象管理；异常退出其作用域会触发释放。借用地址、活动调用和未来插件实例都必须在关闭前结束。本步不实现停止插件、忙碌保护或 ABI 检查，不能代替后续安全卸载流程。
+
+`platform.library` 使用真实 DLL 验证中文路径、多个持有者、重复关闭、异常退出释放、缺失文件与导出、真实 x86 架构不匹配和无效映像；同时验证只有工作目录中的依赖不会被拾取，同目录依赖可正常加载，并检查最后一份测试引用释放后模块不再存在。
+
+本次阅读顺序：[平台接口](platform/include/dafeiyu/dynamic_library.hpp) → [实现](platform/library.cpp) → [加载测试](tests/dynamic_library.cpp) → [夹具构建](tests/fixtures/library/CMakeLists.txt)。下一审查点为 07b：ABI 查询与兼容性校验。
 
 ## 旧工程归档
 
@@ -261,7 +287,7 @@ DeepSeek 和阿里云百炼 Qwen 都提供兼容的 Chat Completions 接口，�
 
 ## 后续审查顺序
 
-剩余基础开发的模块边界、建议契约、16 个小步审查点及验收条件，见 [剩余基础开发指导](docs/foundation-development-guide.md)。其中明确区分已确认约束、当前代码能力和待实现建议。
+剩余基础开发的模块边界、建议契约、分步审查点及验收条件，见 [剩余基础开发指导](docs/foundation-development-guide.md)。其中明确区分已确认约束、当前代码能力和待实现建议。
 
 归档 → 新构建骨架与 VS 分组 → 模型配置 → 单次真实调用 → 最小 Agent 终端流程 → 事件机制 → 插件发现 → SDK 与加载 → 安全卸载 → 本地包管理 → 联通验收。
 

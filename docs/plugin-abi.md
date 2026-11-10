@@ -77,4 +77,4 @@ v1 布局固定，不按编译器枚举宽度传递状态，不传 `bool`、`siz
 
 `dfy_query_example` 只有查询能力：提供完整非空函数表，但 `create` 明确返回 `DFY_UNSUPPORTED` 且不产生实例。生命周期函数是查询样例的占位实现，不是可安装运行的 observer 插件；完整实例与事件桥接仍分别在第 08、10 步建设。
 
-`sdk.abi` 在 C/C++ 两侧检查布局和打包设置，实际通过固定导出名查询 DLL，验证版本拒绝、重复查询、失败输出和调用方错误缓冲。测试代码使用完整路径及限定的 DLL 搜索选项加载该已知样例，并释放本次取得的模块引用；这不替代第 07 步的生产加载器。参见 [LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw)。
+`sdk.abi` 在 C/C++ 两侧检查布局和打包设置，实际通过固定导出名查询 DLL，验证版本拒绝、重复查询、失败输出和调用方错误缓冲。测试代码使用完整路径及限定的 DLL 搜索选项加载该已知样例，并释放本次取得的模块引用。07a 已另行提供 [平台模块引用封装](../platform/include/dafeiyu/dynamic_library.hpp)，生产 ABI 查询校验在 07b 接入，SDK 测试不替代该流程。参见 [LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw)。
