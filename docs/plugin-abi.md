@@ -2,12 +2,12 @@
 
 本契约对应 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。头文件、[纯 C 查询 DLL](../plugins/examples/query/query.c)、[C++ 查询测试](../tests/sdk_abi.cpp)及 [PluginModule 查询校验](../plugins/runtime/module.cpp)已实现。宿主服务、实例生命周期、活动调用计数和事件桥接尚未实现；相关条款是后续实现必须满足的约定，不表示现有宿主已支持插件运行。
 
-后续方向已确定为宿主与插件统一采用异步事件流，见 [分析与待讨论问题](async-event-stream-review.md)。本文继续记录 v1 已有布局与同步订阅契约；新流接口、取消和关闭语义仍待审查，后续生命周期实现须先核对该讨论的定稿结果。
+后续已确认采用宿主与插件统一异步事件流、冻结 v1，并为 v2 提供独立固定查询入口与版本化能力表，见 [开发指导的 ABI 演进方案](foundation-development-guide.md#46-abi-v2-与能力表版本演进)。本文仅记录 v1 已有布局与同步订阅契约，不把 v1 的成功返回解释为异步受理；v2 精确导出名、签名、布局和能力集合仍待审查，当前头文件与加载器尚未实现 v2。
 
 ## 平台、导出与布局
 
 - 首版仅支持 Windows x64，使用 VS2022 的 C11、C++20 验证。其他架构在头文件中拒绝，未承诺其他工具链兼容。
-- 唯一查询导出名为 `dfy_plugin_query`，对应 `DFY_QUERY_EXPORT`。插件编译时定义 `DFY_PLUGIN_BUILD`；宿主通过导出名取得 `dfy_query_fn`，本体不链接插件导入库。
+- v1 的唯一查询导出名为 `dfy_plugin_query`，对应 `DFY_QUERY_EXPORT`。插件编译时定义 `DFY_PLUGIN_BUILD`；宿主通过导出名取得 `dfy_query_fn`，本体不链接插件导入库。
 - C++ 声明包在 `extern "C"` 内，使用 `DFY_CALL`（`__cdecl`）。在 x64 上采用默认 x64 调用约定，不支持替换为 `__vectorcall`。参见 [C 链接](https://learn.microsoft.com/en-us/cpp/cpp/extern-cpp?view=msvc-170)和 [调用约定](https://learn.microsoft.com/en-us/cpp/cpp/cdecl?view=msvc-170)。
 - 头文件对 ABI 结构使用 `pack(push, 8)` / `pack(pop)`，不改变包含方原有设置；C/C++ 验证均在外层 `pack(1)` 下包含头文件并检查恢复结果。参见 [pack 规则](https://learn.microsoft.com/en-us/cpp/preprocessor/pack?view=msvc-170)。
 
@@ -25,7 +25,7 @@ v1 布局固定，不按编译器枚举宽度传递状态，不传 `bool`、`siz
 
 `dfy_plugin_query(requested_abi, &api, error)` 不创建实例、不注册订阅，也不进行业务初始化。成功返回 `DFY_OK` 和 DLL 内只读静态表；重复查询不改变业务状态。失败必须把 `api` 输出清空；不支持的版本返回 `DFY_ABI_MISMATCH`，空输出指针返回 `DFY_INVALID_ARGUMENT`。表和其中函数指针仅在模块仍被宿主持有时有效，不得释放或在卸载后访问。
 
-宿主在调用 `create` 前核对版本、大小、架构、保留字段及全部函数指针；插件在使用宿主服务前同样核对宿主表。版本 1 不接受只提供部分服务的宿主表。清单的 `abi_version` 必须与请求和返回表一致，`manifest_version` 只控制清单格式。查询入口的参数布局、错误缓冲格式与导出名保持稳定，未来版本显式协商，不能只凭清单跳过接口表检查。
+宿主在调用 `create` 前核对版本、大小、架构、保留字段及全部函数指针；插件在使用宿主服务前同样核对宿主表。版本 1 不接受只提供部分服务的宿主表。清单的 `abi_version` 必须与请求和返回表一致，`manifest_version` 只控制清单格式。v1 查询入口的参数布局、错误缓冲格式与导出名保持稳定；v2 经独立入口显式协商，不能只凭清单跳过接口表检查，也不能将新表布局塞进 v1 返回类型。
 
 | 状态 | 值 | 含义 |
 |---|---|---|
