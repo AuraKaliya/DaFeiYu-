@@ -4,6 +4,12 @@ target_link_libraries(dfy_runtime_ids_tests PRIVATE dfy_runtime dfy_build_option
 set_target_properties(dfy_runtime_ids_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_ids.cpp")
 
+# 直接验收生产引用表，不用 SDK 隔离夹具替代槽位与代次实现。
+add_executable(dfy_runtime_handles_tests runtime_handles.cpp)
+target_link_libraries(dfy_runtime_handles_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_runtime_handles_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_handles.cpp")
+
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
@@ -102,6 +108,8 @@ source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
 # 注册 CTest：配置测试使用隔离工作目录，全部测试统一设置执行时限。
 add_test(NAME runtime.identifiers COMMAND dfy_runtime_ids_tests)
 set_tests_properties(runtime.identifiers PROPERTIES TIMEOUT 15)
+add_test(NAME runtime.handles COMMAND dfy_runtime_handles_tests)
+set_tests_properties(runtime.handles PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
