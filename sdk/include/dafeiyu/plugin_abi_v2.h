@@ -22,6 +22,12 @@
 #define DFY_V2_RESOURCE_EXHAUSTED UINT32_C(7)
 #define DFY_V2_REFERENCE_INTERFACE "dfy.references"
 #define DFY_V2_REFERENCE_VERSION UINT32_C(1)
+#define DFY_V2_OPERATION_STATE_INTERFACE "dfy.operation.state"
+#define DFY_V2_OPERATION_STATE_VERSION UINT32_C(1)
+#define DFY_V2_OPERATION_PENDING UINT32_C(1)
+#define DFY_V2_OPERATION_SUCCEEDED UINT32_C(2)
+#define DFY_V2_OPERATION_FAILED UINT32_C(3)
+#define DFY_V2_OPERATION_CANCELLED UINT32_C(4)
 
 // 查询限同一宿主线程；不创建实例或产生业务副作用，异常不得跨越 C ABI。
 #ifdef __cplusplus
@@ -65,6 +71,19 @@ typedef struct dfy_v2_reference_api {
     // 不表示业务完成、取消或异步清理完成；调用方成功后自行清空其句柄副本。
     dfy_v2_status (DFY_V2_CALL *release)(dfy_v2_handle owned, dfy_v2_error* error);
 } dfy_v2_reference_api;
+
+// 调用方持有的状态副本；零值无效，终态不再改变，不表示关联资源已回收。
+typedef struct dfy_v2_operation_snapshot {
+    uint32_t state;
+} dfy_v2_operation_snapshot;
+// 宿主状态服务限同一宿主线程；操作引用可独立保留，释放不取消操作。
+typedef struct dfy_v2_operation_state_api {
+    dfy_v2_api_header header;
+    // 读取有效操作引用的快照，不等待、推进操作或调用消费者；输出必需且失败全零。
+    // 查询成功返回 OK，包括操作失败或已取消；error 可空且只描述本次查询错误。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle operation,
+        dfy_v2_operation_snapshot* snapshot, dfy_v2_error* error);
+} dfy_v2_operation_state_api;
 
 // 按非空 UTF-8 名称和非零版本查询静态能力表；未知名称或版本返回 UNSUPPORTED。
 // 输出必需且失败清空，error 可为空；成功表只读并借用至模块引用释放，不得由调用方释放。
