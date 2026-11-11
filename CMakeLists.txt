@@ -23,6 +23,7 @@ target_compile_options(dfy_build_options INTERFACE
 include(cmake/Dependencies.cmake)
 add_subdirectory(sdk)
 add_subdirectory(platform)
+add_subdirectory(runtime)
 add_subdirectory(events)
 add_subdirectory(model)
 add_subdirectory(agent)
