@@ -20,7 +20,7 @@
 | 插件配置 | [配置接口](../plugins/runtime/include/dafeiyu/plugin_config.hpp) | 默认配置与独立用户设置按顶层键覆盖，输出只读 JSON 文本快照；不创建插件实例 |
 | 插件模块查询 | [PluginModule](../plugins/runtime/include/dafeiyu/plugin_module.hpp) | 复核清单、受控加载和 ABI 校验，失败回收本次引用；不创建实例 |
 | C ABI 契约 | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约说明](plugin-abi.md) | Windows x64 v1 类型与函数表、纯 C 查询 DLL；实例生命周期待建 |
-| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 平台加载、v1／v2 查询、v2 句柄借用、操作状态、通知及生产域签发和引用表在内共十六项；包含真实 x64 依赖、Win32 拒绝及故障查询 DLL |
+| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 平台加载、v1／v2 查询、v2 句柄借用、操作状态、通知及生产域签发和引用表及基础值在内共十七项；包含真实 x64 依赖、Win32 拒绝及故障查询 DLL |
 
 真实 DeepSeek / Qwen 成功回答及多轮联通仍待有效凭据验证。此前真实 HTTPS 的 HTTP 401 检查只验证鉴权失败路径，不能替代成功调用验收。
 
@@ -40,7 +40,7 @@
 
 07b 实现提交：`00a5b0c`（`feat: 完成插件 ABI 查询与兼容性校验`）。当次 Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
 
-**R02a-2 类型化引用表已实现；下一审查点为 R02b-1 最小基础值。** [v2 契约](plugin-abi-v2.md#r01c-1-操作状态与读取)及公开头文件区分受理、查询状态和操作终态；真实 C DLL 与隔离宿主验证只读快照、独立引用及终态不改写。R01a 查询和 R01b 句柄借用保持不变，生产加载器仍只支持 v1，生产句柄注册表、异步机制和实例生命周期尚未实现。其余已确认方向见 [讨论记录](async-event-stream-review.md#0-本轮已确认结论与讨论边界)，分组路线见第 5.1 节；每个单元仍独立验收并停止审查。
+**R02b-1 不可变数值已实现；下一审查点为 R02b-2 String／Bytes。** [v2 契约](plugin-abi-v2.md#r01c-1-操作状态与读取)及公开头文件区分受理、查询状态和操作终态；真实 C DLL 与隔离宿主验证只读快照、独立引用及终态不改写。R01a 查询和 R01b 句柄借用保持不变，生产加载器仍只支持 v1，生产句柄注册表、异步机制和实例生命周期尚未实现。其余已确认方向见 [讨论记录](async-event-stream-review.md#0-本轮已确认结论与讨论边界)，分组路线见第 5.1 节；每个单元仍独立验收并停止审查。
 
 R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](plugin-abi-v2.md#验收与下一单元)。
 
@@ -117,6 +117,14 @@ flowchart LR
 错误域、编号、代次、过期或重复释放抛出 `ReferenceError(invalid_handle)`，不可共享来源抛出 `not_shareable`，容量或可签发槽位耗尽抛出 `exhausted`；拒绝保持既有记录。空对象和零容量为 `invalid_argument`，构造内存分配可能抛出标准分配异常。不同 `T` 和不同表各有独立域，跨表访问均拒绝；尚未建立可按宿主句柄反射的类型目录。
 
 本轮起点 `a76047f`；Debug／Release 主工程、Debug 测试及 Release 引用测试构建通过，完整 CTest 16／16 与 Release 引用测试通过。`runtime.handles` 使用生产表验证独立引用、容量失败、共享限制、跨域拒绝、旧句柄与别名失效、槽位复用、最终释放和销毁后新域；最大代次由生产使用的同一推进函数验证，不通过篡改表内状态模拟。下一单元 R02b-1 实现最小基础值。
+
+### 3.3 不可变数值（R02b-1）
+
+[Value](../runtime/include/dafeiyu/value.hpp) 当前实现 Bool、Int64、UInt64、Float64，按明确命名的工厂创建；内容不可赋值修改，复制产生独立值。`ValueKind` 是宿主内部种类，不是 C ABI 数字或事件类型身份。读取须匹配准确种类，错误读取抛出 `std::bad_variant_access`，不自动做布尔、整数或浮点转换。
+
+两个整数类型覆盖完整 64 位范围；Float64 使用 IEEE 754 双精度，只接受有限数，保留负零和非规格化值，拒绝 NaN 与正负无穷并抛出 `invalid_argument`。当前不提供结构字段、缺失、null 或组合类型占位；普通值可由 `HandleRegistry<const Value>` 保持独立引用，创建和释放均在宿主。
+
+本轮起点 `e9ce8cf`；Debug／Release 主工程、Debug 测试与 Release 基础值测试构建通过，完整 CTest 17／17 和 Release 基础值测试通过，覆盖各类型边界、非法浮点、类型拒绝及引用寿命。下一单元 R02b-2 增加有长度限制的 String／Bytes。
 
 ## 4. 基础契约与接口演进
 

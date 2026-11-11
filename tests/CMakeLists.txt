@@ -10,6 +10,12 @@ target_link_libraries(dfy_runtime_handles_tests PRIVATE dfy_runtime dfy_build_op
 set_target_properties(dfy_runtime_handles_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_handles.cpp")
 
+# 验证宿主基础值的类型、精度及生产引用表中的寿命。
+add_executable(dfy_runtime_values_tests runtime_values.cpp)
+target_link_libraries(dfy_runtime_values_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_runtime_values_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_values.cpp")
+
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
@@ -110,6 +116,8 @@ add_test(NAME runtime.identifiers COMMAND dfy_runtime_ids_tests)
 set_tests_properties(runtime.identifiers PROPERTIES TIMEOUT 15)
 add_test(NAME runtime.handles COMMAND dfy_runtime_handles_tests)
 set_tests_properties(runtime.handles PROPERTIES TIMEOUT 15)
+add_test(NAME runtime.values COMMAND dfy_runtime_values_tests)
+set_tests_properties(runtime.values PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
