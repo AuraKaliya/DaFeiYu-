@@ -4,7 +4,7 @@
 
 ## 当前进度：第 07 步完成，异步事件流方案待讨论
 
-已确认下一方向为“整个宿主与插件的事件订阅统一采用异步事件流”。消费者任务管理、运行时字段反射、普通数据归属、类型体系、类型共享及默认观察责任的讨论结论，以及 DSH、pi、AI-Vtuber 的参考分析，见 [异步事件流分析与待讨论问题](docs/async-event-stream-review.md)。下一项讨论执行与顺序，重点是顺序入池与策略取出；当前实现仍为同步通知，第 08 步须等待交付与回收规则明确。
+已确认下一方向为“整个宿主与插件的事件订阅统一采用异步事件流”。类型反射与共享、默认观察责任、执行顺序、完成分层与 hook、容量调度，以及取消关闭和有界重试的讨论结论，见 [异步事件流分析与待讨论问题](docs/async-event-stream-review.md)。下一项讨论资源归属与插件卸载，重点是运行期依赖和副作用回收；当前实现仍为同步通知，具体参数与接口待细化，第 08 步须等待生命周期契约明确。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -274,7 +274,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成；当前下一审查点为异步事件流设计讨论，第 08 步的实施顺序待讨论结果确认。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成；当前下一审查点为资源归属与插件卸载的设计讨论，第 08 步的实施顺序待生命周期契约明确。
 
 ## 旧工程归档
 
