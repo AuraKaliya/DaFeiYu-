@@ -17,6 +17,7 @@
 #define DFY_V2_OK UINT32_C(0)
 #define DFY_V2_INVALID_ARGUMENT UINT32_C(1)
 #define DFY_V2_ABI_MISMATCH UINT32_C(2)
+#define DFY_V2_BUSY UINT32_C(3)
 #define DFY_V2_UNSUPPORTED UINT32_C(5)
 #define DFY_V2_INVALID_HANDLE UINT32_C(6)
 #define DFY_V2_RESOURCE_EXHAUSTED UINT32_C(7)
@@ -36,6 +37,12 @@
 #define DFY_V2_CANCEL_RECORDED UINT32_C(1)
 #define DFY_V2_CANCEL_ALREADY_REQUESTED UINT32_C(2)
 #define DFY_V2_CANCEL_ALREADY_SETTLED UINT32_C(3)
+#define DFY_V2_OPERATION_NOTIFY_INTERFACE "dfy.operation.notify"
+#define DFY_V2_OPERATION_NOTIFY_VERSION UINT32_C(1)
+#define DFY_V2_NOTIFICATION_PENDING UINT32_C(1)
+#define DFY_V2_NOTIFICATION_RUNNING UINT32_C(2)
+#define DFY_V2_NOTIFICATION_DELIVERED UINT32_C(3)
+#define DFY_V2_NOTIFICATION_REVOKED UINT32_C(4)
 
 // 查询限同一宿主线程；不创建实例或产生业务副作用，异常不得跨越 C ABI。
 #ifdef __cplusplus
@@ -108,6 +115,28 @@ typedef struct dfy_v2_operation_cancel_api {
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle operation,
         dfy_v2_cancel_snapshot* snapshot, dfy_v2_error* error);
 } dfy_v2_operation_cancel_api;
+
+// 同一宿主线程的延后唤醒；operation 仅在本次回调内借用，user 由登记方持有。
+// 回调不得跨 ABI 抛异常；宿主保持操作和回调代码有效至调用返回。
+typedef void (DFY_V2_CALL *dfy_v2_completion_fn)(void* user, dfy_v2_handle operation);
+// 通知登记的调用方状态副本；Delivered/Revoked 表示该登记已无活动或将来回调。
+typedef struct dfy_v2_notification_snapshot {
+    uint32_t state;
+} dfy_v2_notification_snapshot;
+// 通知服务限同一宿主线程；每个登记独立且不可 retain，释放引用本身不撤销通知。
+typedef struct dfy_v2_operation_notify_api {
+    dfy_v2_api_header header;
+    // 为有效操作登记一次性唤醒，输出独立登记引用；callback 必需，user 可空。
+    // 输出必需且失败全零；即使已有终态也不在本调用内执行回调，error 可空。
+    dfy_v2_status (DFY_V2_CALL *subscribe)(dfy_v2_handle operation, dfy_v2_completion_fn callback,
+        void* user, dfy_v2_handle* registration, dfy_v2_error* error);
+    // 读取有效登记引用的状态副本；输出必需且失败全零，不推进回调。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle registration,
+        dfy_v2_notification_snapshot* snapshot, dfy_v2_error* error);
+    // 撤销未开始的回调；活动回调返回 BUSY 且不改状态，已交付或已撤销时幂等成功。
+    // 成功后该登记不会进入或仍处于回调，不取消底层操作；error 可空。
+    dfy_v2_status (DFY_V2_CALL *revoke)(dfy_v2_handle registration, dfy_v2_error* error);
+} dfy_v2_operation_notify_api;
 
 // 按非空 UTF-8 名称和非零版本查询静态能力表；未知名称或版本返回 UNSUPPORTED。
 // 输出必需且失败清空，error 可为空；成功表只读并借用至模块引用释放，不得由调用方释放。

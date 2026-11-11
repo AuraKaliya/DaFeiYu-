@@ -2,9 +2,9 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R01c-2 取消请求契约已建立
+## 当前进度：R01c-3a 完成通知接口已定义
 
-R01c-1 在 [v2 SDK](sdk/include/dafeiyu/plugin_abi_v2.h)中增加独立的 [操作状态与读取契约](docs/plugin-abi-v2.md#r01c-1-操作状态与读取)。`sdk.operations_v2` 用隔离宿主与真实 C11 DLL 验证受理、状态副本、唯一终态及引用寿命，明确查询失败与操作失败的区别。R01a 查询和 R01b 引用契约保持不变，生产加载器仍仅接受 v1，问答与事件仍为同步实现。下一审查项是 R01c-3 完成通知；完整方向见 [讨论记录](docs/async-event-stream-review.md)和 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
+R01c-1 在 [v2 SDK](sdk/include/dafeiyu/plugin_abi_v2.h)中增加独立的 [操作状态与读取契约](docs/plugin-abi-v2.md#r01c-1-操作状态与读取)。`sdk.operations_v2` 用隔离宿主与真实 C11 DLL 验证受理、状态副本、唯一终态及引用寿命，明确查询失败与操作失败的区别。R01a 查询和 R01b 引用契约保持不变，生产加载器仍仅接受 v1，问答与事件仍为同步实现。R01c-3a 已固定 [通知接口与布局](docs/plugin-abi-v2.md#r01c-3a-完成通知接口与布局)，下一审查项是 R01c-3b 通知行为验收；完整方向见 [讨论记录](docs/async-event-stream-review.md)和 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
 
 本次 Debug／Release 主工程、Debug 测试构建及跨配置 DLL 调用通过；完整 CTest 为 13／13 通过，包含此前受权限影响的三项真实符号链接测试，详见 [验收记录](docs/plugin-abi-v2.md#验收与下一单元)。R01c-2 另以隔离宿主与纯 C DLL 验证取消原因、重复请求及与终态的分离，见 [取消契约](docs/plugin-abi-v2.md#r01c-2-取消请求与原因读取)。生产操作执行、取消传播和完成通知尚未实现。
 
@@ -276,7 +276,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R01c-3 完成通知。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R01c-3b 通知行为验收。
 
 ## 旧工程归档
 

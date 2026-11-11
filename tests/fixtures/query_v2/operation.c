@@ -62,3 +62,11 @@ static dfy_v2_status DFY_V2_CALL read_cancel(const dfy_v2_operation_cancel_api* 
     return cancels->read(operation, snapshot, error);
 }
 const dfy_test_cancel_api dfy_test_cancel = {{sizeof(dfy_test_cancel_api), 1}, request_cancel, read_cancel};
+
+// 通知能力本轮仅冻结布局，不向查询入口发布尚未验收的服务。
+_Static_assert(sizeof(dfy_v2_notification_snapshot) == 4 && _Alignof(dfy_v2_notification_snapshot) == 4 &&
+    offsetof(dfy_v2_notification_snapshot, state) == 0, "notification snapshot layout");
+_Static_assert(sizeof(dfy_v2_completion_fn) == 8, "completion callback layout");
+_Static_assert(sizeof(dfy_v2_operation_notify_api) == 32 && _Alignof(dfy_v2_operation_notify_api) == 8 &&
+    offsetof(dfy_v2_operation_notify_api, subscribe) == 8 && offsetof(dfy_v2_operation_notify_api, read) == 16 &&
+    offsetof(dfy_v2_operation_notify_api, revoke) == 24, "notification service layout");

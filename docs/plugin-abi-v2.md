@@ -153,6 +153,29 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 R01c-2 验证：从 `59aa491` 开始；Debug／Release 主工程、Debug 测试构建通过，完整 CTest 13／13 通过，Debug 操作消费者调用 Release C DLL 通过。沿用下节同一组构建和跨配置命令；下一单元为 R01c-3 完成通知，仍按独立提交推进。
 
+## R01c-3a 完成通知接口与布局
+
+本单元固定通知服务声明及 C11／C++20 布局，不提供可用的生产服务，也尚未完成通知行为验收；R01c-3b 用隔离宿主与真实 DLL 验证下述行为。此处不是原同步事件回调接口的扩展。
+
+宿主能力 `dfy.operation.notify@1` 的 `dfy_v2_operation_notify_api` 大小 32、对齐 8，`header/subscribe/read/revoke` 偏移为 0/8/16/24。`dfy_v2_completion_fn` 是 8 字节 C 函数指针，签名为 `void callback(void* user, dfy_v2_handle operation)`，使用 `DFY_V2_CALL`。`dfy_v2_notification_snapshot` 大小 4、对齐 4，仅有偏移 0 的 uint32 `state`。所有服务入口和通知在同一宿主线程调用，禁止异常跨越 C ABI。
+
+`subscribe(operation, callback, user, &registration, error)` 接收有效操作引用及非空回调，`user` 可以为空。成功取得一个不可共享的登记持有引用；`retain` 对它返回 `UNSUPPORTED`。失败清空输出，不保存回调或留下登记、引用和容量占用。操作已经完成也只登记待调度通知，不在 `subscribe` 内重入消费者。多个登记各自独立，每个未撤销登记最多通知一次，同一操作按登记顺序安排可执行通知；回调期间新登记的通知留到后续宿主推进。
+
+| 通知状态宏 | 值 | 边界 |
+|---|---|---|
+| `DFY_V2_NOTIFICATION_PENDING` | 1 | 等待操作终态或已经排队，尚未进入回调 |
+| `DFY_V2_NOTIFICATION_RUNNING` | 2 | 正在回调，回调代码与上下文仍被使用 |
+| `DFY_V2_NOTIFICATION_DELIVERED` | 3 | 一次回调已经返回，且该登记不会再次调用 |
+| `DFY_V2_NOTIFICATION_REVOKED` | 4 | 回调未开始且已被撤销，该登记不会再调用 |
+
+零或未知状态无效。`read(registration, &snapshot, error)` 读取调用方状态副本，不驱动工作；失败清空输出。`revoke(registration, error)` 对 Pending 同步阻止未来回调并进入 Revoked，对 Running 返回 `DFY_V2_BUSY`（值 3）且不变更登记，对 Delivered/Revoked 幂等成功。未知、过期或释放后的引用返回 `INVALID_HANDLE`，有效但对象种类错误返回 `INVALID_ARGUMENT`；必需输出或回调缺失同样返回 `INVALID_ARGUMENT`。容量不足返回 `RESOURCE_EXHAUSTED`。失败无部分变更，所有 `error` 可空并沿用既有缓冲规则。
+
+撤销只作用于这条等待登记，不请求取消底层操作或影响其他等待者。释放登记引用也不隐式撤销；宿主仍承担未交付登记的责任。登记方必须先确认 Delivered/Revoked 或成功撤销，再结束其 `user` 资源和回调代码的使用期；活动回调自撤销得到 Busy 后，应在回调返回宿主后再处理释放。不能把 Busy 当成已关闭。
+
+宿主为登记保持独立的操作引用；回调得到一个仅在本次调用内有效的操作借用，其数值不必与提交登记时相同。原调用方释放操作引用不影响登记，回调可在有效借用期内 `retain` 操作以供稍后查询。回调进入前操作已经有终态；回调返回前不得释放它的借用支撑。服务表、用户上下文和 DLL 代码依赖必须覆盖排队、调用及必要收尾；状态达到 Delivered/Revoked 后该登记不得残留可能进入 DLL 的入口。
+
+本轮只通过真实 C DLL 和 C++ 宿主的编译确认布局及外层 pack 恢复，既有 13／13 CTest、Debug／Release 构建及跨配置操作测试通过。冻结的声明不表示通知已可运行；生产登记、调度与模块依赖仍归后续单元。
+
 ## 验收与下一单元
 
 `sdk.query_v2` 使用真实 C DLL 验证独立导出、主 ABI 拒绝、名称按长度匹配、大小写与版本精确匹配、缺失参数、失败清空输出、可空错误缓冲、重复查询及能力函数调用。C/C++ 两侧检查布局和外层 `pack(1)` 恢复，C++ 消费者同时包含 v1/v2 头文件；模块引用释放后只检查调用方诊断缓冲，不再访问借用表。

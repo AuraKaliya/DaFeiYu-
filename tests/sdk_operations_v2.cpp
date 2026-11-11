@@ -21,6 +21,12 @@ static_assert(sizeof(dfy_v2_cancel_snapshot) == 4 && alignof(dfy_v2_cancel_snaps
 static_assert(sizeof(dfy_v2_operation_cancel_api) == 24 && alignof(dfy_v2_operation_cancel_api) == 8 &&
     offsetof(dfy_v2_operation_cancel_api, request) == 8 && offsetof(dfy_v2_operation_cancel_api, read) == 16);
 static_assert(sizeof(dfy_test_cancel_api) == 24 && offsetof(dfy_test_cancel_api, read) == 16);
+static_assert(sizeof(dfy_v2_notification_snapshot) == 4 && alignof(dfy_v2_notification_snapshot) == 4 &&
+    offsetof(dfy_v2_notification_snapshot, state) == 0);
+static_assert(sizeof(dfy_v2_completion_fn) == 8);
+static_assert(sizeof(dfy_v2_operation_notify_api) == 32 && alignof(dfy_v2_operation_notify_api) == 8 &&
+    offsetof(dfy_v2_operation_notify_api, subscribe) == 8 && offsetof(dfy_v2_operation_notify_api, read) == 16 &&
+    offsetof(dfy_v2_operation_notify_api, revoke) == 24);
 
 namespace {
 // 仅用于契约验收的操作记录和两个引用槽，不是生产注册表或执行器。
