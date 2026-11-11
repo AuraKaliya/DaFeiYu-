@@ -18,6 +18,10 @@
 #define DFY_V2_INVALID_ARGUMENT UINT32_C(1)
 #define DFY_V2_ABI_MISMATCH UINT32_C(2)
 #define DFY_V2_UNSUPPORTED UINT32_C(5)
+#define DFY_V2_INVALID_HANDLE UINT32_C(6)
+#define DFY_V2_RESOURCE_EXHAUSTED UINT32_C(7)
+#define DFY_V2_REFERENCE_INTERFACE "dfy.references"
+#define DFY_V2_REFERENCE_VERSION UINT32_C(1)
 
 // 查询限同一宿主线程；不创建实例或产生业务副作用，异常不得跨越 C ABI。
 #ifdef __cplusplus
@@ -25,6 +29,17 @@ extern "C" {
 #endif
 #pragma pack(push, 8)
 typedef uint32_t dfy_v2_status;
+// 不透明引用标识；三项全零为空，其余由签发方解释，数值复制不增加持有引用。
+typedef struct dfy_v2_handle {
+    uint64_t domain;
+    uint64_t id;
+    uint64_t generation;
+} dfy_v2_handle;
+// 只读字节视图不持有数据；调用借用或持有引用借用的有效期由返回它的接口声明。
+typedef struct dfy_v2_bytes_view {
+    const uint8_t* data;
+    uint64_t length;
+} dfy_v2_bytes_view;
 // UTF-8 字节视图仅在调用期间借用；长度不包含终止符，非零长度要求有效内存。
 typedef struct dfy_v2_string_view {
     const char* data;
@@ -40,6 +55,16 @@ typedef struct dfy_v2_api_header {
     uint32_t struct_size;
     uint32_t interface_version;
 } dfy_v2_api_header;
+
+// 宿主引用服务在同一宿主线程调用，表及函数地址须覆盖全部引用的使用与释放。
+typedef struct dfy_v2_reference_api {
+    dfy_v2_api_header header;
+    // 从有效借用或持有引用取得独立持有句柄；输出必需且失败全零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *retain)(dfy_v2_handle source, dfy_v2_handle* owned, dfy_v2_error* error);
+    // 仅释放持有引用；空句柄成功，过期引用拒绝，失败不消耗引用，error 可空。
+    // 不表示业务完成、取消或异步清理完成；调用方成功后自行清空其句柄副本。
+    dfy_v2_status (DFY_V2_CALL *release)(dfy_v2_handle owned, dfy_v2_error* error);
+} dfy_v2_reference_api;
 
 // 按非空 UTF-8 名称和非零版本查询静态能力表；未知名称或版本返回 UNSUPPORTED。
 // 输出必需且失败清空，error 可为空；成功表只读并借用至模块引用释放，不得由调用方释放。

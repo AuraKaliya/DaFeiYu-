@@ -37,11 +37,13 @@ static dfy_v2_status DFY_V2_CALL query_interface(
         return report(DFY_V2_INVALID_ARGUMENT, error, "invalid interface query");
     }
 
-    if (name.length != sizeof(DFY_TEST_QUERY_ID) - 1 ||
-        memcmp(name.data, DFY_TEST_QUERY_ID, sizeof(DFY_TEST_QUERY_ID) - 1) != 0 || version != 1) {
-        return report(DFY_V2_UNSUPPORTED, error, "unsupported interface or version");
+    if (version == 1) {
+        if (name.length == sizeof(DFY_TEST_QUERY_ID) - 1 && memcmp(name.data, DFY_TEST_QUERY_ID, name.length) == 0)
+            *output = &test_api;
+        if (name.length == sizeof(DFY_TEST_BORROW_ID) - 1 && memcmp(name.data, DFY_TEST_BORROW_ID, name.length) == 0)
+            *output = &dfy_test_borrow;
     }
-    *output = &test_api;
+    if (!*output) return report(DFY_V2_UNSUPPORTED, error, "unsupported interface or version");
     return report(DFY_V2_OK, error, "");
 }
 static const dfy_v2_plugin_api api = {sizeof(dfy_v2_plugin_api), DFY_V2_ABI_VERSION,
