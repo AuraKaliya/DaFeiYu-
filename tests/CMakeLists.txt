@@ -38,6 +38,13 @@ target_link_libraries(dfy_sdk_tests PRIVATE dfy_sdk)
 target_compile_definitions(dfy_sdk_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_dependencies(dfy_sdk_tests dfy_query_example)
 
+# v2 查询消费者只依赖 SDK，通过真实 C DLL 验证独立入口与能力表协商。
+add_subdirectory(fixtures/query_v2)
+add_executable(dfy_sdk_v2_tests sdk_abi_v2.cpp)
+target_link_libraries(dfy_sdk_v2_tests PRIVATE dfy_sdk)
+target_compile_definitions(dfy_sdk_v2_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_dependencies(dfy_sdk_v2_tests dfy_query_v2_fixture)
+
 # 使用独立真实 DLL 夹具测试平台加载器，不接入插件实例或 ABI 查询校验。
 add_subdirectory(fixtures/library)
 add_executable(dfy_library_tests dynamic_library.cpp)
@@ -54,13 +61,14 @@ add_dependencies(dfy_plugin_module_tests dfy_query_fixture dfy_query_example dfy
 
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
-  dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_library_tests dfy_plugin_module_tests PROPERTIES FOLDER "Tests")
+  dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_library_tests dfy_plugin_module_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/model_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/agent_session.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/events.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_registry.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/plugin_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/dynamic_library.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_module.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/dynamic_library.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_module.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi_v2.cpp")
 source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${PROJECT_SOURCE_DIR}/model/client.cpp" "${PROJECT_SOURCE_DIR}/agent/session.cpp"
   "${PROJECT_SOURCE_DIR}/app/chat.cpp")
@@ -75,9 +83,10 @@ add_test(NAME plugins.manifest COMMAND dfy_plugin_manifest_tests "${CMAKE_CURREN
 add_test(NAME plugins.registry COMMAND dfy_plugin_registry_tests "${CMAKE_CURRENT_BINARY_DIR}/registry/$<CONFIG>")
 add_test(NAME plugins.config COMMAND dfy_plugin_config_tests "${CMAKE_CURRENT_BINARY_DIR}/plugin-config/$<CONFIG>")
 add_test(NAME sdk.abi COMMAND dfy_sdk_tests "$<TARGET_FILE:dfy_query_example>")
+add_test(NAME sdk.query_v2 COMMAND dfy_sdk_v2_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 add_test(NAME platform.library COMMAND dfy_library_tests "$<TARGET_FILE:dfy_loader_dependency>"
   "$<TARGET_FILE:dfy_loader_payload>" "${DFY_LOADER_X86_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/library/$<CONFIG>")
 add_test(NAME plugins.module COMMAND dfy_plugin_module_tests "$<TARGET_FILE:dfy_query_fixture>"
   "$<TARGET_FILE:dfy_query_example>" "$<TARGET_FILE:dfy_loader_dependency>" "${CMAKE_CURRENT_BINARY_DIR}/module/$<CONFIG>")
 set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest plugins.registry plugins.config sdk.abi
-  platform.library plugins.module PROPERTIES TIMEOUT 15)
+  sdk.query_v2 platform.library plugins.module PROPERTIES TIMEOUT 15)

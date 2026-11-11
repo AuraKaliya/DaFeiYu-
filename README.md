@@ -2,9 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：第 07 步完成，异步事件流方案待讨论
+## 当前进度：R01a v2 查询契约已建立
 
-已确认宿主与插件统一采用异步事件流，完整设计结论见 [讨论记录](docs/async-event-stream-review.md)。C++／C ABI 两层接口、冻结 v1 并以独立入口演进 v2、最小真实 DLL 链路及 R01～R16 分组路线，已补入 [开发指导](docs/foundation-development-guide.md#45-c-接口与异步操作)。下一审查项为 R01 最小接口契约与首个验收单元；当前代码仍为同步通知及 v1 查询，尚未实施新接口。
+R01a 新增 [v2 查询 SDK](sdk/include/dafeiyu/plugin_abi_v2.h)及 [契约](docs/plugin-abi-v2.md)，固定独立导出 `dfy_plugin_query_v2` 和静态能力表协商；`sdk.query_v2` 用真实 C11 DLL 与 C++20 消费者验证布局、版本、名称及错误缓冲。此步只建设查询协议，生产加载器仍仅接受 v1，问答与事件仍为同步实现。下一审查项是 R01b 句柄与借用；完整方向与分步路线见 [讨论记录](docs/async-event-stream-review.md)和 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
+
+本次 Debug／Release 构建及新查询验收通过；完整 CTest 为 8／11 通过，三项既有测试因符号链接权限不足失败，详见 [验收记录](docs/plugin-abi-v2.md#验收与下一单元)。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -274,7 +276,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收已完成；原第 08～10 步按开发指导的新路线重排，当前下一审查项为 R01 最小接口契约与首个验收单元。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a 已增加独立 v2 查询契约及测试，生产加载器升级仍属于 R06，当前下一审查项为 R01b 句柄与借用。
 
 ## 旧工程归档
 
