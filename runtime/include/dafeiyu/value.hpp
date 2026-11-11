@@ -3,15 +3,19 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace dfy::runtime {
 // 宿主内部种类，不是 C ABI 或事件契约中的类型编号。
-enum class ValueKind { boolean, int64, uint64, float64 };
+enum class ValueKind { boolean, int64, uint64, float64, string, bytes };
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
-// 宿主持有的不可变基础值；当前只实现布尔和三种数值，不含插件析构代码。
+// 宿主持有的不可变基础值，文本和字节复制到宿主内存，不含插件析构代码。
 class Value {
   public:
     // 创建明确为 Bool 的值，不将其他数字分支当作布尔读取。
@@ -26,6 +30,10 @@ class Value {
         if (!std::isfinite(value)) throw std::invalid_argument("value: finite Float64 required");
         return Value(value);
     }
+    // 复制不超过明确字节上限的 UTF-8 文本，非法编码或超限时拒绝。
+    static Value from_string(std::string_view text, std::size_t max_bytes);
+    // 复制不超过明确字节上限的任意二进制数据，零字节和空数据均可表达。
+    static Value from_bytes(std::span<const std::uint8_t> bytes, std::size_t max_bytes);
     // 复制产生独立的不可变值，不共享可修改存储。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
@@ -40,8 +48,13 @@ class Value {
     std::uint64_t as_uint64() const { return std::get<std::uint64_t>(contents_); }
     // 读取 Float64，类型不符抛出 bad_variant_access。
     double as_float64() const { return std::get<double>(contents_); }
+    // 借用 UTF-8 文本，仅在该值的对应持有引用有效期间使用；类型不符抛错。
+    std::string_view as_string() const { return std::get<std::string>(contents_); }
+    // 借用只读字节，仅在该值的对应持有引用有效期间使用；类型不符抛错。
+    std::span<const std::uint8_t> as_bytes() const { return std::get<Bytes>(contents_); }
   private:
-    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double>;
+    using Bytes = std::vector<std::uint8_t>;
+    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes>;
     // 从已校验的明确类型保存只读内容，不向模块外暴露 variant 布局。
     explicit Value(Contents contents) : contents_(std::move(contents)) {}
     const Contents contents_;
