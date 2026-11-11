@@ -4,6 +4,7 @@
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"
 #define DFY_TEST_CANCEL_ID "test.cancel"
+#define DFY_TEST_NOTIFY_ID "test.notification"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,23 @@ typedef struct dfy_test_cancel_api {
         dfy_v2_handle operation, dfy_v2_cancel_snapshot* snapshot, dfy_v2_error* error);
 } dfy_test_cancel_api;
 extern const dfy_test_cancel_api dfy_test_cancel;
+// 由测试宿主持有并覆盖整个回调期，C DLL 只在回调内访问。
+typedef struct dfy_test_notify_context {
+    const dfy_v2_operation_notify_api* notifications;
+    const dfy_v2_reference_api* references;
+    struct dfy_test_notify_context* child;
+    dfy_v2_handle registration;
+    dfy_v2_handle retained;
+    uint32_t calls, revoke_status, retain_status, spawn_status;
+    uint32_t* sequence;
+    uint32_t observed_order;
+} dfy_test_notify_context;
+typedef struct dfy_test_notify_api {
+    dfy_v2_api_header header;
+    // 在宿主调度的回调内测试自撤销、操作保留及可选的新登记；不保存 DLL 全局状态。
+    dfy_v2_completion_fn callback;
+} dfy_test_notify_api;
+extern const dfy_test_notify_api dfy_test_notify;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

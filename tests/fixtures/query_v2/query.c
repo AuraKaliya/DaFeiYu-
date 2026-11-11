@@ -46,6 +46,8 @@ static dfy_v2_status DFY_V2_CALL query_interface(
             *output = &dfy_test_operation;
         if (name.length == sizeof(DFY_TEST_CANCEL_ID) - 1 && memcmp(name.data, DFY_TEST_CANCEL_ID, name.length) == 0)
             *output = &dfy_test_cancel;
+        if (name.length == sizeof(DFY_TEST_NOTIFY_ID) - 1 && memcmp(name.data, DFY_TEST_NOTIFY_ID, name.length) == 0)
+            *output = &dfy_test_notify;
     }
     if (!*output) return report(DFY_V2_UNSUPPORTED, error, "unsupported interface or version");
     return report(DFY_V2_OK, error, "");
