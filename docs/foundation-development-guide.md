@@ -19,8 +19,9 @@
 | 插件发现 | [Registry](../plugins/runtime/include/dafeiyu/plugin_registry.hpp) | 单层扫描、坏包隔离、全部 ID 冲突拒绝、只读快照与显式刷新；不加载 DLL |
 | 插件配置 | [配置接口](../plugins/runtime/include/dafeiyu/plugin_config.hpp) | 默认配置与独立用户设置按顶层键覆盖，输出只读 JSON 文本快照；不创建插件实例 |
 | 插件模块查询 | [PluginModule](../plugins/runtime/include/dafeiyu/plugin_module.hpp) | 复核清单、受控加载和 ABI 校验，失败回收本次引用；不创建实例 |
-| C ABI 契约 | [SDK](../sdk/include/dafeiyu/plugin_abi.h)、[契约说明](plugin-abi.md) | Windows x64 v1 类型与函数表、纯 C 查询 DLL；实例生命周期待建 |
-| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 平台加载、v1／v2 查询、v2 句柄借用、操作状态、通知及生产域签发和引用表及基础值在内共十七项；包含真实 x64 依赖、Win32 拒绝及故障查询 DLL |
+| 宿主数据基础 | [域签发](../runtime/include/dafeiyu/runtime_ids.hpp)、[引用表](../runtime/include/dafeiyu/handle_registry.hpp)、[基础值](../runtime/include/dafeiyu/value.hpp) | 已实现有界类型化引用和六种不可变基础值；结构字段、动态类型目录与 C ABI 装配待建 |
+| C ABI 契约 | [v1 SDK](../sdk/include/dafeiyu/plugin_abi.h)、[v2 SDK](../sdk/include/dafeiyu/plugin_abi_v2.h)、[v2 契约](plugin-abi-v2.md) | v1 冻结；v2 查询、引用、操作状态、取消与通知契约及隔离验收完成，生产适配和实例生命周期待建 |
+| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 共十七项，覆盖模型、会话、事件、插件、v1／v2 ABI 与生产数据基础；包含真实 x64 依赖、Win32 拒绝及故障查询 DLL |
 
 真实 DeepSeek / Qwen 成功回答及多轮联通仍待有效凭据验证。此前真实 HTTPS 的 HTTP 401 检查只验证鉴权失败路径，不能替代成功调用验收。
 
@@ -49,6 +50,18 @@ R01b 当次验证：Debug／Release 主工程、Debug 测试构建及 Debug 消�
 R01c-1 本次从 `7275306` 的干净工作区开始，改动前重建后 12／12 CTest 通过；改动后 Debug／Release 主工程、Debug 测试构建及完整 13／13 CTest 通过，三个 Debug v2 消费者调用 Release C DLL 均通过。此前受权限影响的三项链接测试本次已通过，未修改或跳过相关校验。新增状态由隔离宿主手动结算，不验收生产异步执行、取消竞争或通知寿命。
 
 ## 2. 基础建设完成的范围
+
+最近各单元的实现提交与当次完整 CTest 如下；详细边界见第 3 节和 v2 契约，隔离验收不等于生产异步运行时已经接入。
+
+| 单元 | 提交 | 完整 CTest |
+|---|---|---|
+| R01c-2 取消请求与原因读取 | `03bf68e` | 13／13 |
+| R01c-3a 通知接口与布局 | `d3a2481` | 13／13 |
+| R01c-3b 通知行为隔离验收 | `13290cd` | 14／14 |
+| R02a-1 宿主签发域 | `a76047f` | 15／15 |
+| R02a-2 类型化引用表 | `e9ce8cf` | 16／16 |
+| R02b-1 不可变数值 | `6c32013` | 17／17 |
+| R02b-2 String／Bytes | `2b013cb` | 17／17 |
 
 以下约束已经确认，后续实现应保持：
 
@@ -85,6 +98,7 @@ flowchart LR
 | 入口、路径选择、组件创建和命令分派 | `app/` / App | 装配基础服务实例，不列举必需插件或固定插件角色 |
 | 问答状态与通知发布 | `agent/` / Agent | 依赖模型接口和事件接口，不读取插件清单、不包含供应商 JSON |
 | 事件订阅、交付与取消 | `events/` / Platform | 当前为同步总线；异步投递与调度按新路线建设，不依赖 Agent、模型服务或插件实现 |
+| 域、类型化引用与不可变值 | `runtime/` / Platform | 不依赖 SDK、Agent、事件或插件；生产 C ABI 适配与异步执行另行建设 |
 | DLL 系统操作 | `platform/` / Platform | 封装平台句柄和加载路径，不负责业务状态或配置合并 |
 | 插件发现、注册表、配置、生命周期及事件适配 | `plugins/runtime/` / Plugins | 管理可选插件；业务信息主要保存在运行时注册表中 |
 | 对插件公开的 C 契约 | `sdk/include/dafeiyu/` / SDK | 只包含 ABI 所需类型与函数，不暴露宿主 C++ 实现 |
@@ -98,7 +112,7 @@ flowchart LR
 
 ### 3.1 宿主签发域标识（R02a-1）
 
-新增实际目标 `dfy_runtime`，位于 `runtime/`、归入 Platform 分组，当前只实现[域标识签发](../runtime/include/dafeiyu/runtime_ids.hpp)及其[分配算法](../runtime/id_sequence.hpp)。不依赖 SDK、Agent、事件或插件；本轮尚未建立生产引用表，也未把隔离夹具迁入正式运行时。
+R02a-1 新增实际目标 `dfy_runtime`，位于 `runtime/`、归入 Platform 分组，当次只实现[域标识签发](../runtime/include/dafeiyu/runtime_ids.hpp)及其[分配算法](../runtime/id_sequence.hpp)。该单元不依赖 SDK、Agent、事件或插件；后续引用表及基础值的实现见第 3.2～3.4 节，隔离异步夹具没有作为生产运行时引入。
 
 `next_domain()` 在宿主内返回非零 uint64 域标识，同一进程中不复用，调用方对象销毁不会重置签发器。允许签发最大 uint64，耗尽后持续抛出 `std::overflow_error`，不回绕。宿主仅链接一份此运行库；插件通过 C ABI 宿主服务获得句柄，不能另行链接副本后自行签发域。
 

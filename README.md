@@ -52,6 +52,8 @@ dafeiyu
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
+运行时基础另有 `Tests/dfy_runtime_ids_tests`、`Tests/dfy_runtime_handles_tests`、`Tests/dfy_runtime_values_tests`；v2 契约另有查询、引用、操作和通知四个测试目标。`dfy_runtime` 的范围及逐步验收见 [开发指导](docs/foundation-development-guide.md#31-宿主签发域标识r02a-1)。
+
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
 ## 构建与运行

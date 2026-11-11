@@ -1,6 +1,6 @@
-# 插件 C ABI v2 查询、引用与操作状态契约
+# 插件 C ABI v2 最小接口契约
 
-R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。生产句柄注册表、实例生命周期和异步操作尚未实现；生产 `PluginModule` 仍只接受 v1，v2 加载与兼容校验属于 R06。
+R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。生产 C ABI 服务装配、实例生命周期和异步操作尚未实现；生产 `PluginModule` 仍只接受 v1，v2 加载与兼容校验属于 R06。
 
 R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具](../tests/fixtures/query_v2/operation.c)和[隔离宿主](../tests/sdk_operations_v2.cpp)验证受理、快照读取、唯一终态和引用寿命。本步不提供生产操作执行、结果载荷读取、取消请求或完成通知。
 
@@ -49,7 +49,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 `dfy_v2_handle` 是三个 uint64 组成的 24 字节、8 字节对齐标识：`domain`、`id`、`generation` 分别位于 0、8、16。三项全零是唯一空句柄；有效句柄三项均非零。它不含对象地址，不能解引用、持久化、跨进程使用或自行拼装。
 
-- `domain` 标识宿主的签发域，不是插件 ID 或资源所有者。签发域在进程内不复用，宿主重建也使用新域；生产分配器在 R02 实现。
+- `domain` 标识宿主的签发域，不是插件 ID 或资源所有者。签发域在进程内不复用，宿主重建也使用新域；生产 [域分配器](../runtime/include/dafeiyu/runtime_ids.hpp)和 [C++ 引用表](../runtime/include/dafeiyu/handle_registry.hpp)已在 R02a 实现，C ABI 服务装配仍待 R06。
 - `id` 标识一条持有引用记录，不是事件、类型或业务对象身份。`generation` 区分同一编号的复用；完整三元组不得再次签发，代次耗尽时停用该编号，不能回绕。消费者只原样传回并按完整值比较引用身份，不根据编号推导对象或权限。
 - 原样赋值只复制标识，是同一引用的别名，不增加所有权或延长寿命。借用者不得释放借来的引用；跨回调、挂起或排队保存时，须在借用仍有效时取得独立持有引用，或复制数据到自身存储。
 - 句柄不能替代资源归属、实例代次、使用凭证和 DLL 代码依赖登记。各能力还须验证对象种类及允许的操作；这些登记与访问控制由 R02、R04、R06 等对应单元实现。
