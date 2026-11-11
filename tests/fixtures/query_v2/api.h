@@ -3,6 +3,7 @@
 #define DFY_TEST_QUERY_ID "test.query"
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"
+#define DFY_TEST_CANCEL_ID "test.cancel"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,17 @@ typedef struct dfy_test_operation_api {
         dfy_v2_handle operation, dfy_v2_operation_snapshot* snapshot, dfy_v2_error* error);
 } dfy_test_operation_api;
 extern const dfy_test_operation_api dfy_test_operation;
+// 纯 C 取消消费夹具，仅在调用期间借用服务与操作引用。
+typedef struct dfy_test_cancel_api {
+    dfy_v2_api_header header;
+    // 检查宿主表后请求取消，失败清空回执，不保留服务地址。
+    dfy_v2_status (DFY_V2_CALL *request)(const dfy_v2_operation_cancel_api* cancels,
+        dfy_v2_handle operation, uint32_t reason, uint32_t* disposition, dfy_v2_error* error);
+    // 检查宿主表后读取取消快照，失败清空输出，不改变操作。
+    dfy_v2_status (DFY_V2_CALL *read)(const dfy_v2_operation_cancel_api* cancels,
+        dfy_v2_handle operation, dfy_v2_cancel_snapshot* snapshot, dfy_v2_error* error);
+} dfy_test_cancel_api;
+extern const dfy_test_cancel_api dfy_test_cancel;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

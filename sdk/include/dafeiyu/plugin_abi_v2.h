@@ -28,6 +28,14 @@
 #define DFY_V2_OPERATION_SUCCEEDED UINT32_C(2)
 #define DFY_V2_OPERATION_FAILED UINT32_C(3)
 #define DFY_V2_OPERATION_CANCELLED UINT32_C(4)
+#define DFY_V2_OPERATION_CANCEL_INTERFACE "dfy.operation.cancel"
+#define DFY_V2_OPERATION_CANCEL_VERSION UINT32_C(1)
+#define DFY_V2_CANCEL_USER UINT32_C(1)
+#define DFY_V2_CANCEL_OWNER_STOP UINT32_C(2)
+#define DFY_V2_CANCEL_DEADLINE UINT32_C(3)
+#define DFY_V2_CANCEL_RECORDED UINT32_C(1)
+#define DFY_V2_CANCEL_ALREADY_REQUESTED UINT32_C(2)
+#define DFY_V2_CANCEL_ALREADY_SETTLED UINT32_C(3)
 
 // 查询限同一宿主线程；不创建实例或产生业务副作用，异常不得跨越 C ABI。
 #ifdef __cplusplus
@@ -84,6 +92,22 @@ typedef struct dfy_v2_operation_state_api {
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle operation,
         dfy_v2_operation_snapshot* snapshot, dfy_v2_error* error);
 } dfy_v2_operation_state_api;
+
+// 首个有效取消原因的调用方副本；reason 为零表示尚未记录请求，与操作终态独立。
+typedef struct dfy_v2_cancel_snapshot {
+    uint32_t reason;
+} dfy_v2_cancel_snapshot;
+// 同一宿主线程的可选操作取消服务；不撤销其他等待者，不同步执行消费者或清理。
+typedef struct dfy_v2_operation_cancel_api {
+    dfy_v2_api_header header;
+    // 请求协作取消，输出必需且失败清零；成功回执区分新登记、已有请求及已结算。
+    // reason 仅接受三种已定义原因；首个原因保留，成功不表示已取消或工作已经退出。
+    dfy_v2_status (DFY_V2_CALL *request)(dfy_v2_handle operation, uint32_t reason,
+        uint32_t* disposition, dfy_v2_error* error);
+    // 只读首个取消原因；输出必需且失败全零，未请求时成功返回零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle operation,
+        dfy_v2_cancel_snapshot* snapshot, dfy_v2_error* error);
+} dfy_v2_operation_cancel_api;
 
 // 按非空 UTF-8 名称和非零版本查询静态能力表；未知名称或版本返回 UNSUPPORTED。
 // 输出必需且失败清空，error 可为空；成功表只读并借用至模块引用释放，不得由调用方释放。

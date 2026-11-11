@@ -16,10 +16,20 @@ static_assert(sizeof(dfy_v2_operation_snapshot) == 4 && alignof(dfy_v2_operation
 static_assert(sizeof(dfy_v2_operation_state_api) == 16 && alignof(dfy_v2_operation_state_api) == 8 &&
     offsetof(dfy_v2_operation_state_api, read) == 8);
 static_assert(sizeof(dfy_test_operation_api) == 16 && offsetof(dfy_test_operation_api, read) == 8);
+static_assert(sizeof(dfy_v2_cancel_snapshot) == 4 && alignof(dfy_v2_cancel_snapshot) == 4 &&
+    offsetof(dfy_v2_cancel_snapshot, reason) == 0);
+static_assert(sizeof(dfy_v2_operation_cancel_api) == 24 && alignof(dfy_v2_operation_cancel_api) == 8 &&
+    offsetof(dfy_v2_operation_cancel_api, request) == 8 && offsetof(dfy_v2_operation_cancel_api, read) == 16);
+static_assert(sizeof(dfy_test_cancel_api) == 24 && offsetof(dfy_test_cancel_api, read) == 16);
 
 namespace {
 // 仅用于契约验收的操作记录和两个引用槽，不是生产注册表或执行器。
-struct Operation { uint32_t state = DFY_V2_OPERATION_PENDING; bool is_operation = true; };
+struct Operation {
+    uint32_t state = DFY_V2_OPERATION_PENDING;
+    bool is_operation = true;
+    bool cancellable = true;
+    uint32_t cancel_reason = 0;
+};
 struct Slot { uint64_t generation = 1; std::shared_ptr<Operation> value; };
 std::array<Slot, 2> slots;
 std::shared_ptr<Operation> work;
@@ -107,10 +117,123 @@ bool settle(uint32_t terminal) {
 const dfy_v2_reference_api refs = {{sizeof(dfy_v2_reference_api), DFY_V2_REFERENCE_VERSION}, retain, release};
 const dfy_v2_operation_state_api states = {
     {sizeof(dfy_v2_operation_state_api), DFY_V2_OPERATION_STATE_VERSION}, read_state};
+
+// 只复制已登记的首个取消原因，不混用操作终态。
+// 步骤：清空输出 → 核对引用、对象及支持性 → 复制原因。
+dfy_v2_status DFY_V2_CALL read_cancel(dfy_v2_handle operation,
+    dfy_v2_cancel_snapshot* output, dfy_v2_error* error) {
+    if (!output) return report(DFY_V2_INVALID_ARGUMENT, error);
+    *output = {};
+    const auto* slot = resolve(operation);
+    if (!slot) return report(DFY_V2_INVALID_HANDLE, error);
+    if (!slot->value->is_operation) return report(DFY_V2_INVALID_ARGUMENT, error);
+    if (!slot->value->cancellable) return report(DFY_V2_UNSUPPORTED, error);
+    output->reason = slot->value->cancel_reason;
+    return report(DFY_V2_OK, error);
+}
+// 登记协作取消而不结算操作，重复及迟到请求保持既有结果。
+// 步骤：清空回执并校验参数 → 核对对象能力 → 按终态或已有请求分流 → 保存首个原因。
+dfy_v2_status DFY_V2_CALL request_cancel(dfy_v2_handle operation, uint32_t reason,
+    uint32_t* disposition, dfy_v2_error* error) {
+    if (!disposition) return report(DFY_V2_INVALID_ARGUMENT, error);
+    *disposition = 0;
+    if (reason < DFY_V2_CANCEL_USER || reason > DFY_V2_CANCEL_DEADLINE) return report(DFY_V2_INVALID_ARGUMENT, error);
+    dfy_v2_cancel_snapshot prior{};
+    const auto status = read_cancel(operation, &prior, error);
+    if (status != DFY_V2_OK) return status;
+
+    auto& value = *resolve(operation)->value;
+    if (value.state != DFY_V2_OPERATION_PENDING) *disposition = DFY_V2_CANCEL_ALREADY_SETTLED;
+    else if (prior.reason) *disposition = DFY_V2_CANCEL_ALREADY_REQUESTED;
+    else {
+        value.cancel_reason = reason;
+        *disposition = DFY_V2_CANCEL_RECORDED;
+    }
+    return report(DFY_V2_OK, error);
+}
+const dfy_v2_operation_cancel_api cancels = {
+    {sizeof(dfy_v2_operation_cancel_api), DFY_V2_OPERATION_CANCEL_VERSION}, request_cancel, read_cancel};
+
+// 通过纯 C 消费者验收取消请求、能力拒绝和两种先后顺序，不启动生产调度器。
+// 步骤：检查服务及参数 → 验证首个原因与重复请求 → 验证取消和完成的顺序 → 回收隔离工作。
+void verify_cancel(const dfy_test_cancel_api& consumer) {
+    dfy_v2_handle operation{};
+    check(submit(&operation) == DFY_V2_OK, "cancel submission failed");
+    dfy_v2_cancel_snapshot snapshot{99};
+    uint32_t disposition = 99;
+    dfy_v2_error error{};
+    check(consumer.read(&cancels, operation, &snapshot, nullptr) == DFY_V2_OK && !snapshot.reason, "initial cancellation");
+    check(consumer.request(nullptr, operation, 1, &disposition, nullptr) == DFY_V2_INVALID_ARGUMENT && !disposition,
+        "null cancel service accepted");
+    auto invalid = cancels;
+    ++invalid.header.interface_version;
+    check(consumer.read(&invalid, operation, &snapshot, nullptr) == DFY_V2_UNSUPPORTED && !snapshot.reason,
+        "wrong cancel version accepted");
+    invalid = cancels;
+    ++invalid.header.struct_size;
+    check(consumer.request(&invalid, operation, 1, &disposition, nullptr) == DFY_V2_UNSUPPORTED && !disposition,
+        "wrong cancel size accepted");
+    invalid = cancels;
+    invalid.request = nullptr;
+    check(consumer.read(&invalid, operation, &snapshot, nullptr) == DFY_V2_INVALID_ARGUMENT, "missing cancel entry");
+    check(consumer.request(&cancels, operation, 1, nullptr, nullptr) == DFY_V2_INVALID_ARGUMENT &&
+        consumer.read(&cancels, operation, nullptr, nullptr) == DFY_V2_INVALID_ARGUMENT, "null cancel output accepted");
+    for (auto reason : {0u, 4u, UINT32_MAX}) {
+        disposition = 99;
+        check(consumer.request(&cancels, operation, reason, &disposition, nullptr) == DFY_V2_INVALID_ARGUMENT &&
+            !disposition && !work->cancel_reason, "invalid reason changed state");
+    }
+    work->is_operation = false;
+    check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_INVALID_ARGUMENT, "wrong kind cancelled");
+    work->is_operation = true;
+    work->cancellable = false;
+    check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_UNSUPPORTED && !disposition &&
+        !work->cancel_reason, "unsupported operation cancelled");
+    work->cancellable = true;
+
+    for (auto first_reason : {DFY_V2_CANCEL_USER, DFY_V2_CANCEL_OWNER_STOP, DFY_V2_CANCEL_DEADLINE}) {
+        error.length = 1;
+        check(consumer.request(&cancels, operation, first_reason, &disposition, &error) == DFY_V2_OK && !error.length &&
+            disposition == DFY_V2_CANCEL_RECORDED && work->state == DFY_V2_OPERATION_PENDING, "request settled work");
+        check(consumer.request(&cancels, operation, DFY_V2_CANCEL_USER, &disposition, nullptr) == DFY_V2_OK &&
+            disposition == DFY_V2_CANCEL_ALREADY_REQUESTED, "repeat cancellation not idempotent");
+        check(consumer.read(&cancels, operation, &snapshot, nullptr) == DFY_V2_OK && snapshot.reason == first_reason,
+            "first reason replaced");
+        dfy_v2_handle retained{};
+        check(refs.retain(operation, &retained, nullptr) == DFY_V2_OK &&
+            consumer.read(&cancels, retained, &snapshot, nullptr) == DFY_V2_OK && snapshot.reason == first_reason &&
+            refs.release(retained, nullptr) == DFY_V2_OK, "independent reference lost cancellation state");
+        // 隔离处理者在业务提交前观察取消；终态与工作回收仍由宿主分别推进。
+        check(settle(DFY_V2_OPERATION_CANCELLED) && work != nullptr, "cancelled result lost work responsibility");
+        check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_OK &&
+            disposition == DFY_V2_CANCEL_ALREADY_SETTLED && work->cancel_reason == first_reason, "terminal changed");
+        check(refs.release(operation, nullptr) == DFY_V2_OK, "cannot release cancelled operation");
+        work.reset();
+        check(consumer.read(&cancels, operation, &snapshot, nullptr) == DFY_V2_INVALID_HANDLE && !snapshot.reason,
+            "released cancel reference accepted");
+        check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_INVALID_HANDLE && !disposition,
+            "released operation cancelled");
+        check(submit(&operation) == DFY_V2_OK, "next cancellation test not accepted");
+    }
+    // 取消请求不替代业务结算；已提交或独立失败的工作仍可产生对应正式结果。
+    for (auto terminal : {DFY_V2_OPERATION_SUCCEEDED, DFY_V2_OPERATION_FAILED}) {
+        check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_OK && settle(terminal) &&
+            work->state == terminal, "cancellation forced a terminal outcome");
+        check(refs.release(operation, nullptr) == DFY_V2_OK, "cannot release raced operation");
+        work.reset();
+        check(submit(&operation) == DFY_V2_OK, "next completion test not accepted");
+    }
+    check(settle(DFY_V2_OPERATION_SUCCEEDED), "completion first failed");
+    check(consumer.request(&cancels, operation, 1, &disposition, nullptr) == DFY_V2_OK &&
+        disposition == DFY_V2_CANCEL_ALREADY_SETTLED && !work->cancel_reason &&
+        work->state == DFY_V2_OPERATION_SUCCEEDED, "late cancellation overwrote success");
+    check(refs.release(operation, nullptr) == DFY_V2_OK, "cannot release success");
+    work.reset();
+}
 }
 
 // 用真实 C DLL 验证操作快照与引用责任，并明确宿主手动结算的验收边界。
-// 步骤：查询 C 消费夹具 → 验证服务和句柄拒绝 → 遍历唯一终态及独立引用 → 验证引用释放不取消工作。
+// 步骤：查询 C 消费夹具 → 验证状态与引用 → 验证取消请求及先后顺序 → 验证引用释放不取消工作。
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 2, "expected v2 fixture DLL");
@@ -189,6 +312,14 @@ int wmain(int argc, wchar_t** argv) {
             check(refs.release(other, nullptr) == DFY_V2_OK && lifetime.expired(), "finished record not reclaimed");
         }
 
+        check(api->query_interface({DFY_TEST_CANCEL_ID, sizeof(DFY_TEST_CANCEL_ID) - 1}, 1, &table, nullptr) ==
+            DFY_V2_OK && table, "missing cancel fixture");
+        prefix = static_cast<const dfy_v2_api_header*>(table);
+        check(prefix->struct_size == sizeof(dfy_test_cancel_api) && prefix->interface_version == 1, "invalid cancel fixture");
+        const auto* cancellation = static_cast<const dfy_test_cancel_api*>(table);
+        check(cancellation->request && cancellation->read, "missing cancellation consumer");
+        verify_cancel(*cancellation);
+
         dfy_v2_handle abandoned{};
         check(submit(&abandoned) == DFY_V2_OK && refs.release(abandoned, nullptr) == DFY_V2_OK &&
             work && work->state == DFY_V2_OPERATION_PENDING, "last client release cancelled work");
@@ -197,7 +328,7 @@ int wmain(int argc, wchar_t** argv) {
         check(settle(DFY_V2_OPERATION_SUCCEEDED), "host work depended on consumer DLL");
         work.reset();
         check(snapshot.state == DFY_V2_OPERATION_CANCELLED, "snapshot depended on released reference or DLL");
-        std::cout << "ABI v2 operation state checks passed\n";
+        std::cout << "ABI v2 operation state and cancellation checks passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
