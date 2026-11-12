@@ -79,14 +79,97 @@ void verify_identity() {
     replacement.stop_accepting();
     replacement.finish_close();
 }
+
+// 验证使用凭证绑定双方实例，容量拒绝和清理阻挡不改变现有关系。
+// 步骤：申请并检查两侧容量 → 阻止仍在使用的清理 → 移动和释放凭证 → 逐个完成关闭。
+void verify_uses() {
+    ResourceOwner provider(1, 2), consumer(1, 1), another(1, 2);
+    const auto resource = provider.prepare();
+    rejects<std::logic_error>([&] { (void)provider.acquire(resource, consumer); });
+    provider.activate(resource);
+    auto first = provider.acquire(resource, consumer);
+    check(first.resource() == resource && first.provider_domain() == provider.domain() && first.consumer_domain() == consumer.domain(),
+        "use binding did not identify instances");
+    rejects<std::length_error>([&] { (void)provider.acquire(resource, consumer); });
+    auto second = provider.acquire(resource, another);
+    rejects<std::length_error>([&] { (void)provider.acquire(resource, another); });
+    check(provider.incoming_uses() == 2 && provider.resource_users(resource) == 2 && consumer.outgoing_uses() == 1,
+        "rejected use changed accounting");
+    rejects<std::logic_error>([&] { provider.begin_cleanup(resource); });
+    check(provider.resource_state(resource) == ResourceState::active, "busy cleanup changed phase");
+    provider.stop_accepting();
+    consumer.stop_accepting();
+    rejects<std::logic_error>([&] { (void)provider.acquire(resource, another); });
+    rejects<std::logic_error>([&] { consumer.finish_close(); });
+    ResourceUse moved(std::move(first)), assigned;
+    assigned = std::move(moved);
+    assigned = std::move(assigned);
+    check(!first && !moved && assigned && provider.resource_users(resource) == 2, "move duplicated use");
+    assigned.reset();
+    assigned.reset();
+    consumer.finish_close();
+    check(provider.resource_users(resource) == 1 && !consumer.outgoing_uses(), "use release changed other consumer");
+    second.reset();
+    provider.begin_cleanup(resource);
+    provider.finish_cleanup(resource);
+    provider.finish_close();
+    another.stop_accepting();
+    another.finish_close();
+    check(!provider.incoming_uses() && !another.outgoing_uses(), "use accounting leaked");
 }
 
-// 验收资源归属登记与清理进度，实际副作用、使用凭证及 DLL 依赖由后续单元管理。
-// 步骤：验证关闭与重试 → 验证实例代次 → 汇报结果。
+// 验证自用计量、覆盖移动和具体代次绑定，所有者停止后旧凭证仍有效直到释放。
+// 步骤：建立自用及独立绑定 → 覆盖旧凭证 → 关闭消费者 → 回收并复用资源槽。
+void verify_use_lifetime() {
+    ResourceOwner disabled(1);
+    const auto denied = disabled.prepare();
+    disabled.activate(denied);
+    rejects<std::length_error>([&] { (void)disabled.acquire(denied, disabled); });
+    disabled.begin_cleanup(denied);
+    disabled.finish_cleanup(denied);
+    disabled.stop_accepting();
+    disabled.finish_close();
+
+    ResourceOwner provider(2, 3), consumer(1, 2), replacement(1, 1);
+    const auto first = provider.prepare(), second = provider.prepare();
+    provider.activate(first);
+    provider.activate(second);
+    auto use = provider.acquire(first, consumer);
+    {
+        auto self = provider.acquire(second, provider);
+        check(provider.incoming_uses() == 2 && provider.outgoing_uses() == 1, "self use not counted");
+    }
+    auto newer = provider.acquire(second, replacement);
+    const auto old_consumer = use.consumer_domain();
+    consumer.stop_accepting();
+    rejects<std::logic_error>([&] { (void)provider.acquire(first, consumer); });
+    check(use.consumer_domain() == old_consumer && old_consumer != newer.consumer_domain(), "old binding migrated");
+    use = std::move(newer);
+    consumer.finish_close();
+    check(provider.resource_users(first) == 0 && provider.resource_users(second) == 1 && !provider.outgoing_uses(),
+        "overwritten use not released");
+    provider.begin_cleanup(first);
+    provider.finish_cleanup(first);
+    const auto reused = provider.prepare();
+    provider.activate(reused);
+    rejects<ReferenceError>([&] { (void)provider.acquire(first, replacement); });
+    use.reset();
+    for (const auto item : {reused, second}) { provider.begin_cleanup(item); provider.finish_cleanup(item); }
+    provider.stop_accepting();
+    provider.finish_close();
+    replacement.stop_accepting();
+    replacement.finish_close();
+}
+}
+
+// 验收资源归属、使用凭证及清理进度，实际副作用和 DLL 依赖由后续单元管理。
+// 步骤：验证关闭与重试 → 验证实例代次 → 验证使用关系及计量 → 汇报结果。
 int main() {
     try {
         verify_cleanup();
         verify_identity();
+        verify_uses();
+        verify_use_lifetime();
         std::cout << "Runtime resource checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
