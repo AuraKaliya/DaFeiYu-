@@ -2,6 +2,7 @@
 #include <dafeiyu/plugin_abi_v2.h>
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
+#include <dafeiyu/lifecycle_abi_v2.h>
 #define DFY_TEST_QUERY_ID "test.query"
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"
@@ -98,6 +99,7 @@ typedef struct dfy_test_reads_api {
     dfy_v2_status (DFY_V2_CALL *result)(dfy_v2_query_interface_fn query, dfy_v2_handle request, dfy_v2_read_result* result, dfy_v2_error* error);
 } dfy_test_reads_api;
 extern const dfy_test_reads_api dfy_test_reads;
+extern const dfy_v2_lifecycle_api dfy_test_lifecycle;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

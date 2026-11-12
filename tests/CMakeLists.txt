@@ -216,6 +216,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.subscriptions COMMAND dfy_plugin_subscriptions_tests)
 set_tests_properties(plugins.subscriptions PROPERTIES TIMEOUT 15)
 
+# 真实 C 实例验证停止受理与停止完成分离，保持 v1 生命周期契约冻结。
+add_executable(dfy_sdk_lifecycle_v2_tests sdk_lifecycle_v2.cpp)
+target_link_libraries(dfy_sdk_lifecycle_v2_tests PRIVATE dfy_plugins dfy_build_options)
+add_dependencies(dfy_sdk_lifecycle_v2_tests dfy_query_v2_fixture)
+set_target_properties(dfy_sdk_lifecycle_v2_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/sdk_lifecycle_v2.cpp")
+add_test(NAME sdk.lifecycle_v2 COMMAND dfy_sdk_lifecycle_v2_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
+set_tests_properties(sdk.lifecycle_v2 PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
