@@ -13,6 +13,7 @@
 #define DFY_TEST_VALUES_ID "test.host_values"
 #define DFY_TEST_READS_ID "test.host_reads"
 #define DFY_TEST_NESTED_ID "test.host_nested"
+#define DFY_TEST_PRESENCE_ID "test.host_presence"
 
 #ifdef __cplusplus
 extern "C" {
@@ -109,6 +110,12 @@ typedef struct dfy_test_nested_api {
         uint32_t depth, dfy_test_nested_counts* output, dfy_v2_error* error);
 } dfy_test_nested_api;
 extern const dfy_test_nested_api dfy_test_nested;
+typedef struct dfy_test_presence_api {
+    dfy_v2_api_header header;
+    // 按描述标记区分存在、缺失与显式 null，失败清空状态位图。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint32_t* states, dfy_v2_error* error);
+} dfy_test_presence_api;
+extern const dfy_test_presence_api dfy_test_presence;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

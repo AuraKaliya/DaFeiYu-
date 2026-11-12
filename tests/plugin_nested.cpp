@@ -20,6 +20,33 @@ const T& service(std::string_view name, uint32_t version) {
     check(header->struct_size == sizeof(T) && header->interface_version == version, "service version mismatch");
     return *static_cast<const T*>(table);
 }
+// 核对 C 存在性表达和旧版本拒绝，未知索引不混同可选字段缺失。
+void presence(const dfy_v2_plugin_api& bootstrap) {
+    const void* table = nullptr;
+    check(bootstrap.query_interface({DFY_TEST_PRESENCE_ID, sizeof(DFY_TEST_PRESENCE_ID)-1}, 1, &table, nullptr) == DFY_V2_OK, "presence consumer missing");
+    const auto* consumer = static_cast<const dfy_test_presence_api*>(table);
+    check(consumer && consumer->header.struct_size == sizeof(*consumer) && consumer->header.interface_version == 1 && consumer->inspect, "invalid presence consumer");
+    const FieldDescriptor fields[] = {{"value", ValueKind::string, 0}, {"missing", ValueKind::string, 0, {}, true, false},
+        {"null", ValueKind::string, 0, {}, false, true}};
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.presence", 1, fields, {3,64}));
+    const NamedValue input[] = {{"value", Value::from_string({},0)}, {"null", Value::null()}};
+    HostServices host(8); const auto root = host.expose(std::make_shared<const StructValue>(StructValue::create(type, input, 0)));
+    auto binding = host.bind(); uint32_t states = 0;
+    check(consumer->inspect(HostServices::query, root, &states, nullptr) == DFY_V2_OK && states == 7 && host.references() == 1, "C presence collapsed or leaked");
+    const auto& structures = service<dfy_v2_struct_api_v2>(DFY_V2_STRUCT_INTERFACE, 2);
+    const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE, 1);
+    dfy_v2_handle field{}, descriptor{};
+    check(structures.field(root, 1, &field, nullptr) == DFY_V2_NOT_FOUND && !field.id &&
+        structures.field(root, 3, &field, nullptr) == DFY_V2_INVALID_ARGUMENT && !field.id, "missing and invalid index collapsed");
+    check(service<dfy_v2_struct_api>(DFY_V2_STRUCT_INTERFACE, 1).field(root, 1, &field, nullptr) == DFY_V2_UNSUPPORTED && !field.id, "v1 accepted optional field");
+    check(structures.field(root, 2, &field, nullptr) == DFY_V2_OK && structures.descriptor(root, &descriptor, nullptr) == DFY_V2_OK, "nullable field missing");
+    dfy_v2_value_view value{}; dfy_v2_field_info info{};
+    check(service<dfy_v2_value_api>(DFY_V2_VALUE_INTERFACE, 1).read(field, &value, nullptr) == DFY_V2_UNSUPPORTED && !value.kind &&
+        service<dfy_v2_type_api>(DFY_V2_TYPE_INTERFACE, 1).field(descriptor, 2, &info, nullptr) == DFY_V2_UNSUPPORTED && !info.kind,
+        "v1 accepted nullable semantics");
+    refs.release(field, nullptr); refs.release(descriptor, nullptr); refs.release(root, nullptr);
+    check(!host.references(), "presence references leaked");
+}
 }
 // 以真实 C DLL 递归消费嵌套事件，保留叶字段仍需承担原事件及读取预算。
 // 步骤：构造嵌套事件 → 协商版本 2 并读取 → 拒绝深度不足且回收 → 保留叶子后释放父链并检查预算。
@@ -72,6 +99,7 @@ int wmain(int argc, wchar_t** argv) {
         check(!store->references() && !reader->size(), "leaf held finished event");
         reader->close(dfy::events::CloseMode::cancel); host.advance(); refs.release(receiver, nullptr);
         check(!host.references() && !host.resources(), "nested host leaked");
+        presence(*bootstrap);
         std::cout << "Versioned C nested checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

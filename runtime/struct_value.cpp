@@ -13,6 +13,7 @@ std::size_t scalar_payload_bytes(const Value& value) {
     case ValueKind::string: return value.as_string().size();
     case ValueKind::bytes: return value.as_bytes().size();
     case ValueKind::structure: return value.as_structure().payload_bytes();
+    case ValueKind::null_value: return 0;
     }
     throw std::invalid_argument("struct: unsupported value kind");
 }
@@ -24,17 +25,26 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
     std::span<const NamedValue> fields, std::size_t max_payload_bytes) {
     if (!descriptor) throw std::invalid_argument("struct: descriptor required");
     const auto declared = descriptor->fields();
-    if (fields.size() != declared.size()) throw std::invalid_argument("struct: field count mismatch");
+    if (fields.size() > declared.size()) throw std::invalid_argument("struct: field count mismatch");
     std::unordered_map<std::string_view, const Value*> supplied;
     for (const auto& field : fields) {
         if (!supplied.emplace(field.name, &field.value).second) throw std::invalid_argument("struct: duplicate field");
     }
 
     auto remaining = max_payload_bytes;
+    std::size_t matched = 0;
     for (const auto& field : declared) {
         const auto match = supplied.find(field.name);
-        if (match == supplied.end()) throw std::invalid_argument("struct: missing or unknown field");
+        if (match == supplied.end()) {
+            if (!field.optional) throw std::invalid_argument("struct: required field missing");
+            continue;
+        }
+        ++matched;
         const auto& value = *match->second;
+        if (value.kind() == ValueKind::null_value) {
+            if (!field.nullable) throw std::invalid_argument("struct: null not allowed");
+            continue;
+        }
         if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
         if (field.kind == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
             throw std::invalid_argument("struct: nested definition mismatch");
@@ -46,10 +56,15 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         if (bytes > remaining) throw std::length_error("struct: payload byte limit exceeded");
         remaining -= bytes;
     }
+    if (matched != supplied.size()) throw std::invalid_argument("struct: unknown field");
 
-    std::vector<Value> values;
+    std::vector<std::optional<Value>> values;
     values.reserve(declared.size());
-    for (const auto& field : declared) values.push_back(*supplied.at(field.name));
+    for (const auto& field : declared) {
+        const auto found = supplied.find(field.name);
+        if (found == supplied.end()) values.emplace_back(std::nullopt);
+        else values.emplace_back(*found->second);
+    }
     return StructValue(std::move(descriptor), std::move(values), max_payload_bytes - remaining);
 }
 
@@ -57,7 +72,7 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
 const Value* StructValue::find(std::string_view name) const noexcept {
     const auto declared = descriptor_->fields();
     for (std::size_t index = 0; index < declared.size(); ++index) {
-        if (declared[index].name == name) return &fields_[index];
+        if (declared[index].name == name) return fields_[index] ? &*fields_[index] : nullptr;
     }
     return nullptr;
 }

@@ -13,6 +13,9 @@
 #define DFY_V2_VALUE_STRING UINT32_C(5)
 #define DFY_V2_VALUE_BYTES UINT32_C(6)
 #define DFY_V2_VALUE_STRUCTURE UINT32_C(7)
+#define DFY_V2_VALUE_NULL UINT32_C(8)
+#define DFY_V2_FIELD_OPTIONAL UINT32_C(1)
+#define DFY_V2_FIELD_NULLABLE UINT32_C(2)
 #define DFY_V2_TYPE_VERSION_2 UINT32_C(2)
 #define DFY_V2_VALUE_VERSION_2 UINT32_C(2)
 #define DFY_V2_STRUCT_VERSION_2 UINT32_C(2)
@@ -75,7 +78,7 @@ typedef struct dfy_v2_field_info_v2 {
     uint32_t flags;
     uint64_t max_bytes;
 } dfy_v2_field_info_v2;
-// flags 是可扩展约束标记；当前为零，遇到未实现的标志必须明确拒绝。
+// flags 是可扩展约束标记；可选与可空相互独立，未知标志必须明确拒绝。
 typedef struct dfy_v2_type_api_v2 {
     dfy_v2_api_header header;
     // 与版本 1 相同的类型元数据和借用期。
@@ -87,12 +90,12 @@ typedef struct dfy_v2_type_api_v2 {
 } dfy_v2_type_api_v2;
 typedef struct dfy_v2_value_api_v2 {
     dfy_v2_api_header header;
-    // 基础值同版本 1；组合分类的 data 固定为零，其内容通过实际实现的专用能力访问。
+    // 基础值同版本 1；组合与 null 的 data 固定为零，组合内容通过专用能力访问。
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_value_view* output, dfy_v2_error* error);
     // 取得结构内容的独立持有，保持原值及其预算链，非结构值拒绝。
     dfy_v2_status (DFY_V2_CALL *structure)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_value_api_v2;
-// 版本 2 保持相同函数签名，field 可返回组合值；仍须精确协商版本 2。
+// 版本 2 的 field 可返回组合或 null；已声明但缺失为 NOT_FOUND，越界为 INVALID_ARGUMENT。
 typedef dfy_v2_struct_api dfy_v2_struct_api_v2;
 #pragma pack(pop)
 #ifdef __cplusplus

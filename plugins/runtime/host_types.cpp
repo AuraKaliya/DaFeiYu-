@@ -13,6 +13,9 @@ uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
     case runtime::ValueKind::structure:
         if (profile == 2) return DFY_V2_VALUE_STRUCTURE;
         throw std::domain_error("host: kind unavailable in data capability v1");
+    case runtime::ValueKind::null_value:
+        if (profile == 2) return DFY_V2_VALUE_NULL;
+        throw std::domain_error("host: null unavailable in data capability v1");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }
@@ -30,14 +33,17 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle type, dfy_v2_type_info* output,
 }
 // 读取声明顺序中的基础字段，越界不返回部分信息。
 // 步骤：清空输出 → 校验引用及索引 → 显式映射种类并返回借用。
-dfy_v2_status field_info(dfy_v2_handle type, uint64_t index, dfy_v2_field_info* output, dfy_v2_error* error, uint32_t profile) {
+dfy_v2_status field_info(dfy_v2_handle type, uint64_t index, dfy_v2_field_info* output, dfy_v2_error* error,
+    uint32_t profile, uint32_t* flags = nullptr) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
     return boundary(error, [&](auto& host) {
         const auto fields = object<runtime::StructDescriptor>(host, type).fields();
         if (index >= fields.size()) return DFY_V2_INVALID_ARGUMENT;
         const auto& entry = fields[static_cast<std::size_t>(index)];
+        if (profile == 1 && (entry.optional || entry.nullable)) return DFY_V2_UNSUPPORTED;
         *output = {{entry.name.data(), entry.name.size()}, value_kind(entry.kind, profile), 0, entry.max_bytes};
+        if (flags) *flags = (entry.optional ? DFY_V2_FIELD_OPTIONAL : 0) | (entry.nullable ? DFY_V2_FIELD_NULLABLE : 0);
         return DFY_V2_OK;
     });
 }
@@ -50,8 +56,9 @@ dfy_v2_status DFY_V2_CALL field_v2(dfy_v2_handle type, uint64_t index, dfy_v2_fi
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
     dfy_v2_field_info info{};
-    const auto status = field_info(type, index, &info, error, 2);
-    if (!status) *output = {info.name, info.kind, 0, info.max_bytes};
+    uint32_t flags = 0;
+    const auto status = field_info(type, index, &info, error, 2, &flags);
+    if (!status) *output = {info.name, info.kind, flags, info.max_bytes};
     return status;
 }
 // 为嵌套结构描述签发独立持有，不借用父描述引用。

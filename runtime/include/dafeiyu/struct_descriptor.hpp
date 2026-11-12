@@ -4,12 +4,14 @@
 
 namespace dfy::runtime {
 class StructDescriptor;
-// 必填且不可空的字段；结构必须提供不可变描述，其他种类不能携带结构描述。
+// 字段的可选与可空独立表达；结构必须提供描述，其他种类不能携带结构描述。
 struct FieldDescriptor {
     std::string name;
     ValueKind kind;
     std::size_t max_bytes;
     std::shared_ptr<const StructDescriptor> structure{};
+    bool optional = false;
+    bool nullable = false;
 };
 
 // 单份描述的字段数和所有名称正文的总字节上限，不代表全局内存预算。

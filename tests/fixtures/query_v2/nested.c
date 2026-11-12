@@ -80,3 +80,48 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
     return status;
 }
 const dfy_test_nested_api dfy_test_nested = {{sizeof(dfy_test_nested_api), 1}, inspect};
+
+// 通过 C 状态、字段标记及值分类区分三种存在性，不按空正文猜测。
+// 步骤：查询版本 2 → 枚举字段及约束 → 分别处理缺失、null、值 → 归还持有并提交位图。
+static dfy_v2_status DFY_V2_CALL inspect_presence(dfy_v2_query_interface_fn query, dfy_v2_handle structure,
+    uint32_t* output, dfy_v2_error* error) {
+    services api;
+    dfy_v2_handle type = {0};
+    dfy_v2_type_info info = {0};
+    dfy_v2_status status;
+    uint64_t i;
+    uint32_t states = 0;
+    if (output) *output = 0;
+    if (error) error->length = 0;
+    if (!query || !output) return DFY_V2_INVALID_ARGUMENT;
+    api.refs = (const dfy_v2_reference_api*)service(query, DFY_V2_REFERENCE_INTERFACE, 1, sizeof(*api.refs));
+    api.types = (const dfy_v2_type_api_v2*)service(query, DFY_V2_TYPE_INTERFACE, 2, sizeof(*api.types));
+    api.values = (const dfy_v2_value_api_v2*)service(query, DFY_V2_VALUE_INTERFACE, 2, sizeof(*api.values));
+    api.structures = (const dfy_v2_struct_api_v2*)service(query, DFY_V2_STRUCT_INTERFACE, 2, sizeof(*api.structures));
+    if (!api.refs || !api.types || !api.values || !api.structures || !api.refs->release || !api.types->describe ||
+        !api.types->field || !api.values->read || !api.structures->descriptor || !api.structures->field) return DFY_V2_UNSUPPORTED;
+    status = api.structures->descriptor(structure, &type, 0); if (status) return status;
+    status = api.types->describe(type, &info, 0);
+    for (i = 0; !status && i < info.field_count; ++i) {
+        dfy_v2_field_info_v2 field = {0};
+        dfy_v2_handle owned = {0};
+        dfy_v2_value_view value = {0};
+        status = api.types->field(type, i, &field, 0);
+        if (!status && (field.flags & ~(DFY_V2_FIELD_OPTIONAL | DFY_V2_FIELD_NULLABLE))) status = DFY_V2_UNSUPPORTED;
+        if (!status) status = api.structures->field(structure, i, &owned, 0);
+        if (status == DFY_V2_NOT_FOUND && (field.flags & DFY_V2_FIELD_OPTIONAL)) { states |= 2; status = DFY_V2_OK; }
+        else if (!status) {
+            status = api.values->read(owned, &value, 0);
+            if (!status && value.kind == DFY_V2_VALUE_NULL) {
+                if (!(field.flags & DFY_V2_FIELD_NULLABLE) || value.data.uint64 || value.data.bytes.length) status = DFY_V2_FAILED;
+                else states |= 4;
+            } else if (!status && value.kind == field.kind) states |= 1;
+            else if (!status) status = DFY_V2_FAILED;
+        }
+        api.refs->release(owned, 0);
+    }
+    api.refs->release(type, 0);
+    if (!status) *output = states;
+    return status;
+}
+const dfy_test_presence_api dfy_test_presence = {{sizeof(dfy_test_presence_api), 1}, inspect_presence};

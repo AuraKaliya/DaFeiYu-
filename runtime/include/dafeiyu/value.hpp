@@ -13,7 +13,7 @@
 
 namespace dfy::runtime {
 // 宿主内部种类，不是 C ABI 或事件契约中的类型编号。
-enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure };
+enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure, null_value };
 class StructValue;
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
@@ -38,6 +38,8 @@ class Value {
     static Value from_bytes(std::span<const std::uint8_t> bytes, std::size_t max_bytes);
     // 保持非空不可变结构，嵌套内容不会引用插件代码或可变容器。
     static Value from_structure(std::shared_ptr<const StructValue> value);
+    // 创建显式空值，不等同于字段缺失、空文本或空字节。
+    static Value null() { return Value(std::monostate{}); }
     // 复制基础存储或共享不可变结构，不共享可修改内容。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
@@ -60,7 +62,7 @@ class Value {
     const StructValue& as_structure() const { return *std::get<std::shared_ptr<const StructValue>>(contents_); }
   private:
     using Bytes = std::vector<std::uint8_t>;
-    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>>;
+    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>, std::monostate>;
     // 从已校验的明确类型保存只读内容，不向模块外暴露 variant 布局。
     explicit Value(Contents contents) : contents_(std::move(contents)) {}
     const Contents contents_;

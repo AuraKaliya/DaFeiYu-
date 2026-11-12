@@ -46,7 +46,7 @@
 
 07b 实现提交：`00a5b0c`（`feat: 完成插件 ABI 查询与兼容性校验`）。当次 Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
 
-**当前进度：R09b 版本化 C 嵌套访问已实现；下一单元为 R09c 可选字段与显式空值。** 详细范围与验收见下方阶段记录。
+**当前进度：R09c 可选字段与显式空值已实现；下一单元为 R09d 逻辑节点预算与数组基础。** 详细范围与验收见下方阶段记录。
 
 R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](plugin-abi-v2.md#验收与下一单元)。
 
@@ -502,6 +502,16 @@ TypeCatalog 要求先显式定义嵌套依赖，未知依赖返回 unknown_depen
 结构内容使用原值作为共享别名所有者；从事件读取依次取得父载荷、结构字段、子结构、叶字段后，任一叶数据持有都继续保持原 ReadRequest 及事件／结果预算。普通类型描述则独立保持元数据，不必延长整个事件。递归失败归还所有中间持有。
 
 本轮起点 `e200968`；Debug／Release 主工程及完整测试构建、两种配置 39／39 CTest 和 Debug 嵌套消费者调用 Release C DLL 均通过。纯 C 递归枚举未预编译结构，验证精确版本、显式深度预算、失败无残留、子数据寿命及预算链。下一单元为可选字段、显式 null 与缺失的独立表达。
+
+### 3.37 可选字段、显式 null 与缺失（R09c）
+
+FieldDescriptor 的 optional 与 nullable 默认为 false 且相互独立；它们参与完整定义比较和目录冲突检查。Value::null 是独立值分类，不能作为字段声明种类，字段仍须声明具体类型再允许 null。StructValue 按声明顺序保存可缺失槽位，不补默认值；必填缺失、未知字段、错误种类或不允许的 null 均拒绝。缺失及 null 不计逻辑正文，空字符串／字节仍是存在的实际值。
+
+`presence(index)` 明确区分 missing／null_value／value；`at` 对缺失抛出 bad_optional_access，对越界抛出 out_of_range。find 对未知和缺失都返回空指针，调用方可结合描述和 presence 区分。Nullable 结构仍保留其非空时的完整子定义约束。
+
+C 能力版本 2 的 flags 增加 OPTIONAL=1、NULLABLE=2；NULL 分类为 8，data 全零。结构 field 对已声明但缺失返回新增 NOT_FOUND=4，对越界仍返回 InvalidArgument；显式 null 返回真实持有引用。版本 1 对可选／可空字段和 null 明确返回 Unsupported。未知分类或标记仍必须拒绝，不能按已有字段解释。
+
+本轮起点 `8164077`；Debug／Release 主工程与完整测试构建、两种配置 40／40 CTest 和 Debug C 嵌套／存在性消费者调用 Release DLL 均通过。覆盖四种约束组合、未知字段、空正文、目录冲突和 C 三态表达，无引用残留。下一单元先为容器扩展增加独立逻辑节点预算，再逐项实现数组等类型。
 
 ## 4. 基础契约与接口演进
 
