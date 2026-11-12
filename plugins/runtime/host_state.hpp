@@ -2,22 +2,25 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/handle_registry.hpp>
 #include <dafeiyu/data_abi_v2.h>
+#include <dafeiyu/event_abi_v2.h>
 #include <thread>
 #include <variant>
 
 namespace dfy::plugins::detail {
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
-    std::shared_ptr<const runtime::StructValue>>;
+    std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>>;
 struct HostReference { HostObject object; };
 struct HostState {
     // 建立本上下文独立引用域并固定宿主线程。
-    explicit HostState(std::size_t capacity) : references(capacity), owner(std::this_thread::get_id()) {}
+    HostState(std::size_t capacity, std::size_t reader_capacity)
+        : references(capacity), owner(std::this_thread::get_id()), readers(reader_capacity) {}
     // 拒绝从其他线程直接操作状态，C 服务由线程绑定进一步隔离。
     void require_owner() const {
         if (owner != std::this_thread::get_id()) throw std::logic_error("host: wrong thread");
     }
     runtime::HandleRegistry<HostReference> references;
     const std::thread::id owner;
+    std::vector<std::shared_ptr<events::SubscriptionReader>> readers;
 };
 inline thread_local HostState* current_host = nullptr;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。
@@ -41,6 +44,14 @@ const dfy_v2_type_api& type_api();
 const dfy_v2_value_api& value_api();
 // 返回只读结构载荷服务表。
 const dfy_v2_struct_api& struct_api();
+// 返回类型化读取服务。
+const dfy_v2_reader_api& reader_api();
+// 返回生产操作状态服务，当前由完整读取请求支撑。
+const dfy_v2_operation_state_api& operation_api();
+// 从当前域取得完整读取请求，不能只保留操作状态视图。
+inline std::shared_ptr<events::ReadRequest> request(HostState& host, dfy_v2_handle value) {
+    return std::get<std::shared_ptr<events::ReadRequest>>(host.references.get(native(value)).object);
+}
 
 // 捕获宿主异常并统一转换调用状态，错误缓冲不回显内部文本。
 // 步骤：清空错误 → 检查调用上下文 → 执行能力逻辑 → 按错误类别映射。

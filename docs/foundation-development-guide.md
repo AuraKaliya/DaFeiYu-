@@ -46,7 +46,7 @@
 
 07b 实现提交：`00a5b0c`（`feat: 完成插件 ABI 查询与兼容性校验`）。当次 Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
 
-**当前进度：R06b-2b C 基础值与结构载荷读取已实现；下一单元为 R06c-1 可取消读请求适配。** 详细范围与验收见下方阶段记录。
+**当前进度：R06c-1a C 读请求提交与结果已实现；下一单元为 R06c-1b 生产读取协作取消。** 详细范围与验收见下方阶段记录。
 
 R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](plugin-abi-v2.md#验收与下一单元)。
 
@@ -381,6 +381,16 @@ Platform 的 [CodeModule／CodeLease](../platform/include/dafeiyu/code_module.hp
 值表为 16 字节，提供 `read`；结构表为 24 字节，提供 `descriptor` 和按索引 `field`，每次成功返回新的持有引用。字段使用宿主别名持有父载荷，不复制字段且可以比原结构引用存活更久；描述则独立保持元数据，不强行延长整个载荷。输出失败全零，引用额度不足仍为 ResourceExhausted，不留下半引用。现阶段没有 C 端值构造或组合类型占位。
 
 本轮起点 `b0166c9`；Debug／Release 主工程及完整测试构建，两种配置 31／31 CTest 和 Debug 宿主调用 Release C DLL 均通过。纯 C 枚举结构并读取全部六种测试正文，覆盖完整整数精度、内嵌零、任意字节、引用预算、错误种类／索引及释放父引用后的重新借用。下一单元 R06c-1 适配可取消读请求；事件结果暴露须保持完整 ReadRequest，继续承担事件存储与结果保留预算。
+
+### 3.26 C 读请求提交与结果（R06c-1a）
+
+新增 [事件 ABI 扩展](../sdk/include/dafeiyu/event_abi_v2.h)的 `dfy.reader@1`，32 字节表提供 next／result／payload；24 字节结果以 outcome、close_mode、event_domain、event_sequence 表达事件、流结束或读取取消。Pending 结果返回 Busy 且清空输出；事件身份与请求引用身份分开，只有 Closed 携带关闭模式。既有 `dfy.operation.state@1` 已映射到生产读取的只读操作状态。
+
+宿主以有界槽独立保持预创建的 SubscriptionReader，默认一个控制器槽，构造可明确调整或禁用；释放客户端控制器引用不取消工作。`next` 在接受读取前预分配 C 引用记录，容量或重复 Pending 失败回收本次预留，不能先消耗事件再因输出分配失败丢失结果。请求引用保存完整 ReadRequest；`payload` 的共享别名也以整个请求为所有者，保证客户端保留数据继续占用事件存储和结果槽预算。
+
+宿主仍显式 `advance()`，没有后台线程或内联 DLL 通知；控制器引用不可共享，请求和普通数据可以显式保留。该单元适配宿主预创建读取，插件订阅创建、取消调用、完成回调和关闭管理继续分步接入。
+
+本轮起点 `a9dea8b`；Debug／Release 主工程和完整测试构建，两种配置 32／32 CTest 通过，Debug 读请求测试调用 Release C DLL 通过。纯 C 提交及读取结果覆盖 Pending、重复拒绝、容量回滚、独立事件身份、数据保留预算、释放控制引用后宿主推进及流结束。下一单元 R06c-1b 为生产读取的协作取消适配。
 
 ## 4. 基础契约与接口演进
 

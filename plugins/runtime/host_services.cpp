@@ -16,7 +16,8 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_handle owned, dfy_v2_error* error) {
 const dfy_v2_reference_api reference_api = {{sizeof(dfy_v2_reference_api), 1}, retain, release};
 }
 // 保存服务状态，分配失败不形成可绑定的上下文。
-HostServices::HostServices(std::size_t capacity) : state_(std::make_shared<detail::HostState>(capacity)) {}
+HostServices::HostServices(std::size_t capacity, std::size_t reader_capacity)
+    : state_(std::make_shared<detail::HostState>(capacity, reader_capacity)) {}
 // 默认释放控制器持有，活动绑定仍保持当前调用期的状态。
 HostServices::~HostServices() = default;
 // 在当前线程建立嵌套绑定，拒绝错误线程后不改动绑定栈。
@@ -50,6 +51,25 @@ dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructValue> v
     if (!value) throw std::invalid_argument("host: structure required");
     return detail::store_object(*state_, std::move(value));
 }
+// 在固定控制器预算中独立保持读取责任，先签发引用再提交非抛出持有。
+// 步骤：检查线程与控制器 → 查找空槽并拒绝重复 → 签发引用 → 保存宿主所有权。
+dfy_v2_handle HostServices::expose(std::shared_ptr<events::SubscriptionReader> reader) {
+    state_->require_owner();
+    if (!reader) throw std::invalid_argument("host: reader required");
+    for (const auto& item : state_->readers) if (item == reader) throw std::logic_error("host: reader already exposed");
+    for (auto& item : state_->readers) {
+        if (item) continue;
+        const auto handle = state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{reader}), false);
+        item = std::move(reader);
+        return detail::abi(handle);
+    }
+    throw std::length_error("host: reader capacity exhausted");
+}
+// 显式推进宿主持有的读取，不内联调用 DLL 消费者。
+void HostServices::advance() {
+    state_->require_owner();
+    for (const auto& reader : state_->readers) if (reader) { reader->advance(); reader->collect(); }
+}
 // 只在当前绑定中提供实际实现的宿主服务，插件静态查询不承担此职责。
 // 步骤：清空输出并校验参数 → 检查绑定 → 精确匹配名称与版本。
 dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t version,
@@ -64,6 +84,8 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api();
         else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api();
         else if (requested == DFY_V2_STRUCT_INTERFACE) *output = &detail::struct_api();
+        else if (requested == DFY_V2_READER_INTERFACE) *output = &detail::reader_api();
+        else if (requested == DFY_V2_OPERATION_STATE_INTERFACE) *output = &detail::operation_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

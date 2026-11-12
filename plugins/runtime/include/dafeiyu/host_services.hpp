@@ -2,6 +2,7 @@
 #include <dafeiyu/value.hpp>
 #include <dafeiyu/struct_descriptor.hpp>
 #include <dafeiyu/struct_value.hpp>
+#include <dafeiyu/subscription_reader.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
 #include <memory>
 
@@ -26,7 +27,7 @@ class HostServices {
         detail::HostState* previous_;
     };
     // 创建独立有界引用域；创建、操作及销毁均由同一宿主线程负责。
-    explicit HostServices(std::size_t reference_capacity);
+    explicit HostServices(std::size_t reference_capacity, std::size_t reader_capacity = 1);
     // 释放控制方持有；外部引用须在最后宿主状态退出前结束。
     ~HostServices();
     // 禁止复制服务身份。
@@ -41,6 +42,10 @@ class HostServices {
     dfy_v2_handle expose(std::shared_ptr<const runtime::StructDescriptor> descriptor);
     // 向当前实例暴露不可变结构载荷，不复制为供应商或插件布局。
     dfy_v2_handle expose(std::shared_ptr<const runtime::StructValue> value);
+    // 登记并独立保持预创建读取控制器，返回不可共享引用；客户端释放不结束控制器。
+    dfy_v2_handle expose(std::shared_ptr<events::SubscriptionReader> reader);
+    // 在数据或取消变化后推进所有本实例读取，并回收已无客户端的终结结果。
+    void advance();
     // 返回本上下文当前持有引用数，不计其他宿主上下文。
     std::size_t references() const;
     // 在有效绑定中查询已实现宿主能力，失败清空输出且异常不跨 C ABI。

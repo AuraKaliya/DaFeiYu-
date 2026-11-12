@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/plugin_abi_v2.h>
 #include <dafeiyu/data_abi_v2.h>
+#include <dafeiyu/event_abi_v2.h>
 #define DFY_TEST_QUERY_ID "test.query"
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"
@@ -9,6 +10,7 @@
 #define DFY_TEST_HOST_ID "test.host"
 #define DFY_TEST_TYPES_ID "test.host_types"
 #define DFY_TEST_VALUES_ID "test.host_values"
+#define DFY_TEST_READS_ID "test.host_reads"
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,6 +87,14 @@ typedef struct dfy_test_values_api {
     dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, dfy_v2_error* error);
 } dfy_test_values_api;
 extern const dfy_test_values_api dfy_test_values;
+typedef struct dfy_test_reads_api {
+    dfy_v2_api_header header;
+    // 在当前宿主绑定中提交读取，不保存宿主表或裸上下文。
+    dfy_v2_status (DFY_V2_CALL *next)(dfy_v2_query_interface_fn query, dfy_v2_handle reader, dfy_v2_handle* request, dfy_v2_error* error);
+    // 在当前绑定中读取类型化结果，不自动取得数据持有。
+    dfy_v2_status (DFY_V2_CALL *result)(dfy_v2_query_interface_fn query, dfy_v2_handle request, dfy_v2_read_result* result, dfy_v2_error* error);
+} dfy_test_reads_api;
+extern const dfy_test_reads_api dfy_test_reads;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
