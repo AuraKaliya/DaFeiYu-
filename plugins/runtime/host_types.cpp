@@ -1,7 +1,7 @@
 #include "host_state.hpp"
 
 namespace dfy::plugins::detail {
-// 显式映射六种已实现类型，避免绑定宿主枚举的内部数值。
+// 按数据能力版本显式映射已实现分类，避免绑定宿主枚举的内部数值。
 uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
     switch (kind) {
     case runtime::ValueKind::boolean: return DFY_V2_VALUE_BOOL;
@@ -37,7 +37,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle type, dfy_v2_type_info* output,
         return DFY_V2_OK;
     });
 }
-// 读取声明顺序中的基础字段，越界不返回部分信息。
+// 按精确数据版本读取声明字段及约束，越界或不支持时不返回部分信息。
 // 步骤：清空输出 → 校验引用及索引 → 显式映射种类并返回借用。
 dfy_v2_status field_info(dfy_v2_handle type, uint64_t index, dfy_v2_field_info* output, dfy_v2_error* error,
     uint32_t profile, uint32_t* flags = nullptr) {

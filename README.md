@@ -4,13 +4,15 @@
 
 ## 当前进度：R08 完整链路及 R09f 有界组合观察已验收
 
-R06 已接入生产 v2 模块加载、宿主引用、类型和值反射、读取、取消、通知及订阅关闭。R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)，验证停止受理与完成分离、单次销毁、外部代码依赖拒绝和失败状态保留。现有 App 仍使用同步问答；R08 独立观察插件与完整链路验收尚未完成。
+R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
+
+R09 已实现有界嵌套结构、可选字段与显式空值、标量数组和字符串键标量映射，以及对应 C 反射接口。实际观察包已升级为 0.2.0，支持这些类型并限制消费深度和访问数量。枚举、带标签联合、任意组合容器元素仍待补齐。App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
 本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 42／42。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R09 枚举、带标签联合与组合容器元素的逐项补齐，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
-新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
+[v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
 
-[SDK 头文件](sdk/include/dafeiyu/plugin_abi.h)、[ABI v1 契约](docs/plugin-abi.md)和纯 C 查询示例 DLL 已验证 C/C++ 布局及实际查询。实例生命周期、忙碌保护和事件桥接仍留待后续审查点。
+[ABI v1 契约](docs/plugin-abi.md)及查询示例保持原行为；[v2 契约](docs/plugin-abi-v2.md)和 [数据接口](sdk/include/dafeiyu/data_abi_v2.h)提供独立能力协商。普通数据由宿主管理，数据引用与 DLL 代码寿命分别计量。
 
 [插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
 
@@ -43,13 +45,14 @@ dafeiyu
 │   └── dfy_sdk
 ├── Plugins
 │   ├── dfy_plugins
-│   └── dfy_query_example
+│   ├── dfy_query_example
+│   └── dfy_observer
 └── CMakePredefinedTargets
     ├── ALL_BUILD
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests`、`Tests/dfy_plugin_config_tests` 和 `Tests/dfy_sdk_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 42 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_code_module_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
@@ -161,6 +164,21 @@ ctest --preset windows-tests
 会话测试替代模型服务，验证成功问答的消息顺序、失败回滚、清空、独立会话，以及终端命令、中文输入、错误后继续和流故障；事件部分使用真实总线，验证通知时的历史状态、调用顺序、唯一终态、关联标识、清空后编号连续、模型调用与回调中的重入拒绝，以及观察者失败不覆盖模型异常。模型协议测试验证历史消息的角色映射与内容总量边界。
 
 会话阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/agent_session.cpp)。
+
+## 独立异步观察插件
+
+[观察插件](plugins/examples/observer/observer.c)是仅依赖公开 SDK 的 C11 DLL，构建后形成 `build/rebuild/windows/plugins/examples/observer/<Debug或Release>/example.observer/` 目录包，包含 DLL、清单及空默认配置。该包目前由集成测试显式装配；App 尚未提供加载命令。
+
+在项目根目录复现实际包的完整链路：
+
+```powershell
+cmake --build --preset windows-tests
+ctest --test-dir build/rebuild/windows-tests -C Debug -R '^plugins.observer$' --output-on-failure
+cmake --build build/rebuild/windows-tests --config Release
+ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
+```
+
+[集成测试](tests/observer.cpp)验证真实模块卸载、排队通知撤销、取消等待、重新加载、多实例失败隔离及组合事件的有界消费。数组和映射当前仅包含六种基础值及独立允许的 null；它们不能容纳其他组合类型。详细类型约束、引用寿命及错误结果见 [生产数据契约](docs/plugin-abi-v2.md#生产数据能力与组合访问)。
 
 ## 独立同步事件基础
 
