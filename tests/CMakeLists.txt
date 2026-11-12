@@ -40,6 +40,12 @@ target_link_libraries(dfy_runtime_executor_tests PRIVATE dfy_runtime dfy_build_o
 set_target_properties(dfy_runtime_executor_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_executor.cpp")
 
+# 验证宿主操作终态与客户端引用分离的工作寿命。
+add_executable(dfy_runtime_operations_tests runtime_operations.cpp)
+target_link_libraries(dfy_runtime_operations_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_runtime_operations_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_operations.cpp")
+
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
@@ -150,6 +156,8 @@ add_test(NAME runtime.struct_values COMMAND dfy_runtime_struct_values_tests)
 set_tests_properties(runtime.struct_values PROPERTIES TIMEOUT 15)
 add_test(NAME runtime.executor COMMAND dfy_runtime_executor_tests)
 set_tests_properties(runtime.executor PROPERTIES TIMEOUT 15)
+add_test(NAME runtime.operations COMMAND dfy_runtime_operations_tests)
+set_tests_properties(runtime.operations PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
