@@ -43,4 +43,26 @@ platform::ModuleClose PluginModuleV2::close() {
     if (result == platform::ModuleClose::closed) api_ = {};
     return result;
 }
+
+// 查询静态能力并持续保持其数据和代码，不把不支持当作畸形成功。
+// 步骤：检查控制器与参数 → 在活动保护下查询 → 校验返回状态 → 核对布局并转交凭证。
+std::optional<PluginModuleV2::BoundTable> PluginModuleV2::query_table(
+    std::string_view name, std::uint32_t version, std::uint32_t size) {
+    if (!open()) throw std::logic_error("plugin v2: module closed");
+    if (name.empty() || !version) throw std::invalid_argument("plugin v2: name and version required");
+    auto lease = module_.lease();
+    auto call = lease.enter();
+    const void* reported = nullptr;
+    dfy_v2_error error{};
+    const auto status = api_.query_interface({name.data(), name.size()}, version, &reported, &error);
+
+    if (error.length > DFY_V2_ERROR_CAPACITY) throw std::runtime_error("plugin v2: invalid capability error length");
+    if (status == DFY_V2_UNSUPPORTED) return std::nullopt;
+    if (status != DFY_V2_OK) throw std::runtime_error("plugin v2: capability status " + std::to_string(status));
+    if (!reported || error.length) throw std::runtime_error("plugin v2: invalid capability success");
+    const auto* header = static_cast<const dfy_v2_api_header*>(reported);
+    if (header->struct_size != size) throw std::runtime_error("plugin v2: incompatible capability size");
+    if (header->interface_version != version) throw std::runtime_error("plugin v2: incompatible capability version");
+    return BoundTable{reported, std::move(lease)};
+}
 }

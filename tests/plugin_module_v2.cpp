@@ -7,6 +7,13 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace dfy::plugins;
+struct TestApi { dfy_v2_api_header header; uint32_t (DFY_V2_CALL *value)(); };
+struct Closing { PluginModuleV2* module; dfy::platform::ModuleClose result; };
+// 在真实 DLL 栈内请求关闭，只记录结果，不抛出跨 ABI 异常。
+void DFY_V2_CALL close_during_call(void* user) {
+    auto& closing = *static_cast<Closing*>(user);
+    closing.result = closing.module->close();
+}
 // 在加载器未正确拒绝或回收时报告失败。
 void check(bool condition, const char* reason) { if (!condition) throw std::runtime_error(reason); }
 // 创建独立的真实 v2 目录包，沿用生产清单解析。
@@ -30,6 +37,58 @@ void rejects(const Manifest& manifest, const std::string& expected) {
         return;
     }
     throw std::runtime_error("invalid v2 module accepted");
+}
+
+// 验证能力前缀、代码持有与活动调用，控制对象退出不破坏独立能力。
+// 步骤：拒绝畸形能力 → 验证查询及原生调用保护 → 验证持有与控制器分离 → 回收全部引用。
+void capabilities(const Manifest& manifest) {
+    dfy::platform::DynamicLibrary control(manifest.entry);
+    const auto select = reinterpret_cast<void (DFY_V2_CALL*)(uint32_t)>(control.symbol("dfy_fixture_mode"));
+    const auto observe = reinterpret_cast<void (DFY_V2_CALL*)(void (DFY_V2_CALL*)(void*), void*)>(control.symbol("dfy_fixture_observer"));
+    std::optional<Capability<TestApi>> surviving;
+    {
+        select(0);
+        PluginModuleV2 module(manifest, 3);
+        check(!module.query<TestApi>("unknown", 1) && !module.query<TestApi>("test.capability", 2), "unknown capability accepted");
+        bool invalid = false;
+        try { (void)module.query<TestApi>("", 1); } catch (const std::invalid_argument&) { invalid = true; }
+        check(invalid, "empty capability name accepted");
+        invalid = false;
+        try { (void)module.query<TestApi>("test.capability", 0); } catch (const std::invalid_argument&) { invalid = true; }
+        check(invalid, "zero capability version accepted");
+        for (uint32_t mode = 20; mode <= 27; ++mode) {
+            select(mode);
+            bool rejected = false;
+            try { const auto result = module.query<TestApi>("test.capability", 1); rejected = mode == 20 && !result; }
+            catch (const std::runtime_error&) { rejected = mode != 20; }
+            check(rejected, "invalid capability result accepted");
+        }
+        select(0);
+        Closing closing{&module, dfy::platform::ModuleClose::closed};
+        observe(close_during_call, &closing);
+        surviving = module.query<TestApi>("test.capability", 1);
+        check(surviving && closing.result == dfy::platform::ModuleClose::busy && module.open(), "query not protected");
+        check(module.close() == dfy::platform::ModuleClose::in_use, "capability did not keep code");
+        {
+            auto call = surviving->enter();
+            check(call.api().value && call.api().value() == 42 && closing.result == dfy::platform::ModuleClose::busy,
+                "capability call not protected");
+            auto moved = std::move(call);
+            invalid = false;
+            try { (void)call.api(); } catch (const std::logic_error&) { invalid = true; }
+            check(invalid && moved.api().value() == 42, "moved call exposed unprotected table");
+        }
+        observe(nullptr, nullptr);
+    }
+    control.close();
+    check(GetModuleHandleW(manifest.entry.c_str()) != nullptr, "controller exit invalidated capability");
+    {
+        auto duplicate = surviving->retain();
+        auto call = duplicate.enter();
+        surviving.reset();
+        check(call.api().value() == 42, "independent capability lost code");
+    }
+    check(!GetModuleHandleW(manifest.entry.c_str()), "capability reference leaked");
 }
 }
 
@@ -75,6 +134,7 @@ int wmain(int argc, wchar_t** argv) {
         check(!GetModuleHandleW(v1.entry.c_str()), "missing export leaked module");
         { PluginModuleV2 reloaded(manifest, 1); check(reloaded.open(), "reload failed"); }
         check(!GetModuleHandleW(manifest.entry.c_str()), "destructor leaked module");
+        capabilities(manifest);
         std::cout << "Plugin v2 bootstrap checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
