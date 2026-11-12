@@ -4,6 +4,48 @@ namespace dfy::runtime {
 // 分配登记槽和独立域引用表，构造失败不产生对外登记。
 CompletionNotifications::CompletionNotifications(std::size_t capacity) : records_(capacity), references_(capacity) {}
 
+// 关闭全部未开始入口，排队的宿主包装继续存活但只能跳过已撤销记录。
+CompletionNotifications::~CompletionNotifications() {
+    for (auto& record : records_) {
+        if (record && record->state == NotificationState::pending) finish(*record, NotificationState::revoked);
+    }
+}
+
+// 先结束可能进入消费者代码的捕获及操作借用，再公开终结状态。
+void CompletionNotifications::finish(Record& record, NotificationState terminal) noexcept {
+    record.callback = {};
+    record.operation.reset();
+    record.state = terminal;
+}
+
+// 将最早的可交付通知登记为 FIFO 工作，不在调度提交中调用消费者。
+// 步骤：回收终结项 → 按登记顺序选择完成操作 → 核对执行器容量 → 提交并标记排队。
+ScheduleResult CompletionNotifications::schedule_one(FifoExecutor& executor) {
+    collect();
+    std::shared_ptr<Record> selected;
+    for (const auto& record : records_) {
+        if (!record || record->state != NotificationState::pending || record->queued ||
+            record->operation->state() == OperationState::pending) continue;
+        if (!selected || record->order < selected->order) selected = record;
+    }
+    if (!selected) return ScheduleResult::idle;
+    if (executor.size() == executor.capacity()) return ScheduleResult::blocked;
+    auto scheduled = std::make_shared<Scheduled>(selected);
+    executor.post([scheduled] { deliver(scheduled->record); });
+    selected->queued = true;
+    return ScheduleResult::queued;
+}
+
+// 交付已结算操作的通知一次，撤销不会取消操作，释放客户端引用不会丢失这次工作。
+// 步骤：过滤已撤销项 → 标记活动 → 借用操作调用消费者 → 按成功或异常路径收尾。
+void CompletionNotifications::deliver(const std::shared_ptr<Record>& record) {
+    if (record->state != NotificationState::pending) return;
+    record->state = NotificationState::running;
+    try { record->callback(record->operation); }
+    catch (...) { finish(*record, NotificationState::delivered); throw; }
+    finish(*record, NotificationState::delivered);
+}
+
 // 在有界槽位中接纳通知责任，引用签发成功后再提交登记和序号。
 // 步骤：校验输入 → 回收终结记录并检查容量 → 准备操作及回调持有 → 签发引用并提交。
 Handle CompletionNotifications::subscribe(std::shared_ptr<const Operation> operation, Callback callback) {
@@ -28,9 +70,7 @@ RevokeResult CompletionNotifications::revoke(Handle registration) {
     const auto& record = references_.get(registration).record;
     if (record->state == NotificationState::running) return RevokeResult::busy;
     if (record->state != NotificationState::pending) return RevokeResult::already_inactive;
-    record->state = NotificationState::revoked;
-    record->callback = {};
-    record->operation.reset();
+    finish(*record, NotificationState::revoked);
     return RevokeResult::revoked;
 }
 
