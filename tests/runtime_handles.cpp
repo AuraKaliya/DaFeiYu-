@@ -57,6 +57,13 @@ int main() {
         bool empty_rejected = false;
         try { HandleRegistry<int> empty(0); } catch (const std::invalid_argument&) { empty_rejected = true; }
         check(empty_rejected, "zero capacity accepted");
+        const auto before_clear = registry.insert(std::make_shared<std::string>("clear"));
+        registry.clear(); registry.clear();
+        check(!registry.size(), "clear retained references");
+        rejected(ReferenceFailure::invalid_handle, [&] { (void)registry.get(before_clear); });
+        const auto after_clear = registry.insert(std::make_shared<std::string>("new"));
+        check(after_clear != before_clear, "clear reused reference identity");
+        registry.release(after_clear);
 
         Handle old{};
         std::weak_ptr<int> destroyed;

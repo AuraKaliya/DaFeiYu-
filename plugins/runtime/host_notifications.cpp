@@ -6,11 +6,12 @@ struct CallbackSupport {
     // 先取得代码凭证再登记资源，任一步失败都不留下外部回调。
     // 步骤：保持宿主弱关联 → 取得代码持有 → 准备资源登记。
     CallbackSupport(const std::shared_ptr<HostState>& state, dfy_v2_completion_fn function, void* context)
-        : owner(state), code(state->code.retain()), resource(state->resources.prepare()), callback(function), user(context) {}
+        : owner(state), code(state->code.retain()), resource(state->resources.prepare()), callback(function), user(context) { ++state->callback_pins; }
     // 结束借用和资源登记；契约失败单独记录，不从析构传播异常。
     // 步骤：取得存活宿主 → 释放操作借用 → 完成资源清理或记录失败。
     ~CallbackSupport() {
         if (auto state = owner.lock()) {
+            --state->callback_pins;
             try {
                 state->references.release(borrowed);
                 state->resources.begin_cleanup(resource);

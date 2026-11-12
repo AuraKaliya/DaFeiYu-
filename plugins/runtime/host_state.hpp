@@ -35,6 +35,7 @@ struct HostState : std::enable_shared_from_this<HostState> {
     platform::CodeLease code;
     std::unique_ptr<runtime::CompletionNotifications> notifications;
     bool cleanup_failed = false;
+    std::size_t callback_pins = 0;
 };
 inline thread_local HostState* current_host = nullptr;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。

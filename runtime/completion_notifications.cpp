@@ -6,6 +6,11 @@ CompletionNotifications::CompletionNotifications(std::size_t capacity) : records
 
 // 关闭全部未开始入口，排队的宿主包装继续存活但只能跳过已撤销记录。
 CompletionNotifications::~CompletionNotifications() {
+    revoke_pending();
+}
+
+// 按所有者收尾未开始的通知，排队的宿主包装随后仅跳过。
+void CompletionNotifications::revoke_pending() noexcept {
     for (auto& record : records_) {
         if (record && record->state == NotificationState::pending) finish(*record, NotificationState::revoked);
     }

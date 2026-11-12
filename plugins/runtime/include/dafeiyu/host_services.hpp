@@ -60,6 +60,12 @@ class HostServices {
     std::size_t resources() const;
     // 返回已记录的清理契约失败，不能据此强制释放实例。
     bool cleanup_failed() const;
+    // 活动通知时拒绝且不改变接纳；否则停止新工作、撤销通知并取消关闭所有订阅。
+    bool begin_shutdown();
+    // 插件销毁后完成已开始的收尾，释放剩余引用及代码；未静止或有清理错误时拒绝。
+    bool finish_shutdown();
+    // 返回本服务持有的代码凭证数，供外层区分自身与外部代码依赖。
+    std::size_t code_holds() const;
     // 返回本上下文当前持有引用数，不计其他宿主上下文。
     std::size_t references() const;
     // 在有效绑定中查询已实现宿主能力，失败清空输出且异常不跨 C ABI。

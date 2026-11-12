@@ -39,6 +39,13 @@ class CompletionNotifications {
     std::size_t size() const noexcept { return size_; }
     // 返回有效客户端引用数，不代表未交付通知数。
     std::size_t references() const noexcept { return references_.size(); }
+    // 判断是否仍在调用消费者或释放其捕获，供所有者在改变接纳状态前拒绝关闭。
+    bool running() const noexcept {
+        for (const auto& record : records_) if (record && record->state == NotificationState::running) return true;
+        return false;
+    }
+    // 关闭所有未开始入口，包括已排队项；不触碰 Running，也不取消底层操作。
+    void revoke_pending() noexcept;
 
   private:
     struct Record {

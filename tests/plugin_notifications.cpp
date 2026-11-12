@@ -8,12 +8,13 @@ using namespace dfy::plugins;
 using namespace dfy::runtime;
 // 在代码寿命、通知或资源责任不符合约定时报告失败。
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
-struct Probe { dfy::platform::CodeModule* module; dfy::platform::ModuleClose result; std::size_t active = 0; };
+struct Probe { dfy::platform::CodeModule* module; dfy::platform::ModuleClose result; std::size_t active = 0; HostServices* host = nullptr; bool shutdown = false; };
 // 在真实 C 原生栈内请求关闭，记录活动计量，不抛出跨 ABI 异常。
 void DFY_V2_CALL probe(void* user) {
     auto& value = *static_cast<Probe*>(user);
     value.active = value.module->active_calls();
     value.result = value.module->close();
+    if (value.host) value.shutdown = value.host->begin_shutdown();
 }
 // 查询当前绑定的宿主能力，测试不保存任何实例裸指针。
 template<class T>
@@ -57,6 +58,7 @@ int wmain(int argc, wchar_t** argv) {
             dfy_v2_handle request{};
             dfy_test_notify_context parent{}, child{};
             Probe observed{&module, dfy::platform::ModuleClose::closed};
+            observed.host = &host;
             {
                 auto binding = host.bind();
                 notices = &service<dfy_v2_operation_notify_api>(DFY_V2_OPERATION_NOTIFY_INTERFACE);
@@ -81,7 +83,7 @@ int wmain(int argc, wchar_t** argv) {
             queue->close(dfy::events::CloseMode::cancel); host.advance();
             check(host.schedule_one(executor) == ScheduleResult::queued && !parent.calls, "schedule ran inline");
             check(executor.run_one() == RunResult::executed && parent.calls == 1 && !child.calls && parent.revoke_status == DFY_V2_BUSY &&
-                parent.retain_status == DFY_V2_OK && observed.active == 1 && observed.result == dfy::platform::ModuleClose::busy,
+                parent.retain_status == DFY_V2_OK && observed.active == 1 && observed.result == dfy::platform::ModuleClose::busy && !observed.shutdown,
                 "C callback missing context or code protection");
             check(host.schedule_one(executor) == ScheduleResult::queued && executor.run_one() == RunResult::executed && child.calls == 1,
                 "child notification was lost");
@@ -114,6 +116,19 @@ int wmain(int argc, wchar_t** argv) {
             }
             host.advance(); host.schedule_one(executor);
             check(!host.references() && !host.resources() && !host.cleanup_failed() && !module.active_calls(), "notification cleanup incomplete");
+            auto final_queue = std::make_shared<dfy::events::SubscriptionQueue>(store, 1);
+            const auto final_reader = host.expose(std::make_shared<dfy::events::SubscriptionReader>(final_queue, 1));
+            dfy_test_notify_context stopped{};
+            {
+                auto binding = host.bind();
+                check(service<dfy_v2_reader_api>(DFY_V2_READER_INTERFACE).next(final_reader, &request, nullptr) == DFY_V2_OK &&
+                    notices->subscribe(request, callback, &stopped, &stopped.registration, nullptr) == DFY_V2_OK, "shutdown setup failed");
+            }
+            final_queue->close(dfy::events::CloseMode::cancel); host.advance();
+            check(host.schedule_one(executor) == ScheduleResult::queued && host.begin_shutdown() && !host.resources(), "shutdown did not revoke queued work");
+            check(host.finish_shutdown() && host.finish_shutdown() && !host.references() && !host.code_holds(), "final shutdown not complete");
+            check(module.close() == dfy::platform::ModuleClose::closed && executor.run_one() == RunResult::executed && !stopped.calls,
+                "queued wrapper entered unloaded DLL");
         }
         check(module.close() == dfy::platform::ModuleClose::closed, "module still in use after host exit");
         std::cout << "Production C notification checks passed\n";

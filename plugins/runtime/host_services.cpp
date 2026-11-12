@@ -125,6 +125,39 @@ runtime::ScheduleResult HostServices::schedule_one(runtime::FifoExecutor& execut
 std::size_t HostServices::resources() const { state_->require_owner(); return state_->resources.size(); }
 // 暴露清理故障供外层停止流程保留实例与代码。
 bool HostServices::cleanup_failed() const { state_->require_owner(); return state_->cleanup_failed; }
+// 在未进入消费者时停止接纳，逐项收尾并保留任何未完成责任。
+// 步骤：拒绝活动回调 → 关闭接纳并撤销通知 → 取消关闭读取 → 检查清理结果。
+bool HostServices::begin_shutdown() {
+    state_->require_owner();
+    if (state_->notifications && state_->notifications->running()) return false;
+    state_->resources.stop_accepting();
+    if (state_->notifications) state_->notifications->revoke_pending();
+    for (auto& slot : state_->readers) {
+        const auto reader = slot.reader;
+        if (!reader) continue;
+        try { reader->close(events::CloseMode::cancel); detail::finish_reader(*state_, reader); }
+        catch (...) { state_->cleanup_failed = true; }
+    }
+    return !state_->cleanup_failed && !state_->resources.size();
+}
+// 在插件已不会访问服务后撤销所有残余引用，不把排队包装误认为还会进入 DLL。
+// 步骤：核对收尾前提 → 销毁静止通知池 → 清空引用 → 关闭所有者并释放代码。
+bool HostServices::finish_shutdown() {
+    state_->require_owner();
+    if (state_->resources.state() == runtime::OwnerState::open) throw std::logic_error("host: shutdown not started");
+    if (state_->cleanup_failed || state_->resources.size() || state_->callback_pins ||
+        (state_->notifications && state_->notifications->running())) return false;
+    state_->notifications.reset();
+    state_->references.clear();
+    state_->resources.finish_close();
+    state_->code.reset();
+    return true;
+}
+// 统计本实例自身的代码持有，不包含外部能力或依赖方的凭证。
+std::size_t HostServices::code_holds() const {
+    state_->require_owner();
+    return (state_->code ? 1 : 0) + state_->callback_pins;
+}
 // 只在当前绑定中提供实际实现的宿主服务，插件静态查询不承担此职责。
 // 步骤：清空输出并校验参数 → 检查绑定 → 精确匹配名称与版本。
 dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t version,

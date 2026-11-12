@@ -88,6 +88,16 @@ class HandleRegistry {
     DomainId domain() const noexcept { return domain_; }
     // 返回当前有效持有引用数，不代表对象数量或异步任务数量。
     std::size_t size() const noexcept { return size_; }
+    // 在外层停止使用后释放全部引用并推进代次，不执行异步取消或等待。
+    // 步骤：移出每份持有 → 使旧标识失效并更新计量 → 释放对应对象。
+    void clear() noexcept {
+        for (auto& slot : slots_) {
+            if (!slot.object) continue;
+            auto discarded = std::move(slot.object);
+            slot.generation = detail::following_generation(slot.generation);
+            --size_;
+        }
+    }
     // 返回仍可签发的空槽数，代次耗尽后永久停用的槽位不计入。
     std::size_t available() const noexcept {
         std::size_t result = 0;
