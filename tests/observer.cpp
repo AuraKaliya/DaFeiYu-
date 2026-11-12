@@ -84,8 +84,8 @@ std::shared_ptr<const StructValue> composite_value() {
         {"map", Value::from_map(map)}, {"nil", Value::null()}};
     return std::make_shared<const StructValue>(StructValue::create(type, values, 23, 13));
 }
-// 验证实际 DLL 消费全部当前组合分类，并在遍历数量或深度超限时关闭自身。
-// 步骤：消费组合事件 → 构造数量与深度边界 → 验证失败回收和实际卸载。
+// 验证实际 DLL 消费组合分类，精确预算可用而超限关闭自身。
+// 步骤：消费组合事件 → 构造数量、稀疏字段及深度边界 → 验证共享访问预算 → 核对回收和卸载。
 void composites(const Manifest& manifest, const std::filesystem::path& data) {
     auto store = std::make_shared<dfy::events::EventStore>(8, 8192);
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(store, 2, 1);
@@ -108,24 +108,52 @@ void composites(const Manifest& manifest, const std::filesystem::path& data) {
     }
     const auto wide_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.wide", 1, wide_fields, {4100, 65536}));
     const auto wide = std::make_shared<const StructValue>(StructValue::create(wide_type, wide_values, 4100));
+    const auto exact_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.exact", 1,
+        std::span<const FieldDescriptor>(wide_fields).first(4095), {4095, 65536}));
+    const auto exact = std::make_shared<const StructValue>(StructValue::create(exact_type, std::span<const NamedValue>(wide_values).first(4095), 4095));
+    for (auto& field : wide_fields) field.optional = true;
+    const auto sparse_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.sparse", 1,
+        std::span<const FieldDescriptor>(wide_fields).first(4095), {4095, 65536}));
+    const auto sparse = std::make_shared<const StructValue>(StructValue::create(sparse_type, {}, 0));
+    const auto excess_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.sparse_excess", 1, wide_fields, {4100, 65536}));
+    const auto excess = std::make_shared<const StructValue>(StructValue::create(excess_type, {}, 0));
+
     const FieldDescriptor leaf_fields[] = {{"flag", ValueKind::boolean, 0}};
     const auto leaf_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.leaf", 1, leaf_fields, {1, 128}));
     const NamedValue leaf_values[] = {{"flag", Value::from_bool(true)}};
     auto deep = std::make_shared<const StructValue>(StructValue::create(leaf_type, leaf_values, 1));
+    std::shared_ptr<const StructValue> exact_depth;
     for (unsigned i = 0; i < 33; ++i) {
         const FieldDescriptor fields[] = {{"child", ValueKind::structure, 0, deep->descriptor()}};
         const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.level" + std::to_string(i), 1, fields, {64, 2048, 64}));
         const NamedValue values[] = {{"child", Value::from_structure(deep)}};
         deep = std::make_shared<const StructValue>(StructValue::create(type, values, 1));
+        if (i == 30) exact_depth = deep;
     }
-    for (const auto& payload : {wide, deep}) {
+    struct Case { std::shared_ptr<const StructValue> payload; bool accepted; uint64_t fields; };
+    std::vector<Case> cases = {{exact, true, 4095}, {wide, false, 0}, {sparse, true, 0}, {excess, false, 0},
+        {exact_depth, true, 32}, {deep, false, 0}};
+
+    const auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::boolean, 4094));
+    const FieldDescriptor array_fields[] = {FieldDescriptor::array_field("items", array_type)};
+    const auto container_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.array_budget", 1, array_fields, {1, 128, 2}));
+    const std::vector<Value> elements(4094, Value::from_bool(true));
+    for (std::size_t count : {4093, 4094}) {
+        const auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type, std::span<const Value>(elements).first(count), count));
+        const NamedValue values[] = {{"items", Value::from_array(array)}};
+        cases.push_back({std::make_shared<const StructValue>(StructValue::create(container_type, values, count)), count == 4093, 1});
+    }
+    for (const auto& example : cases) {
         InstanceLimits limits; limits.references = 256;
         PluginInstance instance(manifest, data, channel, limits);
         check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK, "bounded observer setup failed");
-        channel->publish(payload); drain(instance, executor);
+        channel->publish(example.payload); drain(instance, executor);
         const auto observed = statistics(instance);
-        check(observed.failures == 1 && !observed.events && !channel->size() && !store->references(), "bounded observer retained failed delivery");
+        check(observed.events == static_cast<uint64_t>(example.accepted) && observed.failures == static_cast<uint64_t>(!example.accepted) &&
+            channel->size() == static_cast<std::size_t>(example.accepted) && !store->references(), "observer rejected exact budget or retained excess delivery");
+        if (example.accepted) check(observed.fields == example.fields, "budget boundary lost present field count");
         check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()), "bounded observer remains loaded");
+        check(!channel->size() && executor.run_one() == RunResult::idle, "bounded observer left a receiver or callback");
     }
 }
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
