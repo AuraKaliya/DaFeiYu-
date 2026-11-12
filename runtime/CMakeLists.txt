@@ -1,8 +1,9 @@
 # 定义宿主运行时基础，加入已实现的数据能力和有界执行器。
 add_library(dfy_runtime STATIC ids.cpp value.cpp struct_descriptor.cpp type_catalog.cpp struct_value.cpp fifo_executor.cpp operation.cpp
-  id_sequence.hpp include/dafeiyu/runtime_ids.hpp
+  completion_notifications.cpp id_sequence.hpp include/dafeiyu/runtime_ids.hpp
   include/dafeiyu/handle_registry.hpp include/dafeiyu/value.hpp include/dafeiyu/struct_descriptor.hpp include/dafeiyu/type_catalog.hpp
-  include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp)
+  include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp
+  include/dafeiyu/completion_notifications.hpp)
 target_compile_features(dfy_runtime PUBLIC cxx_std_20)
 target_include_directories(dfy_runtime PUBLIC include)
 target_link_libraries(dfy_runtime PRIVATE dfy_build_options)
@@ -17,6 +18,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/struct_value.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/fifo_executor.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/operation.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/completion_notifications.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/runtime_ids.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/handle_registry.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/value.hpp"
@@ -24,4 +26,5 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/type_catalog.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/struct_value.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/fifo_executor.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/operation.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/operation.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/completion_notifications.hpp")
