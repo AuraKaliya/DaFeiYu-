@@ -76,6 +76,12 @@ target_link_libraries(dfy_broadcast_channel_tests PRIVATE dfy_event_streams dfy_
 set_target_properties(dfy_broadcast_channel_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/broadcast_channel.cpp")
 
+# 验证有界读取请求、取消与流结束区分及生产 FIFO 完成通知。
+add_executable(dfy_subscription_reader_tests subscription_reader.cpp)
+target_link_libraries(dfy_subscription_reader_tests PRIVATE dfy_event_streams dfy_build_options)
+set_target_properties(dfy_subscription_reader_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/subscription_reader.cpp")
+
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
@@ -206,6 +212,8 @@ add_test(NAME events.subscription_queue COMMAND dfy_subscription_queue_tests)
 set_tests_properties(events.subscription_queue PROPERTIES TIMEOUT 15)
 add_test(NAME events.broadcast COMMAND dfy_broadcast_channel_tests)
 set_tests_properties(events.broadcast PROPERTIES TIMEOUT 15)
+add_test(NAME events.subscription_reader COMMAND dfy_subscription_reader_tests)
+set_tests_properties(events.subscription_reader PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)

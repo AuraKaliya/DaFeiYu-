@@ -12,8 +12,9 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/bus.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/events.hpp")
 
 # 为新事件链路建立实际数据目标，保留现有同步总线作为 App 基线。
-add_library(dfy_event_streams STATIC event_store.cpp subscription_queue.cpp broadcast_channel.cpp sequence.hpp
-  include/dafeiyu/event_store.hpp include/dafeiyu/subscription_queue.hpp include/dafeiyu/broadcast_channel.hpp)
+add_library(dfy_event_streams STATIC event_store.cpp subscription_queue.cpp broadcast_channel.cpp subscription_reader.cpp sequence.hpp
+  include/dafeiyu/event_store.hpp include/dafeiyu/subscription_queue.hpp include/dafeiyu/broadcast_channel.hpp
+  include/dafeiyu/subscription_reader.hpp)
 target_compile_features(dfy_event_streams PUBLIC cxx_std_20)
 target_include_directories(dfy_event_streams PUBLIC include)
 target_link_libraries(dfy_event_streams PUBLIC dfy_runtime PRIVATE dfy_build_options)
@@ -22,6 +23,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/event_store.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sequence.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/subscription_queue.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/broadcast_channel.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/subscription_reader.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/event_store.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/subscription_queue.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/broadcast_channel.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/broadcast_channel.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/subscription_reader.hpp")
