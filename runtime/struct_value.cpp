@@ -1,6 +1,7 @@
 #include <dafeiyu/struct_value.hpp>
 #include <unordered_map>
 #include <algorithm>
+#include <dafeiyu/array_value.hpp>
 
 namespace dfy::runtime {
 
@@ -34,6 +35,9 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         } else if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
         if (value.kind() == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
             throw std::invalid_argument("struct: nested definition mismatch");
+        }
+        if (value.kind() == ValueKind::array && !field.array->equivalent(*value.as_array().descriptor())) {
+            throw std::invalid_argument("struct: array definition mismatch");
         }
         const auto nodes = value.node_count();
         if (nodes > remaining_nodes) throw std::length_error("struct: node limit exceeded");

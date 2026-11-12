@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R09d-1 独立逻辑节点预算已实现
+## 当前进度：R09d-2 有界标量元素数组已实现
 
 R06 已接入生产 v2 模块加载、宿主引用、类型和值反射、读取、取消、通知及订阅关闭。R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)，验证停止受理与完成分离、单次销毁、外部代码依赖拒绝和失败状态保留。现有 App 仍使用同步问答；R08 独立观察插件与完整链路验收尚未完成。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 40／40。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R09d-2 有界标量元素数组，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 41／41。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R09d-3 C 数组反射与元素访问，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 

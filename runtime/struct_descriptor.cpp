@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
+#include <dafeiyu/array_value.hpp>
 
 namespace dfy::runtime {
 namespace {
@@ -61,6 +62,7 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
         consume_name(field.name, remaining);
         if (!valid_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
         if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
+        if (field.kind != ValueKind::array && field.array) throw std::invalid_argument("descriptor: unexpected array schema");
         switch (field.kind) {
         case ValueKind::string:
         case ValueKind::bytes:
@@ -78,6 +80,11 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
             remaining_fields -= field.structure->total_fields();
             remaining -= field.structure->name_bytes();
             depth = std::max(depth, field.structure->depth() + 1);
+            break;
+        case ValueKind::array:
+            if (!field.array || field.max_bytes) throw std::invalid_argument("descriptor: array schema required without byte override");
+            if (limits.max_depth < 2) throw std::length_error("descriptor: array depth limit exceeded");
+            depth = std::max(depth, std::size_t{2});
             break;
         default:
             throw std::invalid_argument("descriptor: unsupported field kind");
@@ -98,8 +105,9 @@ bool StructDescriptor::equivalent(const StructDescriptor& other) const noexcept 
     for (std::size_t i = 0; i < fields_.size(); ++i) {
         const auto& a = fields_[i]; const auto& b = other.fields_[i];
         if (a.name != b.name || a.kind != b.kind || a.max_bytes != b.max_bytes || a.optional != b.optional || a.nullable != b.nullable ||
-            static_cast<bool>(a.structure) != static_cast<bool>(b.structure)) return false;
+            static_cast<bool>(a.structure) != static_cast<bool>(b.structure) || static_cast<bool>(a.array) != static_cast<bool>(b.array)) return false;
         if (a.structure && !a.structure->equivalent(*b.structure)) return false;
+        if (a.array && !a.array->equivalent(*b.array)) return false;
     }
     return true;
 }

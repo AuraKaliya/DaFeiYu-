@@ -20,6 +20,7 @@ dfy_v2_status read_value(dfy_v2_handle source, dfy_v2_value_view* output, dfy_v2
         case runtime::ValueKind::bytes: { const auto bytes = value.as_bytes(); result.data.bytes = {bytes.data(), bytes.size()}; break; }
         case runtime::ValueKind::structure: break;
         case runtime::ValueKind::null_value: break;
+        case runtime::ValueKind::array: return DFY_V2_UNSUPPORTED;
         }
         *output = result;
         return DFY_V2_OK;
@@ -63,7 +64,7 @@ dfy_v2_status field_value(dfy_v2_handle source, uint64_t index, dfy_v2_handle* o
         const auto& declared = parent->descriptor()->fields()[static_cast<std::size_t>(index)];
         if (profile == 1 && (declared.optional || declared.nullable)) return DFY_V2_UNSUPPORTED;
         if (!parent->present(static_cast<std::size_t>(index))) return DFY_V2_NOT_FOUND;
-        if (profile == 1) (void)value_kind(parent->at(static_cast<std::size_t>(index)).kind());
+        (void)value_kind(parent->at(static_cast<std::size_t>(index)).kind(), profile);
         *output = store_object(host, std::shared_ptr<const runtime::Value>(parent, &parent->at(static_cast<std::size_t>(index))));
         return DFY_V2_OK;
     });

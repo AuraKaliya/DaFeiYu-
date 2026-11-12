@@ -13,8 +13,9 @@
 
 namespace dfy::runtime {
 // 宿主内部种类，不是 C ABI 或事件契约中的类型编号。
-enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure, null_value };
+enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure, null_value, array };
 class StructValue;
+class ArrayValue;
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
 // 宿主持有的不可变基础值，文本和字节复制到宿主内存，不含插件析构代码。
@@ -41,6 +42,8 @@ class Value {
     static Value from_structure(std::shared_ptr<const StructValue> value);
     // 创建显式空值，不等同于字段缺失、空文本或空字节。
     static Value null() { return Value(std::monostate{}); }
+    // 保持非空不可变数组，不允许空指针代替 null 或空数组。
+    static Value from_array(std::shared_ptr<const ArrayValue> value);
     // 复制基础存储或共享不可变结构，不共享可修改内容。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
@@ -65,9 +68,12 @@ class Value {
     std::span<const std::uint8_t> as_bytes() const { return std::get<Bytes>(contents_); }
     // 借用嵌套结构，必须保持对应值引用有效；错误种类抛出 bad_variant_access。
     const StructValue& as_structure() const { return *std::get<std::shared_ptr<const StructValue>>(contents_); }
+    // 借用数组内容，必须保持对应值引用有效。
+    const ArrayValue& as_array() const { return *std::get<std::shared_ptr<const ArrayValue>>(contents_); }
   private:
     using Bytes = std::vector<std::uint8_t>;
-    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>, std::monostate>;
+    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>, std::monostate,
+        std::shared_ptr<const ArrayValue>>;
     // 从已校验的明确类型保存只读内容，不向模块外暴露 variant 布局。
     explicit Value(Contents contents) : contents_(std::move(contents)) {}
     const Contents contents_;
