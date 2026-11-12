@@ -1,0 +1,36 @@
+#include <dafeiyu/type_catalog.hpp>
+#include <algorithm>
+
+namespace dfy::runtime {
+// 记录类型数与单份描述上限，拒绝无法容纳任何定义的目录容量。
+TypeCatalog::TypeCatalog(std::size_t capacity, DescriptorLimits limits) : capacity_(capacity), limits_(limits) {
+    if (!capacity) throw std::invalid_argument("types: positive capacity required");
+}
+
+// 查询精确类型键，不创建描述、不自动转换版本或修改目录。
+std::shared_ptr<const StructDescriptor> TypeCatalog::find(std::string_view name, std::uint32_t version) const noexcept {
+    for (const auto& descriptor : definitions_) {
+        if (descriptor->name() == name && descriptor->version() == version) return descriptor;
+    }
+    return {};
+}
+
+// 在全部约束通过后登记独立描述，失败保持目录及已有快照不变。
+// 步骤：检查同键定义 → 核对数量与描述限制 → 构造宿主快照 → 提交新记录。
+std::shared_ptr<const StructDescriptor> TypeCatalog::define(const StructDescriptor& descriptor) {
+    if (const auto existing = find(descriptor.name(), descriptor.version())) {
+        const auto left = existing->fields(), right = descriptor.fields();
+        const bool identical = std::equal(left.begin(), left.end(), right.begin(), right.end(),
+            [](const FieldDescriptor& a, const FieldDescriptor& b) {
+                return a.name == b.name && a.kind == b.kind && a.max_bytes == b.max_bytes;
+            });
+        throw DefinitionError(identical ? DefinitionFailure::already_defined : DefinitionFailure::conflicting_definition);
+    }
+    if (definitions_.size() == capacity_) throw DefinitionError(DefinitionFailure::exhausted);
+
+    auto snapshot = std::make_shared<const StructDescriptor>(StructDescriptor::create(
+        descriptor.name(), descriptor.version(), descriptor.fields(), limits_));
+    definitions_.push_back(snapshot);
+    return snapshot;
+}
+}
