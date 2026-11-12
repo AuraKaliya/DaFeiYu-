@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R03b 操作唯一终态已实现
+## 当前进度：R03c-1 协作取消请求已实现
 
-R01 已完成 [v2 最小接口契约及隔离验收](docs/plugin-abi-v2.md)：查询、引用、操作状态、协作取消及延后通知。R02 已实现 [宿主域标识](runtime/include/dafeiyu/runtime_ids.hpp)、[类型化引用表](runtime/include/dafeiyu/handle_registry.hpp)、[六种不可变基础值](runtime/include/dafeiyu/value.hpp)、[结构描述快照](runtime/include/dafeiyu/struct_descriptor.hpp)、[有界类型目录](runtime/include/dafeiyu/type_catalog.hpp)及 [结构载荷](runtime/include/dafeiyu/struct_value.hpp)。描述包含精确名称与版本、按声明顺序排列的必填基础字段和字节约束，由宿主校验后复制。生产加载器仍仅接受 v1，问答与事件仍为同步实现；已增加 [有界 FIFO 执行器](runtime/include/dafeiyu/fifo_executor.hpp)，及 [操作终态](runtime/include/dafeiyu/operation.hpp)，下一审查项是 R03c-1 协作取消请求，分步路线见 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
+R01 已完成 [v2 最小接口契约及隔离验收](docs/plugin-abi-v2.md)：查询、引用、操作状态、协作取消及延后通知。R02 已实现 [宿主域标识](runtime/include/dafeiyu/runtime_ids.hpp)、[类型化引用表](runtime/include/dafeiyu/handle_registry.hpp)、[六种不可变基础值](runtime/include/dafeiyu/value.hpp)、[结构描述快照](runtime/include/dafeiyu/struct_descriptor.hpp)、[有界类型目录](runtime/include/dafeiyu/type_catalog.hpp)及 [结构载荷](runtime/include/dafeiyu/struct_value.hpp)。描述包含精确名称与版本、按声明顺序排列的必填基础字段和字节约束，由宿主校验后复制。生产加载器仍仅接受 v1，问答与事件仍为同步实现；已增加 [有界 FIFO 执行器](runtime/include/dafeiyu/fifo_executor.hpp)，[操作终态与协作取消](runtime/include/dafeiyu/operation.hpp)已实现，下一审查项是 R03c-2 可撤销的延后完成通知，分步路线见 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
 
-R03b 的 Debug／Release 主工程、Debug 测试及 Release 操作测试通过；本次完整 CTest 为 19／22 通过，三项既有插件测试因当前进程缺少创建符号链接权限失败，尚未完成全套验收。此前 R02b 的 17／17 记录保留为历史结果。本轮契约及验证见 [操作终态说明](docs/foundation-development-guide.md#39-操作唯一终态r03b)；生产异步执行、资源登记、v2 装配和插件实例生命周期仍待建设。
+R03c-1 的 Debug／Release 主工程、Debug 测试及 Release 操作测试通过；本次完整 CTest 为 19／22 通过，三项既有插件测试因当前进程缺少创建符号链接权限失败，尚未完成全套验收。此前 R02b 的 17／17 记录保留为历史结果。本轮契约及验证见 [协作取消说明](docs/foundation-development-guide.md#310-协作取消请求r03c-1)；生产异步执行、资源登记、v2 装配和插件实例生命周期仍待建设。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -279,7 +279,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R03c-1 协作取消请求。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R03c-2 可撤销的延后完成通知。
 
 ## 旧工程归档
 

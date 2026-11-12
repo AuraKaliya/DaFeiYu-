@@ -60,16 +60,71 @@ void verify_work_ownership() {
     }
     check(result->state() == OperationState::failed, "result disappeared with completion source");
 }
+
+// 验证首个取消原因、独立回执及所有终态都不被请求改写。
+// 步骤：记录各类原因 → 重复请求保持原因 → 分别结算三种终态 → 验证快照与拒绝。
+void verify_cancellation() {
+    for (const auto reason : {CancelReason::user, CancelReason::owner_stop, CancelReason::deadline}) {
+        for (const auto terminal : {OperationState::succeeded, OperationState::failed, OperationState::cancelled}) {
+            OperationSource source(true);
+            const auto view = source.operation(), retained = source.operation();
+            const auto before = view->cancellation_reason();
+            check(view->cancellable() && before == CancelReason::none, "unexpected initial cancellation");
+            check(source.request_cancel(reason) == CancelDisposition::recorded && view->state() == OperationState::pending,
+                "request incorrectly settled operation");
+            const auto other = reason == CancelReason::user ? CancelReason::deadline : CancelReason::user;
+            check(source.request_cancel(other) == CancelDisposition::already_requested &&
+                retained->cancellation_reason() == reason && before == CancelReason::none, "first reason overwritten");
+            source.settle(terminal);
+            check(source.request_cancel(other) == CancelDisposition::already_settled &&
+                view->state() == terminal && retained->cancellation_reason() == reason, "late cancellation changed terminal");
+        }
+    }
+    OperationSource source(true);
+    for (const auto invalid : {CancelReason::none, static_cast<CancelReason>(255)}) {
+        bool rejected = false;
+        try { (void)source.request_cancel(invalid); } catch (const std::invalid_argument&) { rejected = true; }
+        check(rejected && source.operation()->cancellation_reason() == CancelReason::none, "invalid reason changed record");
+    }
+    OperationSource unsupported;
+    bool request_rejected = false, read_rejected = false;
+    try { (void)unsupported.request_cancel(CancelReason::user); } catch (const std::domain_error&) { request_rejected = true; }
+    try { (void)unsupported.operation()->cancellation_reason(); } catch (const std::domain_error&) { read_rejected = true; }
+    check(request_rejected && read_rejected && !unsupported.operation()->cancellable() &&
+        unsupported.operation()->state() == OperationState::pending, "unsupported cancellation accepted");
+    unsupported.settle(OperationState::succeeded);
 }
 
-// 验收生产操作的只读视图和唯一终态，取消请求与完成通知由后续单元提供。
-// 步骤：核对权限接口 → 验证状态迁移 → 验证工作与引用寿命 → 汇报结果。
+// 用生产执行器验证取消先到和完成先到，业务提交边界决定正式结果。
+// 步骤：排队可取消工作 → 按先后顺序请求或推进 → 核对终态及原因快照。
+void verify_cancel_order() {
+    for (const bool cancel_first : {false, true}) {
+        FifoExecutor executor(1);
+        auto source = std::make_shared<OperationSource>(true);
+        const auto view = source->operation();
+        executor.post([source] {
+            const bool cancelled = source->operation()->cancellation_reason() != CancelReason::none;
+            source->settle(cancelled ? OperationState::cancelled : OperationState::succeeded);
+        });
+        if (cancel_first) check(source->request_cancel(CancelReason::user) == CancelDisposition::recorded, "cancel not recorded");
+        check(executor.run_one() == RunResult::executed, "cancellable work failed");
+        if (!cancel_first) check(source->request_cancel(CancelReason::user) == CancelDisposition::already_settled, "late cancel recorded");
+        check(view->state() == (cancel_first ? OperationState::cancelled : OperationState::succeeded) &&
+            view->cancellation_reason() == (cancel_first ? CancelReason::user : CancelReason::none), "cancel order ignored");
+    }
+}
+}
+
+// 验收生产操作的只读状态、协作取消和唯一终态，完成通知由后续单元提供。
+// 步骤：核对权限接口 → 验证状态与寿命 → 验证取消及完成先后 → 汇报结果。
 int main() {
     try {
         static_assert(!std::is_default_constructible_v<Operation> && !std::is_copy_constructible_v<OperationSource>);
         static_assert(std::is_same_v<decltype(std::declval<OperationSource&>().operation()), std::shared_ptr<const Operation>>);
         verify_states();
         verify_work_ownership();
+        verify_cancellation();
+        verify_cancel_order();
         std::cout << "Runtime operation checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
