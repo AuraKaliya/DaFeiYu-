@@ -62,6 +62,7 @@ static dfy_v2_status DFY_V2_CALL request_stop(dfy_v2_instance* instance, dfy_v2_
     if (instance->stopping) return report(DFY_V2_OK, error);
     ++counts[2];
     if (mode == 3) { mode = 0; return report(DFY_V2_FAILED, error); }
+    if (mode == 5) return report(DFY_V2_FAILED, error);
     if (instance->reader.id) {
         status = instance->subscriptions->close(instance->reader, DFY_V2_CLOSE_CANCEL, error); if (status) return status;
         status = instance->refs->release(instance->reader, error); if (status) return status;

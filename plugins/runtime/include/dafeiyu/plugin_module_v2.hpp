@@ -74,6 +74,12 @@ class PluginModuleV2 {
     PluginModuleV2& operator=(const PluginModuleV2&) = delete;
     // 查询本控制器是否仍持有已校验的引导表。
     bool open() const noexcept { return api_.query_interface != nullptr; }
+    // 为宿主生命周期装配取得独立代码凭证，关闭后拒绝。
+    platform::CodeLease retain_code() { return module_.lease(); }
+    // 返回本模块活动保护数量，实例关停前据此拒绝原生重入。
+    std::size_t active_calls() const noexcept { return module_.active_calls(); }
+    // 返回普通代码持有数量，供宿主识别外部依赖。
+    std::size_t code_leases() const noexcept { return module_.leases(); }
     // 按有效 UTF-8 名称和精确版本查询静态能力，未知能力返回空值；必需函数由具体能力调用方核对。
     // 步骤：限定 C 表布局 → 受控查询并校验前缀 → 复制表并转交代码持有。
     template<class T>
