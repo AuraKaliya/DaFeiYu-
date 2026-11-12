@@ -38,6 +38,12 @@ dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::Value> value, 
 }
 // 返回宿主线程可观察的引用计量。
 std::size_t HostServices::references() const { state_->require_owner(); return state_->references.size(); }
+// 登记非空描述快照，宿主独立保持名称及字段寿命。
+dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructDescriptor> descriptor) {
+    state_->require_owner();
+    if (!descriptor) throw std::invalid_argument("host: descriptor required");
+    return detail::abi(state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{std::move(descriptor)})));
+}
 // 只在当前绑定中提供实际实现的宿主服务，插件静态查询不承担此职责。
 // 步骤：清空输出并校验参数 → 检查绑定 → 精确匹配名称与版本。
 dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t version,
@@ -46,8 +52,11 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     if (error) error->length = 0;
     if (!output || !name.data || !name.length || !version) return DFY_V2_INVALID_ARGUMENT;
     return detail::boundary(error, [&](auto&) {
-        if (std::string_view(name.data, name.length) != DFY_V2_REFERENCE_INTERFACE || version != 1) return DFY_V2_UNSUPPORTED;
-        *output = &reference_api;
+        if (version != 1) return DFY_V2_UNSUPPORTED;
+        const std::string_view requested(name.data, name.length);
+        if (requested == DFY_V2_REFERENCE_INTERFACE) *output = &reference_api;
+        else if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api();
+        else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });
 }

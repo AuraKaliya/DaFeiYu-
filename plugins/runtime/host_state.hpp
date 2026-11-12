@@ -1,11 +1,12 @@
 #pragma once
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/handle_registry.hpp>
+#include <dafeiyu/data_abi_v2.h>
 #include <thread>
 #include <variant>
 
 namespace dfy::plugins::detail {
-using HostObject = std::variant<std::shared_ptr<const runtime::Value>>;
+using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>>;
 struct HostReference { HostObject object; };
 struct HostState {
     // 建立本上下文独立引用域并固定宿主线程。
@@ -22,6 +23,15 @@ inline thread_local HostState* current_host = nullptr;
 inline runtime::Handle native(dfy_v2_handle value) noexcept { return {value.domain, value.id, value.generation}; }
 // 将宿主引用身份复制为固定 C 表示。
 inline dfy_v2_handle abi(runtime::Handle value) noexcept { return {value.domain, value.id, value.generation}; }
+// 从已验证引用借用精确种类的宿主数据，不延长来源引用。
+template<class T>
+const T& object(HostState& host, dfy_v2_handle source) {
+    return *std::get<std::shared_ptr<const T>>(host.references.get(native(source)).object);
+}
+// 将宿主基础值种类显式转换为固定 C 编号。
+uint32_t value_kind(runtime::ValueKind kind);
+// 返回只读静态类型服务，实际访问仍需要宿主绑定。
+const dfy_v2_type_api& type_api();
 
 // 捕获宿主异常并统一转换调用状态，错误缓冲不回显内部文本。
 // 步骤：清空错误 → 检查调用上下文 → 执行能力逻辑 → 按错误类别映射。

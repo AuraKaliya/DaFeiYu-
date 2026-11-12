@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/value.hpp>
+#include <dafeiyu/struct_descriptor.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
 #include <memory>
 
@@ -35,6 +36,8 @@ class HostServices {
     Binding bind() const;
     // 向当前实例暴露宿主不可变值，返回独立持有引用。
     dfy_v2_handle expose(std::shared_ptr<const runtime::Value> value, bool shareable = true);
+    // 向当前实例暴露宿主结构描述，字段视图依赖此持有引用。
+    dfy_v2_handle expose(std::shared_ptr<const runtime::StructDescriptor> descriptor);
     // 返回本上下文当前持有引用数，不计其他宿主上下文。
     std::size_t references() const;
     // 在有效绑定中查询已实现宿主能力，失败清空输出且异常不跨 C ABI。

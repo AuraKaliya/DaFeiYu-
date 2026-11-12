@@ -1,11 +1,13 @@
 ﻿#pragma once
 #include <dafeiyu/plugin_abi_v2.h>
+#include <dafeiyu/data_abi_v2.h>
 #define DFY_TEST_QUERY_ID "test.query"
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"
 #define DFY_TEST_CANCEL_ID "test.cancel"
 #define DFY_TEST_NOTIFY_ID "test.notification"
 #define DFY_TEST_HOST_ID "test.host"
+#define DFY_TEST_TYPES_ID "test.host_types"
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,6 +71,13 @@ typedef struct dfy_test_host_api {
         dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_test_host_api;
 extern const dfy_test_host_api dfy_test_host;
+typedef struct dfy_test_types_api {
+    dfy_v2_api_header header;
+    // 不预编译具体事件名称或字段列表，枚举宿主描述并汇总种类位图。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle type,
+        uint32_t* kinds, dfy_v2_error* error);
+} dfy_test_types_api;
+extern const dfy_test_types_api dfy_test_types;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
