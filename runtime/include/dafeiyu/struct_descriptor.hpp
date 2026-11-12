@@ -5,6 +5,7 @@
 namespace dfy::runtime {
 class StructDescriptor;
 class ArrayDescriptor;
+class MapDescriptor;
 // 字段的可选与可空独立表达；结构必须提供描述，其他种类不能携带结构描述。
 struct FieldDescriptor {
     std::string name;
@@ -14,10 +15,16 @@ struct FieldDescriptor {
     bool optional = false;
     bool nullable = false;
     std::shared_ptr<const ArrayDescriptor> array{};
+    std::shared_ptr<const MapDescriptor> map{};
     // 构造数组字段约束，仍独立表达字段本身的可选与可空。
     static FieldDescriptor array_field(std::string name, std::shared_ptr<const ArrayDescriptor> descriptor,
         bool optional = false, bool nullable = false) {
         return {std::move(name), ValueKind::array, 0, {}, optional, nullable, std::move(descriptor)};
+    }
+    // 构造字符串键映射字段，字段可选和可空仍独立于映射值约束。
+    static FieldDescriptor map_field(std::string name, std::shared_ptr<const MapDescriptor> descriptor,
+        bool optional = false, bool nullable = false) {
+        return {std::move(name), ValueKind::map, 0, {}, optional, nullable, {}, std::move(descriptor)};
     }
 };
 

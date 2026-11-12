@@ -1,6 +1,7 @@
 #include <dafeiyu/value.hpp>
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/array_value.hpp>
+#include <dafeiyu/map_value.hpp>
 
 namespace dfy::runtime {
 // 接收宿主已构造的不可变结构，不允许空指针伪装成结构或 null。
@@ -11,6 +12,11 @@ Value Value::from_structure(std::shared_ptr<const StructValue> value) {
 // 保存已构造数组的不可变持有，不接受空数组指针。
 Value Value::from_array(std::shared_ptr<const ArrayValue> value) {
     if (!value) throw std::invalid_argument("value: nonempty array required");
+    return Value(std::move(value));
+}
+// 保存不可变映射持有，不接受空指针。
+Value Value::from_map(std::shared_ptr<const MapValue> value) {
+    if (!value) throw std::invalid_argument("value: nonempty map required");
     return Value(std::move(value));
 }
 // 读取已确定类型的逻辑正文计量，不遍历不可变子结构。
@@ -25,6 +31,7 @@ std::size_t Value::payload_bytes() const {
     case ValueKind::structure: return as_structure().payload_bytes();
     case ValueKind::null_value: return 0;
     case ValueKind::array: return as_array().payload_bytes();
+    case ValueKind::map: return as_map().payload_bytes();
     }
     throw std::invalid_argument("value: unsupported kind");
 }
@@ -33,6 +40,7 @@ std::size_t Value::node_count() const {
     switch (kind()) {
     case ValueKind::structure: return as_structure().node_count();
     case ValueKind::array: return as_array().node_count();
+    case ValueKind::map: return as_map().node_count();
     case ValueKind::boolean:
     case ValueKind::int64:
     case ValueKind::uint64:

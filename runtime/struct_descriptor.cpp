@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <dafeiyu/array_value.hpp>
+#include <dafeiyu/map_value.hpp>
 
 namespace dfy::runtime {
 namespace {
@@ -63,6 +64,7 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
         if (!valid_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
         if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
         if (field.kind != ValueKind::array && field.array) throw std::invalid_argument("descriptor: unexpected array schema");
+        if (field.kind != ValueKind::map && field.map) throw std::invalid_argument("descriptor: unexpected map schema");
         switch (field.kind) {
         case ValueKind::string:
         case ValueKind::bytes:
@@ -86,6 +88,11 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
             if (limits.max_depth < 2) throw std::length_error("descriptor: array depth limit exceeded");
             depth = std::max(depth, std::size_t{2});
             break;
+        case ValueKind::map:
+            if (!field.map || field.max_bytes) throw std::invalid_argument("descriptor: map schema required without byte override");
+            if (limits.max_depth < 2) throw std::length_error("descriptor: map depth limit exceeded");
+            depth = std::max(depth, std::size_t{2});
+            break;
         default:
             throw std::invalid_argument("descriptor: unsupported field kind");
         }
@@ -105,9 +112,11 @@ bool StructDescriptor::equivalent(const StructDescriptor& other) const noexcept 
     for (std::size_t i = 0; i < fields_.size(); ++i) {
         const auto& a = fields_[i]; const auto& b = other.fields_[i];
         if (a.name != b.name || a.kind != b.kind || a.max_bytes != b.max_bytes || a.optional != b.optional || a.nullable != b.nullable ||
-            static_cast<bool>(a.structure) != static_cast<bool>(b.structure) || static_cast<bool>(a.array) != static_cast<bool>(b.array)) return false;
+            static_cast<bool>(a.structure) != static_cast<bool>(b.structure) || static_cast<bool>(a.array) != static_cast<bool>(b.array) ||
+            static_cast<bool>(a.map) != static_cast<bool>(b.map)) return false;
         if (a.structure && !a.structure->equivalent(*b.structure)) return false;
         if (a.array && !a.array->equivalent(*b.array)) return false;
+        if (a.map && !a.map->equivalent(*b.map)) return false;
     }
     return true;
 }
