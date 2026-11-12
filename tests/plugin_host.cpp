@@ -109,6 +109,32 @@ void verify_values(const dfy_v2_plugin_api& bootstrap) {
     refs->release(type, nullptr);
     check(!host.references(), "value references leaked");
 }
+// 旧版数据表对新结构种类明确返回不支持，不能输出占位成功或更改表布局。
+void verify_nested_rejection() {
+    using namespace dfy::runtime;
+    auto leaf = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.leaf", 1, {}, {0, 16}));
+    const FieldDescriptor field{"child", ValueKind::structure, 0, leaf};
+    auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.parent", 1, {&field,1}, {1, 64, 2}));
+    auto nested = std::make_shared<const StructValue>(StructValue::create(leaf, {}, 0));
+    HostServices host(3); auto binding = host.bind();
+    const auto type = host.expose(parent);
+    const auto value = host.expose(std::make_shared<const Value>(Value::from_structure(nested)));
+    const NamedValue child{"child", Value::from_structure(nested)};
+    const auto structure = host.expose(std::make_shared<const StructValue>(StructValue::create(parent, {&child,1}, 0)));
+    const void* table = nullptr;
+    HostServices::query({DFY_V2_TYPE_INTERFACE, sizeof(DFY_V2_TYPE_INTERFACE)-1}, 1, &table, nullptr);
+    dfy_v2_field_info info{};
+    check(static_cast<const dfy_v2_type_api*>(table)->field(type, 0, &info, nullptr) == DFY_V2_UNSUPPORTED && !info.kind && !info.name.data,
+        "v1 type profile accepted nested kind");
+    HostServices::query({DFY_V2_VALUE_INTERFACE, sizeof(DFY_V2_VALUE_INTERFACE)-1}, 1, &table, nullptr);
+    dfy_v2_value_view view{};
+    check(static_cast<const dfy_v2_value_api*>(table)->read(value, &view, nullptr) == DFY_V2_UNSUPPORTED && !view.kind,
+        "v1 value profile accepted nested kind");
+    HostServices::query({DFY_V2_STRUCT_INTERFACE, sizeof(DFY_V2_STRUCT_INTERFACE)-1}, 1, &table, nullptr);
+    dfy_v2_handle field_value{};
+    check(static_cast<const dfy_v2_struct_api*>(table)->field(structure, 0, &field_value, nullptr) == DFY_V2_UNSUPPORTED && !field_value.id,
+        "v1 structure profile returned unreadable nested field");
+}
 }
 
 // 用真实 C DLL 消费生产宿主引用服务，验证实例隔离和调用期绑定。
@@ -167,6 +193,7 @@ int wmain(int argc, wchar_t** argv) {
         check(references->release(owned, nullptr) == DFY_V2_INVALID_CONTEXT && !lifetime.expired(), "scope leaked binding");
         verify_types(*bootstrap);
         verify_values(*bootstrap);
+        verify_nested_rejection();
         library.close();
         {
             auto binding = host.bind();

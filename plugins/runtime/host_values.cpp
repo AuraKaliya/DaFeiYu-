@@ -18,6 +18,7 @@ dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_value_view* output, 
         case runtime::ValueKind::float64: result.data.float64 = value.as_float64(); break;
         case runtime::ValueKind::string: { const auto text = value.as_string(); result.data.string = {text.data(), text.size()}; break; }
         case runtime::ValueKind::bytes: { const auto bytes = value.as_bytes(); result.data.bytes = {bytes.data(), bytes.size()}; break; }
+        case runtime::ValueKind::structure: return DFY_V2_UNSUPPORTED;
         }
         *output = result;
         return DFY_V2_OK;
@@ -40,6 +41,7 @@ dfy_v2_status DFY_V2_CALL field(dfy_v2_handle source, uint64_t index, dfy_v2_han
     return boundary(error, [&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::StructValue>>(host.references.get(native(source)).object);
         if (index >= parent->size()) return DFY_V2_INVALID_ARGUMENT;
+        if (parent->at(static_cast<std::size_t>(index)).kind() == runtime::ValueKind::structure) return DFY_V2_UNSUPPORTED;
         *output = store_object(host, std::shared_ptr<const runtime::Value>(parent, &parent->at(static_cast<std::size_t>(index))));
         return DFY_V2_OK;
     });

@@ -3,7 +3,7 @@
 #include <memory>
 
 namespace dfy::runtime {
-enum class DefinitionFailure { already_defined, conflicting_definition, exhausted };
+enum class DefinitionFailure { already_defined, conflicting_definition, exhausted, unknown_dependency };
 class DefinitionError : public std::runtime_error {
   public:
     // 保存类型登记失败类别，不借用来源描述或插件内存。

@@ -3,7 +3,7 @@
 
 namespace dfy::runtime {
 namespace {
-// 计算基础值的逻辑正文字节数，不包含分配器、字段名或引用记录开销。
+// 计算值的逻辑正文字节数，嵌套使用已核定正文，不包含分配器和描述开销。
 std::size_t scalar_payload_bytes(const Value& value) {
     switch (value.kind()) {
     case ValueKind::boolean: return 1;
@@ -12,6 +12,7 @@ std::size_t scalar_payload_bytes(const Value& value) {
     case ValueKind::float64: return 8;
     case ValueKind::string: return value.as_string().size();
     case ValueKind::bytes: return value.as_bytes().size();
+    case ValueKind::structure: return value.as_structure().payload_bytes();
     }
     throw std::invalid_argument("struct: unsupported value kind");
 }
@@ -35,6 +36,9 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         if (match == supplied.end()) throw std::invalid_argument("struct: missing or unknown field");
         const auto& value = *match->second;
         if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
+        if (field.kind == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
+            throw std::invalid_argument("struct: nested definition mismatch");
+        }
         const auto bytes = scalar_payload_bytes(value);
         if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && bytes > field.max_bytes) {
             throw std::length_error("struct: field byte limit exceeded");

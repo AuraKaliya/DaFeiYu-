@@ -1,6 +1,11 @@
 #include <dafeiyu/value.hpp>
 
 namespace dfy::runtime {
+// 接收宿主已构造的不可变结构，不允许空指针伪装成结构或 null。
+Value Value::from_structure(std::shared_ptr<const StructValue> value) {
+    if (!value) throw std::invalid_argument("value: nonempty structure required");
+    return Value(std::move(value));
+}
 namespace {
 // 校验 UTF-8 标量编码，拒绝过长编码、代理项、截断和超过 Unicode 上界的值。
 // 步骤：识别首字节长度 → 核对剩余字节 → 校验连续字节及边界 → 推进到下一字符。

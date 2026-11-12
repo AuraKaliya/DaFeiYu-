@@ -10,6 +10,7 @@ uint32_t value_kind(runtime::ValueKind kind) {
     case runtime::ValueKind::float64: return DFY_V2_VALUE_FLOAT64;
     case runtime::ValueKind::string: return DFY_V2_VALUE_STRING;
     case runtime::ValueKind::bytes: return DFY_V2_VALUE_BYTES;
+    case runtime::ValueKind::structure: throw std::domain_error("host: kind unavailable in data capability v1");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }

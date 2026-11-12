@@ -19,14 +19,16 @@ std::shared_ptr<const StructDescriptor> TypeCatalog::find(std::string_view name,
 // 步骤：检查同键定义 → 核对数量与描述限制 → 构造宿主快照 → 提交新记录。
 std::shared_ptr<const StructDescriptor> TypeCatalog::define(const StructDescriptor& descriptor) {
     if (const auto existing = find(descriptor.name(), descriptor.version())) {
-        const auto left = existing->fields(), right = descriptor.fields();
-        const bool identical = std::equal(left.begin(), left.end(), right.begin(), right.end(),
-            [](const FieldDescriptor& a, const FieldDescriptor& b) {
-                return a.name == b.name && a.kind == b.kind && a.max_bytes == b.max_bytes;
-            });
+        const bool identical = existing->equivalent(descriptor);
         throw DefinitionError(identical ? DefinitionFailure::already_defined : DefinitionFailure::conflicting_definition);
     }
     if (definitions_.size() == capacity_) throw DefinitionError(DefinitionFailure::exhausted);
+    for (const auto& field : descriptor.fields()) {
+        if (!field.structure) continue;
+        const auto dependency = find(field.structure->name(), field.structure->version());
+        if (!dependency) throw DefinitionError(DefinitionFailure::unknown_dependency);
+        if (!dependency->equivalent(*field.structure)) throw DefinitionError(DefinitionFailure::conflicting_definition);
+    }
 
     auto snapshot = std::make_shared<const StructDescriptor>(StructDescriptor::create(
         descriptor.name(), descriptor.version(), descriptor.fields(), limits_));

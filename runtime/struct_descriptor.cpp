@@ -1,5 +1,7 @@
 #include <dafeiyu/struct_descriptor.hpp>
 #include <unordered_set>
+#include <unordered_map>
+#include <algorithm>
 
 namespace dfy::runtime {
 namespace {
@@ -25,14 +27,32 @@ void consume_name(std::string_view name, std::size_t& remaining) {
     if (name.size() > remaining) throw std::length_error("descriptor: name byte limit exceeded");
     remaining -= name.size();
 }
+// 检查组合快照内的精确类型身份，拒绝递归契约与同键不同定义。
+// 步骤：拒绝根身份回返 → 核对已见定义 → 递归检查尚未见过的子描述。
+void check_nested(const StructDescriptor& descriptor, std::string_view root, std::uint32_t version,
+    std::unordered_map<std::string, const StructDescriptor*>& known) {
+    if (descriptor.name() == root && descriptor.version() == version) throw std::invalid_argument("descriptor: recursive type identity");
+    const auto key = std::string(descriptor.name()) + "#" + std::to_string(descriptor.version());
+    const auto [entry, inserted] = known.emplace(key, &descriptor);
+    if (!inserted) {
+        if (!entry->second->equivalent(descriptor)) throw std::invalid_argument("descriptor: conflicting nested identity");
+        return;
+    }
+    for (const auto& field : descriptor.fields()) if (field.structure) check_nested(*field.structure, root, version, known);
+}
 }
 
-// 生成宿主独立持有的最小结构描述，全部字段必填且不提供空值或嵌套占位。
-// 步骤：核对容量与类型身份 → 校验字段名称、种类和约束 → 拒绝重复字段 → 复制不可变快照。
+// 生成有界不可变结构描述，嵌套按逻辑展开计费且不允许递归契约。
+// 步骤：核对预算和身份 → 校验字段及嵌套计量 → 拒绝重复或冲突身份 → 保存快照。
 StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t version,
     std::span<const FieldDescriptor> fields, DescriptorLimits limits) {
-    if (fields.size() > limits.max_fields) throw std::length_error("descriptor: field limit exceeded");
-    auto remaining = limits.max_name_bytes;
+    if (!limits.max_depth || limits.max_depth > maximum_depth) throw std::invalid_argument("descriptor: invalid depth limit");
+    const auto field_limit = std::min(limits.max_fields, maximum_fields);
+    const auto name_limit = std::min(limits.max_name_bytes, maximum_name_bytes);
+    if (fields.size() > field_limit) throw std::length_error("descriptor: field limit exceeded");
+    auto remaining_fields = field_limit - fields.size();
+    auto remaining = name_limit;
+    std::size_t depth = 1;
     consume_name(name, remaining);
     if (!version || !valid_name(name, true)) throw std::invalid_argument("descriptor: invalid type identity");
 
@@ -40,6 +60,7 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
     for (const auto& field : fields) {
         consume_name(field.name, remaining);
         if (!valid_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
+        if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
         switch (field.kind) {
         case ValueKind::string:
         case ValueKind::bytes:
@@ -50,12 +71,35 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
         case ValueKind::float64:
             if (field.max_bytes) throw std::invalid_argument("descriptor: byte limit on numeric field");
             break;
+        case ValueKind::structure:
+            if (!field.structure || field.max_bytes) throw std::invalid_argument("descriptor: structure schema required without byte override");
+            if (field.structure->depth() >= limits.max_depth || field.structure->total_fields() > remaining_fields ||
+                field.structure->name_bytes() > remaining) throw std::length_error("descriptor: nested limit exceeded");
+            remaining_fields -= field.structure->total_fields();
+            remaining -= field.structure->name_bytes();
+            depth = std::max(depth, field.structure->depth() + 1);
+            break;
         default:
             throw std::invalid_argument("descriptor: unsupported field kind");
         }
         if (!names.insert(field.name).second) throw std::invalid_argument("descriptor: duplicate field");
     }
 
-    return StructDescriptor(std::string(name), version, {fields.begin(), fields.end()});
+    std::unordered_map<std::string, const StructDescriptor*> known;
+    for (const auto& field : fields) if (field.structure) check_nested(*field.structure, name, version, known);
+    return StructDescriptor(std::string(name), version, {fields.begin(), fields.end()}, depth,
+        field_limit - remaining_fields, name_limit - remaining);
+}
+// 在已限定深度和规模的快照之间比较定义，重复引用同一快照直接匹配。
+// 步骤：比较身份和数量 → 顺序比较字段约束 → 比较嵌套定义。
+bool StructDescriptor::equivalent(const StructDescriptor& other) const noexcept {
+    if (this == &other) return true;
+    if (name_ != other.name_ || version_ != other.version_ || fields_.size() != other.fields_.size()) return false;
+    for (std::size_t i = 0; i < fields_.size(); ++i) {
+        const auto& a = fields_[i]; const auto& b = other.fields_[i];
+        if (a.name != b.name || a.kind != b.kind || a.max_bytes != b.max_bytes || static_cast<bool>(a.structure) != static_cast<bool>(b.structure)) return false;
+        if (a.structure && !a.structure->equivalent(*b.structure)) return false;
+    }
+    return true;
 }
 }

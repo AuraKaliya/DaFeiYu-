@@ -9,10 +9,12 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <memory>
 
 namespace dfy::runtime {
 // 宿主内部种类，不是 C ABI 或事件契约中的类型编号。
-enum class ValueKind { boolean, int64, uint64, float64, string, bytes };
+enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure };
+class StructValue;
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
 // 宿主持有的不可变基础值，文本和字节复制到宿主内存，不含插件析构代码。
@@ -34,7 +36,9 @@ class Value {
     static Value from_string(std::string_view text, std::size_t max_bytes);
     // 复制不超过明确字节上限的任意二进制数据，零字节和空数据均可表达。
     static Value from_bytes(std::span<const std::uint8_t> bytes, std::size_t max_bytes);
-    // 复制产生独立的不可变值，不共享可修改存储。
+    // 保持非空不可变结构，嵌套内容不会引用插件代码或可变容器。
+    static Value from_structure(std::shared_ptr<const StructValue> value);
+    // 复制基础存储或共享不可变结构，不共享可修改内容。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
     Value& operator=(const Value&) = delete;
@@ -52,9 +56,11 @@ class Value {
     std::string_view as_string() const { return std::get<std::string>(contents_); }
     // 借用只读字节，仅在该值的对应持有引用有效期间使用；类型不符抛错。
     std::span<const std::uint8_t> as_bytes() const { return std::get<Bytes>(contents_); }
+    // 借用嵌套结构，必须保持对应值引用有效；错误种类抛出 bad_variant_access。
+    const StructValue& as_structure() const { return *std::get<std::shared_ptr<const StructValue>>(contents_); }
   private:
     using Bytes = std::vector<std::uint8_t>;
-    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes>;
+    using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>>;
     // 从已校验的明确类型保存只读内容，不向模块外暴露 variant 布局。
     explicit Value(Contents contents) : contents_(std::move(contents)) {}
     const Contents contents_;

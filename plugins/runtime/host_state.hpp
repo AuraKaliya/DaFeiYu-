@@ -93,6 +93,7 @@ dfy_v2_status boundary(dfy_v2_error* error, Action action) noexcept {
     catch (const std::bad_alloc&) { return DFY_V2_RESOURCE_EXHAUSTED; }
     catch (const std::length_error&) { return DFY_V2_RESOURCE_EXHAUSTED; }
     catch (const std::invalid_argument&) { return DFY_V2_INVALID_ARGUMENT; }
+    catch (const std::domain_error&) { return DFY_V2_UNSUPPORTED; }
     catch (const std::bad_variant_access&) { return DFY_V2_INVALID_ARGUMENT; }
     catch (...) { return DFY_V2_FAILED; }
     return DFY_V2_FAILED;
