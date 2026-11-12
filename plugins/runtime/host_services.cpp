@@ -86,6 +86,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_STRUCT_INTERFACE) *output = &detail::struct_api();
         else if (requested == DFY_V2_READER_INTERFACE) *output = &detail::reader_api();
         else if (requested == DFY_V2_OPERATION_STATE_INTERFACE) *output = &detail::operation_api();
+        else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

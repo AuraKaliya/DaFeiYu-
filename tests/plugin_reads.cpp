@@ -18,6 +18,55 @@ const T& service(std::string_view name) {
     check(header->struct_size == sizeof(T) && header->interface_version == 1, "host service layout mismatch");
     return *static_cast<const T*>(table);
 }
+// 以真实 C 消费者请求取消，证明取消先到不消耗队列事件。
+// 步骤：创建读取与取消入口 → 遍历三种原因 → 保留事件并验证迟到取消 → 回收所有请求。
+void verify_cancel(const dfy_v2_plugin_api& bootstrap) {
+    const void* table = nullptr;
+    check(bootstrap.query_interface({DFY_TEST_CANCEL_ID, sizeof(DFY_TEST_CANCEL_ID) - 1}, 1, &table, nullptr) == DFY_V2_OK,
+        "cancel consumer missing");
+    const auto* consumer = static_cast<const dfy_test_cancel_api*>(table);
+    check(consumer && consumer->header.struct_size == sizeof(*consumer) && consumer->header.interface_version == 1 &&
+        consumer->request && consumer->read, "invalid cancel consumer");
+    auto store = std::make_shared<dfy::events::EventStore>(4, 0);
+    auto queue = std::make_shared<dfy::events::SubscriptionQueue>(store, 1);
+    auto reader = std::make_shared<dfy::events::SubscriptionReader>(queue, 2);
+    HostServices host(4);
+    const auto receiver = host.expose(reader);
+    auto binding = host.bind();
+    const auto& reads = service<dfy_v2_reader_api>(DFY_V2_READER_INTERFACE);
+    const auto& cancels = service<dfy_v2_operation_cancel_api>(DFY_V2_OPERATION_CANCEL_INTERFACE);
+    const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE);
+    auto descriptor = std::make_shared<const dfy::runtime::StructDescriptor>(dfy::runtime::StructDescriptor::create("test.cancel", 1, {}, {0, 32}));
+    auto payload = std::make_shared<const dfy::runtime::StructValue>(dfy::runtime::StructValue::create(descriptor, {}, 0));
+    for (auto reason : {DFY_V2_CANCEL_USER, DFY_V2_CANCEL_OWNER_STOP, DFY_V2_CANCEL_DEADLINE}) {
+        dfy_v2_handle request{}, delivered{}, rejected{};
+        uint32_t disposition = 99;
+        dfy_v2_cancel_snapshot cancel{};
+        dfy_v2_read_result result{};
+        check(reads.next(receiver, &request, nullptr) == DFY_V2_OK, "cancel read not accepted");
+        check(consumer->request(&cancels, request, 0, &disposition, nullptr) == DFY_V2_INVALID_ARGUMENT && !disposition,
+            "invalid reason applied");
+        check(consumer->request(&cancels, receiver, reason, &disposition, nullptr) == DFY_V2_INVALID_ARGUMENT && !disposition,
+            "reader was cancelled as operation");
+        const auto event = store->accept(payload); queue->push(event); store->release(event);
+        check(consumer->request(&cancels, request, reason, &disposition, nullptr) == DFY_V2_OK && disposition == DFY_V2_CANCEL_RECORDED,
+            "cancel not recorded");
+        check(consumer->request(&cancels, request, reason % 3 + 1, &disposition, nullptr) == DFY_V2_OK &&
+            disposition == DFY_V2_CANCEL_ALREADY_REQUESTED && consumer->read(&cancels, request, &cancel, nullptr) == DFY_V2_OK &&
+            cancel.reason == reason, "first reason changed");
+        host.advance();
+        check(reads.result(request, &result, nullptr) == DFY_V2_OK && result.outcome == DFY_V2_READ_CANCELLED &&
+            !result.close_mode && !result.event_sequence && queue->size() == 1, "cancel consumed event or closed stream");
+        check(reads.next(receiver, &delivered, nullptr) == DFY_V2_OK &&
+            consumer->request(&cancels, delivered, reason, &disposition, nullptr) == DFY_V2_OK &&
+            disposition == DFY_V2_CANCEL_ALREADY_SETTLED, "late cancel changed result");
+        check(reads.next(receiver, &rejected, nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !rejected.id && host.references() == 3,
+            "result capacity failure leaked placeholder");
+        refs.release(request, nullptr); refs.release(delivered, nullptr); host.advance();
+        check(!store->references() && !reader->size(), "cancelled or delivered request leaked");
+    }
+    refs.release(receiver, nullptr);
+}
 }
 // 通过真实 C DLL 提交生产读取，并验证结果与事件预算不能随状态引用释放而逃逸。
 // 步骤：建立有界宿主 → 提交与拒绝重复读取 → 交付事件并保留载荷 → 释放控制引用后关闭及回收。
@@ -82,6 +131,7 @@ int wmain(int argc, wchar_t** argv) {
         check(reads.payload(request, &body, nullptr) == DFY_V2_INVALID_ARGUMENT && !body.id, "closed read returned payload");
         refs.release(request, nullptr); host.advance();
         check(!host.references() && !store->references(), "read references leaked");
+        verify_cancel(*bootstrap);
         std::cout << "Production C read checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

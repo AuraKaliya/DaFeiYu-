@@ -72,6 +72,48 @@ dfy_v2_status DFY_V2_CALL state(dfy_v2_handle source, dfy_v2_operation_snapshot*
         return DFY_V2_OK;
     });
 }
+// 校验并显式映射取消原因，不把未知编号传给业务执行层。
+runtime::CancelReason cancel_reason(uint32_t reason) {
+    switch (reason) {
+    case DFY_V2_CANCEL_USER: return runtime::CancelReason::user;
+    case DFY_V2_CANCEL_OWNER_STOP: return runtime::CancelReason::owner_stop;
+    case DFY_V2_CANCEL_DEADLINE: return runtime::CancelReason::deadline;
+    default: throw std::invalid_argument("host: invalid cancel reason");
+    }
+}
+// 只登记协作取消，读取结果由下一次宿主推进裁定。
+// 步骤：清空回执 → 校验原因及请求 → 检查支持性 → 显式映射登记结果。
+dfy_v2_status DFY_V2_CALL cancel(dfy_v2_handle source, uint32_t reason, uint32_t* output, dfy_v2_error* error) {
+    if (output) *output = 0;
+    if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+    return boundary(error, [&](auto& host) {
+        const auto requested = cancel_reason(reason);
+        const auto current = request(host, source);
+        if (!current->operation()->cancellable()) return DFY_V2_UNSUPPORTED;
+        switch (current->request_cancel(requested)) {
+        case runtime::CancelDisposition::recorded: *output = DFY_V2_CANCEL_RECORDED; break;
+        case runtime::CancelDisposition::already_requested: *output = DFY_V2_CANCEL_ALREADY_REQUESTED; break;
+        case runtime::CancelDisposition::already_settled: *output = DFY_V2_CANCEL_ALREADY_SETTLED; break;
+        }
+        return DFY_V2_OK;
+    });
+}
+// 读取首个原因副本，不推进读取或改变操作终态。
+dfy_v2_status DFY_V2_CALL cancellation(dfy_v2_handle source, dfy_v2_cancel_snapshot* output, dfy_v2_error* error) {
+    if (output) *output = {};
+    if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+    return boundary(error, [&](auto& host) {
+        const auto operation = request(host, source)->operation();
+        if (!operation->cancellable()) return DFY_V2_UNSUPPORTED;
+        switch (operation->cancellation_reason()) {
+        case runtime::CancelReason::none: break;
+        case runtime::CancelReason::user: output->reason = DFY_V2_CANCEL_USER; break;
+        case runtime::CancelReason::owner_stop: output->reason = DFY_V2_CANCEL_OWNER_STOP; break;
+        case runtime::CancelReason::deadline: output->reason = DFY_V2_CANCEL_DEADLINE; break;
+        }
+        return DFY_V2_OK;
+    });
+}
 }
 // 提供固定的类型化读取能力。
 const dfy_v2_reader_api& reader_api() {
@@ -81,6 +123,11 @@ const dfy_v2_reader_api& reader_api() {
 // 提供已有 ABI 契约对应的生产操作状态服务。
 const dfy_v2_operation_state_api& operation_api() {
     static const dfy_v2_operation_state_api api = {{sizeof(dfy_v2_operation_state_api), 1}, state};
+    return api;
+}
+// 提供冻结取消表对应的生产适配，不复制一套取消状态。
+const dfy_v2_operation_cancel_api& cancel_api() {
+    static const dfy_v2_operation_cancel_api api = {{sizeof(dfy_v2_operation_cancel_api), 1}, cancel, cancellation};
     return api;
 }
 }

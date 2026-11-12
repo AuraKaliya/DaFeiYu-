@@ -48,6 +48,8 @@ const dfy_v2_struct_api& struct_api();
 const dfy_v2_reader_api& reader_api();
 // 返回生产操作状态服务，当前由完整读取请求支撑。
 const dfy_v2_operation_state_api& operation_api();
+// 返回生产读取的协作取消服务。
+const dfy_v2_operation_cancel_api& cancel_api();
 // 从当前域取得完整读取请求，不能只保留操作状态视图。
 inline std::shared_ptr<events::ReadRequest> request(HostState& host, dfy_v2_handle value) {
     return std::get<std::shared_ptr<events::ReadRequest>>(host.references.get(native(value)).object);
