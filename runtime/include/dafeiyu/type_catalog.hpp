@@ -25,7 +25,7 @@ class TypeCatalog {
     TypeCatalog(const TypeCatalog&) = delete;
     // 禁止赋值或隐式移动目录，保持登记边界稳定。
     TypeCatalog& operator=(const TypeCatalog&) = delete;
-    // 复制并登记新定义；重复、冲突和容量不足均拒绝，不覆盖既有记录。
+    // 核对子结构已经登记且定义相同，再保存新快照；重复、冲突和容量不足均拒绝。
     std::shared_ptr<const StructDescriptor> define(const StructDescriptor& descriptor);
     // 按完整名称和精确版本查询独立持有的快照，未登记的键返回空值。
     std::shared_ptr<const StructDescriptor> find(std::string_view name, std::uint32_t version) const noexcept;

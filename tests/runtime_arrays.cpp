@@ -30,6 +30,7 @@ void scalars() {
         rejects<std::out_of_range>([&] { (void)array.at(1); });
         rejects<std::length_error>([&] { (void)ArrayValue::create(type, {&value,1}, value.payload_bytes(), 1); });
     }
+
     auto empty_type = schema(ValueKind::string, 0, 0);
     check(ArrayValue::create(empty_type, {}, 0, 1).node_count() == 1, "empty array collapsed into absence");
     rejects<std::length_error>([&] { (void)ArrayValue::create(empty_type, {}, 0, 0); });
@@ -37,6 +38,7 @@ void scalars() {
     const auto nulls = ArrayValue::create(schema(ValueKind::string,2,0,true), nullable, 0);
     check(nulls.at(0).kind() == ValueKind::null_value && nulls.at(1).kind() == ValueKind::string && nulls.node_count() == 3,
         "array null and empty string collapsed");
+
     rejects<std::invalid_argument>([&] { (void)ArrayValue::create(schema(ValueKind::string,2), nullable, 0); });
     rejects<std::length_error>([&] { (void)ArrayValue::create(schema(ValueKind::string,1,0,true), nullable, 0); });
     rejects<std::invalid_argument>([&] { (void)ArrayValue::create(schema(ValueKind::uint64,1), {&examples[1],1}, 8); });
@@ -48,6 +50,7 @@ void scalars() {
     }
     rejects<std::length_error>([] { (void)ArrayDescriptor::create(ValueKind::boolean,65537); });
     rejects<std::invalid_argument>([] { (void)Value::from_array({}); });
+
     std::vector<Value> input{examples[4]};
     auto array = std::make_shared<const ArrayValue>(ArrayValue::create(schema(ValueKind::string,1,3), input, 3));
     input.clear(); const std::weak_ptr<const ArrayValue> lifetime = array;
@@ -68,12 +71,14 @@ void structures() {
     auto array = std::make_shared<const ArrayValue>(ArrayValue::create(type,{&element,1},8));
     const NamedValue value{"items",Value::from_array(array)};
     check(StructValue::create(parent,{&value,1},8).node_count() == 3, "structure did not count array root");
+
     const auto different = FieldDescriptor::array_field("items", schema(ValueKind::uint64,3));
     auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&different,1},{1,64,2}));
     rejects<std::invalid_argument>([&] { (void)StructValue::create(other,{&value,1},8); });
     TypeCatalog catalog(2,{2,128,2}); catalog.define(*parent);
     try { catalog.define(*other); check(false,"array constraint conflict accepted"); }
     catch (const DefinitionError& error) { check(error.reason() == DefinitionFailure::conflicting_definition,"wrong array conflict"); }
+
     auto large_type = schema(ValueKind::boolean,65536,0,true);
     std::vector<Value> nulls(65536, Value::null());
     auto large = std::make_shared<const ArrayValue>(ArrayValue::create(large_type,nulls,0));

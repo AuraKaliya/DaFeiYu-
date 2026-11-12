@@ -5,7 +5,7 @@
 
 namespace dfy::runtime {
 enum class FieldPresence { missing, null_value, value };
-// 构造期间借用的具名基础值；构造成功后不继续引用调用方容器。
+// 构造输入中的具名值；基础内容复制，组合内容共享不可变快照，不借用调用方容器。
 struct NamedValue {
     std::string name;
     Value value;
@@ -14,10 +14,10 @@ struct NamedValue {
 // 宿主持有的不可变结构载荷，分别记录字段缺失、显式空值与实际内容。
 class StructValue {
   public:
-    // 按描述校验必填、可空及正文预算，按声明顺序保存；不隐式转换或补默认值。
+    // 按描述校验必填、可空、正文及节点预算并按声明顺序保存；不隐式转换或补默认值。
     static StructValue create(std::shared_ptr<const StructDescriptor> descriptor,
         std::span<const NamedValue> fields, std::size_t max_payload_bytes, std::size_t max_nodes = Value::maximum_nodes);
-    // 复制基础字段并共享不可变描述，不借用原载荷存储。
+    // 复制字段槽位并共享不可变描述和组合内容，不借用原载荷的槽位存储。
     StructValue(const StructValue&) = default;
     // 禁止赋值及隐式移动修改已有结构载荷。
     StructValue& operator=(const StructValue&) = delete;

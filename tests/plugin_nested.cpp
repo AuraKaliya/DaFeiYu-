@@ -25,6 +25,7 @@ const T& service(std::string_view name, uint32_t version) {
     return *static_cast<const T*>(table);
 }
 // 核对 C 存在性表达和旧版本拒绝，未知索引不混同可选字段缺失。
+// 步骤：构造可选与可空字段 → 通过纯 C 核对存在性 → 验证旧版本和错误索引拒绝 → 归还持有。
 void presence(const dfy_v2_plugin_api& bootstrap) {
     const void* table = nullptr;
     check(bootstrap.query_interface({DFY_TEST_PRESENCE_ID, sizeof(DFY_TEST_PRESENCE_ID)-1}, 1, &table, nullptr) == DFY_V2_OK, "presence consumer missing");

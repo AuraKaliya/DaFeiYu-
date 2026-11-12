@@ -51,7 +51,7 @@ template<class T>
 const T& object(HostState& host, dfy_v2_handle source) {
     return *std::get<std::shared_ptr<const T>>(host.references.get(native(source)).object);
 }
-// 将宿主基础值种类显式转换为固定 C 编号。
+// 按精确数据版本将已实现的宿主值种类转换为 C 分类编号。
 uint32_t value_kind(runtime::ValueKind kind, uint32_t profile = 1);
 // 返回只读静态类型服务，实际访问仍需要宿主绑定。
 const dfy_v2_type_api& type_api();

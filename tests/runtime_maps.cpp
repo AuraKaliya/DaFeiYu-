@@ -27,11 +27,13 @@ int main() {
         check(map->size() == 4 && map->payload_bytes() == 37 && map->node_count() == 9 && map->at(0).key.empty() &&
             map->at(1).key == "a" && map->at(2).key == std::string("a\0b",3) && map->at(3).key == "b", "map order or accounting wrong");
         check(map->find(std::string_view("a\0b",3))->as_uint64() == UINT64_MAX && !map->find("A") && !map->find("missing"), "map key normalized or truncated");
+
         rejects<std::length_error>([&] { (void)MapValue::create(type,input,36); });
         rejects<std::length_error>([&] { (void)MapValue::create(type,input,37,8); });
         rejects<std::out_of_range>([&] { (void)map->at(4); });
         input[0].key = "changed"; input.clear();
         check(map->find("b")->as_uint64() == 2 && !map->find("changed"), "map borrowed input keys");
+
         const MapEntry duplicate[] = {{"a",Value::from_uint64(1)}, {"a",Value::from_uint64(2)}};
         rejects<std::invalid_argument>([&] { (void)MapValue::create(type,duplicate,64); });
         const MapEntry bad_key{std::string("\xc0\x80",2),Value::from_uint64(1)};
@@ -40,6 +42,7 @@ int main() {
         rejects<std::length_error>([&] { (void)MapValue::create(type,{&long_key,1},16); });
         const MapEntry wrong{"a",Value::from_int64(1)};
         rejects<std::invalid_argument>([&] { (void)MapValue::create(type,{&wrong,1},16); });
+
         const MapEntry nullable[] = {{"nil",Value::null()}, {"",Value::from_string({},0)}};
         const auto present = MapValue::create(schema(ValueKind::string,2,3,0,true),nullable,3,5);
         check(present.find("nil") && present.find("nil")->kind() == ValueKind::null_value && present.find("")->kind() == ValueKind::string &&
@@ -49,9 +52,11 @@ int main() {
         rejects<std::length_error>([&] { (void)MapValue::create(schema(ValueKind::boolean,0,0),{},0,0); });
         rejects<std::invalid_argument>([] { (void)MapDescriptor::create(ValueKind::array,1,8); });
         rejects<std::length_error>([] { (void)MapDescriptor::create(ValueKind::boolean,65537,0); });
+
         const MapEntry unicode[] = {{"\xc3\xa9",Value::from_bool(true)}, {"e\xcc\x81",Value::from_bool(false)}};
         const auto distinct = MapValue::create(schema(ValueKind::boolean,2,3),unicode,7);
         check(distinct.size() == 2 && distinct.find("\xc3\xa9")->as_bool() && !distinct.find("e\xcc\x81")->as_bool(), "keys implicitly normalized");
+
         const auto field = FieldDescriptor::map_field("items",type);
         auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{1,64,2}));
         const NamedValue value{"items",Value::from_map(map)};
@@ -62,6 +67,7 @@ int main() {
         TypeCatalog catalog(2,{2,128,2}); catalog.define(*parent);
         try { catalog.define(*other); check(false,"map constraint conflict accepted"); }
         catch (const DefinitionError& error) { check(error.reason() == DefinitionFailure::conflicting_definition,"wrong map conflict"); }
+
         const std::weak_ptr<const MapValue> lifetime = map;
         auto owned = std::make_shared<const Value>(Value::from_map(map)); map.reset();
         check(owned->as_map().find("a")->as_uint64() == 1 && !lifetime.expired(),"map lifetime lost");

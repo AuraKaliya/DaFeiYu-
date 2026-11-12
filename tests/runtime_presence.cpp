@@ -23,6 +23,7 @@ int main() {
         check(value.size() == 4 && !value.payload_bytes() && value.presence(0) == FieldPresence::value &&
             value.presence(1) == FieldPresence::missing && value.presence(2) == FieldPresence::null_value &&
             value.presence(3) == FieldPresence::missing, "presence states collapsed");
+
         check(value.node_count() == 3 && Value::null().node_count() == 1 && !Value::null().payload_bytes() &&
             Value::from_string({},0).node_count() == 1, "empty values bypassed node accounting");
         rejects<std::length_error>([&] { (void)StructValue::create(type, input, 0, 2); });
@@ -32,6 +33,7 @@ int main() {
             value.find("nullable") && value.find("nullable")->kind() == ValueKind::null_value, "field lookup confused null and absence");
         rejects<std::bad_optional_access>([&] { (void)value.at(1); });
         rejects<std::out_of_range>([&] { (void)value.presence(4); });
+
         const NamedValue missing[]{input[1]};
         rejects<std::invalid_argument>([&] { (void)StructValue::create(type, missing, 0); });
         const NamedValue invalid_null[] = {input[0], input[1], {"optional", Value::null()}};
@@ -42,12 +44,14 @@ int main() {
         rejects<std::invalid_argument>([&] { (void)StructValue::create(type, wrong_kind, 8); });
         const NamedValue null_child[] = {input[0], input[1], {"both", Value::null()}};
         check(StructValue::create(type, null_child, 0).presence(3) == FieldPresence::null_value, "nullable structure rejected null");
+
         auto child = std::make_shared<const StructValue>(StructValue::create(empty, {}, 0));
         const NamedValue present[] = {input[0], input[1], {"optional", Value::from_string({},0)}, {"both", Value::from_structure(child)}};
         const auto complete = StructValue::create(type, present, 0);
         check(complete.presence(1) == FieldPresence::value && complete.presence(3) == FieldPresence::value &&
             !complete.at(3).as_structure().size(), "empty content treated as null");
         check(complete.node_count() == 5, "nested empty structure node was lost");
+
         const FieldDescriptor invalid_type{"null", ValueKind::null_value, 0};
         rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.invalid", 1, {&invalid_type,1}, {1,32}); });
         TypeCatalog catalog(3, {8,128,2}); catalog.define(*empty); catalog.define(*type);

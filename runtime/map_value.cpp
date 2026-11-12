@@ -15,6 +15,7 @@ MapValue MapValue::create(std::shared_ptr<const MapDescriptor> descriptor, std::
     if (!nodes || entries.size() > descriptor->max_entries() || entries.size() > (nodes - 1) / 2) {
         throw std::length_error("map: entry or node limit exceeded");
     }
+
     auto remaining = max_payload_bytes;
     std::vector<const MapEntry*> ordered;
     ordered.reserve(entries.size());
@@ -33,8 +34,10 @@ MapValue MapValue::create(std::shared_ptr<const MapDescriptor> descriptor, std::
         remaining -= bytes;
         ordered.push_back(&entry);
     }
+
     std::sort(ordered.begin(), ordered.end(), [](const auto* left, const auto* right) { return left->key < right->key; });
     for (std::size_t i = 1; i < ordered.size(); ++i) if (ordered[i - 1]->key == ordered[i]->key) throw std::invalid_argument("map: duplicate key");
+
     std::vector<MapEntry> owned;
     owned.reserve(ordered.size());
     for (const auto* entry : ordered) owned.push_back({entry->key, entry->value});

@@ -16,7 +16,7 @@ std::shared_ptr<const StructDescriptor> TypeCatalog::find(std::string_view name,
 }
 
 // 在全部约束通过后登记独立描述，失败保持目录及已有快照不变。
-// 步骤：检查同键定义 → 核对数量与描述限制 → 构造宿主快照 → 提交新记录。
+// 步骤：检查同键定义 → 核对容量与已登记子定义 → 按描述限制构造快照 → 提交新记录。
 std::shared_ptr<const StructDescriptor> TypeCatalog::define(const StructDescriptor& descriptor) {
     if (const auto existing = find(descriptor.name(), descriptor.version())) {
         const bool identical = existing->equivalent(descriptor);

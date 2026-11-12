@@ -31,6 +31,7 @@ static dfy_v2_status walk(const services* api, dfy_v2_handle structure, uint32_t
     status = api->structures->descriptor(structure, &type, 0);
     if (status) return status;
     status = api->types->describe(type, &info, 0);
+
     for (i = 0; !status && i < info.field_count; ++i) {
         dfy_v2_handle field = {0}, child = {0}, schema = {0};
         dfy_v2_field_info_v2 description = {0};
@@ -53,8 +54,10 @@ static dfy_v2_status walk(const services* api, dfy_v2_handle structure, uint32_t
             if (value.kind == DFY_V2_VALUE_STRING) count->bytes += value.data.string.length;
             if (value.kind == DFY_V2_VALUE_BYTES) count->bytes += value.data.bytes.length;
         } else if (!status) status = DFY_V2_UNSUPPORTED;
+
         api->refs->release(schema, 0); api->refs->release(child, 0); api->refs->release(field, 0);
     }
+
     api->refs->release(type, 0);
     return status;
 }
@@ -68,6 +71,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
     if (output) *output = count;
     if (error) error->length = 0;
     if (!query || !output) return DFY_V2_INVALID_ARGUMENT;
+
     api.refs = (const dfy_v2_reference_api*)service(query, DFY_V2_REFERENCE_INTERFACE, 1, sizeof(*api.refs));
     api.types = (const dfy_v2_type_api_v2*)service(query, DFY_V2_TYPE_INTERFACE, 2, sizeof(*api.types));
     api.values = (const dfy_v2_value_api_v2*)service(query, DFY_V2_VALUE_INTERFACE, 2, sizeof(*api.values));
@@ -75,6 +79,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
     if (!api.refs || !api.types || !api.values || !api.structures || !api.refs->release || !api.types->describe ||
         !api.types->field || !api.types->nested || !api.values->read || !api.values->structure ||
         !api.structures->descriptor || !api.structures->field) return DFY_V2_UNSUPPORTED;
+
     status = walk(&api, structure, depth, &count);
     if (!status) *output = count;
     return status;
@@ -94,14 +99,17 @@ static dfy_v2_status DFY_V2_CALL inspect_presence(dfy_v2_query_interface_fn quer
     if (output) *output = 0;
     if (error) error->length = 0;
     if (!query || !output) return DFY_V2_INVALID_ARGUMENT;
+
     api.refs = (const dfy_v2_reference_api*)service(query, DFY_V2_REFERENCE_INTERFACE, 1, sizeof(*api.refs));
     api.types = (const dfy_v2_type_api_v2*)service(query, DFY_V2_TYPE_INTERFACE, 2, sizeof(*api.types));
     api.values = (const dfy_v2_value_api_v2*)service(query, DFY_V2_VALUE_INTERFACE, 2, sizeof(*api.values));
     api.structures = (const dfy_v2_struct_api_v2*)service(query, DFY_V2_STRUCT_INTERFACE, 2, sizeof(*api.structures));
     if (!api.refs || !api.types || !api.values || !api.structures || !api.refs->release || !api.types->describe ||
         !api.types->field || !api.values->read || !api.structures->descriptor || !api.structures->field) return DFY_V2_UNSUPPORTED;
+
     status = api.structures->descriptor(structure, &type, 0); if (status) return status;
     status = api.types->describe(type, &info, 0);
+
     for (i = 0; !status && i < info.field_count; ++i) {
         dfy_v2_field_info_v2 field = {0};
         dfy_v2_handle owned = {0};
@@ -118,8 +126,10 @@ static dfy_v2_status DFY_V2_CALL inspect_presence(dfy_v2_query_interface_fn quer
             } else if (!status && value.kind == field.kind) states |= 1;
             else if (!status) status = DFY_V2_FAILED;
         }
+
         api.refs->release(owned, 0);
     }
+
     api.refs->release(type, 0);
     if (!status) *output = states;
     return status;

@@ -19,7 +19,7 @@ class ArrayValue;
 class MapValue;
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
-// 宿主持有的不可变基础值，文本和字节复制到宿主内存，不含插件析构代码。
+// 宿主持有的不可变值，基础正文独立存储，组合内容共享宿主快照，不含插件析构代码。
 class Value {
   public:
     static constexpr std::size_t maximum_nodes = 1024 * 1024;
@@ -47,7 +47,7 @@ class Value {
     static Value from_array(std::shared_ptr<const ArrayValue> value);
     // 保持非空不可变映射，不以空指针代替空映射或 null。
     static Value from_map(std::shared_ptr<const MapValue> value);
-    // 复制基础存储或共享不可变结构，不共享可修改内容。
+    // 复制基础存储或共享不可变组合内容，不共享可修改内容。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
     Value& operator=(const Value&) = delete;

@@ -30,12 +30,14 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
     if (output) *output = count;
     if (error) error->length = 0;
     if (!query || !output) return DFY_V2_INVALID_ARGUMENT;
+
     refs = (const dfy_v2_reference_api*)service(query,DFY_V2_REFERENCE_INTERFACE,1,sizeof(*refs));
     structures = (const dfy_v2_struct_api_v2*)service(query,DFY_V2_STRUCT_INTERFACE,2,sizeof(*structures));
     values = (const dfy_v2_value_api_v2*)service(query,DFY_V2_VALUE_INTERFACE,2,sizeof(*values));
     arrays = (const dfy_v2_array_api*)service(query,DFY_V2_ARRAY_INTERFACE,1,sizeof(*arrays));
     if (!refs || !structures || !values || !arrays || !refs->release || !structures->descriptor || !structures->field ||
         !values->read || !arrays->field_type || !arrays->describe || !arrays->element) return DFY_V2_UNSUPPORTED;
+
     status = structures->descriptor(structure,&type,0);
     if (!status) status = arrays->field_type(type,index,&declared,0);
     if (!status) status = structures->field(structure,index,&array,0);
@@ -45,6 +47,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
     if (!status && actual.size > actual.type.max_elements) status = DFY_V2_FAILED;
     if (!status && (declared.element_kind != actual.type.element_kind || declared.element_flags != actual.type.element_flags ||
         declared.max_elements != actual.type.max_elements || declared.max_element_bytes != actual.type.max_element_bytes)) status = DFY_V2_FAILED;
+
     for (i = 0; !status && i < actual.size; ++i) {
         dfy_v2_handle element = {0};
         dfy_v2_value_view value = {0};
@@ -57,6 +60,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query, dfy_v2
         if (!status && value.kind == DFY_V2_VALUE_UINT64) count.last_unsigned = value.data.uint64;
         refs->release(element,0);
     }
+
     refs->release(array,0); refs->release(type,0);
     if (!status) { count.size = actual.size; *output = count; }
     return status;

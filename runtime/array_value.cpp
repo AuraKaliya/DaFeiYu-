@@ -28,6 +28,7 @@ ArrayValue ArrayValue::create(std::shared_ptr<const ArrayDescriptor> descriptor,
     if (elements.size() > descriptor->max_elements() || elements.size() >= std::min(max_nodes, Value::maximum_nodes)) {
         throw std::length_error("array: element or node budget exceeded");
     }
+
     auto remaining = max_payload_bytes;
     for (const auto& element : elements) {
         if (element.kind() == ValueKind::null_value) {
@@ -40,6 +41,7 @@ ArrayValue ArrayValue::create(std::shared_ptr<const ArrayDescriptor> descriptor,
         if (bytes > remaining) throw std::length_error("array: payload limit exceeded");
         remaining -= bytes;
     }
+
     auto owned = elements.empty() ? std::vector<Value>{} : std::vector<Value>(elements.begin(), elements.end());
     return ArrayValue(std::move(descriptor), std::move(owned), max_payload_bytes - remaining);
 }

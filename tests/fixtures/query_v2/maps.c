@@ -30,12 +30,14 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query,dfy_v2_
     if (output) *output = count;
     if (error) error->length = 0;
     if (!query || !output) return DFY_V2_INVALID_ARGUMENT;
+
     refs = (const dfy_v2_reference_api*)service(query,DFY_V2_REFERENCE_INTERFACE,1,sizeof(*refs));
     structures = (const dfy_v2_struct_api_v2*)service(query,DFY_V2_STRUCT_INTERFACE,2,sizeof(*structures));
     values = (const dfy_v2_value_api_v2*)service(query,DFY_V2_VALUE_INTERFACE,2,sizeof(*values));
     maps = (const dfy_v2_map_api*)service(query,DFY_V2_MAP_INTERFACE,1,sizeof(*maps));
     if (!refs || !structures || !values || !maps || !refs->release || !structures->descriptor || !structures->field || !values->read ||
         !maps->field_type || !maps->describe || !maps->entry || !maps->find) return DFY_V2_UNSUPPORTED;
+
     status = structures->descriptor(structure,&type,0);
     if (!status) status = maps->field_type(type,index,&declared,0);
     if (!status) status = structures->field(structure,index,&map,0);
@@ -45,6 +47,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query,dfy_v2_
     if (!status && (declared.value_kind != actual.type.value_kind || declared.value_flags != actual.type.value_flags ||
         declared.max_entries != actual.type.max_entries || declared.max_key_bytes != actual.type.max_key_bytes ||
         declared.max_value_bytes != actual.type.max_value_bytes || actual.size > declared.max_entries)) status = DFY_V2_FAILED;
+
     for (i = 0; !status && i < actual.size; ++i) {
         dfy_v2_string_view key = {0};
         dfy_v2_handle item = {0},found = {0};
@@ -62,6 +65,7 @@ static dfy_v2_status DFY_V2_CALL inspect(dfy_v2_query_interface_fn query,dfy_v2_
         if (!status) { count.key_bytes += key.length; if (value.kind == DFY_V2_VALUE_UINT64) count.last_unsigned = value.data.uint64; }
         refs->release(found,0); refs->release(item,0);
     }
+
     refs->release(map,0); refs->release(type,0);
     if (!status) { count.size = actual.size; *output = count; }
     return status;
