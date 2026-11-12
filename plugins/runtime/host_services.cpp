@@ -166,8 +166,15 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     if (error) error->length = 0;
     if (!output || !name.data || !name.length || !version) return DFY_V2_INVALID_ARGUMENT;
     return detail::boundary(error, [&](auto& host) {
-        if (version != 1) return DFY_V2_UNSUPPORTED;
         const std::string_view requested(name.data, name.length);
+        if (version == 2) {
+            if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api_v2();
+            else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api_v2();
+            else if (requested == DFY_V2_STRUCT_INTERFACE) *output = &detail::struct_api_v2();
+            else return DFY_V2_UNSUPPORTED;
+            return DFY_V2_OK;
+        }
+        if (version != 1) return DFY_V2_UNSUPPORTED;
         if (requested == DFY_V2_REFERENCE_INTERFACE) *output = &reference_api;
         else if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api();
         else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api();

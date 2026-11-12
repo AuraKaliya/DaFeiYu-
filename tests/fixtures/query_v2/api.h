@@ -12,6 +12,7 @@
 #define DFY_TEST_TYPES_ID "test.host_types"
 #define DFY_TEST_VALUES_ID "test.host_values"
 #define DFY_TEST_READS_ID "test.host_reads"
+#define DFY_TEST_NESTED_ID "test.host_nested"
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,6 +101,14 @@ typedef struct dfy_test_reads_api {
 } dfy_test_reads_api;
 extern const dfy_test_reads_api dfy_test_reads;
 extern const dfy_v2_lifecycle_api dfy_test_lifecycle;
+typedef struct dfy_test_nested_counts { uint64_t leaves, bytes; } dfy_test_nested_counts;
+typedef struct dfy_test_nested_api {
+    dfy_v2_api_header header;
+    // 在显式深度预算内递归读取未知结构，失败归还中间引用并清空统计。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure,
+        uint32_t depth, dfy_test_nested_counts* output, dfy_v2_error* error);
+} dfy_test_nested_api;
+extern const dfy_test_nested_api dfy_test_nested;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

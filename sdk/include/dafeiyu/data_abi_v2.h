@@ -12,6 +12,10 @@
 #define DFY_V2_VALUE_FLOAT64 UINT32_C(4)
 #define DFY_V2_VALUE_STRING UINT32_C(5)
 #define DFY_V2_VALUE_BYTES UINT32_C(6)
+#define DFY_V2_VALUE_STRUCTURE UINT32_C(7)
+#define DFY_V2_TYPE_VERSION_2 UINT32_C(2)
+#define DFY_V2_VALUE_VERSION_2 UINT32_C(2)
+#define DFY_V2_STRUCT_VERSION_2 UINT32_C(2)
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -64,6 +68,32 @@ typedef struct dfy_v2_struct_api {
     // 按描述顺序取得基础字段的独立持有，字段可以比原结构引用存活更久。
     dfy_v2_status (DFY_V2_CALL *field)(dfy_v2_handle value, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_struct_api;
+// 能力版本 2 的 kind 为可扩展标记，未知标记须明确拒绝，不得按标量解释。
+typedef struct dfy_v2_field_info_v2 {
+    dfy_v2_string_view name;
+    uint32_t kind;
+    uint32_t flags;
+    uint64_t max_bytes;
+} dfy_v2_field_info_v2;
+// flags 是可扩展约束标记；当前为零，遇到未实现的标志必须明确拒绝。
+typedef struct dfy_v2_type_api_v2 {
+    dfy_v2_api_header header;
+    // 与版本 1 相同的类型元数据和借用期。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle type, dfy_v2_type_info* output, dfy_v2_error* error);
+    // 返回字段分类及基础约束，允许结构分类，复杂约束通过对应访问能力取得。
+    dfy_v2_status (DFY_V2_CALL *field)(dfy_v2_handle type, uint64_t index, dfy_v2_field_info_v2* output, dfy_v2_error* error);
+    // 为结构字段的描述取得独立引用，非结构字段拒绝，输出必需且失败清零。
+    dfy_v2_status (DFY_V2_CALL *nested)(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_type_api_v2;
+typedef struct dfy_v2_value_api_v2 {
+    dfy_v2_api_header header;
+    // 基础值同版本 1；组合分类的 data 固定为零，其内容通过实际实现的专用能力访问。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_value_view* output, dfy_v2_error* error);
+    // 取得结构内容的独立持有，保持原值及其预算链，非结构值拒绝。
+    dfy_v2_status (DFY_V2_CALL *structure)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_value_api_v2;
+// 版本 2 保持相同函数签名，field 可返回组合值；仍须精确协商版本 2。
+typedef dfy_v2_struct_api dfy_v2_struct_api_v2;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

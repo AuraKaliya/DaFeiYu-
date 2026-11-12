@@ -52,13 +52,19 @@ const T& object(HostState& host, dfy_v2_handle source) {
     return *std::get<std::shared_ptr<const T>>(host.references.get(native(source)).object);
 }
 // 将宿主基础值种类显式转换为固定 C 编号。
-uint32_t value_kind(runtime::ValueKind kind);
+uint32_t value_kind(runtime::ValueKind kind, uint32_t profile = 1);
 // 返回只读静态类型服务，实际访问仍需要宿主绑定。
 const dfy_v2_type_api& type_api();
 // 返回只读基础值服务表。
 const dfy_v2_value_api& value_api();
 // 返回只读结构载荷服务表。
 const dfy_v2_struct_api& struct_api();
+// 返回版本 2 的嵌套类型访问能力。
+const dfy_v2_type_api_v2& type_api_v2();
+// 返回版本 2 的值分类及结构访问能力。
+const dfy_v2_value_api_v2& value_api_v2();
+// 返回版本 2 的通用结构字段引用能力。
+const dfy_v2_struct_api_v2& struct_api_v2();
 // 返回类型化读取服务。
 const dfy_v2_reader_api& reader_api();
 // 返回生产操作状态服务，当前由完整读取请求支撑。
