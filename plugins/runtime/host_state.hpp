@@ -65,6 +65,8 @@ const dfy_v2_type_api_v2& type_api_v2();
 const dfy_v2_value_api_v2& value_api_v2();
 // 返回版本 2 的通用结构字段引用能力。
 const dfy_v2_struct_api_v2& struct_api_v2();
+// 返回实际实现的标量数组访问能力。
+const dfy_v2_array_api& array_api();
 // 返回类型化读取服务。
 const dfy_v2_reader_api& reader_api();
 // 返回生产操作状态服务，当前由完整读取请求支撑。

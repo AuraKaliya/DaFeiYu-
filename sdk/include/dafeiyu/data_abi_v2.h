@@ -14,6 +14,10 @@
 #define DFY_V2_VALUE_BYTES UINT32_C(6)
 #define DFY_V2_VALUE_STRUCTURE UINT32_C(7)
 #define DFY_V2_VALUE_NULL UINT32_C(8)
+#define DFY_V2_VALUE_ARRAY UINT32_C(9)
+#define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
+#define DFY_V2_ARRAY_VERSION UINT32_C(1)
+#define DFY_V2_ELEMENT_NULLABLE UINT32_C(1)
 #define DFY_V2_FIELD_OPTIONAL UINT32_C(1)
 #define DFY_V2_FIELD_NULLABLE UINT32_C(2)
 #define DFY_V2_TYPE_VERSION_2 UINT32_C(2)
@@ -97,6 +101,23 @@ typedef struct dfy_v2_value_api_v2 {
 } dfy_v2_value_api_v2;
 // 版本 2 的 field 可返回组合或 null；已声明但缺失为 NOT_FOUND，越界为 INVALID_ARGUMENT。
 typedef dfy_v2_struct_api dfy_v2_struct_api_v2;
+// 第一版数组元素仅为基础种类，element_flags 当前仅支持 ELEMENT_NULLABLE。
+typedef struct dfy_v2_array_type_info {
+    uint32_t element_kind;
+    uint32_t element_flags;
+    uint64_t max_elements;
+    uint64_t max_element_bytes;
+} dfy_v2_array_type_info;
+typedef struct dfy_v2_array_info { dfy_v2_array_type_info type; uint64_t size; } dfy_v2_array_info;
+typedef struct dfy_v2_array_api {
+    dfy_v2_api_header header;
+    // 复制结构字段声明的数组约束，不产生引用；非数组字段拒绝。
+    dfy_v2_status (DFY_V2_CALL *field_type)(dfy_v2_handle type, uint64_t index, dfy_v2_array_type_info* output, dfy_v2_error* error);
+    // 复制实际数组的约束及元素数，空数组仍是数组值。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle value, dfy_v2_array_info* output, dfy_v2_error* error);
+    // 取得元素的独立持有，保持父数组及原始预算；越界不是缺失，返回 INVALID_ARGUMENT。
+    dfy_v2_status (DFY_V2_CALL *element)(dfy_v2_handle value, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_array_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

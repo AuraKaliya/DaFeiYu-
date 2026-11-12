@@ -16,7 +16,9 @@ uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
     case runtime::ValueKind::null_value:
         if (profile == 2) return DFY_V2_VALUE_NULL;
         throw std::domain_error("host: null unavailable in data capability v1");
-    case runtime::ValueKind::array: throw std::domain_error("host: array access not published");
+    case runtime::ValueKind::array:
+        if (profile == 2) return DFY_V2_VALUE_ARRAY;
+        throw std::domain_error("host: array unavailable in data capability v1");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }

@@ -20,7 +20,7 @@ dfy_v2_status read_value(dfy_v2_handle source, dfy_v2_value_view* output, dfy_v2
         case runtime::ValueKind::bytes: { const auto bytes = value.as_bytes(); result.data.bytes = {bytes.data(), bytes.size()}; break; }
         case runtime::ValueKind::structure: break;
         case runtime::ValueKind::null_value: break;
-        case runtime::ValueKind::array: return DFY_V2_UNSUPPORTED;
+        case runtime::ValueKind::array: break;
         }
         *output = result;
         return DFY_V2_OK;

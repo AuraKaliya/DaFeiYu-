@@ -14,6 +14,7 @@
 #define DFY_TEST_READS_ID "test.host_reads"
 #define DFY_TEST_NESTED_ID "test.host_nested"
 #define DFY_TEST_PRESENCE_ID "test.host_presence"
+#define DFY_TEST_ARRAYS_ID "test.host_arrays"
 
 #ifdef __cplusplus
 extern "C" {
@@ -116,6 +117,14 @@ typedef struct dfy_test_presence_api {
     dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint32_t* states, dfy_v2_error* error);
 } dfy_test_presence_api;
 extern const dfy_test_presence_api dfy_test_presence;
+typedef struct dfy_test_array_counts { uint64_t size, nulls, last_unsigned; } dfy_test_array_counts;
+typedef struct dfy_test_arrays_api {
+    dfy_v2_api_header header;
+    // 通过声明及实际数据遍历数组，结果只包含统计副本，失败清空。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        dfy_test_array_counts* output, dfy_v2_error* error);
+} dfy_test_arrays_api;
+extern const dfy_test_arrays_api dfy_test_arrays;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

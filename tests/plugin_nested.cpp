@@ -1,11 +1,13 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/dynamic_library.hpp>
+#include <dafeiyu/array_value.hpp>
 #include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_type_api_v2) == 32 && offsetof(dfy_v2_type_api_v2, nested) == 24);
 static_assert(sizeof(dfy_v2_value_api_v2) == 24 && offsetof(dfy_v2_value_api_v2, structure) == 16);
 static_assert(sizeof(dfy_v2_field_info_v2) == 32 && offsetof(dfy_v2_field_info_v2, flags) == 20);
+static_assert(sizeof(dfy_v2_array_type_info) == 24 && sizeof(dfy_v2_array_info) == 32 && sizeof(dfy_v2_array_api) == 32);
 namespace {
 using namespace dfy::runtime;
 using namespace dfy::plugins;
@@ -46,6 +48,55 @@ void presence(const dfy_v2_plugin_api& bootstrap) {
         "v1 accepted nullable semantics");
     refs.release(field, nullptr); refs.release(descriptor, nullptr); refs.release(root, nullptr);
     check(!host.references(), "presence references leaked");
+}
+// 以真实 C 消费数组并证明叶元素继续保持整个事件预算。
+// 步骤：构造可空数组事件 → 协商并枚举 → 释放父链后读取元素 → 归还数据并关闭。
+void arrays(const dfy_v2_plugin_api& bootstrap) {
+    const void* table = nullptr;
+    check(bootstrap.query_interface({DFY_TEST_ARRAYS_ID, sizeof(DFY_TEST_ARRAYS_ID)-1},1,&table,nullptr) == DFY_V2_OK, "array consumer missing");
+    const auto* consumer = static_cast<const dfy_test_arrays_api*>(table);
+    check(consumer && consumer->header.struct_size == sizeof(*consumer) && consumer->header.interface_version == 1 && consumer->inspect, "invalid array consumer");
+    auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::uint64,3,0,true));
+    const Value elements[] = {Value::from_uint64(1), Value::null(), Value::from_uint64(UINT64_MAX)};
+    auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type,elements,16));
+    const auto field = FieldDescriptor::array_field("items",array_type);
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&field,1},{1,64,2}));
+    const NamedValue input{"items",Value::from_array(array)};
+    auto payload = std::make_shared<const StructValue>(StructValue::create(type,{&input,1},16));
+    auto store = std::make_shared<dfy::events::EventStore>(4,16);
+    auto queue = std::make_shared<dfy::events::SubscriptionQueue>(store,1);
+    auto reader = std::make_shared<dfy::events::SubscriptionReader>(queue,1);
+    HostServices host(16); const auto receiver = host.expose(reader); auto binding = host.bind();
+    const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE,1);
+    const auto& reads = service<dfy_v2_reader_api>(DFY_V2_READER_INTERFACE,1);
+    const auto& structures = service<dfy_v2_struct_api_v2>(DFY_V2_STRUCT_INTERFACE,2);
+    const auto& values = service<dfy_v2_value_api_v2>(DFY_V2_VALUE_INTERFACE,2);
+    const auto& api = service<dfy_v2_array_api>(DFY_V2_ARRAY_INTERFACE,1);
+    dfy_v2_handle request{}, root{}, array_ref{}, held{}, rejected{};
+    check(reads.next(receiver,&request,nullptr) == DFY_V2_OK,"array read submission failed");
+    const auto event = store->accept(payload); queue->push(event); store->release(event); host.advance();
+    check(reads.payload(request,&root,nullptr) == DFY_V2_OK,"array root missing");
+    dfy_test_array_counts count{};
+    check(consumer->inspect(HostServices::query,root,0,&count,nullptr) == DFY_V2_OK && count.size == 3 && count.nulls == 1 &&
+        count.last_unsigned == UINT64_MAX && host.references() == 3,"C array content or cleanup failed");
+    check(structures.field(root,0,&array_ref,nullptr) == DFY_V2_OK && api.element(array_ref,2,&held,nullptr) == DFY_V2_OK,"array element hold failed");
+    dfy_v2_value_view view{};
+    check(values.read(array_ref,&view,nullptr) == DFY_V2_OK && view.kind == DFY_V2_VALUE_ARRAY && !view.data.uint64 && !view.data.bytes.length,
+        "array classification exposed implicit data");
+    check(service<dfy_v2_value_api>(DFY_V2_VALUE_INTERFACE,1).read(array_ref,&view,nullptr) == DFY_V2_UNSUPPORTED && !view.kind &&
+        api.element(array_ref,3,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"array version or index boundary failed");
+    refs.release(array_ref,nullptr); refs.release(root,nullptr); refs.release(request,nullptr); host.advance();
+    check(store->references() == 1 && reader->size() == 1 && values.read(held,&view,nullptr) == DFY_V2_OK &&
+        view.kind == DFY_V2_VALUE_UINT64 && view.data.uint64 == UINT64_MAX,"array leaf escaped event budget");
+    refs.release(held,nullptr); host.advance();
+    check(!store->references() && !reader->size(),"array event not reclaimed");
+    reader->close(dfy::events::CloseMode::cancel); host.advance(); refs.release(receiver,nullptr);
+    const auto empty = host.expose(std::make_shared<const Value>(Value::from_array(std::make_shared<const ArrayValue>(
+        ArrayValue::create(std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::boolean,0)),{},0)))));
+    dfy_v2_array_info info{};
+    check(api.describe(empty,&info,nullptr) == DFY_V2_OK && !info.size && !info.type.max_elements &&
+        api.element(empty,0,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"empty array confused with null or missing");
+    refs.release(empty,nullptr); check(!host.references() && !host.resources(),"array host leaked");
 }
 }
 // 以真实 C DLL 递归消费嵌套事件，保留叶字段仍需承担原事件及读取预算。
@@ -100,6 +151,7 @@ int wmain(int argc, wchar_t** argv) {
         reader->close(dfy::events::CloseMode::cancel); host.advance(); refs.release(receiver, nullptr);
         check(!host.references() && !host.resources(), "nested host leaked");
         presence(*bootstrap);
+        arrays(*bootstrap);
         std::cout << "Versioned C nested checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
