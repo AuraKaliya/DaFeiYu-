@@ -64,6 +64,12 @@ target_link_libraries(dfy_event_store_tests PRIVATE dfy_event_streams dfy_build_
 set_target_properties(dfy_event_store_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/event_store.cpp")
 
+# 验证独立订阅队列、两种关闭及读出事件的持有责任。
+add_executable(dfy_subscription_queue_tests subscription_queue.cpp)
+target_link_libraries(dfy_subscription_queue_tests PRIVATE dfy_event_streams dfy_build_options)
+set_target_properties(dfy_subscription_queue_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/subscription_queue.cpp")
+
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
@@ -190,6 +196,8 @@ add_test(NAME runtime.resources COMMAND dfy_runtime_resources_tests)
 set_tests_properties(runtime.resources PROPERTIES TIMEOUT 15)
 add_test(NAME events.store COMMAND dfy_event_store_tests)
 set_tests_properties(events.store PROPERTIES TIMEOUT 15)
+add_test(NAME events.subscription_queue COMMAND dfy_subscription_queue_tests)
+set_tests_properties(events.subscription_queue PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
