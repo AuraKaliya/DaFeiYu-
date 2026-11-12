@@ -10,16 +10,32 @@ dfy_v2_status DFY_V2_CALL retain(dfy_v2_handle source, dfy_v2_handle* output, df
     return detail::boundary(error, [&](auto& host) { *output = detail::abi(host.references.retain(detail::native(source))); return DFY_V2_OK; });
 }
 // 仅释放当前域中的持有引用，跨实例或过期引用由正式注册表拒绝。
+// 步骤：校验引用 → 对通知先归还原生客户端持有 → 释放边界引用。
 dfy_v2_status DFY_V2_CALL release(dfy_v2_handle owned, dfy_v2_error* error) {
-    return detail::boundary(error, [&](auto& host) { host.references.release(detail::native(owned)); return DFY_V2_OK; });
+    return detail::boundary(error, [&](auto& host) {
+        const auto handle = detail::native(owned);
+        if (!handle.empty()) {
+            const auto& object = host.references.get(handle).object;
+            if (const auto* registration = std::get_if<std::shared_ptr<detail::NotificationReference>>(&object)) {
+                host.notifications->release((*registration)->registration);
+            }
+        }
+        host.references.release(handle);
+        return DFY_V2_OK;
+    });
 }
 const dfy_v2_reference_api reference_api = {{sizeof(dfy_v2_reference_api), 1}, retain, release};
 }
 // 保存服务状态，分配失败不形成可绑定的上下文。
 HostServices::HostServices(std::size_t capacity, std::size_t reader_capacity)
     : state_(std::make_shared<detail::HostState>(capacity, reader_capacity)) {}
-// 默认释放控制器持有，活动绑定仍保持当前调用期的状态。
-HostServices::~HostServices() = default;
+// 在已无资源责任时关闭空所有者；活动绑定保持状态，未完成清理不得以析构代替。
+HostServices::~HostServices() {
+    if (!state_->resources.size() && !state_->resources.incoming_uses() && !state_->resources.outgoing_uses()) {
+        state_->resources.stop_accepting();
+        state_->resources.finish_close();
+    }
+}
 // 在当前线程建立嵌套绑定，拒绝错误线程后不改动绑定栈。
 // 步骤：保持宿主状态 → 核对创建线程 → 保存并替换当前绑定。
 HostServices::Binding::Binding(std::shared_ptr<detail::HostState> state) : state_(std::move(state)) {
@@ -70,6 +86,24 @@ void HostServices::advance() {
     state_->require_owner();
     for (const auto& reader : state_->readers) if (reader) { reader->advance(); reader->collect(); }
 }
+// 在完整分配成功后绑定代码与通知池，不替换已有消费者入口。
+// 步骤：核对线程及配置 → 构造通知池 → 转交代码持有和池。
+void HostServices::enable_notifications(platform::CodeLease code, std::size_t capacity) {
+    state_->require_owner();
+    if (!code || state_->notifications) throw std::invalid_argument("host: live code and fresh notification configuration required");
+    auto notifications = std::make_unique<runtime::CompletionNotifications>(capacity);
+    state_->code = std::move(code);
+    state_->notifications = std::move(notifications);
+}
+// 显式安排一项通知，未启用时没有待调度能力。
+runtime::ScheduleResult HostServices::schedule_one(runtime::FifoExecutor& executor) {
+    state_->require_owner();
+    return state_->notifications ? state_->notifications->schedule_one(executor) : runtime::ScheduleResult::idle;
+}
+// 返回当前仍承担收尾责任的登记计量。
+std::size_t HostServices::resources() const { state_->require_owner(); return state_->resources.size(); }
+// 暴露清理故障供外层停止流程保留实例与代码。
+bool HostServices::cleanup_failed() const { state_->require_owner(); return state_->cleanup_failed; }
 // 只在当前绑定中提供实际实现的宿主服务，插件静态查询不承担此职责。
 // 步骤：清空输出并校验参数 → 检查绑定 → 精确匹配名称与版本。
 dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t version,
@@ -77,7 +111,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     if (output) *output = nullptr;
     if (error) error->length = 0;
     if (!output || !name.data || !name.length || !version) return DFY_V2_INVALID_ARGUMENT;
-    return detail::boundary(error, [&](auto&) {
+    return detail::boundary(error, [&](auto& host) {
         if (version != 1) return DFY_V2_UNSUPPORTED;
         const std::string_view requested(name.data, name.length);
         if (requested == DFY_V2_REFERENCE_INTERFACE) *output = &reference_api;
@@ -87,6 +121,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_READER_INTERFACE) *output = &detail::reader_api();
         else if (requested == DFY_V2_OPERATION_STATE_INTERFACE) *output = &detail::operation_api();
         else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();
+        else if (requested == DFY_V2_OPERATION_NOTIFY_INTERFACE && host.notifications) *output = &detail::notification_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

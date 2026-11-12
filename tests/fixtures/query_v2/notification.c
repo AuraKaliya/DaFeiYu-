@@ -6,6 +6,7 @@ static void DFY_V2_CALL completed(void* user, dfy_v2_handle operation) {
     dfy_test_notify_context* context = (dfy_test_notify_context*)user;
     if (!context) return;
     ++context->calls;
+    if (context->probe) context->probe(context->probe_user);
     if (context->sequence) context->observed_order = ++*context->sequence;
     context->revoke_status = context->notifications->revoke(context->registration, 0);
     context->retain_status = context->references->retain(operation, &context->retained, 0);

@@ -3,17 +3,20 @@
 #include <dafeiyu/handle_registry.hpp>
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
+#include <dafeiyu/resource_owner.hpp>
 #include <thread>
 #include <variant>
 
 namespace dfy::plugins::detail {
+struct NotificationReference { runtime::Handle registration; };
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
-    std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>>;
+    std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>,
+    std::shared_ptr<NotificationReference>>;
 struct HostReference { HostObject object; };
-struct HostState {
+struct HostState : std::enable_shared_from_this<HostState> {
     // 建立本上下文独立引用域并固定宿主线程。
     HostState(std::size_t capacity, std::size_t reader_capacity)
-        : references(capacity), owner(std::this_thread::get_id()), readers(reader_capacity) {}
+        : references(capacity), owner(std::this_thread::get_id()), readers(reader_capacity), resources(capacity) {}
     // 拒绝从其他线程直接操作状态，C 服务由线程绑定进一步隔离。
     void require_owner() const {
         if (owner != std::this_thread::get_id()) throw std::logic_error("host: wrong thread");
@@ -21,6 +24,10 @@ struct HostState {
     runtime::HandleRegistry<HostReference> references;
     const std::thread::id owner;
     std::vector<std::shared_ptr<events::SubscriptionReader>> readers;
+    runtime::ResourceOwner resources;
+    platform::CodeLease code;
+    std::unique_ptr<runtime::CompletionNotifications> notifications;
+    bool cleanup_failed = false;
 };
 inline thread_local HostState* current_host = nullptr;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。
@@ -50,6 +57,8 @@ const dfy_v2_reader_api& reader_api();
 const dfy_v2_operation_state_api& operation_api();
 // 返回生产读取的协作取消服务。
 const dfy_v2_operation_cancel_api& cancel_api();
+// 返回绑定代码寿命的 C 通知服务。
+const dfy_v2_operation_notify_api& notification_api();
 // 从当前域取得完整读取请求，不能只保留操作状态视图。
 inline std::shared_ptr<events::ReadRequest> request(HostState& host, dfy_v2_handle value) {
     return std::get<std::shared_ptr<events::ReadRequest>>(host.references.get(native(value)).object);

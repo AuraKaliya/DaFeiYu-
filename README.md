@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R06c-1b 生产读请求协作取消已实现
+## 当前进度：R06c-2 生产 C 完成通知与代码寿命已实现
 
 R01 已完成 [ABI v2 最小契约与隔离验收](docs/plugin-abi-v2.md)。R02～R04 已提供宿主类型和值、FIFO、操作与通知、资源归属与使用、DLL 代码持有及活动保护。R05 已加入 [原子广播](events/include/dafeiyu/broadcast_channel.hpp)、[有界订阅与两种关闭](events/include/dafeiyu/subscription_queue.hpp)及 [可取消读请求](events/include/dafeiyu/subscription_reader.hpp)，由宿主显式推进。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 32／32。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R06c-2 C 完成通知与代码寿命，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 33／33。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R06d 订阅创建与关闭，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 

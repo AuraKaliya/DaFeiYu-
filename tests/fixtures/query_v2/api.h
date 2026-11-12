@@ -60,6 +60,9 @@ typedef struct dfy_test_notify_context {
     uint32_t calls, revoke_status, retain_status, spawn_status;
     uint32_t* sequence;
     uint32_t observed_order;
+    // 可选宿主探针仅在 C 回调原生栈内执行，测试上下文须覆盖调用。
+    void (DFY_V2_CALL *probe)(void*);
+    void* probe_user;
 } dfy_test_notify_context;
 typedef struct dfy_test_notify_api {
     dfy_v2_api_header header;

@@ -46,7 +46,7 @@
 
 07b 实现提交：`00a5b0c`（`feat: 完成插件 ABI 查询与兼容性校验`）。当次 Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
 
-**当前进度：R06c-1b 生产读请求协作取消已实现；下一单元为 R06c-2 C 完成通知与代码寿命。** 详细范围与验收见下方阶段记录。
+**当前进度：R06c-2 生产 C 完成通知与代码寿命已实现；下一单元为 R06d 订阅创建与关闭。** 详细范围与验收见下方阶段记录。
 
 R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](plugin-abi-v2.md#验收与下一单元)。
 
@@ -397,6 +397,16 @@ Platform 的 [CodeModule／CodeLease](../platform/include/dafeiyu/code_module.hp
 `dfy.operation.cancel@1` 已适配到完整 ReadRequest，原因、回执及操作状态均显式映射。请求只登记原因，不推进队列或修改终态；后续宿主推进按 R05 规则裁定。无效原因、错误种类和失效引用拒绝并清空输出；重复请求保留首个原因，已经完成返回 AlreadySettled。
 
 本轮起点 `a2c95a8`；Debug／Release 主工程及完整测试构建，两种配置 32／32 CTest 通过，Debug 读取测试调用 Release C DLL 通过。真实 C 消费者覆盖三种原因、错误原因／种类、重复请求、取消先到不消耗事件、迟到取消及结果容量回滚。下一单元 R06c-2 为绑定代码寿命和资源责任的 C 完成通知。
+
+### 3.28 生产 C 完成通知与代码寿命（R06c-2）
+
+宿主通过 `enable_notifications(code, capacity)` 显式绑定插件代码凭证及通知容量后，提供 `dfy.operation.notify@1`；未配置时不发布此能力。每份登记先取得独立 CodeLease、准备 ResourceOwner 记录和完整操作借用，再预留边界引用并调用生产 CompletionNotifications；任一步失败回收本次全部责任。登记不可共享，客户端 release 只归还原生客户端引用，不撤销待交付工作。
+
+宿主显式 schedule_one/FIFO 推进。每次 C 回调重新建立正确宿主 Binding 和 CodeCall，C 借用句柄保持完整 ReadRequest，可显式 retain；原生入口返回后才结束活动保护。捕获退出同时释放操作借用、完成资源清理和代码持有；清理契约违约单独记录 cleanup_failed，不从析构传播异常，也不能据此强制释放实例。宿主须在销毁服务前完成注册清理，析构只在所有者已空时关闭其记录。
+
+撤销排队项清空消费者入口，后续 FIFO 包装仅跳过；C 回调自撤销返回 Busy。回调中新登记仍由后续推进执行。普通数据引用不成为代码持有，通知回收与读取取消仍相互独立。
+
+本轮起点 `09d3af7`；Debug／Release 主工程及完整测试构建，两种配置 33／33 CTest 通过，Debug 通知测试调用 Release C DLL 通过。真实 C 回调验证上下文、活动 Busy、子登记、容量失败回滚、排队撤销、客户端释放后交付、完整请求保留及最终资源／引用回收。下一单元 R06d 为订阅创建、关闭与实例服务收尾入口。
 
 ## 4. 基础契约与接口演进
 

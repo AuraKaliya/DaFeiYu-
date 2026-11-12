@@ -3,11 +3,13 @@
 #include <dafeiyu/struct_descriptor.hpp>
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/subscription_reader.hpp>
+#include <dafeiyu/completion_notifications.hpp>
+#include <dafeiyu/code_module.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
 #include <memory>
 
 namespace dfy::plugins {
-namespace detail { struct HostState; }
+namespace detail { struct HostState; struct CallbackSupport; }
 // 宿主线程内的服务上下文；通过作用域绑定调用方，不向 DLL 暴露 C++ 对象。
 class HostServices {
   public:
@@ -21,6 +23,7 @@ class HostServices {
         Binding& operator=(const Binding&) = delete;
       private:
         friend class HostServices;
+        friend struct detail::CallbackSupport;
         // 核对线程后绑定上下文，并保持本次调用所需的宿主状态。
         explicit Binding(std::shared_ptr<detail::HostState> state);
         std::shared_ptr<detail::HostState> state_;
@@ -46,6 +49,14 @@ class HostServices {
     dfy_v2_handle expose(std::shared_ptr<events::SubscriptionReader> reader);
     // 在数据或取消变化后推进所有本实例读取，并回收已无客户端的终结结果。
     void advance();
+    // 为本实例启用有界 C 通知，代码凭证须属于该插件，禁止重复配置。
+    void enable_notifications(platform::CodeLease code, std::size_t capacity);
+    // 将一项就绪通知排入宿主 FIFO，不内联调用 C 消费者。
+    runtime::ScheduleResult schedule_one(runtime::FifoExecutor& executor);
+    // 返回仍需清理的宿主登记数量，普通数据引用不计入。
+    std::size_t resources() const;
+    // 返回已记录的清理契约失败，不能据此强制释放实例。
+    bool cleanup_failed() const;
     // 返回本上下文当前持有引用数，不计其他宿主上下文。
     std::size_t references() const;
     // 在有效绑定中查询已实现宿主能力，失败清空输出且异常不跨 C ABI。
