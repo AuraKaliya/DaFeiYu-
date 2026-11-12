@@ -44,6 +44,12 @@ dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructDescript
     if (!descriptor) throw std::invalid_argument("host: descriptor required");
     return detail::abi(state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{std::move(descriptor)})));
 }
+// 登记非空结构载荷，保持其字段与描述的宿主所有权。
+dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructValue> value) {
+    state_->require_owner();
+    if (!value) throw std::invalid_argument("host: structure required");
+    return detail::store_object(*state_, std::move(value));
+}
 // 只在当前绑定中提供实际实现的宿主服务，插件静态查询不承担此职责。
 // 步骤：清空输出并校验参数 → 检查绑定 → 精确匹配名称与版本。
 dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t version,
@@ -56,6 +62,8 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         const std::string_view requested(name.data, name.length);
         if (requested == DFY_V2_REFERENCE_INTERFACE) *output = &reference_api;
         else if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api();
+        else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api();
+        else if (requested == DFY_V2_STRUCT_INTERFACE) *output = &detail::struct_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

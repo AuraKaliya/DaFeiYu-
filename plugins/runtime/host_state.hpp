@@ -6,7 +6,8 @@
 #include <variant>
 
 namespace dfy::plugins::detail {
-using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>>;
+using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
+    std::shared_ptr<const runtime::StructValue>>;
 struct HostReference { HostObject object; };
 struct HostState {
     // 建立本上下文独立引用域并固定宿主线程。
@@ -23,6 +24,10 @@ inline thread_local HostState* current_host = nullptr;
 inline runtime::Handle native(dfy_v2_handle value) noexcept { return {value.domain, value.id, value.generation}; }
 // 将宿主引用身份复制为固定 C 表示。
 inline dfy_v2_handle abi(runtime::Handle value) noexcept { return {value.domain, value.id, value.generation}; }
+// 为已确认非空的宿主对象建立独立引用，异常由调用边界处理。
+inline dfy_v2_handle store_object(HostState& host, HostObject object) {
+    return abi(host.references.insert(std::make_shared<HostReference>(HostReference{std::move(object)})));
+}
 // 从已验证引用借用精确种类的宿主数据，不延长来源引用。
 template<class T>
 const T& object(HostState& host, dfy_v2_handle source) {
@@ -32,6 +37,10 @@ const T& object(HostState& host, dfy_v2_handle source) {
 uint32_t value_kind(runtime::ValueKind kind);
 // 返回只读静态类型服务，实际访问仍需要宿主绑定。
 const dfy_v2_type_api& type_api();
+// 返回只读基础值服务表。
+const dfy_v2_value_api& value_api();
+// 返回只读结构载荷服务表。
+const dfy_v2_struct_api& struct_api();
 
 // 捕获宿主异常并统一转换调用状态，错误缓冲不回显内部文本。
 // 步骤：清空错误 → 检查调用上下文 → 执行能力逻辑 → 按错误类别映射。

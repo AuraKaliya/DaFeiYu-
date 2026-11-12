@@ -8,6 +8,7 @@
 #define DFY_TEST_NOTIFY_ID "test.notification"
 #define DFY_TEST_HOST_ID "test.host"
 #define DFY_TEST_TYPES_ID "test.host_types"
+#define DFY_TEST_VALUES_ID "test.host_values"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +79,12 @@ typedef struct dfy_test_types_api {
         uint32_t* kinds, dfy_v2_error* error);
 } dfy_test_types_api;
 extern const dfy_test_types_api dfy_test_types;
+typedef struct dfy_test_values_api {
+    dfy_v2_api_header header;
+    // 反射读取六种测试值并释放全部中间引用，不预编译结构名称或字段顺序。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, dfy_v2_error* error);
+} dfy_test_values_api;
+extern const dfy_test_values_api dfy_test_values;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

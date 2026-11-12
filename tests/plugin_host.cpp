@@ -7,6 +7,9 @@
 static_assert(sizeof(dfy_v2_type_info) == 32 && alignof(dfy_v2_type_info) == 8 && offsetof(dfy_v2_type_info, field_count) == 24);
 static_assert(sizeof(dfy_v2_field_info) == 32 && alignof(dfy_v2_field_info) == 8 && offsetof(dfy_v2_field_info, max_bytes) == 24);
 static_assert(sizeof(dfy_v2_type_api) == 24 && offsetof(dfy_v2_type_api, field) == 16);
+static_assert(sizeof(dfy_v2_value_data) == 16 && alignof(dfy_v2_value_data) == 8);
+static_assert(sizeof(dfy_v2_value_view) == 24 && offsetof(dfy_v2_value_view, data) == 8);
+static_assert(sizeof(dfy_v2_value_api) == 16 && sizeof(dfy_v2_struct_api) == 24);
 
 namespace {
 using namespace dfy::plugins;
@@ -57,6 +60,54 @@ void verify_types(const dfy_v2_plugin_api& bootstrap) {
     check(consumer->inspect(HostServices::query, owned, &kinds, nullptr) == DFY_V2_OK && kinds == 126, "retained descriptor lost");
     refs->release(owned, nullptr); refs->release(value, nullptr);
     check(lifetime.expired() && !host.references(), "description reference leaked");
+}
+// 验证纯 C 读取精确值，以及字段引用独立保持父载荷后的借用寿命。
+// 步骤：构造六种值 → 由 C 消费者读取 → 验证错误与容量 → 释放父引用后重新借用字段并回收。
+void verify_values(const dfy_v2_plugin_api& bootstrap) {
+    using namespace dfy::runtime;
+    const FieldDescriptor fields[] = {{"a", ValueKind::boolean, 0}, {"b", ValueKind::int64, 0},
+        {"c", ValueKind::uint64, 0}, {"d", ValueKind::float64, 0}, {"e", ValueKind::string, 3}, {"f", ValueKind::bytes, 3}};
+    auto descriptor = std::make_shared<const StructDescriptor>(StructDescriptor::create("other.record", 1, fields, {6, 64}));
+    const uint8_t binary[]{0, 255, 128};
+    const NamedValue input[] = {{"a", Value::from_bool(true)}, {"b", Value::from_int64(INT64_MIN)},
+        {"c", Value::from_uint64(UINT64_MAX)}, {"d", Value::from_float64(1.25)},
+        {"e", Value::from_string(std::string("A\0B", 3), 3)}, {"f", Value::from_bytes(binary, 3)}};
+    auto payload = std::make_shared<const StructValue>(StructValue::create(descriptor, input, 31));
+    const std::weak_ptr<const StructValue> lifetime = payload;
+    descriptor.reset();
+    HostServices host(4);
+    const auto root = host.expose(payload);
+    payload.reset();
+    auto binding = host.bind();
+    const void* table = nullptr;
+    check(bootstrap.query_interface({DFY_TEST_VALUES_ID, sizeof(DFY_TEST_VALUES_ID) - 1}, 1, &table, nullptr) == DFY_V2_OK,
+        "missing value consumer");
+    const auto* consumer = static_cast<const dfy_test_values_api*>(table);
+    check(consumer && consumer->header.struct_size == sizeof(*consumer) && consumer->header.interface_version == 1 &&
+        consumer->inspect && consumer->inspect(HostServices::query, root, nullptr) == DFY_V2_OK && host.references() == 1,
+        "C value read or cleanup failed");
+    HostServices::query({DFY_V2_STRUCT_INTERFACE, sizeof(DFY_V2_STRUCT_INTERFACE) - 1}, 1, &table, nullptr);
+    const auto* structures = static_cast<const dfy_v2_struct_api*>(table);
+    HostServices::query({DFY_V2_VALUE_INTERFACE, sizeof(DFY_V2_VALUE_INTERFACE) - 1}, 1, &table, nullptr);
+    const auto* values = static_cast<const dfy_v2_value_api*>(table);
+    HostServices::query({DFY_V2_REFERENCE_INTERFACE, sizeof(DFY_V2_REFERENCE_INTERFACE) - 1}, 1, &table, nullptr);
+    const auto* refs = static_cast<const dfy_v2_reference_api*>(table);
+    dfy_v2_handle type{}, field{}, retained{}, rejected{};
+    dfy_v2_value_view view{};
+    check(values->read(root, &view, nullptr) == DFY_V2_INVALID_ARGUMENT && !view.kind, "structure read as primitive");
+    check(structures->field(root, UINT64_MAX, &rejected, nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id, "field index accepted");
+    check(structures->descriptor(root, &type, nullptr) == DFY_V2_OK && structures->field(root, 4, &field, nullptr) == DFY_V2_OK &&
+        refs->retain(field, &retained, nullptr) == DFY_V2_OK, "independent field references failed");
+    check(structures->field(root, 0, &rejected, nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !rejected.id && host.references() == 4,
+        "field capacity failure changed references");
+    refs->release(root, nullptr); refs->release(field, nullptr);
+    check(!lifetime.expired() && values->read(field, &view, nullptr) == DFY_V2_INVALID_HANDLE && !view.kind, "field identity reused");
+    check(values->read(retained, &view, nullptr) == DFY_V2_OK && view.kind == DFY_V2_VALUE_STRING &&
+        std::string_view(view.data.string.data, view.data.string.length) == std::string_view("A\0B", 3), "retained field lost payload");
+    refs->release(retained, nullptr);
+    check(lifetime.expired() && host.references() == 1, "descriptor unnecessarily held payload");
+    refs->release(type, nullptr);
+    check(!host.references(), "value references leaked");
 }
 }
 
@@ -115,6 +166,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         check(references->release(owned, nullptr) == DFY_V2_INVALID_CONTEXT && !lifetime.expired(), "scope leaked binding");
         verify_types(*bootstrap);
+        verify_values(*bootstrap);
         library.close();
         {
             auto binding = host.bind();
