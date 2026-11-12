@@ -7,6 +7,7 @@ struct PackingProbe { char tag; uint64_t value; };
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <dafeiyu/map_value.hpp>
 static_assert(sizeof(PackingProbe) == 9 && sizeof(dfy_observer_stats) == 112 && alignof(dfy_observer_stats) == 8);
 namespace {
 using namespace dfy::plugins;
@@ -60,6 +61,72 @@ void drain(PluginInstance& instance, FifoExecutor& executor) {
         if (result == RunResult::idle) return;
     }
     throw std::runtime_error("observer did not yield");
+}
+// 构造含嵌套结构、可空容器、缺失字段与显式空值的事件。
+// 步骤：创建子结构 → 创建标量容器 → 组装根字段并核定预算。
+std::shared_ptr<const StructValue> composite_value() {
+    const FieldDescriptor child_fields[] = {{"text", ValueKind::string, 3}, {"absent", ValueKind::uint64, 0, {}, true}};
+    const auto child_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.child", 1, child_fields, {2, 128}));
+    const NamedValue child_values[] = {{"text", Value::from_string(std::string("A\0B", 3), 3)}};
+    const auto child = std::make_shared<const StructValue>(StructValue::create(child_type, child_values, 3));
+
+    const auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::uint64, 3, 0, true));
+    const Value elements[] = {Value::from_uint64(1), Value::null(), Value::from_uint64(UINT64_MAX)};
+    const auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type, elements, 16));
+    const auto map_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::string, 2, 1, 3, true));
+    const MapEntry entries[] = {{"x", Value::from_string("字", 3)}, {"", Value::null()}};
+    const auto map = std::make_shared<const MapValue>(MapValue::create(map_type, entries, 4));
+
+    const FieldDescriptor fields[] = {{"nested", ValueKind::structure, 0, child_type}, FieldDescriptor::array_field("array", array_type),
+        FieldDescriptor::map_field("map", map_type), {"nil", ValueKind::string, 0, {}, false, true}, {"missing", ValueKind::bytes, 0, {}, true}};
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.composite", 1, fields, {7, 256, 2}));
+    const NamedValue values[] = {{"nested", Value::from_structure(child)}, {"array", Value::from_array(array)},
+        {"map", Value::from_map(map)}, {"nil", Value::null()}};
+    return std::make_shared<const StructValue>(StructValue::create(type, values, 23, 13));
+}
+// 验证实际 DLL 消费全部当前组合分类，并在遍历数量或深度超限时关闭自身。
+// 步骤：消费组合事件 → 构造数量与深度边界 → 验证失败回收和实际卸载。
+void composites(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8, 8192);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store, 2, 1);
+    FifoExecutor executor(2);
+    {
+        PluginInstance instance(manifest, data, channel);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK, "composite observer setup failed");
+        channel->publish(composite_value()); drain(instance, executor);
+        const auto observed = statistics(instance);
+        check(observed.events == 1 && observed.fields == 5 && observed.bytes == 7 && observed.kinds == 1960 &&
+            observed.last_uint64 == UINT64_MAX && !observed.failures && !store->references(), "composite event lost semantics or retained data");
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()), "composite observer remains loaded");
+    }
+
+    std::vector<FieldDescriptor> wide_fields;
+    std::vector<NamedValue> wide_values;
+    for (unsigned i = 0; i < 4100; ++i) {
+        auto name = "f" + std::to_string(i);
+        wide_fields.push_back({name, ValueKind::boolean, 0}); wide_values.push_back({std::move(name), Value::from_bool(true)});
+    }
+    const auto wide_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.wide", 1, wide_fields, {4100, 65536}));
+    const auto wide = std::make_shared<const StructValue>(StructValue::create(wide_type, wide_values, 4100));
+    const FieldDescriptor leaf_fields[] = {{"flag", ValueKind::boolean, 0}};
+    const auto leaf_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.leaf", 1, leaf_fields, {1, 128}));
+    const NamedValue leaf_values[] = {{"flag", Value::from_bool(true)}};
+    auto deep = std::make_shared<const StructValue>(StructValue::create(leaf_type, leaf_values, 1));
+    for (unsigned i = 0; i < 33; ++i) {
+        const FieldDescriptor fields[] = {{"child", ValueKind::structure, 0, deep->descriptor()}};
+        const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.level" + std::to_string(i), 1, fields, {64, 2048, 64}));
+        const NamedValue values[] = {{"child", Value::from_structure(deep)}};
+        deep = std::make_shared<const StructValue>(StructValue::create(type, values, 1));
+    }
+    for (const auto& payload : {wide, deep}) {
+        InstanceLimits limits; limits.references = 256;
+        PluginInstance instance(manifest, data, channel, limits);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK, "bounded observer setup failed");
+        channel->publish(payload); drain(instance, executor);
+        const auto observed = statistics(instance);
+        check(observed.failures == 1 && !observed.events && !channel->size() && !store->references(), "bounded observer retained failed delivery");
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()), "bounded observer remains loaded");
+    }
 }
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
@@ -180,6 +247,7 @@ int wmain(int argc, wchar_t** argv) {
         reload(manifest, argv[2], channel, store);
         cancellation(manifest, channel, store);
         failures(manifest, argv[2], channel, store);
+        composites(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

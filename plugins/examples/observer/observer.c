@@ -10,9 +10,11 @@ struct dfy_v2_instance {
     const dfy_v2_reader_api* reads;
     const dfy_v2_operation_notify_api* notifications;
     const dfy_v2_operation_cancel_api* cancels;
-    const dfy_v2_type_api* types;
-    const dfy_v2_struct_api* structures;
-    const dfy_v2_value_api* values;
+    const dfy_v2_type_api_v2* types;
+    const dfy_v2_struct_api_v2* structures;
+    const dfy_v2_value_api_v2* values;
+    const dfy_v2_array_api* arrays;
+    const dfy_v2_map_api* maps;
     dfy_v2_handle reader, request, notification;
     uint32_t started, stopping, in_callback;
 };
@@ -36,13 +38,13 @@ static int empty_config(dfy_v2_string_view text) {
     return index == text.length;
 }
 // 查询并核对精确版本的宿主表，失败不读取或保存返回指针。
-static const void* service(dfy_v2_query_interface_fn query, const char* name, uint32_t size) {
+static const void* service(dfy_v2_query_interface_fn query, const char* name, uint32_t size, uint32_t version) {
     const dfy_v2_string_view id = {name, (uint64_t)strlen(name)};
     const void* table = 0;
     const dfy_v2_api_header* header;
-    if (query(id, 1, &table, 0)) return 0;
+    if (query(id, version, &table, 0)) return 0;
     header = (const dfy_v2_api_header*)table;
-    return header && header->struct_size == size && header->interface_version == 1 ? table : 0;
+    return header && header->struct_size == size && header->interface_version == version ? table : 0;
 }
 // 释放一份插件持有，仅成功时清空本地标识，允许停止重试。
 static dfy_v2_status release(dfy_v2_instance* instance, dfy_v2_handle* handle) {
@@ -51,7 +53,7 @@ static dfy_v2_status release(dfy_v2_instance* instance, dfy_v2_handle* handle) {
     return status;
 }
 // 仅按宿主报告的基础种类读取统计，不预编译事件名或字段布局。
-static dfy_v2_status inspect_value(const dfy_v2_value_view* value) {
+static dfy_v2_status inspect_scalar(const dfy_v2_value_view* value) {
     if (value->kind < DFY_V2_VALUE_BOOL || value->kind > DFY_V2_VALUE_BYTES || value->reserved) return DFY_V2_UNSUPPORTED;
     statistics.kinds |= UINT32_C(1) << value->kind;
     switch (value->kind) {
@@ -64,29 +66,128 @@ static dfy_v2_status inspect_value(const dfy_v2_value_view* value) {
     }
     return DFY_V2_OK;
 }
-// 反射读取完整事件并归还中间引用，观察失败不会回写生产者载荷。
-// 步骤：取得载荷及描述 → 枚举并读取字段 → 归还所有持有 → 记录事件身份。
-static dfy_v2_status inspect(dfy_v2_instance* instance, dfy_v2_handle request, const dfy_v2_read_result* result) {
-    dfy_v2_handle payload = {0}, type = {0};
+// 预声明已分类值的有界消费，组合内容使用对应专用能力。
+static dfy_v2_status inspect_any(dfy_v2_instance* instance, dfy_v2_handle value, const dfy_v2_value_view* view, uint32_t depth, uint32_t* remaining);
+// 反射结构字段，缺失、null 和实际内容分别处理，不假设字段名或布局。
+// 步骤：检查预算 → 读取描述 → 按约束读取字段 → 递归消费并归还持有。
+static dfy_v2_status inspect_structure(dfy_v2_instance* instance, dfy_v2_handle payload, uint32_t depth, uint32_t* remaining) {
+    dfy_v2_handle type = {0};
     dfy_v2_type_info info = {0};
-    dfy_v2_status status = instance->reads->payload(request, &payload, 0);
+    dfy_v2_status status;
     uint64_t index;
-    if (status) return status;
+    if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
+    --*remaining;
+
     status = instance->structures->descriptor(payload, &type, 0);
     if (!status) status = instance->types->describe(type, &info, 0);
     if (!status && (!info.name.data || !info.name.length || !info.contract_version || info.reserved)) status = DFY_V2_FAILED;
+    if (!status && info.field_count > *remaining) status = DFY_V2_RESOURCE_EXHAUSTED;
+
     for (index = 0; !status && index < info.field_count; ++index) {
         dfy_v2_handle field = {0};
-        dfy_v2_field_info description = {0};
+        dfy_v2_field_info_v2 description = {0};
         dfy_v2_value_view value = {0};
+        int present = 0;
+        if (!*remaining) { status = DFY_V2_RESOURCE_EXHAUSTED; break; }
+        --*remaining;
         status = instance->types->field(type, index, &description, 0);
+        if (!status && (description.kind < DFY_V2_VALUE_BOOL || description.kind > DFY_V2_VALUE_MAP || description.kind == DFY_V2_VALUE_NULL ||
+            (description.flags & ~(DFY_V2_FIELD_OPTIONAL | DFY_V2_FIELD_NULLABLE)))) status = DFY_V2_UNSUPPORTED;
+
         if (!status) status = instance->structures->field(payload, index, &field, 0);
-        if (!status) status = instance->values->read(field, &value, 0);
-        if (!status) status = value.kind == description.kind ? inspect_value(&value) : DFY_V2_FAILED;
+        if (status == DFY_V2_NOT_FOUND && (description.flags & DFY_V2_FIELD_OPTIONAL)) status = DFY_V2_OK;
+        else if (!status) {
+            present = 1;
+            status = instance->values->read(field, &value, 0);
+            if (!status && value.kind != description.kind && !(value.kind == DFY_V2_VALUE_NULL && (description.flags & DFY_V2_FIELD_NULLABLE))) status = DFY_V2_FAILED;
+            if (!status) status = inspect_any(instance, field, &value, depth - 1, remaining);
+        }
+
         if (release(instance, &field) && !status) status = DFY_V2_FAILED;
-        if (!status) add(&statistics.fields, 1);
+        if (!status && present) add(&statistics.fields, 1);
     }
+
     if (release(instance, &type) && !status) status = DFY_V2_FAILED;
+    return status;
+}
+// 按实际数量消费标量数组，null 元素仍占访问预算。
+// 步骤：核对数组与预算 → 逐项读取 → 按元素约束消费并归还。
+static dfy_v2_status inspect_array(dfy_v2_instance* instance, dfy_v2_handle array, uint32_t depth, uint32_t* remaining) {
+    dfy_v2_array_info info = {0};
+    dfy_v2_status status;
+    uint64_t index;
+    if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
+    --*remaining;
+
+    status = instance->arrays->describe(array, &info, 0);
+    if (!status && (info.type.element_kind < DFY_V2_VALUE_BOOL || info.type.element_kind > DFY_V2_VALUE_BYTES ||
+        (info.type.element_flags & ~DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_UNSUPPORTED;
+    if (!status && (info.size > info.type.max_elements || info.size > *remaining)) status = DFY_V2_RESOURCE_EXHAUSTED;
+
+    for (index = 0; !status && index < info.size; ++index) {
+        dfy_v2_handle element = {0}; dfy_v2_value_view value = {0};
+        --*remaining;
+        status = instance->arrays->element(array, index, &element, 0);
+        if (!status) status = instance->values->read(element, &value, 0);
+        if (!status && value.kind != info.type.element_kind && !(value.kind == DFY_V2_VALUE_NULL && (info.type.element_flags & DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_FAILED;
+        if (!status) status = inspect_any(instance, element, &value, depth - 1, remaining);
+
+        if (release(instance, &element) && !status) status = DFY_V2_FAILED;
+    }
+    return status;
+}
+// 按确定顺序消费映射，动态键计入观察正文长度。
+// 步骤：核对约束与预算 → 取得借用键和独立值 → 消费并归还。
+static dfy_v2_status inspect_map(dfy_v2_instance* instance, dfy_v2_handle map, uint32_t depth, uint32_t* remaining) {
+    dfy_v2_map_info info = {0}; dfy_v2_status status; uint64_t index;
+    if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
+    --*remaining;
+
+    status = instance->maps->describe(map, &info, 0);
+    if (!status && (info.type.value_kind < DFY_V2_VALUE_BOOL || info.type.value_kind > DFY_V2_VALUE_BYTES ||
+        (info.type.value_flags & ~DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_UNSUPPORTED;
+    if (!status && (info.size > info.type.max_entries || info.size > *remaining)) status = DFY_V2_RESOURCE_EXHAUSTED;
+
+    for (index = 0; !status && index < info.size; ++index) {
+        dfy_v2_handle element = {0}; dfy_v2_string_view key = {0}; dfy_v2_value_view value = {0};
+        --*remaining;
+        status = instance->maps->entry(map, index, &key, &element, 0);
+        if (!status && ((key.length && !key.data) || key.length > info.type.max_key_bytes)) status = DFY_V2_FAILED;
+        if (!status) status = instance->values->read(element, &value, 0);
+        if (!status && value.kind != info.type.value_kind && !(value.kind == DFY_V2_VALUE_NULL && (info.type.value_flags & DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_FAILED;
+        if (!status) status = inspect_any(instance, element, &value, depth - 1, remaining);
+        if (!status) add(&statistics.bytes, key.length);
+
+        if (release(instance, &element) && !status) status = DFY_V2_FAILED;
+    }
+    return status;
+}
+// 按已实现分类分派，不把未知类型或非零组合数据解释为标量。
+// 步骤：核对分类与保留区 → 按种类读取标量或组合内容 → 归还临时结构引用。
+static dfy_v2_status inspect_any(dfy_v2_instance* instance, dfy_v2_handle value, const dfy_v2_value_view* view, uint32_t depth, uint32_t* remaining) {
+    if (view->kind <= DFY_V2_VALUE_BYTES) return inspect_scalar(view);
+    if (view->kind > DFY_V2_VALUE_MAP || view->reserved || view->data.uint64 || view->data.bytes.length) return DFY_V2_UNSUPPORTED;
+    statistics.kinds |= UINT32_C(1) << view->kind;
+
+    if (view->kind == DFY_V2_VALUE_NULL) return DFY_V2_OK;
+    if (view->kind == DFY_V2_VALUE_ARRAY) return inspect_array(instance, value, depth, remaining);
+    if (view->kind == DFY_V2_VALUE_MAP) return inspect_map(instance, value, depth, remaining);
+    if (view->kind == DFY_V2_VALUE_STRUCTURE) {
+        dfy_v2_handle child = {0};
+        dfy_v2_status status = instance->values->structure(value, &child, 0);
+        if (!status) status = inspect_structure(instance, child, depth, remaining);
+        if (release(instance, &child) && !status) status = DFY_V2_FAILED;
+        return status;
+    }
+    return DFY_V2_UNSUPPORTED;
+}
+// 在独立消费预算内反射事件，任何失败都会由回调关闭自己的接收方。
+// 步骤：取得载荷 → 有界递归消费 → 归还载荷 → 记录完整事件。
+static dfy_v2_status inspect(dfy_v2_instance* instance, dfy_v2_handle request, const dfy_v2_read_result* result) {
+    dfy_v2_handle payload = {0}; uint32_t remaining = 4096;
+    dfy_v2_status status = instance->reads->payload(request, &payload, 0);
+    if (!status) status = inspect_structure(instance, payload, 32, &remaining);
+
     if (release(instance, &payload) && !status) status = DFY_V2_FAILED;
     if (!status) { add(&statistics.events, 1); statistics.last_domain = result->event_domain; statistics.last_sequence = result->event_sequence; }
     return status;
@@ -131,20 +232,24 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     if (!output || !host || !empty_config(config)) return report(DFY_V2_INVALID_ARGUMENT, error);
     instance = (dfy_v2_instance*)calloc(1, sizeof(*instance));
     if (!instance) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
-    instance->refs = (const dfy_v2_reference_api*)service(host, DFY_V2_REFERENCE_INTERFACE, sizeof(dfy_v2_reference_api));
-    instance->subscriptions = (const dfy_v2_subscription_api*)service(host, DFY_V2_SUBSCRIPTION_INTERFACE, sizeof(dfy_v2_subscription_api));
-    instance->reads = (const dfy_v2_reader_api*)service(host, DFY_V2_READER_INTERFACE, sizeof(dfy_v2_reader_api));
-    instance->notifications = (const dfy_v2_operation_notify_api*)service(host, DFY_V2_OPERATION_NOTIFY_INTERFACE, sizeof(dfy_v2_operation_notify_api));
-    instance->cancels = (const dfy_v2_operation_cancel_api*)service(host, DFY_V2_OPERATION_CANCEL_INTERFACE, sizeof(dfy_v2_operation_cancel_api));
-    instance->types = (const dfy_v2_type_api*)service(host, DFY_V2_TYPE_INTERFACE, sizeof(dfy_v2_type_api));
-    instance->structures = (const dfy_v2_struct_api*)service(host, DFY_V2_STRUCT_INTERFACE, sizeof(dfy_v2_struct_api));
-    instance->values = (const dfy_v2_value_api*)service(host, DFY_V2_VALUE_INTERFACE, sizeof(dfy_v2_value_api));
+    instance->refs = (const dfy_v2_reference_api*)service(host, DFY_V2_REFERENCE_INTERFACE, sizeof(dfy_v2_reference_api), 1);
+    instance->subscriptions = (const dfy_v2_subscription_api*)service(host, DFY_V2_SUBSCRIPTION_INTERFACE, sizeof(dfy_v2_subscription_api), 1);
+    instance->reads = (const dfy_v2_reader_api*)service(host, DFY_V2_READER_INTERFACE, sizeof(dfy_v2_reader_api), 1);
+    instance->notifications = (const dfy_v2_operation_notify_api*)service(host, DFY_V2_OPERATION_NOTIFY_INTERFACE, sizeof(dfy_v2_operation_notify_api), 1);
+    instance->cancels = (const dfy_v2_operation_cancel_api*)service(host, DFY_V2_OPERATION_CANCEL_INTERFACE, sizeof(dfy_v2_operation_cancel_api), 1);
+    instance->types = (const dfy_v2_type_api_v2*)service(host, DFY_V2_TYPE_INTERFACE, sizeof(dfy_v2_type_api_v2), 2);
+    instance->structures = (const dfy_v2_struct_api_v2*)service(host, DFY_V2_STRUCT_INTERFACE, sizeof(dfy_v2_struct_api_v2), 2);
+    instance->values = (const dfy_v2_value_api_v2*)service(host, DFY_V2_VALUE_INTERFACE, sizeof(dfy_v2_value_api_v2), 2);
+    instance->arrays = (const dfy_v2_array_api*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api), 1);
+    instance->maps = (const dfy_v2_map_api*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api), 1);
     if (!instance->refs || !instance->subscriptions || !instance->reads || !instance->notifications || !instance->cancels ||
-        !instance->types || !instance->structures || !instance->values || !instance->refs->retain || !instance->refs->release ||
+        !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->refs->retain || !instance->refs->release ||
         !instance->subscriptions->subscribe || !instance->subscriptions->close || !instance->subscriptions->read || !instance->reads->next || !instance->reads->result ||
         !instance->reads->payload || !instance->notifications->subscribe || !instance->notifications->revoke || !instance->notifications->read ||
         !instance->cancels->request || !instance->cancels->read ||
-        !instance->types->describe || !instance->types->field || !instance->structures->descriptor || !instance->structures->field || !instance->values->read) {
+        !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
+        !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element ||
+        !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find) {
         free(instance); return report(DFY_V2_UNSUPPORTED, error);
     }
     *output = instance; add(&statistics.created, 1);
