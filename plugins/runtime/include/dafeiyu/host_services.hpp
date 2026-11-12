@@ -3,6 +3,7 @@
 #include <dafeiyu/struct_descriptor.hpp>
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/subscription_reader.hpp>
+#include <dafeiyu/broadcast_channel.hpp>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
@@ -49,6 +50,8 @@ class HostServices {
     dfy_v2_handle expose(std::shared_ptr<events::SubscriptionReader> reader);
     // 在数据或取消变化后推进所有本实例读取，并回收已无客户端的终结结果。
     void advance();
+    // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。
+    void enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity);
     // 为本实例启用有界 C 通知，代码凭证须属于该插件，禁止重复配置。
     void enable_notifications(platform::CodeLease code, std::size_t capacity);
     // 将一项就绪通知排入宿主 FIFO，不内联调用 C 消费者。

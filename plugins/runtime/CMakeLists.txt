@@ -1,5 +1,5 @@
 # 定义插件运行时静态库，包含包描述、配置及持有模块引用的 ABI 查询。
-add_library(dfy_plugins STATIC manifest.cpp registry.cpp config.cpp module.cpp module_v2.cpp host_services.cpp host_types.cpp host_values.cpp host_reads.cpp host_notifications.cpp host_state.hpp
+add_library(dfy_plugins STATIC manifest.cpp registry.cpp config.cpp module.cpp module_v2.cpp host_services.cpp host_types.cpp host_values.cpp host_reads.cpp host_notifications.cpp host_subscriptions.cpp host_state.hpp
   include/dafeiyu/plugin_manifest.hpp include/dafeiyu/plugin_registry.hpp include/dafeiyu/plugin_config.hpp
   include/dafeiyu/plugin_module.hpp include/dafeiyu/plugin_module_v2.hpp include/dafeiyu/host_services.hpp)
 
@@ -19,6 +19,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/host_values.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/host_reads.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/host_notifications.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/host_subscriptions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/host_services.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/plugin_manifest.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/plugin_registry.hpp"

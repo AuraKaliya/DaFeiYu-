@@ -72,19 +72,40 @@ dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructValue> v
 dfy_v2_handle HostServices::expose(std::shared_ptr<events::SubscriptionReader> reader) {
     state_->require_owner();
     if (!reader) throw std::invalid_argument("host: reader required");
-    for (const auto& item : state_->readers) if (item == reader) throw std::logic_error("host: reader already exposed");
+    for (const auto& item : state_->readers) if (item.reader == reader) throw std::logic_error("host: reader already exposed");
     for (auto& item : state_->readers) {
-        if (item) continue;
-        const auto handle = state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{reader}), false);
-        item = std::move(reader);
-        return detail::abi(handle);
+        if (!item.resource.empty()) continue;
+        item.resource = state_->resources.prepare();
+        runtime::Handle exposed{};
+        try {
+            exposed = state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{reader}), false);
+            state_->resources.activate(item.resource);
+            item.reader = std::move(reader);
+            return detail::abi(exposed);
+        } catch (...) {
+            state_->references.release(exposed);
+            state_->resources.begin_cleanup(item.resource); state_->resources.finish_cleanup(item.resource); item = {};
+            throw;
+        }
     }
     throw std::length_error("host: reader capacity exhausted");
 }
 // 显式推进宿主持有的读取，不内联调用 DLL 消费者。
 void HostServices::advance() {
     state_->require_owner();
-    for (const auto& reader : state_->readers) if (reader) { reader->advance(); reader->collect(); }
+    for (auto& slot : state_->readers) {
+        const auto reader = slot.reader;
+        if (!reader) continue;
+        reader->advance(); reader->collect();
+        detail::finish_reader(*state_, reader);
+    }
+}
+// 保存共享广播通道及读取预算，不自动创建接收方。
+void HostServices::enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity) {
+    state_->require_owner();
+    if (!channel || !request_capacity || state_->channel) throw std::invalid_argument("host: fresh channel and positive request capacity required");
+    state_->channel = std::move(channel);
+    state_->request_capacity = request_capacity;
 }
 // 在完整分配成功后绑定代码与通知池，不替换已有消费者入口。
 // 步骤：核对线程及配置 → 构造通知池 → 转交代码持有和池。
@@ -122,6 +143,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_OPERATION_STATE_INTERFACE) *output = &detail::operation_api();
         else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();
         else if (requested == DFY_V2_OPERATION_NOTIFY_INTERFACE && host.notifications) *output = &detail::notification_api();
+        else if (requested == DFY_V2_SUBSCRIPTION_INTERFACE && host.channel) *output = &detail::subscription_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

@@ -65,6 +65,7 @@ void verify_cancel(const dfy_v2_plugin_api& bootstrap) {
         refs.release(request, nullptr); refs.release(delivered, nullptr); host.advance();
         check(!store->references() && !reader->size(), "cancelled or delivered request leaked");
     }
+    reader->close(dfy::events::CloseMode::cancel); host.advance();
     refs.release(receiver, nullptr);
 }
 }

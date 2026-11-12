@@ -13,6 +13,11 @@ using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shar
     std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>,
     std::shared_ptr<NotificationReference>>;
 struct HostReference { HostObject object; };
+struct ReaderSlot {
+    std::shared_ptr<events::SubscriptionReader> reader;
+    std::shared_ptr<events::SubscriptionQueue> queue;
+    runtime::Handle resource;
+};
 struct HostState : std::enable_shared_from_this<HostState> {
     // 建立本上下文独立引用域并固定宿主线程。
     HostState(std::size_t capacity, std::size_t reader_capacity)
@@ -23,7 +28,9 @@ struct HostState : std::enable_shared_from_this<HostState> {
     }
     runtime::HandleRegistry<HostReference> references;
     const std::thread::id owner;
-    std::vector<std::shared_ptr<events::SubscriptionReader>> readers;
+    std::vector<ReaderSlot> readers;
+    std::shared_ptr<events::BroadcastChannel> channel;
+    std::size_t request_capacity = 0;
     runtime::ResourceOwner resources;
     platform::CodeLease code;
     std::unique_ptr<runtime::CompletionNotifications> notifications;
@@ -59,6 +66,10 @@ const dfy_v2_operation_state_api& operation_api();
 const dfy_v2_operation_cancel_api& cancel_api();
 // 返回绑定代码寿命的 C 通知服务。
 const dfy_v2_operation_notify_api& notification_api();
+// 返回独立订阅的接纳与关闭服务。
+const dfy_v2_subscription_api& subscription_api();
+// 在交付队列已结束后解除目录与资源责任，保留外部数据引用。
+void finish_reader(HostState& host, const std::shared_ptr<events::SubscriptionReader>& reader);
 // 从当前域取得完整读取请求，不能只保留操作状态视图。
 inline std::shared_ptr<events::ReadRequest> request(HostState& host, dfy_v2_handle value) {
     return std::get<std::shared_ptr<events::ReadRequest>>(host.references.get(native(value)).object);

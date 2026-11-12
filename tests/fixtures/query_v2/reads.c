@@ -2,6 +2,8 @@
 #include <stddef.h>
 _Static_assert(sizeof(dfy_v2_read_result) == 24 && offsetof(dfy_v2_read_result, event_domain) == 8, "read result layout");
 _Static_assert(sizeof(dfy_v2_reader_api) == 32 && offsetof(dfy_v2_reader_api, payload) == 24, "reader table layout");
+_Static_assert(sizeof(dfy_v2_subscription_info) == 16 && offsetof(dfy_v2_subscription_info, queued) == 8, "subscription info layout");
+_Static_assert(sizeof(dfy_v2_subscription_api) == 32 && offsetof(dfy_v2_subscription_api, read) == 24, "subscription table layout");
 // 查询并校验完整读取服务，失败不访问任何返回指针。
 static dfy_v2_status service(dfy_v2_query_interface_fn query, const dfy_v2_reader_api** api, dfy_v2_error* error) {
     const dfy_v2_string_view name = {DFY_V2_READER_INTERFACE, sizeof(DFY_V2_READER_INTERFACE) - 1};

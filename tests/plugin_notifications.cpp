@@ -67,9 +67,9 @@ int wmain(int argc, wchar_t** argv) {
                 const auto count = host.references();
                 dfy_v2_handle rejected{};
                 check(notices->subscribe(request, callback, nullptr, &rejected, nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !rejected.id &&
-                    host.resources() == 4 && host.references() == count, "notification failure left partial resources");
+                    host.resources() == 5 && host.references() == count, "notification failure left partial resources");
                 for (const auto handle : held) { notices->revoke(handle, nullptr); refs->release(handle, nullptr); }
-                check(!host.resources() && host.references() == 2, "revoked notification leaked support");
+                check(host.resources() == 1 && host.references() == 2, "revoked notification leaked support");
                 parent.notifications = child.notifications = notices;
                 parent.references = child.references = refs;
                 parent.child = &child; parent.probe = probe; parent.probe_user = &observed;

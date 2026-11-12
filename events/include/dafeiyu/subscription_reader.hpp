@@ -54,6 +54,12 @@ class SubscriptionReader {
     void collect() noexcept;
     // 返回占用请求槽数，包含客户端仍持有的终结结果。
     std::size_t size() const noexcept { return size_; }
+    // 返回交付队列状态，不推进读取或证明消费者任务已退出。
+    QueueState queue_state() const noexcept { return queue_->state(); }
+    // 返回已经选择的关闭模式，Open 时没有模式。
+    std::optional<CloseMode> close_mode() const noexcept { return queue_->close_mode(); }
+    // 返回尚未读取的交付数量，不包含保留结果。
+    std::size_t queued() const noexcept { return queue_->size(); }
   private:
     // 保存类型化结果后结算唯一终态，并结束本控制器的 Pending 标记。
     void finish(ReadRequest& request, ReadSnapshot result, EventLease event = {});
