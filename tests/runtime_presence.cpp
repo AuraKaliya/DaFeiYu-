@@ -23,6 +23,11 @@ int main() {
         check(value.size() == 4 && !value.payload_bytes() && value.presence(0) == FieldPresence::value &&
             value.presence(1) == FieldPresence::missing && value.presence(2) == FieldPresence::null_value &&
             value.presence(3) == FieldPresence::missing, "presence states collapsed");
+        check(value.node_count() == 3 && Value::null().node_count() == 1 && !Value::null().payload_bytes() &&
+            Value::from_string({},0).node_count() == 1, "empty values bypassed node accounting");
+        rejects<std::length_error>([&] { (void)StructValue::create(type, input, 0, 2); });
+        check(StructValue::create(type, input, 0, 3).node_count() == 3, "exact node limit rejected");
+        rejects<std::length_error>([&] { (void)StructValue::create(empty, {}, 0, 0); });
         check(value.find("required") && value.find("required")->as_string().empty() && !value.find("optional") &&
             value.find("nullable") && value.find("nullable")->kind() == ValueKind::null_value, "field lookup confused null and absence");
         rejects<std::bad_optional_access>([&] { (void)value.at(1); });
@@ -42,6 +47,7 @@ int main() {
         const auto complete = StructValue::create(type, present, 0);
         check(complete.presence(1) == FieldPresence::value && complete.presence(3) == FieldPresence::value &&
             !complete.at(3).as_structure().size(), "empty content treated as null");
+        check(complete.node_count() == 5, "nested empty structure node was lost");
         const FieldDescriptor invalid_type{"null", ValueKind::null_value, 0};
         rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.invalid", 1, {&invalid_type,1}, {1,32}); });
         TypeCatalog catalog(3, {8,128,2}); catalog.define(*empty); catalog.define(*type);

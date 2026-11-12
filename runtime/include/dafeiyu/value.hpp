@@ -20,6 +20,7 @@ static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 // 宿主持有的不可变基础值，文本和字节复制到宿主内存，不含插件析构代码。
 class Value {
   public:
+    static constexpr std::size_t maximum_nodes = 1024 * 1024;
     // 创建明确为 Bool 的值，不将其他数字分支当作布尔读取。
     static Value from_bool(bool value) { return Value(value); }
     // 创建保留完整有符号 64 位范围的值。
@@ -46,6 +47,10 @@ class Value {
     Value& operator=(const Value&) = delete;
     // 返回与存储分支对应的宿主内部种类。
     ValueKind kind() const noexcept { return static_cast<ValueKind>(contents_.index()); }
+    // 返回逻辑正文大小，组合值使用构造时核定的聚合计量。
+    std::size_t payload_bytes() const;
+    // 返回逻辑数据节点数，缺失不形成值，null 与空内容各占一个节点。
+    std::size_t node_count() const;
     // 读取 Bool；类型不符抛出 bad_variant_access，不隐式转换。
     bool as_bool() const { return std::get<bool>(contents_); }
     // 读取 Int64，类型不符抛出 bad_variant_access。

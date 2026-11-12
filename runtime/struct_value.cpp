@@ -1,29 +1,17 @@
 #include <dafeiyu/struct_value.hpp>
 #include <unordered_map>
+#include <algorithm>
 
 namespace dfy::runtime {
-namespace {
-// 计算值的逻辑正文字节数，嵌套使用已核定正文，不包含分配器和描述开销。
-std::size_t scalar_payload_bytes(const Value& value) {
-    switch (value.kind()) {
-    case ValueKind::boolean: return 1;
-    case ValueKind::int64:
-    case ValueKind::uint64:
-    case ValueKind::float64: return 8;
-    case ValueKind::string: return value.as_string().size();
-    case ValueKind::bytes: return value.as_bytes().size();
-    case ValueKind::structure: return value.as_structure().payload_bytes();
-    case ValueKind::null_value: return 0;
-    }
-    throw std::invalid_argument("struct: unsupported value kind");
-}
-}
 
 // 根据宿主描述构造独立不可变载荷，未通过校验时不返回半成品。
 // 步骤：核对描述与字段数量 → 建立唯一名称索引 → 校验必填、种类及预算 → 保存有序字段及正文计量。
 StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descriptor,
-    std::span<const NamedValue> fields, std::size_t max_payload_bytes) {
+    std::span<const NamedValue> fields, std::size_t max_payload_bytes, std::size_t max_nodes) {
     if (!descriptor) throw std::invalid_argument("struct: descriptor required");
+    const auto node_limit = std::min(max_nodes, Value::maximum_nodes);
+    if (!node_limit) throw std::length_error("struct: root node budget required");
+    auto remaining_nodes = node_limit - 1;
     const auto declared = descriptor->fields();
     if (fields.size() > declared.size()) throw std::invalid_argument("struct: field count mismatch");
     std::unordered_map<std::string_view, const Value*> supplied;
@@ -43,13 +31,14 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         const auto& value = *match->second;
         if (value.kind() == ValueKind::null_value) {
             if (!field.nullable) throw std::invalid_argument("struct: null not allowed");
-            continue;
-        }
-        if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
-        if (field.kind == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
+        } else if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
+        if (value.kind() == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
             throw std::invalid_argument("struct: nested definition mismatch");
         }
-        const auto bytes = scalar_payload_bytes(value);
+        const auto nodes = value.node_count();
+        if (nodes > remaining_nodes) throw std::length_error("struct: node limit exceeded");
+        remaining_nodes -= nodes;
+        const auto bytes = value.payload_bytes();
         if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && bytes > field.max_bytes) {
             throw std::length_error("struct: field byte limit exceeded");
         }
@@ -65,7 +54,7 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         if (found == supplied.end()) values.emplace_back(std::nullopt);
         else values.emplace_back(*found->second);
     }
-    return StructValue(std::move(descriptor), std::move(values), max_payload_bytes - remaining);
+    return StructValue(std::move(descriptor), std::move(values), max_payload_bytes - remaining, node_limit - remaining_nodes);
 }
 
 // 按描述字段名查找对应值，未匹配时不产生隐式字段或默认值。

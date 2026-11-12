@@ -16,7 +16,7 @@ class StructValue {
   public:
     // 按描述校验必填、可空及正文预算，按声明顺序保存；不隐式转换或补默认值。
     static StructValue create(std::shared_ptr<const StructDescriptor> descriptor,
-        std::span<const NamedValue> fields, std::size_t max_payload_bytes);
+        std::span<const NamedValue> fields, std::size_t max_payload_bytes, std::size_t max_nodes = Value::maximum_nodes);
     // 复制基础字段并共享不可变描述，不借用原载荷存储。
     StructValue(const StructValue&) = default;
     // 禁止赋值及隐式移动修改已有结构载荷。
@@ -27,6 +27,8 @@ class StructValue {
     std::size_t size() const noexcept { return fields_.size(); }
     // 返回构造时核定的逻辑正文字节数，不包含描述、字段名及分配器开销。
     std::size_t payload_bytes() const noexcept { return payload_bytes_; }
+    // 返回包含根及所有实际字段内容的展开节点数，共享子值按出现次数计入。
+    std::size_t node_count() const noexcept { return node_count_; }
     // 借用存在的字段，越界为 out_of_range，缺失为 bad_optional_access；显式 null 仍是值。
     const Value& at(std::size_t index) const { return fields_.at(index).value(); }
     // 返回字段是否存在，越界仍明确拒绝。
@@ -41,10 +43,12 @@ class StructValue {
 
   private:
     // 接收已校验的字段副本、描述持有及正文计量，固定结构载荷。
-    StructValue(std::shared_ptr<const StructDescriptor> descriptor, std::vector<std::optional<Value>> fields, std::size_t payload_bytes)
-        : descriptor_(std::move(descriptor)), fields_(std::move(fields)), payload_bytes_(payload_bytes) {}
+    StructValue(std::shared_ptr<const StructDescriptor> descriptor, std::vector<std::optional<Value>> fields,
+        std::size_t payload_bytes, std::size_t node_count)
+        : descriptor_(std::move(descriptor)), fields_(std::move(fields)), payload_bytes_(payload_bytes), node_count_(node_count) {}
     const std::shared_ptr<const StructDescriptor> descriptor_;
     const std::vector<std::optional<Value>> fields_;
     const std::size_t payload_bytes_;
+    const std::size_t node_count_;
 };
 }

@@ -57,6 +57,8 @@ void values() {
     auto parent_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.parent", 1, {&field,1}, {2, 64, 2}));
     auto input = std::make_unique<NamedValue>(NamedValue{"child", Value::from_structure(child)});
     auto parent = std::make_shared<const StructValue>(StructValue::create(parent_type, {input.get(),1}, 3));
+    check(parent->node_count() == 3 && input->value.node_count() == 2 && input->value.payload_bytes() == 3, "nested node accounting wrong");
+    rejects<std::length_error>([&] { (void)StructValue::create(parent_type, {input.get(),1}, 3, 2); });
     rejects<std::length_error>([&] { (void)StructValue::create(parent_type, {input.get(),1}, 2); });
     auto wrong = std::make_shared<const StructValue>(StructValue::create(leaf(4), {&text,1}, 3));
     const NamedValue mismatch{"child", Value::from_structure(wrong)};

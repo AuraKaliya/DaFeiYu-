@@ -1,10 +1,39 @@
 #include <dafeiyu/value.hpp>
+#include <dafeiyu/struct_value.hpp>
 
 namespace dfy::runtime {
 // 接收宿主已构造的不可变结构，不允许空指针伪装成结构或 null。
 Value Value::from_structure(std::shared_ptr<const StructValue> value) {
     if (!value) throw std::invalid_argument("value: nonempty structure required");
     return Value(std::move(value));
+}
+// 读取已确定类型的逻辑正文计量，不遍历不可变子结构。
+std::size_t Value::payload_bytes() const {
+    switch (kind()) {
+    case ValueKind::boolean: return 1;
+    case ValueKind::int64:
+    case ValueKind::uint64:
+    case ValueKind::float64: return 8;
+    case ValueKind::string: return as_string().size();
+    case ValueKind::bytes: return as_bytes().size();
+    case ValueKind::structure: return as_structure().payload_bytes();
+    case ValueKind::null_value: return 0;
+    }
+    throw std::invalid_argument("value: unsupported kind");
+}
+// 组合共享按每次出现计费，避免空正文掩盖递归遍历成本。
+std::size_t Value::node_count() const {
+    switch (kind()) {
+    case ValueKind::structure: return as_structure().node_count();
+    case ValueKind::boolean:
+    case ValueKind::int64:
+    case ValueKind::uint64:
+    case ValueKind::float64:
+    case ValueKind::string:
+    case ValueKind::bytes:
+    case ValueKind::null_value: return 1;
+    }
+    throw std::invalid_argument("value: unsupported kind");
 }
 namespace {
 // 校验 UTF-8 标量编码，拒绝过长编码、代理项、截断和超过 Unicode 上界的值。
