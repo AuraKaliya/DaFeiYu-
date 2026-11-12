@@ -46,7 +46,7 @@
 
 07b 实现提交：`00a5b0c`（`feat: 完成插件 ABI 查询与兼容性校验`）。当次 Debug、Release 构建及十项离线 CTest 通过；真实 DLL 覆盖查询状态、返回表、全部必需函数、前置清单校验、关闭与失败回收，并确认未调用实例生命周期函数。
 
-**R05c 有界可取消读请求已实现；下一审查点为 R06a v2 查询加载与兼容校验。** R01 的 [v2 契约](plugin-abi-v2.md)保留真实 C DLL 隔离验收；R02～R05 已提供数据、执行、资源与代码寿命、最小事件交付的宿主 C++ 基础。生产插件加载器仍只支持 v1，正式 App 仍同步；v2 服务装配、插件实例生命周期及首个完整 DLL 异步链路分别由 R06～R08 验收。分组路线见第 5.1 节，单元边界与当次验证记录见第 3 节。
+**当前进度：R06a-1 v2 引导加载与校验已实现；下一单元为 R06a-2 能力协商与受控调用。** 详细范围与验收见下方阶段记录。
 
 R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](plugin-abi-v2.md#验收与下一单元)。
 
@@ -339,6 +339,14 @@ Platform 的 [CodeModule／CodeLease](../platform/include/dafeiyu/code_module.hp
 本轮起点 `6a881c6`。Debug／Release 主工程、Debug 测试与 Release 的 `dfy_subscription_reader_tests` 构建执行通过，完整 Debug CTest 为 26／29，三项真实符号链接测试仍受权限阻断。新增 `events.subscription_reader` 串联生产队列、操作、取消、完成通知及 FIFO，验证等待与结果容量、先取消保留事件、迟到取消、排空及取消关闭、客户端释放后工作继续、控制器退出和独立数据保留。R05 最小交付基础已具备；消费者任务退出、资源及 DLL 的完整装配仍待 R06～R08，下一单元为 R06a v2 查询加载与兼容校验。
 
 本轮收束时另完成整个 `windows-tests` 的 Release 构建，并执行 `ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure`：同为 26／29，通过项与 Debug 一致，失败仍是三项真实符号链接权限检查。新旧公共头文件在独立 VS2022 C++20 消费者中共同编译及运行通过，该消费者没有继承项目 `/utf-8` 选项。完整 Release 和最终专项构建日志无新增编译警告；仍未进行真实模型成功回答或完整插件实例验收。
+
+### 3.21 v2 引导加载与校验（R06a-1）
+
+新增 [PluginModuleV2](../plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)，保留 v1 的 `PluginModule` 与 ABI。v2 构造先拒绝不支持的声明版本，再复核完整清单；通过 `CodeModule` 加载，在 `CodeLease` 和 `CodeCall` 覆盖下查询独立导出。成功才复制精确大小、版本、架构及必需入口均正确的引导表；失败状态不解引用其表指针、不回显 DLL 错误正文。
+
+`close()` 返回已关闭、仍持有或忙碌，只有实际释放本次模块引用后才清空表；重复关闭安全，失败保留状态。本单元不暴露无保护的原始函数表，不创建插件实例；能力查询及借用将在 R06a-2 接入。现有 v1 加载路径未迁移或改变语义。
+
+本轮起点 `b9aa880`，工作区干净；重新建立的基线为 29／29，通过了此前受权限影响的三项真实符号链接测试，没有跳过或修改这些测试。新增真实 C11 故障 DLL 验收 12 种引导结果、过期描述、错误声明、缺失 v2 导出、关闭、重载及失败引用回收。Debug／Release 主工程和完整测试构建通过，完整 Debug／Release CTest 均 30／30；Debug 消费者调用 Release 故障 DLL 通过。下一单元 R06a-2 为能力协商与受控调用。
 
 ## 4. 基础契约与接口演进
 

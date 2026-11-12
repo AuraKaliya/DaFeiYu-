@@ -169,6 +169,18 @@ target_link_libraries(dfy_plugin_module_tests PRIVATE dfy_plugins dfy_build_opti
 target_compile_definitions(dfy_plugin_module_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_dependencies(dfy_plugin_module_tests dfy_query_fixture dfy_query_example dfy_loader_dependency)
 
+# 独立验证 v2 生产查询，不改变 v1 夹具或模块接口。
+add_subdirectory(fixtures/query_v2_faults)
+add_executable(dfy_plugin_module_v2_tests plugin_module_v2.cpp)
+target_link_libraries(dfy_plugin_module_v2_tests PRIVATE dfy_plugins dfy_build_options)
+target_compile_definitions(dfy_plugin_module_v2_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_dependencies(dfy_plugin_module_v2_tests dfy_query_v2_faults dfy_query_example)
+set_target_properties(dfy_plugin_module_v2_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_module_v2.cpp")
+add_test(NAME plugins.module_v2 COMMAND dfy_plugin_module_v2_tests "$<TARGET_FILE:dfy_query_v2_faults>"
+  "$<TARGET_FILE:dfy_query_example>" "${CMAKE_CURRENT_BINARY_DIR}/module-v2/$<CONFIG>")
+set_tests_properties(plugins.module_v2 PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
