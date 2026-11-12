@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R02b 基础值已实现
+## 当前进度：R02c-1 结构描述快照已实现
 
-R01 已完成 [v2 最小接口契约及隔离验收](docs/plugin-abi-v2.md)：查询、引用、操作状态、协作取消及延后通知。R02 已实现 [宿主域标识](runtime/include/dafeiyu/runtime_ids.hpp)、[类型化引用表](runtime/include/dafeiyu/handle_registry.hpp)与 [不可变基础值](runtime/include/dafeiyu/value.hpp)，包括 Bool、Int64、UInt64、有限 Float64、String 和 Bytes。生产加载器仍仅接受 v1，问答与事件仍为同步实现；下一审查项是 R02c 结构字段描述与读取，分步路线见 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
+R01 已完成 [v2 最小接口契约及隔离验收](docs/plugin-abi-v2.md)：查询、引用、操作状态、协作取消及延后通知。R02 已实现 [宿主域标识](runtime/include/dafeiyu/runtime_ids.hpp)、[类型化引用表](runtime/include/dafeiyu/handle_registry.hpp)、[六种不可变基础值](runtime/include/dafeiyu/value.hpp)及 [结构描述快照](runtime/include/dafeiyu/struct_descriptor.hpp)。描述包含精确名称与版本、按声明顺序排列的必填基础字段和字节约束，由宿主校验后复制。生产加载器仍仅接受 v1，问答与事件仍为同步实现；下一审查项是 R02c-2 有界类型目录、注册与查询，结构载荷留待 R02c-3，分步路线见 [开发指导](docs/foundation-development-guide.md#51-重排后的阶段组与验收)。
 
-本次 Debug／Release 主工程、Debug 测试及 Release 基础值测试通过；完整 CTest 为 17／17 通过。本轮各单元的范围与验证见 [开发指导](docs/foundation-development-guide.md#31-宿主签发域标识r02a-1)和 [ABI 验收记录](docs/plugin-abi-v2.md#验收与下一单元)。生产异步执行、资源登记、v2 装配和插件实例生命周期仍待建设。
+R02c-1 的 Debug／Release 主工程、Debug 测试及 Release 描述测试通过；本次完整 CTest 为 15／18 通过，三项既有插件测试因当前进程缺少创建符号链接权限失败，尚未完成全套验收。此前 R02b 的 17／17 记录保留为历史结果。本轮契约及验证见 [结构描述说明](docs/foundation-development-guide.md#35-结构描述快照r02c-1)；生产异步执行、资源登记、v2 装配和插件实例生命周期仍待建设。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -52,7 +52,7 @@ dafeiyu
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
-运行时基础另有 `Tests/dfy_runtime_ids_tests`、`Tests/dfy_runtime_handles_tests`、`Tests/dfy_runtime_values_tests`；v2 契约另有查询、引用、操作和通知四个测试目标。`dfy_runtime` 的范围及逐步验收见 [开发指导](docs/foundation-development-guide.md#31-宿主签发域标识r02a-1)。
+运行时基础另有 `Tests/dfy_runtime_ids_tests`、`Tests/dfy_runtime_handles_tests`、`Tests/dfy_runtime_values_tests`、`Tests/dfy_runtime_struct_descriptors_tests`；v2 契约另有查询、引用、操作和通知四个测试目标。`dfy_runtime` 的范围及逐步验收见 [开发指导](docs/foundation-development-guide.md#31-宿主签发域标识r02a-1)。
 
 各目标的自有源码统一按模块内实际目录展示，不额外套一层 `Source`；公开头文件保留 `include/dafeiyu` 路径。测试目标借用的业务实现保留 `agent/`、`app/`、`model/` 来源路径。职责分组是 IDE 虚拟分组，不改变磁盘目录；Qt Creator 仍可能同时显示目录中的 CMake 配置入口。
 
