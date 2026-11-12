@@ -130,6 +130,14 @@ target_link_libraries(dfy_library_tests PRIVATE dfy_library dfy_build_options)
 target_compile_definitions(dfy_library_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_dependencies(dfy_library_tests dfy_loader_payload dfy_loader_x86)
 
+# 使用真实 DLL 验证独立代码凭证与 FIFO 排队工作中的模块寿命。
+add_executable(dfy_code_module_tests code_module.cpp)
+target_link_libraries(dfy_code_module_tests PRIVATE dfy_library dfy_runtime dfy_build_options)
+target_compile_definitions(dfy_code_module_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(dfy_code_module_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/code_module.cpp")
+add_dependencies(dfy_code_module_tests dfy_loader_payload)
+
 # 用可控真实 DLL 覆盖 ABI 查询结果及构造失败后的引用回收。
 add_subdirectory(fixtures/query)
 add_executable(dfy_plugin_module_tests plugin_module.cpp)
@@ -189,6 +197,8 @@ add_test(NAME sdk.operations_v2 COMMAND dfy_sdk_operations_v2_tests "$<TARGET_FI
 add_test(NAME sdk.notifications_v2 COMMAND dfy_sdk_notifications_v2_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 add_test(NAME platform.library COMMAND dfy_library_tests "$<TARGET_FILE:dfy_loader_dependency>"
   "$<TARGET_FILE:dfy_loader_payload>" "${DFY_LOADER_X86_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/library/$<CONFIG>")
+add_test(NAME platform.code_module COMMAND dfy_code_module_tests "$<TARGET_FILE:dfy_loader_payload>")
+set_tests_properties(platform.code_module PROPERTIES TIMEOUT 15)
 add_test(NAME plugins.module COMMAND dfy_plugin_module_tests "$<TARGET_FILE:dfy_query_fixture>"
   "$<TARGET_FILE:dfy_query_example>" "$<TARGET_FILE:dfy_loader_dependency>" "${CMAKE_CURRENT_BINARY_DIR}/module/$<CONFIG>")
 set_tests_properties(model.config model.complete agent.session events.bus plugins.manifest plugins.registry plugins.config sdk.abi

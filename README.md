@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R04b 资源使用凭证已实现
+## 当前进度：R04c-1 DLL 代码保持引用已实现
 
 R01 已完成 [ABI v2 最小契约与隔离验收](docs/plugin-abi-v2.md)，R02 已实现宿主引用、六种基础值、结构描述、类型目录及 [结构载荷](runtime/include/dafeiyu/struct_value.hpp)。R03 已实现 [有界 FIFO](runtime/include/dafeiyu/fifo_executor.hpp)、[操作终态与协作取消](runtime/include/dafeiyu/operation.hpp)及 [可撤销的延后通知](runtime/include/dafeiyu/completion_notifications.hpp)，由宿主显式调度和推进。
 
-本次 Debug／Release 主工程、Debug 测试及 Release 资源专项通过；完整 CTest 为 21／24，三项既有插件测试仍因创建符号链接权限失败，全套验收待补。已加入 [资源所有者与使用凭证](runtime/include/dafeiyu/resource_owner.hpp)，下一单元为 R04c-1 DLL 代码保持引用；现有 App 仍同步、生产加载器只支持 v1。契约与验收见 [开发指导](docs/foundation-development-guide.md#314-资源使用凭证r04b)。
+本次 Debug／Release 主工程、Debug 测试及 Release 代码凭证专项通过；完整 CTest 为 22／25，三项既有插件测试仍因创建符号链接权限失败，全套验收待补。已加入 [资源所有者与使用凭证](runtime/include/dafeiyu/resource_owner.hpp)及 [DLL 代码凭证](platform/include/dafeiyu/code_module.hpp)，下一单元为 R04c-2 活动调用保护；现有 App 仍同步、生产加载器只支持 v1。契约与验收见 [开发指导](docs/foundation-development-guide.md#315-dll-代码保持引用r04c-1)。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -50,7 +50,7 @@ dafeiyu
 
 测试预设额外显示 `Tests/dfy_model_config_tests`、`Tests/dfy_model_client_tests`、`Tests/dfy_agent_tests`、`Tests/dfy_events_tests`、`Tests/dfy_plugin_manifest_tests`、`Tests/dfy_plugin_registry_tests`、`Tests/dfy_plugin_config_tests` 和 `Tests/dfy_sdk_tests`。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
-加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
+加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_code_module_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
 运行时基础另有 `Tests/dfy_runtime_ids_tests`、`Tests/dfy_runtime_handles_tests`、`Tests/dfy_runtime_values_tests`、`Tests/dfy_runtime_struct_descriptors_tests`、`Tests/dfy_runtime_types_tests`、`Tests/dfy_runtime_struct_values_tests`、`Tests/dfy_runtime_executor_tests`、`Tests/dfy_runtime_operations_tests`、`Tests/dfy_runtime_notifications_tests`、`Tests/dfy_runtime_resources_tests`；v2 契约另有查询、引用、操作和通知四个测试目标。`dfy_runtime` 的范围及逐步验收见 [开发指导](docs/foundation-development-guide.md#31-宿主签发域标识r02a-1)。
 
@@ -279,7 +279,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R04c-1 DLL 代码保持引用。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R04c-2 活动调用保护。
 
 ## 旧工程归档
 

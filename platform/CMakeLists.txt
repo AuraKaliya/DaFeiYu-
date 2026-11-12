@@ -4,7 +4,7 @@ if(NOT WIN32)
 endif()
 
 # 定义受控动态库加载目标，独立于 HTTP、SDK 和插件业务状态。
-add_library(dfy_library STATIC library.cpp include/dafeiyu/dynamic_library.hpp)
+add_library(dfy_library STATIC library.cpp code_module.cpp include/dafeiyu/dynamic_library.hpp include/dafeiyu/code_module.hpp)
 target_compile_features(dfy_library PUBLIC cxx_std_20)
 target_include_directories(dfy_library PUBLIC include)
 target_link_libraries(dfy_library PRIVATE dfy_build_options kernel32)
@@ -24,4 +24,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/winhttp.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/http.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/library.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/dynamic_library.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/code_module.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/dynamic_library.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/code_module.hpp")
