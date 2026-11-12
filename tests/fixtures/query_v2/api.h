@@ -5,6 +5,7 @@
 #define DFY_TEST_OPERATION_ID "test.operation"
 #define DFY_TEST_CANCEL_ID "test.cancel"
 #define DFY_TEST_NOTIFY_ID "test.notification"
+#define DFY_TEST_HOST_ID "test.host"
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,6 +62,13 @@ typedef struct dfy_test_notify_api {
     dfy_v2_completion_fn callback;
 } dfy_test_notify_api;
 extern const dfy_test_notify_api dfy_test_notify;
+typedef struct dfy_test_host_api {
+    dfy_v2_api_header header;
+    // 在宿主绑定期间查询引用服务并返回独立持有，不保存上下文地址。
+    dfy_v2_status (DFY_V2_CALL *preserve)(dfy_v2_query_interface_fn query, dfy_v2_handle source,
+        dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_test_host_api;
+extern const dfy_test_host_api dfy_test_host;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
