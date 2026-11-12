@@ -4,7 +4,7 @@
 
 ## 当前进度：R07b 宿主实例控制器与失败保留已实现
 
-R01 已完成 [ABI v2 最小契约与隔离验收](docs/plugin-abi-v2.md)。R02～R04 已提供宿主类型和值、FIFO、操作与通知、资源归属与使用、DLL 代码持有及活动保护。R05 已加入 [原子广播](events/include/dafeiyu/broadcast_channel.hpp)、[有界订阅与两种关闭](events/include/dafeiyu/subscription_queue.hpp)及 [可取消读请求](events/include/dafeiyu/subscription_reader.hpp)，由宿主显式推进。
+R06 已接入生产 v2 模块加载、宿主引用、类型和值反射、读取、取消、通知及订阅关闭。R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)，验证停止受理与完成分离、单次销毁、外部代码依赖拒绝和失败状态保留。现有 App 仍使用同步问答；R08 独立观察插件与完整链路验收尚未完成。
 
 本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 36／36。当前 App 问答仍同步；v2 与实例能力按阶段装配。下一单元为 R08 独立观察插件与完整链路验收，范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
@@ -280,7 +280,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R06a v2 查询加载与兼容校验。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，独立 v2 加载和实例控制已在 R06／R07b 实现，当前下一审查项为 R08 独立观察插件与完整链路验收。
 
 ## 旧工程归档
 

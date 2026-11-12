@@ -1,5 +1,7 @@
 # 插件 C ABI v2 最小接口契约
 
+当前 R06 已实现生产宿主适配，R07b 已实现实例控制与失败保留；后文各 R01 单元保留其当次边界，最新实现与验证见 [开发指导](foundation-development-guide.md)。独立观察插件及完整集成仍待 R08。
+
 R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。生产 C ABI 服务装配、实例生命周期和异步操作尚未实现；生产 `PluginModule` 仍只接受 v1，v2 加载与兼容校验属于 R06。
 
 R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具](../tests/fixtures/query_v2/operation.c)和[隔离宿主](../tests/sdk_operations_v2.cpp)验证受理、快照读取、唯一终态和引用寿命。本步不提供生产操作执行、结果载荷读取、取消请求或完成通知。
