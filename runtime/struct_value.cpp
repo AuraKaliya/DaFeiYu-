@@ -1,0 +1,60 @@
+#include <dafeiyu/struct_value.hpp>
+#include <unordered_map>
+
+namespace dfy::runtime {
+namespace {
+// 计算基础值的逻辑正文字节数，不包含分配器、字段名或引用记录开销。
+std::size_t payload_bytes(const Value& value) {
+    switch (value.kind()) {
+    case ValueKind::boolean: return 1;
+    case ValueKind::int64:
+    case ValueKind::uint64:
+    case ValueKind::float64: return 8;
+    case ValueKind::string: return value.as_string().size();
+    case ValueKind::bytes: return value.as_bytes().size();
+    }
+    throw std::invalid_argument("struct: unsupported value kind");
+}
+}
+
+// 根据宿主描述构造独立不可变载荷，未通过校验时不返回半成品。
+// 步骤：核对描述与字段数量 → 建立唯一名称索引 → 校验必填、种类及预算 → 复制有序字段。
+StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descriptor,
+    std::span<const NamedValue> fields, std::size_t max_payload_bytes) {
+    if (!descriptor) throw std::invalid_argument("struct: descriptor required");
+    const auto declared = descriptor->fields();
+    if (fields.size() != declared.size()) throw std::invalid_argument("struct: field count mismatch");
+    std::unordered_map<std::string_view, const Value*> supplied;
+    for (const auto& field : fields) {
+        if (!supplied.emplace(field.name, &field.value).second) throw std::invalid_argument("struct: duplicate field");
+    }
+
+    auto remaining = max_payload_bytes;
+    for (const auto& field : declared) {
+        const auto match = supplied.find(field.name);
+        if (match == supplied.end()) throw std::invalid_argument("struct: missing or unknown field");
+        const auto& value = *match->second;
+        if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
+        const auto bytes = payload_bytes(value);
+        if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && bytes > field.max_bytes) {
+            throw std::length_error("struct: field byte limit exceeded");
+        }
+        if (bytes > remaining) throw std::length_error("struct: payload byte limit exceeded");
+        remaining -= bytes;
+    }
+
+    std::vector<Value> values;
+    values.reserve(declared.size());
+    for (const auto& field : declared) values.push_back(*supplied.at(field.name));
+    return StructValue(std::move(descriptor), std::move(values));
+}
+
+// 按描述字段名查找对应值，未匹配时不产生隐式字段或默认值。
+const Value* StructValue::find(std::string_view name) const noexcept {
+    const auto declared = descriptor_->fields();
+    for (std::size_t index = 0; index < declared.size(); ++index) {
+        if (declared[index].name == name) return &fields_[index];
+    }
+    return nullptr;
+}
+}
