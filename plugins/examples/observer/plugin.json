@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "example.observer",
+  "name": "异步事件观察示例",
+  "version": "0.1.0",
+  "abi_version": 2,
+  "entry": "dfy_observer.dll",
+  "default_config": "defaults.json"
+}

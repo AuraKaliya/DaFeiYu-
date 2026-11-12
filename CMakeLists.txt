@@ -29,6 +29,7 @@ add_subdirectory(model)
 add_subdirectory(agent)
 add_subdirectory(plugins/runtime)
 add_subdirectory(plugins/examples/query)
+add_subdirectory(plugins/examples/observer)
 add_subdirectory(app)
 
 # 按需启用离线测试，普通构建不生成测试目标。

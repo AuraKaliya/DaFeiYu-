@@ -236,6 +236,16 @@ add_test(NAME plugins.instance COMMAND dfy_plugin_instance_tests "$<TARGET_FILE:
   "${CMAKE_CURRENT_BINARY_DIR}/instance/$<CONFIG>")
 set_tests_properties(plugins.instance PROPERTIES TIMEOUT 15)
 
+# 实际纯 C 观察插件只通过公开 ABI 消费生产事件，不链接到宿主测试。
+add_executable(dfy_observer_tests observer.cpp)
+target_link_libraries(dfy_observer_tests PRIVATE dfy_plugins dfy_build_options)
+target_compile_definitions(dfy_observer_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_dependencies(dfy_observer_tests dfy_observer)
+set_target_properties(dfy_observer_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/observer.cpp")
+add_test(NAME plugins.observer COMMAND dfy_observer_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/observer-data/$<CONFIG>")
+set_tests_properties(plugins.observer PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
