@@ -6,28 +6,39 @@ struct PackingProbe { char tag; uint64_t value; };
 #pragma pack(pop)
 #include <cmath>
 #include <iostream>
+#include <fstream>
 static_assert(sizeof(PackingProbe) == 9 && sizeof(dfy_observer_stats) == 112 && alignof(dfy_observer_stats) == 8);
 namespace {
 using namespace dfy::plugins;
 using namespace dfy::runtime;
 // 在独立观察插件的行为或回收不符合预期时报告失败。
 void check(bool condition, const char* reason) { if (!condition) throw std::runtime_error(reason); }
-// 在代码与活动保护内取得只读统计，不保留 DLL 表地址。
-// 步骤：建立保护 → 查询引导与统计能力 → 复制统计。
-dfy_observer_stats statistics(PluginInstance& instance) {
-    auto code = instance.retain_code(); auto call = code.enter();
+// 在活动保护内复制指定示例能力，调用方必须继续保持代码凭证。
+// 步骤：查询引导 → 精确查询能力 → 核对布局并复制。
+template<class T>
+T ability(dfy::platform::CodeLease& code, std::string_view name) {
+    auto call = code.enter();
     const auto query = reinterpret_cast<dfy_v2_query_fn>(call.symbol(DFY_V2_QUERY_EXPORT));
     const dfy_v2_plugin_api* bootstrap = nullptr;
-    check(query(2, &bootstrap, nullptr) == DFY_V2_OK && bootstrap && bootstrap->query_interface, "observer query failed");
+    check(query(2, &bootstrap, nullptr) == DFY_V2_OK && bootstrap && bootstrap->struct_size == sizeof(*bootstrap) &&
+        bootstrap->abi_version == 2 && bootstrap->architecture == DFY_V2_ARCH_X64 && !bootstrap->reserved && bootstrap->query_interface,
+        "observer query failed");
     const void* table = nullptr;
-    check(bootstrap->query_interface({DFY_OBSERVER_STATS_INTERFACE, sizeof(DFY_OBSERVER_STATS_INTERFACE)-1}, 1, &table, nullptr) == DFY_V2_OK,
-        "observer statistics missing");
-    const auto* api = static_cast<const dfy_observer_stats_api*>(table);
-    check(api && api->header.struct_size == sizeof(*api) && api->header.interface_version == 1 && api->read, "invalid statistics table");
+    check(bootstrap->query_interface({name.data(), name.size()}, 1, &table, nullptr) == DFY_V2_OK && table, "observer capability missing");
+    const auto* header = static_cast<const dfy_v2_api_header*>(table);
+    check(header->struct_size == sizeof(T) && header->interface_version == 1, "invalid capability table");
+    return *static_cast<const T*>(table);
+}
+// 在受控代码持有下复制统计，不让调用表或地址逃逸。
+dfy_observer_stats statistics(dfy::platform::CodeLease& code) {
+    const auto api = ability<dfy_observer_stats_api>(code, DFY_OBSERVER_STATS_INTERFACE);
+    auto call = code.enter();
     dfy_observer_stats result{};
-    check(api->read(&result, nullptr) == DFY_V2_OK, "statistics read failed");
+    check(api.read && api.read(&result, nullptr) == DFY_V2_OK, "statistics read failed");
     return result;
 }
+// 临时保留实例模块以读取统计，返回前归还该外部代码持有。
+dfy_observer_stats statistics(PluginInstance& instance) { auto code = instance.retain_code(); return statistics(code); }
 // 构造包含六种基础字段的宿主结构，名称未编译进观察 DLL。
 // 步骤：定义字段描述 → 构造边界值 → 保存不可变宿主载荷。
 std::shared_ptr<const StructValue> event_value() {
@@ -49,6 +60,98 @@ void drain(PluginInstance& instance, FifoExecutor& executor) {
         if (result == RunResult::idle) return;
     }
     throw std::runtime_error("observer did not yield");
+}
+// 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
+// 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
+void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
+    const std::shared_ptr<dfy::events::EventStore>& store) {
+    FifoExecutor executor(2);
+    for (unsigned round = 0; round < 2; ++round) {
+        PluginInstance instance(manifest, data, channel);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK && statistics(instance).created == 1, "fresh reload failed");
+        const auto id = channel->publish(event_value());
+        if (!round) {
+            check(instance.advance(executor) == ScheduleResult::queued && !statistics(instance).events, "queue setup failed");
+        } else {
+            drain(instance, executor);
+            check(statistics(instance).events == 1 && statistics(instance).last_sequence == id.sequence, "reload consumed stale event");
+        }
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()), "reload shutdown retained module");
+        if (!round) check(executor.run_one() == RunResult::executed, "revoked host wrapper did not finish");
+        check(!channel->size() && !store->references() && executor.run_one() == RunResult::idle, "reload left work or data");
+    }
+}
+// 在真实插件停止入口主动取消尚未消费的等待，区分取消与宿主预先关闭。
+// 步骤：创建启动 → 发布但不推进 → 插件请求取消与停止 → 核对取消结果 → 销毁并释放。
+void cancellation(const Manifest& manifest, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
+    const std::shared_ptr<dfy::events::EventStore>& store) {
+    dfy::platform::CodeModule module(manifest.entry, 8);
+    auto code = module.lease();
+    const auto api = ability<dfy_v2_lifecycle_api>(code, DFY_V2_LIFECYCLE_INTERFACE);
+    check(api.create && api.start && api.request_stop && api.poll_stop && api.destroy, "incomplete observer lifecycle");
+    HostServices host(32);
+    host.enable_events(channel, 4); host.enable_notifications(code.retain(), 8);
+    dfy_v2_instance* instance = nullptr;
+    {
+        auto binding = host.bind(); auto call = code.enter();
+        check(api.create(HostServices::query, {"{}",2}, &instance, nullptr) == DFY_V2_OK && instance &&
+            api.start(instance, nullptr) == DFY_V2_OK, "manual observer start failed");
+    }
+    channel->publish(event_value());
+    {
+        auto binding = host.bind(); auto call = code.enter();
+        uint32_t state = 0;
+        check(api.request_stop(instance, nullptr) == DFY_V2_OK && api.request_stop(instance, nullptr) == DFY_V2_OK &&
+            api.poll_stop(instance, &state, nullptr) == DFY_V2_OK && state == DFY_V2_STOPPED, "observer cancellation failed");
+    }
+    check(host.begin_shutdown() && !host.resources() && !store->references() && !channel->size(), "cancelled observer retained work");
+    {
+        auto binding = host.bind(); auto call = code.enter(); api.destroy(instance);
+    }
+    check(host.finish_shutdown(), "manual observer finalization failed");
+    const auto observed = statistics(code);
+    check(observed.created == 1 && observed.destroyed == 1 && observed.cancelled == 1 && !observed.events && !observed.failures,
+        "cancelled waiting was confused with consumption or replayed");
+    code.reset();
+    check(module.close() == dfy::platform::ModuleClose::closed && !GetModuleHandleW(manifest.entry.c_str()), "manual observer DLL remains");
+}
+// 验证消费预算失败只关闭自身，部分启动和错误配置均能独立回收。
+// 步骤：运行受限与正常实例 → 观察失败隔离 → 验证启动预算失败 → 验证非法配置。
+void failures(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
+    const std::shared_ptr<dfy::events::EventStore>& store) {
+    FifoExecutor executor(4);
+    InstanceLimits limited; limited.references = 5;
+    {
+        PluginInstance failing(manifest, data, channel, limited), healthy(manifest, data, channel);
+        check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,
+            "failure isolation setup failed");
+        channel->publish(event_value());
+        drain(failing, executor);
+        check(channel->size() == 1 && store->references() == 1, "failed observer blocked or retained other delivery");
+        drain(healthy, executor);
+        const auto observed = statistics(healthy);
+        check(observed.events == 1 && observed.failures == 1 && !store->references(), "observer failure changed healthy result");
+        check(failing.shutdown() == ShutdownResult::closed, "failed observer did not stop");
+        channel->publish(event_value()); drain(healthy, executor);
+        check(statistics(healthy).events == 2 && healthy.shutdown() == ShutdownResult::closed, "healthy observer did not continue");
+    }
+    limited.references = 2;
+    {
+        PluginInstance partial(manifest, data, channel, limited);
+        check(partial.create() == DFY_V2_OK && partial.start() == DFY_V2_RESOURCE_EXHAUSTED && !channel->size() &&
+            partial.shutdown() == ShutdownResult::closed, "partial observer start leaked");
+    }
+    const auto invalid = data / "invalid";
+    std::filesystem::create_directories(invalid / "plugins" / manifest.id);
+    std::ofstream settings(invalid / "plugins" / manifest.id / "settings.json"); settings << R"({"unsupported":true})"; settings.close();
+    check(static_cast<bool>(settings), "invalid settings fixture not written");
+    {
+        PluginInstance rejected(manifest, invalid, channel);
+        check(rejected.create() == DFY_V2_INVALID_ARGUMENT && rejected.phase() == InstancePhase::unloaded, "invalid observer configuration accepted");
+    }
+    channel->publish(event_value());
+    check(!channel->size() && !store->references() && !GetModuleHandleW(manifest.entry.c_str()) && PluginInstance::retained().empty(),
+        "failure paths leaked or empty-plugin publication broke");
 }
 }
 // 使用实际目录包和纯 C 观察 DLL 验收创建、反射消费与安全卸载。
@@ -74,6 +177,9 @@ int wmain(int argc, wchar_t** argv) {
         check(instance.shutdown() == ShutdownResult::closed && !channel->size() && !GetModuleHandleW(manifest.entry.c_str()),
             "observer did not unload");
         check(PluginInstance::retained().empty(), "observer retained failed instance");
+        reload(manifest, argv[2], channel, store);
+        cancellation(manifest, channel, store);
+        failures(manifest, argv[2], channel, store);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
