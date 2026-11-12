@@ -42,7 +42,8 @@ void verify_reflection_and_lifetime() {
         input[0].name = "changed";
     }
     const auto type = value->descriptor();
-    check(value->size() == 6 && type->fields()[0].name == "flag" && value->at(0).as_bool(), "field order lost");
+    check(value->size() == 6 && value->payload_bytes() == 30 && type->fields()[0].name == "flag" && value->at(0).as_bool(),
+        "field order or payload accounting lost");
     check(value->find("signed")->as_int64() == INT64_MIN && value->find("unsigned")->as_uint64() == UINT64_MAX,
         "integer precision lost");
     check(std::signbit(value->find("ratio")->as_float64()) && value->find("data")->as_bytes()[1] == 255,

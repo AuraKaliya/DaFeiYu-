@@ -10,3 +10,13 @@ target_link_libraries(dfy_events PRIVATE dfy_build_options)
 set_target_properties(dfy_events PROPERTIES FOLDER "Platform")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/bus.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/events.hpp")
+
+# 为新事件链路建立实际数据目标，保留现有同步总线作为 App 基线。
+add_library(dfy_event_streams STATIC event_store.cpp sequence.hpp include/dafeiyu/event_store.hpp)
+target_compile_features(dfy_event_streams PUBLIC cxx_std_20)
+target_include_directories(dfy_event_streams PUBLIC include)
+target_link_libraries(dfy_event_streams PUBLIC dfy_runtime PRIVATE dfy_build_options)
+set_target_properties(dfy_event_streams PROPERTIES FOLDER "Platform")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/event_store.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sequence.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/event_store.hpp")

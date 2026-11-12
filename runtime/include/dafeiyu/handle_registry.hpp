@@ -88,6 +88,12 @@ class HandleRegistry {
     DomainId domain() const noexcept { return domain_; }
     // 返回当前有效持有引用数，不代表对象数量或异步任务数量。
     std::size_t size() const noexcept { return size_; }
+    // 返回仍可签发的空槽数，代次耗尽后永久停用的槽位不计入。
+    std::size_t available() const noexcept {
+        std::size_t result = 0;
+        for (const auto& slot : slots_) if (!slot.object && slot.generation) ++result;
+        return result;
+    }
 
   private:
     struct Slot {

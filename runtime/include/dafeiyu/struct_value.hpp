@@ -23,16 +23,19 @@ class StructValue {
     std::shared_ptr<const StructDescriptor> descriptor() const noexcept { return descriptor_; }
     // 返回描述及载荷共有的字段数量。
     std::size_t size() const noexcept { return fields_.size(); }
+    // 返回构造时核定的逻辑正文字节数，不包含描述、字段名及分配器开销。
+    std::size_t payload_bytes() const noexcept { return payload_bytes_; }
     // 按描述内索引借用字段值，越界抛出 out_of_range；借用受结构载荷引用寿命约束。
     const Value& at(std::size_t index) const { return fields_.at(index); }
     // 按精确名称借用字段，未知名称返回空指针；不延长载荷寿命。
     const Value* find(std::string_view name) const noexcept;
 
   private:
-    // 接收已校验的字段副本与描述持有，固定结构载荷。
-    StructValue(std::shared_ptr<const StructDescriptor> descriptor, std::vector<Value> fields)
-        : descriptor_(std::move(descriptor)), fields_(std::move(fields)) {}
+    // 接收已校验的字段副本、描述持有及正文计量，固定结构载荷。
+    StructValue(std::shared_ptr<const StructDescriptor> descriptor, std::vector<Value> fields, std::size_t payload_bytes)
+        : descriptor_(std::move(descriptor)), fields_(std::move(fields)), payload_bytes_(payload_bytes) {}
     const std::shared_ptr<const StructDescriptor> descriptor_;
     const std::vector<Value> fields_;
+    const std::size_t payload_bytes_;
 };
 }

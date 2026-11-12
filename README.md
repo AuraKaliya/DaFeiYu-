@@ -2,11 +2,11 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R04 资源与代码寿命基础已实现
+## 当前进度：R05a 有界事件接纳已实现
 
 R01 已完成 [ABI v2 最小契约与隔离验收](docs/plugin-abi-v2.md)，R02 已实现宿主引用、六种基础值、结构描述、类型目录及 [结构载荷](runtime/include/dafeiyu/struct_value.hpp)。R03 已实现 [有界 FIFO](runtime/include/dafeiyu/fifo_executor.hpp)、[操作终态与协作取消](runtime/include/dafeiyu/operation.hpp)及 [可撤销的延后通知](runtime/include/dafeiyu/completion_notifications.hpp)，由宿主显式调度和推进。
 
-本次 Debug／Release 主工程、Debug 测试及 Release 代码凭证专项通过；完整 CTest 为 22／25，三项既有插件测试仍因创建符号链接权限失败，全套验收待补。已加入 [资源所有者与使用凭证](runtime/include/dafeiyu/resource_owner.hpp)及 [DLL 代码凭证与活动保护](platform/include/dafeiyu/code_module.hpp)，下一单元为 R05a 有界事件接纳与稳定标识；现有 App 仍同步、生产加载器只支持 v1。契约与验收见 [开发指导](docs/foundation-development-guide.md#316-dll-活动调用保护r04c-2)。
+本次 Debug／Release 主工程、Debug 测试及 Release 事件接纳专项通过；完整 CTest 为 23／26，三项既有插件测试仍因创建符号链接权限失败，全套验收待补。已加入 [资源所有者与使用凭证](runtime/include/dafeiyu/resource_owner.hpp)及 [DLL 代码凭证与活动保护](platform/include/dafeiyu/code_module.hpp)，已新增 [有界事件接纳](events/include/dafeiyu/event_store.hpp)，下一单元为 R05b-1 有界订阅队列；现有 App 仍同步、生产加载器只支持 v1。契约与验收见 [开发指导](docs/foundation-development-guide.md#317-有界事件接纳r05a)。
 
 新增 [插件模块接口](plugins/runtime/include/dafeiyu/plugin_module.hpp)，复用平台加载器完成清单复核、ABI 查询与兼容性校验，并在构造失败时回收本次模块引用。07a 平台封装与 07b 查询校验均已完成，尚未创建插件实例或接入终端管理命令。
 
@@ -36,6 +36,7 @@ dafeiyu
 ├── Platform
 │   ├── dfy_runtime
 │   ├── dfy_events
+│   ├── dfy_event_streams
 │   ├── dfy_http
 │   └── dfy_library
 ├── SDK
@@ -279,7 +280,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R05a 有界事件接纳与稳定标识。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，生产加载器升级仍属于 R06，当前下一审查项为 R05b-1 有界订阅队列。
 
 ## 旧工程归档
 

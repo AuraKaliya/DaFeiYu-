@@ -4,7 +4,7 @@
 namespace dfy::runtime {
 namespace {
 // 计算基础值的逻辑正文字节数，不包含分配器、字段名或引用记录开销。
-std::size_t payload_bytes(const Value& value) {
+std::size_t scalar_payload_bytes(const Value& value) {
     switch (value.kind()) {
     case ValueKind::boolean: return 1;
     case ValueKind::int64:
@@ -18,7 +18,7 @@ std::size_t payload_bytes(const Value& value) {
 }
 
 // 根据宿主描述构造独立不可变载荷，未通过校验时不返回半成品。
-// 步骤：核对描述与字段数量 → 建立唯一名称索引 → 校验必填、种类及预算 → 复制有序字段。
+// 步骤：核对描述与字段数量 → 建立唯一名称索引 → 校验必填、种类及预算 → 保存有序字段及正文计量。
 StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descriptor,
     std::span<const NamedValue> fields, std::size_t max_payload_bytes) {
     if (!descriptor) throw std::invalid_argument("struct: descriptor required");
@@ -35,7 +35,7 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         if (match == supplied.end()) throw std::invalid_argument("struct: missing or unknown field");
         const auto& value = *match->second;
         if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
-        const auto bytes = payload_bytes(value);
+        const auto bytes = scalar_payload_bytes(value);
         if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && bytes > field.max_bytes) {
             throw std::length_error("struct: field byte limit exceeded");
         }
@@ -46,7 +46,7 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
     std::vector<Value> values;
     values.reserve(declared.size());
     for (const auto& field : declared) values.push_back(*supplied.at(field.name));
-    return StructValue(std::move(descriptor), std::move(values));
+    return StructValue(std::move(descriptor), std::move(values), max_payload_bytes - remaining);
 }
 
 // 按描述字段名查找对应值，未匹配时不产生隐式字段或默认值。
