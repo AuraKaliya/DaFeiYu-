@@ -28,6 +28,8 @@ class EventStore {
     EventStore& operator=(const EventStore&) = delete;
     // 校验正文后接纳事件并返回持有引用，成功才推进序号；不表示消费者处理完成。
     runtime::Handle accept(std::shared_ptr<const runtime::StructValue> payload);
+    // 原子签发同一新事件的多份引用，全部成功才推进接纳序号，失败回收本次全部持有。
+    std::vector<runtime::Handle> accept_batch(std::shared_ptr<const runtime::StructValue> payload, std::size_t copies);
     // 取得同一事件的另一份持有引用，不产生新的接纳序号。
     runtime::Handle retain(runtime::Handle source) { return references_.retain(source); }
     // 释放一份事件引用，旧别名失效，不定义投递或业务完成。

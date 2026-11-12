@@ -42,8 +42,13 @@ SubscriptionQueue::SubscriptionQueue(std::shared_ptr<EventStore> store, std::siz
 void SubscriptionQueue::push(runtime::Handle source) {
     if (state_ != QueueState::open) throw std::logic_error("subscription: admission closed");
     if (size_ == slots_.size()) throw std::length_error("subscription: queue full");
-    const auto owned = store_->retain(source);
-    slots_[tail_] = owned;
+    auto owned = store_->retain(source);
+    append_owned(owned);
+}
+
+// 将预先准备的事件引用转交已检查的队尾，提交阶段不再产生失败点。
+void SubscriptionQueue::append_owned(runtime::Handle& owned) noexcept {
+    slots_[tail_] = std::exchange(owned, {});
     tail_ = (tail_ + 1) % slots_.size();
     ++size_;
 }
