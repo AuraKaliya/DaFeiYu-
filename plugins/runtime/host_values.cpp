@@ -21,7 +21,7 @@ dfy_v2_status read_value(dfy_v2_handle source, dfy_v2_value_view* output, dfy_v2
         case runtime::ValueKind::structure: break;
         case runtime::ValueKind::null_value: break;
         case runtime::ValueKind::array: break;
-        case runtime::ValueKind::map: return DFY_V2_UNSUPPORTED;
+        case runtime::ValueKind::map: break;
         }
         *output = result;
         return DFY_V2_OK;

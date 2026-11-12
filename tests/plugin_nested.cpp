@@ -1,6 +1,7 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/dynamic_library.hpp>
 #include <dafeiyu/array_value.hpp>
+#include <dafeiyu/map_value.hpp>
 #include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
@@ -8,6 +9,7 @@ static_assert(sizeof(dfy_v2_type_api_v2) == 32 && offsetof(dfy_v2_type_api_v2, n
 static_assert(sizeof(dfy_v2_value_api_v2) == 24 && offsetof(dfy_v2_value_api_v2, structure) == 16);
 static_assert(sizeof(dfy_v2_field_info_v2) == 32 && offsetof(dfy_v2_field_info_v2, flags) == 20);
 static_assert(sizeof(dfy_v2_array_type_info) == 24 && sizeof(dfy_v2_array_info) == 32 && sizeof(dfy_v2_array_api) == 32);
+static_assert(sizeof(dfy_v2_map_type_info) == 32 && sizeof(dfy_v2_map_info) == 40 && sizeof(dfy_v2_map_api) == 40);
 namespace {
 using namespace dfy::runtime;
 using namespace dfy::plugins;
@@ -98,6 +100,59 @@ void arrays(const dfy_v2_plugin_api& bootstrap) {
         api.element(empty,0,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"empty array confused with null or missing");
     refs.release(empty,nullptr); check(!host.references() && !host.resources(),"array host leaked");
 }
+// 通过纯 C 验证映射精确查询、借用键以及独立叶值保持的事件预算。
+// 步骤：构造映射事件 → 反射并重复查键 → 检查空键和错误输出 → 释放父链并保留叶值。
+void maps(const dfy_v2_plugin_api& bootstrap) {
+    const void* table = nullptr;
+    check(bootstrap.query_interface({DFY_TEST_MAPS_ID,sizeof(DFY_TEST_MAPS_ID)-1},1,&table,nullptr) == DFY_V2_OK,"map consumer missing");
+    const auto* consumer = static_cast<const dfy_test_maps_api*>(table);
+    check(consumer && consumer->header.struct_size == sizeof(*consumer) && consumer->header.interface_version == 1 && consumer->inspect,"invalid map consumer");
+    auto map_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::uint64,3,3,0,true));
+    const MapEntry entries[] = {{"nil",Value::null()},{std::string("a\0b",3),Value::from_uint64(UINT64_MAX)},{"",Value::from_uint64(1)}};
+    auto map = std::make_shared<const MapValue>(MapValue::create(map_type,entries,22));
+    const auto field = FieldDescriptor::map_field("items",map_type);
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{1,64,2}));
+    const NamedValue input{"items",Value::from_map(map)};
+    auto payload = std::make_shared<const StructValue>(StructValue::create(type,{&input,1},22));
+    auto store = std::make_shared<dfy::events::EventStore>(4,22);
+    auto queue = std::make_shared<dfy::events::SubscriptionQueue>(store,1);
+    auto reader = std::make_shared<dfy::events::SubscriptionReader>(queue,1);
+    HostServices host(16); const auto receiver = host.expose(reader); auto binding = host.bind();
+    const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE,1);
+    const auto& reads = service<dfy_v2_reader_api>(DFY_V2_READER_INTERFACE,1);
+    const auto& structures = service<dfy_v2_struct_api_v2>(DFY_V2_STRUCT_INTERFACE,2);
+    const auto& values = service<dfy_v2_value_api_v2>(DFY_V2_VALUE_INTERFACE,2);
+    const auto& api = service<dfy_v2_map_api>(DFY_V2_MAP_INTERFACE,1);
+    dfy_v2_handle request{},root{},map_ref{},held{},temporary{},rejected{};
+    check(reads.next(receiver,&request,nullptr) == DFY_V2_OK,"map read submission failed");
+    const auto event=store->accept(payload); queue->push(event); store->release(event); host.advance();
+    check(reads.payload(request,&root,nullptr) == DFY_V2_OK,"map root missing");
+    dfy_test_map_counts count{};
+    check(consumer->inspect(HostServices::query,root,0,&count,nullptr) == DFY_V2_OK && count.size == 3 && count.nulls == 1 &&
+        count.key_bytes == 6 && count.last_unsigned == UINT64_MAX && host.references() == 3,"C map read or cleanup failed");
+    check(structures.field(root,0,&map_ref,nullptr) == DFY_V2_OK && api.find(map_ref,{"a\0b",3},&held,nullptr) == DFY_V2_OK,"embedded-zero key lost");
+    dfy_v2_value_view view{}; dfy_v2_string_view key{};
+    check(api.entry(map_ref,1,&key,&temporary,nullptr) == DFY_V2_OK && std::string_view(key.data,key.length) == std::string_view("a\0b",3),"key borrow changed");
+    refs.release(temporary,nullptr);
+    check(api.find(map_ref,{nullptr,0},&temporary,nullptr) == DFY_V2_OK && values.read(temporary,&view,nullptr) == DFY_V2_OK &&
+        view.data.uint64 == 1,"empty key rejected"); refs.release(temporary,nullptr);
+    check(api.find(map_ref,{"a",1},&rejected,nullptr) == DFY_V2_NOT_FOUND && !rejected.id &&
+        api.find(map_ref,{nullptr,1},&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"key lookup truncated or accepted invalid view");
+    check(api.entry(map_ref,3,&key,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !key.data && !key.length && !rejected.id,"invalid entry left output");
+    check(service<dfy_v2_value_api>(DFY_V2_VALUE_INTERFACE,1).read(map_ref,&view,nullptr) == DFY_V2_UNSUPPORTED && !view.kind,"v1 accepted map");
+    refs.release(map_ref,nullptr); refs.release(root,nullptr); refs.release(request,nullptr); host.advance();
+    check(store->references() == 1 && reader->size() == 1 && values.read(held,&view,nullptr) == DFY_V2_OK &&
+        view.data.uint64 == UINT64_MAX,"map value escaped event budget");
+    refs.release(held,nullptr); host.advance(); reader->close(dfy::events::CloseMode::cancel); host.advance(); refs.release(receiver,nullptr);
+    check(!host.references() && !host.resources() && !store->references(),"map host leaked");
+    {
+        HostServices full(1); const auto source=full.expose(std::make_shared<const Value>(Value::from_map(map))); auto scope=full.bind();
+        key={"old",3};
+        check(api.entry(source,0,&key,&rejected,nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !key.data && !rejected.id && full.references() == 1,
+            "map entry allocation exposed partial key");
+        refs.release(source,nullptr);
+    }
+}
 }
 // 以真实 C DLL 递归消费嵌套事件，保留叶字段仍需承担原事件及读取预算。
 // 步骤：构造嵌套事件 → 协商版本 2 并读取 → 拒绝深度不足且回收 → 保留叶子后释放父链并检查预算。
@@ -152,6 +207,7 @@ int wmain(int argc, wchar_t** argv) {
         check(!host.references() && !host.resources(), "nested host leaked");
         presence(*bootstrap);
         arrays(*bootstrap);
+        maps(*bootstrap);
         std::cout << "Versioned C nested checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

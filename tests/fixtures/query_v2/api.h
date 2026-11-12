@@ -15,6 +15,7 @@
 #define DFY_TEST_NESTED_ID "test.host_nested"
 #define DFY_TEST_PRESENCE_ID "test.host_presence"
 #define DFY_TEST_ARRAYS_ID "test.host_arrays"
+#define DFY_TEST_MAPS_ID "test.host_maps"
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,6 +126,14 @@ typedef struct dfy_test_arrays_api {
         dfy_test_array_counts* output, dfy_v2_error* error);
 } dfy_test_arrays_api;
 extern const dfy_test_arrays_api dfy_test_arrays;
+typedef struct dfy_test_map_counts { uint64_t size, nulls, key_bytes, last_unsigned; } dfy_test_map_counts;
+typedef struct dfy_test_maps_api {
+    dfy_v2_api_header header;
+    // 在纯 C 中按序枚举并以完整键再次查询，失败回收中间持有并清空统计。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        dfy_test_map_counts* output, dfy_v2_error* error);
+} dfy_test_maps_api;
+extern const dfy_test_maps_api dfy_test_maps;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

@@ -19,7 +19,9 @@ uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
     case runtime::ValueKind::array:
         if (profile == 2) return DFY_V2_VALUE_ARRAY;
         throw std::domain_error("host: array unavailable in data capability v1");
-    case runtime::ValueKind::map: throw std::domain_error("host: map access not published");
+    case runtime::ValueKind::map:
+        if (profile == 2) return DFY_V2_VALUE_MAP;
+        throw std::domain_error("host: map unavailable in data capability v1");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }

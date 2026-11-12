@@ -15,6 +15,9 @@
 #define DFY_V2_VALUE_STRUCTURE UINT32_C(7)
 #define DFY_V2_VALUE_NULL UINT32_C(8)
 #define DFY_V2_VALUE_ARRAY UINT32_C(9)
+#define DFY_V2_VALUE_MAP UINT32_C(10)
+#define DFY_V2_MAP_INTERFACE "dfy.maps"
+#define DFY_V2_MAP_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
 #define DFY_V2_ARRAY_VERSION UINT32_C(1)
 #define DFY_V2_ELEMENT_NULLABLE UINT32_C(1)
@@ -118,6 +121,26 @@ typedef struct dfy_v2_array_api {
     // 取得元素的独立持有，保持父数组及原始预算；越界不是缺失，返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *element)(dfy_v2_handle value, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_array_api;
+// 映射键为 UTF-8 字符串，value_flags 当前仅允许 ELEMENT_NULLABLE。
+typedef struct dfy_v2_map_type_info {
+    uint32_t value_kind;
+    uint32_t value_flags;
+    uint64_t max_entries;
+    uint64_t max_key_bytes;
+    uint64_t max_value_bytes;
+} dfy_v2_map_type_info;
+typedef struct dfy_v2_map_info { dfy_v2_map_type_info type; uint64_t size; } dfy_v2_map_info;
+typedef struct dfy_v2_map_api {
+    dfy_v2_api_header header;
+    // 复制结构字段的映射约束，非映射字段拒绝。
+    dfy_v2_status (DFY_V2_CALL *field_type)(dfy_v2_handle type, uint64_t index, dfy_v2_map_type_info* output, dfy_v2_error* error);
+    // 复制实际映射的约束与条目数。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle value, dfy_v2_map_info* output, dfy_v2_error* error);
+    // 按字节序返回借用键与独立值引用；键依赖传入映射引用，两个输出均必需且失败清空。
+    dfy_v2_status (DFY_V2_CALL *entry)(dfy_v2_handle value, uint64_t index, dfy_v2_string_view* key, dfy_v2_handle* output, dfy_v2_error* error);
+    // 按完整键精确查询并返回独立值引用，未知键为 NOT_FOUND，空键合法。
+    dfy_v2_status (DFY_V2_CALL *find)(dfy_v2_handle value, dfy_v2_string_view key, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_map_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
