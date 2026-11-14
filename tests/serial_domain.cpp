@@ -1,4 +1,5 @@
 #include <dafeiyu/serial_domain.hpp>
+#include <dafeiyu/completion_notifications.hpp>
 #include <iostream>
 namespace {
 using namespace dfy::runtime;
@@ -80,10 +81,57 @@ void lifetime() {
     orphan.finish(orphan.active()); orphan.collect(); check(!orphan.size(),"host could not release unreferenced occupancy");
     rejects<std::invalid_argument>([] { SerialDomain invalid(0); });
 }
+// 验证延后授予通知、跨域推进和异步恢复，原域直到宿主确认处理结束才放行。
+// 步骤：登记授予与恢复通知 → 启动首项后等待 → 执行其他域 → 恢复原处理并放行后续。
+void continuation() {
+    SerialDomain ordered(2), independent(1);
+    const auto first = ordered.submit(), next = ordered.submit(), other = independent.submit();
+    OperationSource completion;
+    CompletionNotifications notices(4); FifoExecutor executor(1);
+    std::vector<int> trace;
+    const auto first_notice = notices.subscribe(first->admission(),[&](const auto&) { trace.push_back(1); });
+    const auto next_notice = notices.subscribe(next->admission(),[&](const auto&) { trace.push_back(4); ordered.finish(next); });
+    const auto other_notice = notices.subscribe(other->admission(),[&](const auto&) { trace.push_back(2); independent.finish(other); });
+    const auto resumed = notices.subscribe(completion.operation(),[&](const auto&) { trace.push_back(3); ordered.finish(first); });
+    ordered.advance(); independent.advance();
+    check(trace.empty() && notices.schedule_one(executor) == ScheduleResult::queued && notices.schedule_one(executor) == ScheduleResult::blocked,
+        "serial admission called work inline or ignored FIFO backpressure");
+    check(executor.run_one() == RunResult::executed && trace == std::vector<int>{1},"first ordered work did not start");
+    ordered.advance();
+    check(ordered.active() == first && next->admission()->state() == OperationState::pending,"asynchronous waiting released ordering occupancy");
+    check(notices.schedule_one(executor) == ScheduleResult::queued && executor.run_one() == RunResult::executed && trace == std::vector<int>({1,2}),
+        "waiting domain blocked independent work");
+    check(notices.schedule_one(executor) == ScheduleResult::idle,"later ordered work ran before original completion");
+    completion.settle(OperationState::succeeded);
+    check(trace == std::vector<int>({1,2}) && ordered.active() == first,"completion signal executed continuation inline");
+    check(notices.schedule_one(executor) == ScheduleResult::queued && executor.run_one() == RunResult::executed && trace == std::vector<int>({1,2,3}) &&
+        next->admission()->state() == OperationState::pending,"resume repeated grant or started next inline");
+    ordered.advance();
+    check(notices.schedule_one(executor) == ScheduleResult::queued && executor.run_one() == RunResult::executed && trace == std::vector<int>({1,2,3,4}) &&
+        !ordered.active(),"ordered continuation lost FIFO progression");
+    for (const auto notice : {first_notice,next_notice,other_notice,resumed}) notices.release(notice);
+    notices.collect(); check(!notices.size() && !notices.references() && executor.run_one() == RunResult::idle,"serial notification chain leaked");
+}
+// 验证通知撤销或回调失败不被误认为处理结束，宿主必须明确归还已经授予的占用。
+// 步骤：授予后撤销入口 → 核对仍占用 → 执行失败回调 → 显式确认结束后归还。
+void delivery_failures() {
+    SerialDomain domain(2); auto first = domain.submit(), next = domain.submit();
+    CompletionNotifications notices(2); FifoExecutor executor(1); unsigned calls = 0;
+    const auto revoked = notices.subscribe(first->admission(),[&](const auto&) { ++calls; });
+    domain.advance(); check(notices.schedule_one(executor) == ScheduleResult::queued && notices.revoke(revoked) == RevokeResult::revoked,"serial revoke setup failed");
+    check(executor.run_one() == RunResult::executed && !calls && domain.active() == first && next->phase() == SerialPhase::waiting,
+        "revoking grant notification silently released occupancy");
+    notices.release(revoked); domain.finish(first); domain.advance();
+    const auto failed = notices.subscribe(next->admission(),[&](const auto&) { ++calls; throw std::runtime_error("simulated work failure"); });
+    check(notices.schedule_one(executor) == ScheduleResult::queued && executor.run_one() == RunResult::failed && calls == 1 && domain.active() == next,
+        "callback failure pretended to confirm processing completion");
+    domain.finish(next); notices.release(failed); notices.collect();
+    check(!domain.active() && !notices.size() && executor.run_one() == RunResult::idle,"failed serial notification leaked");
+}
 }
 // 验收顺序域的授予、占用和结束边界，授予成功不冒充业务结果。
-// 步骤：核对顺序与取消 → 核对关闭与容量 → 核对责任寿命 → 报告结果。
+// 步骤：核对顺序与关闭 → 验证责任寿命 → 联测通知恢复及失败 → 报告结果。
 int main() {
-    try { ordering(); closure(); lifetime(); std::cout << "Serial domain checks passed\n"; return 0; }
+    try { ordering(); closure(); lifetime(); continuation(); delivery_failures(); std::cout << "Serial domain checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
