@@ -38,7 +38,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 数据子引用使用宿主别名持有：保留叶字段或容器元素仍保持原载荷、读请求结果和事件存储预算，不能提前释放中间引用来绕过计量。最后一份数据持有释放后才归还相应预算；单独取得类型描述只保留不可变描述，不保留事件正文。借用视图在其指定引用释放后失效，即使另一个引用仍使底层对象存活，也必须重新读取。
 
-真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过；枚举已由 C／C++ 校验布局、由 [生产服务测试](../tests/plugin_enums.cpp) 校验行为，实际 C 枚举消费者为下一单元。App／Agent 的正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL 通过；实际观察包枚举支持为下一单元。App／Agent 的正式异步迁移仍属 R15。
 
 ## 引导入口与布局
 

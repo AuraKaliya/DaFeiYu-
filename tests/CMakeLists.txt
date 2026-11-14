@@ -298,9 +298,10 @@ set_tests_properties(runtime.enums PROPERTIES TIMEOUT 15)
 # 验证版本化 C 枚举服务的精确值、借用和独立描述持有。
 add_executable(dfy_plugin_enums_tests plugin_enums.cpp)
 target_link_libraries(dfy_plugin_enums_tests PRIVATE dfy_plugins dfy_build_options)
+add_dependencies(dfy_plugin_enums_tests dfy_query_v2_fixture)
 set_target_properties(dfy_plugin_enums_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_enums.cpp")
-add_test(NAME plugins.enums COMMAND dfy_plugin_enums_tests)
+add_test(NAME plugins.enums COMMAND dfy_plugin_enums_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.enums PROPERTIES TIMEOUT 15)
 
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。

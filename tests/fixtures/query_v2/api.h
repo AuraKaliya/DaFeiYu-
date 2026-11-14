@@ -134,6 +134,15 @@ typedef struct dfy_test_maps_api {
         dfy_test_map_counts* output, dfy_v2_error* error);
 } dfy_test_maps_api;
 extern const dfy_test_maps_api dfy_test_maps;
+#define DFY_TEST_ENUMS_ID "test.enums"
+typedef struct dfy_test_enum_counts { uint64_t members; dfy_v2_enum_selection selection; } dfy_test_enum_counts;
+typedef struct dfy_test_enums_api {
+    dfy_v2_api_header header;
+    // 在宿主绑定内有界反射枚举，成功转交一份字段持有；失败清空全部输出。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        uint64_t member_budget, dfy_test_enum_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
+} dfy_test_enums_api;
+extern const dfy_test_enums_api dfy_test_enums;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

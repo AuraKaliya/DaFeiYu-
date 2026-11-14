@@ -1,6 +1,8 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/enum_value.hpp>
 #include <dafeiyu/data_abi_v2.h>
+#include <dafeiyu/dynamic_library.hpp>
+#include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_enum_info) == 32 && offsetof(dfy_v2_enum_info, member_count) == 24);
@@ -70,12 +72,67 @@ void inspect(EnumNumber number, ValueKind kind) {
         refs.release(source,nullptr);
     }
 }
+// 验证真实 C DLL 有界反射未知成员，叶引用持续保持事件及读请求预算。
+// 步骤：构造整数边界事件 → 由纯 C 消费并留存字段 → 释放父链检查计量 → 归还数据并确认描述独立。
+void consume(const dfy_test_enums_api& consumer, EnumNumber number, ValueKind kind) {
+    const std::vector<EnumMember> members = kind == ValueKind::int64 ?
+        std::vector<EnumMember>{{"min",INT64_MIN},{"zero",std::int64_t{0}},{"max",INT64_MAX}} :
+        std::vector<EnumMember>{{"zero",std::uint64_t{0}},{"max",UINT64_MAX}};
+    auto definition = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("test.event_enum",1,kind,members,3,32));
+    const auto field = FieldDescriptor::enum_field("value",definition);
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.event",1,{&field,1},{4,64}));
+    const NamedValue input{"value",Value::from_enum(std::make_shared<const EnumValue>(EnumValue::create(definition,number)))};
+    auto payload = std::make_shared<const StructValue>(StructValue::create(type,{&input,1},8));
+    auto store = std::make_shared<dfy::events::EventStore>(2,8);
+    auto queue = std::make_shared<dfy::events::SubscriptionQueue>(store,1);
+    auto reader = std::make_shared<dfy::events::SubscriptionReader>(queue,1);
+    HostServices host(7); const auto receiver = host.expose(reader); auto binding = host.bind();
+    const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE);
+    const auto& reads = service<dfy_v2_reader_api>(DFY_V2_READER_INTERFACE);
+    const auto& enums = service<dfy_v2_enum_api>(DFY_V2_ENUM_INTERFACE);
+    dfy_v2_handle request{},root{},held{},description{}; dfy_test_enum_counts count{};
+    check(reads.next(receiver,&request,nullptr) == DFY_V2_OK,"enum read submission failed");
+    const auto event = store->accept(payload); queue->push(event); store->release(event); host.advance();
+    check(reads.payload(request,&root,nullptr) == DFY_V2_OK,"enum payload missing");
+    check(consumer.inspect(HostServices::query,root,0,members.size()-1,&count,&held,nullptr) == DFY_V2_RESOURCE_EXHAUSTED &&
+        !count.members && !count.selection.number.kind && !held.id && host.references() == 3,"C enum budget failure leaked");
+    check(consumer.inspect(HostServices::query,root,0,members.size(),&count,&held,nullptr) == DFY_V2_OK &&
+        count.members == members.size() && count.selection.index == definition->index_of(number) && host.references() == 4,"C enum reflection or cleanup failed");
+    check(enums.descriptor(held,&description,nullptr) == DFY_V2_OK,"enum independent descriptor failed");
+
+    refs.release(root,nullptr); refs.release(request,nullptr); host.advance();
+    dfy_v2_enum_selection selection{};
+    check(store->references() == 1 && reader->size() == 1 && enums.read(held,&selection,nullptr) == DFY_V2_OK,"enum leaf escaped event budget");
+    if (kind == ValueKind::int64) check(selection.number.data.int64 == std::get<std::int64_t>(number),"C signed enum changed");
+    else check(selection.number.data.uint64 == UINT64_MAX,"C unsigned enum narrowed");
+    refs.release(held,nullptr); host.advance();
+    dfy_v2_enum_info info{};
+    check(!store->references() && !reader->size() && enums.describe(description,&info,nullptr) == DFY_V2_OK,"enum descriptor retained event budget");
+    refs.release(description,nullptr); reader->close(dfy::events::CloseMode::cancel); host.advance(); refs.release(receiver,nullptr);
+    check(!host.references() && !host.resources(),"C enum lifecycle leaked");
+    {
+        HostServices full(3); const auto source = full.expose(payload); auto scope = full.bind();
+        check(consumer.inspect(HostServices::query,source,0,members.size(),&count,&held,nullptr) == DFY_V2_RESOURCE_EXHAUSTED &&
+            !count.members && !held.id && full.references() == 1,"C enum partial acquisition leaked");
+        refs.release(source,nullptr);
+    }
 }
-// 验证三种整数边界及无上下文调用，不依赖真实模型或插件实现。
-// 步骤：验收三种极值 → 拒绝未绑定查询 → 报告结果。
-int main() {
+}
+// 通过生产服务与真实 C DLL 验证枚举精度、预算及借用边界。
+// 步骤：验收生产服务边界 → 查询纯 C 消费者 → 验证三种极值事件链 → 拒绝未绑定查询。
+int wmain(int argc, wchar_t** argv) {
     try {
         inspect(INT64_MIN,ValueKind::int64); inspect(INT64_MAX,ValueKind::int64); inspect(UINT64_MAX,ValueKind::uint64);
+        check(argc == 2,"C enum consumer DLL required");
+        dfy::platform::DynamicLibrary module(std::filesystem::canonical(argv[1]));
+        const auto query = reinterpret_cast<dfy_v2_query_fn>(module.symbol(DFY_V2_QUERY_EXPORT));
+        const dfy_v2_plugin_api* bootstrap = nullptr;
+        check(query(2,&bootstrap,nullptr) == DFY_V2_OK && bootstrap,"C enum bootstrap failed");
+        const void* consumer_table = nullptr;
+        check(bootstrap->query_interface({DFY_TEST_ENUMS_ID,sizeof(DFY_TEST_ENUMS_ID)-1},1,&consumer_table,nullptr) == DFY_V2_OK && consumer_table,"C enum consumer missing");
+        const auto& consumer = *static_cast<const dfy_test_enums_api*>(consumer_table);
+        check(consumer.header.struct_size == sizeof(consumer) && consumer.header.interface_version == 1 && consumer.inspect,"C enum consumer invalid");
+        consume(consumer,INT64_MIN,ValueKind::int64); consume(consumer,INT64_MAX,ValueKind::int64); consume(consumer,UINT64_MAX,ValueKind::uint64);
         const void* table = nullptr;
         check(HostServices::query({DFY_V2_ENUM_INTERFACE,sizeof(DFY_V2_ENUM_INTERFACE)-1},1,&table,nullptr) == DFY_V2_INVALID_CONTEXT && !table,"unbound enum service accepted");
         std::cout << "C enum service checks passed\n"; return 0;
