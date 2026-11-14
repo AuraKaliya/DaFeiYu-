@@ -5,6 +5,7 @@
 namespace dfy::events {
 class SubscriptionQueue;
 class BroadcastChannel;
+class ConsumerGroup;
 
 // 移动式事件数据持有，只管理数据寿命，不代表处理成功或消费者任务退出。
 class EventLease {
@@ -69,6 +70,7 @@ class SubscriptionQueue {
     std::size_t available() const noexcept { return slots_.size() - size_; }
   private:
     friend class BroadcastChannel;
+    friend class ConsumerGroup;
     // 接收已准备且属于本存储的引用；仅在已确认 Open 且有空槽时使用，不分配内存。
     void append_owned(runtime::Handle& owned) noexcept;
     std::shared_ptr<EventStore> store_;

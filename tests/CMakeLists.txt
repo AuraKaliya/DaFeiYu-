@@ -364,6 +364,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.targets COMMAND dfy_plugin_targets_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.targets PROPERTIES TIMEOUT 15)
 
+# 验证消费者组的有界成员、共享领取和独立关闭语义。
+add_executable(dfy_consumer_group_tests consumer_group.cpp)
+target_link_libraries(dfy_consumer_group_tests PRIVATE dfy_event_streams dfy_build_options)
+set_target_properties(dfy_consumer_group_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/consumer_group.cpp")
+add_test(NAME events.consumer_group COMMAND dfy_consumer_group_tests)
+set_tests_properties(events.consumer_group PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
