@@ -1,3 +1,11 @@
+# 只在 GUI 构建中验证来源与 Frame 代次，不启动浏览器。
+if(BUILD_GUI)
+  add_executable(dfy_ui_scope_tests ui_frame_scope.cpp)
+  target_link_libraries(dfy_ui_scope_tests PRIVATE dfy_ui_scope dfy_build_options)
+  set_target_properties(dfy_ui_scope_tests PROPERTIES FOLDER Tests)
+  add_test(NAME ui.frame_scope COMMAND dfy_ui_scope_tests)
+endif()
+
 # 验证生产域签发器与同一内部算法的整数边界，不连接任何插件或模型服务。
 add_executable(dfy_runtime_ids_tests runtime_ids.cpp)
 target_link_libraries(dfy_runtime_ids_tests PRIVATE dfy_runtime dfy_build_options)
