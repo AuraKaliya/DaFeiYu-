@@ -397,6 +397,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.groups COMMAND dfy_plugin_groups_tests)
 set_tests_properties(plugins.groups PROPERTIES TIMEOUT 15)
 
+# 真实 C 回调验证组成员退出与代码活动保护、排队撤销的独立边界。
+add_executable(dfy_plugin_group_notifications_tests plugin_group_notifications.cpp)
+target_link_libraries(dfy_plugin_group_notifications_tests PRIVATE dfy_plugins dfy_build_options)
+add_dependencies(dfy_plugin_group_notifications_tests dfy_query_v2_fixture)
+set_target_properties(dfy_plugin_group_notifications_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_group_notifications.cpp")
+add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
+set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
