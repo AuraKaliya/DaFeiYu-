@@ -8,7 +8,7 @@ const dialogOpen = ref(false);
 const composing = ref(false);
 const compositions = ref(0);
 const trustedEnds = ref(0);
-const verify = location.hash === '#verify';
+const verify = location.hash === '#verify' || location.hash === '#offline';
 const frameUrl = ref('');
 const frameVisible = ref(false);
 const framePending = ref(false);
@@ -23,7 +23,7 @@ function hostMessage(event: MessageEvent<unknown>): void {
   const data = event.data;
   if (!data || typeof data !== 'object' || !('event' in data)) return;
   if (data.event === 'frame.opened' && 'url' in data && typeof data.url === 'string' && /^https:\/\/probe\.dafeiyu\.invalid\/frames\/index\.html\?view=[1-9][0-9]*$/.test(data.url)) {
-    frameUrl.value = data.url + (verify ? '#verify' : ''); frameVisible.value = true; framePending.value = false;
+    frameUrl.value = data.url + (verify ? location.hash : ''); frameVisible.value = true; framePending.value = false;
   } else if (data.event === 'frame.closed') framePending.value = false;
   else if (data.event === 'frame.busy') framePending.value = true;
 }

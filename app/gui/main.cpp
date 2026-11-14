@@ -43,6 +43,7 @@ struct Window : std::enable_shared_from_this<Window> {
     unsigned pending = 0, pending_at_close = 0;
     bool closing = false, smoke = false, interaction_mode = false, lifecycle_mode = false, early = false, close_controller = false, navigation_bound = false;
     bool finish_posted = false, process_check_failed = false, close_warned = false;
+    bool offline = false, offline_enabled = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -112,8 +113,36 @@ struct Window : std::enable_shared_from_this<Window> {
             }
             return S_OK;
         }).Get(),&navigation));
-        navigation_bound = true; resize(); require(view->Navigate((std::wstring(page)+(smoke ? L"#verify" : L"")).c_str()));
+        navigation_bound = true; resize();
         if (smoke || interaction_mode) { deadline = std::chrono::steady_clock::now()+std::chrono::seconds(20); SetTimer(handle,1,20,nullptr); }
+        if (offline) prepare_offline(); else navigate();
+    }
+    // 以固定验收片段选择页面检查，不向页面开放任意原生操作。
+    void navigate() { require(view->Navigate((std::wstring(page)+(offline ? L"#offline" : smoke ? L"#verify" : L"")).c_str())); }
+    // 导航前设置当前 WebView2 的离线模拟，不改变系统网络或其他浏览器。
+    // 步骤：保留准备责任 → 提交固定 CDP 命令 → 核对结果 → 按关闭状态导航或回收。
+    void prepare_offline() {
+        ++pending; const auto weak = weak_from_this();
+        const auto status = view->CallDevToolsProtocolMethod(L"Network.emulateNetworkConditions",
+            L"{\"offline\":true,\"latency\":0,\"downloadThroughput\":-1,\"uploadThroughput\":-1}",
+            Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+            // 只有协议明确成功才启动页面，失败不退回在线模式冒充通过。
+            // 步骤：归还回调责任 → 核对协议回执 → 导航或继续关闭。
+            [weak](HRESULT result,LPCWSTR raw) -> HRESULT {
+                if (const auto self = weak.lock()) {
+                    --self->pending;
+                    try {
+                        require(result);
+                        if (!raw || nlohmann::json::parse(dfy::ui::utf8(raw)).contains("error")) throw std::runtime_error("U01: offline emulation rejected");
+                        self->offline_enabled = true;
+                        if (!self->closing) self->navigate();
+                    } catch (const std::exception& error) { self->fail(error.what()); }
+                    catch (...) { self->fail(); }
+                    if (self->closing) self->close();
+                }
+                return S_OK;
+            }).Get());
+        if (FAILED(status)) { --pending; require(status); }
     }
     // 有界等待真实异步消息，不以导航成功替代 Frame 授权验收。
     // 步骤：检查原生完成条件 → 成功请求关闭 → 超时记录边界并失败。
@@ -140,7 +169,7 @@ struct Window : std::enable_shared_from_this<Window> {
             catch (...) { fail(); }
         }
         if (interaction) interaction->advance();
-        if (smoke && loaded && content->blocked_requests() && checks->verified()) PostMessageW(handle,WM_CLOSE,0,0);
+        if (smoke && loaded && (offline ? offline_enabled : content->blocked_requests() != 0) && checks->verified()) PostMessageW(handle,WM_CLOSE,0,0);
         else if (std::chrono::steady_clock::now() >= deadline) {
             std::fprintf(stderr,"Frame checks: loaded=%d active=%u allowed=%u inactive=%u stale=%u forbidden=%u navigation=%u malformed=%u\n",
                 loaded,checks->active,checks->decisions[0],checks->decisions[1],checks->decisions[3],checks->decisions[4],checks->blocked_navigation,checks->malformed);
@@ -216,7 +245,8 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
 // 在 STA 中运行独立离线容器，验证入口不依赖终端、模型或插件。
 // 步骤：核对参数与运行库 → 创建窗口及环境 → 推进消息循环 → 释放 COM 公寓。
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
-    const bool smoke = __argc == 2 && std::wstring_view(__wargv[1]) == L"--smoke";
+    const bool offline = __argc == 2 && std::wstring_view(__wargv[1]) == L"--offline";
+    const bool smoke = offline || (__argc == 2 && std::wstring_view(__wargv[1]) == L"--smoke");
     const bool interaction_mode = __argc == 2 && std::wstring_view(__wargv[1]) == L"--interaction";
     const bool lifecycle_mode = __argc == 2 && std::wstring_view(__wargv[1]) == L"--lifecycle";
     const bool early = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-early";
@@ -238,6 +268,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         }
         auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
         state->close_controller = close_controller;
+        state->offline = offline;
         state->assets = dfy::app::executable_directory()/L"ui";
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");
@@ -258,6 +289,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             {"live_channels",state->checks ? state->checks->live_channels : 0},
             {"created_frames",state->checks ? state->checks->created : 0},{"destroyed_frames",state->checks ? state->checks->destroyed : 0},
             {"runtime",dfy::ui::utf8(version.get())},{"root_navigation_ms",state->navigation_ms},
+            {"offline_enabled",state->offline_enabled},
             {"elapsed_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-state->started).count()}};
         std::puts(report.dump().c_str());
     } catch (const std::exception& error) { std::fprintf(stderr,"%s\n",error.what()); result = 1; }

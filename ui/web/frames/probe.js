@@ -15,6 +15,7 @@ function request(method, identity = view, extra = {}, text = '你好，大肥鱼
 // 依据宿主真实回执验证授权，不用页面本地判断替代原生校验。
 // 步骤：核对来源隔离 → 正确回显 → 方法与代次越权 → 非法结构 → 改源触发撤销。
 async function verify() {
+  if (location.hash === '#offline' && navigator.onLine) throw new Error('浏览器未处于离线状态');
   let isolated = false;
   try { void parent.document.body; } catch { isolated = true; }
   if (!isolated) throw new Error('Frame 可以读取主页面，来源隔离失败');
@@ -52,4 +53,4 @@ document.querySelector('#stale').addEventListener('click', async () => {
   output.textContent = reply.decision;
 });
 // 只有自动验收地址运行越权和导航探针，手动输入页保持授权可用。
-if (location.hash === '#verify') verify().catch(error => { output.textContent = error.message; });
+if (location.hash === '#verify' || location.hash === '#offline') verify().catch(error => { output.textContent = error.message; });

@@ -68,3 +68,9 @@ cmake --build --preset windows-ui-debug
 Debug 的离线、输入、20 轮 Frame 回收和初始化中止模式均确认回调与通道归零、所属进程退出及目录清理。`--close-controller` 实际观察到关闭时仍有一个创建回调，最终归零并确认其创建的浏览器进程退出。另以固定不存在的运行库目录模拟 SDK 不可用，`--missing-runtime` 明确输出原因并返回 4，未卸载或改动本机 Evergreen。
 
 程序向标准输出写入无正文 JSON 验收回执；`root_navigation_ms` 仅表示主文档导航完成时间，`elapsed_ms` 包含测试和收尾，不能作为完整产品启动或整体内存性能排名。正常关闭回执必须确认 `processes_exited`、`profile_cleaned` 为真，且创建回调、CDP 在途、活动 Frame 和通道对象均归零。
+
+## U01i 浏览器离线状态启动
+
+新增 `--offline`：在首次导航前仅对当前 WebView2 设置 CDP 离线条件，不修改系统网络。独立 Frame 先确认 `navigator.onLine` 为假，再运行编码、权限和导航探针；每次使用新配置目录，不能靠已有页面缓存通过。若协议设置失败，直接报告失败，不退回在线模式。
+
+定向构建 GUI 并运行 Debug `ui.offline`，1／1 通过。本地 Vue 主页面、静态依赖和独立 Frame 在该离线条件下完成验证并正常回收。浏览器离线模拟与原生外部资源拦截分别验收，不将本项表述为断开了整台电脑或 Evergreen 更新器的网络。
