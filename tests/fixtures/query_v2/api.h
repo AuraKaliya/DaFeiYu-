@@ -152,6 +152,15 @@ typedef struct dfy_test_unions_api {
         uint64_t branch_budget, dfy_test_union_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
 } dfy_test_unions_api;
 extern const dfy_test_unions_api dfy_test_unions;
+#define DFY_TEST_COMPOSITE_ARRAYS_ID "test.composite_arrays"
+typedef struct dfy_test_composite_array_counts { uint64_t size, nulls; uint32_t kind, flags; } dfy_test_composite_array_counts;
+typedef struct dfy_test_composite_arrays_api {
+    dfy_v2_api_header header;
+    // 在宿主绑定中有界读取完整数组，成功转交非 null 元素持有；失败清空输出。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        uint64_t budget, dfy_test_composite_array_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
+} dfy_test_composite_arrays_api;
+extern const dfy_test_composite_arrays_api dfy_test_composite_arrays;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
