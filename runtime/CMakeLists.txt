@@ -5,6 +5,9 @@ add_library(dfy_runtime STATIC ids.cpp value.cpp array_value.cpp map_value.cpp s
   include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp
   include/dafeiyu/completion_notifications.hpp include/dafeiyu/resource_owner.hpp include/dafeiyu/array_value.hpp include/dafeiyu/map_value.hpp)
 target_compile_features(dfy_runtime PUBLIC cxx_std_20)
+target_sources(dfy_runtime PRIVATE owner_scheduler.cpp include/dafeiyu/owner_scheduler.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/owner_scheduler.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/owner_scheduler.hpp")
 target_sources(dfy_runtime PRIVATE budget.cpp include/dafeiyu/budget.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/budget.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/budget.hpp")

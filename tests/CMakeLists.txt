@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证所有者权重、前置执行资格及活动任务容量。
+add_executable(dfy_owner_scheduler_tests owner_scheduler.cpp)
+target_link_libraries(dfy_owner_scheduler_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_owner_scheduler_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/owner_scheduler.cpp")
+add_test(NAME runtime.owner_scheduler COMMAND dfy_owner_scheduler_tests)
+set_tests_properties(runtime.owner_scheduler PROPERTIES TIMEOUT 15)
+
 # 验证真实事件共享存储及跨处理队列的所有者预算。
 add_executable(dfy_event_budget_tests event_budget.cpp)
 target_link_libraries(dfy_event_budget_tests PRIVATE dfy_event_streams dfy_build_options)
