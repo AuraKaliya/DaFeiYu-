@@ -103,6 +103,7 @@ dfy_v2_handle detail::expose_reader(HostState& host, std::shared_ptr<ReaderRefer
 // 显式推进宿主持有的读取，不内联调用 DLL 消费者。
 void HostServices::advance() {
     state_->require_owner();
+    if (state_->processing) state_->processing->advance();
     for (auto& slot : state_->readers) {
         const auto reader = slot.reader;
         if (!reader) continue;
@@ -145,12 +146,17 @@ std::size_t HostServices::resources() const { state_->require_owner(); return st
 // 暴露清理故障供外层停止流程保留实例与代码。
 bool HostServices::cleanup_failed() const { state_->require_owner(); return state_->cleanup_failed; }
 // 在未进入消费者时停止接纳，逐项收尾并保留任何未完成责任。
-// 步骤：拒绝活动回调 → 关闭接纳并撤销通知 → 结束自身接收方 → 检查清理结果。
+// 步骤：拒绝活动回调和运行处理 → 关闭接纳及通知 → 结束等待处理与自身接收方 → 检查清理结果。
 bool HostServices::begin_shutdown() {
     state_->require_owner();
-    if (state_->notifications && state_->notifications->running()) return false;
+    if (processing_busy() || (state_->notifications && state_->notifications->running())) return false;
     state_->resources.stop_accepting();
     if (state_->notifications) state_->notifications->revoke_pending();
+    if (state_->processing) state_->processing->close(events::CloseMode::cancel);
+    if (!state_->processing_resource.empty()) {
+        state_->resources.begin_cleanup(state_->processing_resource); state_->resources.finish_cleanup(state_->processing_resource);
+        state_->processing_resource = {};
+    }
     for (auto& slot : state_->readers) {
         const auto reader = slot.reader;
         if (!reader) continue;
@@ -168,6 +174,7 @@ bool HostServices::finish_shutdown() {
         (state_->notifications && state_->notifications->running())) return false;
     state_->notifications.reset();
     state_->references.clear();
+    state_->processing.reset();
     state_->resources.finish_close();
     state_->group.reset();
     state_->code.reset();
@@ -213,6 +220,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_OPERATION_NOTIFY_INTERFACE && host.notifications) *output = &detail::notification_api();
         else if (requested == DFY_V2_SUBSCRIPTION_INTERFACE && host.channel) *output = &detail::subscription_api();
         else if (requested == DFY_V2_GROUP_INTERFACE && host.group) *output = &detail::group_api();
+        else if (requested == DFY_V2_PROCESSING_INTERFACE && host.processing) *output = &detail::processing_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });

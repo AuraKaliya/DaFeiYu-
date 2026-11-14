@@ -31,6 +31,8 @@ class ProcessingQueue {
     void collect() noexcept;
     // 判断全部已受理处理均实际退出，不要求外部终态和数据已释放。
     bool closed() const noexcept;
+    // 判断是否仍有实际运行的处理，用于无副作用地拒绝忙碌卸载。
+    bool running() const noexcept;
     // 返回仍由宿主或客户端持有的处理槽数。
     std::size_t size() const noexcept { return size_; }
     // 返回已经选择的关闭方式，开放时为空。

@@ -40,6 +40,7 @@ struct PluginInstance::State {
         try {
             if (phase == InstancePhase::unloaded) return ShutdownResult::closed;
             if (module.active_calls()) return ShutdownResult::busy;
+            if (host.processing_busy()) return ShutdownResult::busy;
             if (module.code_leases() > (lifecycle ? 1 : 0) + host.code_holds()) return ShutdownResult::in_use;
             if (phase == InstancePhase::broken) return ShutdownResult::failed;
             if (!host.begin_shutdown()) { error = DFY_V2_FAILED; return ShutdownResult::failed; }

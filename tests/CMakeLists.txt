@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证宿主处理能力的顺序、结算及忙碌停止边界。
+add_executable(dfy_plugin_processing_tests plugin_processing.cpp)
+target_link_libraries(dfy_plugin_processing_tests PRIVATE dfy_plugins dfy_build_options)
+set_target_properties(dfy_plugin_processing_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_processing.cpp")
+add_test(NAME plugins.processing COMMAND dfy_plugin_processing_tests)
+set_tests_properties(plugins.processing PROPERTIES TIMEOUT 15)
+
 # 验证真实事件处理的业务结果、实际退出和独立数据寿命。
 add_executable(dfy_processing_tests processing.cpp)
 target_link_libraries(dfy_processing_tests PRIVATE dfy_event_streams dfy_build_options)

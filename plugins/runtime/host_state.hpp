@@ -4,6 +4,7 @@
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
 #include <dafeiyu/group_abi_v2.h>
+#include <dafeiyu/processing_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
 #include <dafeiyu/union_descriptor.hpp>
@@ -16,7 +17,7 @@ struct NotificationReference { runtime::Handle registration; };
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
     std::shared_ptr<const runtime::StructValue>, std::shared_ptr<ReaderReference>, std::shared_ptr<events::ReadRequest>,
     std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>, std::shared_ptr<const runtime::FieldDescriptor>,
-    std::shared_ptr<const runtime::UnionDescriptor>>;
+    std::shared_ptr<const runtime::UnionDescriptor>, std::shared_ptr<events::ProcessingRecord>>;
 struct HostReference { HostObject object; };
 struct ReaderSlot {
     std::shared_ptr<ReaderReference> reader;
@@ -38,6 +39,8 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::size_t request_capacity = 0;
     std::shared_ptr<events::ConsumerGroup> group;
     std::size_t group_request_capacity = 0;
+    std::unique_ptr<events::ProcessingQueue> processing;
+    runtime::Handle processing_resource;
     runtime::ResourceOwner resources;
     platform::CodeLease code;
     std::unique_ptr<runtime::CompletionNotifications> notifications;
@@ -100,6 +103,8 @@ const dfy_v2_operation_notify_api& notification_api();
 const dfy_v2_subscription_api& subscription_api();
 // 返回仅管理当前上下文组成员的加入、退出和状态服务。
 const dfy_v2_group_api& group_api();
+// 返回独立业务结算、实际退出和数据持有的处理服务。
+const dfy_v2_processing_api& processing_api();
 // 在交付队列已结束后解除目录与资源责任，保留外部数据引用。
 void finish_reader(HostState& host, const std::shared_ptr<ReaderReference>& reader);
 // 登记预创建读取的宿主责任，重复、关闭或容量不足时拒绝。

@@ -4,6 +4,7 @@
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/subscription_reader.hpp>
 #include <dafeiyu/group_reader.hpp>
+#include <dafeiyu/processing_queue.hpp>
 #include <dafeiyu/broadcast_channel.hpp>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
@@ -57,6 +58,12 @@ class HostServices {
     void enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity);
     // 为当前实例授予一个组的成员接入能力，固定请求预算，不授予共享组关闭权。
     void enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity);
+    // 为本实例建立独立有界处理域，默认串行，不允许重复配置。
+    void enable_processing(std::size_t capacity, bool ordered = true);
+    // 在处理接纳点固定顺序并签发不可复制 C 处理引用，失败不消耗来源数据。
+    dfy_v2_handle submit_processing(const events::EventLease& event);
+    // 查询是否有尚未实际退出的运行处理，忙碌卸载须在改变状态前拒绝。
+    bool processing_busy() const;
     // 为本实例启用有界 C 通知，代码凭证须属于该插件，禁止重复配置。
     void enable_notifications(platform::CodeLease code, std::size_t capacity);
     // 将一项就绪通知排入宿主 FIFO，不内联调用 C 消费者。
@@ -65,7 +72,7 @@ class HostServices {
     std::size_t resources() const;
     // 返回已记录的清理契约失败，不能据此强制释放实例。
     bool cleanup_failed() const;
-    // 活动通知时拒绝且不改变接纳；否则停止新工作、撤销通知并取消关闭所有订阅。
+    // 活动通知或运行处理时拒绝且不改变接纳；否则停止新工作、撤销通知并取消自身接收与等待处理。
     bool begin_shutdown();
     // 插件销毁后完成已开始的收尾，释放剩余引用及代码；未静止或有清理错误时拒绝。
     bool finish_shutdown();

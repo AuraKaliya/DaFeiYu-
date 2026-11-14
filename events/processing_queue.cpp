@@ -72,6 +72,11 @@ bool ProcessingQueue::closed() const noexcept {
     for (const auto& source : sources_) if (source && source->record_->phase() != ProcessingPhase::exited) return false;
     return true;
 }
+// 查询实际运行阶段，业务结果已经确定的处理仍然属于忙碌。
+bool ProcessingQueue::running() const noexcept {
+    for (const auto& source : sources_) if (source && source->record_->phase() == ProcessingPhase::running) return true;
+    return false;
+}
 // 归还无外部持有的退出记录，再回收其顺序记录名额。
 void ProcessingQueue::collect() noexcept {
     for (auto& source : sources_) if (source && source->record_->phase() == ProcessingPhase::exited && source->record_.use_count() == 1) {
