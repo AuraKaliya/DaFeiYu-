@@ -1,4 +1,5 @@
 #include "chat.hpp"
+#include "diagnostics.hpp"
 #include <iostream>
 #include <thread>
 
@@ -19,20 +20,31 @@ void ChatController::line(std::string text) {
             else output_ << "No active request to cancel.\n";
             return;
         }
-        if (text == "/clear") { session_.clear(); output_ << "Context cleared.\n"; return; }
+        if (text == "/clear") {
+            const auto receipt = session_.clear(); output_ << "Context cleared.\n";
+            write_observation_warning(errors_,session_.id(),0,"session_cleared",receipt); return;
+        }
         if (text.starts_with('/')) {
             if (!command_ || !command_(text)) errors_ << "Unknown command. Use /clear, /cancel or /exit.\n";
             return;
         }
         if (current_) throw std::logic_error("session: wait for the current request to finish");
-        current_ = session_.begin(text); reported_ = false;
+        current_ = session_.begin(text); reported_ = false; finished_notification_reported_ = false;
+        write_observation_warning(errors_,session_.id(),current_->turn(),"turn_started",*current_->notifications().started);
     } catch (const std::exception& error) { errors_ << error.what() << '\n'; }
     catch (...) { errors_ << "Command failed.\n"; }
 }
 // 输出业务结果后继续跟踪后台退出，正常 EOF 不取消尚未完成的回答。
-// 步骤：推进会话 → 输出唯一业务结果 → 归还退出回合 → 按 EOF 状态关闭空闲会话。
+// 步骤：推进会话 → 独立报告终态通知失败 → 输出唯一业务结果 → 归还退出回合 → 按 EOF 状态关闭空闲会话。
 void ChatController::advance() {
     session_.advance();
+    if (current_ && !finished_notification_reported_ && current_->notifications().finished) {
+        finished_notification_reported_ = true;
+        const auto state = current_->operation()->state();
+        const auto kind = state == runtime::OperationState::succeeded ? "turn_completed" :
+            state == runtime::OperationState::cancelled ? "turn_cancelled" : "turn_failed";
+        write_observation_warning(errors_,session_.id(),current_->turn(),kind,*current_->notifications().finished);
+    }
     if (current_ && !reported_ && current_->operation()->state() != runtime::OperationState::pending) {
         reported_ = true;
         if (current_->operation()->state() == runtime::OperationState::cancelled) output_ << "Request cancelled. Waiting for the current call to finish.\n";

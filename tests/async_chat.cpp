@@ -80,10 +80,48 @@ void command_flush() {
     } catch (...) { CloseHandle(write); CloseHandle(read); throw; }
     CloseHandle(write); CloseHandle(read);
 }
+// 验证通知背压对成功、失败、取消及清空均独立报告，重复推进不重复提示。
+// 步骤：按结果类别准备拥堵队列 → 接纳并推进问答 → 核对唯一通知提示 → 清空并检查独立回执。
+void notification_warnings() {
+    for (unsigned outcome = 0; outcome < 3; ++outcome) {
+        auto events = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,1);
+        auto observer = events->subscribe();
+        std::promise<void> release, entered; auto gate = release.get_future().share(); auto started = entered.get_future();
+        dfy::agent::AsyncSession session({},events,1,
+        // 保持模型可控，分别产生返回、抛错或被取消后迟到返回。
+        // 步骤：报告进入 → 等待放行 → 按测试类别返回或抛错。
+        [&](const auto&,const auto&) -> std::string {
+            entered.set_value(); gate.wait();
+            if (outcome == 1) throw std::runtime_error("controlled failure");
+            return "ok";
+        });
+        Release cleanup{release}; std::ostringstream output, errors; ChatController chat(session,output,errors);
+        if (outcome) session.clear();
+        chat.line("private prompt"); started.wait();
+        check(outcome ? errors.str().find("turn_started notification not accepted") != std::string::npos : errors.str().empty(),
+            "start notification failure was hidden or accepted notification warned");
+        if (outcome == 2) { chat.line("/cancel"); chat.advance(); }
+        cleanup.open();
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (session.busy() && std::chrono::steady_clock::now() < deadline) { chat.advance(); std::this_thread::yield(); }
+        const auto kind = outcome == 0 ? "turn_completed" : outcome == 1 ? "turn_failed" : "turn_cancelled";
+        const auto warning = std::string(kind)+" notification not accepted"; const auto once = errors.str();
+        check(!session.busy() && once.find(warning) != std::string::npos && once.find(warning) == once.rfind(warning) &&
+            once.find("private prompt") == std::string::npos && once.find("capacity exhausted") != std::string::npos,
+            "terminal notification warning was missing, duplicated or contained prompt");
+        chat.advance(); check(errors.str() == once,"notification warning repeated after exit");
+        check(outcome == 0 ? session.message_count() == 2 && output.str().find("ok") != std::string::npos : !session.message_count(),
+            "observation warning changed question result");
+
+        chat.line("/clear");
+        check(errors.str().find("session_cleared notification not accepted") != std::string::npos &&
+            output.str().find("Context cleared") != std::string::npos && !session.message_count(),"clear receipt was hidden or rolled back clear");
+    }
+}
 }
 // 验收终端本地命令、取消和真实输入循环，模型只使用离线后台替身。
-// 步骤：验证等待期间命令 → 验证 EOF 与宿主推进 → 报告结果。
+// 步骤：验证等待期间命令 → 验证 EOF 与输出刷新 → 验证观察失败提示 → 报告结果。
 int main() {
-    try { commands(); input_loop(); command_flush(); std::cout << "Async chat checks passed\n"; return 0; }
+    try { commands(); input_loop(); command_flush(); notification_warnings(); std::cout << "Async chat checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

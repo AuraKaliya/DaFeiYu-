@@ -31,6 +31,7 @@ class ChatController {
     LocalCommand command_;
     std::shared_ptr<agent::TurnRequest> current_;
     bool reported_ = false, ending_ = false;
+    bool finished_notification_reported_ = false;
 };
 // 轮询输入与会话，持续推进宿主事件；输入关闭和业务结果均不能提前退出资源回收。
 int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::ostream& output, std::ostream& errors,
