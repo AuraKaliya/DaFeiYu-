@@ -17,6 +17,9 @@
 #define DFY_V2_VALUE_ARRAY UINT32_C(9)
 #define DFY_V2_VALUE_MAP UINT32_C(10)
 #define DFY_V2_VALUE_ENUM UINT32_C(11)
+#define DFY_V2_VALUE_UNION UINT32_C(12)
+#define DFY_V2_UNION_INTERFACE "dfy.unions"
+#define DFY_V2_UNION_VERSION UINT32_C(1)
 #define DFY_V2_ENUM_INTERFACE "dfy.enums"
 #define DFY_V2_ENUM_VERSION UINT32_C(1)
 #define DFY_V2_CONSTRAINT_INTERFACE "dfy.constraints"
@@ -102,7 +105,7 @@ typedef struct dfy_v2_type_api_v2 {
 } dfy_v2_type_api_v2;
 typedef struct dfy_v2_value_api_v2 {
     dfy_v2_api_header header;
-    // 基础值同版本 1；结构、容器、枚举与 null 的 data 为零，内容通过专用能力访问。
+    // 基础值同版本 1；结构、容器、枚举、联合与 null 的 data 为零，内容通过专用能力访问。
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_value_view* output, dfy_v2_error* error);
     // 取得结构内容的独立持有，保持原值及其预算链，非结构值拒绝。
     dfy_v2_status (DFY_V2_CALL *structure)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
@@ -177,13 +180,35 @@ typedef struct dfy_v2_constraint_api {
     dfy_v2_status (DFY_V2_CALL *field)(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
     // 读取种类、名称、可选／可空及字节约束，借用期依赖传入约束引用。
     dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle constraint, dfy_v2_field_info_v2* output, dfy_v2_error* error);
-    // 为结构或枚举内容返回对应种类的独立描述引用；其他种类拒绝，调用方负责释放。
+    // 为结构、枚举或联合返回对应种类的独立描述引用；其他种类拒绝，调用方负责释放。
     dfy_v2_status (DFY_V2_CALL *named_type)(dfy_v2_handle constraint, dfy_v2_handle* output, dfy_v2_error* error);
     // 复制数组约束，非数组内容返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *array)(dfy_v2_handle constraint, dfy_v2_array_type_info* output, dfy_v2_error* error);
     // 复制映射约束，非映射内容返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *map)(dfy_v2_handle constraint, dfy_v2_map_type_info* output, dfy_v2_error* error);
 } dfy_v2_constraint_api;
+// 联合名称借用依赖描述引用，版本和分支数为副本，reserved 固定为零。
+typedef struct dfy_v2_union_info {
+    dfy_v2_string_view name;
+    uint32_t contract_version;
+    uint32_t reserved;
+    uint64_t branch_count;
+} dfy_v2_union_info;
+// 索引按声明顺序，标签是完整 UInt64，零与最大值均合法。
+typedef struct dfy_v2_union_selection { uint64_t index; uint64_t tag; } dfy_v2_union_selection;
+typedef struct dfy_v2_union_api {
+    dfy_v2_api_header header;
+    // 同宿主线程绑定中读取联合描述；所有输出必需，失败全零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle type, dfy_v2_union_info* output, dfy_v2_error* error);
+    // 返回分支标签及独立约束引用，由 constraints 反射；任一失败清空两个输出。
+    dfy_v2_status (DFY_V2_CALL *branch)(dfy_v2_handle type, uint64_t index, uint64_t* tag, dfy_v2_handle* constraint, dfy_v2_error* error);
+    // 为联合值取得独立描述持有，不保留事件数据预算，调用方负责释放。
+    dfy_v2_status (DFY_V2_CALL *descriptor)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+    // 复制实际选择的分支索引及标签，不读取未选中内容。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_union_selection* output, dfy_v2_error* error);
+    // 为实际内容取得独立持有，保持联合及原事件预算；带标签 null 仍返回有效值引用。
+    dfy_v2_status (DFY_V2_CALL *content)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_union_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

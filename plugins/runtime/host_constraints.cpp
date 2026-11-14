@@ -39,6 +39,7 @@ dfy_v2_status DFY_V2_CALL named_type(dfy_v2_handle source, dfy_v2_handle* output
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (field.structure) *output = store_object(host,field.structure);
         else if (field.enumeration) *output = store_object(host,field.enumeration);
+        else if (field.tagged_union) *output = store_object(host,field.tagged_union);
         else return DFY_V2_INVALID_ARGUMENT;
         return DFY_V2_OK;
     });

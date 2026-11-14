@@ -42,14 +42,15 @@ int main() {
         const auto& api = service<dfy_v2_constraint_api>(DFY_V2_CONSTRAINT_INTERFACE);
         const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE);
         dfy_v2_handle constraint{},named{},rejected{}; dfy_v2_field_info_v2 info{};
-        for (uint64_t i = 0; i < 6; ++i) {
+        for (uint64_t i = 0; i < 7; ++i) {
             check(api.field(root,i,&constraint,nullptr) == DFY_V2_OK && api.describe(constraint,&info,nullptr) == DFY_V2_OK &&
                 std::string_view(info.name.data,info.name.length) == fields[i].name,"constraint field metadata wrong");
             if (i == 1) check(info.flags == (DFY_V2_FIELD_OPTIONAL | DFY_V2_FIELD_NULLABLE) && info.max_bytes == 4,"constraint flags lost");
-            if (i == 2 || i == 3) {
+            if (i == 2 || i == 3 || i == 6) {
                 check(api.named_type(constraint,&named,nullptr) == DFY_V2_OK,"named constraint missing");
                 if (i == 2) { dfy_v2_type_info nested{}; check(service<dfy_v2_type_api>(DFY_V2_TYPE_INTERFACE).describe(named,&nested,nullptr) == DFY_V2_OK && nested.field_count == 0,"structure constraint changed"); }
-                else { dfy_v2_enum_info nested{}; check(service<dfy_v2_enum_api>(DFY_V2_ENUM_INTERFACE).describe(named,&nested,nullptr) == DFY_V2_OK && nested.member_count == 1,"enum constraint changed"); }
+                else if (i == 3) { dfy_v2_enum_info nested{}; check(service<dfy_v2_enum_api>(DFY_V2_ENUM_INTERFACE).describe(named,&nested,nullptr) == DFY_V2_OK && nested.member_count == 1,"enum constraint changed"); }
+                else { dfy_v2_union_info nested{}; check(service<dfy_v2_union_api>(DFY_V2_UNION_INTERFACE).describe(named,&nested,nullptr) == DFY_V2_OK && nested.branch_count == 1,"union constraint changed"); }
                 refs.release(named,nullptr);
             }
             if (i == 4) { dfy_v2_array_type_info array{}; check(api.array(constraint,&array,nullptr) == DFY_V2_OK && array.element_kind == DFY_V2_VALUE_INT64 && array.max_elements == 2,"array constraint changed"); }
@@ -57,8 +58,8 @@ int main() {
                 map.max_key_bytes == 2 && map.max_value_bytes == 4 && map.value_flags == DFY_V2_ELEMENT_NULLABLE,"map constraint changed"); }
             refs.release(constraint,nullptr);
         }
-        check(api.field(root,6,&rejected,nullptr) == DFY_V2_UNSUPPORTED && !rejected.id &&
-            api.field(root,UINT64_MAX,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"unsupported or invalid constraint accepted");
+        check(api.field(root,7,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id &&
+            api.field(root,UINT64_MAX,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"invalid constraint accepted");
         check(api.describe(root,&info,nullptr) == DFY_V2_INVALID_ARGUMENT && !info.name.data && api.describe(root,nullptr,nullptr) == DFY_V2_INVALID_ARGUMENT,"wrong constraint input accepted");
         const void* unavailable = &api;
         check(HostServices::query({DFY_V2_CONSTRAINT_INTERFACE,sizeof(DFY_V2_CONSTRAINT_INTERFACE)-1},2,&unavailable,nullptr) == DFY_V2_UNSUPPORTED && !unavailable,"constraint wrong version accepted");

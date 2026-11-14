@@ -183,6 +183,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_MAP_INTERFACE) *output = &detail::map_api();
         else if (requested == DFY_V2_ENUM_INTERFACE) *output = &detail::enum_api();
         else if (requested == DFY_V2_CONSTRAINT_INTERFACE) *output = &detail::constraint_api();
+        else if (requested == DFY_V2_UNION_INTERFACE) *output = &detail::union_api();
         else if (requested == DFY_V2_READER_INTERFACE) *output = &detail::reader_api();
         else if (requested == DFY_V2_OPERATION_STATE_INTERFACE) *output = &detail::operation_api();
         else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();

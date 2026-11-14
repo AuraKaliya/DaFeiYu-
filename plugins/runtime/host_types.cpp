@@ -26,7 +26,8 @@ uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
         if (profile == 2) return DFY_V2_VALUE_ENUM;
         throw std::domain_error("host: enum unavailable in data capability v1");
     case runtime::ValueKind::tagged_union:
-        throw std::domain_error("host: union capability unavailable");
+        if (profile == 2) return DFY_V2_VALUE_UNION;
+        throw std::domain_error("host: union unavailable in data capability v1");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }

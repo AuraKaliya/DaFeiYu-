@@ -5,6 +5,7 @@
 #include <dafeiyu/event_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
+#include <dafeiyu/union_descriptor.hpp>
 #include <thread>
 #include <variant>
 
@@ -12,7 +13,8 @@ namespace dfy::plugins::detail {
 struct NotificationReference { runtime::Handle registration; };
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
     std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>,
-    std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>, std::shared_ptr<const runtime::FieldDescriptor>>;
+    std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>, std::shared_ptr<const runtime::FieldDescriptor>,
+    std::shared_ptr<const runtime::UnionDescriptor>>;
 struct HostReference { HostObject object; };
 struct ReaderSlot {
     std::shared_ptr<events::SubscriptionReader> reader;
@@ -74,6 +76,8 @@ const dfy_v2_map_api& map_api();
 const dfy_v2_enum_api& enum_api();
 // 返回独立字段约束的反射和命名描述访问服务。
 const dfy_v2_constraint_api& constraint_api();
+// 返回带标签联合的反射与实际内容访问服务。
+const dfy_v2_union_api& union_api();
 // 返回类型化读取服务。
 const dfy_v2_reader_api& reader_api();
 // 返回生产操作状态服务，当前由完整读取请求支撑。

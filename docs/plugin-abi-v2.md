@@ -8,7 +8,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 ## 生产数据能力与组合访问
 
-以下为截至 R09g-4 的实际实现，声明见 [data_abi_v2.h](../sdk/include/dafeiyu/data_abi_v2.h)。所有调用在同一宿主线程的有效绑定中进行；无绑定返回 `INVALID_CONTEXT`。输出指针为必需，错误诊断可空；失败清空输出，句柄按独立持有规则释放。版本号精确匹配，不因表较大而隐式接受。
+以下为截至 R09h-5 的实际实现，声明见 [data_abi_v2.h](../sdk/include/dafeiyu/data_abi_v2.h)。所有调用在同一宿主线程的有效绑定中进行；无绑定返回 `INVALID_CONTEXT`。输出指针为必需，错误诊断可空；失败清空输出，句柄按独立持有规则释放。版本号精确匹配，不因表较大而隐式接受。
 
 | 能力 | 版本／表大小 | 已实现入口与边界 |
 |---|---|---|
@@ -21,13 +21,14 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 | `dfy.arrays` | 1／32 字节 | `field_type`、`describe`、`element`；基础元素约束、实际数量及独立元素持有 |
 | `dfy.maps` | 1／40 字节 | `field_type`、`describe`、`entry`、`find`；字符串键、基础值、按序及精确键访问 |
 | `dfy.enums` | 1／48 字节 | `field_type`、`describe`、`member`、`descriptor`、`read`；闭合枚举定义和成员选择 |
-| `dfy.constraints` | 1／48 字节 | `field`、`describe`、`named_type`、`array`、`map`；独立字段约束及已有内容描述，联合尚不支持 |
+| `dfy.constraints` | 1／48 字节 | `field`、`describe`、`named_type`、`array`、`map`；独立内容约束及命名类型／容器描述 |
+| `dfy.unions` | 1／48 字节 | `describe`、`branch`、`descriptor`、`read`、`content`；闭合分支、选择及实际内容持有 |
 
 `dfy_v2_type_info` 与两版字段信息均为 32 字节；版本 2 字段 flags 位于偏移 20，`max_bytes` 位于 24。`dfy_v2_value_view` 为 24 字节，data 位于 8。数组约束／实际信息分别为 24／32 字节，映射约束／实际信息分别为 32／40 字节；以上对齐均为 8，并恢复包含方原打包设置。
 
-分类编号：Bool 1、Int64 2、UInt64 3、Float64 4、String 5、Bytes 6、Structure 7、Null 8、Array 9、Map 10、Enum 11。旧数据能力拒绝新增种类及可选／可空字段，返回 `UNSUPPORTED`；版本 2 的 kind 和 flags 是可扩展标记，消费者必须拒绝未知标记。结构、容器、枚举与 null 的通用 `read` 仅返回分类，data 全零，不隐式创建引用；实际内容通过对应专用能力读取。
+分类编号：Bool 1、Int64 2、UInt64 3、Float64 4、String 5、Bytes 6、Structure 7、Null 8、Array 9、Map 10、Enum 11、Union 12。旧数据能力拒绝新增种类及可选／可空字段，返回 `UNSUPPORTED`；版本 2 的 kind 和 flags 是可扩展标记，消费者必须拒绝未知标记。结构、容器、枚举、联合与 null 的通用 `read` 仅返回分类，data 全零，不隐式创建引用；实际内容通过对应专用能力读取。
 
-字段 `OPTIONAL=1` 与 `NULLABLE=2` 独立：已声明但缺失返回 `NOT_FOUND=4`，显式 null 返回有效值引用且 kind 为 8，空字符串／字节／容器仍是各自真实类型。索引越界、引用对象种类不符、对非结构值调用 `structure` 等返回 `INVALID_ARGUMENT`。联合尚无分类或可查询能力，不能作为占位类型发布成功。
+字段 `OPTIONAL=1` 与 `NULLABLE=2` 独立：已声明但缺失返回 `NOT_FOUND=4`，显式 null 返回有效值引用且 kind 为 8，空字符串／字节／容器仍是各自真实类型。索引越界、引用对象种类不符、对非结构值调用 `structure` 等返回 `INVALID_ARGUMENT`。
 
 枚举是非空闭合成员集，底层只允许完整 Int64 或 UInt64；成员名及整数各自唯一，未知数字和符号不匹配在构造时拒绝。`field_type` 和 `descriptor` 返回独立枚举描述引用；`describe` 返回名称、版本、整数种类和成员数。`member` 返回声明顺序的名称借用与带种类整数副本，`read` 返回选中索引及数字副本；不得将索引当作稳定取值。枚举信息／成员／选择分别为 32／40／32 字节，成员数字偏移 16、选择数字偏移 8。枚举数据计 8 字节、1 节点；枚举成员与名称纳入父结构的展开描述预算。
 
@@ -39,7 +40,9 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 数据子引用使用宿主别名持有：保留叶字段或容器元素仍保持原载荷、读请求结果和事件存储预算，不能提前释放中间引用来绕过计量。最后一份数据持有释放后才归还相应预算；单独取得类型描述只保留不可变描述，不保留事件正文。借用视图在其指定引用释放后失效，即使另一个引用仍使底层对象存活，也必须重新读取。
 
-`dfy.constraints` 让调用方独立持有一个字段的完整内容约束。`describe` 复用版本 2 字段元数据；`named_type` 对结构或枚举返回对应描述，`array`／`map` 返回容器约束副本。约束引用保持父描述，名称视图依赖传入约束引用；这条描述持有链不计入事件数据预算。非对应种类访问返回 `INVALID_ARGUMENT`，未接入的联合约束返回 `UNSUPPORTED`。
+`dfy.constraints` 让调用方独立持有字段或联合分支的完整内容约束。`describe` 复用版本 2 字段元数据；`named_type` 对结构、枚举或联合返回对应描述，`array`／`map` 返回容器约束副本。约束引用保持父描述，名称视图依赖传入约束引用；这条描述持有链不计入事件数据预算。非对应种类访问返回 `INVALID_ARGUMENT`。
+
+联合是非空闭合分支集，显式 UInt64 标签唯一，零及最大值均合法，未知标签在值构造时拒绝。`branch` 按声明顺序返回标签与独立约束引用，分配失败时两个输出均清零；`read` 返回索引及稳定标签；`content` 保持实际内容及原事件预算。分支可空与外层字段可空独立，带标签 null 不是外层 null。描述信息／选择分别为 32／16 字节，分支数偏移 24、标签偏移 8。联合根占 1 节点、标签占 8 字节，再加实际内容；全部分支均参与描述预算。
 
 真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL、Debug 宿主消费 Release 观察包均通过；观察包 0.3.0 以共享访问预算消费全部枚举成员。App／Agent 的正式异步迁移仍属 R15。
 
