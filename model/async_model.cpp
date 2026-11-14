@@ -18,7 +18,9 @@ AsyncClient::AsyncClient(std::size_t capacity, Completion completion)
     if (!capacity) throw std::invalid_argument("model: positive async capacity required");
 }
 // 不遗留后台线程；已取消业务仍等待真实 I/O 返回后才释放所用输入和配置。
-AsyncClient::~AsyncClient() {
+AsyncClient::~AsyncClient() { wait_closed(); }
+// 最外层兜底等待已经接受的线程退出，再在宿主结算退出确认。
+void AsyncClient::wait_closed() {
     close();
     for (const auto& request : requests_) if (request && request->worker_.valid()) request->worker_.wait();
     advance();

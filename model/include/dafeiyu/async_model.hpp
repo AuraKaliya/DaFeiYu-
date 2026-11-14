@@ -49,6 +49,8 @@ class AsyncClient {
     void advance();
     // 停止新请求接纳并请求取消，实际网络退出仍按原超时边界等待。
     void close();
+    // 关闭后阻塞等待真实后台退出，仅用于最外层兜底回收，不用于交互推进。
+    void wait_closed();
     // 判断已停止接纳且全部后台调用退出，保留的只读结果不阻止逻辑关闭。
     bool closed() const noexcept;
     // 回收没有客户端持有的退出记录，等待或运行不会随客户端释放消失。
