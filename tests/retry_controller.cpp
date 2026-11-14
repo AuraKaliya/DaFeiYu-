@@ -56,6 +56,17 @@ void boundaries() {
         "late attempt overwrote deadline or lost its fact");
     rejects<std::invalid_argument>([&] { timeout.advance(origin); });
     rejects<std::invalid_argument>([&] { RetryController invalid({65,1ms,1ms},origin,origin+1s); });
+    auto budget = std::make_shared<Budget>(BudgetAmount{2,0}); std::shared_ptr<const Operation> abandoned;
+    {
+        RetryController held({2,100ms,100ms},origin,origin+1s,budget);
+        auto first = held.begin_attempt(origin); held.finish_attempt(*first,OperationState::failed,true,origin); abandoned = held.readiness();
+        rejects<std::length_error>([&] { RetryController rejected({},origin,origin+1s,budget); });
+    }
+    check(abandoned->state() == OperationState::cancelled && !budget->used().items,"abandoned backoff leaked metadata or wakeup");
+    const auto near_max = RetryTime::max()-50ms;
+    RetryController edge({2,100ms,100ms},near_max,RetryTime::max()); id = edge.begin_attempt(near_max);
+    edge.finish_attempt(*id,OperationState::failed,true,near_max); edge.advance(RetryTime::max());
+    check(edge.phase() == RetryPhase::finished && edge.operation()->state() == OperationState::cancelled,"backoff time overflow bypassed deadline");
 }
 }
 // 验收显式安全的有界尝试、取消退避、唯一结果及实际退出边界。
