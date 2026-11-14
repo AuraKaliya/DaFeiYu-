@@ -287,6 +287,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME runtime.maps COMMAND dfy_runtime_maps_tests)
 set_tests_properties(runtime.maps PROPERTIES TIMEOUT 15)
 
+# 验证闭合枚举的精确整数、不可变定义与有界成员集。
+add_executable(dfy_runtime_enums_tests runtime_enums.cpp)
+target_link_libraries(dfy_runtime_enums_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_runtime_enums_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_enums.cpp")
+add_test(NAME runtime.enums COMMAND dfy_runtime_enums_tests)
+set_tests_properties(runtime.enums PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests

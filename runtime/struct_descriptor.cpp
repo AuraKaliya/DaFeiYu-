@@ -4,26 +4,10 @@
 #include <algorithm>
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
+#include "descriptor_name.hpp"
 
 namespace dfy::runtime {
 namespace {
-// 检查小写 ASCII 标识；类型名至少包含两个点分段，字段名只允许一个段。
-// 步骤：按段校验首字母及后续字符 → 拒绝空段 → 核对是否为完整类型名。
-bool valid_name(std::string_view name, bool qualified) {
-    bool first = true, dotted = false;
-    for (const char character : name) {
-        if (character == '.' && qualified && !first) {
-            first = true;
-            dotted = true;
-            continue;
-        }
-        if (!(character >= 'a' && character <= 'z') &&
-            (first || !((character >= '0' && character <= '9') || character == '_'))) return false;
-        first = false;
-    }
-    return !first && (!qualified || dotted);
-}
-
 // 从名称预算中扣除实际字节，先比较再相减以避免累计长度溢出。
 void consume_name(std::string_view name, std::size_t& remaining) {
     if (name.size() > remaining) throw std::length_error("descriptor: name byte limit exceeded");
@@ -56,12 +40,12 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
     auto remaining = name_limit;
     std::size_t depth = 1;
     consume_name(name, remaining);
-    if (!version || !valid_name(name, true)) throw std::invalid_argument("descriptor: invalid type identity");
+    if (!version || !detail::valid_descriptor_name(name, true)) throw std::invalid_argument("descriptor: invalid type identity");
 
     std::unordered_set<std::string_view> names;
     for (const auto& field : fields) {
         consume_name(field.name, remaining);
-        if (!valid_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
+        if (!detail::valid_descriptor_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
         if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
         if (field.kind != ValueKind::array && field.array) throw std::invalid_argument("descriptor: unexpected array schema");
         if (field.kind != ValueKind::map && field.map) throw std::invalid_argument("descriptor: unexpected map schema");
