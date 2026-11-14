@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证分层条目与字节预算的原子计费、移动归还及极限。
+add_executable(dfy_budget_tests budget.cpp)
+target_link_libraries(dfy_budget_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_budget_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/budget.cpp")
+add_test(NAME runtime.budget COMMAND dfy_budget_tests)
+set_tests_properties(runtime.budget PROPERTIES TIMEOUT 15)
+
 # 验证真实纯 C DLL 的分步处理与跨配置数据、代码寿命。
 add_executable(dfy_plugin_processing_dll_tests plugin_processing_dll.cpp)
 target_link_libraries(dfy_plugin_processing_dll_tests PRIVATE dfy_plugins dfy_build_options)
