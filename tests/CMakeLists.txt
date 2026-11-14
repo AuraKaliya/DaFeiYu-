@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证显式业务参与者的结果策略、取消和结果预算寿命。
+add_executable(dfy_result_group_tests result_group.cpp)
+target_link_libraries(dfy_result_group_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_result_group_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/result_group.cpp")
+add_test(NAME runtime.result_group COMMAND dfy_result_group_tests)
+set_tests_properties(runtime.result_group PROPERTIES TIMEOUT 15)
+
 # 验证完成通知接入公平调度后的背压、异常及撤销。
 add_executable(dfy_owner_notification_tests owner_notifications.cpp)
 target_link_libraries(dfy_owner_notification_tests PRIVATE dfy_runtime dfy_build_options)
