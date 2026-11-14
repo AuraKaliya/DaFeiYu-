@@ -16,6 +16,9 @@ add_library(dfy_event_streams STATIC event_store.cpp subscription_queue.cpp broa
   include/dafeiyu/event_store.hpp include/dafeiyu/subscription_queue.hpp include/dafeiyu/broadcast_channel.hpp
   include/dafeiyu/subscription_reader.hpp)
 target_compile_features(dfy_event_streams PUBLIC cxx_std_20)
+target_sources(dfy_event_streams PRIVATE processing.cpp include/dafeiyu/processing.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/processing.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/processing.hpp")
 target_sources(dfy_event_streams PRIVATE group_reader.cpp include/dafeiyu/group_reader.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/group_reader.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/group_reader.hpp")
