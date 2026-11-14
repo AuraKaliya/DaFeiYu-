@@ -3,6 +3,7 @@
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
 #include <dafeiyu/lifecycle_abi_v2.h>
+#include <dafeiyu/group_abi_v2.h>
 #define DFY_TEST_QUERY_ID "test.query"
 #define DFY_TEST_BORROW_ID "test.borrow"
 #define DFY_TEST_OPERATION_ID "test.operation"

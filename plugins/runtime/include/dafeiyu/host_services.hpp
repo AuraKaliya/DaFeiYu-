@@ -55,6 +55,8 @@ class HostServices {
     void advance();
     // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。
     void enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity);
+    // 为当前实例授予一个组的成员接入能力，固定请求预算，不授予共享组关闭权。
+    void enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity);
     // 为本实例启用有界 C 通知，代码凭证须属于该插件，禁止重复配置。
     void enable_notifications(platform::CodeLease code, std::size_t capacity);
     // 将一项就绪通知排入宿主 FIFO，不内联调用 C 消费者。

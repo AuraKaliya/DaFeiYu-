@@ -51,6 +51,14 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 真实 C 验收入口：[嵌套与标量容器](../tests/plugin_nested.cpp)、[枚举](../tests/plugin_enums.cpp)、[联合](../tests/plugin_unions.cpp)、[组合数组](../tests/plugin_arrays.cpp)、[组合映射及预算链](../tests/plugin_maps.cpp)、[定向读取隔离](../tests/plugin_targets.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 完整测试为 52／52；枚举、联合、组合数组、组合映射、定向读取和观察包六组 Debug 宿主消费 Release DLL 均通过。消费者组当前是宿主领取与通道共同接纳，尚无组成员 C 能力；App／Agent 正式异步迁移仍属 R15。
 
+## 组成员接入能力
+
+`dfy.groups@1` 声明见 [group_abi_v2.h](../sdk/include/dafeiyu/group_abi_v2.h)，表大小 32 字节，`join`／`leave`／`read` 偏移 8／16／24。成员状态为 16 字节、8 字节对齐，state／close_mode／queued 偏移 0／4／8；状态 1／2／3 分别表示 Open／Draining／Closed，关闭模式沿用 Drain 1／Cancel 2。所有调用限同宿主线程的有效绑定。
+
+宿主通过运行时绑定授予一个组，未授权不提供能力。`join` 返回不可共享的成员接收方，复用 `dfy.reader`、操作取消和通知；失败清空输出且不留下成员或宿主资源。`leave` 只退出本成员，重复调用成功，既有完成读取和数据不会重写。引用释放不等于退出，宿主保留责任直至明确退出或停止；`read` 不推进读取，退出后返回 Closed 及本地关闭方式、queued 0。共享组的关闭和发布不属于此授权。
+
+组成员接收方不适用于旧 `dfy.subscriptions` 的关闭／状态接口，错误种类返回 `INVALID_ARGUMENT`。成员、控制器或引用容量不足返回 `RESOURCE_EXHAUSTED`，停止接纳或授权组关闭时加入为 `BUSY`；域、版本及输出校验沿用其他宿主能力规则。当前宿主行为及布局已验收，实际观察包接入为下一单元。
+
 ## 引导入口与布局
 
 - 支持 Windows x64，使用 `extern "C"` 和 `__cdecl`；固定导出为 `dfy_plugin_query_v2`，宏为 `DFY_V2_QUERY_EXPORT`。v1 的头文件、宏、导出与签名保持不变，两份头文件可以同时包含。

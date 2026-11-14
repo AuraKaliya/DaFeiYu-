@@ -3,6 +3,7 @@
 #include <dafeiyu/handle_registry.hpp>
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
+#include <dafeiyu/group_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
 #include <dafeiyu/union_descriptor.hpp>
@@ -35,6 +36,8 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::vector<ReaderSlot> readers;
     std::shared_ptr<events::BroadcastChannel> channel;
     std::size_t request_capacity = 0;
+    std::shared_ptr<events::ConsumerGroup> group;
+    std::size_t group_request_capacity = 0;
     runtime::ResourceOwner resources;
     platform::CodeLease code;
     std::unique_ptr<runtime::CompletionNotifications> notifications;
@@ -95,6 +98,8 @@ const dfy_v2_operation_cancel_api& cancel_api();
 const dfy_v2_operation_notify_api& notification_api();
 // 返回独立订阅的接纳与关闭服务。
 const dfy_v2_subscription_api& subscription_api();
+// 返回仅管理当前上下文组成员的加入、退出和状态服务。
+const dfy_v2_group_api& group_api();
 // 在交付队列已结束后解除目录与资源责任，保留外部数据引用。
 void finish_reader(HostState& host, const std::shared_ptr<ReaderReference>& reader);
 // 登记预创建读取的宿主责任，重复、关闭或容量不足时拒绝。

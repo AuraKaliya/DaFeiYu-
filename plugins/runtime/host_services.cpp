@@ -117,6 +117,15 @@ void HostServices::enable_events(std::shared_ptr<events::BroadcastChannel> chann
     state_->channel = std::move(channel);
     state_->request_capacity = request_capacity;
 }
+// 在开放上下文中固定组访问授权，不能替换或恢复已经停止的上下文。
+// 步骤：核对线程、状态和参数 → 保存组持有与成员读取预算。
+void HostServices::enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity) {
+    state_->require_owner();
+    if (!group || !request_capacity || state_->group) throw std::invalid_argument("host: fresh group and positive request capacity required");
+    if (state_->resources.state() != runtime::OwnerState::open) throw std::logic_error("host: group grant requires open context");
+
+    state_->group = std::move(group); state_->group_request_capacity = request_capacity;
+}
 // 在完整分配成功后绑定代码与通知池，不替换已有消费者入口。
 // 步骤：核对线程及配置 → 构造通知池 → 转交代码持有和池。
 void HostServices::enable_notifications(platform::CodeLease code, std::size_t capacity) {
@@ -160,6 +169,7 @@ bool HostServices::finish_shutdown() {
     state_->notifications.reset();
     state_->references.clear();
     state_->resources.finish_close();
+    state_->group.reset();
     state_->code.reset();
     return true;
 }
@@ -202,6 +212,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();
         else if (requested == DFY_V2_OPERATION_NOTIFY_INTERFACE && host.notifications) *output = &detail::notification_api();
         else if (requested == DFY_V2_SUBSCRIPTION_INTERFACE && host.channel) *output = &detail::subscription_api();
+        else if (requested == DFY_V2_GROUP_INTERFACE && host.group) *output = &detail::group_api();
         else return DFY_V2_UNSUPPORTED;
         return DFY_V2_OK;
     });
