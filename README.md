@@ -6,7 +6,7 @@
 
 最终从全新目录构建 Debug、Release，两种配置的完整 CTest 均为 **79／79**；另通过 **20／20** 项 Debug 宿主调用 Release DLL 的检查。DeepSeek 与 Qwen 均完成真实单次调用，以及空插件、加载观察包、卸载后的多轮上下文验收。详情见 [最终验收记录](docs/final-acceptance-2026-11-14.md) 和 [开发指导](docs/foundation-development-guide.md)。
 
-[大肥鱼管理中心 UI 框架设计方案 V0.1](docs/ui-framework-design.md) 已形成待审查草案，覆盖房间首页、组件库、UI 接口和两级插件界面规范；当前仍为终端程序，尚未实现 GUI。
+[大肥鱼管理中心 UI 框架设计方案 V0.2](docs/ui-framework-design.md) 覆盖房间首页、组件库、UI 接口和两级插件界面规范；[技术选型](docs/ui-technology-decisions.md) 采用 Win32／WebView2、Vue 3／TypeScript 与独立来源的受限 iframe。当前仍为终端程序，尚未实现 GUI。
 
 ## 运行与构建
 
