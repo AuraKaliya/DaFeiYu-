@@ -1,4 +1,5 @@
 #include "chat.hpp"
+#include "async_chat.hpp"
 #ifdef _WIN32
 #include "console.hpp"
 #endif
@@ -54,9 +55,11 @@ int run(const std::vector<std::filesystem::path>& args) {
             return 0;
         }
         if (args.size() == 3 && args[1] == "--chat") {
-            dfy::events::Bus events;
-            dfy::agent::Session session(dfy::model::load_config(args[2]), events);
-            return dfy::app::chat(session, std::cin, std::cout, std::cerr);
+            auto store = std::make_shared<dfy::events::EventStore>(256,64);
+            auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,16,8);
+            dfy::agent::AsyncSession session(dfy::model::load_config(args[2]),channel);
+            dfy::platform::LineInput input;
+            return dfy::app::async_chat(session,input,std::cout,std::cerr);
         }
         if (args.size() != 1) {
             std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG]\n";
