@@ -15,13 +15,14 @@ ProcessingSource::ProcessingSource(const EventLease& event, std::shared_ptr<Seri
 // 步骤：保留已开始或已退出的事实 → 请求未开始项停止 → 撤回顺序并确认无需运行退出。
 ProcessingSource::~ProcessingSource() {
     if (record_->phase_ != ProcessingPhase::waiting) return;
-    record_->request_cancel(CancelReason::owner_stop);
+    const auto reason = ordering_cancellation();
+    record_->request_cancel(reason == CancelReason::none ? CancelReason::owner_stop : reason);
     cancel_unstarted();
 }
 // 固定开始前取消，已授予资格可归还，但不改写授予事实或驱动后续处理。
 // 步骤：按顺序阶段撤回占用 → 结算业务取消 → 确认实际退出。
 void ProcessingSource::cancel_unstarted() {
-    if (domain_ && record_->ordering_->phase() != SerialPhase::cancelled)
+    if (domain_ && record_->ordering_->phase() != SerialPhase::cancelled && record_->ordering_->withdrawal_reason() == CancelReason::none)
         domain_->withdraw(record_->ordering_,record_->exit()->cancellation_reason());
     record_->completion_.settle(OperationState::cancelled);
     record_->phase_ = ProcessingPhase::exited;
@@ -32,14 +33,19 @@ void ProcessingSource::cancel_unstarted() {
 StartResult ProcessingSource::start() {
     if (record_->phase_ == ProcessingPhase::exited) return StartResult::exited;
     if (record_->phase_ != ProcessingPhase::waiting) throw std::logic_error("processing: already started");
-    if (domain_ && record_->ordering_->phase() == SerialPhase::cancelled)
-        record_->request_cancel(record_->ordering_->admission()->cancellation_reason());
+    if (const auto reason = ordering_cancellation(); reason != CancelReason::none) record_->request_cancel(reason);
     if (record_->exit()->cancellation_reason() != CancelReason::none) { cancel_unstarted(); return StartResult::exited; }
     if (domain_ && record_->ordering_->phase() == SerialPhase::waiting) return StartResult::waiting;
 
     if (domain_) domain_->begin(record_->ordering_);
     record_->phase_ = ProcessingPhase::running;
     return StartResult::started;
+}
+// 域撤回已授予项时授予仍是成功，故必须独立读取撤回事实。
+CancelReason ProcessingSource::ordering_cancellation() const {
+    if (!domain_) return CancelReason::none;
+    if (record_->ordering_->withdrawal_reason() != CancelReason::none) return record_->ordering_->withdrawal_reason();
+    return record_->ordering_->phase() == SerialPhase::cancelled ? record_->ordering_->admission()->cancellation_reason() : CancelReason::none;
 }
 // 固定唯一业务结果，不把取消意图当作已完成，也不在此归还顺序域。
 void ProcessingSource::complete(OperationState terminal) {

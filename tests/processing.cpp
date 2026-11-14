@@ -1,6 +1,8 @@
 #include <dafeiyu/processing.hpp>
 #include <dafeiyu/processing_queue.hpp>
 #include <iostream>
+#include <cstdlib>
+#include <cstdio>
 namespace {
 using namespace dfy::runtime;
 using namespace dfy::events;
@@ -99,10 +101,27 @@ void queue_lifetime() {
     for (const auto& item : {x,y}) { parallel.complete(item,OperationState::cancelled); parallel.finish(item); }
     check(parallel.closed(),"parallel exit did not close queue");
 }
+// 验证域控制器撤回已经授予但尚未开始的请求后，完成源能够观察取消并安全退出。
+// 步骤：授予并外部撤回 → 通过推进或析构结束处理 → 核对首因及唯一取消结果。
+void external_withdrawal() {
+    const auto previous = std::set_terminate([]() noexcept { std::fputs("withdrawn processing source terminated during cleanup\n",stderr); std::_Exit(2); });
+    auto store = std::make_shared<EventStore>(8,0); auto data = event(store);
+    for (const bool advance : {true,false}) {
+        auto domain = std::make_shared<SerialDomain>(1); const auto order = domain->submit(); std::shared_ptr<ProcessingRecord> result;
+        {
+            ProcessingSource source(data,domain,order); result = source.record(); domain->advance();
+            domain->withdraw(order,CancelReason::deadline);
+            if (advance) check(source.start() == StartResult::exited,"withdrawn grant was treated as executable");
+        }
+        check(result->completion()->state() == OperationState::cancelled && result->exit()->state() == OperationState::succeeded &&
+            result->exit()->cancellation_reason() == CancelReason::deadline && !domain->active(),"external withdrawal lost cancellation or exit");
+    }
+    std::set_terminate(previous);
+}
 }
 // 验收真实事件处理的业务完成、协作取消、实际退出及数据寿命。
 // 步骤：验证顺序生命周期 → 验证取消与准备失败 → 报告结果。
 int main() {
-    try { lifecycle(); cancellation(); queue_lifetime(); std::cout << "Processing checks passed\n"; return 0; }
+    try { lifecycle(); cancellation(); queue_lifetime(); external_withdrawal(); std::cout << "Processing checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

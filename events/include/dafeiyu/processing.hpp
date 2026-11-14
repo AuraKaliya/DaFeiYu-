@@ -47,7 +47,7 @@ class ProcessingRecord {
 // 同宿主线程的唯一处理完成源，宿主必须保留至 finish；客户端释放不会结束处理。
 class ProcessingSource {
   public:
-    // 先保留真实事件及准备结果，再独占绑定已有顺序请求；无顺序约束时两个参数均为空。
+    // 独占绑定已有顺序请求，之后通过本源开始和完成；域仍可撤回未开始项，无顺序时两参数均为空。
     ProcessingSource(const EventLease& event, std::shared_ptr<runtime::SerialDomain> domain = {},
         std::shared_ptr<const runtime::SerialRequest> ordering = {});
     // 取消尚未开始处理；运行中销毁属于宿主违约，不伪造结果、退出或释放占用。
@@ -68,6 +68,8 @@ class ProcessingSource {
     friend class ProcessingQueue;
     // 撤回未开始处理，取消业务结果并确认无需等待运行退出。
     void cancel_unstarted();
+    // 读取域控制器已确认的取消或撤回首因，不推进执行或改写授予结果。
+    runtime::CancelReason ordering_cancellation() const;
     std::shared_ptr<runtime::SerialDomain> domain_;
     const std::shared_ptr<ProcessingRecord> record_;
 };

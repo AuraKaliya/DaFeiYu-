@@ -72,8 +72,10 @@ void SerialDomain::withdraw(const std::shared_ptr<const SerialRequest>& request,
     if (!item.bound_ || (item.phase_ != SerialPhase::waiting && item.phase_ != SerialPhase::granted))
         throw std::logic_error("serial: started or unbound request cannot be withdrawn");
     item.source_.request_cancel(reason);
+    const auto first = item.admission()->cancellation_reason();
+    item.withdrawal_ = first == CancelReason::none ? reason : first;
 
-    if (item.phase_ == SerialPhase::granted) { finish(request); return; }
+    if (item.phase_ == SerialPhase::granted) { item.phase_ = SerialPhase::released; active_.reset(); return; }
     item.source_.settle(OperationState::cancelled);
     item.phase_ = SerialPhase::cancelled;
 }
@@ -82,6 +84,7 @@ void SerialDomain::withdraw(const std::shared_ptr<const SerialRequest>& request,
 void SerialDomain::finish(const std::shared_ptr<const SerialRequest>& request) {
     if (!request || request->domain() != domain_) throw std::invalid_argument("serial: foreign request");
     if (!active_ || requests_[*active_].get() != request.get()) throw std::logic_error("serial: request not active");
+    if (request->bound_ && request->phase_ != SerialPhase::running) throw std::logic_error("serial: bound processing has not started");
 
     requests_[*active_]->phase_ = SerialPhase::released;
     active_.reset();

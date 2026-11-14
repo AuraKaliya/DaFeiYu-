@@ -26,6 +26,8 @@ class SerialRequest {
     std::uint64_t sequence() const noexcept { return sequence_; }
     // 返回当前占用阶段，查询不推进授予或释放。
     SerialPhase phase() const noexcept { return phase_; }
+    // 返回明确撤回的首因，已授予操作仍保持成功，不以该操作的终态代替撤回事实。
+    CancelReason withdrawal_reason() const noexcept { return withdrawal_; }
   private:
     friend class SerialDomain;
     // 创建尚未发布的等待记录，序号在完整分配后由域签发。
@@ -34,6 +36,7 @@ class SerialRequest {
     std::uint64_t sequence_ = 0;
     SerialPhase phase_ = SerialPhase::waiting;
     bool bound_ = false;
+    CancelReason withdrawal_ = CancelReason::none;
     OperationSource source_{true};
 };
 
@@ -58,7 +61,7 @@ class SerialDomain {
     void begin(const std::shared_ptr<const SerialRequest>& request);
     // 撤回已绑定但尚未开始的处理，归还等待或授予占用，不推进下一项。
     void withdraw(const std::shared_ptr<const SerialRequest>& request, CancelReason reason);
-    // 宿主确认实际处理结束后释放当前占用，不自动授予后续请求或改写授予操作。
+    // 宿主确认实际处理结束后释放当前占用；已绑定请求必须先开始，开始前使用 withdraw。
     void finish(const std::shared_ptr<const SerialRequest>& request);
     // 停止接纳并选择排空或取消等待，已授予处理保持占用直到 finish。
     void close(SerialClose mode);

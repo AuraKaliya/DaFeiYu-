@@ -174,9 +174,11 @@ void processing_binding() {
     domain.advance();
     rejects<std::invalid_argument>([&] { domain.withdraw(first,CancelReason::none); });
     check(domain.active() == first,"invalid withdrawal changed occupancy");
+    rejects<std::logic_error>([&] { domain.finish(first); });
     domain.withdraw(first,CancelReason::user);
     check(first->phase() == SerialPhase::released && first->admission()->state() == OperationState::succeeded &&
-        next->phase() == SerialPhase::waiting && !domain.active(),"granted withdrawal changed grant result or advanced next");
+        next->phase() == SerialPhase::waiting && !domain.active() && first->withdrawal_reason() == CancelReason::user,
+        "granted withdrawal changed grant result, lost reason or advanced next");
     rejects<std::logic_error>([&] { domain.bind(first); });
 
     domain.advance(); domain.begin(next);
