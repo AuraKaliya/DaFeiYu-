@@ -18,6 +18,8 @@ class ConsumerGroup {
     MemberId join();
     // 撤销有效成员身份，不关闭共享队列，也不重放该成员已经领取的数据。
     void leave(MemberId member);
+    // 判断成员身份是否仍有效，不改变目录或取得新的成员身份。
+    bool has_member(MemberId member) const noexcept { return members_.contains(member); }
     // 由有效成员单次领取队首，空队列和流结束分别返回，不自动轮转其他成员。
     QueueRead poll(MemberId member);
     // 为组接纳一份事件引用，尚无成员时也可有界排队，满队列或存储不足原子拒绝。

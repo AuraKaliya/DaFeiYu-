@@ -84,6 +84,12 @@ class HandleRegistry {
     }
     // 借用有效引用对应的只读对象，不增加持有责任或允许借用者释放来源引用。
     const T& get(Handle source) const { return *checked(source).object; }
+    // 无分配地检查完整引用身份，不取得持有或抛出失效引用异常。
+    bool contains(Handle source) const noexcept {
+        if (source.domain != domain_ || !source.id || source.id > slots_.size()) return false;
+        const auto& slot = slots_[static_cast<std::size_t>(source.id - 1)];
+        return slot.object && source.generation && source.generation == slot.generation;
+    }
     // 返回当前表的签发域，表销毁后该域也不会再次分配。
     DomainId domain() const noexcept { return domain_; }
     // 返回当前有效持有引用数，不代表对象数量或异步任务数量。
@@ -112,16 +118,10 @@ class HandleRegistry {
         bool shareable = true;
     };
     // 验证签发域、槽位、代次与有效引用后返回记录，不解引用调用方地址。
-    // 步骤：核对域与编号 → 核对记录及代次 → 返回有效槽位。
+    // 步骤：核对完整引用身份 → 返回有效槽位。
     const Slot& checked(Handle source) const {
-        if (source.domain != domain_ || !source.id || source.id > slots_.size()) {
-            throw ReferenceError(ReferenceFailure::invalid_handle);
-        }
-        const auto& slot = slots_[static_cast<std::size_t>(source.id - 1)];
-        if (!slot.object || !source.generation || source.generation != slot.generation) {
-            throw ReferenceError(ReferenceFailure::invalid_handle);
-        }
-        return slot;
+        if (!contains(source)) throw ReferenceError(ReferenceFailure::invalid_handle);
+        return slots_[static_cast<std::size_t>(source.id - 1)];
     }
     DomainId domain_;
     std::vector<Slot> slots_;

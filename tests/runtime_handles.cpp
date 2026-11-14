@@ -26,6 +26,7 @@ int main() {
         const std::weak_ptr<std::string> lifetime = value;
         const auto original = registry.insert(value);
         const auto retained = registry.retain(original);
+        check(registry.contains(original) && registry.contains(retained) && !another.contains(original), "reference presence query wrong");
         value.reset();
         check(original != retained && registry.size() == 2 && &registry.get(original) == &registry.get(retained),
             "independent reference copied the object");
@@ -37,6 +38,7 @@ int main() {
         check(reused.id == original.id && reused.generation != original.generation, "slot identity reused");
         for (auto invalid : {Handle{}, original, Handle{another.domain(), retained.id, retained.generation},
             Handle{registry.domain(), 0, 1}, Handle{registry.domain(), 3, 1}, Handle{registry.domain(), retained.id, 0}}) {
+            check(!registry.contains(invalid), "invalid reference reported present");
             rejected(ReferenceFailure::invalid_handle, [&] { (void)registry.get(invalid); });
             rejected(ReferenceFailure::invalid_handle, [&] { (void)registry.retain(invalid); });
             if (!invalid.empty()) rejected(ReferenceFailure::invalid_handle, [&] { registry.release(invalid); });

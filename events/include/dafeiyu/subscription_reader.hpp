@@ -26,6 +26,7 @@ class ReadRequest {
     EventLease retain_event() const;
   private:
     friend class SubscriptionReader;
+    friend class GroupReader;
     // 创建支持协作取消的 Pending 读取，不触碰订阅队列。
     ReadRequest() = default;
     runtime::OperationSource source_{true};
