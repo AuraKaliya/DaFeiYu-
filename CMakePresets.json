@@ -23,6 +23,14 @@
       "cacheVariables": {
         "BUILD_TESTING": "ON"
       }
+    },
+    {
+      "name": "windows-ui",
+      "inherits": "windows-tests",
+      "binaryDir": "${sourceDir}/build/rebuild/windows-ui",
+      "cacheVariables": {
+        "BUILD_GUI": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -40,6 +48,12 @@
       "name": "windows-tests",
       "configurePreset": "windows-tests",
       "configuration": "Debug"
+    },
+    {
+      "name": "windows-ui-debug",
+      "configurePreset": "windows-ui",
+      "configuration": "Debug",
+      "targets": ["dfy_ui_probe"]
     }
   ],
   "testPresets": [

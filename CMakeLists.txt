@@ -31,6 +31,11 @@ add_subdirectory(plugins/runtime)
 add_subdirectory(plugins/examples/query)
 add_subdirectory(plugins/examples/observer)
 add_subdirectory(app)
+option(BUILD_GUI "Build the native WebView2 validation window" OFF)
+if(BUILD_GUI)
+  include(cmake/WebView2.cmake)
+  add_subdirectory(app/gui)
+endif()
 include(cmake/Distribution.cmake)
 
 # 按需启用离线测试，普通构建不生成测试目标。
