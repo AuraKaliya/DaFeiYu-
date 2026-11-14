@@ -16,7 +16,7 @@ class ModelRequest {
     ModelRequest& operator=(const ModelRequest&) = delete;
     // 返回业务结果，协作取消可早于实际网络调用退出。
     std::shared_ptr<const runtime::Operation> operation() const noexcept { return result_.operation(); }
-    // 返回工作线程已经退出并被宿主回收的确认。
+    // 返回后台调用已完成且宿主已接收结果的确认，不表示标准库线程池整体退出。
     std::shared_ptr<const runtime::Operation> exit() const noexcept { return exit_.operation(); }
     // 在宿主线程记录取消；不强行终止系统网络调用，迟到回复不会恢复已取消结果。
     runtime::CancelDisposition request_cancel(runtime::CancelReason reason) { return result_.request_cancel(reason); }
@@ -24,7 +24,7 @@ class ModelRequest {
     const std::string& answer() const;
   private:
     friend class AsyncClient;
-    // 准备独立业务和退出操作，尚不启动线程。
+    // 准备独立业务和退出操作，尚不提交后台调用。
     ModelRequest() = default;
     runtime::OperationSource result_{true}, exit_;
     std::future<std::string> worker_;
@@ -37,9 +37,9 @@ class AsyncClient {
   public:
     // 固定在途及保留结果容量，可注入离线模型；默认沿用随本体发布的完整文本调用。
     explicit AsyncClient(std::size_t capacity = 1, Completion completion = {});
-    // 请求取消并等待实际工作线程退出；正常交互应先通过 close 和 advance 非阻塞排空。
+    // 请求取消并等待所有后台调用实际完成；正常交互应先通过 close 和 advance 非阻塞排空。
     ~AsyncClient();
-    // 禁止复制线程及请求回收责任。
+    // 禁止复制后台调用及请求回收责任。
     AsyncClient(const AsyncClient&) = delete;
     // 禁止赋值或隐式移动在途客户端。
     AsyncClient& operator=(const AsyncClient&) = delete;
@@ -49,7 +49,7 @@ class AsyncClient {
     void advance();
     // 停止新请求接纳并请求取消，实际网络退出仍按原超时边界等待。
     void close();
-    // 关闭后阻塞等待真实后台退出，仅用于最外层兜底回收，不用于交互推进。
+    // 关闭后等待已接受调用实际返回，仅用于最外层兜底回收，不用于交互推进。
     void wait_closed();
     // 判断已停止接纳且全部后台调用退出，保留的只读结果不阻止逻辑关闭。
     bool closed() const noexcept;

@@ -2,6 +2,7 @@
 #include <dafeiyu/owner_scheduler.hpp>
 #include <iostream>
 #include <thread>
+#include <atomic>
 namespace {
 using namespace dfy::runtime;
 using namespace dfy::model;
@@ -45,12 +46,17 @@ void cancellation() {
     rejects<std::runtime_error>([&] { (void)request->answer(); }); request.reset(); client.collect(); check(!client.size(),"model request leaked after last client");
 }
 // 验证完整文本与异常传播、客户端释放后的宿主责任和失败前的输入限制。
-// 步骤：返回完整回答 → 保留结果并检查容量 → 读取失败 → 提前释放客户端 → 宿主关闭回收。
+// 步骤：拒绝非法输入 → 返回完整回答并检查保留容量 → 读取失败 → 提前释放客户端 → 宿主关闭回收。
 void outcomes() {
-    AsyncClient client(1,[](const Config&,const std::vector<Message>& messages) {
+    std::atomic<unsigned> calls{0};
+    AsyncClient client(1,[&](const Config&,const std::vector<Message>& messages) {
+        ++calls;
         if (messages.back().content == "fail") throw std::runtime_error("model: controlled failure");
         return messages.back().content;
     });
+    rejects<std::invalid_argument>([&] { (void)client.submit({},{{Role::user,""},{Role::assistant,""}}); });
+    rejects<std::invalid_argument>([&] { (void)client.submit({},{{static_cast<Role>(99),"invalid"}}); });
+    check(!calls.load() && !client.size(),"invalid message metadata entered backend or consumed a slot");
     auto request = client.submit({},{{Role::user,"完整回答"}}); drain(client,request);
     check(request->answer() == "完整回答" && request->operation()->state() == OperationState::succeeded,"complete text lost");
     rejects<std::length_error>([&] { (void)client.submit({},{{Role::user,"held"}}); });

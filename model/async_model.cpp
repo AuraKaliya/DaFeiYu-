@@ -17,22 +17,26 @@ AsyncClient::AsyncClient(std::size_t capacity, Completion completion)
     })) {
     if (!capacity) throw std::invalid_argument("model: positive async capacity required");
 }
-// 不遗留后台线程；已取消业务仍等待真实 I/O 返回后才释放所用输入和配置。
+// 不丢弃进行中的后台调用；已取消业务仍等待真实 I/O 返回后才释放所用输入和配置。
 AsyncClient::~AsyncClient() { wait_closed(); }
-// 最外层兜底等待已经接受的线程退出，再在宿主结算退出确认。
+// 最外层兜底等待已接受的异步调用完成，不要求标准库工作线程池整体退出。
+// 步骤：关闭接纳并请求取消 → 等待各调用返回 → 在宿主结算结果及退出确认。
 void AsyncClient::wait_closed() {
     close();
     for (const auto& request : requests_) if (request && request->worker_.valid()) request->worker_.wait();
     advance();
 }
-// 将完整输入独立转交后台，线程启动之后只有不会失败的槽位提交。
-// 步骤：回收并检查接纳及输入上限 → 准备结果及输入捕获 → 启动工作线程 → 保存宿主责任。
+// 将完整输入独立转交后台，异步提交之后只有不会失败的槽位提交。
+// 步骤：回收并检查接纳及完整消息约束 → 准备结果及输入捕获 → 提交后台调用 → 保存宿主责任。
 std::shared_ptr<ModelRequest> AsyncClient::submit(Config config, std::vector<Message> messages) {
     collect();
     if (!accepting_) throw std::logic_error("model: async admission closed");
     std::size_t bytes = 0;
     if (messages.empty()) throw std::invalid_argument("model: messages required");
     for (const auto& message : messages) {
+        if ((message.role != Role::user && message.role != Role::assistant) || message.content.empty() ||
+            (message.role == Role::user && message.content.find_first_not_of(" \t\r\n") == std::string::npos))
+            throw std::invalid_argument("model: valid role and nonempty message required");
         if (message.content.size() > 1024 * 1024 - bytes) throw std::length_error("model: messages exceed 1 MiB");
         bytes += message.content.size();
     }
@@ -69,6 +73,7 @@ void AsyncClient::advance() {
     }
 }
 // 关闭接纳并请求取消，已经完成的结果及首个取消原因保持不变。
+// 步骤：停止新请求 → 登记各请求停止原因 → 非阻塞推进已有结果。
 void AsyncClient::close() {
     accepting_ = false;
     for (const auto& request : requests_) if (request) request->request_cancel(CancelReason::owner_stop);
