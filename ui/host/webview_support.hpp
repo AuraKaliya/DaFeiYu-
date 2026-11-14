@@ -6,12 +6,35 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace dfy::ui {
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Callback;
 // 由外层回调捕获 COM 错误，禁止异常穿过 Windows 接口。
 inline void require_hresult(HRESULT result) { if (FAILED(result)) throw std::runtime_error("UI HRESULT="+std::to_string(result)); }
+// 将有界 UTF-16 消息完整转换为 UTF-8，拒绝非法代理项。
+// 步骤：检查输入上限 → 计算输出长度 → 分配并完成转换。
+inline std::string utf8(std::wstring_view value) {
+    if (value.size() > 16384) throw std::length_error("UI: UTF-16 input too large");
+    if (value.empty()) return {};
+    const auto count = WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+    if (!count) throw std::runtime_error("UI: invalid UTF-16");
+    std::string result(count,'\0');
+    if (!WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),result.data(),count,nullptr,nullptr)) throw std::runtime_error("UI: UTF-8 conversion failed");
+    return result;
+}
+// 将已校验的 UTF-8 JSON 转为浏览器消息，不拼接可执行脚本。
+// 步骤：检查输入上限 → 计算输出长度 → 分配并完成转换。
+inline std::wstring utf16(std::string_view value) {
+    if (value.size() > 16384) throw std::length_error("UI: UTF-8 input too large");
+    if (value.empty()) return {};
+    const auto count = MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0);
+    if (!count) throw std::runtime_error("UI: invalid UTF-8");
+    std::wstring result(count,L'\0');
+    if (!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),result.data(),count)) throw std::runtime_error("UI: UTF-16 conversion failed");
+    return result;
+}
 // 有界复制并归还 COM 字符串，所有成功和失败路径都释放调用方缓冲。
 // 步骤：接收缓冲并固定释放责任 → 检查结果及长度 → 返回独立副本。
 template<class Read>
