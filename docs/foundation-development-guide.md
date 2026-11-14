@@ -1505,3 +1505,30 @@ feat: 实现本次单一功能点
 `/status` 展示当前回合；空闲时使用最近已退出回合的值快照，未接纳过问答则明确报告为空。输出区分问答结果、失败阶段、取消原因、后台调用事实和实际退出，并以模型提交为起点显示各阶段毫秒偏移及通知事件身份。接纳成功只标记 `queued only`；退出后的耗时固定。清空上下文保留诊断，诊断既不占额外回合槽，也不保存提示词、回答或异常正文。
 
 本单元构建 `dfy_async_chat_tests` 并运行 Debug `app.async_chat`，1／1 通过；覆盖空查询、运行中、取消等待、迟到返回、两类失败、通知失败回执保留、清空后快照稳定及容量为一时连续问答。运行说明和命令提示同步更新，`git diff --check` 通过。下一步审查本轮整体差异并进行一次最终完整构建、CTest、跨配置及分发检查。
+
+### D05 最终验收与交付
+
+本轮功能按以下提交分别验收；开发过程只运行各单元所需目标与测试，功能完成后才执行本节全量。
+
+| 单元 | 提交 | 阅读入口 |
+|---|---|---|
+| D01 模型调用时间事实 | `59e1b69` | [模型快照](../model/include/dafeiyu/async_model.hpp)、[实现](../model/async_model.cpp) |
+| D02 回合诊断关联 | `7956475` | [回合快照](../agent/include/dafeiyu/session.hpp)、[实现](../agent/session.cpp) |
+| D03 通知失败可见性 | `4a24b08` | [终端控制器](../app/chat.cpp)、[诊断输出](../app/diagnostics.cpp) |
+| D04 本地状态查询 | `055bc4a` | [交互回归](../tests/async_chat.cpp)、[运行说明](run-guide.md) |
+
+在全新 `build/diagnostics-validation` 目录使用 VS2022 x64、MSVC 19.44、C++20／C11 构建。首次依赖下载连接中断后，复用本机保存的 nlohmann/json 3.12.0 原始归档，并核对 SHA-256 与 `cmake/Dependencies.cmake` 完全一致；构建目录重新解包依赖，没有改变版本、校验规则或引用 `Old`。
+
+| 验收内容 | 结果 |
+|---|---|
+| Debug 全部正式目标与测试构建、完整 CTest | 构建无警告，79／79 通过 |
+| Release 全部正式目标与测试构建、最终完整 CTest | 构建无警告，79／79 通过 |
+| Debug 宿主调用 Release DLL | 20／20：17 项直接 C 夹具、观察包、应用生命周期及管理器 |
+| 独立 Release 分发进程 | 系统目录 PATH、不同工作目录下，诊断查询和真实插件安装／加载／卸载／移除通过，退出码 0 |
+| 编码与文档 | 286 个受版本管理文本严格 UTF-8 检查；3 个本轮新增或修改的公开头 BOM 正确；234 处本地文档链接有效；分发 SDK 的 13 个文件与上次交付一致 |
+
+Release 首次全量为 78／79，既有 `plugins.install` 在自定义深度包发布时报告 `package: cannot move managed directory`。同一二进制单独复测通过，随后该项连续 10 次通过，再执行最终完整 Release CTest 为 79／79。没有修改安装实现或隐藏失败；首次系统目录移动失败的底层原因尚未确认，日志保存在 `build/diagnostics-ctest-Release.log`，复测和最终结果分别为 `build/diagnostics-install-stability.log`、`build/diagnostics-ctest-Release-final.log`。
+
+分发验收使用明确不存在的专用凭据环境变量，验证正式模型路径的失败阶段诊断；在读取凭据时即结束，不发起网络请求。成功、取消及通知背压由真实线程、有界队列与离线模型替身覆盖。`/status` 查询不增加调用，反复查询和清空后的最终快照一致，输出不包含测试提示、回答、异常正文或凭据配置。此前两家供应商的真实服务验收记录保持其原有代码基线，本轮不计作真实服务复验。
+
+独立运行目录为 `build/diagnostics-delivery/DaFeiYu`，可分发归档为同目录上层的 `DaFeiYu-diagnostics-20261114-windows-x64.zip`，附 SHA-256 文件。本轮范围完成；后续如需调整观察投递策略、传输取消或引入业务能力，另立小步审查单元。

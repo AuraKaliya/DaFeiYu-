@@ -128,7 +128,7 @@ void status_queries() {
     std::promise<void> release, entered; auto gate = release.get_future().share(); auto started = entered.get_future(); unsigned calls = 0;
     dfy::agent::AsyncSession session({},events,1,
     // 用一轮受控调用和两类失败覆盖诊断，不向真实服务发送任何请求。
-    // 步骤：首轮报告进入并等待 → 第二轮抛错 → 第三轮产生超过历史容量的文本。
+    // 步骤：计数调用 → 按轮次选择阻塞返回、抛错或超过历史容量的文本。
     [&](const auto&,const auto&) -> std::string {
         ++calls;
         if (calls == 1) { entered.set_value(); gate.wait(); return "private answer"; }
