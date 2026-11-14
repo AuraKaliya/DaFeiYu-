@@ -1,6 +1,6 @@
 # 插件 C ABI v2 最小接口契约
 
-当前 R06 生产宿主适配、R07b 实例控制与失败保留、R08 独立观察包完整链路均已验收。R09 已提供嵌套、可选／可空、完整组合数组与映射、枚举和带标签联合，实际观察包 0.6.0 支持这些类型；完整范围见 [开发指导](foundation-development-guide.md)。后文各 R01 单元保留其当次边界。
+当前 R06 生产宿主适配、R07b 实例控制与失败保留、R08 独立观察包完整链路均已验收。R09 已提供完整组合数据；观察包 0.7.0 支持这些类型，并通过 R10 的独立订阅及组消费验收。完整范围见 [开发指导](foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
 
 R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。当时的隔离验收不包含生产运行时；现已由独立 `PluginModuleV2`、`HostServices` 和 `PluginInstance` 装配生产能力，原 `PluginModule` 保持 v1。
 
@@ -49,7 +49,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 联合是非空闭合分支集，显式 UInt64 标签唯一，零及最大值均合法，未知标签在值构造时拒绝。`branch` 按声明顺序返回标签与独立约束引用，分配失败时两个输出均清零；`read` 返回索引及稳定标签；`content` 保持实际内容及原事件预算。分支可空与外层字段可空独立，带标签 null 不是外层 null。描述信息／选择分别为 32／16 字节，分支数偏移 24、标签偏移 8。联合根占 1 节点、标签占 8 字节，再加实际内容；全部分支均参与描述预算。
 
-真实 C 验收入口：[嵌套与标量容器](../tests/plugin_nested.cpp)、[枚举](../tests/plugin_enums.cpp)、[联合](../tests/plugin_unions.cpp)、[组合数组](../tests/plugin_arrays.cpp)、[组合映射及预算链](../tests/plugin_maps.cpp)、[定向读取隔离](../tests/plugin_targets.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 完整测试为 52／52；枚举、联合、组合数组、组合映射、定向读取和观察包六组 Debug 宿主消费 Release DLL 均通过。消费者组当前是宿主领取与通道共同接纳，尚无组成员 C 能力；App／Agent 正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与标量容器](../tests/plugin_nested.cpp)、[枚举](../tests/plugin_enums.cpp)、[联合](../tests/plugin_unions.cpp)、[组合数组](../tests/plugin_arrays.cpp)、[组合映射](../tests/plugin_maps.cpp)、[定向读取](../tests/plugin_targets.cpp)、[组读取](../tests/plugin_group_reads.cpp)、[组通知](../tests/plugin_group_notifications.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 完整测试为 58／58；组读取、组通知、定向读取、枚举、联合、组合数组、组合映射和观察包八组跨配置 DLL 检查均通过。顺序域当前为宿主基础，没有新增 C 工作完成协议；App／Agent 正式异步迁移仍属 R15。
 
 ## 组成员接入能力
 
