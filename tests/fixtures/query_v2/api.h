@@ -171,6 +171,14 @@ typedef struct dfy_test_composite_maps_api {
         uint64_t budget, dfy_test_composite_map_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
 } dfy_test_composite_maps_api;
 extern const dfy_test_composite_maps_api dfy_test_composite_maps;
+#define DFY_TEST_PROCESSING_ID "test.processing"
+typedef struct dfy_test_processing_api {
+    dfy_v2_api_header header;
+    // 在有效绑定中分步开始并完成业务或确认退出，失败清零输出，不内联推进宿主队列。
+    dfy_v2_status (DFY_V2_CALL *step)(dfy_v2_query_interface_fn query, dfy_v2_handle work, uint32_t phase,
+        dfy_v2_handle* payload, dfy_v2_error* error);
+} dfy_test_processing_api;
+extern const dfy_test_processing_api dfy_test_processing;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

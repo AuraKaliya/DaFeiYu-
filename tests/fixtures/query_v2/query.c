@@ -51,6 +51,8 @@ static dfy_v2_status DFY_V2_CALL query_interface(
     }
 
     if (version == 1) {
+        if (name.length == sizeof(DFY_TEST_PROCESSING_ID) - 1 && memcmp(name.data, DFY_TEST_PROCESSING_ID, name.length) == 0)
+            *output = &dfy_test_processing;
         if (name.length == sizeof(DFY_TEST_QUERY_ID) - 1 && memcmp(name.data, DFY_TEST_QUERY_ID, name.length) == 0)
             *output = &test_api;
         if (name.length == sizeof(DFY_TEST_BORROW_ID) - 1 && memcmp(name.data, DFY_TEST_BORROW_ID, name.length) == 0)

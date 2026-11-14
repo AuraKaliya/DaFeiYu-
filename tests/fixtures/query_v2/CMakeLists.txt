@@ -1,6 +1,8 @@
 # 构建纯 C11 v2 查询夹具，只发布测试能力，不继承宿主字符集选项。
 add_library(dfy_query_v2_fixture SHARED query.c borrow.c operation.c notification.c host.c values.c reads.c lifecycle.c nested.c arrays.c maps.c api.h)
 target_link_libraries(dfy_query_v2_fixture PRIVATE dfy_sdk)
+target_sources(dfy_query_v2_fixture PRIVATE processing.c)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/processing.c")
 target_sources(dfy_query_v2_fixture PRIVATE enums.c unions.c composite_arrays.c composite_maps.c)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/enums.c" "${CMAKE_CURRENT_SOURCE_DIR}/unions.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/composite_arrays.c" "${CMAKE_CURRENT_SOURCE_DIR}/composite_maps.c")
