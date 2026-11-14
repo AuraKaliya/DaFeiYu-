@@ -312,6 +312,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME runtime.unions COMMAND dfy_runtime_unions_tests)
 set_tests_properties(runtime.unions PROPERTIES TIMEOUT 15)
 
+# 验证字段约束独立持有及已实现内容种类的统一反射。
+add_executable(dfy_plugin_constraints_tests plugin_constraints.cpp)
+target_link_libraries(dfy_plugin_constraints_tests PRIVATE dfy_plugins dfy_build_options)
+set_target_properties(dfy_plugin_constraints_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_constraints.cpp")
+add_test(NAME plugins.constraints COMMAND dfy_plugin_constraints_tests)
+set_tests_properties(plugins.constraints PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests

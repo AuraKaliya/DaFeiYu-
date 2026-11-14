@@ -2,13 +2,13 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R09h-3 联合字段与类型目录已验收
+## 当前进度：R09h-4 C 字段约束反射已验收
 
 R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
 
 R09 已实现有界嵌套结构、可选字段与显式空值、标量数组、字符串键标量映射及闭合枚举，以及对应 C 反射接口。实际观察包已升级为 0.3.0，支持这些类型并限制消费深度和访问数量。带标签联合、任意组合容器元素仍待补齐。App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 45／45。枚举完整链路已经验收，[联合描述](runtime/include/dafeiyu/union_descriptor.hpp) 和 [联合值](runtime/include/dafeiyu/union_value.hpp) 已接入字段、嵌套和类型目录；下一单元为 C 约束及联合访问。范围和验收见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 46／46。枚举完整链路已经验收，联合已接入字段、嵌套和类型目录，独立 C 字段约束反射已经提供；下一单元为联合 C 访问。范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
 [v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
 

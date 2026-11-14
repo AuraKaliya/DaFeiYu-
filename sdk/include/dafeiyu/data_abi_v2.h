@@ -19,6 +19,8 @@
 #define DFY_V2_VALUE_ENUM UINT32_C(11)
 #define DFY_V2_ENUM_INTERFACE "dfy.enums"
 #define DFY_V2_ENUM_VERSION UINT32_C(1)
+#define DFY_V2_CONSTRAINT_INTERFACE "dfy.constraints"
+#define DFY_V2_CONSTRAINT_VERSION UINT32_C(1)
 #define DFY_V2_MAP_INTERFACE "dfy.maps"
 #define DFY_V2_MAP_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
@@ -168,6 +170,20 @@ typedef struct dfy_v2_enum_api {
     // 复制枚举值选中的成员索引及整数；值引用仍承担原始数据预算，非枚举值拒绝。
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_enum_selection* output, dfy_v2_error* error);
 } dfy_v2_enum_api;
+// 独立内容约束引用复用字段元数据，名称借用依赖该约束引用，不保持事件正文。
+typedef struct dfy_v2_constraint_api {
+    dfy_v2_api_header header;
+    // 同宿主线程绑定中取得结构字段约束的独立持有；输出必需，失败全零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *field)(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+    // 读取种类、名称、可选／可空及字节约束，借用期依赖传入约束引用。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle constraint, dfy_v2_field_info_v2* output, dfy_v2_error* error);
+    // 为结构或枚举内容返回对应种类的独立描述引用；其他种类拒绝，调用方负责释放。
+    dfy_v2_status (DFY_V2_CALL *named_type)(dfy_v2_handle constraint, dfy_v2_handle* output, dfy_v2_error* error);
+    // 复制数组约束，非数组内容返回 INVALID_ARGUMENT。
+    dfy_v2_status (DFY_V2_CALL *array)(dfy_v2_handle constraint, dfy_v2_array_type_info* output, dfy_v2_error* error);
+    // 复制映射约束，非映射内容返回 INVALID_ARGUMENT。
+    dfy_v2_status (DFY_V2_CALL *map)(dfy_v2_handle constraint, dfy_v2_map_type_info* output, dfy_v2_error* error);
+} dfy_v2_constraint_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

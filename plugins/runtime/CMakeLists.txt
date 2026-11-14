@@ -5,8 +5,9 @@ add_library(dfy_plugins STATIC manifest.cpp registry.cpp config.cpp module.cpp m
 
 # 配置公开 SDK 与平台接口，JSON 解析保留在实现层，不依赖 Agent。
 target_compile_features(dfy_plugins PUBLIC cxx_std_20)
-target_sources(dfy_plugins PRIVATE host_enums.cpp)
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/host_enums.cpp")
+target_sources(dfy_plugins PRIVATE host_enums.cpp host_constraints.cpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/host_enums.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/host_constraints.cpp")
 target_include_directories(dfy_plugins PUBLIC include)
 target_link_libraries(dfy_plugins PUBLIC dfy_library dfy_sdk dfy_runtime dfy_event_streams PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
 

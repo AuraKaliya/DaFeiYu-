@@ -21,6 +21,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 | `dfy.arrays` | 1／32 字节 | `field_type`、`describe`、`element`；基础元素约束、实际数量及独立元素持有 |
 | `dfy.maps` | 1／40 字节 | `field_type`、`describe`、`entry`、`find`；字符串键、基础值、按序及精确键访问 |
 | `dfy.enums` | 1／48 字节 | `field_type`、`describe`、`member`、`descriptor`、`read`；闭合枚举定义和成员选择 |
+| `dfy.constraints` | 1／48 字节 | `field`、`describe`、`named_type`、`array`、`map`；独立字段约束及已有内容描述，联合尚不支持 |
 
 `dfy_v2_type_info` 与两版字段信息均为 32 字节；版本 2 字段 flags 位于偏移 20，`max_bytes` 位于 24。`dfy_v2_value_view` 为 24 字节，data 位于 8。数组约束／实际信息分别为 24／32 字节，映射约束／实际信息分别为 32／40 字节；以上对齐均为 8，并恢复包含方原打包设置。
 
@@ -37,6 +38,8 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 映射键是有效 UTF-8，允许空键及内嵌零；按完整字节精确匹配，不折叠大小写或 Unicode 规范化。构造拒绝重复键，枚举按字节序返回；未知键为 `NOT_FOUND`，空指针加非零长度非法。`entry` 同时返回借用键与独立值引用：键借用依赖传入映射引用，引用签发失败时两个输出都清空。
 
 数据子引用使用宿主别名持有：保留叶字段或容器元素仍保持原载荷、读请求结果和事件存储预算，不能提前释放中间引用来绕过计量。最后一份数据持有释放后才归还相应预算；单独取得类型描述只保留不可变描述，不保留事件正文。借用视图在其指定引用释放后失效，即使另一个引用仍使底层对象存活，也必须重新读取。
+
+`dfy.constraints` 让调用方独立持有一个字段的完整内容约束。`describe` 复用版本 2 字段元数据；`named_type` 对结构或枚举返回对应描述，`array`／`map` 返回容器约束副本。约束引用保持父描述，名称视图依赖传入约束引用；这条描述持有链不计入事件数据预算。非对应种类访问返回 `INVALID_ARGUMENT`，未接入的联合约束返回 `UNSUPPORTED`。
 
 真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL、Debug 宿主消费 Release 观察包均通过；观察包 0.3.0 以共享访问预算消费全部枚举成员。App／Agent 的正式异步迁移仍属 R15。
 

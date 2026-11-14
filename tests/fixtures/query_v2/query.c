@@ -18,6 +18,7 @@ _Static_assert(sizeof(dfy_v2_enum_info) == 32 && offsetof(dfy_v2_enum_info, memb
 _Static_assert(sizeof(dfy_v2_enum_member) == 40 && offsetof(dfy_v2_enum_member, number) == 16, "enum member layout");
 _Static_assert(sizeof(dfy_v2_enum_selection) == 32 && offsetof(dfy_v2_enum_selection, number) == 8, "enum selection layout");
 _Static_assert(sizeof(dfy_v2_enum_api) == 48 && offsetof(dfy_v2_enum_api, read) == 40, "enum table layout");
+_Static_assert(sizeof(dfy_v2_constraint_api) == 48 && offsetof(dfy_v2_constraint_api, map) == 40, "constraint table layout");
 
 // 将固定诊断写入调用方缓冲；本夹具文本均为容量以内的 ASCII，不依赖 DLL 内文本寿命。
 static dfy_v2_status report(dfy_v2_status status, dfy_v2_error* error, const char* message) {
