@@ -27,6 +27,7 @@
 #define DFY_V2_CONSTRAINT_VERSION_2 UINT32_C(2)
 #define DFY_V2_MAP_INTERFACE "dfy.maps"
 #define DFY_V2_MAP_VERSION UINT32_C(1)
+#define DFY_V2_MAP_VERSION_2 UINT32_C(2)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
 #define DFY_V2_ARRAY_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_VERSION_2 UINT32_C(2)
@@ -163,6 +164,20 @@ typedef struct dfy_v2_map_api {
     // 按完整键精确查询并返回独立值引用，未知键为 NOT_FOUND，空键合法。
     dfy_v2_status (DFY_V2_CALL *find)(dfy_v2_handle value, dfy_v2_string_view key, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_map_api;
+// 版本 2 映射允许全部已实现值种类，精确 UTF-8 键语义与版本 1 相同。
+typedef struct dfy_v2_map_api_v2 {
+    dfy_v2_api_header header;
+    // 同宿主线程绑定中复制字段映射约束；所有输出必需，失败清零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *field_type)(dfy_v2_handle type, uint64_t index, dfy_v2_map_type_info* output, dfy_v2_error* error);
+    // 返回实际条目数量及完整值分类，空映射保留完整声明。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle value, dfy_v2_map_info* output, dfy_v2_error* error);
+    // 返回借用键与独立值持有，键依赖传入映射引用；签发失败时两个输出均清空。
+    dfy_v2_status (DFY_V2_CALL *entry)(dfy_v2_handle value, uint64_t index, dfy_v2_string_view* key, dfy_v2_handle* output, dfy_v2_error* error);
+    // 按完整键取得独立数据持有，保持父映射及事件预算；未知键返回 NOT_FOUND。
+    dfy_v2_status (DFY_V2_CALL *find)(dfy_v2_handle value, dfy_v2_string_view key, dfy_v2_handle* output, dfy_v2_error* error);
+    // 返回实际映射的匿名值约束持有，由 constraints 反射；不保留事件数据预算。
+    dfy_v2_status (DFY_V2_CALL *value_type)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_map_api_v2;
 // 闭合枚举身份；underlying_kind 仅为 INT64 或 UINT64，名称借用依赖描述引用。
 typedef struct dfy_v2_enum_info {
     dfy_v2_string_view name;

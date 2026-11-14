@@ -74,6 +74,8 @@ const dfy_v2_array_api& array_api();
 const dfy_v2_array_api_v2& array_api_v2();
 // 返回实际实现的字符串键标量映射访问能力。
 const dfy_v2_map_api& map_api();
+// 返回版本 2 的完整映射数据及匿名值约束访问能力。
+const dfy_v2_map_api_v2& map_api_v2();
 // 返回闭合枚举定义与成员选择的反射服务。
 const dfy_v2_enum_api& enum_api();
 // 返回独立字段约束的反射和命名描述访问服务。
