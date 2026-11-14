@@ -59,7 +59,7 @@ class HostServices {
     // 为当前实例授予一个组的成员接入能力，固定请求预算，不授予共享组关闭权。
     void enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity);
     // 为本实例建立独立有界处理域，默认串行，不允许重复配置。
-    void enable_processing(std::size_t capacity, bool ordered = true);
+    void enable_processing(std::size_t capacity, bool ordered = true, std::shared_ptr<runtime::Budget> owner_budget = {});
     // 在处理接纳点固定顺序并签发不可复制 C 处理引用，失败不消耗来源数据。
     dfy_v2_handle submit_processing(const events::EventLease& event);
     // 查询是否有尚未实际退出的运行处理，忙碌卸载须在改变状态前拒绝。

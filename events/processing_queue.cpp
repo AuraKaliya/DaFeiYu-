@@ -1,22 +1,25 @@
 #include <dafeiyu/processing_queue.hpp>
+#include <limits>
 
 namespace dfy::events {
 using namespace runtime;
-// 预分配全部处理槽和可选顺序域，不在过载时扩容。
-ProcessingQueue::ProcessingQueue(std::size_t capacity, bool ordered)
-    : sources_(capacity), domain_(ordered ? std::make_shared<SerialDomain>(capacity) : nullptr) {
+// 预分配处理槽、可选顺序域和共享父预算下的接收方额度，不在过载时扩容。
+ProcessingQueue::ProcessingQueue(std::size_t capacity, bool ordered, std::shared_ptr<Budget> parent_budget)
+    : sources_(capacity), domain_(ordered ? std::make_shared<SerialDomain>(capacity) : nullptr),
+      budget_(std::make_shared<Budget>(BudgetAmount{capacity,std::numeric_limits<std::size_t>::max()},parent_budget)) {
     if (!capacity) throw std::invalid_argument("processing queue: positive capacity required");
 }
 // 收回未开始责任；运行中处理的宿主必须先完成并确认退出。
 ProcessingQueue::~ProcessingQueue() { close(CloseMode::cancel); }
 // 在处理接纳点固定顺序，所有可能失败的数据准备均先于顺序签发。
-// 步骤：回收并核对接纳预算 → 准备数据和完成源 → 签发并绑定顺序 → 提交固定槽。
+// 步骤：回收并核对槽位 → 准备数据、完成源及分层计费 → 签发并绑定顺序 → 提交固定槽。
 std::shared_ptr<ProcessingRecord> ProcessingQueue::submit(const EventLease& event) {
     collect();
     if (mode_) throw std::logic_error("processing queue: admission closed");
     for (auto& slot : sources_) {
         if (slot) continue;
         auto source = std::make_unique<ProcessingSource>(event);
+        source->record_->charge_ = budget_->acquire({1,event.get().payload->payload_bytes()});
         if (domain_) {
             const auto order = domain_->submit();
             domain_->bind(order);

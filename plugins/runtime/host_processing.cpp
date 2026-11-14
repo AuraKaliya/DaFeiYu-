@@ -2,10 +2,10 @@
 
 namespace dfy::plugins {
 // 在副作用前建立完整处理队列，再登记宿主停止责任。
-void HostServices::enable_processing(std::size_t capacity, bool ordered) {
+void HostServices::enable_processing(std::size_t capacity, bool ordered, std::shared_ptr<runtime::Budget> owner_budget) {
     state_->require_owner();
     if (state_->processing) throw std::logic_error("host: processing already enabled");
-    auto queue = std::make_unique<events::ProcessingQueue>(capacity,ordered);
+    auto queue = std::make_unique<events::ProcessingQueue>(capacity,ordered,std::move(owner_budget));
     const auto resource = state_->resources.prepare(); state_->resources.activate(resource);
     state_->processing = std::move(queue); state_->processing_resource = resource;
 }

@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证真实事件共享存储及跨处理队列的所有者预算。
+add_executable(dfy_event_budget_tests event_budget.cpp)
+target_link_libraries(dfy_event_budget_tests PRIVATE dfy_event_streams dfy_build_options)
+set_target_properties(dfy_event_budget_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/event_budget.cpp")
+add_test(NAME events.budget COMMAND dfy_event_budget_tests)
+set_tests_properties(events.budget PROPERTIES TIMEOUT 15)
+
 # 验证分层条目与字节预算的原子计费、移动归还及极限。
 add_executable(dfy_budget_tests budget.cpp)
 target_link_libraries(dfy_budget_tests PRIVATE dfy_runtime dfy_build_options)

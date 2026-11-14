@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/subscription_queue.hpp>
 #include <dafeiyu/serial_domain.hpp>
+#include <dafeiyu/budget.hpp>
 
 namespace dfy::events {
 enum class ProcessingPhase { waiting, running, exited };
@@ -39,6 +40,7 @@ class ProcessingRecord {
     ProcessingPhase phase_ = ProcessingPhase::waiting;
     runtime::OperationSource completion_;
     runtime::OperationSource exit_{true};
+    runtime::BudgetLease charge_;
 };
 
 // 同宿主线程的唯一处理完成源，宿主必须保留至 finish；客户端释放不会结束处理。

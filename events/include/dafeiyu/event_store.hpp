@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/handle_registry.hpp>
 #include <dafeiyu/struct_value.hpp>
+#include <dafeiyu/budget.hpp>
 
 namespace dfy::events {
 // 事件身份由接纳域及序号组成，独立于每份持有引用的域、槽位和代次。
@@ -13,13 +14,15 @@ struct EventId {
 struct EventRecord {
     const EventId id;
     const std::shared_ptr<const runtime::StructValue> payload;
+    // 同一事件的所有交付共用一份存储计费，最后一份事件持有退出后归还。
+    runtime::BudgetLease storage_charge;
 };
 
 // 同一宿主线程内顺序接纳不可变事件，所有事件持有引用共用明确的容量。
 class EventStore {
   public:
-    // 建立独立接纳域、正引用容量和单事件正文上限，构造失败不返回存储。
-    EventStore(std::size_t reference_capacity, std::size_t max_payload_bytes);
+    // 建立独立接纳域、正引用容量、单事件正文上限及可选存储父预算，构造失败不返回存储。
+    EventStore(std::size_t reference_capacity, std::size_t max_payload_bytes, std::shared_ptr<runtime::Budget> parent_budget = {});
     // 释放表内引用；宿主须先结束使用该表的交付和消费者。
     ~EventStore() = default;
     // 禁止复制接纳身份和引用责任。
@@ -46,6 +49,7 @@ class EventStore {
     const runtime::DomainId domain_;
     runtime::HandleRegistry<const EventRecord> references_;
     const std::size_t max_payload_bytes_;
+    std::shared_ptr<runtime::Budget> budget_;
     std::uint64_t next_sequence_ = 1;
 };
 }

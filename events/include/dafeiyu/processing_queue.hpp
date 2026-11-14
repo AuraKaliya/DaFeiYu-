@@ -5,8 +5,8 @@ namespace dfy::events {
 // 同宿主线程的处理接纳域，默认串行；等待、运行及外部保留的终态共同计费。
 class ProcessingQueue {
   public:
-    // 建立正容量处理槽，串行模式在本队列接受处理时固定独立域顺序。
-    explicit ProcessingQueue(std::size_t capacity, bool ordered = true);
+    // 建立正容量处理槽及可选上级预算，串行模式在接受处理时固定独立域顺序。
+    explicit ProcessingQueue(std::size_t capacity, bool ordered = true, std::shared_ptr<runtime::Budget> parent_budget = {});
     // 取消未开始处理，不以析构代替运行中处理退出；宿主必须持有队列直至 closed。
     ~ProcessingQueue();
     // 禁止复制处理接纳及完成责任。
@@ -42,6 +42,7 @@ class ProcessingQueue {
     ProcessingSource& owned(const std::shared_ptr<const ProcessingRecord>& record) const;
     std::vector<std::unique_ptr<ProcessingSource>> sources_;
     std::shared_ptr<runtime::SerialDomain> domain_;
+    std::shared_ptr<runtime::Budget> budget_;
     std::optional<CloseMode> mode_;
     std::size_t size_ = 0;
 };
