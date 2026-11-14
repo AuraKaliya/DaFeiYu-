@@ -6,6 +6,8 @@ struct PackingProbe { char tag; uint64_t value; };
 #pragma pack(pop)
 #include <cmath>
 #include <iostream>
+#include <dafeiyu/enum_value.hpp>
+#include <dafeiyu/data_abi_v2.h>
 #include <fstream>
 #include <dafeiyu/map_value.hpp>
 static_assert(sizeof(PackingProbe) == 9 && sizeof(dfy_observer_stats) == 112 && alignof(dfy_observer_stats) == 8);
@@ -156,6 +158,54 @@ void composites(const Manifest& manifest, const std::filesystem::path& data) {
         check(!channel->size() && executor.run_one() == RunResult::idle, "bounded observer left a receiver or callback");
     }
 }
+// 构造明确数量的枚举成员，以最后一项承载待验证的完整整数。
+// 步骤：生成独立成员名和数字 → 创建枚举定义及字段 → 选择整数并构造事件。
+std::shared_ptr<const StructValue> enum_event(std::size_t count, EnumNumber number) {
+    const auto kind = std::holds_alternative<std::int64_t>(number) ? ValueKind::int64 : ValueKind::uint64;
+    std::vector<EnumMember> members;
+    for (std::size_t i = 0; i < count; ++i) members.push_back({"m" + std::to_string(i), kind == ValueKind::int64 ?
+        EnumNumber{static_cast<std::int64_t>(i)} : EnumNumber{static_cast<std::uint64_t>(i)}});
+    members.back().number = number;
+
+    const auto definition = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("tests.enum",1,kind,members,count,65536));
+    const auto field = FieldDescriptor::enum_field("value",definition);
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.enum_event",1,{&field,1},{count+1,131072}));
+    const NamedValue value{"value",Value::from_enum(std::make_shared<const EnumValue>(EnumValue::create(definition,number)))};
+    return std::make_shared<const StructValue>(StructValue::create(type,{&value,1},8));
+}
+// 验证实际观察包读取完整枚举整数，预算不足只关闭自身且能够正常卸载。
+// 步骤：逐项验收整数极值和成员边界 → 验证两个实例的失败隔离 → 归还所有事件及模块引用。
+void enumerations(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8,8);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,2,2);
+    FifoExecutor executor(4);
+    const std::pair<std::size_t,EnumNumber> cases[] = {{3,INT64_MIN},{3,INT64_MAX},{3,UINT64_MAX},{4094,UINT64_MAX},{4095,UINT64_MAX}};
+    for (const auto& [count,number] : cases) {
+        PluginInstance instance(manifest,data,channel);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK,"enum observer startup failed");
+        channel->publish(enum_event(count,number)); drain(instance,executor);
+        const auto observed = statistics(instance); const bool accepted = count <= 4094;
+        check(observed.events == static_cast<uint64_t>(accepted) && observed.failures == static_cast<uint64_t>(!accepted) &&
+            channel->size() == static_cast<std::size_t>(accepted) && !store->references(),"enum observer budget or cleanup wrong");
+        if (accepted) {
+            check(observed.fields == 1 && (observed.kinds & (1u << DFY_V2_VALUE_ENUM)),"observer lost enum classification");
+            if (const auto* signed_number = std::get_if<std::int64_t>(&number)) check(observed.last_int64 == *signed_number,"observer narrowed signed enum");
+            else check(observed.last_uint64 == UINT64_MAX,"observer narrowed unsigned enum");
+        }
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()),"enum observer remains loaded");
+    }
+
+    InstanceLimits limits; limits.references = 6;
+    PluginInstance failing(manifest,data,channel,limits), healthy(manifest,data,channel);
+    check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,"enum isolation setup failed");
+    channel->publish(enum_event(3,UINT64_MAX)); drain(failing,executor);
+    check(channel->size() == 1 && store->references() == 1,"enum failure affected healthy delivery");
+    drain(healthy,executor);
+    const auto observed = statistics(healthy);
+    check(observed.events == 1 && observed.failures == 1 && observed.last_uint64 == UINT64_MAX && !store->references(),"enum failure isolation lost");
+    check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
+        !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"enum isolation retained module or callback");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -276,6 +326,7 @@ int wmain(int argc, wchar_t** argv) {
         cancellation(manifest, channel, store);
         failures(manifest, argv[2], channel, store);
         composites(manifest, argv[2]);
+        enumerations(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

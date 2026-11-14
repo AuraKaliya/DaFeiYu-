@@ -15,6 +15,7 @@ struct dfy_v2_instance {
     const dfy_v2_value_api_v2* values;
     const dfy_v2_array_api* arrays;
     const dfy_v2_map_api* maps;
+    const dfy_v2_enum_api* enums;
     dfy_v2_handle reader, request, notification;
     uint32_t started, stopping, in_callback;
 };
@@ -91,7 +92,7 @@ static dfy_v2_status inspect_structure(dfy_v2_instance* instance, dfy_v2_handle 
         if (!*remaining) { status = DFY_V2_RESOURCE_EXHAUSTED; break; }
         --*remaining;
         status = instance->types->field(type, index, &description, 0);
-        if (!status && (description.kind < DFY_V2_VALUE_BOOL || description.kind > DFY_V2_VALUE_MAP || description.kind == DFY_V2_VALUE_NULL ||
+        if (!status && (description.kind < DFY_V2_VALUE_BOOL || description.kind > DFY_V2_VALUE_ENUM || description.kind == DFY_V2_VALUE_NULL ||
             (description.flags & ~(DFY_V2_FIELD_OPTIONAL | DFY_V2_FIELD_NULLABLE)))) status = DFY_V2_UNSUPPORTED;
 
         if (!status) status = instance->structures->field(payload, index, &field, 0);
@@ -162,16 +163,42 @@ static dfy_v2_status inspect_map(dfy_v2_instance* instance, dfy_v2_handle map, u
     }
     return status;
 }
+// 在共享访问预算内反射枚举成员，选中数字只按精确底层种类参与统计。
+// 步骤：读取枚举定义与选择 → 核对预算 → 逐项反射并验证选中成员 → 归还描述并统计。
+static dfy_v2_status inspect_enum(dfy_v2_instance* instance, dfy_v2_handle value, uint32_t* remaining) {
+    dfy_v2_handle type = {0}; dfy_v2_enum_info info = {0}; dfy_v2_enum_selection selection = {0};
+    uint64_t index;
+    dfy_v2_status status = instance->enums->descriptor(value, &type, 0);
+    if (!status) status = instance->enums->describe(type, &info, 0);
+    if (!status && (!info.name.data || !info.name.length || !info.contract_version || !info.member_count ||
+        (info.underlying_kind != DFY_V2_VALUE_INT64 && info.underlying_kind != DFY_V2_VALUE_UINT64))) status = DFY_V2_UNSUPPORTED;
+    if (!status && info.member_count > *remaining) status = DFY_V2_RESOURCE_EXHAUSTED;
+    if (!status) { *remaining -= (uint32_t)info.member_count; status = instance->enums->read(value, &selection, 0); }
+    if (!status && (selection.index >= info.member_count || selection.number.kind != info.underlying_kind || selection.number.reserved)) status = DFY_V2_FAILED;
+
+    for (index = 0; !status && index < info.member_count; ++index) {
+        dfy_v2_enum_member member = {0};
+        status = instance->enums->member(type, index, &member, 0);
+        if (!status && (!member.name.data || !member.name.length || member.number.kind != info.underlying_kind || member.number.reserved)) status = DFY_V2_FAILED;
+        if (!status && index == selection.index && (info.underlying_kind == DFY_V2_VALUE_INT64 ?
+            member.number.data.int64 != selection.number.data.int64 : member.number.data.uint64 != selection.number.data.uint64)) status = DFY_V2_FAILED;
+    }
+
+    if (release(instance, &type) && !status) status = DFY_V2_FAILED;
+    if (!status) status = inspect_scalar(&selection.number);
+    return status;
+}
 // 按已实现分类分派，不把未知类型或非零组合数据解释为标量。
 // 步骤：核对分类与保留区 → 按种类读取标量或组合内容 → 归还临时结构引用。
 static dfy_v2_status inspect_any(dfy_v2_instance* instance, dfy_v2_handle value, const dfy_v2_value_view* view, uint32_t depth, uint32_t* remaining) {
     if (view->kind <= DFY_V2_VALUE_BYTES) return inspect_scalar(view);
-    if (view->kind > DFY_V2_VALUE_MAP || view->reserved || view->data.uint64 || view->data.bytes.length) return DFY_V2_UNSUPPORTED;
+    if (view->kind > DFY_V2_VALUE_ENUM || view->reserved || view->data.uint64 || view->data.bytes.length) return DFY_V2_UNSUPPORTED;
     statistics.kinds |= UINT32_C(1) << view->kind;
 
     if (view->kind == DFY_V2_VALUE_NULL) return DFY_V2_OK;
     if (view->kind == DFY_V2_VALUE_ARRAY) return inspect_array(instance, value, depth, remaining);
     if (view->kind == DFY_V2_VALUE_MAP) return inspect_map(instance, value, depth, remaining);
+    if (view->kind == DFY_V2_VALUE_ENUM) return inspect_enum(instance, value, remaining);
     if (view->kind == DFY_V2_VALUE_STRUCTURE) {
         dfy_v2_handle child = {0};
         dfy_v2_status status = instance->values->structure(value, &child, 0);
@@ -242,14 +269,16 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     instance->values = (const dfy_v2_value_api_v2*)service(host, DFY_V2_VALUE_INTERFACE, sizeof(dfy_v2_value_api_v2), 2);
     instance->arrays = (const dfy_v2_array_api*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api), 1);
     instance->maps = (const dfy_v2_map_api*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api), 1);
+    instance->enums = (const dfy_v2_enum_api*)service(host, DFY_V2_ENUM_INTERFACE, sizeof(dfy_v2_enum_api), 1);
     if (!instance->refs || !instance->subscriptions || !instance->reads || !instance->notifications || !instance->cancels ||
-        !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->refs->retain || !instance->refs->release ||
+        !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->enums || !instance->refs->retain || !instance->refs->release ||
         !instance->subscriptions->subscribe || !instance->subscriptions->close || !instance->subscriptions->read || !instance->reads->next || !instance->reads->result ||
         !instance->reads->payload || !instance->notifications->subscribe || !instance->notifications->revoke || !instance->notifications->read ||
         !instance->cancels->request || !instance->cancels->read ||
         !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
         !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element ||
-        !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find) {
+        !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find ||
+        !instance->enums->field_type || !instance->enums->describe || !instance->enums->member || !instance->enums->descriptor || !instance->enums->read) {
         free(instance); return report(DFY_V2_UNSUPPORTED, error);
     }
     *output = instance; add(&statistics.created, 1);

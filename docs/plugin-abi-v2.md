@@ -1,6 +1,6 @@
 # 插件 C ABI v2 最小接口契约
 
-当前 R06 生产宿主适配、R07b 实例控制与失败保留、R08 独立观察包完整链路均已验收。R09 已提供嵌套、可选／可空、标量数组与映射，实际观察包支持这些类型；完整范围见 [开发指导](foundation-development-guide.md)。后文各 R01 单元保留其当次边界。
+当前 R06 生产宿主适配、R07b 实例控制与失败保留、R08 独立观察包完整链路均已验收。R09 已提供嵌套、可选／可空、标量数组与映射、枚举，实际观察包 0.3.0 支持这些类型；完整范围见 [开发指导](foundation-development-guide.md)。后文各 R01 单元保留其当次边界。
 
 R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。当时的隔离验收不包含生产运行时；现已由独立 `PluginModuleV2`、`HostServices` 和 `PluginInstance` 装配生产能力，原 `PluginModule` 保持 v1。
 
@@ -38,7 +38,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 数据子引用使用宿主别名持有：保留叶字段或容器元素仍保持原载荷、读请求结果和事件存储预算，不能提前释放中间引用来绕过计量。最后一份数据持有释放后才归还相应预算；单独取得类型描述只保留不可变描述，不保留事件正文。借用视图在其指定引用释放后失效，即使另一个引用仍使底层对象存活，也必须重新读取。
 
-真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL 通过；实际观察包枚举支持为下一单元。App／Agent 的正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL、Debug 宿主消费 Release 观察包均通过；观察包 0.3.0 以共享访问预算消费全部枚举成员。App／Agent 的正式异步迁移仍属 R15。
 
 ## 引导入口与布局
 
