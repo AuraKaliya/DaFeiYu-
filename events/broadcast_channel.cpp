@@ -1,4 +1,5 @@
 #include <dafeiyu/broadcast_channel.hpp>
+#include <dafeiyu/consumer_group.hpp>
 #include <algorithm>
 #include <unordered_set>
 
@@ -28,6 +29,19 @@ std::shared_ptr<SubscriptionQueue> BroadcastChannel::subscribe() {
     }
     throw std::length_error("broadcast: subscription capacity exhausted");
 }
+// 将组共享队列作为一个广播目标，别名持有保证组不会随调用方释放而提前销毁。
+// 步骤：校验成员预算 → 查找接收名额 → 完整创建组 → 提交组队列别名。
+std::shared_ptr<ConsumerGroup> BroadcastChannel::subscribe_group(std::size_t member_capacity) {
+    if (!member_capacity) throw std::invalid_argument("broadcast: positive group member capacity required");
+    for (auto& subscription : subscriptions_) {
+        if (subscription) continue;
+        auto group = std::make_shared<ConsumerGroup>(store_,member_capacity,queue_capacity_);
+        subscription = std::shared_ptr<SubscriptionQueue>(group,&group->queue_);
+        ++size_;
+        return group;
+    }
+    throw std::length_error("broadcast: subscription capacity exhausted");
+}
 
 // 仅移除本通道已经结束的订阅，不把移除请求解释为消费者任务已经退出。
 // 步骤：核对归属及 Closed → 释放目录持有 → 归还订阅名额。
@@ -37,6 +51,11 @@ void BroadcastChannel::remove(const std::shared_ptr<SubscriptionQueue>& subscrip
     if (subscription->state() != QueueState::closed) throw std::logic_error("broadcast: subscription not closed");
     found->reset();
     --size_;
+}
+// 复用接收方移除规则，不将组成员数量当作交付队列的关闭状态。
+void BroadcastChannel::remove_group(const std::shared_ptr<ConsumerGroup>& group) {
+    if (!group) throw std::invalid_argument("broadcast: group required");
+    remove(std::shared_ptr<SubscriptionQueue>(group,&group->queue_));
 }
 
 // 接纳一份共享不可变事件到全部开放接收方，任何预检或引用准备失败都不交付。
@@ -78,6 +97,12 @@ EventId BroadcastChannel::publish_to(std::shared_ptr<const runtime::StructValue>
     }
 
     return deliver(std::move(payload),selected);
+}
+// 以组的共享队列参与原子目标校验，组内不按成员数复制交付。
+EventId BroadcastChannel::publish_to_group(std::shared_ptr<const runtime::StructValue> payload, const std::shared_ptr<ConsumerGroup>& group) {
+    if (!group) throw std::invalid_argument("broadcast: group required");
+    const auto target = std::shared_ptr<SubscriptionQueue>(group,&group->queue_);
+    return publish_to(std::move(payload),{&target,1});
 }
 
 // 对已经固定且预检通过的目标提交同一个事件身份，失败不留下部分交付。

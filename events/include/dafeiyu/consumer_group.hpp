@@ -33,6 +33,7 @@ class ConsumerGroup {
     // 返回尚未领取的事件数，不包含已交出的数据持有。
     std::size_t queued() const noexcept { return queue_.size(); }
   private:
+    friend class BroadcastChannel;
     struct Member {};
     std::shared_ptr<EventStore> store_;
     SubscriptionQueue queue_;

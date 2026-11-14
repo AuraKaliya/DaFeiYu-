@@ -16,14 +16,20 @@ class BroadcastChannel {
     BroadcastChannel& operator=(const BroadcastChannel&) = delete;
     // 创建由通道保持的独立接收队列，调用方引用消失不自动移除订阅。
     std::shared_ptr<SubscriptionQueue> subscribe();
+    // 登记一个共享领取组，通道保持组控制器，组只占一个接收名额和每事件一份引用。
+    std::shared_ptr<ConsumerGroup> subscribe_group(std::size_t member_capacity);
     // 移除本通道中已 Closed 的订阅，旧队列对象仍可读取结束状态。
     void remove(const std::shared_ptr<SubscriptionQueue>& subscription);
+    // 移除本通道已关闭的组，成员和已领取数据仍由外部持有者管理。
+    void remove_group(const std::shared_ptr<ConsumerGroup>& group);
     // 原子接纳到当前全部 Open 队列，返回事件身份；不等待消费者处理。
     EventId publish(std::shared_ptr<const runtime::StructValue> payload);
     // 原子接纳到非空且唯一的本通道 Open 目标；未知、关闭或任一目标满时全部拒绝。
     EventId publish_to(std::shared_ptr<const runtime::StructValue> payload,
         std::span<const std::shared_ptr<SubscriptionQueue>> targets);
-    // 返回当前登记的订阅数量，Closed 项在显式移除前也占名额。
+    // 只向本通道登记且开放的组原子交付，具体成员在领取时确定。
+    EventId publish_to_group(std::shared_ptr<const runtime::StructValue> payload, const std::shared_ptr<ConsumerGroup>& group);
+    // 返回当前登记的独立队列及组数量，Closed 项在显式移除前也占名额。
     std::size_t size() const noexcept { return size_; }
   private:
     // 为已预检的目标准备事件引用并无失败点交付；空目标仅供普通广播记录接纳。
