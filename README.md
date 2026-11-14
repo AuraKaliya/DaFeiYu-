@@ -2,27 +2,19 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R10c-3 顺序域与显式等待检查已验收
+## 当前进度：R15 异步会话与终端已接入
 
-R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
+R01～R14 已完成运行时数据、C ABI、实际观察插件、交付与顺序、处理结束协议、分层预算、公平调度、结果策略、hook、有界重试和插件依赖基础。详细契约与逐项验收见 [开发指导](docs/foundation-development-guide.md)。
 
-R09 已实现有界嵌套结构、可选字段与显式空值、完整组合数组及字符串键映射、闭合枚举和带标签联合，以及对应版本化 C 反射接口。观察包 0.7.0 支持独立订阅或运行时授予的组消费。R10 已完成组成员异步／C 链路及独立顺序域基础，实际交付处理绑定待建；App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
+正式 [Session](agent/include/dafeiyu/session.hpp) 使用有界后台模型调用，通过不可变事件队列发布问答事实；完整回答准备成功后才成对提交历史，失败和取消保持旧上下文。终端 `--chat` 在模型等待期间继续处理 `/cancel` 和本地命令，正常 EOF 等待已接受回答完成，明确退出则请求取消并等待实际资源回收。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 58／58。组成员完整链路已验收，[顺序域](runtime/include/dafeiyu/serial_domain.hpp) 及[显式等待图](runtime/include/dafeiyu/serial_wait_graph.hpp) 已通过授予、恢复和环检查；后续为与实际交付处理绑定，范围见 [开发指导](docs/foundation-development-guide.md)。
+[内置 DeepSeek／Qwen](model/client.cpp) 继续一次返回完整文本，插件为空也可问答。后台调用不触碰宿主操作或插件对象，供应商协议差异只在模型层。本阶段没有工具循环、自动规划和会话持久化。
 
-[v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
+[观察包 0.7.0](plugins/examples/observer/observer.c) 已通过真实 DLL、组合类型、组消费和公平调度验收；[实例控制](plugins/runtime/include/dafeiyu/plugin_instance.hpp) 与[依赖目录](plugins/runtime/include/dafeiyu/plugin_dependencies.hpp)支持失败保留、旧绑定寿命和消费者优先的联动停止。插件终端管理与本地安装正在按 R16 接入。
 
-[ABI v1 契约](docs/plugin-abi.md)及查询示例保持原行为；[v2 契约](docs/plugin-abi-v2.md)和 [数据接口](sdk/include/dafeiyu/data_abi_v2.h)提供独立能力协商。普通数据由宿主管理，数据引用与 DLL 代码寿命分别计量。
+开发过程按用户要求只构建受影响目标、运行必要测试，最终交付统一执行全量验收。最近一次已完成全量为 Debug／Release 68／68；其后新增功能的定向结果逐项记录在开发指导中。
 
-[插件配置接口](plugins/runtime/include/dafeiyu/plugin_config.hpp)合并包默认配置与按插件 ID 隔离的用户设置，返回独立只读快照。配置读取不写文件、不修改模型配置，也不加载插件实例。
-
-[插件目录注册表](plugins/runtime/include/dafeiyu/plugin_registry.hpp)支持显式扫描根目录，隔离坏包和重复 ID，并返回包含描述、诊断和变更记录的只读快照。当前不加载 DLL，也未接入终端管理命令。
-
-[Agent 会话](agent/session.cpp)已接入独立的 [事件模块](events/include/dafeiyu/events.hpp)，发布问答开始、成功、失败和清空通知。通知用于观察生命周期，观察者失败不会改变模型结果；终端入口创建宿主总线，当前不注册观察者。
-
-当前支持 DeepSeek、Qwen 的配置检查、单次调用和终端多轮问答。App 负责终端输入与展示，[Agent 会话](agent/session.cpp)维护当前上下文，[Model 模块](model/client.cpp)负责供应商协议，[Platform 模块](platform/winhttp.cpp)执行 HTTPS 请求。
-
-Agent 通过独立的 [模型消息与调用接口](model/include/dafeiyu/model_client.hpp)同步请求完整文本，不处理供应商 JSON 或网络。会话只在完整回答成功后成对保存用户与助手消息，失败保持原上下文；本阶段没有工具循环和持久化记忆。
+[v1 ABI](docs/plugin-abi.md) 保持冻结；[v2 契约](docs/plugin-abi-v2.md)和 [SDK 数据能力](sdk/include/dafeiyu/data_abi_v2.h)使用精确版本协商。插件描述与默认设置随包保存，用户设置按插件 ID 隔离，运行时在内存中汇总。
 
 VS 解决方案当前按实际目标分组：
 
@@ -52,7 +44,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 58 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_code_module_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
@@ -163,7 +155,7 @@ ctest --preset windows-tests
 
 会话测试替代模型服务，验证成功问答的消息顺序、失败回滚、清空、独立会话，以及终端命令、中文输入、错误后继续和流故障；事件部分使用真实总线，验证通知时的历史状态、调用顺序、唯一终态、关联标识、清空后编号连续、模型调用与回调中的重入拒绝，以及观察者失败不覆盖模型异常。模型协议测试验证历史消息的角色映射与内容总量边界。
 
-会话阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/agent_session.cpp)。
+会话阅读顺序：[Session 接口](agent/include/dafeiyu/session.hpp) → [会话实现](agent/session.cpp) → [终端循环](app/chat.cpp) → [启动入口](app/main.cpp) → [模型消息映射](model/client.cpp) → [会话测试](tests/async_session.cpp)。
 
 ## 独立异步观察插件
 

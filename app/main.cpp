@@ -1,11 +1,9 @@
 #include "chat.hpp"
-#include "async_chat.hpp"
 #ifdef _WIN32
 #include "console.hpp"
 #endif
 #include <dafeiyu/model_config.hpp>
 #include <dafeiyu/model_client.hpp>
-#include <dafeiyu/events.hpp>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
