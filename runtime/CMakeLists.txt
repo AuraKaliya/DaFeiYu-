@@ -5,6 +5,10 @@ add_library(dfy_runtime STATIC ids.cpp value.cpp array_value.cpp map_value.cpp s
   include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp
   include/dafeiyu/completion_notifications.hpp include/dafeiyu/resource_owner.hpp include/dafeiyu/array_value.hpp include/dafeiyu/map_value.hpp)
 target_compile_features(dfy_runtime PUBLIC cxx_std_20)
+target_sources(dfy_runtime PRIVATE union_value.cpp field_validation.cpp field_validation.hpp include/dafeiyu/union_value.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/union_value.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/union_value.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/field_validation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/field_validation.hpp")
 target_sources(dfy_runtime PRIVATE enum_descriptor.cpp enum_value.cpp union_descriptor.cpp descriptor_name.hpp
   include/dafeiyu/enum_descriptor.hpp include/dafeiyu/enum_value.hpp include/dafeiyu/union_descriptor.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES

@@ -1,9 +1,7 @@
 #include <dafeiyu/struct_value.hpp>
 #include <unordered_map>
 #include <algorithm>
-#include <dafeiyu/array_value.hpp>
-#include <dafeiyu/map_value.hpp>
-#include <dafeiyu/enum_value.hpp>
+#include "field_validation.hpp"
 
 namespace dfy::runtime {
 
@@ -32,28 +30,11 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         }
         ++matched;
         const auto& value = *match->second;
-        if (value.kind() == ValueKind::null_value) {
-            if (!field.nullable) throw std::invalid_argument("struct: null not allowed");
-        } else if (value.kind() != field.kind) throw std::invalid_argument("struct: field kind mismatch");
-        if (value.kind() == ValueKind::structure && !field.structure->equivalent(*value.as_structure().descriptor())) {
-            throw std::invalid_argument("struct: nested definition mismatch");
-        }
-        if (value.kind() == ValueKind::array && !field.array->equivalent(*value.as_array().descriptor())) {
-            throw std::invalid_argument("struct: array definition mismatch");
-        }
-        if (value.kind() == ValueKind::map && !field.map->equivalent(*value.as_map().descriptor())) {
-            throw std::invalid_argument("struct: map definition mismatch");
-        }
-        if (value.kind() == ValueKind::enumeration && !field.enumeration->equivalent(*value.as_enum().descriptor())) {
-            throw std::invalid_argument("struct: enum definition mismatch");
-        }
+        detail::validate_field(field,value);
         const auto nodes = value.node_count();
         if (nodes > remaining_nodes) throw std::length_error("struct: node limit exceeded");
         remaining_nodes -= nodes;
         const auto bytes = value.payload_bytes();
-        if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && bytes > field.max_bytes) {
-            throw std::length_error("struct: field byte limit exceeded");
-        }
         if (bytes > remaining) throw std::length_error("struct: payload byte limit exceeded");
         remaining -= bytes;
     }

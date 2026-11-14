@@ -3,6 +3,7 @@
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
 #include <dafeiyu/enum_value.hpp>
+#include <dafeiyu/union_value.hpp>
 
 namespace dfy::runtime {
 // 接收宿主已构造的不可变结构，不允许空指针伪装成结构或 null。
@@ -25,6 +26,11 @@ Value Value::from_enum(std::shared_ptr<const EnumValue> value) {
     if (!value) throw std::invalid_argument("value: nonempty enum required");
     return Value(std::move(value));
 }
+// 保存已构造的联合值，不接受空指针。
+Value Value::from_union(std::shared_ptr<const UnionValue> value) {
+    if (!value) throw std::invalid_argument("value: nonempty union required");
+    return Value(std::move(value));
+}
 // 读取已确定类型的逻辑正文计量，不遍历不可变子结构。
 std::size_t Value::payload_bytes() const {
     switch (kind()) {
@@ -39,6 +45,7 @@ std::size_t Value::payload_bytes() const {
     case ValueKind::null_value: return 0;
     case ValueKind::array: return as_array().payload_bytes();
     case ValueKind::map: return as_map().payload_bytes();
+    case ValueKind::tagged_union: return as_union().payload_bytes();
     }
     throw std::invalid_argument("value: unsupported kind");
 }
@@ -48,6 +55,7 @@ std::size_t Value::node_count() const {
     case ValueKind::structure: return as_structure().node_count();
     case ValueKind::array: return as_array().node_count();
     case ValueKind::map: return as_map().node_count();
+    case ValueKind::tagged_union: return as_union().node_count();
     case ValueKind::boolean:
     case ValueKind::int64:
     case ValueKind::uint64:

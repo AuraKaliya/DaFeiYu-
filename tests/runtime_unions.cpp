@@ -1,5 +1,6 @@
 #include <dafeiyu/union_descriptor.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
+#include <dafeiyu/union_value.hpp>
 #include <iostream>
 
 namespace {
@@ -54,9 +55,42 @@ void descriptions() {
     check(UnionDescriptor::create("test.union",1,{&nested,1},{1,32,2}).depth() == 2,"union nested depth lost");
     rejects<std::length_error>([&] { (void)UnionDescriptor::create("test.union",1,{&nested,1},{1,32}); });
 }
+// 验证选中分支的内容约束、null 语义、整数精度及聚合预算。
+// 步骤：选择文本及整数分支 → 拒绝未知标签和错误内容 → 检查精确预算 → 验证共享持有与回收。
+void values() {
+    const UnionBranch branches[] = {{0,{"text",ValueKind::string,3,{},false,true}}, {UINT64_MAX,{"count",ValueKind::uint64,0}}};
+    auto type = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("test.choice",1,branches,{2,20}));
+    const auto text = Value::from_string(std::string("a\0b",3),3);
+    const auto choice = UnionValue::create(type,0,text,11,2);
+    check(choice.tag() == 0 && choice.index() == 0 && choice.value().as_string() == std::string_view("a\0b",3) &&
+        choice.payload_bytes() == 11 && choice.node_count() == 2,"union selected content or accounting wrong");
+    const auto empty = Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(type,0,Value::null(),8,2)));
+    check(empty.kind() == ValueKind::tagged_union && empty.as_union().value().kind() == ValueKind::null_value &&
+        empty.payload_bytes() == 8 && empty.node_count() == 2,"union null content collapsed into outer null");
+    check(UnionValue::create(type,UINT64_MAX,Value::from_uint64(UINT64_MAX),16,2).value().as_uint64() == UINT64_MAX,"union unsigned value narrowed");
+    rejects<std::invalid_argument>([&] { (void)UnionValue::create(type,1,text,11); });
+    rejects<std::invalid_argument>([&] { (void)UnionValue::create(type,UINT64_MAX,Value::from_int64(1),16); });
+    rejects<std::invalid_argument>([&] { (void)UnionValue::create(type,UINT64_MAX,Value::null(),8); });
+    rejects<std::invalid_argument>([&] { (void)UnionValue::create({},0,text,11); });
+    rejects<std::length_error>([&] { (void)UnionValue::create(type,0,Value::from_string("long",4),12); });
+    rejects<std::length_error>([&] { (void)UnionValue::create(type,0,text,10); });
+    rejects<std::length_error>([&] { (void)UnionValue::create(type,0,Value::null(),7); });
+    for (std::size_t nodes : {0,1}) rejects<std::length_error>([&] { (void)UnionValue::create(type,0,text,11,nodes); });
+    rejects<std::invalid_argument>([] { (void)Value::from_union({}); });
+    rejects<std::bad_variant_access>([&] { (void)text.as_union(); });
+
+    std::weak_ptr<const UnionValue> observed;
+    {
+        auto selected = std::make_shared<const UnionValue>(UnionValue::create(type,0,text,11));
+        observed = selected;
+        const auto held = Value::from_union(selected); selected.reset();
+        check(!observed.expired() && held.as_union().tag() == 0 && held.payload_bytes() == 11,"union ownership lost");
+    }
+    check(observed.expired(),"union not released after last hold");
 }
-// 验收有界联合描述，值选择和跨 DLL 读取另行接入。
+}
+// 验收有界联合描述和不可变选择，跨 DLL 读取另行接入。
 int main() {
-    try { descriptions(); std::cout << "Union descriptor checks passed\n"; return 0; }
+    try { descriptions(); values(); std::cout << "Union descriptor and value checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

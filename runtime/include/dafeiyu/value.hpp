@@ -13,11 +13,12 @@
 
 namespace dfy::runtime {
 // 宿主内部种类，不是 C ABI 或事件契约中的类型编号。
-enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure, null_value, array, map, enumeration };
+enum class ValueKind { boolean, int64, uint64, float64, string, bytes, structure, null_value, array, map, enumeration, tagged_union };
 class StructValue;
 class ArrayValue;
 class MapValue;
 class EnumValue;
+class UnionValue;
 static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559);
 
 // 宿主持有的不可变值，基础正文独立存储，组合内容共享宿主快照，不含插件析构代码。
@@ -50,6 +51,8 @@ class Value {
     static Value from_map(std::shared_ptr<const MapValue> value);
     // 保持非空不可变枚举值，不将整数隐式当作枚举。
     static Value from_enum(std::shared_ptr<const EnumValue> value);
+    // 保持非空不可变联合值，不以空指针代替联合或 null。
+    static Value from_union(std::shared_ptr<const UnionValue> value);
     // 复制基础存储或共享不可变组合内容，不共享可修改内容。
     Value(const Value&) = default;
     // 禁止赋值，保持已经发布的值不变。
@@ -80,10 +83,12 @@ class Value {
     const MapValue& as_map() const { return *std::get<std::shared_ptr<const MapValue>>(contents_); }
     // 借用枚举值，种类错误抛出 bad_variant_access，借用依赖对应持有。
     const EnumValue& as_enum() const { return *std::get<std::shared_ptr<const EnumValue>>(contents_); }
+    // 借用带标签联合，借用期依赖对应值持有，种类不符抛错。
+    const UnionValue& as_union() const { return *std::get<std::shared_ptr<const UnionValue>>(contents_); }
   private:
     using Bytes = std::vector<std::uint8_t>;
     using Contents = std::variant<bool, std::int64_t, std::uint64_t, double, std::string, Bytes, std::shared_ptr<const StructValue>, std::monostate,
-        std::shared_ptr<const ArrayValue>, std::shared_ptr<const MapValue>, std::shared_ptr<const EnumValue>>;
+        std::shared_ptr<const ArrayValue>, std::shared_ptr<const MapValue>, std::shared_ptr<const EnumValue>, std::shared_ptr<const UnionValue>>;
     // 从已校验的明确类型保存只读内容，不向模块外暴露 variant 布局。
     explicit Value(Contents contents) : contents_(std::move(contents)) {}
     const Contents contents_;
