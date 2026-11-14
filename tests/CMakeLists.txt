@@ -323,9 +323,10 @@ set_tests_properties(plugins.constraints PROPERTIES TIMEOUT 15)
 # 验证联合分支反射、稳定标签、实际内容及独立引用寿命。
 add_executable(dfy_plugin_unions_tests plugin_unions.cpp)
 target_link_libraries(dfy_plugin_unions_tests PRIVATE dfy_plugins dfy_build_options)
+add_dependencies(dfy_plugin_unions_tests dfy_query_v2_fixture)
 set_target_properties(dfy_plugin_unions_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_unions.cpp")
-add_test(NAME plugins.unions COMMAND dfy_plugin_unions_tests)
+add_test(NAME plugins.unions COMMAND dfy_plugin_unions_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.unions PROPERTIES TIMEOUT 15)
 
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。

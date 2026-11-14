@@ -143,6 +143,15 @@ typedef struct dfy_test_enums_api {
         uint64_t member_budget, dfy_test_enum_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
 } dfy_test_enums_api;
 extern const dfy_test_enums_api dfy_test_enums;
+#define DFY_TEST_UNIONS_ID "test.unions"
+typedef struct dfy_test_union_counts { uint64_t branches, tag; uint32_t kinds, content_kind; } dfy_test_union_counts;
+typedef struct dfy_test_unions_api {
+    dfy_v2_api_header header;
+    // 同宿主线程有界反射全部分支，成功转交内容持有；失败清空统计并回收临时引用。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        uint64_t branch_budget, dfy_test_union_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
+} dfy_test_unions_api;
+extern const dfy_test_unions_api dfy_test_unions;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

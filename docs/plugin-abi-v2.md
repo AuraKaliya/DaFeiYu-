@@ -44,7 +44,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 联合是非空闭合分支集，显式 UInt64 标签唯一，零及最大值均合法，未知标签在值构造时拒绝。`branch` 按声明顺序返回标签与独立约束引用，分配失败时两个输出均清零；`read` 返回索引及稳定标签；`content` 保持实际内容及原事件预算。分支可空与外层字段可空独立，带标签 null 不是外层 null。描述信息／选择分别为 32／16 字节，分支数偏移 24、标签偏移 8。联合根占 1 节点、标签占 8 字节，再加实际内容；全部分支均参与描述预算。
 
-真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过，Debug 枚举宿主消费 Release C DLL、Debug 宿主消费 Release 观察包均通过；观察包 0.3.0 以共享访问预算消费全部枚举成员。App／Agent 的正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[枚举消费及事件预算链](../tests/plugin_enums.cpp)、[联合复杂分支及预算链](../tests/plugin_unions.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 47 项测试通过，Debug 联合宿主消费 Release C DLL 通过。观察包 0.3.0 支持枚举，联合支持是下一单元；App／Agent 的正式异步迁移仍属 R15。
 
 ## 引导入口与布局
 
