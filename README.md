@@ -2,13 +2,13 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R10c-1 独立顺序域已验收
+## 当前进度：R10c-3 顺序域与显式等待检查已验收
 
 R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
 
 R09 已实现有界嵌套结构、可选字段与显式空值、完整组合数组及字符串键映射、闭合枚举和带标签联合，以及对应版本化 C 反射接口。实际观察包已升级为 0.6.0，有界消费这些类型。R10 已完成指定投递及消费者组宿主基础；App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 57／57。组成员完整链路已验收，[独立顺序域](runtime/include/dafeiyu/serial_domain.hpp) 已实现有界排队、显式授予及处理结束后的占用归还；下一单元为等待恢复联测，范围见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 58／58。组成员完整链路已验收，[顺序域](runtime/include/dafeiyu/serial_domain.hpp) 及[显式等待图](runtime/include/dafeiyu/serial_wait_graph.hpp) 已通过授予、恢复和环检查；后续为与实际交付处理绑定，范围见 [开发指导](docs/foundation-development-guide.md)。
 
 [v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
 

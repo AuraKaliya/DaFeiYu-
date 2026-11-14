@@ -414,6 +414,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME runtime.serial_domain COMMAND dfy_serial_domain_tests)
 set_tests_properties(runtime.serial_domain PROPERTIES TIMEOUT 15)
 
+# 验证顺序域显式等待依赖的同域拒绝、跨域环和登记预算。
+add_executable(dfy_serial_wait_graph_tests serial_wait_graph.cpp)
+target_link_libraries(dfy_serial_wait_graph_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_serial_wait_graph_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/serial_wait_graph.cpp")
+add_test(NAME runtime.serial_wait_graph COMMAND dfy_serial_wait_graph_tests)
+set_tests_properties(runtime.serial_wait_graph PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
