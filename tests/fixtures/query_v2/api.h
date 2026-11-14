@@ -161,6 +161,15 @@ typedef struct dfy_test_composite_arrays_api {
         uint64_t budget, dfy_test_composite_array_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
 } dfy_test_composite_arrays_api;
 extern const dfy_test_composite_arrays_api dfy_test_composite_arrays;
+#define DFY_TEST_COMPOSITE_MAPS_ID "test.composite_maps"
+typedef struct dfy_test_composite_map_counts { uint64_t size, nulls, key_bytes; uint32_t kind, reserved; } dfy_test_composite_map_counts;
+typedef struct dfy_test_composite_maps_api {
+    dfy_v2_api_header header;
+    // 在宿主绑定中有界反射组合映射并精确查键，成功转交非 null 值；失败清空输出。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_query_interface_fn query, dfy_v2_handle structure, uint64_t index,
+        uint64_t budget, dfy_test_composite_map_counts* output, dfy_v2_handle* held, dfy_v2_error* error);
+} dfy_test_composite_maps_api;
+extern const dfy_test_composite_maps_api dfy_test_composite_maps;
 #pragma pack(pop)
 #ifdef __cplusplus
 }
