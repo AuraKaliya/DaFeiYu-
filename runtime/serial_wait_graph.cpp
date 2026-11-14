@@ -29,7 +29,8 @@ bool SerialWaitGraph::creates_cycle(DomainId from, DomainId to) const {
 // 步骤：核对来源与目标阶段 → 检查容量及等待环 → 创建独立登记 → 提交槽位。
 Handle SerialWaitGraph::add(std::shared_ptr<const SerialRequest> owner, std::shared_ptr<const SerialRequest> target) {
     if (!owner || !target) throw std::invalid_argument("serial wait: requests required");
-    if (owner->phase() != SerialPhase::granted) throw std::logic_error("serial wait: owner must hold domain");
+    if (owner->phase() != SerialPhase::granted && owner->phase() != SerialPhase::running)
+        throw std::logic_error("serial wait: owner must hold domain");
     if (target->phase() == SerialPhase::released || target->phase() == SerialPhase::cancelled) return {};
     const auto slot = std::find(slots_.begin(),slots_.end(),Handle{});
     if (slot == slots_.end()) throw ReferenceError(ReferenceFailure::exhausted);

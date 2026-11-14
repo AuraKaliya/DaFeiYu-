@@ -18,6 +18,8 @@ void cycles() {
     rejects<std::logic_error>([&] { (void)graph.add(first,queued); });
     rejects<std::logic_error>([&] { (void)graph.add(queued,second); });
     const auto ab = graph.add(first,second), bc = graph.add(second,third);
+    a.bind(first); a.begin(first); b.bind(second); b.begin(second);
+    check(graph.active(ab) && graph.active(bc),"actual processing start discarded wait dependencies");
     rejects<std::logic_error>([&] { (void)graph.add(third,first); });
     check(graph.size() == 2 && graph.active(ab) && graph.active(bc) && a.active() == first && c.active() == third,"cycle rejection changed processing");
     const auto duplicate = graph.add(first,second); graph.release(ab);

@@ -7,7 +7,7 @@
 
 namespace dfy::runtime {
 // 宿主内部的顺序占用阶段；授予不等于业务完成，释放不表达业务成功。
-enum class SerialPhase { waiting, granted, released, cancelled };
+enum class SerialPhase { waiting, granted, running, released, cancelled };
 enum class SerialClose { drain, cancel };
 class SerialDomain;
 class SerialRequest {
@@ -33,6 +33,7 @@ class SerialRequest {
     const DomainId domain_;
     std::uint64_t sequence_ = 0;
     SerialPhase phase_ = SerialPhase::waiting;
+    bool bound_ = false;
     OperationSource source_{true};
 };
 
@@ -51,6 +52,12 @@ class SerialDomain {
     std::shared_ptr<SerialRequest> submit();
     // 先处理等待取消，再在没有活动占用时授予最早请求，不调用工作或通知回调。
     void advance();
+    // 为一项处理独占绑定本域的未开始请求，重复绑定或已结束请求明确拒绝。
+    void bind(const std::shared_ptr<const SerialRequest>& request);
+    // 确认已绑定处理实际开始，授予通知或读取完成本身不会进入 running。
+    void begin(const std::shared_ptr<const SerialRequest>& request);
+    // 撤回已绑定但尚未开始的处理，归还等待或授予占用，不推进下一项。
+    void withdraw(const std::shared_ptr<const SerialRequest>& request, CancelReason reason);
     // 宿主确认实际处理结束后释放当前占用，不自动授予后续请求或改写授予操作。
     void finish(const std::shared_ptr<const SerialRequest>& request);
     // 停止接纳并选择排空或取消等待，已授予处理保持占用直到 finish。
@@ -70,6 +77,8 @@ class SerialDomain {
     // 返回宿主签发的独立顺序域身份。
     DomainId id() const noexcept { return domain_; }
   private:
+    // 核对本域请求身份并取得宿主可变记录，客户端无法自行构造身份。
+    SerialRequest& owned(const std::shared_ptr<const SerialRequest>& request) const;
     const DomainId domain_;
     std::vector<std::shared_ptr<SerialRequest>> requests_;
     std::atomic<std::uint64_t> last_sequence_{0};

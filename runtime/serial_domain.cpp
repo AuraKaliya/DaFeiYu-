@@ -46,7 +46,38 @@ void SerialDomain::advance() {
     request.phase_ = SerialPhase::granted; active_ = oldest;
     request.source_.settle(OperationState::succeeded);
 }
-// 只归还本域当前授予的占用，等待、旧终态及其他域均不能完成当前处理。
+// 核对请求来自本控制器，域身份不可由客户端复制或重新签发。
+SerialRequest& SerialDomain::owned(const std::shared_ptr<const SerialRequest>& request) const {
+    if (!request || request->domain() != domain_) throw std::invalid_argument("serial: foreign request");
+    for (const auto& slot : requests_) if (slot.get() == request.get()) return *slot;
+    throw std::logic_error("serial: request no longer retained");
+}
+// 固定单个处理的绑定权，失败不改变请求阶段或授予顺序。
+void SerialDomain::bind(const std::shared_ptr<const SerialRequest>& request) {
+    auto& item = owned(request);
+    if (item.bound_ || (item.phase_ != SerialPhase::waiting && item.phase_ != SerialPhase::granted))
+        throw std::logic_error("serial: request cannot be bound");
+    item.bound_ = true;
+}
+// 在已获得占用后确认真正开始，仍然保留原域直至实际结束。
+void SerialDomain::begin(const std::shared_ptr<const SerialRequest>& request) {
+    auto& item = owned(request);
+    if (!item.bound_ || item.phase_ != SerialPhase::granted) throw std::logic_error("serial: bound grant required");
+    item.phase_ = SerialPhase::running;
+}
+// 撤回未开始处理，已授予记录只归还占用，授予操作的成功事实保持不变。
+// 步骤：核对绑定及未开始阶段 → 校验并登记取消 → 取消等待或归还授予占用。
+void SerialDomain::withdraw(const std::shared_ptr<const SerialRequest>& request, CancelReason reason) {
+    auto& item = owned(request);
+    if (!item.bound_ || (item.phase_ != SerialPhase::waiting && item.phase_ != SerialPhase::granted))
+        throw std::logic_error("serial: started or unbound request cannot be withdrawn");
+    item.source_.request_cancel(reason);
+
+    if (item.phase_ == SerialPhase::granted) { finish(request); return; }
+    item.source_.settle(OperationState::cancelled);
+    item.phase_ = SerialPhase::cancelled;
+}
+// 只归还本域当前授予或运行的占用，等待、旧终态及其他域均不能完成当前处理。
 // 步骤：核对域身份及当前记录 → 标记占用释放 → 清空活动槽。
 void SerialDomain::finish(const std::shared_ptr<const SerialRequest>& request) {
     if (!request || request->domain() != domain_) throw std::invalid_argument("serial: foreign request");

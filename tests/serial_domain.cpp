@@ -155,10 +155,42 @@ void admission_edges() {
     check(reused->sequence() == 2 && admission->state() == OperationState::succeeded && bounded.size() == 1,"terminal snapshot release lost state or consumed sequence");
     bounded.close(SerialClose::cancel);
 }
+// 验证绑定独占、实际开始和开始前撤回，运行期间只能显式确认结束。
+// 步骤：拒绝未绑定与重复绑定 → 撤回等待和授予 → 开始后保留占用 → 完成并核对错误身份。
+void processing_binding() {
+    SerialDomain domain(4), other(1);
+    const auto first = domain.submit(), withdrawn = domain.submit(), next = domain.submit(), foreign = other.submit();
+    rejects<std::logic_error>([&] { domain.begin(first); });
+    rejects<std::logic_error>([&] { domain.withdraw(first,CancelReason::user); });
+    rejects<std::invalid_argument>([&] { domain.bind(foreign); });
+    rejects<std::invalid_argument>([&] { domain.bind({}); });
+    domain.bind(first); domain.bind(withdrawn); domain.bind(next);
+    rejects<std::logic_error>([&] { domain.bind(first); });
+    rejects<std::logic_error>([&] { domain.begin(first); });
+    withdrawn->request_cancel(CancelReason::deadline);
+    domain.withdraw(withdrawn,CancelReason::owner_stop);
+    check(withdrawn->phase() == SerialPhase::cancelled && withdrawn->admission()->cancellation_reason() == CancelReason::deadline &&
+        !domain.active() && first->phase() == SerialPhase::waiting,"waiting withdrawal granted work or changed cancellation");
+    domain.advance();
+    rejects<std::invalid_argument>([&] { domain.withdraw(first,CancelReason::none); });
+    check(domain.active() == first,"invalid withdrawal changed occupancy");
+    domain.withdraw(first,CancelReason::user);
+    check(first->phase() == SerialPhase::released && first->admission()->state() == OperationState::succeeded &&
+        next->phase() == SerialPhase::waiting && !domain.active(),"granted withdrawal changed grant result or advanced next");
+    rejects<std::logic_error>([&] { domain.bind(first); });
+
+    domain.advance(); domain.begin(next);
+    rejects<std::logic_error>([&] { domain.begin(next); });
+    rejects<std::logic_error>([&] { domain.withdraw(next,CancelReason::owner_stop); });
+    domain.close(SerialClose::cancel);
+    check(next->phase() == SerialPhase::running && domain.active() == next && !domain.closed(),"running withdrawal or close released occupancy");
+    domain.finish(next);
+    check(domain.closed() && next->phase() == SerialPhase::released,"running completion did not release domain");
+}
 }
 // 验收顺序域的授予、占用和结束边界，授予成功不冒充业务结果。
 // 步骤：核对顺序与关闭 → 验证责任寿命 → 联测通知恢复及失败 → 核对授予边界 → 报告结果。
 int main() {
-    try { ordering(); closure(); lifetime(); continuation(); delivery_failures(); admission_edges(); std::cout << "Serial domain checks passed\n"; return 0; }
+    try { ordering(); closure(); lifetime(); continuation(); delivery_failures(); admission_edges(); processing_binding(); std::cout << "Serial domain checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

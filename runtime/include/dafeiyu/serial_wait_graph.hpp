@@ -29,8 +29,8 @@ class SerialWaitGraph {
         // 只在来源仍占用域且目标处理未结束时保留等待约束，不延长请求记录寿命。
         bool active() const noexcept {
             const auto source = owner.lock(), destination = target.lock();
-            return source && destination && source->phase() == SerialPhase::granted &&
-                (destination->phase() == SerialPhase::waiting || destination->phase() == SerialPhase::granted);
+            return source && destination && (source->phase() == SerialPhase::granted || source->phase() == SerialPhase::running) &&
+                (destination->phase() == SerialPhase::waiting || destination->phase() == SerialPhase::granted || destination->phase() == SerialPhase::running);
         }
     };
     // 检查加入 from→to 后是否形成环，分配失败不改变已有登记。
