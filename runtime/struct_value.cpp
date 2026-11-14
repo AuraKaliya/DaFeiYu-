@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
+#include <dafeiyu/enum_value.hpp>
 
 namespace dfy::runtime {
 
@@ -42,6 +43,9 @@ StructValue StructValue::create(std::shared_ptr<const StructDescriptor> descript
         }
         if (value.kind() == ValueKind::map && !field.map->equivalent(*value.as_map().descriptor())) {
             throw std::invalid_argument("struct: map definition mismatch");
+        }
+        if (value.kind() == ValueKind::enumeration && !field.enumeration->equivalent(*value.as_enum().descriptor())) {
+            throw std::invalid_argument("struct: enum definition mismatch");
         }
         const auto nodes = value.node_count();
         if (nodes > remaining_nodes) throw std::length_error("struct: node limit exceeded");

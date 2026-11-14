@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
+#include <dafeiyu/enum_descriptor.hpp>
 #include "descriptor_name.hpp"
 
 namespace dfy::runtime {
@@ -13,18 +14,34 @@ void consume_name(std::string_view name, std::size_t& remaining) {
     if (name.size() > remaining) throw std::length_error("descriptor: name byte limit exceeded");
     remaining -= name.size();
 }
+using KnownStructures = std::unordered_map<std::string, const StructDescriptor*>;
+using KnownEnums = std::unordered_map<std::string, const EnumDescriptor*>;
+// 核对枚举身份，拒绝同键不同种类或不同成员定义。
+// 步骤：排除根及结构身份冲突 → 登记枚举身份 → 比较重复定义。
+void check_enum(const EnumDescriptor& descriptor, std::string_view root, std::uint32_t version,
+    const KnownStructures& structures, KnownEnums& enums) {
+    const auto key = std::string(descriptor.name()) + "#" + std::to_string(descriptor.version());
+    if ((descriptor.name() == root && descriptor.version() == version) || structures.contains(key))
+        throw std::invalid_argument("descriptor: conflicting enum identity");
+    const auto [entry, inserted] = enums.emplace(key, &descriptor);
+    if (!inserted && !entry->second->equivalent(descriptor)) throw std::invalid_argument("descriptor: conflicting enum definition");
+}
 // 检查组合快照内的精确类型身份，拒绝递归契约与同键不同定义。
 // 步骤：拒绝根身份回返 → 核对已见定义 → 递归检查尚未见过的子描述。
 void check_nested(const StructDescriptor& descriptor, std::string_view root, std::uint32_t version,
-    std::unordered_map<std::string, const StructDescriptor*>& known) {
+    KnownStructures& known, KnownEnums& enums) {
     if (descriptor.name() == root && descriptor.version() == version) throw std::invalid_argument("descriptor: recursive type identity");
     const auto key = std::string(descriptor.name()) + "#" + std::to_string(descriptor.version());
+    if (enums.contains(key)) throw std::invalid_argument("descriptor: conflicting type kind");
     const auto [entry, inserted] = known.emplace(key, &descriptor);
     if (!inserted) {
         if (!entry->second->equivalent(descriptor)) throw std::invalid_argument("descriptor: conflicting nested identity");
         return;
     }
-    for (const auto& field : descriptor.fields()) if (field.structure) check_nested(*field.structure, root, version, known);
+    for (const auto& field : descriptor.fields()) {
+        if (field.structure) check_nested(*field.structure, root, version, known, enums);
+        if (field.enumeration) check_enum(*field.enumeration, root, version, known, enums);
+    }
 }
 }
 
@@ -49,6 +66,7 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
         if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
         if (field.kind != ValueKind::array && field.array) throw std::invalid_argument("descriptor: unexpected array schema");
         if (field.kind != ValueKind::map && field.map) throw std::invalid_argument("descriptor: unexpected map schema");
+        if (field.kind != ValueKind::enumeration && field.enumeration) throw std::invalid_argument("descriptor: unexpected enum schema");
         switch (field.kind) {
         case ValueKind::string:
         case ValueKind::bytes:
@@ -77,14 +95,25 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
             if (limits.max_depth < 2) throw std::length_error("descriptor: map depth limit exceeded");
             depth = std::max(depth, std::size_t{2});
             break;
+        case ValueKind::enumeration:
+            if (!field.enumeration || field.max_bytes) throw std::invalid_argument("descriptor: enum schema required without byte override");
+            if (field.enumeration->members().size() > remaining_fields || field.enumeration->name_bytes() > remaining)
+                throw std::length_error("descriptor: enum limit exceeded");
+            remaining_fields -= field.enumeration->members().size();
+            remaining -= field.enumeration->name_bytes();
+            break;
         default:
             throw std::invalid_argument("descriptor: unsupported field kind");
         }
         if (!names.insert(field.name).second) throw std::invalid_argument("descriptor: duplicate field");
     }
 
-    std::unordered_map<std::string, const StructDescriptor*> known;
-    for (const auto& field : fields) if (field.structure) check_nested(*field.structure, name, version, known);
+    KnownStructures known;
+    KnownEnums enums;
+    for (const auto& field : fields) {
+        if (field.structure) check_nested(*field.structure, name, version, known, enums);
+        if (field.enumeration) check_enum(*field.enumeration, name, version, known, enums);
+    }
     return StructDescriptor(std::string(name), version, {fields.begin(), fields.end()}, depth,
         field_limit - remaining_fields, name_limit - remaining);
 }
@@ -97,10 +126,11 @@ bool StructDescriptor::equivalent(const StructDescriptor& other) const noexcept 
         const auto& a = fields_[i]; const auto& b = other.fields_[i];
         if (a.name != b.name || a.kind != b.kind || a.max_bytes != b.max_bytes || a.optional != b.optional || a.nullable != b.nullable ||
             static_cast<bool>(a.structure) != static_cast<bool>(b.structure) || static_cast<bool>(a.array) != static_cast<bool>(b.array) ||
-            static_cast<bool>(a.map) != static_cast<bool>(b.map)) return false;
+            static_cast<bool>(a.map) != static_cast<bool>(b.map) || static_cast<bool>(a.enumeration) != static_cast<bool>(b.enumeration)) return false;
         if (a.structure && !a.structure->equivalent(*b.structure)) return false;
         if (a.array && !a.array->equivalent(*b.array)) return false;
         if (a.map && !a.map->equivalent(*b.map)) return false;
+        if (a.enumeration && !a.enumeration->equivalent(*b.enumeration)) return false;
     }
     return true;
 }

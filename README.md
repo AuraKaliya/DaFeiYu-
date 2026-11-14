@@ -2,13 +2,13 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R09g-2 不可变枚举值已实现
+## 当前进度：R09g-3 枚举字段与类型目录已验收
 
 R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
 
 R09 已实现有界嵌套结构、可选字段与显式空值、标量数组和字符串键标量映射，以及对应 C 反射接口。实际观察包已升级为 0.2.0，支持这些类型并限制消费深度和访问数量。枚举、带标签联合、任意组合容器元素仍待补齐。App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 43／43。[枚举描述](runtime/include/dafeiyu/enum_descriptor.hpp) 与 [枚举值](runtime/include/dafeiyu/enum_value.hpp) 已提供有界成员及完整整数精度，下一单元接入结构字段与类型目录。当前 App 问答仍同步；范围和验收见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 43／43。[枚举描述](runtime/include/dafeiyu/enum_descriptor.hpp) 与 [枚举值](runtime/include/dafeiyu/enum_value.hpp) 已接入结构字段及类型目录，下一单元为 C 反射访问。当前 App 问答仍同步；范围和验收见 [开发指导](docs/foundation-development-guide.md)。
 
 [v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
 
@@ -52,7 +52,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 42 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 43 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_code_module_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 

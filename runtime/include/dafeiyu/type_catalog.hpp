@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/struct_descriptor.hpp>
+#include <dafeiyu/enum_descriptor.hpp>
 #include <memory>
 
 namespace dfy::runtime {
@@ -25,16 +26,21 @@ class TypeCatalog {
     TypeCatalog(const TypeCatalog&) = delete;
     // 禁止赋值或隐式移动目录，保持登记边界稳定。
     TypeCatalog& operator=(const TypeCatalog&) = delete;
-    // 核对子结构已经登记且定义相同，再保存新快照；重复、冲突和容量不足均拒绝。
+    // 核对子结构及枚举已经登记且定义相同，再保存快照；重复、冲突和容量不足均拒绝。
     std::shared_ptr<const StructDescriptor> define(const StructDescriptor& descriptor);
+    // 登记独立枚举快照，与结构共享身份空间及类型数量预算。
+    std::shared_ptr<const EnumDescriptor> define(const EnumDescriptor& descriptor);
     // 按完整名称和精确版本查询独立持有的快照，未登记的键返回空值。
     std::shared_ptr<const StructDescriptor> find(std::string_view name, std::uint32_t version) const noexcept;
+    // 查询精确枚举身份，其他类型或未登记身份返回空值。
+    std::shared_ptr<const EnumDescriptor> find_enum(std::string_view name, std::uint32_t version) const noexcept;
     // 返回当前登记的类型版本数量，不包含外部引用数量。
-    std::size_t size() const noexcept { return definitions_.size(); }
+    std::size_t size() const noexcept { return definitions_.size() + enums_.size(); }
 
   private:
     const std::size_t capacity_;
     const DescriptorLimits limits_;
     std::vector<std::shared_ptr<const StructDescriptor>> definitions_;
+    std::vector<std::shared_ptr<const EnumDescriptor>> enums_;
 };
 }
