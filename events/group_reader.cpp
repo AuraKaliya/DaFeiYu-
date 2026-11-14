@@ -20,12 +20,15 @@ GroupReader::~GroupReader() {
     end(CloseMode::cancel);
 }
 // 撤销仍属于本控制器的登记，外部退出或槽位复用不导致误删新成员。
+// 步骤：复用既有结束状态 → 按完整身份撤销成员 → 固定本地结束方式。
 void GroupReader::end(CloseMode mode) {
     if (ended_) return;
     if (group_->has_member(member_)) group_->leave(member_);
-    member_ = {}; ended_ = mode;
+    member_ = {};
+    ended_ = mode;
 }
 // 只结束本成员接收，已经结束的组保留其原关闭方式。
+// 步骤：确定结束方式并退出成员 → 推进本成员尚未结算的读取。
 void GroupReader::close() {
     end(group_->state() == QueueState::closed ? *group_->close_mode() : CloseMode::cancel);
     advance();
@@ -46,8 +49,10 @@ std::shared_ptr<ReadRequest> GroupReader::next() {
     throw std::length_error("group reader: request capacity exhausted");
 }
 // 固定结果与数据后发布操作终态，完成通知仍由宿主独立调度。
+// 步骤：保存事件与结果 → 发布唯一终态 → 解除本控制器的等待标记。
 void GroupReader::finish(ReadRequest& request, ReadSnapshot result, EventLease event) {
-    request.event_ = std::move(event); request.result_ = result;
+    request.event_ = std::move(event);
+    request.result_ = result;
 
     request.source_.settle(result.outcome == ReadOutcome::cancelled ? runtime::OperationState::cancelled : runtime::OperationState::succeeded);
     pending_.reset();

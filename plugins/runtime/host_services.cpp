@@ -145,7 +145,7 @@ std::size_t HostServices::resources() const { state_->require_owner(); return st
 // 暴露清理故障供外层停止流程保留实例与代码。
 bool HostServices::cleanup_failed() const { state_->require_owner(); return state_->cleanup_failed; }
 // 在未进入消费者时停止接纳，逐项收尾并保留任何未完成责任。
-// 步骤：拒绝活动回调 → 关闭接纳并撤销通知 → 取消关闭读取 → 检查清理结果。
+// 步骤：拒绝活动回调 → 关闭接纳并撤销通知 → 结束自身接收方 → 检查清理结果。
 bool HostServices::begin_shutdown() {
     state_->require_owner();
     if (state_->notifications && state_->notifications->running()) return false;
@@ -160,7 +160,7 @@ bool HostServices::begin_shutdown() {
     return !state_->cleanup_failed && !state_->resources.size();
 }
 // 在插件已不会访问服务后撤销所有残余引用，不把排队包装误认为还会进入 DLL。
-// 步骤：核对收尾前提 → 销毁静止通知池 → 清空引用 → 关闭所有者并释放代码。
+// 步骤：核对收尾前提 → 销毁静止通知池 → 清空引用 → 关闭所有者、撤销组授权并释放代码。
 bool HostServices::finish_shutdown() {
     state_->require_owner();
     if (state_->resources.state() == runtime::OwnerState::open) throw std::logic_error("host: shutdown not started");

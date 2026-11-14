@@ -661,8 +661,8 @@ void failures(const Manifest& manifest, const std::filesystem::path& data, const
         "failure paths leaked or empty-plugin publication broke");
 }
 }
-// 验收实际观察包的完整类型消费、预算边界和安全退出。
-// 步骤：装配并验收基础消费 → 验证重载、取消和失败隔离 → 逐类验收组合类型及精确预算 → 确认回收结果。
+// 验收实际观察包的完整类型、组消费、能力边界和安全退出。
+// 步骤：装配并验收基础消费 → 验证重载、取消和隔离 → 逐类验收组合预算 → 验收组消费及能力协商 → 确认回收结果。
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3, "expected observer package and userdata path");

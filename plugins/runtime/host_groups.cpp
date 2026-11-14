@@ -7,16 +7,19 @@ namespace {
 dfy_v2_status DFY_V2_CALL join(dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         if (!host.group) return DFY_V2_UNSUPPORTED;
         if (host.resources.state() != runtime::OwnerState::open || host.group->state() != events::QueueState::open) return DFY_V2_BUSY;
         for (auto& slot : host.readers) {
             if (!slot.resource.empty()) continue;
-            slot.resource = host.resources.prepare(); runtime::Handle exposed{};
+            slot.resource = host.resources.prepare();
+            runtime::Handle exposed{};
             try {
                 slot.reader = std::make_shared<ReaderReference>(std::make_shared<events::GroupReader>(host.group,host.group_request_capacity));
                 exposed = host.references.insert(std::make_shared<HostReference>(HostReference{slot.reader}),false);
-                host.resources.activate(slot.resource); *output = abi(exposed);
+                host.resources.activate(slot.resource);
+                *output = abi(exposed);
                 return DFY_V2_OK;
             } catch (...) {
                 try {
@@ -33,6 +36,7 @@ dfy_v2_status DFY_V2_CALL join(dfy_v2_handle* output, dfy_v2_error* error) {
 // 只结束当前接收方的成员责任，成功读取和普通数据引用保持原结果。
 // 步骤：核对精确控制器种类 → 退出成员并推进等待 → 归还已结束的宿主资源。
 dfy_v2_status DFY_V2_CALL leave(dfy_v2_handle source, dfy_v2_error* error) {
+
     return boundary(error,[&](auto& host) {
         const auto receiver = reader(host,source);
         receiver->group_member()->close();
@@ -45,6 +49,7 @@ dfy_v2_status DFY_V2_CALL leave(dfy_v2_handle source, dfy_v2_error* error) {
 dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_group_member_info* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         const auto member = reader(host,source)->group_member();
         dfy_v2_group_member_info info{};
@@ -54,7 +59,8 @@ dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_group_member_info* o
         case events::QueueState::closed: info.state = DFY_V2_GROUP_MEMBER_CLOSED; break;
         }
         if (const auto mode = member->close_mode()) info.close_mode = *mode == events::CloseMode::drain ? DFY_V2_CLOSE_DRAIN : DFY_V2_CLOSE_CANCEL;
-        info.queued = member->queued(); *output = info;
+        info.queued = member->queued();
+        *output = info;
         return DFY_V2_OK;
     });
 }

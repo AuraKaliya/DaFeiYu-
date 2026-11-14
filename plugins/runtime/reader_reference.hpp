@@ -31,7 +31,7 @@ class ReaderReference {
     std::shared_ptr<events::SubscriptionReader> subscription() const { return std::get<std::shared_ptr<events::SubscriptionReader>>(source_); }
     // 只借用组成员控制器，不将独立订阅当作成员流。
     std::shared_ptr<events::GroupReader> group_member() const { return std::get<std::shared_ptr<events::GroupReader>>(source_); }
-    // 取消本接收方；组成员只退出自身，独立订阅关闭自己的队列。
+    // 结束本接收方；组成员只退出自身，独立订阅取消关闭自己的队列。
     void cancel() { std::visit([](const auto& reader) {
         if constexpr (std::is_same_v<typename std::decay_t<decltype(reader)>::element_type,events::GroupReader>) reader->close();
         else reader->close(events::CloseMode::cancel);

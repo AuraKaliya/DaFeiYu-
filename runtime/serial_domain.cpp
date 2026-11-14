@@ -13,9 +13,11 @@ SerialDomain::~SerialDomain() { close(SerialClose::cancel); }
 std::shared_ptr<SerialRequest> SerialDomain::submit() {
     collect();
     if (mode_) throw std::logic_error("serial: admission closed");
+
     for (auto& slot : requests_) {
         if (slot) continue;
         auto request = std::shared_ptr<SerialRequest>(new SerialRequest(domain_));
+
         request->sequence_ = detail::allocate_id(last_sequence_);
         slot = request; ++size_;
         return request;
