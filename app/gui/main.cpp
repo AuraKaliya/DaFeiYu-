@@ -90,7 +90,7 @@ struct Window : std::enable_shared_from_this<Window> {
             }
             return S_OK;
         }).Get(),&navigation));
-        navigation_bound = true; resize(); require(view->Navigate(page));
+        navigation_bound = true; resize(); require(view->Navigate((std::wstring(page)+(smoke ? L"#verify" : L"")).c_str()));
         if (smoke) { deadline = std::chrono::steady_clock::now()+std::chrono::seconds(8); SetTimer(handle,1,20,nullptr); }
     }
     // 有界等待真实异步消息，不以导航成功替代 Frame 授权验收。

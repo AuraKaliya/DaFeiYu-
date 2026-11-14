@@ -5,4 +5,6 @@
 /.cache/
 /config/*.local.json
 /.vscode/
+/ui/web/node_modules/
+/ui/web/dist/
 

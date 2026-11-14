@@ -16,7 +16,7 @@ bool local_resource(std::wstring_view uri) noexcept {
 // 生成含宿主代次的地址，使旧文档即使同源也不能复用新视图身份。
 std::wstring probe_url(std::uint64_t view) {
     if (!view) throw std::invalid_argument("UI: nonzero view required");
-    return L"https://probe.dafeiyu.invalid/index.html?view="+std::to_wstring(view);
+    return L"https://probe.dafeiyu.invalid/frames/index.html?view="+std::to_wstring(view);
 }
 // 准备仅待首次导航的权限，不在构造时授予页面调用能力。
 FrameScope::FrameScope(std::uint64_t view) : id_(std::to_string(view)), url_(probe_url(view)) {}

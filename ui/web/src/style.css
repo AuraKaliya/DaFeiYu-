@@ -1,0 +1,15 @@
+:root{font-family:"Segoe UI","Microsoft YaHei",sans-serif;color:#173b3d;background:#f1f6f4;font-synthesis:none;line-height:1.55}
+*{box-sizing:border-box}body{margin:0}main{max-width:1000px;margin:auto;padding:32px}
+header{margin-bottom:24px}h1{font-size:28px;margin:4px 0 8px}h2{font-size:20px;margin:0 0 12px}
+p{margin:8px 0}.eyebrow{font-size:12px;letter-spacing:.15em;color:#386f69}
+.surface{padding:24px;background:#fff;border-radius:12px;margin-bottom:20px;border:1px solid #dbe7e3}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:20px}label{display:block;margin:12px 0}
+input{display:block;width:100%;font:inherit;padding:10px 12px;margin-top:6px;border:1px solid #a9bebb;border-radius:6px;background:#fff;color:#173b3d}
+button{font:inherit;cursor:pointer;padding:10px 16px;border-radius:6px;border:1px solid #a9bebb}
+.primary{background:#175c57;color:#fff;border-color:#175c57;font-weight:600}
+:focus-visible{outline:3px solid #dc9527;outline-offset:3px}.echo{min-height:28px;color:#365c58}
+iframe{display:block;width:100%;height:220px;border:1px solid #cbded7;border-radius:6px;background:#fbfdfc}
+footer{font-size:13px;color:#526d68}.overlay{position:fixed;inset:0;background:#112d35a8}
+.dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#173b3d;border-radius:12px;padding:28px;box-shadow:0 16px 64px #112d3540}
+.dialog-title{font-size:22px;margin:0 0 10px}.dialog p{color:#526d68}
+@media(max-width:700px){main{padding:16px}.fields{grid-template-columns:1fr;gap:0}}

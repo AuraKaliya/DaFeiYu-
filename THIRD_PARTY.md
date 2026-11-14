@@ -4,10 +4,14 @@
 |---|---|---|---|
 | [nlohmann/json](https://github.com/nlohmann/json/tree/v3.12.0) | 3.12.0 | [MIT](https://github.com/nlohmann/json/blob/v3.12.0/LICENSE.MIT) | 模型配置、请求与响应、插件清单及插件配置的 JSON 处理 |
 | [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4314.35) | 1.0.4314.35 | 包内 LICENSE.txt 与 NOTICE.txt | 可选 GUI 的 C++ SDK 与静态加载器；Evergreen Runtime 单独安装 |
+| [Vue](https://vuejs.org/) | 3.5.45 | MIT | 本地管理中心验证页面 |
+| [Reka UI](https://reka-ui.com/) | 2.11.0 | MIT | 对话框、焦点及可访问性交互基础 |
 
 CMake 首次配置时下载并校验归档 SHA-256。依赖保存在构建目录，未复制到项目源码，也不引用 `Old/`。分发包含该依赖的产物时须随附其版权和许可证声明。
 
 WebView2 仅在 `BUILD_GUI=ON` 时获取，归档 SHA-256 为 `90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4`。GUI 分发附带 SDK 原始许可证和 NOTICE；不会把 Edge 浏览器当作运行库，也不把 WebView2 依赖加到终端目标。
+
+前端工具和传递依赖由 `ui/web/package-lock.json` 固定，Node.js 只用于构建。Vite 构建按实际进入页面的模块收集原始许可证，随 UI 的 `licenses/` 目录和 `packages.json` 发布；页面运行不使用 CDN 或 npm 服务。
 
 HTTPS 使用 Windows SDK 的 WinHTTP 接口，链接系统 `winhttp` 库；无需额外下载 HTTP 库，当前网络实现仅支持 Windows。
 

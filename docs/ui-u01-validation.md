@@ -7,6 +7,7 @@
 GUI 是独立可选目标，终端不依赖 WebView2。安装微软 WebView2 Evergreen Runtime 后，可构建验证窗口：
 
 ```powershell
+npm ci --prefix ui/web --ignore-scripts
 cmake --preset windows-ui
 cmake --build --preset windows-ui-debug
 .\build\rebuild\windows-ui\bin\Debug\dafeiyu-ui-probe.exe
@@ -37,3 +38,9 @@ cmake --build --preset windows-ui-debug
 [FrameChannel](../ui/host/frame_channel.cpp) 将一个具体原生 Frame 与宿主签发的视图绑定，验证实际 Source、有界 JSON、精确字段、代次和固定方法。页面使用独立本地来源及 `allow-scripts allow-same-origin` 受限 iframe，不能取得主页面来源；同来源前提不能通过路径模拟。
 
 只构建 Debug GUI 目标并运行真实隐藏窗口探针。中文及 emoji 的 JSON 回显、业务方法越权、旧视图、非法字段拒绝，以及改源导航触发原生授权撤销均通过。导航期间的页面消息不作为撤销证明，宿主直接核对事件处理后的授权状态。关闭或销毁后晚到回调先检查通道有效性，不再访问已释放 Frame。此处中文回显仅证明编码链路，实际输入法、焦点及重复回收仍待后续单元验证。
+
+## U01e Vue 与输入验证页面
+
+固定 Vue 3.5.45、Reka UI 2.11.0、Vite 8.3.8、TypeScript 5.9.3、Vue 编译插件 6.0.11 和 vue-tsc 3.3.14，以 npm 锁文件保存完整解析；本机 Node.js 24.13.0 满足依赖要求。CMake 只在 GUI 目标构建时调用类型检查及静态打包；Node 不进入运行目录。主界面和独立 Frame 为两个本地入口，产物按构建配置分别输出。
+
+增加真实输入法可信组合事件计数、独立 Frame 回显，以及 Reka 对话框的焦点约束和组合期间 Escape 保护。自动探针通过 `#verify` 运行，普通打开窗口不自动撤销输入页面授权。严格 TypeScript 检查、静态构建、授权规则定向测试及实际 WebView2 隐藏探针通过；手动窗口交互检查仍是下一步，不能据此声称输入法已验收。
