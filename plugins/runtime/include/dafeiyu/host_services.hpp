@@ -3,6 +3,7 @@
 #include <dafeiyu/struct_descriptor.hpp>
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/subscription_reader.hpp>
+#include <dafeiyu/group_reader.hpp>
 #include <dafeiyu/broadcast_channel.hpp>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
@@ -48,6 +49,8 @@ class HostServices {
     dfy_v2_handle expose(std::shared_ptr<const runtime::StructValue> value);
     // 登记并独立保持预创建读取控制器，返回不可共享引用；客户端释放不结束控制器。
     dfy_v2_handle expose(std::shared_ptr<events::SubscriptionReader> reader);
+    // 登记预创建组成员控制器；宿主停止只退出该成员，不关闭共享组。
+    dfy_v2_handle expose(std::shared_ptr<events::GroupReader> reader);
     // 在数据或取消变化后推进所有本实例读取，并回收已无客户端的终结结果。
     void advance();
     // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。

@@ -3,7 +3,7 @@
 namespace dfy::plugins::detail {
 // 只有流已结束才归还宿主控制责任；读取结果及 C 客户端引用保持独立。
 // 步骤：核对队列终态 → 找到资源记录 → 撤销通道登记并完成清理 → 清空宿主槽位。
-void finish_reader(HostState& host, const std::shared_ptr<events::SubscriptionReader>& reader) {
+void finish_reader(HostState& host, const std::shared_ptr<ReaderReference>& reader) {
     if (reader->queue_state() != events::QueueState::closed) return;
     for (auto& slot : host.readers) {
         if (slot.reader != reader) continue;
@@ -31,7 +31,7 @@ dfy_v2_status DFY_V2_CALL subscribe(dfy_v2_handle* output, dfy_v2_error* error) 
             runtime::Handle exposed{};
             try {
                 slot.queue = host.channel->subscribe();
-                slot.reader = std::make_shared<events::SubscriptionReader>(slot.queue, host.request_capacity);
+                slot.reader = std::make_shared<ReaderReference>(std::make_shared<events::SubscriptionReader>(slot.queue, host.request_capacity));
                 exposed = host.references.insert(std::make_shared<HostReference>(HostReference{slot.reader}), false);
                 host.resources.activate(slot.resource);
                 *output = abi(exposed);
@@ -52,9 +52,9 @@ dfy_v2_status DFY_V2_CALL subscribe(dfy_v2_handle* output, dfy_v2_error* error) 
 dfy_v2_status DFY_V2_CALL close(dfy_v2_handle source, uint32_t mode, dfy_v2_error* error) {
     return boundary(error, [&](auto& host) {
         if (mode != DFY_V2_CLOSE_DRAIN && mode != DFY_V2_CLOSE_CANCEL) return DFY_V2_INVALID_ARGUMENT;
-        const auto reader = std::get<std::shared_ptr<events::SubscriptionReader>>(host.references.get(native(source)).object);
-        reader->close(mode == DFY_V2_CLOSE_DRAIN ? events::CloseMode::drain : events::CloseMode::cancel);
-        finish_reader(host, reader);
+        const auto receiver = reader(host,source);
+        receiver->subscription()->close(mode == DFY_V2_CLOSE_DRAIN ? events::CloseMode::drain : events::CloseMode::cancel);
+        finish_reader(host, receiver);
         return DFY_V2_OK;
     });
 }
@@ -63,7 +63,7 @@ dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_subscription_info* o
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
     return boundary(error, [&](auto& host) {
-        const auto reader = std::get<std::shared_ptr<events::SubscriptionReader>>(host.references.get(native(source)).object);
+        const auto reader = detail::reader(host,source)->subscription();
         dfy_v2_subscription_info info{};
         switch (reader->queue_state()) {
         case events::QueueState::open: info.state = DFY_V2_SUBSCRIPTION_OPEN; break;

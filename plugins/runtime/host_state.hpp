@@ -6,18 +6,19 @@
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
 #include <dafeiyu/union_descriptor.hpp>
+#include "reader_reference.hpp"
 #include <thread>
 #include <variant>
 
 namespace dfy::plugins::detail {
 struct NotificationReference { runtime::Handle registration; };
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
-    std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>,
+    std::shared_ptr<const runtime::StructValue>, std::shared_ptr<ReaderReference>, std::shared_ptr<events::ReadRequest>,
     std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>, std::shared_ptr<const runtime::FieldDescriptor>,
     std::shared_ptr<const runtime::UnionDescriptor>>;
 struct HostReference { HostObject object; };
 struct ReaderSlot {
-    std::shared_ptr<events::SubscriptionReader> reader;
+    std::shared_ptr<ReaderReference> reader;
     std::shared_ptr<events::SubscriptionQueue> queue;
     runtime::Handle resource;
 };
@@ -95,7 +96,13 @@ const dfy_v2_operation_notify_api& notification_api();
 // 返回独立订阅的接纳与关闭服务。
 const dfy_v2_subscription_api& subscription_api();
 // 在交付队列已结束后解除目录与资源责任，保留外部数据引用。
-void finish_reader(HostState& host, const std::shared_ptr<events::SubscriptionReader>& reader);
+void finish_reader(HostState& host, const std::shared_ptr<ReaderReference>& reader);
+// 登记预创建读取的宿主责任，重复、关闭或容量不足时拒绝。
+dfy_v2_handle expose_reader(HostState& host, std::shared_ptr<ReaderReference> reader);
+// 从当前引用域取得读取转发持有，不接受其他对象种类。
+inline std::shared_ptr<ReaderReference> reader(HostState& host, dfy_v2_handle source) {
+    return std::get<std::shared_ptr<ReaderReference>>(host.references.get(native(source)).object);
+}
 // 从当前域取得完整读取请求，不能只保留操作状态视图。
 inline std::shared_ptr<events::ReadRequest> request(HostState& host, dfy_v2_handle value) {
     return std::get<std::shared_ptr<events::ReadRequest>>(host.references.get(native(value)).object);

@@ -9,10 +9,10 @@ dfy_v2_status DFY_V2_CALL next(dfy_v2_handle source, dfy_v2_handle* output, dfy_
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
     return boundary(error, [&](auto& host) {
         if (host.resources.state() != runtime::OwnerState::open) return DFY_V2_BUSY;
-        const auto reader = std::get<std::shared_ptr<events::SubscriptionReader>>(host.references.get(native(source)).object);
+        const auto receiver = reader(host,source);
         auto reference = std::make_shared<HostReference>(HostReference{std::shared_ptr<events::ReadRequest>{}});
         const auto reserved = host.references.insert(reference);
-        try { reference->object = reader->next(); }
+        try { reference->object = receiver->next(); }
         catch (const std::length_error&) { host.references.release(reserved); return DFY_V2_RESOURCE_EXHAUSTED; }
         catch (const std::logic_error&) { host.references.release(reserved); return DFY_V2_BUSY; }
         catch (...) { host.references.release(reserved); throw; }

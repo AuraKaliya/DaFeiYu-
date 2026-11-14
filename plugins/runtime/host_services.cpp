@@ -67,24 +67,34 @@ dfy_v2_handle HostServices::expose(std::shared_ptr<const runtime::StructValue> v
     if (!value) throw std::invalid_argument("host: structure required");
     return detail::store_object(*state_, std::move(value));
 }
-// 在固定控制器预算中独立保持读取责任，先签发引用再提交非抛出持有。
-// 步骤：检查线程与控制器 → 查找空槽并拒绝重复 → 签发引用 → 保存宿主所有权。
+// 将非空独立读取包装为宿主统一接收方，拒绝空控制器。
 dfy_v2_handle HostServices::expose(std::shared_ptr<events::SubscriptionReader> reader) {
     state_->require_owner();
     if (!reader) throw std::invalid_argument("host: reader required");
-    for (const auto& item : state_->readers) if (item.reader == reader) throw std::logic_error("host: reader already exposed");
-    for (auto& item : state_->readers) {
+    return detail::expose_reader(*state_,std::make_shared<detail::ReaderReference>(std::move(reader)));
+}
+// 将非空成员读取包装为宿主接收方，不转交整个组的关闭责任。
+dfy_v2_handle HostServices::expose(std::shared_ptr<events::GroupReader> reader) {
+    state_->require_owner();
+    if (!reader) throw std::invalid_argument("host: group reader required");
+    return detail::expose_reader(*state_,std::make_shared<detail::ReaderReference>(std::move(reader)));
+}
+// 在固定控制器预算中登记读取责任，先签发引用再提交非抛出持有。
+// 步骤：拒绝重复控制器 → 准备资源 → 签发引用并激活 → 保存持有或回滚。
+dfy_v2_handle detail::expose_reader(HostState& host, std::shared_ptr<ReaderReference> reader) {
+    for (const auto& item : host.readers) if (item.reader && item.reader->same_source(*reader)) throw std::logic_error("host: reader already exposed");
+    for (auto& item : host.readers) {
         if (!item.resource.empty()) continue;
-        item.resource = state_->resources.prepare();
+        item.resource = host.resources.prepare();
         runtime::Handle exposed{};
         try {
-            exposed = state_->references.insert(std::make_shared<detail::HostReference>(detail::HostReference{reader}), false);
-            state_->resources.activate(item.resource);
+            exposed = host.references.insert(std::make_shared<HostReference>(HostReference{reader}), false);
+            host.resources.activate(item.resource);
             item.reader = std::move(reader);
             return detail::abi(exposed);
         } catch (...) {
-            state_->references.release(exposed);
-            state_->resources.begin_cleanup(item.resource); state_->resources.finish_cleanup(item.resource); item = {};
+            host.references.release(exposed);
+            host.resources.begin_cleanup(item.resource); host.resources.finish_cleanup(item.resource); item = {};
             throw;
         }
     }
@@ -135,7 +145,7 @@ bool HostServices::begin_shutdown() {
     for (auto& slot : state_->readers) {
         const auto reader = slot.reader;
         if (!reader) continue;
-        try { reader->close(events::CloseMode::cancel); detail::finish_reader(*state_, reader); }
+        try { reader->cancel(); detail::finish_reader(*state_, reader); }
         catch (...) { state_->cleanup_failed = true; }
     }
     return !state_->cleanup_failed && !state_->resources.size();
