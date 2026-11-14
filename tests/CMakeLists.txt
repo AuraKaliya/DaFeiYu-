@@ -400,6 +400,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证本地包目录边界、重解析点拒绝及私有暂存清理。
+add_executable(dfy_package_file_tests package_files.cpp)
+target_link_libraries(dfy_package_file_tests PRIVATE dfy_plugins dfy_build_options)
+set_target_properties(dfy_package_file_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/package_files.cpp")
+add_test(NAME plugins.package_files COMMAND dfy_package_file_tests "${CMAKE_CURRENT_BINARY_DIR}/package-files/$<CONFIG>")
+set_tests_properties(plugins.package_files PROPERTIES TIMEOUT 15)
+
 # 验证插件本地命令、中文路径解析及真实加载卸载。
 add_executable(dfy_plugin_command_tests plugin_commands.cpp)
 add_dependencies(dfy_plugin_command_tests dfy_observer)
