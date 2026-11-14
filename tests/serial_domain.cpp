@@ -128,10 +128,37 @@ void delivery_failures() {
     domain.finish(next); notices.release(failed); notices.collect();
     check(!domain.active() && !notices.size() && executor.run_one() == RunResult::idle,"failed serial notification leaked");
 }
+// 验证尚未授予时的取消优先级和仅保留终态造成的容量压力。
+// 步骤：取消队首后授予下一项 → 在排空及取消关闭前取消全部等待 → 释放终态快照后复用槽位。
+void admission_edges() {
+    SerialDomain domain(2); const auto head = domain.submit(), next = domain.submit();
+    head->request_cancel(CancelReason::deadline); domain.advance();
+    check(head->phase() == SerialPhase::cancelled && head->admission()->cancellation_reason() == CancelReason::deadline &&
+        domain.active() == next && next->sequence() == 2,"cancelled head was granted or blocked next request");
+    domain.finish(next);
+    rejects<std::logic_error>([&] { domain.finish(head); });
+    for (const auto mode : {SerialClose::drain,SerialClose::cancel}) {
+        SerialDomain closing(2); const auto first = closing.submit(), second = closing.submit();
+        first->request_cancel(CancelReason::user);
+        if (mode == SerialClose::drain) second->request_cancel(CancelReason::deadline);
+        closing.close(mode); closing.advance();
+        check(closing.closed() && !closing.active() && first->phase() == SerialPhase::cancelled && second->phase() == SerialPhase::cancelled &&
+            first->admission()->cancellation_reason() == CancelReason::user && second->admission()->cancellation_reason() ==
+                (mode == SerialClose::drain ? CancelReason::deadline : CancelReason::owner_stop),"pre-grant close changed cancel order or granted work");
+    }
+    SerialDomain bounded(1); auto retained = bounded.submit(); const auto admission = retained->admission();
+    bounded.advance(); bounded.finish(retained); bounded.collect();
+    rejects<std::length_error>([&] { (void)bounded.submit(); });
+    check(bounded.size() == 1 && !bounded.pending() && !bounded.active(),"terminal capacity rejection changed completed state");
+    retained.reset(); bounded.collect();
+    const auto reused = bounded.submit();
+    check(reused->sequence() == 2 && admission->state() == OperationState::succeeded && bounded.size() == 1,"terminal snapshot release lost state or consumed sequence");
+    bounded.close(SerialClose::cancel);
+}
 }
 // 验收顺序域的授予、占用和结束边界，授予成功不冒充业务结果。
-// 步骤：核对顺序与关闭 → 验证责任寿命 → 联测通知恢复及失败 → 报告结果。
+// 步骤：核对顺序与关闭 → 验证责任寿命 → 联测通知恢复及失败 → 核对授予边界 → 报告结果。
 int main() {
-    try { ordering(); closure(); lifetime(); continuation(); delivery_failures(); std::cout << "Serial domain checks passed\n"; return 0; }
+    try { ordering(); closure(); lifetime(); continuation(); delivery_failures(); admission_edges(); std::cout << "Serial domain checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
