@@ -289,6 +289,82 @@ void unions(const Manifest& manifest, const std::filesystem::path& data) {
     check(statistics(healthy).events == 2 && healthy.shutdown() == ShutdownResult::closed && !channel->size() &&
         !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"union recovery or shutdown failed");
 }
+// 将已有数组包装为根事件，保持数组完整声明及数据预算。
+// 步骤：取得数组描述 → 构造单字段根描述 → 保存事件载荷。
+std::shared_ptr<const StructValue> array_event(std::shared_ptr<const ArrayValue> array) {
+    const auto field = FieldDescriptor::array_field("items",array->descriptor());
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.array_event",1,{&field,1},{65536,4194304,64}));
+    const NamedValue input{"items",Value::from_array(std::move(array))};
+    return std::make_shared<const StructValue>(StructValue::create(type,{&input,1},128));
+}
+// 验证实际包递归消费各类数组元素，空组合值也不能绕过共享访问预算。
+// 步骤：构造完整元素矩阵 → 准备精确访问和深度边界 → 逐项消费与卸载 → 检查多实例失败隔离。
+void composite_arrays(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8,128);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,2,2);
+    FifoExecutor executor(4);
+    const auto number = Value::from_uint64(UINT64_MAX); const auto record = composite_value();
+    const EnumMember member{"min",INT64_MIN};
+    const auto enumeration = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("tests.enum",1,ValueKind::int64,{&member,1},1,32));
+    const UnionBranch branch{UINT64_MAX,{"number",ValueKind::uint64,0}};
+    const auto choice = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("tests.choice",1,{&branch,1},{1,32}));
+    const auto inner = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::uint64,1));
+    const auto map = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::uint64,1,1));
+    const MapEntry entry{"k",number};
+    struct Input { FieldDescriptor schema; Value value; };
+    const Input examples[] = {{{"",ValueKind::structure,0,record->descriptor()},Value::from_structure(record)},
+        {FieldDescriptor::enum_field("",enumeration),Value::from_enum(std::make_shared<const EnumValue>(EnumValue::create(enumeration,INT64_MIN)))},
+        {FieldDescriptor::union_field("",choice),Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(choice,UINT64_MAX,number,16)))},
+        {FieldDescriptor::array_field("",inner),Value::from_array(std::make_shared<const ArrayValue>(ArrayValue::create(inner,{&number,1},8)))},
+        {FieldDescriptor::map_field("",map),Value::from_map(std::make_shared<const MapValue>(MapValue::create(map,{&entry,1},9)))}};
+    struct Example { std::shared_ptr<const StructValue> payload; bool accepted; };
+    std::vector<Example> cases;
+    for (const auto& example : examples) {
+        auto schema = example.schema; schema.nullable = true;
+        const auto type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ElementDescriptor::create(schema,{64,1024,64}),2));
+        const Value values[] = {example.value,Value::null()};
+        cases.push_back({array_event(std::make_shared<const ArrayValue>(ArrayValue::create(type,values,128))),true});
+        cases.push_back({array_event(std::make_shared<const ArrayValue>(ArrayValue::create(type,{},0))),true});
+    }
+
+    const auto empty_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::boolean,0));
+    const auto empty = Value::from_array(std::make_shared<const ArrayValue>(ArrayValue::create(empty_type,{},0)));
+    const auto repeated_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(
+        ElementDescriptor::create(FieldDescriptor::array_field("",empty_type,false,true),{2,0,2}),2047));
+    for (bool exact : {true,false}) {
+        std::vector<Value> elements; elements.push_back(exact ? Value::null() : empty);
+        for (unsigned i = 1; i < 2047; ++i) elements.push_back(empty);
+        cases.push_back({array_event(std::make_shared<const ArrayValue>(ArrayValue::create(repeated_type,elements,0))),exact});
+    }
+    auto deep_type = inner;
+    auto deep = std::make_shared<const ArrayValue>(ArrayValue::create(deep_type,{&number,1},8));
+    for (unsigned depth = 2; depth <= 32; ++depth) {
+        deep_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(
+            ElementDescriptor::create(FieldDescriptor::array_field("",deep_type),{64,0,64}),1));
+        const Value value = Value::from_array(deep);
+        deep = std::make_shared<const ArrayValue>(ArrayValue::create(deep_type,{&value,1},8));
+        if (depth >= 31) cases.push_back({array_event(deep),depth == 31});
+    }
+    for (const auto& example : cases) {
+        InstanceLimits limits; limits.references = 256;
+        PluginInstance instance(manifest,data,channel,limits);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK,"composite array observer setup failed");
+        channel->publish(example.payload); drain(instance,executor); const auto observed = statistics(instance);
+        check(observed.events == static_cast<uint64_t>(example.accepted) && observed.failures == static_cast<uint64_t>(!example.accepted) &&
+            channel->size() == static_cast<std::size_t>(example.accepted) && !store->references(),"composite array observer boundary or cleanup failed");
+        if (example.accepted) check(observed.kinds & (1u << DFY_V2_VALUE_ARRAY),"observer lost array classification");
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()),"composite array observer remains loaded");
+    }
+    InstanceLimits limited; limited.references = 6;
+    PluginInstance failing(manifest,data,channel,limited), healthy(manifest,data,channel);
+    check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,"array isolation setup failed");
+    channel->publish(cases.front().payload); drain(failing,executor);
+    check(channel->size() == 1 && store->references() == 1,"array failure blocked healthy observer");
+    drain(healthy,executor);
+    check(statistics(healthy).events == 1 && statistics(healthy).failures == 1 && !store->references(),"array failure isolation lost");
+    check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
+        !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"array observer leaked after failure");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -411,6 +487,7 @@ int wmain(int argc, wchar_t** argv) {
         composites(manifest, argv[2]);
         enumerations(manifest, argv[2]);
         unions(manifest, argv[2]);
+        composite_arrays(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

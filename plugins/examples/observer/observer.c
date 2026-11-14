@@ -13,11 +13,11 @@ struct dfy_v2_instance {
     const dfy_v2_type_api_v2* types;
     const dfy_v2_struct_api_v2* structures;
     const dfy_v2_value_api_v2* values;
-    const dfy_v2_array_api* arrays;
+    const dfy_v2_array_api_v2* arrays;
     const dfy_v2_map_api* maps;
     const dfy_v2_enum_api* enums;
     const dfy_v2_union_api* unions;
-    const dfy_v2_constraint_api* constraints;
+    const dfy_v2_constraint_api_v2* constraints;
     dfy_v2_handle reader, request, notification;
     uint32_t started, stopping, in_callback;
 };
@@ -113,19 +113,25 @@ static dfy_v2_status inspect_structure(dfy_v2_instance* instance, dfy_v2_handle 
     if (release(instance, &type) && !status) status = DFY_V2_FAILED;
     return status;
 }
-// 按实际数量消费标量数组，null 元素仍占访问预算。
-// 步骤：核对数组与预算 → 逐项读取 → 按元素约束消费并归还。
+// 按实际数量消费完整元素数组，null 和空组合内容仍占相应访问预算。
+// 步骤：核对数组与预算 → 验证匿名元素约束 → 逐项递归消费并归还。
 static dfy_v2_status inspect_array(dfy_v2_instance* instance, dfy_v2_handle array, uint32_t depth, uint32_t* remaining) {
     dfy_v2_array_info info = {0};
+    dfy_v2_handle element_type = {0}; dfy_v2_field_info_v2 schema = {0};
     dfy_v2_status status;
     uint64_t index;
     if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
     --*remaining;
 
     status = instance->arrays->describe(array, &info, 0);
-    if (!status && (info.type.element_kind < DFY_V2_VALUE_BOOL || info.type.element_kind > DFY_V2_VALUE_BYTES ||
+    if (!status && (info.type.element_kind < DFY_V2_VALUE_BOOL || info.type.element_kind > DFY_V2_VALUE_UNION || info.type.element_kind == DFY_V2_VALUE_NULL ||
         (info.type.element_flags & ~DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_UNSUPPORTED;
     if (!status && (info.size > info.type.max_elements || info.size > *remaining)) status = DFY_V2_RESOURCE_EXHAUSTED;
+    if (!status) status = instance->arrays->element_type(array, &element_type, 0);
+    if (!status) status = instance->constraints->describe(element_type, &schema, 0);
+    if (!status && (schema.name.length || schema.kind != info.type.element_kind || schema.max_bytes != info.type.max_element_bytes ||
+        schema.flags != ((info.type.element_flags & DFY_V2_ELEMENT_NULLABLE) ? DFY_V2_FIELD_NULLABLE : 0))) status = DFY_V2_FAILED;
+    if (release(instance, &element_type) && !status) status = DFY_V2_FAILED;
 
     for (index = 0; !status && index < info.size; ++index) {
         dfy_v2_handle element = {0}; dfy_v2_value_view value = {0};
@@ -309,11 +315,11 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     instance->types = (const dfy_v2_type_api_v2*)service(host, DFY_V2_TYPE_INTERFACE, sizeof(dfy_v2_type_api_v2), 2);
     instance->structures = (const dfy_v2_struct_api_v2*)service(host, DFY_V2_STRUCT_INTERFACE, sizeof(dfy_v2_struct_api_v2), 2);
     instance->values = (const dfy_v2_value_api_v2*)service(host, DFY_V2_VALUE_INTERFACE, sizeof(dfy_v2_value_api_v2), 2);
-    instance->arrays = (const dfy_v2_array_api*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api), 1);
+    instance->arrays = (const dfy_v2_array_api_v2*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api_v2), 2);
     instance->maps = (const dfy_v2_map_api*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api), 1);
     instance->enums = (const dfy_v2_enum_api*)service(host, DFY_V2_ENUM_INTERFACE, sizeof(dfy_v2_enum_api), 1);
     instance->unions = (const dfy_v2_union_api*)service(host, DFY_V2_UNION_INTERFACE, sizeof(dfy_v2_union_api), 1);
-    instance->constraints = (const dfy_v2_constraint_api*)service(host, DFY_V2_CONSTRAINT_INTERFACE, sizeof(dfy_v2_constraint_api), 1);
+    instance->constraints = (const dfy_v2_constraint_api_v2*)service(host, DFY_V2_CONSTRAINT_INTERFACE, sizeof(dfy_v2_constraint_api_v2), 2);
     if (!instance->refs || !instance->subscriptions || !instance->reads || !instance->notifications || !instance->cancels ||
         !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->enums || !instance->unions || !instance->constraints ||
         !instance->refs->retain || !instance->refs->release ||
@@ -321,11 +327,11 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
         !instance->reads->payload || !instance->notifications->subscribe || !instance->notifications->revoke || !instance->notifications->read ||
         !instance->cancels->request || !instance->cancels->read ||
         !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
-        !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element ||
+        !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element || !instance->arrays->element_type ||
         !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find ||
         !instance->enums->field_type || !instance->enums->describe || !instance->enums->member || !instance->enums->descriptor || !instance->enums->read ||
         !instance->unions->describe || !instance->unions->branch || !instance->unions->descriptor || !instance->unions->read || !instance->unions->content ||
-        !instance->constraints->field || !instance->constraints->describe || !instance->constraints->named_type || !instance->constraints->array || !instance->constraints->map) {
+        !instance->constraints->field || !instance->constraints->describe || !instance->constraints->named_type || !instance->constraints->array || !instance->constraints->map || !instance->constraints->element) {
         free(instance); return report(DFY_V2_UNSUPPORTED, error);
     }
     *output = instance; add(&statistics.created, 1);
