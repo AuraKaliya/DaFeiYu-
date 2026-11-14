@@ -24,6 +24,7 @@
 #define DFY_V2_ENUM_VERSION UINT32_C(1)
 #define DFY_V2_CONSTRAINT_INTERFACE "dfy.constraints"
 #define DFY_V2_CONSTRAINT_VERSION UINT32_C(1)
+#define DFY_V2_CONSTRAINT_VERSION_2 UINT32_C(2)
 #define DFY_V2_MAP_INTERFACE "dfy.maps"
 #define DFY_V2_MAP_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
@@ -112,7 +113,7 @@ typedef struct dfy_v2_value_api_v2 {
 } dfy_v2_value_api_v2;
 // 版本 2 的 field 可返回组合或 null；已声明但缺失为 NOT_FOUND，越界为 INVALID_ARGUMENT。
 typedef dfy_v2_struct_api dfy_v2_struct_api_v2;
-// 第一版数组元素仅为基础种类，element_flags 当前仅支持 ELEMENT_NULLABLE。
+// 版本 1 的元素仅为基础种类，版本 2 可返回组合分类；element_flags 仅支持 ELEMENT_NULLABLE。
 typedef struct dfy_v2_array_type_info {
     uint32_t element_kind;
     uint32_t element_flags;
@@ -182,11 +183,27 @@ typedef struct dfy_v2_constraint_api {
     dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle constraint, dfy_v2_field_info_v2* output, dfy_v2_error* error);
     // 为结构、枚举或联合返回对应种类的独立描述引用；其他种类拒绝，调用方负责释放。
     dfy_v2_status (DFY_V2_CALL *named_type)(dfy_v2_handle constraint, dfy_v2_handle* output, dfy_v2_error* error);
-    // 复制数组约束，非数组内容返回 INVALID_ARGUMENT。
+    // 复制标量数组约束，组合元素返回 UNSUPPORTED，非数组内容返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *array)(dfy_v2_handle constraint, dfy_v2_array_type_info* output, dfy_v2_error* error);
-    // 复制映射约束，非映射内容返回 INVALID_ARGUMENT。
+    // 复制标量映射约束，组合值返回 UNSUPPORTED，非映射内容返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *map)(dfy_v2_handle constraint, dfy_v2_map_type_info* output, dfy_v2_error* error);
 } dfy_v2_constraint_api;
+// 版本 2 支持完整容器元素约束；匿名元素的 name 为空，optional 固定为 false。
+typedef struct dfy_v2_constraint_api_v2 {
+    dfy_v2_api_header header;
+    // 同版本 1，取得结构字段约束的独立持有，失败清空输出。
+    dfy_v2_status (DFY_V2_CALL *field)(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+    // 读取完整分类和标志，名称借用依赖传入约束引用；所有输出必需，error 可空。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle constraint, dfy_v2_field_info_v2* output, dfy_v2_error* error);
+    // 按真实种类返回命名描述持有，标量及容器自身没有命名类型。
+    dfy_v2_status (DFY_V2_CALL *named_type)(dfy_v2_handle constraint, dfy_v2_handle* output, dfy_v2_error* error);
+    // 复制数组数量及元素基本约束，组合元素通过 element 取得完整定义。
+    dfy_v2_status (DFY_V2_CALL *array)(dfy_v2_handle constraint, dfy_v2_array_type_info* output, dfy_v2_error* error);
+    // 复制映射的键、值和容量约束，完整值定义通过 element 取得。
+    dfy_v2_status (DFY_V2_CALL *map)(dfy_v2_handle constraint, dfy_v2_map_type_info* output, dfy_v2_error* error);
+    // 同宿主线程绑定内取得数组元素或映射值的匿名约束持有；只保持描述，不占事件预算。
+    dfy_v2_status (DFY_V2_CALL *element)(dfy_v2_handle constraint, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_constraint_api_v2;
 // 联合名称借用依赖描述引用，版本和分支数为副本，reserved 固定为零。
 typedef struct dfy_v2_union_info {
     dfy_v2_string_view name;

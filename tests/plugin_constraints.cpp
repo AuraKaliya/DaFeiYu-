@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_constraint_api) == 48 && offsetof(dfy_v2_constraint_api,map) == 40);
+static_assert(sizeof(dfy_v2_constraint_api_v2) == 56 && offsetof(dfy_v2_constraint_api_v2,element) == 48);
 namespace {
 using namespace dfy::runtime;
 using namespace dfy::plugins;
@@ -14,11 +15,11 @@ void check(bool condition, const char* message) { if (!condition) throw std::run
 // 查询精确版本与布局，拒绝不匹配的函数表。
 // 步骤：查询能力 → 核对公共前缀 → 返回对应类型。
 template<class T>
-const T& service(std::string_view name) {
+const T& service(std::string_view name, uint32_t version = 1) {
     const void* table = nullptr;
-    check(HostServices::query({name.data(),name.size()},1,&table,nullptr) == DFY_V2_OK && table,"constraint service missing");
+    check(HostServices::query({name.data(),name.size()},version,&table,nullptr) == DFY_V2_OK && table,"constraint service missing");
     const auto* header = static_cast<const dfy_v2_api_header*>(table);
-    check(header->struct_size == sizeof(T) && header->interface_version == 1,"constraint table invalid");
+    check(header->struct_size == sizeof(T) && header->interface_version == version,"constraint table invalid");
     return *static_cast<const T*>(table);
 }
 }
@@ -40,6 +41,7 @@ int main() {
         const std::weak_ptr<const StructDescriptor> lifetime = type;
         HostServices host(4); const auto root = host.expose(type); auto binding = host.bind();
         const auto& api = service<dfy_v2_constraint_api>(DFY_V2_CONSTRAINT_INTERFACE);
+        const auto& extended = service<dfy_v2_constraint_api_v2>(DFY_V2_CONSTRAINT_INTERFACE,2);
         const auto& refs = service<dfy_v2_reference_api>(DFY_V2_REFERENCE_INTERFACE);
         dfy_v2_handle constraint{},named{},rejected{}; dfy_v2_field_info_v2 info{};
         for (uint64_t i = 0; i < 7; ++i) {
@@ -55,18 +57,22 @@ int main() {
             }
             if (i == 4) { dfy_v2_array_type_info array{}; check(api.array(constraint,&array,nullptr) == DFY_V2_OK && array.element_kind == DFY_V2_VALUE_INT64 && array.max_elements == 2,"array constraint changed"); }
             if (i == 5) { dfy_v2_map_type_info map{}; check(api.map(constraint,&map,nullptr) == DFY_V2_OK && map.value_kind == DFY_V2_VALUE_STRING && map.max_entries == 2 &&
-                map.max_key_bytes == 2 && map.max_value_bytes == 4 && map.value_flags == DFY_V2_ELEMENT_NULLABLE,"map constraint changed"); }
+                map.max_key_bytes == 2 && map.max_value_bytes == 4 && map.value_flags == DFY_V2_ELEMENT_NULLABLE,"map constraint changed");
+                check(extended.element(constraint,&named,nullptr) == DFY_V2_OK && extended.describe(named,&info,nullptr) == DFY_V2_OK &&
+                    !info.name.length && info.kind == DFY_V2_VALUE_STRING && info.flags == DFY_V2_FIELD_NULLABLE && info.max_bytes == 4,"map anonymous value metadata lost");
+                refs.release(named,nullptr); }
             refs.release(constraint,nullptr);
         }
         check(api.field(root,7,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id &&
             api.field(root,UINT64_MAX,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"invalid constraint accepted");
         check(api.describe(root,&info,nullptr) == DFY_V2_INVALID_ARGUMENT && !info.name.data && api.describe(root,nullptr,nullptr) == DFY_V2_INVALID_ARGUMENT,"wrong constraint input accepted");
         const void* unavailable = &api;
-        check(HostServices::query({DFY_V2_CONSTRAINT_INTERFACE,sizeof(DFY_V2_CONSTRAINT_INTERFACE)-1},2,&unavailable,nullptr) == DFY_V2_UNSUPPORTED && !unavailable,"constraint wrong version accepted");
+        check(HostServices::query({DFY_V2_CONSTRAINT_INTERFACE,sizeof(DFY_V2_CONSTRAINT_INTERFACE)-1},3,&unavailable,nullptr) == DFY_V2_UNSUPPORTED && !unavailable,"constraint wrong version accepted");
         check(api.field(root,1,&constraint,nullptr) == DFY_V2_OK,"constraint hold failed");
         dfy_v2_array_type_info array{}; dfy_v2_map_type_info map{};
         check(api.array(constraint,&array,nullptr) == DFY_V2_INVALID_ARGUMENT && !array.element_kind &&
             api.map(constraint,&map,nullptr) == DFY_V2_INVALID_ARGUMENT && !map.value_kind && api.named_type(constraint,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"scalar constraint became composite");
+        check(extended.element(constraint,&rejected,nullptr) == DFY_V2_INVALID_ARGUMENT && !rejected.id,"scalar constraint had an element");
         {
             HostServices full(1); const auto full_root = full.expose(type); auto scope = full.bind();
             check(api.field(full_root,0,&rejected,nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !rejected.id && full.references() == 1,"constraint capacity failure leaked");
@@ -87,7 +93,19 @@ int main() {
                 arrays.element(source,0,&rejected,nullptr) == DFY_V2_UNSUPPORTED && !rejected.id,"legacy arrays accepted composite declaration through null");
             check(api.field(schema,0,&named,nullptr) == DFY_V2_OK && api.array(named,&array,nullptr) == DFY_V2_UNSUPPORTED && !array.element_kind,
                 "legacy constraint accepted composite array");
-            refs.release(named,nullptr); refs.release(schema,nullptr); refs.release(source,nullptr);
+            check(extended.array(named,&array,nullptr) == DFY_V2_OK && array.element_kind == DFY_V2_VALUE_ENUM && array.element_flags == DFY_V2_ELEMENT_NULLABLE,
+                "extended array constraint lost enum kind");
+            dfy_v2_handle element{},definition{};
+            check(extended.element(named,&element,nullptr) == DFY_V2_OK && extended.describe(element,&info,nullptr) == DFY_V2_OK &&
+                !info.name.length && info.kind == DFY_V2_VALUE_ENUM && info.flags == DFY_V2_FIELD_NULLABLE,"anonymous enum constraint missing");
+            check(extended.named_type(element,&definition,nullptr) == DFY_V2_RESOURCE_EXHAUSTED && !definition.id,"element descriptor capacity bypassed");
+            refs.release(source,nullptr);
+            check(extended.named_type(element,&definition,nullptr) == DFY_V2_OK,"element named type missing");
+            refs.release(named,nullptr); refs.release(schema,nullptr);
+            check(extended.describe(element,&info,nullptr) == DFY_V2_OK && info.kind == DFY_V2_VALUE_ENUM,"element lost parent constraint");
+            refs.release(element,nullptr); dfy_v2_enum_info enum_info{};
+            check(service<dfy_v2_enum_api>(DFY_V2_ENUM_INTERFACE).describe(definition,&enum_info,nullptr) == DFY_V2_OK && enum_info.member_count == 1,"element type lost independent lifetime");
+            refs.release(definition,nullptr);
             check(!limited.references(),"legacy array rejection leaked");
         }
         type.reset(); refs.release(root,nullptr);
