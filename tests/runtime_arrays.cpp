@@ -2,6 +2,7 @@
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/type_catalog.hpp>
 #include <dafeiyu/handle_registry.hpp>
+#include <dafeiyu/union_value.hpp>
 #include <iostream>
 
 namespace {
@@ -65,7 +66,7 @@ void scalars() {
 void structures() {
     auto type = schema(ValueKind::uint64,2);
     const auto field = FieldDescriptor::array_field("items", type);
-    auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&field,1},{1,64,2}));
+    auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&field,1},{2,64,2}));
     rejects<std::length_error>([&] { (void)StructDescriptor::create("test.array",1,{&field,1},{1,64}); });
     const Value element = Value::from_uint64(UINT64_MAX);
     auto array = std::make_shared<const ArrayValue>(ArrayValue::create(type,{&element,1},8));
@@ -73,7 +74,7 @@ void structures() {
     check(StructValue::create(parent,{&value,1},8).node_count() == 3, "structure did not count array root");
 
     const auto different = FieldDescriptor::array_field("items", schema(ValueKind::uint64,3));
-    auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&different,1},{1,64,2}));
+    auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&different,1},{2,64,2}));
     rejects<std::invalid_argument>([&] { (void)StructValue::create(other,{&value,1},8); });
     TypeCatalog catalog(2,{2,128,2}); catalog.define(*parent);
     try { catalog.define(*other); check(false,"array constraint conflict accepted"); }
@@ -88,12 +89,63 @@ void structures() {
         const auto name="a"+std::to_string(i);
         fields.push_back(FieldDescriptor::array_field(name,large_type)); values.push_back({name,Value::from_array(large)});
     }
-    auto repeated = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.large",1,fields,{17,256,2}));
+    auto repeated = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.large",1,fields,{34,256,2}));
     rejects<std::length_error>([&] { (void)StructValue::create(repeated,values,0,std::numeric_limits<std::size_t>::max()); });
 }
+// 验证完整组合元素、逻辑重复计量与穿过数组的命名依赖。
+// 步骤：构造结构数组 → 核对共享预算和完整定义 → 验证嵌套数组及联合 → 拒绝身份回返并登记依赖。
+void composites() {
+    const FieldDescriptor text{"text",ValueKind::string,3};
+    const auto record = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.record",1,{&text,1},{1,32}));
+    const NamedValue input{"text",Value::from_string("abc",3)};
+    const auto value = std::make_shared<const StructValue>(StructValue::create(record,{&input,1},3));
+    const auto constraint = ElementDescriptor::create({"",ValueKind::structure,0,record,false,true},{2,32,2});
+    const auto type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(constraint,3));
+    const Value elements[] = {Value::from_structure(value),Value::null(),Value::from_structure(value)};
+    const auto array = std::make_shared<const ArrayValue>(ArrayValue::create(type,elements,6,6));
+    check(array->size() == 3 && array->node_count() == 6 && array->payload_bytes() == 6 && type->depth() == 2 &&
+        type->total_fields() == 2 && array->at(0).as_structure().at(0).as_string() == "abc","composite array accounting wrong");
+    rejects<std::length_error>([&] { (void)ArrayValue::create(type,elements,5); });
+    rejects<std::length_error>([&] { (void)ArrayValue::create(type,elements,6,5); });
+    const FieldDescriptor changed{"text",ValueKind::string,4};
+    const auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.record",1,{&changed,1},{1,32}));
+    const Value mismatch = Value::from_structure(std::make_shared<const StructValue>(StructValue::create(other,{&input,1},3)));
+    rejects<std::invalid_argument>([&] { (void)ArrayValue::create(type,{&mismatch,1},3); });
+    const auto different = ArrayDescriptor::create(ElementDescriptor::create({"",ValueKind::structure,0,other,false,true},{2,32,2}),3);
+    check(!type->equivalent(different),"array ignored full element definition");
+    const auto outer = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(
+        ElementDescriptor::create(FieldDescriptor::array_field("",type),{3,32,3}),2));
+    const Value shared[] = {Value::from_array(array),Value::from_array(array)};
+    const auto nested = ArrayValue::create(outer,shared,12,13);
+    check(nested.node_count() == 13 && nested.payload_bytes() == 12 && outer->depth() == 3,"nested array accounting lost");
+    rejects<std::length_error>([&] { (void)ArrayValue::create(outer,shared,12,12); });
+
+    const UnionBranch branch{UINT64_MAX,{"number",ValueKind::uint64,0}};
+    const auto choice = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("test.choice",1,{&branch,1},{1,32}));
+    const auto choices = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(
+        ElementDescriptor::create(FieldDescriptor::union_field("",choice),{2,32,2}),1));
+    const Value selected = Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(choice,UINT64_MAX,Value::from_uint64(UINT64_MAX),16)));
+    check(ArrayValue::create(choices,{&selected,1},16,3).at(0).as_union().tag() == UINT64_MAX,"union array lost stable tag");
+    const auto field = FieldDescriptor::array_field("items",type);
+    const auto parent = StructDescriptor::create("test.parent",1,{&field,1},{3,64,3});
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.record",1,{&field,1},{3,64,3}); });
+    const FieldDescriptor conflicts[] = {field,{"other",ValueKind::structure,0,other}};
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.parent",1,conflicts,{5,128,3}); });
+    TypeCatalog catalog(2,{4,128,3});
+    try { catalog.define(parent); check(false,"array dependency bypassed catalog"); }
+    catch (const DefinitionError& error) { check(error.reason() == DefinitionFailure::unknown_dependency && !catalog.size(),"wrong array dependency rejection"); }
+    catalog.define(*record); catalog.define(parent);
+    check(catalog.size() == 2,"array dependency registration failed");
+
+    auto deep = schema(ValueKind::boolean,0);
+    for (unsigned depth = 2; depth <= 64; ++depth)
+        deep = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ElementDescriptor::create(FieldDescriptor::array_field("",deep),{64,0,64}),0));
+    check(deep->depth() == 64 && deep->total_fields() == 64,"anonymous array layers escaped descriptor budget");
+    rejects<std::length_error>([&] { (void)ElementDescriptor::create(FieldDescriptor::array_field("",deep),{65,0,64}); });
 }
-// 验收第一批标量数组，不把尚未实现的组合元素当作受支持类型。
+}
+// 验收标量及组合数组的完整内容约束、展开预算和命名依赖。
 int main() {
-    try { scalars(); structures(); std::cout << "Scalar array checks passed\n"; return 0; }
+    try { scalars(); structures(); composites(); std::cout << "Scalar and composite array checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

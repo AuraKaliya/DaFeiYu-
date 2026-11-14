@@ -41,6 +41,8 @@ void check_fields(std::span<const FieldDescriptor> fields, std::string_view root
         if (field.structure) check_definition(*field.structure,root,version,known);
         if (field.enumeration) check_definition(*field.enumeration,root,version,known);
         if (field.tagged_union) check_definition(*field.tagged_union,root,version,known);
+        if (field.array) check_fields({&field.array->element().constraint(),1},root,version,known);
+        if (field.map) check_fields({&field.map->element().constraint(),1},root,version,known);
     }
 }
 }
@@ -89,13 +91,19 @@ DescriptorMetrics validate_schema(std::string_view name, std::uint32_t version,
             break;
         case ValueKind::array:
             if (!field.array || field.max_bytes) throw std::invalid_argument("descriptor: array schema required without byte override");
-            if (limits.max_depth < 2) throw std::length_error("descriptor: array depth limit exceeded");
-            depth = std::max(depth, std::size_t{2});
+            if (field.array->depth() >= limits.max_depth || field.array->total_fields() > remaining_fields || field.array->name_bytes() > remaining)
+                throw std::length_error("descriptor: array limit exceeded");
+            remaining_fields -= field.array->total_fields();
+            remaining -= field.array->name_bytes();
+            depth = std::max(depth,field.array->depth() + 1);
             break;
         case ValueKind::map:
             if (!field.map || field.max_bytes) throw std::invalid_argument("descriptor: map schema required without byte override");
-            if (limits.max_depth < 2) throw std::length_error("descriptor: map depth limit exceeded");
-            depth = std::max(depth, std::size_t{2});
+            if (field.map->depth() >= limits.max_depth || field.map->total_fields() > remaining_fields || field.map->name_bytes() > remaining)
+                throw std::length_error("descriptor: map limit exceeded");
+            remaining_fields -= field.map->total_fields();
+            remaining -= field.map->name_bytes();
+            depth = std::max(depth,field.map->depth() + 1);
             break;
         case ValueKind::enumeration:
             if (!field.enumeration || field.max_bytes) throw std::invalid_argument("descriptor: enum schema required without byte override");

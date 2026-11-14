@@ -22,6 +22,14 @@ class MapDescriptor {
     std::size_t max_value_bytes() const noexcept { return values_.max_element_bytes(); }
     // 判断条目值是否可以是显式 null。
     bool nullable() const noexcept { return values_.nullable(); }
+    // 借用当前映射的匿名值约束，键约束仍由映射独立保存。
+    const ElementDescriptor& element() const noexcept { return values_.element(); }
+    // 返回包含映射层及值内容的描述深度。
+    std::size_t depth() const noexcept { return values_.depth(); }
+    // 返回匿名值条目及其子描述的展开数量。
+    std::size_t total_fields() const noexcept { return values_.total_fields(); }
+    // 返回值约束中命名子描述的展开名称正文。
+    std::size_t name_bytes() const noexcept { return values_.name_bytes(); }
     // 比较完整映射约束，键和值预算都是定义的一部分。
     bool equivalent(const MapDescriptor& other) const noexcept { return values_.equivalent(other.values_) && max_key_bytes_ == other.max_key_bytes_; }
   private:

@@ -73,6 +73,23 @@ int main() {
             check(api.describe(constraint,&info,nullptr) == DFY_V2_INVALID_HANDLE && !info.kind,"cross-domain constraint accepted");
             refs.release(full_root,nullptr);
         }
+        {
+            const auto elements = ElementDescriptor::create(FieldDescriptor::enum_field("",enumeration,false,true),{2,32});
+            const auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(elements,1));
+            const Value null = Value::null();
+            HostServices limited(4); auto scope = limited.bind();
+            const auto source = limited.expose(std::make_shared<const Value>(Value::from_array(
+                std::make_shared<const ArrayValue>(ArrayValue::create(array_type,{&null,1},0)))));
+            const auto array_field = FieldDescriptor::array_field("list",array_type);
+            const auto schema = limited.expose(std::make_shared<const StructDescriptor>(StructDescriptor::create("test.composite",1,{&array_field,1},{3,64,2})));
+            const auto& arrays = service<dfy_v2_array_api>(DFY_V2_ARRAY_INTERFACE); dfy_v2_array_info actual{};
+            check(arrays.describe(source,&actual,nullptr) == DFY_V2_UNSUPPORTED && !actual.type.element_kind &&
+                arrays.element(source,0,&rejected,nullptr) == DFY_V2_UNSUPPORTED && !rejected.id,"legacy arrays accepted composite declaration through null");
+            check(api.field(schema,0,&named,nullptr) == DFY_V2_OK && api.array(named,&array,nullptr) == DFY_V2_UNSUPPORTED && !array.element_kind,
+                "legacy constraint accepted composite array");
+            refs.release(named,nullptr); refs.release(schema,nullptr); refs.release(source,nullptr);
+            check(!limited.references(),"legacy array rejection leaked");
+        }
         type.reset(); refs.release(root,nullptr);
         check(!lifetime.expired() && api.describe(constraint,&info,nullptr) == DFY_V2_OK && info.max_bytes == 4,"constraint lost parent metadata");
         refs.release(constraint,nullptr);

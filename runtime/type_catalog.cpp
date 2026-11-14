@@ -1,5 +1,7 @@
 #include <dafeiyu/type_catalog.hpp>
 #include <algorithm>
+#include <dafeiyu/array_value.hpp>
+#include <dafeiyu/map_value.hpp>
 
 namespace dfy::runtime {
 // 记录类型数与单份描述上限，拒绝无法容纳任何定义的目录容量。
@@ -36,6 +38,8 @@ std::shared_ptr<const StructDescriptor> TypeCatalog::define(const StructDescript
 // 步骤：按实际种类查找依赖 → 区分缺失和种类冲突 → 比较完整定义。
 void TypeCatalog::validate_dependencies(std::span<const FieldDescriptor> fields) const {
     for (const auto& field : fields) {
+        if (field.array) validate_dependencies({&field.array->element().constraint(),1});
+        if (field.map) validate_dependencies({&field.map->element().constraint(),1});
         if (field.enumeration) {
             const auto dependency = find_enum(field.enumeration->name(), field.enumeration->version());
             if (!dependency && (find(field.enumeration->name(), field.enumeration->version()) || find_union(field.enumeration->name(), field.enumeration->version())))

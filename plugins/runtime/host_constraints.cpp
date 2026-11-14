@@ -53,7 +53,7 @@ dfy_v2_status DFY_V2_CALL array(dfy_v2_handle source, dfy_v2_array_type_info* ou
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (!field.array) return DFY_V2_INVALID_ARGUMENT;
         const auto& type = *field.array;
-        *output = {value_kind(type.element_kind(),2),type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,type.max_elements(),type.max_element_bytes()};
+        *output = {value_kind(type.element_kind(),1),type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,type.max_elements(),type.max_element_bytes()};
         return DFY_V2_OK;
     });
 }
@@ -66,7 +66,7 @@ dfy_v2_status DFY_V2_CALL map(dfy_v2_handle source, dfy_v2_map_type_info* output
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (!field.map) return DFY_V2_INVALID_ARGUMENT;
         const auto& type = *field.map;
-        *output = {value_kind(type.value_kind(),2),type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,type.max_entries(),type.max_key_bytes(),type.max_value_bytes()};
+        *output = {value_kind(type.value_kind(),1),type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,type.max_entries(),type.max_key_bytes(),type.max_value_bytes()};
         return DFY_V2_OK;
     });
 }

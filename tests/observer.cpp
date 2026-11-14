@@ -82,7 +82,7 @@ std::shared_ptr<const StructValue> composite_value() {
 
     const FieldDescriptor fields[] = {{"nested", ValueKind::structure, 0, child_type}, FieldDescriptor::array_field("array", array_type),
         FieldDescriptor::map_field("map", map_type), {"nil", ValueKind::string, 0, {}, false, true}, {"missing", ValueKind::bytes, 0, {}, true}};
-    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.composite", 1, fields, {7, 256, 2}));
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.composite", 1, fields, {9, 256, 2}));
     const NamedValue values[] = {{"nested", Value::from_structure(child)}, {"array", Value::from_array(array)},
         {"map", Value::from_map(map)}, {"nil", Value::null()}};
     return std::make_shared<const StructValue>(StructValue::create(type, values, 23, 13));
@@ -139,7 +139,7 @@ void composites(const Manifest& manifest, const std::filesystem::path& data) {
 
     const auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::boolean, 4094));
     const FieldDescriptor array_fields[] = {FieldDescriptor::array_field("items", array_type)};
-    const auto container_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.array_budget", 1, array_fields, {1, 128, 2}));
+    const auto container_type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.array_budget", 1, array_fields, {2, 128, 2}));
     const std::vector<Value> elements(4094, Value::from_bool(true));
     for (std::size_t count : {4093, 4094}) {
         const auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type, std::span<const Value>(elements).first(count), count));

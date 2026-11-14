@@ -1,37 +1,44 @@
 ﻿#pragma once
-#include <dafeiyu/value.hpp>
+#include <dafeiyu/element_descriptor.hpp>
 
 namespace dfy::runtime {
-// 第一版数组约束仅接受六种基础元素，可独立允许 null，不接受组合元素占位。
+// 数组持有完整匿名元素约束，基础工厂保留六种标量的便捷构造方式。
 class ArrayDescriptor {
   public:
     static constexpr std::size_t maximum_elements = 65536;
     // 校验元素种类、数量及单元素正文上限，数值类型的字节上限必须为零。
     static ArrayDescriptor create(ValueKind element_kind, std::size_t max_elements, std::size_t max_element_bytes = 0, bool nullable = false);
+    // 使用已校验的完整元素约束，支持全部已实现组合种类，数量仍受硬上限限制。
+    static ArrayDescriptor create(const ElementDescriptor& element, std::size_t max_elements);
     // 复制只读约束快照。
     ArrayDescriptor(const ArrayDescriptor&) = default;
     // 禁止修改已发布约束。
     ArrayDescriptor& operator=(const ArrayDescriptor&) = delete;
     // 返回声明的非空元素种类。
-    ValueKind element_kind() const noexcept { return element_kind_; }
+    ValueKind element_kind() const noexcept { return element_.constraint().kind; }
     // 返回元素个数上限，零仅允许空数组。
     std::size_t max_elements() const noexcept { return max_elements_; }
     // 返回每个 String/Bytes 元素的正文上限。
-    std::size_t max_element_bytes() const noexcept { return max_element_bytes_; }
+    std::size_t max_element_bytes() const noexcept { return element_.constraint().max_bytes; }
     // 判断是否独立允许显式 null 元素。
-    bool nullable() const noexcept { return nullable_; }
+    bool nullable() const noexcept { return element_.constraint().nullable; }
+    // 借用完整匿名元素约束，使用期间须保持数组描述。
+    const ElementDescriptor& element() const noexcept { return element_; }
+    // 返回包含数组层及元素内容的最大描述深度。
+    std::size_t depth() const noexcept { return element_.container_depth(); }
+    // 返回匿名元素条目及全部子描述的逻辑展开数量。
+    std::size_t total_fields() const noexcept { return element_.total_fields(); }
+    // 返回元素子描述展开后的名称正文总量。
+    std::size_t name_bytes() const noexcept { return element_.name_bytes(); }
     // 比较元素种类和全部约束，不以实际元素数量代替声明相同。
     bool equivalent(const ArrayDescriptor& other) const noexcept {
-        return element_kind_ == other.element_kind_ && max_elements_ == other.max_elements_ &&
-            max_element_bytes_ == other.max_element_bytes_ && nullable_ == other.nullable_;
+        return max_elements_ == other.max_elements_ && element_.equivalent(other.element_);
     }
   private:
     // 保存已经校验的不可变数组约束。
-    ArrayDescriptor(ValueKind kind, std::size_t count, std::size_t bytes, bool nullable)
-        : element_kind_(kind), max_elements_(count), max_element_bytes_(bytes), nullable_(nullable) {}
-    const ValueKind element_kind_;
-    const std::size_t max_elements_, max_element_bytes_;
-    const bool nullable_;
+    ArrayDescriptor(ElementDescriptor element, std::size_t count) : element_(std::move(element)), max_elements_(count) {}
+    const ElementDescriptor element_;
+    const std::size_t max_elements_;
 };
 
 // 宿主持有的有序不可变数组，所有元素在构造时复制并核定预算。
@@ -52,14 +59,14 @@ class ArrayValue {
     const Value& at(std::size_t index) const { return elements_.at(index); }
     // 返回已核定的逻辑正文总量。
     std::size_t payload_bytes() const noexcept { return payload_bytes_; }
-    // 返回包含根容器和实际元素的逻辑节点数。
-    std::size_t node_count() const noexcept { return elements_.size() + 1; }
+    // 返回根容器与每个实际元素的完整节点总数，共享内容按出现次数计费。
+    std::size_t node_count() const noexcept { return node_count_; }
   private:
     // 接收已校验的约束和元素副本。
-    ArrayValue(std::shared_ptr<const ArrayDescriptor> descriptor, std::vector<Value> elements, std::size_t bytes)
-        : descriptor_(std::move(descriptor)), elements_(std::move(elements)), payload_bytes_(bytes) {}
+    ArrayValue(std::shared_ptr<const ArrayDescriptor> descriptor, std::vector<Value> elements, std::size_t bytes, std::size_t nodes)
+        : descriptor_(std::move(descriptor)), elements_(std::move(elements)), payload_bytes_(bytes), node_count_(nodes) {}
     const std::shared_ptr<const ArrayDescriptor> descriptor_;
     const std::vector<Value> elements_;
-    const std::size_t payload_bytes_;
+    const std::size_t payload_bytes_, node_count_;
 };
 }

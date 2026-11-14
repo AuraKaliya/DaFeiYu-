@@ -58,11 +58,11 @@ int main() {
         check(distinct.size() == 2 && distinct.find("\xc3\xa9")->as_bool() && !distinct.find("e\xcc\x81")->as_bool(), "keys implicitly normalized");
 
         const auto field = FieldDescriptor::map_field("items",type);
-        auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{1,64,2}));
+        auto parent = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{2,64,2}));
         const NamedValue value{"items",Value::from_map(map)};
         check(StructValue::create(parent,{&value,1},37).node_count() == 10,"parent omitted map nodes");
         const auto different = FieldDescriptor::map_field("items",schema(ValueKind::uint64,4,4));
-        auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&different,1},{1,64,2}));
+        auto other = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&different,1},{2,64,2}));
         rejects<std::invalid_argument>([&] { (void)StructValue::create(other,{&value,1},37); });
         TypeCatalog catalog(2,{2,128,2}); catalog.define(*parent);
         try { catalog.define(*other); check(false,"map constraint conflict accepted"); }

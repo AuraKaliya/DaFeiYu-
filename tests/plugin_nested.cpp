@@ -63,7 +63,7 @@ void arrays(const dfy_v2_plugin_api& bootstrap) {
     const Value elements[] = {Value::from_uint64(1), Value::null(), Value::from_uint64(UINT64_MAX)};
     auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type,elements,16));
     const auto field = FieldDescriptor::array_field("items",array_type);
-    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&field,1},{1,64,2}));
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.array",1,{&field,1},{2,64,2}));
     const NamedValue input{"items",Value::from_array(array)};
     auto payload = std::make_shared<const StructValue>(StructValue::create(type,{&input,1},16));
     auto store = std::make_shared<dfy::events::EventStore>(4,16);
@@ -112,7 +112,7 @@ void maps(const dfy_v2_plugin_api& bootstrap) {
     const MapEntry entries[] = {{"nil",Value::null()},{std::string("a\0b",3),Value::from_uint64(UINT64_MAX)},{"",Value::from_uint64(1)}};
     auto map = std::make_shared<const MapValue>(MapValue::create(map_type,entries,22));
     const auto field = FieldDescriptor::map_field("items",map_type);
-    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{1,64,2}));
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&field,1},{2,64,2}));
     const NamedValue input{"items",Value::from_map(map)};
     auto payload = std::make_shared<const StructValue>(StructValue::create(type,{&input,1},22));
     auto store = std::make_shared<dfy::events::EventStore>(4,22);
