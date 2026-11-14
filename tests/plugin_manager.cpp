@@ -26,6 +26,11 @@ int wmain(int argc, wchar_t** argv) {
         auto store = std::make_shared<dfy::events::EventStore>(16,64);
         auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,4,4);
         PluginManager manager(root,data,channel,4); check(manager.catalog()->packages.empty(),"empty directory required a plugin");
+        { std::ofstream invalid(run/"root-file"); invalid << "not a directory"; }
+        {
+            PluginManager unavailable(run/"root-file",data,channel,1);
+            check(!unavailable.directory_error().empty() && unavailable.catalog()->packages.empty() && unavailable.close(),"root failure prevented isolated empty-plugin manager");
+        }
         fs::copy(fs::canonical(argv[1]),root/"observer",fs::copy_options::recursive);
         fs::create_directory(root/"broken"); { std::ofstream invalid(root/"broken"/"plugin.json"); invalid << "{"; }
         manager.refresh(); check(manager.catalog()->packages.size() == 1 && manager.catalog()->diagnostics.size() == 1,"bad package poisoned catalog");

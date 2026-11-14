@@ -38,6 +38,7 @@ const char* phase(plugins::InstancePhase value) {
 // 步骤：取得一致快照 → 列出包及运行状态 → 补充缺失包实例 → 报告独立目录诊断。
 void list(plugins::PluginManager& manager, std::ostream& output) {
     const auto catalog = manager.catalog(); const auto loaded = manager.loaded();
+    if (!manager.directory_error().empty()) output << "Plugin directory unavailable: " << manager.directory_error() << '\n';
     if (catalog->packages.empty() && loaded.empty()) output << "No plugins installed or loaded.\n";
     for (const auto& [id,package] : catalog->packages) {
         const auto instance = std::find_if(loaded.begin(),loaded.end(),[&](const auto& item) { return item.id == id; });

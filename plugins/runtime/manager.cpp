@@ -11,7 +11,7 @@ std::size_t bounded(std::size_t capacity) {
 struct PluginManager::State {
     struct Entry {
         std::shared_ptr<PluginInstance> instance; runtime::Handle owner;
-        bool stopping = false, owner_stopped = false; DependencyStop stop_mode = DependencyStop::refuse_dependents;
+        bool stopping = false, owner_stopped = false, faulted = false; DependencyStop stop_mode = DependencyStop::refuse_dependents;
     };
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
@@ -20,7 +20,7 @@ struct PluginManager::State {
           user_data(std::filesystem::absolute(data).lexically_normal()), channel(std::move(events)), scheduler(bounded(limit)),
           dependencies(bounded(limit)*bounded(limit)), capacity(limit) {
         if (!channel || data.empty()) throw std::invalid_argument("plugins: channel and user data path required");
-        registry.refresh();
+        try { registry.refresh(); } catch (const std::runtime_error& error) { directory_error = error.what(); }
     }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
     void collect() {
@@ -35,11 +35,14 @@ struct PluginManager::State {
     // 正常停止等待继续轮询，生命周期失败保留给显式重试，不自动反复调用失败入口。
     // 步骤：推进停止或通知 → 执行一个所有者步骤 → 回收已退出实例。
     runtime::RunResult advance() {
+        bool failed = false;
         for (auto& [id,entry] : instances) {
-            if (entry.stopping) entry.stopping = dependencies.shutdown(entry.instance,entry.stop_mode).result == ShutdownResult::pending;
-            else if (entry.instance->phase() == InstancePhase::active) entry.instance->advance(scheduler,entry.owner);
+            try {
+                if (entry.stopping) entry.stopping = dependencies.shutdown(entry.instance,entry.stop_mode).result == ShutdownResult::pending;
+                else if (!entry.faulted && entry.instance->phase() == InstancePhase::active) entry.instance->advance(scheduler,entry.owner);
+            } catch (...) { entry.faulted = true; entry.stopping = false; failed = true; }
         }
-        const auto result = scheduler.run_one(); collect(); return result;
+        const auto result = scheduler.run_one(); collect(); return failed ? runtime::RunResult::failed : result;
     }
     // 有序停止全部实例，失败保持整个管理状态，不能依靠字段析构释放仍在使用的代码。
     // 步骤：关闭加载接纳 → 联动停止具体实例 → 排空已有宿主包装 → 回收或保留责任。
@@ -62,6 +65,7 @@ struct PluginManager::State {
     PluginDependencies dependencies;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
+    std::string directory_error;
     bool accepting = true;
     State* next = nullptr;
 };
@@ -75,13 +79,18 @@ PluginManager::~PluginManager() {
     if (!state_->close()) { state_->next = retained_; retained_ = state_.release(); }
 }
 // 刷新描述快照，不根据变化自动替换已有实例。
-void PluginManager::refresh() { state_->registry.refresh(); }
+void PluginManager::refresh() {
+    try { state_->registry.refresh(); state_->directory_error.clear(); }
+    catch (const std::runtime_error& error) { state_->directory_error = error.what(); throw; }
+}
 // 返回当前描述目录的独立共享快照。
 std::shared_ptr<const Catalog> PluginManager::catalog() const { return state_->registry.snapshot(); }
+// 目录失败作为插件诊断保留，本体模型调用不依赖目录扫描成功。
+std::string_view PluginManager::directory_error() const noexcept { return state_->directory_error; }
 // 复制非敏感实例状态供终端展示，不暴露配置或凭据。
 std::vector<LoadedPlugin> PluginManager::loaded() const {
     std::vector<LoadedPlugin> result;
-    for (const auto& [id,entry] : state_->instances) result.push_back({id,entry.instance->phase(),entry.instance->last_error()});
+    for (const auto& [id,entry] : state_->instances) result.push_back({id,entry.instance->phase(),entry.faulted ? DFY_V2_FAILED : entry.instance->last_error()});
     return result;
 }
 // 为实例预留目录与调度名额，再执行一次创建及启动，失败沿既有生命周期回收。

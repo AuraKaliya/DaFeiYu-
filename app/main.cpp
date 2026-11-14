@@ -1,14 +1,18 @@
 #include "chat.hpp"
+#include "plugin_commands.hpp"
+#include "paths.hpp"
 #ifdef _WIN32
 #include "console.hpp"
 #endif
 #include <dafeiyu/model_config.hpp>
 #include <dafeiyu/model_client.hpp>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <thread>
 
 namespace {
 // 读取有大小限制的提示词文件，兼容 UTF-8 BOM 并保留正文换行。
@@ -52,15 +56,37 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
-        if (args.size() == 3 && args[1] == "--chat") {
+        if (args.size() >= 3 && args[1] == "--chat") {
+            std::filesystem::path plugins, user_data;
+            for (std::size_t index = 3; index < args.size(); index += 2) {
+                if (index+1 >= args.size() || args[index+1].empty()) throw std::invalid_argument("app: option path required");
+                if (args[index] == "--plugins" && plugins.empty()) plugins = args[index+1];
+                else if (args[index] == "--data" && user_data.empty()) user_data = args[index+1];
+                else throw std::invalid_argument("app: unknown or duplicate option");
+            }
+            if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
+            if (user_data.empty()) user_data = dfy::app::default_user_data();
             auto store = std::make_shared<dfy::events::EventStore>(256,64);
             auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,16,8);
             dfy::agent::AsyncSession session(dfy::model::load_config(args[2]),channel);
+            dfy::plugins::PluginManager manager(plugins,user_data,channel);
             dfy::platform::LineInput input;
-            return dfy::app::async_chat(session,input,std::cout,std::cerr);
+            if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
+            const auto result = dfy::app::async_chat(session,input,std::cout,std::cerr,[&] {
+                if (manager.advance() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
+            },[&](std::string_view command) { return dfy::app::plugin_command(manager,command,std::cout,std::cerr); });
+            const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+            while (!manager.close()) {
+                const auto loaded = manager.loaded();
+                if (std::any_of(loaded.begin(),loaded.end(),[](const auto& item) { return item.error != 0; }) || std::chrono::steady_clock::now() >= deadline) {
+                    std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return 1;
+                }
+                manager.advance(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return result;
         }
         if (args.size() != 1) {
-            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG]\n";
+            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n";
             return 1;
         }
 

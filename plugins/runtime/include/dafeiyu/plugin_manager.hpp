@@ -20,6 +20,8 @@ class PluginManager {
     void refresh();
     // 返回独立不可变包目录快照。
     std::shared_ptr<const Catalog> catalog() const;
+    // 返回最近一次根目录扫描错误，错误不阻止本体在空插件模式下运行。
+    std::string_view directory_error() const noexcept;
     // 返回当前加载或保留中的实例状态副本。
     std::vector<LoadedPlugin> loaded() const;
     // 显式加载并启动指定可用包，失败保留必要清理责任并返回原生命周期状态。
