@@ -4,6 +4,7 @@
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
+#include <dafeiyu/enum_descriptor.hpp>
 #include <thread>
 #include <variant>
 
@@ -11,7 +12,7 @@ namespace dfy::plugins::detail {
 struct NotificationReference { runtime::Handle registration; };
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
     std::shared_ptr<const runtime::StructValue>, std::shared_ptr<events::SubscriptionReader>, std::shared_ptr<events::ReadRequest>,
-    std::shared_ptr<NotificationReference>>;
+    std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>>;
 struct HostReference { HostObject object; };
 struct ReaderSlot {
     std::shared_ptr<events::SubscriptionReader> reader;
@@ -69,6 +70,8 @@ const dfy_v2_struct_api_v2& struct_api_v2();
 const dfy_v2_array_api& array_api();
 // 返回实际实现的字符串键标量映射访问能力。
 const dfy_v2_map_api& map_api();
+// 返回闭合枚举定义与成员选择的反射服务。
+const dfy_v2_enum_api& enum_api();
 // 返回类型化读取服务。
 const dfy_v2_reader_api& reader_api();
 // 返回生产操作状态服务，当前由完整读取请求支撑。

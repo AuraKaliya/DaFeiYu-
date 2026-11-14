@@ -16,6 +16,9 @@
 #define DFY_V2_VALUE_NULL UINT32_C(8)
 #define DFY_V2_VALUE_ARRAY UINT32_C(9)
 #define DFY_V2_VALUE_MAP UINT32_C(10)
+#define DFY_V2_VALUE_ENUM UINT32_C(11)
+#define DFY_V2_ENUM_INTERFACE "dfy.enums"
+#define DFY_V2_ENUM_VERSION UINT32_C(1)
 #define DFY_V2_MAP_INTERFACE "dfy.maps"
 #define DFY_V2_MAP_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
@@ -97,7 +100,7 @@ typedef struct dfy_v2_type_api_v2 {
 } dfy_v2_type_api_v2;
 typedef struct dfy_v2_value_api_v2 {
     dfy_v2_api_header header;
-    // 基础值同版本 1；组合与 null 的 data 固定为零，组合内容通过专用能力访问。
+    // 基础值同版本 1；结构、容器、枚举与 null 的 data 为零，内容通过专用能力访问。
     dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_value_view* output, dfy_v2_error* error);
     // 取得结构内容的独立持有，保持原值及其预算链，非结构值拒绝。
     dfy_v2_status (DFY_V2_CALL *structure)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
@@ -141,6 +144,30 @@ typedef struct dfy_v2_map_api {
     // 按完整键精确查询并返回独立值引用，未知键为 NOT_FOUND，空键合法。
     dfy_v2_status (DFY_V2_CALL *find)(dfy_v2_handle value, dfy_v2_string_view key, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_map_api;
+// 闭合枚举身份；underlying_kind 仅为 INT64 或 UINT64，名称借用依赖描述引用。
+typedef struct dfy_v2_enum_info {
+    dfy_v2_string_view name;
+    uint32_t contract_version;
+    uint32_t underlying_kind;
+    uint64_t member_count;
+} dfy_v2_enum_info;
+// 成员名依赖传入描述引用；number 为带精确整数种类的副本，reserved 固定为零。
+typedef struct dfy_v2_enum_member { dfy_v2_string_view name; dfy_v2_value_view number; } dfy_v2_enum_member;
+// 索引属于本描述的声明顺序，稳定整数在 number 中，二者不能互换。
+typedef struct dfy_v2_enum_selection { uint64_t index; dfy_v2_value_view number; } dfy_v2_enum_selection;
+typedef struct dfy_v2_enum_api {
+    dfy_v2_api_header header;
+    // 同宿主线程绑定中取得枚举字段描述的独立持有；所有输出必需，失败全零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *field_type)(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+    // 读取枚举元数据；非枚举描述拒绝，名称借用至传入引用释放。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle type, dfy_v2_enum_info* output, dfy_v2_error* error);
+    // 按声明顺序读取成员；越界返回 INVALID_ARGUMENT，不截断或转换整数。
+    dfy_v2_status (DFY_V2_CALL *member)(dfy_v2_handle type, uint64_t index, dfy_v2_enum_member* output, dfy_v2_error* error);
+    // 从枚举值取得描述独立持有；描述不保留数据及其事件预算，调用方负责释放。
+    dfy_v2_status (DFY_V2_CALL *descriptor)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+    // 复制枚举值选中的成员索引及整数；值引用仍承担原始数据预算，非枚举值拒绝。
+    dfy_v2_status (DFY_V2_CALL *read)(dfy_v2_handle value, dfy_v2_enum_selection* output, dfy_v2_error* error);
+} dfy_v2_enum_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

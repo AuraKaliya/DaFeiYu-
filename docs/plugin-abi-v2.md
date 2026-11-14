@@ -8,7 +8,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 ## 生产数据能力与组合访问
 
-以下为截至 R09f 的实际实现，声明见 [data_abi_v2.h](../sdk/include/dafeiyu/data_abi_v2.h)。所有调用在同一宿主线程的有效绑定中进行；无绑定返回 `INVALID_CONTEXT`。输出指针为必需，错误诊断可空；失败清空输出，句柄按独立持有规则释放。版本号精确匹配，不因表较大而隐式接受。
+以下为截至 R09g-4 的实际实现，声明见 [data_abi_v2.h](../sdk/include/dafeiyu/data_abi_v2.h)。所有调用在同一宿主线程的有效绑定中进行；无绑定返回 `INVALID_CONTEXT`。输出指针为必需，错误诊断可空；失败清空输出，句柄按独立持有规则释放。版本号精确匹配，不因表较大而隐式接受。
 
 | 能力 | 版本／表大小 | 已实现入口与边界 |
 |---|---|---|
@@ -20,12 +20,15 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 | `dfy.structures` | 2／24 字节 | `descriptor`、`field`；包含组合或显式 null，缺失另报 |
 | `dfy.arrays` | 1／32 字节 | `field_type`、`describe`、`element`；基础元素约束、实际数量及独立元素持有 |
 | `dfy.maps` | 1／40 字节 | `field_type`、`describe`、`entry`、`find`；字符串键、基础值、按序及精确键访问 |
+| `dfy.enums` | 1／48 字节 | `field_type`、`describe`、`member`、`descriptor`、`read`；闭合枚举定义和成员选择 |
 
 `dfy_v2_type_info` 与两版字段信息均为 32 字节；版本 2 字段 flags 位于偏移 20，`max_bytes` 位于 24。`dfy_v2_value_view` 为 24 字节，data 位于 8。数组约束／实际信息分别为 24／32 字节，映射约束／实际信息分别为 32／40 字节；以上对齐均为 8，并恢复包含方原打包设置。
 
-分类编号：Bool 1、Int64 2、UInt64 3、Float64 4、String 5、Bytes 6、Structure 7、Null 8、Array 9、Map 10。旧数据能力拒绝新增种类及可选／可空字段，返回 `UNSUPPORTED`；版本 2 的 kind 和 flags 是可扩展标记，消费者必须拒绝未知标记。组合与 null 的 `read` 仅返回分类，data 全零，不隐式创建引用；实际组合内容通过对应专用能力读取。
+分类编号：Bool 1、Int64 2、UInt64 3、Float64 4、String 5、Bytes 6、Structure 7、Null 8、Array 9、Map 10、Enum 11。旧数据能力拒绝新增种类及可选／可空字段，返回 `UNSUPPORTED`；版本 2 的 kind 和 flags 是可扩展标记，消费者必须拒绝未知标记。结构、容器、枚举与 null 的通用 `read` 仅返回分类，data 全零，不隐式创建引用；实际内容通过对应专用能力读取。
 
-字段 `OPTIONAL=1` 与 `NULLABLE=2` 独立：已声明但缺失返回 `NOT_FOUND=4`，显式 null 返回有效值引用且 kind 为 8，空字符串／字节／容器仍是各自真实类型。索引越界、引用对象种类不符、对非结构值调用 `structure` 等返回 `INVALID_ARGUMENT`。枚举和联合尚无分类或可查询能力，不能作为占位类型发布成功。
+字段 `OPTIONAL=1` 与 `NULLABLE=2` 独立：已声明但缺失返回 `NOT_FOUND=4`，显式 null 返回有效值引用且 kind 为 8，空字符串／字节／容器仍是各自真实类型。索引越界、引用对象种类不符、对非结构值调用 `structure` 等返回 `INVALID_ARGUMENT`。联合尚无分类或可查询能力，不能作为占位类型发布成功。
+
+枚举是非空闭合成员集，底层只允许完整 Int64 或 UInt64；成员名及整数各自唯一，未知数字和符号不匹配在构造时拒绝。`field_type` 和 `descriptor` 返回独立枚举描述引用；`describe` 返回名称、版本、整数种类和成员数。`member` 返回声明顺序的名称借用与带种类整数副本，`read` 返回选中索引及数字副本；不得将索引当作稳定取值。枚举信息／成员／选择分别为 32／40／32 字节，成员数字偏移 16、选择数字偏移 8。枚举数据计 8 字节、1 节点；枚举成员与名称纳入父结构的展开描述预算。
 
 嵌套描述按完整名称与精确契约版本识别，定义比较包含顺序、类型和全部约束；同名同版本冲突、根身份回返均拒绝。深度硬上限为 64，展开字段数上限 65536，展开名称正文上限 4 MiB；共享子描述按每次出现计算。普通值构造另核定正文和逻辑节点预算，节点硬上限 1048576，根和显式 null 各占一个节点，缺失占零。
 
@@ -35,7 +38,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 数据子引用使用宿主别名持有：保留叶字段或容器元素仍保持原载荷、读请求结果和事件存储预算，不能提前释放中间引用来绕过计量。最后一份数据持有释放后才归还相应预算；单独取得类型描述只保留不可变描述，不保留事件正文。借用视图在其指定引用释放后失效，即使另一个引用仍使底层对象存活，也必须重新读取。
 
-真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 42 项测试通过，另验证 Debug 宿主消费 Release C DLL；App／Agent 的正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与容器消费者](../tests/plugin_nested.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 全部 44 项测试通过；枚举已由 C／C++ 校验布局、由 [生产服务测试](../tests/plugin_enums.cpp) 校验行为，实际 C 枚举消费者为下一单元。App／Agent 的正式异步迁移仍属 R15。
 
 ## 引导入口与布局
 
