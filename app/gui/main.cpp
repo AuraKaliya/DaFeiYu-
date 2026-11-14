@@ -1,10 +1,12 @@
 #include "../paths.hpp"
+#include "local_content.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <wrl.h>
 #include <WebView2.h>
 #include <filesystem>
 #include <memory>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 
@@ -21,12 +23,16 @@ struct Window : std::enable_shared_from_this<Window> {
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> view;
+    std::shared_ptr<dfy::ui::LocalContent> content;
     EventRegistrationToken navigation{};
     unsigned pending = 0;
     bool closing = false, smoke = false, navigation_bound = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
-    void fail() noexcept { result = 1; PostMessageW(handle,WM_CLOSE,0,0); }
+    // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
+    void fail(const char* reason = "UI initialization failed") noexcept {
+        std::fprintf(stderr,"%s\n",reason); result = 1; PostMessageW(handle,WM_CLOSE,0,0);
+    }
     // 随窗口客户区调整浏览器，不在最小化期间创建新的容器。
     void resize() noexcept {
         RECT bounds{};
@@ -37,6 +43,7 @@ struct Window : std::enable_shared_from_this<Window> {
     void close() noexcept {
         closing = true; ShowWindow(handle,SW_HIDE);
         if (view && navigation_bound) { view->remove_NavigationCompleted(navigation); navigation_bound = false; }
+        if (content) content->close();
         if (controller) controller->Close();
         view.Reset(); controller.Reset();
         if (!pending) { environment.Reset(); DestroyWindow(handle); }
@@ -45,8 +52,7 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：取得能力与设置 → 映射本地资源 → 登记导航结果 → 加载离线页面。
     void configure() {
         require(controller->get_CoreWebView2(&view));
-        ComPtr<ICoreWebView2_3> local; require(view.As(&local));
-        require(local->SetVirtualHostNameToFolderMapping(L"center.dafeiyu.invalid",assets.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS));
+        content = dfy::ui::LocalContent::attach(environment.Get(),view.Get(),assets);
         ComPtr<ICoreWebView2Settings> settings; require(view->get_Settings(&settings));
         require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(FALSE));
         const auto weak = weak_from_this();
@@ -57,7 +63,10 @@ struct Window : std::enable_shared_from_this<Window> {
             if (const auto self = weak.lock()) {
                 BOOL success = FALSE;
                 if (FAILED(args->get_IsSuccess(&success)) || !success) self->fail();
-                else if (self->smoke) PostMessageW(self->handle,WM_CLOSE,0,0);
+                else if (self->smoke) {
+                    if (!self->content->blocked_requests()) { self->result = 1; std::fputs("External resource rejection not observed\n",stderr); }
+                    PostMessageW(self->handle,WM_CLOSE,0,0);
+                }
             }
             return S_OK;
         }).Get(),&navigation));
@@ -77,7 +86,8 @@ struct Window : std::enable_shared_from_this<Window> {
                     require(status); if (!created) throw std::runtime_error("WebView2: no controller");
                     self->controller = created;
                     if (!self->closing) self->configure();
-                } catch (...) { self->fail(); }
+                } catch (const std::exception& error) { self->fail(error.what()); }
+                catch (...) { self->fail(); }
                 if (self->closing) self->close();
             } else if (created) created->Close();
             return S_OK;
@@ -100,7 +110,8 @@ struct Window : std::enable_shared_from_this<Window> {
                         require(status); if (!created) throw std::runtime_error("WebView2: no environment");
                         self->environment = created;
                         if (!self->closing) self->create_controller();
-                    } catch (...) { self->fail(); }
+                    } catch (const std::exception& error) { self->fail(error.what()); }
+                    catch (...) { self->fail(); }
                     if (self->closing) self->close();
                 }
                 return S_OK;
@@ -144,10 +155,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
         ShowWindow(state->handle,smoke ? SW_HIDE : show);
-        try { state->start(); } catch (...) { state->fail(); }
+        try { state->start(); } catch (const std::exception& error) { state->fail(error.what()); }
+        catch (...) { state->fail(); }
         MSG message{}; BOOL next;
         while ((next = GetMessageW(&message,nullptr,0,0)) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
         result = next < 0 ? 1 : static_cast<int>(message.wParam);
-    } catch (...) { result = 1; }
+    } catch (const std::exception& error) { std::fprintf(stderr,"%s\n",error.what()); result = 1; }
+    catch (...) { result = 1; }
     CoUninitialize(); return result;
 }

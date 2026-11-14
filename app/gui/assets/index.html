@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; connect-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://network-probe.invalid; object-src 'none'; connect-src 'none'">
 <title>大肥鱼管理中心 · U01 验证</title>
 <style>body{font:16px/1.6 'Segoe UI','Microsoft YaHei',sans-serif;margin:48px;max-width:800px}input{font:inherit;padding:8px}label{display:block;margin:16px 0}small{color:#555}</style>
 <h1>大肥鱼管理中心</h1>
@@ -10,4 +10,6 @@
 <label>中文输入 <input aria-label="中文输入" placeholder="在这里输入中文"></label>
 <label>第二个输入框 <input aria-label="第二个输入框" placeholder="用于键盘焦点验证"></label>
 <small>当前仅验证界面容器，没有连接模型或加载能力插件。</small>
+<!-- 专用反向探针由原生资源处理器返回 403，不应交给网络层。 -->
+<img src="https://network-probe.invalid/blocked.png" hidden alt="">
 </html>
