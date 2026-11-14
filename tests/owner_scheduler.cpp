@@ -43,10 +43,36 @@ void eligibility() {
     scheduler.post(b,[&] { rejects<std::logic_error>([&] { (void)scheduler.run_one(); }); rejects<std::length_error>([&] { scheduler.post(b,[] {}); }); });
     check(scheduler.run_one() == RunResult::executed && !scheduler.size(b),"activity guard or active capacity failed");
 }
+// 验证优先级份额和独立控制预留，普通过载仍能执行取消收尾。
+// 步骤：持续排队全部普通级别 → 核对固定份额和同级顺序 → 填满普通队列 → 验证控制与普通交替。
+void priorities() {
+    OwnerScheduler scheduler(1); const auto owner = scheduler.add_owner(1,21,6); std::vector<int> trace;
+    for (int i = 0; i < 7; ++i) {
+        scheduler.post(owner,[&,i] { trace.push_back(100+i); },{},TaskPriority::high);
+        scheduler.post(owner,[&,i] { trace.push_back(200+i); },{},TaskPriority::normal);
+        scheduler.post(owner,[&,i] { trace.push_back(300+i); },{},TaskPriority::low);
+    }
+    check(!scheduler.available(owner) && scheduler.available(owner,TaskPriority::control) == 6,"ordinary work consumed control reserve");
+    rejects<std::length_error>([&] { scheduler.post(owner,[] {}); });
+    for (int i = 0; i < 7; ++i) scheduler.run_one();
+    check(trace == std::vector<int>({100,101,102,103,200,201,300}),"priority shares or same-level FIFO wrong");
+    trace.clear();
+    for (int i = 0; i < 6; ++i) scheduler.post(owner,[&,i] { trace.push_back(i); },{},TaskPriority::control);
+    rejects<std::length_error>([&] { scheduler.post(owner,[] {},{},TaskPriority::control); });
+    for (int i = 0; i < 5; ++i) scheduler.run_one();
+    check(trace == std::vector<int>({0,1,2,3,104}),"control burst starved ordinary work or used wrong reserve");
+    while (scheduler.run_one() != RunResult::idle) {}
+    rejects<std::invalid_argument>([&] { scheduler.post(owner,[] {},{},static_cast<TaskPriority>(99)); });
+    OperationSource pending;
+    scheduler.post(owner,[&] { trace.push_back(400); },pending.operation(),TaskPriority::high);
+    scheduler.post(owner,[&] { trace.push_back(500); },{},TaskPriority::low);
+    scheduler.run_one(); check(trace.back() == 500,"priority bypassed prerequisite eligibility");
+    pending.settle(OperationState::succeeded); scheduler.run_one(); check(trace.back() == 400,"ready high priority lost");
+}
 }
 // 验收所有者有界调度、前置资格、权重公平和活动保护。
 // 步骤：验证持续竞争 → 验证等待及失败隔离 → 报告结果。
 int main() {
-    try { fairness(); eligibility(); std::cout << "Owner scheduler checks passed\n"; return 0; }
+    try { fairness(); eligibility(); priorities(); std::cout << "Owner scheduler checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
