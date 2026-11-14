@@ -53,7 +53,10 @@ int wmain(int argc, wchar_t** argv) {
         PluginManager manager(run/"plugins",run/"user",channel,4);
         std::promise<void> release, entered; const auto gate = release.get_future().share(); auto started = entered.get_future();
         std::vector<dfy::model::Message> messages;
-        dfy::agent::Session session({},channel,4,[&](const auto&,const auto& input) {
+        dfy::agent::Session session({},channel,4,
+        // 复制真实上下文并按测试回合选择等待、失败或成功，不接触宿主操作对象。
+        // 步骤：保存输入 → 按提示等待或失败 → 返回完整回答。
+        [&](const auto&,const auto& input) {
             messages = input;
             if (input.back().content == "with plugin") { entered.set_value(); gate.wait(); }
             if (input.back().content == "failure") throw std::runtime_error("model: integration failure");

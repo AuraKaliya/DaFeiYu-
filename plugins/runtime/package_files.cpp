@@ -76,6 +76,7 @@ std::vector<Item> inspect(const fs::path& root, Limits limits) {
     return items;
 }
 // 创建唯一私有名额，不复用既有暂存目录或把半包放入可发现名称。
+// 步骤：核对根及私有前缀 → 有界生成候选身份 → 创建并复核直接子目录。
 fs::path temporary(const fs::path& root, const std::string& prefix) {
     const auto base = directory(root,true);
     if (prefix.empty() || prefix.front() != '.') throw std::invalid_argument("package: private prefix required");
@@ -88,6 +89,7 @@ fs::path temporary(const fs::path& root, const std::string& prefix) {
     throw std::runtime_error("package: cannot reserve private directory");
 }
 // 移动前重新解析两个边界，Windows 不覆盖目标的改名保持发布完整性。
+// 步骤：确认来源直接归属 → 核对新目标及父目录 → 执行不覆盖的本地改名。
 void move(const fs::path& root, const fs::path& source, const fs::path& destination) {
     const auto base = directory(root), from = child(base,source);
     const auto to = fs::absolute(destination).lexically_normal();

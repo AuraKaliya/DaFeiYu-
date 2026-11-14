@@ -1,4 +1,5 @@
-﻿# 显式验收独立分发程序的真实多轮服务和插件生命周期；不会由离线 CTest 自动调用。
+﻿#requires -Version 7.0
+# 显式验收独立分发程序的真实多轮服务和插件生命周期；不会由离线 CTest 自动调用。
 # 步骤：建立隔离目录与进程 → 空插件记忆验收标记 → 加载观察包后核对上下文 → 卸载后再次核对 → 移除并退出。
 param(
     [Parameter(Mandatory=$true)][string]$Distribution,
@@ -54,7 +55,7 @@ function Drain-Output($State) {
 }
 
 $distributionPath = (Resolve-Path -LiteralPath $Distribution).Path
-$workspacePath = [IO.Path]::GetFullPath($Workspace)
+$workspacePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Workspace)
 $runPath = Join-Path $workspacePath ($Provider+'-'+[Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($runPath) | Out-Null
 $program = Join-Path $distributionPath 'dafeiyu.exe'

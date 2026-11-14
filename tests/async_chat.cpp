@@ -23,7 +23,10 @@ struct Release {
 // 步骤：阻塞真实后台模型 → 执行本地管理及取消 → 观察唯一取消输出 → 实际退出后结束输入。
 void commands() {
     std::promise<void> release, entered; const auto gate = release.get_future().share(); auto started = entered.get_future();
-    dfy::agent::AsyncSession session({},channel(),2,[&](const auto&,const auto&) { entered.set_value(); gate.wait(); return std::string("late answer"); });
+    dfy::agent::AsyncSession session({},channel(),2,
+    // 保持后台模型未返回，验证终端仍可独立处理管理和取消。
+    // 步骤：报告已进入 → 等待测试放行 → 返回迟到文本。
+    [&](const auto&,const auto&) { entered.set_value(); gate.wait(); return std::string("late answer"); });
     Release cleanup{release}; std::ostringstream output, errors; unsigned managed = 0;
     ChatController chat(session,output,errors,[&](std::string_view text) { if (text == "/plugins list") { ++managed; return true; } return false; });
     chat.line("hello"); started.wait(); chat.line("another"); chat.line("/plugins list"); chat.line("/cancel"); chat.advance();
@@ -64,7 +67,10 @@ void command_flush() {
         dfy::agent::AsyncSession session({},channel(),1,[](const auto&,const auto&) -> std::string { throw std::runtime_error("local command reached model"); });
         SyncedBuffer buffer; std::ostream output(&buffer); std::ostringstream errors; bool sent_exit = false;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
-        check(async_chat(session,input,output,errors,[&] {
+        check(async_chat(session,input,output,errors,
+        // 只有本地回执真正刷新后才继续输入，超时明确暴露相互等待。
+        // 步骤：核对截止 → 观察回执同步 → 一次发送退出命令。
+        [&] {
             check(std::chrono::steady_clock::now() < deadline,"local command output remained buffered");
             if (buffer.command_visible && !sent_exit) {
                 DWORD written = 0; check(WriteFile(write,"/exit\n",6,&written,nullptr) && written == 6,"flush exit write failed"); sent_exit = true;

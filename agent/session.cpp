@@ -81,6 +81,7 @@ events::ObservationReceipt Session::clear() {
     history_.clear(); return notify("session_cleared",0);
 }
 // 停止新问答并请求当前工作退出，已经成功提交的历史不回滚。
+// 步骤：关闭回合接纳 → 登记当前取消 → 关闭模型入口并推进收尾。
 void Session::close() {
     accepting_ = false; if (active_) active_->request_cancel(CancelReason::owner_stop);
     models_.close(); advance();

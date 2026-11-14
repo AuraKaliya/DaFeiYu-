@@ -12,6 +12,7 @@ ProcessingSource::ProcessingSource(const EventLease& event, std::shared_ptr<Seri
     if (domain_) domain_->bind(record_->ordering_);
 }
 // 仅收回尚未开始的处理，运行中的完成和退出必须由仍存活的宿主控制器负责。
+// 步骤：保留已开始或已退出的事实 → 请求未开始项停止 → 撤回顺序并确认无需运行退出。
 ProcessingSource::~ProcessingSource() {
     if (record_->phase_ != ProcessingPhase::waiting) return;
     record_->request_cancel(CancelReason::owner_stop);

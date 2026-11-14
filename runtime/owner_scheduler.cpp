@@ -18,6 +18,7 @@ Handle OwnerScheduler::add_owner(std::size_t weight, std::size_t capacity, std::
 // 停止新步骤接纳，不抹除尚待运行或挂起的记录。
 void OwnerScheduler::stop(Handle owner) { checked(owner).accepting = false; }
 // 在全部工作退出后归还名额，不自动放弃仍有前置等待的任务。
+// 步骤：核对停止及排空 → 清除当前通路份额 → 释放所有者身份及目录槽。
 void OwnerScheduler::remove(Handle owner) {
     const auto& record = checked(owner);
     if (record.accepting || record.used || record.running) throw std::logic_error("scheduler: owner not stopped and drained");

@@ -26,6 +26,7 @@ Manifest relocated(const Manifest& source, const fs::path& destination) {
     return result;
 }
 // 检查全部可解析包的实际 ID，目录别名或已有重复 ID 也不能绕过重名拒绝。
+// 步骤：检查固定目标 → 枚举可发现子项 → 只对可解析包核对完整 ID。
 void reject_existing(const fs::path& root, const std::string& id) {
     if (fs::exists(fs::symlink_status(root/id))) throw std::runtime_error("package: destination already exists");
     for (const auto& entry : fs::directory_iterator(root)) {

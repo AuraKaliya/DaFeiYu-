@@ -25,6 +25,7 @@ struct PluginManager::State {
         try { registry.refresh(); } catch (const std::runtime_error& error) { directory_error = error.what(); }
     }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
+    // 步骤：筛选已卸载实例 → 停止其调度接纳 → 等待包装排空 → 归还名额与实例持有。
     void collect() {
         for (auto item = instances.begin(); item != instances.end();) {
             auto& entry = item->second;
@@ -77,10 +78,12 @@ PluginManager::PluginManager(const std::filesystem::path& root, const std::files
     std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity)
     : state_(std::make_unique<State>(root,user_data,std::move(channel),capacity)) {}
 // 失败保留链节点已在状态内预留，不在退出时申请新内存。
+// 步骤：尝试完整停止 → 将未完成状态转交保留链并保留全部运行责任。
 PluginManager::~PluginManager() {
     if (!state_->close()) { state_->next = retained_; retained_ = state_.release(); }
 }
 // 刷新描述快照，不根据变化自动替换已有实例。
+// 步骤：尝试替换目录快照 → 成功清除旧错误或保存独立失败 → 按结果返回。
 void PluginManager::refresh() {
     try { state_->registry.refresh(); state_->directory_error.clear(); }
     catch (const std::runtime_error& error) { state_->directory_error = error.what(); throw; }
@@ -142,6 +145,7 @@ ManagedRemoval PluginManager::remove(const std::string& id) {
     return {ShutdownResult::closed,std::move(result)};
 }
 // 只在实例实际卸载后停止对应调度接纳，忙碌拒绝不改变活动实例。
+// 步骤：定位具体实例 → 按依赖协议停止 → 保存继续等待方式 → 回收已结束名额。
 ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode) {
     const auto item = state_->instances.find(id);
     if (item == state_->instances.end()) throw std::invalid_argument("plugins: id is not loaded");

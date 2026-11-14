@@ -29,7 +29,10 @@ void drain(AsyncClient& client, const std::shared_ptr<ModelRequest>& request) {
 void cancellation() {
     std::promise<void> signal; const auto release = signal.get_future().share(); std::promise<std::thread::id> entered;
     auto worker = entered.get_future(); const auto owner = std::this_thread::get_id();
-    AsyncClient client(1,[&](const Config&,const std::vector<Message>& messages) {
+    AsyncClient client(1,
+    // 在真实后台报告线程身份后等待测试放行，再产生可被取消裁定丢弃的回答。
+    // 步骤：通知已进入后台 → 等待可控门 → 返回完整文本。
+    [&](const Config&,const std::vector<Message>& messages) {
         entered.set_value(std::this_thread::get_id()); release.wait(); return messages.back().content;
     });
     Release cleanup{signal}; auto request = client.submit({},{{Role::user,"late answer"}});

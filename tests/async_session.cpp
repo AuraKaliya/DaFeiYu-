@@ -62,7 +62,10 @@ void isolation() {
     }
     (void)events->poll();
     std::promise<void> release, entered; const auto gate = release.get_future().share(); auto running = entered.get_future();
-    AsyncSession session({},channel,1,[&](const auto&,const auto&) { entered.set_value(); gate.wait(); return std::string("late"); });
+    AsyncSession session({},channel,1,
+    // 通知后台已经接纳并延后回答，供宿主在真实调用未结束时执行取消。
+    // 步骤：报告开始 → 等待放行 → 返回迟到回答。
+    [&](const auto&,const auto&) { entered.set_value(); gate.wait(); return std::string("late"); });
     Release cleanup{release}; auto request = session.begin("cancel"); running.wait(); session.close();
     check(request->operation()->state() == OperationState::cancelled && request->exit()->state() == OperationState::pending && session.busy() && !session.closed(),
         "session cancel forged worker exit");
