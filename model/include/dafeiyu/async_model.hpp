@@ -1,11 +1,24 @@
 ﻿#pragma once
 #include <dafeiyu/model_client.hpp>
 #include <dafeiyu/operation.hpp>
+#include <dafeiyu/runtime_ids.hpp>
+#include <chrono>
 #include <functional>
 #include <future>
+#include <optional>
 
 namespace dfy::model {
 using Completion = std::function<std::string(const Config&,const std::vector<Message>&)>;
+// 仅描述后台调用返回或抛错，不代替宿主对文本有效性、取消及业务结果的裁定。
+enum class CallOutcome { pending, returned, threw };
+struct CallDiagnostics {
+    using TimePoint = std::chrono::steady_clock::time_point;
+    runtime::DomainId request = 0;
+    TimePoint submitted;
+    std::optional<TimePoint> started, finished;
+    CallOutcome outcome = CallOutcome::pending;
+};
+struct CallProgress;
 class AsyncClient;
 // 宿主线程观察的完整文本请求，工作线程不访问操作状态或插件对象。
 class ModelRequest {
@@ -22,10 +35,14 @@ class ModelRequest {
     runtime::CancelDisposition request_cancel(runtime::CancelReason reason) { return result_.request_cancel(reason); }
     // 成功后借用完整文本，失败重抛模型异常，取消或尚未完成明确拒绝。
     const std::string& answer() const;
+    // 在宿主线程读取后台已发布的单调时间快照，不推进结果或持有正文与凭据。
+    CallDiagnostics diagnostics() const noexcept;
   private:
     friend class AsyncClient;
     // 准备独立业务和退出操作，尚不提交后台调用。
-    ModelRequest() = default;
+    ModelRequest();
+    const runtime::DomainId id_;
+    const std::shared_ptr<CallProgress> progress_;
     runtime::OperationSource result_{true}, exit_;
     std::future<std::string> worker_;
     std::string answer_;

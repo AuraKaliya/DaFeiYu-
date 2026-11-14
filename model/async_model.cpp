@@ -1,8 +1,37 @@
 #include <dafeiyu/async_model.hpp>
+#include <atomic>
 #include <stdexcept>
 
 namespace dfy::model {
 using namespace runtime;
+// 后台单次发布的时间字段通过标志同步；发布后不再改写，宿主不读取未发布字段。
+struct CallProgress {
+    CallDiagnostics::TimePoint submitted, started, finished;
+    CallOutcome outcome = CallOutcome::pending;
+    std::atomic<bool> has_started{false}, has_finished{false};
+    // 在进入供应商调用前发布开始时刻，不访问宿主业务状态。
+    void start() noexcept {
+        started = std::chrono::steady_clock::now();
+        has_started.store(true,std::memory_order_release);
+    }
+    // 在调用返回或抛错后发布结束事实，不表示宿主已经接收或提交结果。
+    void finish(CallOutcome value) noexcept {
+        finished = std::chrono::steady_clock::now(); outcome = value;
+        has_finished.store(true,std::memory_order_release);
+    }
+};
+// 在提交后台前准备独立请求身份及固定大小诊断记录。
+ModelRequest::ModelRequest() : id_(next_domain()), progress_(std::make_shared<CallProgress>()) {}
+// 取得同一请求的时间快照，结束事实可见时开始事实必然也可见。
+// 步骤：读取已发布的结束字段 → 读取开始字段 → 返回不含调用内容的值副本。
+CallDiagnostics ModelRequest::diagnostics() const noexcept {
+    CallDiagnostics result; result.request = id_; result.submitted = progress_->submitted;
+    if (progress_->has_finished.load(std::memory_order_acquire)) {
+        result.finished = progress_->finished; result.outcome = progress_->outcome;
+    }
+    if (progress_->has_started.load(std::memory_order_acquire)) result.started = progress_->started;
+    return result;
+}
 // 保留真实模型错误边界，借用文本必须保持完整请求。
 const std::string& ModelRequest::answer() const {
     if (operation()->state() == OperationState::failed) std::rethrow_exception(error_);
@@ -42,8 +71,16 @@ std::shared_ptr<ModelRequest> AsyncClient::submit(Config config, std::vector<Mes
     }
     for (auto& slot : requests_) if (!slot) {
         auto request = std::shared_ptr<ModelRequest>(new ModelRequest());
-        request->worker_ = std::async(std::launch::async,[completion = completion_,config = std::move(config),messages = std::move(messages)] {
-            return completion(config,messages);
+        request->progress_->submitted = std::chrono::steady_clock::now();
+        request->worker_ = std::async(std::launch::async,
+        // 在后台发布调用阶段，完整文本或原异常仍仅通过 future 交还宿主。
+        // 步骤：发布开始 → 调用供应商 → 按返回或抛错发布结束 → 交还原结果。
+        [progress = request->progress_,completion = completion_,config = std::move(config),messages = std::move(messages)] {
+            progress->start();
+            try {
+                auto answer = completion(config,messages);
+                progress->finish(CallOutcome::returned); return answer;
+            } catch (...) { progress->finish(CallOutcome::threw); throw; }
         });
         slot = request; ++size_; return request;
     }

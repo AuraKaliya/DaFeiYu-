@@ -37,15 +37,23 @@ void cancellation() {
     });
     Release cleanup{signal}; auto request = client.submit({},{{Role::user,"late answer"}});
     check(worker.get() != owner,"model ran on host thread");
+    const auto running = request->diagnostics();
+    check(running.request && running.started && running.submitted <= *running.started && !running.finished &&
+        running.outcome == CallOutcome::pending,"live model diagnostics invented completion");
     OwnerScheduler scheduler(1); const auto id = scheduler.add_owner(1,1); bool ran = false;
     scheduler.post(id,[&] { ran = true; }); scheduler.run_one();
     request->request_cancel(CancelReason::user); client.advance();
     check(ran && request->operation()->state() == OperationState::cancelled && request->exit()->state() == OperationState::pending,
         "model waiting blocked scheduler or cancel forged exit");
+    check(!request->diagnostics().finished,"business cancellation forged call finish time");
     rejects<std::length_error>([&] { (void)client.submit({},{{Role::user,"blocked"}}); });
     client.close(); check(!client.closed(),"model close released active thread");
     cleanup.open(); drain(client,request);
     check(client.closed() && client.size() == 1 && request->operation()->cancellation_reason() == CancelReason::user,"late success changed cancel or released retained slot");
+    const auto finished = request->diagnostics();
+    check(finished.request == running.request && finished.started == running.started && finished.finished &&
+        *finished.finished >= *finished.started && finished.outcome == CallOutcome::returned,
+        "late call return lost timing or replaced cancellation");
     rejects<std::runtime_error>([&] { (void)request->answer(); }); request.reset(); client.collect(); check(!client.size(),"model request leaked after last client");
 }
 // 验证完整文本与异常传播、客户端释放后的宿主责任和失败前的输入限制。
@@ -62,9 +70,14 @@ void outcomes() {
     check(!calls.load() && !client.size(),"invalid message metadata entered backend or consumed a slot");
     auto request = client.submit({},{{Role::user,"完整回答"}}); drain(client,request);
     check(request->answer() == "完整回答" && request->operation()->state() == OperationState::succeeded,"complete text lost");
+    const auto success = request->diagnostics();
+    check(success.started && success.finished && success.outcome == CallOutcome::returned,"successful call lost diagnostics");
     rejects<std::length_error>([&] { (void)client.submit({},{{Role::user,"held"}}); });
     request.reset(); client.collect(); request = client.submit({},{{Role::user,"fail"}}); drain(client,request);
     check(request->operation()->state() == OperationState::failed,"backend error became success");
+    const auto failure = request->diagnostics();
+    check(failure.request != success.request && failure.started && failure.finished && failure.outcome == CallOutcome::threw &&
+        failure.submitted <= *failure.started && *failure.started <= *failure.finished,"failed call lost independent timing");
     rejects<std::runtime_error>([&] { (void)request->answer(); }); request.reset(); client.collect();
     rejects<std::length_error>([&] { (void)client.submit({},{{Role::user,std::string(1024*1024+1,'x')}}); });
     request = client.submit({},{{Role::user,"orphan"}}); const auto exit = request->exit(); request.reset(); client.close();
@@ -72,10 +85,27 @@ void outcomes() {
     while (!client.closed() && std::chrono::steady_clock::now() < deadline) { client.advance(); std::this_thread::yield(); }
     client.collect(); check(client.closed() && !client.size() && exit->state() == OperationState::succeeded,"client release lost worker responsibility");
 }
+// 验证诊断读取不代替宿主结算，后台返回文本也不代表输出校验成功。
+// 步骤：等待后台发布返回事实 → 只读快照核对 Pending → 推进并验证空文本失败 → 保留快照并回收槽位。
+void diagnostic_boundary() {
+    AsyncClient client(1,[](const auto&,const auto&) { return std::string(); });
+    auto request = client.submit({},{{Role::user,"empty reply"}});
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (!request->diagnostics().finished && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    const auto snapshot = request->diagnostics();
+    check(snapshot.finished && snapshot.outcome == CallOutcome::returned && request->operation()->state() == OperationState::pending &&
+        request->exit()->state() == OperationState::pending,"diagnostic read settled host result or exit");
+
+    drain(client,request);
+    check(request->operation()->state() == OperationState::failed && request->diagnostics().finished == snapshot.finished,
+        "invalid output lost actual call return or changed finish time");
+    request.reset(); client.collect();
+    check(!client.size() && snapshot.request,"diagnostic snapshot retained a model slot");
+}
 }
 // 验收真实后台线程与宿主唯一结算，所有模型结果使用可控离线替身。
-// 步骤：验证取消及在途责任 → 验证结果和异常 → 报告结果。
+// 步骤：验证取消及在途责任 → 验证结果和异常 → 验证诊断边界 → 报告结果。
 int main() {
-    try { cancellation(); outcomes(); std::cout << "Async model checks passed\n"; return 0; }
+    try { cancellation(); outcomes(); diagnostic_boundary(); std::cout << "Async model checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
