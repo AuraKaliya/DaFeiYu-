@@ -2,6 +2,8 @@
 
 本图依据本轮 35 个提交及审查修复后的代码绘制。主要运行路径见下图；共享库的部分细粒度依赖边省略，并不表示 Runtime 反向依赖 Events。
 
+2026-11-15 已另行整理 [Agent 基础能力开发计划](agent-capability-development-plan.md)。其中的工具循环、规划和环境观察属于待实现能力，不应从当前架构图推断已经具备；可选 UI 容器的已完成验证见 [U01 记录](ui-u01-validation.md)。
+
 ![当前项目架构](architecture.png)
 
 [SVG 矢量图](architecture.svg) 可放大查看；[生成脚本](../scripts/draw-architecture.ps1) 在 Windows PowerShell 7 下使用系统绘图库生成 SVG 和 PNG，不依赖在线绘图服务。
