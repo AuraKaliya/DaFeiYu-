@@ -6,6 +6,8 @@
 
 最终从全新目录构建 Debug、Release，两种配置的完整 CTest 均为 **79／79**；另通过 **20／20** 项 Debug 宿主调用 Release DLL 的检查。DeepSeek 与 Qwen 均完成真实单次调用，以及空插件、加载观察包、卸载后的多轮上下文验收。详情见 [最终验收记录](docs/final-acceptance-2026-11-14.md) 和 [开发指导](docs/foundation-development-guide.md)。
 
+[大肥鱼管理中心 UI 框架设计方案 V0.1](docs/ui-framework-design.md) 已形成待审查草案，覆盖房间首页、组件库、UI 接口和两级插件界面规范；当前仍为终端程序，尚未实现 GUI。
+
 ## 运行与构建
 
 内置 DeepSeek、Qwen 返回一次完整文本，空插件目录也能问答。凭据分别来自 `DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`，示例配置只包含环境变量名称。更新环境后请新开终端。
