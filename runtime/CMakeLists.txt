@@ -5,6 +5,9 @@ add_library(dfy_runtime STATIC ids.cpp value.cpp array_value.cpp map_value.cpp s
   include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp
   include/dafeiyu/completion_notifications.hpp include/dafeiyu/resource_owner.hpp include/dafeiyu/array_value.hpp include/dafeiyu/map_value.hpp)
 target_compile_features(dfy_runtime PUBLIC cxx_std_20)
+target_sources(dfy_runtime PRIVATE retry_controller.cpp include/dafeiyu/retry_controller.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/retry_controller.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/retry_controller.hpp")
 target_sources(dfy_runtime PRIVATE result_group.cpp include/dafeiyu/result_group.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/result_group.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/result_group.hpp")
