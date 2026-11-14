@@ -14,6 +14,6 @@ std::vector<Item> inspect(const std::filesystem::path& root, Limits limits = {})
 std::filesystem::path temporary(const std::filesystem::path& root, const std::string& prefix);
 // 核对来源与目标均为根的直接子目录后原子改名，不覆盖已有目标。
 void move(const std::filesystem::path& root, const std::filesystem::path& source, const std::filesystem::path& destination);
-// 仅清理根下以点开头的私有直接子目录，逐项重新核对实际路径后删除，不调用无边界递归删除。
-void erase(const std::filesystem::path& root, const std::filesystem::path& target);
+// 按明确限制清理根下私有直接子目录，逐项重新核对实际路径后删除，不调用无边界递归删除。
+void erase(const std::filesystem::path& root, const std::filesystem::path& target, Limits limits = {});
 }

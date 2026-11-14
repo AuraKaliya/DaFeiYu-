@@ -68,7 +68,7 @@ Manifest install_package(const fs::path& root, const fs::path& source, PackageLi
         files::move(base,stage,installed.directory); return installed;
     } catch (...) {
         const auto failure = std::current_exception();
-        try { files::erase(base,stage); }
+        try { files::erase(base,stage,limits); }
         catch (...) {
             const auto bytes = stage.u8string();
             throw std::runtime_error("package: installation failed; private staging remains at "+std::string(bytes.begin(),bytes.end()));

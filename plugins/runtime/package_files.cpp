@@ -99,10 +99,10 @@ void move(const fs::path& root, const fs::path& source, const fs::path& destinat
 }
 // 仅清理经过完整校验的私有树，每个实际删除前再次核对路径，不跟随外部链接。
 // 步骤：核对私有直接子目录 → 完整检查树 → 逆序删除已校验子项 → 最后删除空私有目录。
-void erase(const fs::path& root, const fs::path& target) {
+void erase(const fs::path& root, const fs::path& target, Limits limits) {
     const auto base = directory(root), path = child(base,target);
     if (!path.filename().native().starts_with(L'.')) throw std::runtime_error("package: only private staging may be erased");
-    const auto items = inspect(path);
+    const auto items = inspect(path,limits);
     for (auto item = items.rbegin(); item != items.rend(); ++item) {
         const auto current = path/item->relative; (void)directory(current.parent_path()); const auto flags = attributes(current); within(path,current);
         if (!item->directory && (flags & FILE_ATTRIBUTE_READONLY)) throw std::runtime_error("package: read-only file prevents cleanup");

@@ -12,6 +12,6 @@ struct RemovalReceipt {
     std::vector<std::filesystem::path> residual;
     bool package_present = false, more_pending = false;
 };
-// 在实例退出后分批清理同 ID 旧残留，再将唯一包私有改名并清理；回执区分仍可见包和未处理批次。
-RemovalReceipt remove_package(const std::filesystem::path& root, const std::string& id);
+// 在实例退出后按与安装一致的限制分批清理及移除；回执区分仍可见包和未处理批次。
+RemovalReceipt remove_package(const std::filesystem::path& root, const std::string& id, PackageLimits limits = {});
 }
