@@ -102,7 +102,8 @@ void erase(const fs::path& root, const fs::path& target) {
     if (!path.filename().native().starts_with(L'.')) throw std::runtime_error("package: only private staging may be erased");
     const auto items = inspect(path);
     for (auto item = items.rbegin(); item != items.rend(); ++item) {
-        const auto current = path/item->relative; (void)directory(current.parent_path()); (void)attributes(current); within(path,current);
+        const auto current = path/item->relative; (void)directory(current.parent_path()); const auto flags = attributes(current); within(path,current);
+        if (!item->directory && (flags & FILE_ATTRIBUTE_READONLY)) throw std::runtime_error("package: read-only file prevents cleanup");
         if (!fs::remove(current)) throw std::runtime_error("package: private item could not be removed");
     }
     if (child(base,path) != path || !fs::remove(path)) throw std::runtime_error("package: private directory could not be removed");

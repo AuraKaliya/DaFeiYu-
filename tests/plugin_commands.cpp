@@ -38,7 +38,12 @@ int wmain(int argc, wchar_t** argv) {
         plugin_command(manager,"/plugins list",output,errors); check(output.str().find("[running]") != std::string::npos,"list lost runtime status");
         auto pin = manager.instance("example.observer")->retain_code(); plugin_command(manager,"/plugins unload example.observer",output,errors);
         check(manager.loaded().size() == 1 && errors.str().find("still in use") != std::string::npos,"unload command forced a dependency");
+        const auto package_path = manager.catalog()->packages.at("example.observer").directory;
+        plugin_command(manager,"/plugins remove example.observer",output,errors);
+        check(fs::exists(package_path) && manager.loaded().size() == 1 && errors.str().find("Package kept") != std::string::npos,"remove command changed busy package");
         pin.reset(); plugin_command(manager,"/plugins unload example.observer",output,errors); check(manager.loaded().empty(),"unload command leaked instance");
+        plugin_command(manager,"/plugins remove example.observer",output,errors);
+        check(!fs::exists(package_path) && manager.catalog()->packages.empty(),"remove command did not update disk and catalog");
         const auto before = manager.catalog(); plugin_command(manager,"/plugins load missing",output,errors);
         check(manager.catalog() == before && !plugin_command(manager,"/plugins-extra list",output,errors),"command error changed catalog or consumed other command family");
         check(manager.close(),"command manager failed to close"); std::cout << "Plugin command checks passed\n"; return 0;

@@ -127,6 +127,20 @@ Manifest PluginManager::install(const std::filesystem::path& source) {
     try { refresh(); } catch (const std::runtime_error&) {}
     return installed;
 }
+// 已加载实例先按默认依赖规则退出，再移出包发现目录，用户设置不参与文件操作。
+// 步骤：核对管理接纳 → 按需卸载并保留拒绝 → 移除或重试私有残留 → 刷新独立目录状态。
+ManagedRemoval PluginManager::remove(const std::string& id) {
+    if (!state_->accepting) throw std::logic_error("plugins: manager closing");
+    if (state_->instances.contains(id)) {
+        const auto result = unload(id);
+        if (result != ShutdownResult::closed) return {result,{}};
+    }
+    auto result = remove_package(state_->root,id);
+    if (!result.found) throw std::invalid_argument("plugins: package not installed and no removal is pending");
+    // 包已退出发现目录，后续刷新错误独立保存，不把剩余清理误报为未发生移除。
+    try { refresh(); } catch (const std::runtime_error&) {}
+    return {ShutdownResult::closed,std::move(result)};
+}
 // 只在实例实际卸载后停止对应调度接纳，忙碌拒绝不改变活动实例。
 ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode) {
     const auto item = state_->instances.find(id);

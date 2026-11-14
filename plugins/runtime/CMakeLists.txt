@@ -5,6 +5,8 @@ add_library(dfy_plugins STATIC manifest.cpp registry.cpp config.cpp module.cpp m
 
 # 配置公开 SDK 与平台接口，JSON 解析保留在实现层，不依赖 Agent。
 target_compile_features(dfy_plugins PUBLIC cxx_std_20)
+target_sources(dfy_plugins PRIVATE package_remove.cpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/package_remove.cpp")
 target_sources(dfy_plugins PRIVATE package_install.cpp include/dafeiyu/plugin_package.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/package_install.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/plugin_package.hpp")

@@ -64,6 +64,16 @@ bool plugin_command(plugins::PluginManager& manager, std::string_view command, s
             output << "Installed " << installed.id << ". Use /plugins load " << installed.id << " to start it.\n";
             if (!manager.directory_error().empty()) errors << "Package installed; refresh the directory again: " << manager.directory_error() << '\n';
         }
+        else if (words.size() == 3 && words[1] == "remove") {
+            const auto removed = manager.remove(words[2]);
+            if (removed.status != plugins::ShutdownResult::closed) errors << "Package kept: its plugin is still busy, in use, or stopping. Finish unloading and retry remove.\n";
+            else if (removed.files.residual.empty()) output << "Removed " << words[2] << ". User settings kept.\n";
+            else {
+                errors << "Package is no longer discoverable; cleanup is incomplete. Retry /plugins remove " << words[2] << ".\n";
+                for (const auto& path : removed.files.residual) { const auto text = path.u8string(); errors << "Remaining: " << std::string(text.begin(),text.end()) << '\n'; }
+            }
+            if (!manager.directory_error().empty()) errors << "Refresh the plugin directory again: " << manager.directory_error() << '\n';
+        }
         else if (words.size() == 3 && words[1] == "load") {
             const auto status = manager.load(words[2]);
             if (!status) output << "Loaded " << words[2] << ".\n";
@@ -83,7 +93,7 @@ bool plugin_command(plugins::PluginManager& manager, std::string_view command, s
             case plugins::ShutdownResult::in_use: errors << "Plugin is still in use. Stop its users or choose --linked.\n"; break;
             case plugins::ShutdownResult::failed: errors << "Plugin stop failed; its state is kept for another unload attempt.\n"; break;
             }
-        } else errors << "Usage: /plugins list | refresh | install <directory> | load <id> | unload <id> [--linked]\n";
+        } else errors << "Usage: /plugins list | refresh | install <directory> | load <id> | unload <id> [--linked] | remove <id>\n";
     } catch (const std::exception& error) { errors << error.what() << '\n'; }
     catch (...) { errors << "Plugin command failed.\n"; }
     return true;

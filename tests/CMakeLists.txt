@@ -400,6 +400,16 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证卸载后移除、用户配置保持及私有清理残留重试。
+add_executable(dfy_package_remove_tests package_remove.cpp)
+add_dependencies(dfy_package_remove_tests dfy_observer)
+target_link_libraries(dfy_package_remove_tests PRIVATE dfy_plugins dfy_build_options)
+target_compile_definitions(dfy_package_remove_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(dfy_package_remove_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/package_remove.cpp")
+add_test(NAME plugins.remove COMMAND dfy_package_remove_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/remove-data/$<CONFIG>")
+set_tests_properties(plugins.remove PROPERTIES TIMEOUT 15)
+
 # 验证本地包暂存、默认配置复核、同名拒绝和发布回滚。
 add_executable(dfy_package_install_tests package_install.cpp)
 add_dependencies(dfy_package_install_tests dfy_observer)

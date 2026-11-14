@@ -1,9 +1,11 @@
 ﻿#pragma once
 #include <dafeiyu/plugin_registry.hpp>
 #include <dafeiyu/plugin_dependencies.hpp>
+#include <dafeiyu/plugin_package.hpp>
 
 namespace dfy::plugins {
 struct LoadedPlugin { std::string id; InstancePhase phase; std::uint32_t error; };
+struct ManagedRemoval { ShutdownResult status; RemovalReceipt files; };
 // 宿主线程的插件目录及实例管理，不自动加载发现的插件，也不绑定必需插件角色。
 class PluginManager {
   public:
@@ -28,6 +30,8 @@ class PluginManager {
     std::uint32_t load(const std::string& id);
     // 本地安装且不自动加载，拒绝替换运行实例，发布后刷新目录但不改用户配置。
     Manifest install(const std::filesystem::path& source);
+    // 默认先卸载再移除包，忙碌或失败时不触碰包；保持用户设置，可重试同 ID 清理残留。
+    ManagedRemoval remove(const std::string& id);
     // 按默认拒绝或显式联动规则卸载，忙碌和失败不强制释放模块。
     ShutdownResult unload(const std::string& id, DependencyStop mode = DependencyStop::refuse_dependents);
     // 推进全部实例的就绪通知及正常停止等待，每次只执行一个公平调度步骤。
