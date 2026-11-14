@@ -67,11 +67,12 @@ bool plugin_command(plugins::PluginManager& manager, std::string_view command, s
         else if (words.size() == 3 && words[1] == "remove") {
             const auto removed = manager.remove(words[2]);
             if (removed.status != plugins::ShutdownResult::closed) errors << "Package kept: its plugin is still busy, in use, or stopping. Finish unloading and retry remove.\n";
-            else if (removed.files.residual.empty()) output << "Removed " << words[2] << ". User settings kept.\n";
+            else if (removed.files.package_present) errors << "Package kept: earlier removal cleanup is still pending. Retry /plugins remove " << words[2] << ".\n";
+            else if (removed.files.residual.empty() && !removed.files.more_pending) output << "Removed " << words[2] << ". User settings kept.\n";
             else {
                 errors << "Package is no longer discoverable; cleanup is incomplete. Retry /plugins remove " << words[2] << ".\n";
-                for (const auto& path : removed.files.residual) { const auto text = path.u8string(); errors << "Remaining: " << std::string(text.begin(),text.end()) << '\n'; }
             }
+            for (const auto& path : removed.files.residual) { const auto text = path.u8string(); errors << "Remaining: " << std::string(text.begin(),text.end()) << '\n'; }
             if (!manager.directory_error().empty()) errors << "Refresh the plugin directory again: " << manager.directory_error() << '\n';
         }
         else if (words.size() == 3 && words[1] == "load") {

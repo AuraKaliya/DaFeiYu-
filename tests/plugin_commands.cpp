@@ -42,6 +42,10 @@ int wmain(int argc, wchar_t** argv) {
         plugin_command(manager,"/plugins remove example.observer",output,errors);
         check(fs::exists(package_path) && manager.loaded().size() == 1 && errors.str().find("Package kept") != std::string::npos,"remove command changed busy package");
         pin.reset(); plugin_command(manager,"/plugins unload example.observer",output,errors); check(manager.loaded().empty(),"unload command leaked instance");
+        for (unsigned i = 0; i < 65; ++i) fs::create_directory(root/(".removed-16-example.observer-review-"+std::to_string(i)));
+        plugin_command(manager,"/plugins remove example.observer",output,errors);
+        check(fs::exists(package_path) && errors.str().find("earlier removal cleanup is still pending") != std::string::npos,
+            "partial batch reported visible package as removed");
         plugin_command(manager,"/plugins remove example.observer",output,errors);
         check(!fs::exists(package_path) && manager.catalog()->packages.empty(),"remove command did not update disk and catalog");
         const auto before = manager.catalog(); plugin_command(manager,"/plugins load missing",output,errors);
