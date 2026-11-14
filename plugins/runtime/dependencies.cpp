@@ -43,4 +43,53 @@ void PluginDependencies::release(runtime::Handle binding) {
     const auto slot = std::find(slots_.begin(),slots_.end(),binding);
     references_.release(binding); *slot = {};
 }
+// 先固定依赖闭包，再按无剩余使用者的叶子取出，所有计划分配发生在停止前。
+// 步骤：收集递归依赖方 → 反复选择无在途依赖方的实例 → 返回消费者先于提供方的计划。
+std::vector<std::shared_ptr<PluginInstance>> PluginDependencies::stop_plan(const std::shared_ptr<PluginInstance>& provider) const {
+    std::vector<std::shared_ptr<PluginInstance>> pending{provider}, plan;
+    for (std::size_t index = 0; index < pending.size(); ++index) {
+        for (const auto handle : slots_) if (!handle.empty()) {
+            const auto& binding = references_.get(handle).binding;
+            if (binding->provider() == pending[index] && std::find(pending.begin(),pending.end(),binding->consumer()) == pending.end())
+                pending.push_back(binding->consumer());
+        }
+    }
+    plan.reserve(pending.size());
+    while (!pending.empty()) {
+        const auto leaf = std::find_if(pending.begin(),pending.end(),[&](const auto& candidate) {
+            for (const auto handle : slots_) if (!handle.empty()) {
+                const auto& binding = references_.get(handle).binding;
+                if (binding->provider() == candidate && std::find(pending.begin(),pending.end(),binding->consumer()) != pending.end()) return false;
+            }
+            return true;
+        });
+        if (leaf == pending.end()) throw std::logic_error("dependencies: cyclic stop plan");
+        plan.push_back(*leaf); pending.erase(leaf);
+    }
+    return plan;
+}
+// 逐阶段停止具体实例，成功退出者归还出向依赖，失败不强制释放或回滚已完成步骤。
+// 步骤：校验策略并按默认规则拒绝 → 冻结联动计划 → 逐项停止 → 只清理已退出者关系或报告阻挡项。
+DependencyShutdown PluginDependencies::shutdown(const std::shared_ptr<PluginInstance>& provider, DependencyStop mode) {
+    if (!provider || (mode != DependencyStop::refuse_dependents && mode != DependencyStop::linked))
+        throw std::invalid_argument("dependencies: provider and valid stop mode required");
+    if (mode == DependencyStop::refuse_dependents) {
+        for (const auto handle : slots_) if (!handle.empty()) {
+            const auto& binding = references_.get(handle).binding;
+            if (binding->provider() == provider) return {ShutdownResult::in_use,binding->consumer(),0};
+        }
+    }
+    const auto plan = mode == DependencyStop::linked ? stop_plan(provider) : std::vector<std::shared_ptr<PluginInstance>>{provider};
+    std::size_t closed = 0;
+    for (const auto& instance : plan) {
+        const bool already_closed = instance->phase() == InstancePhase::unloaded;
+        const auto result = instance->shutdown();
+        if (result != ShutdownResult::closed) return {result,instance,closed};
+        if (!already_closed) ++closed;
+        for (auto& handle : slots_) if (!handle.empty() && references_.get(handle).binding->consumer() == instance) {
+            references_.release(handle); handle = {};
+        }
+    }
+    return {ShutdownResult::closed,{},closed};
+}
 }

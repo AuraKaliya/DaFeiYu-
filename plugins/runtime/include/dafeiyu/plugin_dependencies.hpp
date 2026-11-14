@@ -4,6 +4,8 @@
 
 namespace dfy::plugins {
 class PluginDependencies;
+enum class DependencyStop { refuse_dependents, linked };
+struct DependencyShutdown { ShutdownResult result; std::shared_ptr<PluginInstance> blocked; std::size_t closed = 0; };
 // 绑定具体消费者和提供方实例的代码凭证，重载同名包不会替换旧绑定。
 class DependencyBinding {
   public:
@@ -43,12 +45,16 @@ class PluginDependencies {
     std::shared_ptr<const DependencyBinding> get(runtime::Handle binding) const { return references_.get(binding).binding; }
     // 在实际使用结束后归还一份关系，旧视图继续阻止其提供方卸载。
     void release(runtime::Handle binding);
+    // 默认有使用者则拒绝；显式联动时先停止依赖方，失败保留未完成关系，重复调用继续剩余部分。
+    DependencyShutdown shutdown(const std::shared_ptr<PluginInstance>& provider, DependencyStop mode = DependencyStop::refuse_dependents);
     // 返回目录中仍未归还的绑定数，旧绑定在重新绑定后仍占名额。
     std::size_t size() const noexcept { return references_.size(); }
   private:
     struct Reference { std::shared_ptr<const DependencyBinding> binding; };
     // 检查提供方是否已经直接或间接依赖消费者，防止新边成环。
     bool cyclic(const PluginInstance* consumer, const PluginInstance* provider) const;
+    // 在任何停止副作用前冻结受影响实例及依赖方优先的顺序。
+    std::vector<std::shared_ptr<PluginInstance>> stop_plan(const std::shared_ptr<PluginInstance>& provider) const;
     runtime::HandleRegistry<Reference> references_;
     std::vector<runtime::Handle> slots_;
 };

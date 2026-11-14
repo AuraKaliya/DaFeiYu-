@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_instance.hpp>
+#include <dafeiyu/plugin_dependencies.hpp>
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -74,6 +75,18 @@ int wmain(int argc, wchar_t** argv) {
             mode(1);
             check(instance.create() == DFY_V2_FAILED && instance.phase() == InstancePhase::unloaded && count(3) == 3,
                 "failed creation was destroyed or retained unnecessarily");
+        }
+        {
+            mode(0); auto provider = std::make_shared<PluginInstance>(manifest,data,channel);
+            auto consumer = std::make_shared<PluginInstance>(manifest,data,channel);
+            check(!provider->create() && !provider->start() && !consumer->create() && !consumer->start(),"linked failure setup failed");
+            PluginDependencies graph(1); graph.bind(consumer,provider); mode(5);
+            const auto failed = graph.shutdown(provider,DependencyStop::linked);
+            check(failed.result == ShutdownResult::failed && failed.blocked == consumer && !failed.closed && graph.size() == 1 &&
+                provider->phase() == InstancePhase::active && count(3) == 3,"failed linked stop released provider or replayed destroy");
+            mode(0); const auto resumed = graph.shutdown(provider,DependencyStop::linked);
+            check(resumed.result == ShutdownResult::closed && resumed.closed == 2 && !graph.size() && count(3) == 5,
+                "linked failure retry did not resume only incomplete stages");
         }
         control.close();
         check(!GetModuleHandleW(manifest.entry.c_str()), "instance module reference leaked");
