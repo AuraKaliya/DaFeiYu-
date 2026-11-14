@@ -16,6 +16,8 @@ struct dfy_v2_instance {
     const dfy_v2_array_api* arrays;
     const dfy_v2_map_api* maps;
     const dfy_v2_enum_api* enums;
+    const dfy_v2_union_api* unions;
+    const dfy_v2_constraint_api* constraints;
     dfy_v2_handle reader, request, notification;
     uint32_t started, stopping, in_callback;
 };
@@ -92,7 +94,7 @@ static dfy_v2_status inspect_structure(dfy_v2_instance* instance, dfy_v2_handle 
         if (!*remaining) { status = DFY_V2_RESOURCE_EXHAUSTED; break; }
         --*remaining;
         status = instance->types->field(type, index, &description, 0);
-        if (!status && (description.kind < DFY_V2_VALUE_BOOL || description.kind > DFY_V2_VALUE_ENUM || description.kind == DFY_V2_VALUE_NULL ||
+        if (!status && (description.kind < DFY_V2_VALUE_BOOL || description.kind > DFY_V2_VALUE_UNION || description.kind == DFY_V2_VALUE_NULL ||
             (description.flags & ~(DFY_V2_FIELD_OPTIONAL | DFY_V2_FIELD_NULLABLE)))) status = DFY_V2_UNSUPPORTED;
 
         if (!status) status = instance->structures->field(payload, index, &field, 0);
@@ -188,17 +190,57 @@ static dfy_v2_status inspect_enum(dfy_v2_instance* instance, dfy_v2_handle value
     if (!status) status = inspect_scalar(&selection.number);
     return status;
 }
+// 在共享访问与深度预算内读取联合，分支声明和实际内容分别校验。
+// 步骤：核对预算与选择 → 有界反射全部分支 → 取得选中内容 → 按约束递归消费并归还引用。
+static dfy_v2_status inspect_union(dfy_v2_instance* instance, dfy_v2_handle value, uint32_t depth, uint32_t* remaining) {
+    dfy_v2_handle type = {0}, contents = {0}; dfy_v2_union_info info = {0}; dfy_v2_union_selection selection = {0};
+    dfy_v2_value_view view = {0}; dfy_v2_status status; uint64_t index;
+    uint32_t expected_kind = 0, flags = 0; uint64_t max_bytes = 0;
+    if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
+    --*remaining;
+    status = instance->unions->descriptor(value, &type, 0);
+    if (!status) status = instance->unions->describe(type, &info, 0);
+    if (!status && (!info.name.data || !info.name.length || !info.contract_version || !info.branch_count || info.reserved)) status = DFY_V2_FAILED;
+    if (!status && info.branch_count > *remaining) status = DFY_V2_RESOURCE_EXHAUSTED;
+    if (!status) status = instance->unions->read(value, &selection, 0);
+    if (!status && selection.index >= info.branch_count) status = DFY_V2_FAILED;
+
+    for (index = 0; !status && index < info.branch_count; ++index) {
+        dfy_v2_handle branch = {0}; dfy_v2_field_info_v2 schema = {0}; uint64_t tag = 0;
+        --*remaining;
+        status = instance->unions->branch(type, index, &tag, &branch, 0);
+        if (!status) status = instance->constraints->describe(branch, &schema, 0);
+        if (!status && (!schema.name.data || !schema.name.length || (schema.flags & ~DFY_V2_FIELD_NULLABLE) ||
+            schema.kind < DFY_V2_VALUE_BOOL || schema.kind > DFY_V2_VALUE_UNION || schema.kind == DFY_V2_VALUE_NULL)) status = DFY_V2_UNSUPPORTED;
+        if (!status && index == selection.index) {
+            if (tag != selection.tag) status = DFY_V2_FAILED;
+            expected_kind = schema.kind; flags = schema.flags; max_bytes = schema.max_bytes;
+        }
+        if (release(instance, &branch) && !status) status = DFY_V2_FAILED;
+    }
+
+    if (!status) status = instance->unions->content(value, &contents, 0);
+    if (!status) status = instance->values->read(contents, &view, 0);
+    if (!status && view.kind != expected_kind && !(view.kind == DFY_V2_VALUE_NULL && (flags & DFY_V2_FIELD_NULLABLE))) status = DFY_V2_FAILED;
+    if (!status && ((view.kind == DFY_V2_VALUE_STRING && view.data.string.length > max_bytes) ||
+        (view.kind == DFY_V2_VALUE_BYTES && view.data.bytes.length > max_bytes))) status = DFY_V2_FAILED;
+    if (!status) status = inspect_any(instance, contents, &view, depth - 1, remaining);
+    if (release(instance, &contents) && !status) status = DFY_V2_FAILED;
+    if (release(instance, &type) && !status) status = DFY_V2_FAILED;
+    return status;
+}
 // 按已实现分类分派，不把未知类型或非零组合数据解释为标量。
 // 步骤：核对分类与保留区 → 按种类读取标量或组合内容 → 归还临时结构引用。
 static dfy_v2_status inspect_any(dfy_v2_instance* instance, dfy_v2_handle value, const dfy_v2_value_view* view, uint32_t depth, uint32_t* remaining) {
     if (view->kind <= DFY_V2_VALUE_BYTES) return inspect_scalar(view);
-    if (view->kind > DFY_V2_VALUE_ENUM || view->reserved || view->data.uint64 || view->data.bytes.length) return DFY_V2_UNSUPPORTED;
+    if (view->kind > DFY_V2_VALUE_UNION || view->reserved || view->data.uint64 || view->data.bytes.length) return DFY_V2_UNSUPPORTED;
     statistics.kinds |= UINT32_C(1) << view->kind;
 
     if (view->kind == DFY_V2_VALUE_NULL) return DFY_V2_OK;
     if (view->kind == DFY_V2_VALUE_ARRAY) return inspect_array(instance, value, depth, remaining);
     if (view->kind == DFY_V2_VALUE_MAP) return inspect_map(instance, value, depth, remaining);
     if (view->kind == DFY_V2_VALUE_ENUM) return inspect_enum(instance, value, remaining);
+    if (view->kind == DFY_V2_VALUE_UNION) return inspect_union(instance, value, depth, remaining);
     if (view->kind == DFY_V2_VALUE_STRUCTURE) {
         dfy_v2_handle child = {0};
         dfy_v2_status status = instance->values->structure(value, &child, 0);
@@ -270,15 +312,20 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     instance->arrays = (const dfy_v2_array_api*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api), 1);
     instance->maps = (const dfy_v2_map_api*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api), 1);
     instance->enums = (const dfy_v2_enum_api*)service(host, DFY_V2_ENUM_INTERFACE, sizeof(dfy_v2_enum_api), 1);
+    instance->unions = (const dfy_v2_union_api*)service(host, DFY_V2_UNION_INTERFACE, sizeof(dfy_v2_union_api), 1);
+    instance->constraints = (const dfy_v2_constraint_api*)service(host, DFY_V2_CONSTRAINT_INTERFACE, sizeof(dfy_v2_constraint_api), 1);
     if (!instance->refs || !instance->subscriptions || !instance->reads || !instance->notifications || !instance->cancels ||
-        !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->enums || !instance->refs->retain || !instance->refs->release ||
+        !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->enums || !instance->unions || !instance->constraints ||
+        !instance->refs->retain || !instance->refs->release ||
         !instance->subscriptions->subscribe || !instance->subscriptions->close || !instance->subscriptions->read || !instance->reads->next || !instance->reads->result ||
         !instance->reads->payload || !instance->notifications->subscribe || !instance->notifications->revoke || !instance->notifications->read ||
         !instance->cancels->request || !instance->cancels->read ||
         !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
         !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element ||
         !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find ||
-        !instance->enums->field_type || !instance->enums->describe || !instance->enums->member || !instance->enums->descriptor || !instance->enums->read) {
+        !instance->enums->field_type || !instance->enums->describe || !instance->enums->member || !instance->enums->descriptor || !instance->enums->read ||
+        !instance->unions->describe || !instance->unions->branch || !instance->unions->descriptor || !instance->unions->read || !instance->unions->content ||
+        !instance->constraints->field || !instance->constraints->describe || !instance->constraints->named_type || !instance->constraints->array || !instance->constraints->map) {
         free(instance); return report(DFY_V2_UNSUPPORTED, error);
     }
     *output = instance; add(&statistics.created, 1);

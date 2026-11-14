@@ -7,6 +7,7 @@ struct PackingProbe { char tag; uint64_t value; };
 #include <cmath>
 #include <iostream>
 #include <dafeiyu/enum_value.hpp>
+#include <dafeiyu/union_value.hpp>
 #include <dafeiyu/data_abi_v2.h>
 #include <fstream>
 #include <dafeiyu/map_value.hpp>
@@ -206,6 +207,88 @@ void enumerations(const Manifest& manifest, const std::filesystem::path& data) {
     check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
         !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"enum isolation retained module or callback");
 }
+// 将给定内容包入指定分支数的联合，最后分支使用最大标签。
+// 步骤：创建独立分支名称 → 校验联合描述及选中内容 → 构造单字段事件。
+std::shared_ptr<const StructValue> union_event(std::size_t count, FieldDescriptor content_type, const Value& value) {
+    std::vector<UnionBranch> branches;
+    for (std::size_t i = 0; i < count; ++i) {
+        content_type.name = "b" + std::to_string(i);
+        branches.push_back({i,content_type});
+    }
+    branches.back().tag = UINT64_MAX;
+    const auto choice = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("tests.union",1,branches,{65536,4194304,64}));
+    const auto field = FieldDescriptor::union_field("choice",choice);
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.union_event",1,{&field,1},{65536,4194304,64}));
+    const NamedValue input{"choice",Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(choice,UINT64_MAX,value,128)))};
+    return std::make_shared<const StructValue>(StructValue::create(type,{&input,1},128));
+}
+// 验证联合复杂内容、精确访问与深度边界以及独立实例的失败回收。
+// 步骤：构造各类分支与边界事件 → 由实际观察包逐项消费 → 核对失败隔离 → 确认回调与模块释放。
+void unions(const Manifest& manifest, const std::filesystem::path& data) {
+    // 允许深度边界案例的标签正文，避免正文限额遮住待验收的深度拒绝。
+    auto store = std::make_shared<dfy::events::EventStore>(8,264);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,2,2);
+    FifoExecutor executor(4);
+    const FieldDescriptor integer{"value",ValueKind::uint64,0};
+    const auto number = Value::from_uint64(UINT64_MAX);
+    const auto composite = composite_value();
+    const auto array_type = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(ValueKind::uint64,1));
+    const auto array = std::make_shared<const ArrayValue>(ArrayValue::create(array_type,{&number,1},8));
+    const auto map_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::uint64,1,1));
+    const MapEntry entry{"k",number}; const auto map = std::make_shared<const MapValue>(MapValue::create(map_type,{&entry,1},9));
+    const EnumMember member{"min",INT64_MIN};
+    const auto enumeration = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("tests.enum",1,ValueKind::int64,{&member,1},1,32));
+    struct Example { std::shared_ptr<const StructValue> payload; bool accepted; };
+    std::vector<Example> cases{{union_event(4093,integer,number),true},{union_event(4094,integer,number),false},
+        {union_event(1,{"text",ValueKind::string,0,{},false,true},Value::null()),true},
+        {union_event(1,{"record",ValueKind::structure,0,composite->descriptor()},Value::from_structure(composite)),true},
+        {union_event(1,FieldDescriptor::array_field("list",array_type),Value::from_array(array)),true},
+        {union_event(1,FieldDescriptor::map_field("lookup",map_type),Value::from_map(map)),true},
+        {union_event(1,FieldDescriptor::enum_field("state",enumeration),Value::from_enum(std::make_shared<const EnumValue>(EnumValue::create(enumeration,INT64_MIN)))),true}};
+    auto deep_value = std::make_shared<const Value>(number); FieldDescriptor deep_type = integer;
+    for (unsigned depth = 1; depth <= 31; ++depth) {
+        const UnionBranch branch{depth,deep_type};
+        const auto type = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("tests.depth"+std::to_string(depth),1,{&branch,1},{64,4096,64}));
+        deep_value = std::make_shared<const Value>(Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(type,depth,*deep_value,264))));
+        deep_type = FieldDescriptor::union_field("next",type);
+        if (depth >= 30) {
+            const auto field = FieldDescriptor::union_field("choice",type);
+            const auto root = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.deep_union",1,{&field,1},{64,4096,64}));
+            const NamedValue input{"choice",*deep_value};
+            cases.push_back({std::make_shared<const StructValue>(StructValue::create(root,{&input,1},264)),true});
+        }
+    }
+    const UnionBranch beyond{32,deep_type};
+    const auto beyond_type = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("tests.depth32",1,{&beyond,1},{64,4096,64}));
+    const auto beyond_value = std::make_shared<const UnionValue>(UnionValue::create(beyond_type,32,*deep_value,264));
+    const auto beyond_field = FieldDescriptor::union_field("choice",beyond_type);
+    const auto beyond_root = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.excess_union",1,{&beyond_field,1},{64,4096,64}));
+    const NamedValue beyond_input{"choice",Value::from_union(beyond_value)};
+    cases.push_back({std::make_shared<const StructValue>(StructValue::create(beyond_root,{&beyond_input,1},264)),false});
+    for (const auto& example : cases) {
+        InstanceLimits limits; limits.references = 256;
+        PluginInstance instance(manifest,data,channel,limits);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK,"union observer startup failed");
+        channel->publish(example.payload); drain(instance,executor); const auto observed = statistics(instance);
+        check(observed.events == static_cast<uint64_t>(example.accepted) && observed.failures == static_cast<uint64_t>(!example.accepted) &&
+            channel->size() == static_cast<std::size_t>(example.accepted) && !store->references(),"union observer boundary or cleanup failed");
+        if (example.accepted) check((observed.kinds & (1u << DFY_V2_VALUE_UNION)) && observed.fields,"observer lost union kind");
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()),"union observer remains loaded");
+    }
+
+    InstanceLimits limited; limited.references = 6;
+    PluginInstance failing(manifest,data,channel,limited), healthy(manifest,data,channel);
+    check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,"union isolation setup failed");
+    const auto payload = union_event(1,integer,number);
+    channel->publish(payload); drain(failing,executor);
+    check(channel->size() == 1 && store->references() == 1,"union failure blocked healthy receiver");
+    drain(healthy,executor);
+    check(statistics(healthy).events == 1 && statistics(healthy).failures == 1 && !store->references(),"union failure isolation lost");
+    check(failing.shutdown() == ShutdownResult::closed,"failed union observer retained module");
+    channel->publish(payload); drain(healthy,executor);
+    check(statistics(healthy).events == 2 && healthy.shutdown() == ShutdownResult::closed && !channel->size() &&
+        !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"union recovery or shutdown failed");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -327,6 +410,7 @@ int wmain(int argc, wchar_t** argv) {
         failures(manifest, argv[2], channel, store);
         composites(manifest, argv[2]);
         enumerations(manifest, argv[2]);
+        unions(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
