@@ -1,0 +1,17 @@
+# 独立 SDK 示例只需要 Windows C11 编译器和分发目录中的公开头文件。
+cmake_minimum_required(VERSION 3.28)
+project(dafeiyu_observer_sdk LANGUAGES C)
+if(NOT WIN32)
+  message(FATAL_ERROR "This SDK example targets Windows native DLLs")
+endif()
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+add_library(dfy_observer SHARED observer.c observer_api.h)
+target_include_directories(dfy_observer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
+target_compile_definitions(dfy_observer PRIVATE DFY_PLUGIN_BUILD)
+target_compile_options(dfy_observer PRIVATE "$<$<C_COMPILER_ID:MSVC>:/W4>")
+set_target_properties(dfy_observer PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/example.observer")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/example.observer/plugin.json" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/plugin.json")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/example.observer/defaults.json" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/defaults.json")

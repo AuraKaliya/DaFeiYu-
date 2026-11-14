@@ -56,7 +56,8 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
-        if (args.size() >= 3 && args[1] == "--chat") {
+        if (args.size() == 1 || (args.size() >= 3 && args[1] == "--chat")) {
+            const auto configuration = args.size() == 1 ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
             std::filesystem::path plugins, user_data;
             for (std::size_t index = 3; index < args.size(); index += 2) {
                 if (index+1 >= args.size() || args[index+1].empty()) throw std::invalid_argument("app: option path required");
@@ -68,7 +69,7 @@ int run(const std::vector<std::filesystem::path>& args) {
             if (user_data.empty()) user_data = dfy::app::default_user_data();
             auto store = std::make_shared<dfy::events::EventStore>(256,64);
             auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,16,8);
-            dfy::agent::AsyncSession session(dfy::model::load_config(args[2]),channel);
+            dfy::agent::AsyncSession session(dfy::model::load_config(configuration),channel);
             dfy::plugins::PluginManager manager(plugins,user_data,channel);
             dfy::platform::LineInput input;
             if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
@@ -85,23 +86,11 @@ int run(const std::vector<std::filesystem::path>& args) {
             }
             return result;
         }
-        if (args.size() != 1) {
-            std::cerr << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n";
-            return 1;
-        }
-
-        std::cout << "DaFeiYu\nEnter /exit to quit.\n";
-
-        std::string command;
-        while (std::getline(std::cin, command)) {
-            if (command == "/exit") {
-                break;
-            }
-            if (!command.empty()) {
-                std::cout << "Unknown command. Enter /exit to quit.\n";
-            }
-        }
-        return std::cin.bad() ? 1 : 0;
+        const bool help = args.size() == 2 && args[1] == "--help";
+        auto& output = help ? std::cout : std::cerr;
+        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n"
+            << "No arguments: chat with the bundled DeepSeek configuration.\n";
+        return help ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
