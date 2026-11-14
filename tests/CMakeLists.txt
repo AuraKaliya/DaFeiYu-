@@ -400,6 +400,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证一个进程内从空插件问答到安装、观察、卸载及移除的完整链路。
+add_executable(dfy_application_lifecycle_tests application_lifecycle.cpp)
+add_dependencies(dfy_application_lifecycle_tests dfy_observer)
+target_link_libraries(dfy_application_lifecycle_tests PRIVATE dfy_agent dfy_plugins dfy_build_options)
+set_target_properties(dfy_application_lifecycle_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/application_lifecycle.cpp")
+add_test(NAME app.lifecycle COMMAND dfy_application_lifecycle_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/application-data/$<CONFIG>")
+set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
+
 # 验证卸载后移除、用户配置保持及私有清理残留重试。
 add_executable(dfy_package_remove_tests package_remove.cpp)
 add_dependencies(dfy_package_remove_tests dfy_observer)
