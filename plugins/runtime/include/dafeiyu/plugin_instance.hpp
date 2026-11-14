@@ -14,9 +14,9 @@ struct RetainedInstance { std::string id; InstancePhase phase; uint32_t error; }
 class PluginInstance {
   public:
     static constexpr std::size_t maximum_instances = 64;
-    // 只装配模块、配置及宿主服务，create 才执行插件实例创建。
+    // 装配模块、配置及可选组授权，create 才执行插件实例创建。
     PluginInstance(const Manifest& manifest, const std::filesystem::path& user_data_root,
-        std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits = {});
+        std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits = {}, std::shared_ptr<events::ConsumerGroup> group = {});
     // 尝试一次非阻塞收尾，未完成则转交宿主保留表，不强制释放原生实例。
     ~PluginInstance();
     // 禁止复制或隐式移动实例控制责任。

@@ -444,6 +444,68 @@ void composite_maps(const Manifest& manifest, const std::filesystem::path& data)
     check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
         !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"map observer leaked after failure");
 }
+// 验证实际观察包通过组能力共享领取、退出和处理失败，不关闭其他成员。
+// 步骤：验证广播与组共同消费 → 停止单个成员后继续 → 撤销排队回调 → 验证失败隔离及关闭组拒绝。
+void consumer_groups(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8,128);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,2,2);
+    const auto group = channel->subscribe_group(2); const auto independent = channel->subscribe();
+    FifoExecutor executor(4);
+    {
+        PluginInstance first(manifest,data,channel,{},group), second(manifest,data,channel,{},group);
+        check(first.create() == DFY_V2_OK && first.start() == DFY_V2_OK && second.create() == DFY_V2_OK && second.start() == DFY_V2_OK &&
+            group->member_count() == 2 && channel->size() == 2,"group observers created independent subscriptions");
+        const auto id = channel->publish(event_value());
+        check(!statistics(first).events,"group publication entered DLL inline");
+        drain(first,executor); drain(second,executor);
+        check(statistics(second).events == 1 && statistics(second).last_sequence == id.sequence && independent->poll().event.get().id == id,
+            "group observer duplicated delivery or disagreed with broadcast");
+        check(first.shutdown() == ShutdownResult::closed && group->member_count() == 1 && group->state() == dfy::events::QueueState::open,
+            "first observer stopped shared group");
+        const auto next = channel->publish_to_group(event_value(),group); drain(second,executor);
+        check(statistics(second).events == 2 && statistics(second).last_sequence == next.sequence && !independent->size() && !store->references(),
+            "remaining group observer did not continue");
+        check(second.shutdown() == ShutdownResult::closed && !group->member_count() && !GetModuleHandleW(manifest.entry.c_str()),"group observers did not unload");
+    }
+    independent->close(dfy::events::CloseMode::cancel); channel->remove(independent);
+    {
+        PluginInstance first(manifest,data,channel,{},group), second(manifest,data,channel,{},group), excess(manifest,data,channel,{},group);
+        check(first.create() == DFY_V2_OK && first.start() == DFY_V2_OK && second.create() == DFY_V2_OK && second.start() == DFY_V2_OK &&
+            excess.create() == DFY_V2_OK && excess.start() == DFY_V2_RESOURCE_EXHAUSTED && excess.shutdown() == ShutdownResult::closed && group->member_count() == 2,
+            "group member admission failure leaked or affected peers");
+        const auto skipped = channel->publish_to_group(event_value(),group);
+        check(first.advance(executor) == ScheduleResult::queued && !statistics(second).events,"group queued callback setup failed");
+        check(first.shutdown() == ShutdownResult::closed && group->member_count() == 1 && executor.run_one() == RunResult::executed,
+            "queued group callback prevented safe member stop");
+        drain(second,executor);
+        check(!statistics(second).events && !statistics(second).failures && !store->references(),"revoked group callback entered DLL or replayed claimed event");
+        const auto next = channel->publish_to_group(event_value(),group); drain(second,executor);
+        check(next.sequence == skipped.sequence + 1 && statistics(second).events == 1 && statistics(second).last_sequence == next.sequence,
+            "group reload path repeated old delivery");
+        check(second.shutdown() == ShutdownResult::closed && !group->member_count() && !GetModuleHandleW(manifest.entry.c_str()),"queued group path retained DLL");
+    }
+    {
+        InstanceLimits limited; limited.references = 6;
+        PluginInstance failing(manifest,data,channel,limited,group), healthy(manifest,data,channel,{},group);
+        check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,"group failure setup failed");
+        const auto failed = channel->publish_to_group(composite_value(),group); drain(failing,executor); drain(healthy,executor);
+        check(group->member_count() == 1 && !statistics(healthy).events && statistics(healthy).failures == 1 && !store->references(),
+            "failed group member closed peers or replayed delivery");
+        const auto next = channel->publish_to_group(composite_value(),group); drain(healthy,executor);
+        check(next.sequence == failed.sequence + 1 && statistics(healthy).events == 1 && statistics(healthy).last_sequence == next.sequence,
+            "healthy group member did not consume next event");
+        check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
+            !group->member_count() && !GetModuleHandleW(manifest.entry.c_str()),"failed group member retained module");
+    }
+    group->close(dfy::events::CloseMode::cancel);
+    {
+        PluginInstance closed(manifest,data,channel,{},group);
+        check(closed.create() == DFY_V2_OK && closed.start() == DFY_V2_BUSY && closed.shutdown() == ShutdownResult::closed && channel->size() == 1,
+            "closed group silently fell back to independent subscription");
+    }
+    channel->remove_group(group);
+    check(!channel->size() && !store->references() && executor.run_one() == RunResult::idle && PluginInstance::retained().empty(),"group lifecycle leaked resources");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -568,6 +630,7 @@ int wmain(int argc, wchar_t** argv) {
         unions(manifest, argv[2]);
         composite_arrays(manifest, argv[2]);
         composite_maps(manifest, argv[2]);
+        consumer_groups(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

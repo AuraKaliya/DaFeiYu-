@@ -1,12 +1,14 @@
 ﻿#include "observer_api.h"
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
+#include <dafeiyu/group_abi_v2.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct dfy_v2_instance {
     const dfy_v2_reference_api* refs;
     const dfy_v2_subscription_api* subscriptions;
+    const dfy_v2_group_api* groups;
     const dfy_v2_reader_api* reads;
     const dfy_v2_operation_notify_api* notifications;
     const dfy_v2_operation_cancel_api* cancels;
@@ -48,6 +50,31 @@ static const void* service(dfy_v2_query_interface_fn query, const char* name, ui
     if (query(id, version, &table, 0)) return 0;
     header = (const dfy_v2_api_header*)table;
     return header && header->struct_size == size && header->interface_version == version ? table : 0;
+}
+// 查询可选组授权，只有明确未提供时使用独立订阅，不把异常或错误布局当作缺省。
+// 步骤：查询组能力 → 区分未提供与失败 → 核对完整布局 → 保存只读能力。
+static dfy_v2_status group_service(dfy_v2_query_interface_fn query, const dfy_v2_group_api** output) {
+    const dfy_v2_string_view id = {DFY_V2_GROUP_INTERFACE,sizeof(DFY_V2_GROUP_INTERFACE)-1};
+    const void* table = 0;
+    dfy_v2_status status = query(id,1,&table,0);
+    *output = 0;
+    if (status == DFY_V2_UNSUPPORTED && !table) return DFY_V2_OK;
+    if (status) return status;
+    if (!table || ((const dfy_v2_api_header*)table)->struct_size != sizeof(dfy_v2_group_api) ||
+        ((const dfy_v2_api_header*)table)->interface_version != 1) return DFY_V2_UNSUPPORTED;
+    *output = (const dfy_v2_group_api*)table;
+    return DFY_V2_OK;
+}
+// 结束当前接收方；组模式仅退出本成员并核对终态，不关闭共享组。
+// 步骤：按接收方式分流 → 关闭独立订阅或退出成员 → 核对成员已结束。
+static dfy_v2_status close_receiver(dfy_v2_instance* instance) {
+    dfy_v2_status status;
+    dfy_v2_group_member_info info = {0};
+    if (!instance->groups) return instance->subscriptions->close(instance->reader,DFY_V2_CLOSE_CANCEL,0);
+    status = instance->groups->leave(instance->reader,0);
+    if (!status) status = instance->groups->read(instance->reader,&info,0);
+    if (!status && (info.state != DFY_V2_GROUP_MEMBER_CLOSED || info.queued)) status = DFY_V2_FAILED;
+    return status;
 }
 // 释放一份插件持有，仅成功时清空本地标识，允许停止重试。
 static dfy_v2_status release(dfy_v2_instance* instance, dfy_v2_handle* handle) {
@@ -275,7 +302,7 @@ static dfy_v2_status inspect(dfy_v2_instance* instance, dfy_v2_handle request, c
 }
 // 预声明一次读取登记，完成回调会按条件继续下一次等待。
 static dfy_v2_status arm(dfy_v2_instance* instance);
-// 消费一次确定结果，引用与当前借用分别处理，失败关闭自身订阅以免持续背压其他接收方。
+// 消费一次确定结果，引用与借用分别处理，失败结束自身接收方而不影响其他成员。
 // 步骤：释放本次通知持有 → 读取结果及事件 → 归还请求 → 按结果继续或关闭。
 static void DFY_V2_CALL completed(void* user, dfy_v2_handle borrowed) {
     dfy_v2_instance* instance = (dfy_v2_instance*)user;
@@ -292,7 +319,7 @@ static void DFY_V2_CALL completed(void* user, dfy_v2_handle borrowed) {
     if (!status && !instance->stopping && result.outcome != DFY_V2_READ_CLOSED) status = arm(instance);
     if (status) {
         add(&statistics.failures, 1);
-        if (!instance->subscriptions->close(instance->reader, DFY_V2_CLOSE_CANCEL, 0) && !release(instance, &instance->request)) {
+        if (!close_receiver(instance) && !release(instance, &instance->request)) {
             release(instance, &instance->reader);
         }
     }
@@ -309,10 +336,13 @@ static dfy_v2_status arm(dfy_v2_instance* instance) {
 static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_view config,
     dfy_v2_instance** output, dfy_v2_error* error) {
     dfy_v2_instance* instance;
+    dfy_v2_status group_status;
     if (output) *output = 0;
     if (!output || !host || !empty_config(config)) return report(DFY_V2_INVALID_ARGUMENT, error);
     instance = (dfy_v2_instance*)calloc(1, sizeof(*instance));
     if (!instance) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
+    group_status = group_service(host,&instance->groups);
+    if (group_status) { free(instance); return report(group_status,error); }
     instance->refs = (const dfy_v2_reference_api*)service(host, DFY_V2_REFERENCE_INTERFACE, sizeof(dfy_v2_reference_api), 1);
     instance->subscriptions = (const dfy_v2_subscription_api*)service(host, DFY_V2_SUBSCRIPTION_INTERFACE, sizeof(dfy_v2_subscription_api), 1);
     instance->reads = (const dfy_v2_reader_api*)service(host, DFY_V2_READER_INTERFACE, sizeof(dfy_v2_reader_api), 1);
@@ -326,10 +356,11 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     instance->enums = (const dfy_v2_enum_api*)service(host, DFY_V2_ENUM_INTERFACE, sizeof(dfy_v2_enum_api), 1);
     instance->unions = (const dfy_v2_union_api*)service(host, DFY_V2_UNION_INTERFACE, sizeof(dfy_v2_union_api), 1);
     instance->constraints = (const dfy_v2_constraint_api_v2*)service(host, DFY_V2_CONSTRAINT_INTERFACE, sizeof(dfy_v2_constraint_api_v2), 2);
-    if (!instance->refs || !instance->subscriptions || !instance->reads || !instance->notifications || !instance->cancels ||
+    if (!instance->refs || (!instance->groups && !instance->subscriptions) || !instance->reads || !instance->notifications || !instance->cancels ||
         !instance->types || !instance->structures || !instance->values || !instance->arrays || !instance->maps || !instance->enums || !instance->unions || !instance->constraints ||
         !instance->refs->retain || !instance->refs->release ||
-        !instance->subscriptions->subscribe || !instance->subscriptions->close || !instance->subscriptions->read || !instance->reads->next || !instance->reads->result ||
+        (!instance->groups && (!instance->subscriptions->subscribe || !instance->subscriptions->close || !instance->subscriptions->read)) ||
+        (instance->groups && (!instance->groups->join || !instance->groups->leave || !instance->groups->read)) || !instance->reads->next || !instance->reads->result ||
         !instance->reads->payload || !instance->notifications->subscribe || !instance->notifications->revoke || !instance->notifications->read ||
         !instance->cancels->request || !instance->cancels->read ||
         !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
@@ -343,18 +374,18 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     *output = instance; add(&statistics.created, 1);
     return report(DFY_V2_OK, error);
 }
-// 启动独立接收方及一次等待，重复启动或停止后的启动均拒绝。
-// 步骤：核对启动状态 → 创建订阅 → 接受并观察读取。
+// 按宿主授权启动组成员或独立接收方，重复启动和停止后的启动均拒绝。
+// 步骤：核对启动状态 → 按授权创建接收方 → 接受并观察读取。
 static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* error) {
     dfy_v2_status status;
     if (!instance || instance->started || instance->stopping) return report(DFY_V2_BUSY, error);
     instance->started = 1;
-    status = instance->subscriptions->subscribe(&instance->reader, 0);
+    status = instance->groups ? instance->groups->join(&instance->reader,0) : instance->subscriptions->subscribe(&instance->reader,0);
     if (!status) status = arm(instance);
     return report(status, error);
 }
-// 取消等待并关闭订阅，已成功释放的句柄不在停止重试中重放。
-// 步骤：拒绝活动回调 → 请求取消并撤销通知 → 关闭队列并读取取消结果 → 释放持有。
+// 取消等待并结束自身接收，已成功释放的句柄不在停止重试中重放。
+// 步骤：拒绝活动回调 → 请求取消并撤销通知 → 结束接收并读取取消结果 → 释放持有。
 static dfy_v2_status DFY_V2_CALL request_stop(dfy_v2_instance* instance, dfy_v2_error* error) {
     dfy_v2_status status;
     uint32_t disposition = 0;
@@ -364,7 +395,7 @@ static dfy_v2_status DFY_V2_CALL request_stop(dfy_v2_instance* instance, dfy_v2_
     instance->stopping = 1;
     if (instance->request.id) { status = instance->cancels->request(instance->request, DFY_V2_CANCEL_OWNER_STOP, &disposition, 0); if (status) return report(status, error); }
     if (instance->notification.id) { status = instance->notifications->revoke(instance->notification, 0); if (status) return report(status, error); }
-    if (instance->reader.id) { status = instance->subscriptions->close(instance->reader, DFY_V2_CLOSE_CANCEL, 0); if (status) return report(status, error); }
+    if (instance->reader.id) { status = close_receiver(instance); if (status) return report(status, error); }
     if (instance->request.id) {
         dfy_v2_read_result result = {0};
         cancelled = !instance->reads->result(instance->request, &result, 0) && result.outcome == DFY_V2_READ_CANCELLED;

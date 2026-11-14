@@ -6,9 +6,9 @@ PluginInstance::State* PluginInstance::retained_ = nullptr;
 std::size_t PluginInstance::resident_ = 0;
 struct PluginInstance::State {
     // 在任何实例副作用前完成全部宿主分配、能力校验及配置读取。
-    // 步骤：加载模块与服务 → 查询完整生命周期 → 配置事件及通知 → 登记宿主状态名额。
+    // 步骤：加载模块与服务 → 查询完整生命周期 → 配置事件、可选组及通知 → 登记宿主状态名额。
     State(const Manifest& manifest, std::shared_ptr<const EffectiveConfig> settings,
-        std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits)
+        std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits, std::shared_ptr<events::ConsumerGroup> group)
         : module(manifest, limits.code_leases, limits.active_calls), host(limits.references, limits.readers), config(std::move(settings)), id(manifest.id) {
         lifecycle = module.query<dfy_v2_lifecycle_api>(DFY_V2_LIFECYCLE_INTERFACE, 1);
         if (!lifecycle) throw std::runtime_error("instance: lifecycle unavailable");
@@ -17,6 +17,7 @@ struct PluginInstance::State {
             if (!api.create || !api.start || !api.request_stop || !api.poll_stop || !api.destroy) throw std::runtime_error("instance: incomplete lifecycle");
         }
         host.enable_events(std::move(channel), limits.requests);
+        if (group) host.enable_group(std::move(group),limits.requests);
         host.enable_notifications(module.retain_code(), limits.notifications);
         ++resident_;
     }
@@ -86,9 +87,9 @@ struct PluginInstance::State {
 
 // 先核对全局有界名额并读取配置，构造阶段不执行插件 create。
 PluginInstance::PluginInstance(const Manifest& manifest, const std::filesystem::path& user_data_root,
-    std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits) {
+    std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits, std::shared_ptr<events::ConsumerGroup> group) {
     if (resident_ >= maximum_instances) throw std::length_error("instance: host state capacity exhausted");
-    state_ = std::make_unique<State>(manifest, load_config(manifest, user_data_root), std::move(channel), limits);
+    state_ = std::make_unique<State>(manifest, load_config(manifest, user_data_root), std::move(channel), limits, std::move(group));
 }
 // 未完成状态转入预留在对象内的链节点，不分配内存，也不丢失清理责任。
 PluginInstance::~PluginInstance() {
