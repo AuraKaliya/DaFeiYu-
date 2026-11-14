@@ -70,6 +70,8 @@ const dfy_v2_value_api_v2& value_api_v2();
 const dfy_v2_struct_api_v2& struct_api_v2();
 // 返回实际实现的标量数组访问能力。
 const dfy_v2_array_api& array_api();
+// 返回版本 2 的完整数组内容及匿名元素描述访问能力。
+const dfy_v2_array_api_v2& array_api_v2();
 // 返回实际实现的字符串键标量映射访问能力。
 const dfy_v2_map_api& map_api();
 // 返回闭合枚举定义与成员选择的反射服务。

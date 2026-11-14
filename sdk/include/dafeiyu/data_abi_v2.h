@@ -29,6 +29,7 @@
 #define DFY_V2_MAP_VERSION UINT32_C(1)
 #define DFY_V2_ARRAY_INTERFACE "dfy.arrays"
 #define DFY_V2_ARRAY_VERSION UINT32_C(1)
+#define DFY_V2_ARRAY_VERSION_2 UINT32_C(2)
 #define DFY_V2_ELEMENT_NULLABLE UINT32_C(1)
 #define DFY_V2_FIELD_OPTIONAL UINT32_C(1)
 #define DFY_V2_FIELD_NULLABLE UINT32_C(2)
@@ -130,6 +131,18 @@ typedef struct dfy_v2_array_api {
     // 取得元素的独立持有，保持父数组及原始预算；越界不是缺失，返回 INVALID_ARGUMENT。
     dfy_v2_status (DFY_V2_CALL *element)(dfy_v2_handle value, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
 } dfy_v2_array_api;
+// 版本 2 数组支持全部已实现元素种类，元数据持有和实际元素的数据持有分别计量。
+typedef struct dfy_v2_array_api_v2 {
+    dfy_v2_api_header header;
+    // 同宿主线程绑定中复制字段数组约束；所有输出必需，失败全零，error 可空。
+    dfy_v2_status (DFY_V2_CALL *field_type)(dfy_v2_handle type, uint64_t index, dfy_v2_array_type_info* output, dfy_v2_error* error);
+    // 返回实际数量与完整元素分类，空数组仍保留完整声明。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_handle value, dfy_v2_array_info* output, dfy_v2_error* error);
+    // 返回任意已实现元素的独立数据持有，保持父数组及原事件预算，越界拒绝。
+    dfy_v2_status (DFY_V2_CALL *element)(dfy_v2_handle value, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error);
+    // 返回实际数组的匿名元素约束持有，由 constraints 反射；该引用不保留数据预算。
+    dfy_v2_status (DFY_V2_CALL *element_type)(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error);
+} dfy_v2_array_api_v2;
 // 映射键为 UTF-8 字符串，value_flags 当前仅允许 ELEMENT_NULLABLE。
 typedef struct dfy_v2_map_type_info {
     uint32_t value_kind;

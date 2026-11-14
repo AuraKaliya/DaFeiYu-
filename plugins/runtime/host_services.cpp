@@ -172,6 +172,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
             else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api_v2();
             else if (requested == DFY_V2_STRUCT_INTERFACE) *output = &detail::struct_api_v2();
             else if (requested == DFY_V2_CONSTRAINT_INTERFACE) *output = &detail::constraint_api_v2();
+            else if (requested == DFY_V2_ARRAY_INTERFACE) *output = &detail::array_api_v2();
             else return DFY_V2_UNSUPPORTED;
             return DFY_V2_OK;
         }

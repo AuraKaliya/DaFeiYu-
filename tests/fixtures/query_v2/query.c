@@ -20,6 +20,7 @@ _Static_assert(sizeof(dfy_v2_enum_selection) == 32 && offsetof(dfy_v2_enum_selec
 _Static_assert(sizeof(dfy_v2_enum_api) == 48 && offsetof(dfy_v2_enum_api, read) == 40, "enum table layout");
 _Static_assert(sizeof(dfy_v2_constraint_api) == 48 && offsetof(dfy_v2_constraint_api, map) == 40, "constraint table layout");
 _Static_assert(sizeof(dfy_v2_constraint_api_v2) == 56 && offsetof(dfy_v2_constraint_api_v2, element) == 48, "constraint v2 table layout");
+_Static_assert(sizeof(dfy_v2_array_api_v2) == 40 && offsetof(dfy_v2_array_api_v2, element_type) == 32, "array v2 table layout");
 _Static_assert(sizeof(dfy_v2_union_info) == 32 && offsetof(dfy_v2_union_info, branch_count) == 24, "union info layout");
 _Static_assert(sizeof(dfy_v2_union_selection) == 16 && offsetof(dfy_v2_union_selection, tag) == 8, "union selection layout");
 _Static_assert(sizeof(dfy_v2_union_api) == 48 && offsetof(dfy_v2_union_api, content) == 40, "union table layout");
