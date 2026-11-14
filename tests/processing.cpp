@@ -1,4 +1,5 @@
 #include <dafeiyu/processing.hpp>
+#include <dafeiyu/processing_queue.hpp>
 #include <iostream>
 namespace {
 using namespace dfy::runtime;
@@ -66,10 +67,42 @@ void cancellation() {
     extra.reset(); ProcessingSource accepted(full,retry_domain,retry);
     check(full.get().id == accepted.record()->event().id,"failed preparation consumed data or binding");
 }
+// 验证队列独立持有在途责任，接受时定序，取消后等待真正退出。
+// 步骤：接纳并释放客户端 → 按固定顺序开始 → 关闭并保留运行项 → 退出后回收预算。
+void queue_lifetime() {
+    auto store = std::make_shared<EventStore>(10,0); auto data = event(store);
+    ProcessingQueue queue(2), other(1); auto first = queue.submit(data), second = queue.submit(data);
+    rejects<std::length_error>([&] { (void)queue.submit(data); });
+    rejects<std::invalid_argument>([&] { (void)other.start(first); });
+    const auto completion = first->completion(); first.reset(); queue.advance();
+    auto active = queue.ready();
+    check(active && active->ordering()->sequence() == 1 && queue.start(active) == StartResult::started,"client release lost ordered work");
+    queue.complete(active,OperationState::succeeded); queue.advance();
+    check(!queue.ready() && completion->state() == OperationState::succeeded,"completed business admitted next before exit");
+    queue.close(CloseMode::cancel);
+    check(!queue.closed() && second->completion()->state() == OperationState::cancelled &&
+        active->exit()->cancellation_reason() == CancelReason::owner_stop,"queue close forged running exit");
+    queue.finish(active); check(queue.closed() && queue.size() == 2,"queue close discarded terminal snapshots");
+    active.reset(); second.reset(); queue.collect(); check(!queue.size(),"processing queue leaked terminal capacity");
+    rejects<std::logic_error>([&] { (void)queue.submit(data); });
+
+    ProcessingQueue draining(2); auto a = draining.submit(data), b = draining.submit(data);
+    draining.close(CloseMode::drain); draining.advance(); draining.start(a);
+    draining.complete(a,OperationState::failed); draining.finish(a); a.reset(); draining.advance();
+    check(draining.ready() == b && b->ordering()->sequence() == 2,"drain or slot reuse changed accepted order");
+    draining.start(b); draining.complete(b,OperationState::succeeded); draining.finish(b);
+    check(draining.closed(),"drain did not finish after actual processing exit");
+
+    ProcessingQueue parallel(2,false); const auto x = parallel.submit(data), y = parallel.submit(data);
+    check(!x->ordering() && parallel.start(y) == StartResult::started && parallel.start(x) == StartResult::started,"parallel queue added serial constraint");
+    parallel.close(CloseMode::cancel);
+    for (const auto& item : {x,y}) { parallel.complete(item,OperationState::cancelled); parallel.finish(item); }
+    check(parallel.closed(),"parallel exit did not close queue");
+}
 }
 // 验收真实事件处理的业务完成、协作取消、实际退出及数据寿命。
 // 步骤：验证顺序生命周期 → 验证取消与准备失败 → 报告结果。
 int main() {
-    try { lifecycle(); cancellation(); std::cout << "Processing checks passed\n"; return 0; }
+    try { lifecycle(); cancellation(); queue_lifetime(); std::cout << "Processing checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

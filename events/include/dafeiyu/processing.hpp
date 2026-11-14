@@ -30,11 +30,12 @@ class ProcessingRecord {
     std::shared_ptr<const runtime::SerialRequest> ordering() const noexcept { return ordering_; }
   private:
     friend class ProcessingSource;
+    friend class ProcessingQueue;
     // 完整准备数据和结果记录，尚不绑定或开始处理。
     ProcessingRecord(const EventLease& event, std::shared_ptr<const runtime::SerialRequest> ordering)
         : event_(event.retain()), ordering_(std::move(ordering)) {}
     EventLease event_;
-    const std::shared_ptr<const runtime::SerialRequest> ordering_;
+    std::shared_ptr<const runtime::SerialRequest> ordering_;
     ProcessingPhase phase_ = ProcessingPhase::waiting;
     runtime::OperationSource completion_;
     runtime::OperationSource exit_{true};
@@ -61,9 +62,10 @@ class ProcessingSource {
     // 在业务已有结果且处理真正退出后归还顺序占用，独立数据持有继续有效。
     void finish();
   private:
+    friend class ProcessingQueue;
     // 撤回未开始处理，取消业务结果并确认无需等待运行退出。
     void cancel_unstarted();
-    const std::shared_ptr<runtime::SerialDomain> domain_;
+    std::shared_ptr<runtime::SerialDomain> domain_;
     const std::shared_ptr<ProcessingRecord> record_;
 };
 }
