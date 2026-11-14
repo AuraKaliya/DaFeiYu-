@@ -1,11 +1,13 @@
 ﻿#pragma once
 #include <dafeiyu/plugin_instance.hpp>
 #include <dafeiyu/handle_registry.hpp>
+#include <span>
 
 namespace dfy::plugins {
 class PluginDependencies;
 enum class DependencyStop { refuse_dependents, linked };
 struct DependencyShutdown { ShutdownResult result; std::shared_ptr<PluginInstance> blocked; std::size_t closed = 0; };
+struct InstanceShutdown { std::shared_ptr<PluginInstance> instance; ShutdownResult result; };
 // 绑定具体消费者和提供方实例的代码凭证，重载同名包不会替换旧绑定。
 class DependencyBinding {
   public:
@@ -47,6 +49,8 @@ class PluginDependencies {
     void release(runtime::Handle binding);
     // 默认有使用者则拒绝；显式联动时先停止依赖方，失败保留未完成关系，重复调用继续剩余部分。
     DependencyShutdown shutdown(const std::shared_ptr<PluginInstance>& provider, DependencyStop mode = DependencyStop::refuse_dependents);
+    // 在停止前合并全部依赖计划，每个具体实例本轮最多尝试一次，独立分支继续停止。
+    std::vector<InstanceShutdown> shutdown_all(std::span<const std::shared_ptr<PluginInstance>> providers);
     // 返回目录中仍未归还的绑定数，旧绑定在重新绑定后仍占名额。
     std::size_t size() const noexcept { return references_.size(); }
   private:
@@ -55,6 +59,8 @@ class PluginDependencies {
     bool cyclic(const PluginInstance* consumer, const PluginInstance* provider) const;
     // 在任何停止副作用前冻结受影响实例及依赖方优先的顺序。
     std::vector<std::shared_ptr<PluginInstance>> stop_plan(const std::shared_ptr<PluginInstance>& provider) const;
+    // 停止单个实例，仅在实际卸载后归还它的出向关系。
+    ShutdownResult stop_instance(const std::shared_ptr<PluginInstance>& instance);
     runtime::HandleRegistry<Reference> references_;
     std::vector<runtime::Handle> slots_;
 };

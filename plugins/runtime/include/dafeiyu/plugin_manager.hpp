@@ -38,6 +38,8 @@ class PluginManager {
     runtime::RunResult advance();
     // 停止新加载并尝试有序关闭全部实例，失败责任仍可显式重试。
     bool close() noexcept;
+    // 在调用 close 后查询本轮关闭结果，不用实例历史错误码推断本轮是否失败。
+    ShutdownResult close_status() const noexcept;
     // 借用固定的包管理根路径，后续文件操作仍须逐次校验实际边界。
     const std::filesystem::path& root() const;
     // 返回当前具体实例供宿主绑定能力，未知或已回收实例拒绝。

@@ -83,13 +83,33 @@ DependencyShutdown PluginDependencies::shutdown(const std::shared_ptr<PluginInst
     std::size_t closed = 0;
     for (const auto& instance : plan) {
         const bool already_closed = instance->phase() == InstancePhase::unloaded;
-        const auto result = instance->shutdown();
+        const auto result = stop_instance(instance);
         if (result != ShutdownResult::closed) return {result,instance,closed};
         if (!already_closed) ++closed;
+    }
+    return {ShutdownResult::closed,{},closed};
+}
+// 实例实际退出后才归还出向绑定，失败和正常等待均保持依赖保护。
+ShutdownResult PluginDependencies::stop_instance(const std::shared_ptr<PluginInstance>& instance) {
+    const auto result = instance->shutdown();
+    if (result == ShutdownResult::closed)
         for (auto& handle : slots_) if (!handle.empty() && references_.get(handle).binding->consumer() == instance) {
             references_.release(handle); handle = {};
         }
+    return result;
+}
+// 合并相交依赖闭包，防止一个失败消费者被不同提供方在同一轮反复停止。
+// 步骤：校验根集合 → 准备去重且消费者优先的计划 → 预留回执 → 各尝试一次并保留独立结果。
+std::vector<InstanceShutdown> PluginDependencies::shutdown_all(std::span<const std::shared_ptr<PluginInstance>> providers) {
+    if (providers.size() > PluginInstance::maximum_instances) throw std::length_error("dependencies: too many stop roots");
+    std::vector<std::shared_ptr<PluginInstance>> plan;
+    for (const auto& provider : providers) {
+        if (!provider) throw std::invalid_argument("dependencies: stop root required");
+        for (const auto& instance : stop_plan(provider))
+            if (std::find(plan.begin(),plan.end(),instance) == plan.end()) plan.push_back(instance);
     }
-    return {ShutdownResult::closed,{},closed};
+    std::vector<InstanceShutdown> results; results.reserve(plan.size());
+    for (const auto& instance : plan) results.push_back({instance,stop_instance(instance)});
+    return results;
 }
 }

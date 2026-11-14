@@ -78,11 +78,13 @@ int run(const std::vector<std::filesystem::path>& args) {
             },[&](std::string_view command) { return dfy::app::plugin_command(manager,command,std::cout,std::cerr); });
             const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
             while (!manager.close()) {
-                const auto loaded = manager.loaded();
-                if (std::any_of(loaded.begin(),loaded.end(),[](const auto& item) { return item.error != 0; }) || std::chrono::steady_clock::now() >= deadline) {
+                if (manager.close_status() == dfy::plugins::ShutdownResult::failed || std::chrono::steady_clock::now() >= deadline) {
                     std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return 1;
                 }
-                manager.advance(); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (manager.advance() == dfy::runtime::RunResult::failed) {
+                    std::cerr << "Plugin stopping failed; its resources remain retained.\n"; return 1;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
             return result;
         }

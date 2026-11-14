@@ -41,25 +41,34 @@ struct PluginManager::State {
         bool failed = false;
         for (auto& [id,entry] : instances) {
             try {
-                if (entry.stopping) entry.stopping = dependencies.shutdown(entry.instance,entry.stop_mode).result == ShutdownResult::pending;
+                if (entry.stopping) {
+                    const auto result = dependencies.shutdown(entry.instance,entry.stop_mode).result;
+                    entry.stopping = result == ShutdownResult::pending;
+                    if (result == ShutdownResult::failed) { failed = true; if (!accepting) close_result = result; }
+                }
                 else if (!entry.faulted && entry.instance->phase() == InstancePhase::active) entry.instance->advance(scheduler,entry.owner);
-            } catch (...) { entry.faulted = true; entry.stopping = false; failed = true; }
+            } catch (...) { entry.faulted = true; entry.stopping = false; failed = true; if (!accepting) close_result = ShutdownResult::failed; }
         }
         const auto result = scheduler.run_one(); collect(); return failed ? runtime::RunResult::failed : result;
     }
     // 有序停止全部实例，失败保持整个管理状态，不能依靠字段析构释放仍在使用的代码。
-    // 步骤：关闭加载接纳 → 联动停止具体实例 → 排空已有宿主包装 → 回收或保留责任。
+    // 步骤：关闭加载接纳 → 冻结去重依赖计划并各尝试一次 → 记录本轮结果 → 排空包装并回收或保留责任。
     bool close() noexcept {
-        accepting = false;
+        accepting = false; close_result = ShutdownResult::closed;
         try {
-            for (auto& [id,entry] : instances) {
-                const auto stopped = dependencies.shutdown(entry.instance,DependencyStop::linked);
-                entry.stopping = stopped.result == ShutdownResult::pending;
-                entry.stop_mode = DependencyStop::linked;
+            std::vector<std::shared_ptr<PluginInstance>> roots; roots.reserve(instances.size());
+            for (const auto& [id,entry] : instances) roots.push_back(entry.instance);
+            for (const auto& stopped : dependencies.shutdown_all(roots)) {
+                if (stopped.result == ShutdownResult::failed || (stopped.result != ShutdownResult::closed && close_result == ShutdownResult::closed))
+                    close_result = stopped.result;
+                for (auto& [id,entry] : instances) if (entry.instance == stopped.instance) {
+                    entry.stopping = stopped.result == ShutdownResult::pending;
+                    entry.stop_mode = DependencyStop::refuse_dependents;
+                }
             }
             while (scheduler.run_one() != runtime::RunResult::idle) {}
             collect(); return instances.empty();
-        } catch (...) { return false; }
+        } catch (...) { close_result = ShutdownResult::failed; return false; }
     }
     Registry registry;
     std::filesystem::path root, user_data;
@@ -70,6 +79,7 @@ struct PluginManager::State {
     std::map<std::string,Entry> instances;
     std::string directory_error;
     bool accepting = true;
+    ShutdownResult close_result = ShutdownResult::closed;
     State* next = nullptr;
 };
 PluginManager::State* PluginManager::retained_ = nullptr;
@@ -78,9 +88,10 @@ PluginManager::PluginManager(const std::filesystem::path& root, const std::files
     std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity)
     : state_(std::make_unique<State>(root,user_data,std::move(channel),capacity)) {}
 // 失败保留链节点已在状态内预留，不在退出时申请新内存。
-// 步骤：尝试完整停止 → 将未完成状态转交保留链并保留全部运行责任。
+// 步骤：保留已报告失败或尝试停止 → 将未完成状态转交保留链，不隐式重试已知失败。
 PluginManager::~PluginManager() {
-    if (!state_->close()) { state_->next = retained_; retained_ = state_.release(); }
+    const bool failed = !state_->accepting && state_->close_result == ShutdownResult::failed;
+    if (failed || !state_->close()) { state_->next = retained_; retained_ = state_.release(); }
 }
 // 刷新描述快照，不根据变化自动替换已有实例。
 // 步骤：尝试替换目录快照 → 成功清除旧错误或保存独立失败 → 按结果返回。
@@ -156,6 +167,8 @@ ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode)
 runtime::RunResult PluginManager::advance() { return state_->advance(); }
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。
 bool PluginManager::close() noexcept { return state_->close(); }
+// 只报告本轮批量关闭的裁定，历史生命周期错误继续留在实例诊断中。
+ShutdownResult PluginManager::close_status() const noexcept { return state_->close_result; }
 // 返回固定包管理根，文件系统操作不能仅依靠该字符串判断安全性。
 const std::filesystem::path& PluginManager::root() const { return state_->root; }
 // 取得当前具体实例，不因目录刷新切换到新对象。

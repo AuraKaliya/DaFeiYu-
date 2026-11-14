@@ -72,7 +72,7 @@ static dfy_v2_status DFY_V2_CALL request_stop(dfy_v2_instance* instance, dfy_v2_
         status = instance->refs->release(instance->request, error); if (status) return status;
         instance->request = empty;
     }
-    instance->delay = mode == 4 ? 1 : 0; mode = 0;
+    instance->delay = mode == 4 ? 1 : (mode == 6 ? 4 : 0); mode = 0;
     instance->stopping = 1;
     return report(DFY_V2_OK, error);
 }
