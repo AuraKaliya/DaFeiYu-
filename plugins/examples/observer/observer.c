@@ -14,7 +14,7 @@ struct dfy_v2_instance {
     const dfy_v2_struct_api_v2* structures;
     const dfy_v2_value_api_v2* values;
     const dfy_v2_array_api_v2* arrays;
-    const dfy_v2_map_api* maps;
+    const dfy_v2_map_api_v2* maps;
     const dfy_v2_enum_api* enums;
     const dfy_v2_union_api* unions;
     const dfy_v2_constraint_api_v2* constraints;
@@ -145,17 +145,23 @@ static dfy_v2_status inspect_array(dfy_v2_instance* instance, dfy_v2_handle arra
     }
     return status;
 }
-// 按确定顺序消费映射，动态键计入观察正文长度。
-// 步骤：核对约束与预算 → 取得借用键和独立值 → 消费并归还。
+// 按确定顺序消费完整映射，动态键计入观察正文长度。
+// 步骤：核对约束与预算 → 验证匿名值声明 → 取得借用键和独立值 → 递归消费并归还。
 static dfy_v2_status inspect_map(dfy_v2_instance* instance, dfy_v2_handle map, uint32_t depth, uint32_t* remaining) {
     dfy_v2_map_info info = {0}; dfy_v2_status status; uint64_t index;
+    dfy_v2_handle value_type = {0}; dfy_v2_field_info_v2 schema = {0};
     if (!depth || !*remaining) return DFY_V2_RESOURCE_EXHAUSTED;
     --*remaining;
 
     status = instance->maps->describe(map, &info, 0);
-    if (!status && (info.type.value_kind < DFY_V2_VALUE_BOOL || info.type.value_kind > DFY_V2_VALUE_BYTES ||
+    if (!status && (info.type.value_kind < DFY_V2_VALUE_BOOL || info.type.value_kind > DFY_V2_VALUE_UNION || info.type.value_kind == DFY_V2_VALUE_NULL ||
         (info.type.value_flags & ~DFY_V2_ELEMENT_NULLABLE))) status = DFY_V2_UNSUPPORTED;
     if (!status && (info.size > info.type.max_entries || info.size > *remaining)) status = DFY_V2_RESOURCE_EXHAUSTED;
+    if (!status) status = instance->maps->value_type(map, &value_type, 0);
+    if (!status) status = instance->constraints->describe(value_type, &schema, 0);
+    if (!status && (schema.name.length || schema.kind != info.type.value_kind || schema.max_bytes != info.type.max_value_bytes ||
+        schema.flags != ((info.type.value_flags & DFY_V2_ELEMENT_NULLABLE) ? DFY_V2_FIELD_NULLABLE : 0))) status = DFY_V2_FAILED;
+    if (release(instance, &value_type) && !status) status = DFY_V2_FAILED;
 
     for (index = 0; !status && index < info.size; ++index) {
         dfy_v2_handle element = {0}; dfy_v2_string_view key = {0}; dfy_v2_value_view value = {0};
@@ -316,7 +322,7 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     instance->structures = (const dfy_v2_struct_api_v2*)service(host, DFY_V2_STRUCT_INTERFACE, sizeof(dfy_v2_struct_api_v2), 2);
     instance->values = (const dfy_v2_value_api_v2*)service(host, DFY_V2_VALUE_INTERFACE, sizeof(dfy_v2_value_api_v2), 2);
     instance->arrays = (const dfy_v2_array_api_v2*)service(host, DFY_V2_ARRAY_INTERFACE, sizeof(dfy_v2_array_api_v2), 2);
-    instance->maps = (const dfy_v2_map_api*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api), 1);
+    instance->maps = (const dfy_v2_map_api_v2*)service(host, DFY_V2_MAP_INTERFACE, sizeof(dfy_v2_map_api_v2), 2);
     instance->enums = (const dfy_v2_enum_api*)service(host, DFY_V2_ENUM_INTERFACE, sizeof(dfy_v2_enum_api), 1);
     instance->unions = (const dfy_v2_union_api*)service(host, DFY_V2_UNION_INTERFACE, sizeof(dfy_v2_union_api), 1);
     instance->constraints = (const dfy_v2_constraint_api_v2*)service(host, DFY_V2_CONSTRAINT_INTERFACE, sizeof(dfy_v2_constraint_api_v2), 2);
@@ -328,7 +334,7 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
         !instance->cancels->request || !instance->cancels->read ||
         !instance->types->describe || !instance->types->field || !instance->types->nested || !instance->structures->descriptor || !instance->structures->field ||
         !instance->values->read || !instance->values->structure || !instance->arrays->field_type || !instance->arrays->describe || !instance->arrays->element || !instance->arrays->element_type ||
-        !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find ||
+        !instance->maps->field_type || !instance->maps->describe || !instance->maps->entry || !instance->maps->find || !instance->maps->value_type ||
         !instance->enums->field_type || !instance->enums->describe || !instance->enums->member || !instance->enums->descriptor || !instance->enums->read ||
         !instance->unions->describe || !instance->unions->branch || !instance->unions->descriptor || !instance->unions->read || !instance->unions->content ||
         !instance->constraints->field || !instance->constraints->describe || !instance->constraints->named_type || !instance->constraints->array || !instance->constraints->map || !instance->constraints->element) {

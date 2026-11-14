@@ -365,6 +365,85 @@ void composite_arrays(const Manifest& manifest, const std::filesystem::path& dat
     check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
         !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"array observer leaked after failure");
 }
+// 将完整映射包装为事件，键正文与实际值一同受载荷预算约束。
+// 步骤：读取映射描述 → 构造根字段约束 → 保存不可变载荷。
+std::shared_ptr<const StructValue> map_event(std::shared_ptr<const MapValue> map) {
+    const auto field = FieldDescriptor::map_field("items",map->descriptor());
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("tests.map_event",1,{&field,1},{65536,4194304,64}));
+    const NamedValue input{"items",Value::from_map(std::move(map))};
+    return std::make_shared<const StructValue>(StructValue::create(type,{&input,1},65536));
+}
+// 验证实际观察包的完整映射值、交替容器及精确消费边界。
+// 步骤：构造复杂值矩阵 → 准备共享空映射和深度边界 → 消费并卸载 → 验证失败实例隔离。
+void composite_maps(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8,65536);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,2,2);
+    FifoExecutor executor(4);
+    const auto number = Value::from_uint64(UINT64_MAX); const auto record = composite_value();
+    const EnumMember member{"min",INT64_MIN};
+    const auto enumeration = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("tests.enum",1,ValueKind::int64,{&member,1},1,32));
+    const UnionBranch branch{UINT64_MAX,{"number",ValueKind::uint64,0}};
+    const auto choice = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("tests.choice",1,{&branch,1},{1,32}));
+    const auto inner_map = std::make_shared<const MapDescriptor>(MapDescriptor::create(
+        ElementDescriptor::create({"",ValueKind::structure,0,record->descriptor()},{64,1024,64}),1,1));
+    const MapEntry entry{"k",Value::from_structure(record)};
+    const auto nested_map = Value::from_map(std::make_shared<const MapValue>(MapValue::create(inner_map,{&entry,1},128)));
+    const auto array = std::make_shared<const ArrayDescriptor>(ArrayDescriptor::create(
+        ElementDescriptor::create(FieldDescriptor::map_field("",inner_map),{64,1024,64}),1));
+    struct Input { FieldDescriptor schema; Value value; };
+    const Input examples[] = {{{"",ValueKind::structure,0,record->descriptor()},Value::from_structure(record)},
+        {FieldDescriptor::enum_field("",enumeration),Value::from_enum(std::make_shared<const EnumValue>(EnumValue::create(enumeration,INT64_MIN)))},
+        {FieldDescriptor::union_field("",choice),Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(choice,UINT64_MAX,number,16)))},
+        {FieldDescriptor::map_field("",inner_map),nested_map},
+        {FieldDescriptor::array_field("",array),Value::from_array(std::make_shared<const ArrayValue>(ArrayValue::create(array,{&nested_map,1},128)))}};
+    struct Example { std::shared_ptr<const StructValue> payload; bool accepted; };
+    std::vector<Example> cases;
+    for (const auto& example : examples) {
+        auto schema = example.schema; schema.nullable = true;
+        const auto type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ElementDescriptor::create(schema,{64,1024,64}),2,3));
+        const MapEntry values[] = {{std::string("a\0b",3),example.value},{"nil",Value::null()}};
+        cases.push_back({map_event(std::make_shared<const MapValue>(MapValue::create(type,values,128))),true});
+        cases.push_back({map_event(std::make_shared<const MapValue>(MapValue::create(type,{},0))),true});
+    }
+
+    const auto empty_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::boolean,0,0));
+    const auto empty = Value::from_map(std::make_shared<const MapValue>(MapValue::create(empty_type,{},0)));
+    const auto repeated_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(
+        ElementDescriptor::create(FieldDescriptor::map_field("",empty_type,false,true),{2,0,2}),2047,4));
+    for (bool exact : {true,false}) {
+        std::vector<MapEntry> entries; entries.push_back({"0",exact ? Value::null() : empty});
+        for (unsigned i = 1; i < 2047; ++i) entries.push_back({std::to_string(i),empty});
+        cases.push_back({map_event(std::make_shared<const MapValue>(MapValue::create(repeated_type,entries,65536))),exact});
+    }
+    auto deep_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(ValueKind::uint64,1,0));
+    const MapEntry leaf{"",number}; auto deep = std::make_shared<const MapValue>(MapValue::create(deep_type,{&leaf,1},8));
+    for (unsigned depth = 2; depth <= 32; ++depth) {
+        deep_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(
+            ElementDescriptor::create(FieldDescriptor::map_field("",deep_type),{64,0,64}),1,0));
+        const MapEntry value{"",Value::from_map(deep)};
+        deep = std::make_shared<const MapValue>(MapValue::create(deep_type,{&value,1},8));
+        if (depth >= 31) cases.push_back({map_event(deep),depth == 31});
+    }
+    for (const auto& example : cases) {
+        InstanceLimits limits; limits.references = 256;
+        PluginInstance instance(manifest,data,channel,limits);
+        check(instance.create() == DFY_V2_OK && instance.start() == DFY_V2_OK,"composite map observer setup failed");
+        channel->publish(example.payload); drain(instance,executor); const auto observed = statistics(instance);
+        check(observed.events == static_cast<uint64_t>(example.accepted) && observed.failures == static_cast<uint64_t>(!example.accepted) &&
+            channel->size() == static_cast<std::size_t>(example.accepted) && !store->references(),"composite map observer boundary or cleanup failed");
+        if (example.accepted) check(observed.kinds & (1u << DFY_V2_VALUE_MAP),"observer lost map classification");
+        check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()),"composite map observer remains loaded");
+    }
+    InstanceLimits limited; limited.references = 6;
+    PluginInstance failing(manifest,data,channel,limited), healthy(manifest,data,channel);
+    check(failing.create() == DFY_V2_OK && failing.start() == DFY_V2_OK && healthy.create() == DFY_V2_OK && healthy.start() == DFY_V2_OK,"map isolation setup failed");
+    channel->publish(cases.front().payload); drain(failing,executor);
+    check(channel->size() == 1 && store->references() == 1,"map failure blocked healthy observer");
+    drain(healthy,executor);
+    check(statistics(healthy).events == 1 && statistics(healthy).failures == 1 && !store->references(),"map failure isolation lost");
+    check(failing.shutdown() == ShutdownResult::closed && healthy.shutdown() == ShutdownResult::closed &&
+        !GetModuleHandleW(manifest.entry.c_str()) && executor.run_one() == RunResult::idle,"map observer leaked after failure");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -488,6 +567,7 @@ int wmain(int argc, wchar_t** argv) {
         enumerations(manifest, argv[2]);
         unions(manifest, argv[2]);
         composite_arrays(manifest, argv[2]);
+        composite_maps(manifest, argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
