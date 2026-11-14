@@ -59,7 +59,8 @@ int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::os
         if (!controller.closing()) {
             auto read = input.poll();
             switch (read.state) {
-            case platform::InputState::line: controller.line(std::move(read.line)); break;
+            case platform::InputState::line:
+                controller.line(std::move(read.line)); output << std::flush; errors << std::flush; break;
             case platform::InputState::end: controller.finish_input(); break;
             case platform::InputState::failed:
                 errors << "Input failed: " << read.error << '\n'; input_failed = true; controller.request_exit(); break;

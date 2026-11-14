@@ -49,10 +49,35 @@ void input_loop() {
     }
     CloseHandle(read);
 }
+struct SyncedBuffer : std::stringbuf {
+    bool command_visible = false;
+    // 记录本地命令内容是否已经同步到输出端，区分写入内存与可观察回执。
+    int sync() override { command_visible |= str().find("local result") != std::string::npos; return std::stringbuf::sync(); }
+};
+// 验证命令回执在下一次输入之前刷新，不依赖后续问答或进程退出。
+// 步骤：管道只提交一个本地命令 → 等待输出同步 → 再发送退出 → 核对无需模型调用。
+void command_flush() {
+    HANDLE read = nullptr, write = nullptr; check(CreatePipe(&read,&write,nullptr,0),"flush pipe failed");
+    DWORD count = 0; check(WriteFile(write,"/local\n",7,&count,nullptr) && count == 7,"flush command write failed");
+    try {
+        dfy::platform::LineInput input(read,1,64);
+        dfy::agent::AsyncSession session({},channel(),1,[](const auto&,const auto&) -> std::string { throw std::runtime_error("local command reached model"); });
+        SyncedBuffer buffer; std::ostream output(&buffer); std::ostringstream errors; bool sent_exit = false;
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        check(async_chat(session,input,output,errors,[&] {
+            check(std::chrono::steady_clock::now() < deadline,"local command output remained buffered");
+            if (buffer.command_visible && !sent_exit) {
+                DWORD written = 0; check(WriteFile(write,"/exit\n",6,&written,nullptr) && written == 6,"flush exit write failed"); sent_exit = true;
+            }
+        },[&](std::string_view command) { if (command != "/local") return false; output << "local result\n"; return true; }) == 0 &&
+            sent_exit && errors.str().empty(),"local output flush did not allow next input");
+    } catch (...) { CloseHandle(write); CloseHandle(read); throw; }
+    CloseHandle(write); CloseHandle(read);
+}
 }
 // 验收终端本地命令、取消和真实输入循环，模型只使用离线后台替身。
 // 步骤：验证等待期间命令 → 验证 EOF 与宿主推进 → 报告结果。
 int main() {
-    try { commands(); input_loop(); std::cout << "Async chat checks passed\n"; return 0; }
+    try { commands(); input_loop(); command_flush(); std::cout << "Async chat checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
