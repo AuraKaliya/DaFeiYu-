@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证真实后台模型线程的宿主结算、取消及退出。
+add_executable(dfy_async_model_tests async_model.cpp)
+target_link_libraries(dfy_async_model_tests PRIVATE dfy_model dfy_build_options)
+set_target_properties(dfy_async_model_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/async_model.cpp")
+add_test(NAME model.async COMMAND dfy_async_model_tests)
+set_tests_properties(model.async PROPERTIES TIMEOUT 15)
+
 # 验证真实插件实例依赖、环检查及旧绑定代码寿命。
 add_executable(dfy_plugin_dependency_tests plugin_dependencies.cpp)
 add_dependencies(dfy_plugin_dependency_tests dfy_observer)

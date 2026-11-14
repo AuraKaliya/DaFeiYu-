@@ -3,6 +3,10 @@ add_library(dfy_model STATIC config.cpp client.cpp include/dafeiyu/model_config.
 
 # 配置接口与内部依赖：公开 C++20 模型接口，JSON 和 HTTP 留在实现层。
 target_compile_features(dfy_model PUBLIC cxx_std_20)
+target_sources(dfy_model PRIVATE async_model.cpp include/dafeiyu/async_model.hpp)
+target_link_libraries(dfy_model PUBLIC dfy_runtime)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/async_model.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/async_model.hpp")
 target_include_directories(dfy_model PUBLIC include)
 target_link_libraries(dfy_model PRIVATE dfy_build_options nlohmann_json::nlohmann_json dfy_http)
 target_compile_definitions(dfy_model PRIVATE _CRT_SECURE_NO_WARNINGS)
