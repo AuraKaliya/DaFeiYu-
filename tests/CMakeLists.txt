@@ -400,6 +400,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证插件本地命令、中文路径解析及真实加载卸载。
+add_executable(dfy_plugin_command_tests plugin_commands.cpp)
+add_dependencies(dfy_plugin_command_tests dfy_observer)
+target_link_libraries(dfy_plugin_command_tests PRIVATE dfy_terminal dfy_build_options)
+set_target_properties(dfy_plugin_command_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.cpp")
+add_test(NAME app.plugin_commands COMMAND dfy_plugin_command_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/command-data/$<CONFIG>")
+set_tests_properties(app.plugin_commands PROPERTIES TIMEOUT 15)
+
 # 验证管理器发现、加载、消费、卸载及失败状态整体保留。
 add_executable(dfy_plugin_manager_tests plugin_manager.cpp)
 add_dependencies(dfy_plugin_manager_tests dfy_observer dfy_query_v2_fixture)
