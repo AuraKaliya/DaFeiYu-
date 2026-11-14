@@ -35,12 +35,13 @@ class ProcessingRecord {
     // 完整准备数据和结果记录，尚不绑定或开始处理。
     ProcessingRecord(const EventLease& event, std::shared_ptr<const runtime::SerialRequest> ordering)
         : event_(event.retain()), ordering_(std::move(ordering)) {}
+    // 额度最后归还，覆盖事件持有和处理记录成员的实际析构。
+    runtime::BudgetLease charge_;
     EventLease event_;
     std::shared_ptr<const runtime::SerialRequest> ordering_;
     ProcessingPhase phase_ = ProcessingPhase::waiting;
     runtime::OperationSource completion_;
     runtime::OperationSource exit_{true};
-    runtime::BudgetLease charge_;
 };
 
 // 同宿主线程的唯一处理完成源，宿主必须保留至 finish；客户端释放不会结束处理。

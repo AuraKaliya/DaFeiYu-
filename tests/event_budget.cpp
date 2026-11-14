@@ -53,10 +53,25 @@ void processing_owners() {
     data.reset(); check(memory->used().bytes == 8,"independent retained event lost budget");
     retained.reset(); check(!memory->used().bytes && !memory->used().items,"storage budget survived final event lease");
 }
+// 验证最后数据持有的实际释放阶段仍计费，不能先归还额度再销毁载荷。
+// 步骤：建立可观察析构的载荷 → 转入处理并释放外部持有 → 取消和回收处理 → 核对释放期间及之后的计量。
+void release_boundary() {
+    auto memory = std::make_shared<Budget>(BudgetAmount{1,8}), owner = std::make_shared<Budget>(BudgetAmount{1,8});
+    bool charged_during_release = false;
+    auto tracked = std::shared_ptr<const StructValue>(new StructValue(*payload()),[&](const StructValue* value) {
+        charged_during_release = memory->used().items == 1 && owner->used().items == 1;
+        delete value;
+    });
+    auto store = std::make_shared<EventStore>(4,8,memory); SubscriptionQueue incoming(store,1);
+    const auto handle = store->accept(tracked); tracked.reset(); incoming.push(handle); store->release(handle); auto data = incoming.poll().event;
+    ProcessingQueue processing(1,true,owner); auto record = processing.submit(data); data.reset();
+    processing.close(CloseMode::cancel); record.reset(); processing.collect();
+    check(charged_during_release && !memory->used().items && !owner->used().items,"quota returned before payload ownership was released");
+}
 }
 // 验收真实存储与处理的分层预算，区分共享存储成本和每份处理持有关系。
 // 步骤：验证事件共享计费 → 验证所有者汇总与退出寿命 → 报告结果。
 int main() {
-    try { shared_storage(); processing_owners(); std::cout << "Event budget checks passed\n"; return 0; }
+    try { shared_storage(); processing_owners(); release_boundary(); std::cout << "Event budget checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -33,9 +33,10 @@ class GroupResult : public std::enable_shared_from_this<GroupResult> {
     friend class ResultGroup;
     struct Entry { OperationState state = OperationState::pending; std::shared_ptr<const Value> value; bool cancel = false; };
     // 固定参与者槽，结果正文采用共享预算的预留上限。
-    GroupResult(std::size_t participants, BudgetLease charge) : entries_(participants), charge_(std::move(charge)) {}
-    std::vector<Entry> entries_;
+    GroupResult(std::size_t participants, BudgetLease charge) : charge_(std::move(charge)), entries_(participants) {}
+    // 预留最后归还，覆盖全部结果值的实际释放阶段。
     BudgetLease charge_;
+    std::vector<Entry> entries_;
     OperationSource source_{true};
     std::optional<std::size_t> winner_;
     std::size_t reported_ = 0, bytes_ = 0;

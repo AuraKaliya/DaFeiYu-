@@ -12,10 +12,10 @@ struct EventId {
     bool operator==(const EventId&) const = default;
 };
 struct EventRecord {
+    // 计费先构造后析构，使最后一次载荷持有实际归还后才释放额度。
+    runtime::BudgetLease storage_charge;
     const EventId id;
     const std::shared_ptr<const runtime::StructValue> payload;
-    // 同一事件的所有交付共用一份存储计费，最后一份事件持有退出后归还。
-    runtime::BudgetLease storage_charge;
 };
 
 // 同一宿主线程内顺序接纳不可变事件，所有事件持有引用共用明确的容量。

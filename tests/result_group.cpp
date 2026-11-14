@@ -49,6 +49,15 @@ void boundaries() {
     }
     check(budget->used().items == 1 && budget->used().bytes == 4 && retained->as_string() == "test","result value escaped budget or lifetime");
     retained.reset(); check(!budget->used().items && !budget->used().bytes,"result reservation leaked");
+    bool charged_during_release = false;
+    {
+        ResultGroup group(ResultStrategy::single,1,4,RemainingPolicy::keep_running,budget);
+        auto value = std::shared_ptr<const Value>(new Value(Value::from_string("held",4)),[&](const Value* item) {
+            charged_during_release = budget->used().items == 1 && budget->used().bytes == 4; delete item;
+        });
+        group.report(0,OperationState::succeeded,std::move(value));
+    }
+    check(charged_during_release && !budget->used().items,"result reservation returned before value release");
     rejects<std::invalid_argument>([] { ResultGroup invalid(ResultStrategy::single,2,0); });
     rejects<std::invalid_argument>([] { ResultGroup invalid(ResultStrategy::all_succeeded,0,0); });
 }

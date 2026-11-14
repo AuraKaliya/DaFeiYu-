@@ -25,7 +25,7 @@ std::vector<runtime::Handle> EventStore::accept_batch(std::shared_ptr<const runt
     std::vector<runtime::Handle> owned;
     owned.reserve(copies);
     auto charge = budget_->acquire({1,payload->payload_bytes()});
-    auto event = std::make_shared<const EventRecord>(EventRecord{{domain_, next_sequence_}, std::move(payload),std::move(charge)});
+    auto event = std::make_shared<const EventRecord>(EventRecord{std::move(charge),{domain_, next_sequence_},std::move(payload)});
     try {
         for (std::size_t index = 0; index < copies; ++index) owned.push_back(references_.insert(event));
     } catch (...) {
