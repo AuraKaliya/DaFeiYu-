@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证顺序域的 FIFO 授予、跨等待占用及独立取消关闭。
+add_executable(dfy_serial_domain_tests serial_domain.cpp)
+target_link_libraries(dfy_serial_domain_tests PRIVATE dfy_runtime dfy_build_options)
+set_target_properties(dfy_serial_domain_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/serial_domain.cpp")
+add_test(NAME runtime.serial_domain COMMAND dfy_serial_domain_tests)
+set_tests_properties(runtime.serial_domain PROPERTIES TIMEOUT 15)
+
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
 set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_agent_tests dfy_events_tests dfy_plugin_manifest_tests
   dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
