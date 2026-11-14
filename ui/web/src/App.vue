@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui';
 
 const text = ref('');
@@ -9,7 +9,28 @@ const composing = ref(false);
 const compositions = ref(0);
 const trustedEnds = ref(0);
 const verify = location.hash === '#verify';
-const frameUrl = 'https://probe.dafeiyu.invalid/frames/index.html?view=1' + (verify ? '#verify' : '');
+const frameUrl = ref('');
+const frameVisible = ref(false);
+const framePending = ref(false);
+
+// 只有原生宿主确认旧 Frame 已销毁后才重新申请，不由页面猜测代次。
+function openFrame(): void { framePending.value = true; window.chrome.webview.postMessage({ type: 'frame.open' }); }
+// 移除 DOM 后仍等待真实销毁回执，避免过早重新占用通道。
+function closeFrame(): void { framePending.value = true; frameVisible.value = false; }
+// 校验宿主回执再更新视图，非法数据不能注入任意 iframe 地址。
+// 步骤：收窄未知消息 → 按打开、忙碌或销毁回执更新界面。
+function hostMessage(event: MessageEvent<unknown>): void {
+  const data = event.data;
+  if (!data || typeof data !== 'object' || !('event' in data)) return;
+  if (data.event === 'frame.opened' && 'url' in data && typeof data.url === 'string' && /^https:\/\/probe\.dafeiyu\.invalid\/frames\/index\.html\?view=[1-9][0-9]*$/.test(data.url)) {
+    frameUrl.value = data.url + (verify ? '#verify' : ''); frameVisible.value = true; framePending.value = false;
+  } else if (data.event === 'frame.closed') framePending.value = false;
+  else if (data.event === 'frame.busy') framePending.value = true;
+}
+// 先登记回执再申请 Frame，避免漏掉快速返回的宿主身份。
+onMounted(() => { window.chrome.webview.addEventListener('message', hostMessage); openFrame(); });
+// 只撤销当前页面监听，不代替原生 Frame 的实际退出。
+onBeforeUnmount(() => window.chrome.webview.removeEventListener('message', hostMessage));
 
 // 组合状态按事件结束恢复，浏览器可信标记单独记录，不把协议模拟等同于系统输入法。
 // 步骤：按事件种类更新组合状态 → 记录结束次数与可信标记。
@@ -49,7 +70,8 @@ function escape(event: KeyboardEvent): void {
     </section>
     <section class="surface">
       <h2>独立来源页面</h2><p>此区域使用不同来源的 iframe；页面消息须由原生宿主授权。</p>
-      <iframe title="独立来源 Frame 验证" sandbox="allow-scripts allow-same-origin" :src="frameUrl"></iframe>
+      <div class="frame-actions"><button id="remove-frame" :disabled="!frameVisible || framePending" @click="closeFrame">移除验证页面</button><button id="reopen-frame" :disabled="frameVisible || framePending" @click="openFrame">重新打开页面</button><span>{{ framePending ? '等待原生确认' : '页面可操作' }}</span></div>
+      <iframe v-if="frameVisible" title="独立来源 Frame 验证" sandbox="allow-scripts allow-same-origin" :src="frameUrl"></iframe>
     </section>
     <footer>仅 U01 验证窗口 · 未调用模型 · 未加载业务插件</footer>
     <img src="https://network-probe.invalid/blocked.png" hidden alt="">

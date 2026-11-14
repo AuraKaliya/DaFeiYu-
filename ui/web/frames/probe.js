@@ -46,5 +46,10 @@ document.querySelector('#echo').addEventListener('click', async () => {
   const reply = await request('probe.echo', view, {}, document.querySelector('#frame-text').value);
   output.textContent = reply.decision + '：' + reply.text;
 });
+// 在新文档中重放上一代身份，由原生宿主决定是否拒绝。
+document.querySelector('#stale').addEventListener('click', async () => {
+  const reply = await request('probe.echo', String(BigInt(view) - 1n));
+  output.textContent = reply.decision;
+});
 // 只有自动验收地址运行越权和导航探针，手动输入页保持授权可用。
 if (location.hash === '#verify') verify().catch(error => { output.textContent = error.message; });

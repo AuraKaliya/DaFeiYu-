@@ -9,6 +9,7 @@ button{font:inherit;cursor:pointer;padding:10px 16px;border-radius:6px;border:1p
 .primary{background:#175c57;color:#fff;border-color:#175c57;font-weight:600}
 :focus-visible{outline:3px solid #dc9527;outline-offset:3px}.echo{min-height:28px;color:#365c58}
 iframe{display:block;width:100%;height:220px;border:1px solid #cbded7;border-radius:6px;background:#fbfdfc}
+.frame-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}button:disabled{opacity:.5;cursor:default}
 footer{font-size:13px;color:#526d68}.overlay{position:fixed;inset:0;background:#112d35a8}
 .dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#173b3d;border-radius:12px;padding:28px;box-shadow:0 16px 64px #112d3540}
 .dialog-title{font-size:22px;margin:0 0 10px}.dialog p{color:#526d68}

@@ -14,6 +14,7 @@ std::shared_ptr<FrameChannel> FrameChannel::attach(ICoreWebView2Frame* frame, st
     const auto navigate = Callback<ICoreWebView2FrameNavigationStartingEventHandler>([weak](ICoreWebView2Frame*,ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
         const auto state = weak.lock(); bool allowed = false;
         if (state && state->active_ && state->frame_) {
+            if (state->ready_) { state->ready_ = false; --state->checks_->ready; }
             try { allowed = state->scope_.navigate(read_text([&](auto** uri) { return args->get_Uri(uri); })); }
             catch (...) { state->scope_.revoke(); }
             if (!allowed) {
@@ -25,6 +26,18 @@ std::shared_ptr<FrameChannel> FrameChannel::attach(ICoreWebView2Frame* frame, st
         return args->put_Cancel(!allowed);
     });
     self->navigation_.bind(self->frame_.Get(),&ICoreWebView2Frame2::remove_NavigationStarting,[&](auto* token) { return self->frame_->add_NavigationStarting(navigate.Get(),token); });
+    // 只在当前授权文档完成加载后计为就绪，取消导航不伪造可用页面。
+    // 步骤：核对通道与加载结果 → 核对当前授权 → 登记一次就绪。
+    const auto loaded = Callback<ICoreWebView2FrameNavigationCompletedEventHandler>([weak](ICoreWebView2Frame*,ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+        if (const auto state = weak.lock(); state && state->active_ && !state->ready_) {
+            BOOL success = FALSE;
+            if (SUCCEEDED(args->get_IsSuccess(&success)) && success && state->scope_.authorize(state->scope_.url(),state->scope_.id(),"probe.echo") == FrameDecision::allowed) {
+                state->ready_ = true; ++state->checks_->ready;
+            }
+        }
+        return S_OK;
+    });
+    self->loaded_.bind(self->frame_.Get(),&ICoreWebView2Frame2::remove_NavigationCompleted,[&](auto* token) { return self->frame_->add_NavigationCompleted(loaded.Get(),token); });
     const auto message = Callback<ICoreWebView2FrameWebMessageReceivedEventHandler>([weak](ICoreWebView2Frame*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock()) return state->message(args);
         return E_ABORT;
@@ -35,7 +48,7 @@ std::shared_ptr<FrameChannel> FrameChannel::attach(ICoreWebView2Frame* frame, st
         return S_OK;
     });
     self->destroyed_.bind(frame,&ICoreWebView2Frame::remove_Destroyed,[&](auto* token) { return frame->add_Destroyed(destroyed.Get(),token); });
-    self->active_ = true; ++self->checks_->active; return self;
+    self->active_ = true; ++self->checks_->active; ++self->checks_->created; return self;
 }
 // 拒绝未登记字段和非法类型，只有实际来源及代次匹配时返回输入文本。
 // 步骤：复制有界消息 → 校验固定结构 → 裁定来源与能力 → 发回非执行式 JSON。
@@ -62,7 +75,8 @@ HRESULT FrameChannel::message(ICoreWebView2WebMessageReceivedEventArgs* args) no
 // 先撤销调用权限，再归还事件与原生 Frame；真实销毁与主动解绑分别计数。
 // 步骤：撤销权限 → 归还事件 → 释放接口 → 归还活动计数。
 void FrameChannel::close() noexcept {
-    scope_.revoke(); messages_.reset(dead_); navigation_.reset(dead_); destroyed_.reset(dead_); frame_.Reset();
+    scope_.revoke(); messages_.reset(dead_); loaded_.reset(dead_); navigation_.reset(dead_); destroyed_.reset(dead_); frame_.Reset();
+    if (ready_) { ready_ = false; --checks_->ready; }
     if (active_) { active_ = false; --checks_->active; }
 }
 }

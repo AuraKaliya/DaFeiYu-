@@ -6,7 +6,11 @@ namespace dfy::ui {
 InteractionProbe::InteractionProbe(ICoreWebView2* view, std::function<void(bool)> finished) : view_(view), finished_(std::move(finished)) {}
 // 保存一项固定方法与参数，后续由唯一推进流程执行。
 void InteractionProbe::call(std::string name, std::wstring method, Json parameters, std::function<void(const Json&)> check) {
-    steps_.push_back({std::move(name),std::move(method),std::move(parameters),false,std::move(check)});
+    steps_.push_back({std::move(name),std::move(method),std::move(parameters),false,std::move(check),{}});
+}
+// 原生等待项不发送浏览器请求，仅由消息循环观察实际回收。
+void InteractionProbe::wait_for(std::string name, std::function<bool()> ready) {
+    steps_.push_back({std::move(name),L"",Json::object(),false,{},std::move(ready)});
 }
 // 断言结果必须明确为布尔真，JavaScript 异常或其他值均拒绝。
 // 步骤：准备固定求值参数 → 登记断言 → 固定主文档或 Frame 上下文。
@@ -83,19 +87,26 @@ void InteractionProbe::start() {
 // 每项协议只在上一项回调完成后执行，晚到回调不能重启已经关闭的验收。
 // 步骤：完成或提交当前项 → 处理协议错误 → 核对结果 → 递交下一项或报告失败。
 void InteractionProbe::next() noexcept {
-    if (closed_) return;
-    if (current_ == steps_.size()) { finished_(true); return; }
+    if (closed_ || waiting_ || completed_) return;
+    if (current_ == steps_.size()) { completed_ = true; finished_(true); return; }
     try {
         const auto& step = steps_[current_]; auto parameters = step.parameters;
+        if (step.ready) {
+            if (step.ready()) { ++current_; next(); }
+            return;
+        }
         if (step.frame) parameters["contextId"] = context_;
         if (step.method == L"Page.createIsolatedWorld") parameters["frameId"] = frame_id_;
         const auto weak = weak_from_this();
+        waiting_ = true;
         require_hresult(view_->CallDevToolsProtocolMethod(step.method.c_str(),utf16(parameters.dump()).c_str(),
             Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
             // 复制协议返回值后再验证，失败时只输出固定检查名，不记录页面正文。
             // 步骤：过滤失效宿主 → 检查返回及断言 → 推进计数或报告失败。
             [weak](HRESULT status,LPCWSTR raw) -> HRESULT {
-                if (const auto self = weak.lock(); self && !self->closed_) {
+                if (const auto self = weak.lock()) {
+                    self->waiting_ = false;
+                    if (self->closed_) return S_OK;
                     try {
                         require_hresult(status);
                         if (!raw) throw std::runtime_error("Missing CDP response");
@@ -105,11 +116,40 @@ void InteractionProbe::next() noexcept {
                         ++self->current_; self->next();
                     } catch (const std::exception& error) {
                         std::fprintf(stderr,"Interaction check failed: %s (%s)\n",self->steps_[self->current_].name.c_str(),error.what());
-                        self->finished_(false);
-                    } catch (...) { self->finished_(false); }
+                        self->completed_ = true; self->finished_(false);
+                    } catch (...) { self->completed_ = true; self->finished_(false); }
                 }
                 return S_OK;
             }).Get()));
-    } catch (...) { finished_(false); }
+    } catch (const std::exception& error) {
+        std::fprintf(stderr,"Protocol submission failed: %s (%s)\n",steps_[current_].name.c_str(),error.what());
+        waiting_ = false; completed_ = true; finished_(false);
+    } catch (...) { waiting_ = false; completed_ = true; finished_(false); }
+}
+// 依次销毁和重建二十个真实 Frame，浏览器确认销毁后才允许下一轮。
+// 步骤：等待初始页面 → 验证旧视图消息拒绝 → 逐轮移除并核对原生释放 → 重新签发新代次。
+void InteractionProbe::start_lifecycle(std::shared_ptr<const FrameChecks> checks) {
+    wait_for("initial frame ready",[checks] { return checks->ready == 1 && checks->created == 1; });
+    for (unsigned cycle = 1; cycle <= 20; ++cycle) {
+        if (cycle == 2) {
+            call("replacement frame",L"Page.getFrameTree",Json::object(),[this](const Json& reply) { frame_id_ = reply.at("frameTree").at("childFrames").at(0).at("frame").at("id").get<std::string>(); });
+            call("replacement context",L"Page.createIsolatedWorld",{{"worldName","dfy-u01-check"},{"grantUniveralAccess",false}},[this](const Json& reply) { context_ = reply.at("executionContextId").get<int>(); });
+            evaluate("replay old view","document.querySelector('#stale').click(); true",true);
+            expect("old view rejected","document.querySelector('#result').textContent === 'stale_view'",true);
+            wait_for("native old-view denial",[checks] { return checks->decisions[3] == 1; });
+        }
+        evaluate("remove frame","document.querySelector('#remove-frame').click(); true");
+        wait_for("native frame released",[checks,cycle] {
+            return checks->active == 0 && checks->ready == 0 && checks->destroyed == cycle && checks->live_channels == 0;
+        });
+        expect("close acknowledgement","!document.querySelector('#reopen-frame').disabled && !document.querySelector('iframe')");
+        if (cycle < 20) {
+            evaluate("reopen frame","document.querySelector('#reopen-frame').click(); true");
+            wait_for("new frame ready",[checks,cycle] {
+                return checks->active == 1 && checks->ready == 1 && checks->created == cycle+1 && checks->live_channels == 1;
+            });
+        }
+    }
+    next();
 }
 }
