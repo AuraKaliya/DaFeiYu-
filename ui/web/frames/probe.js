@@ -31,10 +31,14 @@ window.chrome.webview.addEventListener('message', event => {
   const resolve = pending.get(event.data.request);
   if (resolve) { pending.delete(event.data.request); resolve(event.data); }
 });
-// 真实组合输入与编码回显分别记录，脚本改值不计入输入法事件。
+// 组合结束和可信标记分别记录，协议模拟不能冒充系统输入法人工验收。
 let compositions = 0;
+let trustedEnds = 0;
 document.querySelector('#frame-text').addEventListener('compositionend', event => {
-  if (event.isTrusted) document.querySelector('#composition').textContent = '组合输入完成次数：' + (++compositions);
+  const status = document.querySelector('#composition');
+  if (event.isTrusted) trustedEnds++;
+  status.dataset.count = String(++compositions);
+  status.textContent = '组合结束次数：' + compositions + '；可信标记：' + trustedEnds;
 });
 // 将用户明确提交的输入通过已授权回显链路返回，不触发其他业务。
 // 步骤：取得当前输入并提交 → 等待原生裁定 → 显示结果文本。

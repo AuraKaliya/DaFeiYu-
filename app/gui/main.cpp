@@ -1,6 +1,7 @@
 #include "../paths.hpp"
 #include "local_content.hpp"
 #include "frame_channel.hpp"
+#include "interaction_probe.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <wrl.h>
@@ -28,12 +29,13 @@ struct Window : std::enable_shared_from_this<Window> {
     std::shared_ptr<dfy::ui::LocalContent> content;
     std::shared_ptr<dfy::ui::FrameChecks> checks = std::make_shared<dfy::ui::FrameChecks>();
     std::shared_ptr<dfy::ui::FrameChannel> frame;
+    std::shared_ptr<dfy::ui::InteractionProbe> interaction;
     dfy::ui::EventSlot<ICoreWebView2_4> frames;
     std::chrono::steady_clock::time_point deadline;
     bool loaded = false;
     EventRegistrationToken navigation{};
     unsigned pending = 0;
-    bool closing = false, smoke = false, navigation_bound = false;
+    bool closing = false, smoke = false, interaction_mode = false, navigation_bound = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -45,11 +47,14 @@ struct Window : std::enable_shared_from_this<Window> {
         RECT bounds{};
         if (controller && GetClientRect(handle,&bounds)) controller->put_Bounds(bounds);
     }
+    // 将所属窗口的键盘焦点交给浏览器控件，不切换其他应用或窗口。
+    void focus() noexcept { if (controller) controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC); }
     // 关闭控制器并等待未交回的创建回调，避免回调访问已销毁窗口。
     // 步骤：关闭新接纳并隐藏 → 撤销通知并关闭浏览器 → 等待创建完成 → 销毁原生窗口。
     void close() noexcept {
         closing = true; ShowWindow(handle,SW_HIDE);
         KillTimer(handle,1); frames.reset(); if (frame) frame->close();
+        if (interaction) interaction->close();
         if (view && navigation_bound) { view->remove_NavigationCompleted(navigation); navigation_bound = false; }
         if (content) content->close();
         if (controller) controller->Close();
@@ -91,12 +96,28 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get(),&navigation));
         navigation_bound = true; resize(); require(view->Navigate((std::wstring(page)+(smoke ? L"#verify" : L"")).c_str()));
-        if (smoke) { deadline = std::chrono::steady_clock::now()+std::chrono::seconds(8); SetTimer(handle,1,20,nullptr); }
+        if (smoke || interaction_mode) { deadline = std::chrono::steady_clock::now()+std::chrono::seconds(20); SetTimer(handle,1,20,nullptr); }
     }
     // 有界等待真实异步消息，不以导航成功替代 Frame 授权验收。
     // 步骤：检查原生完成条件 → 成功请求关闭 → 超时记录边界并失败。
     void tick() noexcept {
-        if (loaded && content->blocked_requests() && checks->verified()) PostMessageW(handle,WM_CLOSE,0,0);
+        if (loaded && interaction_mode && !interaction) {
+            try {
+                const auto weak = weak_from_this();
+                const auto foreground = GetForegroundWindow();
+                require(controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC));
+                if (foreground != handle && GetForegroundWindow() == handle) throw std::runtime_error("U01: focus probe activated its window");
+                interaction = std::make_shared<dfy::ui::InteractionProbe>(view.Get(),[weak](bool passed) {
+                    if (const auto self = weak.lock()) {
+                        if (!passed) self->result = 1;
+                        else std::fprintf(stderr,"Interaction protocol checks passed: %zu\n",self->interaction->passed());
+                        PostMessageW(self->handle,WM_CLOSE,0,0);
+                    }
+                });
+                interaction->start();
+            } catch (...) { fail(); }
+        }
+        if (smoke && loaded && content->blocked_requests() && checks->verified()) PostMessageW(handle,WM_CLOSE,0,0);
         else if (std::chrono::steady_clock::now() >= deadline) {
             std::fprintf(stderr,"Frame checks: loaded=%d active=%u allowed=%u inactive=%u stale=%u forbidden=%u navigation=%u malformed=%u\n",
                 loaded,checks->active,checks->decisions[0],checks->decisions[1],checks->decisions[3],checks->decisions[4],checks->blocked_navigation,checks->malformed);
@@ -157,6 +178,7 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
     auto* state = reinterpret_cast<Window*>(GetWindowLongPtrW(window,GWLP_USERDATA));
     if (state) {
         if (message == WM_SIZE) { state->resize(); return 0; }
+        if (message == WM_SETFOCUS) { state->focus(); return 0; }
         if (message == WM_TIMER) { state->tick(); return 0; }
         if (message == WM_CLOSE) { state->close(); return 0; }
         if (message == WM_DESTROY) { PostQuitMessage(state->result); return 0; }
@@ -168,17 +190,18 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
 // 步骤：核对参数与运行库 → 创建窗口及环境 → 推进消息循环 → 释放 COM 公寓。
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool smoke = __argc == 2 && std::wstring_view(__wargv[1]) == L"--smoke";
-    if (__argc > 1 && !smoke) return 2;
+    const bool interaction_mode = __argc == 2 && std::wstring_view(__wargv[1]) == L"--interaction";
+    if (__argc > 1 && !smoke && !interaction_mode) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     try {
         LPWSTR raw = nullptr; const auto status = GetAvailableCoreWebView2BrowserVersionString(nullptr,&raw);
         std::unique_ptr<wchar_t,decltype(&CoTaskMemFree)> version(raw,&CoTaskMemFree);
         if (FAILED(status) || !version) {
-            if (!smoke) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
+            if (!smoke && !interaction_mode) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
             CoUninitialize(); return 4;
         }
-        auto state = std::make_shared<Window>(); state->smoke = smoke;
+        auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode;
         state->assets = dfy::app::executable_directory()/L"ui";
         state->profile = dfy::app::default_user_data()/L"ui-probe";
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
@@ -186,7 +209,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->handle = CreateWindowW(kind.lpszClassName,L"大肥鱼管理中心 · U01 验证",WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
-        ShowWindow(state->handle,smoke ? SW_HIDE : show);
+        ShowWindow(state->handle,smoke || interaction_mode ? SW_HIDE : show);
         try { state->start(); } catch (const std::exception& error) { state->fail(error.what()); }
         catch (...) { state->fail(); }
         MSG message{}; BOOL next;

@@ -7,15 +7,15 @@ const panelText = ref('');
 const dialogOpen = ref(false);
 const composing = ref(false);
 const compositions = ref(0);
+const trustedEnds = ref(0);
 const verify = location.hash === '#verify';
 const frameUrl = 'https://probe.dafeiyu.invalid/frames/index.html?view=1' + (verify ? '#verify' : '');
 
-// 只记录浏览器可信的真实输入法事件，粘贴或脚本改值不算组合输入验收。
-// 步骤：过滤非可信事件 → 按开始或结束更新组合状态及计数。
+// 组合状态按事件结束恢复，浏览器可信标记单独记录，不把协议模拟等同于系统输入法。
+// 步骤：按事件种类更新组合状态 → 记录结束次数与可信标记。
 function composition(event: CompositionEvent): void {
-  if (!event.isTrusted) return;
   composing.value = event.type === 'compositionstart';
-  if (event.type === 'compositionend') compositions.value++;
+  if (event.type === 'compositionend') { compositions.value++; if (event.isTrusted) trustedEnds.value++; }
 }
 // 输入法组合期间保留 Escape 给候选窗口，不把取消候选误当作关闭面板。
 function escape(event: KeyboardEvent): void {
@@ -32,17 +32,17 @@ function escape(event: KeyboardEvent): void {
         <label for="main-text">主界面中文输入<input id="main-text" v-model="text" placeholder="使用中文输入法输入文字" @compositionstart="composition" @compositionend="composition"></label>
         <label for="next-text">下一个焦点<input id="next-text" placeholder="Tab 应当到达这里"></label>
       </div>
-      <p aria-live="polite">组合输入完成次数：<strong id="composition-count">{{ compositions }}</strong> · {{ composing ? '正在选字' : '未组合' }}</p>
+      <p aria-live="polite">组合结束次数：<strong id="composition-count">{{ compositions }}</strong> · 可信标记：<span id="trusted-composition-count">{{ trustedEnds }}</span> · {{ composing ? '正在选字' : '未组合' }}</p>
       <p class="echo">当前文字：<span id="main-echo">{{ text || '尚未输入' }}</span></p>
       <DialogRoot v-model:open="dialogOpen">
-        <DialogTrigger class="primary">打开验证面板</DialogTrigger>
+        <DialogTrigger id="open-panel" class="primary">打开验证面板</DialogTrigger>
         <DialogPortal><DialogOverlay class="overlay" />
           <DialogContent class="dialog" @escape-key-down="escape">
             <DialogTitle class="dialog-title">输入与焦点验证</DialogTitle>
             <DialogDescription>Tab 应保持在面板内。输入法选字时 Escape 取消候选，结束组合后 Escape 关闭面板。</DialogDescription>
             <label for="panel-text">面板中文输入<input id="panel-text" v-model="panelText" @compositionstart="composition" @compositionend="composition"></label>
             <label for="panel-next">面板第二个焦点<input id="panel-next" placeholder="检查 Tab 与 Shift+Tab"></label>
-            <DialogClose class="primary">关闭面板</DialogClose>
+            <DialogClose id="close-panel" class="primary">关闭面板</DialogClose>
           </DialogContent>
         </DialogPortal>
       </DialogRoot>
