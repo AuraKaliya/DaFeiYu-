@@ -5,7 +5,7 @@ namespace dfy::plugins::detail {
 namespace {
 // 显式复制映射约束，不借用键或数据。
 dfy_v2_map_type_info describe_type(const runtime::MapDescriptor& type) {
-    return {value_kind(type.value_kind(),2), type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,
+    return {value_kind(type.value_kind(),1), type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,
         type.max_entries(), type.max_key_bytes(), type.max_value_bytes()};
 }
 // 读取结构字段的映射约束，错误输出清空。
@@ -38,6 +38,7 @@ dfy_v2_status DFY_V2_CALL entry(dfy_v2_handle source, uint64_t index, dfy_v2_str
     return boundary(error,[&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::Value>>(host.references.get(native(source)).object);
         const auto& map = parent->as_map();
+        (void)value_kind(map.descriptor()->value_kind(),1);
         if (index >= map.size()) return DFY_V2_INVALID_ARGUMENT;
         const auto& item = map.at(static_cast<std::size_t>(index));
         *output = store_object(host,std::shared_ptr<const runtime::Value>(parent,&item.value));
@@ -53,7 +54,9 @@ dfy_v2_status DFY_V2_CALL find(dfy_v2_handle source, dfy_v2_string_view key, dfy
     if (!output || (!key.data && key.length)) return DFY_V2_INVALID_ARGUMENT;
     return boundary(error,[&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::Value>>(host.references.get(native(source)).object);
-        const auto* value = parent->as_map().find({key.data ? key.data : "",static_cast<std::size_t>(key.length)});
+        const auto& map = parent->as_map();
+        (void)value_kind(map.descriptor()->value_kind(),1);
+        const auto* value = map.find({key.data ? key.data : "",static_cast<std::size_t>(key.length)});
         if (!value) return DFY_V2_NOT_FOUND;
         *output = store_object(host,std::shared_ptr<const runtime::Value>(parent,value));
         return DFY_V2_OK;

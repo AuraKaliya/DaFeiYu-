@@ -2,12 +2,14 @@
 #include <dafeiyu/array_value.hpp>
 
 namespace dfy::runtime {
-// 第一版映射以 UTF-8 字符串为键，值限定为六种基础类型并可独立允许 null。
+// 映射以 UTF-8 字符串为键，值持有完整匿名约束并可独立允许 null。
 class MapDescriptor {
   public:
     // 校验条目、键和标量值约束；数量上限沿用 65536 的容器硬边界。
     static MapDescriptor create(ValueKind value_kind, std::size_t max_entries, std::size_t max_key_bytes,
         std::size_t max_value_bytes = 0, bool nullable = false);
+    // 使用完整匿名值约束创建映射，条目数量仍受 65536 的硬上限限制。
+    static MapDescriptor create(const ElementDescriptor& element, std::size_t max_entries, std::size_t max_key_bytes);
     // 复制不可变映射约束。
     MapDescriptor(const MapDescriptor&) = default;
     // 禁止修改已经发布的约束。
@@ -33,7 +35,7 @@ class MapDescriptor {
     // 比较完整映射约束，键和值预算都是定义的一部分。
     bool equivalent(const MapDescriptor& other) const noexcept { return values_.equivalent(other.values_) && max_key_bytes_ == other.max_key_bytes_; }
   private:
-    // 接收已经校验的标量约束和键上限。
+    // 接收已经校验的完整内容约束和键上限。
     MapDescriptor(ArrayDescriptor values, std::size_t key_bytes) : values_(std::move(values)), max_key_bytes_(key_bytes) {}
     const ArrayDescriptor values_;
     const std::size_t max_key_bytes_;
@@ -59,14 +61,14 @@ class MapValue {
     const Value* find(std::string_view key) const noexcept;
     // 返回包含键和实际值正文的逻辑字节数。
     std::size_t payload_bytes() const noexcept { return payload_bytes_; }
-    // 根、每个键及每个实际值分别占节点，空键和 null 也计入。
-    std::size_t node_count() const noexcept { return 1 + 2 * entries_.size(); }
+    // 根与每个键各占节点，实际值按完整节点累计，空键和 null 也计入。
+    std::size_t node_count() const noexcept { return node_count_; }
   private:
     // 保存已校验的排序副本及正文计量。
-    MapValue(std::shared_ptr<const MapDescriptor> descriptor, std::vector<MapEntry> entries, std::size_t bytes)
-        : descriptor_(std::move(descriptor)), entries_(std::move(entries)), payload_bytes_(bytes) {}
+    MapValue(std::shared_ptr<const MapDescriptor> descriptor, std::vector<MapEntry> entries, std::size_t bytes, std::size_t nodes)
+        : descriptor_(std::move(descriptor)), entries_(std::move(entries)), payload_bytes_(bytes), node_count_(nodes) {}
     const std::shared_ptr<const MapDescriptor> descriptor_;
     const std::vector<MapEntry> entries_;
-    const std::size_t payload_bytes_;
+    const std::size_t payload_bytes_, node_count_;
 };
 }

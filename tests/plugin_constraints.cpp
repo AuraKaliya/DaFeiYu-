@@ -107,6 +107,22 @@ int main() {
             check(service<dfy_v2_enum_api>(DFY_V2_ENUM_INTERFACE).describe(definition,&enum_info,nullptr) == DFY_V2_OK && enum_info.member_count == 1,"element type lost independent lifetime");
             refs.release(definition,nullptr);
             check(!limited.references(),"legacy array rejection leaked");
+            const auto map_type = std::make_shared<const MapDescriptor>(MapDescriptor::create(elements,1,3));
+            const MapEntry entry{"nil",null};
+            const auto map_value = limited.expose(std::make_shared<const Value>(Value::from_map(
+                std::make_shared<const MapValue>(MapValue::create(map_type,{&entry,1},3,3)))));
+            const auto map_field = FieldDescriptor::map_field("lookup",map_type);
+            const auto map_schema = limited.expose(std::make_shared<const StructDescriptor>(StructDescriptor::create("test.map",1,{&map_field,1},{3,64,2})));
+            const auto& maps = service<dfy_v2_map_api>(DFY_V2_MAP_INTERFACE); dfy_v2_map_info map_info{}; dfy_v2_string_view key{"old",3};
+            check(maps.describe(map_value,&map_info,nullptr) == DFY_V2_UNSUPPORTED && !map_info.type.value_kind &&
+                maps.entry(map_value,0,&key,&rejected,nullptr) == DFY_V2_UNSUPPORTED && !key.data && !rejected.id &&
+                maps.find(map_value,{"nil",3},&rejected,nullptr) == DFY_V2_UNSUPPORTED && !rejected.id,"legacy map accepted composite null");
+            check(api.field(map_schema,0,&named,nullptr) == DFY_V2_OK && api.map(named,&map,nullptr) == DFY_V2_UNSUPPORTED && !map.value_kind &&
+                extended.map(named,&map,nullptr) == DFY_V2_OK && map.value_kind == DFY_V2_VALUE_ENUM,"map constraint version boundary failed");
+            check(extended.element(named,&element,nullptr) == DFY_V2_OK && extended.describe(element,&info,nullptr) == DFY_V2_OK &&
+                !info.name.length && info.kind == DFY_V2_VALUE_ENUM && info.flags == DFY_V2_FIELD_NULLABLE,"full map value constraint lost");
+            refs.release(element,nullptr); refs.release(named,nullptr); refs.release(map_schema,nullptr); refs.release(map_value,nullptr);
+            check(!limited.references(),"legacy map rejection leaked");
         }
         type.reset(); refs.release(root,nullptr);
         check(!lifetime.expired() && api.describe(constraint,&info,nullptr) == DFY_V2_OK && info.max_bytes == 4,"constraint lost parent metadata");
