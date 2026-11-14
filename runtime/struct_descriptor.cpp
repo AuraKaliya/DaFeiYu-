@@ -11,10 +11,11 @@ StructDescriptor StructDescriptor::create(std::string_view name, std::uint32_t v
         metrics.depth,metrics.total_fields,metrics.name_bytes);
 }
 // 在已限定深度和规模的快照之间比较定义，重复引用同一快照直接匹配。
-// 步骤：比较身份和数量 → 顺序比较字段约束 → 比较嵌套定义。
+// 步骤：比较身份和数量 → 顺序比较每个字段的完整内容约束。
 bool StructDescriptor::equivalent(const StructDescriptor& other) const noexcept {
     if (this == &other) return true;
     if (name_ != other.name_ || version_ != other.version_ || fields_.size() != other.fields_.size()) return false;
+
     for (std::size_t i = 0; i < fields_.size(); ++i) {
         if (!detail::equivalent_field(fields_[i],other.fields_[i])) return false;
     }

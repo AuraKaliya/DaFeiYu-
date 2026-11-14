@@ -6,7 +6,7 @@
 #include <dafeiyu/union_value.hpp>
 
 namespace dfy::runtime::detail {
-// 统一结构字段和联合分支的内容验证，不隐式转换种类或放宽子描述约束。
+// 统一字段、分支及容器内容的完整约束验证，不隐式转换种类或放宽子描述。
 // 步骤：区分 null 与正常种类 → 比较完整子定义 → 核对文本或字节上限。
 void validate_field(const FieldDescriptor& field, const Value& value) {
     if (value.kind() == ValueKind::null_value) {

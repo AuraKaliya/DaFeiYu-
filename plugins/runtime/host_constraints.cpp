@@ -9,6 +9,7 @@ namespace {
 dfy_v2_status DFY_V2_CALL field(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::StructDescriptor>>(host.references.get(native(type)).object);
         if (index >= parent->fields().size()) return DFY_V2_INVALID_ARGUMENT;
@@ -23,6 +24,7 @@ dfy_v2_status DFY_V2_CALL field(dfy_v2_handle type, uint64_t index, dfy_v2_handl
 dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle source, dfy_v2_field_info_v2* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         *output = {{field.name.data(),field.name.size()},value_kind(field.kind,2),
@@ -35,6 +37,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle source, dfy_v2_field_info_v2* o
 dfy_v2_status DFY_V2_CALL named_type(dfy_v2_handle source, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (field.structure) *output = store_object(host,field.structure);
@@ -49,6 +52,7 @@ dfy_v2_status DFY_V2_CALL named_type(dfy_v2_handle source, dfy_v2_handle* output
 dfy_v2_status array_info(dfy_v2_handle source, dfy_v2_array_type_info* output, dfy_v2_error* error, uint32_t profile) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (!field.array) return DFY_V2_INVALID_ARGUMENT;
@@ -62,6 +66,7 @@ dfy_v2_status array_info(dfy_v2_handle source, dfy_v2_array_type_info* output, d
 dfy_v2_status map_info(dfy_v2_handle source, dfy_v2_map_type_info* output, dfy_v2_error* error, uint32_t profile) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& field = object<runtime::FieldDescriptor>(host,source);
         if (!field.map) return DFY_V2_INVALID_ARGUMENT;
@@ -91,6 +96,7 @@ dfy_v2_status DFY_V2_CALL map_v2(dfy_v2_handle source, dfy_v2_map_type_info* out
 dfy_v2_status DFY_V2_CALL element(dfy_v2_handle source, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::FieldDescriptor>>(host.references.get(native(source)).object);
         const auto* selected = parent->array ? &parent->array->element().constraint() : parent->map ? &parent->map->element().constraint() : nullptr;

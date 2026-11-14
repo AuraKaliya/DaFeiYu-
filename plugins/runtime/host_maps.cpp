@@ -8,10 +8,12 @@ dfy_v2_map_type_info describe_type(const runtime::MapDescriptor& type, uint32_t 
     return {value_kind(type.value_kind(),profile), type.nullable() ? DFY_V2_ELEMENT_NULLABLE : 0,
         type.max_entries(), type.max_key_bytes(), type.max_value_bytes()};
 }
-// 读取结构字段的映射约束，错误输出清空。
+// 按精确数据版本读取结构字段的映射约束，错误输出清空。
+// 步骤：清空输出 → 核对绑定及映射字段 → 映射版本分类并复制约束。
 dfy_v2_status field_info(dfy_v2_handle source, uint64_t index, dfy_v2_map_type_info* output, dfy_v2_error* error, uint32_t profile) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         const auto fields = object<runtime::StructDescriptor>(host,source).fields();
         if (index >= fields.size() || !fields[static_cast<std::size_t>(index)].map) return DFY_V2_INVALID_ARGUMENT;
@@ -19,10 +21,12 @@ dfy_v2_status field_info(dfy_v2_handle source, uint64_t index, dfy_v2_map_type_i
         return DFY_V2_OK;
     });
 }
-// 返回实际映射约束和数量，不复制任何条目。
+// 按精确数据版本返回实际映射约束和数量，不复制任何条目。
+// 步骤：清空输出 → 核对映射值 → 映射值分类并复制实际数量。
 dfy_v2_status describe_value(dfy_v2_handle source, dfy_v2_map_info* output, dfy_v2_error* error, uint32_t profile) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         const auto& map = object<runtime::Value>(host,source).as_map();
         *output = {describe_type(*map.descriptor(),profile),map.size()};
@@ -30,11 +34,12 @@ dfy_v2_status describe_value(dfy_v2_handle source, dfy_v2_map_info* output, dfy_
     });
 }
 // 在值引用成功签发后才交付键借用，失败不留下部分输出。
-// 步骤：清空输出 → 核对映射和索引 → 保留值别名 → 返回键借用。
+// 步骤：清空输出 → 核对映射声明版本和索引 → 保留值别名 → 返回键借用。
 dfy_v2_status entry_value(dfy_v2_handle source, uint64_t index, dfy_v2_string_view* key, dfy_v2_handle* output, dfy_v2_error* error, uint32_t profile) {
     if (key) *key = {};
     if (output) *output = {};
     if (!key || !output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::Value>>(host.references.get(native(source)).object);
         const auto& map = parent->as_map();
@@ -47,11 +52,12 @@ dfy_v2_status entry_value(dfy_v2_handle source, uint64_t index, dfy_v2_string_vi
     });
 }
 // 按完整键查找，空键可用，存在的 null 不当作未知键。
-// 步骤：清空输出并校验视图 → 查询实际键 → 签发独立值持有或报告未知。
+// 步骤：清空输出并校验视图 → 核对声明版本并查询实际键 → 签发独立值持有或报告未知。
 dfy_v2_status find_value(dfy_v2_handle source, dfy_v2_string_view key, dfy_v2_handle* output, dfy_v2_error* error, uint32_t profile) {
     if (output) *output = {};
     if (error) error->length = 0;
     if (!output || (!key.data && key.length)) return DFY_V2_INVALID_ARGUMENT;
+
     return boundary(error,[&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::Value>>(host.references.get(native(source)).object);
         const auto& map = parent->as_map();
@@ -99,6 +105,7 @@ dfy_v2_status DFY_V2_CALL find_v2(dfy_v2_handle source, dfy_v2_string_view key, 
 dfy_v2_status DFY_V2_CALL value_type(dfy_v2_handle source, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error,[&](auto& host) {
         const auto descriptor = object<runtime::Value>(host,source).as_map().descriptor();
         *output = store_object(host,std::shared_ptr<const runtime::FieldDescriptor>(descriptor,&descriptor->element().constraint()));

@@ -33,9 +33,11 @@ std::shared_ptr<SubscriptionQueue> BroadcastChannel::subscribe() {
 // 步骤：校验成员预算 → 查找接收名额 → 完整创建组 → 提交组队列别名。
 std::shared_ptr<ConsumerGroup> BroadcastChannel::subscribe_group(std::size_t member_capacity) {
     if (!member_capacity) throw std::invalid_argument("broadcast: positive group member capacity required");
+
     for (auto& subscription : subscriptions_) {
         if (subscription) continue;
         auto group = std::make_shared<ConsumerGroup>(store_,member_capacity,queue_capacity_);
+
         subscription = std::shared_ptr<SubscriptionQueue>(group,&group->queue_);
         ++size_;
         return group;

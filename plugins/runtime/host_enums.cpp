@@ -18,6 +18,7 @@ dfy_v2_value_view number_view(const runtime::EnumNumber& number) {
 dfy_v2_status DFY_V2_CALL field_type(dfy_v2_handle type, uint64_t index, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto fields = object<runtime::StructDescriptor>(host, type).fields();
         if (index >= fields.size() || !fields[static_cast<std::size_t>(index)].enumeration) return DFY_V2_INVALID_ARGUMENT;
@@ -30,6 +31,7 @@ dfy_v2_status DFY_V2_CALL field_type(dfy_v2_handle type, uint64_t index, dfy_v2_
 dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle type, dfy_v2_enum_info* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& descriptor = object<runtime::EnumDescriptor>(host, type);
         *output = {{descriptor.name().data(),descriptor.name().size()},descriptor.version(),value_kind(descriptor.underlying()),descriptor.members().size()};
@@ -41,6 +43,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle type, dfy_v2_enum_info* output,
 dfy_v2_status DFY_V2_CALL member(dfy_v2_handle type, uint64_t index, dfy_v2_enum_member* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto members = object<runtime::EnumDescriptor>(host, type).members();
         if (index >= members.size()) return DFY_V2_INVALID_ARGUMENT;
@@ -54,6 +57,7 @@ dfy_v2_status DFY_V2_CALL member(dfy_v2_handle type, uint64_t index, dfy_v2_enum
 dfy_v2_status DFY_V2_CALL descriptor(dfy_v2_handle value, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         *output = store_object(host, object<runtime::Value>(host,value).as_enum().descriptor());
         return DFY_V2_OK;
@@ -64,6 +68,7 @@ dfy_v2_status DFY_V2_CALL descriptor(dfy_v2_handle value, dfy_v2_handle* output,
 dfy_v2_status DFY_V2_CALL read(dfy_v2_handle value, dfy_v2_enum_selection* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& selected = object<runtime::Value>(host,value).as_enum();
         *output = {selected.index(),number_view(selected.member().number)};

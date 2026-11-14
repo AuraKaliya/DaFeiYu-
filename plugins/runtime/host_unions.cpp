@@ -8,6 +8,7 @@ namespace {
 dfy_v2_status DFY_V2_CALL describe(dfy_v2_handle source, dfy_v2_union_info* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& type = object<runtime::UnionDescriptor>(host,source);
         *output = {{type.name().data(),type.name().size()},type.version(),0,type.branches().size()};
@@ -20,6 +21,7 @@ dfy_v2_status DFY_V2_CALL branch(dfy_v2_handle source, uint64_t index, uint64_t*
     if (tag) *tag = 0;
     if (output) *output = {};
     if (!tag || !output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::UnionDescriptor>>(host.references.get(native(source)).object);
         if (index >= parent->branches().size()) return DFY_V2_INVALID_ARGUMENT;
@@ -34,6 +36,7 @@ dfy_v2_status DFY_V2_CALL branch(dfy_v2_handle source, uint64_t index, uint64_t*
 dfy_v2_status DFY_V2_CALL descriptor(dfy_v2_handle source, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         *output = store_object(host,object<runtime::Value>(host,source).as_union().descriptor());
         return DFY_V2_OK;
@@ -44,6 +47,7 @@ dfy_v2_status DFY_V2_CALL descriptor(dfy_v2_handle source, dfy_v2_handle* output
 dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_union_selection* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& value = object<runtime::Value>(host,source).as_union();
         *output = {value.index(),value.tag()};
@@ -55,6 +59,7 @@ dfy_v2_status DFY_V2_CALL read(dfy_v2_handle source, dfy_v2_union_selection* out
 dfy_v2_status DFY_V2_CALL content(dfy_v2_handle source, dfy_v2_handle* output, dfy_v2_error* error) {
     if (output) *output = {};
     if (!output) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
+
     return boundary(error, [&](auto& host) {
         const auto& parent = std::get<std::shared_ptr<const runtime::Value>>(host.references.get(native(source)).object);
         *output = store_object(host,std::shared_ptr<const runtime::Value>(parent,&parent->as_union().value()));

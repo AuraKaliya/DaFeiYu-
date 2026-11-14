@@ -8,6 +8,7 @@ ConsumerGroup::ConsumerGroup(std::shared_ptr<EventStore> store, std::size_t memb
 // 步骤：核对开放状态 → 签发唯一成员身份。
 MemberId ConsumerGroup::join() {
     if (queue_.state() != QueueState::open) throw std::logic_error("group: joining closed admission");
+
     return members_.insert(std::make_shared<const Member>(),false);
 }
 // 只撤销当前成员登记，已领取事件和其他成员保持原状态。

@@ -171,7 +171,8 @@ void integration() {
     rejects<std::length_error>([&] { (void)StructDescriptor::create("test.too_deep",1,{&excessive,1},{65,4096,64}); });
 }
 }
-// 验收有界联合描述和不可变选择，跨 DLL 读取另行接入。
+// 验收联合描述、不可变值以及结构和目录集成。
+// 步骤：检查分支描述 → 检查不可变选择 → 验收嵌套及目录 → 报告结果。
 int main() {
     try { descriptions(); values(); integration(); std::cout << "Union descriptor and value checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

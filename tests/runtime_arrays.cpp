@@ -145,6 +145,7 @@ void composites() {
 }
 }
 // 验收标量及组合数组的完整内容约束、展开预算和命名依赖。
+// 步骤：验收基础元素 → 核对父结构约束 → 验收组合及嵌套 → 报告结果。
 int main() {
     try { scalars(); structures(); composites(); std::cout << "Scalar and composite array checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -146,6 +146,7 @@ void integrated_delivery() {
 }
 }
 // 验收有界成员与交付层单次领取，不将数据交出或释放当作业务成功。
+// 步骤：核对成员与数据寿命 → 验证关闭语义 → 验收共同接纳 → 报告结果。
 int main() {
     try { members(); closure(); integrated_delivery(); std::cout << "Consumer group membership checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

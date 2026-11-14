@@ -537,8 +537,8 @@ void failures(const Manifest& manifest, const std::filesystem::path& data, const
         "failure paths leaked or empty-plugin publication broke");
 }
 }
-// 使用实际目录包和纯 C 观察 DLL 验收创建、反射消费与安全卸载。
-// 步骤：读取包并装配 → 创建启动 → 发布并显式推进 → 核对精度与引用 → 停止销毁并确认卸载。
+// 验收实际观察包的完整类型消费、预算边界和安全退出。
+// 步骤：装配并验收基础消费 → 验证重载、取消和失败隔离 → 逐类验收组合类型及精确预算 → 确认回收结果。
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3, "expected observer package and userdata path");

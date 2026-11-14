@@ -116,8 +116,8 @@ void fields() {
     definition_failure(opposite,DefinitionFailure::conflicting_definition,[&] { opposite.define(*type); });
 }
 }
-// 验证整数精度、唯一成员、严格身份和不可变快照。
-// 步骤：构造边界成员 → 核对顺序与输入隔离 → 拒绝非法定义和超限 → 比较完整定义。
+// 验收闭合枚举的描述、值、结构字段和类型目录。
+// 步骤：验证成员值和字段约束 → 核对描述精度及输入隔离 → 拒绝非法定义和超限 → 比较完整定义。
 int main() {
     try {
         values();

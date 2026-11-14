@@ -70,8 +70,8 @@ void composites() {
     rejects<std::length_error>([&] { (void)MapValue::create(repeated_type,repeated,SIZE_MAX,SIZE_MAX); });
 }
 }
-// 验证 UTF-8 键、确定顺序、空值区分、输入副本与完整约束匹配。
-// 步骤：构造并排序 → 验证精确查询和输入隔离 → 拒绝无效及超限 → 校验父结构和定义冲突。
+// 验证标量及组合映射的键语义、完整内容约束与数据预算。
+// 步骤：验收组合值与嵌套预算 → 核对键顺序及输入隔离 → 拒绝非法与超限 → 验证父结构及持有寿命。
 int main() {
     try {
         composites();
