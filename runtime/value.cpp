@@ -2,6 +2,7 @@
 #include <dafeiyu/struct_value.hpp>
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
+#include <dafeiyu/enum_value.hpp>
 
 namespace dfy::runtime {
 // 接收宿主已构造的不可变结构，不允许空指针伪装成结构或 null。
@@ -19,13 +20,19 @@ Value Value::from_map(std::shared_ptr<const MapValue> value) {
     if (!value) throw std::invalid_argument("value: nonempty map required");
     return Value(std::move(value));
 }
+// 保存不可变枚举持有，不接受空指针或隐式整数。
+Value Value::from_enum(std::shared_ptr<const EnumValue> value) {
+    if (!value) throw std::invalid_argument("value: nonempty enum required");
+    return Value(std::move(value));
+}
 // 读取已确定类型的逻辑正文计量，不遍历不可变子结构。
 std::size_t Value::payload_bytes() const {
     switch (kind()) {
     case ValueKind::boolean: return 1;
     case ValueKind::int64:
     case ValueKind::uint64:
-    case ValueKind::float64: return 8;
+    case ValueKind::float64:
+    case ValueKind::enumeration: return 8;
     case ValueKind::string: return as_string().size();
     case ValueKind::bytes: return as_bytes().size();
     case ValueKind::structure: return as_structure().payload_bytes();
@@ -47,7 +54,8 @@ std::size_t Value::node_count() const {
     case ValueKind::float64:
     case ValueKind::string:
     case ValueKind::bytes:
-    case ValueKind::null_value: return 1;
+    case ValueKind::null_value:
+    case ValueKind::enumeration: return 1;
     }
     throw std::invalid_argument("value: unsupported kind");
 }

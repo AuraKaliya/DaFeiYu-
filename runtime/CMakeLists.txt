@@ -5,9 +5,11 @@ add_library(dfy_runtime STATIC ids.cpp value.cpp array_value.cpp map_value.cpp s
   include/dafeiyu/struct_value.hpp include/dafeiyu/fifo_executor.hpp include/dafeiyu/operation.hpp
   include/dafeiyu/completion_notifications.hpp include/dafeiyu/resource_owner.hpp include/dafeiyu/array_value.hpp include/dafeiyu/map_value.hpp)
 target_compile_features(dfy_runtime PUBLIC cxx_std_20)
-target_sources(dfy_runtime PRIVATE enum_descriptor.cpp descriptor_name.hpp include/dafeiyu/enum_descriptor.hpp)
+target_sources(dfy_runtime PRIVATE enum_descriptor.cpp enum_value.cpp descriptor_name.hpp
+  include/dafeiyu/enum_descriptor.hpp include/dafeiyu/enum_value.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/enum_descriptor.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/descriptor_name.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/enum_value.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/enum_value.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/enum_descriptor.hpp")
 target_include_directories(dfy_runtime PUBLIC include)
 target_link_libraries(dfy_runtime PRIVATE dfy_build_options)

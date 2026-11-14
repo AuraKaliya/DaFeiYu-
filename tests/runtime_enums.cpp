@@ -1,4 +1,5 @@
 #include <dafeiyu/enum_descriptor.hpp>
+#include <dafeiyu/enum_value.hpp>
 #include <iostream>
 
 namespace {
@@ -8,11 +9,43 @@ void check(bool condition, const char* message) { if (!condition) throw std::run
 // 要求输入以指定异常类别拒绝，避免无关异常掩盖结果。
 template<class Error, class Action>
 void rejects(Action action) { try { action(); } catch (const Error&) { return; } throw std::runtime_error("enum input accepted"); }
+// 验证枚举值的成员选择、数据计量、精确类型和共享描述寿命。
+// 步骤：选择整数极值 → 核对分类和计量 → 拒绝未知值与错误种类 → 释放来源并验证最终回收。
+void values() {
+    const EnumMember members[] = {{"min", INT64_MIN}, {"max", INT64_MAX}};
+    auto descriptor = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("test.value", 1, ValueKind::int64, members, 2, 16));
+    auto enumeration = std::make_shared<const EnumValue>(EnumValue::create(descriptor, INT64_MIN));
+    const auto value = Value::from_enum(enumeration);
+    check(value.kind() == ValueKind::enumeration && value.payload_bytes() == 8 && value.node_count() == 1 &&
+        value.as_enum().index() == 0 && std::get<std::int64_t>(value.as_enum().member().number) == INT64_MIN, "enum selection or accounting wrong");
+    check(EnumValue::create(descriptor, INT64_MAX).index() == 1, "signed maximum enum lost");
+    rejects<std::invalid_argument>([&] { (void)EnumValue::create(descriptor, std::int64_t{0}); });
+    rejects<std::invalid_argument>([&] { (void)EnumValue::create(descriptor, std::uint64_t{0}); });
+    rejects<std::invalid_argument>([] { (void)EnumValue::create({}, std::int64_t{0}); });
+    rejects<std::invalid_argument>([] { (void)Value::from_enum({}); });
+    rejects<std::bad_variant_access>([&] { (void)value.as_int64(); });
+    rejects<std::bad_variant_access>([] { (void)Value::from_int64(1).as_enum(); });
+
+    std::weak_ptr<const EnumDescriptor> observed;
+    std::weak_ptr<const EnumValue> observed_value;
+    {
+        const EnumMember member{"max", UINT64_MAX};
+        auto source = std::make_shared<const EnumDescriptor>(EnumDescriptor::create("test.unsigned", 1, ValueKind::uint64, {&member,1}, 1, 16));
+        auto selected = std::make_shared<const EnumValue>(EnumValue::create(source, UINT64_MAX));
+        observed = source; observed_value = selected;
+        const auto held = Value::from_enum(selected);
+        source.reset(); selected.reset();
+        check(!observed.expired() && !observed_value.expired() && std::get<std::uint64_t>(held.as_enum().member().number) == UINT64_MAX,
+            "enum borrowed source or lost unsigned precision");
+    }
+    check(observed.expired() && observed_value.expired(), "enum retained after last owner");
+}
 }
 // 验证整数精度、唯一成员、严格身份和不可变快照。
 // 步骤：构造边界成员 → 核对顺序与输入隔离 → 拒绝非法定义和超限 → 比较完整定义。
 int main() {
     try {
+        values();
         std::vector<EnumMember> members{{"min", INT64_MIN}, {"zero", std::int64_t{0}}, {"max", INT64_MAX}};
         const auto type = EnumDescriptor::create("test.signed", UINT32_MAX, ValueKind::int64, members, 3, 21);
         check(type.version() == UINT32_MAX && type.name_bytes() == 21 && type.index_of(INT64_MIN) == 0 &&

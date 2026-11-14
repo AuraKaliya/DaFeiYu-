@@ -22,6 +22,8 @@ uint32_t value_kind(runtime::ValueKind kind, uint32_t profile) {
     case runtime::ValueKind::map:
         if (profile == 2) return DFY_V2_VALUE_MAP;
         throw std::domain_error("host: map unavailable in data capability v1");
+    case runtime::ValueKind::enumeration:
+        throw std::domain_error("host: enum capability unavailable");
     }
     throw std::invalid_argument("host: unsupported value kind");
 }
