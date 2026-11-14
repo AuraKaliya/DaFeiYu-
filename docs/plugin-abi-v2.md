@@ -1,10 +1,20 @@
 # 插件 C ABI v2 最小接口契约
 
-当前 R06 生产宿主适配、R07b 实例控制与失败保留、R08 独立观察包完整链路均已验收。R09 已提供完整组合数据；观察包 0.7.0 支持这些类型，并通过 R10 的独立订阅及组消费验收。完整范围见 [开发指导](foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
+当前基础阶段 R01～R16 已完成开发和自动验收，包含生产宿主、生命周期、完整组合数据、组消费、显式处理结束及正式 App 管理。观察包 0.7.0 可从分发 SDK 独立构建，跨配置与真实服务插件切换均已验证。完整范围见 [开发指导](foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
 
 R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。当时的隔离验收不包含生产运行时；现已由独立 `PluginModuleV2`、`HostServices` 和 `PluginInstance` 装配生产能力，原 `PluginModule` 保持 v1。
 
 R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具](../tests/fixtures/query_v2/operation.c)和[隔离宿主](../tests/sdk_operations_v2.cpp)验证受理、快照读取、唯一终态和引用寿命。本步不提供生产操作执行、结果载荷读取、取消请求或完成通知。
+
+## 显式处理能力
+
+[processing_abi_v2.h](../sdk/include/dafeiyu/processing_abi_v2.h) 定义 `dfy.processing@1`：56 字节表含 `read`、`start`、`complete`、`finish`、`cancel`、`payload`。48 字节快照包含 phase、result、exit、cancel_reason 四个 uint32，以及事件域／序号、顺序域／序号四个 uint64；order_domain 位于偏移 32。C11／C++20 均检查布局及外层打包恢复。
+
+宿主显式启用有界处理队列并提交真实事件后才提供处理引用；普通观察读取不自动进入业务参与者集合。控制引用不可复制，释放它不结束宿主工作。`start` 未获顺序资格返回 BUSY，成功只确认实际开始；`complete` 固定唯一业务终态，仍保留顺序占用；消费者确认实际不会再执行本项后，才调用 `finish`。取消仅登记意图，运行中处理仍阻止卸载。
+
+快照的 result 和 exit 使用各自的操作状态，退出成功不表达业务成功。载荷引用保持整个处理记录及其预算，数据可在处理退出后保留。错误上下文、外部实例、过期身份和非法终态均明确拒绝，失败清空输出。验证见 [宿主控制测试](../tests/plugin_processing.cpp)、[真实 C 消费者](../tests/fixtures/query_v2/processing.c) 和 [跨 DLL 验收](../tests/plugin_processing_dll.cpp)。
+
+既有 `dfy.operation.state`、`dfy.operation.cancel`、`dfy.operation.notify` 的生产对象当前为完整读请求；不能将处理控制引用或任意值当作通用操作句柄。新能力使用独立版本化表，未向冻结表追加字段。
 
 ## 生产数据能力与组合访问
 
