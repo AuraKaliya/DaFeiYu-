@@ -2,13 +2,13 @@
 
 项目正在按最小 Agent 基线重新建设，采用 C++20、CMake 和 VS2022。
 
-## 当前进度：R09 类型体系完整链路已验收
+## 当前进度：R10a-1 指定接收方投递已验收
 
 R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
 
 R09 已实现有界嵌套结构、可选字段与显式空值、完整组合数组及字符串键映射、闭合枚举和带标签联合，以及对应版本化 C 反射接口。实际观察包已升级为 0.6.0，有界消费这些类型。下一阶段为 R10 交付与顺序扩展；App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
-本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 50／50。枚举、联合、组合数组与组合映射均已完成宿主、真实 C DLL、预算链及实际观察验收。下一单元为指定接收方投递，范围见 [开发指导](docs/foundation-development-guide.md)。
+本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 50／50。R09 完整类型链路已验收，通道现已支持指定接收方的原子投递；下一单元验证真实 C 消费与目标隔离，范围见 [开发指导](docs/foundation-development-guide.md)。
 
 [v1 插件模块](plugins/runtime/include/dafeiyu/plugin_module.hpp)保留冻结的查询路径；[v2 插件模块](plugins/runtime/include/dafeiyu/plugin_module_v2.hpp)独立管理版本化能力、代码持有和活动调用。实例控制器负责 v2 实例的创建、启动、分阶段停止和失败保留；终端管理命令与安装尚未接入。
 
