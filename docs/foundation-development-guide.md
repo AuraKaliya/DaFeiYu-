@@ -8,6 +8,20 @@
 
 2026-11-14 用户再次授权依据本指导持续开发至北京时间 15:00；本轮从干净基线 `cc1ce89` 开始，保持每个单元独立验证和提交，到期恢复默认人工审查节奏。
 
+本轮里程碑如下。每个提交范围均由独立小单元组成，表内测试数量是该里程碑完成时的 Debug／Release 完整 CTest 结果；最后统一复核为 52／52。
+
+| 里程碑 | 提交范围 | 当次完整 CTest | 阅读入口 |
+|---|---|---|---|
+| R09g 闭合枚举完整链路 | `3f7d146` ～ `c590515` | 44／44 | [枚举描述](../runtime/include/dafeiyu/enum_descriptor.hpp) |
+| R09h 带标签联合完整链路 | `8c8c4b3` ～ `aaad765` | 47／47 | [联合描述](../runtime/include/dafeiyu/union_descriptor.hpp) |
+| R09i 完整组合数组 | `b8a18d7` ～ `6f01162` | 49／49 | [匿名元素约束](../runtime/include/dafeiyu/element_descriptor.hpp)、[数组](../runtime/include/dafeiyu/array_value.hpp) |
+| R09j 完整组合映射 | `5d61479` ～ `7379b85` | 50／50 | [映射](../runtime/include/dafeiyu/map_value.hpp)、[C 数据接口](../sdk/include/dafeiyu/data_abi_v2.h) |
+| R10a 指定投递与真实 C 隔离 | `5a9e69c` ～ `e512db0` | 51／51 | [投递通道](../events/include/dafeiyu/broadcast_channel.hpp)、[C 目标验收](../tests/plugin_targets.cpp) |
+| R10b-1／2 消费者组与共同接纳 | `15146ee` ～ `8d84d00` | 52／52 | [消费者组](../events/include/dafeiyu/consumer_group.hpp)、[组验收](../tests/consumer_group.cpp) |
+| 中文职责注释与编码复核 | `7230b71` | 52／52 | 第 3.74 节 |
+
+下一可独立审查单元是组成员的有界异步读取：需明确成员退出只终结自身等待、取消与领取的先后、已领取数据的预算保持，再接入 C 能力及实例停止流程。当前组能力是宿主同步领取，尚未提供组成员 C 接口；顺序域、分层调度、结果策略、App 异步迁移及安装管理继续按后续阶段逐项推进。
+
 ## 1. 从哪里继续
 
 | 已有能力 | 代码入口 | 当前边界 |
@@ -26,10 +40,10 @@
 | 宿主数据基础 | [引用表](../runtime/include/dafeiyu/handle_registry.hpp)、[基础值](../runtime/include/dafeiyu/value.hpp)、[结构描述](../runtime/include/dafeiyu/struct_descriptor.hpp)、[数组](../runtime/include/dafeiyu/array_value.hpp)、[映射](../runtime/include/dafeiyu/map_value.hpp) | 有界引用、嵌套结构、可选与可空、完整组合容器、枚举、带标签联合及版本化 C ABI 已实现 |
 | 执行与完成 | [FIFO](../runtime/include/dafeiyu/fifo_executor.hpp)、[操作](../runtime/include/dafeiyu/operation.hpp)、[通知](../runtime/include/dafeiyu/completion_notifications.hpp) | 同宿主线程显式推进；唯一终态、协作取消、延后通知与撤销已实现，不自动异步化阻塞 I/O |
 | 资源与代码寿命 | [资源归属与使用](../runtime/include/dafeiyu/resource_owner.hpp)、[代码持有与活动保护](../platform/include/dafeiyu/code_module.hpp)、[实例控制](../plugins/runtime/include/dafeiyu/plugin_instance.hpp) | 已装配实例生命周期；忙碌拒绝、停止完成确认、单次销毁、失败保留和重试均已验收 |
-| 最小事件流 | [事件存储](../events/include/dafeiyu/event_store.hpp)、[广播](../events/include/dafeiyu/broadcast_channel.hpp)、[读请求](../events/include/dafeiyu/subscription_reader.hpp) | 有界接纳、独立队列、排空／取消关闭及可取消读请求已实现；显式推进，正式 App 未迁移 |
+| 最小事件流 | [事件存储](../events/include/dafeiyu/event_store.hpp)、[投递通道](../events/include/dafeiyu/broadcast_channel.hpp)、[读请求](../events/include/dafeiyu/subscription_reader.hpp)、[消费者组](../events/include/dafeiyu/consumer_group.hpp) | 有界接纳、指定投递、组共同接纳、独立队列及可取消读取已实现；组异步／C 适配和正式 App 迁移待建 |
 | C ABI 契约 | [v1 SDK](../sdk/include/dafeiyu/plugin_abi.h)、[v2 SDK](../sdk/include/dafeiyu/plugin_abi_v2.h)、[v2 契约](plugin-abi-v2.md) | v1 冻结；v2 生产适配、生命周期及版本化组合数据访问已实现 |
 | 实际观察插件 | [纯 C 实现](../plugins/examples/observer/observer.c)、[完整链路验收](../tests/observer.cpp) | 0.6.0 目录包只依赖 SDK；完整类型的有界消费、失败隔离、安全卸载及重新加载通过，App 尚未装配 |
-| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 当前 Debug、Release 均为 50／50；包含真实符号链接及 DLL 测试，历史权限失败记录不代表本次状态 |
+| 离线测试 | [测试构建](../tests/CMakeLists.txt) | 当前 Debug、Release 均为 52／52；包含真实符号链接及 DLL 测试，历史权限失败记录不代表本次状态 |
 
 真实 DeepSeek / Qwen 成功回答及多轮联通仍待有效凭据验证。此前真实 HTTPS 的 HTTP 401 检查只验证鉴权失败路径，不能替代成功调用验收。
 
@@ -125,20 +139,20 @@ flowchart LR
     App["App：入口与宿主装配"] --> Agent["Agent：Session"]
     Agent --> Model["Model：模型协议"]
     Model --> HTTP["Platform：WinHTTP"]
-    App --> Manager["插件运行时（基础已建，装配与生命周期待建）"]
-    Agent --> Events["事件系统（已接入会话）"]
+    App --> Manager["插件运行时（实例控制已建，App 装配待建）"]
+    Agent --> Events["事件系统（同步会话通知及独立异步流已建）"]
     Manager --> Events
     Manager --> Loader["Platform：动态库加载器"]
-    Loader -. "动态加载" .-> Plugin["可选 DLL 插件包（待建）"]
-    Events -. "C ABI 异步流适配（待建）" .-> Plugin
+    Loader -. "动态加载" .-> Plugin["可选 DLL 插件包（观察包已验收）"]
+    Events -. "C ABI 异步流适配（已建，App 迁移待建）" .-> Plugin
 ```
 
 | 职责 | 建议放置位置 / VS 分组 | 边界 |
 |---|---|---|
 | 入口、路径选择、组件创建和命令分派 | `app/` / App | 装配基础服务实例，不列举必需插件或固定插件角色 |
 | 问答状态与通知发布 | `agent/` / Agent | 依赖模型接口和事件接口，不读取插件清单、不包含供应商 JSON |
-| 事件订阅、交付与取消 | `events/` / Platform | 当前为同步总线；异步投递与调度按新路线建设，不依赖 Agent、模型服务或插件实现 |
-| 域、类型化引用、不可变值与结构描述 | `runtime/` / Platform | 不依赖 SDK、Agent、事件或插件；生产 C ABI 适配与异步执行另行建设 |
+| 事件订阅、交付与取消 | `events/` / Platform | 同步会话总线与独立有界事件流并存，显式推进；不依赖 Agent、模型服务或插件实现 |
+| 域、类型化引用、不可变值与结构描述 | `runtime/` / Platform | 不依赖 SDK、Agent、事件或插件；提供有界执行基础，生产 C ABI 适配位于插件运行时 |
 | DLL 系统操作 | `platform/` / Platform | 封装平台句柄和加载路径，不负责业务状态或配置合并 |
 | 插件发现、注册表、配置、生命周期及事件适配 | `plugins/runtime/` / Plugins | 管理可选插件；业务信息主要保存在运行时注册表中 |
 | 对插件公开的 C 契约 | `sdk/include/dafeiyu/` / SDK | 只包含 ABI 所需类型与函数，不暴露宿主 C++ 实现 |
@@ -1011,7 +1025,7 @@ R01a 已固定独立导出 `dfy_plugin_query_v2`、24 字节引导表及静态�
 | R07 最小插件生命周期（已实现） | R07a 生命周期能力及真实 C 验收；R07b 实例控制与失败保留 | 忙碌拒绝、停止失败保留、销毁一次、释放失败仅重试释放 |
 | R08 首个完整链路（已验收） | R08a 独立 C 观察包；R08b 取消、重载与失败隔离 | 收事件、取消等待、关闭、卸载、重新加载；卸载后排队包装不进入旧 DLL |
 | R09 类型体系补齐（已验收） | 嵌套、可选／可空、节点预算、完整组合数组与映射、枚举、带标签联合、版本化 C 访问和真实观察均已完成 | 每种类型独立验证反射、约束、空值、预算、失败回收及跨 Debug／Release；递归契约继续拒绝 |
-| R10 交付与顺序扩展 | 指定接收方；消费者组；顺序域 | 原子领取、成员退出、同域顺序及跨域推进 |
+| R10 交付与顺序扩展（部分完成） | 指定接收方及 C 隔离已验收；消费者组宿主成员与共同接纳已验收，组异步读取／C 适配待建；顺序域待建 | 原子领取、成员退出、同域顺序及跨域推进 |
 | R11 容量与调度 | 所有者预算；优先级；加权公平；控制预留 | 在途资源计费、持续竞争下的调度机会、过载时仍可回收 |
 | R12 结果与 hook | 单一结果；各聚合策略；观察 hook；控制 hook | 完成条件明确、错误隔离、迟到结果不覆盖终态；清理动作沿用资源基础 |
 | R13 有界重试 | 退避等待；尝试记录；取消与重新调度 | 取消后不再重试，预算有效，不重放已成功业务 |
@@ -1021,7 +1035,7 @@ R01a 已固定独立导出 `dfy_plugin_query_v2`、24 字节引导表及静态�
 
 R02 先提供最小链路所需类型，其余已确定类型由 R09 逐项补齐；R08 只证明实际提供的能力。R04～R07 可用隔离宿主和真实 DLL 夹具验证，不提前向正式 App 暴露不完整生命周期。R05 已须有界接纳和必要关闭通路，R11 再扩展分层计量、公平策略等能力，不能在最小链路中建立无界缓冲。
 
-开发各组前先定稿该单元所需的契约、数值和失败结果；表中方向不能代替具体验收条件。R01～R09 已完成当前规划的基础能力，下一审查方向是 R10 指定接收方、消费者组及顺序域，仍逐单元验证和提交。取消与通知使用独立版本化能力，不向已冻结的操作状态表追加函数；复杂单元继续拆分。只在模块实际实现时增加目标，保留既有职责分组，不创建空壳库。
+开发各组前先定稿该单元所需的契约、数值和失败结果；表中方向不能代替具体验收条件。R01～R09 已完成当前规划的基础能力，R10 指定接收方与组宿主基础已验收，下一审查方向为组成员异步读取、C 适配及顺序域，仍逐单元验证和提交。取消与通知使用独立版本化能力，不向已冻结的操作状态表追加函数；复杂单元继续拆分。只在模块实际实现时增加目标，保留既有职责分组，不创建空壳库。
 
 建设期间保留现有同步问答作为可用基线。新模块先通过隔离测试和真实 DLL 夹具验收，达到可运行条件后，再单独提交 Agent／App 切换，避免长期保留两套正式业务语义。模型继续返回完整文本，默认 Provider 随本体发布，空插件目录仍可问答。
 

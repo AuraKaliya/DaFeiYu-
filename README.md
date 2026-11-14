@@ -6,7 +6,7 @@
 
 R06 已接入生产 v2 模块加载及宿主能力，R07b 已提供 [实例控制器](plugins/runtime/include/dafeiyu/plugin_instance.hpp)。R08 使用独立纯 C 观察包验收了订阅、延后通知、反射读取、取消、关闭、卸载及重新加载，并覆盖部分启动失败和多实例故障隔离。
 
-R09 已实现有界嵌套结构、可选字段与显式空值、完整组合数组及字符串键映射、闭合枚举和带标签联合，以及对应版本化 C 反射接口。实际观察包已升级为 0.6.0，有界消费这些类型。下一阶段为 R10 交付与顺序扩展；App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
+R09 已实现有界嵌套结构、可选字段与显式空值、完整组合数组及字符串键映射、闭合枚举和带标签联合，以及对应版本化 C 反射接口。实际观察包已升级为 0.6.0，有界消费这些类型。R10 已完成指定投递及消费者组宿主基础；App／Agent 当前仍为同步问答，正式异步迁移留在 R15。
 
 本次 Debug／Release 主工程及完整测试构建通过，完整 Debug、Release CTest 均为 52／52。指定投递与 C 隔离已验收，[消费者组](events/include/dafeiyu/consumer_group.hpp) 已支持成员单次领取、与广播共同原子接纳及指定组投递；下一单元为组成员异步读取及 C 适配，范围见 [开发指导](docs/foundation-development-guide.md)。
 
@@ -52,7 +52,7 @@ dafeiyu
     └── ZERO_CHECK
 ```
 
-测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 50 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
+测试预设额外显示 `Tests` 下的模型、会话、事件流、运行时、插件和 SDK 验收目标，当前共 52 项 CTest；完整清单见 [测试构建](tests/CMakeLists.txt)。其他职责分组随实际功能逐步加入；JSON 依赖是头文件接口目标，不生成独立库项目。
 
 加载与查询测试另外提供 `Tests/dfy_library_tests`、`Tests/dfy_code_module_tests`、`Tests/dfy_plugin_module_tests` 及专用 DLL 夹具目标。测试构建需要 VS2022 的 x86 和 x64 C/C++ 工具；Win32 DLL 仅用于验证架构拒绝，不改变本体与 SDK 的 x64 目标。
 
@@ -298,7 +298,7 @@ ABI 阅读顺序：[契约](docs/plugin-abi.md) → [公开头文件](sdk/includ
 
 上述校验面向遵守 C ABI 内存与异常约定的可信 DLL；同进程原生代码的非法指针、越界写入或跨 ABI 异常仍不具备故障隔离。
 
-模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；R01a／R01b／R01c-1 已增加 v2 查询、句柄借用及操作状态契约，独立 v2 加载和实例控制已在 R06／R07b 实现，当前下一审查项为 R08 独立观察插件与完整链路验收。
+模块阅读顺序：[接口](plugins/runtime/include/dafeiyu/plugin_module.hpp) → [查询实现](plugins/runtime/module.cpp) → [查询测试](tests/plugin_module.cpp) → [故障夹具](tests/fixtures/query/query.c)。第 07 步整体验收保留；v2 加载、实例控制和独立观察包完整链路已经完成，当前进度及下一审查单元见本页概览与 [开发指导](docs/foundation-development-guide.md)。
 
 ## 旧工程归档
 
