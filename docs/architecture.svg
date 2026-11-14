@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1540" height="1070" viewBox="0 0 1540 1070" role="img" aria-label="大肥鱼当前项目架构图">
+<defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse"><path d="M0 0L12 6L0 12Z" fill="#385974"/></marker></defs>
+<rect width="1540" height="1070" fill="#f7f9fc"/>
+<text x='60' y='52' fill='#17324d' font-size='28' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>DaFeiYu  当前项目架构</text>
+<text x='60' y='82' fill='#52677b' font-size='16' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>审查后实现 · Windows x64 / C++20 / C ABI</text>
+<text x='655' y='151' fill='#17324d' font-size='19' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>用户 / 终端输入</text>
+<polyline points='765,163 765,195' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<polyline points='370,255 440,255' fill='none' stroke='#385974' stroke-width='2'  marker-start='url(#arrow)' marker-end='url(#arrow)'/>
+<text x='384' y='243' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>输入</text>
+<polyline points='575,315 575,390' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='586' y='358' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>问答</text>
+<polyline points='440,285 405,285 405,350 215,350 215,390' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='235' y='339' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>本地管理命令</text>
+<polyline points='710,450 790,450' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='716' y='437' fill='#243b53' font-size='12' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>提交 / 结果</text>
+<polyline points='1090,450 1170,450' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='1095' y='437' fill='#243b53' font-size='12' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>供应商协议</text>
+<polyline points='1320,510 1320,610' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='1330' y='566' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>HTTPS</text>
+<polyline points='215,510 215,610' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='228' y='565' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>实例与宿主能力</text>
+<polyline points='575,510 575,610' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='586' y='565' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>不可变会话事实</text>
+<polyline points='370,684 440,684' fill='none' stroke='#385974' stroke-width='2'  marker-start='url(#arrow)' marker-end='url(#arrow)'/>
+<text x='377' y='672' fill='#243b53' font-size='12' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>读取/数据</text>
+<polyline points='710,684 790,684' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='718' y='672' fill='#243b53' font-size='12' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>类型/操作</text>
+<polyline points='215,760 215,810' fill='none' stroke='#385974' stroke-width='2' stroke-dasharray='6 5'  marker-end='url(#arrow)'/>
+<text x='226' y='790' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>SDK · C ABI v2</text>
+<polyline points='370,735 405,735 405,790 575,790 575,810' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='436' y='777' fill='#243b53' font-size='13' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>代码持有</text>
+<polyline points='440,875 370,875' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='380' y='863' fill='#243b53' font-size='12' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>动态加载</text>
+<polyline points='940,810 940,760' fill='none' stroke='#385974' stroke-width='2' stroke-dasharray='6 5'  marker-end='url(#arrow)'/>
+<polyline points='60,450 28,450 28,975 1320,975 1320,940' fill='none' stroke='#385974' stroke-width='2'   marker-end='url(#arrow)'/>
+<text x='760' y='992' fill='#52677b' font-size='14' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>安全暂存 / 原子发布 / 独立用户设置</text>
+<rect x='60' y='195' width='310' height='120' rx='14' fill='#fff4d8' stroke='#bf9145' stroke-width='1.6' />
+<text x='77' y='226' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Platform · LineInput</text>
+<text x='77' y='254' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>专用读取线程 / 有界行队列</text>
+<text x='77' y='278' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>UTF-16 → UTF-8</text>
+<text x='77' y='302' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>取消读取后确认实际回收</text>
+<rect x='440' y='195' width='650' height='120' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='457' y='226' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>App · 交互宿主（主线程）</text>
+<text x='457' y='254' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>入口与路径 / ChatController / plugin_commands</text>
+<text x='457' y='278' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>交替推进模型、插件和输入；本地命令不发送给模型</text>
+<rect x='60' y='390' width='310' height='120' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='77' y='421' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Plugins · PluginManager</text>
+<text x='77' y='449' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>目录 / 安装 / 移除 / 实例</text>
+<text x='77' y='473' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>可选依赖绑定与去重停止计划</text>
+<text x='77' y='497' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>失败保留，明确重试</text>
+<rect x='440' y='390' width='270' height='120' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='457' y='421' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Agent · Session</text>
+<text x='457' y='449' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>单轮问答与上下文</text>
+<text x='457' y='473' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>完整成功后成对提交历史</text>
+<text x='457' y='497' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>取消与实际退出分开</text>
+<rect x='790' y='390' width='300' height='120' rx='14' fill='#fff4d8' stroke='#bf9145' stroke-width='1.6' />
+<text x='807' y='421' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Model · AsyncClient</text>
+<text x='807' y='449' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>有界后台完整文本调用</text>
+<text x='807' y='473' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>内置 DeepSeek / Qwen 适配</text>
+<text x='807' y='497' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>结果仅由宿主线程结算</text>
+<rect x='1170' y='390' width='300' height='120' rx='14' fill='#fff4d8' stroke='#bf9145' stroke-width='1.6' />
+<text x='1187' y='421' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Platform · WinHTTP</text>
+<text x='1187' y='449' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>系统 TLS / 分阶段超时</text>
+<text x='1187' y='473' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>不跟随重定向</text>
+<text x='1187' y='497' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>完整响应大小限制</text>
+<rect x='60' y='610' width='310' height='150' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='77' y='641' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>PluginInstance / HostServices</text>
+<text x='77' y='669' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>创建 / 启动 / 停止 / 销毁</text>
+<text x='77' y='693' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>宿主线程绑定与能力表</text>
+<text x='77' y='717' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>读取 / 通知 / 引用适配</text>
+<text x='77' y='741' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>忙碌拒绝，停止失败保留</text>
+<rect x='440' y='610' width='270' height='150' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='457' y='641' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Events · 不可变事件流</text>
+<text x='457' y='669' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>EventStore / BroadcastChannel</text>
+<text x='457' y='693' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>独立订阅 / 按授权组消费</text>
+<text x='457' y='717' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>有界接纳与读请求</text>
+<text x='457' y='741' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>发布时不内联调用插件</text>
+<rect x='790' y='610' width='300' height='150' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='807' y='641' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Runtime · 共用基础</text>
+<text x='807' y='669' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>类型 / 引用 / 操作 / 预算</text>
+<text x='807' y='693' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>CompletionNotifications</text>
+<text x='807' y='717' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>OwnerScheduler / 公平调度</text>
+<text x='807' y='741' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>ResourceOwner / 生命周期</text>
+<rect x='1170' y='610' width='300' height='100' rx='14' fill='#fff4d8' stroke='#bf9145' stroke-width='1.6' />
+<text x='1187' y='641' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>外部模型服务</text>
+<text x='1187' y='669' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>DeepSeek / Qwen</text>
+<text x='1187' y='693' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>插件为空也可完成问答</text>
+<rect x='60' y='810' width='310' height='130' rx='14' fill='#e3f4ed' stroke='#5d9982' stroke-width='1.6' />
+<text x='77' y='841' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>可选可信原生 DLL</text>
+<text x='77' y='869' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>observer 0.7.0 示例</text>
+<text x='77' y='893' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>同进程 / 宿主线程回调</text>
+<text x='77' y='917' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>独立安装、加载和卸载</text>
+<rect x='440' y='810' width='270' height='130' rx='14' fill='#e8f1fb' stroke='#668bb3' stroke-width='1.6' />
+<text x='457' y='841' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Platform · DLL 代码寿命</text>
+<text x='457' y='869' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>CodeModule / CodeLease</text>
+<text x='457' y='893' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>CodeCall 活动保护</text>
+<text x='457' y='917' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>DLL 目录 + 系统目录加载</text>
+<rect x='790' y='810' width='300' height='130' rx='14' fill='#eef1f5' stroke='#8895a4' stroke-width='1.6' stroke-dasharray='7 5'/>
+<text x='807' y='841' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>已实现的可选基础接口</text>
+<text x='807' y='869' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>Processing / Serial / 等待图</text>
+<text x='807' y='893' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>ResultGroup / ControlGate / Retry</text>
+<text x='807' y='917' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>默认问答未启用这些业务流程</text>
+<rect x='1170' y='810' width='300' height='130' rx='14' fill='#eef1f5' stroke='#8895a4' stroke-width='1.6' />
+<text x='1187' y='841' fill='#17324d' font-size='18' font-weight='700' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>磁盘与用户配置</text>
+<text x='1187' y='869' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>plugins/&lt;id&gt;：包与默认配置</text>
+<text x='1187' y='893' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>用户目录：独立 settings.json</text>
+<text x='1187' y='917' fill='#243b53' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>移除包保留用户设置</text>
+<text x='60' y='1033' fill='#52677b' font-size='15' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>蓝：宿主状态与调度   黄：后台 I/O / 外部服务   绿：可信 DLL 边界   灰虚框：非默认业务接口</text>
+<text x='60' y='1056' fill='#52677b' font-size='14' font-weight='400' font-family='Microsoft YaHei UI,Microsoft YaHei,Segoe UI,sans-serif'>按主要运行路径绘制，共用运行时的部分依赖边省略；本体不静态链接插件实现。</text>
+</svg>
