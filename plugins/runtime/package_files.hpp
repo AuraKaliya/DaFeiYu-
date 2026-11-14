@@ -1,9 +1,10 @@
 ﻿#pragma once
 #include <filesystem>
 #include <vector>
+#include <dafeiyu/plugin_package.hpp>
 
 namespace dfy::plugins::files {
-struct Limits { std::size_t entries = 4096, bytes = 512*1024*1024, depth = 32; };
+using Limits = PackageLimits;
 struct Item { std::filesystem::path relative; bool directory; };
 // 逐层校验本地目录路径，拒绝任何重解析点；可明确创建缺失目录，返回规范绝对路径。
 std::filesystem::path directory(const std::filesystem::path& path, bool create = false);

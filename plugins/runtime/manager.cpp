@@ -1,4 +1,6 @@
 #include <dafeiyu/plugin_manager.hpp>
+#include <dafeiyu/plugin_package.hpp>
+#include "package_files.hpp"
 
 namespace dfy::plugins {
 namespace {
@@ -113,6 +115,17 @@ std::uint32_t PluginManager::load(const std::string& id) {
     if (!status) status = item->second.instance->start();
     if (status) (void)unload(id);
     return status;
+}
+// 先确认同 ID 没有运行责任，再安装并独立刷新描述，已发布包不因刷新失败被回滚。
+// 步骤：核对管理接纳及实例 → 完整安装 → 刷新目录或保留独立诊断 → 返回发布事实。
+Manifest PluginManager::install(const std::filesystem::path& source) {
+    if (!state_->accepting) throw std::logic_error("plugins: manager closing");
+    const auto descriptor = load_manifest(files::directory(source));
+    if (state_->instances.contains(descriptor.id)) throw std::logic_error("plugins: finish unloading the existing instance before installing");
+    auto installed = install_package(state_->root,source);
+    // 发布已经完成，刷新错误由目录诊断保存，不把复制成功报告成安装回滚。
+    try { refresh(); } catch (const std::runtime_error&) {}
+    return installed;
 }
 // 只在实例实际卸载后停止对应调度接纳，忙碌拒绝不改变活动实例。
 ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode) {

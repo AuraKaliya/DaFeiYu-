@@ -26,6 +26,8 @@ class PluginManager {
     std::vector<LoadedPlugin> loaded() const;
     // 显式加载并启动指定可用包，失败保留必要清理责任并返回原生命周期状态。
     std::uint32_t load(const std::string& id);
+    // 本地安装且不自动加载，拒绝替换运行实例，发布后刷新目录但不改用户配置。
+    Manifest install(const std::filesystem::path& source);
     // 按默认拒绝或显式联动规则卸载，忙碌和失败不强制释放模块。
     ShutdownResult unload(const std::string& id, DependencyStop mode = DependencyStop::refuse_dependents);
     // 推进全部实例的就绪通知及正常停止等待，每次只执行一个公平调度步骤。

@@ -28,7 +28,10 @@ int wmain(int argc, wchar_t** argv) {
         auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),2,2);
         PluginManager manager(root,run/"data",channel,2); std::ostringstream output, errors;
         check(plugin_command(manager,"/plugins list",output,errors) && output.str().find("No plugins") != std::string::npos,"empty command catalog wrong");
-        fs::copy(fs::canonical(argv[1]),root/"observer",fs::copy_options::recursive);
+        const auto source = run/u8"来源 包"; fs::copy(fs::canonical(argv[1]),source,fs::copy_options::recursive);
+        const auto source_bytes = source.u8string();
+        plugin_command(manager,"/plugins install \""+std::string(source_bytes.begin(),source_bytes.end())+"\"",output,errors);
+        check(manager.catalog()->packages.size() == 1 && manager.loaded().empty() && errors.str().empty(),"quoted install command failed or loaded automatically");
         plugin_command(manager,"/plugins refresh",output,errors); check(manager.loaded().empty(),"refresh auto-loaded plugin");
         plugin_command(manager,"/plugins load example.observer",output,errors);
         check(manager.loaded().size() == 1 && manager.loaded()[0].phase == InstancePhase::active && errors.str().empty(),"load command failed");

@@ -59,6 +59,11 @@ bool plugin_command(plugins::PluginManager& manager, std::string_view command, s
         const auto words = command_words(command);
         if (words.size() == 2 && words[1] == "list") list(manager,output);
         else if (words.size() == 2 && words[1] == "refresh") { manager.refresh(); output << "Plugin directory refreshed.\n"; list(manager,output); }
+        else if (words.size() == 3 && words[1] == "install") {
+            const auto installed = manager.install(std::filesystem::path(std::u8string(words[2].begin(),words[2].end())));
+            output << "Installed " << installed.id << ". Use /plugins load " << installed.id << " to start it.\n";
+            if (!manager.directory_error().empty()) errors << "Package installed; refresh the directory again: " << manager.directory_error() << '\n';
+        }
         else if (words.size() == 3 && words[1] == "load") {
             const auto status = manager.load(words[2]);
             if (!status) output << "Loaded " << words[2] << ".\n";
@@ -78,7 +83,7 @@ bool plugin_command(plugins::PluginManager& manager, std::string_view command, s
             case plugins::ShutdownResult::in_use: errors << "Plugin is still in use. Stop its users or choose --linked.\n"; break;
             case plugins::ShutdownResult::failed: errors << "Plugin stop failed; its state is kept for another unload attempt.\n"; break;
             }
-        } else errors << "Usage: /plugins list | refresh | load <id> | unload <id> [--linked]\n";
+        } else errors << "Usage: /plugins list | refresh | install <directory> | load <id> | unload <id> [--linked]\n";
     } catch (const std::exception& error) { errors << error.what() << '\n'; }
     catch (...) { errors << "Plugin command failed.\n"; }
     return true;
