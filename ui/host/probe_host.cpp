@@ -50,6 +50,8 @@ void ProbeHost::created(ICoreWebView2Frame* frame) {
     frame_.reset(); gone_.reset();
     frame_ = FrameChannel::attach(frame,ticket_,checks_);
     const auto weak = weak_from_this();
+    // 真实销毁发生后归还宿主持有，并让主页面解除重建等待。
+    // 步骤：失效销毁登记 → 归还通道对象 → 提交关闭确认。
     const auto destroyed = Callback<ICoreWebView2FrameDestroyedEventHandler>([weak](ICoreWebView2Frame*,IUnknown*) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) {
             state->gone_.reset(true); state->frame_.reset();

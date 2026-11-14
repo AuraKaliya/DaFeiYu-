@@ -43,6 +43,8 @@ std::shared_ptr<FrameChannel> FrameChannel::attach(ICoreWebView2Frame* frame, st
         return E_ABORT;
     });
     self->messages_.bind(self->frame_.Get(),&ICoreWebView2Frame2::remove_WebMessageReceived,[&](auto* token) { return self->frame_->add_WebMessageReceived(message.Get(),token); });
+    // 以浏览器销毁事件终止通道，不再调用已销毁 Frame 的接口。
+    // 步骤：记录真实销毁 → 标记来源失效 → 归还事件与通道持有。
     const auto destroyed = Callback<ICoreWebView2FrameDestroyedEventHandler>([weak](ICoreWebView2Frame*,IUnknown*) -> HRESULT {
         if (const auto state = weak.lock()) { state->dead_ = true; ++state->checks_->destroyed; state->close(); }
         return S_OK;

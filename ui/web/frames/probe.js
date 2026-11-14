@@ -48,6 +48,7 @@ document.querySelector('#echo').addEventListener('click', async () => {
   output.textContent = reply.decision + '：' + reply.text;
 });
 // 在新文档中重放上一代身份，由原生宿主决定是否拒绝。
+// 步骤：构造旧身份请求 → 等待原生裁定 → 显示拒绝种类。
 document.querySelector('#stale').addEventListener('click', async () => {
   const reply = await request('probe.echo', String(BigInt(view) - 1n));
   output.textContent = reply.decision;

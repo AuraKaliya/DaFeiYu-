@@ -100,8 +100,8 @@ struct Window : std::enable_shared_from_this<Window> {
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); });
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
-        // 仅观察本次导航是否完成，通过窗口消息安排自动验收退出。
-        // 步骤：读取导航结果 → 失败时记录错误 → 按验收模式请求关闭。
+        // 处理主文档导航回执，自动验收由计时器另行推进。
+        // 步骤：读取结果 → 按成功或失败记录就绪时刻或提交错误关闭。
         [weak](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
             if (const auto self = weak.lock(); self && !self->closing) {
                 BOOL success = FALSE;
@@ -144,8 +144,8 @@ struct Window : std::enable_shared_from_this<Window> {
             }).Get());
         if (FAILED(status)) { --pending; require(status); }
     }
-    // 有界等待真实异步消息，不以导航成功替代 Frame 授权验收。
-    // 步骤：检查原生完成条件 → 成功请求关闭 → 超时记录边界并失败。
+    // 按关闭或验证状态推进消息，不以导航成功替代授权和退出验收。
+    // 步骤：分流收尾状态 → 启动或推进协议 → 核对完成条件与期限。
     void tick() noexcept {
         if (closing) { finish_close(); return; }
         if (loaded && interaction_mode && !interaction) {

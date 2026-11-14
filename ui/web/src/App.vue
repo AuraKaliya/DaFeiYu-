@@ -28,6 +28,7 @@ function hostMessage(event: MessageEvent<unknown>): void {
   else if (data.event === 'frame.busy') framePending.value = true;
 }
 // 先登记回执再申请 Frame，避免漏掉快速返回的宿主身份。
+// 步骤：登记当前文档监听 → 提交固定页面申请。
 onMounted(() => { window.chrome.webview.addEventListener('message', hostMessage); openFrame(); });
 // 只撤销当前页面监听，不代替原生 Frame 的实际退出。
 onBeforeUnmount(() => window.chrome.webview.removeEventListener('message', hostMessage));
