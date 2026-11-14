@@ -8,6 +8,7 @@ struct PackingProbe { char tag; uint64_t value; };
 #include <iostream>
 #include <dafeiyu/enum_value.hpp>
 #include <dafeiyu/union_value.hpp>
+#include <dafeiyu/group_abi_v2.h>
 #include <dafeiyu/data_abi_v2.h>
 #include <fstream>
 #include <dafeiyu/map_value.hpp>
@@ -506,6 +507,67 @@ void consumer_groups(const Manifest& manifest, const std::filesystem::path& data
     channel->remove_group(group);
     check(!channel->size() && !store->references() && executor.run_one() == RunResult::idle && PluginInstance::retained().empty(),"group lifecycle leaked resources");
 }
+enum class GroupFault { absent, failed_pointer, success_null, short_table, long_table, wrong_version, no_join, no_leave, no_read, unsupported_table };
+GroupFault group_fault = GroupFault::absent;
+dfy_v2_group_api group_fault_table{};
+// 只替换组能力查询结果，其他能力仍由实际宿主提供，不创建任何伪成员。
+// 步骤：分流非组查询 → 清空输出 → 按故障模式返回状态或受控表。
+dfy_v2_status DFY_V2_CALL group_fault_query(dfy_v2_string_view name, uint32_t version, const void** output, dfy_v2_error* error) {
+    if (!name.data || name.length != sizeof(DFY_V2_GROUP_INTERFACE)-1 || std::string_view(name.data,name.length) != DFY_V2_GROUP_INTERFACE)
+        return HostServices::query(name,version,output,error);
+    if (error) error->length = 0;
+    if (!output) return DFY_V2_INVALID_ARGUMENT;
+    *output = nullptr;
+    if (group_fault == GroupFault::absent) return DFY_V2_UNSUPPORTED;
+    if (group_fault == GroupFault::failed_pointer) { *output = reinterpret_cast<const void*>(uintptr_t{1}); return DFY_V2_FAILED; }
+    if (group_fault == GroupFault::success_null) return DFY_V2_OK;
+    *output = &group_fault_table;
+    return group_fault == GroupFault::unsupported_table ? DFY_V2_UNSUPPORTED : DFY_V2_OK;
+}
+// 验证观察包只对明确缺省进行独立订阅回退，异常或错误组表必须拒绝创建。
+// 步骤：装配真实能力 → 注入状态、布局及缺失入口故障 → 核对无半实例 → 验证缺省路径并卸载。
+void group_negotiation(const Manifest& manifest) {
+    dfy::platform::CodeModule module(manifest.entry,8); auto code = module.lease();
+    const auto api = ability<dfy_v2_lifecycle_api>(code,DFY_V2_LIFECYCLE_INTERFACE);
+    auto store = std::make_shared<dfy::events::EventStore>(4,64);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,1,1);
+    const auto group = std::make_shared<dfy::events::ConsumerGroup>(store,1,1);
+    HostServices host(32); host.enable_events(channel,4); host.enable_group(group,4); host.enable_notifications(code.retain(),4);
+    {
+        auto binding = host.bind(); const void* table = nullptr;
+        check(HostServices::query({DFY_V2_GROUP_INTERFACE,sizeof(DFY_V2_GROUP_INTERFACE)-1},1,&table,nullptr) == DFY_V2_OK,"group fault fixture missing service");
+        const auto valid = *static_cast<const dfy_v2_group_api*>(table);
+        for (const auto fault : {GroupFault::failed_pointer,GroupFault::success_null,GroupFault::short_table,GroupFault::long_table,
+            GroupFault::wrong_version,GroupFault::no_join,GroupFault::no_leave,GroupFault::no_read,GroupFault::unsupported_table}) {
+            group_fault = fault; group_fault_table = valid;
+            if (fault == GroupFault::short_table) group_fault_table.header.struct_size = 8;
+            if (fault == GroupFault::long_table) group_fault_table.header.struct_size += 8;
+            if (fault == GroupFault::wrong_version) group_fault_table.header.interface_version = 2;
+            if (fault == GroupFault::no_join) group_fault_table.join = nullptr;
+            if (fault == GroupFault::no_leave) group_fault_table.leave = nullptr;
+            if (fault == GroupFault::no_read) group_fault_table.read = nullptr;
+            dfy_v2_instance* instance = reinterpret_cast<dfy_v2_instance*>(uintptr_t{1});
+            auto call = code.enter();
+            const auto status = api.create(group_fault_query,{"{}",2},&instance,nullptr);
+            check(status == (fault == GroupFault::failed_pointer ? DFY_V2_FAILED : DFY_V2_UNSUPPORTED) && !instance &&
+                !host.references() && !host.resources() && !group->member_count() && !channel->size(),"invalid group query silently fell back or left partial instance");
+        }
+        check(!statistics(code).created,"failed group negotiation counted an instance");
+        group_fault = GroupFault::absent; dfy_v2_instance* instance = nullptr;
+        {
+            auto call = code.enter();
+            check(api.create(group_fault_query,{"{}",2},&instance,nullptr) == DFY_V2_OK && instance && api.start(instance,nullptr) == DFY_V2_OK &&
+                channel->size() == 1 && !group->member_count(),"explicit absent group did not use independent subscription");
+            uint32_t state = 0;
+            check(api.request_stop(instance,nullptr) == DFY_V2_OK && api.poll_stop(instance,&state,nullptr) == DFY_V2_OK && state == DFY_V2_STOPPED,
+                "group negotiation control instance did not stop");
+            api.destroy(instance);
+        }
+    }
+    check(host.begin_shutdown() && host.finish_shutdown() && !channel->size() && !store->references(),"group negotiation retained host work");
+    code.reset();
+    check(module.close() == dfy::platform::ModuleClose::closed && !GetModuleHandleW(manifest.entry.c_str()),"group negotiation retained DLL");
+}
 // 验证排队时卸载后宿主包装不进入已释放的 DLL，并实际重新加载新实例。
 // 步骤：创建并排队通知 → 卸载后执行剩余包装 → 重新加载 → 消费新事件并再次卸载。
 void reload(const Manifest& manifest, const std::filesystem::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel,
@@ -631,6 +693,7 @@ int wmain(int argc, wchar_t** argv) {
         composite_arrays(manifest, argv[2]);
         composite_maps(manifest, argv[2]);
         consumer_groups(manifest, argv[2]);
+        group_negotiation(manifest);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
