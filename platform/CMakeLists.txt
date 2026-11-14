@@ -3,6 +3,16 @@ if(NOT WIN32)
   message(FATAL_ERROR "The current HTTPS transport requires Windows WinHTTP")
 endif()
 
+# 定义有界后台输入目标，独立于模型、插件和会话。
+add_library(dfy_input STATIC line_input.cpp include/dafeiyu/line_input.hpp)
+target_compile_features(dfy_input PUBLIC cxx_std_20)
+target_include_directories(dfy_input PUBLIC include)
+target_link_libraries(dfy_input PRIVATE dfy_build_options kernel32)
+target_compile_definitions(dfy_input PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(dfy_input PROPERTIES FOLDER "Platform")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/line_input.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/line_input.hpp")
+
 # 定义受控动态库加载目标，独立于 HTTP、SDK 和插件业务状态。
 add_library(dfy_library STATIC library.cpp code_module.cpp include/dafeiyu/dynamic_library.hpp include/dafeiyu/code_module.hpp)
 target_compile_features(dfy_library PUBLIC cxx_std_20)

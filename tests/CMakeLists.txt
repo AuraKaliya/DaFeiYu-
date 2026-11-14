@@ -406,6 +406,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证真实 Windows 管道的有界行读取、背压和取消竞争。
+add_executable(dfy_line_input_tests line_input.cpp)
+target_link_libraries(dfy_line_input_tests PRIVATE dfy_input dfy_build_options)
+target_compile_definitions(dfy_line_input_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(dfy_line_input_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/line_input.cpp")
+add_test(NAME platform.line_input COMMAND dfy_line_input_tests)
+set_tests_properties(platform.line_input PROPERTIES TIMEOUT 15)
+
 # 验证异步会话的历史提交、事件快照及实际退出。
 add_executable(dfy_async_session_tests async_session.cpp)
 target_link_libraries(dfy_async_session_tests PRIVATE dfy_agent dfy_build_options)

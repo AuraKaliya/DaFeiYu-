@@ -1053,6 +1053,14 @@ Debug／Release 主工程及完整测试构建通过，完整 CTest 两种配置
 
 本轮起点 `c51e28c`；只构建 Debug 的相关目标并运行 `agent.async_session`、`model.async`，2／2 通过，无新增编译警告。当前同步终端暂作为可运行基线，新异步会话完成终端接入后移除旧正式路径，不长期维持两套业务语义。下一单元为可取消的终端输入适配。
 
+### 3.104 可取消的有界终端输入（R15c）
+
+`LineInput` 使用专用线程读取终端、管道或文件，宿主只非阻塞轮询。固定排队行数和单行上限（最多 1 MiB）；满队列等待可被关闭唤醒，超过单行上限明确失败而不截断。终端采用 `ReadConsoleW` 保留系统编辑与回显，严格转为 UTF-8 并保留跨块代理对；重定向输入按字节组装行，支持跨块 CRLF 和 EOF 前末行。输入句柄为借用，回收线程不关闭调用方句柄。
+
+停止设置独立标志、唤醒满队列等待并请求 `CancelSynchronousIo`；宿主持续推进以覆盖两次读调用之间的取消竞争，只有实际 join 后才确认退出。该处理依据微软关于[同步 I/O 取消竞争与实际完成](https://learn.microsoft.com/en-us/windows/win32/fileio/canceling-pending-i-o-operations)和[系统行编辑模式](https://learn.microsoft.com/en-us/windows/console/getconsolemode)的说明，不将一次取消返回当作线程已经退出。
+
+本轮起点 `10ccd60`；只构建 Debug 输入目标及测试，`platform.line_input` 1／1 通过，无新增编译警告。使用真实匿名管道验证中文字节跨块、精确行长、CRLF、背压、EOF、超量、即时取消竞争及借用句柄保持；未操作用户终端。下一单元为正式终端循环切换到异步会话。
+
 ## 4. 基础契约与接口演进
 
 ### 4.1 事件用于通知，不驱动新的业务循环
