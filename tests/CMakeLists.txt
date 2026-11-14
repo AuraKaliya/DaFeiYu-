@@ -406,6 +406,15 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证真实插件实例依赖、环检查及旧绑定代码寿命。
+add_executable(dfy_plugin_dependency_tests plugin_dependencies.cpp)
+add_dependencies(dfy_plugin_dependency_tests dfy_observer)
+target_link_libraries(dfy_plugin_dependency_tests PRIVATE dfy_plugins dfy_build_options)
+set_target_properties(dfy_plugin_dependency_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_dependencies.cpp")
+add_test(NAME plugins.dependencies COMMAND dfy_plugin_dependency_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/dependency-data/$<CONFIG>")
+set_tests_properties(plugins.dependencies PROPERTIES TIMEOUT 15)
+
 # 验证原事件处理跨重试保持顺序、身份及实际退出边界。
 add_executable(dfy_retry_processing_tests retry_processing.cpp)
 target_link_libraries(dfy_retry_processing_tests PRIVATE dfy_event_streams dfy_build_options)
