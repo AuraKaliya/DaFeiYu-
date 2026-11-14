@@ -45,10 +45,11 @@ void check_fields(std::span<const FieldDescriptor> fields, std::string_view root
 }
 }
 
-// 核定命名描述的完整展开计量，嵌套按逻辑展开计费且不允许递归契约。
+namespace {
+// 核定命名或匿名描述的完整展开计量，嵌套按逻辑展开计费且不允许递归契约。
 // 步骤：核对预算和身份 → 校验字段及嵌套计量 → 拒绝重复或冲突身份 → 返回完整计量。
-DescriptorMetrics validate_description(std::string_view name, std::uint32_t version,
-    std::span<const FieldDescriptor> fields, DescriptorLimits limits) {
+DescriptorMetrics validate_schema(std::string_view name, std::uint32_t version,
+    std::span<const FieldDescriptor> fields, DescriptorLimits limits, bool named) {
     if (!limits.max_depth || limits.max_depth > StructDescriptor::maximum_depth) throw std::invalid_argument("descriptor: invalid depth limit");
     const auto field_limit = std::min(limits.max_fields, StructDescriptor::maximum_fields);
     const auto name_limit = std::min(limits.max_name_bytes, StructDescriptor::maximum_name_bytes);
@@ -57,12 +58,12 @@ DescriptorMetrics validate_description(std::string_view name, std::uint32_t vers
     auto remaining = name_limit;
     std::size_t depth = 1;
     consume_name(name, remaining);
-    if (!version || !valid_descriptor_name(name, true)) throw std::invalid_argument("descriptor: invalid type identity");
+    if (named && (!version || !valid_descriptor_name(name, true))) throw std::invalid_argument("descriptor: invalid type identity");
 
     std::unordered_set<std::string_view> names;
     for (const auto& field : fields) {
         consume_name(field.name, remaining);
-        if (!valid_descriptor_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
+        if (named && !valid_descriptor_name(field.name, false)) throw std::invalid_argument("descriptor: invalid field name");
         if (field.kind != ValueKind::structure && field.structure) throw std::invalid_argument("descriptor: unexpected nested schema");
         if (field.kind != ValueKind::array && field.array) throw std::invalid_argument("descriptor: unexpected array schema");
         if (field.kind != ValueKind::map && field.map) throw std::invalid_argument("descriptor: unexpected map schema");
@@ -120,5 +121,31 @@ DescriptorMetrics validate_description(std::string_view name, std::uint32_t vers
     KnownDefinitions known;
     check_fields(fields,name,version,known);
     return {depth, field_limit - remaining_fields, name_limit - remaining};
+}
+}
+// 为结构和联合核定完整命名描述，保留身份与字段名称校验。
+DescriptorMetrics validate_description(std::string_view name, std::uint32_t version,
+    std::span<const FieldDescriptor> fields, DescriptorLimits limits) {
+    return validate_schema(name,version,fields,limits,true);
+}
+// 核定容器的匿名元素约束，不占用任何用户类型名称。
+// 步骤：禁止名称及缺失 → 以匿名容器层校验完整内容和预算。
+DescriptorMetrics validate_element(const FieldDescriptor& field, DescriptorLimits limits) {
+    if (!field.name.empty() || field.optional) throw std::invalid_argument("element: anonymous non-optional constraint required");
+    return validate_schema({},0,{&field,1},limits,false);
+}
+// 比较内容约束的完整定义，不以名称或共享指针相同替代约束相同。
+// 步骤：比较基本种类和标志 → 比较所有实际子描述。
+bool equivalent_field(const FieldDescriptor& a, const FieldDescriptor& b) noexcept {
+    if (a.name != b.name || a.kind != b.kind || a.max_bytes != b.max_bytes || a.optional != b.optional || a.nullable != b.nullable ||
+        static_cast<bool>(a.structure) != static_cast<bool>(b.structure) || static_cast<bool>(a.array) != static_cast<bool>(b.array) ||
+        static_cast<bool>(a.map) != static_cast<bool>(b.map) || static_cast<bool>(a.enumeration) != static_cast<bool>(b.enumeration) ||
+        static_cast<bool>(a.tagged_union) != static_cast<bool>(b.tagged_union)) return false;
+    if (a.structure && !a.structure->equivalent(*b.structure)) return false;
+    if (a.array && !a.array->equivalent(*b.array)) return false;
+    if (a.map && !a.map->equivalent(*b.map)) return false;
+    if (a.enumeration && !a.enumeration->equivalent(*b.enumeration)) return false;
+    if (a.tagged_union && !a.tagged_union->equivalent(*b.tagged_union)) return false;
+    return true;
 }
 }
