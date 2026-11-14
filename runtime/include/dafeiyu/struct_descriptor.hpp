@@ -7,6 +7,7 @@ class StructDescriptor;
 class ArrayDescriptor;
 class MapDescriptor;
 class EnumDescriptor;
+class UnionDescriptor;
 // 字段的可选与可空独立表达；复合或枚举字段必须提供对应种类的描述。
 struct FieldDescriptor {
     std::string name;
@@ -18,6 +19,7 @@ struct FieldDescriptor {
     std::shared_ptr<const ArrayDescriptor> array{};
     std::shared_ptr<const MapDescriptor> map{};
     std::shared_ptr<const EnumDescriptor> enumeration{};
+    std::shared_ptr<const UnionDescriptor> tagged_union{};
     // 构造数组字段约束，仍独立表达字段本身的可选与可空。
     static FieldDescriptor array_field(std::string name, std::shared_ptr<const ArrayDescriptor> descriptor,
         bool optional = false, bool nullable = false) {
@@ -33,9 +35,14 @@ struct FieldDescriptor {
         bool optional = false, bool nullable = false) {
         return {std::move(name), ValueKind::enumeration, 0, {}, optional, nullable, {}, {}, std::move(descriptor)};
     }
+    // 构造联合字段，外层可选及可空不改变分支自身的内容约束。
+    static FieldDescriptor union_field(std::string name, std::shared_ptr<const UnionDescriptor> descriptor,
+        bool optional = false, bool nullable = false) {
+        return {std::move(name), ValueKind::tagged_union, 0, {}, optional, nullable, {}, {}, {}, std::move(descriptor)};
+    }
 };
 
-// 单份描述展开后的字段及枚举成员数量、名称正文上限，不代表全局内存预算。
+// 单份描述展开后的字段、联合分支及枚举成员数量和名称上限，不代表全局内存预算。
 struct DescriptorLimits {
     std::size_t max_fields;
     std::size_t max_name_bytes;
@@ -63,7 +70,7 @@ class StructDescriptor {
     std::span<const FieldDescriptor> fields() const noexcept { return fields_; }
     // 返回包含本结构的嵌套深度，最小为一。
     std::size_t depth() const noexcept { return depth_; }
-    // 返回按字段出现次数展开的字段及枚举成员总数，共享描述也逐次计入。
+    // 返回展开后的字段、联合分支及枚举成员总数，共享描述也逐次计入。
     std::size_t total_fields() const noexcept { return total_fields_; }
     // 返回按字段出现次数展开的名称正文总量，不代表实际分配字节。
     std::size_t name_bytes() const noexcept { return name_bytes_; }

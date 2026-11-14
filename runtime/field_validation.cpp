@@ -3,6 +3,7 @@
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
 #include <dafeiyu/enum_value.hpp>
+#include <dafeiyu/union_value.hpp>
 
 namespace dfy::runtime::detail {
 // 统一结构字段和联合分支的内容验证，不隐式转换种类或放宽子描述约束。
@@ -21,6 +22,8 @@ void validate_field(const FieldDescriptor& field, const Value& value) {
         throw std::invalid_argument("field: map definition mismatch");
     if (value.kind() == ValueKind::enumeration && !field.enumeration->equivalent(*value.as_enum().descriptor()))
         throw std::invalid_argument("field: enum definition mismatch");
+    if (value.kind() == ValueKind::tagged_union && !field.tagged_union->equivalent(*value.as_union().descriptor()))
+        throw std::invalid_argument("field: union definition mismatch");
 
     if ((field.kind == ValueKind::string || field.kind == ValueKind::bytes) && value.payload_bytes() > field.max_bytes)
         throw std::length_error("field: byte limit exceeded");

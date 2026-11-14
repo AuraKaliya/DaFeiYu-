@@ -1,6 +1,8 @@
 #include <dafeiyu/union_descriptor.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
 #include <dafeiyu/union_value.hpp>
+#include <dafeiyu/struct_value.hpp>
+#include <dafeiyu/type_catalog.hpp>
 #include <iostream>
 
 namespace {
@@ -88,9 +90,89 @@ void values() {
     }
     check(observed.expired(),"union not released after last hold");
 }
+// 建立单一整数分支，标签可变用于同身份冲突验收。
+std::shared_ptr<const UnionDescriptor> choice_type(std::uint64_t tag = 0) {
+    const UnionBranch branch{tag,{"number",ValueKind::uint64,0}};
+    return std::make_shared<const UnionDescriptor>(UnionDescriptor::create("test.choice",1,{&branch,1},{1,17}));
+}
+// 核对类型目录拒绝的精确原因及失败后的规模。
+// 步骤：记录原规模 → 执行登记 → 核对拒绝原因与原记录保持。
+template<class Action>
+void definition_failure(TypeCatalog& catalog, DefinitionFailure expected, Action action) {
+    const auto count = catalog.size();
+    try { action(); } catch (const DefinitionError& error) {
+        check(error.reason() == expected && catalog.size() == count,"union definition rejection changed catalog"); return;
+    }
+    throw std::runtime_error("union definition unexpectedly accepted");
+}
+// 验证结构及联合互相组合时的内容、身份和展开约束。
+// 步骤：构造联合字段并区分外层 null → 校验嵌套和共享预算 → 拒绝跨种类身份冲突 → 按依赖登记目录。
+void integration() {
+    const auto choice = choice_type();
+    const auto field = FieldDescriptor::union_field("choice",choice,true,true);
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.root",1,{&field,1},{2,32,2}));
+    const auto selected = std::make_shared<const UnionValue>(UnionValue::create(choice,0,Value::from_uint64(UINT64_MAX),16,2));
+    const NamedValue input{"choice",Value::from_union(selected)};
+    const auto payload = StructValue::create(type,{&input,1},16,3);
+    check(payload.node_count() == 3 && payload.payload_bytes() == 16 && type->depth() == 2 && type->total_fields() == 2 &&
+        payload.at(0).as_union().value().as_uint64() == UINT64_MAX,"union field accounting or precision wrong");
+    const NamedValue outer_null{"choice",Value::null()};
+    check(!StructValue::create(type,{},0,1).present(0) && StructValue::create(type,{&outer_null,1},0,2).at(0).kind() == ValueKind::null_value,
+        "outer union null or missing collapsed");
+    rejects<std::length_error>([&] { (void)StructValue::create(type,{&input,1},15); });
+    rejects<std::length_error>([&] { (void)StructValue::create(type,{&input,1},16,2); });
+    const NamedValue mismatch{"choice",Value::from_union(std::make_shared<const UnionValue>(UnionValue::create(choice_type(1),1,Value::from_uint64(0),16)))};
+    rejects<std::invalid_argument>([&] { (void)StructValue::create(type,{&mismatch,1},16); });
+    rejects<std::length_error>([&] { (void)StructDescriptor::create("test.root",1,{&field,1},{2,32}); });
+    const FieldDescriptor repeated[] = {field,FieldDescriptor::union_field("other",choice)};
+    rejects<std::length_error>([&] { (void)StructDescriptor::create("test.root",1,repeated,{3,128,2}); });
+    auto malformed = field; malformed.kind = ValueKind::uint64;
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.root",1,{&malformed,1},{2,32,2}); });
+    const auto missing = FieldDescriptor::union_field("choice",{});
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.root",1,{&missing,1},{2,32,2}); });
+
+    const UnionBranch branch{7,FieldDescriptor::union_field("nested",choice)};
+    const auto outer = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("test.outer",1,{&branch,1},{2,64,2}));
+    const auto nested = UnionValue::create(outer,7,input.value,24,3);
+    check(nested.node_count() == 3 && nested.value().as_union().tag() == 0,"nested union selection lost");
+    rejects<std::invalid_argument>([&] { (void)UnionDescriptor::create("test.choice",1,{&branch,1},{2,64,2}); });
+    const auto structure = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.choice",1,{}, {0,17}));
+    const FieldDescriptor mixed[] = {field,{"record",ValueKind::structure,0,structure}};
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.root",1,mixed,{3,128,2}); });
+    const FieldDescriptor reversed[] = {mixed[1],mixed[0]};
+    rejects<std::invalid_argument>([&] { (void)StructDescriptor::create("test.root",1,reversed,{3,128,2}); });
+    const EnumMember member{"only",std::int64_t{0}};
+    const auto enumeration = EnumDescriptor::create("test.choice",1,ValueKind::int64,{&member,1},1,32);
+
+    TypeCatalog catalog(3,{64,4096,64});
+    definition_failure(catalog,DefinitionFailure::unknown_dependency,[&] { catalog.define(*outer); });
+    definition_failure(catalog,DefinitionFailure::unknown_dependency,[&] { catalog.define(*type); });
+    const auto registered = catalog.define(*choice);
+    check(registered.get() != choice.get() && catalog.find_union("test.choice",1) == registered && !catalog.find_union("test.choice",2),"union catalog snapshot wrong");
+    definition_failure(catalog,DefinitionFailure::already_defined,[&] { catalog.define(*choice); });
+    definition_failure(catalog,DefinitionFailure::conflicting_definition,[&] { catalog.define(*choice_type(1)); });
+    definition_failure(catalog,DefinitionFailure::conflicting_definition,[&] { catalog.define(*structure); });
+    definition_failure(catalog,DefinitionFailure::conflicting_definition,[&] { catalog.define(enumeration); });
+    catalog.define(*outer); catalog.define(*type);
+    definition_failure(catalog,DefinitionFailure::exhausted,[&] { catalog.define(StructDescriptor::create("test.extra",1,{}, {0,16})); });
+    TypeCatalog conflicting(2,{64,4096,64}); conflicting.define(*structure);
+    definition_failure(conflicting,DefinitionFailure::conflicting_definition,[&] { conflicting.define(*choice); });
+    TypeCatalog other_kind(2,{64,4096,64}); other_kind.define(enumeration);
+    definition_failure(other_kind,DefinitionFailure::conflicting_definition,[&] { other_kind.define(*choice); });
+    definition_failure(other_kind,DefinitionFailure::conflicting_definition,[&] { other_kind.define(*type); });
+
+    auto deep = choice;
+    for (unsigned depth = 2; depth <= 64; ++depth) {
+        const UnionBranch next{depth,FieldDescriptor::union_field("next",deep)};
+        deep = std::make_shared<const UnionDescriptor>(UnionDescriptor::create("test.level"+std::to_string(depth),1,{&next,1},{64,4096,64}));
+    }
+    const auto excessive = FieldDescriptor::union_field("next",deep);
+    check(deep->depth() == 64,"union exact depth rejected");
+    rejects<std::length_error>([&] { (void)StructDescriptor::create("test.too_deep",1,{&excessive,1},{65,4096,64}); });
+}
 }
 // 验收有界联合描述和不可变选择，跨 DLL 读取另行接入。
 int main() {
-    try { descriptions(); values(); std::cout << "Union descriptor and value checks passed\n"; return 0; }
+    try { descriptions(); values(); integration(); std::cout << "Union descriptor and value checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
