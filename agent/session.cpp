@@ -18,6 +18,25 @@ const std::string& TurnRequest::answer() const {
     if (operation()->state() != OperationState::succeeded) throw std::logic_error("session: answer pending");
     return answer_;
 }
+// 记录首次有效取消的时刻，重复请求或已结算回合不改写诊断。
+// 步骤：交由原操作登记取消 → 仅在首次接纳时固定时间 → 返回原取消回执。
+CancelDisposition TurnRequest::request_cancel(CancelReason reason) {
+    const auto disposition = result_.request_cancel(reason);
+    if (disposition == CancelDisposition::recorded) cancel_requested_ = std::chrono::steady_clock::now();
+    return disposition;
+}
+// 用原操作状态和单次记录的时间形成回合视图，不维护第二套业务状态。
+// 步骤：复制身份与时间 → 读取业务及退出状态 → 关联模型事实和通知接纳回执。
+TurnDiagnostics TurnRequest::diagnostics() const noexcept {
+    TurnDiagnostics result;
+    result.session = session_; result.turn = turn_; result.accepted = accepted_;
+    result.cancel_requested = cancel_requested_; result.settled = settled_; result.exited = exited_;
+    result.result = operation()->state(); result.exit = exit()->state();
+    result.cancellation = operation()->cancellation_reason(); result.failure = failure_;
+    result.model = model_ ? model_->diagnostics() : completed_call_;
+    result.notifications = notifications_;
+    return result;
+}
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)
@@ -46,33 +65,42 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
     for (auto& slot : records_) if (!slot) {
         auto pending = history_; pending.push_back({model::Role::user,prompt});
-        auto record = std::shared_ptr<TurnRequest>(new TurnRequest(turn_+1));
+        auto record = std::shared_ptr<TurnRequest>(new TurnRequest(id_,turn_+1));
         auto request = models_.submit(config_,pending);
-        pending_.swap(pending); model_request_ = std::move(request); active_ = record; slot = record; ++turn_;
+        pending_.swap(pending); record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
+        record->accepted_ = std::chrono::steady_clock::now();
         record->notifications_.started = notify("turn_started",turn_); return record;
     }
     throw std::length_error("session: retained turn capacity exhausted");
 }
 // 取消优先于同次推进观察到的模型结果，完整问答准备成功才原子提交历史。
-// 步骤：裁定回合取消 → 推进后台结果 → 准备并提交成功或保留失败历史 → 通知唯一终态 → 确认实际退出。
+// 步骤：裁定回合取消 → 推进后台结果 → 准备历史并记录结算阶段 → 通知唯一终态 → 保存调用事实并确认退出。
 void Session::advance() {
     if (active_ && active_->operation()->state() == OperationState::pending && active_->operation()->cancellation_reason() != CancelReason::none) {
-        model_request_->request_cancel(active_->operation()->cancellation_reason()); active_->result_.settle(OperationState::cancelled);
+        active_->model_->request_cancel(active_->operation()->cancellation_reason()); active_->result_.settle(OperationState::cancelled);
+        active_->settled_ = std::chrono::steady_clock::now();
         pending_.clear(); active_->notifications_.finished = notify("turn_cancelled",active_->turn());
     }
     models_.advance();
-    if (!active_ || model_request_->exit()->state() == OperationState::pending) return;
+    if (!active_ || active_->model_->exit()->state() == OperationState::pending) return;
     if (active_->operation()->state() == OperationState::pending) {
         try {
-            auto answer = model_request_->answer(); std::size_t bytes = answer.size();
+            auto answer = active_->model_->answer(); std::size_t bytes = answer.size();
             for (const auto& message : pending_) bytes += message.content.size();
             if (bytes > 1024*1024) throw std::length_error("session: history exceeds 1 MiB; clear context before retrying");
             pending_.push_back({model::Role::assistant,answer});
             history_.swap(pending_); active_->answer_ = std::move(answer); active_->result_.settle(OperationState::succeeded);
-        } catch (...) { active_->error_ = std::current_exception(); active_->result_.settle(OperationState::failed); }
+        } catch (...) {
+            active_->error_ = std::current_exception();
+            active_->failure_ = active_->model_->operation()->state() == OperationState::failed ? TurnFailure::model : TurnFailure::history_commit;
+            active_->result_.settle(OperationState::failed);
+        }
+        active_->settled_ = std::chrono::steady_clock::now();
         active_->notifications_.finished = notify(active_->operation()->state() == OperationState::succeeded ? "turn_completed" : "turn_failed",active_->turn());
     }
-    pending_.clear(); model_request_.reset(); models_.collect();
+    active_->completed_call_ = active_->model_->diagnostics();
+    pending_.clear(); active_->model_.reset(); models_.collect();
+    active_->exited_ = std::chrono::steady_clock::now();
     active_->exit_.settle(OperationState::succeeded); active_.reset();
 }
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。

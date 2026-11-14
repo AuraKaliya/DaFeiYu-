@@ -28,8 +28,18 @@ void history() {
     });
     auto a = session.begin("first"); rejects<std::logic_error>([&] { (void)session.begin("busy"); }); drain(session,a);
     check(a->answer() == "answer:first" && session.message_count() == 2 && events->size() == 2,"success did not commit independently of observer");
+    const auto success = a->diagnostics();
+    check(success.session == session.id() && success.turn == 1 && success.result == OperationState::succeeded &&
+        success.exit == OperationState::succeeded && success.failure == TurnFailure::none && !success.cancel_requested &&
+        success.settled && success.exited && success.model.finished && success.model.submitted <= success.accepted &&
+        success.accepted <= *success.settled && *success.model.finished <= *success.settled && *success.settled <= *success.exited,
+        "successful turn lost identity, timing or original operation states");
     auto b = session.begin("fail"); drain(session,b);
     check(b->operation()->state() == OperationState::failed && session.message_count() == 2,"model failure polluted history");
+    const auto failure = b->diagnostics();
+    check(failure.failure == TurnFailure::model && failure.model.outcome == dfy::model::CallOutcome::threw &&
+        failure.model.request != success.model.request && success.turn == 1 && success.result == OperationState::succeeded,
+        "model failure or next turn corrupted retained diagnostics");
     rejects<std::length_error>([&] { (void)session.begin("held"); }); a.reset(); b.reset();
     auto c = session.begin("second"); drain(session,c);
     check(c->turn() == 3 && received.size() == 3 && received[0].content == "first" && received[2].content == "second" &&
@@ -59,6 +69,10 @@ void isolation() {
         AsyncSession session({},channel,1,[](const auto&,const auto&) { return std::string("ok"); }); auto request = session.begin("hello"); drain(session,request);
         check(request->operation()->state() == OperationState::succeeded && request->notifications().finished->status == ObservationStatus::overloaded,
             "observation overload rewrote business success");
+        const auto snapshot = request->diagnostics();
+        check(snapshot.notifications.started->status == ObservationStatus::accepted &&
+            snapshot.notifications.finished->status == ObservationStatus::overloaded && snapshot.failure == TurnFailure::none,
+            "turn diagnostics hid observation overload or made it a business failure");
     }
     (void)events->poll();
     std::promise<void> release, entered; const auto gate = release.get_future().share(); auto running = entered.get_future();
@@ -69,13 +83,41 @@ void isolation() {
     Release cleanup{release}; auto request = session.begin("cancel"); running.wait(); session.close();
     check(request->operation()->state() == OperationState::cancelled && request->exit()->state() == OperationState::pending && session.busy() && !session.closed(),
         "session cancel forged worker exit");
+    const auto cancelled = request->diagnostics();
+    check(cancelled.cancel_requested && cancelled.settled && !cancelled.exited && !cancelled.model.finished &&
+        cancelled.cancellation == CancelReason::owner_stop && *cancelled.cancel_requested <= *cancelled.settled,
+        "cancel diagnostics forged actual exit or lost first cause");
+    request->request_cancel(CancelReason::user);
+    check(request->diagnostics().cancel_requested == cancelled.cancel_requested,"repeated cancellation rewrote original time");
     rejects<std::logic_error>([&] { (void)session.clear(); }); cleanup.open(); drain(session,request);
     check(session.closed() && !session.message_count() && request->operation()->state() == OperationState::cancelled,"late model reply committed cancelled history");
+    const auto exited = request->diagnostics();
+    check(exited.result == cancelled.result && exited.cancel_requested == cancelled.cancel_requested &&
+        exited.settled == cancelled.settled && exited.exited && exited.model.finished &&
+        *exited.model.finished >= *exited.settled && *exited.exited >= *exited.model.finished,
+        "late return changed cancellation or lost real exit timing");
+}
+// 验证模型返回后历史提交失败可定位，保留诊断不占用后续模型请求槽。
+// 步骤：产生超过历史容量的回答 → 核对提交阶段失败 → 保留旧回合并成功接纳新回合。
+void commit_failure() {
+    auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),1,8);
+    AsyncSession session({},channel,2,[](const auto&,const auto& messages) {
+        return messages.back().content == "large" ? std::string(1024*1024,'x') : std::string("ok");
+    });
+    auto failed = session.begin("large"); drain(session,failed);
+    const auto snapshot = failed->diagnostics();
+    check(snapshot.failure == TurnFailure::history_commit && snapshot.result == OperationState::failed &&
+        snapshot.model.outcome == dfy::model::CallOutcome::returned && snapshot.exited && !session.message_count(),
+        "history failure was mislabeled as model failure or committed data");
+
+    auto next = session.begin("small"); drain(session,next);
+    check(next->answer() == "ok" && next->turn() == 2 && next->diagnostics().model.request != snapshot.model.request &&
+        failed->diagnostics().exited == snapshot.exited,"retained turn diagnostics kept model busy or changed old snapshot");
 }
 }
 // 验收异步会话的历史事务、通知隔离和取消退出，模型使用可控后台替身。
-// 步骤：验证上下文及事件 → 验证背压和关闭 → 报告结果。
+// 步骤：验证上下文及事件 → 验证背压和关闭 → 验证历史失败诊断 → 报告结果。
 int main() {
-    try { history(); isolation(); std::cout << "Async session checks passed\n"; return 0; }
+    try { history(); isolation(); commit_failure(); std::cout << "Async session checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

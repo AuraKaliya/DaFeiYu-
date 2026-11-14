@@ -5,6 +5,20 @@
 namespace dfy::agent {
 class Session;
 struct TurnNotifications { std::optional<events::ObservationReceipt> started, finished; };
+enum class TurnFailure { none, model, history_commit };
+// 固定大小的回合快照；状态来自原操作，接纳时刻可以晚于后台调用开始。
+struct TurnDiagnostics {
+    using TimePoint = model::CallDiagnostics::TimePoint;
+    runtime::DomainId session = 0;
+    std::uint64_t turn = 0;
+    TimePoint accepted;
+    std::optional<TimePoint> cancel_requested, settled, exited;
+    runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
+    runtime::CancelReason cancellation = runtime::CancelReason::none;
+    TurnFailure failure = TurnFailure::none;
+    model::CallDiagnostics model;
+    TurnNotifications notifications;
+};
 // 宿主线程内的一轮问答结果，业务终态、通知回执与后台退出分别保留。
 class TurnRequest {
   public:
@@ -19,20 +33,28 @@ class TurnRequest {
     // 返回本轮后台资源已退出确认，取消业务不提前完成此操作。
     std::shared_ptr<const runtime::Operation> exit() const noexcept { return exit_.operation(); }
     // 请求取消当前回合，提交前由宿主推进裁定；已提交成功不回滚。
-    runtime::CancelDisposition request_cancel(runtime::CancelReason reason) { return result_.request_cancel(reason); }
+    runtime::CancelDisposition request_cancel(runtime::CancelReason reason);
     // 借用成功回答，失败重抛原错误；取消和尚未完成明确拒绝。
     const std::string& answer() const;
     // 返回观察接纳回执副本，观察失败不会改写业务结果。
     TurnNotifications notifications() const noexcept { return notifications_; }
+    // 返回当前或已退出回合的诊断值副本，不保留模型请求、事件载荷或正文。
+    TurnDiagnostics diagnostics() const noexcept;
   private:
     friend class Session;
     // 准备尚未发布的回合记录，不调用模型或观察者。
-    explicit TurnRequest(std::uint64_t turn) : turn_(turn) {}
+    TurnRequest(runtime::DomainId session, std::uint64_t turn) : session_(session), turn_(turn) {}
+    const runtime::DomainId session_;
     const std::uint64_t turn_;
     runtime::OperationSource result_{true}, exit_;
     std::string answer_;
     std::exception_ptr error_;
     TurnNotifications notifications_;
+    std::shared_ptr<model::ModelRequest> model_;
+    model::CallDiagnostics completed_call_;
+    TurnDiagnostics::TimePoint accepted_;
+    std::optional<TurnDiagnostics::TimePoint> cancel_requested_, settled_, exited_;
+    TurnFailure failure_ = TurnFailure::none;
 };
 
 // 最小异步会话，只维护当前上下文；不引入工具循环、自动规划或会话持久化。
@@ -75,7 +97,6 @@ class Session {
     std::uint64_t turn_ = 0;
     std::vector<std::shared_ptr<TurnRequest>> records_;
     std::shared_ptr<TurnRequest> active_;
-    std::shared_ptr<model::ModelRequest> model_request_;
     std::vector<model::Message> history_, pending_;
     model::AsyncClient models_;
     bool accepting_ = true;
