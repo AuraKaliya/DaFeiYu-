@@ -2,6 +2,7 @@
 #include <dafeiyu/handle_registry.hpp>
 #include <dafeiyu/operation.hpp>
 #include <dafeiyu/fifo_executor.hpp>
+#include <dafeiyu/owner_scheduler.hpp>
 #include <functional>
 
 namespace dfy::runtime {
@@ -29,6 +30,8 @@ class CompletionNotifications {
     RevokeResult revoke(Handle registration);
     // 按登记顺序向 FIFO 提交一项已完成操作的通知；队满返回 blocked，消费者始终延后调用。
     ScheduleResult schedule_one(FifoExecutor& executor);
+    // 将一项完成通知送入明确所有者与优先级，满额或停止接纳时返回 blocked。
+    ScheduleResult schedule_one(OwnerScheduler& scheduler, Handle owner, TaskPriority priority = TaskPriority::normal);
     // 按引用契约拒绝有效登记的共享，同时保留无效句柄的错误类别。
     Handle retain(Handle registration) { return references_.retain(registration); }
     // 释放客户端引用，不撤销 Pending 通知，再回收无持有者的终结记录。
@@ -67,6 +70,8 @@ class CompletionNotifications {
     static void finish(Record& record, NotificationState terminal) noexcept;
     // 在 FIFO 上交付一次通知；活动期覆盖回调及捕获释放，异常收尾后继续向执行器报告。
     static void deliver(const std::shared_ptr<Record>& record);
+    // 回收终态后返回最早可交付通知，不改变排队标记。
+    std::shared_ptr<Record> ready();
     std::vector<std::shared_ptr<Record>> records_;
     HandleRegistry<Reference> references_;
     std::size_t size_ = 0;

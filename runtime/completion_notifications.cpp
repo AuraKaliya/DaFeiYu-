@@ -23,9 +23,9 @@ void CompletionNotifications::finish(Record& record, NotificationState terminal)
     record.state = terminal;
 }
 
-// 将最早的可交付通知登记为 FIFO 工作，不在调度提交中调用消费者。
-// 步骤：回收终结项 → 按登记顺序选择完成操作 → 核对执行器容量 → 提交并标记排队。
-ScheduleResult CompletionNotifications::schedule_one(FifoExecutor& executor) {
+// 选择尚未排队的最早完成通知，取消及资源回收仍由各自协议负责。
+// 步骤：回收终结项 → 过滤未完成和已排队项 → 按登记顺序选取。
+std::shared_ptr<CompletionNotifications::Record> CompletionNotifications::ready() {
     collect();
     std::shared_ptr<Record> selected;
     for (const auto& record : records_) {
@@ -33,10 +33,27 @@ ScheduleResult CompletionNotifications::schedule_one(FifoExecutor& executor) {
             record->operation->state() == OperationState::pending) continue;
         if (!selected || record->order < selected->order) selected = record;
     }
+    return selected;
+}
+// 将最早的可交付通知登记为 FIFO 工作，不在调度提交中调用消费者。
+// 步骤：选择可交付通知 → 核对执行器容量 → 提交并标记排队。
+ScheduleResult CompletionNotifications::schedule_one(FifoExecutor& executor) {
+    const auto selected = ready();
     if (!selected) return ScheduleResult::idle;
     if (executor.size() == executor.capacity()) return ScheduleResult::blocked;
     auto scheduled = std::make_shared<Scheduled>(selected);
     executor.post([scheduled] { deliver(scheduled->record); });
+    selected->queued = true;
+    return ScheduleResult::queued;
+}
+// 复用同一通知持有和交付边界，仅将取出策略交给所有者调度器。
+// 步骤：选择可交付通知 → 核对目标通路额度 → 提交宿主包装 → 标记排队。
+ScheduleResult CompletionNotifications::schedule_one(OwnerScheduler& scheduler, Handle owner, TaskPriority priority) {
+    const auto selected = ready();
+    if (!selected) return ScheduleResult::idle;
+    if (!scheduler.available(owner,priority)) return ScheduleResult::blocked;
+    auto scheduled = std::make_shared<Scheduled>(selected);
+    scheduler.post(owner,[scheduled] { deliver(scheduled->record); },{},priority);
     selected->queued = true;
     return ScheduleResult::queued;
 }

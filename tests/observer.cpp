@@ -56,6 +56,25 @@ std::shared_ptr<const StructValue> event_value() {
         {"text", Value::from_string(std::string("中文\0x", 8), 8)}, {"blob", Value::from_bytes(bytes, 3)}};
     return std::make_shared<const StructValue>(StructValue::create(type, values, 36));
 }
+// 验证实际观察包使用控制预留消费，卸载后旧调度包装只能跳过已撤销入口。
+// 步骤：填满普通通路 → 通过预留消费真实事件 → 再次排队后卸载 → 排空宿主包装并回收。
+void fair_scheduling(const Manifest& manifest, const std::filesystem::path& data) {
+    auto store = std::make_shared<dfy::events::EventStore>(8,64);
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,1,2);
+    PluginInstance instance(manifest,data,channel); OwnerScheduler scheduler(1); const auto owner = scheduler.add_owner(1,1,1);
+    check(!instance.create() && !instance.start(),"fair observer startup failed");
+    unsigned normal = 0; scheduler.post(owner,[&] { ++normal; }); channel->publish(event_value());
+    check(instance.advance(scheduler,owner) == ScheduleResult::blocked && statistics(instance).events == 0,"observer ignored fair backpressure");
+    check(instance.advance(scheduler,owner,TaskPriority::control) == ScheduleResult::queued && scheduler.run_one() == RunResult::executed &&
+        statistics(instance).events == 1 && !normal,"observer did not use control reserve");
+    channel->publish(event_value());
+    check(instance.advance(scheduler,owner,TaskPriority::control) == ScheduleResult::queued,"observer second fair notification failed");
+    check(instance.shutdown() == ShutdownResult::closed && !GetModuleHandleW(manifest.entry.c_str()),"queued fair observer prevented safe unload");
+    scheduler.stop(owner);
+    check(scheduler.run_one() == RunResult::executed && scheduler.run_one() == RunResult::executed && scheduler.run_one() == RunResult::idle &&
+        normal == 1 && !store->references(),"revoked fair wrapper entered unloaded code or leaked event");
+    scheduler.remove(owner);
+}
 // 在有限次数内推进事件及通知，等待下次事件不占执行器线程。
 void drain(PluginInstance& instance, FifoExecutor& executor) {
     for (unsigned i = 0; i < 32; ++i) {
@@ -694,6 +713,7 @@ int wmain(int argc, wchar_t** argv) {
         composite_maps(manifest, argv[2]);
         consumer_groups(manifest, argv[2]);
         group_negotiation(manifest);
+        fair_scheduling(manifest,argv[2]);
         std::cout << "Independent observer checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -68,6 +68,9 @@ class HostServices {
     void enable_notifications(platform::CodeLease code, std::size_t capacity);
     // 将一项就绪通知排入宿主 FIFO，不内联调用 C 消费者。
     runtime::ScheduleResult schedule_one(runtime::FifoExecutor& executor);
+    // 将一项 C 通知排入明确所有者的公平调度通路，保持原代码寿命及活动保护。
+    runtime::ScheduleResult schedule_one(runtime::OwnerScheduler& scheduler, runtime::Handle owner,
+        runtime::TaskPriority priority = runtime::TaskPriority::normal);
     // 返回仍需清理的宿主登记数量，普通数据引用不计入。
     std::size_t resources() const;
     // 返回已记录的清理契约失败，不能据此强制释放实例。

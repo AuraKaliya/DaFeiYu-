@@ -136,6 +136,11 @@ runtime::ScheduleResult PluginInstance::advance(runtime::FifoExecutor& executor)
     state_->host.advance();
     return state_->host.schedule_one(executor);
 }
+// 复用实例宿主责任，将就绪通知送入公平调度及控制预留通路。
+runtime::ScheduleResult PluginInstance::advance(runtime::OwnerScheduler& scheduler, runtime::Handle owner, runtime::TaskPriority priority) {
+    state_->host.advance();
+    return state_->host.schedule_one(scheduler,owner,priority);
+}
 // 复制保留项的非敏感诊断，原状态和代码继续留在宿主。
 std::vector<RetainedInstance> PluginInstance::retained() {
     std::vector<RetainedInstance> result;

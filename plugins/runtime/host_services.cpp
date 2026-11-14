@@ -141,6 +141,11 @@ runtime::ScheduleResult HostServices::schedule_one(runtime::FifoExecutor& execut
     state_->require_owner();
     return state_->notifications ? state_->notifications->schedule_one(executor) : runtime::ScheduleResult::idle;
 }
+// 使用同一 C 通知封装参与所有者调度，不改变绑定、回调或撤销语义。
+runtime::ScheduleResult HostServices::schedule_one(runtime::OwnerScheduler& scheduler, runtime::Handle owner, runtime::TaskPriority priority) {
+    state_->require_owner();
+    return state_->notifications ? state_->notifications->schedule_one(scheduler,owner,priority) : runtime::ScheduleResult::idle;
+}
 // 返回当前仍承担收尾责任的登记计量。
 std::size_t HostServices::resources() const { state_->require_owner(); return state_->resources.size(); }
 // 暴露清理故障供外层停止流程保留实例与代码。

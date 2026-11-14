@@ -37,6 +37,9 @@ class PluginInstance {
     platform::CodeLease retain_code();
     // 推进读取并安排一项通知，由调用方单独推进共享 FIFO。
     runtime::ScheduleResult advance(runtime::FifoExecutor& executor);
+    // 推进读取并向明确所有者的公平调度通路提交一项通知，执行由外层独立推进。
+    runtime::ScheduleResult advance(runtime::OwnerScheduler& scheduler, runtime::Handle owner,
+        runtime::TaskPriority priority = runtime::TaskPriority::normal);
     // 查询离开控制作用域但尚未安全回收的实例，不包含配置内容。
     static std::vector<RetainedInstance> retained();
     // 在主宿主线程逐项重试保留实例，返回仍未完成的数量。
