@@ -39,6 +39,7 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 
 | 命令 | 用途 |
 |---|---|
+| `/status` | 查看当前或最近一轮的状态、调用耗时、退出确认和通知接纳结果 |
 | `/clear` | 空闲时清空上下文 |
 | `/cancel` | 请求取消本轮，等待实际调用退出 |
 | `/exit` | 停止输入并有序结束 |
@@ -52,6 +53,8 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 模型等待期间仍可使用本地命令，新的普通问答明确报告忙碌。正常输入 EOF 等待已接纳回答完成；明确退出请求取消当前问答。取消决定与后台实际退出分开，迟到回答不能恢复已取消结果。模型默认不自动重发失败请求。
 
 `dfy.session.event@1` 记录 `kind`、`session`、`turn`、`messages`，不包含凭据或对话正文。种类为 `turn_started`、`turn_completed`、`turn_failed`、`turn_cancelled`、`session_cleared`；成功事件在历史提交后接纳，观察者始终延后运行。
+
+单次问答诊断将会话、回合、模型请求和通知事件身份关联，并记录单调时间及失败阶段。`/status` 仅查询有界内存快照，不调用模型；取消结果与实际退出分别显示。通知未接纳会独立提示一次，不改写问答结果，也不自动补发。诊断不含正文、凭据或异常内容，终端仅保留最近一轮，清空上下文后仍可查看，退出后丢弃。详细字段解释见 [运行说明](docs/run-guide.md)。
 
 ## 插件与运行时
 

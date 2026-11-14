@@ -8,13 +8,19 @@ namespace dfy::app {
 ChatController::ChatController(agent::AsyncSession& session, std::ostream& output, std::ostream& errors, LocalCommand command)
     : session_(session), output_(output), errors_(errors), command_(std::move(command)) {}
 // 管理命令不发送给模型，普通输入只在会话实际空闲时接纳。
-// 步骤：忽略结束和空白 → 处理退出、取消与清空 → 转交本地管理 → 接受问答或独立报告拒绝。
+// 步骤：忽略结束和空白 → 处理退出、取消、清空及诊断 → 转交本地管理 → 接受问答或独立报告拒绝。
 void ChatController::line(std::string text) {
     if (ending_) return;
     if (text.ends_with('\r')) text.pop_back();
     if (text.find_first_not_of(" \t\r\n") == std::string::npos) return;
     try {
         if (text == "/exit") { request_exit(); return; }
+        if (text == "/status") {
+            if (current_) write_turn_status(output_,current_->diagnostics());
+            else if (last_) write_turn_status(output_,*last_);
+            else output_ << "No accepted question in this session.\n";
+            return;
+        }
         if (text == "/cancel") {
             if (current_ && current_->operation()->state() == runtime::OperationState::pending) current_->request_cancel(runtime::CancelReason::user);
             else output_ << "No active request to cancel.\n";
@@ -25,7 +31,7 @@ void ChatController::line(std::string text) {
             write_observation_warning(errors_,session_.id(),0,"session_cleared",receipt); return;
         }
         if (text.starts_with('/')) {
-            if (!command_ || !command_(text)) errors_ << "Unknown command. Use /clear, /cancel or /exit.\n";
+            if (!command_ || !command_(text)) errors_ << "Unknown command. Use /status, /clear, /cancel or /exit.\n";
             return;
         }
         if (current_) throw std::logic_error("session: wait for the current request to finish");
@@ -35,7 +41,7 @@ void ChatController::line(std::string text) {
     catch (...) { errors_ << "Command failed.\n"; }
 }
 // 输出业务结果后继续跟踪后台退出，正常 EOF 不取消尚未完成的回答。
-// 步骤：推进会话 → 独立报告终态通知失败 → 输出唯一业务结果 → 归还退出回合 → 按 EOF 状态关闭空闲会话。
+// 步骤：推进会话 → 独立报告终态通知失败 → 输出唯一业务结果 → 保存最近快照并归还退出回合 → 按 EOF 状态关闭空闲会话。
 void ChatController::advance() {
     session_.advance();
     if (current_ && !finished_notification_reported_ && current_->notifications().finished) {
@@ -55,7 +61,9 @@ void ChatController::advance() {
         }
         output_ << std::flush; errors_ << std::flush;
     }
-    if (current_ && current_->exit()->state() != runtime::OperationState::pending) current_.reset();
+    if (current_ && current_->exit()->state() != runtime::OperationState::pending) {
+        last_ = current_->diagnostics(); current_.reset();
+    }
     if (ending_ && !session_.busy()) session_.close();
 }
 // 明确退出请求停止新问答并协作取消当前调用，完成确认仍由 advance 处理。
@@ -65,7 +73,7 @@ void ChatController::request_exit() { ending_ = true; session_.close(); }
 int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::ostream& output, std::ostream& errors,
     HostPump pump, LocalCommand command) {
     ChatController controller(session,output,errors,std::move(command)); bool input_failed = false, input_closing = false;
-    output << "DaFeiYu\nEnter a message, /clear, /cancel or /exit. Local commands remain available while waiting.\n" << std::flush;
+    output << "DaFeiYu\nEnter a message, /status, /clear, /cancel or /exit. Local commands remain available while waiting.\n" << std::flush;
     while (!controller.done() || !input.exited()) {
         if (pump) pump(); controller.advance();
         if (!controller.closing()) {

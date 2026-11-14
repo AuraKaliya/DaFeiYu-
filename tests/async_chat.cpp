@@ -112,16 +112,66 @@ void notification_warnings() {
         chat.advance(); check(errors.str() == once,"notification warning repeated after exit");
         check(outcome == 0 ? session.message_count() == 2 && output.str().find("ok") != std::string::npos : !session.message_count(),
             "observation warning changed question result");
+        output.str(""); chat.line("/status");
+        check(output.str().find("finished=capacity exhausted") != std::string::npos && errors.str() == once &&
+            (outcome != 0 || output.str().find("Question=succeeded") != std::string::npos),"status lost notification failure or repeated warning");
 
         chat.line("/clear");
         check(errors.str().find("session_cleared notification not accepted") != std::string::npos &&
             output.str().find("Context cleared") != std::string::npos && !session.message_count(),"clear receipt was hidden or rolled back clear");
     }
 }
+// 验证本地诊断可查看取消前后状态，最近快照稳定且不阻止下一轮或泄露内容。
+// 步骤：查询空会话及运行中 → 取消后分别检查结算和退出 → 保留快照并清空 → 连续验证两类失败。
+void status_queries() {
+    auto events = channel(); auto observer = events->subscribe();
+    std::promise<void> release, entered; auto gate = release.get_future().share(); auto started = entered.get_future(); unsigned calls = 0;
+    dfy::agent::AsyncSession session({},events,1,
+    // 用一轮受控调用和两类失败覆盖诊断，不向真实服务发送任何请求。
+    // 步骤：首轮报告进入并等待 → 第二轮抛错 → 第三轮产生超过历史容量的文本。
+    [&](const auto&,const auto&) -> std::string {
+        ++calls;
+        if (calls == 1) { entered.set_value(); gate.wait(); return "private answer"; }
+        if (calls == 2) throw std::runtime_error("private exception");
+        return std::string(1024*1024,'x');
+    });
+    Release cleanup{release}; std::ostringstream output, errors; ChatController chat(session,output,errors);
+    chat.line("/status"); check(!calls && output.str().find("No accepted question") != std::string::npos,"empty status invoked model");
+    chat.line("private prompt"); started.wait(); output.str(""); chat.line("/status");
+    check(calls == 1 && output.str().find("Question=pending") != std::string::npos &&
+        output.str().find("Model call=running, exit=waiting") != std::string::npos &&
+        output.str().find("finished=not emitted") != std::string::npos && output.str().find("private") == std::string::npos,
+        "live status advanced model, invented completion or leaked content");
+
+    chat.line("/cancel"); chat.advance(); output.str(""); chat.line("/status");
+    check(output.str().find("Question=cancelled") != std::string::npos && output.str().find("Cancellation=user") != std::string::npos &&
+        output.str().find("Model call=running, exit=waiting") != std::string::npos,"cancel status hid actual exit wait");
+    cleanup.open();
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (session.busy() && std::chrono::steady_clock::now() < deadline) { chat.advance(); std::this_thread::yield(); }
+    check(!session.busy(),"status test model did not exit");
+    output.str(""); chat.line("/status"); const auto final = output.str();
+    check(final.find("Question=cancelled") != std::string::npos && final.find("Model call=returned, exit=confirmed") != std::string::npos &&
+        final.find("(final)") != std::string::npos && final.find("accepted (queued only); event=") != std::string::npos &&
+        final.find("private") == std::string::npos,"latest status lost late-return facts or exposed response");
+    chat.line("/clear"); output.str(""); chat.line("/status");
+    check(output.str() == final,"clear or repeated status changed final diagnostic snapshot");
+
+    for (const auto stage : {"model","history commit"}) {
+        chat.line("another private prompt");
+        const auto until = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (session.busy() && std::chrono::steady_clock::now() < until) { chat.advance(); std::this_thread::yield(); }
+        check(!session.busy(),"retained diagnostic prevented next question exit");
+        output.str(""); errors.str(""); chat.line("/status");
+        check(output.str().find(std::string("Question=failed, failure stage=")+stage) != std::string::npos &&
+            output.str().find("private") == std::string::npos && errors.str().empty(),"failure status lost stage or exposed exception");
+    }
+    check(calls == 3 && !session.message_count(),"status queries changed history or caused extra model calls");
+}
 }
 // 验收终端本地命令、取消和真实输入循环，模型只使用离线后台替身。
-// 步骤：验证等待期间命令 → 验证 EOF 与输出刷新 → 验证观察失败提示 → 报告结果。
+// 步骤：验证等待期间命令 → 验证 EOF 与输出刷新 → 验证观察失败与回合诊断 → 报告结果。
 int main() {
-    try { commands(); input_loop(); command_flush(); notification_warnings(); std::cout << "Async chat checks passed\n"; return 0; }
+    try { commands(); input_loop(); command_flush(); notification_warnings(); status_queries(); std::cout << "Async chat checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

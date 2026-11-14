@@ -30,6 +30,7 @@ class ChatController {
     std::ostream& errors_;
     LocalCommand command_;
     std::shared_ptr<agent::TurnRequest> current_;
+    std::optional<agent::TurnDiagnostics> last_;
     bool reported_ = false, ending_ = false;
     bool finished_notification_reported_ = false;
 };
