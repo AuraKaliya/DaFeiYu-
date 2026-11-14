@@ -21,6 +21,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void close() noexcept { closed_ = true; view_.Reset(); }
     // 返回已通过的协议检查数。
     std::size_t passed() const noexcept { return current_; }
+    // 关闭后仍需等待正在交回的协议调用，不把放弃显示当作回调已经结束。
+    bool pending() const noexcept { return waiting_; }
   private:
     using Json = nlohmann::json;
     struct Step { std::string name; std::wstring method; Json parameters; bool frame; std::function<void(const Json&)> check; std::function<bool()> ready; };

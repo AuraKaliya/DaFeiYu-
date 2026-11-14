@@ -3,6 +3,7 @@
 #include "frame_channel.hpp"
 #include "interaction_probe.hpp"
 #include "probe_host.hpp"
+#include "browser_lifetime.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <wrl.h>
@@ -23,7 +24,9 @@ void require(HRESULT status) { if (FAILED(status)) throw std::runtime_error("Web
 
 struct Window : std::enable_shared_from_this<Window> {
     HWND handle = nullptr;
-    std::filesystem::path assets, profile;
+    std::filesystem::path assets;
+    dfy::ui::ProbeProfile profile;
+    dfy::ui::BrowserProcesses processes;
     ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> view;
@@ -32,10 +35,14 @@ struct Window : std::enable_shared_from_this<Window> {
     std::shared_ptr<const dfy::ui::FrameChecks> checks;
     std::shared_ptr<dfy::ui::InteractionProbe> interaction;
     std::chrono::steady_clock::time_point deadline;
+    std::chrono::steady_clock::time_point close_deadline;
+    const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
     bool loaded = false;
+    long long navigation_ms = -1;
     EventRegistrationToken navigation{};
-    unsigned pending = 0;
-    bool closing = false, smoke = false, interaction_mode = false, lifecycle_mode = false, navigation_bound = false;
+    unsigned pending = 0, pending_at_close = 0;
+    bool closing = false, smoke = false, interaction_mode = false, lifecycle_mode = false, early = false, close_controller = false, navigation_bound = false;
+    bool finish_posted = false, process_check_failed = false, close_warned = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -49,17 +56,37 @@ struct Window : std::enable_shared_from_this<Window> {
     }
     // 将所属窗口的键盘焦点交给浏览器控件，不切换其他应用或窗口。
     void focus() noexcept { if (controller) controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC); }
-    // 关闭控制器并等待未交回的创建回调，避免回调访问已销毁窗口。
-    // 步骤：关闭新接纳并隐藏 → 撤销通知并关闭浏览器 → 等待创建完成 → 销毁原生窗口。
+    // 关闭入口和控制器后继续推进消息，直到创建回调及浏览器进程实际结束。
+    // 步骤：停止接纳 → 记录所属进程 → 关闭浏览器接口 → 延后确认退出。
     void close() noexcept {
-        closing = true; ShowWindow(handle,SW_HIDE);
+        if (!closing) { closing = true; pending_at_close = pending; close_deadline = std::chrono::steady_clock::now()+std::chrono::seconds(10); }
+        ShowWindow(handle,SW_HIDE);
         KillTimer(handle,1); if (host) host->close();
         if (interaction) interaction->close();
+        if (environment) {
+            try { processes.observe(environment.Get()); }
+            catch (const std::exception& error) { process_check_failed = true; result = 1; std::fprintf(stderr,"%s\n",error.what()); }
+        }
         if (view && navigation_bound) { view->remove_NavigationCompleted(navigation); navigation_bound = false; }
-        if (content) content->close();
         if (controller) controller->Close();
+        if (content) content->close();
         view.Reset(); controller.Reset();
-        if (!pending) { environment.Reset(); DestroyWindow(handle); }
+        // 尚未交回的控制器可能继续创建进程，保留环境供最后一次回调重新观察。
+        if (!pending) environment.Reset();
+        SetTimer(handle,2,20,nullptr);
+    }
+    // 用内核退出、回调和目录回收共同确认关闭，不在 COM 回调栈内销毁窗口。
+    // 步骤：等待全部责任 → 清理本次配置 → 延后销毁窗口或报告超时。
+    void finish_close() noexcept {
+        const bool callbacks_done = !pending && (!interaction || !interaction->pending());
+        const bool frames_done = !checks || (!checks->active && !checks->ready && !checks->live_channels);
+        if (callbacks_done && frames_done && processes.exited() && !process_check_failed && profile.cleanup()) {
+            if (!finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
+        } else if (std::chrono::steady_clock::now() >= close_deadline) {
+            result = 1;
+            if (!close_warned) { close_warned = true; std::fputs("U01: shutdown incomplete; profile retained\n",stderr); }
+            if (callbacks_done && processes.exited() && !finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
+        }
     }
     // 在控制器完成后配置本地资源与最小浏览设置，再异步导航。
     // 步骤：取得能力与设置 → 映射本地资源 → 登记导航结果 → 加载离线页面。
@@ -75,13 +102,13 @@ struct Window : std::enable_shared_from_this<Window> {
         // 仅观察本次导航是否完成，通过窗口消息安排自动验收退出。
         // 步骤：读取导航结果 → 失败时记录错误 → 按验收模式请求关闭。
         [weak](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
-            if (const auto self = weak.lock()) {
+            if (const auto self = weak.lock(); self && !self->closing) {
                 BOOL success = FALSE;
                 if (FAILED(args->get_IsSuccess(&success)) || !success) {
                     COREWEBVIEW2_WEB_ERROR_STATUS error{}; args->get_WebErrorStatus(&error);
                     const auto reason = "U01 main navigation error="+std::to_string(static_cast<int>(error)); self->fail(reason.c_str());
                 }
-                else self->loaded = true;
+                else { self->loaded = true; self->navigation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-self->started).count(); }
             }
             return S_OK;
         }).Get(),&navigation));
@@ -91,6 +118,7 @@ struct Window : std::enable_shared_from_this<Window> {
     // 有界等待真实异步消息，不以导航成功替代 Frame 授权验收。
     // 步骤：检查原生完成条件 → 成功请求关闭 → 超时记录边界并失败。
     void tick() noexcept {
+        if (closing) { finish_close(); return; }
         if (loaded && interaction_mode && !interaction) {
             try {
                 const auto weak = weak_from_this();
@@ -140,13 +168,15 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get());
         if (FAILED(status)) { --pending; require(status); }
+        if (close_controller) PostMessageW(handle,WM_CLOSE,0,0);
     }
     // 创建独立环境，配置路径与回调寿命由当前窗口拥有。
     // 步骤：检查离线入口 → 提交环境创建 → 接收环境或错误 → 按窗口状态继续或收尾。
     void start() {
         if (!std::filesystem::is_regular_file(assets/L"index.html")) throw std::runtime_error("UI assets missing");
+        profile.create();
         const auto weak = weak_from_this(); ++pending;
-        const auto status = CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.c_str(),nullptr,
+        const auto status = CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.path().c_str(),nullptr,
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             // 在创建回调返回前固定环境责任，关闭中的窗口不再创建控制器。
             // 步骤：核对宿主 → 接收环境 → 按关闭状态创建或回收 → 捕获本地错误。
@@ -164,6 +194,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 return S_OK;
             }).Get());
         if (FAILED(status)) { --pending; require(status); }
+        if (early) PostMessageW(handle,WM_CLOSE,0,0);
     }
 };
 // 将原生窗口事件转交所属容器，窗口存活期间仅借用状态指针。
@@ -176,6 +207,7 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
         if (message == WM_SETFOCUS) { state->focus(); return 0; }
         if (message == WM_TIMER) { state->tick(); return 0; }
         if (message == WM_CLOSE) { state->close(); return 0; }
+        if (message == WM_APP+1) { KillTimer(window,2); DestroyWindow(window); return 0; }
         if (message == WM_DESTROY) { PostQuitMessage(state->result); return 0; }
     }
     return DefWindowProcW(window,message,wparam,lparam);
@@ -187,31 +219,47 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool smoke = __argc == 2 && std::wstring_view(__wargv[1]) == L"--smoke";
     const bool interaction_mode = __argc == 2 && std::wstring_view(__wargv[1]) == L"--interaction";
     const bool lifecycle_mode = __argc == 2 && std::wstring_view(__wargv[1]) == L"--lifecycle";
-    if (__argc > 1 && !smoke && !interaction_mode && !lifecycle_mode) return 2;
+    const bool early = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-early";
+    const bool close_controller = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-controller";
+    const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime;
+    if (__argc > 1 && !automatic) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     try {
-        LPWSTR raw = nullptr; const auto status = GetAvailableCoreWebView2BrowserVersionString(nullptr,&raw);
+        const auto missing = dfy::app::executable_directory()/L"__u01_missing_runtime__";
+        if (missing_runtime && std::filesystem::exists(missing)) throw std::runtime_error("U01: missing-runtime fixture must not exist");
+        LPWSTR raw = nullptr; const auto status = GetAvailableCoreWebView2BrowserVersionString(missing_runtime ? missing.c_str() : nullptr,&raw);
         std::unique_ptr<wchar_t,decltype(&CoTaskMemFree)> version(raw,&CoTaskMemFree);
         if (FAILED(status) || !version) {
-            if (!smoke && !interaction_mode && !lifecycle_mode) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
+            std::fputs("WebView2 Runtime unavailable\n",stderr);
+            if (!automatic) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
             CoUninitialize(); return 4;
         }
-        auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode; state->lifecycle_mode = lifecycle_mode;
+        auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
+        state->close_controller = close_controller;
         state->assets = dfy::app::executable_directory()/L"ui";
-        state->profile = dfy::app::default_user_data()/L"ui-probe";
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");
-        const DWORD extended = smoke || interaction_mode || lifecycle_mode ? WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW : 0;
+        const DWORD extended = automatic ? WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW : 0;
         state->handle = CreateWindowExW(extended,kind.lpszClassName,L"大肥鱼管理中心 · U01 验证",WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
-        ShowWindow(state->handle,smoke || interaction_mode || lifecycle_mode ? SW_HIDE : show);
+        ShowWindow(state->handle,automatic ? SW_HIDE : show);
         try { state->start(); } catch (const std::exception& error) { state->fail(error.what()); }
         catch (...) { state->fail(); }
         MSG message{}; BOOL next;
         while ((next = GetMessageW(&message,nullptr,0,0)) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
         result = next < 0 ? 1 : static_cast<int>(message.wParam);
+        const nlohmann::json report{{"result",result},{"pending_callbacks",state->pending},{"pending_at_close",state->pending_at_close},
+            {"protocol_pending",state->interaction && state->interaction->pending()},
+            {"browser_processes",state->processes.count()},{"processes_exited",!state->process_check_failed && state->processes.exited()},
+            {"profile_cleaned",state->profile.cleaned()},{"active_frames",state->checks ? state->checks->active : 0},
+            {"live_channels",state->checks ? state->checks->live_channels : 0},
+            {"created_frames",state->checks ? state->checks->created : 0},{"destroyed_frames",state->checks ? state->checks->destroyed : 0},
+            {"runtime",dfy::ui::utf8(version.get())},{"root_navigation_ms",state->navigation_ms},
+            {"elapsed_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-state->started).count()}};
+        std::puts(report.dump().c_str());
     } catch (const std::exception& error) { std::fprintf(stderr,"%s\n",error.what()); result = 1; }
     catch (...) { result = 1; }
     CoUninitialize(); return result;

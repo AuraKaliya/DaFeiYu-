@@ -4,6 +4,10 @@ if(BUILD_GUI)
   target_link_libraries(dfy_ui_scope_tests PRIVATE dfy_ui_scope dfy_build_options)
   set_target_properties(dfy_ui_scope_tests PROPERTIES FOLDER Tests)
   add_test(NAME ui.frame_scope COMMAND dfy_ui_scope_tests)
+  foreach(mode IN ITEMS smoke interaction lifecycle close-early close-controller)
+    add_test(NAME "ui.${mode}" COMMAND dfy_ui_probe "--${mode}")
+    set_tests_properties("ui.${mode}" PROPERTIES TIMEOUT 35)
+  endforeach()
 endif()
 
 # 验证生产域签发器与同一内部算法的整数边界，不连接任何插件或模型服务。
