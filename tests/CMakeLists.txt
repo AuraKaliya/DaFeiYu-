@@ -406,6 +406,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.group_notifications COMMAND dfy_plugin_group_notifications_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.group_notifications PROPERTIES TIMEOUT 15)
 
+# 验证观察失败隔离和控制边界的许可、期限及实际退出。
+add_executable(dfy_hooks_tests hooks.cpp)
+target_link_libraries(dfy_hooks_tests PRIVATE dfy_event_streams dfy_build_options)
+set_target_properties(dfy_hooks_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/hooks.cpp")
+add_test(NAME events.hooks COMMAND dfy_hooks_tests)
+set_tests_properties(events.hooks PROPERTIES TIMEOUT 15)
+
 # 验证显式业务参与者的结果策略、取消和结果预算寿命。
 add_executable(dfy_result_group_tests result_group.cpp)
 target_link_libraries(dfy_result_group_tests PRIVATE dfy_runtime dfy_build_options)
