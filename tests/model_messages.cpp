@@ -35,9 +35,31 @@ void protocol() {
     request = fixture(); request.messages.assign(1025,{Role::user,"x"}); rejects(request);
     request = fixture(); request.max_output_tokens = 0; rejects(request);
 }
+// 拒绝不能交给执行层的模型响应，不执行其中的任何工具。
+void rejects_response(const Response& response) {
+    try { validate_response(response); } catch (const std::logic_error&) { return; }
+    throw std::runtime_error("invalid model response accepted");
+}
+// 验证完整调用与文本兼容，并保证截断、重复和结束原因不一致时不交付调用。
+// 步骤：接受正常文本与调用 → 拒绝残缺和重复调用 → 保留无调用的受限结束原因。
+void responses() {
+    validate_response({{Role::assistant,"answer"}});
+    const Response call{{Role::assistant,"",{{"one","read_state","{}"}}},FinishReason::tool_calls};
+    validate_response(call);
+    auto response = call; response.finish = FinishReason::length; rejects_response(response);
+    response = call; response.finish = FinishReason::stop; rejects_response(response);
+    response = call; response.message.tool_calls.clear(); rejects_response(response);
+    response = call; response.message.tool_calls.push_back(response.message.tool_calls.front()); rejects_response(response);
+    response = call; response.message.tool_calls[0].arguments = "{\"incomplete\":"; rejects_response(response);
+    response = call; response.message.role = Role::user; rejects_response(response);
+    response = call; response.message.content.assign(8*1024*1024,'x'); rejects_response(response);
+    rejects_response({{Role::assistant,""}});
+    validate_response({{Role::assistant,"partial"},FinishReason::length});
+    validate_response({{Role::assistant,""},FinishReason::content_filter});
+}
 }
 // 执行纯内存的模型消息校验并报告结果。
 int main() {
-    try { protocol(); std::cout << "Model message checks passed\n"; return 0; }
+    try { protocol(); responses(); std::cout << "Model message checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

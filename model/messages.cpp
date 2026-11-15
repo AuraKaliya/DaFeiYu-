@@ -14,8 +14,8 @@ bool tool_name(const std::string& name) {
     return true;
 }
 // 累加有界正文，不让整数溢出绕过请求预算。
-void account(std::size_t& bytes, const std::string& text) {
-    if (text.size() > max_bytes-bytes) throw std::length_error("model: request exceeds 1 MiB");
+void account(std::size_t& bytes, const std::string& text, std::size_t limit = max_bytes) {
+    if (text.size() > limit-bytes) throw std::length_error("model: message payload exceeds limit");
     bytes += text.size();
 }
 // 校验参数或 schema 为完整 JSON 对象，不将不完整参数送入执行层。
@@ -64,5 +64,28 @@ void validate_request(const Request& request) {
         }
     }
     if (!pending.empty()) throw std::invalid_argument("model: missing tool results");
+}
+// 对完整文本和工具调用使用同一响应边界，不把长度截断作为可执行参数。
+// 步骤：检查角色和结束原因 → 校验文本与调用容量 → 检查调用身份和完整参数。
+void validate_response(const Response& response) {
+    const auto& message = response.message;
+    if (message.role != Role::assistant || !message.tool_call_id.empty() || message.tool_calls.size() > 64)
+        throw std::invalid_argument("model: invalid assistant response");
+    if (response.finish != FinishReason::stop && response.finish != FinishReason::tool_calls &&
+        response.finish != FinishReason::length && response.finish != FinishReason::content_filter)
+        throw std::invalid_argument("model: unknown finish reason");
+    if ((response.finish == FinishReason::tool_calls) != !message.tool_calls.empty())
+        throw std::invalid_argument("model: incomplete or inconsistent tool calls");
+    if (response.finish == FinishReason::stop && message.content.empty())
+        throw std::invalid_argument("model: empty final text");
+
+    std::size_t bytes = 0; account(bytes,message.content,8*max_bytes);
+    std::set<std::string> calls;
+    for (const auto& call : message.tool_calls) {
+        account(bytes,call.id,8*max_bytes); account(bytes,call.name,8*max_bytes); account(bytes,call.arguments,8*max_bytes);
+        if (call.id.empty() || call.id.size() > 128 || !tool_name(call.name) || !calls.insert(call.id).second)
+            throw std::invalid_argument("model: invalid or duplicate response tool call");
+        object_json(call.arguments);
+    }
 }
 }

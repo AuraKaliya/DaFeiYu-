@@ -29,4 +29,6 @@ struct Response {
 };
 // 校验统一请求的角色、工具配对、定义和容量，失败时不接触凭据或网络。
 void validate_request(const Request& request);
+// 校验完整模型响应及工具参数，截断调用和不一致结束原因均明确拒绝。
+void validate_response(const Response& response);
 }
