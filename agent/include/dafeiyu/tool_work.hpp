@@ -2,6 +2,8 @@
 #include <dafeiyu/model_messages.hpp>
 #include <dafeiyu/operation.hpp>
 #include <dafeiyu/run_identity.hpp>
+#include <dafeiyu/budget.hpp>
+#include <dafeiyu/serial_domain.hpp>
 #include <functional>
 #include <utility>
 
@@ -16,6 +18,12 @@ struct ToolResult {
 };
 struct ToolProgress { std::optional<ToolResult> result; bool exited = false; };
 struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; model::ToolCall call; };
+// 顺序资格与计费均由宿主先准备；预算覆盖保留结果，顺序占用覆盖实际工作退出。
+struct ToolResources {
+    std::shared_ptr<runtime::SerialDomain> domain;
+    std::shared_ptr<const runtime::SerialRequest> ordering;
+    runtime::BudgetLease charge;
+};
 // 同一宿主线程推进的已接纳工作；后台责任必须保持到 exited，不能在析构中强行中止。
 class ToolWork {
   public:
@@ -49,7 +57,8 @@ class ToolRequest {
   private:
     friend struct ToolWorkState;
     // 准备结果和退出操作，不执行工厂或占用原生代码。
-    explicit ToolRequest(ToolInvocation invocation) : invocation_(std::move(invocation)) {}
+    ToolRequest(ToolInvocation invocation, runtime::BudgetLease charge) : charge_(std::move(charge)), invocation_(std::move(invocation)) {}
+    runtime::BudgetLease charge_;
     const ToolInvocation invocation_;
     runtime::OperationSource result_, exit_{true};
     ToolResult outcome_{false,ToolEffect::not_applied,{},ToolError::none};
@@ -58,7 +67,7 @@ class ToolRequest {
 class ToolDriver {
   public:
     // 预备调用记录和显式工厂，首次 advance 才调用工厂。
-    ToolDriver(ToolInvocation invocation, ToolFactory factory);
+    ToolDriver(ToolInvocation invocation, ToolFactory factory, ToolResources resources = {});
     // 请求停止并尝试推进一次；未退出工作转入有界保留表，不释放在途代码。
     ~ToolDriver();
     // 禁止复制工作推进及退出责任。

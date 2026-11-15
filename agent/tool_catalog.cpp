@@ -80,7 +80,7 @@ ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& 
 }
 // 先验证选择和参数，再准备不立即执行的驱动，授权撤销仍能阻止首次实际调用。
 // 步骤：解析原实例 → 核对实现 → 捕获原注册并设置调用前校验 → 签发工作身份。
-std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::ToolCall call) const {
+std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::ToolCall call, ToolResources resources) const {
     const auto selection = resolve(call.name,call.arguments);
     for (const auto& entry : entries_) if (entry->registration == selection.registration) {
         if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
@@ -89,7 +89,7 @@ std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::Tool
                 return completed_tool({false,ToolEffect::not_applied,{},ToolError::unavailable});
             return entry->factory(input);
         };
-        return std::make_unique<ToolDriver>(ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(guarded));
+        return std::make_unique<ToolDriver>(ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(guarded),std::move(resources));
     }
     throw std::logic_error("tools: missing selected registration");
 }

@@ -26,7 +26,7 @@ class ToolSnapshot {
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。
-    std::unique_ptr<ToolDriver> prepare(AttemptId attempt, model::ToolCall call) const;
+    std::unique_ptr<ToolDriver> prepare(AttemptId attempt, model::ToolCall call, ToolResources resources = {}) const;
   private:
     friend class ToolCatalog;
     // 保留已完整校验的成员集合，不取得任何原生函数指针。

@@ -22,11 +22,18 @@ struct ToolWorkState {
     std::shared_ptr<ToolRequest> record;
     ToolFactory factory;
     std::unique_ptr<ToolWork> work;
+    std::shared_ptr<runtime::SerialDomain> domain;
+    std::shared_ptr<const runtime::SerialRequest> ordering;
     ToolWorkState* next = nullptr;
     bool started = false, advancing = false, reported = false;
     // 完整准备记录和调用对象，计入进程内最多 256 个活动或保留驱动状态。
-    ToolWorkState(ToolInvocation invocation, ToolFactory callback)
-        : record(new ToolRequest(std::move(invocation))), factory(std::move(callback)) { ++resident_count; }
+    // 步骤：创建请求与资源责任 → 绑定原顺序资格 → 登记驱动计数。
+    ToolWorkState(ToolInvocation invocation, ToolFactory callback, ToolResources resources)
+        : record(new ToolRequest(std::move(invocation),std::move(resources.charge))), factory(std::move(callback)),
+          domain(std::move(resources.domain)), ordering(std::move(resources.ordering)) {
+        if (domain) domain->bind(ordering);
+        ++resident_count;
+    }
     // 已确认退出后释放状态计数，工作必须先在推进阶段销毁。
     ~ToolWorkState() { --resident_count; }
     // 只在业务尚未结算时报告失败，不改写已发生效果或取消终态。
@@ -35,9 +42,17 @@ struct ToolWorkState {
             record->outcome_.error = error; record->result_.settle(runtime::OperationState::failed);
         }
     }
-    // 确认当前工作已不再执行，销毁工作后才发布退出。
+    // 确认工作退出并归还原顺序占用，保留结果的预算不随工作退出提前归还。
+    // 步骤：销毁工作和工厂 → 完成占用或撤回未开始资格 → 发布退出确认。
     void finish() {
-        work.reset(); factory = {}; record->exit_.settle(runtime::OperationState::succeeded);
+        using namespace runtime;
+        work.reset(); factory = {};
+        if (domain) {
+            if (started) domain->finish(ordering);
+            else if (ordering->phase() != SerialPhase::cancelled && ordering->withdrawal_reason() == CancelReason::none)
+                domain->withdraw(ordering,record->exit()->cancellation_reason());
+        }
+        record->exit_.settle(OperationState::succeeded);
     }
     // 在接收回调结果前重新裁定取消，回调内请求取消也优先于迟到成功。
     runtime::CancelReason cancel() {
@@ -50,15 +65,24 @@ struct ToolWorkState {
         return reason;
     }
     // 推进真实工作与唯一结果，取消只停止后续接纳，迟到效果仍然记录。
-    // 步骤：裁定取消 → 首次提交工厂 → 读取并校验工作报告 → 结算业务 → 按实际退出回收。
+    // 步骤：核对顺序与取消 → 首次提交工厂 → 读取并校验工作报告 → 结算业务 → 按实际退出回收。
     void advance() {
         using namespace runtime;
         if (advancing) throw std::logic_error("tool work: reentrant advance");
         if (record->exit()->state() != OperationState::pending) return;
         advancing = true;
+        if (!started && domain) {
+            auto reason = ordering->withdrawal_reason();
+            if (reason == CancelReason::none && ordering->phase() == SerialPhase::cancelled) reason = ordering->admission()->cancellation_reason();
+            if (reason != CancelReason::none) record->request_cancel(reason);
+        }
         const auto cancellation = cancel();
         if (!started && cancellation != CancelReason::none) { finish(); advancing = false; return; }
         if (!started) {
+            if (domain && ordering->phase() == SerialPhase::waiting) { advancing = false; return; }
+            if (domain) {
+                try { domain->begin(ordering); } catch (...) { advancing = false; throw; }
+            }
             started = true; record->outcome_.effect = ToolEffect::unknown;
             try { work = factory(record->invocation_); }
             catch (...) { cancel(); fail(ToolError::failed); finish(); advancing = false; return; }
@@ -90,12 +114,16 @@ struct ToolWorkState {
     }
 };
 // 在任何工具代码执行之前验证调用身份、工厂和有界驱动容量。
-ToolDriver::ToolDriver(ToolInvocation invocation, ToolFactory factory) {
+// 步骤：校验调用及资源归属 → 检查驱动容量 → 准备状态并绑定顺序责任。
+ToolDriver::ToolDriver(ToolInvocation invocation, ToolFactory factory, ToolResources resources) {
     if (!factory || !invocation.invocation || !invocation.attempt.step.run.session || !invocation.attempt.step.run.sequence ||
         !invocation.attempt.step.sequence || !invocation.attempt.sequence || invocation.call.id.empty() || invocation.call.name.empty())
         throw std::invalid_argument("tool work: identity and factory required");
+    if (static_cast<bool>(resources.domain) != static_cast<bool>(resources.ordering) ||
+        (resources.domain && resources.ordering->domain() != resources.domain->id()))
+        throw std::invalid_argument("tool work: matching ordering resources required");
     if (resident_count >= 256) throw std::length_error("tool work: driver capacity exhausted");
-    state_ = std::make_unique<ToolWorkState>(std::move(invocation),std::move(factory));
+    state_ = std::make_unique<ToolWorkState>(std::move(invocation),std::move(factory),std::move(resources));
 }
 // 关闭局部驱动时保持未退出责任，不以析构或业务取消冒充原生代码退出。
 // 步骤：请求所有者停止 → 尝试推进一次 → 已退出释放，否则转入预分配保留链。

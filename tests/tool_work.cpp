@@ -77,9 +77,44 @@ void callback_cancel() {
     check(request->operation()->state() == OperationState::cancelled && request->outcome().effect == ToolEffect::applied &&
         request->exit()->state() == OperationState::succeeded,"callback cancellation lost to returned success");
 }
+// 验证真实顺序域只在实际退出后让出占用，保留结果继续占据原分层预算。
+// 步骤：接纳两项顺序工作 → 提前业务完成但阻塞后项 → 实际退出后放行 → 释放结果归还预算。
+void resources() {
+    auto parent = std::make_shared<Budget>(BudgetAmount{2,256});
+    auto budget = std::make_shared<Budget>(BudgetAmount{2,256},parent);
+    auto domain = std::make_shared<SerialDomain>(2); auto gate = std::make_shared<Gate>();
+    const auto first = domain->submit(), second = domain->submit(); unsigned starts = 0;
+    auto a = std::make_unique<ToolDriver>(invocation(),[&](const auto&) { ++starts; return std::make_unique<Work>(gate); },
+        ToolResources{domain,first,budget->acquire({1,128})});
+    auto b = std::make_unique<ToolDriver>(invocation(),[&](const auto&) { ++starts; return completed_tool({true,ToolEffect::not_applied,"ok",ToolError::none}); },
+        ToolResources{domain,second,budget->acquire({1,128})});
+    auto retained = a->request(); gate->report = true;
+    a->advance(); check(!starts,"driver granted its own ordering");
+    domain->advance(); a->advance(); b->advance();
+    check(starts == 1 && retained->operation()->state() == OperationState::succeeded &&
+        first->phase() == SerialPhase::running && second->phase() == SerialPhase::waiting,"business completion released ordering");
+    gate->exit = true; a->advance(); domain->advance(); b->advance();
+    check(starts == 2 && second->phase() == SerialPhase::released && parent->used().items == 2,"exit lost ordering or retained budget");
+    a.reset(); b.reset(); check(parent->used().items == 1,"retained result released its budget early");
+    retained.reset(); check(parent->used().items == 0 && budget->used().bytes == 0,"result budget leaked");
+}
+// 验证保留工作仍阻止共享顺序域前进，域关闭会取消未开始工作而不调用工厂。
+void ordering_retention() {
+    auto domain = std::make_shared<SerialDomain>(2); auto gate = std::make_shared<Gate>();
+    const auto first = domain->submit();
+    { ToolDriver a(invocation(),[&](const auto&) { return std::make_unique<Work>(gate); },{domain,first,{}});
+      domain->advance(); a.advance(); }
+    const auto second = domain->submit(); unsigned starts = 0;
+    ToolDriver b(invocation(),[&](const auto&) { ++starts; return completed_tool({true,ToolEffect::not_applied,"ok",ToolError::none}); },{domain,second,{}});
+    domain->advance(); b.advance(); check(!starts && first->phase() == SerialPhase::running,"orphan work lost ordering");
+    domain->close(SerialClose::cancel); b.advance();
+    check(!starts && b.request()->operation()->state() == OperationState::cancelled && b.request()->exit()->state() == OperationState::succeeded,
+        "closed domain started pending work");
+    gate->report = gate->exit = true; check(!ToolDriver::retry_retained() && domain->closed(),"orphan exit retained serial domain");
+}
 }
 // 执行固定工具工作夹具，不调用真实模型。
 int main() {
-    try { lifecycle(); retention(); callback_cancel(); std::cout << "Tool work checks passed\n"; return 0; }
+    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); std::cout << "Tool work checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
