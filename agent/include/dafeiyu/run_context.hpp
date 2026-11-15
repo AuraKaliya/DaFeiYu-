@@ -1,0 +1,38 @@
+﻿#pragma once
+#include <dafeiyu/tool_work.hpp>
+
+namespace dfy::agent {
+using MessageHistory = std::vector<model::Message>;
+// 单次运行的上下文事务；完成的工具结果可独立提交，不依赖后续最终回答成功。
+class RunContext {
+  public:
+    static constexpr std::size_t maximum_reply_bytes = 64*1024+256;
+    // 从已提交历史创建本轮输入，校验完成前不改变原历史。
+    RunContext(std::shared_ptr<const MessageHistory> history, std::string prompt);
+    // 禁止复制未提交事务，避免两个写入者共享同一待填上下文。
+    RunContext(const RunContext&) = delete;
+    // 禁止赋值或移动覆盖事务责任，历史快照另行按值持有。
+    RunContext& operator=(const RunContext&) = delete;
+    // 借用下一模型请求的完整消息；工具结果尚未提交时拒绝，下一次变更前有效。
+    const MessageHistory& messages() const;
+    // 返回不可变的已提交消息持有，不包含未完成的工具占位。
+    std::shared_ptr<const MessageHistory> committed() const noexcept { return committed_; }
+    // 在动作前预留整批结果正文并核对完整请求预算，失败不发布半个批次。
+    void prepare_tools(const model::Message& assistant, const std::vector<model::ToolDefinition>& definitions);
+    // 在预留空间内格式化终态及真实效果，不再分配结果正文；拒绝状态与实际执行分开。
+    void set_tool_result(std::size_t index, const ToolResult& outcome, runtime::OperationState state,
+        ToolError fault = ToolError::none, bool accepted = true);
+    // 仅在全部结果已准备时发布本批历史，提交不分配内存。
+    void commit_tools();
+    // 准备并提交最终文本；失败不会回滚已提交工具事实。
+    void finish_text(std::string answer);
+    // 丢弃未提交的纯文本输入并封闭事务；不允许丢弃尚待结果的工具批次。
+    void seal();
+  private:
+    std::shared_ptr<const MessageHistory> committed_;
+    std::shared_ptr<MessageHistory> pending_;
+    std::vector<bool> replies_;
+    std::size_t tool_begin_ = 0;
+    bool finished_ = false;
+};
+}
