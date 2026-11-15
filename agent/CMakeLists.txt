@@ -3,6 +3,9 @@ add_library(dfy_agent STATIC session.cpp include/dafeiyu/session.hpp include/daf
 
 # 配置接口依赖：向使用者公开会话头文件及其依赖的模型、事件接口。
 target_include_directories(dfy_agent PUBLIC include)
+target_sources(dfy_agent PRIVATE tool_batch.cpp include/dafeiyu/tool_batch.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/tool_batch.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/tool_batch.hpp")
 target_sources(dfy_agent PRIVATE run_trace.cpp include/dafeiyu/run_trace.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/run_trace.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/run_trace.hpp")

@@ -96,6 +96,12 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
+add_executable(dfy_tool_batch_tests tool_batch.cpp)
+target_link_libraries(dfy_tool_batch_tests PRIVATE dfy_agent dfy_build_options)
+set_target_properties(dfy_tool_batch_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/tool_batch.cpp")
+add_test(NAME agent.tool_batch COMMAND dfy_tool_batch_tests)
+set_tests_properties(agent.tool_batch PROPERTIES TIMEOUT 15)
 add_executable(dfy_offline_scenario_tests offline_scenario.cpp support/scripted_model.hpp)
 target_link_libraries(dfy_offline_scenario_tests PRIVATE dfy_agent dfy_build_options)
 set_target_properties(dfy_offline_scenario_tests PROPERTIES FOLDER "Tests")
