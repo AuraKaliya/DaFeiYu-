@@ -1,0 +1,58 @@
+#include <dafeiyu/model_protocol.hpp>
+#include <nlohmann/json.hpp>
+#include <iostream>
+#include <stdexcept>
+
+namespace {
+using namespace dfy::model;
+using Json = nlohmann::json;
+// 将协议断言失败转换为进程失败。
+void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
+// 确认非法响应被拒绝且错误不包含服务端正文。
+void rejects(const Json& document) {
+    try { (void)decode_response(document.dump()); }
+    catch (const std::exception& error) {
+        check(std::string(error.what()).find("private-response") == std::string::npos,"response body leaked"); return;
+    }
+    throw std::runtime_error("invalid structured response accepted");
+}
+// 构造带工具调用和用量的固定服务响应，不访问凭据或服务。
+Json fixture() {
+    return {{"choices",Json::array({{{"finish_reason","tool_calls"},{"message",{{"role","assistant"},{"content",nullptr},
+        {"tool_calls",Json::array({{{"id","call_1"},{"type","function"},{"function",{{"name","read_state"},{"arguments","{}"}}}}})}}}}})},
+        {"usage",{{"prompt_tokens",12},{"completion_tokens",4}}}};
+}
+// 验证两家供应商参数隔离和调用结果往返，旧文本请求不附带工具字段。
+// 步骤：编码两家相同业务请求 → 检查工具消息及定义 → 解码完整与异常响应。
+void protocol() {
+    Request request{{{Role::system,"rules"},{Role::user,"goal"},{Role::assistant,"",{{"call_1","read_state","{}"}}},
+        {Role::tool,"state",{},"call_1"}},{{"read_state","read","{\"type\":\"object\"}"}},64};
+    for (const auto* provider : {"deepseek","qwen"}) {
+        Config config; config.provider = provider; config.model = "fixture-model";
+        const auto body = Json::parse(encode_request(config,request));
+        check(body["stream"] == false && body["max_tokens"] == 64 && body["messages"][3]["tool_call_id"] == "call_1" &&
+            body["tools"][0]["function"]["parameters"]["type"] == "object","structured request changed");
+        check(config.provider == "deepseek" ? body.contains("thinking") && !body.contains("enable_thinking") :
+            body.contains("enable_thinking") && !body.contains("thinking"),"provider dialect leaked");
+        const auto plain = Json::parse(encode_request(config,{{{Role::user,"plain"}}}));
+        check(!plain.contains("tools") && !plain.contains("max_tokens"),"text request gained optional fields");
+    }
+    const auto response = decode_response(fixture().dump());
+    check(response.finish == FinishReason::tool_calls && response.message.tool_calls[0].name == "read_state" &&
+        response.usage && response.usage->input_tokens == 12 && response.usage->output_tokens == 4,"response lost calls or usage");
+    auto document = fixture(); document.erase("usage");
+    check(!decode_response(document.dump()).usage,"missing usage invented token counts");
+    document = fixture(); document["choices"][0]["finish_reason"] = "length"; rejects(document);
+    document = fixture(); document["usage"]["prompt_tokens"] = -1; rejects(document);
+    document = fixture(); document["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "private-response"; rejects(document);
+    document = fixture(); document["choices"][0]["message"]["role"] = "user"; rejects(document);
+    document = fixture(); document["choices"][0]["finish_reason"] = "unknown"; rejects(document);
+    document = fixture(); document["choices"][0] = {{"finish_reason","stop"},{"message",{{"role","assistant"},{"content","answer"}}}};
+    check(decode_response(document.dump()).message.content == "answer","plain response lost text");
+}
+}
+// 只执行固定协议样本并报告结果。
+int main() {
+    try { protocol(); std::cout << "Model protocol checks passed\n"; return 0; }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+}

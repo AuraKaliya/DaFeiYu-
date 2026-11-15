@@ -96,6 +96,12 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
+add_executable(dfy_model_protocol_tests model_protocol.cpp)
+target_link_libraries(dfy_model_protocol_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
+set_target_properties(dfy_model_protocol_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/model_protocol.cpp")
+add_test(NAME model.protocol COMMAND dfy_model_protocol_tests)
+set_tests_properties(model.protocol PROPERTIES TIMEOUT 15)
 add_executable(dfy_model_messages_tests model_messages.cpp)
 target_link_libraries(dfy_model_messages_tests PRIVATE dfy_model dfy_build_options)
 set_target_properties(dfy_model_messages_tests PROPERTIES FOLDER "Tests")

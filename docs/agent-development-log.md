@@ -45,3 +45,9 @@ Debug 必要目标 `dfy_model_messages_tests`、`dfy_model_client_tests`、`dfy_
 状态：已完成。统一响应最多 8 MiB、64 项工具调用；校验角色、结束原因、唯一调用 ID、合法名称和完整对象参数。只允许 `tool_calls` 结束原因交付调用，长度截断、过滤或普通文本结束夹带调用均拒绝；无调用的截断和过滤结果保留明确原因，后续运行控制器据此停止。
 
 Debug 仅重建并运行 `model.messages`，1／1 通过，覆盖完整调用、重复、截断、空文本、容量及结束原因；未运行其他测试或真实模型。下一步 A02b 增加纯协议转换，HTTP 仍由原传输边界负责。
+
+## A02b 供应商结构化编解码
+
+状态：已完成纯协议转换。依据 [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/) 与 [Qwen Function Calling](https://help.aliyun.com/zh/model-studio/qwen-function-calling) 的工具定义、调用及结果格式，增加 `encode_request`／`decode_response`。两家思考关闭字段仍独立选择；只读可选用量，缺失时保持未知，负数拒绝。工具执行和重试不进入协议层，暂不启用思考或多模态。
+
+Debug 仅构建 `dfy_model_protocol_tests` 并运行 `^model\.protocol$`，1／1 通过。固定样本覆盖两家请求方言、工具结果回填、普通文本兼容、用量缺失／非法、截断和损坏响应。供应商在线兼容性仍属 M05“仅记录，不执行”，本单元没有读取密钥或访问模型服务。下一步把统一协议连接到现有 HTTP 和异步生命周期入口。

@@ -3,6 +3,9 @@ add_library(dfy_model STATIC config.cpp client.cpp include/dafeiyu/model_config.
 
 # 配置接口与内部依赖：公开 C++20 模型接口，JSON 和 HTTP 留在实现层。
 target_compile_features(dfy_model PUBLIC cxx_std_20)
+target_sources(dfy_model PRIVATE protocol.cpp include/dafeiyu/model_protocol.hpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/protocol.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/model_protocol.hpp")
 target_sources(dfy_model PRIVATE messages.cpp include/dafeiyu/model_messages.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/messages.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/model_messages.hpp")
