@@ -98,6 +98,6 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-下一阶段的工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)，其中区分现有能力、待实现功能与模型表现记录。本次仅形成计划，U01 已完成，后续单元仍逐项审查。
+工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)。已完成模型结构化协议、工具目录与执行基础、原生插件工具适配，并开发至 A05a-2 的独立上下文事务；按用户要求暂停。默认 CLI 仍为单次问答，完整工具循环尚未接入。当前完成边界和框架见 [进度与架构快照](docs/agent-progress-2026-11-15.md)。
 
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。
