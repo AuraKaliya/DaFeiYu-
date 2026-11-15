@@ -100,4 +100,6 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)。已完成模型结构化协议、工具目录与执行基础、原生插件工具适配，并开发至 A05a-2 的独立上下文事务；按用户要求暂停。默认 CLI 仍为单次问答，完整工具循环尚未接入。当前完成边界和框架见 [进度与架构快照](docs/agent-progress-2026-11-15.md)。
 
+计划现已补入 [统一策略、追踪与离线回放](docs/agent-cross-cutting-plan.md) 三条横向能力，明确依赖与验收。此为文档规划，代码仍暂停，回放和评测也不调用真实模型。
+
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。

@@ -70,6 +70,6 @@ flowchart TB
 
 本轮未运行真实模型、未采用 Computer Use，未做最终全量或跨配置验收，也未生成新分发包。此前 U01 的完整验收结果仍属于其原提交，不能作为本轮全部新增功能的最终验收证据。
 
-恢复后建议先做 A05a-3：正式 Session 复用 RunContext；然后接工具循环、停止条件和多步诊断，再按 A06～A09 接入观察、规划、反馈及应用服务。当前暂停，不自动进入下一步。
+恢复后先做 A05a-3：正式 Session 复用 RunContext；后续按已补充的 [P／T／E 横向计划](agent-cross-cutting-plan.md) 接入策略与人工介入、追踪与版本、离线回放，再沿 A05～A09 主线推进。该规划修订不改变本页已实现状态，当前仍暂停。
 
 阅读入口：[开发计划](agent-capability-development-plan.md) → [逐步记录](agent-development-log.md) → [正式会话](../agent/session.cpp) → [工具执行器](../agent/tool_executor.cpp) → [原生注册](../plugins/tools/registration.cpp)／[原生工作](../plugins/tools/native_work.cpp) → [上下文事务](../agent/run_context.cpp)。
