@@ -13,3 +13,11 @@
 本机 CMake／CTest 使用 VS2022 附带的 `C:/Program Files (x86)/Microsoft Visual Studio/build_tools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin`，复用构建目录 `build/rebuild/windows-tests`。后续记录中的目标与正则均对应此目录，除非单独注明。
 
 下一步为 A01a：运行与步骤身份，保持现有单次问答行为及 Operation 状态来源。
+
+## A01a 运行、步骤与尝试身份
+
+状态：已完成。新增 [RunId／StepId／AttemptId](../agent/include/dafeiyu/run_identity.hpp) 值类型：会话域和原回合号组成运行身份，步骤和尝试序号分别从一开始。`TurnRequest` 与诊断直接返回同一份身份，不另建操作状态；当前仍是每轮一个步骤、一次模型请求。原通知结构和单次问答行为保持兼容。
+
+复用 `tests/async_session.cpp` 的模型替身，补充跨会话同序号不碰撞、拒绝不消耗身份、清空后递增、失败／取消／迟到返回／宿主销毁后身份稳定，以及原结果和退出操作不被替换的检查。Debug 只构建 `dfy_async_session_tests`、`dfy_async_chat_tests`，运行 `^(agent\.async_session|app\.async_chat)$`，2／2 通过；公开头 UTF-8 BOM 与差异检查通过。未运行全量或真实模型。
+
+阅读顺序：身份值类型 → [Session 接口](../agent/include/dafeiyu/session.hpp) → [会话接纳与诊断](../agent/session.cpp) → [相关测试](../tests/async_session.cpp)。下一单元为 A01b：有界运行事实与只读快照。

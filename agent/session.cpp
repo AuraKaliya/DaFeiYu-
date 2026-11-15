@@ -29,7 +29,7 @@ CancelDisposition TurnRequest::request_cancel(CancelReason reason) {
 // 步骤：复制身份与时间 → 读取业务及退出状态 → 关联模型事实和通知接纳回执。
 TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     TurnDiagnostics result;
-    result.session = session_; result.turn = turn_; result.accepted = accepted_;
+    result.session = run_id().session; result.turn = turn(); result.attempt = attempt_; result.accepted = accepted_;
     result.cancel_requested = cancel_requested_; result.settled = settled_; result.exited = exited_;
     result.result = operation()->state(); result.exit = exit()->state();
     result.cancellation = operation()->cancellation_reason(); result.failure = failure_;
@@ -65,7 +65,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
     for (auto& slot : records_) if (!slot) {
         auto pending = history_; pending.push_back({model::Role::user,prompt});
-        auto record = std::shared_ptr<TurnRequest>(new TurnRequest(id_,turn_+1));
+        auto record = std::shared_ptr<TurnRequest>(new TurnRequest({id_,turn_+1}));
         auto request = models_.submit(config_,pending);
         pending_.swap(pending); record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
         record->accepted_ = std::chrono::steady_clock::now();

@@ -29,6 +29,9 @@ void history() {
     auto a = session.begin("first"); rejects<std::logic_error>([&] { (void)session.begin("busy"); }); drain(session,a);
     check(a->answer() == "answer:first" && session.message_count() == 2 && events->size() == 2,"success did not commit independently of observer");
     const auto success = a->diagnostics();
+    check(success.attempt == a->attempt_id() && success.attempt.step == a->step_id() &&
+        success.attempt.step.run == RunId{session.id(),a->turn()} && success.attempt.step.sequence == 1 &&
+        success.attempt.sequence == 1,"single completion lost run, step or attempt association");
     check(success.session == session.id() && success.turn == 1 && success.result == OperationState::succeeded &&
         success.exit == OperationState::succeeded && success.failure == TurnFailure::none && !success.cancel_requested &&
         success.settled && success.exited && success.model.finished && success.model.submitted <= success.accepted &&
@@ -37,6 +40,8 @@ void history() {
     auto b = session.begin("fail"); drain(session,b);
     check(b->operation()->state() == OperationState::failed && session.message_count() == 2,"model failure polluted history");
     const auto failure = b->diagnostics();
+    check(b->run_id() != a->run_id() && failure.attempt.step.run.sequence == 2 &&
+        a->diagnostics().attempt == success.attempt,"failed turn reused or changed a prior run identity");
     check(failure.failure == TurnFailure::model && failure.model.outcome == dfy::model::CallOutcome::threw &&
         failure.model.request != success.model.request && success.turn == 1 && success.result == OperationState::succeeded,
         "model failure or next turn corrupted retained diagnostics");
@@ -92,6 +97,8 @@ void isolation() {
     rejects<std::logic_error>([&] { (void)session.clear(); }); cleanup.open(); drain(session,request);
     check(session.closed() && !session.message_count() && request->operation()->state() == OperationState::cancelled,"late model reply committed cancelled history");
     const auto exited = request->diagnostics();
+    check(exited.attempt == cancelled.attempt && exited.model.request == cancelled.model.request,
+        "late completion changed attempt or model request identity");
     check(exited.result == cancelled.result && exited.cancel_requested == cancelled.cancel_requested &&
         exited.settled == cancelled.settled && exited.exited && exited.model.finished &&
         *exited.model.finished >= *exited.settled && *exited.exited >= *exited.model.finished,
@@ -114,10 +121,36 @@ void commit_failure() {
     check(next->answer() == "ok" && next->turn() == 2 && next->diagnostics().model.request != snapshot.model.request &&
         failed->diagnostics().exited == snapshot.exited,"retained turn diagnostics kept model busy or changed old snapshot");
 }
+// 验证同序号跨会话不碰撞，拒绝不消耗身份，清空和销毁不改写已交付身份。
+// 步骤：分别接纳两会话 → 清空后重新接纳 → 保留值快照并销毁宿主 → 核对原操作和身份。
+void identities() {
+    std::shared_ptr<TurnRequest> retained;
+    AttemptId saved;
+    {
+        auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(16,64),1,8);
+        const dfy::model::Completion reply = [](const auto&,const auto&) { return std::string("ok"); };
+        AsyncSession first({},channel,2,reply), second({},channel,1,reply);
+        rejects<std::invalid_argument>([&] { (void)first.begin(" "); });
+        retained = first.begin("first"); auto other = second.begin("other");
+        const auto result = retained->operation(), exit = retained->exit();
+        saved = retained->attempt_id();
+        check(retained->run_id().sequence == 1 && other->run_id().sequence == 1 &&
+            retained->run_id() != other->run_id(),"session-local run sequence collided or rejection consumed identity");
+        drain(first,retained); drain(second,other);
+        first.clear(); auto next = first.begin("next"); drain(first,next);
+        check(next->run_id() == RunId{first.id(),2} && next->step_id().sequence == 1 &&
+            next->attempt_id().sequence == 1 && retained->attempt_id() == saved,
+            "clear reset run identity or a new run inherited previous step identity");
+        check(retained->operation() == result && retained->exit() == exit,
+            "identity introduced replacement operation state");
+    }
+    check(retained->diagnostics().attempt == saved && retained->answer() == "ok" &&
+        retained->exit()->state() == OperationState::succeeded,"host destruction changed retained attempt");
+}
 }
 // 验收异步会话的历史事务、通知隔离和取消退出，模型使用可控后台替身。
-// 步骤：验证上下文及事件 → 验证背压和关闭 → 验证历史失败诊断 → 报告结果。
+// 步骤：验证上下文及事件 → 验证背压和关闭 → 验证失败诊断与身份 → 报告结果。
 int main() {
-    try { history(); isolation(); commit_failure(); std::cout << "Async session checks passed\n"; return 0; }
+    try { history(); isolation(); commit_failure(); identities(); std::cout << "Async session checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/async_model.hpp>
 #include <dafeiyu/hooks.hpp>
+#include <dafeiyu/run_identity.hpp>
 
 namespace dfy::agent {
 class Session;
@@ -18,6 +19,7 @@ struct TurnDiagnostics {
     TurnFailure failure = TurnFailure::none;
     model::CallDiagnostics model;
     TurnNotifications notifications;
+    AttemptId attempt;
 };
 // 宿主线程内的一轮问答结果，业务终态、通知回执与后台退出分别保留。
 class TurnRequest {
@@ -27,7 +29,13 @@ class TurnRequest {
     // 禁止赋值或隐式移动已接受回合。
     TurnRequest& operator=(const TurnRequest&) = delete;
     // 返回本会话接受时固定的回合号。
-    std::uint64_t turn() const noexcept { return turn_; }
+    std::uint64_t turn() const noexcept { return run_id().sequence; }
+    // 返回本轮接纳时固定的运行身份，与旧回合号共用一个来源。
+    RunId run_id() const noexcept { return attempt_.step.run; }
+    // 返回当前单次问答所属的第一步骤，不签发新身份或推进执行。
+    StepId step_id() const noexcept { return attempt_.step; }
+    // 返回当前单次模型尝试的身份，取消与实际退出不改变此值。
+    AttemptId attempt_id() const noexcept { return attempt_; }
     // 返回问答业务状态，Succeeded 表示完整问答已提交历史。
     std::shared_ptr<const runtime::Operation> operation() const noexcept { return result_.operation(); }
     // 返回本轮后台资源已退出确认，取消业务不提前完成此操作。
@@ -42,10 +50,9 @@ class TurnRequest {
     TurnDiagnostics diagnostics() const noexcept;
   private:
     friend class Session;
-    // 准备尚未发布的回合记录，不调用模型或观察者。
-    TurnRequest(runtime::DomainId session, std::uint64_t turn) : session_(session), turn_(turn) {}
-    const runtime::DomainId session_;
-    const std::uint64_t turn_;
+    // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
+    explicit TurnRequest(RunId run) : attempt_{{run,1},1} {}
+    const AttemptId attempt_;
     runtime::OperationSource result_{true}, exit_;
     std::string answer_;
     std::exception_ptr error_;
