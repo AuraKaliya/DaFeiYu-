@@ -59,6 +59,8 @@ class ToolRequest {
     const ToolInvocation& invocation() const noexcept { return invocation_; }
     // 借用最近报告的效果事实；未开始为未发生，开始后未知直至工作报告。
     const ToolResult& outcome() const noexcept { return outcome_; }
+    // 返回宿主观察到的工作协议或收尾故障，独立于已经结算的业务结果。
+    ToolError fault() const noexcept { return fault_; }
   private:
     friend struct ToolWorkState;
     // 准备结果和退出操作，不执行工厂或占用原生代码。
@@ -67,6 +69,7 @@ class ToolRequest {
     const ToolInvocation invocation_;
     runtime::OperationSource result_, exit_{true};
     ToolResult outcome_{false,ToolEffect::not_applied,{},ToolError::none};
+    ToolError fault_ = ToolError::none;
 };
 // 已授权且已预留资源的单个工作驱动器；目录授权与调度由上层负责。
 class ToolDriver {

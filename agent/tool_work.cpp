@@ -1,4 +1,5 @@
 #include <dafeiyu/tool_work.hpp>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -39,8 +40,9 @@ struct ToolWorkState {
     }
     // 已确认退出后释放状态计数，工作必须先在推进阶段销毁。
     ~ToolWorkState() { --resident_count; }
-    // 只在业务尚未结算时报告失败，不改写已发生效果或取消终态。
+    // 始终保留宿主故障，仅在业务尚未结算时报告失败，不改写效果或取消终态。
     void fail(ToolError error) noexcept {
+        record->fault_ = error;
         if (record->result_.operation()->state() == runtime::OperationState::pending) {
             record->outcome_.error = error; record->result_.settle(runtime::OperationState::failed);
         }
@@ -102,10 +104,15 @@ struct ToolWorkState {
             if (progress.result && !reported) {
                 auto& result = *progress.result;
                 const bool effect_valid = result.effect == ToolEffect::not_applied || result.effect == ToolEffect::applied || result.effect == ToolEffect::unknown;
-                if (result.output.size() > 64*1024 || !effect_valid ||
+                if (effect_valid) record->outcome_.effect = result.effect;
+                bool output_valid = result.output.size() <= 64*1024;
+                if (output_valid) {
+                    try { (void)nlohmann::json(result.output).dump(); }
+                    catch (const nlohmann::json::exception&) { output_valid = false; }
+                }
+                if (!output_valid || !effect_valid ||
                     static_cast<unsigned>(result.error) > static_cast<unsigned>(ToolError::deadline) ||
                     (result.succeeded != (result.error == ToolError::none))) {
-                    if (effect_valid) record->outcome_.effect = result.effect;
                     fail(ToolError::invalid_result);
                 } else {
                     record->outcome_ = std::move(result); reported = true;

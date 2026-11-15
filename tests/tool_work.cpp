@@ -133,9 +133,23 @@ void deadlines() {
         second.request()->outcome().effect == ToolEffect::applied && second.request()->exit()->state() == OperationState::succeeded,
         "callback crossing deadline forged success or erased effect");
 }
+// 验证业务完成后的清理故障仍可查询，损坏文本不会丢弃已知动作效果。
+// 步骤：报告成功后制造清理故障 → 保留原结果并收尾 → 拒绝非法 UTF-8 输出。
+void faults() {
+    auto gate = std::make_shared<Gate>(); gate->report = true;
+    ToolDriver driver(invocation(),[gate](const auto&) { return std::make_unique<Work>(gate); });
+    driver.advance(); gate->throw_poll = true; driver.advance();
+    check(driver.request()->operation()->state() == OperationState::succeeded && driver.request()->fault() == ToolError::invalid_result &&
+        driver.request()->exit()->state() == OperationState::pending,"cleanup failure was hidden by prior business success");
+    gate->throw_poll = false; gate->exit = true; driver.advance();
+    ToolDriver invalid(invocation(),[](const auto&) { return completed_tool({true,ToolEffect::applied,std::string(1,static_cast<char>(0xff)),ToolError::none}); });
+    invalid.advance();
+    check(invalid.request()->operation()->state() == OperationState::failed && invalid.request()->outcome().effect == ToolEffect::applied &&
+        invalid.request()->fault() == ToolError::invalid_result && invalid.request()->outcome().output.empty(),"invalid UTF-8 escaped or erased effect");
+}
 }
 // 执行固定工具工作夹具，不调用真实模型。
 int main() {
-    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); deadlines(); std::cout << "Tool work checks passed\n"; return 0; }
+    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); deadlines(); faults(); std::cout << "Tool work checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
