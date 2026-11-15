@@ -96,6 +96,13 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
+add_executable(dfy_tool_abi_tests tool_abi_layout.cpp tool_abi_layout.c)
+target_link_libraries(dfy_tool_abi_tests PRIVATE dfy_sdk)
+target_compile_features(dfy_tool_abi_tests PRIVATE c_std_11 cxx_std_20)
+set_target_properties(dfy_tool_abi_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/tool_abi_layout.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tool_abi_layout.c")
+add_test(NAME sdk.tool_abi COMMAND dfy_tool_abi_tests)
+set_tests_properties(sdk.tool_abi PROPERTIES TIMEOUT 15)
 add_executable(dfy_tool_executor_tests tool_executor.cpp)
 target_link_libraries(dfy_tool_executor_tests PRIVATE dfy_agent dfy_build_options)
 set_target_properties(dfy_tool_executor_tests PROPERTIES FOLDER "Tests")
