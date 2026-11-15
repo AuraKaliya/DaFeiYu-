@@ -75,7 +75,7 @@ Session::~Session() { close(); models_.wait_closed(); advance(); }
 events::ObservationReceipt Session::notify(std::string_view kind, std::uint64_t turn) noexcept {
     try {
         const NamedValue values[] = {{"kind",Value::from_string(kind,32)},{"session",Value::from_uint64(id_)},
-            {"turn",Value::from_uint64(turn)},{"messages",Value::from_uint64(history_.size())}};
+            {"turn",Value::from_uint64(turn)},{"messages",Value::from_uint64(history_->size())}};
         return events::observe(*events_,std::make_shared<const StructValue>(StructValue::create(descriptor_,values,64)));
     } catch (...) { return {events::ObservationStatus::failed,{}}; }
 }
@@ -88,10 +88,10 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
         throw std::invalid_argument("session: nonblank prompt within 1 MiB required");
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
     for (auto& slot : records_) if (!slot) {
-        auto pending = history_; pending.push_back({model::Role::user,prompt});
         auto record = std::shared_ptr<TurnRequest>(new TurnRequest({id_,turn_+1}));
-        auto request = models_.submit_request(config_,model::Request{pending});
-        pending_.swap(pending); record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
+        record->context_ = std::make_unique<RunContext>(history_,prompt);
+        auto request = models_.submit_request(config_,model::Request{record->context_->messages()});
+        record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
         record->accepted_ = std::chrono::steady_clock::now();
         record->record_fact(RunFactKind::accepted);
         record->notifications_.started = notify("turn_started",turn_); return record;
@@ -105,7 +105,7 @@ void Session::advance() {
         active_->model_->request_cancel(active_->operation()->cancellation_reason()); active_->result_.settle(OperationState::cancelled);
         active_->settled_ = std::chrono::steady_clock::now();
         active_->record_fact(RunFactKind::settled);
-        pending_.clear(); active_->notifications_.finished = notify("turn_cancelled",active_->turn());
+        active_->context_->seal(); active_->notifications_.finished = notify("turn_cancelled",active_->turn());
     }
     models_.advance();
     if (!active_ || active_->model_->exit()->state() == OperationState::pending) return;
@@ -117,11 +117,9 @@ void Session::advance() {
                 active_->failure_ = TurnFailure::model_response;
                 throw std::runtime_error("session: final text response required");
             }
-            auto answer = response.message.content; std::size_t bytes = answer.size();
-            for (const auto& message : pending_) bytes += message.content.size();
-            if (bytes > 1024*1024) throw std::length_error("session: history exceeds 1 MiB; clear context before retrying");
-            pending_.push_back({model::Role::assistant,answer});
-            history_.swap(pending_); active_->answer_ = std::move(answer); active_->result_.settle(OperationState::succeeded);
+            auto answer = response.message.content;
+            active_->context_->finish_text(answer); history_ = active_->context_->committed();
+            active_->answer_ = std::move(answer); active_->result_.settle(OperationState::succeeded);
         } catch (...) {
             active_->error_ = std::current_exception();
             if (active_->failure_ == TurnFailure::none)
@@ -133,14 +131,14 @@ void Session::advance() {
         active_->notifications_.finished = notify(active_->operation()->state() == OperationState::succeeded ? "turn_completed" : "turn_failed",active_->turn());
     }
     active_->completed_call_ = active_->model_->diagnostics();
-    pending_.clear(); active_->model_.reset(); models_.collect();
+    active_->context_->seal(); active_->context_.reset(); active_->model_.reset(); models_.collect();
     active_->exited_ = std::chrono::steady_clock::now();
     active_->exit_.settle(OperationState::succeeded); active_->record_fact(RunFactKind::exited); active_.reset();
 }
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。
 events::ObservationReceipt Session::clear() {
     if (!accepting_ || active_) throw std::logic_error("session: busy or closed");
-    history_.clear(); return notify("session_cleared",0);
+    history_ = std::make_shared<const MessageHistory>(); return notify("session_cleared",0);
 }
 // 停止新问答并请求当前工作退出，已经成功提交的历史不回滚。
 // 步骤：关闭回合接纳 → 登记当前取消 → 关闭模型入口并推进收尾。

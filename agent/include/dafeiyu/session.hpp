@@ -2,6 +2,7 @@
 #include <dafeiyu/async_model.hpp>
 #include <dafeiyu/hooks.hpp>
 #include <dafeiyu/run_identity.hpp>
+#include <dafeiyu/run_context.hpp>
 #include <array>
 
 namespace dfy::agent {
@@ -82,6 +83,7 @@ class TurnRequest {
     std::exception_ptr error_;
     TurnNotifications notifications_;
     std::shared_ptr<model::ModelRequest> model_;
+    std::unique_ptr<RunContext> context_;
     model::CallDiagnostics completed_call_;
     TurnDiagnostics::TimePoint accepted_;
     std::optional<TurnDiagnostics::TimePoint> cancel_requested_, settled_, exited_;
@@ -118,7 +120,7 @@ class Session {
     // 返回宿主签发的独立会话身份。
     runtime::DomainId id() const noexcept { return id_; }
     // 返回已提交消息数，成功问答成对提交，失败和取消不改变历史。
-    std::size_t message_count() const noexcept { return history_.size(); }
+    std::size_t message_count() const noexcept { return history_->size(); }
   private:
     // 构造不可变会话事实并返回独立接纳回执，任何观察失败都留在通知边界。
     events::ObservationReceipt notify(std::string_view kind, std::uint64_t turn) noexcept;
@@ -131,7 +133,7 @@ class Session {
     std::uint64_t turn_ = 0;
     std::vector<std::shared_ptr<TurnRequest>> records_;
     std::shared_ptr<TurnRequest> active_;
-    std::vector<model::Message> history_, pending_;
+    std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
     model::AsyncClient models_;
     bool accepting_ = true;
 };

@@ -203,10 +203,30 @@ void structured_backend() {
     }
     check(calls == 3,"structured session duplicated model calls");
 }
+// 验证正式会话使用上下文事务后，拒绝和提交失败不污染历史，清空不修改已交付结果。
+// 步骤：提交一次回答 → 拒绝非法输入及超量回答 → 清空后重新请求 → 核对历史和保留结果。
+void context_transactions() {
+    auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),1,8);
+    std::vector<dfy::model::Message> received; unsigned calls = 0;
+    AsyncSession session({},channel,3,[&](const auto&,const auto& messages) {
+        ++calls; received = messages;
+        return messages.back().content == "overflow" ? std::string(1024*1024,'x') : std::string("ok");
+    });
+    auto first = session.begin("first"); drain(session,first);
+    rejects<std::invalid_argument>([&] { (void)session.begin(std::string(1,static_cast<char>(0xff))); });
+    check(calls == 1 && session.message_count() == 2,"invalid context reached backend or changed history");
+    auto failed = session.begin("overflow"); drain(session,failed);
+    check(failed->turn() == 2 && failed->diagnostics().failure == TurnFailure::history_commit && session.message_count() == 2,
+        "failed context commit consumed extra identity or replaced history");
+    session.clear(); auto next = session.begin("fresh"); drain(session,next);
+    check(calls == 3 && received.size() == 1 && received[0].content == "fresh" && session.message_count() == 2 &&
+        first->answer() == "ok" && failed->operation()->state() == OperationState::failed,
+        "clear retained prior context or rewrote delivered outcomes");
+}
 }
 // 验收异步会话的历史事务、通知隔离和取消退出，模型使用可控后台替身。
 // 步骤：验证上下文及事件 → 验证背压和关闭 → 验证失败诊断、身份与事实 → 报告结果。
 int main() {
-    try { history(); isolation(); commit_failure(); identities(); facts(); structured_backend(); std::cout << "Async session checks passed\n"; return 0; }
+    try { history(); isolation(); commit_failure(); identities(); facts(); structured_backend(); context_transactions(); std::cout << "Async session checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
