@@ -19,11 +19,12 @@ typedef struct dfy_v2_tool_description {
     uint32_t version;
     uint32_t flags;
     uint32_t reserved;
+    // 实例内局部 ID：1～32 个 ASCII 字母、数字、下划线或连字符，由宿主加包命名空间。
     dfy_v2_string_view id;
     dfy_v2_string_view description;
     dfy_v2_string_view parameters;
 } dfy_v2_tool_description;
-// 输入只在 begin 调用期间借用；运行及调用 ID 关联业务命令，invocation 区分具体原生尝试。
+// 输入只在 begin 调用期间借用，后台工作自行复制所需字段；运行及调用 ID 关联命令，invocation 区分原生尝试。
 typedef struct dfy_v2_tool_call {
     uint32_t struct_size;
     uint32_t tool_version;
@@ -52,7 +53,7 @@ typedef struct dfy_v2_tool_api {
     dfy_v2_status (DFY_V2_CALL *count)(dfy_v2_instance* instance, uint32_t* count, dfy_v2_error* error);
     // 按零基索引返回描述；先核对 struct_size，大小不符仅清零该字段，其他失败清零完整输出；不修改能力集合。
     dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_instance* instance, uint32_t index, dfy_v2_tool_description* description, dfy_v2_error* error);
-    // 校验版本并接纳一次工作，成功返回非零票据；失败无副作用且无后台责任，票据清零。
+    // 非阻塞校验版本并接纳工作，成功返回非零票据；失败无副作用且无后台责任，票据清零。
     dfy_v2_status (DFY_V2_CALL *begin)(dfy_v2_instance* instance, dfy_v2_string_view id,
         const dfy_v2_tool_call* call, dfy_v2_tool_ticket* ticket, dfy_v2_error* error);
     // 非阻塞推进并复制状态；先核对 struct_size，大小不符仅清零该字段，其他失败清零输出且保留工作责任。

@@ -43,6 +43,7 @@ struct ToolWorkState {
     // 始终保留宿主故障，仅在业务尚未结算时报告失败，不改写效果或取消终态。
     void fail(ToolError error) noexcept {
         record->fault_ = error;
+        if (record->exit()->state() == runtime::OperationState::pending) record->request_cancel(runtime::CancelReason::owner_stop);
         if (record->result_.operation()->state() == runtime::OperationState::pending) {
             record->outcome_.error = error; record->result_.settle(runtime::OperationState::failed);
         }
@@ -119,6 +120,9 @@ struct ToolWorkState {
                     if (record->operation()->state() == OperationState::pending)
                         record->result_.settle(record->outcome_.succeeded ? OperationState::succeeded : OperationState::failed);
                 }
+            }
+            if (progress.fault != ToolError::none) {
+                fail(static_cast<unsigned>(progress.fault) <= static_cast<unsigned>(ToolError::deadline) ? progress.fault : ToolError::invalid_result);
             }
             if (progress.exited) {
                 if (!reported) fail(ToolError::invalid_result);

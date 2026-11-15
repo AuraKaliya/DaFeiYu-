@@ -10,14 +10,14 @@
 
 namespace dfy::agent {
 enum class ToolEffect { not_applied, applied, unknown };
-enum class ToolError { none, failed, unavailable, invalid_result, cancelled, deadline };
+enum class ToolError { none, failed, unavailable, invalid_result, cancel_failed, read_failed, release_failed, cancelled, deadline };
 struct ToolResult {
     bool succeeded = false;
     ToolEffect effect = ToolEffect::unknown;
     std::string output;
     ToolError error = ToolError::failed;
 };
-struct ToolProgress { std::optional<ToolResult> result; bool exited = false; };
+struct ToolProgress { std::optional<ToolResult> result; bool exited = false; ToolError fault = ToolError::none; };
 struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; model::ToolCall call; };
 using ToolTime = std::chrono::steady_clock::time_point;
 using ToolClock = std::function<ToolTime()>;

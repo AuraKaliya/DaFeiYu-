@@ -119,6 +119,7 @@ static dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket t
         (void)snprintf(work->output,sizeof(work->output),"%llu",(unsigned long long)instance->value);
         if (work->cancel) work->exited = 1;
     } else work->exited = 1;
+    if (mode == 6) { work->exited = 1; mode = 1; }
     output->struct_size = sizeof(*output); output->result_ready = 1; output->succeeded = work->succeeded;
     output->effect = work->effect; output->exited = work->exited; output->output = view(work->output);
     if (mode == 5) { mode = 0; --output->struct_size; }
