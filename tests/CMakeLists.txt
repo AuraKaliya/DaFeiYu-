@@ -96,6 +96,13 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
+add_executable(dfy_plugin_tools_tests plugin_tools.cpp)
+target_link_libraries(dfy_plugin_tools_tests PRIVATE dfy_plugin_tools dfy_build_options)
+add_dependencies(dfy_plugin_tools_tests dfy_tools_fixture dfy_query_v2_fixture)
+set_target_properties(dfy_plugin_tools_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_tools.cpp")
+add_test(NAME plugins.tools COMMAND dfy_plugin_tools_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>" "${CMAKE_CURRENT_BINARY_DIR}/tools-data/$<CONFIG>" "$<TARGET_FILE:dfy_query_v2_fixture>")
+set_tests_properties(plugins.tools PROPERTIES TIMEOUT 15)
 add_executable(dfy_plugin_tool_work_tests plugin_tool_work.cpp)
 target_link_libraries(dfy_plugin_tool_work_tests PRIVATE dfy_plugin_tools dfy_build_options)
 add_dependencies(dfy_plugin_tool_work_tests dfy_tools_fixture)

@@ -132,6 +132,8 @@ InstancePhase PluginInstance::phase() const noexcept { return state_->phase; }
 uint32_t PluginInstance::last_error() const noexcept { return state_->error; }
 // 返回固定实例代次，不因启动、停止或重新绑定而变化。
 runtime::DomainId PluginInstance::generation() const noexcept { return state_->generation; }
+// 返回实例关联的包 ID，运行代次仍由 generation 单独表示。
+std::string_view PluginInstance::plugin_id() const noexcept { return state_->id; }
 // 仅在原生实例活动期间允许查询新能力。
 PluginModuleV2& PluginInstance::active_module() {
     if (state_->phase != InstancePhase::active) throw std::logic_error("instance: active capability context required");

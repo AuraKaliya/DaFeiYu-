@@ -57,6 +57,8 @@ class PluginInstance {
     uint32_t last_error() const noexcept;
     // 返回进程期唯一实例代次，同包重新创建也不复用。
     runtime::DomainId generation() const noexcept;
+    // 借用已校验包 ID，实例销毁前保持稳定，不暴露配置内容。
+    std::string_view plugin_id() const noexcept;
     // 从活动实例取得精确版本能力，并保留该实例的代码寿命。
     // 步骤：核对活动阶段并查询能力 → 固定具体实例代次 → 转交代码持有。
     template<class T> std::optional<InstanceCapability<T>> query(std::string_view name, std::uint32_t version) {
