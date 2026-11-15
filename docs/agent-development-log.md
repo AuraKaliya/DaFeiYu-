@@ -21,3 +21,9 @@
 复用 `tests/async_session.cpp` 的模型替身，补充跨会话同序号不碰撞、拒绝不消耗身份、清空后递增、失败／取消／迟到返回／宿主销毁后身份稳定，以及原结果和退出操作不被替换的检查。Debug 只构建 `dfy_async_session_tests`、`dfy_async_chat_tests`，运行 `^(agent\.async_session|app\.async_chat)$`，2／2 通过；公开头 UTF-8 BOM 与差异检查通过。未运行全量或真实模型。
 
 阅读顺序：身份值类型 → [Session 接口](../agent/include/dafeiyu/session.hpp) → [会话接纳与诊断](../agent/session.cpp) → [相关测试](../tests/async_session.cpp)。下一单元为 A01b：有界运行事实与只读快照。
+
+## A01b 单次运行事实与快照
+
+状态：已完成当前单次问答范围。`TurnRequest::snapshot()` 返回诊断和按宿主修订排序的事实值：接纳、首次取消请求、模型结束、业务结算、实际退出。五种事实各有固定预留槽，收尾不分配内存，重复推进不追加；后台发生时间与宿主观察顺序分开。多步工具事实在 A04／A05 接入时扩展，不把本单元写成已支持通用执行日志。
+
+Debug 仅构建 `dfy_async_session_tests`，`^agent\.async_session$` 1／1 通过。覆盖查询不推进、通知背压后仍有完整事实、取消后迟到返回、修订连续、快照不占用结果槽及槽容量拒绝。差异检查通过。下一单元 A01c 整理当前文本上下文投影，为结构化消息接入保留同一约束入口。

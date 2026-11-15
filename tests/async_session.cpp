@@ -89,6 +89,10 @@ void isolation() {
     check(request->operation()->state() == OperationState::cancelled && request->exit()->state() == OperationState::pending && session.busy() && !session.closed(),
         "session cancel forged worker exit");
     const auto cancelled = request->diagnostics();
+    const auto before_exit = request->snapshot();
+    check(before_exit.fact_count == 3 && before_exit.facts[0].kind == RunFactKind::accepted &&
+        before_exit.facts[1].kind == RunFactKind::cancel_requested && before_exit.facts[2].kind == RunFactKind::settled &&
+        before_exit.facts[2].result == OperationState::cancelled,"cancellation facts lost host ordering");
     check(cancelled.cancel_requested && cancelled.settled && !cancelled.exited && !cancelled.model.finished &&
         cancelled.cancellation == CancelReason::owner_stop && *cancelled.cancel_requested <= *cancelled.settled,
         "cancel diagnostics forged actual exit or lost first cause");
@@ -97,6 +101,11 @@ void isolation() {
     rejects<std::logic_error>([&] { (void)session.clear(); }); cleanup.open(); drain(session,request);
     check(session.closed() && !session.message_count() && request->operation()->state() == OperationState::cancelled,"late model reply committed cancelled history");
     const auto exited = request->diagnostics();
+    const auto final_facts = request->snapshot();
+    check(final_facts.fact_count == 5 && final_facts.facts[3].kind == RunFactKind::model_finished &&
+        final_facts.facts[3].model == dfy::model::CallOutcome::returned &&
+        final_facts.facts[4].kind == RunFactKind::exited && before_exit.fact_count == 3,
+        "late return lost facts, duplicated cancel or rewrote an old snapshot");
     check(exited.attempt == cancelled.attempt && exited.model.request == cancelled.model.request,
         "late completion changed attempt or model request identity");
     check(exited.result == cancelled.result && exited.cancel_requested == cancelled.cancel_requested &&
@@ -147,10 +156,36 @@ void identities() {
     check(retained->diagnostics().attempt == saved && retained->answer() == "ok" &&
         retained->exit()->state() == OperationState::succeeded,"host destruction changed retained attempt");
 }
+// 验证运行事实独立于通知，查询不推进模型，固定槽位不额外持有结果。
+// 步骤：使通知无法接纳 → 只读查询未结算回合 → 推进并核对连续修订 → 回收后复用结果槽。
+void facts() {
+    auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(4,64),1,1);
+    auto subscription = channel->subscribe();
+    AsyncSession session({},channel,1,[](const auto&,const auto&) { return std::string("ok"); });
+    auto request = session.begin("one");
+    const auto first = request->snapshot();
+    check(first.fact_count == 1 && first.facts[0].revision == 1 &&
+        first.diagnostics.result == OperationState::pending && request->snapshot().fact_count == 1,
+        "query advanced the model or appended facts");
+    drain(session,request); const auto final = request->snapshot();
+    check(final.fact_count == 4 && final.facts[1].kind == RunFactKind::model_finished &&
+        final.facts[2].kind == RunFactKind::settled && final.facts[2].result == OperationState::succeeded &&
+        final.facts[3].kind == RunFactKind::exited &&
+        final.diagnostics.notifications.finished->status == ObservationStatus::overloaded,
+        "notification overload discarded authoritative run facts");
+    for (std::size_t i = 0; i < final.fact_count; ++i) {
+        check(final.facts[i].revision == i+1,"run fact revisions are not contiguous");
+        if (i) check(final.facts[i-1].observed <= final.facts[i].observed,"host observation ordering changed");
+    }
+    session.advance(); check(request->snapshot().fact_count == final.fact_count,"repeated advance added facts");
+    rejects<std::length_error>([&] { (void)session.begin("retained"); });
+    request.reset(); auto next = session.begin("two"); drain(session,next);
+    check(next->snapshot().fact_count == 4 && final.diagnostics.turn == 1,"value snapshot retained a result slot");
+}
 }
 // 验收异步会话的历史事务、通知隔离和取消退出，模型使用可控后台替身。
-// 步骤：验证上下文及事件 → 验证背压和关闭 → 验证失败诊断与身份 → 报告结果。
+// 步骤：验证上下文及事件 → 验证背压和关闭 → 验证失败诊断、身份与事实 → 报告结果。
 int main() {
-    try { history(); isolation(); commit_failure(); identities(); std::cout << "Async session checks passed\n"; return 0; }
+    try { history(); isolation(); commit_failure(); identities(); facts(); std::cout << "Async session checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

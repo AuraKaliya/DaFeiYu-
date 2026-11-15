@@ -2,6 +2,7 @@
 #include <dafeiyu/async_model.hpp>
 #include <dafeiyu/hooks.hpp>
 #include <dafeiyu/run_identity.hpp>
+#include <array>
 
 namespace dfy::agent {
 class Session;
@@ -20,6 +21,23 @@ struct TurnDiagnostics {
     model::CallDiagnostics model;
     TurnNotifications notifications;
     AttemptId attempt;
+};
+enum class RunFactKind { accepted, cancel_requested, model_finished, settled, exited };
+// 已发生的生命周期事实；修订号反映宿主观察顺序，后台时间不必与修订顺序一致。
+struct RunFact {
+    std::uint64_t revision = 0;
+    RunFactKind kind = RunFactKind::accepted;
+    TurnDiagnostics::TimePoint observed;
+    runtime::OperationState result = runtime::OperationState::pending;
+    runtime::CancelReason cancellation = runtime::CancelReason::none;
+    model::CallOutcome model = model::CallOutcome::pending;
+    TurnFailure failure = TurnFailure::none;
+};
+// 当前单次问答最多五种生命周期事实；快照不拥有正文、操作、事件或插件代码。
+struct RunSnapshot {
+    TurnDiagnostics diagnostics;
+    std::array<RunFact,5> facts{};
+    std::size_t fact_count = 0;
 };
 // 宿主线程内的一轮问答结果，业务终态、通知回执与后台退出分别保留。
 class TurnRequest {
@@ -48,11 +66,17 @@ class TurnRequest {
     TurnNotifications notifications() const noexcept { return notifications_; }
     // 返回当前或已退出回合的诊断值副本，不保留模型请求、事件载荷或正文。
     TurnDiagnostics diagnostics() const noexcept;
+    // 复制当前诊断与已发生事实，读取不推进执行且不依赖通知是否接纳。
+    RunSnapshot snapshot() const noexcept;
   private:
     friend class Session;
     // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
     explicit TurnRequest(RunId run) : attempt_{{run,1},1} {}
     const AttemptId attempt_;
+    // 首次写入指定事实并签发修订号，固定槽位预留确保收尾无需分配。
+    void record_fact(RunFactKind kind) noexcept;
+    std::array<RunFact,5> facts_{};
+    std::size_t fact_count_ = 0;
     runtime::OperationSource result_{true}, exit_;
     std::string answer_;
     std::exception_ptr error_;

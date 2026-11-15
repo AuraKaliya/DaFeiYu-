@@ -22,7 +22,9 @@ const std::string& TurnRequest::answer() const {
 // 步骤：交由原操作登记取消 → 仅在首次接纳时固定时间 → 返回原取消回执。
 CancelDisposition TurnRequest::request_cancel(CancelReason reason) {
     const auto disposition = result_.request_cancel(reason);
-    if (disposition == CancelDisposition::recorded) cancel_requested_ = std::chrono::steady_clock::now();
+    if (disposition == CancelDisposition::recorded) {
+        cancel_requested_ = std::chrono::steady_clock::now(); record_fact(RunFactKind::cancel_requested);
+    }
     return disposition;
 }
 // 用原操作状态和单次记录的时间形成回合视图，不维护第二套业务状态。
@@ -35,6 +37,22 @@ TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     result.cancellation = operation()->cancellation_reason(); result.failure = failure_;
     result.model = model_ ? model_->diagnostics() : completed_call_;
     result.notifications = notifications_;
+    return result;
+}
+// 在固定槽位记录首次发生的生命周期事实，重复推进不追加重复项。
+// 步骤：定位本类事实槽 → 忽略已记录事实 → 复制原状态并签发宿主顺序修订。
+void TurnRequest::record_fact(RunFactKind kind) noexcept {
+    auto& fact = facts_[static_cast<std::size_t>(kind)];
+    if (fact.revision) return;
+    const auto current = diagnostics();
+    fact = {++fact_count_,kind,std::chrono::steady_clock::now(),current.result,current.cancellation,
+        current.model.outcome,current.failure};
+}
+// 复制诊断并按首次记录顺序排列事实，不触发后台结果接收或事件消费。
+// 步骤：取得诊断值副本 → 按修订号复制已记录项 → 返回固定容量快照。
+RunSnapshot TurnRequest::snapshot() const noexcept {
+    RunSnapshot result; result.diagnostics = diagnostics(); result.fact_count = fact_count_;
+    for (const auto& fact : facts_) if (fact.revision) result.facts[fact.revision-1] = fact;
     return result;
 }
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
@@ -69,6 +87,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
         auto request = models_.submit(config_,pending);
         pending_.swap(pending); record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
         record->accepted_ = std::chrono::steady_clock::now();
+        record->record_fact(RunFactKind::accepted);
         record->notifications_.started = notify("turn_started",turn_); return record;
     }
     throw std::length_error("session: retained turn capacity exhausted");
@@ -79,10 +98,12 @@ void Session::advance() {
     if (active_ && active_->operation()->state() == OperationState::pending && active_->operation()->cancellation_reason() != CancelReason::none) {
         active_->model_->request_cancel(active_->operation()->cancellation_reason()); active_->result_.settle(OperationState::cancelled);
         active_->settled_ = std::chrono::steady_clock::now();
+        active_->record_fact(RunFactKind::settled);
         pending_.clear(); active_->notifications_.finished = notify("turn_cancelled",active_->turn());
     }
     models_.advance();
     if (!active_ || active_->model_->exit()->state() == OperationState::pending) return;
+    active_->record_fact(RunFactKind::model_finished);
     if (active_->operation()->state() == OperationState::pending) {
         try {
             auto answer = active_->model_->answer(); std::size_t bytes = answer.size();
@@ -96,12 +117,13 @@ void Session::advance() {
             active_->result_.settle(OperationState::failed);
         }
         active_->settled_ = std::chrono::steady_clock::now();
+        active_->record_fact(RunFactKind::settled);
         active_->notifications_.finished = notify(active_->operation()->state() == OperationState::succeeded ? "turn_completed" : "turn_failed",active_->turn());
     }
     active_->completed_call_ = active_->model_->diagnostics();
     pending_.clear(); active_->model_.reset(); models_.collect();
     active_->exited_ = std::chrono::steady_clock::now();
-    active_->exit_.settle(OperationState::succeeded); active_.reset();
+    active_->exit_.settle(OperationState::succeeded); active_->record_fact(RunFactKind::exited); active_.reset();
 }
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。
 events::ObservationReceipt Session::clear() {
