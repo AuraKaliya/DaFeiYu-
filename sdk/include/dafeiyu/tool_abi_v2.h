@@ -24,7 +24,7 @@ typedef struct dfy_v2_tool_description {
     dfy_v2_string_view description;
     dfy_v2_string_view parameters;
 } dfy_v2_tool_description;
-// 输入只在 begin 调用期间借用，后台工作自行复制所需字段；运行及调用 ID 关联命令，invocation 区分原生尝试。
+// 输入仅在 begin 调用期间借用，后台自行复制；运行／步骤／尝试与调用 ID 共同标识命令，invocation 区分原生工作。
 typedef struct dfy_v2_tool_call {
     uint32_t struct_size;
     uint32_t tool_version;

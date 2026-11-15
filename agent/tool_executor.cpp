@@ -36,8 +36,8 @@ std::shared_ptr<ToolRequest> ToolExecutor::submit(AttemptId attempt, model::Tool
     auto arguments = canonical(call.arguments);
     for (const auto& entry : entries_) if (entry.driver) {
         const auto request = entry.driver->request(); const auto& original = request->invocation();
-        if (original.call.id != call.id) continue;
-        if (original.attempt != attempt || original.call.name != call.name || entry.canonical != arguments)
+        if (original.attempt != attempt || original.call.id != call.id) continue;
+        if (original.call.name != call.name || entry.canonical != arguments)
             throw std::invalid_argument("tools: command identity conflict");
         return request;
     }
@@ -46,8 +46,9 @@ std::shared_ptr<ToolRequest> ToolExecutor::submit(AttemptId attempt, model::Tool
     if (selection.description.changes_state && !selection.description.idempotent) {
         for (const auto& entry : entries_) if (entry.driver && entry.registration == selection.registration && entry.canonical == arguments) {
             const auto request = entry.driver->request();
-            if (request->exit()->state() == OperationState::pending || request->outcome().effect == ToolEffect::unknown)
-                throw std::logic_error("tools: prior matching action is pending or has unknown effects");
+            if (request->exit()->state() == OperationState::pending || request->outcome().effect == ToolEffect::unknown ||
+                (request->operation()->state() != OperationState::succeeded && request->outcome().effect == ToolEffect::applied))
+                throw std::logic_error("tools: prior matching action requires effect confirmation");
         }
     }
     if (size_ == entries_.size()) throw std::length_error("tools: run call limit exhausted");

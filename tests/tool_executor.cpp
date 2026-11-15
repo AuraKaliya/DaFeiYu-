@@ -30,7 +30,8 @@ void receipts() {
         rejects([&] { executor.submit(attempt,{"two","action","{}"}); });
         rejects([&] { executor.submit(attempt,{"one","action",R"({"changed":1})"}); });
         executor.advance(); check(calls == 1 && !executor.busy(),"first action did not exit");
-        executor.submit(attempt,{"two","action","{}"}); executor.advance();
+        auto next = attempt; next.step.sequence = 2;
+        executor.submit(next,{"one","action","{}"}); executor.advance();
         check(calls == 2 && executor.size() == 2,"known applied action with new ID was not explicit");
         rejects([&] { executor.submit(attempt,{"three","action","{}"}); });
         executor.close(); check(executor.submit(attempt,{"one","action","{}"}) == first,"closed execution lost existing receipt");
@@ -38,16 +39,18 @@ void receipts() {
     check(parent->used().items == 1,"retained result lost parent budget"); retained.reset();
     check(parent->used().items == 0,"run result budget leaked");
 }
-// 验证未知副作用不能以新命令盲目重试，已知未发生效果可以显式再接纳。
+// 验证失败动作已发生或未知时不能盲目重试，确定无效果或声明幂等时允许显式接纳。
+// 步骤：报告三种效果 → 在新步骤重复局部调用 ID → 核对幂等和非幂等策略。
 void repeat_effects() {
     const std::vector<std::string> ids{"fixture/action"}; const AttemptId attempt{StepId{RunId{1,1},1},1};
-    for (const bool idempotent : {false,true}) for (const auto effect : {ToolEffect::unknown,ToolEffect::not_applied}) {
+    for (const bool idempotent : {false,true}) for (const auto effect : {ToolEffect::unknown,ToolEffect::not_applied,ToolEffect::applied}) {
         ToolCatalog catalog; unsigned calls = 0;
         catalog.add(description(idempotent),[&](const auto&) { ++calls; return completed_tool({false,effect,{},ToolError::failed}); });
         ToolExecutor executor({1,1},catalog.snapshot(ids,true)); executor.submit(attempt,{"one","action","{}"}); executor.advance();
-        const bool blocked = effect == ToolEffect::unknown && !idempotent;
-        if (blocked) rejects([&] { executor.submit(attempt,{"two","action","{}"}); });
-        else { executor.submit(attempt,{"two","action","{}"}); executor.advance(); }
+        const bool blocked = effect != ToolEffect::not_applied && !idempotent;
+        auto next = attempt; next.step.sequence = 2;
+        if (blocked) rejects([&] { executor.submit(next,{"one","action","{}"}); });
+        else { executor.submit(next,{"one","action","{}"}); executor.advance(); }
         check(calls == (blocked ? 1u : 2u),"repeat effect policy changed actual invocation count");
     }
 }

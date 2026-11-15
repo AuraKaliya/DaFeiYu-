@@ -49,7 +49,7 @@ int wmain(int argc, wchar_t** argv) {
             progress.struct_size = sizeof(progress); check(!api.poll(native,ticket,&progress,nullptr) && progress.exited,"native exit missing");
             mode(1); check(api.release(native,ticket,nullptr) == DFY_V2_FAILED && !api.release(native,ticket,nullptr),"failed release did not retain ticket");
             check(api.release(native,ticket,nullptr) == DFY_V2_INVALID_HANDLE,"released ticket remained valid");
-            const auto old = ticket; call.invocation = 2;
+            const auto old = ticket; call.step = 2; call.invocation = 2;
             check(!api.begin(native,{"increment",9},&call,&ticket,nullptr) && ticket.sequence != old.sequence,"native slot reused ticket");
             progress.struct_size = sizeof(progress); check(api.poll(native,old,&progress,nullptr) == DFY_V2_INVALID_HANDLE && !progress.struct_size,"stale ticket reached new work");
             check(!api.request_cancel(native,ticket,DFY_V2_CANCEL_USER,nullptr),"cancel rejected");

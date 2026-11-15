@@ -56,6 +56,8 @@ void validate_request(const Request& request) {
         if (message.role == Role::tool) {
             if (!pending.erase(message.tool_call_id)) throw std::invalid_argument("model: unmatched tool result");
         }
+        // 已闭合历史批次中的同名 ID 不属于当前调用，配对由消息顺序确定。
+        if (message.role == Role::assistant) calls.clear();
         for (const auto& call : message.tool_calls) {
             account(bytes,call.id); account(bytes,call.name); account(bytes,call.arguments);
             if (call.id.empty() || call.id.size() > 128 || !tool_name(call.name) || !calls.insert(call.id).second)

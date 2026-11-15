@@ -20,6 +20,10 @@ Request fixture() {
 // 步骤：接受固定完整对话 → 拒绝损坏的角色和配对 → 拒绝错误定义与容量。
 void protocol() {
     validate_request(fixture()); validate_request({{{Role::user,"你好"},{Role::assistant,"回答"}}});
+    auto repeated = fixture();
+    repeated.messages.push_back({Role::assistant,"",{{"a","read_state","{}"}}});
+    repeated.messages.push_back({Role::tool,"new step",{},"a"});
+    validate_request(repeated);
     auto request = fixture(); request.messages.pop_back(); rejects(request);
     request = fixture(); request.messages[4].tool_call_id = "a"; rejects(request);
     request = fixture(); request.messages[2].tool_calls[1].id = "a"; rejects(request);
