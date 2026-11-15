@@ -24,13 +24,16 @@ struct ToolWorkState {
     std::unique_ptr<ToolWork> work;
     std::shared_ptr<runtime::SerialDomain> domain;
     std::shared_ptr<const runtime::SerialRequest> ordering;
+    std::optional<ToolTime> deadline;
+    ToolClock now;
     ToolWorkState* next = nullptr;
     bool started = false, advancing = false, reported = false;
     // 完整准备记录和调用对象，计入进程内最多 256 个活动或保留驱动状态。
     // 步骤：创建请求与资源责任 → 绑定原顺序资格 → 登记驱动计数。
     ToolWorkState(ToolInvocation invocation, ToolFactory callback, ToolResources resources)
         : record(new ToolRequest(std::move(invocation),std::move(resources.charge))), factory(std::move(callback)),
-          domain(std::move(resources.domain)), ordering(std::move(resources.ordering)) {
+          domain(std::move(resources.domain)), ordering(std::move(resources.ordering)),
+          deadline(resources.deadline), now(std::move(resources.now)) {
         if (domain) domain->bind(ordering);
         ++resident_count;
     }
@@ -54,9 +57,14 @@ struct ToolWorkState {
         }
         record->exit_.settle(OperationState::succeeded);
     }
-    // 在接收回调结果前重新裁定取消，回调内请求取消也优先于迟到成功。
+    // 在回调前后裁定取消和期限，时钟故障停止业务但仍等待工作实际退出。
+    // 步骤：保留已有取消首因 → 核对截止时刻或时钟错误 → 裁定尚未结算的业务取消。
     runtime::CancelReason cancel() {
         using namespace runtime;
+        if (record->exit()->cancellation_reason() == CancelReason::none && deadline) {
+            try { if (now() >= *deadline) record->request_cancel(CancelReason::deadline); }
+            catch (...) { fail(ToolError::invalid_result); record->request_cancel(CancelReason::owner_stop); }
+        }
         const auto reason = record->exit()->cancellation_reason();
         if (reason != CancelReason::none && record->operation()->state() == OperationState::pending) {
             record->outcome_.error = reason == CancelReason::deadline ? ToolError::deadline : ToolError::cancelled;
@@ -122,6 +130,7 @@ ToolDriver::ToolDriver(ToolInvocation invocation, ToolFactory factory, ToolResou
     if (static_cast<bool>(resources.domain) != static_cast<bool>(resources.ordering) ||
         (resources.domain && resources.ordering->domain() != resources.domain->id()))
         throw std::invalid_argument("tool work: matching ordering resources required");
+    if (resources.deadline && !resources.now) throw std::invalid_argument("tool work: deadline clock required");
     if (resident_count >= 256) throw std::length_error("tool work: driver capacity exhausted");
     state_ = std::make_unique<ToolWorkState>(std::move(invocation),std::move(factory),std::move(resources));
 }

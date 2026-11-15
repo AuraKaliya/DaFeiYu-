@@ -5,6 +5,7 @@
 #include <dafeiyu/budget.hpp>
 #include <dafeiyu/serial_domain.hpp>
 #include <functional>
+#include <chrono>
 #include <utility>
 
 namespace dfy::agent {
@@ -18,11 +19,15 @@ struct ToolResult {
 };
 struct ToolProgress { std::optional<ToolResult> result; bool exited = false; };
 struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; model::ToolCall call; };
+using ToolTime = std::chrono::steady_clock::time_point;
+using ToolClock = std::function<ToolTime()>;
 // 顺序资格与计费均由宿主先准备；预算覆盖保留结果，顺序占用覆盖实际工作退出。
 struct ToolResources {
     std::shared_ptr<runtime::SerialDomain> domain;
     std::shared_ptr<const runtime::SerialRequest> ordering;
     runtime::BudgetLease charge;
+    std::optional<ToolTime> deadline;
+    ToolClock now = std::chrono::steady_clock::now;
 };
 // 同一宿主线程推进的已接纳工作；后台责任必须保持到 exited，不能在析构中强行中止。
 class ToolWork {

@@ -112,9 +112,30 @@ void ordering_retention() {
         "closed domain started pending work");
     gate->report = gate->exit = true; check(!ToolDriver::retry_retained() && domain->closed(),"orphan exit retained serial domain");
 }
+// 验证截止前后的取消边界，超时不调用未开始工具，也不抹掉回调期间发生的效果。
+// 步骤：到期前接纳但延迟推进 → 超时拒绝首次调用 → 模拟调用跨越截止时刻并保留效果。
+void deadlines() {
+    auto clock = std::make_shared<ToolTime>(ToolTime{}); unsigned calls = 0;
+    const auto deadline = *clock+std::chrono::seconds(1);
+    ToolResources resources; resources.deadline = deadline; resources.now = [clock] { return *clock; };
+    ToolDriver first(invocation(),[&](const auto&) { ++calls; return completed_tool({true,ToolEffect::applied,"ok",ToolError::none}); },std::move(resources));
+    *clock = deadline; first.advance();
+    check(!calls && first.request()->operation()->state() == OperationState::cancelled &&
+        first.request()->exit()->cancellation_reason() == CancelReason::deadline &&
+        first.request()->outcome().effect == ToolEffect::not_applied,"expired pending call executed");
+    *clock = ToolTime{}; ToolResources during; during.deadline = deadline; during.now = [clock] { return *clock; };
+    ToolDriver second(invocation(),[&](const auto&) {
+        ++calls; *clock = deadline;
+        return completed_tool({true,ToolEffect::applied,"changed",ToolError::none});
+    },std::move(during));
+    second.advance();
+    check(calls == 1 && second.request()->operation()->state() == OperationState::cancelled &&
+        second.request()->outcome().effect == ToolEffect::applied && second.request()->exit()->state() == OperationState::succeeded,
+        "callback crossing deadline forged success or erased effect");
+}
 }
 // 执行固定工具工作夹具，不调用真实模型。
 int main() {
-    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); std::cout << "Tool work checks passed\n"; return 0; }
+    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); deadlines(); std::cout << "Tool work checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
