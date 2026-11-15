@@ -155,3 +155,9 @@ Debug `^(agent\.async_session|app\.async_chat)$` 2／2 通过，覆盖正式结�
 多步接入前修正调用身份作用域：模型调用 ID 只在当前助手批次内要求唯一，闭合历史批次可复用同名 ID；执行回执使用运行／步骤／尝试／调用 ID 组合，不能把不同步骤误认成同一个命令。非幂等动作失败或取消后若效果已发生，也与未知效果一样阻止未经确认的重复；成功动作的新步骤仍可显式执行，幂等能力与确定无效果按原规则处理。
 
 Debug `model.messages`、`agent.tool_executor` 首次 2／2 通过；补充失败已发生效果约束后仅重跑 `agent.tool_executor`，1／1 通过。没有真实模型调用，供应商在线行为仍仅记录。
+
+### A05 上下文提交前的无分配编码校验
+
+复用原 `Value` 的 UTF-8 标量校验算法，提取为 Runtime 公共无分配函数，不重写算法。模型请求／响应、工具结果和原生描述复用该入口，避免工具效果已经发生后仅为校验编码再分配 JSON 临时对象；显式模型替身也不能绕过非法文本或调用 ID 校验。
+
+仅构建实际受影响目标，Debug `runtime.values`、`model.messages`、`model.complete`、`agent.tool_work`、`plugins.tools` 共 5 项通过。协议测试仍使用原传输替身，不链接 WinHTTP；本次只增加 Runtime 工具依赖，未读取真实模型凭据。

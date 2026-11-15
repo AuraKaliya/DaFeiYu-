@@ -1,4 +1,5 @@
 #include <dafeiyu/model_messages.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <stdexcept>
@@ -13,9 +14,10 @@ bool tool_name(const std::string& name) {
         (c >= '0' && c <= '9') || c == '_' || c == '-')) return false;
     return true;
 }
-// 累加有界正文，不让整数溢出绕过请求预算。
+// 校验 UTF-8 并累加有界正文，不让非法编码或整数溢出绕过请求边界。
 void account(std::size_t& bytes, const std::string& text, std::size_t limit = max_bytes) {
     if (text.size() > limit-bytes) throw std::length_error("model: message payload exceeds limit");
+    if (!runtime::valid_utf8(text)) throw std::invalid_argument("model: invalid UTF-8 text");
     bytes += text.size();
 }
 // 校验参数或 schema 为完整 JSON 对象，不将不完整参数送入执行层。

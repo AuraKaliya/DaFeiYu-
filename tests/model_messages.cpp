@@ -38,6 +38,8 @@ void protocol() {
     request = fixture(); request.messages[1].content.assign(1024*1024,'x'); rejects(request);
     request = fixture(); request.messages.assign(1025,{Role::user,"x"}); rejects(request);
     request = fixture(); request.max_output_tokens = 0; rejects(request);
+    request = fixture(); request.messages[1].content = std::string(1,static_cast<char>(0xff)); rejects(request);
+    request = fixture(); request.messages[2].tool_calls[0].id = std::string(1,static_cast<char>(0xff)); rejects(request);
 }
 // 拒绝不能交给执行层的模型响应，不执行其中的任何工具。
 void rejects_response(const Response& response) {
@@ -58,6 +60,7 @@ void responses() {
     response = call; response.message.role = Role::user; rejects_response(response);
     response = call; response.message.content.assign(8*1024*1024,'x'); rejects_response(response);
     rejects_response({{Role::assistant,""}});
+    rejects_response({{Role::assistant,std::string(1,static_cast<char>(0xff))}});
     validate_response({{Role::assistant,"partial"},FinishReason::length});
     validate_response({{Role::assistant,""},FinishReason::content_filter});
 }

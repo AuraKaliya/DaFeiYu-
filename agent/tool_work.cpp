@@ -1,5 +1,5 @@
 #include <dafeiyu/tool_work.hpp>
-#include <nlohmann/json.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -106,11 +106,7 @@ struct ToolWorkState {
                 auto& result = *progress.result;
                 const bool effect_valid = result.effect == ToolEffect::not_applied || result.effect == ToolEffect::applied || result.effect == ToolEffect::unknown;
                 if (effect_valid) record->outcome_.effect = result.effect;
-                bool output_valid = result.output.size() <= 64*1024;
-                if (output_valid) {
-                    try { (void)nlohmann::json(result.output).dump(); }
-                    catch (const nlohmann::json::exception&) { output_valid = false; }
-                }
+                const bool output_valid = result.output.size() <= 64*1024 && runtime::valid_utf8(result.output);
                 if (!output_valid || !effect_valid ||
                     static_cast<unsigned>(result.error) > static_cast<unsigned>(ToolError::deadline) ||
                     (result.succeeded != (result.error == ToolError::none))) {

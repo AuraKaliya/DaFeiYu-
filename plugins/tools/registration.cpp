@@ -1,7 +1,7 @@
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/tool_schema.hpp>
 #include <dafeiyu/tool_abi_v2.h>
-#include <nlohmann/json.hpp>
+#include <dafeiyu/utf8.hpp>
 
 namespace dfy::plugins {
 namespace {
@@ -9,8 +9,7 @@ namespace {
 std::string copy(dfy_v2_string_view value, std::size_t limit) {
     if (value.length > limit || (value.length && !value.data)) throw std::invalid_argument("plugin tools: invalid string view");
     std::string result; if (value.length) result.assign(value.data,static_cast<std::size_t>(value.length));
-    try { (void)nlohmann::json(result).dump(); }
-    catch (const nlohmann::json::exception&) { throw std::invalid_argument("plugin tools: invalid UTF-8"); }
+    if (!runtime::valid_utf8(result)) throw std::invalid_argument("plugin tools: invalid UTF-8");
     return result;
 }
 // 将包命名空间映射为模型可接受的稳定名称，名称冲突仍由目录明确拒绝。
