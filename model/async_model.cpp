@@ -54,7 +54,7 @@ AsyncClient::AsyncClient(std::size_t capacity, Completion completion)
 }
 // 准备有界请求槽并保留显式后端，空注入不会回退为真实网络调用。
 AsyncClient::AsyncClient(std::size_t capacity, Backend backend)
-    : requests_(capacity), backend_(std::move(backend)) {
+    : requests_(capacity), backend_(std::move(backend)), structured_(backend_.structured) {
     if (!capacity || !backend_.complete) throw std::invalid_argument("model: positive capacity and backend required");
 }
 // 不丢弃进行中的后台调用；已取消业务仍等待真实 I/O 返回后才释放所用输入和配置。

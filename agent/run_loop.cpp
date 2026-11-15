@@ -91,11 +91,12 @@ struct RunLoopState {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         stage = TurnFailure::control; auto current = control(); current.attempt.step.sequence = record->model_requests_+1;
         const auto decision = restrict_policy(policy.before_model(current),options.extension,ControlPoint::model_request,current);
-        if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
+        if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
         model::Request input{record->context_->messages(),options.tools ? options.tools->definitions() : std::vector<model::ToolDefinition>{}};
         auto request = models.submit_request(config,std::move(input));
+        if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
     }
     // 保存已退出模型的原状态和用量，释放请求槽后才允许下一次提交。
@@ -166,7 +167,11 @@ struct RunLoopState {
 RunLoop::RunLoop(RunId run, model::Config config, model::Backend backend, std::shared_ptr<const MessageHistory> history, std::string prompt, RunOptions options) {
     if (resident_count >= 64) throw std::length_error("run: resident capacity exhausted");
     state_ = std::make_unique<RunLoopState>(run,std::move(config),std::move(backend),std::move(history),std::move(prompt),std::move(options));
-    state_->start_model(); state_->record->accepted_ = std::chrono::steady_clock::now(); state_->record->record_fact(RunFactKind::accepted);
+    state_->start_model();
+    if (!state_->record->model_requests_) throw std::runtime_error("run: stopped before model admission");
+    state_->record->accepted_ = std::chrono::steady_clock::now();
+    if (!state_->record->model_requests_) state_->record->origin_ = state_->record->accepted_;
+    state_->record->record_fact(RunFactKind::accepted);
 }
 // 关闭局部协调器后仍保留未退出模型和工具，不依赖客户端推进。
 // 步骤：请求停止并尝试推进 → 未退出转入保留链，否则释放上下文。

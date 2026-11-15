@@ -46,6 +46,26 @@ std::string_view failure_name(agent::TurnFailure failure) noexcept {
     }
     return "unknown";
 }
+// 将运行停止原因转换为固定标签，不输出规则或模型异常正文。
+std::string_view stop_name(agent::PolicyReason reason) noexcept {
+    switch (reason) {
+    case agent::PolicyReason::none: return "none";
+    case agent::PolicyReason::invalid_context: return "invalid_context";
+    case agent::PolicyReason::stale_goal: return "stale_goal";
+    case agent::PolicyReason::stale_policy: return "stale_policy";
+    case agent::PolicyReason::cancelled: return "cancelled";
+    case agent::PolicyReason::deadline: return "deadline";
+    case agent::PolicyReason::model_limit: return "model_limit";
+    case agent::PolicyReason::tool_limit: return "tool_limit";
+    case agent::PolicyReason::source_denied: return "source_denied";
+    case agent::PolicyReason::confirmation_required: return "confirmation_required";
+    case agent::PolicyReason::work_pending: return "work_pending";
+    case agent::PolicyReason::invalid_result: return "invalid_result";
+    case agent::PolicyReason::no_progress: return "no_progress";
+    case agent::PolicyReason::policy_failed: return "policy_failed";
+    }
+    return "unknown";
+}
 // 展示后台事实；调用返回或抛错均不等同于宿主退出确认。
 std::string_view call_name(const model::CallDiagnostics& call) noexcept {
     if (call.outcome == model::CallOutcome::returned) return "returned";
@@ -86,17 +106,20 @@ void write_turn_status(std::ostream& output, const agent::TurnDiagnostics& snaps
         << "Question=" << operation_name(snapshot.result) << ", failure stage=" << failure_name(snapshot.failure) << '\n'
         << "Cancellation=" << cancellation_name(snapshot.cancellation) << '\n'
         << "Model call=" << call_name(snapshot.model) << ", exit="
-        << (snapshot.exit == runtime::OperationState::succeeded ? "confirmed" : "waiting") << '\n';
+        << (snapshot.model_exit == runtime::OperationState::succeeded ? "confirmed" : "waiting") << '\n'
+        << "Run exit=" << (snapshot.exit == runtime::OperationState::succeeded ? "confirmed" : "waiting")
+        << "; model requests=" << snapshot.model_requests << "; tool candidates=" << snapshot.tool_requests << '\n'
+        << "Stop reason=" << stop_name(snapshot.stop_reason) << '\n';
 
     const auto end = snapshot.exited.value_or(std::chrono::steady_clock::now());
-    output << "Elapsed ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(end-snapshot.model.submitted).count()
-        << " (" << (snapshot.exited ? "final" : "active") << ")\nTimes in ms since model submission:\n";
-    write_time(output,"accepted",snapshot.accepted,snapshot.model.submitted);
-    write_time(output,"model started",snapshot.model.started,snapshot.model.submitted);
-    write_time(output,"model finished",snapshot.model.finished,snapshot.model.submitted);
-    write_time(output,"cancel requested",snapshot.cancel_requested,snapshot.model.submitted);
-    write_time(output,"question settled",snapshot.settled,snapshot.model.submitted);
-    write_time(output,"exit confirmed",snapshot.exited,snapshot.model.submitted);
+    output << "Elapsed ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(end-snapshot.origin).count()
+        << " (" << (snapshot.exited ? "final" : "active") << ")\nTimes in ms since run start:\n";
+    write_time(output,"accepted",snapshot.accepted,snapshot.origin);
+    write_time(output,"model started",snapshot.model.started,snapshot.origin);
+    write_time(output,"model finished",snapshot.model.finished,snapshot.origin);
+    write_time(output,"cancel requested",snapshot.cancel_requested,snapshot.origin);
+    write_time(output,"question settled",snapshot.settled,snapshot.origin);
+    write_time(output,"exit confirmed",snapshot.exited,snapshot.origin);
 
     output << "Notifications (acceptance only):\n";
     write_receipt(output,"started",snapshot.notifications.started);

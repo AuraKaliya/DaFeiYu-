@@ -1,9 +1,18 @@
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/run_loop.hpp>
 #include <limits>
 
 namespace dfy::agent {
 using namespace runtime;
 namespace {
+// 将原文本调用包装为明确的文本后端，不允许静默丢弃工具字段。
+// 步骤：选取明确调用或内置文本 Provider → 包装完整响应并标记文本能力。
+model::Backend text_backend(model::Completion completion) {
+    if (!completion) completion = [](const auto& config,const auto& messages) { return model::complete(config,messages); };
+    return {[completion = std::move(completion)](const model::Config& config,const model::Request& request) {
+        return model::Response{{model::Role::assistant,completion(config,request.messages)}};
+    },false};
+}
 // 定义跨插件共享的会话事实结构，不包含供应商参数或认证信息。
 std::shared_ptr<const StructDescriptor> event_descriptor() {
     const FieldDescriptor fields[] = {{"kind",ValueKind::string,32},{"session",ValueKind::uint64,0},
@@ -31,7 +40,7 @@ CancelDisposition TurnRequest::request_cancel(CancelReason reason) {
 // 步骤：复制身份与时间 → 读取业务及退出状态 → 关联模型事实和通知接纳回执。
 TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     TurnDiagnostics result;
-    result.session = run_id().session; result.turn = turn(); result.attempt = attempt_; result.accepted = accepted_;
+    result.session = run_id().session; result.turn = turn(); result.attempt = attempt_; result.accepted = accepted_; result.origin = origin_;
     result.cancel_requested = cancel_requested_; result.settled = settled_; result.exited = exited_;
     result.result = operation()->state(); result.exit = exit()->state();
     result.cancellation = operation()->cancellation_reason(); result.failure = failure_;
@@ -67,18 +76,16 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)
-    : config_(std::move(config)), events_(std::move(events)), descriptor_(event_descriptor()), id_(next_domain()),
-      records_(result_capacity), models_(1,std::move(completion)) {
-    if (!events_ || !result_capacity) throw std::invalid_argument("session: event channel and positive result capacity required");
-}
+    : Session(std::move(config),std::move(events),text_backend(std::move(completion)),result_capacity) {}
 // 完整准备结构化后端，状态仍由原会话的结果和退出操作负责。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events, model::Backend backend, std::size_t result_capacity)
     : config_(std::move(config)), events_(std::move(events)), descriptor_(event_descriptor()), id_(next_domain()),
-      records_(result_capacity), models_(1,std::move(backend)) {
-    if (!events_ || !result_capacity) throw std::invalid_argument("session: event channel and positive result capacity required");
+      records_(result_capacity), backend_(std::move(backend)) {
+    if (!events_ || !result_capacity || !backend_.complete) throw std::invalid_argument("session: channel, backend and result capacity required");
 }
 // 兜底关闭时先保留所有回合责任，实际模型退出后再结算回合退出。
-Session::~Session() { close(); models_.wait_closed(); advance(); }
+// 步骤：关闭接纳 → 等待原模型退出 → 推进工具收尾 → 将未退出责任交给保留链。
+Session::~Session() { close(); if (active_) active_->wait_model(); advance(); active_.reset(); }
 // 以不可变事件传递会话事实，观察接纳或分配失败只形成独立回执。
 // 步骤：构造类型化字段 → 创建宿主载荷 → 接纳观察通知或返回失败回执。
 events::ObservationReceipt Session::notify(std::string_view kind, std::uint64_t turn) noexcept {
@@ -88,78 +95,63 @@ events::ObservationReceipt Session::notify(std::string_view kind, std::uint64_t 
         return events::observe(*events_,std::make_shared<const StructValue>(StructValue::create(descriptor_,values,64)));
     } catch (...) { return {events::ObservationStatus::failed,{}}; }
 }
-// 完整准备成功后才接受回合，拒绝不消耗回合号或改变已提交上下文。
-// 步骤：检查空闲、输入和结果槽 → 准备待提交历史及回合 → 提交后台模型 → 固定接纳并通知开始。
-std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
+// 原入口沿用无工具选项，仍通过同一正式运行协调器执行。
+std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) { return begin(prompt,{}); }
+// 完整准备和控制检查成功后才接纳，拒绝不消耗回合号或改变已提交上下文。
+// 步骤：检查入口与输入 → 包装关闭边界 → 准备有界协调器 → 固定接纳并通知开始。
+std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOptions options) {
     collect();
-    if (!accepting_ || active_) throw std::logic_error("session: busy or closed");
+    if (!*accepting_ || active_ || working_) throw std::logic_error("session: busy, closed or reentrant");
     if (prompt.empty() || prompt.find_first_not_of(" \t\r\n") == std::string::npos || prompt.size() > 1024*1024)
         throw std::invalid_argument("session: nonblank prompt within 1 MiB required");
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
-    for (auto& slot : records_) if (!slot) {
-        auto record = std::shared_ptr<TurnRequest>(new TurnRequest({id_,turn_+1}));
-        record->model_steps_.reserve(1);
-        record->context_ = std::make_unique<RunContext>(history_,prompt);
-        auto request = models_.submit_request(config_,model::Request{record->context_->messages()});
-        record->model_ = std::move(request); record->model_requests_ = 1; active_ = record; slot = record; ++turn_;
-        record->accepted_ = std::chrono::steady_clock::now();
-        record->record_fact(RunFactKind::accepted);
-        record->notifications_.started = notify("turn_started",turn_); return record;
-    }
-    throw std::length_error("session: retained turn capacity exhausted");
-}
-// 取消优先于同次推进观察到的模型结果，完整问答准备成功才原子提交历史。
-// 步骤：裁定回合取消 → 推进后台结果 → 准备历史并记录结算阶段 → 通知唯一终态 → 保存调用事实并确认退出。
-void Session::advance() {
-    if (active_ && active_->operation()->state() == OperationState::pending && active_->operation()->cancellation_reason() != CancelReason::none) {
-        active_->model_->request_cancel(active_->operation()->cancellation_reason()); active_->result_.settle(OperationState::cancelled);
-        active_->settled_ = std::chrono::steady_clock::now();
-        active_->record_fact(RunFactKind::settled);
-        active_->context_->seal(); active_->notifications_.finished = notify("turn_cancelled",active_->turn());
-    }
-    models_.advance();
-    if (!active_ || active_->model_->exit()->state() == OperationState::pending) return;
-    active_->record_fact(RunFactKind::model_finished);
-    if (active_->operation()->state() == OperationState::pending) {
-        try {
-            const auto& response = active_->model_->response();
-            if (response.finish != model::FinishReason::stop || !response.message.tool_calls.empty()) {
-                active_->failure_ = TurnFailure::model_response;
-                throw std::runtime_error("session: final text response required");
-            }
-            auto answer = response.message.content;
-            active_->context_->finish_text(answer); history_ = active_->context_->committed();
-            active_->answer_ = std::move(answer); active_->result_.settle(OperationState::succeeded);
-        } catch (...) {
-            active_->error_ = std::current_exception();
-            if (active_->failure_ == TurnFailure::none)
-                active_->failure_ = active_->model_->operation()->state() == OperationState::failed ? TurnFailure::model : TurnFailure::history_commit;
-            active_->result_.settle(OperationState::failed);
+    // 用独立会话门保护规则回调，关闭发生在回调内时仍能阻止新的受控调用。
+    // 步骤：调用明确规则 → 重查会话门 → 返回原决定或关闭拒绝。
+    options.extension = [gate = accepting_,rule = std::move(options.extension)](ControlPoint point,const PolicyContext& context) {
+        const auto decision = rule ? rule(point,context) : PolicyDecision{PolicyVerdict::allow,PolicyReason::none};
+        return *gate ? decision : PolicyDecision{PolicyVerdict::deny,PolicyReason::cancelled};
+    };
+    working_ = true;
+    try {
+        for (auto& slot : records_) if (!slot) {
+            auto loop = std::make_unique<RunLoop>(RunId{id_,turn_+1},config_,backend_,history_,prompt,std::move(options));
+            auto record = loop->request(); active_ = std::move(loop); slot = record; ++turn_;
+            record->notifications_.started = notify("turn_started",turn_); working_ = false; return record;
         }
-        active_->settled_ = std::chrono::steady_clock::now();
-        active_->record_fact(RunFactKind::settled);
-        active_->notifications_.finished = notify(active_->operation()->state() == OperationState::succeeded ? "turn_completed" : "turn_failed",active_->turn());
-    }
-    active_->completed_call_ = active_->model_->diagnostics();
-    active_->completed_model_result_ = active_->model_->operation()->state(); active_->completed_model_exit_ = active_->model_->exit()->state();
-    ModelStepSnapshot step{active_->attempt_,active_->completed_call_,active_->completed_model_result_,active_->completed_model_exit_};
-    if (step.result == OperationState::succeeded) step.usage = active_->model_->response().usage;
-    active_->model_steps_.push_back(step);
-    active_->context_->seal(); active_->context_.reset(); active_->model_.reset(); models_.collect();
-    active_->exited_ = std::chrono::steady_clock::now();
-    active_->exit_.settle(OperationState::succeeded); active_->record_fact(RunFactKind::exited); active_.reset();
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::length_error("session: retained turn capacity exhausted");
+}
+// 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
+// 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。
+void Session::advance() {
+    if (working_) throw std::logic_error("session: reentrant advance");
+    if (!active_) return;
+    working_ = true;
+    try {
+        active_->advance(); history_ = active_->history(); const auto record = active_->request();
+        const auto state = record->operation()->state();
+        if (state != OperationState::pending && !record->notifications_.finished)
+            record->notifications_.finished = notify(state == OperationState::succeeded ? "turn_completed" :
+                state == OperationState::cancelled ? "turn_cancelled" : "turn_failed",record->turn());
+        if (record->exit()->state() != OperationState::pending) active_.reset();
+    } catch (...) { working_ = false; throw; }
+    working_ = false;
 }
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。
 events::ObservationReceipt Session::clear() {
-    if (!accepting_ || active_) throw std::logic_error("session: busy or closed");
+    if (!*accepting_ || active_ || working_) throw std::logic_error("session: busy or closed");
     history_ = std::make_shared<const MessageHistory>(); return notify("session_cleared",0);
 }
-// 停止新问答并请求当前工作退出，已经成功提交的历史不回滚。
-// 步骤：关闭回合接纳 → 登记当前取消 → 关闭模型入口并推进收尾。
+// 停止新运行并请求当前工作退出，回调内关闭只登记取消而不重入推进。
+// 步骤：关闭接纳 → 登记当前取消 → 非重入时推进收尾。
 void Session::close() {
-    accepting_ = false; if (active_) active_->request_cancel(CancelReason::owner_stop);
-    models_.close(); advance();
+    *accepting_ = false; if (active_) active_->request()->request_cancel(CancelReason::owner_stop);
+    if (!working_) advance();
 }
+// 返回原协调器保留的真实收尾数量。
+std::size_t Session::retained() noexcept { return RunLoop::retained(); }
+// 复用同一协调器收尾，不创建第二条执行路径。
+std::size_t Session::retry_retained() { return RunLoop::retry_retained(); }
 // 释放没有客户端的终态结果，尚未实际退出的回合始终保留。
 void Session::collect() noexcept {
     for (auto& record : records_) if (record && record->exit()->state() != OperationState::pending && record.use_count() == 1) record.reset();

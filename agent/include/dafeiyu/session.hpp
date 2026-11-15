@@ -4,6 +4,7 @@
 #include <dafeiyu/run_identity.hpp>
 #include <dafeiyu/run_context.hpp>
 #include <dafeiyu/tool_batch.hpp>
+#include <dafeiyu/run_options.hpp>
 #include <array>
 
 namespace dfy::agent {
@@ -18,6 +19,7 @@ struct TurnDiagnostics {
     runtime::DomainId session = 0;
     std::uint64_t turn = 0;
     TimePoint accepted;
+    TimePoint origin;
     std::optional<TimePoint> cancel_requested, settled, exited;
     runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
     runtime::CancelReason cancellation = runtime::CancelReason::none;
@@ -112,11 +114,12 @@ class TurnRequest {
     model::CallDiagnostics completed_call_;
     runtime::OperationState completed_model_result_ = runtime::OperationState::pending, completed_model_exit_ = runtime::OperationState::pending;
     TurnDiagnostics::TimePoint accepted_;
+    TurnDiagnostics::TimePoint origin_;
     std::optional<TurnDiagnostics::TimePoint> cancel_requested_, settled_, exited_;
     TurnFailure failure_ = TurnFailure::none;
 };
 
-// 最小异步会话，只维护当前上下文；不引入工具循环、自动规划或会话持久化。
+// 单活跃运行的异步会话，工具循环须显式提供授权快照；不包含规划或磁盘持久化。
 class Session {
   public:
     // 固定结果槽、共享事件通道与模型调用，历史正文总量最多 1 MiB。
@@ -133,6 +136,8 @@ class Session {
     Session& operator=(const Session&) = delete;
     // 空闲时接受一轮问答，完整准备和模型提交成功后才发布开始通知。
     std::shared_ptr<TurnRequest> begin(const std::string& prompt);
+    // 用明确的工具范围、策略和限额接纳一次运行，旧入口保持无工具行为。
+    std::shared_ptr<TurnRequest> begin(const std::string& prompt, RunOptions options);
     // 非阻塞推进取消、完整回答及原子历史提交；通知仅进入事件队列。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。
@@ -142,11 +147,15 @@ class Session {
     // 返回是否有尚未实际退出的回合。
     bool busy() const noexcept { return static_cast<bool>(active_); }
     // 判断已经停止接纳且后台调用真正退出。
-    bool closed() const noexcept { return !accepting_ && !active_ && models_.closed(); }
+    bool closed() const noexcept { return !*accepting_ && !active_; }
     // 返回宿主签发的独立会话身份。
     runtime::DomainId id() const noexcept { return id_; }
-    // 返回已提交消息数，成功问答成对提交，失败和取消不改变历史。
+    // 返回已提交消息数；文本失败保留原历史，工具事实可在最终回答前独立提交。
     std::size_t message_count() const noexcept { return history_->size(); }
+    // 返回失去局部协调器但仍在真实收尾的运行数量。
+    static std::size_t retained() noexcept;
+    // 在原宿主线程重试保留运行，实际退出前不释放工作责任。
+    static std::size_t retry_retained();
   private:
     // 构造不可变会话事实并返回独立接纳回执，任何观察失败都留在通知边界。
     events::ObservationReceipt notify(std::string_view kind, std::uint64_t turn) noexcept;
@@ -158,9 +167,10 @@ class Session {
     const runtime::DomainId id_;
     std::uint64_t turn_ = 0;
     std::vector<std::shared_ptr<TurnRequest>> records_;
-    std::shared_ptr<TurnRequest> active_;
+    std::unique_ptr<RunLoop> active_;
     std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
-    model::AsyncClient models_;
-    bool accepting_ = true;
+    const model::Backend backend_;
+    std::shared_ptr<bool> accepting_ = std::make_shared<bool>(true);
+    bool working_ = false;
 };
 }

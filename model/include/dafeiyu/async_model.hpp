@@ -9,8 +9,8 @@
 
 namespace dfy::model {
 using Completion = std::function<std::string(const Config&,const std::vector<Message>&)>;
-// 显式结构化调用入口；空函数拒绝构造，不为遗漏注入的测试自动选择真实服务。
-struct Backend { std::function<Response(const Config&,const Request&)> complete; };
+// 显式模型入口并声明结构化请求支持；空函数由客户端拒绝，不为遗漏注入的测试选择真实服务。
+struct Backend { std::function<Response(const Config&,const Request&)> complete; bool structured = true; };
 // 仅描述后台调用返回或抛错，不代替宿主对文本有效性、取消及业务结果的裁定。
 enum class CallOutcome { pending, returned, threw };
 struct CallDiagnostics {
