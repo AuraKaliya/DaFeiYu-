@@ -64,4 +64,15 @@ PolicyDecision evaluate_policy(const std::function<PolicyDecision()>& rule) noex
     } catch (...) {}
     return {PolicyVerdict::deny,PolicyReason::policy_failed};
 }
+// 对基础策略作单向收紧，不允许扩展重新授予已拒绝的权限。
+// 步骤：核对基础决定 → 跳过已拒绝或空扩展 → 隔离扩展异常 → 保留更严格结果。
+PolicyDecision restrict_policy(PolicyDecision base, const PolicyExtension& extension, ControlPoint point, const PolicyContext& context) noexcept {
+    try {
+        base = evaluate_policy([base] { return base; });
+        if (base.verdict == PolicyVerdict::deny || !extension) return base;
+        const auto extra = evaluate_policy([&] { return extension(point,context); });
+        if (extra.verdict == PolicyVerdict::deny || base.verdict == PolicyVerdict::allow) return extra;
+        return base;
+    } catch (...) { return {PolicyVerdict::deny,PolicyReason::policy_failed}; }
+}
 }

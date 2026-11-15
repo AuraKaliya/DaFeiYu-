@@ -54,6 +54,14 @@ void rule_errors() {
     check(evaluate_policy([]() -> PolicyDecision { throw std::runtime_error("fixture"); }).verdict == PolicyVerdict::deny,"throwing rule allowed");
     check(evaluate_policy([] { return PolicyDecision{PolicyVerdict::allow,PolicyReason::deadline}; }).verdict == PolicyVerdict::deny,"malformed allow accepted");
     check(evaluate_policy([] { return PolicyDecision{PolicyVerdict::wait,PolicyReason::confirmation_required}; }).verdict == PolicyVerdict::wait,"valid wait changed");
+    unsigned called = 0;
+    const PolicyExtension allow = [&](auto,const auto&) { ++called; return PolicyDecision{PolicyVerdict::allow,PolicyReason::none}; };
+    check(restrict_policy({PolicyVerdict::deny,PolicyReason::tool_limit},allow,ControlPoint::tool_start,context()).reason == PolicyReason::tool_limit && !called,
+        "extension ran after denial or expanded permission");
+    check(restrict_policy({PolicyVerdict::wait,PolicyReason::confirmation_required},allow,ControlPoint::tool_start,context()).verdict == PolicyVerdict::wait,
+        "extension bypassed confirmation");
+    check(restrict_policy({PolicyVerdict::allow,PolicyReason::none},[](auto,const auto&) -> PolicyDecision { throw std::runtime_error("fixture"); },
+        ControlPoint::model_request,context()).reason == PolicyReason::policy_failed,"throwing extension allowed");
 }
 }
 // 只验证控制规则与固定工具工作，不调用模型或 UI。
