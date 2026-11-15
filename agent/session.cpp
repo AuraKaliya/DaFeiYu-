@@ -36,6 +36,8 @@ TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     result.result = operation()->state(); result.exit = exit()->state();
     result.cancellation = operation()->cancellation_reason(); result.failure = failure_;
     result.model = model_ ? model_->diagnostics() : completed_call_;
+    result.model_result = model_ ? model_->operation()->state() : completed_model_result_;
+    result.model_exit = model_ ? model_->exit()->state() : completed_model_exit_;
     result.notifications = notifications_;
     return result;
 }
@@ -131,6 +133,7 @@ void Session::advance() {
         active_->notifications_.finished = notify(active_->operation()->state() == OperationState::succeeded ? "turn_completed" : "turn_failed",active_->turn());
     }
     active_->completed_call_ = active_->model_->diagnostics();
+    active_->completed_model_result_ = active_->model_->operation()->state(); active_->completed_model_exit_ = active_->model_->exit()->state();
     active_->context_->seal(); active_->context_.reset(); active_->model_.reset(); models_.collect();
     active_->exited_ = std::chrono::steady_clock::now();
     active_->exit_.settle(OperationState::succeeded); active_->record_fact(RunFactKind::exited); active_.reset();

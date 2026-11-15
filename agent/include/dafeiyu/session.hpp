@@ -20,6 +20,7 @@ struct TurnDiagnostics {
     runtime::CancelReason cancellation = runtime::CancelReason::none;
     TurnFailure failure = TurnFailure::none;
     model::CallDiagnostics model;
+    runtime::OperationState model_result = runtime::OperationState::pending, model_exit = runtime::OperationState::pending;
     TurnNotifications notifications;
     AttemptId attempt;
 };
@@ -85,6 +86,7 @@ class TurnRequest {
     std::shared_ptr<model::ModelRequest> model_;
     std::unique_ptr<RunContext> context_;
     model::CallDiagnostics completed_call_;
+    runtime::OperationState completed_model_result_ = runtime::OperationState::pending, completed_model_exit_ = runtime::OperationState::pending;
     TurnDiagnostics::TimePoint accepted_;
     std::optional<TurnDiagnostics::TimePoint> cancel_requested_, settled_, exited_;
     TurnFailure failure_ = TurnFailure::none;
