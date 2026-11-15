@@ -2,6 +2,8 @@
 
 最小 Agent 基础阶段已完成，采用 C++20、CMake、VS2022 和 Windows x64。开发指导中的 R01～R16 已形成独立提交及验收记录，供统一审查。
 
+下述 R01～R16 和 U01 的全量数字属于各自历史基线；本轮新增有界工具循环只完成必要阶段检查，尚未做最终全量验收。最新完成范围见文末进度入口。
+
 随后已完成对这 35 个提交的[专项审查及修复](docs/review-2026-11-14.md)，修复 5 处可复现问题，并再次通过 Debug／Release 各 79／79 全量及 20／20 跨配置检查。[当前架构图](docs/architecture.md)按实际装配绘制，区分正式问答链路与可选基础接口。
 
 最终从全新目录构建 Debug、Release，两种配置的完整 CTest 均为 **79／79**；另通过 **20／20** 项 Debug 宿主调用 Release DLL 的检查。DeepSeek 与 Qwen 均完成真实单次调用，以及空插件、加载观察包、卸载后的多轮上下文验收。详情见 [最终验收记录](docs/final-acceptance-2026-11-14.md) 和 [开发指导](docs/foundation-development-guide.md)。
@@ -98,7 +100,7 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)。已完成模型结构化协议、工具目录与执行基础、原生插件工具适配，并在 A05a-3 将上下文事务接入正式 Session。默认 CLI 仍为单次问答，完整工具循环尚未接入。此前暂停点见 [进度与架构快照](docs/agent-progress-2026-11-15.md)，本轮进度见 [开发记录](docs/agent-development-log.md)。
+工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)。正式 Session 已接入有界模型工具循环，显式提供结构化后端和授权工具快照后可多步执行；默认 CLI 尚未自动装配插件工具，仍保留原文本入口。最新边界和框架见 [21:00 检查点](docs/agent-progress-2026-11-15-2100.md)，逐步证据见 [开发记录](docs/agent-development-log.md)。
 
 计划已补入 [统一策略、追踪与离线回放](docs/agent-cross-cutting-plan.md) 三条横向能力；用户已恢复开发至 2026-11-15 北京时间 21:00。回放和评测同样不调用真实模型。
 
