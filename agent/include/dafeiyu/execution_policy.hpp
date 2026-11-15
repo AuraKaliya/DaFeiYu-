@@ -7,7 +7,7 @@ enum class PolicyVerdict { allow, deny, wait };
 enum class ControlPoint { model_request, tool_start, tool_result };
 enum class PolicyReason {
     none, invalid_context, stale_goal, stale_policy, cancelled, deadline,
-    model_limit, tool_limit, source_denied, confirmation_required, work_pending, invalid_result, policy_failed
+    model_limit, tool_limit, source_denied, confirmation_required, work_pending, invalid_result, no_progress, policy_failed
 };
 struct PolicyDecision { PolicyVerdict verdict = PolicyVerdict::deny; PolicyReason reason = PolicyReason::invalid_context; };
 // 由宿主从权威运行状态生成的值上下文，模型文本和普通观察通知不能授予这些字段。

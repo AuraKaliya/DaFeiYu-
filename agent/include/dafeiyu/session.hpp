@@ -3,12 +3,15 @@
 #include <dafeiyu/hooks.hpp>
 #include <dafeiyu/run_identity.hpp>
 #include <dafeiyu/run_context.hpp>
+#include <dafeiyu/tool_batch.hpp>
 #include <array>
 
 namespace dfy::agent {
 class Session;
+class RunLoop;
+struct RunLoopState;
 struct TurnNotifications { std::optional<events::ObservationReceipt> started, finished; };
-enum class TurnFailure { none, model, history_commit, model_response };
+enum class TurnFailure { none, model, history_commit, model_response, control, tool_execution, model_request };
 // 固定大小的回合快照；状态来自原操作，接纳时刻可以晚于后台调用开始。
 struct TurnDiagnostics {
     using TimePoint = model::CallDiagnostics::TimePoint;
@@ -23,6 +26,8 @@ struct TurnDiagnostics {
     runtime::OperationState model_result = runtime::OperationState::pending, model_exit = runtime::OperationState::pending;
     TurnNotifications notifications;
     AttemptId attempt;
+    std::size_t model_requests = 0, tool_requests = 0;
+    PolicyReason stop_reason = PolicyReason::none;
 };
 enum class RunFactKind { accepted, cancel_requested, model_finished, settled, exited };
 // 已发生的生命周期事实；修订号反映宿主观察顺序，后台时间不必与修订顺序一致。
@@ -34,8 +39,16 @@ struct RunFact {
     runtime::CancelReason cancellation = runtime::CancelReason::none;
     model::CallOutcome model = model::CallOutcome::pending;
     TurnFailure failure = TurnFailure::none;
+    AttemptId attempt;
+    runtime::DomainId model_request = 0;
 };
-// 当前单次问答最多五种生命周期事实；快照不拥有正文、操作、事件或插件代码。
+struct ModelStepSnapshot {
+    AttemptId attempt;
+    model::CallDiagnostics call;
+    runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
+    std::optional<model::Usage> usage;
+};
+// 固定运行生命周期快照；model_finished 保留首个模型退出，全部步骤另由专用查询返回。
 struct RunSnapshot {
     TurnDiagnostics diagnostics;
     std::array<RunFact,5> facts{};
@@ -70,11 +83,17 @@ class TurnRequest {
     TurnDiagnostics diagnostics() const noexcept;
     // 复制当前诊断与已发生事实，读取不推进执行且不依赖通知是否接纳。
     RunSnapshot snapshot() const noexcept;
+    // 复制已实际退出的模型步骤，不返回后台请求或业务正文。
+    std::vector<ModelStepSnapshot> model_steps() const { return model_steps_; }
+    // 复制各批次工具的状态与策略决定，不持有原生代码。
+    std::vector<BatchToolSnapshot> tool_steps() const;
   private:
     friend class Session;
+    friend class RunLoop;
+    friend struct RunLoopState;
     // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
     explicit TurnRequest(RunId run) : attempt_{{run,1},1} {}
-    const AttemptId attempt_;
+    AttemptId attempt_;
     // 首次写入指定事实并签发修订号，固定槽位预留确保收尾无需分配。
     void record_fact(RunFactKind kind) noexcept;
     std::array<RunFact,5> facts_{};
@@ -85,6 +104,11 @@ class TurnRequest {
     TurnNotifications notifications_;
     std::shared_ptr<model::ModelRequest> model_;
     std::unique_ptr<RunContext> context_;
+    std::unique_ptr<ToolExecutor> tools_;
+    std::vector<std::unique_ptr<ToolBatch>> batches_;
+    std::vector<ModelStepSnapshot> model_steps_;
+    std::size_t model_requests_ = 0, tool_requests_ = 0;
+    PolicyReason stop_reason_ = PolicyReason::none;
     model::CallDiagnostics completed_call_;
     runtime::OperationState completed_model_result_ = runtime::OperationState::pending, completed_model_exit_ = runtime::OperationState::pending;
     TurnDiagnostics::TimePoint accepted_;

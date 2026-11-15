@@ -31,7 +31,8 @@ RunTrace single_run_trace(const RunSnapshot& snapshot, std::string name_space, T
     validate_namespace(name_space); validate_trace_versions(versions);
     const auto& data = snapshot.diagnostics; const auto& attempt = data.attempt;
     if (attempt.step.run != RunId{data.session,data.turn} || attempt.step.sequence != 1 || attempt.sequence != 1 || !data.model.request ||
-        !snapshot.fact_count || snapshot.fact_count > snapshot.facts.size()) throw std::invalid_argument("trace: unsupported or invalid single-run snapshot");
+        data.model_requests > 1 || data.tool_requests || !snapshot.fact_count || snapshot.fact_count > snapshot.facts.size())
+        throw std::invalid_argument("trace: unsupported or invalid single-run snapshot");
     const TraceNodeId root{attempt.step.run}, step{attempt.step.run,TraceNodeKind::step,1}, trial{attempt.step.run,TraceNodeKind::attempt,1,1};
     const TraceNodeId call{attempt.step.run,TraceNodeKind::model,1,1,data.model.request};
     validate_trace_id(root);

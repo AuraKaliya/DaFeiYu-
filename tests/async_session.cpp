@@ -122,6 +122,8 @@ void commit_failure() {
     });
     auto failed = session.begin("large"); drain(session,failed);
     const auto snapshot = failed->diagnostics();
+    check(failed->model_steps().size() == 1 && failed->model_steps()[0].result == OperationState::succeeded &&
+        !failed->model_steps()[0].usage,"step metadata lost original model state or fabricated usage");
     check(snapshot.failure == TurnFailure::history_commit && snapshot.result == OperationState::failed &&
         snapshot.model.outcome == dfy::model::CallOutcome::returned && snapshot.exited && !session.message_count(),
         "history failure was mislabeled as model failure or committed data");

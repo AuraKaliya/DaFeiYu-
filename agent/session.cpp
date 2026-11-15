@@ -39,6 +39,7 @@ TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     result.model_result = model_ ? model_->operation()->state() : completed_model_result_;
     result.model_exit = model_ ? model_->exit()->state() : completed_model_exit_;
     result.notifications = notifications_;
+    result.model_requests = model_requests_; result.tool_requests = tool_requests_; result.stop_reason = stop_reason_;
     return result;
 }
 // 在固定槽位记录首次发生的生命周期事实，重复推进不追加重复项。
@@ -48,13 +49,19 @@ void TurnRequest::record_fact(RunFactKind kind) noexcept {
     if (fact.revision) return;
     const auto current = diagnostics();
     fact = {++fact_count_,kind,std::chrono::steady_clock::now(),current.result,current.cancellation,
-        current.model.outcome,current.failure};
+        current.model.outcome,current.failure,current.attempt,current.model.request};
 }
 // 复制诊断并按首次记录顺序排列事实，不触发后台结果接收或事件消费。
 // 步骤：取得诊断值副本 → 按修订号复制已记录项 → 返回固定容量快照。
 RunSnapshot TurnRequest::snapshot() const noexcept {
     RunSnapshot result; result.diagnostics = diagnostics(); result.fact_count = fact_count_;
     for (const auto& fact : facts_) if (fact.revision) result.facts[fact.revision-1] = fact;
+    return result;
+}
+// 合并批次的只读值投影，查询不推进工作或延长代码寿命。
+std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
+    std::vector<BatchToolSnapshot> result;
+    for (const auto& batch : batches_) { auto values = batch->snapshot(); result.insert(result.end(),values.begin(),values.end()); }
     return result;
 }
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
@@ -91,9 +98,10 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
     for (auto& slot : records_) if (!slot) {
         auto record = std::shared_ptr<TurnRequest>(new TurnRequest({id_,turn_+1}));
+        record->model_steps_.reserve(1);
         record->context_ = std::make_unique<RunContext>(history_,prompt);
         auto request = models_.submit_request(config_,model::Request{record->context_->messages()});
-        record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
+        record->model_ = std::move(request); record->model_requests_ = 1; active_ = record; slot = record; ++turn_;
         record->accepted_ = std::chrono::steady_clock::now();
         record->record_fact(RunFactKind::accepted);
         record->notifications_.started = notify("turn_started",turn_); return record;
@@ -134,6 +142,9 @@ void Session::advance() {
     }
     active_->completed_call_ = active_->model_->diagnostics();
     active_->completed_model_result_ = active_->model_->operation()->state(); active_->completed_model_exit_ = active_->model_->exit()->state();
+    ModelStepSnapshot step{active_->attempt_,active_->completed_call_,active_->completed_model_result_,active_->completed_model_exit_};
+    if (step.result == OperationState::succeeded) step.usage = active_->model_->response().usage;
+    active_->model_steps_.push_back(step);
     active_->context_->seal(); active_->context_.reset(); active_->model_.reset(); models_.collect();
     active_->exited_ = std::chrono::steady_clock::now();
     active_->exit_.settle(OperationState::succeeded); active_->record_fact(RunFactKind::exited); active_.reset();
