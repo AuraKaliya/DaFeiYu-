@@ -57,3 +57,9 @@ Debug 仅构建 `dfy_model_protocol_tests` 并运行 `^model\.protocol$`，1／1
 状态：已完成同步连接。`complete_response` 在读取凭据前校验、编码请求，复用原单次 HTTPS、状态检查和凭据校验，再解码完整响应。旧 `complete` 接口继续只接受文本；新增工具字段传入旧接口时明确拒绝，避免静默丢弃。
 
 `dfy_model_client_tests` 仍独立编译协议与校验实现，并以原 `post_json` 替身替代传输，不链接 WinHTTP。Debug `^model\.complete$` 1／1 通过，覆盖双服务结构化调用、非法输入不进入传输和原文本／错误行为；使用虚构测试凭据，未读取真实凭据。下一步复用原异步操作与退出边界。
+
+## A02c-2 结构化异步入口与 A00b 固定序列
+
+状态：已完成。`AsyncClient` 增加显式 `Backend` 和 `submit_request`，原 Future、结果／退出 Operation、取消优先、保留槽与诊断继续复用；`ModelRequest::response()` 借用完整响应。旧文本调用仅做适配，不支持的结构化字段在提交前拒绝；空结构化后端明确拒绝，不能因遗漏测试注入而回退到真实服务。
+
+A00b 随本单元复用原异步测试加入固定响应序列：工具调用 → 工具结果 → 最终文本，以及迟到响应取消、空后端和不支持字段检查，不建立另一套测试框架。Debug 必要构建后 `^(model\.async|agent\.async_session|app\.async_chat)$` 3／3 通过；修正测试中可选无符号值比较的编译警告后相关目标重建干净。下一步 A03 工具描述、参数校验与授权目录。

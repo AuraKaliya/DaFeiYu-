@@ -102,10 +102,42 @@ void diagnostic_boundary() {
     request.reset(); client.collect();
     check(!client.size() && snapshot.request,"diagnostic snapshot retained a model slot");
 }
+// 验证结构化后端复用原操作生命周期，按预设调用结果推进且不回退真实服务。
+// 步骤：拒绝空后端与错误选项 → 返回固定工具调用 → 回填固定结果 → 取消后丢弃迟到响应。
+void structured() {
+    rejects<std::invalid_argument>([] { AsyncClient invalid(1,Backend{}); });
+    const Request input{{{Role::system,"rules"},{Role::user,"goal"}},{{"read","read","{}"}},32};
+    AsyncClient text(1,[](const auto&,const auto&) { return std::string("text"); });
+    rejects<std::invalid_argument>([&] { (void)text.submit_request({},input); });
+
+    unsigned calls = 0;
+    AsyncClient client(1,Backend{[&](const Config&,const Request& request) {
+        ++calls;
+        if (calls == 1) {
+            check(request.tools.size() == 1 && request.max_output_tokens == 32u,"structured request metadata lost");
+            return Response{{Role::assistant,"",{{"call","read","{}"}}},FinishReason::tool_calls};
+        }
+        check(request.messages.back().tool_call_id == "call","tool result did not reach backend");
+        return Response{{Role::assistant,"done"}};
+    }});
+    auto first = client.submit_request({},input);
+    rejects<std::logic_error>([&] { (void)first->response(); }); drain(client,first);
+    const auto reply = first->response();
+    check(reply.message.tool_calls.size() == 1 && first->operation()->state() == OperationState::succeeded,
+        "structured response was treated as empty text");
+    rejects<std::logic_error>([&] { (void)first->answer(); }); first.reset(); client.collect();
+    auto next = input; next.messages.push_back(reply.message); next.messages.push_back({Role::tool,"value",{},"call"});
+    auto final = client.submit_request({},next); drain(client,final);
+    check(final->answer() == "done" && calls == 2,"fixed model sequence did not complete");
+    final.reset(); client.collect(); auto cancelled = client.submit_request({},next);
+    cancelled->request_cancel(CancelReason::user); drain(client,cancelled);
+    check(cancelled->operation()->state() == OperationState::cancelled,"late structured response replaced cancellation");
+    rejects<std::runtime_error>([&] { (void)cancelled->response(); });
+}
 }
 // 验收真实后台线程与宿主唯一结算，所有模型结果使用可控离线替身。
-// 步骤：验证取消及在途责任 → 验证结果和异常 → 验证诊断边界 → 报告结果。
+// 步骤：验证取消及在途责任 → 验证结果和异常 → 验证诊断与结构化后端 → 报告结果。
 int main() {
-    try { cancellation(); outcomes(); diagnostic_boundary(); std::cout << "Async model checks passed\n"; return 0; }
+    try { cancellation(); outcomes(); diagnostic_boundary(); structured(); std::cout << "Async model checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

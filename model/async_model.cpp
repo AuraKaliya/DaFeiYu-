@@ -32,19 +32,30 @@ CallDiagnostics ModelRequest::diagnostics() const noexcept {
     if (progress_->has_started.load(std::memory_order_acquire)) result.started = progress_->started;
     return result;
 }
-// 保留真实模型错误边界，借用文本必须保持完整请求。
+// 仅以完整文本结束的成功响应提供旧接口，工具调用不能冒充空回答。
 const std::string& ModelRequest::answer() const {
+    const auto& value = response();
+    if (value.finish != FinishReason::stop || !value.message.tool_calls.empty()) throw std::logic_error("model: response is not final text");
+    return value.message.content;
+}
+// 保留模型错误与取消边界，借用响应必须保持完整请求。
+const Response& ModelRequest::response() const {
     if (operation()->state() == OperationState::failed) std::rethrow_exception(error_);
     if (operation()->state() == OperationState::cancelled) throw std::runtime_error("model: cancelled");
     if (operation()->state() != OperationState::succeeded) throw std::logic_error("model: request pending");
-    return answer_;
+    return response_;
 }
 // 固定请求容量并选择内置 Provider 或明确提供的测试调用。
 AsyncClient::AsyncClient(std::size_t capacity, Completion completion)
-    : requests_(capacity), completion_(completion ? std::move(completion) : Completion([](const Config& config,const std::vector<Message>& messages) {
-        return complete(config,messages);
-    })) {
-    if (!capacity) throw std::invalid_argument("model: positive async capacity required");
+    : AsyncClient(capacity,Backend{[completion = completion ? std::move(completion) : Completion(
+        [](const Config& config,const std::vector<Message>& messages) { return complete(config,messages); })]
+        (const Config& config,const Request& request) { return Response{{Role::assistant,completion(config,request.messages)}}; }}) {
+    structured_ = false;
+}
+// 准备有界请求槽并保留显式后端，空注入不会回退为真实网络调用。
+AsyncClient::AsyncClient(std::size_t capacity, Backend backend)
+    : requests_(capacity), backend_(std::move(backend)) {
+    if (!capacity || !backend_.complete) throw std::invalid_argument("model: positive capacity and backend required");
 }
 // 不丢弃进行中的后台调用；已取消业务仍等待真实 I/O 返回后才释放所用输入和配置。
 AsyncClient::~AsyncClient() { wait_closed(); }
@@ -55,38 +66,42 @@ void AsyncClient::wait_closed() {
     for (const auto& request : requests_) if (request && request->worker_.valid()) request->worker_.wait();
     advance();
 }
-// 将完整输入独立转交后台，异步提交之后只有不会失败的槽位提交。
-// 步骤：回收并检查接纳及完整消息约束 → 准备结果及输入捕获 → 提交后台调用 → 保存宿主责任。
+// 将旧文本消息转入同一异步入口，不静默忽略结构化字段。
 std::shared_ptr<ModelRequest> AsyncClient::submit(Config config, std::vector<Message> messages) {
     collect();
+    for (const auto& message : messages) if ((message.role != Role::user && message.role != Role::assistant) ||
+        !message.tool_calls.empty() || !message.tool_call_id.empty()) throw std::invalid_argument("model: text messages required");
+    return submit_request(std::move(config),Request{std::move(messages)});
+}
+// 将完整输入独立转交后台，异步提交之后只有不会失败的槽位提交。
+// 步骤：回收并校验接纳、协议及后端能力 → 准备结果及输入捕获 → 提交后台调用 → 保存宿主责任。
+std::shared_ptr<ModelRequest> AsyncClient::submit_request(Config config, Request input) {
+    collect();
     if (!accepting_) throw std::logic_error("model: async admission closed");
-    std::size_t bytes = 0;
-    if (messages.empty()) throw std::invalid_argument("model: messages required");
-    for (const auto& message : messages) {
-        if ((message.role != Role::user && message.role != Role::assistant) || message.content.empty() ||
-            (message.role == Role::user && message.content.find_first_not_of(" \t\r\n") == std::string::npos))
-            throw std::invalid_argument("model: valid role and nonempty message required");
-        if (message.content.size() > 1024 * 1024 - bytes) throw std::length_error("model: messages exceed 1 MiB");
-        bytes += message.content.size();
+    validate_request(input);
+    if (!structured_) {
+        if (!input.tools.empty() || input.max_output_tokens) throw std::invalid_argument("model: text backend does not support request options");
+        for (const auto& message : input.messages) if ((message.role != Role::user && message.role != Role::assistant) ||
+            !message.tool_calls.empty() || !message.tool_call_id.empty()) throw std::invalid_argument("model: text backend does not support structured messages");
     }
     for (auto& slot : requests_) if (!slot) {
         auto request = std::shared_ptr<ModelRequest>(new ModelRequest());
         request->progress_->submitted = std::chrono::steady_clock::now();
         request->worker_ = std::async(std::launch::async,
-        // 在后台发布调用阶段，完整文本或原异常仍仅通过 future 交还宿主。
+        // 在后台发布调用阶段，完整响应或原异常仍仅通过 future 交还宿主。
         // 步骤：发布开始 → 调用供应商 → 按返回或抛错发布结束 → 交还原结果。
-        [progress = request->progress_,completion = completion_,config = std::move(config),messages = std::move(messages)] {
+        [progress = request->progress_,backend = backend_,config = std::move(config),input = std::move(input)] {
             progress->start();
             try {
-                auto answer = completion(config,messages);
-                progress->finish(CallOutcome::returned); return answer;
+                auto response = backend.complete(config,input);
+                progress->finish(CallOutcome::returned); return response;
             } catch (...) { progress->finish(CallOutcome::threw); throw; }
         });
         slot = request; ++size_; return request;
     }
     throw std::length_error("model: async request capacity exhausted");
 }
-// 宿主裁定取消优先于同次推进观察到的回复，工作线程只交还完整文本或异常。
+// 宿主裁定取消优先于同次推进观察到的回复，工作线程只交还完整响应或异常。
 // 步骤：回收旧结果 → 结算协作取消 → 非阻塞检查工作退出 → 接受或丢弃回复 → 确认实际退出。
 void AsyncClient::advance() {
     collect();
@@ -96,10 +111,10 @@ void AsyncClient::advance() {
             request->result_.settle(OperationState::cancelled);
         if (request->worker_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) continue;
         try {
-            auto answer = request->worker_.get();
+            auto response = request->worker_.get();
             if (request->operation()->state() == OperationState::pending) {
-                if (answer.empty() || answer.size() > 8 * 1024 * 1024) throw std::length_error("model: complete text outside response limit");
-                request->answer_ = std::move(answer); request->result_.settle(OperationState::succeeded);
+                validate_response(response);
+                request->response_ = std::move(response); request->result_.settle(OperationState::succeeded);
             }
         } catch (...) {
             if (request->operation()->state() == OperationState::pending) {
