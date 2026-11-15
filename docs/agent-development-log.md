@@ -51,3 +51,9 @@ Debug 仅重建并运行 `model.messages`，1／1 通过，覆盖完整调用、
 状态：已完成纯协议转换。依据 [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/) 与 [Qwen Function Calling](https://help.aliyun.com/zh/model-studio/qwen-function-calling) 的工具定义、调用及结果格式，增加 `encode_request`／`decode_response`。两家思考关闭字段仍独立选择；只读可选用量，缺失时保持未知，负数拒绝。工具执行和重试不进入协议层，暂不启用思考或多模态。
 
 Debug 仅构建 `dfy_model_protocol_tests` 并运行 `^model\.protocol$`，1／1 通过。固定样本覆盖两家请求方言、工具结果回填、普通文本兼容、用量缺失／非法、截断和损坏响应。供应商在线兼容性仍属 M05“仅记录，不执行”，本单元没有读取密钥或访问模型服务。下一步把统一协议连接到现有 HTTP 和异步生命周期入口。
+
+## A02c-1 结构化请求复用传输
+
+状态：已完成同步连接。`complete_response` 在读取凭据前校验、编码请求，复用原单次 HTTPS、状态检查和凭据校验，再解码完整响应。旧 `complete` 接口继续只接受文本；新增工具字段传入旧接口时明确拒绝，避免静默丢弃。
+
+`dfy_model_client_tests` 仍独立编译协议与校验实现，并以原 `post_json` 替身替代传输，不链接 WinHTTP。Debug `^model\.complete$` 1／1 通过，覆盖双服务结构化调用、非法输入不进入传输和原文本／错误行为；使用虚构测试凭据，未读取真实凭据。下一步复用原异步操作与退出边界。

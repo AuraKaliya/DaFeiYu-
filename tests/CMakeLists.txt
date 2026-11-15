@@ -111,7 +111,8 @@ set_tests_properties(model.messages PROPERTIES TIMEOUT 15)
 target_link_libraries(dfy_model_config_tests PRIVATE dfy_model dfy_build_options nlohmann_json::nlohmann_json)
 
 # 单独编译协议实现，以测试传输替代 WinHTTP，测试全程不访问模型服务。
-add_executable(dfy_model_client_tests model_client.cpp "${PROJECT_SOURCE_DIR}/model/client.cpp")
+add_executable(dfy_model_client_tests model_client.cpp "${PROJECT_SOURCE_DIR}/model/client.cpp"
+  "${PROJECT_SOURCE_DIR}/model/messages.cpp" "${PROJECT_SOURCE_DIR}/model/protocol.cpp")
 target_include_directories(dfy_model_client_tests PRIVATE
   "${PROJECT_SOURCE_DIR}/model/include" "${PROJECT_SOURCE_DIR}/platform/include")
 target_link_libraries(dfy_model_client_tests PRIVATE dfy_build_options nlohmann_json::nlohmann_json)

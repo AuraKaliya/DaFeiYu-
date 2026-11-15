@@ -88,10 +88,29 @@ int main() {
             config, Messages{{Role::user, "提问"}, {Role::assistant, " "}, {Role::user, "继续"}});
         check(sent.at("messages").at(1).at("content") == " ", "assistant whitespace was changed");
         const auto before_messages = calls;
+        rejects(Messages{{Role::assistant,"text",{{"id","read","{}"}}}},"tool fields");
         rejects(Messages{}, "messages:");
         rejects(Messages{{static_cast<Role>(42), "invalid"}}, "unsupported role");
         rejects(Messages{{Role::user, std::string(1024 * 1024, 'x')}, {Role::assistant, "y"}}, "total content");
         check(calls == before_messages, "invalid conversation reached network");
+
+        auto structured = success;
+        structured["choices"][0]["finish_reason"] = "tool_calls";
+        structured["choices"][0]["message"] = {{"role","assistant"},{"content",nullptr},
+            {"tool_calls",Json::array({{{"id","call_1"},{"type","function"},{"function",{{"name","read"},{"arguments","{}"}}}}})}};
+        reply = {200,structured.dump()};
+        const dfy::model::Request request{{{Role::system,"rules"},{Role::user,prompt}},{{"read","read","{\"type\":\"object\"}"}},32};
+        for (const auto* provider : {"deepseek","qwen"}) {
+            auto selected = config; selected.provider = provider;
+            const auto result = dfy::model::complete_response(selected,request);
+            check(result.message.tool_calls.size() == 1 && result.message.tool_calls[0].id == "call_1" &&
+                result.finish == dfy::model::FinishReason::tool_calls && sent["tools"][0]["function"]["name"] == "read" &&
+                sent["max_tokens"] == 32,"structured request did not use the existing transport boundary");
+        }
+        const auto before_structured = calls;
+        try { (void)dfy::model::complete_response(config,{}); throw std::runtime_error("invalid structured request accepted"); }
+        catch (const std::invalid_argument&) {}
+        check(calls == before_structured,"invalid structured request reached transport");
 
         for (unsigned status : {302u, 400u, 401u, 403u, 429u, 500u, 503u}) {
             reply = {status, "private-test-token"};
