@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <fstream>
 #include <iostream>
+#include "fixtures/query_v2/api.h"
 
 namespace {
 namespace fs = std::filesystem;
@@ -23,7 +24,7 @@ Manifest package(const fs::path& dll, const fs::path& root) {
 }
 }
 // 通过真实 C 插件验证有界实例、关停阶段及离开作用域后的失败保留。
-// 步骤：验证活动和外部依赖拒绝 → 验证 Pending 与单次销毁 → 验证部分启动失败 → 保留并重试失败实例。
+// 步骤：验证活动和外部依赖拒绝 → 验证正常及失败回收 → 保留并重试失败实例 → 验证实例能力绑定。
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3, "expected lifecycle DLL and work directory");
@@ -87,6 +88,33 @@ int wmain(int argc, wchar_t** argv) {
             mode(0); const auto resumed = graph.shutdown(provider,DependencyStop::linked);
             check(resumed.result == ShutdownResult::closed && resumed.closed == 2 && !graph.size() && count(3) == 5,
                 "linked failure retry did not resume only incomplete stages");
+        }
+        {
+            PluginInstance first(manifest,data,channel), second(manifest,data,channel);
+            bool rejected = false;
+            try { (void)first.query<dfy_test_query_api>(DFY_TEST_QUERY_ID,1); } catch (const std::logic_error&) { rejected = true; }
+            check(rejected,"inactive instance exposed a capability");
+            check(!first.create() && !first.start() && !second.create() && !second.start(),"capability instance setup failed");
+            auto capability = first.query<dfy_test_query_api>(DFY_TEST_QUERY_ID,1);
+            check(capability && capability->generation() == first.generation() && first.generation() != second.generation() &&
+                !first.query<dfy_test_query_api>(DFY_TEST_QUERY_ID,2),"instance generation or exact version lost");
+            bool called = false; rejected = false;
+            try { second.invoke(*capability,[&](const auto& api,auto*) { called = true; return api.value(); }); }
+            catch (const std::invalid_argument&) { rejected = true; }
+            check(rejected && !called,"foreign instance invoked a bound capability");
+            const auto value = first.invoke(*capability,
+            // 在真实能力调用内检查宿主上下文和活动保护，最后读取固定 C 返回值。
+            // 步骤：查询当前宿主服务 → 验证调用中拒绝卸载 → 调用 C 能力。
+            [&](const auto& api,auto* native) {
+                const void* table = nullptr;
+                check(native && HostServices::query({DFY_V2_REFERENCE_INTERFACE,sizeof(DFY_V2_REFERENCE_INTERFACE)-1},1,&table,nullptr) == DFY_V2_OK && table,
+                    "instance capability has no host binding");
+                check(first.shutdown() == ShutdownResult::busy,"active capability did not block unload");
+                return api.value();
+            });
+            check(value == 42 && first.shutdown() == ShutdownResult::in_use,"bound capability did not retain native code");
+            capability.reset(); check(first.shutdown() == ShutdownResult::closed && second.shutdown() == ShutdownResult::closed,
+                "released instance capability retained plugin");
         }
         control.close();
         check(!GetModuleHandleW(manifest.entry.c_str()), "instance module reference leaked");

@@ -4,8 +4,30 @@
 #include <dafeiyu/lifecycle_abi_v2.h>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace dfy::plugins {
+class PluginInstance;
+// 静态能力表与具体实例代次共同绑定，不能把一个实例的能力用于另一个实例。
+template<class T> class InstanceCapability {
+  public:
+    // 禁止复制代码持有和实例绑定。
+    InstanceCapability(const InstanceCapability&) = delete;
+    // 禁止复制赋值覆盖现有绑定。
+    InstanceCapability& operator=(const InstanceCapability&) = delete;
+    // 移动转交能力及其代码寿命，来源不能再进入调用。
+    InstanceCapability(InstanceCapability&&) = default;
+    // 移动替换现有能力，归还旧代码持有。
+    InstanceCapability& operator=(InstanceCapability&&) = default;
+    // 返回宿主签发的具体实例代次，不暴露原生实例指针。
+    runtime::DomainId generation() const noexcept { return generation_; }
+  private:
+    friend class PluginInstance;
+    // 接收当前实例代次与已校验能力，不复制裸函数表到实例作用域外。
+    InstanceCapability(runtime::DomainId generation, Capability<T> capability) : generation_(generation), capability_(std::move(capability)) {}
+    runtime::DomainId generation_;
+    Capability<T> capability_;
+};
 enum class InstancePhase { loaded, created, active, stopping, destroyed, unloaded, broken };
 enum class ShutdownResult { closed, pending, busy, in_use, failed };
 struct InstanceLimits { std::size_t references = 32, readers = 1, requests = 4, notifications = 8, code_leases = 16, active_calls = 1; };
@@ -33,6 +55,23 @@ class PluginInstance {
     InstancePhase phase() const noexcept;
     // 返回最近记录的失败码，不保存 DLL 文本或异常对象。
     uint32_t last_error() const noexcept;
+    // 返回进程期唯一实例代次，同包重新创建也不复用。
+    runtime::DomainId generation() const noexcept;
+    // 从活动实例取得精确版本能力，并保留该实例的代码寿命。
+    // 步骤：核对活动阶段并查询能力 → 固定具体实例代次 → 转交代码持有。
+    template<class T> std::optional<InstanceCapability<T>> query(std::string_view name, std::uint32_t version) {
+        auto capability = active_module().query<T>(name,version);
+        if (!capability) return std::nullopt;
+        return InstanceCapability<T>(generation(),std::move(*capability));
+    }
+    // 在宿主服务绑定和代码活动保护内调用本实例能力，回调不得泄露借用表或实例指针。
+    // 步骤：拒绝跨实例绑定 → 绑定宿主服务 → 取得代码活动保护 → 调用并返回值结果。
+    template<class T, class Action> auto invoke(const InstanceCapability<T>& capability, Action&& action) {
+        static_assert(!std::is_reference_v<std::invoke_result_t<Action,const T&,dfy_v2_instance*>>);
+        if (capability.generation_ != generation()) throw std::invalid_argument("instance: foreign capability binding");
+        auto binding = bind_active(); auto call = capability.capability_.enter();
+        return std::invoke(std::forward<Action>(action),call.api(),native_instance());
+    }
     // 为显式宿主代码依赖取得凭证，持有期间默认拒绝卸载。
     platform::CodeLease retain_code();
     // 推进读取并安排一项通知，由调用方单独推进共享 FIFO。
@@ -45,6 +84,12 @@ class PluginInstance {
     // 在主宿主线程逐项重试保留实例，返回仍未完成的数量。
     static std::size_t retry_retained();
   private:
+    // 只向活动实例提供能力查询入口。
+    PluginModuleV2& active_module();
+    // 核对活动阶段并建立本次原生调用的宿主上下文。
+    HostServices::Binding bind_active() const;
+    // 在已绑定调用内部借用原生实例，不向外转移实例所有权。
+    dfy_v2_instance* native_instance() const noexcept;
     struct State;
     std::unique_ptr<State> state_;
     static State* retained_;

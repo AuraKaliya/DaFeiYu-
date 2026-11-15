@@ -6,10 +6,10 @@ PluginInstance::State* PluginInstance::retained_ = nullptr;
 std::size_t PluginInstance::resident_ = 0;
 struct PluginInstance::State {
     // 在任何实例副作用前完成全部宿主分配、能力校验及配置读取。
-    // 步骤：加载模块与服务 → 查询完整生命周期 → 配置事件、可选组及通知 → 登记宿主状态名额。
+    // 步骤：签发实例代次并加载模块与服务 → 查询完整生命周期 → 配置事件、可选组及通知 → 登记宿主状态名额。
     State(const Manifest& manifest, std::shared_ptr<const EffectiveConfig> settings,
         std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits, std::shared_ptr<events::ConsumerGroup> group)
-        : module(manifest, limits.code_leases, limits.active_calls), host(limits.references, limits.readers), config(std::move(settings)), id(manifest.id) {
+        : generation(runtime::next_domain()), module(manifest, limits.code_leases, limits.active_calls), host(limits.references, limits.readers), config(std::move(settings)), id(manifest.id) {
         lifecycle = module.query<dfy_v2_lifecycle_api>(DFY_V2_LIFECYCLE_INTERFACE, 1);
         if (!lifecycle) throw std::runtime_error("instance: lifecycle unavailable");
         {
@@ -74,6 +74,7 @@ struct PluginInstance::State {
             return ShutdownResult::closed;
         } catch (...) { error = DFY_V2_FAILED; return ShutdownResult::failed; }
     }
+    const runtime::DomainId generation;
     PluginModuleV2 module;
     HostServices host;
     std::shared_ptr<const EffectiveConfig> config;
@@ -129,6 +130,20 @@ ShutdownResult PluginInstance::shutdown() noexcept { return state_->shutdown(); 
 InstancePhase PluginInstance::phase() const noexcept { return state_->phase; }
 // 返回最近失败码，成功收尾不抹去历史故障。
 uint32_t PluginInstance::last_error() const noexcept { return state_->error; }
+// 返回固定实例代次，不因启动、停止或重新绑定而变化。
+runtime::DomainId PluginInstance::generation() const noexcept { return state_->generation; }
+// 仅在原生实例活动期间允许查询新能力。
+PluginModuleV2& PluginInstance::active_module() {
+    if (state_->phase != InstancePhase::active) throw std::logic_error("instance: active capability context required");
+    return state_->module;
+}
+// 保证实例仍活动后进入宿主服务上下文，离开调用时自动恢复原绑定。
+HostServices::Binding PluginInstance::bind_active() const {
+    if (state_->phase != InstancePhase::active) throw std::logic_error("instance: active capability context required");
+    return state_->host.bind();
+}
+// 借用当前实例指针，仅供受保护调用内部使用。
+dfy_v2_instance* PluginInstance::native_instance() const noexcept { return state_->instance; }
 // 为明确的外部代码依赖签发凭证。
 platform::CodeLease PluginInstance::retain_code() { return state_->module.retain_code(); }
 // 由宿主显式推进读取和通知，执行器运行由外层控制。
