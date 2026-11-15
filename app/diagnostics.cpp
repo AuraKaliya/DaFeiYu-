@@ -39,6 +39,7 @@ std::string_view failure_name(agent::TurnFailure failure) noexcept {
     case agent::TurnFailure::none: return "none";
     case agent::TurnFailure::model: return "model";
     case agent::TurnFailure::history_commit: return "history commit";
+    case agent::TurnFailure::model_response: return "model response";
     }
     return "unknown";
 }

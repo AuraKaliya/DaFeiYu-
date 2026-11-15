@@ -7,7 +7,7 @@
 namespace dfy::agent {
 class Session;
 struct TurnNotifications { std::optional<events::ObservationReceipt> started, finished; };
-enum class TurnFailure { none, model, history_commit };
+enum class TurnFailure { none, model, history_commit, model_response };
 // 固定大小的回合快照；状态来自原操作，接纳时刻可以晚于后台调用开始。
 struct TurnDiagnostics {
     using TimePoint = model::CallDiagnostics::TimePoint;
@@ -94,6 +94,9 @@ class Session {
     // 固定结果槽、共享事件通道与模型调用，历史正文总量最多 1 MiB。
     Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
         std::size_t result_capacity = 4, model::Completion completion = {});
+    // 使用显式结构化模型后端，复用同一会话、历史和结果生命周期。
+    Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
+        model::Backend backend, std::size_t result_capacity = 4);
     // 取消并等待仍在使用会话输入的模型调用退出，外部回合结果继续有效。
     ~Session();
     // 禁止复制会话身份、历史及后台责任。

@@ -182,10 +182,31 @@ void facts() {
     request.reset(); auto next = session.begin("two"); drain(session,next);
     check(next->snapshot().fact_count == 4 && final.diagnostics.turn == 1,"value snapshot retained a result slot");
 }
+// 验证结构化后端仍走原会话流程，截断或未授权工具响应不能冒充最终文本。
+// 步骤：完成文本问答 → 拒绝截断与工具响应 → 核对原历史及调用次数。
+void structured_backend() {
+    auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),1,8);
+    unsigned calls = 0;
+    AsyncSession session({},channel,dfy::model::Backend{[&](const auto&,const dfy::model::Request& request) {
+        using namespace dfy::model; ++calls;
+        if (request.messages.back().content == "length") return Response{{Role::assistant,"partial"},FinishReason::length};
+        if (request.messages.back().content == "tools") return Response{{Role::assistant,"",{{"id","read","{}"}}},FinishReason::tool_calls};
+        return Response{{Role::assistant,"done"}};
+    }},2);
+    auto first = session.begin("plain"); drain(session,first);
+    check(first->answer() == "done" && session.message_count() == 2,"structured backend lost text compatibility");
+    for (const auto* input : {"length","tools"}) {
+        auto request = session.begin(input); drain(session,request);
+        check(request->operation()->state() == OperationState::failed && request->diagnostics().failure == TurnFailure::model_response &&
+            request->diagnostics().model.outcome == dfy::model::CallOutcome::returned && session.message_count() == 2,
+            "nonfinal response was committed or mislabeled as history failure");
+    }
+    check(calls == 3,"structured session duplicated model calls");
+}
 }
 // 验收异步会话的历史事务、通知隔离和取消退出，模型使用可控后台替身。
 // 步骤：验证上下文及事件 → 验证背压和关闭 → 验证失败诊断、身份与事实 → 报告结果。
 int main() {
-    try { history(); isolation(); commit_failure(); identities(); facts(); std::cout << "Async session checks passed\n"; return 0; }
+    try { history(); isolation(); commit_failure(); identities(); facts(); structured_backend(); std::cout << "Async session checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

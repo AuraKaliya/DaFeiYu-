@@ -62,6 +62,12 @@ Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel>
       records_(result_capacity), models_(1,std::move(completion)) {
     if (!events_ || !result_capacity) throw std::invalid_argument("session: event channel and positive result capacity required");
 }
+// 完整准备结构化后端，状态仍由原会话的结果和退出操作负责。
+Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events, model::Backend backend, std::size_t result_capacity)
+    : config_(std::move(config)), events_(std::move(events)), descriptor_(event_descriptor()), id_(next_domain()),
+      records_(result_capacity), models_(1,std::move(backend)) {
+    if (!events_ || !result_capacity) throw std::invalid_argument("session: event channel and positive result capacity required");
+}
 // 兜底关闭时先保留所有回合责任，实际模型退出后再结算回合退出。
 Session::~Session() { close(); models_.wait_closed(); advance(); }
 // 以不可变事件传递会话事实，观察接纳或分配失败只形成独立回执。
@@ -84,7 +90,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) {
     for (auto& slot : records_) if (!slot) {
         auto pending = history_; pending.push_back({model::Role::user,prompt});
         auto record = std::shared_ptr<TurnRequest>(new TurnRequest({id_,turn_+1}));
-        auto request = models_.submit(config_,pending);
+        auto request = models_.submit_request(config_,model::Request{pending});
         pending_.swap(pending); record->model_ = std::move(request); active_ = record; slot = record; ++turn_;
         record->accepted_ = std::chrono::steady_clock::now();
         record->record_fact(RunFactKind::accepted);
@@ -106,14 +112,20 @@ void Session::advance() {
     active_->record_fact(RunFactKind::model_finished);
     if (active_->operation()->state() == OperationState::pending) {
         try {
-            auto answer = active_->model_->answer(); std::size_t bytes = answer.size();
+            const auto& response = active_->model_->response();
+            if (response.finish != model::FinishReason::stop || !response.message.tool_calls.empty()) {
+                active_->failure_ = TurnFailure::model_response;
+                throw std::runtime_error("session: final text response required");
+            }
+            auto answer = response.message.content; std::size_t bytes = answer.size();
             for (const auto& message : pending_) bytes += message.content.size();
             if (bytes > 1024*1024) throw std::length_error("session: history exceeds 1 MiB; clear context before retrying");
             pending_.push_back({model::Role::assistant,answer});
             history_.swap(pending_); active_->answer_ = std::move(answer); active_->result_.settle(OperationState::succeeded);
         } catch (...) {
             active_->error_ = std::current_exception();
-            active_->failure_ = active_->model_->operation()->state() == OperationState::failed ? TurnFailure::model : TurnFailure::history_commit;
+            if (active_->failure_ == TurnFailure::none)
+                active_->failure_ = active_->model_->operation()->state() == OperationState::failed ? TurnFailure::model : TurnFailure::history_commit;
             active_->result_.settle(OperationState::failed);
         }
         active_->settled_ = std::chrono::steady_clock::now();
