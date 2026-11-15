@@ -96,6 +96,12 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
+add_executable(dfy_trace_identity_tests trace_identity.cpp)
+target_link_libraries(dfy_trace_identity_tests PRIVATE dfy_agent dfy_build_options)
+set_target_properties(dfy_trace_identity_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/trace_identity.cpp")
+add_test(NAME agent.trace_identity COMMAND dfy_trace_identity_tests)
+set_tests_properties(agent.trace_identity PROPERTIES TIMEOUT 15)
 add_executable(dfy_execution_policy_tests execution_policy.cpp)
 target_link_libraries(dfy_execution_policy_tests PRIVATE dfy_agent dfy_build_options)
 set_target_properties(dfy_execution_policy_tests PROPERTIES FOLDER "Tests")
