@@ -50,12 +50,12 @@ typedef struct dfy_v2_tool_api {
     dfy_v2_api_header header;
     // 只读返回本实例固定描述数量，最多 64；输出必需，失败清零，不执行工具。
     dfy_v2_status (DFY_V2_CALL *count)(dfy_v2_instance* instance, uint32_t* count, dfy_v2_error* error);
-    // 按零基索引返回完整描述；调用方先设置 struct_size，失败清零，不修改能力集合。
+    // 按零基索引返回描述；先核对 struct_size，大小不符仅清零该字段，其他失败清零完整输出；不修改能力集合。
     dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_instance* instance, uint32_t index, dfy_v2_tool_description* description, dfy_v2_error* error);
     // 校验版本并接纳一次工作，成功返回非零票据；失败无副作用且无后台责任，票据清零。
     dfy_v2_status (DFY_V2_CALL *begin)(dfy_v2_instance* instance, dfy_v2_string_view id,
         const dfy_v2_tool_call* call, dfy_v2_tool_ticket* ticket, dfy_v2_error* error);
-    // 非阻塞推进并复制状态，调用方先设置 struct_size；结果和退出独立，失败清零且保留工作责任。
+    // 非阻塞推进并复制状态；先核对 struct_size，大小不符仅清零该字段，其他失败清零输出且保留工作责任。
     dfy_v2_status (DFY_V2_CALL *poll)(dfy_v2_instance* instance, dfy_v2_tool_ticket ticket,
         dfy_v2_tool_progress* progress, dfy_v2_error* error);
     // 幂等提交协作取消，原因使用 DFY_V2_CANCEL_*；OK 不表示业务已取消或工作已退出。
