@@ -9,6 +9,7 @@ struct ToolEntry {
     const ToolDescription description;
     const ToolSchema schema;
     const runtime::DomainId registration;
+    const ToolFactory factory;
     bool enabled = true, registered = true;
 };
 // 校验固定槽数量后准备目录，不接受可导致无界分配的容量。
@@ -20,7 +21,7 @@ ToolCatalog::ToolCatalog(std::size_t capacity) {
 ToolCatalog::~ToolCatalog() { for (const auto& entry : entries_) if (entry) entry->registered = false; }
 // 在发布注册前校验全部描述，失败不消耗槽位或改变已有实例。
 // 步骤：校验身份与模型描述 → 拒绝名称冲突 → 准备参数契约 → 签发注册并发布。
-runtime::DomainId ToolCatalog::add(ToolDescription description) {
+runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory factory) {
     if (description.id.empty() || description.id.size() > 128 || !description.instance || !description.version)
         throw std::invalid_argument("tools: identity, instance and version required");
     for (const auto c : description.id) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -33,7 +34,7 @@ runtime::DomainId ToolCatalog::add(ToolDescription description) {
     if (slot == entries_.end()) throw std::length_error("tools: catalog full");
     ToolSchema schema(description.model.parameters);
     const auto registration = runtime::next_domain();
-    *slot = std::make_shared<ToolEntry>(std::move(description),std::move(schema),registration);
+    *slot = std::make_shared<ToolEntry>(std::move(description),std::move(schema),registration,std::move(factory));
     return registration;
 }
 // 仅按当前注册身份查找，不从过期身份猜测目标。
@@ -62,10 +63,10 @@ ToolSnapshot ToolCatalog::snapshot(std::span<const std::string> ids, bool allow_
     }
     return ToolSnapshot(std::move(selected));
 }
-// 复制固定成员描述，查询不扩大授权也不改变注册生命周期。
+// 投影固定成员中当前仍允许执行的描述，查询不扩大授权或改变注册生命周期。
 std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
     std::vector<model::ToolDefinition> result;
-    for (const auto& entry : entries_) result.push_back(entry->description.model);
+    for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description.model);
     return result;
 }
 // 仅从本运行的成员中选择目标，并在使用前重新核对授权及参数。
@@ -76,5 +77,20 @@ ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& 
         entry->schema.validate(arguments); return {entry->description,entry->registration};
     }
     throw std::invalid_argument("tools: not granted");
+}
+// 先验证选择和参数，再准备不立即执行的驱动，授权撤销仍能阻止首次实际调用。
+// 步骤：解析原实例 → 核对实现 → 捕获原注册并设置调用前校验 → 签发工作身份。
+std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::ToolCall call) const {
+    const auto selection = resolve(call.name,call.arguments);
+    for (const auto& entry : entries_) if (entry->registration == selection.registration) {
+        if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
+        ToolFactory guarded = [entry](const ToolInvocation& input) {
+            if (!entry->registered || !entry->enabled)
+                return completed_tool({false,ToolEffect::not_applied,{},ToolError::unavailable});
+            return entry->factory(input);
+        };
+        return std::make_unique<ToolDriver>(ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(guarded));
+    }
+    throw std::logic_error("tools: missing selected registration");
 }
 }

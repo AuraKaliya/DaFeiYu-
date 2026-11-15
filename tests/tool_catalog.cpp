@@ -19,7 +19,8 @@ ToolDescription tool(std::string id, std::string name, dfy::runtime::DomainId in
 // 验证目录容量、固定授权、撤销和重新注册后的身份隔离。
 // 步骤：校验注册事务 → 建立权限快照 → 禁用与恢复 → 同名重载仍拒绝旧快照。
 void catalog() {
-    ToolCatalog catalog(2); const auto first = catalog.add(tool("fixture/read","read",1));
+    const ToolFactory unused = [](const auto&) -> std::unique_ptr<ToolWork> { throw std::logic_error("unexpected invocation"); };
+    ToolCatalog catalog(2); const auto first = catalog.add(tool("fixture/read","read",1),unused);
     rejects([&] { catalog.add(tool("fixture/read","other",2)); });
     rejects([&] { catalog.add(tool("other/read","read",2)); });
     const auto second = catalog.add(tool("fixture/write","write",1,true));
@@ -33,8 +34,9 @@ void catalog() {
     check(catalog.snapshot(write_ids,true).resolve("write","{}").registration == second,"explicit action grant rejected");
     catalog.enable(first,false); rejects([&] { (void)snapshot.resolve("read","{}"); });
     catalog.enable(first,true); check(snapshot.resolve("read","{}").description.instance == 1,"reenable changed instance");
-    catalog.remove(first); const auto replacement = catalog.add(tool("fixture/read","read",2));
+    catalog.remove(first); const auto replacement = catalog.add(tool("fixture/read","read",2),unused);
     rejects([&] { (void)snapshot.resolve("read","{}"); });
+    check(snapshot.definitions().empty(),"revoked tool remained model-visible");
     rejects([&] { catalog.enable(first,true); });
     check(replacement != first && catalog.snapshot(read_ids).resolve("read","{}").description.instance == 2,
         "reload reused authorization for a prior instance");

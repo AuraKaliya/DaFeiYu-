@@ -3,10 +3,21 @@
 
 namespace dfy::agent {
 namespace {
+class CompletedWork final : public ToolWork {
+  public:
+    // 接收已经发生的结果，后续只转交结果和退出事实。
+    explicit CompletedWork(ToolResult result) : result_(std::move(result)) {}
+    // 返回已有结果并确认没有剩余工作，不产生新的副作用。
+    ToolProgress poll(runtime::CancelReason) override { return {std::move(result_),true}; }
+  private:
+    ToolResult result_;
+};
 ToolWorkState* retained_head = nullptr;
 std::size_t resident_count = 0, retained_count = 0;
 bool reaping = false;
 }
+// 包装同步结果以复用统一工作生命周期，不重新执行原动作。
+std::unique_ptr<ToolWork> completed_tool(ToolResult result) { return std::make_unique<CompletedWork>(std::move(result)); }
 struct ToolWorkState {
     std::shared_ptr<ToolRequest> record;
     ToolFactory factory;
@@ -28,6 +39,16 @@ struct ToolWorkState {
     void finish() {
         work.reset(); factory = {}; record->exit_.settle(runtime::OperationState::succeeded);
     }
+    // 在接收回调结果前重新裁定取消，回调内请求取消也优先于迟到成功。
+    runtime::CancelReason cancel() {
+        using namespace runtime;
+        const auto reason = record->exit()->cancellation_reason();
+        if (reason != CancelReason::none && record->operation()->state() == OperationState::pending) {
+            record->outcome_.error = reason == CancelReason::deadline ? ToolError::deadline : ToolError::cancelled;
+            record->result_.settle(OperationState::cancelled);
+        }
+        return reason;
+    }
     // 推进真实工作与唯一结果，取消只停止后续接纳，迟到效果仍然记录。
     // 步骤：裁定取消 → 首次提交工厂 → 读取并校验工作报告 → 结算业务 → 按实际退出回收。
     void advance() {
@@ -35,21 +56,17 @@ struct ToolWorkState {
         if (advancing) throw std::logic_error("tool work: reentrant advance");
         if (record->exit()->state() != OperationState::pending) return;
         advancing = true;
-        const auto cancellation = record->exit()->cancellation_reason();
-        if (cancellation != CancelReason::none && record->operation()->state() == OperationState::pending) {
-            record->outcome_.error = cancellation == CancelReason::deadline ? ToolError::deadline : ToolError::cancelled;
-            record->result_.settle(OperationState::cancelled);
-        }
+        const auto cancellation = cancel();
         if (!started && cancellation != CancelReason::none) { finish(); advancing = false; return; }
         if (!started) {
             started = true; record->outcome_.effect = ToolEffect::unknown;
             try { work = factory(record->invocation_); }
-            catch (...) { fail(ToolError::failed); finish(); advancing = false; return; }
-            if (!work) { fail(ToolError::invalid_result); finish(); advancing = false; return; }
+            catch (...) { cancel(); fail(ToolError::failed); finish(); advancing = false; return; }
+            if (!work) { cancel(); fail(ToolError::invalid_result); finish(); advancing = false; return; }
         }
 
         try {
-            auto progress = work->poll(cancellation);
+            auto progress = work->poll(cancel()); cancel();
             if (progress.result && !reported) {
                 auto& result = *progress.result;
                 const bool effect_valid = result.effect == ToolEffect::not_applied || result.effect == ToolEffect::applied || result.effect == ToolEffect::unknown;
@@ -68,7 +85,7 @@ struct ToolWorkState {
                 if (!reported) fail(ToolError::invalid_result);
                 finish();
             }
-        } catch (...) { fail(ToolError::invalid_result); }
+        } catch (...) { cancel(); fail(ToolError::invalid_result); }
         advancing = false;
     }
 };

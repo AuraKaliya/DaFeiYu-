@@ -66,9 +66,20 @@ void retention() {
     check(!ToolDriver::retry_retained() && gate->destroyed == 1 && request->exit()->state() == OperationState::succeeded,
         "retained work did not finish");
 }
+// 验证原生调用返回前发出的取消仍优先结算，实际效果可以随后成功报告。
+void callback_cancel() {
+    std::shared_ptr<ToolRequest> request;
+    ToolDriver driver(invocation(),[&](const auto&) {
+        request->request_cancel(CancelReason::user);
+        return completed_tool({true,ToolEffect::applied,"done",ToolError::none});
+    });
+    request = driver.request(); driver.advance();
+    check(request->operation()->state() == OperationState::cancelled && request->outcome().effect == ToolEffect::applied &&
+        request->exit()->state() == OperationState::succeeded,"callback cancellation lost to returned success");
+}
 }
 // 执行固定工具工作夹具，不调用真实模型。
 int main() {
-    try { lifecycle(); retention(); std::cout << "Tool work checks passed\n"; return 0; }
+    try { lifecycle(); retention(); callback_cancel(); std::cout << "Tool work checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

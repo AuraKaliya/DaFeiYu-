@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/model_messages.hpp>
 #include <dafeiyu/runtime_ids.hpp>
+#include <dafeiyu/tool_work.hpp>
 #include <memory>
 #include <span>
 #include <utility>
@@ -20,10 +21,12 @@ class ToolCatalog;
 // 单个运行的固定成员快照；撤销与当前授权仍在每次解析时核对。
 class ToolSnapshot {
   public:
-    // 返回已授予成员的描述副本，不追加快照建立后注册的工具。
+    // 返回仍获准且已绑定实现的成员描述，不追加快照建立后注册的工具。
     std::vector<model::ToolDefinition> definitions() const;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
+    // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。
+    std::unique_ptr<ToolDriver> prepare(AttemptId attempt, model::ToolCall call) const;
   private:
     friend class ToolCatalog;
     // 保留已完整校验的成员集合，不取得任何原生函数指针。
@@ -41,8 +44,8 @@ class ToolCatalog {
     ToolCatalog(const ToolCatalog&) = delete;
     // 禁止赋值或移动覆盖活动目录。
     ToolCatalog& operator=(const ToolCatalog&) = delete;
-    // 完整校验描述后注册，返回进程期不复用的注册身份。
-    runtime::DomainId add(ToolDescription description);
+    // 完整校验后注册描述和可选工厂；未绑定实现的描述不会向模型暴露。
+    runtime::DomainId add(ToolDescription description, ToolFactory factory = {});
     // 撤销并释放注册槽，旧快照仍保留描述但不能再解析执行目标。
     void remove(runtime::DomainId registration);
     // 改变当前授权开关，不改变已签发身份或旧快照成员集合。

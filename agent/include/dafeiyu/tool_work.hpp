@@ -7,7 +7,7 @@
 
 namespace dfy::agent {
 enum class ToolEffect { not_applied, applied, unknown };
-enum class ToolError { none, failed, invalid_result, cancelled, deadline };
+enum class ToolError { none, failed, unavailable, invalid_result, cancelled, deadline };
 struct ToolResult {
     bool succeeded = false;
     ToolEffect effect = ToolEffect::unknown;
@@ -26,6 +26,8 @@ class ToolWork {
 };
 // 工厂只在调用期间借用输入；失败不得遗留无人持有的后台工作，实际副作用可能未知。
 using ToolFactory = std::function<std::unique_ptr<ToolWork>(const ToolInvocation&)>;
+// 将已经完成的同步结果包装为可推进工作，不在包装期间执行任何动作。
+std::unique_ptr<ToolWork> completed_tool(ToolResult result);
 struct ToolWorkState;
 // 工具调用的只读结果；逻辑取消不抹掉随后报告的实际效果。
 class ToolRequest {
