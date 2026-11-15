@@ -63,3 +63,9 @@ Debug 仅构建 `dfy_model_protocol_tests` 并运行 `^model\.protocol$`，1／1
 状态：已完成。`AsyncClient` 增加显式 `Backend` 和 `submit_request`，原 Future、结果／退出 Operation、取消优先、保留槽与诊断继续复用；`ModelRequest::response()` 借用完整响应。旧文本调用仅做适配，不支持的结构化字段在提交前拒绝；空结构化后端明确拒绝，不能因遗漏测试注入而回退到真实服务。
 
 A00b 随本单元复用原异步测试加入固定响应序列：工具调用 → 工具结果 → 最终文本，以及迟到响应取消、空后端和不支持字段检查，不建立另一套测试框架。Debug 必要构建后 `^(model\.async|agent\.async_session|app\.async_chat)$` 3／3 通过；修正测试中可选无符号值比较的编译警告后相关目标重建干净。下一步 A03 工具描述、参数校验与授权目录。
+
+## A03a-1 工具参数契约
+
+状态：已完成宿主参数 schema 校验。支持对象、数组、字符串、JSON 整数、数字、布尔及标量枚举；对象必须声明 `properties` 和 `additionalProperties:false`，可指定 `required`，数组必须指定 `items`，允许有界描述。未知关键字（含 `$ref`、未实现的数值约束）、元组、可空联合与隐式类型转换明确拒绝，不宣称支持完整 JSON Schema。
+
+定义和参数各限 64 KiB，定义最多八层／每层 32 个属性，数组参数最多 64 项。共享定义不可变，校验不补默认值、不执行工具。Debug `^agent\.tool_schema$` 1／1 通过，覆盖嵌套、枚举、必需／额外字段、错误类型、超量及 uint64 精度；新增必要目标构建无警告。下一步建立有界目录和按运行授权的快照。
