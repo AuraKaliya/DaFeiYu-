@@ -138,7 +138,7 @@ class Session {
     std::shared_ptr<TurnRequest> begin(const std::string& prompt);
     // 用明确的工具范围、策略和限额接纳一次运行，旧入口保持无工具行为。
     std::shared_ptr<TurnRequest> begin(const std::string& prompt, RunOptions options);
-    // 非阻塞推进取消、完整回答及原子历史提交；通知仅进入事件队列。
+    // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。
     events::ObservationReceipt clear();

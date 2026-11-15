@@ -100,8 +100,8 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt) { return 
 // 完整准备和控制检查成功后才接纳，拒绝不消耗回合号或改变已提交上下文。
 // 步骤：检查入口与输入 → 包装关闭边界 → 准备有界协调器 → 固定接纳并通知开始。
 std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOptions options) {
-    collect();
     if (!*accepting_ || active_ || working_) throw std::logic_error("session: busy, closed or reentrant");
+    collect();
     if (prompt.empty() || prompt.find_first_not_of(" \t\r\n") == std::string::npos || prompt.size() > 1024*1024)
         throw std::invalid_argument("session: nonblank prompt within 1 MiB required");
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");

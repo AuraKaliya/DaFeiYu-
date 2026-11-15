@@ -198,7 +198,8 @@ std::size_t RunLoop::retry_retained() {
     if (reaping) throw std::logic_error("run: reentrant retained cleanup");
     reaping = true; auto* remaining = std::exchange(retained_head,nullptr);
     while (remaining) {
-        auto* value = remaining; remaining = value->next; value->advance();
+        auto* value = remaining; remaining = value->next;
+        try { value->advance(); } catch (...) {}
         if (value->record->exit()->state() == runtime::OperationState::pending) { value->next = retained_head; retained_head = value; }
         else { value->record->context_.reset(); delete value; --retained_count; }
     }

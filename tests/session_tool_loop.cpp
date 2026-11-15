@@ -58,6 +58,36 @@ void admission_close() {
     bool rejected = false; try { (void)session.begin("goal",options); } catch (const std::runtime_error&) { rejected = true; }
     check(rejected && session.closed() && !session.message_count(),"closed admission submitted a model"); model.verify_complete();
 }
+// 验证首个请求提交前到期不接纳半个运行，之后正常请求仍使用原回合号。
+// 步骤：在控制回调推进时钟 → 拒绝到期接纳 → 正常请求验证序号及唯一模型调用。
+void preflight_deadline() {
+    ScriptStep step; step.last_text = "goal"; step.response = Response{{Role::assistant,"done"}};
+    ScriptedModel model({1,"preflight_deadline",1,{},{step},1});
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session({},channel,model.backend()); auto clock = std::make_shared<ToolTime>(ToolTime{}); RunOptions options;
+    options.timeout = std::chrono::milliseconds(1); options.now = [clock] { return *clock; };
+    options.extension = [clock](auto,const auto&) { *clock += std::chrono::milliseconds(1); return PolicyDecision{PolicyVerdict::allow,PolicyReason::none}; };
+    bool rejected = false; try { (void)session.begin("goal",options); } catch (const std::runtime_error&) { rejected = true; }
+    check(rejected && !session.busy() && !model.report().attempted,"expired preflight consumed a model request");
+    auto request = session.begin("goal"); drain(session,request);
+    check(request->turn() == 1 && request->answer() == "done","rejected preflight consumed a turn"); model.verify_complete();
+}
+// 验证结果回调内取消仍阻止下一模型请求，同时保留已发生动作。
+// 步骤：完成一次受控动作 → 回调内请求取消 → 验证终态、事实及模型次数。
+void callback_cancel() {
+    ToolCatalog catalog; unsigned actions = 0;
+    catalog.add({"fixture/action",1,1,{"action","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,false},
+        [&](const auto&) { ++actions; return completed_tool({true,ToolEffect::applied,"done",ToolError::none}); });
+    ScriptStep step; step.last_text = "goal"; step.tool_names = {"action"}; step.response = Response{{Role::assistant,"",{{"call","action","{}"}}},FinishReason::tool_calls};
+    ScriptedModel model({1,"callback_cancel",1,{},{step},1}); const std::vector<std::string> ids{"fixture/action"};
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session({},channel,model.backend()); std::shared_ptr<TurnRequest> request; RunOptions options;
+    options.tools = catalog.snapshot(ids,true); options.now = model.clock();
+    options.extension = [&](auto point,const auto&) { if (point == ControlPoint::tool_result) request->request_cancel(CancelReason::user); return PolicyDecision{PolicyVerdict::allow,PolicyReason::none}; };
+    request = session.begin("goal",options); drain(session,request); model.verify_complete();
+    check(actions == 1 && request->operation()->state() == OperationState::cancelled && session.message_count() == 3 &&
+        request->tool_steps()[0].effect == ToolEffect::applied,"callback cancellation allowed another model or lost action");
+}
 struct Gate { bool released = false; };
 class PendingWork final : public ToolWork {
   public:
@@ -100,7 +130,7 @@ void session_retention() {
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"expected package and settings"); const auto manifest = load_manifest(argv[1]);
-        native_case(manifest,argv[2],false); native_case(manifest,argv[2],true); admission_close(); session_retention();
+        native_case(manifest,argv[2],false); native_case(manifest,argv[2],true); admission_close(); preflight_deadline(); callback_cancel(); session_retention();
         std::cout << "Session native tool loop checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
