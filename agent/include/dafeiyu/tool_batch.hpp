@@ -2,6 +2,7 @@
 #include <dafeiyu/execution_policy.hpp>
 #include <dafeiyu/run_context.hpp>
 #include <dafeiyu/tool_executor.hpp>
+#include <dafeiyu/confirmation.hpp>
 
 namespace dfy::agent {
 struct BatchToolSnapshot {
@@ -12,13 +13,15 @@ struct BatchToolSnapshot {
     runtime::OperationState result = runtime::OperationState::failed, exit = runtime::OperationState::succeeded;
     ToolEffect effect = ToolEffect::not_applied;
     ToolError error = ToolError::unavailable, fault = ToolError::none;
+    runtime::DomainId confirmation = 0;
+    std::optional<ConfirmationState> confirmation_state;
 };
 // 一次助手工具批次的协调器；宿主须保持上下文、执行器及本对象到结果提交完成。
 class ToolBatch {
   public:
-    // 动作前预留所有回填空间，逐项检查策略并接纳，构造期间不执行工具。
+    // 动作前预留回填并检查策略；确认账本须存活到批次销毁，等待时不接纳工具。
     ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
-        const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension = {});
+        const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension = {}, ConfirmationBook* confirmations = nullptr);
     // 未完成时仅请求取消，实际工作责任仍由执行器保留，不提交伪造结果。
     ~ToolBatch();
     // 禁止复制批次结果回填责任。
@@ -34,14 +37,22 @@ class ToolBatch {
     // 返回只读值快照，不把工作、参数或输出持有交给观察者。
     std::vector<BatchToolSnapshot> snapshot() const;
   private:
-    struct Entry { BatchToolSnapshot metadata; std::shared_ptr<ToolRequest> request; bool filled = false; };
+    struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; bool filled = false; };
+    // 重新核对全部候选与确认状态；任一等待使整个未接纳批次让出宿主。
+    bool review(const PolicyContext& current);
+    // 确认全部就绪后消费批准并接纳，仍不在该边界执行工具工厂。
+    void admit(const PolicyContext& current);
+    // 为未执行候选填入拒绝事实，并使尚未消费的确认失效。
+    void reject(std::size_t index, ConfirmationState reason = ConfirmationState::invalidated);
     RunContext& context_;
     ToolExecutor& executor_;
+    const ToolSnapshot tools_;
+    ConfirmationBook* const confirmations_;
     const ExecutionPolicy policy_;
     const PolicyContext bound_;
     const PolicyExtension extension_;
     std::vector<Entry> entries_;
     PolicyDecision continuation_{PolicyVerdict::allow,PolicyReason::none};
-    bool done_ = false, advancing_ = false;
+    bool done_ = false, advancing_ = false, admitted_ = false;
 };
 }

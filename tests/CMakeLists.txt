@@ -758,6 +758,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME agent.confirmation COMMAND dfy_confirmation_tests)
 set_tests_properties(agent.confirmation PROPERTIES TIMEOUT 15)
 
+# 验证工具批次等待不执行，批准后仍遵守原授权和实际退出边界。
+add_executable(dfy_tool_confirmation_tests tool_confirmation.cpp)
+target_link_libraries(dfy_tool_confirmation_tests PRIVATE dfy_agent dfy_build_options)
+set_target_properties(dfy_tool_confirmation_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/tool_confirmation.cpp")
+add_test(NAME agent.tool_confirmation COMMAND dfy_tool_confirmation_tests)
+set_tests_properties(agent.tool_confirmation PROPERTIES TIMEOUT 15)
+
 # 注册 CTest：配置测试使用隔离工作目录，全部测试统一设置执行时限。
 add_test(NAME runtime.identifiers COMMAND dfy_runtime_ids_tests)
 set_tests_properties(runtime.identifiers PROPERTIES TIMEOUT 15)
