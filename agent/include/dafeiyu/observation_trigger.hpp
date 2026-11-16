@@ -12,7 +12,7 @@ struct ObservationRule {
     std::chrono::milliseconds minimum_interval{1000};
     ObservationTime deadline;
 };
-enum class TriggerDecision { ready, disabled, stopped, expired, busy, run_limit, wrong_object, stale, gap, duplicate, throttled, invalid_clock };
+enum class TriggerDecision { ready, disabled, stopped, expired, busy, run_limit, wrong_object, stale, gap, duplicate, throttled, invalid_clock, missing_observation, user_pending };
 struct TriggerTicket {
     runtime::DomainId rule = 0, ticket = 0;
     std::uint64_t observation_revision = 0;
@@ -40,6 +40,8 @@ class ObservationTrigger {
     const ObservationRule& rule() const noexcept { return rule_; }
     // 返回已实际接纳运行的次数，失败、取消和成功都计入上限。
     std::size_t runs() const noexcept { return receipts_.size(); }
+    // 返回与具体采样无关的规则接纳状态，不推进或消耗预算。
+    TriggerDecision availability(ObservationTime now) const noexcept;
     // 只判断当前采样能否触发，不占用预算或修改水位。
     TriggerDecision inspect(const ObservationRecord& value, ObservationTime now) const noexcept;
     // 在调用 Session 前预留唯一接纳位置，拒绝不消耗观察修订或运行次数。

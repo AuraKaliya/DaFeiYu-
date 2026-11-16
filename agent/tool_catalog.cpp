@@ -75,6 +75,11 @@ std::vector<ToolDescription> ToolSnapshot::descriptions() const {
     for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description);
     return result;
 }
+// 按固定成员描述判断授予范围，不因暂时禁用而允许观察入口绕过变更限制。
+bool ToolSnapshot::permits_state_changes() const noexcept {
+    for (const auto& entry : entries_) if (entry->description.changes_state) return true;
+    return false;
+}
 // 仅从本运行的成员中选择目标，并在使用前重新核对授权及参数。
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {

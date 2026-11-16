@@ -26,15 +26,20 @@ void ObservationTrigger::enable() {
 }
 // 停止为永久决定，已经预留的真实接纳仍可记账。
 void ObservationTrigger::stop() noexcept { control_->stopped = true; control_->enabled = false; }
-// 核对显式规则和原采样，不从正文推断来源或完整性。
-// 步骤：检查规则生命周期及预算 → 核对对象、时效和断档 → 拒绝重复修订或过快触发。
-TriggerDecision ObservationTrigger::inspect(const ObservationRecord& value, ObservationTime now) const noexcept {
+// 返回原规则的生命周期、时间和容量约束，不读取或消费观察值。
+TriggerDecision ObservationTrigger::availability(ObservationTime now) const noexcept {
     if (control_->stopped) return TriggerDecision::stopped;
     if (!control_->enabled) return TriggerDecision::disabled;
     if (now < created_) return TriggerDecision::invalid_clock;
     if (now >= rule_.deadline) return TriggerDecision::expired;
     if (pending_) return TriggerDecision::busy;
     if (receipts_.size() == rule_.maximum_runs) return TriggerDecision::run_limit;
+    return TriggerDecision::ready;
+}
+// 核对显式规则和原采样，不从正文推断来源或完整性。
+// 步骤：检查规则生命周期及预算 → 核对对象、时效和断档 → 拒绝重复修订或过快触发。
+TriggerDecision ObservationTrigger::inspect(const ObservationRecord& value, ObservationTime now) const noexcept {
+    const auto state = availability(now); if (state != TriggerDecision::ready) return state;
     const auto& data = value.metadata();
     if (data.source != rule_.source || data.object.id != rule_.object.id || data.object.generation != rule_.object.generation)
         return TriggerDecision::wrong_object;

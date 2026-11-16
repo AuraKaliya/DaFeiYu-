@@ -25,6 +25,8 @@ class ToolSnapshot {
     std::vector<model::ToolDefinition> definitions() const;
     // 复制当前可用成员的公开描述，供运行固定版本信息；不取得工作或原生代码。
     std::vector<ToolDescription> descriptions() const;
+    // 判断固定授予成员是否包含变更工具，禁用或撤销不会隐藏原范围的性质。
+    bool permits_state_changes() const noexcept;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。
