@@ -50,6 +50,7 @@ TriggerDecision ObservationTrigger::inspect(const ObservationRecord& value, Obse
     return TriggerDecision::ready;
 }
 // 只准备一个尚未接纳的候选，失败不占用运行次数或推进观察水位。
+// 步骤：检查规则及采样 → 签发唯一票据 → 固定尚未执行的预留。
 TriggerOffer ObservationTrigger::reserve(const ObservationRecord& value, ObservationTime now) {
     const auto decision = inspect(value,now); if (decision != TriggerDecision::ready) return {decision,{}};
     const TriggerTicket ticket{id_,runtime::next_domain(),value.metadata().revision}; pending_ = Pending{ticket,now}; return {decision,ticket};

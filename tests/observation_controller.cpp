@@ -64,6 +64,7 @@ void refusals() {
     check(rejected,"disabled change tool hid an unsafe fixed scope"); model.verify_complete();
 }
 // 验证实际接纳之后时钟失败仍记账并可查询，原会话继续完成真实退出。
+// 步骤：让接纳后的时钟失败 → 核对原运行仍可查询且计数 → 推进真实退出并保持停止。
 void admission_clock_failure() {
     ScriptStep step; step.response = Response{{Role::assistant,"late"}}; ScriptedModel model({1,"controller_clock",1,{},{step},1});
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);

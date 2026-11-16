@@ -17,6 +17,7 @@ std::shared_ptr<const StructValue> payload() {
     return std::make_shared<const StructValue>(StructValue::create(descriptor,{},64));
 }
 // 验证显式开启、撤回、实际接纳计数、重复修订及有限频率。
+// 步骤：开启并撤回预留 → 记录实际接纳 → 拒绝重复与过快采样 → 停止后保留原记账。
 void admission() {
     const ObservationTime now{}; ObservationSource source(1,ObservationTrust::external_data); ObservationInbox inbox({source.id()});
     const auto sample = [&](std::uint64_t revision) {
@@ -39,6 +40,7 @@ void admission() {
     rejects([&] { trigger.enable(); });
 }
 // 验证断档、到期、对象代次、运行次数及销毁后的控制门。
+// 步骤：拒绝断档及到期 → 建立完整基线并耗尽预算 → 检查销毁和代次边界。
 void boundaries() {
     const ObservationTime now{}; ObservationSource source(1,ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
     inbox.accept(source.capture({"object",1},3,now,now+std::chrono::seconds(2),payload()),now);

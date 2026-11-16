@@ -62,6 +62,7 @@ void PlanBook::confirm(const PlanStepKey& key, std::string_view evidence) {
     entry.evidence.assign(evidence); entry.state = PlanStepState::completed;
 }
 // 明确跳过只作用于下一未开始步骤，不抹去实际失败或取消的工作。
+// 步骤：校验证据并复用原决定 → 核对当前版本及顺序 → 固定跳过事实。
 void PlanBook::skip(const PlanStepKey& key, std::string_view reason) {
     validate_evidence(reason); const auto index = find(key.step); auto& entry = entries_[index];
     if (entry.state == PlanStepState::skipped && entry.started == key.plan && entry.evidence == reason) return;
