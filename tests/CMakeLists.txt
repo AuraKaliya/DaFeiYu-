@@ -750,6 +750,14 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
 source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${PROJECT_SOURCE_DIR}/model/client.cpp")
 
+# 验证进程内确认的宿主身份、幂等回执及停止边界。
+add_executable(dfy_confirmation_tests confirmation.cpp)
+target_link_libraries(dfy_confirmation_tests PRIVATE dfy_agent dfy_build_options)
+set_target_properties(dfy_confirmation_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/confirmation.cpp")
+add_test(NAME agent.confirmation COMMAND dfy_confirmation_tests)
+set_tests_properties(agent.confirmation PROPERTIES TIMEOUT 15)
+
 # 注册 CTest：配置测试使用隔离工作目录，全部测试统一设置执行时限。
 add_test(NAME runtime.identifiers COMMAND dfy_runtime_ids_tests)
 set_tests_properties(runtime.identifiers PROPERTIES TIMEOUT 15)
