@@ -73,6 +73,8 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
     for (const auto& batch : batches_) { auto values = batch->snapshot(); result.insert(result.end(),values.begin(),values.end()); }
     return result;
 }
+// 只复制确认值，不推进模型、工具或控制决定。
+std::vector<ConfirmationSnapshot> TurnRequest::confirmations() const { return confirmations_ ? confirmations_->snapshot() : std::vector<ConfirmationSnapshot>{}; }
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)
@@ -120,6 +122,20 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
         }
     } catch (...) { working_ = false; throw; }
     working_ = false; throw std::length_error("session: retained turn capacity exhausted");
+}
+// 路由可信控制命令，已退出结果只复用原回执，不重建执行器或恢复终态。
+// 步骤：保护控制入口 → 按完整运行身份定位 → 活动运行重查或终态回执复用 → 归还入口。
+ConfirmationReceipt Session::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) {
+    if (working_) throw std::logic_error("session: reentrant decision");
+    working_ = true;
+    try {
+        for (const auto& record : records_) if (record && record->run_id() == command.expected.attempt.step.run && record->confirmations_) {
+            const auto receipt = active_ && active_->request() == record ? active_->decide(caller,command) :
+                record->confirmations_->decide(caller,command,ToolTime::max());
+            working_ = false; return receipt;
+        }
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::invalid_argument("session: confirmation run unavailable");
 }
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。

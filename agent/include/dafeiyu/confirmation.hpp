@@ -60,6 +60,10 @@ class ConfirmationBook {
     std::vector<ConfirmationSnapshot> snapshot() const;
     // 读取原记录状态，不从过去的批准回执推导当前许可。
     ConfirmationState state(runtime::DomainId request) const;
+    // 复制单项原目标，宿主决定入口用其重新核对当前授权，不相信命令正文替换目标。
+    ConfirmationTarget target(runtime::DomainId request) const;
+    // 只读取同一宿主原命令回执，身份或命令冲突明确拒绝。
+    std::optional<ConfirmationReceipt> prior_receipt(const ConfirmationCaller& caller, const ConfirmationCommand& command) const;
     // 按宿主身份、原目标和期望修订作单次决定，原命令重试返回相同回执。
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command, ToolTime now);
     // 在接纳动作前消耗精确批准，失效或期限到达均不能复用。

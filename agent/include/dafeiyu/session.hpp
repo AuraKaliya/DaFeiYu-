@@ -89,6 +89,8 @@ class TurnRequest {
     std::vector<ModelStepSnapshot> model_steps() const { return model_steps_; }
     // 复制各批次工具的状态与策略决定，不持有原生代码。
     std::vector<BatchToolSnapshot> tool_steps() const;
+    // 返回可信控制界面的确认记录和待审参数；普通诊断与通知不包含这些正文。
+    std::vector<ConfirmationSnapshot> confirmations() const;
   private:
     friend class Session;
     friend class RunLoop;
@@ -107,6 +109,7 @@ class TurnRequest {
     std::shared_ptr<model::ModelRequest> model_;
     std::unique_ptr<RunContext> context_;
     std::unique_ptr<ToolExecutor> tools_;
+    std::unique_ptr<ConfirmationBook> confirmations_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::size_t model_requests_ = 0, tool_requests_ = 0;
@@ -138,6 +141,8 @@ class Session {
     std::shared_ptr<TurnRequest> begin(const std::string& prompt);
     // 用明确的工具范围、策略和限额接纳一次运行，旧入口保持无工具行为。
     std::shared_ptr<TurnRequest> begin(const std::string& prompt, RunOptions options);
+    // 使用宿主绑定凭证处理确认命令，不在提交决定时执行动作；保留结果期间可重取原回执。
+    ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。

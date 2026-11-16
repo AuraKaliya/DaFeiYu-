@@ -24,6 +24,8 @@ class RunLoop {
     std::shared_ptr<const MessageHistory> history() const noexcept;
     // 推进一个有界阶段，工具批次准备后让出宿主，不递归调用模型。
     void advance();
+    // 在宿主控制入口决定原候选；拒绝重入，命令处理不推进工具工作。
+    ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。
     void wait_model();
     // 返回仍需要宿主重试收尾的运行数。

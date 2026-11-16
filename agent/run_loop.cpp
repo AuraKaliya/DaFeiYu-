@@ -43,6 +43,7 @@ struct RunLoopState {
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = now+duration; record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt));
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
+        if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit);
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
             ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now);
         ++resident_count;
@@ -60,6 +61,7 @@ struct RunLoopState {
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
+        if (record->confirmations_) record->confirmations_->advance(deadline,reason);
         if (record->model_) record->model_->request_cancel(reason);
         if (record->tools_) record->tools_->close(reason);
     }
@@ -84,6 +86,25 @@ struct RunLoopState {
         record->stop_reason_ = reason == runtime::CancelReason::deadline ? PolicyReason::deadline : PolicyReason::cancelled;
         stop_children(reason); record->result_.settle(runtime::OperationState::cancelled);
         record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
+    }
+    // 处理宿主决定时重查原目标，历史回执不依赖工具仍在线，也不能重新执行。
+    // 步骤：保护入口并复用原回执 → 裁定取消和期限 → 重查原授权绑定 → 保存单次决定。
+    ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) {
+        if (advancing || !record->confirmations_) throw std::logic_error("run: reentrant or unavailable confirmation");
+        advancing = true;
+        try {
+            auto& book = *record->confirmations_;
+            if (const auto prior = book.prior_receipt(caller,command)) { advancing = false; return *prior; }
+            interrupt(); const auto current = control(); book.advance(current.now,current.cancellation);
+            if (policy.check_context(current).verdict != PolicyVerdict::allow) throw std::invalid_argument("run: confirmation stopped");
+            const auto original = book.target(command.request);
+            try {
+                const auto selected = options.tools->resolve(original.name,original.arguments);
+                if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments}) != original)
+                    throw std::invalid_argument("run: confirmation target changed");
+            } catch (...) { book.invalidate(command.request,ConfirmationState::invalidated); throw; }
+            const auto receipt = book.decide(caller,command,current.now); advancing = false; return receipt;
+        } catch (...) { advancing = false; throw; }
     }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
     // 步骤：裁定停止 → 检查基础及扩展规则 → 准备完整输入 → 接纳并发布步骤身份。
@@ -152,7 +173,7 @@ struct RunLoopState {
                         if (record->tool_requests_ > options.policy.tool_limit || count > options.policy.tool_limit-record->tool_requests_) {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
-                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension);
+                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension,record->confirmations_.get());
                         batch = next_batch.get(); batch_size = count; record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
@@ -188,6 +209,8 @@ std::shared_ptr<TurnRequest> RunLoop::request() const noexcept { return state_->
 std::shared_ptr<const MessageHistory> RunLoop::history() const noexcept { return state_->record->context_->committed(); }
 // 推进当前运行的一个阶段。
 void RunLoop::advance() { state_->advance(); }
+// 只转交可信控制命令，不驱动模型或工具执行。
+ConfirmationReceipt RunLoop::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) { return state_->decide(caller,command); }
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }
 // 返回保留运行数量。

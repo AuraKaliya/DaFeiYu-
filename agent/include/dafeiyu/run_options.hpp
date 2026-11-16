@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/execution_policy.hpp>
+#include <dafeiyu/confirmation.hpp>
 
 namespace dfy::agent {
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
@@ -12,6 +13,8 @@ struct RunOptions {
     std::size_t no_progress_limit = 3;
     ToolClock now = std::chrono::steady_clock::now;
     PolicyExtension extension;
+    std::optional<ConfirmationCaller> confirmation_caller;
+    std::size_t confirmation_limit = 16;
     std::shared_ptr<runtime::Budget> budget;
 };
 }

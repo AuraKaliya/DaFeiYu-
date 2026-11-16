@@ -54,9 +54,14 @@ ConfirmationState ConfirmationBook::state(runtime::DomainId request) const {
     for (const auto& entry : entries_) if (entry.value.id == request) return entry.value.state;
     throw std::invalid_argument("confirmation: unknown request");
 }
-// 在原值绑定上接纳一次宿主决定，重复命令不会改变当前状态。
-// 步骤：校验宿主凭证及命令 → 复用或拒绝冲突回执 → 核对期限和修订 → 保存命令后发布决定。
-ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command, ToolTime now) {
+// 返回不可变原目标副本，不能由命令正文改变当前待审动作。
+ConfirmationTarget ConfirmationBook::target(runtime::DomainId request) const {
+    for (const auto& entry : entries_) if (entry.value.id == request) return entry.value.target;
+    throw std::invalid_argument("confirmation: unknown request");
+}
+// 查询原决定回执，不重新授权或延长批准期限。
+// 步骤：核对宿主凭证 → 查找原命令 → 完整比较命令后返回回执或冲突。
+std::optional<ConfirmationReceipt> ConfirmationBook::prior_receipt(const ConfirmationCaller& caller, const ConfirmationCommand& command) const {
     if (!(caller == caller_) || !command.command) throw std::invalid_argument("confirmation: unbound caller or command");
     for (const auto& entry : entries_) if (entry.command && entry.command->command == command.command) {
         const auto& original = *entry.command;
@@ -64,6 +69,12 @@ ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, c
             original.expected != command.expected || original.approve != command.approve) throw std::invalid_argument("confirmation: command conflict");
         return entry.receipt;
     }
+    return {};
+}
+// 在原值绑定上接纳一次宿主决定，重复命令不会改变当前状态。
+// 步骤：复用或拒绝原命令 → 核对期限和修订 → 保存命令后发布决定。
+ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command, ToolTime now) {
+    if (const auto prior = prior_receipt(caller,command)) return *prior;
     advance(now); auto& entry = find(command.request); auto& value = entry.value;
     if (value.state != ConfirmationState::waiting || value.revision != command.expected_revision || value.target != command.expected)
         throw std::invalid_argument("confirmation: stale decision");
