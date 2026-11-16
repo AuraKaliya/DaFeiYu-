@@ -1,0 +1,63 @@
+#include <dafeiyu/observation_input.hpp>
+#include <dafeiyu/map_value.hpp>
+#include <nlohmann/json.hpp>
+#include <stdexcept>
+
+namespace dfy::agent {
+namespace {
+using Json = nlohmann::json;
+// 转换一个已核定节点预算的值，嵌套层数另受文本上下文上限约束。
+Json encode_value(const runtime::Value& value, std::size_t depth);
+// 复制实际存在字段，缺失与显式 null 保持不同，不输出内部引用或代码地址。
+// 步骤：核对深度 → 跳过缺失字段并递归编码 → 返回普通数据对象。
+Json encode_structure(const runtime::StructValue& value, std::size_t depth) {
+    if (depth > 8) throw std::length_error("observation input: nesting limit exceeded");
+    Json result = Json::object(); const auto fields = value.descriptor()->fields();
+    for (std::size_t index = 0; index < value.size(); ++index) if (value.present(index)) result[fields[index].name] = encode_value(value.at(index),depth+1);
+    return result;
+}
+// 只投影明确支持的数据种类，不把二进制或未知组合猜测成可执行文本。
+// 步骤：核对深度 → 直接复制标量 → 递归复制支持的容器 → 拒绝未支持种类。
+Json encode_value(const runtime::Value& value, std::size_t depth) {
+    using runtime::ValueKind;
+    if (depth > 8) throw std::length_error("observation input: nesting limit exceeded");
+    switch (value.kind()) {
+    case ValueKind::boolean: return value.as_bool();
+    case ValueKind::int64: return value.as_int64();
+    case ValueKind::uint64: return value.as_uint64();
+    case ValueKind::float64: return value.as_float64();
+    case ValueKind::string: return value.as_string();
+    case ValueKind::null_value: return nullptr;
+    case ValueKind::structure: return encode_structure(value.as_structure(),depth);
+    case ValueKind::array: {
+        Json result = Json::array(); const auto& array = value.as_array();
+        for (std::size_t index = 0; index < array.size(); ++index) result.push_back(encode_value(array.at(index),depth+1));
+        return result;
+    }
+    case ValueKind::map: {
+        Json result = Json::object(); const auto& map = value.as_map();
+        for (std::size_t index = 0; index < map.size(); ++index) { const auto& entry = map.at(index); result[entry.key] = encode_value(entry.value,depth+1); }
+        return result;
+    }
+    default: throw std::invalid_argument("observation input: unsupported value kind");
+    }
+}
+}
+// 编码普通观察数据，来源标签不授予模型任何宿主权限。
+// 步骤：核对时效与完整基线 → 限制描述元数据 → 编码来源和载荷 → 核对最终文本大小。
+std::string observation_input(const ObservationRecord& observation, ObservationTime now) {
+    if (observation.validity(now) != ObservationValidity::fresh || observation.revision_gap())
+        throw std::invalid_argument("observation input: fresh complete state required");
+    const auto& data = observation.metadata(); const auto descriptor = observation.payload().descriptor();
+    if (descriptor->name().size() > 128 || descriptor->name_bytes() > 64*1024 || descriptor->total_fields() > 1024 || descriptor->depth() > 8)
+        throw std::length_error("observation input: descriptor limit exceeded");
+    Json value{{"kind","dafeiyu.observation"},{"schema_version",1},{"source",data.source},{"provider_instance",data.provider_instance},
+        {"object",{{"id",data.object.id},{"generation",data.object.generation}}},{"revision",data.revision},
+        {"trust",data.trust == ObservationTrust::host_verified ? "host_verified" : "external_data"},
+        {"age_ms",std::chrono::duration_cast<std::chrono::milliseconds>(now-data.sampled).count()},
+        {"valid_for_ms",std::chrono::duration_cast<std::chrono::milliseconds>(data.expires-now).count()},
+        {"payload_schema",{{"name",descriptor->name()},{"version",descriptor->version()}}},{"payload",encode_structure(observation.payload(),1)}};
+    auto text = value.dump(); if (text.size() > 64*1024) throw std::length_error("observation input: encoded payload exceeds 64 KiB");
+    return text;
+}
+}
