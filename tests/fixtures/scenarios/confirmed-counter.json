@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "confirmed-counter",
+  "version": 1,
+  "prompt": "执行测试计数",
+  "timeout_ms": 1000,
+  "policy": {"revision": 1, "model_limit": 4, "tool_limit": 4, "allow_observation": false, "confirm_changes": true},
+  "fixtures": [
+    {
+      "id": "fixture/counter",
+      "name": "counter",
+      "description": "返回预设计数结果",
+      "parameters": {"type": "object", "properties": {}, "additionalProperties": false},
+      "changes_state": true,
+      "idempotent": false,
+      "results": [{"succeeded": true, "effect": "applied", "output": "1", "error": "none"}]
+    }
+  ],
+  "steps": [
+    {
+      "last_role": "user", "last_text": "执行测试计数", "tools": ["counter"],
+      "response": {"text": "", "finish": "tool_calls", "tool_calls": [{"id": "one", "name": "counter", "arguments": {}}]}
+    },
+    {
+      "last_role": "tool", "last_tool_id": "one", "tools": ["counter"],
+      "response": {"text": "测试动作已完成", "finish": "stop"}
+    }
+  ],
+  "decisions": ["approve"],
+  "expected": {"model_requests": 2, "tool_calls": 1, "history_messages": 4, "result": "succeeded", "stop_reason": "none", "effects": ["applied"]}
+}
