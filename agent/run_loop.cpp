@@ -8,15 +8,6 @@ namespace {
 RunLoopState* retained_head = nullptr;
 std::size_t resident_count = 0, retained_count = 0;
 bool reaping = false;
-// 对当前批次的调用及实际回执计算无分配指纹，不把调用 ID 差异当作进展。
-std::uint64_t fingerprint(const MessageHistory& messages, std::size_t count) {
-    std::uint64_t hash = UINT64_C(14695981039346656037);
-    const auto add = [&](std::string_view text) { for (const unsigned char byte : text) { hash ^= byte; hash *= UINT64_C(1099511628211); } hash ^= 255; };
-    const auto& assistant = messages[messages.size()-count-1];
-    for (const auto& call : assistant.tool_calls) { add(call.name); add(call.arguments); }
-    for (std::size_t i = messages.size()-count; i < messages.size(); ++i) add(messages[i].content);
-    return hash;
-}
 }
 struct RunLoopState {
     std::shared_ptr<TurnRequest> record;
@@ -26,7 +17,7 @@ struct RunLoopState {
     ExecutionPolicy policy;
     ToolTime deadline;
     ToolBatch* batch = nullptr;
-    std::size_t batch_size = 0, repeated = 0;
+    std::size_t repeated = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
     RunLoopState* next = nullptr;
@@ -164,11 +155,10 @@ struct RunLoopState {
                 stage = TurnFailure::tool_execution;
                 if (batch->advance(control())) {
                     record->record_history();
-                    const auto continuation = batch->continuation(); batch = nullptr; interrupt();
+                    const auto continuation = batch->continuation(); const auto stamp = batch->progress_fingerprint(); batch = nullptr; interrupt();
                     if (record->operation()->state() == OperationState::pending) {
                         stage = TurnFailure::control;
                         if (continuation.verdict != PolicyVerdict::allow) { record->stop_reason_ = continuation.reason; throw std::runtime_error("run: continuation denied"); }
-                        const auto stamp = fingerprint(record->context_->messages(),batch_size);
                         repeated = last_fingerprint && *last_fingerprint == stamp ? repeated+1 : 0; last_fingerprint = stamp;
                         if (repeated >= options.no_progress_limit) { record->stop_reason_ = PolicyReason::no_progress; throw std::runtime_error("run: no progress"); }
                         start_model();
@@ -191,7 +181,7 @@ struct RunLoopState {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
                         auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
-                        batch = next_batch.get(); batch_size = count; record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
+                        batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
             }

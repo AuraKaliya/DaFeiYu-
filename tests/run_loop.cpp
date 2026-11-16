@@ -53,11 +53,13 @@ void limits() {
     for (const bool repeat : {false,true}) {
         unsigned calls = 0; ToolCatalog catalog; register_tool(catalog,calls,false); auto spec = script(false,repeat);
         if (!repeat) { spec.steps.resize(1); spec.expected_model_requests = 1; }
+        else spec.steps[1].response->message.tool_calls[0].arguments = "{ }";
         ScriptedModel model(std::move(spec)); RunOptions options; options.tools = catalog.snapshot(ids); options.now = model.clock();
         options.policy.model_limit = repeat ? 8 : 1; options.no_progress_limit = 1;
         RunLoop loop({1,1},{},model.backend(),std::make_shared<const MessageHistory>(),"goal",options); drain(loop); model.verify_complete();
         check(loop.request()->operation()->state() == OperationState::failed && loop.request()->diagnostics().stop_reason ==
             (repeat ? PolicyReason::no_progress : PolicyReason::model_limit) && calls == (repeat ? 2u : 1u),"run limit failed");
+        if (repeat) check((*loop.history())[3].tool_calls[0].arguments == "{ }","progress check rewrote original arguments");
     }
 }
 // 验证模型前控制、运行期限和整批调用上限都在受控动作之前生效。

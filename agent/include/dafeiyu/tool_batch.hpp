@@ -39,6 +39,8 @@ class ToolBatch {
     bool done() const noexcept { return done_; }
     // 返回结果后对下一调度的约束，不改写已记录工具事实。
     PolicyDecision continuation() const noexcept { return continuation_; }
+    // 返回完整结果后的进展指纹；参数仅忽略 JSON 排版差异，未完成批次拒绝读取。
+    std::uint64_t progress_fingerprint() const;
     // 返回只读值快照，不把工作、参数或输出持有交给观察者。
     std::vector<BatchToolSnapshot> snapshot() const;
   private:
@@ -63,6 +65,7 @@ class ToolBatch {
     const PolicyExtension extension_;
     std::vector<Entry> entries_;
     PolicyDecision continuation_{PolicyVerdict::allow,PolicyReason::none};
+    std::uint64_t fingerprint_ = UINT64_C(14695981039346656037);
     bool done_ = false, advancing_ = false, admitted_ = false;
 };
 }

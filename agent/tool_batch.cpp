@@ -1,7 +1,15 @@
 #include <dafeiyu/tool_batch.hpp>
 #include <stdexcept>
+#include <nlohmann/json.hpp>
 
 namespace dfy::agent {
+namespace {
+// 按文本及字段边界累积轻量指纹，只用于无进展停止，不作为安全身份或幂等凭证。
+void add_fingerprint(std::uint64_t& hash, std::string_view text) noexcept {
+    for (const unsigned char byte : text) { hash ^= byte; hash *= UINT64_C(1099511628211); }
+    hash ^= 255;
+}
+}
 // 准备有界工具批次，任何拒绝都产生配对回执而不执行该候选动作。
 // 步骤：检查总调用预算 → 准备元数据和完整上下文 → 裁定候选及确认 → 全部就绪才接纳。
 ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
@@ -15,6 +23,13 @@ ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::M
         entries_[index].call = assistant.tool_calls[index];
         entries_[index].metadata.attempt = control.attempt; entries_[index].metadata.candidate = runtime::next_domain();
         entries_[index].metadata.result = entries_[index].metadata.exit = runtime::OperationState::pending;
+        add_fingerprint(fingerprint_,assistant.tool_calls[index].name);
+        // 仅规范化已经通过有界 schema 的候选；未知或非法候选仍按原文本比较，不扩大解析深度。
+        try {
+            tools.resolve(assistant.tool_calls[index].name,assistant.tool_calls[index].arguments);
+            add_fingerprint(fingerprint_,nlohmann::json::parse(assistant.tool_calls[index].arguments).dump());
+        } catch (const std::invalid_argument&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
+        catch (const std::length_error&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
     }
     context_.prepare_tools(assistant,tools.definitions());
     for (std::size_t index = 0; index < count; ++index) publish(index,TraceFactKind::tool_candidate);
@@ -139,9 +154,19 @@ bool ToolBatch::advance(const PolicyContext& current) {
             context_.set_tool_result(index,entry.request->outcome(),entry.request->operation()->state(),entry.request->fault());
             entry.filled = true;
         }
-        if (complete) { context_.commit_tools(); done_ = true; }
+        if (complete) {
+            context_.commit_tools(); const auto& messages = *context_.committed();
+            for (std::size_t index = messages.size()-entries_.size(); index < messages.size(); ++index)
+                add_fingerprint(fingerprint_,messages[index].content);
+            done_ = true;
+        }
     } catch (...) { advancing_ = false; throw; }
     advancing_ = false; return done_;
+}
+// 只返回完成时固定的指纹，不重新解析参数、读取工具或依赖上下文继续存活。
+std::uint64_t ToolBatch::progress_fingerprint() const {
+    if (!done_) throw std::logic_error("batch: progress is not committed");
+    return fingerprint_;
 }
 // 从原请求读取最新状态形成值副本，不保存任何原生工作引用。
 std::vector<BatchToolSnapshot> ToolBatch::snapshot() const {
