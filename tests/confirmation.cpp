@@ -56,9 +56,25 @@ void stops() {
     another.call_id = "new-id"; another.arguments = R"({ "a":1, "b":2 })";
     rejects([&] { normalized.offer(another); });
 }
+// 验证同批或先前批准尚未消费时，用户拒绝仍约束整个目标内的相同动作。
+// 步骤：批准一个候选 → 拒绝同目标另一个候选 → 核对旧回执与现许可分离 → 保留已消费事实。
+void denial_scope() {
+    ConfirmationCaller caller; ConfirmationBook book({1,1},caller);
+    const auto one = book.offer(target()); ConfirmationCommand approved{1,one,1,target(),true};
+    const auto receipt = book.decide(caller,approved,{});
+    auto other = target(); other.call_id = "sibling"; const auto two = book.offer(other);
+    book.decide(caller,{2,two,1,other,false},{});
+    check(book.state(one) == ConfirmationState::denied && !book.consume(one,target(),{}) && book.decide(caller,approved,{}) == receipt,
+        "sibling denial left an executable approval");
+    rejects([&] { book.offer(target()); });
+    ConfirmationBook finished({1,1},caller); const auto done = finished.offer(target()); finished.decide(caller,{3,done,1,target(),true},{});
+    check(finished.consume(done,target(),{}),"initial approval unavailable");
+    const auto denied = finished.offer(other); finished.decide(caller,{4,denied,1,other,false},{});
+    check(finished.state(done) == ConfirmationState::consumed,"later denial rewrote consumed action fact");
+}
 }
 // 只验证宿主确认值契约，不调用工具、模型或 UI。
 int main() {
-    try { decisions(); stops(); std::cout << "Confirmation checks passed\n"; return 0; }
+    try { decisions(); stops(); denial_scope(); std::cout << "Confirmation checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

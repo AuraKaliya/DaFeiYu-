@@ -4,6 +4,12 @@
 #include <stdexcept>
 
 namespace dfy::agent {
+namespace {
+// 用目标范围及规范参数识别同一动作，调用 ID、策略修订和插件重载不消除原拒绝。
+bool same_action(const ConfirmationTarget& left, const ConfirmationTarget& right) {
+    return left.goal_revision == right.goal_revision && left.tool_id == right.tool_id && left.arguments == right.arguments;
+}
+}
 // 生成规范参数和完整版本绑定，不将确认当作工具授权来源。
 // 步骤：核对调用名称和参数契约 → 规范化参数 → 复制宿主身份与期限。
 ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selected, const model::ToolCall& call) {
@@ -31,8 +37,7 @@ runtime::DomainId ConfirmationBook::offer(ConfirmationTarget target) {
     if (target.arguments.size() > 64*1024) throw std::length_error("confirmation: canonical arguments too large");
     for (const auto& entry : entries_) {
         const auto& original = entry.value.target;
-        if (entry.value.state == ConfirmationState::denied && original.goal_revision == target.goal_revision &&
-            original.tool_id == target.tool_id && original.arguments == target.arguments)
+        if (entry.value.state == ConfirmationState::denied && same_action(original,target))
             throw std::logic_error("confirmation: action already denied for this goal");
     }
     if (entries_.size() == limit_) throw std::length_error("confirmation: request limit exhausted");
@@ -72,7 +77,7 @@ std::optional<ConfirmationReceipt> ConfirmationBook::prior_receipt(const Confirm
     return {};
 }
 // 在原值绑定上接纳一次宿主决定，重复命令不会改变当前状态。
-// 步骤：复用或拒绝原命令 → 核对期限和修订 → 保存命令后发布决定。
+// 步骤：复用或拒绝原命令 → 核对期限和修订 → 保存决定 → 撤销同目标同动作的未消费许可。
 ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command, ToolTime now) {
     if (const auto prior = prior_receipt(caller,command)) return *prior;
     advance(now); auto& entry = find(command.request); auto& value = entry.value;
@@ -80,6 +85,10 @@ ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, c
         throw std::invalid_argument("confirmation: stale decision");
     entry.command = command;
     value.state = command.approve ? ConfirmationState::approved : ConfirmationState::denied; ++value.revision;
+    if (!command.approve) for (auto& other : entries_) {
+        if ((other.value.state == ConfirmationState::waiting || other.value.state == ConfirmationState::approved) &&
+            same_action(other.value.target,value.target)) { other.value.state = ConfirmationState::denied; ++other.value.revision; }
+    }
     entry.receipt = {command.command,command.request,value.revision,value.state}; return entry.receipt;
 }
 // 仅消耗仍有效的单次批准，动作接纳后原批准不能用于再次执行。

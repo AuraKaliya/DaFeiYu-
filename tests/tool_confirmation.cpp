@@ -57,9 +57,24 @@ void mixed_wait() {
     }
     check(cleanup.snapshot().front().state == ConfirmationState::cancelled && calls == 1,"destroyed batch left live confirmation");
 }
+// 验证模型同批重复提出的同一动作不能通过分别批准和拒绝绕开拒绝范围。
+void duplicate_candidates() {
+    unsigned calls = 0; ToolCatalog catalog;
+    catalog.add({"fixture/change",1,1,{"change","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,false},
+        [&](const auto&) { ++calls; return completed_tool({true,ToolEffect::applied,"changed",ToolError::none}); });
+    const std::vector<std::string> ids{"fixture/change"}; const auto tools = catalog.snapshot(ids,true);
+    ConfirmationCaller caller; ConfirmationBook book({1,1},caller); ToolExecutor executor({1,1},tools);
+    RunContext context(std::make_shared<const MessageHistory>(),"goal"); PolicySettings settings; settings.confirm_changes = true;
+    ToolBatch batch(context,executor,{dfy::model::Role::assistant,"",{{"one","change","{}"},{"two","change","{}"}}},tools,
+        ExecutionPolicy({1,1},1,settings),control(),{},&book);
+    const auto values = book.snapshot(); book.decide(caller,{1,values[0].id,1,values[0].target,true},{});
+    book.decide(caller,{2,values[1].id,1,values[1].target,false},{});
+    for (unsigned i = 0; !batch.done() && i < 4; ++i) batch.advance(control());
+    check(batch.done() && !calls && !executor.size(),"duplicate call bypassed same-goal denial");
+}
 }
 // 使用本地工具工厂验证确认，不调用模型。
 int main() {
-    try { scenarios(); mixed_wait(); std::cout << "Tool confirmation checks passed\n"; return 0; }
+    try { scenarios(); mixed_wait(); duplicate_candidates(); std::cout << "Tool confirmation checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
