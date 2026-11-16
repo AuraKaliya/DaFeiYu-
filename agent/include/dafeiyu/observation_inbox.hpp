@@ -1,0 +1,51 @@
+﻿#pragma once
+#include <dafeiyu/observation.hpp>
+#include <dafeiyu/budget.hpp>
+
+namespace dfy::agent {
+enum class ObservationAdmission { inserted, replaced, duplicate, conflict, stale_revision, stale_generation, not_allowed, future, expired, source_revoked, capacity };
+struct ObservationReceipt { ObservationAdmission status; bool revision_gap = false; };
+class ObservationInbox;
+// 计费的数据持有；只借用载荷，客户端保留本句柄时旧版本继续占用预算。
+class ObservationRecord {
+  public:
+    // 禁止复制计费责任；客户端共享同一记录句柄。
+    ObservationRecord(const ObservationRecord&) = delete;
+    // 禁止赋值替换已经发布的采样值。
+    ObservationRecord& operator=(const ObservationRecord&) = delete;
+    // 借用不可变来源与对象身份，借用期不得超过本记录持有期。
+    const ObservationMetadata& metadata() const noexcept { return value_.metadata(); }
+    // 借用不可变结构载荷，读取不会推进或重新采样。
+    const runtime::StructValue& payload() const noexcept { return *value_.payload(); }
+    // 核对原来源和时间资格，不把旧值保留解释为仍然新鲜。
+    ObservationValidity validity(ObservationTime now) const noexcept { return value_.validity(now); }
+    // 返回是否曾缺少同一对象代次的中间修订；新连续采样不会静默清除此标记。
+    bool revision_gap() const noexcept { return gap_; }
+  private:
+    friend class ObservationInbox;
+    // 接收已预留预算和值，数据持有先释放，最后归还本记录计费。
+    ObservationRecord(runtime::BudgetLease charge, ObservationSnapshot value, bool gap) : charge_(std::move(charge)),value_(value),gap_(gap) {}
+    runtime::BudgetLease charge_;
+    ObservationSnapshot value_;
+    bool gap_;
+};
+// 同宿主线程的最新状态采样集合；不接收用户命令或事务回执，不自动触发行动。
+class ObservationInbox {
+  public:
+    // 固定来源白名单及对象槽；保留记录预算包括客户端持有的旧版本，至少预留一个替换槽。
+    ObservationInbox(std::vector<runtime::DomainId> sources, std::size_t objects = 32,
+        runtime::BudgetAmount retained = {64,256*1024}, std::shared_ptr<runtime::Budget> parent = {});
+    // 禁止复制接纳水位和所有者计费责任。
+    ObservationInbox(const ObservationInbox&) = delete;
+    // 禁止赋值或移动覆盖已发布采样。
+    ObservationInbox& operator=(const ObservationInbox&) = delete;
+    // 接纳新鲜且获准的状态，按来源／对象保留更高代次或修订；失败保持原值和水位。
+    ObservationReceipt accept(const ObservationSnapshot& value, ObservationTime now);
+    // 读取最新保留版本；过期值仍可回顾，调用方须同时检查时效及断档。
+    std::shared_ptr<const ObservationRecord> latest(runtime::DomainId source, std::string_view object) const noexcept;
+  private:
+    const std::vector<runtime::DomainId> sources_;
+    std::shared_ptr<runtime::Budget> budget_;
+    std::vector<std::shared_ptr<const ObservationRecord>> records_;
+};
+}

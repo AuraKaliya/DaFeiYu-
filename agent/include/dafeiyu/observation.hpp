@@ -7,6 +7,7 @@ namespace dfy::agent {
 using ObservationTime = std::chrono::steady_clock::time_point;
 enum class ObservationTrust { external_data, host_verified };
 enum class ObservationValidity { fresh, future, expired, source_revoked };
+// 同一来源内对象重新建立时使用更高代次，不能直接把可复用的原生地址当作代次。
 struct ObservationObject { std::string id; std::uint64_t generation = 0; };
 // 来源和信任由宿主签发，载荷字段不能覆盖这些控制元数据。
 struct ObservationMetadata {
