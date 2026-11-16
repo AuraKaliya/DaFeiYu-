@@ -16,6 +16,8 @@ target_sources(dfy_agent PRIVATE tool_batch.cpp include/dafeiyu/tool_batch.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/tool_batch.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/tool_batch.hpp")
 target_sources(dfy_agent PRIVATE run_trace.cpp include/dafeiyu/run_trace.hpp)
+target_sources(dfy_agent PRIVATE timeline_review.cpp)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/timeline_review.cpp")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/run_trace.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/run_trace.hpp")
 target_sources(dfy_agent PRIVATE trace_identity.cpp include/dafeiyu/trace_identity.hpp)

@@ -94,6 +94,7 @@ inline ReplayReport replay_scenario(ReplayCase scenario) {
         throw std::runtime_error("replay: execution facts differ from explicit expectations");
     for (const auto& node : report.trace.nodes) if (node.parent && std::none_of(report.trace.nodes.begin(),report.trace.nodes.end(),
         [&](const auto& parent) { return parent.id == *node.parent; })) throw std::runtime_error("replay: missing trace parent");
+    if (!review_timeline(report.trace).run_exited) throw std::runtime_error("replay: diagnostic review did not confirm actual exit");
     return report;
 }
 }

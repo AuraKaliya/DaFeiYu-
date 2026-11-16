@@ -56,6 +56,14 @@ struct RunTimeline {
 };
 // 投影正式多步当前事实并分页读取历史；历史缺口不会隐藏当前模型、工具及确认状态。
 RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std::uint64_t after = 0, std::size_t limit = 256);
+struct TimelineReview {
+    bool complete_history = false, run_exited = false, notification_issue = false;
+    // 元数据本身不含固定响应及夹具，不能据此授权或重现动作。
+    bool replayable = false;
+    std::size_t models = 0, tools = 0, confirmations = 0, applied_effects = 0, unknown_effects = 0;
+};
+// 只核对值时间线的版本、关联和顺序；不接收 Session、工具工厂或执行凭证。
+TimelineReview review_timeline(const RunTimeline& timeline, std::uint32_t schema_version = RunTimeline::schema_version);
 // 投影当前单步骤会话；不推进工作、不读取正文，拒绝将未来多步骤快照误作单次路径。
 RunTrace single_run_trace(const RunSnapshot& snapshot, std::string name_space, TraceVersions versions = {});
 // 复制工具身份、结果和效果，时间暂缺时保持未知，不持有原工作或 DLL。
