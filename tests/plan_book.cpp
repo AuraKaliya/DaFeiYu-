@@ -40,6 +40,7 @@ void sequential() {
     check(book.binding().plan_revision == 2 && book.snapshot().steps[0].key == first && old.definition->steps()[1].objective == "汇总事实",
         "revision rewrote executed prefix or old snapshot");
     book.confirm(first,"checked"); auto changed = next; changed[0].objective = "改写历史"; rejects([&] { book.install(book.binding(),changed); });
+    rejects([&] { book.start({book.binding(),"summary"},work); });
     book.skip({book.binding(),"summary"},"host_not_needed"); check(book.snapshot().steps[1].state == PlanStepState::skipped && gate->calls == 1,"skip executed work");
 }
 // 验证失败工作和停止不能被新计划或模型式完成声明擦除。

@@ -39,6 +39,8 @@ void PlanBook::start(const PlanStepKey& key, PlanWork work) {
     if (index != next() || entries_[index].state != PlanStepState::pending) throw std::logic_error("plan: step not ready");
     if (work.execution.step.run != scope_.run() || !work.execution.step.sequence || !work.execution.sequence || !work.result || !work.exit || work.result == work.exit)
         throw std::invalid_argument("plan: original independent work states required");
+    for (const auto& previous : entries_) if (previous.work && (previous.work->result == work.result || previous.work->exit == work.exit))
+        throw std::invalid_argument("plan: work already assigned to another step");
     auto& entry = entries_[index]; entry.started = key.plan; entry.work = std::move(work); entry.state = PlanStepState::running;
 }
 // 证据引用有界且非空白；它的语义由宿主验证器负责，计划不解析为指令。
