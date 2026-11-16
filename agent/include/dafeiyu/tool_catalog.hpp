@@ -23,6 +23,8 @@ class ToolSnapshot {
   public:
     // 返回仍获准且已绑定实现的成员描述，不追加快照建立后注册的工具。
     std::vector<model::ToolDefinition> definitions() const;
+    // 复制当前可用成员的公开描述，供运行固定版本信息；不取得工作或原生代码。
+    std::vector<ToolDescription> descriptions() const;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。

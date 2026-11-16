@@ -96,6 +96,10 @@ class TurnRequest {
     std::vector<ConfirmationSnapshot> confirmations() const;
     // 返回无正文的有界增量；查询不推进运行，旧游标和投影故障由结果明确说明。
     TraceDelta trace_delta(std::uint64_t after = 0, std::size_t limit = 256) const { return journal_.read(after,limit); }
+    // 复制确认元数据，普通追踪不通过完整确认接口读取业务参数。
+    std::vector<ConfirmationSummary> confirmation_steps() const;
+    // 返回运行接纳前固定的公开版本，缺失标签保持未知。
+    TraceVersions trace_versions() const { return versions_; }
   private:
     friend class Session;
     friend class RunLoop;
@@ -104,6 +108,7 @@ class TurnRequest {
     explicit TurnRequest(RunId run, std::size_t trace_capacity) : attempt_{{run,1},1},journal_(run,trace_capacity) {}
     AttemptId attempt_;
     RunJournal journal_;
+    TraceVersions versions_;
     // 在完整上下文提交后记录消息数量及提交修订，不复制业务正文。
     void record_history() noexcept;
     std::uint64_t history_revision_ = 0;

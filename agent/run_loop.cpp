@@ -42,6 +42,12 @@ struct RunLoopState {
         const auto now = options.now(); const auto duration = std::chrono::duration_cast<ToolTime::duration>(options.timeout);
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = now+duration; record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt));
+        record->versions_ = public_model_versions(config); auto& versions = record->versions_;
+        versions.application_commit = options.version_labels.application_commit; versions.build = options.version_labels.build;
+        versions.prompt_template = options.version_labels.prompt_template; versions.model_profile = options.version_labels.model_profile;
+        versions.policy = options.policy.revision;
+        if (options.tools) for (const auto& tool : options.tools->descriptions()) versions.tools.push_back({tool.id,tool.version,tool.instance,{},{}});
+        validate_trace_versions(versions);
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,

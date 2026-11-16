@@ -69,6 +69,12 @@ std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
     for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description.model);
     return result;
 }
+// 只复制与当前模型可见集合一致的公开描述，不扩大快照成员。
+std::vector<ToolDescription> ToolSnapshot::descriptions() const {
+    std::vector<ToolDescription> result;
+    for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description);
+    return result;
+}
 // 仅从本运行的成员中选择目标，并在使用前重新核对授权及参数。
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {

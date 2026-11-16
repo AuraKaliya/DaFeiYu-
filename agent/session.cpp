@@ -88,6 +88,8 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
 }
 // 只复制确认值，不推进模型、工具或控制决定。
 std::vector<ConfirmationSnapshot> TurnRequest::confirmations() const { return confirmations_ ? confirmations_->snapshot() : std::vector<ConfirmationSnapshot>{}; }
+// 只复制普通追踪需要的确认元数据，不包含待审参数或命令。
+std::vector<ConfirmationSummary> TurnRequest::confirmation_steps() const { return confirmations_ ? confirmations_->summaries() : std::vector<ConfirmationSummary>{}; }
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)

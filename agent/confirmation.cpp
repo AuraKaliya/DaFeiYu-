@@ -62,6 +62,15 @@ std::vector<ConfirmationSnapshot> ConfirmationBook::snapshot() const {
     for (const auto& entry : entries_) result.push_back(entry.value);
     return result;
 }
+// 只复制可公开的身份、修订和状态，不借用原确认记录或参数。
+std::vector<ConfirmationSummary> ConfirmationBook::summaries() const {
+    std::vector<ConfirmationSummary> result; result.reserve(entries_.size());
+    for (const auto& entry : entries_) {
+        const auto& value = entry.value; const auto& target = value.target;
+        result.push_back({value.id,target.candidate,target.attempt,value.revision,target.goal_revision,target.policy_revision,value.state});
+    }
+    return result;
+}
 // 读取等待数量，不以当前时钟推断或隐藏尚未推进的原记录状态。
 std::size_t ConfirmationBook::waiting() const noexcept {
     std::size_t count = 0;

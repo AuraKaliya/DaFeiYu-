@@ -26,6 +26,10 @@ struct TraceVersions {
     std::optional<std::uint64_t> policy;
     std::vector<ToolTraceVersion> tools;
 };
+// 宿主显式提供的公开版本标签；供应商、模型、策略和工具版本由实际运行另行采集。
+struct RunVersionLabels {
+    std::optional<std::string> application_commit, build, prompt_template, model_profile;
+};
 // 校验节点层级，拒绝不完整路径及未知种类。
 void validate_trace_id(const TraceNodeId& id);
 // 由合法身份计算唯一父节点；根运行没有父节点。

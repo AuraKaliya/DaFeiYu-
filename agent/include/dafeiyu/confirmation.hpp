@@ -45,6 +45,13 @@ struct ConfirmationReceipt {
     // 比较原命令回执，重试返回原值而非新执行许可。
     bool operator==(const ConfirmationReceipt&) const = default;
 };
+// 普通诊断可读取的确认元数据，不含参数、调用凭证或可重放命令。
+struct ConfirmationSummary {
+    runtime::DomainId id = 0, candidate = 0;
+    AttemptId attempt;
+    std::uint64_t revision = 0, goal_revision = 0, policy_revision = 0;
+    ConfirmationState state = ConfirmationState::waiting;
+};
 // 从已授权候选生成完整动作绑定，保留规范参数以供确认与执行前精确比较。
 ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selection, const model::ToolCall& call, runtime::DomainId candidate = 0);
 // 运行内有界确认账本，只拥有值记录，不占用工具顺序域、DLL 或业务完成权。
@@ -60,6 +67,8 @@ class ConfirmationBook {
     runtime::DomainId offer(ConfirmationTarget target);
     // 复制可信控制入口所需的完整记录，不推进或批准动作。
     std::vector<ConfirmationSnapshot> snapshot() const;
+    // 复制无正文状态摘要，完整待审参数仍只由可信控制查询取得。
+    std::vector<ConfirmationSummary> summaries() const;
     // 返回已登记记录数，已终止记录仍占运行内回执容量。
     std::size_t size() const noexcept { return entries_.size(); }
     // 返回等待用户决定的条数，不导出参数或改变到期状态。
