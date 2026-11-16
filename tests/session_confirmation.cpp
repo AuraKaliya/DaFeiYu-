@@ -13,6 +13,7 @@ using namespace dfy::model;
 using namespace dfy::runtime;
 using namespace dfy::plugins;
 using namespace dfy::tests;
+enum class Case { approve, deny, cancel_wait, expire_wait, unload, cancel_inflight, cancel_in_rule, deny_in_rule, throw_in_rule };
 // 报告正式确认流程违反执行或资源约束。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 // 验证无效决定明确拒绝，不接受静默忽略为成功。
@@ -28,7 +29,7 @@ void until(Session& session, const auto& condition) {
 }
 // 用真实 C DLL 验证等待、批准、拒绝、取消、到期及卸载，不调用模型服务。
 // 步骤：建立固定模型序列及原生实例 → 等待并查询 → 提交决定或停止 → 核对唯一动作和资源退出。
-void native(const Manifest& manifest, const std::filesystem::path& settings, unsigned mode) {
+void native(const Manifest& manifest, const std::filesystem::path& settings, Case mode) {
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),2,8);
     auto instance = std::make_shared<PluginInstance>(manifest,settings,channel);
     check(!instance->create() && !instance->start(),"native setup failed");
@@ -37,42 +38,61 @@ void native(const Manifest& manifest, const std::filesystem::path& settings, uns
     dfy::platform::DynamicLibrary counter(manifest.entry);
     const auto count = reinterpret_cast<uint32_t (DFY_V2_CALL*)(uint32_t)>(counter.symbol("dfy_tool_test_count")); const auto starts = count(0), effects = count(1);
     ScriptStep first; first.last_text = "goal"; first.tool_names = {name}; first.response = Response{{Role::assistant,"",{{"call",name,"{}"}}},FinishReason::tool_calls};
-    ScriptStep last; last.last_role = Role::tool; last.last_tool_id = "call"; last.tool_names = mode == 4 ? std::vector<std::string>{} : std::vector<std::string>{name};
+    ScriptStep last; last.last_role = Role::tool; last.last_tool_id = "call"; last.tool_names = mode == Case::unload ? std::vector<std::string>{} : std::vector<std::string>{name};
     last.response = Response{{Role::assistant,"done"}}; ScenarioSpec spec{1,"native_confirmation",1,{},{first,last},2};
-    if (mode == 2 || mode == 3) { spec.steps.resize(1); spec.expected_model_requests = 1; }
+    const bool cancelled = mode == Case::cancel_wait || mode == Case::expire_wait || mode == Case::cancel_inflight || mode == Case::cancel_in_rule;
+    const bool action = mode == Case::approve || mode == Case::cancel_inflight;
+    if (cancelled) { spec.steps.resize(1); spec.expected_model_requests = 1; }
     ScriptedModel model(std::move(spec)); Session session({},channel,model.backend()); ConfirmationCaller caller, stranger; RunOptions options;
     options.tools = scope; options.now = model.clock(); options.confirmation_caller = caller; options.policy.confirm_changes = true;
-    const auto request = session.begin("goal",options); until(session,[&] { return !request->confirmations().empty(); });
+    std::shared_ptr<TurnRequest> request;
+    // 在批准后的工具前控制点注入停止；初次等待不改变原候选。
+    // 步骤：确认当前为已批准候选 → 按场景取消、拒绝或抛错 → 其余边界放行。
+    options.extension = [&](auto point,const auto&) -> PolicyDecision {
+        if (point == ControlPoint::tool_start && request && !request->confirmations().empty() &&
+            request->confirmations().front().state == ConfirmationState::approved) {
+            if (mode == Case::cancel_in_rule) request->request_cancel(CancelReason::user);
+            if (mode == Case::deny_in_rule) return {PolicyVerdict::deny,PolicyReason::source_denied};
+            if (mode == Case::throw_in_rule) throw std::runtime_error("controlled failure after approval");
+        }
+        return {PolicyVerdict::allow,PolicyReason::none};
+    };
+    request = session.begin("goal",options); until(session,[&] { return !request->confirmations().empty(); });
     for (unsigned i = 0; i < 4; ++i) session.advance();
     check(count(0) == starts && request->operation()->state() == OperationState::pending && request->tool_steps()[0].confirmation_state == ConfirmationState::waiting,
         "waiting executed native tool or settled run");
     std::ostringstream status; dfy::app::write_turn_status(status,request->diagnostics());
     check(status.str().find("Confirmations=1; waiting=1") != std::string::npos && status.str().find("goal") == std::string::npos &&
         status.str().find(name) == std::string::npos,"waiting status missing or leaked business text");
-    const auto value = request->confirmations().front(); ConfirmationCommand command{1,value.id,value.revision,value.target,mode != 1};
+    const auto value = request->confirmations().front(); ConfirmationCommand command{1,value.id,value.revision,value.target,mode != Case::deny};
     rejects([&] { session.decide(stranger,command); });
     auto modified = command; modified.expected.arguments = R"({"changed":true})"; rejects([&] { session.decide(caller,modified); });
     std::optional<ConfirmationReceipt> receipt;
-    if (mode == 2) { request->request_cancel(CancelReason::user); rejects([&] { session.decide(caller,command); }); }
-    else if (mode == 3) { model.advance_clock(options.timeout); rejects([&] { session.decide(caller,command); }); }
-    else if (mode == 4) {
+    if (mode == Case::cancel_wait) { request->request_cancel(CancelReason::user); rejects([&] { session.decide(caller,command); }); }
+    else if (mode == Case::expire_wait) { model.advance_clock(options.timeout); rejects([&] { session.decide(caller,command); }); }
+    else if (mode == Case::unload) {
         check(instance->shutdown() == ShutdownResult::closed,"waiting pinned native instance"); registration.revoke();
         rejects([&] { session.decide(caller,command); });
     } else { receipt = session.decide(caller,command); check(session.decide(caller,command) == *receipt,"decision retry changed receipt"); }
     check(count(0) == starts,"decision command executed action inline");
+    if (mode == Case::cancel_inflight) {
+        until(session,[&] { return count(1) != effects; });
+        check(request->exit()->state() == OperationState::pending,"applied effect forged actual exit");
+        request->request_cancel(CancelReason::user);
+    }
     until(session,[&] { return request->exit()->state() == OperationState::succeeded; }); model.verify_complete();
-    check(count(0)-starts == (mode == 0 ? 1u : 0u) && count(1)-effects == (mode == 0 ? 1u : 0u),"confirmation repeated or bypassed action");
-    check(request->operation()->state() == (mode == 2 || mode == 3 ? OperationState::cancelled : OperationState::succeeded),"confirmation corrupted run outcome");
+    check(count(0)-starts == (action ? 1u : 0u) && count(1)-effects == (action ? 1u : 0u),"confirmation repeated or bypassed action");
+    check(request->operation()->state() == (cancelled ? OperationState::cancelled : OperationState::succeeded),"confirmation corrupted run outcome");
     check(!request->diagnostics().waiting_confirmations && request->diagnostics().confirmation_requests == 1,"settled run still waiting for decision");
-    if (receipt) check(session.decide(caller,command) == *receipt && count(0)-starts == (mode == 0 ? 1u : 0u),"completed receipt replayed action");
+    if (receipt) check(session.decide(caller,command) == *receipt && count(0)-starts == (action ? 1u : 0u),"completed receipt replayed action");
     const auto trace = request->trace_delta(); std::vector<TraceFact> changes;
     for (const auto& fact : trace.facts) if (fact.kind == TraceFactKind::confirmation_changed) changes.push_back(fact);
-    check(changes.size() == (mode == 0 ? 3u : 2u) && changes.front().confirmation == ConfirmationState::waiting &&
+    check(changes.size() == (receipt && mode != Case::deny ? 3u : 2u) && changes.front().confirmation == ConfirmationState::waiting &&
         changes.back().confirmation == request->confirmations().front().state,"confirmation timeline lost or duplicated changes");
     for (std::size_t i = 0; i < changes.size(); ++i) check(changes[i].source_revision == i+1 &&
         changes[i].related == request->tool_steps()[0].candidate && trace_parent(changes[i].subject) ==
         TraceNodeId{request->run_id(),TraceNodeKind::attempt,1,1},"confirmation lost candidate or parent association");
-    if (mode == 0) check(std::any_of(trace.facts.begin(),trace.facts.end(),[](const auto& fact) {
+    if (action) check(std::any_of(trace.facts.begin(),trace.facts.end(),[](const auto& fact) {
         return fact.kind == TraceFactKind::tool_changed && fact.effect == ToolEffect::applied && fact.exit == OperationState::pending;
     }),"tool effect was hidden until actual exit");
     check(instance->shutdown() == ShutdownResult::closed,"confirmation result pinned native instance");
@@ -82,7 +102,8 @@ void native(const Manifest& manifest, const std::filesystem::path& settings, uns
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"expected package and settings"); const auto manifest = load_manifest(argv[1]);
-        for (unsigned mode = 0; mode < 5; ++mode) native(manifest,argv[2],mode);
+        for (const auto mode : {Case::approve,Case::deny,Case::cancel_wait,Case::expire_wait,Case::unload,Case::cancel_inflight,
+            Case::cancel_in_rule,Case::deny_in_rule,Case::throw_in_rule}) native(manifest,argv[2],mode);
         std::cout << "Session confirmation checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
