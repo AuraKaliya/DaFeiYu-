@@ -49,6 +49,7 @@ TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     result.model_exit = model_ ? model_->exit()->state() : completed_model_exit_;
     result.notifications = notifications_;
     result.model_requests = model_requests_; result.tool_requests = tool_requests_; result.stop_reason = stop_reason_;
+    if (confirmations_) { result.confirmation_requests = confirmations_->size(); result.waiting_confirmations = confirmations_->waiting(); }
     return result;
 }
 // 在固定槽位记录首次发生的生命周期事实，重复推进不追加重复项。

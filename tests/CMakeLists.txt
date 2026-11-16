@@ -105,7 +105,7 @@ add_test(NAME agent.session_tool_loop COMMAND dfy_session_tool_loop_tests "$<TAR
 set_tests_properties(agent.session_tool_loop PROPERTIES TIMEOUT 15)
 # 验证正式会话的可信确认入口及真实 DLL 等待、卸载与唯一效果。
 add_executable(dfy_session_confirmation_tests session_confirmation.cpp)
-target_link_libraries(dfy_session_confirmation_tests PRIVATE dfy_plugin_tools dfy_build_options)
+target_link_libraries(dfy_session_confirmation_tests PRIVATE dfy_plugin_tools dfy_terminal dfy_build_options)
 add_dependencies(dfy_session_confirmation_tests dfy_tools_fixture)
 set_target_properties(dfy_session_confirmation_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/session_confirmation.cpp")

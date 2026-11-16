@@ -109,6 +109,7 @@ void write_turn_status(std::ostream& output, const agent::TurnDiagnostics& snaps
         << (snapshot.model_exit == runtime::OperationState::succeeded ? "confirmed" : "waiting") << '\n'
         << "Run exit=" << (snapshot.exit == runtime::OperationState::succeeded ? "confirmed" : "waiting")
         << "; model requests=" << snapshot.model_requests << "; tool candidates=" << snapshot.tool_requests << '\n'
+        << "Confirmations=" << snapshot.confirmation_requests << "; waiting=" << snapshot.waiting_confirmations << '\n'
         << "Stop reason=" << stop_name(snapshot.stop_reason) << '\n';
 
     const auto end = snapshot.exited.value_or(std::chrono::steady_clock::now());

@@ -5,6 +5,7 @@
 
 namespace dfy::agent {
 namespace {
+constexpr std::size_t confirmation_bytes = 2*64*1024+2048;
 // 用目标范围及规范参数识别同一动作，调用 ID、策略修订和插件重载不消除原拒绝。
 bool same_action(const ConfirmationTarget& left, const ConfirmationTarget& right) {
     return left.goal_revision == right.goal_revision && left.tool_id == right.tool_id && left.arguments == right.arguments;
@@ -20,9 +21,11 @@ ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolS
         selected.description.version,selected.description.id,call.id,call.name,nlohmann::json::parse(call.arguments).dump(),context.deadline};
 }
 // 固定容量和宿主凭证，等待记录不取得任何工具资源。
-ConfirmationBook::ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit) : run_(run),caller_(caller),limit_(limit) {
+ConfirmationBook::ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit, std::shared_ptr<runtime::Budget> parent)
+    : run_(run),caller_(caller),limit_(limit) {
     if (!run.session || !run.sequence || !limit || limit > 64) throw std::invalid_argument("confirmation: invalid binding or capacity");
     entries_.reserve(limit);
+    budget_ = std::make_shared<runtime::Budget>(runtime::BudgetAmount{limit,limit*confirmation_bytes},parent);
 }
 // 只为合法完整目标登记有限等待，拒绝动作不得靠新调用身份重新询问。
 // 步骤：校验范围及容量 → 检查原目标拒绝记录 → 签发请求并保存值记录。
@@ -41,13 +44,20 @@ runtime::DomainId ConfirmationBook::offer(ConfirmationTarget target) {
             throw std::logic_error("confirmation: action already denied for this goal");
     }
     if (entries_.size() == limit_) throw std::length_error("confirmation: request limit exhausted");
-    const auto id = runtime::next_domain(); entries_.push_back({{id,1,std::move(target)}}); return id;
+    auto charge = budget_->acquire({1,confirmation_bytes});
+    const auto id = runtime::next_domain(); entries_.push_back({std::move(charge),{id,1,std::move(target)}}); return id;
 }
 // 返回完整值副本，调用本身不会改变请求修订或触发执行。
 std::vector<ConfirmationSnapshot> ConfirmationBook::snapshot() const {
     std::vector<ConfirmationSnapshot> result; result.reserve(entries_.size());
     for (const auto& entry : entries_) result.push_back(entry.value);
     return result;
+}
+// 读取等待数量，不以当前时钟推断或隐藏尚未推进的原记录状态。
+std::size_t ConfirmationBook::waiting() const noexcept {
+    std::size_t count = 0;
+    for (const auto& entry : entries_) if (entry.value.state == ConfirmationState::waiting) ++count;
+    return count;
 }
 // 按原请求定位记录，不接受跨运行的猜测身份。
 ConfirmationBook::Entry& ConfirmationBook::find(runtime::DomainId request) {

@@ -43,7 +43,7 @@ struct RunLoopState {
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = now+duration; record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt));
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
-        if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit);
+        if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget);
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
             ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now);
         ++resident_count;

@@ -29,6 +29,7 @@ struct TurnDiagnostics {
     TurnNotifications notifications;
     AttemptId attempt;
     std::size_t model_requests = 0, tool_requests = 0;
+    std::size_t confirmation_requests = 0, waiting_confirmations = 0;
     PolicyReason stop_reason = PolicyReason::none;
 };
 enum class RunFactKind { accepted, cancel_requested, model_finished, settled, exited };

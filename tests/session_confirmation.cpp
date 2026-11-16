@@ -3,6 +3,8 @@
 #include <dafeiyu/session.hpp>
 #include <iostream>
 #include <thread>
+#include "diagnostics.hpp"
+#include <sstream>
 
 namespace {
 using namespace dfy::agent;
@@ -43,6 +45,9 @@ void native(const Manifest& manifest, const std::filesystem::path& settings, uns
     for (unsigned i = 0; i < 4; ++i) session.advance();
     check(count(0) == starts && request->operation()->state() == OperationState::pending && request->tool_steps()[0].confirmation_state == ConfirmationState::waiting,
         "waiting executed native tool or settled run");
+    std::ostringstream status; dfy::app::write_turn_status(status,request->diagnostics());
+    check(status.str().find("Confirmations=1; waiting=1") != std::string::npos && status.str().find("goal") == std::string::npos &&
+        status.str().find(name) == std::string::npos,"waiting status missing or leaked business text");
     const auto value = request->confirmations().front(); ConfirmationCommand command{1,value.id,value.revision,value.target,mode != 1};
     rejects([&] { session.decide(stranger,command); });
     auto modified = command; modified.expected.arguments = R"({"changed":true})"; rejects([&] { session.decide(caller,modified); });
@@ -57,6 +62,7 @@ void native(const Manifest& manifest, const std::filesystem::path& settings, uns
     until(session,[&] { return request->exit()->state() == OperationState::succeeded; }); model.verify_complete();
     check(count(0)-starts == (mode == 0 ? 1u : 0u) && count(1)-effects == (mode == 0 ? 1u : 0u),"confirmation repeated or bypassed action");
     check(request->operation()->state() == (mode == 2 || mode == 3 ? OperationState::cancelled : OperationState::succeeded),"confirmation corrupted run outcome");
+    check(!request->diagnostics().waiting_confirmations && request->diagnostics().confirmation_requests == 1,"settled run still waiting for decision");
     if (receipt) check(session.decide(caller,command) == *receipt && count(0)-starts == (mode == 0 ? 1u : 0u),"completed receipt replayed action");
     check(instance->shutdown() == ShutdownResult::closed,"confirmation result pinned native instance");
 }

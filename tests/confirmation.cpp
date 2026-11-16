@@ -72,9 +72,24 @@ void denial_scope() {
     const auto denied = finished.offer(other); finished.decide(caller,{4,denied,1,other,false},{});
     check(finished.state(done) == ConfirmationState::consumed,"later denial rewrote consumed action fact");
 }
+// 验证等待和幂等回执共用有界预算，失败不占条目，最后释放前仍计费。
+void budget() {
+    ConfirmationCaller caller; auto small = std::make_shared<Budget>(BudgetAmount{1,256});
+    ConfirmationBook denied({1,1},caller,1,small); rejects([&] { denied.offer(target()); });
+    check(!small->used().items && !denied.size(),"failed confirmation consumed budget or record");
+    auto parent = std::make_shared<Budget>(BudgetAmount{1,256*1024});
+    {
+        ConfirmationBook book({1,1},caller,2,parent); const auto id = book.offer(target());
+        check(parent->used().items == 1 && parent->used().bytes && book.waiting() == 1,"waiting confirmation uncharged");
+        auto other = target(); other.call_id = "next"; rejects([&] { book.offer(other); });
+        book.decide(caller,{1,id,1,target(),true},{}); check(book.consume(id,target(),{}),"budgeted approval unavailable");
+        check(!book.waiting() && book.size() == 1 && parent->used().items == 1,"retained receipt released charge early");
+    }
+    check(!parent->used().items && !parent->used().bytes,"confirmation budget leaked");
+}
 }
 // 只验证宿主确认值契约，不调用工具、模型或 UI。
 int main() {
-    try { decisions(); stops(); denial_scope(); std::cout << "Confirmation checks passed\n"; return 0; }
+    try { decisions(); stops(); denial_scope(); budget(); std::cout << "Confirmation checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

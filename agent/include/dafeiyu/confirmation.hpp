@@ -48,8 +48,8 @@ ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolS
 // 运行内有界确认账本，只拥有值记录，不占用工具顺序域、DLL 或业务完成权。
 class ConfirmationBook {
   public:
-    // 固定运行、宿主调用凭证和一至 64 条确认容量。
-    ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit = 16);
+    // 固定运行、宿主凭证及一至 64 条容量，每条记录和原命令均计入分层预算。
+    ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit = 16, std::shared_ptr<runtime::Budget> parent = {});
     // 禁止复制确认状态，避免同一批准拥有多个消费入口。
     ConfirmationBook(const ConfirmationBook&) = delete;
     // 禁止赋值或移动覆盖已签发的确认记录。
@@ -58,6 +58,10 @@ class ConfirmationBook {
     runtime::DomainId offer(ConfirmationTarget target);
     // 复制可信控制入口所需的完整记录，不推进或批准动作。
     std::vector<ConfirmationSnapshot> snapshot() const;
+    // 返回已登记记录数，已终止记录仍占运行内回执容量。
+    std::size_t size() const noexcept { return entries_.size(); }
+    // 返回等待用户决定的条数，不导出参数或改变到期状态。
+    std::size_t waiting() const noexcept;
     // 读取原记录状态，不从过去的批准回执推导当前许可。
     ConfirmationState state(runtime::DomainId request) const;
     // 复制单项原目标，宿主决定入口用其重新核对当前授权，不相信命令正文替换目标。
@@ -73,12 +77,13 @@ class ConfirmationBook {
     // 在停止或时间推进时封闭未消费记录，不因超时自动批准。
     void advance(ToolTime now, runtime::CancelReason cancellation = runtime::CancelReason::none);
   private:
-    struct Entry { ConfirmationSnapshot value; std::optional<ConfirmationCommand> command; ConfirmationReceipt receipt; };
+    struct Entry { runtime::BudgetLease charge; ConfirmationSnapshot value; std::optional<ConfirmationCommand> command; ConfirmationReceipt receipt; };
     // 按签发身份定位有界记录，未知请求明确拒绝。
     Entry& find(runtime::DomainId request);
     const RunId run_;
     const ConfirmationCaller caller_;
     const std::size_t limit_;
+    std::shared_ptr<runtime::Budget> budget_;
     std::vector<Entry> entries_;
 };
 }
