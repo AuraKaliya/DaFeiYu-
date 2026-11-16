@@ -2,8 +2,10 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace dfy::agent {
+static_assert(std::is_trivially_copyable_v<TraceFact>,"execution trace facts must remain allocation-free values");
 // 构造时分配固定槽，后续执行期间写入只作值复制。
 RunJournal::RunJournal(RunId run, std::size_t capacity) : run_(run) {
     validate_trace_id({run});
@@ -14,8 +16,7 @@ RunJournal::RunJournal(RunId run, std::size_t capacity) : run_(run) {
 // 步骤：校验来源与节点 → 签发单调修订 → 写入空槽或替换最旧保留项。
 void RunJournal::append(TraceFact fact) noexcept {
     try {
-        validate_trace_id(fact.subject);
-        if (fact.subject.run != run_ || static_cast<unsigned>(fact.kind) > static_cast<unsigned>(TraceFactKind::exited) ||
+        if (!valid_trace_id(fact.subject) || fact.subject.run != run_ || static_cast<unsigned>(fact.kind) > static_cast<unsigned>(TraceFactKind::exited) ||
             revision_ == std::numeric_limits<std::uint64_t>::max()) { failed_ = true; return; }
         fact.revision = ++revision_; fact.observed = std::chrono::steady_clock::now();
         if (size_ < slots_.size()) { slots_[(begin_+size_)%slots_.size()] = fact; ++size_; }

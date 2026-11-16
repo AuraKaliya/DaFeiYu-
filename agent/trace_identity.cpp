@@ -14,27 +14,31 @@ void version_text(const std::string& value) {
 // 只校验显式提供的标识，缺失版本不构造伪默认值。
 void optional_text(const std::optional<std::string>& value) { if (value) version_text(*value); }
 }
-// 校验节点所属运行及分层路径，不创建操作或改变运行状态。
-// 步骤：检查运行身份 → 根据节点类型核对路径字段 → 拒绝不支持的结构。
-void validate_trace_id(const TraceNodeId& id) {
-    if (!id.run.session || !id.run.sequence) throw std::invalid_argument("trace: run identity required");
+// 直接判断运行及分层路径，错误身份不构造异常或分配错误文本。
+// 步骤：检查运行身份 → 按节点类型核对路径字段 → 返回合法性。
+bool valid_trace_id(const TraceNodeId& id) noexcept {
+    if (!id.run.session || !id.run.sequence) return false;
     switch (id.kind) {
     case TraceNodeKind::run:
-        if (!id.step && !id.attempt && !id.local) return;
+        if (!id.step && !id.attempt && !id.local) return true;
         break;
     case TraceNodeKind::step:
-        if (id.step && !id.attempt && !id.local) return;
+        if (id.step && !id.attempt && !id.local) return true;
         break;
     case TraceNodeKind::attempt:
-        if (id.step && id.attempt && !id.local) return;
+        if (id.step && id.attempt && !id.local) return true;
         break;
     case TraceNodeKind::model:
     case TraceNodeKind::tool:
     case TraceNodeKind::control:
-        if (id.step && id.attempt && id.local) return;
+        if (id.step && id.attempt && id.local) return true;
         break;
     }
-    throw std::invalid_argument("trace: invalid node hierarchy");
+    return false;
+}
+// 在构造和查询边界以明确错误报告不合法身份，执行期间使用无分配判断。
+void validate_trace_id(const TraceNodeId& id) {
+    if (!valid_trace_id(id)) throw std::invalid_argument("trace: invalid node hierarchy");
 }
 // 只从原路径派生父节点，局部编号不跨运行关联。
 std::optional<TraceNodeId> trace_parent(const TraceNodeId& id) {

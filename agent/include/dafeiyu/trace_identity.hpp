@@ -32,6 +32,8 @@ struct RunVersionLabels {
 };
 // 校验节点层级，拒绝不完整路径及未知种类。
 void validate_trace_id(const TraceNodeId& id);
+// 无分配地判断节点层级，供执行期间的故障隔离投影使用。
+bool valid_trace_id(const TraceNodeId& id) noexcept;
 // 由合法身份计算唯一父节点；根运行没有父节点。
 std::optional<TraceNodeId> trace_parent(const TraceNodeId& id);
 // 校验有界公开版本清单，空可选值保持未知，不自动补版本。
