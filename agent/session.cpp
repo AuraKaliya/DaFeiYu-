@@ -60,6 +60,18 @@ void TurnRequest::record_fact(RunFactKind kind) noexcept {
     const auto current = diagnostics();
     fact = {++fact_count_,kind,std::chrono::steady_clock::now(),current.result,current.cancellation,
         current.model.outcome,current.failure,current.attempt,current.model.request};
+    if (kind == RunFactKind::model_finished) return;
+    TraceFact projection; projection.subject = {run_id()}; projection.result = current.result; projection.exit = current.exit;
+    projection.cancellation = current.cancellation; projection.stop_reason = current.stop_reason;
+    projection.kind = kind == RunFactKind::accepted ? TraceFactKind::accepted : kind == RunFactKind::cancel_requested ? TraceFactKind::cancel_requested :
+        kind == RunFactKind::settled ? TraceFactKind::settled : TraceFactKind::exited;
+    journal_.append(projection);
+}
+// 只在完整上下文已成为权威历史后投影一次提交，不把工具占位当成已提交事实。
+void TurnRequest::record_history() noexcept {
+    TraceFact fact; fact.subject = {run_id(),TraceNodeKind::attempt,attempt_.step.sequence,attempt_.sequence};
+    fact.kind = TraceFactKind::history_committed; fact.source_revision = ++history_revision_; fact.history_messages = context_->committed()->size();
+    journal_.append(fact);
 }
 // 复制诊断并按首次记录顺序排列事实，不触发后台结果接收或事件消费。
 // 步骤：取得诊断值副本 → 按修订号复制已记录项 → 返回固定容量快照。

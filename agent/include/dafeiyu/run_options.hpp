@@ -15,6 +15,7 @@ struct RunOptions {
     PolicyExtension extension;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;
+    std::size_t trace_capacity = 256;
     std::shared_ptr<runtime::Budget> budget;
 };
 }

@@ -35,7 +35,7 @@ struct RunLoopState {
     // 步骤：创建原回合与模型入口 → 校验选项 → 预留步骤及上下文 → 准备工具执行器。
     RunLoopState(RunId run, model::Config value, model::Backend backend, std::shared_ptr<const MessageHistory> history,
         std::string prompt, RunOptions settings)
-        : record(new TurnRequest(run)), config(std::move(value)), models(1,std::move(backend)), options(std::move(settings)),
+        : record(new TurnRequest(run,settings.trace_capacity)), config(std::move(value)), models(1,std::move(backend)), options(std::move(settings)),
           policy(run,options.goal_revision,options.policy) {
         if (!options.now || options.timeout <= std::chrono::milliseconds::zero() || options.timeout > std::chrono::hours(1) ||
             !options.no_progress_limit || options.no_progress_limit > 64) throw std::invalid_argument("run: invalid limits");
@@ -112,6 +112,9 @@ struct RunLoopState {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         stage = TurnFailure::control; auto current = control(); current.attempt.step.sequence = record->model_requests_+1;
         const auto decision = restrict_policy(policy.before_model(current),options.extension,ControlPoint::model_request,current);
+        TraceFact policy_fact; policy_fact.subject = {record->run_id(),TraceNodeKind::attempt,current.attempt.step.sequence,current.attempt.sequence};
+        policy_fact.kind = TraceFactKind::policy_decision; policy_fact.control_point = ControlPoint::model_request; policy_fact.decision = decision;
+        record->journal_.append(policy_fact);
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
@@ -119,14 +122,20 @@ struct RunLoopState {
         auto request = models.submit_request(config,std::move(input));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
+        TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
+        submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
     }
     // 保存已退出模型的原状态和用量，释放请求槽后才允许下一次提交。
     // 步骤：复制真实状态及可选用量 → 保存步骤与首个退出事实 → 归还模型请求槽。
     void collect_model() {
         ModelStepSnapshot value{record->attempt_,record->model_->diagnostics(),record->model_->operation()->state(),record->model_->exit()->state()};
         if (value.result == runtime::OperationState::succeeded) value.usage = record->model_->response().usage;
+        value.observed_exit = std::chrono::steady_clock::now();
         record->model_steps_.push_back(value); record->completed_call_ = value.call;
         record->completed_model_result_ = value.result; record->completed_model_exit_ = value.exit;
+        TraceFact fact; fact.subject = {record->run_id(),TraceNodeKind::model,value.attempt.step.sequence,value.attempt.sequence,value.call.request};
+        fact.kind = TraceFactKind::model_exited; fact.result = value.result; fact.exit = value.exit; fact.model_outcome = value.call.outcome;
+        record->journal_.append(fact);
         record->record_fact(RunFactKind::model_finished); record->model_.reset(); models.collect();
     }
     // 仅在全部真实工作退出后结算运行退出，不丢弃未完成工具占位。
@@ -148,6 +157,7 @@ struct RunLoopState {
             if (batch) {
                 stage = TurnFailure::tool_execution;
                 if (batch->advance(control())) {
+                    record->record_history();
                     const auto continuation = batch->continuation(); batch = nullptr; interrupt();
                     if (record->operation()->state() == OperationState::pending) {
                         stage = TurnFailure::control;
@@ -166,6 +176,7 @@ struct RunLoopState {
                 if (response && record->operation()->state() == OperationState::pending) {
                     if (response->finish == model::FinishReason::stop) {
                         stage = TurnFailure::history_commit; record->context_->finish_text(response->message.content);
+                        record->record_history();
                         record->answer_ = std::move(response->message.content); record->result_.settle(OperationState::succeeded);
                         record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
                     } else if (response->finish == model::FinishReason::tool_calls && record->tools_) {

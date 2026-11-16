@@ -5,6 +5,7 @@
 #include <dafeiyu/run_context.hpp>
 #include <dafeiyu/tool_batch.hpp>
 #include <dafeiyu/run_options.hpp>
+#include <dafeiyu/run_journal.hpp>
 #include <array>
 
 namespace dfy::agent {
@@ -50,6 +51,7 @@ struct ModelStepSnapshot {
     model::CallDiagnostics call;
     runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
     std::optional<model::Usage> usage;
+    TurnDiagnostics::TimePoint observed_exit;
 };
 // 固定运行生命周期快照；model_finished 保留首个模型退出，全部步骤另由专用查询返回。
 struct RunSnapshot {
@@ -92,13 +94,19 @@ class TurnRequest {
     std::vector<BatchToolSnapshot> tool_steps() const;
     // 返回可信控制界面的确认记录和待审参数；普通诊断与通知不包含这些正文。
     std::vector<ConfirmationSnapshot> confirmations() const;
+    // 返回无正文的有界增量；查询不推进运行，旧游标和投影故障由结果明确说明。
+    TraceDelta trace_delta(std::uint64_t after = 0, std::size_t limit = 256) const { return journal_.read(after,limit); }
   private:
     friend class Session;
     friend class RunLoop;
     friend struct RunLoopState;
     // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
-    explicit TurnRequest(RunId run) : attempt_{{run,1},1} {}
+    explicit TurnRequest(RunId run, std::size_t trace_capacity) : attempt_{{run,1},1},journal_(run,trace_capacity) {}
     AttemptId attempt_;
+    RunJournal journal_;
+    // 在完整上下文提交后记录消息数量及提交修订，不复制业务正文。
+    void record_history() noexcept;
+    std::uint64_t history_revision_ = 0;
     // 首次写入指定事实并签发修订号，固定槽位预留确保收尾无需分配。
     void record_fact(RunFactKind kind) noexcept;
     std::array<RunFact,5> facts_{};
