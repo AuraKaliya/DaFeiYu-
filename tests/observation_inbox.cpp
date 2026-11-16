@@ -55,9 +55,29 @@ void source_and_time() {
     ObservationInbox limited({source.id()},1,{2,0}); check(limited.accept(valid,now).status == A::capacity && !limited.latest(source.id(),"object"),"failed byte budget published data");
     source.revoke(); check(inbox.accept(valid,now).status == A::source_revoked,"revoked source admitted");
 }
+// 验证完整重采样的条件替换，迟到、跨集合、过期及容量失败不能清除断档。
+// 步骤：产生断档并固定水位 → 拒绝迟到重采样 → 验证失败保持原值 → 接纳新的完整基线。
+void refresh() {
+    ObservationSource source(1,ObservationTrust::host_verified); const ObservationTime now{}; const auto data = payload();
+    ObservationInbox inbox({source.id()},1,{2,1024}), other({source.id()},1,{2,1024});
+    const auto sample = [&](std::uint64_t revision) { return source.capture({"object",1},revision,now,now+std::chrono::seconds(1),data); };
+    check(inbox.accept(sample(3),now).revision_gap,"initial missing baseline not visible");
+    const auto original = *inbox.refresh_ticket(source.id(),"object"); inbox.accept(sample(4),now);
+    check(inbox.refresh(original,sample(5),now).status == A::stale_refresh,"late refresh overwrote new sample");
+    const auto expected = *inbox.refresh_ticket(source.id(),"object");
+    check(other.refresh(expected,sample(5),now).status == A::stale_refresh,"foreign inbox accepted refresh ticket");
+    check(inbox.refresh(expected,sample(5),now+std::chrono::seconds(1)).status == A::expired &&
+        inbox.latest(source.id(),"object")->revision_gap(),"expired refresh cleared gap");
+    auto held = inbox.latest(source.id(),"object"); inbox.accept(sample(5),now);
+    const auto latest = *inbox.refresh_ticket(source.id(),"object");
+    check(inbox.refresh(latest,sample(6),now).status == A::capacity && inbox.latest(source.id(),"object")->revision_gap(),"failed refresh lost original gap");
+    held.reset(); const auto receipt = inbox.refresh(latest,sample(6),now);
+    check(receipt.status == A::replaced && !receipt.revision_gap && !inbox.latest(source.id(),"object")->revision_gap(),"complete refresh failed to establish baseline");
+    check(inbox.refresh(latest,sample(6),now).status == A::stale_refresh,"refresh ticket reused after watermarks advanced");
+}
 }
 // 只运行合成状态采样，不把用户命令或动作回执送入可合并集合。
 int main() {
-    try { versions_and_budget(); source_and_time(); std::cout << "Observation inbox checks passed\n"; return 0; }
+    try { versions_and_budget(); source_and_time(); refresh(); std::cout << "Observation inbox checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

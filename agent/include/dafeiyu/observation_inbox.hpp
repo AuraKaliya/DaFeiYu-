@@ -3,8 +3,14 @@
 #include <dafeiyu/budget.hpp>
 
 namespace dfy::agent {
-enum class ObservationAdmission { inserted, replaced, duplicate, conflict, stale_revision, stale_generation, not_allowed, future, expired, source_revoked, capacity };
+enum class ObservationAdmission { inserted, replaced, duplicate, conflict, stale_revision, stale_generation, not_allowed, future, expired, source_revoked, capacity, stale_refresh };
 struct ObservationReceipt { ObservationAdmission status; bool revision_gap = false; };
+// 宿主开始完整重采样时固定的原水位；不是模型或载荷可以授予的行动许可。
+struct ObservationRefresh {
+    runtime::DomainId inbox = 0, source = 0;
+    ObservationObject object;
+    std::uint64_t revision = 0;
+};
 class ObservationInbox;
 // 计费的数据持有；只借用载荷，客户端保留本句柄时旧版本继续占用预算。
 class ObservationRecord {
@@ -19,7 +25,7 @@ class ObservationRecord {
     const runtime::StructValue& payload() const noexcept { return *value_.payload(); }
     // 核对原来源和时间资格，不把旧值保留解释为仍然新鲜。
     ObservationValidity validity(ObservationTime now) const noexcept { return value_.validity(now); }
-    // 返回是否曾缺少同一对象代次的中间修订；新连续采样不会静默清除此标记。
+    // 返回尚未用完整重采样处理的修订断档；普通连续采样不会静默清除此标记。
     bool revision_gap() const noexcept { return gap_; }
   private:
     friend class ObservationInbox;
@@ -41,9 +47,16 @@ class ObservationInbox {
     ObservationInbox& operator=(const ObservationInbox&) = delete;
     // 接纳新鲜且获准的状态，按来源／对象保留更高代次或修订；失败保持原值和水位。
     ObservationReceipt accept(const ObservationSnapshot& value, ObservationTime now);
+    // 为已有对象记录完整重采样的期望水位，不触发来源调用。
+    std::optional<ObservationRefresh> refresh_ticket(runtime::DomainId source, std::string_view object) const;
+    // 宿主确认载荷为完整重采样后显式调用；原水位仍匹配且新修订接纳成功才清除断档。
+    ObservationReceipt refresh(const ObservationRefresh& expected, const ObservationSnapshot& value, ObservationTime now);
     // 读取最新保留版本；过期值仍可回顾，调用方须同时检查时效及断档。
     std::shared_ptr<const ObservationRecord> latest(runtime::DomainId source, std::string_view object) const noexcept;
   private:
+    // 共用来源、时效、版本及预算校验；完整基线仅由受保护的刷新入口选择。
+    ObservationReceipt accept_impl(const ObservationSnapshot& value, ObservationTime now, bool baseline);
+    runtime::DomainId id_;
     const std::vector<runtime::DomainId> sources_;
     std::shared_ptr<runtime::Budget> budget_;
     std::vector<std::shared_ptr<const ObservationRecord>> records_;

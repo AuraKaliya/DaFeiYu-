@@ -12,11 +12,13 @@ ObservationInbox::ObservationInbox(std::vector<runtime::DomainId> sources, std::
         throw std::invalid_argument("observations: invalid scope or limits");
     std::set<runtime::DomainId> unique;
     for (const auto source : sources_) if (!source || !unique.insert(source).second) throw std::invalid_argument("observations: invalid source grant");
-    records_.resize(objects); budget_ = std::make_shared<runtime::Budget>(retained,parent);
+    records_.resize(objects); budget_ = std::make_shared<runtime::Budget>(retained,parent); id_ = runtime::next_domain();
 }
+// 普通采样永远不宣称补齐中间遗漏，断档保持到明确的完整重采样。
+ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, ObservationTime now) { return accept_impl(value,now,false); }
 // 只合并状态采样；旧代次、旧修订、冲突或容量不足均不改变当前值。
 // 步骤：检查来源及时效 → 定位对象及版本水位 → 判断重复或断档 → 预留完整预算 → 原子替换记录。
-ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, ObservationTime now) {
+ObservationReceipt ObservationInbox::accept_impl(const ObservationSnapshot& value, ObservationTime now, bool baseline) {
     using A = ObservationAdmission; const auto& incoming = value.metadata();
     if (std::find(sources_.begin(),sources_.end(),incoming.source) == sources_.end()) return {A::not_allowed};
     switch (value.validity(now)) {
@@ -28,7 +30,7 @@ ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, Ob
     auto slot = std::find_if(records_.begin(),records_.end(),[&](const auto& record) {
         return record && record->metadata().source == incoming.source && record->metadata().object.id == incoming.object.id;
     });
-    const bool replacing = slot != records_.end(); bool gap = incoming.revision != 1;
+    const bool replacing = slot != records_.end(); bool gap = !baseline && incoming.revision != 1;
     if (replacing) {
         const auto& record = **slot; const auto& current = record.metadata();
         if (incoming.object.generation < current.object.generation) return {A::stale_generation};
@@ -38,7 +40,7 @@ ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, Ob
                 const bool same = incoming.sampled == current.sampled && incoming.expires == current.expires && value.payload() == record.value_.payload();
                 return {same ? A::duplicate : A::conflict,record.gap_};
             }
-            gap = record.gap_ || incoming.revision-current.revision > 1;
+            gap = !baseline && (record.gap_ || incoming.revision-current.revision > 1);
         }
     } else {
         slot = std::find(records_.begin(),records_.end(),nullptr);
@@ -50,6 +52,21 @@ ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, Ob
         *slot = std::move(accepted);
     } catch (const std::length_error&) { return {A::capacity}; }
     return {replacing ? A::replaced : A::inserted,gap};
+}
+// 固定发起重采样时看到的原对象和修订，未知对象没有可覆盖的基线。
+std::optional<ObservationRefresh> ObservationInbox::refresh_ticket(runtime::DomainId source, std::string_view object) const {
+    const auto current = latest(source,object); if (!current) return {};
+    const auto& data = current->metadata(); return ObservationRefresh{id_,source,data.object,data.revision};
+}
+// 完整重采样不能覆盖期间出现的新状态，也不因失败提前清除断档。
+// 步骤：核对原集合及对象水位 → 检查同代次的新采样 → 复用接纳并原子建立完整基线。
+ObservationReceipt ObservationInbox::refresh(const ObservationRefresh& expected, const ObservationSnapshot& value, ObservationTime now) {
+    const auto current = latest(expected.source,expected.object.id); const auto& incoming = value.metadata();
+    if (expected.inbox != id_ || !current || current->metadata().object.generation != expected.object.generation ||
+        current->metadata().revision != expected.revision || incoming.source != expected.source || incoming.object.id != expected.object.id ||
+        incoming.object.generation != expected.object.generation || incoming.revision <= expected.revision)
+        return {ObservationAdmission::stale_refresh};
+    return accept_impl(value,now,true);
 }
 // 返回只读保留句柄，不刷新时效、推进来源或移除过期水位。
 std::shared_ptr<const ObservationRecord> ObservationInbox::latest(runtime::DomainId source, std::string_view object) const noexcept {
