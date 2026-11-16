@@ -12,6 +12,10 @@ template<class T> bool within(T value, T maximum) { return static_cast<unsigned>
 void operation(const std::optional<runtime::OperationState>& value) {
     if (value) require(within(*value,runtime::OperationState::cancelled));
 }
+// 只比较已知的同域相对时刻，缺失信息保持未知而不是补成零。
+void ordered(std::optional<std::int64_t> earlier, std::optional<std::int64_t> later) {
+    if (earlier && later) require(*earlier <= *later);
+}
 // 定位完整节点身份；未找到返回空，不以相似编号跨节点绑定。
 const TraceNode* find_node(const RunTimeline& value, TraceNodeId id) {
     const auto found = std::find_if(value.nodes.begin(),value.nodes.end(),[&](const auto& node) { return node.id == id; });
@@ -43,6 +47,9 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
         require(std::none_of(value.nodes.begin(),value.nodes.begin()+index,[&](const auto& earlier) { return earlier.id == node.id; }));
         if (node.parent) require(find_node(value,*node.parent));
         operation(node.result); operation(node.exit);
+        ordered(node.submitted_ns,node.accepted_ns); ordered(node.submitted_ns,node.call_started_ns);
+        ordered(node.call_started_ns,node.call_finished_ns); ordered(node.call_finished_ns,node.observed_exit_ns);
+        ordered(node.settled_ns,node.observed_exit_ns);
         require(!node.exit || *node.exit == runtime::OperationState::pending || *node.exit == runtime::OperationState::succeeded);
         if (node.before) decision(*node.before); if (node.after) decision(*node.after);
         if (node.effect) require(within(*node.effect,ToolEffect::unknown));

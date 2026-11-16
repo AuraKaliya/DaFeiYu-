@@ -45,6 +45,8 @@ void corruption() {
     bad = original; bad.delta.facts.back().result = dfy::runtime::OperationState::failed; rejects([&] { review_timeline(bad); });
     bad = original; bad.delta.facts[0].kind = TraceFactKind::model_exited; rejects([&] { review_timeline(bad); });
     bad = original; bad.delta.facts.clear(); bad.delta.latest_revision = 0; rejects([&] { review_timeline(bad); });
+    bad = original; bad.nodes.back().call_started_ns = 10; bad.nodes.back().call_finished_ns = 9; rejects([&] { review_timeline(bad); });
+    bad = original; bad.nodes[0].settled_ns = 100; bad.nodes[0].observed_exit_ns = 99; rejects([&] { review_timeline(bad); });
     check(review_timeline(original).complete_history,"invalid copy mutated original facts");
 }
 }
