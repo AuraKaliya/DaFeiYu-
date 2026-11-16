@@ -32,6 +32,8 @@ struct TurnDiagnostics {
     std::size_t model_requests = 0, tool_requests = 0;
     std::size_t confirmation_requests = 0, waiting_confirmations = 0;
     PolicyReason stop_reason = PolicyReason::none;
+    RunOrigin source = RunOrigin::user_request;
+    std::uint64_t goal_revision = 0;
 };
 enum class RunFactKind { accepted, cancel_requested, model_finished, settled, exited };
 // 已发生的生命周期事实；修订号反映宿主观察顺序，后台时间不必与修订顺序一致。
@@ -100,6 +102,8 @@ class TurnRequest {
     std::vector<ConfirmationSummary> confirmation_steps() const;
     // 返回运行接纳前固定的公开版本，缺失标签保持未知。
     TraceVersions trace_versions() const { return versions_; }
+    // 复制接纳时的来源、对象及修订关联，不保留观察载荷或提供实例。
+    std::vector<ObservationInputFact> observation_inputs() const { return observation_inputs_; }
   private:
     friend class Session;
     friend class RunLoop;
@@ -109,6 +113,9 @@ class TurnRequest {
     AttemptId attempt_;
     RunJournal journal_;
     TraceVersions versions_;
+    std::vector<ObservationInputFact> observation_inputs_;
+    RunOrigin source_ = RunOrigin::user_request;
+    std::uint64_t goal_revision_ = 0;
     // 在完整上下文提交后记录消息数量及提交修订，不复制业务正文。
     void record_history() noexcept;
     std::uint64_t history_revision_ = 0;

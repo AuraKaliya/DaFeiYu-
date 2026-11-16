@@ -38,6 +38,9 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
     for (const auto c : value.key.name_space) require((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.');
     validate_trace_versions(value.versions); validate_trace_id({value.key.run});
+    require(value.goal_revision && within(value.source,RunOrigin::observation_rule) && value.observations.size() <= 4);
+    for (const auto& observation : value.observations) require(observation.source && observation.provider_instance && observation.object.generation &&
+        !observation.object.id.empty() && observation.object.id.size() <= 128 && observation.revision && within(observation.trust,ObservationTrust::host_verified));
     require(within(value.failure,TurnFailure::model_request) && within(value.stop_reason,PolicyReason::policy_failed));
     const auto root = find_node(value,{value.key.run}); require(root && root->result && root->exit);
     TimelineReview report; report.run_exited = root->exit == runtime::OperationState::succeeded;

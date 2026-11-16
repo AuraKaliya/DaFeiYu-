@@ -53,6 +53,9 @@ struct RunTimeline {
     TurnNotifications notifications;
     TurnFailure failure = TurnFailure::none;
     PolicyReason stop_reason = PolicyReason::none;
+    RunOrigin source = RunOrigin::user_request;
+    std::uint64_t goal_revision = 0;
+    std::vector<ObservationInputFact> observations;
 };
 // 投影正式多步当前事实并分页读取历史；历史缺口不会隐藏当前模型、工具及确认状态。
 RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std::uint64_t after = 0, std::size_t limit = 256);

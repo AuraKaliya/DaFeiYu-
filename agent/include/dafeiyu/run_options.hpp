@@ -2,6 +2,7 @@
 #include <dafeiyu/execution_policy.hpp>
 #include <dafeiyu/confirmation.hpp>
 #include <dafeiyu/trace_identity.hpp>
+#include <dafeiyu/observation_input.hpp>
 
 namespace dfy::agent {
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
@@ -11,6 +12,8 @@ struct RunOptions {
     std::uint64_t goal_revision = 1;
     RunOrigin origin = RunOrigin::user_request;
     std::chrono::milliseconds timeout{120000};
+    std::optional<ToolTime> deadline;
+    std::vector<std::shared_ptr<const ObservationRecord>> observations;
     std::size_t no_progress_limit = 3;
     ToolClock now = std::chrono::steady_clock::now;
     PolicyExtension extension;

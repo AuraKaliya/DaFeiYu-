@@ -49,6 +49,7 @@ TurnDiagnostics TurnRequest::diagnostics() const noexcept {
     result.model_exit = model_ ? model_->exit()->state() : completed_model_exit_;
     result.notifications = notifications_;
     result.model_requests = model_requests_; result.tool_requests = tool_requests_; result.stop_reason = stop_reason_;
+    result.source = source_; result.goal_revision = goal_revision_;
     if (confirmations_) { result.confirmation_requests = confirmations_->size(); result.waiting_confirmations = confirmations_->waiting(); }
     return result;
 }

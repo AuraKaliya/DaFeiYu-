@@ -32,7 +32,16 @@ struct RunLoopState {
             !options.no_progress_limit || options.no_progress_limit > 64) throw std::invalid_argument("run: invalid limits");
         const auto now = options.now(); const auto duration = std::chrono::duration_cast<ToolTime::duration>(options.timeout);
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
-        deadline = now+duration; record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt));
+        deadline = std::min(now+duration,options.deadline.value_or(now+duration));
+        if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
+        std::vector<std::string> inputs; inputs.reserve(options.observations.size()); record->observation_inputs_.reserve(options.observations.size());
+        for (const auto& observation : options.observations) {
+            if (!observation) throw std::invalid_argument("run: observation required");
+            inputs.push_back(observation_input(*observation,now)); const auto& data = observation->metadata();
+            record->observation_inputs_.push_back({data.source,data.provider_instance,data.object,data.revision,data.trust});
+        }
+        record->source_ = options.origin; record->goal_revision_ = options.goal_revision;
+        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
         record->versions_ = public_model_versions(config); auto& versions = record->versions_;
         versions.application_commit = options.version_labels.application_commit; versions.build = options.version_labels.build;
         versions.prompt_template = options.version_labels.prompt_template; versions.model_profile = options.version_labels.model_profile;
@@ -104,7 +113,7 @@ struct RunLoopState {
         } catch (...) { advancing = false; throw; }
     }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
-    // 步骤：裁定停止 → 检查基础及扩展规则 → 准备完整输入 → 接纳并发布步骤身份。
+    // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
     void start_model() {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         stage = TurnFailure::control; auto current = control(); current.attempt.step.sequence = record->model_requests_+1;
@@ -113,9 +122,15 @@ struct RunLoopState {
         policy_fact.kind = TraceFactKind::policy_decision; policy_fact.control_point = ControlPoint::model_request; policy_fact.decision = decision;
         record->journal_.append(policy_fact);
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
+        if (!record->model_requests_) for (const auto& observation : options.observations) {
+            if (observation->validity(options.now()) != ObservationValidity::fresh || observation->revision_gap()) {
+                record->stop_reason_ = PolicyReason::invalid_context; throw std::invalid_argument("run: observation invalidated before admission");
+            }
+        }
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
         model::Request input{record->context_->messages(),options.tools ? options.tools->definitions() : std::vector<model::ToolDefinition>{}};
+        interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         auto request = models.submit_request(config,std::move(input));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
