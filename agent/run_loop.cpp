@@ -43,7 +43,7 @@ struct RunLoopState {
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = now+duration; record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt));
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
-        if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget);
+        if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
             ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now);
         ++resident_count;
@@ -100,7 +100,7 @@ struct RunLoopState {
             const auto original = book.target(command.request);
             try {
                 const auto selected = options.tools->resolve(original.name,original.arguments);
-                if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments}) != original)
+                if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments},original.candidate) != original)
                     throw std::invalid_argument("run: confirmation target changed");
             } catch (...) { book.invalidate(command.request,ConfirmationState::invalidated); throw; }
             const auto receipt = book.decide(caller,command,current.now); advancing = false; return receipt;
@@ -184,7 +184,7 @@ struct RunLoopState {
                         if (record->tool_requests_ > options.policy.tool_limit || count > options.policy.tool_limit-record->tool_requests_) {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
-                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension,record->confirmations_.get());
+                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
                         batch = next_batch.get(); batch_size = count; record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }

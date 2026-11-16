@@ -1,5 +1,6 @@
 #include <dafeiyu/confirmation.hpp>
 #include <dafeiyu/tool_schema.hpp>
+#include <dafeiyu/run_journal.hpp>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -13,16 +14,16 @@ bool same_action(const ConfirmationTarget& left, const ConfirmationTarget& right
 }
 // 生成规范参数和完整版本绑定，不将确认当作工具授权来源。
 // 步骤：核对调用名称和参数契约 → 规范化参数 → 复制宿主身份与期限。
-ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selected, const model::ToolCall& call) {
+ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selected, const model::ToolCall& call, runtime::DomainId candidate) {
     if (call.name != selected.description.model.name || call.id.empty() || call.id.size() > 128)
         throw std::invalid_argument("confirmation: invalid candidate");
     ToolSchema(selected.description.model.parameters).validate(call.arguments);
     return {context.attempt,context.goal_revision,context.policy_revision,selected.registration,selected.description.instance,
-        selected.description.version,selected.description.id,call.id,call.name,nlohmann::json::parse(call.arguments).dump(),context.deadline};
+        selected.description.version,selected.description.id,call.id,call.name,nlohmann::json::parse(call.arguments).dump(),context.deadline,candidate};
 }
 // 固定容量和宿主凭证，等待记录不取得任何工具资源。
-ConfirmationBook::ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit, std::shared_ptr<runtime::Budget> parent)
-    : run_(run),caller_(caller),limit_(limit) {
+ConfirmationBook::ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit, std::shared_ptr<runtime::Budget> parent, RunJournal* journal)
+    : run_(run),caller_(caller),limit_(limit),journal_(journal) {
     if (!run.session || !run.sequence || !limit || limit > 64) throw std::invalid_argument("confirmation: invalid binding or capacity");
     entries_.reserve(limit);
     budget_ = std::make_shared<runtime::Budget>(runtime::BudgetAmount{limit,limit*confirmation_bytes},parent);
@@ -45,7 +46,15 @@ runtime::DomainId ConfirmationBook::offer(ConfirmationTarget target) {
     }
     if (entries_.size() == limit_) throw std::length_error("confirmation: request limit exhausted");
     auto charge = budget_->acquire({1,confirmation_bytes});
-    const auto id = runtime::next_domain(); entries_.push_back({std::move(charge),{id,1,std::move(target)}}); return id;
+    const auto id = runtime::next_domain(); entries_.push_back({std::move(charge),{id,1,std::move(target)}}); publish(entries_.back()); return id;
+}
+// 只投影来源状态；账本生命周期必须位于宿主追踪记录生命周期内。
+void ConfirmationBook::publish(const Entry& entry) noexcept {
+    if (!journal_) return;
+    const auto& value = entry.value; const auto& attempt = value.target.attempt; TraceFact fact;
+    fact.subject = {attempt.step.run,TraceNodeKind::control,attempt.step.sequence,attempt.sequence,value.id};
+    fact.kind = TraceFactKind::confirmation_changed; fact.confirmation = value.state; fact.source_revision = value.revision;
+    fact.related = value.target.candidate; journal_->append(fact);
 }
 // 返回完整值副本，调用本身不会改变请求修订或触发执行。
 std::vector<ConfirmationSnapshot> ConfirmationBook::snapshot() const {
@@ -97,9 +106,9 @@ ConfirmationReceipt ConfirmationBook::decide(const ConfirmationCaller& caller, c
     value.state = command.approve ? ConfirmationState::approved : ConfirmationState::denied; ++value.revision;
     if (!command.approve) for (auto& other : entries_) {
         if ((other.value.state == ConfirmationState::waiting || other.value.state == ConfirmationState::approved) &&
-            same_action(other.value.target,value.target)) { other.value.state = ConfirmationState::denied; ++other.value.revision; }
+            same_action(other.value.target,value.target)) { other.value.state = ConfirmationState::denied; ++other.value.revision; publish(other); }
     }
-    entry.receipt = {command.command,command.request,value.revision,value.state}; return entry.receipt;
+    entry.receipt = {command.command,command.request,value.revision,value.state}; publish(entry); return entry.receipt;
 }
 // 仅消耗仍有效的单次批准，动作接纳后原批准不能用于再次执行。
 // 步骤：更新到期状态 → 精确重查目标 → 消耗批准或返回拒绝。
@@ -107,14 +116,14 @@ bool ConfirmationBook::consume(runtime::DomainId request, const ConfirmationTarg
     advance(now); auto& entry = find(request);
     if (entry.value.target != current) { invalidate(request,ConfirmationState::invalidated); return false; }
     if (entry.value.state != ConfirmationState::approved) return false;
-    entry.value.state = ConfirmationState::consumed; ++entry.value.revision; return true;
+    entry.value.state = ConfirmationState::consumed; ++entry.value.revision; publish(entry); return true;
 }
 // 失效只作用于未消费许可，不回滚已发生动作或用户拒绝。
 void ConfirmationBook::invalidate(runtime::DomainId request, ConfirmationState reason) {
     if (reason != ConfirmationState::cancelled && reason != ConfirmationState::expired && reason != ConfirmationState::invalidated)
         throw std::invalid_argument("confirmation: invalid stop reason");
-    auto& value = find(request).value;
-    if (value.state == ConfirmationState::waiting || value.state == ConfirmationState::approved) { value.state = reason; ++value.revision; }
+    auto& entry = find(request); auto& value = entry.value;
+    if (value.state == ConfirmationState::waiting || value.state == ConfirmationState::approved) { value.state = reason; ++value.revision; publish(entry); }
 }
 // 逐项裁定停止边界，任何等待时长都不能变成同意。
 void ConfirmationBook::advance(ToolTime now, runtime::CancelReason cancellation) {

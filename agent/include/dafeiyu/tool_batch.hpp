@@ -3,9 +3,13 @@
 #include <dafeiyu/run_context.hpp>
 #include <dafeiyu/tool_executor.hpp>
 #include <dafeiyu/confirmation.hpp>
+#include <dafeiyu/run_journal.hpp>
 
 namespace dfy::agent {
 struct BatchToolSnapshot {
+    AttemptId attempt;
+    runtime::DomainId candidate = 0;
+    std::uint64_t revision = 0;
     std::string call_id, name;
     bool accepted = false;
     runtime::DomainId invocation = 0;
@@ -21,7 +25,8 @@ class ToolBatch {
   public:
     // 动作前预留回填并检查策略；确认账本须存活到批次销毁，等待时不接纳工具。
     ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
-        const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension = {}, ConfirmationBook* confirmations = nullptr);
+        const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension = {}, ConfirmationBook* confirmations = nullptr,
+        RunJournal* journal = nullptr);
     // 未完成时仅请求取消，实际工作责任仍由执行器保留，不提交伪造结果。
     ~ToolBatch();
     // 禁止复制批次结果回填责任。
@@ -37,7 +42,11 @@ class ToolBatch {
     // 返回只读值快照，不把工作、参数或输出持有交给观察者。
     std::vector<BatchToolSnapshot> snapshot() const;
   private:
-    struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; bool filled = false; };
+    struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; std::optional<TraceFact> last; bool filled = false; };
+    // 在原工具状态发生变化时记录无正文事实，重复推进不追加相同状态。
+    void publish(std::size_t index, TraceFactKind kind = TraceFactKind::tool_changed) noexcept;
+    // 记录候选控制决定，不替代执行入口的权限或参数检查。
+    void publish_policy(std::size_t index, ControlPoint point, PolicyDecision decision) noexcept;
     // 重新核对全部候选与确认状态；任一等待使整个未接纳批次让出宿主。
     bool review(const PolicyContext& current);
     // 确认全部就绪后消费批准并接纳，仍不在该边界执行工具工厂。
@@ -48,6 +57,7 @@ class ToolBatch {
     ToolExecutor& executor_;
     const ToolSnapshot tools_;
     ConfirmationBook* const confirmations_;
+    RunJournal* const journal_;
     const ExecutionPolicy policy_;
     const PolicyContext bound_;
     const PolicyExtension extension_;

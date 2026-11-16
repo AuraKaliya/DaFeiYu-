@@ -5,6 +5,7 @@
 #include <thread>
 #include "diagnostics.hpp"
 #include <sstream>
+#include <algorithm>
 
 namespace {
 using namespace dfy::agent;
@@ -64,6 +65,16 @@ void native(const Manifest& manifest, const std::filesystem::path& settings, uns
     check(request->operation()->state() == (mode == 2 || mode == 3 ? OperationState::cancelled : OperationState::succeeded),"confirmation corrupted run outcome");
     check(!request->diagnostics().waiting_confirmations && request->diagnostics().confirmation_requests == 1,"settled run still waiting for decision");
     if (receipt) check(session.decide(caller,command) == *receipt && count(0)-starts == (mode == 0 ? 1u : 0u),"completed receipt replayed action");
+    const auto trace = request->trace_delta(); std::vector<TraceFact> changes;
+    for (const auto& fact : trace.facts) if (fact.kind == TraceFactKind::confirmation_changed) changes.push_back(fact);
+    check(changes.size() == (mode == 0 ? 3u : 2u) && changes.front().confirmation == ConfirmationState::waiting &&
+        changes.back().confirmation == request->confirmations().front().state,"confirmation timeline lost or duplicated changes");
+    for (std::size_t i = 0; i < changes.size(); ++i) check(changes[i].source_revision == i+1 &&
+        changes[i].related == request->tool_steps()[0].candidate && trace_parent(changes[i].subject) ==
+        TraceNodeId{request->run_id(),TraceNodeKind::attempt,1,1},"confirmation lost candidate or parent association");
+    if (mode == 0) check(std::any_of(trace.facts.begin(),trace.facts.end(),[](const auto& fact) {
+        return fact.kind == TraceFactKind::tool_changed && fact.effect == ToolEffect::applied && fact.exit == OperationState::pending;
+    }),"tool effect was hidden until actual exit");
     check(instance->shutdown() == ShutdownResult::closed,"confirmation result pinned native instance");
 }
 }

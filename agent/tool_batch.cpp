@@ -5,17 +5,40 @@ namespace dfy::agent {
 // 准备有界工具批次，任何拒绝都产生配对回执而不执行该候选动作。
 // 步骤：检查总调用预算 → 准备元数据和完整上下文 → 裁定候选及确认 → 全部就绪才接纳。
 ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
-    const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension, ConfirmationBook* confirmations)
-    : context_(context), executor_(executor), tools_(tools), confirmations_(confirmations), policy_(std::move(policy)), bound_(control), extension_(std::move(extension)) {
+    const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension, ConfirmationBook* confirmations, RunJournal* journal)
+    : context_(context), executor_(executor), tools_(tools), confirmations_(confirmations), journal_(journal), policy_(std::move(policy)), bound_(control), extension_(std::move(extension)) {
     const auto count = assistant.tool_calls.size(), limit = policy_.settings().tool_limit;
     if (!count || control.tool_requests > limit || count > limit-control.tool_requests) throw std::length_error("batch: tool limit exhausted");
     entries_.resize(count);
     for (std::size_t index = 0; index < count; ++index) {
         entries_[index].metadata.call_id = assistant.tool_calls[index].id; entries_[index].metadata.name = assistant.tool_calls[index].name;
         entries_[index].call = assistant.tool_calls[index];
+        entries_[index].metadata.attempt = control.attempt; entries_[index].metadata.candidate = runtime::next_domain();
+        entries_[index].metadata.result = entries_[index].metadata.exit = runtime::OperationState::pending;
     }
     context_.prepare_tools(assistant,tools.definitions());
+    for (std::size_t index = 0; index < count; ++index) publish(index,TraceFactKind::tool_candidate);
     if (review(control)) admit(control);
+}
+// 在原状态变化后记录投影，结果成功与资源仍待退出可以同时出现。
+// 步骤：读取原工具或候选状态 → 跳过重复投影 → 签发来源修订并写入有界记录。
+void ToolBatch::publish(std::size_t index, TraceFactKind kind) noexcept {
+    if (!journal_) return;
+    auto& entry = entries_[index]; auto& data = entry.metadata; const auto attempt = data.attempt; TraceFact fact;
+    fact.subject = {attempt.step.run,TraceNodeKind::tool,attempt.step.sequence,attempt.sequence,data.candidate}; fact.kind = kind;
+    fact.result = entry.request ? entry.request->operation()->state() : data.result; fact.exit = entry.request ? entry.request->exit()->state() : data.exit;
+    fact.effect = entry.request ? entry.request->outcome().effect : data.effect; fact.error = entry.request ? entry.request->outcome().error : data.error;
+    fact.fault = entry.request ? entry.request->fault() : data.fault; fact.related = data.invocation;
+    if (entry.last && entry.last->result == fact.result && entry.last->exit == fact.exit && entry.last->effect == fact.effect &&
+        entry.last->error == fact.error && entry.last->fault == fact.fault && entry.last->related == fact.related) return;
+    fact.source_revision = ++data.revision; journal_->append(fact); entry.last = fact;
+}
+// 投影已经裁定的控制决定，不调用规则、参数解析或插件函数。
+void ToolBatch::publish_policy(std::size_t index, ControlPoint point, PolicyDecision decision) noexcept {
+    if (!journal_) return;
+    auto& data = entries_[index].metadata; const auto attempt = data.attempt; TraceFact fact;
+    fact.subject = {attempt.step.run,TraceNodeKind::tool,attempt.step.sequence,attempt.sequence,data.candidate}; fact.kind = TraceFactKind::policy_decision;
+    fact.control_point = point; fact.decision = decision; fact.source_revision = ++data.revision; journal_->append(fact);
 }
 // 为拒绝候选记录零动作，不改写已经消费或发生效果的确认。
 void ToolBatch::reject(std::size_t index, ConfirmationState reason) {
@@ -23,6 +46,7 @@ void ToolBatch::reject(std::size_t index, ConfirmationState reason) {
     if (entry.metadata.confirmation) confirmations_->invalidate(entry.metadata.confirmation,reason);
     context_.set_tool_result(index,{false,ToolEffect::not_applied,{},ToolError::unavailable},runtime::OperationState::failed,ToolError::none,false);
     entry.metadata.result = runtime::OperationState::failed; entry.metadata.exit = runtime::OperationState::succeeded; entry.filled = true;
+    publish(index);
 }
 // 将候选和决定维持为值记录，等待不能占用执行顺序或工具工作资源。
 // 步骤：读取原确认状态 → 重新解析授权与策略 → 登记必要确认 → 汇总批次是否可以接纳。
@@ -37,12 +61,14 @@ bool ToolBatch::review(const PolicyContext& current) {
             }
             const auto selected = tools_.resolve(entry.call.name,entry.call.arguments);
             auto candidate = current; candidate.tool_requests = bound_.tool_requests+index;
+            const auto previous = entry.metadata.before;
             entry.metadata.before = restrict_policy(policy_.before_tool(candidate,selected),extension_,ControlPoint::tool_start,candidate);
+            if (previous != entry.metadata.before) publish_policy(index,ControlPoint::tool_start,*entry.metadata.before);
             const auto decision = *entry.metadata.before;
             if (decision.verdict == PolicyVerdict::deny) { reject(index); continue; }
             if (decision.verdict == PolicyVerdict::wait) {
                 if (!confirmations_ || decision.reason != PolicyReason::confirmation_required) { reject(index); continue; }
-                if (!entry.metadata.confirmation) entry.metadata.confirmation = confirmations_->offer(confirmation_target(candidate,selected,entry.call));
+                if (!entry.metadata.confirmation) entry.metadata.confirmation = confirmations_->offer(confirmation_target(candidate,selected,entry.call,entry.metadata.candidate));
             }
             if (entry.metadata.confirmation && confirmations_->state(entry.metadata.confirmation) == ConfirmationState::waiting) ready = false;
             entry.metadata.result = entry.metadata.exit = runtime::OperationState::pending;
@@ -57,9 +83,10 @@ void ToolBatch::admit(const PolicyContext& current) {
         auto& entry = entries_[index]; if (entry.filled) continue;
         try {
             if (entry.metadata.confirmation && !confirmations_->consume(entry.metadata.confirmation,
-                confirmation_target(current,tools_.resolve(entry.call.name,entry.call.arguments),entry.call),current.now)) { reject(index); continue; }
+                confirmation_target(current,tools_.resolve(entry.call.name,entry.call.arguments),entry.call,entry.metadata.candidate),current.now)) { reject(index); continue; }
             entry.request = executor_.submit(current.attempt,entry.call); entry.metadata.accepted = true;
             entry.metadata.invocation = entry.request->invocation().invocation;
+            publish(index);
         } catch (...) { reject(index); }
     }
     admitted_ = true;
@@ -102,8 +129,10 @@ bool ToolBatch::advance(const PolicyContext& current) {
         executor_.advance(); bool complete = true;
         for (std::size_t index = 0; index < entries_.size(); ++index) {
             auto& entry = entries_[index]; if (entry.filled) continue;
+            publish(index);
             if (entry.request->exit()->state() == OperationState::pending) { complete = false; continue; }
             entry.metadata.after = restrict_policy(policy_.after_tool(current,*entry.request),extension_,ControlPoint::tool_result,current);
+            publish_policy(index,ControlPoint::tool_result,*entry.metadata.after);
             if (entry.metadata.after->verdict != PolicyVerdict::allow) {
                 continuation_ = *entry.metadata.after; executor_.close(CancelReason::owner_stop);
             }

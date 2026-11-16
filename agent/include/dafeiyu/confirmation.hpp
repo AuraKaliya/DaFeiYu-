@@ -2,6 +2,7 @@
 #include <dafeiyu/execution_policy.hpp>
 
 namespace dfy::agent {
+class RunJournal;
 // 宿主在入口绑定的进程内调用凭证；消息正文不能通过自报 ID 构造同一凭证。
 class ConfirmationCaller {
   public:
@@ -20,6 +21,7 @@ struct ConfirmationTarget {
     std::uint32_t contract_version = 0;
     std::string tool_id, call_id, name, arguments;
     ToolTime deadline;
+    runtime::DomainId candidate = 0;
     // 完整比较动作绑定，参数采用规范 JSON，禁止仅按名称或摘要碰撞复用授权。
     bool operator==(const ConfirmationTarget&) const = default;
 };
@@ -44,12 +46,12 @@ struct ConfirmationReceipt {
     bool operator==(const ConfirmationReceipt&) const = default;
 };
 // 从已授权候选生成完整动作绑定，保留规范参数以供确认与执行前精确比较。
-ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selection, const model::ToolCall& call);
+ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selection, const model::ToolCall& call, runtime::DomainId candidate = 0);
 // 运行内有界确认账本，只拥有值记录，不占用工具顺序域、DLL 或业务完成权。
 class ConfirmationBook {
   public:
-    // 固定运行、宿主凭证及一至 64 条容量，每条记录和原命令均计入分层预算。
-    ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit = 16, std::shared_ptr<runtime::Budget> parent = {});
+    // 固定运行、凭证及一至 64 条容量；可选追踪须比账本长寿，记录和命令均计入分层预算。
+    ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit = 16, std::shared_ptr<runtime::Budget> parent = {}, RunJournal* journal = nullptr);
     // 禁止复制确认状态，避免同一批准拥有多个消费入口。
     ConfirmationBook(const ConfirmationBook&) = delete;
     // 禁止赋值或移动覆盖已签发的确认记录。
@@ -80,10 +82,13 @@ class ConfirmationBook {
     struct Entry { runtime::BudgetLease charge; ConfirmationSnapshot value; std::optional<ConfirmationCommand> command; ConfirmationReceipt receipt; };
     // 按签发身份定位有界记录，未知请求明确拒绝。
     Entry& find(runtime::DomainId request);
+    // 投影确认状态及来源修订，不复制参数、调用凭证或命令正文。
+    void publish(const Entry& entry) noexcept;
     const RunId run_;
     const ConfirmationCaller caller_;
     const std::size_t limit_;
     std::shared_ptr<runtime::Budget> budget_;
+    RunJournal* journal_;
     std::vector<Entry> entries_;
 };
 }
