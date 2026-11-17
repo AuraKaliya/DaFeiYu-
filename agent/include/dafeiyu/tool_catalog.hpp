@@ -27,6 +27,8 @@ class ToolSnapshot {
     std::vector<ToolDescription> descriptions() const;
     // 判断固定授予成员是否包含变更工具，禁用或撤销不会隐藏原范围的性质。
     bool permits_state_changes() const noexcept;
+    // 从固定成员收紧步骤范围，保留原注册及撤销关系；不能补回外部工具或重绑新实例。
+    ToolSnapshot restrict_to(std::span<const std::string> ids) const;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。

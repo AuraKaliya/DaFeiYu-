@@ -55,9 +55,45 @@ void lifetime() {
     rejects([&] { (void)retained->resolve("name","{}"); });
     rejects([] { ToolCatalog invalid(65); });
 }
+// 验证计划步骤只缩小原范围，子快照仍共享禁用、撤销与实例隔离边界。
+// 步骤：收紧原授权并执行选中工具 → 拒绝扩权和重复 → 禁用及重装后核对原身份。
+void subsets() {
+    using namespace dfy::runtime;
+    unsigned reads = 0, writes = 0;
+    ToolCatalog catalog;
+    const auto read = catalog.add(tool("fixture/read","read",1),[&](const auto&) {
+        ++reads; return completed_tool({true,ToolEffect::not_applied,"value",ToolError::none});
+    });
+    const auto write = catalog.add(tool("fixture/write","write",1,true),[&](const auto&) {
+        ++writes; return completed_tool({true,ToolEffect::applied,"",ToolError::none});
+    });
+    const std::vector<std::string> all_ids{"fixture/read","fixture/write"}, read_ids{"fixture/read"}, write_ids{"fixture/write"};
+    const auto original = catalog.snapshot(all_ids,true); const auto subset = original.restrict_to(read_ids);
+    check(subset.definitions().size() == 1 && subset.resolve("read","{}").registration == read &&
+        !subset.permits_state_changes() && original.permits_state_changes(),"subset changed original scope");
+    auto work = subset.prepare({{{1,1},1},1},{"call","read","{}"}); work->advance();
+    check(reads == 1 && !writes && work->request()->exit()->state() == OperationState::succeeded,"subset executed wrong tool");
+    rejects([&] { subset.prepare({{{1,1},2},1},{"call","write","{}"}); });
+    rejects([&] { subset.restrict_to(write_ids); });
+    rejects([&] { original.restrict_to(std::vector<std::string>{"fixture/read","missing"}); });
+    rejects([&] { original.restrict_to(std::vector<std::string>{"fixture/read","fixture/read"}); });
+    check(subset.restrict_to({}).definitions().empty(),"empty subset exposed tools");
+
+    catalog.enable(write,false); const auto disabled = original.restrict_to(write_ids);
+    check(disabled.permits_state_changes() && disabled.definitions().empty(),"subset hid disabled change permission");
+    rejects([&] { disabled.resolve("write","{}"); }); catalog.enable(write,true);
+    check(disabled.resolve("write","{}").registration == write,"reenable rebound subset");
+    auto delayed = subset.prepare({{{1,1},3},1},{"late","read","{}"});
+    catalog.remove(read); catalog.add(tool("fixture/read","read",2),[&](const auto&) {
+        ++reads; return completed_tool({true,ToolEffect::not_applied,"replacement",ToolError::none});
+    });
+    delayed->advance(); rejects([&] { original.restrict_to(read_ids).resolve("read","{}"); });
+    check(reads == 1 && !writes && delayed->request()->outcome().error == ToolError::unavailable && subset.definitions().empty(),
+        "revoked subset invoked replacement or old tool");
+}
 }
 // 运行工具描述与授权检查，本单元不执行模型或原生工具。
 int main() {
-    try { catalog(); lifetime(); std::cout << "Tool catalog checks passed\n"; return 0; }
+    try { catalog(); lifetime(); subsets(); std::cout << "Tool catalog checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -80,6 +80,19 @@ bool ToolSnapshot::permits_state_changes() const noexcept {
     for (const auto& entry : entries_) if (entry->description.changes_state) return true;
     return false;
 }
+// 子范围仅复制原授权成员，当前禁用或撤销状态仍由每次实际调用检查。
+// 步骤：限制成员数量 → 拒绝重复及范围外 ID → 保留原注册身份形成子快照。
+ToolSnapshot ToolSnapshot::restrict_to(std::span<const std::string> ids) const {
+    if (ids.size() > 64) throw std::length_error("tools: too many subset grants");
+    std::set<std::string> seen; std::vector<std::shared_ptr<ToolEntry>> selected; selected.reserve(ids.size());
+    for (const auto& id : ids) {
+        if (!seen.insert(id).second) throw std::invalid_argument("tools: duplicate subset grant");
+        const auto entry = std::find_if(entries_.begin(),entries_.end(),[&](const auto& item) { return item->description.id == id; });
+        if (entry == entries_.end()) throw std::invalid_argument("tools: subset outside original grant");
+        selected.push_back(*entry);
+    }
+    return ToolSnapshot(std::move(selected));
+}
 // 仅从本运行的成员中选择目标，并在使用前重新核对授权及参数。
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {
