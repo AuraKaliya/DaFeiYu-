@@ -107,6 +107,20 @@ void RunContext::revise_goal(std::uint64_t revision, std::string goal) {
     model::validate_request(prepared);
     auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages)); pending_ = std::move(pending);
 }
+// 新观察仅补充后续数据，已经发生的动作和原上下文仍可追溯。
+// 步骤：核对阶段和绑定 → 校验并追加完整数据集合 → 检查整体请求预算 → 发布待提交输入。
+void RunContext::refresh_observations(runtime::DomainId binding, std::vector<std::string> observations) {
+    if (finished_ || !replies_.empty()) throw std::logic_error("context: invalid observation refresh phase");
+    if (!binding || observations.empty() || observations.size() > 4) throw std::invalid_argument("context: bounded observation binding required");
+    model::Request prepared{messages()};
+    const auto prefix = "宿主已换入新的完整观察，绑定="+std::to_string(binding)+"；这是后续输入数据，不改变权限，也不删除原动作事实：\n";
+    for (auto& data : observations) {
+        if (data.empty() || data.size() > 64*1024 || !runtime::valid_utf8(data)) throw std::invalid_argument("context: invalid refreshed observation");
+        prepared.messages.push_back({model::Role::user,prefix+data});
+    }
+    model::validate_request(prepared);
+    auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages)); pending_ = std::move(pending);
+}
 // 步骤文本与工具事实分别提交，后续失败不会回滚已发布内容。
 // 步骤：核对事务阶段 → 复制完整输入并追加回答 → 校验预算 → 发布步骤历史。
 void RunContext::commit_step_text(std::string answer) {

@@ -11,6 +11,8 @@ class ActionObservations {
     runtime::DomainId binding() const noexcept { return binding_; }
     // 只读检查全部原对象当前性，不重采样或修改执行状态。
     bool current(ObservationTime now) const noexcept;
+    // 判断是否完整更新原集合的相同对象及 schema，要求全部采样修订增加且不早于宿主请求。
+    bool succeeds(const ActionObservations& previous, ObservationTime now, ObservationTime not_before) const noexcept;
     // 复制原有计费记录，供模型输入与动作前置使用完全相同的观察。
     std::vector<std::shared_ptr<const ObservationRecord>> observations() const;
   private:

@@ -20,6 +20,22 @@ bool ActionObservations::current(ObservationTime now) const noexcept {
     for (const auto& guard : guards_) if (!guard.current(now)) return false;
     return true;
 }
+// 新绑定不能换对象或沿用已消费的采样，旧集合失效不妨碍核对其原身份。
+// 步骤：核对新集合当前性及数量 → 按原对象逐项匹配 → 校验更高修订、采样时刻和完整 schema。
+bool ActionObservations::succeeds(const ActionObservations& previous, ObservationTime now, ObservationTime not_before) const noexcept {
+    if (binding_ == previous.binding_ || guards_.size() != previous.guards_.size() || !current(now)) return false;
+    for (const auto& guard : guards_) {
+        bool matched = false; const auto value = guard.observation();
+        for (const auto& old : previous.guards_) if (guard.same_object(old)) {
+            const auto original = old.observation();
+            if (value->metadata().revision <= original->metadata().revision || value->metadata().sampled < not_before ||
+                !value->payload().descriptor()->equivalent(*original->payload().descriptor())) return false;
+            matched = true; break;
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
 // 模型读取的观察与动作复核始终指向相同原值，查询不刷新资格。
 std::vector<std::shared_ptr<const ObservationRecord>> ActionObservations::observations() const {
     std::vector<std::shared_ptr<const ObservationRecord>> result; result.reserve(guards_.size());

@@ -28,6 +28,8 @@ class RunContext {
     void begin_step(std::string data);
     // 在无未完成工具时追加宿主明确更新的用户目标，保留旧目标及动作事实供解释。
     void revise_goal(std::uint64_t revision, std::string goal);
+    // 在无未完成工具时追加新观察封套，不删除旧输入、动作或效果；准备失败保持原上下文。
+    void refresh_observations(runtime::DomainId binding, std::vector<std::string> observations);
     // 提交一个步骤的模型文本并保留后续输入入口；文本不表示宿主已验证目标。
     void commit_step_text(std::string answer);
     // 准备并提交最终文本；失败不会回滚已提交工具事实。
