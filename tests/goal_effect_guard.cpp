@@ -16,9 +16,14 @@ void until(Session& session, const auto& ready) {
     while (!ready() && std::chrono::steady_clock::now() < end) { session.advance(); std::this_thread::yield(); }
     check(ready(),"effect guard scenario stalled");
 }
+// 为刷新构造不含模型解释的宿主状态值。
+std::shared_ptr<const StructValue> payload() {
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("fixture.effect",1,{}, {1,64}));
+    return std::make_shared<const StructValue>(StructValue::create(type,{},64));
+}
 // 用新目标和新批准重复同一非幂等候选，未知或失败已发生的旧效果必须继续阻止调用。
 // 步骤：执行一次不确定动作 → 保留原回执并修改目标 → 批准新候选 → 核对零重复调用及旧效果。
-void repeated(ToolEffect effect) {
+void repeated(ToolEffect effect, bool refresh = false) {
     unsigned calls = 0; ToolCatalog catalog;
     catalog.add({"fixture/change",1,1,{"change","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,false},
         [&](const auto&) { ++calls; return completed_tool({false,effect,"partial",ToolError::failed}); });
@@ -30,25 +35,42 @@ void repeated(ToolEffect effect) {
     Session session({},channel,model.backend()); ConfirmationCaller caller; RunOptions options;
     const std::vector<std::string> ids{"fixture/change"}; options.tools = catalog.snapshot(ids,true); options.planning = PlanLimits{};
     options.now = model.clock(); options.confirmation_caller = caller; options.policy.confirm_changes = true;
+    ObservationSource source(1,ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
+    const auto sample = [&](std::uint64_t revision) {
+        const auto now = model.clock()(); inbox.accept(source.capture({"object",1},revision,now,now+std::chrono::seconds(1),payload()),now);
+        return ActionObservations({inbox.guard(inbox.latest(source.id(),"object"),now)});
+    };
+    if (refresh) options.action_observations = sample(1);
     const auto request = session.begin("first goal",options);
     until(session,[&] { return request->confirmations().size() == 1; });
     auto pending = request->confirmations()[0]; session.decide(caller,{1,pending.id,pending.revision,pending.target,true});
     until(session,[&] { return request->plan()->steps[0].waiting == PlanWait::verification; });
     check(calls == 1 && request->tool_steps()[0].result == OperationState::failed && request->tool_steps()[0].effect == effect,"original effect was not retained");
+    if (refresh) {
+        const auto ticket = session.request_observation_rebind(caller,request->plan()->steps[0].key);
+        session.rebind_observations(caller,ticket,sample(2));
+        check(request->plan()->steps[0].waiting == PlanWait::verification && request->observation_rebinds().size() == 1,
+            "fresh observations falsely verified failed action");
+    }
     session.revise_goal(caller,request->plan()->definition->binding(),"explicitly revised goal");
     until(session,[&] { return request->confirmations().size() == 2; }); pending = request->confirmations()[1];
     check(pending.target.goal_revision == 2,"new approval still bound to old goal");
     const ConfirmationCommand command{2,pending.id,pending.revision,pending.target,true}; session.decide(caller,command);
     until(session,[&] { return request->plan()->steps[0].waiting == PlanWait::verification; });
     const auto tools = request->tool_steps();
-    check(calls == 1 && tools.size() == 2 && tools[0].effect == effect && !tools[1].accepted && tools[1].effect == ToolEffect::not_applied,
+    const bool safe_retry = refresh && effect == ToolEffect::not_applied;
+    check(calls == (safe_retry ? 2u : 1u) && tools.size() == 2 && tools[0].effect == effect && tools[1].accepted == safe_retry && tools[1].effect == ToolEffect::not_applied,
         "new goal or approval replayed uncertain non-idempotent effect");
     session.decide(caller,command); request->request_cancel(CancelReason::user); until(session,[&] { return !session.busy(); }); model.verify_complete();
-    check(calls == 1 && request->plan_history().size() == 1,"receipt retry or goal history lost effect guard");
+    check(calls == (safe_retry ? 2u : 1u) && request->plan_history().size() == 1,"receipt retry or goal history lost effect guard");
 }
 }
 // 固定模型和工具回执验证宿主效果治理，不执行真实模型裁判或外部动作。
 int main() {
-    try { repeated(ToolEffect::unknown); repeated(ToolEffect::applied); std::cout << "Goal effect guard checks passed\n"; return 0; }
+    try {
+        repeated(ToolEffect::unknown); repeated(ToolEffect::applied);
+        for (const auto effect : {ToolEffect::unknown,ToolEffect::applied,ToolEffect::not_applied}) repeated(effect,true);
+        std::cout << "Goal effect guard checks passed\n"; return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
