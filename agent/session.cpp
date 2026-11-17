@@ -98,6 +98,12 @@ std::optional<PlanStepOutput> TurnRequest::plan_output(const PlanStepKey& key) c
     for (const auto& output : plan_outputs_) if (output.key == key) return output;
     return std::nullopt;
 }
+// 复制已停止旧计划的值状态，旧目标不再有继续执行入口。
+std::vector<PlanSnapshot> TurnRequest::plan_history() const {
+    std::vector<PlanSnapshot> result; result.reserve(previous_plans_.size());
+    for (const auto& previous : previous_plans_) result.push_back(previous->snapshot());
+    return result;
+}
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)
@@ -168,6 +174,9 @@ void Session::confirm_plan_step(const ConfirmationCaller& caller, const PlanStep
     try {
         for (const auto& record : records_) if (record && record->run_id() == key.plan.run && record->plan_) {
             if (!record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("session: unbound plan verifier");
+            for (const auto& previous : record->previous_plans_) if (previous->binding().goal_revision == key.plan.goal_revision) {
+                previous->confirm(key,evidence); working_ = false; return;
+            }
             if (active_ && active_->request() == record) active_->confirm_plan_step(caller,key,evidence);
             else record->plan_->confirm(key,evidence);
             working_ = false; return;
@@ -192,6 +201,24 @@ PlanBinding Session::replan(const ConfirmationCaller& caller, PlanBinding expect
         }
     } catch (...) { working_ = false; throw; }
     working_ = false; throw std::invalid_argument("session: replan run unavailable");
+}
+// 路由原运行的目标修订，重复旧请求只返回原接纳结果，不再次改变当前目标。
+// 步骤：保护入口并核对调用者 → 复用完整原请求 → 活动运行检查及接纳 → 归还入口。
+PlanBinding Session::revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal) {
+    if (working_) throw std::logic_error("session: reentrant goal revision");
+    working_ = true;
+    try {
+        for (const auto& record : records_) if (record && record->run_id() == expected.run && record->plan_) {
+            if (!record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("session: unbound goal caller");
+            for (const auto& previous : record->goal_revisions_) if (previous.expected == expected) {
+                if (previous.goal != goal) throw std::invalid_argument("session: goal revision conflict");
+                working_ = false; return {expected.run,expected.goal_revision+1,0};
+            }
+            if (!active_ || active_->request() != record) throw std::logic_error("session: goal run already stopped");
+            const auto receipt = active_->revise_goal(caller,expected,goal); working_ = false; return receipt;
+        }
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::invalid_argument("session: goal run unavailable");
 }
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。

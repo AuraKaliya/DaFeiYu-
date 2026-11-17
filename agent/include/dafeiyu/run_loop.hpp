@@ -31,6 +31,8 @@ class RunLoop {
     void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence);
     // 接纳原目标内的有限重规划请求，只有后续推进才调用模型。
     PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance);
+    // 只在无在途模型和工具的边界更新目标，旧计划停止并保留，新规划延后提交。
+    PlanBinding revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。
     void wait_model();
     // 返回仍需要宿主重试收尾的运行数。

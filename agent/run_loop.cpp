@@ -2,6 +2,7 @@
 #include <dafeiyu/plan_protocol.hpp>
 #include <dafeiyu/session.hpp>
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -23,7 +24,7 @@ struct RunLoopState {
     model::Config config;
     model::AsyncClient models;
     RunOptions options;
-    ExecutionPolicy policy;
+    std::unique_ptr<ExecutionPolicy> policy;
     ToolTime deadline;
     ToolBatch* batch = nullptr;
     std::optional<PlanScope> planning_scope;
@@ -41,9 +42,10 @@ struct RunLoopState {
     RunLoopState(RunId run, model::Config value, model::Backend backend, std::shared_ptr<const MessageHistory> history,
         std::string prompt, RunOptions settings)
         : record(new TurnRequest(run,settings.trace_capacity)), config(std::move(value)), models(1,std::move(backend)), options(std::move(settings)),
-          policy(run,options.goal_revision,options.policy) {
+          policy(std::make_unique<ExecutionPolicy>(run,options.goal_revision,options.policy)) {
         if (!options.now || options.timeout <= std::chrono::milliseconds::zero() || options.timeout > std::chrono::hours(1) ||
-            !options.no_progress_limit || options.no_progress_limit > 64) throw std::invalid_argument("run: invalid limits");
+            !options.no_progress_limit || options.no_progress_limit > 64 || (options.planning && (!options.goal_update_limit || options.goal_update_limit > 16)))
+            throw std::invalid_argument("run: invalid limits");
         const auto now = options.now(); const auto duration = std::chrono::duration_cast<ToolTime::duration>(options.timeout);
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = std::min(now+duration,options.deadline.value_or(now+duration));
@@ -62,6 +64,7 @@ struct RunLoopState {
             record->plan_caller_ = options.confirmation_caller;
             record->plan_outputs_.reserve(options.policy.model_limit);
             record->plan_revisions_.reserve(options.planning->maximum_revisions);
+            record->goal_revisions_.reserve(options.goal_update_limit); record->previous_plans_.reserve(options.goal_update_limit);
             planning_goal = prompt;
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
@@ -129,7 +132,7 @@ struct RunLoopState {
             auto& book = *record->confirmations_;
             if (const auto prior = book.prior_receipt(caller,command)) { advancing = false; return *prior; }
             interrupt(); const auto current = control(); book.advance(current.now,current.cancellation);
-            if (policy.check_context(current).verdict != PolicyVerdict::allow) throw std::invalid_argument("run: confirmation stopped");
+            if (policy->check_context(current).verdict != PolicyVerdict::allow) throw std::invalid_argument("run: confirmation stopped");
             const auto original = book.target(command.request);
             try {
                 const auto& scope = record->plan_ ? step_tools : options.tools;
@@ -146,6 +149,9 @@ struct RunLoopState {
     void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) {
         if (advancing || !record->plan_ || !record->plan_caller_ || caller != *record->plan_caller_)
             throw std::invalid_argument("run: unbound or reentrant plan verification");
+        for (const auto& previous : record->previous_plans_) if (previous->binding().goal_revision == key.plan.goal_revision) {
+            previous->confirm(key,evidence); return;
+        }
         advancing = true;
         try {
             const auto snapshot = record->plan_->snapshot();
@@ -154,7 +160,7 @@ struct RunLoopState {
             });
             if (!completed) {
                 interrupt();
-                if (policy.check_context(control()).verdict != PolicyVerdict::allow || !plan_step || plan_step->key != key)
+                if (policy->check_context(control()).verdict != PolicyVerdict::allow || !plan_step || plan_step->key != key)
                     throw std::invalid_argument("run: stale or stopped plan verification");
             }
             record->plan_->confirm(key,evidence); advancing = false;
@@ -172,8 +178,8 @@ struct RunLoopState {
         advancing = true;
         try {
             interrupt(); const auto snapshot = record->plan_->snapshot();
-            if (policy.check_context(control()).verdict != PolicyVerdict::allow || planning_request || record->model_ || batch ||
-                expected != record->plan_->binding() || !snapshot.definition || snapshot.stopped)
+            if (policy->check_context(control()).verdict != PolicyVerdict::allow || planning_request || record->model_ || batch ||
+                expected != record->plan_->binding() || !snapshot.definition || snapshot.stopped || record->plan_revisions_.size() >= options.planning->maximum_revisions-1)
                 throw std::invalid_argument("run: stale or unavailable replan");
             std::size_t prefix = 0;
             while (prefix < snapshot.steps.size() && (snapshot.steps[prefix].state == PlanStepState::completed || snapshot.steps[prefix].state == PlanStepState::skipped)) ++prefix;
@@ -185,12 +191,44 @@ struct RunLoopState {
             return {expected.run,expected.goal_revision,expected.plan_revision+1};
         } catch (...) { advancing = false; throw; }
     }
+    // 明确的新用户目标只在原工作退出边界生效，不通过新目标清空旧动作或重置运行预算。
+    // 步骤：核对宿主并复用原修订 → 检查安全边界及总上限 → 准备新范围、策略和上下文 → 停止保留旧计划并发布新目标。
+    PlanBinding revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal) {
+        if (advancing || !record->plan_ || !record->plan_caller_ || caller != *record->plan_caller_)
+            throw std::invalid_argument("run: unbound or reentrant goal revision");
+        for (const auto& previous : record->goal_revisions_) if (previous.expected == expected) {
+            if (previous.goal != goal) throw std::invalid_argument("run: goal revision conflict");
+            return {expected.run,expected.goal_revision+1,0};
+        }
+        advancing = true;
+        try {
+            interrupt();
+            if (policy->check_context(control()).verdict != PolicyVerdict::allow || options.origin != RunOrigin::user_request ||
+                expected != record->plan_->binding() || !expected.plan_revision || planning_request || record->model_ || batch ||
+                (record->tools_ && record->tools_->busy()) || (plan_step && plan_step->exit.operation()->state() == runtime::OperationState::pending) ||
+                record->goal_revisions_.size() == options.goal_update_limit || expected.goal_revision == std::numeric_limits<std::uint64_t>::max())
+                throw std::invalid_argument("run: goal revision boundary unavailable");
+            const auto revision = expected.goal_revision+1;
+            PlanScope scope(record->run_id(),revision,options.tools,*options.planning);
+            auto input = prepare_plan_prompt(scope,0,goal); auto book = std::make_unique<PlanBook>(scope);
+            auto next_policy = std::make_unique<ExecutionPolicy>(record->run_id(),revision,options.policy);
+            std::string next_goal(goal); TurnRequest::GoalRevisionRecord receipt{expected,next_goal};
+            record->context_->revise_goal(revision,next_goal);
+
+            record->plan_->stop(); record->previous_plans_.push_back(std::move(record->plan_));
+            record->goal_revisions_.push_back(std::move(receipt)); record->plan_ = std::move(book);
+            plan_step.reset(); step_tools.reset(); policy = std::move(next_policy); planning_scope = std::move(scope);
+            planning_goal = std::move(next_goal); planning_request = std::move(input);
+            options.goal_revision = revision; record->goal_revision_ = revision; advancing = false;
+            return {expected.run,revision,0};
+        } catch (...) { advancing = false; throw; }
+    }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
     // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
     void start_model() {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         stage = TurnFailure::control; auto current = control(); current.attempt.step.sequence = record->model_requests_+1;
-        const auto decision = restrict_policy(policy.before_model(current),options.extension,ControlPoint::model_request,current);
+        const auto decision = restrict_policy(policy->before_model(current),options.extension,ControlPoint::model_request,current);
         TraceFact policy_fact; policy_fact.subject = {record->run_id(),TraceNodeKind::attempt,current.attempt.step.sequence,current.attempt.sequence};
         policy_fact.kind = TraceFactKind::policy_decision; policy_fact.control_point = ControlPoint::model_request; policy_fact.decision = decision;
         record->journal_.append(policy_fact);
@@ -320,7 +358,7 @@ struct RunLoopState {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
                         const auto& scope = record->plan_ ? step_tools : options.tools;
-                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*scope,policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
+                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*scope,*policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
                         batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
@@ -364,6 +402,8 @@ ConfirmationReceipt RunLoop::decide(const ConfirmationCaller& caller, const Conf
 void RunLoop::confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) { state_->confirm_plan_step(caller,key,evidence); }
 // 转交有限重规划请求，不在命令提交期间执行模型。
 PlanBinding RunLoop::replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance) { return state_->replan(caller,expected,guidance); }
+// 转交用户目标修订，原模型和工具仍由同一运行拥有。
+PlanBinding RunLoop::revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal) { return state_->revise_goal(caller,expected,goal); }
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }
 // 返回保留运行数量。

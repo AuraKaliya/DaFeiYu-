@@ -125,6 +125,8 @@ class TurnRequest {
     std::optional<PlanSnapshot> plan() const;
     // 按原步骤完整版本复制已提交的文本及最后模型尝试；尚无输出返回空值，不驱动工作。
     std::optional<PlanStepOutput> plan_output(const PlanStepKey& key) const;
+    // 复制目标更新前已经停止的原计划，保留原结果与验证证据，不提供恢复执行入口。
+    std::vector<PlanSnapshot> plan_history() const;
   private:
     friend class Session;
     friend class RunLoop;
@@ -157,6 +159,9 @@ class TurnRequest {
     std::vector<PlanStepOutput> plan_outputs_;
     struct PlanRevisionRecord { PlanBinding expected; std::string guidance; };
     std::vector<PlanRevisionRecord> plan_revisions_;
+    struct GoalRevisionRecord { PlanBinding expected; std::string goal; };
+    std::vector<GoalRevisionRecord> goal_revisions_;
+    std::vector<std::unique_ptr<PlanBook>> previous_plans_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::vector<ModelContextSnapshot> model_contexts_;
@@ -195,6 +200,8 @@ class Session {
     void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence);
     // 在步骤边界请求有限尾部重规划；返回待生成版本，重复原请求不再次调用模型。
     PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance = {});
+    // 在原工作已退出的步骤边界更新用户目标；返回新目标待生成版本，保持原权限及总预算。
+    PlanBinding revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal);
     // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。
