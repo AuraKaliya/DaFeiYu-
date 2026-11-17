@@ -86,10 +86,14 @@ struct RunLoopState {
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
-        std::function<bool()> action_guard;
-        if (options.action_observations) action_guard = [observations = *options.action_observations,clock = options.now] { return observations.current(clock()); };
+        // 最后检查只持有原操作读句柄，避免捕获整个运行形成回收环；不能因工具自身期限较晚而越过总期限。
+        const auto action_guard = [observations = options.action_observations,clock = options.now,absolute = deadline,run_state = record->operation()] {
+            const auto current = clock();
+            return run_state->state() == runtime::OperationState::pending && run_state->cancellation_reason() == runtime::CancelReason::none &&
+                current < absolute && (!observations || observations->current(current));
+        };
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
-            ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now,std::move(action_guard));
+            ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now,action_guard);
         ++resident_count;
     }
     // 已退出或外层尚未启动的状态销毁后归还运行名额。
