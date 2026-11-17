@@ -75,6 +75,7 @@ RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std
     result.key = {std::move(name_space),request.run_id()}; result.versions = request.trace_versions(); validate_trace_versions(result.versions);
     result.origin = data.origin; result.notifications = data.notifications; result.failure = data.failure; result.stop_reason = data.stop_reason;
     result.source = data.source; result.goal_revision = data.goal_revision; result.observations = request.observation_inputs();
+    result.model_contexts = request.model_contexts();
     TraceNode root; root.id = {request.run_id()}; root.result = data.result; root.exit = data.exit; root.submitted_ns = 0;
     root.accepted_ns = offset(data.accepted,data.origin); root.settled_ns = optional_offset(data.settled,data.origin);
     root.observed_exit_ns = optional_offset(data.exited,data.origin); result.nodes.push_back(root);

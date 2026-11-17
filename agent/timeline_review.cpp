@@ -29,6 +29,31 @@ void decision(PolicyDecision value) {
     else require(value.verdict == PolicyVerdict::deny && value.reason != PolicyReason::none &&
         value.reason != PolicyReason::confirmation_required && value.reason != PolicyReason::work_pending);
 }
+// 核对每个模型的原版本绑定，不把当前目标修订套到先前模型调用上。
+// 步骤：核对数量及身份 → 校验调用目的和步骤标识 → 检查模型节点及单调目标关联。
+void model_contexts(const RunTimeline& value, std::size_t count) {
+    require(value.model_contexts.size() == count && count <= 64);
+    std::uint64_t previous_step = 0, previous_goal = 0;
+    for (const auto& context : value.model_contexts) {
+        require(context.attempt.step.run == value.key.run && context.attempt.step.sequence > previous_step && context.attempt.sequence &&
+            context.goal_revision && context.goal_revision >= previous_goal && context.goal_revision <= value.goal_revision &&
+            within(context.purpose,ModelPurpose::plan_step));
+        require(std::any_of(value.nodes.begin(),value.nodes.end(),[&](const auto& node) {
+            return node.id.kind == TraceNodeKind::model && node.id.step == context.attempt.step.sequence && node.id.attempt == context.attempt.sequence;
+        }));
+        if (context.purpose == ModelPurpose::direct) require(!context.plan_revision && context.plan_step.empty());
+        else {
+            require(context.plan_revision && context.plan_revision <= 16);
+            if (context.purpose == ModelPurpose::plan_generation) require(context.plan_step.empty());
+            else {
+                require(!context.plan_step.empty() && context.plan_step.size() <= 64);
+                for (const auto c : context.plan_step) require((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.');
+            }
+        }
+        previous_step = context.attempt.step.sequence; previous_goal = context.goal_revision;
+    }
+}
 }
 // 只读解释已有元数据，损坏拒绝、缺口明示，元数据不能变成当前执行许可。
 // 步骤：核对格式和大小 → 验证完整节点及关联 → 验证保留窗口和单调事实 → 汇总可见状态及缺失材料。
@@ -70,6 +95,7 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
             if (report.run_exited) require(*node.confirmation != ConfirmationState::waiting && *node.confirmation != ConfirmationState::approved);
         }
     }
+    model_contexts(value,report.models);
     const auto& delta = value.delta;
     require(delta.run == value.key.run && delta.latest_revision && delta.oldest_revision && delta.oldest_revision-1 <= delta.latest_revision &&
         delta.latest_revision-(delta.oldest_revision-1) <= 1024 && delta.requested_after <= delta.latest_revision &&

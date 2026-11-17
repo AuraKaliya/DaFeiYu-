@@ -56,6 +56,14 @@ struct ModelStepSnapshot {
     std::optional<model::Usage> usage;
     TurnDiagnostics::TimePoint observed_exit;
 };
+enum class ModelPurpose { direct, plan_generation, plan_step };
+// 模型提交时固定的目标与计划关联，无提示词、结果正文或可执行凭证。
+struct ModelContextSnapshot {
+    AttemptId attempt;
+    std::uint64_t goal_revision = 0, plan_revision = 0;
+    ModelPurpose purpose = ModelPurpose::direct;
+    std::string plan_step;
+};
 // 仅供可信验证入口读取的步骤模型文本；不是完成证据，普通诊断不得自动导出正文。
 struct PlanStepOutput {
     PlanStepKey key;
@@ -99,6 +107,8 @@ class TurnRequest {
     RunSnapshot snapshot() const noexcept;
     // 复制已实际退出的模型步骤，不返回后台请求或业务正文。
     std::vector<ModelStepSnapshot> model_steps() const { return model_steps_; }
+    // 复制每个已接纳模型请求的原目标及计划关联，后续修订不覆盖旧调用。
+    std::vector<ModelContextSnapshot> model_contexts() const { return model_contexts_; }
     // 复制各批次工具的状态与策略决定，不持有原生代码。
     std::vector<BatchToolSnapshot> tool_steps() const;
     // 返回可信控制界面的确认记录和待审参数；普通诊断与通知不包含这些正文。
@@ -149,6 +159,7 @@ class TurnRequest {
     std::vector<PlanRevisionRecord> plan_revisions_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
+    std::vector<ModelContextSnapshot> model_contexts_;
     std::size_t model_requests_ = 0, tool_requests_ = 0;
     PolicyReason stop_reason_ = PolicyReason::none;
     model::CallDiagnostics completed_call_;

@@ -1,5 +1,6 @@
 #include "support/scripted_model.hpp"
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/run_trace.hpp>
 #include <atomic>
 #include <iostream>
 #include <thread>
@@ -75,6 +76,12 @@ void scenarios(unsigned mode) {
         check(request->answer() == "last output" && request->plan_output(first_key)->text == "first output","replan changed original output");
     }
     model.verify_complete(); const auto attempted = model.report().attempted;
+    const auto trace = run_timeline(*request,"replan-fixture");
+    check(review_timeline(trace).run_exited && trace.model_contexts.size() == attempted &&
+        trace.model_contexts[0].purpose == ModelPurpose::plan_generation && trace.model_contexts[1].plan_step == "first" &&
+        trace.model_contexts[1].plan_revision == 1,"model contexts lost original plan association");
+    if (mode == 0) check(trace.model_contexts[2].purpose == ModelPurpose::plan_generation && trace.model_contexts[2].plan_revision == 2 &&
+        trace.model_contexts[3].plan_step == "last" && trace.model_contexts[3].plan_revision == 2,"revision relabeled old or new model");
     check(session.replan(caller,original,"adjust tail") == target && model.report().attempted == attempted,"terminal replan receipt restarted work");
 }
 // 验证规划模型尚未退出时的宿主推进不会重复提交或覆盖原请求。

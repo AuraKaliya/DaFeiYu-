@@ -72,6 +72,7 @@ struct RunLoopState {
         if (options.tools) for (const auto& tool : options.tools->descriptions()) versions.tools.push_back({tool.id,tool.version,tool.instance,{},{}});
         validate_trace_versions(versions);
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
+        record->model_contexts_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
             ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now);
@@ -204,10 +205,14 @@ struct RunLoopState {
         const auto& scope = record->plan_ ? step_tools : options.tools;
         model::Request input = planning_request ? planning_request->request :
             model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
+        ModelContextSnapshot context{current.attempt,options.goal_revision};
+        if (planning_request) { context.purpose = ModelPurpose::plan_generation; context.plan_revision = planning_request->expected.plan_revision+1; }
+        else if (plan_step) { context.purpose = ModelPurpose::plan_step; context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->key.step; }
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         auto request = models.submit_request(config,std::move(input));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
+        record->model_contexts_.push_back(std::move(context));
         TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
     }

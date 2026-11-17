@@ -44,7 +44,7 @@ struct RunTrace {
 };
 // 进程内完整当前节点与有限历史增量；origin 和 delta 时刻属于同一单调时钟域，不能跨进程比较。
 struct RunTimeline {
-    static constexpr std::uint32_t schema_version = 2;
+    static constexpr std::uint32_t schema_version = 3;
     TraceKey key;
     TraceVersions versions;
     TurnDiagnostics::TimePoint origin;
@@ -56,6 +56,7 @@ struct RunTimeline {
     RunOrigin source = RunOrigin::user_request;
     std::uint64_t goal_revision = 0;
     std::vector<ObservationInputFact> observations;
+    std::vector<ModelContextSnapshot> model_contexts;
 };
 // 投影正式多步当前事实并分页读取历史；历史缺口不会隐藏当前模型、工具及确认状态。
 RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std::uint64_t after = 0, std::size_t limit = 256);
