@@ -9,6 +9,14 @@ namespace {
 RunLoopState* retained_head = nullptr;
 std::size_t resident_count = 0, retained_count = 0;
 bool reaping = false;
+// 由原 RunLoop 拥有一个计划步骤的工作完成源；计划账本只借用读句柄，验证状态仍独立。
+struct PlanExecution {
+    PlanStepKey key;
+    runtime::OperationSource result, exit;
+    std::string answer;
+    // 在任何模型或工具调用之前预留本步骤的独立结果与退出操作。
+    explicit PlanExecution(PlanStepKey value) : key(std::move(value)) {}
+};
 }
 struct RunLoopState {
     std::shared_ptr<TurnRequest> record;
@@ -20,6 +28,8 @@ struct RunLoopState {
     ToolBatch* batch = nullptr;
     std::optional<PlanScope> planning_scope;
     std::optional<PlanPrompt> planning_request;
+    std::optional<ToolSnapshot> step_tools;
+    std::unique_ptr<PlanExecution> plan_step;
     std::size_t repeated = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
@@ -76,6 +86,8 @@ struct RunLoopState {
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
         if (record->plan_) record->plan_->stop();
+        if (plan_step && plan_step->result.operation()->state() == runtime::OperationState::pending)
+            plan_step->result.settle(record->operation()->state() == runtime::OperationState::failed ? runtime::OperationState::failed : runtime::OperationState::cancelled);
         if (record->confirmations_) record->confirmations_->advance(deadline,reason);
         if (record->model_) record->model_->request_cancel(reason);
         if (record->tools_) record->tools_->close(reason);
@@ -114,7 +126,9 @@ struct RunLoopState {
             if (policy.check_context(current).verdict != PolicyVerdict::allow) throw std::invalid_argument("run: confirmation stopped");
             const auto original = book.target(command.request);
             try {
-                const auto selected = options.tools->resolve(original.name,original.arguments);
+                const auto& scope = record->plan_ ? step_tools : options.tools;
+                if (!scope) throw std::invalid_argument("run: confirmation scope unavailable");
+                const auto selected = scope->resolve(original.name,original.arguments);
                 if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments},original.candidate) != original)
                     throw std::invalid_argument("run: confirmation target changed");
             } catch (...) { book.invalidate(command.request,ConfirmationState::invalidated); throw; }
@@ -138,14 +152,31 @@ struct RunLoopState {
         }
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
+        const auto& scope = record->plan_ ? step_tools : options.tools;
         model::Request input = planning_request ? planning_request->request :
-            model::Request{record->context_->messages(),options.tools ? options.tools->definitions() : std::vector<model::ToolDefinition>{}};
+            model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         auto request = models.submit_request(config,std::move(input));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
         TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
+    }
+    // 将下一计划步骤交给原模型工具循环，工作成功仍须另行由宿主验证。
+    // 步骤：取得下一未完成步骤 → 收紧原工具范围并预留工作 → 准备步骤输入与关联 → 提交原模型入口。
+    void start_plan_step() {
+        const auto snapshot = record->plan_->snapshot();
+        if (!snapshot.definition || snapshot.stopped) return;
+        std::size_t index = 0;
+        while (index < snapshot.steps.size() && (snapshot.steps[index].state == PlanStepState::completed || snapshot.steps[index].state == PlanStepState::skipped)) ++index;
+        if (index == snapshot.steps.size() || snapshot.steps[index].state != PlanStepState::pending) return;
+        const auto& step = snapshot.definition->steps()[index];
+        auto tools = options.tools ? std::optional<ToolSnapshot>(options.tools->restrict_to(step.tools)) : std::nullopt;
+        auto execution = std::make_unique<PlanExecution>(snapshot.steps[index].key);
+        record->context_->begin_step(plan_step_input(*snapshot.definition,index));
+        const AttemptId attempt{{record->run_id(),record->model_requests_+1},1};
+        record->plan_->start(execution->key,{attempt,execution->result.operation(),execution->exit.operation()});
+        step_tools = std::move(tools); plan_step = std::move(execution); start_model();
     }
     // 保存已退出模型的原状态和用量，释放请求槽后才允许下一次提交。
     // 步骤：复制真实状态及可选用量 → 保存步骤与首个退出事实 → 归还模型请求槽。
@@ -164,6 +195,7 @@ struct RunLoopState {
     // 步骤：核对全部工作已退出 → 封闭上下文和模型接纳 → 发布运行退出。
     void finish() {
         if (record->operation()->state() == runtime::OperationState::pending || record->model_ || (record->tools_ && record->tools_->busy()) || (batch && !batch->done())) return;
+        if (plan_step && plan_step->exit.operation()->state() == runtime::OperationState::pending) plan_step->exit.settle(runtime::OperationState::succeeded);
         record->context_->seal(); models.close(); record->exited_ = std::chrono::steady_clock::now();
         record->exit_.settle(runtime::OperationState::succeeded); record->record_fact(RunFactKind::exited);
     }
@@ -200,20 +232,27 @@ struct RunLoopState {
                         const auto candidate = parse_plan_response(*planning_scope,planning_request->expected,*response);
                         record->plan_->install(planning_request->expected,candidate.steps()); planning_request.reset();
                     } else if (response->finish == model::FinishReason::stop) {
-                        stage = TurnFailure::history_commit; record->context_->finish_text(response->message.content);
-                        record->record_history();
-                        record->answer_ = std::move(response->message.content); record->result_.settle(OperationState::succeeded);
-                        record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
+                        stage = TurnFailure::history_commit;
+                        if (plan_step) {
+                            record->context_->commit_step_text(response->message.content); record->record_history();
+                            plan_step->answer = std::move(response->message.content);
+                            plan_step->result.settle(OperationState::succeeded); plan_step->exit.settle(OperationState::succeeded);
+                        } else {
+                            record->context_->finish_text(response->message.content); record->record_history();
+                            record->answer_ = std::move(response->message.content); record->result_.settle(OperationState::succeeded);
+                            record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
+                        }
                     } else if (response->finish == model::FinishReason::tool_calls && record->tools_) {
                         stage = TurnFailure::tool_execution; const auto count = response->message.tool_calls.size();
                         if (record->tool_requests_ > options.policy.tool_limit || count > options.policy.tool_limit-record->tool_requests_) {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
-                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*options.tools,policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
+                        const auto& scope = record->plan_ ? step_tools : options.tools;
+                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*scope,policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
                         batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
-            }
+            } else if (record->operation()->state() == OperationState::pending && record->plan_ && !planning_request && !plan_step) start_plan_step();
             finish();
         } catch (...) { fail(std::current_exception()); try { finish(); } catch (...) {} }
         advancing = false;

@@ -45,7 +45,7 @@ void accepted() {
             plan->steps[0].state == PlanStepState::pending && request->operation()->state() == OperationState::pending &&
             request->exit()->state() == OperationState::pending && !session.message_count() && !calls && !review_timeline(trace).run_exited,
             "candidate finished run, executed tools or lost binding");
-        for (unsigned repeat = 0; repeat < 3; ++repeat) { request->plan(); session.advance(); }
+        for (unsigned repeat = 0; repeat < 3; ++repeat) request->plan();
         check(request->diagnostics().model_requests == 1 && !calls,"query or pending plan restarted model");
         if (timeout) model.advance_clock(std::chrono::milliseconds(10)); else request->request_cancel(CancelReason::user);
         until(session,[&] { return !session.busy(); }); model.verify_complete();
@@ -72,9 +72,80 @@ void failures_and_default() {
         else check(request->plan()->stopped && !request->plan()->definition && !session.message_count(),"failure installed a plan or history");
     }
 }
+struct Gate { unsigned calls = 0; bool release = false; };
+class ReadWork final : public ToolWork {
+  public:
+    // 记录只读执行开始，结果与真实退出由测试分别控制。
+    explicit ReadWork(std::shared_ptr<Gate> gate) : gate_(std::move(gate)) { ++gate_->calls; }
+    // 返回固定结果，保留原资源直至测试放行。
+    ToolProgress poll(CancelReason) override { return {ToolResult{true,ToolEffect::not_applied,"read value",ToolError::none},gate_->release}; }
+  private:
+    std::shared_ptr<Gate> gate_;
+};
+// 验证计划步骤使用原循环和工具子集，文本结束只进入宿主验证等待。
+// 步骤：生成候选 → 执行有限只读步骤 → 分别检查工具结果与退出 → 等待验证或取消收尾。
+void execution() {
+    for (const bool cancel : {false,true}) {
+        auto gate = std::make_shared<Gate>(); unsigned forbidden = 0; ToolCatalog catalog;
+        const std::string schema = R"({"type":"object","properties":{},"additionalProperties":false})";
+        catalog.add({"fixture/read",1,1,{"read","fixture",schema},false,true},[gate](const auto&) { return std::make_unique<ReadWork>(gate); });
+        catalog.add({"fixture/other",1,1,{"other","fixture",schema},false,true},[&](const auto&) { ++forbidden; return completed_tool({true,ToolEffect::not_applied,"",ToolError::none}); });
+        ScriptStep generation; generation.response = proposal();
+        ScriptStep action; action.tool_names = {"read"}; action.response = Response{{Role::assistant,"",{{"call","read","{}"}}},FinishReason::tool_calls};
+        ScriptStep answer; answer.last_role = Role::tool; answer.last_tool_id = "call"; answer.tool_names = {"read"}; answer.response = Response{{Role::assistant,"model claims complete"}};
+        ScenarioSpec spec{1,"plan_step_execution",1,{},{generation,action},2}; if (!cancel) { spec.steps.push_back(answer); spec.expected_model_requests = 3; }
+        ScriptedModel model(std::move(spec)); Session session({},channel(),model.backend()); RunOptions options;
+        options.planning = PlanLimits{}; options.now = model.clock(); const std::vector<std::string> ids{"fixture/read","fixture/other"}; options.tools = catalog.snapshot(ids);
+        const auto request = session.begin("host goal",options); until(session,[&] { return gate->calls == 1; });
+        const auto active = request->plan()->steps[0];
+        check(active.state == PlanStepState::running && active.result == OperationState::pending && active.exit == OperationState::pending &&
+            active.execution->step.run == request->run_id() && active.execution->step.sequence == 2 && request->tool_steps()[0].exit == OperationState::pending,
+            "plan step lost original work or forged exit");
+        if (cancel) { request->request_cancel(CancelReason::user); session.advance(); }
+        gate->release = true;
+        if (cancel) until(session,[&] { return !session.busy(); });
+        else {
+            until(session,[&] { return request->plan()->steps[0].waiting == PlanWait::verification; });
+            check(request->operation()->state() == OperationState::pending && session.message_count() == 5 && request->plan()->steps[0].state == PlanStepState::running,
+                "model text completed plan or lost step history");
+            for (unsigned repeat = 0; repeat < 3; ++repeat) session.advance();
+            request->request_cancel(CancelReason::user); until(session,[&] { return !session.busy(); });
+        }
+        model.verify_complete(); check(gate->calls == 1 && !forbidden && request->plan()->stopped &&
+            request->plan()->steps[0].exit == OperationState::succeeded,"plan step replayed or lost actual exit");
+    }
+}
+// 验证模型越过步骤工具范围时零动作，规划生成也消耗原运行模型预算。
+// 步骤：固定原范围及只读步骤 → 返回范围外候选或耗尽预算 → 检查拒绝事实和原运行退出。
+void restricted_step() {
+    for (const bool limited : {false,true}) {
+        unsigned calls = 0; ToolCatalog catalog; register_read(catalog,calls);
+        catalog.add({"fixture/other",1,1,{"other","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},false,true},
+            [&](const auto&) { ++calls; return completed_tool({true,ToolEffect::not_applied,"",ToolError::none}); });
+        ScriptStep generation; generation.response = proposal();
+        ScriptStep action; action.tool_names = {"read"}; action.response = Response{{Role::assistant,"",{{"call","other","{}"}}},FinishReason::tool_calls};
+        ScriptStep answer; answer.last_role = Role::tool; answer.tool_names = {"read"}; answer.response = Response{{Role::assistant,"rejected"}};
+        ScenarioSpec spec{1,"restricted_plan_step",1,{},{generation},1};
+        if (!limited) { spec.steps.push_back(action); spec.steps.push_back(answer); spec.expected_model_requests = 3; }
+        ScriptedModel model(std::move(spec)); Session session({},channel(),model.backend()); RunOptions options;
+        options.planning = PlanLimits{}; options.now = model.clock(); const std::vector<std::string> ids{"fixture/read","fixture/other"}; options.tools = catalog.snapshot(ids);
+        if (limited) options.policy.model_limit = 1;
+        const auto request = session.begin("host goal",options);
+        if (limited) {
+            until(session,[&] { return !session.busy(); });
+            check(request->diagnostics().stop_reason == PolicyReason::model_limit && request->plan()->steps[0].state == PlanStepState::failed,
+                "planning bypassed original model budget");
+        } else {
+            until(session,[&] { return request->plan()->definition && request->plan()->steps[0].waiting == PlanWait::verification; });
+            check(!request->tool_steps()[0].accepted && request->tool_steps()[0].effect == ToolEffect::not_applied,"step scope allowed outside tool");
+            request->request_cancel(CancelReason::user); until(session,[&] { return !session.busy(); });
+        }
+        model.verify_complete(); check(!calls,"restricted or over-budget step executed tool");
+    }
+}
 }
 // 只使用原模型替身验证正式规划生成及停止，不调用真实模型。
 int main() {
-    try { accepted(); failures_and_default(); std::cout << "Session planning checks passed\n"; return 0; }
+    try { accepted(); failures_and_default(); execution(); restricted_step(); std::cout << "Session planning checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

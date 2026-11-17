@@ -82,4 +82,10 @@ PlanDefinition parse_plan_response(const PlanScope& scope, PlanBinding expected,
         return PlanDefinition::create(scope,expected.plan_revision+1,std::move(steps));
     } catch (const Json::exception&) { throw std::invalid_argument("plan protocol: malformed candidate"); }
 }
+// 只投影原候选中的指定步骤，模型不能通过这个数据入口选择其他版本。
+std::string plan_step_input(const PlanDefinition& definition, std::size_t index) {
+    const auto& step = definition.steps().at(index); const auto bound = definition.binding();
+    return Json{{"goal_revision",bound.goal_revision},{"plan_revision",bound.plan_revision},{"step_id",step.id},
+        {"objective",step.objective},{"completion_criterion",step.completion_criterion},{"allowed_tool_ids",step.tools}}.dump();
+}
 }
