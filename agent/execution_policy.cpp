@@ -37,6 +37,7 @@ PolicyDecision ExecutionPolicy::before_tool(const PolicyContext& context, const 
     const auto base = common(context); if (base.verdict != PolicyVerdict::allow) return base;
     if (!tool.registration || !tool.description.instance || !tool.description.version || tool.description.id.empty())
         return {PolicyVerdict::deny,PolicyReason::invalid_context};
+    if (tool.description.changes_state && !context.observations_current) return {PolicyVerdict::deny,PolicyReason::invalid_context};
     if (context.tool_requests >= settings_.tool_limit) return {PolicyVerdict::deny,PolicyReason::tool_limit};
     if (tool.description.changes_state && settings_.confirm_changes) return {PolicyVerdict::wait,PolicyReason::confirmation_required};
     return base;

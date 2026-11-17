@@ -123,7 +123,8 @@ bool ToolBatch::advance(const PolicyContext& current) {
     try {
         if (confirmations_) confirmations_->advance(current.now,current.cancellation);
         auto decision = policy_.check_context(current);
-        if (current.attempt != bound_.attempt) decision = {PolicyVerdict::deny,PolicyReason::invalid_context};
+        if (current.attempt != bound_.attempt || current.plan_revision != bound_.plan_revision || current.plan_step != bound_.plan_step ||
+            current.observation_binding != bound_.observation_binding) decision = {PolicyVerdict::deny,PolicyReason::invalid_context};
         if (decision.verdict != PolicyVerdict::allow) {
             continuation_ = decision;
             const bool valid_cancel = current.cancellation == CancelReason::user || current.cancellation == CancelReason::owner_stop || current.cancellation == CancelReason::deadline;

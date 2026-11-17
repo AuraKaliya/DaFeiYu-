@@ -50,6 +50,14 @@ struct RunLoopState {
         const auto now = options.now(); const auto duration = std::chrono::duration_cast<ToolTime::duration>(options.timeout);
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
         deadline = std::min(now+duration,options.deadline.value_or(now+duration));
+        if (options.action_observations) {
+            const auto guarded = options.action_observations->observations();
+            if (!options.action_observations->current(now) || (!options.observations.empty() && options.observations != guarded))
+                throw std::invalid_argument("run: mismatched or stale action observations");
+            options.observations = guarded;
+        }
+        if (options.tools && options.tools->permits_state_changes() && !options.observations.empty() && !options.action_observations)
+            throw std::invalid_argument("run: observed changes require currentness guards");
         if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
         std::vector<std::string> inputs; inputs.reserve(options.observations.size()); record->observation_inputs_.reserve(options.observations.size());
         for (const auto& observation : options.observations) {
@@ -78,8 +86,10 @@ struct RunLoopState {
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
+        std::function<bool()> action_guard;
+        if (options.action_observations) action_guard = [observations = *options.action_observations,clock = options.now] { return observations.current(clock()); };
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
-            ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now);
+            ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now,std::move(action_guard));
         ++resident_count;
     }
     // 已退出或外层尚未启动的状态销毁后归还运行名额。
@@ -93,6 +103,10 @@ struct RunLoopState {
         PolicyContext context{record->attempt_,options.goal_revision,options.policy.revision,options.origin,record->model_requests_,record->tool_requests_,
             stopping ? deadline : options.now(),deadline,reason};
         if (plan_step && !planning_request) { context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->index+1; }
+        if (options.action_observations) {
+            context.observation_binding = options.action_observations->binding();
+            context.observations_current = options.action_observations->current(context.now);
+        }
         return context;
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
@@ -141,6 +155,8 @@ struct RunLoopState {
                 const auto& scope = record->plan_ ? step_tools : options.tools;
                 if (!scope) throw std::invalid_argument("run: confirmation scope unavailable");
                 const auto selected = scope->resolve(original.name,original.arguments);
+                if (selected.description.changes_state && !current.observations_current)
+                    throw std::invalid_argument("run: action observations changed before confirmation");
                 if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments},original.candidate) != original)
                     throw std::invalid_argument("run: confirmation target changed");
             } catch (...) { book.invalidate(command.request,ConfirmationState::invalidated); throw; }

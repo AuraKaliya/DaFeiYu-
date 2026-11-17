@@ -1,0 +1,28 @@
+#include <dafeiyu/action_observations.hpp>
+#include <set>
+#include <stdexcept>
+
+namespace dfy::agent {
+// 将已由原集合签发的观察检查组成有界且不可冒充的新绑定。
+// 步骤：核对数量与对象唯一性 → 保留原检查 → 签发进程内身份。
+ActionObservations::ActionObservations(std::vector<ObservationGuard> guards) : guards_(std::move(guards)) {
+    if (guards_.empty() || guards_.size() > 4) throw std::invalid_argument("action observations: expected 1..4 guards");
+    std::set<std::pair<runtime::DomainId,std::string>> seen;
+    for (const auto& guard : guards_) {
+        const auto& value = guard.observation()->metadata();
+        if (!seen.emplace(value.source,value.object.id).second) throw std::invalid_argument("action observations: duplicate object");
+    }
+    binding_ = runtime::next_domain();
+}
+// 任一来源、对象水位或有效期变化都使原集合不再满足动作前置条件。
+bool ActionObservations::current(ObservationTime now) const noexcept {
+    for (const auto& guard : guards_) if (!guard.current(now)) return false;
+    return true;
+}
+// 模型读取的观察与动作复核始终指向相同原值，查询不刷新资格。
+std::vector<std::shared_ptr<const ObservationRecord>> ActionObservations::observations() const {
+    std::vector<std::shared_ptr<const ObservationRecord>> result; result.reserve(guards_.size());
+    for (const auto& guard : guards_) result.push_back(guard.observation());
+    return result;
+}
+}
