@@ -657,3 +657,9 @@ Debug `agent.diagnostic_json`、`agent.native_action_feedback` 2／2 通过。�
 从 `33e3949` 增加明确路径的应用层文件入口。写入先完成编码，再独占创建同目录临时文件，完整写入及刷新后以无覆盖方式发布；已有目标、备用数据流和无效路径拒绝。读取在分配前检查 8 MiB 上限，独立返回经过同一严格校验的纯值诊断，不加载插件或恢复运行。
 
 Debug 仅 `app.diagnostic_files` 通过，实际验证中文空格路径、完整往返、已有文件保持、坏格式／超量文件拒绝和失败后无临时残留。测试只清理本次明确创建的文件与空目录，没有递归删除，也没有网络上传。默认 CLI 命令接入仍留在 A09。
+
+### T03e 公开配置与实际工具版本关联
+
+从 `4924d22` 通过系统 SHA-256 固定规范 schema 摘要，关联原实例创建时的插件清单声明版本；声明版本不冒充二进制签名。运行同时摘要公开模型字段（provider、model、timeout）及基础执行限额，端点、凭据引用和完整配置均不读取、不哈希；自定义控制扩展只记录宿主显式标签，未知保持空。代码／构建／模板标签继续由宿主提供，不把当前仓库 HEAD 猜成已构建程序版本。
+
+RunTimeline 值格式升为 5，诊断封套明确携带该版本；默认模型配置超时初始化为未知值 0，避免替身配置未设置字段时读取未初始化值。Debug `agent.version_fingerprint`、`agent.multi_run_trace`、`agent.native_observation_rebind` 首轮通过，公开配置扩展后针对 `agent.version_fingerprint`、`agent.diagnostic_json`、`agent.native_observation_rebind` 3／3 通过。覆盖标准摘要向量、schema 排版不变／内容变化、实际插件版本，以及改变私有端点或凭据引用不会影响公开摘要。未调用真实模型。

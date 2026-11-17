@@ -53,7 +53,7 @@ void decoding(const std::string& text) {
 int main() {
     try {
         const auto value = fixture(); const auto original = value.timeline.origin; const auto text = encode_diagnostic(value); const auto json = nlohmann::json::parse(text);
-        check(text.find("PRIVATE_") == std::string::npos && json["schema_version"] == 1 && json["timeline_schema_version"] == 4 &&
+        check(text.find("PRIVATE_") == std::string::npos && json["schema_version"] == 1 && json["timeline_schema_version"] == RunTimeline::schema_version &&
             json["data"]["timeline"]["versions"]["application_commit"].is_null() && !json["data"]["timeline"].contains("origin"),"diagnostic exposed content or invented versions");
         check(json["data"]["timeline"]["delta"]["gap"] == true && json["data"]["plans"][0]["steps"][0]["has_evidence"] == true &&
             json["data"]["plans"][0]["steps"][0]["state"] == "completed" && value.timeline.origin == original && text == encode_diagnostic(value),

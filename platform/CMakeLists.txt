@@ -3,6 +3,14 @@ if(NOT WIN32)
   message(FATAL_ERROR "The current HTTPS transport requires Windows WinHTTP")
 endif()
 
+# 为公开版本指纹提供系统 SHA-256，不接触模型或插件业务。
+add_library(dfy_digest STATIC digest.cpp include/dafeiyu/digest.hpp)
+target_include_directories(dfy_digest PUBLIC include)
+target_link_libraries(dfy_digest PRIVATE dfy_build_options bcrypt)
+target_compile_definitions(dfy_digest PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(dfy_digest PROPERTIES FOLDER "Platform")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/digest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/digest.hpp")
+
 # 定义有界后台输入目标，独立于模型、插件和会话。
 add_library(dfy_input STATIC line_input.cpp include/dafeiyu/line_input.hpp)
 target_compile_features(dfy_input PUBLIC cxx_std_20)

@@ -14,6 +14,7 @@ struct ToolDescription {
     model::ToolDefinition model;
     bool changes_state = false;
     bool idempotent = false;
+    std::optional<std::string> plugin_version, schema_digest;
 };
 struct ToolSelection { ToolDescription description; runtime::DomainId registration = 0; };
 struct ToolEntry;

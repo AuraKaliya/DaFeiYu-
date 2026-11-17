@@ -58,6 +58,7 @@ PluginTools::PluginTools(const std::shared_ptr<PluginInstance>& instance, std::s
                 {model_name(id,local),copy(description.description,1024),copy(description.parameters,64*1024)},
                 (description.flags & DFY_V2_TOOL_CHANGES_STATE) != 0,(description.flags & DFY_V2_TOOL_IDEMPOTENT) != 0};
             const agent::ToolSchema schema(host.model.parameters);
+            host.plugin_version = std::string(instance->plugin_version());
             return Prepared{std::move(host),native_tool_factory(instance,local,description.version)};
         });
         ids_.push_back(entry.description.id); prepared.push_back(std::move(entry));

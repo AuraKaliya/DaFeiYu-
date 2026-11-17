@@ -1,5 +1,8 @@
 #include <dafeiyu/tool_catalog.hpp>
 #include <dafeiyu/tool_schema.hpp>
+#include <dafeiyu/digest.hpp>
+#include <dafeiyu/trace_identity.hpp>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <set>
 #include <stdexcept>
@@ -33,6 +36,9 @@ runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory fact
     const auto slot = std::find(entries_.begin(),entries_.end(),nullptr);
     if (slot == entries_.end()) throw std::length_error("tools: catalog full");
     ToolSchema schema(description.model.parameters);
+    description.schema_digest = "sha256:"+platform::sha256(nlohmann::json::parse(description.model.parameters).dump());
+    TraceVersions metadata; metadata.tools.push_back({description.id,description.version,description.instance,description.plugin_version,description.schema_digest});
+    validate_trace_versions(metadata);
     const auto registration = runtime::next_domain();
     *slot = std::make_shared<ToolEntry>(std::move(description),std::move(schema),registration,std::move(factory));
     return registration;

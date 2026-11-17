@@ -141,6 +141,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
     if (prompt.empty() || prompt.find_first_not_of(" \t\r\n") == std::string::npos || prompt.size() > 1024*1024)
         throw std::invalid_argument("session: nonblank prompt within 1 MiB required");
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
+    if (!options.extension && !options.version_labels.control_extension) options.version_labels.control_extension = "none";
     // 用独立会话门保护规则回调，关闭发生在回调内时仍能阻止新的受控调用。
     // 步骤：调用明确规则 → 重查会话门 → 返回原决定或关闭拒绝。
     options.extension = [gate = accepting_,rule = std::move(options.extension)](ControlPoint point,const PolicyContext& context) {

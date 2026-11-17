@@ -1,5 +1,8 @@
 #include <dafeiyu/trace_identity.hpp>
 #include <dafeiyu/utf8.hpp>
+#include <dafeiyu/run_options.hpp>
+#include <dafeiyu/digest.hpp>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <stdexcept>
 
@@ -53,6 +56,7 @@ std::optional<TraceNodeId> trace_parent(const TraceNodeId& id) {
 void validate_trace_versions(const TraceVersions& versions) {
     optional_text(versions.application_commit); optional_text(versions.build); optional_text(versions.prompt_template);
     optional_text(versions.provider); optional_text(versions.model); optional_text(versions.model_profile);
+    optional_text(versions.public_model_config); optional_text(versions.execution_policy); optional_text(versions.control_extension);
     if ((versions.policy && !*versions.policy) || versions.tools.size() > 64) throw std::invalid_argument("trace: invalid version limits");
     std::set<std::string> tools;
     for (const auto& tool : versions.tools) {
@@ -66,6 +70,26 @@ TraceVersions public_model_versions(const model::Config& config) {
     TraceVersions result;
     if (!config.provider.empty()) result.provider = config.provider;
     if (!config.model.empty()) result.model = config.model;
+    validate_trace_versions(result); return result;
+}
+// 只对显式允许的字段取摘要，缺失代码／模板标识不伪造为当前版本。
+// 步骤：复制公开标识 → 摘要公开模型及基础执行配置 → 关联实际工具版本 → 校验清单。
+TraceVersions public_run_versions(const model::Config& config, const RunOptions& options, std::chrono::milliseconds effective_timeout) {
+    using Json = nlohmann::json;
+    auto result = public_model_versions(config); const auto& labels = options.version_labels;
+    result.application_commit = labels.application_commit; result.build = labels.build; result.prompt_template = labels.prompt_template;
+    result.model_profile = labels.model_profile; result.policy = options.policy.revision; result.control_extension = labels.control_extension;
+    if (!options.extension && !result.control_extension) result.control_extension = "none";
+    if (result.provider && result.model && config.timeout_ms > 0) result.public_model_config = "sha256:"+platform::sha256(Json{
+        {"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}}.dump());
+    Json policy{{"revision",options.policy.revision},{"model_limit",options.policy.model_limit},{"tool_limit",options.policy.tool_limit},
+        {"allow_observation",options.policy.allow_observation},{"confirm_changes",options.policy.confirm_changes},{"timeout_ms",effective_timeout.count()},
+        {"goal_update_limit",options.goal_update_limit},{"observation_rebind_limit",options.observation_rebind_limit},
+        {"confirmation_limit",options.confirmation_limit},{"no_progress_limit",options.no_progress_limit},{"planning",nullptr},{"parent_budget",nullptr}};
+    if (options.planning) policy["planning"] = {{"steps",options.planning->maximum_steps},{"revisions",options.planning->maximum_revisions},{"text_bytes",options.planning->maximum_text_bytes}};
+    if (options.budget) { const auto limit = options.budget->limit(); policy["parent_budget"] = {{"items",limit.items},{"bytes",limit.bytes}}; }
+    result.execution_policy = "sha256:"+platform::sha256(policy.dump());
+    if (options.tools) for (const auto& tool : options.tools->descriptions()) result.tools.push_back({tool.id,tool.version,tool.instance,tool.plugin_version,tool.schema_digest});
     validate_trace_versions(result); return result;
 }
 }

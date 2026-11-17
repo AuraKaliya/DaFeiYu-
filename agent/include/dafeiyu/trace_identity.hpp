@@ -3,6 +3,7 @@
 #include <dafeiyu/run_identity.hpp>
 #include <optional>
 #include <vector>
+#include <chrono>
 
 namespace dfy::agent {
 enum class TraceNodeKind { run, step, attempt, model, tool, control };
@@ -25,11 +26,14 @@ struct TraceVersions {
     std::optional<std::string> application_commit, build, prompt_template, provider, model, model_profile;
     std::optional<std::uint64_t> policy;
     std::vector<ToolTraceVersion> tools;
+    std::optional<std::string> public_model_config, execution_policy, control_extension;
 };
 // 宿主显式提供的公开版本标签；供应商、模型、策略和工具版本由实际运行另行采集。
 struct RunVersionLabels {
     std::optional<std::string> application_commit, build, prompt_template, model_profile;
+    std::optional<std::string> control_extension;
 };
+struct RunOptions;
 // 校验节点层级，拒绝不完整路径及未知种类。
 void validate_trace_id(const TraceNodeId& id);
 // 无分配地判断节点层级，供执行期间的故障隔离投影使用。
@@ -40,4 +44,6 @@ std::optional<TraceNodeId> trace_parent(const TraceNodeId& id);
 void validate_trace_versions(const TraceVersions& versions);
 // 仅提取公开供应商和模型名，不读取凭据变量、端点或配置正文。
 TraceVersions public_model_versions(const model::Config& config);
+// 固定允许公开的配置摘要及实际工具版本，不读取端点、凭据引用或扩展捕获内容。
+TraceVersions public_run_versions(const model::Config& config, const RunOptions& options, std::chrono::milliseconds effective_timeout);
 }

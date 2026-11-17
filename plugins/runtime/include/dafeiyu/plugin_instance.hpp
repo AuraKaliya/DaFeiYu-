@@ -59,6 +59,8 @@ class PluginInstance {
     runtime::DomainId generation() const noexcept;
     // 借用已校验包 ID，实例销毁前保持稳定，不暴露配置内容。
     std::string_view plugin_id() const noexcept;
+    // 借用原包清单声明的版本，不把它解释为二进制签名或代码内容摘要。
+    std::string_view plugin_version() const noexcept;
     // 从活动实例取得精确版本能力，并保留该实例的代码寿命。
     // 步骤：核对活动阶段并查询能力 → 固定具体实例代次 → 转交代码持有。
     template<class T> std::optional<InstanceCapability<T>> query(std::string_view name, std::uint32_t version) {

@@ -8,7 +8,7 @@ struct Config {
     std::string base_url;
     std::string model;
     std::string api_key_env;
-    int timeout_ms;
+    int timeout_ms = 0;
 };
 
 // 离线读取并校验单个模型服务配置，保留密钥环境变量引用而不读取凭据。

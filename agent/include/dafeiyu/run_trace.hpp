@@ -44,7 +44,7 @@ struct RunTrace {
 };
 // 进程内完整当前节点与有限历史增量；origin 和 delta 时刻属于同一单调时钟域，不能跨进程比较。
 struct RunTimeline {
-    static constexpr std::uint32_t schema_version = 4;
+    static constexpr std::uint32_t schema_version = 5;
     TraceKey key;
     TraceVersions versions;
     TurnDiagnostics::TimePoint origin;

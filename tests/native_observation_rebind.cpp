@@ -104,6 +104,7 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, b
         trace.model_contexts[2].observation_binding == initial_binding && trace.model_contexts[2].observations_current == false &&
         trace.model_contexts[3].observation_binding == replacement.binding() && trace.model_contexts[3].observations_current == true,
         "observation refresh rewrote old model context");
+    check(trace.versions.tools[0].plugin == std::string(instance->plugin_version()) && trace.versions.tools[0].schema->starts_with("sha256:"),"native public versions missing");
     auto damaged = trace; damaged.model_contexts[0].observation_binding = replacement.binding(); rejects([&] { review_timeline(damaged); });
     damaged = trace; damaged.observation_rebinds[0].after_model_requests = 2; rejects([&] { review_timeline(damaged); });
     damaged = trace; damaged.observation_rebinds[0].observations[0].revision = 1; rejects([&] { review_timeline(damaged); });

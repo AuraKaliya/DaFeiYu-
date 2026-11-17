@@ -39,7 +39,7 @@ void timeline() {
     const auto result = run_timeline(*request,"test-boot");
     check(actions == 1 && result.nodes.size() == 9 && result.delta.gap && result.nodes[0].result == OperationState::succeeded &&
         result.versions.application_commit == "fixture-commit" && result.versions.policy == std::uint64_t{7} && result.versions.provider == "qwen" &&
-        result.versions.tools[0].instance == DomainId{17} && result.versions.tools[0].contract == std::uint32_t{3} && !result.versions.build && !result.versions.tools[0].schema,
+        result.versions.tools[0].instance == DomainId{17} && result.versions.tools[0].contract == std::uint32_t{3} && !result.versions.build && result.versions.tools[0].schema->starts_with("sha256:"),
         "full snapshot lost current nodes or invented versions after trimming");
     for (const auto& node : result.nodes) {
         if (node.parent) check(std::any_of(result.nodes.begin(),result.nodes.end(),[&](const auto& parent) { return parent.id == *node.parent; }),"missing parent");
