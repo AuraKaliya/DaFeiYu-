@@ -16,6 +16,7 @@ ActionObservations::ActionObservations(std::vector<ObservationGuard> guards) : g
 }
 // 任一来源、对象水位或有效期变化都使原集合不再满足动作前置条件。
 bool ActionObservations::current(ObservationTime now) const noexcept {
+    if (guards_.empty()) return false;
     for (const auto& guard : guards_) if (!guard.current(now)) return false;
     return true;
 }
