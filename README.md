@@ -100,8 +100,8 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-工具循环、受控自动规划与“观察＋行动”建设顺序见 [Agent 基础能力开发计划](docs/agent-capability-development-plan.md)。正式 Session 支持有界循环、原生确认、追踪、固定场景、受控分步规划、有限重规划及步骤边界目标更新。观察规则仍只触发有限文本／只读工具运行；显式用户运行已有动作前复核和新观察反馈验证。默认 CLI／GUI 尚未装配工具确认、观察规则和计划交互，原文本入口保留。最新边界和框架见 [17:00 检查点](docs/agent-progress-2026-11-17-1700.md)，逐步证据见 [开发记录](docs/agent-development-log.md)。
+工具循环、受控自动规划与“观察＋行动”顺序见 [主计划](docs/agent-capability-development-plan.md)。正式 Session 已支持规划、确认、反馈及运行内观察替换，保留原预算和效果；本地诊断文件与公开版本查询已有接口。观察规则仍只读，默认 CLI／GUI 尚未装配新控制和导出命令，原文本入口保留。范围见 [23:00 检查点](docs/agent-progress-2026-11-17-2300.md)，证据见 [开发记录](docs/agent-development-log.md)。
 
-计划包含 [统一策略、追踪与离线回放](docs/agent-cross-cutting-plan.md) 三条横向能力；最新授权窗口截至 2026-11-17 北京时间 17:00，之后等待用户继续。下一步 A08c 的运行内观察重新绑定与受控继续，随后 T03／E03 和 A09 应用接入及最终验收。本轮没有新分发包；回放和评测同样不调用真实模型。
+计划包含 [统一策略、追踪与离线回放](docs/agent-cross-cutting-plan.md)。本轮截至 2026-11-17 北京时间 23:00，之后等待继续。下一步补明确自动观察变更规则，再推进 E03 同案例行为比较及 A09；公开版本差异不等于行为比较。本轮无新分发包，所有测试继续不调用真实模型。
 
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。

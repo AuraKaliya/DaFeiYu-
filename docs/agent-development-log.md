@@ -681,3 +681,9 @@ Debug 仅 `agent.version_fingerprint` 通过，覆盖已知策略变化、未知
 在 `3fabaeb` 上补齐只读回顾约束：声称完整的历史必须包含每个模型的提交及相应退出、每个工具候选和确认事实，不能删除事实后重新编号冒充完整轨迹；计划步骤的完成、失败、取消及等待原因也必须与原操作状态一致。
 
 Debug `agent.diagnostic_json`、`agent.native_action_feedback`、`app.diagnostic_files` 3／3 通过，新增删改完整历史及伪造完成后等待的拒绝回归。随后只对本轮构造和时间线接口直接影响的既有入口做兼容复核，不扩大为最终全量。
+
+### 2026-11-17 23:00 轮次收尾
+
+从同步基线 `40f948c` 完成 14 个开发、修复和测试提交，检查点 `6dd758a`，另有同步授权及收尾文档。A08c 已接入待验证边界的完整观察替换及受控继续，T03 已有当前文件与公开版本接口；默认观察规则仍只读，E03 同案例行为比较和 A09 默认入口尚未完成。范围与当前结构见 [23:00 检查点](agent-progress-2026-11-17-2300.md)。
+
+最后必要复核 `agent.replay_material`、`agent.observation_controller`、`agent.session_goal_revision` 3／3 通过。收尾仅核对编码、链接和差异；无真实模型、凭据读取、Computer Use、最终全量／Release／跨配置总验收或新分发包。到北京时间 23:00 后暂停，等待用户继续。
