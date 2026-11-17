@@ -2,6 +2,7 @@
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>
 #include <dafeiyu/diagnostic_snapshot.hpp>
+#include <dafeiyu/diagnostic_json.hpp>
 #include <charconv>
 #include <iostream>
 #include <thread>
@@ -82,6 +83,8 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, u
     check(diagnostic.feedback.size() == 1 && diagnostic.feedback[0].request == ticket.id() && diagnostic.feedback[0].checks == 1 &&
         diagnostic.feedback[0].latest->match == assessment.match && diagnostic.feedback[0].verified == (mode == 0) && diagnostic.plans.size() == 1,
         "diagnostic lost feedback or copied false completion");
+    const auto encoded = encode_diagnostic(diagnostic); const auto decoded = decode_diagnostic(encoded);
+    check(decoded.feedback[0].latest->match == assessment.match && encode_diagnostic(decoded) == encoded,"native feedback diagnostic did not round-trip");
     check(assessment.match == (mode == 0 ? ObservationMatch::satisfied : mode == 1 ? ObservationMatch::not_satisfied : ObservationMatch::unknown),"native feedback confused target and evidence");
     if (mode) { check(request->operation()->state() == OperationState::pending,"model text completed an unverified target"); request->request_cancel(CancelReason::user); }
     until(session,[&] { return !session.busy(); }); model.verify_complete();

@@ -1,6 +1,7 @@
 #include <dafeiyu/diagnostic_snapshot.hpp>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
 
 namespace dfy::agent {
 namespace {
@@ -27,6 +28,9 @@ DiagnosticSnapshot diagnostic_snapshot(const TurnRequest& request, std::string n
 void validate_diagnostic_snapshot(const DiagnosticSnapshot& value) {
     review_timeline(value.timeline); const auto run = value.timeline.key.run;
     require(value.plans.size() <= 17 && value.feedback.size() <= 64); std::uint64_t previous_goal = 0;
+    const bool planning = !value.timeline.model_contexts.empty() && value.timeline.model_contexts.front().purpose != ModelPurpose::direct;
+    require(planning == !value.plans.empty());
+    for (const auto& context : value.timeline.model_contexts) require((context.purpose != ModelPurpose::direct) == planning);
     for (const auto& plan : value.plans) {
         require(plan.binding.run == run && plan.binding.goal_revision > previous_goal && plan.binding.goal_revision <= value.timeline.goal_revision &&
             plan.binding.plan_revision <= 16 && plan.steps.size() <= 32 && (plan.binding.plan_revision || plan.steps.empty()));
@@ -56,11 +60,16 @@ void validate_diagnostic_snapshot(const DiagnosticSnapshot& value) {
         require(feedback.expected_type == runtime::ValueKind::boolean || feedback.expected_type == runtime::ValueKind::int64 ||
             feedback.expected_type == runtime::ValueKind::uint64 || feedback.expected_type == runtime::ValueKind::string || feedback.expected_type == runtime::ValueKind::null_value);
         for (std::size_t earlier = 0; earlier < index; ++earlier) require(value.feedback[earlier].request != feedback.request);
+        require(!feedback.checks_saturated || feedback.checks == std::numeric_limits<std::uint64_t>::max());
         const auto context = std::find_if(value.timeline.model_contexts.begin(),value.timeline.model_contexts.end(),[&](const auto& item) { return item.attempt == feedback.issued_at; });
         require(context != value.timeline.model_contexts.end() && context->purpose == ModelPurpose::plan_step && context->goal_revision == feedback.step.plan.goal_revision &&
             context->plan_revision == feedback.step.plan.plan_revision && context->plan_step == feedback.step.step);
         if (feedback.completed_tool) require(std::any_of(value.timeline.nodes.begin(),value.timeline.nodes.end(),[&](const auto& node) {
-            return node.id.kind == TraceNodeKind::tool && node.id.local == feedback.completed_tool && node.accepted == true && node.exit == runtime::OperationState::succeeded;
+            return node.id.kind == TraceNodeKind::tool && node.id.local == feedback.completed_tool && node.accepted == true && node.exit == runtime::OperationState::succeeded &&
+                node.id.step <= feedback.issued_at.step.sequence && std::any_of(value.timeline.model_contexts.begin(),value.timeline.model_contexts.end(),[&](const auto& model) {
+                    return model.attempt == AttemptId{{run,node.id.step},node.id.attempt} && model.goal_revision == feedback.step.plan.goal_revision &&
+                        model.plan_revision == feedback.step.plan.plan_revision && model.plan_step == feedback.step.step;
+                });
         }));
         if (feedback.latest) require(static_cast<unsigned>(feedback.latest->match) <= static_cast<unsigned>(ObservationMatch::unknown) &&
             static_cast<unsigned>(feedback.latest->issue) <= static_cast<unsigned>(ObservationEvidenceIssue::type_changed) &&
