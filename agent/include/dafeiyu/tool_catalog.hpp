@@ -24,8 +24,8 @@ class ToolSnapshot {
   public:
     // 返回仍获准且已绑定实现的成员描述，不追加快照建立后注册的工具。
     std::vector<model::ToolDefinition> definitions() const;
-    // 复制当前可用成员的公开描述，供运行固定版本信息；不取得工作或原生代码。
-    std::vector<ToolDescription> descriptions() const;
+    // 复制公开描述；默认只返回当前可用成员，版本清单可显式读取原固定成员，不取得工作或原生代码。
+    std::vector<ToolDescription> descriptions(bool available_only = true) const;
     // 判断固定授予成员是否包含变更工具，禁用或撤销不会隐藏原范围的性质。
     bool permits_state_changes() const noexcept;
     // 从固定成员收紧步骤范围，保留原注册及撤销关系；不能补回外部工具或重绑新实例。

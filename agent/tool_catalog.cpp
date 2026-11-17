@@ -75,10 +75,10 @@ std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
     for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description.model);
     return result;
 }
-// 只复制与当前模型可见集合一致的公开描述，不扩大快照成员。
-std::vector<ToolDescription> ToolSnapshot::descriptions() const {
+// 按请求复制当前可用或原固定成员描述，读取不改变模型可见性或执行授权。
+std::vector<ToolDescription> ToolSnapshot::descriptions(bool available_only) const {
     std::vector<ToolDescription> result;
-    for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description);
+    for (const auto& entry : entries_) if (!available_only || (entry->registered && entry->enabled && entry->factory)) result.push_back(entry->description);
     return result;
 }
 // 按固定成员描述判断授予范围，不因暂时禁用而允许观察入口绕过变更限制。

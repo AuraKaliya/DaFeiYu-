@@ -89,7 +89,7 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     if (options.planning) policy["planning"] = {{"steps",options.planning->maximum_steps},{"revisions",options.planning->maximum_revisions},{"text_bytes",options.planning->maximum_text_bytes}};
     if (options.budget) { const auto limit = options.budget->limit(); policy["parent_budget"] = {{"items",limit.items},{"bytes",limit.bytes}}; }
     result.execution_policy = "sha256:"+platform::sha256(policy.dump());
-    if (options.tools) for (const auto& tool : options.tools->descriptions()) result.tools.push_back({tool.id,tool.version,tool.instance,tool.plugin_version,tool.schema_digest});
+    if (options.tools) for (const auto& tool : options.tools->descriptions(false)) result.tools.push_back({tool.id,tool.version,tool.instance,tool.plugin_version,tool.schema_digest});
     validate_trace_versions(result); return result;
 }
 }

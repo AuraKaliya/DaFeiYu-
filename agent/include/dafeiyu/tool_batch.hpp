@@ -7,6 +7,7 @@
 
 namespace dfy::agent {
 struct BatchToolSnapshot {
+    std::optional<std::string> tool_id;
     AttemptId attempt;
     runtime::DomainId candidate = 0;
     std::uint64_t revision = 0;

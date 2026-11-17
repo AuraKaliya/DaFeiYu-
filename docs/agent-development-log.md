@@ -663,3 +663,9 @@ Debug 仅 `app.diagnostic_files` 通过，实际验证中文空格路径、完�
 从 `4924d22` 通过系统 SHA-256 固定规范 schema 摘要，关联原实例创建时的插件清单声明版本；声明版本不冒充二进制签名。运行同时摘要公开模型字段（provider、model、timeout）及基础执行限额，端点、凭据引用和完整配置均不读取、不哈希；自定义控制扩展只记录宿主显式标签，未知保持空。代码／构建／模板标签继续由宿主提供，不把当前仓库 HEAD 猜成已构建程序版本。
 
 RunTimeline 值格式升为 5，诊断封套明确携带该版本；默认模型配置超时初始化为未知值 0，避免替身配置未设置字段时读取未初始化值。Debug `agent.version_fingerprint`、`agent.multi_run_trace`、`agent.native_observation_rebind` 首轮通过，公开配置扩展后针对 `agent.version_fingerprint`、`agent.diagnostic_json`、`agent.native_observation_rebind` 3／3 通过。覆盖标准摘要向量、schema 排版不变／内容变化、实际插件版本，以及改变私有端点或凭据引用不会影响公开摘要。未调用真实模型。
+
+### T03f 工具候选与原契约关联
+
+在 `0b67b84` 上为已解析候选保存宿主规范工具 ID，普通诊断不复制模型参数或未解析名称；已接纳工具必须对应原版本清单。清单显式读取原固定授予成员，暂时禁用不会让后来仍属原范围的工具失去版本关联；模型可见性和实际授权仍由原解析入口检查。RunTimeline 升为 6，文件读取拒绝未支持的旧格式，不猜补新字段。
+
+Debug `agent.native_observation_rebind`、`agent.diagnostic_json`、`agent.multi_run_trace` 3／3 通过，原生候选能定位到 `test.tools/increment` 的原契约及 schema 摘要，普通多步和无工具诊断保持兼容。

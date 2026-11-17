@@ -105,7 +105,7 @@ RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std
         group(tool.attempt); TraceNode node;
         node.id = {request.run_id(),TraceNodeKind::tool,tool.attempt.step.sequence,tool.attempt.sequence,tool.candidate}; node.parent = trace_parent(node.id);
         node.result = tool.result; node.exit = tool.exit; node.effect = tool.effect; node.error = tool.error; node.fault = tool.fault;
-        node.accepted = tool.accepted; node.related = tool.invocation; node.before = tool.before; node.after = tool.after; result.nodes.push_back(node);
+        node.accepted = tool.accepted; node.related = tool.invocation; node.before = tool.before; node.after = tool.after; node.tool_id = tool.tool_id; result.nodes.push_back(node);
     }
     for (const auto& confirmation : request.confirmation_steps()) {
         group(confirmation.attempt); TraceNode node;

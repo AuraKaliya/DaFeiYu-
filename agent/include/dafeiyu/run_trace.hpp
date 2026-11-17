@@ -23,6 +23,7 @@ struct TraceNode {
     runtime::DomainId related = 0;
     std::optional<PolicyDecision> before, after;
     std::optional<ConfirmationState> confirmation;
+    std::optional<std::string> tool_id;
 };
 struct TraceEvent {
     std::uint64_t revision = 0;
@@ -44,7 +45,7 @@ struct RunTrace {
 };
 // 进程内完整当前节点与有限历史增量；origin 和 delta 时刻属于同一单调时钟域，不能跨进程比较。
 struct RunTimeline {
-    static constexpr std::uint32_t schema_version = 5;
+    static constexpr std::uint32_t schema_version = 6;
     TraceKey key;
     TraceVersions versions;
     TurnDiagnostics::TimePoint origin;

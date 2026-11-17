@@ -75,6 +75,7 @@ bool ToolBatch::review(const PolicyContext& current) {
                 if (state != ConfirmationState::waiting && state != ConfirmationState::approved) { reject(index); continue; }
             }
             const auto selected = tools_.resolve(entry.call.name,entry.call.arguments);
+            entry.metadata.tool_id = selected.description.id;
             auto candidate = current; candidate.tool_requests = bound_.tool_requests+index;
             const auto previous = entry.metadata.before;
             entry.metadata.before = restrict_policy(policy_.before_tool(candidate,selected),extension_,ControlPoint::tool_start,candidate);

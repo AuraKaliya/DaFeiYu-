@@ -126,6 +126,8 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
             ++report.models; require(node.result && node.exit && node.call_outcome && within(*node.call_outcome,model::CallOutcome::threw));
         } else if (node.id.kind == TraceNodeKind::tool) {
             ++report.tools; require(node.result && node.exit && node.accepted && node.effect && (node.related != 0) == *node.accepted);
+            if (*node.accepted) require(node.tool_id.has_value());
+            if (node.tool_id) require(std::any_of(value.versions.tools.begin(),value.versions.tools.end(),[&](const auto& tool) { return tool.id == *node.tool_id; }));
             if (*node.effect == ToolEffect::applied) { require(*node.accepted); ++report.applied_effects; }
             if (*node.effect == ToolEffect::unknown) { require(*node.accepted); ++report.unknown_effects; }
         } else if (node.id.kind == TraceNodeKind::control) {
