@@ -228,11 +228,11 @@ PlanBinding Session::revise_goal(const ConfirmationCaller& caller, PlanBinding e
 // 只向当前活动运行签发反馈请求，旧回合不能借当前观察恢复执行。
 // 步骤：核对活动身份与重入 → 原运行检查并签发 → 归还入口并返回不可变请求。
 PlanFeedbackTicket Session::request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
-    ObservationGuard baseline, std::string field, runtime::Value expected) {
+    ObservationGuard baseline, std::string field, runtime::Value expected, runtime::DomainId completed_tool) {
     if (working_ || !active_ || active_->request()->run_id() != key.plan.run) throw std::invalid_argument("session: unavailable feedback run");
     working_ = true;
     try {
-        auto ticket = active_->request_plan_feedback(caller,key,std::move(baseline),std::move(field),expected);
+        auto ticket = active_->request_plan_feedback(caller,key,std::move(baseline),std::move(field),expected,completed_tool);
         working_ = false; return ticket;
     } catch (...) { working_ = false; throw; }
 }

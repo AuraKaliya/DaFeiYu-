@@ -206,9 +206,9 @@ class Session {
     PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance = {});
     // 在原工作已退出的步骤边界更新用户目标；返回新目标待生成版本，保持原权限及总预算。
     PlanBinding revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal);
-    // 在原步骤成功并实际退出后固定反馈基线和宿主条件，每个运行最多签发 64 次。
+    // 在原步骤或明确的原工具退出后固定反馈基线和宿主条件，每个运行最多签发 64 次。
     PlanFeedbackTicket request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
-        ObservationGuard baseline, std::string field, runtime::Value expected);
+        ObservationGuard baseline, std::string field, runtime::Value expected, runtime::DomainId completed_tool = 0);
     // 只有新采样明确满足原条件才确认原步骤；不满足或未知继续有界等待，不执行工具。
     ObservationAssessment verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current);
     // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。

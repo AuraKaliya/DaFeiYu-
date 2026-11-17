@@ -34,9 +34,9 @@ class RunLoop {
     PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance);
     // 只在无在途模型和工具的边界更新目标，旧计划停止并保留，新规划延后提交。
     PlanBinding revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal);
-    // 在原步骤实际退出后准备反馈请求，不提前认可已有采样为行动后证据。
+    // 在原步骤或明确工具实际退出后准备反馈请求，不认可已有采样为行动后证据。
     PlanFeedbackTicket request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
-        ObservationGuard baseline, std::string field, runtime::Value expected);
+        ObservationGuard baseline, std::string field, runtime::Value expected, runtime::DomainId completed_tool = 0);
     // 用原反馈请求检查新观察，满足时只记录步骤验证，后续推进再继续运行。
     ObservationAssessment verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。

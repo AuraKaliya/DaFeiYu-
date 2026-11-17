@@ -17,6 +17,8 @@ class PlanFeedbackTicket {
     const PlanStepKey& step() const noexcept { return step_; }
     // 返回仅用于证据关联的进程内请求身份，不能代替调用者凭证。
     runtime::DomainId id() const noexcept { return id_; }
+    // 返回作为采样起点的原工具候选，零表示整个步骤退出后签发。
+    runtime::DomainId completed_tool() const noexcept { return completed_tool_; }
     // 核对请求之后的新采样，不执行动作或自行完成计划。
     ObservationAssessment assess(const ObservationGuard& observation, ObservationTime now) const {
         if (!condition_) throw std::invalid_argument("feedback: moved request has no condition");
@@ -25,12 +27,13 @@ class PlanFeedbackTicket {
   private:
     friend struct RunLoopState;
     // 完整准备原步骤和判定条件后签发身份，只有已退出工作边界能够调用。
-    PlanFeedbackTicket(PlanStepKey step, ObservationGuard baseline, std::string field, runtime::Value expected, ObservationTime requested)
+    PlanFeedbackTicket(PlanStepKey step, ObservationGuard baseline, std::string field, runtime::Value expected, ObservationTime requested, runtime::DomainId completed_tool)
         : step_(std::move(step)),condition_(std::make_shared<const ObservationExpectation>(std::move(baseline),std::move(field),expected)),
-          requested_(requested),id_(runtime::next_domain()) {}
+          requested_(requested),id_(runtime::next_domain()),completed_tool_(completed_tool) {}
     PlanStepKey step_;
     std::shared_ptr<const ObservationExpectation> condition_;
     ObservationTime requested_;
     runtime::DomainId id_;
+    runtime::DomainId completed_tool_;
 };
 }
