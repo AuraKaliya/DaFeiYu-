@@ -68,6 +68,7 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, E
     } else {
         const auto receipt = session->decide(caller,command); check(session->decide(caller,command) == receipt && count(0) == starts,"approval executed or repeated inline");
         until(*session,[&] { return count(1) != effects; });
+        check(!request->tool_result(request->tool_steps()[0].candidate),"inflight native result published as exited feedback");
         check(request->tool_steps()[0].exit == OperationState::pending && instance->shutdown() == ShutdownResult::in_use,"effect forged native release");
         rejects([&] { session->confirm_plan_step(caller,first_key,"premature"); });
         rejects([&] { session->revise_goal(caller,original,"read instead"); });
@@ -89,6 +90,9 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, E
     if (session) until(*session,[&] { return !session->busy(); });
     else { Session::retry_retained(); check(request->exit()->state() == OperationState::succeeded,"destroyed session lost native exit"); }
     model.verify_complete(); const auto trace = run_timeline(*request,"planned-native"); check(review_timeline(trace).run_exited,"plan trace did not record actual exit");
+    const auto value = request->tool_result(request->tool_steps()[0].candidate);
+    check(!request->tool_result(0) && (ending == End::unload ? !value : value && value->output == "1" && value->effect == ToolEffect::applied),
+        "tool feedback lost original native outcome or used model text");
     const auto expected_calls = ending == End::unload ? 0u : ending == End::complete || ending == End::replace ? 2u : 1u;
     check(count(0)-starts == expected_calls && count(2)-releases == expected_calls && count(1)-effects == (ending == End::unload ? 0u : 1u),
         "plan repeated effects or lost native release");

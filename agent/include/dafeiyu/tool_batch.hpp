@@ -43,6 +43,8 @@ class ToolBatch {
     std::uint64_t progress_fingerprint() const;
     // 返回只读值快照，不把工作、参数或输出持有交给观察者。
     std::vector<BatchToolSnapshot> snapshot() const;
+    // 复制已实际退出候选的原工具回执正文；尚未退出或未接纳返回空，不推进执行。
+    std::optional<ToolResult> result(runtime::DomainId candidate) const;
   private:
     struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; std::optional<TraceFact> last; bool filled = false; };
     // 在原工具状态发生变化时记录无正文事实，重复推进不追加相同状态。

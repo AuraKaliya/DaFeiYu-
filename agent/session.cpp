@@ -87,6 +87,11 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
     for (const auto& batch : batches_) { auto values = batch->snapshot(); result.insert(result.end(),values.begin(),values.end()); }
     return result;
 }
+// 按宿主候选身份查询完整工具回执，值副本不持有原生代码或工作。
+std::optional<ToolResult> TurnRequest::tool_result(runtime::DomainId candidate) const {
+    for (const auto& batch : batches_) if (auto value = batch->result(candidate)) return value;
+    return std::nullopt;
+}
 // 只复制确认值，不推进模型、工具或控制决定。
 std::vector<ConfirmationSnapshot> TurnRequest::confirmations() const { return confirmations_ ? confirmations_->snapshot() : std::vector<ConfirmationSnapshot>{}; }
 // 只复制普通追踪需要的确认元数据，不包含待审参数或命令。

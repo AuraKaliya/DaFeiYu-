@@ -112,6 +112,8 @@ class TurnRequest {
     std::vector<ModelContextSnapshot> model_contexts() const { return model_contexts_; }
     // 复制各批次工具的状态与策略决定，不持有原生代码。
     std::vector<BatchToolSnapshot> tool_steps() const;
+    // 为可信验证入口复制已退出工具的原回执；普通追踪不导出正文，调用不读取模型解释。
+    std::optional<ToolResult> tool_result(runtime::DomainId candidate) const;
     // 返回可信控制界面的确认记录和待审参数；普通诊断与通知不包含这些正文。
     std::vector<ConfirmationSnapshot> confirmations() const;
     // 返回无正文的有界增量；查询不推进运行，旧游标和投影故障由结果明确说明。

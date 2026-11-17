@@ -183,4 +183,10 @@ std::vector<BatchToolSnapshot> ToolBatch::snapshot() const {
     }
     return result;
 }
+// 可信验证读取原工具回执，不从模型转述或未完成占位中推测实际结果。
+std::optional<ToolResult> ToolBatch::result(runtime::DomainId candidate) const {
+    for (const auto& entry : entries_) if (entry.metadata.candidate == candidate && entry.request &&
+        entry.request->exit()->state() == runtime::OperationState::succeeded) return entry.request->outcome();
+    return std::nullopt;
+}
 }
