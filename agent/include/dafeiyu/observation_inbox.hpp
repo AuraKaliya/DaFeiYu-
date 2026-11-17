@@ -53,6 +53,8 @@ class ObservationGuard {
     bool current(ObservationTime now) const noexcept;
     // 判断是否属于同一原集合、来源对象及代次，不把同名外部对象当作相同证据。
     bool same_object(const ObservationGuard& other) const noexcept;
+    // 读取仍存活的同代次对象水位；过期值可用于请求重采样，但返回水位不表示行动许可。
+    std::optional<std::uint64_t> revision_floor(ObservationTime now) const noexcept;
   private:
     friend class ObservationInbox;
     // 只由原集合在当前且完整采样上签发检查，客户端不能自报水位。

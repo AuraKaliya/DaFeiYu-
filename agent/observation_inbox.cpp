@@ -97,4 +97,11 @@ bool ObservationGuard::same_object(const ObservationGuard& other) const noexcept
     return observation_->watermark_ == other.observation_->watermark_ &&
         observation_->metadata().object.generation == other.observation_->metadata().object.generation;
 }
+// 请求重采样时固定已见最高修订，来源撤销、集合退出或对象换代都不能继续使用旧基线。
+std::optional<std::uint64_t> ObservationGuard::revision_floor(ObservationTime now) const noexcept {
+    const auto alive = alive_.lock(); const auto validity = observation_->validity(now);
+    if (!alive || !*alive || validity == ObservationValidity::source_revoked || validity == ObservationValidity::future ||
+        observation_->watermark_->generation != observation_->metadata().object.generation) return {};
+    return observation_->watermark_->revision;
+}
 }

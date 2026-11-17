@@ -37,11 +37,15 @@ void binding() {
     inbox.accept(sample("b",2),later); auto reversed = guards(inbox); std::swap(reversed[0],reversed[1]);
     const ActionObservations current(reversed);
     check(current.succeeds(original,later,later) && !current.succeeds(original,later,later+std::chrono::nanoseconds(1)),"time boundary or order-independent matching failed");
+    const ActionObservationCheckpoint checkpoint(original,later);
+    check(!checkpoint.accepts(current,later),"already-seen sample became post-request evidence at same clock tick");
+    inbox.accept(sample("a",3),later); inbox.accept(sample("b",3),later);
+    check(checkpoint.accepts(ActionObservations(guards(inbox)),later),"new revisions did not satisfy checkpoint floors");
     foreign.accept(sample("a",2),later); foreign.accept(sample("b",2),later);
     const auto refresh_a = *foreign.refresh_ticket(source.id(),"a"), refresh_b = *foreign.refresh_ticket(source.id(),"b");
     foreign.refresh(refresh_a,sample("a",3),later); foreign.refresh(refresh_b,sample("b",3),later);
     check(!ActionObservations(guards(foreign)).succeeds(original,later,zero),"foreign inbox used same source names");
-    inbox.accept(sample("a",3,1,2),later); check(!ActionObservations(guards(inbox)).succeeds(original,later,zero),"schema change accepted");
+    inbox.accept(sample("a",4,1,2),later); check(!ActionObservations(guards(inbox)).succeeds(original,later,zero),"schema change accepted");
     inbox.accept(sample("a",1,2),later); check(!ActionObservations(guards(inbox)).succeeds(original,later,zero),"object generation changed silently");
 }
 // 验证刷新不抹去动作事实，失败或未提交刷新不改变已提交历史。
@@ -60,9 +64,21 @@ void context() {
     check(context.messages().back().content == last,"failed refresh published partial data"); context.seal();
     check(context.committed() == old,"sealing discarded original action facts");
 }
+// 验证旧值到期后仍可请求新采样，但对象换代和来源撤销不能延续基线。
+// 步骤：保留原对象直至过期 → 固定刷新水位 → 接纳新样本 → 拒绝来源撤销后的请求。
+void expired_checkpoint() {
+    ObservationSource source(1,ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
+    const ObservationTime zero{}; const auto later = zero+std::chrono::seconds(2);
+    inbox.accept(source.capture({"object",1},1,zero,zero+std::chrono::seconds(1),payload()),zero);
+    const auto guard = inbox.guard(inbox.latest(source.id(),"object"),zero); const ActionObservations original({guard});
+    const ActionObservationCheckpoint checkpoint(original,later);
+    inbox.accept(source.capture({"object",1},2,later,later+std::chrono::seconds(1),payload()),later);
+    check(checkpoint.accepts(ActionObservations({inbox.guard(inbox.latest(source.id(),"object"),later)}),later),"expired original prevented resampling");
+    source.revoke(); rejects([&] { ActionObservationCheckpoint revoked(original,later); });
+}
 }
 // 只验证固定观察和上下文值，不调用模型或执行工具。
 int main() {
-    try { binding(); context(); std::cout << "Action observation refresh checks passed\n"; return 0; }
+    try { binding(); context(); expired_checkpoint(); std::cout << "Action observation refresh checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -10,6 +10,8 @@ namespace {
 RunLoopState* retained_head = nullptr;
 std::size_t resident_count = 0, retained_count = 0;
 bool reaping = false;
+// 原运行共享的行动依据，工具只捕获此小型状态；更新不能重建执行器或清除旧回执。
+struct ActionBasis { std::optional<ActionObservations> observations; bool available = true; };
 // 由原 RunLoop 拥有一个计划步骤的工作完成源；计划账本只借用读句柄，验证状态仍独立。
 struct PlanExecution {
     PlanStepKey key;
@@ -33,7 +35,7 @@ struct RunLoopState {
     std::string planning_goal;
     std::optional<ToolSnapshot> step_tools;
     std::unique_ptr<PlanExecution> plan_step;
-    std::shared_ptr<bool> action_basis_available = std::make_shared<bool>(true);
+    std::shared_ptr<ActionBasis> action_basis = std::make_shared<ActionBasis>();
     std::size_t repeated = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
@@ -87,13 +89,14 @@ struct RunLoopState {
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
-        // 最后检查只持有原操作读句柄，避免捕获整个运行形成回收环；不能因工具自身期限较晚而越过总期限。
-        const auto action_guard = [observations = options.action_observations,clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis_available] {
+        action_basis->observations = std::move(options.action_observations); options.action_observations.reset();
+        // 最后检查只持有原操作读句柄与共享依据，避免捕获整个运行或把旧回执变成新的执行器。
+        const auto action_guard = [clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis] {
             const auto current = clock();
             if (run_state->state() != runtime::OperationState::pending || run_state->cancellation_reason() != runtime::CancelReason::none ||
-                current >= absolute || (observations && (!*basis || !observations->current(current)))) return false;
+                current >= absolute || (basis->observations && (!basis->available || !basis->observations->current(current)))) return false;
             // 开始尝试变更后不再复用同一行动前依据；后续只读查询仍可继续。
-            if (observations) *basis = false;
+            if (basis->observations) basis->available = false;
             return true;
         };
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
@@ -111,9 +114,9 @@ struct RunLoopState {
         PolicyContext context{record->attempt_,options.goal_revision,options.policy.revision,options.origin,record->model_requests_,record->tool_requests_,
             stopping ? deadline : options.now(),deadline,reason};
         if (plan_step && !planning_request) { context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->index+1; }
-        if (options.action_observations) {
-            context.observation_binding = options.action_observations->binding();
-            context.observations_current = *action_basis_available && options.action_observations->current(context.now);
+        if (action_basis->observations) {
+            context.observation_binding = action_basis->observations->binding();
+            context.observations_current = action_basis->available && action_basis->observations->current(context.now);
         }
         return context;
     }

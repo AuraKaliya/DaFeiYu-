@@ -42,4 +42,30 @@ std::vector<std::shared_ptr<const ObservationRecord>> ActionObservations::observ
     for (const auto& guard : guards_) result.push_back(guard.observation());
     return result;
 }
+// 捕获请求时的最高修订，时间过期不等于对象身份丢失。
+// 步骤：拒绝空集合 → 读取各原对象当前水位 → 完整返回或拒绝失效基线。
+std::vector<std::uint64_t> ActionObservations::revision_floors(ObservationTime now) const {
+    if (guards_.empty()) throw std::invalid_argument("action observations: empty checkpoint");
+    std::vector<std::uint64_t> result; result.reserve(guards_.size());
+    for (const auto& guard : guards_) {
+        const auto floor = guard.revision_floor(now);
+        if (!floor) throw std::invalid_argument("action observations: unavailable checkpoint object");
+        result.push_back(*floor);
+    }
+    return result;
+}
+// 固定原观察身份及实际请求水位，不能把已更新但尚未使用的数据当成请求之后的反馈。
+ActionObservationCheckpoint::ActionObservationCheckpoint(ActionObservations previous, ObservationTime requested)
+    : previous_(std::move(previous)),requested_(requested),floors_(previous_.revision_floors(requested)) {}
+// 匹配相同对象的完整新集合，同时核对原定义和请求水位。
+// 步骤：核对当前性、身份和采样时间 → 按原对象匹配水位 → 拒绝请求前已经存在的修订。
+bool ActionObservationCheckpoint::accepts(const ActionObservations& next, ObservationTime now) const {
+    if (!next.succeeds(previous_,now,requested_)) return false;
+    const auto old = previous_.observations(), fresh = next.observations();
+    for (const auto& value : fresh) for (std::size_t index = 0; index < old.size(); ++index) {
+        const auto& original = old[index]->metadata(); const auto& current = value->metadata();
+        if (current.source == original.source && current.object.id == original.object.id && current.revision <= floors_[index]) return false;
+    }
+    return true;
+}
 }

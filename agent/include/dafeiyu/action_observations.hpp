@@ -15,8 +15,24 @@ class ActionObservations {
     bool succeeds(const ActionObservations& previous, ObservationTime now, ObservationTime not_before) const noexcept;
     // 复制原有计费记录，供模型输入与动作前置使用完全相同的观察。
     std::vector<std::shared_ptr<const ObservationRecord>> observations() const;
+    // 固定原对象当前已见水位；用于后续采样的下限，不恢复旧值的行动资格。
+    std::vector<std::uint64_t> revision_floors(ObservationTime now) const;
   private:
     runtime::DomainId binding_;
     std::vector<ObservationGuard> guards_;
+};
+// 重采样请求时的值基线；候选必须高于请求时已经见过的水位，而不只是高于旧输入修订。
+class ActionObservationCheckpoint {
+  public:
+    // 固定原对象、请求时刻和各对象已见修订，不执行采样或授予权限。
+    ActionObservationCheckpoint(ActionObservations previous, ObservationTime requested);
+    // 判断新集合能否替代原输入，重复包装或请求之前的采样均拒绝。
+    bool accepts(const ActionObservations& next, ObservationTime now) const;
+    // 返回原动作绑定，供原运行识别是否仍属于同一次更新。
+    runtime::DomainId binding() const noexcept { return previous_.binding(); }
+  private:
+    const ActionObservations previous_;
+    const ObservationTime requested_;
+    const std::vector<std::uint64_t> floors_;
 };
 }
