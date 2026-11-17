@@ -58,6 +58,7 @@ struct RunLoopState {
             planning_scope.emplace(run,options.goal_revision,options.tools,*options.planning);
             planning_request = prepare_plan_prompt(*planning_scope,0,prompt);
             record->plan_ = std::make_unique<PlanBook>(*planning_scope);
+            record->plan_caller_ = options.confirmation_caller;
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
         record->versions_ = public_model_versions(config); auto& versions = record->versions_;
@@ -135,6 +136,25 @@ struct RunLoopState {
             const auto receipt = book.decide(caller,command,current.now); advancing = false; return receipt;
         } catch (...) { advancing = false; throw; }
     }
+    // 步骤验证与工具授权分开，历史确认可重取但不能恢复停止的运行。
+    // 步骤：核对宿主身份和重入 → 复用已完成步骤 → 重查运行与当前步骤 → 记录原宿主证据。
+    void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) {
+        if (advancing || !record->plan_ || !record->plan_caller_ || caller != *record->plan_caller_)
+            throw std::invalid_argument("run: unbound or reentrant plan verification");
+        advancing = true;
+        try {
+            const auto snapshot = record->plan_->snapshot();
+            const bool completed = std::any_of(snapshot.steps.begin(),snapshot.steps.end(),[&](const auto& step) {
+                return step.key == key && step.state == PlanStepState::completed;
+            });
+            if (!completed) {
+                interrupt();
+                if (policy.check_context(control()).verdict != PolicyVerdict::allow || !plan_step || plan_step->key != key)
+                    throw std::invalid_argument("run: stale or stopped plan verification");
+            }
+            record->plan_->confirm(key,evidence); advancing = false;
+        } catch (...) { advancing = false; throw; }
+    }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
     // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
     void start_model() {
@@ -177,6 +197,22 @@ struct RunLoopState {
         const AttemptId attempt{{record->run_id(),record->model_requests_+1},1};
         record->plan_->start(execution->key,{attempt,execution->result.operation(),execution->exit.operation()});
         step_tools = std::move(tools); plan_step = std::move(execution); start_model();
+    }
+    // 只有宿主已经确认的步骤才能让出下一步骤，最终结算仍使用原 Run 完成源。
+    // 步骤：读取已验证步骤 → 保留最后步骤文本并释放已退出工作 → 全部完成则结算，否则下次推进再调度。
+    void advance_plan() {
+        if (!plan_step) { start_plan_step(); return; }
+        const auto snapshot = record->plan_->snapshot();
+        const bool confirmed = std::any_of(snapshot.steps.begin(),snapshot.steps.end(),[&](const auto& step) {
+            return step.key == plan_step->key && step.state == PlanStepState::completed;
+        });
+        if (!confirmed) return;
+        record->answer_ = std::move(plan_step->answer); plan_step.reset(); step_tools.reset();
+        if (!std::all_of(snapshot.steps.begin(),snapshot.steps.end(),[](const auto& step) {
+            return step.state == PlanStepState::completed || step.state == PlanStepState::skipped;
+        })) return;
+        record->result_.settle(runtime::OperationState::succeeded);
+        record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
     }
     // 保存已退出模型的原状态和用量，释放请求槽后才允许下一次提交。
     // 步骤：复制真实状态及可选用量 → 保存步骤与首个退出事实 → 归还模型请求槽。
@@ -252,7 +288,7 @@ struct RunLoopState {
                         batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
-            } else if (record->operation()->state() == OperationState::pending && record->plan_ && !planning_request && !plan_step) start_plan_step();
+            } else if (record->operation()->state() == OperationState::pending && record->plan_ && !planning_request) advance_plan();
             finish();
         } catch (...) { fail(std::current_exception()); try { finish(); } catch (...) {} }
         advancing = false;
@@ -286,6 +322,8 @@ std::shared_ptr<const MessageHistory> RunLoop::history() const noexcept { return
 void RunLoop::advance() { state_->advance(); }
 // 只转交可信控制命令，不驱动模型或工具执行。
 ConfirmationReceipt RunLoop::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) { return state_->decide(caller,command); }
+// 转交可信验证，调用本身不继续运行或改变原工作结果。
+void RunLoop::confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) { state_->confirm_plan_step(caller,key,evidence); }
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }
 // 返回保留运行数量。

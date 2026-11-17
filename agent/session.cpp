@@ -155,6 +155,21 @@ ConfirmationReceipt Session::decide(const ConfirmationCaller& caller, const Conf
     } catch (...) { working_ = false; throw; }
     working_ = false; throw std::invalid_argument("session: confirmation run unavailable");
 }
+// 验证原计划步骤，终态运行只允许重取已经保存的同一确认。
+// 步骤：保护控制入口 → 按完整运行及宿主身份定位 → 活动运行复核或原证据幂等核对 → 归还入口。
+void Session::confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) {
+    if (working_) throw std::logic_error("session: reentrant plan verification");
+    working_ = true;
+    try {
+        for (const auto& record : records_) if (record && record->run_id() == key.plan.run && record->plan_) {
+            if (!record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("session: unbound plan verifier");
+            if (active_ && active_->request() == record) active_->confirm_plan_step(caller,key,evidence);
+            else record->plan_->confirm(key,evidence);
+            working_ = false; return;
+        }
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::invalid_argument("session: plan run unavailable");
+}
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。
 void Session::advance() {

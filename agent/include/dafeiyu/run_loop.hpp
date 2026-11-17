@@ -5,6 +5,7 @@
 
 namespace dfy::agent {
 class TurnRequest;
+struct PlanStepKey;
 struct RunLoopState;
 // 一次运行的有界协调器，结果仍由原 TurnRequest 的 Operation 提供。
 class RunLoop {
@@ -26,6 +27,8 @@ class RunLoop {
     void advance();
     // 在宿主控制入口决定原候选；拒绝重入，命令处理不推进工具工作。
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
+    // 接收宿主对原步骤的验证，重查停止边界，不在确认调用中调度新模型或工具。
+    void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。
     void wait_model();
     // 返回仍需要宿主重试收尾的运行数。

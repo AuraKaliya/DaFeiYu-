@@ -11,6 +11,11 @@ using namespace dfy::model;
 using namespace dfy::tests;
 // 报告正式规划接纳、等待或退出边界与固定场景不符。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+// 验证未绑定、过期或缺乏实际完成工作的步骤确认被拒绝。
+void rejects(const auto& action) {
+    try { action(); } catch (const std::exception&) { return; }
+    throw std::runtime_error("invalid plan control accepted");
+}
 // 建立无外部消费者的原生会话事件通道。
 std::shared_ptr<dfy::events::BroadcastChannel> channel() {
     return std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
@@ -143,9 +148,52 @@ void restricted_step() {
         model.verify_complete(); check(!calls,"restricted or over-budget step executed tool");
     }
 }
+// 验证宿主确认后的顺序推进、完成结算和幂等查询，不把调用者正文当作身份。
+// 步骤：生成两步计划 → 拒绝错绑并确认首步 → 执行及确认第二步 → 终态重试保持零新增工作。
+void verified_sequence() {
+    ScriptStep generation; generation.response = Response{{Role::assistant,R"({"schema_version":1,"steps":[
+        {"id":"first","objective":"first","completion_criterion":"host checks","tools":[]},
+        {"id":"second","objective":"second","completion_criterion":"host checks","tools":[]}]})"}};
+    ScriptStep first; first.response = Response{{Role::assistant,"first value"}};
+    ScriptStep second; second.response = Response{{Role::assistant,"second value"}};
+    ScriptedModel model({1,"verified_plan",1,{},{generation,first,second},3}); Session session({},channel(),model.backend());
+    ConfirmationCaller caller, stranger; RunOptions options; options.planning = PlanLimits{}; options.now = model.clock(); options.confirmation_caller = caller;
+    const auto request = session.begin("host goal",options);
+    until(session,[&] { return request->plan()->definition && request->plan()->steps[0].waiting == PlanWait::verification; });
+    const auto key = request->plan()->steps[0].key; auto wrong = key; ++wrong.plan.plan_revision;
+    rejects([&] { session.confirm_plan_step(stranger,key,"checked"); });
+    rejects([&] { session.confirm_plan_step(caller,wrong,"checked"); });
+    rejects([&] { session.confirm_plan_step(caller,request->plan()->steps[1].key,"premature"); });
+    session.confirm_plan_step(caller,key,"checked"); session.confirm_plan_step(caller,key,"checked");
+    rejects([&] { session.confirm_plan_step(caller,key,"different evidence"); });
+    check(request->diagnostics().model_requests == 2 && request->operation()->state() == OperationState::pending,"confirmation executed next step inline");
+    until(session,[&] { return request->plan()->steps[1].waiting == PlanWait::verification; });
+    session.confirm_plan_step(caller,key,"checked"); const auto last = request->plan()->steps[1].key;
+    session.confirm_plan_step(caller,last,"last checked"); until(session,[&] { return !session.busy(); }); model.verify_complete();
+    check(request->answer() == "second value" && session.message_count() == 5 && request->plan()->steps[0].state == PlanStepState::completed &&
+        request->plan()->steps[1].state == PlanStepState::completed,"verified plan did not complete original run");
+    session.confirm_plan_step(caller,last,"last checked"); rejects([&] { session.confirm_plan_step(stranger,last,"last checked"); });
+    check(model.report().attempted == 3 && !session.busy(),"terminal verification restarted completed run");
+}
+// 验证验证等待期间的取消和期限使新确认失效，不允许确认命令恢复已停止工作。
+// 步骤：等待纯文本步骤完成 → 注入停止 → 拒绝原确认 → 收尾并保留未验证状态。
+void verification_stops() {
+    for (const bool timeout : {false,true}) {
+        ScriptStep generation; generation.response = Response{{Role::assistant,R"({"schema_version":1,"steps":[{"id":"one","objective":"one","completion_criterion":"host checks","tools":[]}]})"}};
+        ScriptStep answer; answer.response = Response{{Role::assistant,"done"}};
+        ScriptedModel model({1,"verification_stop",1,{},{generation,answer},2}); Session session({},channel(),model.backend()); ConfirmationCaller caller;
+        RunOptions options; options.planning = PlanLimits{}; options.now = model.clock(); options.confirmation_caller = caller;
+        const auto request = session.begin("host goal",options);
+        until(session,[&] { return request->plan()->definition && request->plan()->steps[0].waiting == PlanWait::verification; }); const auto key = request->plan()->steps[0].key;
+        if (timeout) model.advance_clock(options.timeout); else request->request_cancel(CancelReason::user);
+        rejects([&] { session.confirm_plan_step(caller,key,"too late"); }); until(session,[&] { return !session.busy(); }); model.verify_complete();
+        check(request->operation()->state() == OperationState::cancelled && request->plan()->steps[0].state == PlanStepState::running &&
+            request->plan()->steps[0].waiting == PlanWait::stopped,"late verification resumed or completed stopped goal");
+    }
+}
 }
 // 只使用原模型替身验证正式规划生成及停止，不调用真实模型。
 int main() {
-    try { accepted(); failures_and_default(); execution(); restricted_step(); std::cout << "Session planning checks passed\n"; return 0; }
+    try { accepted(); failures_and_default(); execution(); restricted_step(); verified_sequence(); verification_stops(); std::cout << "Session planning checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
