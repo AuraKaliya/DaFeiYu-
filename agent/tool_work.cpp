@@ -27,6 +27,7 @@ struct ToolWorkState {
     std::shared_ptr<const runtime::SerialRequest> ordering;
     std::optional<ToolTime> deadline;
     ToolClock now;
+    std::function<bool()> before_start;
     ToolWorkState* next = nullptr;
     bool started = false, advancing = false, reported = false;
     // 完整准备记录和调用对象，计入进程内最多 256 个活动或保留驱动状态。
@@ -34,7 +35,7 @@ struct ToolWorkState {
     ToolWorkState(ToolInvocation invocation, ToolFactory callback, ToolResources resources)
         : record(new ToolRequest(std::move(invocation),std::move(resources.charge))), factory(std::move(callback)),
           domain(std::move(resources.domain)), ordering(std::move(resources.ordering)),
-          deadline(resources.deadline), now(std::move(resources.now)) {
+          deadline(resources.deadline), now(std::move(resources.now)),before_start(std::move(resources.before_start)) {
         if (domain) domain->bind(ordering);
         ++resident_count;
     }
@@ -52,7 +53,7 @@ struct ToolWorkState {
     // 步骤：销毁工作和工厂 → 完成占用或撤回未开始资格 → 发布退出确认。
     void finish() {
         using namespace runtime;
-        work.reset(); factory = {};
+        work.reset(); factory = {}; before_start = {};
         if (domain) {
             if (started) domain->finish(ordering);
             else if (ordering->phase() != SerialPhase::cancelled && ordering->withdrawal_reason() == CancelReason::none)
@@ -76,7 +77,7 @@ struct ToolWorkState {
         return reason;
     }
     // 推进真实工作与唯一结果，取消只停止后续接纳，迟到效果仍然记录。
-    // 步骤：核对顺序与取消 → 首次提交工厂 → 读取并校验工作报告 → 结算业务 → 按实际退出回收。
+    // 步骤：核对顺序、前置及取消 → 首次提交工厂 → 读取并校验工作报告 → 结算业务 → 按实际退出回收。
     void advance() {
         using namespace runtime;
         if (advancing) throw std::logic_error("tool work: reentrant advance");
@@ -91,6 +92,12 @@ struct ToolWorkState {
         if (!started && cancellation != CancelReason::none) { finish(); advancing = false; return; }
         if (!started) {
             if (domain && ordering->phase() == SerialPhase::waiting) { advancing = false; return; }
+            if (before_start) {
+                bool permitted = false;
+                try { permitted = before_start(); } catch (...) {}
+                if (cancel() != CancelReason::none) { finish(); advancing = false; return; }
+                if (!permitted) { fail(ToolError::unavailable); finish(); advancing = false; return; }
+            }
             if (domain) {
                 try { domain->begin(ordering); } catch (...) { advancing = false; throw; }
             }

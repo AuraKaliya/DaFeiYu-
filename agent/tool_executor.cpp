@@ -15,8 +15,8 @@ std::string canonical(const std::string& input) {
 }
 // 建立运行级调用上限、分层预算与独立顺序域，不执行模型或工具。
 // 步骤：校验运行及限额 → 预留回执槽 → 建立预算和顺序域。
-ToolExecutor::ToolExecutor(RunId run, ToolSnapshot tools, ToolLimits limits, std::shared_ptr<runtime::Budget> parent, ToolClock now)
-    : run_(run), tools_(std::move(tools)), limits_(limits), now_(std::move(now)) {
+ToolExecutor::ToolExecutor(RunId run, ToolSnapshot tools, ToolLimits limits, std::shared_ptr<runtime::Budget> parent, ToolClock now, std::function<bool()> action_guard)
+    : run_(run), tools_(std::move(tools)), limits_(limits), now_(std::move(now)),action_guard_(std::move(action_guard)) {
     if (!run.session || !run.sequence || !limits.calls || limits.calls > 64 || !now_ ||
         limits.timeout <= std::chrono::milliseconds::zero() || limits.timeout > std::chrono::hours(1))
         throw std::invalid_argument("tools: invalid execution limits");
@@ -57,7 +57,9 @@ std::shared_ptr<ToolRequest> ToolExecutor::submit(AttemptId attempt, model::Tool
     auto charge = budget_->acquire({1,record_bytes});
     const auto ordering = domain_->submit();
     try {
-        auto driver = tools_.prepare(attempt,std::move(call),{domain_,ordering,std::move(charge),now+duration,now_});
+        ToolResources resources{domain_,ordering,std::move(charge),now+duration,now_};
+        if (selection.description.changes_state) resources.before_start = action_guard_;
+        auto driver = tools_.prepare(attempt,std::move(call),std::move(resources));
         const auto request = driver->request();
         entries_[size_] = {std::move(driver),std::move(arguments),selection.registration};
         ++size_; return request;

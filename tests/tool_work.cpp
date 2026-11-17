@@ -147,9 +147,37 @@ void faults() {
     check(invalid.request()->operation()->state() == OperationState::failed && invalid.request()->outcome().effect == ToolEffect::applied &&
         invalid.request()->fault() == ToolError::invalid_result && invalid.request()->outcome().output.empty(),"invalid UTF-8 escaped or erased effect");
 }
+// 验证最终前置检查发生在工厂之前，检查期间取消或到期仍优先停止。
+// 步骤：注入拒绝、异常或停止 → 推进获准顺序 → 核对零动作与明确退出。
+void preconditions() {
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        auto domain = std::make_shared<SerialDomain>(1); const auto ordering = domain->submit();
+        ToolTime now{}; unsigned starts = 0, checks = 0; std::shared_ptr<ToolRequest> request;
+        ToolResources resources{domain,ordering,{},now+std::chrono::milliseconds(1),[&] { return now; }};
+        resources.before_start = [&] {
+            ++checks;
+            if (mode == 0) return false;
+            if (mode == 1) throw std::runtime_error("precondition unavailable");
+            if (mode == 2 || mode == 4) request->request_cancel(CancelReason::user);
+            if (mode == 3) now += std::chrono::milliseconds(1);
+            return mode != 4;
+        };
+        ToolDriver driver(invocation(),[&](const auto&) { ++starts; return completed_tool({true,ToolEffect::applied,"",ToolError::none}); },std::move(resources));
+        request = driver.request(); driver.advance(); check(!checks,"precondition ran before ordering grant");
+        domain->advance(); driver.advance();
+        check(checks == 1 && !starts && request->outcome().effect == ToolEffect::not_applied && request->exit()->state() == OperationState::succeeded &&
+            request->operation()->state() == (mode < 2 ? OperationState::failed : OperationState::cancelled),"precondition started work or forged unknown effect");
+    }
+    auto gate = std::make_shared<Gate>(); gate->report = true; unsigned checks = 0;
+    ToolResources resources; resources.before_start = [&] { return ++checks == 1; };
+    ToolDriver driver(invocation(),[gate](const auto&) { return std::make_unique<Work>(gate); },std::move(resources));
+    driver.advance(); gate->exit = true; driver.advance();
+    check(checks == 1 && driver.request()->outcome().effect == ToolEffect::applied && driver.request()->exit()->state() == OperationState::succeeded,
+        "precondition reran during cleanup or erased applied effect");
+}
 }
 // 执行固定工具工作夹具，不调用真实模型。
 int main() {
-    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); deadlines(); faults(); std::cout << "Tool work checks passed\n"; return 0; }
+    try { lifecycle(); retention(); callback_cancel(); resources(); ordering_retention(); deadlines(); faults(); preconditions(); std::cout << "Tool work checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

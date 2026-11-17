@@ -28,6 +28,8 @@ struct ToolResources {
     runtime::BudgetLease charge;
     std::optional<ToolTime> deadline;
     ToolClock now = std::chrono::steady_clock::now;
+    // 纯宿主前置检查，仅在首次调用工厂前执行；拒绝或异常均为确定未发生。
+    std::function<bool()> before_start;
 };
 // 同一宿主线程推进的已接纳工作；后台责任必须保持到 exited，不能在析构中强行中止。
 class ToolWork {

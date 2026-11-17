@@ -6,9 +6,9 @@ struct ToolLimits { std::size_t calls = 32; std::chrono::milliseconds timeout{30
 // 一个运行拥有的有界工具执行入口；回执保留至运行释放，默认串行且不自动重试。
 class ToolExecutor {
   public:
-    // 固定运行、权限快照、计费父级与期限，测试可注入单调时钟。
+    // 固定运行、权限、预算及期限；可选纯宿主检查在变更工具实际开始前执行。
     ToolExecutor(RunId run, ToolSnapshot tools, ToolLimits limits = {},
-        std::shared_ptr<runtime::Budget> parent = {}, ToolClock now = std::chrono::steady_clock::now);
+        std::shared_ptr<runtime::Budget> parent = {}, ToolClock now = std::chrono::steady_clock::now, std::function<bool()> action_guard = {});
     // 停止接纳并请求收尾；未退出工作由驱动保留原顺序和资源责任。
     ~ToolExecutor();
     // 禁止复制运行的执行与回执责任。
@@ -35,6 +35,7 @@ class ToolExecutor {
     const ToolSnapshot tools_;
     const ToolLimits limits_;
     const ToolClock now_;
+    const std::function<bool()> action_guard_;
     std::shared_ptr<runtime::Budget> budget_;
     std::shared_ptr<runtime::SerialDomain> domain_;
     std::vector<Entry> entries_;

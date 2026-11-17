@@ -68,9 +68,27 @@ void limits() {
     rejects([&] { denied.submit(attempt,{"one","action","{}"}); });
     check(!denied.size() && !parent->used().items && !calls,"budget refusal left admitted work");
 }
+// 验证只有变更工具需要最终行动检查，失败回执重试不因检查恢复而重做动作。
+// 步骤：接纳只读与变更候选 → 在实际开始前拒绝变更 → 复用原失败回执 → 显式新命令重新检查。
+void action_guard() {
+    ToolCatalog catalog; unsigned reads = 0, changes = 0, checks = 0; bool allowed = false;
+    auto read = description(); read.id = "fixture/read"; read.model.name = "read"; read.changes_state = false;
+    catalog.add(read,[&](const auto&) { ++reads; return completed_tool({true,ToolEffect::not_applied,"",ToolError::none}); });
+    catalog.add(description(),[&](const auto&) { ++changes; return completed_tool({true,ToolEffect::applied,"",ToolError::none}); });
+    const std::vector<std::string> ids{"fixture/read","fixture/action"};
+    ToolExecutor executor({1,1},catalog.snapshot(ids,true),{}, {},std::chrono::steady_clock::now,[&] { ++checks; return allowed; });
+    const AttemptId attempt{{{1,1},1},1}; executor.submit(attempt,{"read","read","{}"});
+    const auto denied = executor.submit(attempt,{"change","action","{}"}); executor.advance(); executor.advance();
+    check(reads == 1 && !changes && checks == 1 && denied->outcome().effect == ToolEffect::not_applied && denied->operation()->state() == OperationState::failed,
+        "action guard affected read or admitted change");
+    allowed = true; check(executor.submit(attempt,{"change","action","{}"}) == denied,"guard recovery replaced original receipt");
+    executor.advance(); check(!changes && checks == 1,"old command repeated after guard recovered");
+    executor.submit({{{1,1},2},1},{"change","action","{}"}); executor.advance();
+    check(changes == 1 && checks == 2,"new explicit command did not recheck action precondition");
+}
 }
 // 验证固定工具和真实预算，不调用模型。
 int main() {
-    try { receipts(); repeat_effects(); limits(); std::cout << "Tool executor checks passed\n"; return 0; }
+    try { receipts(); repeat_effects(); limits(); action_guard(); std::cout << "Tool executor checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
