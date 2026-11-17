@@ -51,6 +51,8 @@ class ObservationGuard {
     std::shared_ptr<const ObservationRecord> observation() const noexcept { return observation_; }
     // 核对集合存活、对象水位、原来源及有效期；查询不产生任何外部动作。
     bool current(ObservationTime now) const noexcept;
+    // 判断是否属于同一原集合、来源对象及代次，不把同名外部对象当作相同证据。
+    bool same_object(const ObservationGuard& other) const noexcept;
   private:
     friend class ObservationInbox;
     // 只由原集合在当前且完整采样上签发检查，客户端不能自报水位。

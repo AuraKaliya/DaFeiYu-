@@ -92,4 +92,9 @@ bool ObservationGuard::current(ObservationTime now) const noexcept {
     return alive && *alive && !observation_->revision_gap() && observation_->validity(now) == ObservationValidity::fresh &&
         observation_->watermark_->generation == metadata.object.generation && observation_->watermark_->revision == metadata.revision;
 }
+// 比较同一集合的对象水位持有及代次，引用身份不向外暴露为原生地址。
+bool ObservationGuard::same_object(const ObservationGuard& other) const noexcept {
+    return observation_->watermark_ == other.observation_->watermark_ &&
+        observation_->metadata().object.generation == other.observation_->metadata().object.generation;
+}
 }
