@@ -33,6 +33,7 @@ struct RunLoopState {
     std::string planning_goal;
     std::optional<ToolSnapshot> step_tools;
     std::unique_ptr<PlanExecution> plan_step;
+    std::shared_ptr<bool> action_basis_available = std::make_shared<bool>(true);
     std::size_t repeated = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
@@ -87,10 +88,13 @@ struct RunLoopState {
         record->model_contexts_.reserve(options.policy.model_limit);
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
         // 最后检查只持有原操作读句柄，避免捕获整个运行形成回收环；不能因工具自身期限较晚而越过总期限。
-        const auto action_guard = [observations = options.action_observations,clock = options.now,absolute = deadline,run_state = record->operation()] {
+        const auto action_guard = [observations = options.action_observations,clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis_available] {
             const auto current = clock();
-            return run_state->state() == runtime::OperationState::pending && run_state->cancellation_reason() == runtime::CancelReason::none &&
-                current < absolute && (!observations || observations->current(current));
+            if (run_state->state() != runtime::OperationState::pending || run_state->cancellation_reason() != runtime::CancelReason::none ||
+                current >= absolute || (observations && (!*basis || !observations->current(current)))) return false;
+            // 开始尝试变更后不再复用同一行动前依据；后续只读查询仍可继续。
+            if (observations) *basis = false;
+            return true;
         };
         if (options.tools) record->tools_ = std::make_unique<ToolExecutor>(run,*options.tools,
             ToolLimits{options.policy.tool_limit,std::min(options.timeout,std::chrono::milliseconds(30000))},options.budget,options.now,action_guard);
@@ -109,7 +113,7 @@ struct RunLoopState {
         if (plan_step && !planning_request) { context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->index+1; }
         if (options.action_observations) {
             context.observation_binding = options.action_observations->binding();
-            context.observations_current = options.action_observations->current(context.now);
+            context.observations_current = *action_basis_available && options.action_observations->current(context.now);
         }
         return context;
     }

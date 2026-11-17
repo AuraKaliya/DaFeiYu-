@@ -82,11 +82,30 @@ void missing_guard() {
     Session session({},channel,model.backend()); RunOptions options; options.tools = catalog.snapshot(ids,true); options.now = model.clock();
     options.observations = {inbox.latest(source.id(),"object")}; rejects([&] { session.begin("host goal",options); }); model.verify_complete();
 }
+// 验证本运行开始一次变更后不能继续复用行动前观察，即使来源尚未推送新采样。
+// 步骤：接纳两个可并列准备的幂等候选 → 首个变更消费旧观察依据 → 第二个实际开始前拒绝 → 保留两份配对结果。
+void changed_by_own_action() {
+    ObservationSource source(1,ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
+    inbox.accept(source.capture({"object",1},1,{},ObservationTime{}+std::chrono::seconds(1),payload()),{});
+    const auto guard = inbox.guard(inbox.latest(source.id(),"object"),{}); unsigned calls = 0; ToolCatalog catalog;
+    catalog.add({"fixture/action",1,1,{"action","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,true},
+        [&](const auto&) { ++calls; return completed_tool({true,ToolEffect::applied,"assigned",ToolError::none}); });
+    ScriptStep action; action.tool_names = {"action"}; action.response = Response{{Role::assistant,"",{{"first","action","{}"},{"second","action","{}"}}},FinishReason::tool_calls};
+    ScriptStep answer; answer.tool_names = {"action"}; answer.last_role = Role::tool; answer.response = Response{{Role::assistant,"reported"}};
+    ScriptedModel model({1,"own_action_observation",1,{},{action,answer},2});
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session({},channel,model.backend()); RunOptions options; options.now = model.clock();
+    const std::vector<std::string> ids{"fixture/action"}; options.tools = catalog.snapshot(ids,true); options.action_observations.emplace(std::vector<ObservationGuard>{guard});
+    const auto request = session.begin("host goal",options); until(session,[&] { return !session.busy(); }); model.verify_complete();
+    const auto steps = request->tool_steps();
+    check(guard.current({}) && calls == 1 && steps.size() == 2 && steps[0].effect == ToolEffect::applied && steps[1].accepted &&
+        steps[1].result == OperationState::failed && steps[1].effect == ToolEffect::not_applied,"own change reused original observation for another action");
+}
 }
 // 使用合成观察和固定响应验证确定性动作控制，不调用真实模型。
 int main() {
     try {
         for (const auto change : {Change::none,Change::waiting,Change::approved,Change::admitted,Change::callback,Change::expired,Change::destroyed,Change::revoked}) scenario(change);
-        missing_guard(); std::cout << "Session action guard checks passed\n"; return 0;
+        missing_guard(); changed_by_own_action(); std::cout << "Session action guard checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
