@@ -36,5 +36,6 @@ struct ObservationRebindReceipt {
     runtime::DomainId request = 0, previous_binding = 0, binding = 0;
     PlanStepKey step;
     std::vector<ObservationInputFact> observations;
+    std::size_t after_model_requests = 0;
 };
 }

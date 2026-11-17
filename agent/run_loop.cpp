@@ -59,6 +59,7 @@ struct RunLoopState {
             if (!options.action_observations->current(now) || (!options.observations.empty() && options.observations != guarded))
                 throw std::invalid_argument("run: mismatched or stale action observations");
             options.observations = guarded;
+            record->initial_observation_binding_ = options.action_observations->binding();
         }
         if (options.tools && options.tools->permits_state_changes() && !options.observations.empty() && !options.action_observations)
             throw std::invalid_argument("run: observed changes require currentness guards");
@@ -335,6 +336,7 @@ struct RunLoopState {
 
             auto replacement = std::optional<ActionObservations>(next_observations); auto observations = replacement->observations();
             ObservationRebindReceipt receipt{ticket.id(),ticket.binding(),replacement->binding(),ticket.step(),{}};
+            receipt.after_model_requests = record->model_requests_;
             std::vector<std::string> inputs; inputs.reserve(observations.size()); receipt.observations.reserve(observations.size());
             for (const auto& observation : observations) {
                 inputs.push_back(observation_input(*observation,now)); const auto& data = observation->metadata();
@@ -372,6 +374,8 @@ struct RunLoopState {
         model::Request input = planning_request ? planning_request->request :
             model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
         ModelContextSnapshot context{current.attempt,options.goal_revision};
+        context.observation_binding = current.observation_binding;
+        if (current.observation_binding) context.observations_current = current.observations_current;
         if (planning_request) { context.purpose = ModelPurpose::plan_generation; context.plan_revision = planning_request->expected.plan_revision+1; }
         else if (plan_step) { context.purpose = ModelPurpose::plan_step; context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->key.step; }
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;

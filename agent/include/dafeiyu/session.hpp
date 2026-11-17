@@ -59,12 +59,15 @@ struct ModelStepSnapshot {
     TurnDiagnostics::TimePoint observed_exit;
 };
 enum class ModelPurpose { direct, plan_generation, plan_step };
-// 模型提交时固定的目标与计划关联，无提示词、结果正文或可执行凭证。
+// 模型前控制检查时固定的目标、计划与行动观察关联，无正文或可执行凭证。
 struct ModelContextSnapshot {
     AttemptId attempt;
     std::uint64_t goal_revision = 0, plan_revision = 0;
     ModelPurpose purpose = ModelPurpose::direct;
     std::string plan_step;
+    runtime::DomainId observation_binding = 0;
+    // 无行动观察绑定时为未知，不把默认允许解释为采样已经核验。
+    std::optional<bool> observations_current;
 };
 // 仅供可信验证入口读取的步骤模型文本；不是完成证据，普通诊断不得自动导出正文。
 struct PlanStepOutput {
@@ -125,6 +128,8 @@ class TurnRequest {
     TraceVersions trace_versions() const { return versions_; }
     // 复制接纳时的来源、对象及修订关联，不保留观察载荷或提供实例。
     std::vector<ObservationInputFact> observation_inputs() const { return observation_inputs_; }
+    // 返回运行接纳时的行动观察绑定；后续更新另由原接纳回执表示。
+    runtime::DomainId initial_observation_binding() const noexcept { return initial_observation_binding_; }
     // 复制已接纳观察替换的元数据，不保留载荷或提供新的动作许可。
     std::vector<ObservationRebindReceipt> observation_rebinds() const { return observation_rebinds_; }
     // 复制显式规划的候选及进度；无规划返回空值，查询不执行模型或推进步骤。
@@ -143,6 +148,7 @@ class TurnRequest {
     RunJournal journal_;
     TraceVersions versions_;
     std::vector<ObservationInputFact> observation_inputs_;
+    runtime::DomainId initial_observation_binding_ = 0;
     RunOrigin source_ = RunOrigin::user_request;
     std::uint64_t goal_revision_ = 0;
     // 在完整上下文提交后记录消息数量及提交修订，不复制业务正文。

@@ -1,6 +1,7 @@
 #include "support/scripted_model.hpp"
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/run_trace.hpp>
 #include <charconv>
 #include <iostream>
 #include <thread>
@@ -13,6 +14,11 @@ using namespace dfy::plugins;
 using namespace dfy::tests;
 // 报告原生连续行动、观察绑定或预算不一致。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+// 验证损坏关联不能冒充真实诊断。
+void rejects(const auto& action) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
+    throw std::runtime_error("invalid observation association accepted");
+}
 // 有界推进原 Session，不把查询或刷新作为工作推进。
 void until(Session& session, const auto& ready) {
     const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(2);
@@ -94,6 +100,13 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, b
         request->observation_rebinds().size() == 1 && request->operation()->state() == (limited ? OperationState::failed : OperationState::succeeded),
         "native continuation lost effects, budget or release");
     if (limited) check(request->diagnostics().stop_reason == PolicyReason::model_limit,"rebinding renewed model budget");
+    const auto trace = run_timeline(*request,"native-rebind"); check(review_timeline(trace).run_exited && trace.observation_rebinds.size() == 1 &&
+        trace.model_contexts[2].observation_binding == initial_binding && trace.model_contexts[2].observations_current == false &&
+        trace.model_contexts[3].observation_binding == replacement.binding() && trace.model_contexts[3].observations_current == true,
+        "observation refresh rewrote old model context");
+    auto damaged = trace; damaged.model_contexts[0].observation_binding = replacement.binding(); rejects([&] { review_timeline(damaged); });
+    damaged = trace; damaged.observation_rebinds[0].after_model_requests = 2; rejects([&] { review_timeline(damaged); });
+    damaged = trace; damaged.observation_rebinds[0].observations[0].revision = 1; rejects([&] { review_timeline(damaged); });
     check(instance->shutdown() == ShutdownResult::closed,"rebind values pinned native code");
 }
 }

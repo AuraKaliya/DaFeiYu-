@@ -1,6 +1,7 @@
 #include <dafeiyu/run_trace.hpp>
 #include <algorithm>
 #include <stdexcept>
+#include <dafeiyu/utf8.hpp>
 
 namespace dfy::agent {
 namespace {
@@ -29,15 +30,54 @@ void decision(PolicyDecision value) {
     else require(value.verdict == PolicyVerdict::deny && value.reason != PolicyReason::none &&
         value.reason != PolicyReason::confirmation_required && value.reason != PolicyReason::work_pending);
 }
+// 核对无载荷观察关联，身份必须有界、唯一并符合原生产入口的编码规则。
+void observations(const std::vector<ObservationInputFact>& values) {
+    require(values.size() <= 4);
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const auto& value = values[index]; require(value.source && value.provider_instance && value.object.generation && value.revision &&
+            !value.object.id.empty() && value.object.id.size() <= 128 && runtime::valid_utf8(value.object.id) && within(value.trust,ObservationTrust::host_verified));
+        for (const unsigned char c : value.object.id) require(c >= 32 && c != 127);
+        for (std::size_t earlier = 0; earlier < index; ++earlier) require(values[earlier].source != value.source || values[earlier].object.id != value.object.id);
+    }
+}
+// 核对原观察及后继绑定链，不把新采样套到已经发生的模型调用。
+// 步骤：校验初始集合 → 检查绑定链和接纳位置 → 逐对象核对更高修订及原身份。
+void observation_rebinds(const RunTimeline& value) {
+    observations(value.observations); require(value.observation_rebinds.size() <= 64 && value.model_contexts.size() <= 64);
+    if (value.initial_observation_binding) require(!value.observations.empty());
+    auto binding = value.initial_observation_binding; std::size_t after = 0;
+    const auto* previous = &value.observations;
+    for (std::size_t index = 0; index < value.observation_rebinds.size(); ++index) {
+        const auto& receipt = value.observation_rebinds[index]; observations(receipt.observations);
+        require(receipt.request && binding && receipt.previous_binding == binding && receipt.binding && receipt.binding != binding &&
+            receipt.observations.size() == previous->size() && receipt.after_model_requests >= after && receipt.after_model_requests &&
+            receipt.after_model_requests <= value.model_contexts.size() && receipt.step.plan.run == value.key.run);
+        for (std::size_t earlier = 0; earlier < index; ++earlier) require(value.observation_rebinds[earlier].request != receipt.request &&
+            value.observation_rebinds[earlier].binding != receipt.binding);
+        require(receipt.binding != value.initial_observation_binding);
+        const auto& context = value.model_contexts[receipt.after_model_requests-1];
+        require(context.purpose == ModelPurpose::plan_step && context.goal_revision == receipt.step.plan.goal_revision &&
+            context.plan_revision == receipt.step.plan.plan_revision && context.plan_step == receipt.step.step);
+        for (const auto& fresh : receipt.observations) {
+            const auto old = std::find_if(previous->begin(),previous->end(),[&](const auto& item) { return item.source == fresh.source && item.object.id == fresh.object.id; });
+            require(old != previous->end() && old->provider_instance == fresh.provider_instance && old->object.generation == fresh.object.generation &&
+                old->trust == fresh.trust && old->revision < fresh.revision);
+        }
+        binding = receipt.binding; after = receipt.after_model_requests; previous = &receipt.observations;
+    }
+}
 // 核对每个模型的原版本绑定，不把当前目标修订套到先前模型调用上。
 // 步骤：核对数量及身份 → 校验调用目的和步骤标识 → 检查模型节点及单调目标关联。
 void model_contexts(const RunTimeline& value, std::size_t count) {
     require(value.model_contexts.size() == count && count <= 64);
     std::uint64_t previous_step = 0, previous_goal = 0;
     for (const auto& context : value.model_contexts) {
-        require(context.attempt.step.run == value.key.run && context.attempt.step.sequence > previous_step && context.attempt.sequence &&
+        require(context.attempt.step.run == value.key.run && context.attempt.step.sequence == previous_step+1 && context.attempt.sequence &&
             context.goal_revision && context.goal_revision >= previous_goal && context.goal_revision <= value.goal_revision &&
             within(context.purpose,ModelPurpose::plan_step));
+        auto binding = value.initial_observation_binding;
+        for (const auto& receipt : value.observation_rebinds) if (receipt.after_model_requests < context.attempt.step.sequence) binding = receipt.binding;
+        require(context.observation_binding == binding && context.observations_current.has_value() == static_cast<bool>(binding));
         require(std::any_of(value.nodes.begin(),value.nodes.end(),[&](const auto& node) {
             return node.id.kind == TraceNodeKind::model && node.id.step == context.attempt.step.sequence && node.id.attempt == context.attempt.sequence;
         }));
@@ -63,9 +103,8 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
     for (const auto c : value.key.name_space) require((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.');
     validate_trace_versions(value.versions); validate_trace_id({value.key.run});
-    require(value.goal_revision && within(value.source,RunOrigin::observation_rule) && value.observations.size() <= 4);
-    for (const auto& observation : value.observations) require(observation.source && observation.provider_instance && observation.object.generation &&
-        !observation.object.id.empty() && observation.object.id.size() <= 128 && observation.revision && within(observation.trust,ObservationTrust::host_verified));
+    require(value.goal_revision && within(value.source,RunOrigin::observation_rule));
+    observation_rebinds(value);
     require(within(value.failure,TurnFailure::model_request) && within(value.stop_reason,PolicyReason::policy_failed));
     const auto root = find_node(value,{value.key.run}); require(root && root->result && root->exit);
     TimelineReview report; report.run_exited = root->exit == runtime::OperationState::succeeded;

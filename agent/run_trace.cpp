@@ -112,6 +112,7 @@ RunTimeline run_timeline(const TurnRequest& request, std::string name_space, std
         node.id = {request.run_id(),TraceNodeKind::control,confirmation.attempt.step.sequence,confirmation.attempt.sequence,confirmation.id};
         node.parent = trace_parent(node.id); node.confirmation = confirmation.state; node.related = confirmation.candidate; result.nodes.push_back(node);
     }
+    result.initial_observation_binding = request.initial_observation_binding(); result.observation_rebinds = request.observation_rebinds();
     result.delta = request.trace_delta(after,limit);
     for (const auto& fact : result.delta.facts) if (fact.subject.kind == TraceNodeKind::attempt)
         group({{fact.subject.run,fact.subject.step},fact.subject.attempt});
