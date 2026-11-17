@@ -73,9 +73,32 @@ void boundaries() {
     context.finish_text("done"); check(context.committed()->size() == 6,"multi-step final history lost messages");
     rejects([&] { context.prepare_tools(assistant,{}); });
 }
+// 验证计划步骤数据和文本独立提交，旧事实不被未完成的新步骤或容量失败覆盖。
+// 步骤：提交首步文本 → 拒绝损坏和超量输入 → 接收工具事实 → 丢弃未提交尾部并保留完整配对。
+void plan_steps() {
+    const auto empty = std::make_shared<const MessageHistory>(); RunContext context(empty,"original goal");
+    context.begin_step(R"({"objective":"read","completion_criterion":"host verifies"})");
+    check(context.committed() == empty && context.messages().size() == 2 && context.messages()[1].role == Role::user,
+        "step input committed early or changed role");
+    context.commit_step_text("model says done"); const auto first = context.committed();
+    check(first->size() == 3 && first->back().content == "model says done","step text not recorded");
+    rejects([&] { context.begin_step(std::string(64*1024+1,'x')); });
+    rejects([&] { context.begin_step(std::string(1,static_cast<char>(0xff))); });
+    check(context.committed() == first && context.messages().size() == 3,"invalid step changed prior context");
+    context.begin_step("second step");
+    const dfy::model::Message assistant{Role::assistant,"",{{"call","change","{}"}}}; context.prepare_tools(assistant,{});
+    rejects([&] { context.begin_step("must wait"); }); rejects([&] { context.commit_step_text("premature"); });
+    context.set_tool_result(0,{false,ToolEffect::unknown,"unknown",ToolError::failed},OperationState::failed); context.commit_tools();
+    const auto facts = context.committed(); context.begin_step("uncommitted tail"); context.seal();
+    check(context.committed() == facts && facts->size() == 6 && facts->back().content.find("effect=unknown") != std::string::npos &&
+        first->size() == 3,"step failure erased effects or mutated old history");
+    rejects([&] { context.begin_step("sealed"); }); rejects([&] { context.commit_step_text("sealed"); });
+    RunContext full(empty,std::string(1024*1024-64,'x')); rejects([&] { full.begin_step(std::string(128,'y')); });
+    check(full.committed() == empty && full.messages().size() == 1,"step capacity failure published partial data");
+}
 }
 // 只验证固定消息和工具结果投影，不调用模型或执行工具。
 int main() {
-    try { facts(); boundaries(); std::cout << "Run context checks passed\n"; return 0; }
+    try { facts(); boundaries(); plan_steps(); std::cout << "Run context checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

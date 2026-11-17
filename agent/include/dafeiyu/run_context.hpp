@@ -24,6 +24,10 @@ class RunContext {
         ToolError fault = ToolError::none, bool accepted = true);
     // 仅在全部结果已准备时发布本批历史，提交不分配内存。
     void commit_tools();
+    // 在无未完成工具时追加有界步骤数据，准备失败不改变已提交历史或当前输入。
+    void begin_step(std::string data);
+    // 提交一个步骤的模型文本并保留后续输入入口；文本不表示宿主已验证目标。
+    void commit_step_text(std::string answer);
     // 准备并提交最终文本；失败不会回滚已提交工具事实。
     void finish_text(std::string answer);
     // 丢弃未提交的纯文本输入并封闭事务；不允许丢弃尚待结果的工具批次。
