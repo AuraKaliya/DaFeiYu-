@@ -175,6 +175,24 @@ void Session::confirm_plan_step(const ConfirmationCaller& caller, const PlanStep
     } catch (...) { working_ = false; throw; }
     working_ = false; throw std::invalid_argument("session: plan run unavailable");
 }
+// 将重规划路由到原活动运行，终态只能复用已有请求的接纳结果。
+// 步骤：保护入口并核对完整身份 → 复用同参数原请求 → 活动运行检查并接纳 → 归还入口。
+PlanBinding Session::replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance) {
+    if (working_) throw std::logic_error("session: reentrant replan");
+    working_ = true;
+    try {
+        for (const auto& record : records_) if (record && record->run_id() == expected.run && record->plan_) {
+            if (!record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("session: unbound replan caller");
+            for (const auto& previous : record->plan_revisions_) if (previous.expected == expected) {
+                if (previous.guidance != guidance) throw std::invalid_argument("session: replan request conflict");
+                working_ = false; return {expected.run,expected.goal_revision,expected.plan_revision+1};
+            }
+            if (!active_ || active_->request() != record) throw std::logic_error("session: replan run already stopped");
+            const auto receipt = active_->replan(caller,expected,guidance); working_ = false; return receipt;
+        }
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::invalid_argument("session: replan run unavailable");
+}
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。
 void Session::advance() {

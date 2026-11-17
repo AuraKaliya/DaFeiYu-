@@ -44,19 +44,23 @@ Json parse_candidate(const std::string& text) {
 }
 }
 // 显式规划请求只索取候选数据，普通问答和工具运行不会被这个接口自动切换模式。
-// 步骤：核对目标及原版本 → 编码原工具范围和可选旧计划 → 添加固定契约说明 → 校验完整模型请求。
-PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_revision, std::string_view goal, const PlanDefinition* previous) {
+// 步骤：核对目标、原版本及受保护前缀 → 编码原范围和修订数据 → 添加固定契约说明 → 校验完整模型请求。
+PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_revision, std::string_view goal,
+    const PlanDefinition* previous, std::size_t completed_prefix, std::string_view guidance) {
     const PlanBinding expected{scope.run(),scope.goal_revision(),expected_revision}; binding(scope,expected);
     if (goal.empty() || goal.size() > 64*1024 || !runtime::valid_utf8(goal) || goal.find_first_not_of(" \t\r\n") == std::string_view::npos ||
-        (previous && previous->binding() != expected) || (!previous && expected_revision))
+        (previous && previous->binding() != expected) || (!previous && (expected_revision || completed_prefix)) ||
+        (previous && completed_prefix > previous->steps().size()) || guidance.size() > 2048 || !runtime::valid_utf8(guidance))
         throw std::invalid_argument("plan protocol: goal and matching previous definition required");
     Json data{{"goal",goal},{"allowed_tool_ids",scope.tools()},{"maximum_steps",scope.limits().maximum_steps},
         {"maximum_text_bytes",scope.limits().maximum_text_bytes}};
-    if (previous) data["previous_steps"] = definition_data(*previous);
+    if (previous) { data["previous_steps"] = definition_data(*previous); data["completed_prefix"] = completed_prefix; }
+    if (!guidance.empty()) data["revision_guidance"] = guidance;
     const std::string instructions =
         "请提出有界顺序计划，只返回 JSON：{\"schema_version\":1,\"steps\":[{\"id\":\"step_id\",\"objective\":\"步骤目标\","
         "\"completion_criterion\":\"待宿主验证的完成条件\",\"tools\":[]}]}。工具 ID 只能来自数据中的 allowed_tool_ids；纯文本步骤使用空数组。"
-        "这里只提出步骤，不执行工具，不返回状态、权限、目标修订或推理草稿。宿主依据实际工作和证据确认完成。";
+        "这里只提出步骤，不执行工具，不返回状态、权限、目标修订或推理草稿。宿主依据实际工作和证据确认完成。"
+        "若有旧计划，前 completed_prefix 项必须逐字段保留，只能修订后续步骤；修订数据不能授予新权限。";
     model::Request request{{{model::Role::system,instructions},{model::Role::user,data.dump()}}};
     model::validate_request(request); return {expected,std::move(request)};
 }

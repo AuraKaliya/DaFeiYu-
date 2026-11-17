@@ -145,6 +145,8 @@ class TurnRequest {
     std::unique_ptr<PlanBook> plan_;
     std::optional<ConfirmationCaller> plan_caller_;
     std::vector<PlanStepOutput> plan_outputs_;
+    struct PlanRevisionRecord { PlanBinding expected; std::string guidance; };
+    std::vector<PlanRevisionRecord> plan_revisions_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::size_t model_requests_ = 0, tool_requests_ = 0;
@@ -180,6 +182,8 @@ class Session {
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 由宿主绑定的验证入口确认步骤完成条件；重复同证据不重复推进，调用本身不执行后续工作。
     void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence);
+    // 在步骤边界请求有限尾部重规划；返回待生成版本，重复原请求不再次调用模型。
+    PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance = {});
     // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。

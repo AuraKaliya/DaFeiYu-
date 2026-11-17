@@ -29,6 +29,8 @@ class RunLoop {
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 接收宿主对原步骤的验证，重查停止边界，不在确认调用中调度新模型或工具。
     void confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence);
+    // 接纳原目标内的有限重规划请求，只有后续推进才调用模型。
+    PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。
     void wait_model();
     // 返回仍需要宿主重试收尾的运行数。

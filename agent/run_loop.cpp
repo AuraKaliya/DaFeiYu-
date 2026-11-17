@@ -28,6 +28,7 @@ struct RunLoopState {
     ToolBatch* batch = nullptr;
     std::optional<PlanScope> planning_scope;
     std::optional<PlanPrompt> planning_request;
+    std::string planning_goal;
     std::optional<ToolSnapshot> step_tools;
     std::unique_ptr<PlanExecution> plan_step;
     std::size_t repeated = 0;
@@ -60,6 +61,8 @@ struct RunLoopState {
             record->plan_ = std::make_unique<PlanBook>(*planning_scope);
             record->plan_caller_ = options.confirmation_caller;
             record->plan_outputs_.reserve(options.policy.model_limit);
+            record->plan_revisions_.reserve(options.planning->maximum_revisions);
+            planning_goal = prompt;
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
         record->versions_ = public_model_versions(config); auto& versions = record->versions_;
@@ -154,6 +157,31 @@ struct RunLoopState {
                     throw std::invalid_argument("run: stale or stopped plan verification");
             }
             record->plan_->confirm(key,evidence); advancing = false;
+        } catch (...) { advancing = false; throw; }
+    }
+    // 重规划仅替换尚未执行的尾部，不重置运行次数、期限或已发生事实。
+    // 步骤：核对调用者并复用原请求 → 重查停止及步骤边界 → 准备受保护前缀的候选请求 → 发布待生成版本。
+    PlanBinding replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance) {
+        if (advancing || !record->plan_ || !record->plan_caller_ || caller != *record->plan_caller_)
+            throw std::invalid_argument("run: unbound or reentrant replan");
+        for (const auto& previous : record->plan_revisions_) if (previous.expected == expected) {
+            if (previous.guidance != guidance) throw std::invalid_argument("run: replan request conflict");
+            return {expected.run,expected.goal_revision,expected.plan_revision+1};
+        }
+        advancing = true;
+        try {
+            interrupt(); const auto snapshot = record->plan_->snapshot();
+            if (policy.check_context(control()).verdict != PolicyVerdict::allow || planning_request || record->model_ || batch ||
+                expected != record->plan_->binding() || !snapshot.definition || snapshot.stopped)
+                throw std::invalid_argument("run: stale or unavailable replan");
+            std::size_t prefix = 0;
+            while (prefix < snapshot.steps.size() && (snapshot.steps[prefix].state == PlanStepState::completed || snapshot.steps[prefix].state == PlanStepState::skipped)) ++prefix;
+            if (prefix < snapshot.steps.size() && snapshot.steps[prefix].state != PlanStepState::pending)
+                throw std::logic_error("run: unfinished work or verification prevents replan");
+            auto input = prepare_plan_prompt(*planning_scope,expected.plan_revision,planning_goal,snapshot.definition.get(),prefix,guidance);
+            TurnRequest::PlanRevisionRecord receipt{expected,std::string(guidance)};
+            record->plan_revisions_.push_back(std::move(receipt)); planning_request = std::move(input); advancing = false;
+            return {expected.run,expected.goal_revision,expected.plan_revision+1};
         } catch (...) { advancing = false; throw; }
     }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
@@ -291,7 +319,9 @@ struct RunLoopState {
                         batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
-            } else if (record->operation()->state() == OperationState::pending && record->plan_ && !planning_request) advance_plan();
+            } else if (record->operation()->state() == OperationState::pending && record->plan_ && !record->model_) {
+                if (planning_request) start_model(); else advance_plan();
+            }
             finish();
         } catch (...) { fail(std::current_exception()); try { finish(); } catch (...) {} }
         advancing = false;
@@ -327,6 +357,8 @@ void RunLoop::advance() { state_->advance(); }
 ConfirmationReceipt RunLoop::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) { return state_->decide(caller,command); }
 // 转交可信验证，调用本身不继续运行或改变原工作结果。
 void RunLoop::confirm_plan_step(const ConfirmationCaller& caller, const PlanStepKey& key, std::string_view evidence) { state_->confirm_plan_step(caller,key,evidence); }
+// 转交有限重规划请求，不在命令提交期间执行模型。
+PlanBinding RunLoop::replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance) { return state_->replan(caller,expected,guidance); }
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }
 // 返回保留运行数量。
