@@ -96,9 +96,24 @@ void plan_steps() {
     RunContext full(empty,std::string(1024*1024-64,'x')); rejects([&] { full.begin_step(std::string(128,'y')); });
     check(full.committed() == empty && full.messages().size() == 1,"step capacity failure published partial data");
 }
+// 验证目标修改是待提交用户数据，未完成工具和失败修订不能覆盖已发生事实。
+// 步骤：保留原动作结果 → 准备新目标 → 拒绝坏输入 → 封闭未提交尾部并复核旧事实。
+void revised_goal() {
+    const auto empty = std::make_shared<const MessageHistory>(); RunContext context(empty,"original goal");
+    context.prepare_tools({Role::assistant,"",{{"call","change","{}"}}},{});
+    rejects([&] { context.revise_goal(2,"too early"); });
+    context.set_tool_result(0,{true,ToolEffect::applied,"changed",ToolError::none},OperationState::succeeded); context.commit_tools();
+    const auto facts = context.committed(); context.revise_goal(2,"new goal"); const auto input = context.messages();
+    check(context.committed() == facts && input.size() == 4 && input.back().role == Role::user && input.back().content.ends_with("new goal"),
+        "goal revision erased or prematurely committed facts");
+    rejects([&] { context.revise_goal(0,"invalid"); }); rejects([&] { context.revise_goal(3," "); });
+    rejects([&] { context.revise_goal(3,std::string(64*1024+1,'x')); });
+    check(context.messages().size() == input.size() && context.messages().back().content == input.back().content,"bad revision mutated pending input");
+    context.seal(); check(context.committed() == facts && facts->back().content.find("effect=applied") != std::string::npos,"goal cancellation erased action");
+}
 }
 // 只验证固定消息和工具结果投影，不调用模型或执行工具。
 int main() {
-    try { facts(); boundaries(); plan_steps(); std::cout << "Run context checks passed\n"; return 0; }
+    try { facts(); boundaries(); plan_steps(); revised_goal(); std::cout << "Run context checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

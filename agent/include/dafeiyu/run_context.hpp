@@ -26,6 +26,8 @@ class RunContext {
     void commit_tools();
     // 在无未完成工具时追加有界步骤数据，准备失败不改变已提交历史或当前输入。
     void begin_step(std::string data);
+    // 在无未完成工具时追加宿主明确更新的用户目标，保留旧目标及动作事实供解释。
+    void revise_goal(std::uint64_t revision, std::string goal);
     // 提交一个步骤的模型文本并保留后续输入入口；文本不表示宿主已验证目标。
     void commit_step_text(std::string answer);
     // 准备并提交最终文本；失败不会回滚已提交工具事实。

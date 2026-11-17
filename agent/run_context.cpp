@@ -96,6 +96,17 @@ void RunContext::begin_step(std::string data) {
     model::validate_request(prepared);
     auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages)); pending_ = std::move(pending);
 }
+// 新目标只由宿主控制入口追加，旧动作事实不能因目标改变而消失。
+// 步骤：校验版本、正文和阶段 → 追加明确修订的用户消息 → 校验整体预算 → 发布待提交上下文。
+void RunContext::revise_goal(std::uint64_t revision, std::string goal) {
+    if (finished_ || !replies_.empty()) throw std::logic_error("context: invalid goal revision phase");
+    if (!revision || goal.empty() || goal.size() > 64*1024 || !runtime::valid_utf8(goal) || goal.find_first_not_of(" \t\r\n") == std::string::npos)
+        throw std::invalid_argument("context: bounded revised goal required");
+    model::Request prepared{messages()};
+    prepared.messages.push_back({model::Role::user,"宿主已更新用户目标，修订="+std::to_string(revision)+"；此前动作事实仍保留，新目标不能自行扩大工具权限：\n"+goal});
+    model::validate_request(prepared);
+    auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages)); pending_ = std::move(pending);
+}
 // 步骤文本与工具事实分别提交，后续失败不会回滚已发布内容。
 // 步骤：核对事务阶段 → 复制完整输入并追加回答 → 校验预算 → 发布步骤历史。
 void RunContext::commit_step_text(std::string answer) {
