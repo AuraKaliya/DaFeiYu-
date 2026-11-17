@@ -33,6 +33,9 @@ struct RunVersionLabels {
     std::optional<std::string> application_commit, build, prompt_template, model_profile;
     std::optional<std::string> control_extension;
 };
+struct VersionDifference {
+    std::vector<std::string> changed, unknown;
+};
 struct RunOptions;
 // 校验节点层级，拒绝不完整路径及未知种类。
 void validate_trace_id(const TraceNodeId& id);
@@ -46,4 +49,6 @@ void validate_trace_versions(const TraceVersions& versions);
 TraceVersions public_model_versions(const model::Config& config);
 // 固定允许公开的配置摘要及实际工具版本，不读取端点、凭据引用或扩展捕获内容。
 TraceVersions public_run_versions(const model::Config& config, const RunOptions& options, std::chrono::milliseconds effective_timeout);
+// 比较公开软件／配置版本；缺失单列为未知，进程内实例代次不冒充软件变化，不执行场景。
+VersionDifference compare_public_versions(const TraceVersions& previous, const TraceVersions& current);
 }

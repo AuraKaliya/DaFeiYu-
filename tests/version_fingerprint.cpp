@@ -32,6 +32,13 @@ int main() {
         options.policy.model_limit = 2;
         check(dfy::agent::public_run_versions(config,options,std::chrono::seconds(1)).execution_policy != versions.execution_policy &&
             versions.control_extension == "none" && !versions.application_commit,"policy change hidden or code version fabricated");
+        config.timeout_ms = 1000; const auto changed = dfy::agent::public_run_versions(config,options,std::chrono::seconds(1));
+        const auto diff = dfy::agent::compare_public_versions(versions,changed);
+        check(diff.changed == std::vector<std::string>{"execution_policy"} && !diff.unknown.empty(),"version comparison invented equality or missed public change");
+        auto before = versions; before.tools.push_back({"fixture/read",1,10,"fixture-v1",first}); auto after = before; after.tools[0].instance = 20;
+        check(dfy::agent::compare_public_versions(before,after).changed.empty(),"runtime generation became software version difference");
+        after.tools[0].schema = "different-schema";
+        check(dfy::agent::compare_public_versions(before,after).changed == std::vector<std::string>{"tool/fixture/read/schema"},"tool contract difference lost");
         std::cout << "Version fingerprint checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

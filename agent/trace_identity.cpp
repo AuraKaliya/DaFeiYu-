@@ -4,6 +4,7 @@
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <algorithm>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -91,5 +92,34 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     result.execution_policy = "sha256:"+platform::sha256(policy.dump());
     if (options.tools) for (const auto& tool : options.tools->descriptions(false)) result.tools.push_back({tool.id,tool.version,tool.instance,tool.plugin_version,tool.schema_digest});
     validate_trace_versions(result); return result;
+}
+// 只比较有依据的公开版本，未知不能被当成相等，运行期身份不跨进程比较。
+// 步骤：校验清单 → 比较固定标签及摘要 → 按规范工具 ID 匹配 → 报告已知差异和缺失信息。
+VersionDifference compare_public_versions(const TraceVersions& previous, const TraceVersions& current) {
+    validate_trace_versions(previous); validate_trace_versions(current); VersionDifference result;
+    const auto compare = [&](std::string name,const auto& left,const auto& right) {
+        if (!left || !right) result.unknown.push_back(std::move(name));
+        else if (*left != *right) result.changed.push_back(std::move(name));
+    };
+    compare("application_commit",previous.application_commit,current.application_commit); compare("build",previous.build,current.build);
+    compare("prompt_template",previous.prompt_template,current.prompt_template); compare("provider",previous.provider,current.provider);
+    compare("model",previous.model,current.model); compare("model_profile",previous.model_profile,current.model_profile);
+    compare("policy_revision",previous.policy,current.policy); compare("public_model_config",previous.public_model_config,current.public_model_config);
+    compare("execution_policy",previous.execution_policy,current.execution_policy); compare("control_extension",previous.control_extension,current.control_extension);
+    std::set<std::string> ids;
+    for (const auto& tool : previous.tools) ids.insert(tool.id);
+    for (const auto& tool : current.tools) ids.insert(tool.id);
+    for (const auto& id : ids) {
+        const auto left = std::find_if(previous.tools.begin(),previous.tools.end(),[&](const auto& item) { return item.id == id; });
+        const auto right = std::find_if(current.tools.begin(),current.tools.end(),[&](const auto& item) { return item.id == id; });
+        const auto prefix = "tool/"+id+"/";
+        if (left == previous.tools.end()) result.changed.push_back(prefix+"added");
+        else if (right == current.tools.end()) result.changed.push_back(prefix+"removed");
+        else {
+            compare(prefix+"contract",left->contract,right->contract); compare(prefix+"plugin",left->plugin,right->plugin);
+            compare(prefix+"schema",left->schema,right->schema);
+        }
+    }
+    return result;
 }
 }
