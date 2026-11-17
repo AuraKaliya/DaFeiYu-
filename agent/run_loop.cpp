@@ -48,7 +48,8 @@ struct RunLoopState {
         : record(new TurnRequest(run,settings.trace_capacity)), config(std::move(value)), models(1,std::move(backend)), options(std::move(settings)),
           policy(std::make_unique<ExecutionPolicy>(run,options.goal_revision,options.policy)) {
         if (!options.now || options.timeout <= std::chrono::milliseconds::zero() || options.timeout > std::chrono::hours(1) ||
-            !options.no_progress_limit || options.no_progress_limit > 64 || (options.planning && (!options.goal_update_limit || options.goal_update_limit > 16)))
+            !options.no_progress_limit || options.no_progress_limit > 64 || (options.planning && (!options.goal_update_limit || options.goal_update_limit > 16 ||
+                !options.observation_rebind_limit || options.observation_rebind_limit > 64)))
             throw std::invalid_argument("run: invalid limits");
         const auto now = options.now(); const auto duration = std::chrono::duration_cast<ToolTime::duration>(options.timeout);
         if (now > ToolTime::max()-duration) throw std::overflow_error("run: deadline overflow");
@@ -77,6 +78,7 @@ struct RunLoopState {
             record->plan_outputs_.reserve(options.policy.model_limit);
             record->plan_revisions_.reserve(options.planning->maximum_revisions);
             record->goal_revisions_.reserve(options.goal_update_limit); record->previous_plans_.reserve(options.goal_update_limit);
+            record->observation_rebinds_.reserve(options.observation_rebind_limit);
             planning_goal = prompt;
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
@@ -300,6 +302,55 @@ struct RunLoopState {
             advancing = false; return result;
         } catch (...) { advancing = false; throw; }
     }
+    // 在原步骤待验证边界记录刷新水位，不恢复或替换尚未退出的工作。
+    // 步骤：保护入口并核对原步骤 → 核对原绑定及签发上限 → 准备完整请求 → 登记签发次数。
+    ObservationRebindTicket request_observation_rebind(const ConfirmationCaller& caller, const PlanStepKey& key) {
+        if (advancing) throw std::logic_error("run: reentrant observation rebind request");
+        advancing = true;
+        try {
+            const auto now = feedback_boundary(caller,key);
+            if (!action_basis->observations || key.plan != record->plan_->binding() || record->model_ || batch ||
+                (record->tools_ && record->tools_->busy()) || record->observation_rebind_requests_ >= options.observation_rebind_limit)
+                throw std::invalid_argument("run: observation rebind boundary unavailable");
+            ObservationRebindTicket ticket(key,*action_basis->observations,now);
+            ++record->observation_rebind_requests_; advancing = false; return ticket;
+        } catch (...) { advancing = false; throw; }
+    }
+    // 换入新输入及同一行动状态，不能借刷新重建工具执行器或清除未知效果。
+    // 步骤：核对原步骤及绑定 → 校验完整新采样 → 预备全部输入与回执 → 重查停止 → 原子发布新依据。
+    ObservationRebindReceipt rebind_observations(const ConfirmationCaller& caller, const ObservationRebindTicket& ticket, const ActionObservations& next_observations) {
+        if (advancing || !ticket.binding() || ticket.step().plan.run != record->run_id() || !record->plan_caller_ || caller != *record->plan_caller_)
+            throw std::invalid_argument("run: invalid or reentrant observation rebind");
+        for (const auto& previous : record->observation_rebinds_) if (previous.request == ticket.id()) {
+            if (previous.previous_binding != ticket.binding() || previous.step != ticket.step() || previous.binding != next_observations.binding())
+                throw std::invalid_argument("run: observation replacement conflict");
+            return previous;
+        }
+        advancing = true;
+        try {
+            const auto now = feedback_boundary(caller,ticket.step());
+            if (ticket.step().plan != record->plan_->binding() || !action_basis->observations || ticket.binding() != action_basis->observations->binding() ||
+                record->model_ || batch || (record->tools_ && record->tools_->busy()) || !ticket.accepts(next_observations,now))
+                throw std::invalid_argument("run: stale or incomplete observation replacement");
+
+            auto replacement = std::optional<ActionObservations>(next_observations); auto observations = replacement->observations();
+            ObservationRebindReceipt receipt{ticket.id(),ticket.binding(),replacement->binding(),ticket.step(),{}};
+            std::vector<std::string> inputs; inputs.reserve(observations.size()); receipt.observations.reserve(observations.size());
+            for (const auto& observation : observations) {
+                inputs.push_back(observation_input(*observation,now)); const auto& data = observation->metadata();
+                receipt.observations.push_back({data.source,data.provider_instance,data.object,data.revision,data.trust});
+            }
+            auto stored = receipt;
+            interrupt();
+            if (policy->check_context(control()).verdict != PolicyVerdict::allow || !replacement->current(options.now()))
+                throw std::invalid_argument("run: observation replacement stopped before publication");
+            record->context_->refresh_observations(replacement->binding(),std::move(inputs));
+
+            record->observation_rebinds_.push_back(std::move(stored)); options.observations = std::move(observations);
+            action_basis->observations = std::move(replacement); action_basis->available = true;
+            advancing = false; return receipt;
+        } catch (...) { advancing = false; throw; }
+    }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
     // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
     void start_model() {
@@ -489,6 +540,12 @@ PlanFeedbackTicket RunLoop::request_plan_feedback(const ConfirmationCaller& call
 // 只验证原请求的新观察，不在此调用中继续执行计划。
 ObservationAssessment RunLoop::verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current) {
     return state_->verify_plan_feedback(caller,ticket,current);
+}
+// 由原运行在已退出步骤边界签发观察刷新请求。
+ObservationRebindTicket RunLoop::request_observation_rebind(const ConfirmationCaller& caller, const PlanStepKey& key) { return state_->request_observation_rebind(caller,key); }
+// 只更新原运行的输入与行动依据，不另建执行路径。
+ObservationRebindReceipt RunLoop::rebind_observations(const ConfirmationCaller& caller, const ObservationRebindTicket& ticket, const ActionObservations& next) {
+    return state_->rebind_observations(caller,ticket,next);
 }
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }

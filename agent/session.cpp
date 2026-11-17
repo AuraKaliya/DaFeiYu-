@@ -244,6 +244,33 @@ ObservationAssessment Session::verify_plan_feedback(const ConfirmationCaller& ca
     try { const auto result = active_->verify_plan_feedback(caller,ticket,current); working_ = false; return result; }
     catch (...) { working_ = false; throw; }
 }
+// 只向原活动运行签发观察刷新，不让新回合继承旧回合的采样请求。
+// 步骤：核对活动身份及重入 → 由原运行准备请求 → 归还入口并返回原请求。
+ObservationRebindTicket Session::request_observation_rebind(const ConfirmationCaller& caller, const PlanStepKey& key) {
+    if (working_ || !active_ || active_->request()->run_id() != key.plan.run) throw std::invalid_argument("session: unavailable observation rebind run");
+    working_ = true;
+    try { auto ticket = active_->request_observation_rebind(caller,key); working_ = false; return ticket; }
+    catch (...) { working_ = false; throw; }
+}
+// 原请求重试只读取原回执，不重新启用已消费或停止的观察依据。
+// 步骤：保护入口并核对宿主身份 → 复用或拒绝原请求 → 交给原活动运行更新 → 归还入口。
+ObservationRebindReceipt Session::rebind_observations(const ConfirmationCaller& caller, const ObservationRebindTicket& ticket, const ActionObservations& next) {
+    if (working_ || !ticket.binding()) throw std::invalid_argument("session: invalid or reentrant observation rebind");
+    working_ = true;
+    try {
+        for (const auto& record : records_) if (record && record->run_id() == ticket.step().plan.run) {
+            if (!record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("session: unbound observation caller");
+            for (const auto& previous : record->observation_rebinds_) if (previous.request == ticket.id()) {
+                if (previous.previous_binding != ticket.binding() || previous.step != ticket.step() || previous.binding != next.binding())
+                    throw std::invalid_argument("session: observation replacement conflict");
+                auto receipt = previous; working_ = false; return receipt;
+            }
+            if (!active_ || active_->request() != record) throw std::invalid_argument("session: observation run already stopped");
+            auto receipt = active_->rebind_observations(caller,ticket,next); working_ = false; return receipt;
+        }
+    } catch (...) { working_ = false; throw; }
+    working_ = false; throw std::invalid_argument("session: observation run unavailable");
+}
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。
 void Session::advance() {

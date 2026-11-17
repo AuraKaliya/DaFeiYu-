@@ -8,6 +8,7 @@
 #include <dafeiyu/run_journal.hpp>
 #include <dafeiyu/plan_book.hpp>
 #include <dafeiyu/plan_feedback.hpp>
+#include <dafeiyu/observation_rebind.hpp>
 #include <array>
 
 namespace dfy::agent {
@@ -124,6 +125,8 @@ class TurnRequest {
     TraceVersions trace_versions() const { return versions_; }
     // 复制接纳时的来源、对象及修订关联，不保留观察载荷或提供实例。
     std::vector<ObservationInputFact> observation_inputs() const { return observation_inputs_; }
+    // 复制已接纳观察替换的元数据，不保留载荷或提供新的动作许可。
+    std::vector<ObservationRebindReceipt> observation_rebinds() const { return observation_rebinds_; }
     // 复制显式规划的候选及进度；无规划返回空值，查询不执行模型或推进步骤。
     std::optional<PlanSnapshot> plan() const;
     // 按原步骤完整版本复制已提交的文本及最后模型尝试；尚无输出返回空值，不驱动工作。
@@ -166,6 +169,8 @@ class TurnRequest {
     std::vector<GoalRevisionRecord> goal_revisions_;
     std::vector<std::unique_ptr<PlanBook>> previous_plans_;
     std::size_t feedback_requests_ = 0;
+    std::size_t observation_rebind_requests_ = 0;
+    std::vector<ObservationRebindReceipt> observation_rebinds_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::vector<ModelContextSnapshot> model_contexts_;
@@ -211,6 +216,10 @@ class Session {
         ObservationGuard baseline, std::string field, runtime::Value expected, runtime::DomainId completed_tool = 0);
     // 只有新采样明确满足原条件才确认原步骤；不满足或未知继续有界等待，不执行工具。
     ObservationAssessment verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current);
+    // 在原步骤成功且实际退出后请求完整新观察，待验证步骤保持暂停。
+    ObservationRebindTicket request_observation_rebind(const ConfirmationCaller& caller, const PlanStepKey& key);
+    // 提交原刷新请求的新观察；命令不执行工具或模型，重复提交只重取原回执。
+    ObservationRebindReceipt rebind_observations(const ConfirmationCaller& caller, const ObservationRebindTicket& ticket, const ActionObservations& next);
     // 推进一个有界阶段并采纳完整上下文，业务终态后仍等待实际退出；通知仅入队。
     void advance();
     // 空闲时清空已提交历史并通知，保持会话身份及回合号。

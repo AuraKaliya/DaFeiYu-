@@ -3,6 +3,7 @@
 #include <dafeiyu/run_context.hpp>
 #include <dafeiyu/async_model.hpp>
 #include <dafeiyu/plan_feedback.hpp>
+#include <dafeiyu/observation_rebind.hpp>
 
 namespace dfy::agent {
 class TurnRequest;
@@ -39,6 +40,10 @@ class RunLoop {
         ObservationGuard baseline, std::string field, runtime::Value expected, runtime::DomainId completed_tool = 0);
     // 用原反馈请求检查新观察，满足时只记录步骤验证，后续推进再继续运行。
     ObservationAssessment verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current);
+    // 在原步骤待验证边界固定观察刷新请求，不执行采样或继续步骤。
+    ObservationRebindTicket request_observation_rebind(const ConfirmationCaller& caller, const PlanStepKey& key);
+    // 原子换入同对象的完整新观察，保留原执行器、预算、期限及旧回执。
+    ObservationRebindReceipt rebind_observations(const ConfirmationCaller& caller, const ObservationRebindTicket& ticket, const ActionObservations& next);
     // 仅用于外层关闭时等待已有模型调用返回，工具清理仍按原协议推进。
     void wait_model();
     // 返回仍需要宿主重试收尾的运行数。

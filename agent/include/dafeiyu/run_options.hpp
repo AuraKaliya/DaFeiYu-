@@ -12,6 +12,7 @@ struct RunOptions {
     std::optional<ToolSnapshot> tools;
     std::optional<PlanLimits> planning;
     std::size_t goal_update_limit = 4;
+    std::size_t observation_rebind_limit = 16;
     PolicySettings policy;
     std::uint64_t goal_revision = 1;
     RunOrigin origin = RunOrigin::user_request;
