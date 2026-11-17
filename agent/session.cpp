@@ -220,6 +220,25 @@ PlanBinding Session::revise_goal(const ConfirmationCaller& caller, PlanBinding e
     } catch (...) { working_ = false; throw; }
     working_ = false; throw std::invalid_argument("session: goal run unavailable");
 }
+// 只向当前活动运行签发反馈请求，旧回合不能借当前观察恢复执行。
+// 步骤：核对活动身份与重入 → 原运行检查并签发 → 归还入口并返回不可变请求。
+PlanFeedbackTicket Session::request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
+    ObservationGuard baseline, std::string field, runtime::Value expected) {
+    if (working_ || !active_ || active_->request()->run_id() != key.plan.run) throw std::invalid_argument("session: unavailable feedback run");
+    working_ = true;
+    try {
+        auto ticket = active_->request_plan_feedback(caller,key,std::move(baseline),std::move(field),expected);
+        working_ = false; return ticket;
+    } catch (...) { working_ = false; throw; }
+}
+// 将反馈仅送回原活动运行，明确未知或未满足不变成动作重试。
+// 步骤：核对原运行与重入 → 检查新观察并按需验证步骤 → 归还入口。
+ObservationAssessment Session::verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current) {
+    if (working_ || !active_ || active_->request()->run_id() != ticket.step().plan.run) throw std::invalid_argument("session: unavailable feedback run");
+    working_ = true;
+    try { const auto result = active_->verify_plan_feedback(caller,ticket,current); working_ = false; return result; }
+    catch (...) { working_ = false; throw; }
+}
 // 推进统一运行并同步完整历史，业务终态通知和真实退出分别处理。
 // 步骤：保护宿主入口 → 推进一个运行阶段 → 采纳已提交上下文 → 发布唯一终态通知 → 退出后归还活动槽。
 void Session::advance() {

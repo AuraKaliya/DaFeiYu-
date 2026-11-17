@@ -246,6 +246,43 @@ struct RunLoopState {
             return {expected.run,revision,0};
         } catch (...) { advancing = false; throw; }
     }
+    // 反馈只属于已成功且实际退出的当前步骤，停止或旧目标不能重新验证。
+    // 步骤：核对宿主身份 → 裁定停止与版本 → 检查原工作及验证等待 → 返回同域时刻。
+    ToolTime feedback_boundary(const ConfirmationCaller& caller, const PlanStepKey& key) {
+        if (!record->plan_ || !record->plan_caller_ || caller != *record->plan_caller_) throw std::invalid_argument("run: unbound feedback caller");
+        interrupt(); const auto current = control();
+        if (policy->check_context(current).verdict != PolicyVerdict::allow || !plan_step || plan_step->key != key || planning_request)
+            throw std::invalid_argument("run: stale or stopped feedback");
+        const auto snapshot = record->plan_->snapshot();
+        if (std::none_of(snapshot.steps.begin(),snapshot.steps.end(),[&](const auto& step) { return step.key == key && step.waiting == PlanWait::verification; }))
+            throw std::logic_error("run: original step has not reached verification");
+        return current.now;
+    }
+    // 原工作退出后才固定新的反馈基线，模型旧观察或完成声明不能充当行动后证据。
+    // 步骤：保护入口并检查原工作 → 核对当前基线及容量 → 完整准备条件和请求 → 登记有限签发次数。
+    PlanFeedbackTicket request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
+        ObservationGuard baseline, std::string field, runtime::Value expected) {
+        if (advancing) throw std::logic_error("run: reentrant feedback request");
+        advancing = true;
+        try {
+            const auto now = feedback_boundary(caller,key);
+            if (!baseline.current(now) || record->feedback_requests_ >= 64) throw std::invalid_argument("run: invalid feedback baseline or capacity");
+            PlanFeedbackTicket ticket(key,std::move(baseline),std::move(field),expected,now);
+            ++record->feedback_requests_; advancing = false; return ticket;
+        } catch (...) { advancing = false; throw; }
+    }
+    // 明确满足只记录原步骤的证据，不修改工具结果、未知效果或动作授权。
+    // 步骤：保护入口并复核原步骤 → 检查新采样 → 满足时记录唯一证据 → 返回判定值。
+    ObservationAssessment verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& observation) {
+        if (advancing) throw std::logic_error("run: reentrant feedback verification");
+        advancing = true;
+        try {
+            const auto result = ticket.assess(observation,feedback_boundary(caller,ticket.step()));
+            if (result.match == ObservationMatch::satisfied) record->plan_->confirm(ticket.step(),
+                "feedback/"+std::to_string(ticket.id())+"/"+std::to_string(result.source)+"/"+std::to_string(result.revision));
+            advancing = false; return result;
+        } catch (...) { advancing = false; throw; }
+    }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
     // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
     void start_model() {
@@ -427,6 +464,13 @@ void RunLoop::confirm_plan_step(const ConfirmationCaller& caller, const PlanStep
 PlanBinding RunLoop::replan(const ConfirmationCaller& caller, PlanBinding expected, std::string_view guidance) { return state_->replan(caller,expected,guidance); }
 // 转交用户目标修订，原模型和工具仍由同一运行拥有。
 PlanBinding RunLoop::revise_goal(const ConfirmationCaller& caller, PlanBinding expected, std::string_view goal) { return state_->revise_goal(caller,expected,goal); }
+// 转交已退出步骤的反馈基线和宿主条件。
+PlanFeedbackTicket RunLoop::request_plan_feedback(const ConfirmationCaller& caller, const PlanStepKey& key,
+    ObservationGuard baseline, std::string field, runtime::Value expected) { return state_->request_plan_feedback(caller,key,std::move(baseline),std::move(field),expected); }
+// 只验证原请求的新观察，不在此调用中继续执行计划。
+ObservationAssessment RunLoop::verify_plan_feedback(const ConfirmationCaller& caller, const PlanFeedbackTicket& ticket, const ObservationGuard& current) {
+    return state_->verify_plan_feedback(caller,ticket,current);
+}
 // 在关闭外层时等待原模型工作完成，不强制终止网络调用。
 void RunLoop::wait_model() { state_->models.wait_closed(); }
 // 返回保留运行数量。
