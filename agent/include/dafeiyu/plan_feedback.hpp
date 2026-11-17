@@ -4,7 +4,7 @@
 
 namespace dfy::agent {
 struct RunLoopState;
-// 原步骤实际退出后由宿主签发的反馈请求；复制只保留原条件，不能改写目标或创建执行许可。
+// 原步骤或明确工具实际退出后由宿主签发的反馈请求；复制只保留原条件，不改写目标或创建执行许可。
 class PlanFeedbackTicket {
   public:
     // 复制原反馈请求身份和不可变条件，不重新采样或签发请求。

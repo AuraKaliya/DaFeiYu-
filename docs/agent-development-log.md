@@ -585,3 +585,9 @@ Debug 仅 `agent.session_action_guard` 通过。新增同一批次两个可接�
 在 `70035b8` 上检查值对象寿命时发现，ActionObservations 的默认移动会留下空成员集合；原 `current` 遍历空集合会返回真。现在空集合明确无效，不能把已转交的原对象重新传入 RunOptions 形成有效前置条件。完整新对象及正常复制仍保持原绑定。
 
 Debug 仅重建并运行 `agent.session_action_guard`，通过。新增移动后有效性和正式会话零模型接纳回归，连同既有等待、批准、最后检查和自身动作场景验证；未扩展 A08c 或运行全量。
+
+### 2026-11-17 17:00 轮次收尾
+
+从 `d2a2203` 完成 22 个独立开发、修复和测试提交，功能检查点 `cfa090a`；另有恢复授权及收尾文档提交。为核对原运行接口、观察入口及值时间线 schema 3 对已有链路的影响，必要重建后运行 `agent.run_loop`、`agent.async_session`、`agent.observed_native_loop`、`agent.observation_controller`、`agent.replay_material`、`agent.timeline_review`，6／6 通过。其后移动值边界修复只复验直接受影响的动作观察场景。
+
+范围、当前结构和下一步见 [17:00 检查点](agent-progress-2026-11-17-1700.md)。同步 README、架构入口、主计划、横向计划和开发指导，保持 A08c／T03／E03／A09 的未完成边界；校正反馈请求职责注释以同时覆盖已退出原工具。核对 57 个变更文本严格 UTF-8、16 个头文件 BOM、259 处本地文档链接和代码围栏，整体差异通过。没有最终全量、Release／跨配置总验收或新分发。到北京时间 17:00 后暂停，等待用户继续。
