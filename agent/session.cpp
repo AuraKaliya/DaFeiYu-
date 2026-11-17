@@ -91,6 +91,8 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
 std::vector<ConfirmationSnapshot> TurnRequest::confirmations() const { return confirmations_ ? confirmations_->snapshot() : std::vector<ConfirmationSnapshot>{}; }
 // 只复制普通追踪需要的确认元数据，不包含待审参数或命令。
 std::vector<ConfirmationSummary> TurnRequest::confirmation_steps() const { return confirmations_ ? confirmations_->summaries() : std::vector<ConfirmationSummary>{}; }
+// 只投影原计划记录，不把候选文本解释为执行或完成命令。
+std::optional<PlanSnapshot> TurnRequest::plan() const { return plan_ ? std::optional<PlanSnapshot>(plan_->snapshot()) : std::nullopt; }
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)

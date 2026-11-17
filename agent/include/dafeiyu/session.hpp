@@ -6,6 +6,7 @@
 #include <dafeiyu/tool_batch.hpp>
 #include <dafeiyu/run_options.hpp>
 #include <dafeiyu/run_journal.hpp>
+#include <dafeiyu/plan_book.hpp>
 #include <array>
 
 namespace dfy::agent {
@@ -104,6 +105,8 @@ class TurnRequest {
     TraceVersions trace_versions() const { return versions_; }
     // 复制接纳时的来源、对象及修订关联，不保留观察载荷或提供实例。
     std::vector<ObservationInputFact> observation_inputs() const { return observation_inputs_; }
+    // 复制显式规划的候选及进度；无规划返回空值，查询不执行模型或推进步骤。
+    std::optional<PlanSnapshot> plan() const;
   private:
     friend class Session;
     friend class RunLoop;
@@ -131,6 +134,7 @@ class TurnRequest {
     std::unique_ptr<RunContext> context_;
     std::unique_ptr<ToolExecutor> tools_;
     std::unique_ptr<ConfirmationBook> confirmations_;
+    std::unique_ptr<PlanBook> plan_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::size_t model_requests_ = 0, tool_requests_ = 0;
@@ -143,7 +147,7 @@ class TurnRequest {
     TurnFailure failure_ = TurnFailure::none;
 };
 
-// 单活跃运行的异步会话，工具循环须显式提供授权快照；不包含规划或磁盘持久化。
+// 单活跃运行的异步会话，工具和规划均由宿主显式开启；不包含磁盘持久化。
 class Session {
   public:
     // 固定结果槽、共享事件通道与模型调用，历史正文总量最多 1 MiB。

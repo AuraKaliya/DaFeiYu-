@@ -3,11 +3,13 @@
 #include <dafeiyu/confirmation.hpp>
 #include <dafeiyu/trace_identity.hpp>
 #include <dafeiyu/observation_input.hpp>
+#include <dafeiyu/plan_definition.hpp>
 
 namespace dfy::agent {
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
     std::optional<ToolSnapshot> tools;
+    std::optional<PlanLimits> planning;
     PolicySettings policy;
     std::uint64_t goal_revision = 1;
     RunOrigin origin = RunOrigin::user_request;

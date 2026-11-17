@@ -1,4 +1,5 @@
 #include <dafeiyu/run_loop.hpp>
+#include <dafeiyu/plan_protocol.hpp>
 #include <dafeiyu/session.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -17,13 +18,15 @@ struct RunLoopState {
     ExecutionPolicy policy;
     ToolTime deadline;
     ToolBatch* batch = nullptr;
+    std::optional<PlanScope> planning_scope;
+    std::optional<PlanPrompt> planning_request;
     std::size_t repeated = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
     RunLoopState* next = nullptr;
     bool advancing = false;
     // 在首个模型调用之前固定运行资源，全部分配完成后由外层启动。
-    // 步骤：创建原回合与模型入口 → 校验选项 → 预留步骤及上下文 → 准备工具执行器。
+    // 步骤：创建原回合与模型入口 → 校验选项和显式规划 → 预留步骤及上下文 → 准备工具执行器。
     RunLoopState(RunId run, model::Config value, model::Backend backend, std::shared_ptr<const MessageHistory> history,
         std::string prompt, RunOptions settings)
         : record(new TurnRequest(run,settings.trace_capacity)), config(std::move(value)), models(1,std::move(backend)), options(std::move(settings)),
@@ -41,6 +44,11 @@ struct RunLoopState {
             record->observation_inputs_.push_back({data.source,data.provider_instance,data.object,data.revision,data.trust});
         }
         record->source_ = options.origin; record->goal_revision_ = options.goal_revision;
+        if (options.planning) {
+            planning_scope.emplace(run,options.goal_revision,options.tools,*options.planning);
+            planning_request = prepare_plan_prompt(*planning_scope,0,prompt);
+            record->plan_ = std::make_unique<PlanBook>(*planning_scope);
+        }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
         record->versions_ = public_model_versions(config); auto& versions = record->versions_;
         versions.application_commit = options.version_labels.application_commit; versions.build = options.version_labels.build;
@@ -67,6 +75,7 @@ struct RunLoopState {
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
+        if (record->plan_) record->plan_->stop();
         if (record->confirmations_) record->confirmations_->advance(deadline,reason);
         if (record->model_) record->model_->request_cancel(reason);
         if (record->tools_) record->tools_->close(reason);
@@ -129,7 +138,8 @@ struct RunLoopState {
         }
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
-        model::Request input{record->context_->messages(),options.tools ? options.tools->definitions() : std::vector<model::ToolDefinition>{}};
+        model::Request input = planning_request ? planning_request->request :
+            model::Request{record->context_->messages(),options.tools ? options.tools->definitions() : std::vector<model::ToolDefinition>{}};
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         auto request = models.submit_request(config,std::move(input));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
@@ -185,7 +195,11 @@ struct RunLoopState {
                 catch (...) { collect_model(); throw; }
                 collect_model(); interrupt();
                 if (response && record->operation()->state() == OperationState::pending) {
-                    if (response->finish == model::FinishReason::stop) {
+                    if (planning_request) {
+                        stage = TurnFailure::model_response;
+                        const auto candidate = parse_plan_response(*planning_scope,planning_request->expected,*response);
+                        record->plan_->install(planning_request->expected,candidate.steps()); planning_request.reset();
+                    } else if (response->finish == model::FinishReason::stop) {
                         stage = TurnFailure::history_commit; record->context_->finish_text(response->message.content);
                         record->record_history();
                         record->answer_ = std::move(response->message.content); record->result_.settle(OperationState::succeeded);
