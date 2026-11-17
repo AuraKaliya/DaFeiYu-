@@ -80,6 +80,7 @@ struct RunLoopState {
             record->plan_revisions_.reserve(options.planning->maximum_revisions);
             record->goal_revisions_.reserve(options.goal_update_limit); record->previous_plans_.reserve(options.goal_update_limit);
             record->observation_rebinds_.reserve(options.observation_rebind_limit);
+            record->plan_feedback_.reserve(64);
             planning_goal = prompt;
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
@@ -287,7 +288,11 @@ struct RunLoopState {
         try {
             const auto now = feedback_boundary(caller,key,completed_tool);
             if (!baseline.current(now) || record->feedback_requests_ >= 64) throw std::invalid_argument("run: invalid feedback baseline or capacity");
+            const auto& metadata = baseline.observation()->metadata();
+            PlanFeedbackSnapshot snapshot{0,key,record->attempt_,completed_tool,
+                {metadata.source,metadata.provider_instance,metadata.object,metadata.revision,metadata.trust},expected.kind()};
             PlanFeedbackTicket ticket(key,std::move(baseline),std::move(field),expected,now,completed_tool);
+            snapshot.request = ticket.id(); record->plan_feedback_.push_back(std::move(snapshot));
             ++record->feedback_requests_; advancing = false; return ticket;
         } catch (...) { advancing = false; throw; }
     }
@@ -300,6 +305,11 @@ struct RunLoopState {
             const auto result = ticket.assess(observation,feedback_boundary(caller,ticket.step()));
             if (result.match == ObservationMatch::satisfied) record->plan_->confirm(ticket.step(),
                 "feedback/"+std::to_string(ticket.id())+"/"+std::to_string(result.source)+"/"+std::to_string(result.revision));
+            for (auto& snapshot : record->plan_feedback_) if (snapshot.request == ticket.id()) {
+                snapshot.latest = result; snapshot.verified = result.match == ObservationMatch::satisfied;
+                if (snapshot.checks != std::numeric_limits<std::uint64_t>::max()) ++snapshot.checks; else snapshot.checks_saturated = true;
+                break;
+            }
             advancing = false; return result;
         } catch (...) { advancing = false; throw; }
     }

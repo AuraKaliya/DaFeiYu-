@@ -1,9 +1,22 @@
 ﻿#pragma once
 #include <dafeiyu/plan_book.hpp>
 #include <dafeiyu/observation_verification.hpp>
+#include <dafeiyu/observation_input.hpp>
 
 namespace dfy::agent {
 struct RunLoopState;
+// 无条件正文的反馈摘要；保留基线身份及末次判断，不持有原观察或行动凭证。
+struct PlanFeedbackSnapshot {
+    runtime::DomainId request = 0;
+    PlanStepKey step;
+    AttemptId issued_at;
+    runtime::DomainId completed_tool = 0;
+    ObservationInputFact baseline;
+    runtime::ValueKind expected_type = runtime::ValueKind::null_value;
+    std::optional<ObservationAssessment> latest;
+    std::uint64_t checks = 0;
+    bool verified = false, checks_saturated = false;
+};
 // 原步骤或明确工具实际退出后由宿主签发的反馈请求；复制只保留原条件，不改写目标或创建执行许可。
 class PlanFeedbackTicket {
   public:

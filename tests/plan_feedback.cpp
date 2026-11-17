@@ -55,9 +55,12 @@ void scenario(unsigned mode) {
     }
     check(transferred.id() == ticket.id() && session.verify_plan_feedback(caller,ticket,baseline).issue == ObservationEvidenceIssue::not_resampled,
         "old observation completed post-work feedback");
+    check(request->plan_feedback()[0].checks == 1 && request->plan_feedback()[0].latest->match == ObservationMatch::unknown,
+        "unknown feedback was omitted from summary");
     inbox.accept(sample(2,0),model.clock()()); const auto unmet = inbox.guard(inbox.latest(source.id(),"object"),model.clock()());
     check(session.verify_plan_feedback(caller,ticket,unmet).match == ObservationMatch::not_satisfied && request->operation()->state() == OperationState::pending,
         "unmet condition completed run");
+    check(request->plan_feedback()[0].checks == 2 && !request->plan_feedback()[0].verified,"unmet feedback became verified");
     model.advance_clock(std::chrono::milliseconds(1)); inbox.accept(sample(3,1),model.clock()()); const auto current = inbox.guard(inbox.latest(source.id(),"object"),model.clock()());
     rejects([&] { session.verify_plan_feedback(stranger,ticket,current); });
     if (mode == 1) session.revise_goal(caller,key.plan,"new goal");

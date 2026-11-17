@@ -1,6 +1,7 @@
 #include "support/scripted_model.hpp"
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>
+#include <dafeiyu/diagnostic_snapshot.hpp>
 #include <charconv>
 #include <iostream>
 #include <thread>
@@ -77,6 +78,10 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, u
     const auto now = model.clock()(); inbox.accept(source.capture({"counter",1},2,now,now+std::chrono::seconds(1),observed(*read_result)),now);
     const auto current = inbox.guard(inbox.latest(source.id(),"counter"),now); if (mode == 2) source.revoke();
     const auto assessment = session.verify_plan_feedback(caller,ticket,current);
+    const auto diagnostic = diagnostic_snapshot(*request,"feedback-summary");
+    check(diagnostic.feedback.size() == 1 && diagnostic.feedback[0].request == ticket.id() && diagnostic.feedback[0].checks == 1 &&
+        diagnostic.feedback[0].latest->match == assessment.match && diagnostic.feedback[0].verified == (mode == 0) && diagnostic.plans.size() == 1,
+        "diagnostic lost feedback or copied false completion");
     check(assessment.match == (mode == 0 ? ObservationMatch::satisfied : mode == 1 ? ObservationMatch::not_satisfied : ObservationMatch::unknown),"native feedback confused target and evidence");
     if (mode) { check(request->operation()->state() == OperationState::pending,"model text completed an unverified target"); request->request_cancel(CancelReason::user); }
     until(session,[&] { return !session.busy(); }); model.verify_complete();

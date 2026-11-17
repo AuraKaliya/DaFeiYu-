@@ -138,6 +138,8 @@ class TurnRequest {
     std::optional<PlanStepOutput> plan_output(const PlanStepKey& key) const;
     // 复制目标更新前已经停止的原计划，保留原结果与验证证据，不提供恢复执行入口。
     std::vector<PlanSnapshot> plan_history() const;
+    // 复制反馈请求的无正文摘要，保留未满足及未知，不重新进行判定。
+    std::vector<PlanFeedbackSnapshot> plan_feedback() const { return plan_feedback_; }
   private:
     friend class Session;
     friend class RunLoop;
@@ -175,6 +177,7 @@ class TurnRequest {
     std::vector<GoalRevisionRecord> goal_revisions_;
     std::vector<std::unique_ptr<PlanBook>> previous_plans_;
     std::size_t feedback_requests_ = 0;
+    std::vector<PlanFeedbackSnapshot> plan_feedback_;
     std::size_t observation_rebind_requests_ = 0;
     std::vector<ObservationRebindReceipt> observation_rebinds_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
