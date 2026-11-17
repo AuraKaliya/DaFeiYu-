@@ -43,10 +43,16 @@ void decoding(const std::string& text) {
     bad = original; bad["data"]["plans"][0]["steps"][0]["has_evidence"] = 1; rejects([&] { decode_diagnostic(bad.dump()); });
     bad = original; bad["data"]["timeline"]["nodes"].push_back(bad["data"]["timeline"]["nodes"][0]); rejects([&] { decode_diagnostic(bad.dump()); });
     bad = original; bad["data"]["plans"] = Json::array(); rejects([&] { decode_diagnostic(bad.dump()); });
+    bad = original; bad["data"]["plans"][0]["steps"][0]["waiting"] = "work"; rejects([&] { decode_diagnostic(bad.dump()); });
     rejects([&] { decode_diagnostic("{\"kind\":\"dafeiyu.diagnostic\","+original.dump().substr(1)); });
     rejects([&] { decode_diagnostic(std::string(8*1024*1024+1,' ')); });
     const auto complete = fixture(false); const auto full_text = encode_diagnostic(complete);
     check(!decode_diagnostic(full_text).timeline.delta.gap && encode_diagnostic(decode_diagnostic(full_text)) == full_text,"complete relative timeline did not round-trip");
+    bad = Json::parse(full_text); auto& facts = bad["data"]["timeline"]["delta"]["facts"];
+    for (auto it = facts.begin(); it != facts.end(); ++it) if ((*it)["kind"] == "model_submitted") { facts.erase(it); break; }
+    for (std::size_t index = 0; index < facts.size(); ++index) facts[index]["revision"] = index+1;
+    bad["data"]["timeline"]["delta"]["latest_revision"] = facts.size();
+    rejects([&] { decode_diagnostic(bad.dump()); });
 }
 }
 // 编码固定模型场景的只读值，不进行网络或文件写入。

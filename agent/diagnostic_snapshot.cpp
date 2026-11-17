@@ -50,6 +50,15 @@ void validate_diagnostic_snapshot(const DiagnosticSnapshot& value) {
             if (step.state == PlanStepState::skipped) require(step.has_evidence);
             if (step.state == PlanStepState::failed) require(step.result == runtime::OperationState::failed);
             if (step.state == PlanStepState::cancelled) require(step.result == runtime::OperationState::cancelled);
+            if (step.state == PlanStepState::completed || step.state == PlanStepState::skipped) require(step.waiting == PlanWait::none);
+            else if (step.state == PlanStepState::pending) require(step.waiting == (plan.stopped ? PlanWait::stopped : PlanWait::none));
+            else if (step.state == PlanStepState::failed || step.state == PlanStepState::cancelled)
+                require(step.waiting == (step.exit == runtime::OperationState::pending ? PlanWait::exit : PlanWait::none));
+            else {
+                require(step.result == runtime::OperationState::pending || step.result == runtime::OperationState::succeeded);
+                if (step.exit == runtime::OperationState::pending) require(step.waiting == (step.result == runtime::OperationState::pending ? PlanWait::work : PlanWait::exit));
+                else require(step.result == runtime::OperationState::succeeded && step.waiting == (plan.stopped ? PlanWait::stopped : PlanWait::verification));
+            }
         }
     }
     if (!value.plans.empty()) require(value.plans.back().binding.goal_revision == value.timeline.goal_revision);

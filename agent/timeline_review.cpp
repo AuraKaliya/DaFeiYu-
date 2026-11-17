@@ -192,6 +192,15 @@ TimelineReview review_timeline(const RunTimeline& value, std::uint32_t schema_ve
     report.complete_history = !delta.requested_after && !delta.gap && !delta.more && !delta.projection_failed;
     if (report.complete_history) require(root_facts[static_cast<std::size_t>(TraceFactKind::accepted)] &&
         (!report.run_exited || root_facts[static_cast<std::size_t>(TraceFactKind::exited)]));
+    if (report.complete_history) for (const auto& node : value.nodes) {
+        const auto count = [&](TraceFactKind kind) {
+            return std::count_if(delta.facts.begin(),delta.facts.end(),[&](const auto& fact) { return fact.subject == node.id && fact.kind == kind; });
+        };
+        if (node.id.kind == TraceNodeKind::model) require(count(TraceFactKind::model_submitted) == 1 &&
+            count(TraceFactKind::model_exited) == (node.exit == runtime::OperationState::succeeded ? 1 : 0));
+        if (node.id.kind == TraceNodeKind::tool) require(count(TraceFactKind::tool_candidate) == 1);
+        if (node.id.kind == TraceNodeKind::control) require(count(TraceFactKind::confirmation_changed) > 0);
+    }
     for (const auto& receipt : {value.notifications.started,value.notifications.finished})
         if (receipt && receipt->status != events::ObservationStatus::accepted) report.notification_issue = true;
     return report;
