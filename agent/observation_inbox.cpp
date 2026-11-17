@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 namespace dfy::agent {
+struct ObservationWatermark { std::uint64_t generation = 0, revision = 0; };
 // 固定订阅范围及有限记录空间，不在对象满时默默淘汰旧对象的修订水位。
 // 步骤：核对来源和容量 → 预留对象槽 → 建立保留版本的分层预算。
 ObservationInbox::ObservationInbox(std::vector<runtime::DomainId> sources, std::size_t objects,
@@ -14,6 +15,8 @@ ObservationInbox::ObservationInbox(std::vector<runtime::DomainId> sources, std::
     for (const auto source : sources_) if (!source || !unique.insert(source).second) throw std::invalid_argument("observations: invalid source grant");
     records_.resize(objects); budget_ = std::make_shared<runtime::Budget>(retained,parent); id_ = runtime::next_domain();
 }
+// 只撤销当前性检查，不丢弃客户端仍持有的历史观察值。
+ObservationInbox::~ObservationInbox() { *alive_ = false; }
 // 普通采样永远不宣称补齐中间遗漏，断档保持到明确的完整重采样。
 ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, ObservationTime now) { return accept_impl(value,now,false); }
 // 只合并状态采样；旧代次、旧修订、冲突或容量不足均不改变当前值。
@@ -48,7 +51,9 @@ ObservationReceipt ObservationInbox::accept_impl(const ObservationSnapshot& valu
     }
     try {
         auto charge = budget_->acquire({1,value.payload()->payload_bytes()+incoming.object.id.size()});
-        auto accepted = std::shared_ptr<const ObservationRecord>(new ObservationRecord(std::move(charge),value,gap));
+        auto watermark = replacing ? (*slot)->watermark_ : std::make_shared<ObservationWatermark>();
+        auto accepted = std::shared_ptr<const ObservationRecord>(new ObservationRecord(std::move(charge),value,gap,watermark));
+        *watermark = {incoming.object.generation,incoming.revision};
         *slot = std::move(accepted);
     } catch (const std::length_error&) { return {A::capacity}; }
     return {replacing ? A::replaced : A::inserted,gap};
@@ -72,5 +77,19 @@ ObservationReceipt ObservationInbox::refresh(const ObservationRefresh& expected,
 std::shared_ptr<const ObservationRecord> ObservationInbox::latest(runtime::DomainId source, std::string_view object) const noexcept {
     for (const auto& record : records_) if (record && record->metadata().source == source && record->metadata().object.id == object) return record;
     return {};
+}
+// 只对同一集合的完整当前值签发检查，不能从旧快照恢复行动资格。
+// 步骤：核对原记录和当前对象 → 检查来源、时间及断档 → 保留值与弱寿命引用。
+ObservationGuard ObservationInbox::guard(std::shared_ptr<const ObservationRecord> observation, ObservationTime now) const {
+    if (!observation || latest(observation->metadata().source,observation->metadata().object.id) != observation ||
+        observation->revision_gap() || observation->validity(now) != ObservationValidity::fresh)
+        throw std::invalid_argument("observations: current complete record required");
+    return {std::move(observation),alive_};
+}
+// 原值必须仍对应本对象的最新水位，集合或来源失效不能靠旧值持有恢复。
+bool ObservationGuard::current(ObservationTime now) const noexcept {
+    const auto alive = alive_.lock(); const auto& metadata = observation_->metadata();
+    return alive && *alive && !observation_->revision_gap() && observation_->validity(now) == ObservationValidity::fresh &&
+        observation_->watermark_->generation == metadata.object.generation && observation_->watermark_->revision == metadata.revision;
 }
 }

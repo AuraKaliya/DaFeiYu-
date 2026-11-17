@@ -7,6 +7,11 @@ using namespace dfy::runtime;
 using A = ObservationAdmission;
 // 报告采样合并、水位或计费错误。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+// 验证过期、断档及跨集合观察不能签发新的当前性检查。
+void rejects(const auto& action) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
+    throw std::runtime_error("invalid observation guard accepted");
+}
 // 创建确定性的不可变载荷，字段内容不参与来源授权。
 // 步骤：声明单字段结构 → 准备固定数值 → 构造不可变载荷。
 std::shared_ptr<const StructValue> payload() {
@@ -75,9 +80,38 @@ void refresh() {
     check(receipt.status == A::replaced && !receipt.revision_gap && !inbox.latest(source.id(),"object")->revision_gap(),"complete refresh failed to establish baseline");
     check(inbox.refresh(latest,sample(6),now).status == A::stale_refresh,"refresh ticket reused after watermarks advanced");
 }
+// 验证当前性检查随对象修订和生命周期失效，失败接纳不改变既有资格。
+// 步骤：绑定完整当前值 → 检查重复及替换 → 验证容量失败和断档 → 核对集合销毁与来源撤销。
+void guards() {
+    ObservationSource source(1,ObservationTrust::host_verified); const ObservationTime now{}; const auto data = payload();
+    const auto sample = [&](std::uint64_t revision, std::uint64_t generation = 1) {
+        return source.capture({"object",generation},revision,now,now+std::chrono::seconds(1),data);
+    };
+    std::optional<ObservationGuard> retained;
+    {
+        ObservationInbox inbox({source.id()},1,{2,1024}), other({source.id()},1,{2,1024});
+        const auto initial = sample(1); inbox.accept(initial,now); other.accept(initial,now);
+        auto original = inbox.guard(inbox.latest(source.id(),"object"),now); const auto copied = original;
+        check(original.current(now) && copied.current(now) && !original.current(now+std::chrono::seconds(1)),"guard ignored source time");
+        rejects([&] { inbox.guard(other.latest(source.id(),"object"),now); });
+        check(inbox.accept(initial,now).status == A::duplicate && original.current(now),"duplicate invalidated original guard");
+        inbox.accept(sample(2),now); check(!original.current(now),"new revision kept old observation current");
+        retained = inbox.guard(inbox.latest(source.id(),"object"),now);
+        check(inbox.accept(sample(3),now).status == A::capacity && retained->current(now),"failed admission advanced guard watermark");
+        rejects([&] { inbox.guard(original.observation(),now); });
+    }
+    check(!retained->current(now) && retained->observation()->metadata().revision == 2,"destroyed inbox remained actionable or erased data");
+    ObservationInbox inbox({source.id()}); inbox.accept(sample(3),now);
+    rejects([&] { inbox.guard(inbox.latest(source.id(),"object"),now); });
+    const auto ticket = *inbox.refresh_ticket(source.id(),"object"); inbox.refresh(ticket,sample(4),now);
+    const auto refreshed = inbox.guard(inbox.latest(source.id(),"object"),now); check(refreshed.current(now),"complete refresh lacked current guard");
+    inbox.accept(sample(1,2),now); check(!refreshed.current(now),"new generation reused old guard");
+    const auto replacement = inbox.guard(inbox.latest(source.id(),"object"),now); source.revoke();
+    check(!replacement.current(now),"source revocation left guard valid");
+}
 }
 // 只运行合成状态采样，不把用户命令或动作回执送入可合并集合。
 int main() {
-    try { versions_and_budget(); source_and_time(); refresh(); std::cout << "Observation inbox checks passed\n"; return 0; }
+    try { versions_and_budget(); source_and_time(); refresh(); guards(); std::cout << "Observation inbox checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
