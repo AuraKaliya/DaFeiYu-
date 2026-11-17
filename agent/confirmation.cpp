@@ -19,7 +19,8 @@ ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolS
         throw std::invalid_argument("confirmation: invalid candidate");
     ToolSchema(selected.description.model.parameters).validate(call.arguments);
     return {context.attempt,context.goal_revision,context.policy_revision,selected.registration,selected.description.instance,
-        selected.description.version,selected.description.id,call.id,call.name,nlohmann::json::parse(call.arguments).dump(),context.deadline,candidate};
+        selected.description.version,selected.description.id,call.id,call.name,nlohmann::json::parse(call.arguments).dump(),context.deadline,candidate,
+        context.plan_revision,context.plan_step,context.observation_binding};
 }
 // 固定容量和宿主凭证，等待记录不取得任何工具资源。
 ConfirmationBook::ConfirmationBook(RunId run, ConfirmationCaller caller, std::size_t limit, std::shared_ptr<runtime::Budget> parent, RunJournal* journal)
@@ -34,7 +35,8 @@ runtime::DomainId ConfirmationBook::offer(ConfirmationTarget target) {
     if (target.attempt.step.run != run_ || !target.attempt.step.sequence || !target.attempt.sequence || !target.goal_revision ||
         !target.policy_revision || !target.registration || !target.instance || !target.contract_version || target.tool_id.empty() ||
         target.tool_id.size() > 128 || target.call_id.empty() || target.call_id.size() > 128 || target.name.empty() ||
-        target.name.size() > 64 || target.arguments.size() > 64*1024) throw std::invalid_argument("confirmation: invalid target");
+        target.name.size() > 64 || target.arguments.size() > 64*1024 || target.plan_revision > 16 || target.plan_step > 32 ||
+        (static_cast<bool>(target.plan_revision) != static_cast<bool>(target.plan_step))) throw std::invalid_argument("confirmation: invalid target");
     const auto arguments = nlohmann::json::parse(target.arguments,nullptr,false);
     if (!arguments.is_object()) throw std::invalid_argument("confirmation: object arguments required");
     target.arguments = arguments.dump();
@@ -67,7 +69,8 @@ std::vector<ConfirmationSummary> ConfirmationBook::summaries() const {
     std::vector<ConfirmationSummary> result; result.reserve(entries_.size());
     for (const auto& entry : entries_) {
         const auto& value = entry.value; const auto& target = value.target;
-        result.push_back({value.id,target.candidate,target.attempt,value.revision,target.goal_revision,target.policy_revision,value.state});
+        result.push_back({value.id,target.candidate,target.attempt,value.revision,target.goal_revision,target.policy_revision,value.state,
+            target.plan_revision,target.plan_step,target.observation_binding});
     }
     return result;
 }

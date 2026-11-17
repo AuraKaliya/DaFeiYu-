@@ -14,6 +14,7 @@ PolicyDecision ExecutionPolicy::common(const PolicyContext& context) const noexc
     using runtime::CancelReason;
     if (context.attempt.step.run != run_ || !context.attempt.step.sequence || !context.attempt.sequence ||
         (context.origin != RunOrigin::user_request && context.origin != RunOrigin::observation_rule) ||
+        context.plan_revision > 16 || context.plan_step > 32 || (static_cast<bool>(context.plan_revision) != static_cast<bool>(context.plan_step)) ||
         (context.cancellation != CancelReason::none && context.cancellation != CancelReason::user &&
          context.cancellation != CancelReason::owner_stop && context.cancellation != CancelReason::deadline))
         return {PolicyVerdict::deny,PolicyReason::invalid_context};

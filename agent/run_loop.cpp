@@ -13,10 +13,11 @@ bool reaping = false;
 // 由原 RunLoop 拥有一个计划步骤的工作完成源；计划账本只借用读句柄，验证状态仍独立。
 struct PlanExecution {
     PlanStepKey key;
+    std::size_t index;
     runtime::OperationSource result, exit;
     std::string answer;
     // 在任何模型或工具调用之前预留本步骤的独立结果与退出操作。
-    explicit PlanExecution(PlanStepKey value) : key(std::move(value)) {}
+    PlanExecution(PlanStepKey value, std::size_t position) : key(std::move(value)),index(position) {}
 };
 }
 struct RunLoopState {
@@ -89,8 +90,10 @@ struct RunLoopState {
         auto reason = record->operation()->cancellation_reason();
         const bool stopping = record->operation()->state() != runtime::OperationState::pending;
         if (stopping && reason == runtime::CancelReason::none) reason = runtime::CancelReason::owner_stop;
-        return {record->attempt_,options.goal_revision,options.policy.revision,options.origin,record->model_requests_,record->tool_requests_,
+        PolicyContext context{record->attempt_,options.goal_revision,options.policy.revision,options.origin,record->model_requests_,record->tool_requests_,
             stopping ? deadline : options.now(),deadline,reason};
+        if (plan_step && !planning_request) { context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->index+1; }
+        return context;
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
@@ -264,7 +267,7 @@ struct RunLoopState {
         if (index == snapshot.steps.size() || snapshot.steps[index].state != PlanStepState::pending) return;
         const auto& step = snapshot.definition->steps()[index];
         auto tools = options.tools ? std::optional<ToolSnapshot>(options.tools->restrict_to(step.tools)) : std::nullopt;
-        auto execution = std::make_unique<PlanExecution>(snapshot.steps[index].key);
+        auto execution = std::make_unique<PlanExecution>(snapshot.steps[index].key,index);
         record->context_->begin_step(plan_step_input(*snapshot.definition,index));
         const AttemptId attempt{{record->run_id(),record->model_requests_+1},1};
         record->plan_->start(execution->key,{attempt,execution->result.operation(),execution->exit.operation()});

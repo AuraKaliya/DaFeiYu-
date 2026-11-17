@@ -22,6 +22,7 @@ struct ConfirmationTarget {
     std::string tool_id, call_id, name, arguments;
     ToolTime deadline;
     runtime::DomainId candidate = 0;
+    std::uint64_t plan_revision = 0, plan_step = 0, observation_binding = 0;
     // 完整比较动作绑定，参数采用规范 JSON，禁止仅按名称或摘要碰撞复用授权。
     bool operator==(const ConfirmationTarget&) const = default;
 };
@@ -51,6 +52,7 @@ struct ConfirmationSummary {
     AttemptId attempt;
     std::uint64_t revision = 0, goal_revision = 0, policy_revision = 0;
     ConfirmationState state = ConfirmationState::waiting;
+    std::uint64_t plan_revision = 0, plan_step = 0, observation_binding = 0;
 };
 // 从已授权候选生成完整动作绑定，保留规范参数以供确认与执行前精确比较。
 ConfirmationTarget confirmation_target(const PolicyContext& context, const ToolSelection& selection, const model::ToolCall& call, runtime::DomainId candidate = 0);

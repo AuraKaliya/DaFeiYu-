@@ -60,6 +60,7 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, E
     const auto request = session->begin("increment then read",options); until(*session,[&] { return !request->confirmations().empty(); });
     const auto original = request->plan()->definition->binding(); const auto first_key = request->plan()->steps[0].key;
     const auto pending = request->confirmations()[0]; ConfirmationCommand command{1,pending.id,pending.revision,pending.target,true};
+    check(pending.target.plan_revision == 1 && pending.target.plan_step == 1 && pending.target.goal_revision == 1,"native confirmation lost plan binding");
     check(count(0) == starts,"plan bypassed confirmation"); rejects([&] { session->revise_goal(caller,original,"read instead"); });
     if (ending == End::unload) {
         check(instance->shutdown() == ShutdownResult::closed,"waiting plan pinned DLL"); registration.revoke();

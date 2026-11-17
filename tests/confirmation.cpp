@@ -87,9 +87,31 @@ void budget() {
     }
     check(!parent->used().items && !parent->used().bytes,"confirmation budget leaked");
 }
+// 验证计划和观察绑定改变后旧批准不能消费，拒绝也不能靠新计划版本规避。
+// 步骤：固定计划及观察身份 → 改变一个维度 → 拒绝旧许可 → 核对原拒绝范围。
+void changing_preconditions() {
+    ConfirmationCaller caller;
+    auto original = target(); original.plan_revision = 1; original.plan_step = 1; original.observation_binding = 7;
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        ConfirmationBook book({1,1},caller); const auto id = book.offer(original);
+        auto changed = original;
+        if (mode == 0) ++changed.plan_revision;
+        if (mode == 1) ++changed.plan_step;
+        if (mode == 2) ++changed.observation_binding;
+        rejects([&] { book.decide(caller,{1,id,1,changed,true},{}); });
+        book.decide(caller,{1,id,1,original,true},{});
+        check(!book.consume(id,changed,{}) && book.state(id) == ConfirmationState::invalidated,"changed precondition reused old approval");
+        const auto summary = book.summaries()[0];
+        check(summary.plan_revision == 1 && summary.plan_step == 1 && summary.observation_binding == 7,"summary rewrote original preconditions");
+    }
+    ConfirmationBook denied({1,1},caller); const auto id = denied.offer(original); denied.decide(caller,{1,id,1,original,false},{});
+    auto changed = original; changed.plan_revision = 2; changed.observation_binding = 8; changed.call_id = "new";
+    rejects([&] { denied.offer(changed); });
+    ConfirmationBook malformed({1,1},caller); changed = original; changed.plan_step = 0; rejects([&] { malformed.offer(changed); });
+}
 }
 // 只验证宿主确认值契约，不调用工具、模型或 UI。
 int main() {
-    try { decisions(); stops(); denial_scope(); budget(); std::cout << "Confirmation checks passed\n"; return 0; }
+    try { decisions(); stops(); denial_scope(); budget(); changing_preconditions(); std::cout << "Confirmation checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

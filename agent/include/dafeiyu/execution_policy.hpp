@@ -22,6 +22,7 @@ struct PolicyContext {
     std::size_t model_requests = 0, tool_requests = 0;
     ToolTime now, deadline;
     runtime::CancelReason cancellation = runtime::CancelReason::none;
+    std::uint64_t plan_revision = 0, plan_step = 0, observation_binding = 0;
 };
 struct PolicySettings {
     std::uint64_t revision = 1;
