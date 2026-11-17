@@ -59,6 +59,7 @@ struct RunLoopState {
             planning_request = prepare_plan_prompt(*planning_scope,0,prompt);
             record->plan_ = std::make_unique<PlanBook>(*planning_scope);
             record->plan_caller_ = options.confirmation_caller;
+            record->plan_outputs_.reserve(options.policy.model_limit);
         }
         record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
         record->versions_ = public_model_versions(config); auto& versions = record->versions_;
@@ -270,7 +271,9 @@ struct RunLoopState {
                     } else if (response->finish == model::FinishReason::stop) {
                         stage = TurnFailure::history_commit;
                         if (plan_step) {
+                            PlanStepOutput output{plan_step->key,record->attempt_,response->message.content};
                             record->context_->commit_step_text(response->message.content); record->record_history();
+                            record->plan_outputs_.push_back(std::move(output));
                             plan_step->answer = std::move(response->message.content);
                             plan_step->result.settle(OperationState::succeeded); plan_step->exit.settle(OperationState::succeeded);
                         } else {

@@ -103,6 +103,7 @@ void execution() {
         options.planning = PlanLimits{}; options.now = model.clock(); const std::vector<std::string> ids{"fixture/read","fixture/other"}; options.tools = catalog.snapshot(ids);
         const auto request = session.begin("host goal",options); until(session,[&] { return gate->calls == 1; });
         const auto active = request->plan()->steps[0];
+        check(!request->plan_output(active.key),"unfinished work published a step answer");
         check(active.state == PlanStepState::running && active.result == OperationState::pending && active.exit == OperationState::pending &&
             active.execution->step.run == request->run_id() && active.execution->step.sequence == 2 && request->tool_steps()[0].exit == OperationState::pending,
             "plan step lost original work or forged exit");
@@ -113,6 +114,9 @@ void execution() {
             until(session,[&] { return request->plan()->steps[0].waiting == PlanWait::verification; });
             check(request->operation()->state() == OperationState::pending && session.message_count() == 5 && request->plan()->steps[0].state == PlanStepState::running,
                 "model text completed plan or lost step history");
+            const auto output = request->plan_output(active.key);
+            check(output && output->text == "model claims complete" && output->last_attempt.step.sequence == 3 &&
+                output->last_attempt.step.run == request->run_id(),"step output lost original model association");
             for (unsigned repeat = 0; repeat < 3; ++repeat) session.advance();
             request->request_cancel(CancelReason::user); until(session,[&] { return !session.busy(); });
         }
@@ -161,6 +165,8 @@ void verified_sequence() {
     const auto request = session.begin("host goal",options);
     until(session,[&] { return request->plan()->definition && request->plan()->steps[0].waiting == PlanWait::verification; });
     const auto key = request->plan()->steps[0].key; auto wrong = key; ++wrong.plan.plan_revision;
+    const auto first_output = request->plan_output(key);
+    check(first_output && first_output->text == "first value" && !request->plan_output(wrong),"step output accepted wrong version");
     rejects([&] { session.confirm_plan_step(stranger,key,"checked"); });
     rejects([&] { session.confirm_plan_step(caller,wrong,"checked"); });
     rejects([&] { session.confirm_plan_step(caller,request->plan()->steps[1].key,"premature"); });
@@ -170,6 +176,8 @@ void verified_sequence() {
     until(session,[&] { return request->plan()->steps[1].waiting == PlanWait::verification; });
     session.confirm_plan_step(caller,key,"checked"); const auto last = request->plan()->steps[1].key;
     session.confirm_plan_step(caller,last,"last checked"); until(session,[&] { return !session.busy(); }); model.verify_complete();
+    check(request->plan_output(key)->text == first_output->text && request->plan_output(last)->text == "second value" &&
+        first_output->last_attempt.step.sequence == 2,"later output changed previous snapshot");
     check(request->answer() == "second value" && session.message_count() == 5 && request->plan()->steps[0].state == PlanStepState::completed &&
         request->plan()->steps[1].state == PlanStepState::completed,"verified plan did not complete original run");
     session.confirm_plan_step(caller,last,"last checked"); rejects([&] { session.confirm_plan_step(stranger,last,"last checked"); });

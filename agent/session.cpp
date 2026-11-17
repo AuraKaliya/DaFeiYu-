@@ -93,6 +93,11 @@ std::vector<ConfirmationSnapshot> TurnRequest::confirmations() const { return co
 std::vector<ConfirmationSummary> TurnRequest::confirmation_steps() const { return confirmations_ ? confirmations_->summaries() : std::vector<ConfirmationSummary>{}; }
 // 只投影原计划记录，不把候选文本解释为执行或完成命令。
 std::optional<PlanSnapshot> TurnRequest::plan() const { return plan_ ? std::optional<PlanSnapshot>(plan_->snapshot()) : std::nullopt; }
+// 只返回同一原步骤已提交的模型文本，旧版本不会被当前同名步骤替代。
+std::optional<PlanStepOutput> TurnRequest::plan_output(const PlanStepKey& key) const {
+    for (const auto& output : plan_outputs_) if (output.key == key) return output;
+    return std::nullopt;
+}
 // 完整准备会话数据和有界模型客户端，不创建待执行问答。
 Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
     std::size_t result_capacity, model::Completion completion)

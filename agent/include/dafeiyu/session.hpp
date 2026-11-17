@@ -56,6 +56,12 @@ struct ModelStepSnapshot {
     std::optional<model::Usage> usage;
     TurnDiagnostics::TimePoint observed_exit;
 };
+// 仅供可信验证入口读取的步骤模型文本；不是完成证据，普通诊断不得自动导出正文。
+struct PlanStepOutput {
+    PlanStepKey key;
+    AttemptId last_attempt;
+    std::string text;
+};
 // 固定运行生命周期快照；model_finished 保留首个模型退出，全部步骤另由专用查询返回。
 struct RunSnapshot {
     TurnDiagnostics diagnostics;
@@ -107,6 +113,8 @@ class TurnRequest {
     std::vector<ObservationInputFact> observation_inputs() const { return observation_inputs_; }
     // 复制显式规划的候选及进度；无规划返回空值，查询不执行模型或推进步骤。
     std::optional<PlanSnapshot> plan() const;
+    // 按原步骤完整版本复制已提交的文本及最后模型尝试；尚无输出返回空值，不驱动工作。
+    std::optional<PlanStepOutput> plan_output(const PlanStepKey& key) const;
   private:
     friend class Session;
     friend class RunLoop;
@@ -136,6 +144,7 @@ class TurnRequest {
     std::unique_ptr<ConfirmationBook> confirmations_;
     std::unique_ptr<PlanBook> plan_;
     std::optional<ConfirmationCaller> plan_caller_;
+    std::vector<PlanStepOutput> plan_outputs_;
     std::vector<std::unique_ptr<ToolBatch>> batches_;
     std::vector<ModelStepSnapshot> model_steps_;
     std::size_t model_requests_ = 0, tool_requests_ = 0;
