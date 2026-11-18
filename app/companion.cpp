@@ -2,6 +2,7 @@
 
 namespace dfy::app {
 namespace {
+constexpr auto state_refresh_interval = std::chrono::seconds(1);
 // 要求实例自身提供经工具目录核验的角色声明。
 plugins::CompanionOffer require_offer(plugins::PluginInstance& instance, const agent::ToolCatalog& catalog) {
     auto offer = plugins::companion_offer(instance, catalog);
@@ -49,7 +50,7 @@ void CompanionSession::advance() {
     mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, return_tool_, clock_);
     if (!stopping_ && inbox_.status().enabled && !reader_.state().pending && clock_() >= next_refresh_) {
         refresh();
-        next_refresh_ = clock_() + std::chrono::seconds(1);
+        next_refresh_ = clock_() + state_refresh_interval;
     }
     if (auto completed = conversation_.advance()) result_ = std::move(completed);
     if (visit_work_ && visit_ && visit_work_->diagnostics().exit != runtime::OperationState::pending) {
@@ -230,5 +231,18 @@ CompanionStatus CompanionSession::status() const {
 std::optional<CompletedTurn> CompanionSession::result(std::uint64_t turn) const {
     if (result_ && result_->status.turn == turn) return result_;
     return {};
+}
+
+// 保留原观察与本次读取依据，玩家问位置不占用游戏动作或模型回合。
+// 步骤：结合实际行动判断时效 → 复用近期观察或请求重读 → 标明最后确认与请求身份。
+LocationAnswer CompanionSession::locate(LocationPurpose purpose) {
+    const auto& state = reader_.state();
+    const auto& work = mining_.status();
+    const bool moving = (visit_ && visit_->phase == VisitPhase::submitted) || work.phase == MiningPhase::submitted ||
+        work.home.phase == ReturnPhase::requested;
+    LocationAnswer answer{location_basis(state, purpose, moving, clock_(), state_refresh_interval), state.last, 0};
+    if (stopping_ || !bound()) answer.basis = LocationBasis::disconnected;
+    else if (answer.basis != LocationBasis::recent) answer.refresh = refresh();
+    return answer;
 }
 }

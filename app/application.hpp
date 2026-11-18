@@ -68,6 +68,8 @@ class Application {
     std::optional<DeliveryStatus> companion_delivery(runtime::DomainId session) const;
     // 返回原会话最近采掘工作的事实，客户端结束不等于实际入包。
     std::optional<MiningStatus> companion_mining(runtime::DomainId session) const;
+    // 在可信主入口询问位置，返回所用最近观察或新读取编号。
+    LocationAnswer locate_companion(runtime::DomainId session, LocationPurpose purpose);
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

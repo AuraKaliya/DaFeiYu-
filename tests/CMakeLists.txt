@@ -36,7 +36,7 @@ if(DFY_MC_NODE)
     "$<TARGET_FILE:dfy_companion_exchange_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-exchange")
   set_tests_properties(app.companion_exchange PROPERTIES TIMEOUT 20)
   add_executable(dfy_companion_state_tests companion_state.cpp)
-  target_link_libraries(dfy_companion_state_tests PRIVATE dfy_application dfy_build_options)
+  target_link_libraries(dfy_companion_state_tests PRIVATE dfy_terminal dfy_build_options)
   add_dependencies(dfy_companion_state_tests dfy_mc_companion)
   set_target_properties(dfy_companion_state_tests PROPERTIES FOLDER "Tests")
   add_test(NAME app.companion_state COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"

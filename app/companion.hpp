@@ -7,6 +7,7 @@
 #include "companion_question.hpp"
 #include "companion_delivery.hpp"
 #include "companion_mining.hpp"
+#include "companion_location.hpp"
 #include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 
@@ -54,6 +55,8 @@ class CompanionSession {
     DeliveryStatus delivery() const { return delivery_.status(); }
     // 读取原生采掘与客户端退出的事实。
     MiningStatus mining() const { return mining_.status(); }
+    // 为进度或会合查询选择最近确认的位置或另行重读。
+    LocationAnswer locate(LocationPurpose purpose);
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);

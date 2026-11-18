@@ -83,6 +83,18 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             throw;
         }
         output << "Companion session " << id << " enabled.\n";
+    } else if ((words.size() == 3 || (words.size() == 4 && words[3] == "meet")) && words[1] == "where") {
+        const auto answer = app.locate_companion(positive_id(words[2]), words.size() == 4 ? LocationPurpose::meeting : LocationPurpose::progress);
+        switch (answer.basis) {
+        case LocationBasis::recent: output << "Recent confirmed progress. "; break;
+        case LocationBasis::confirm_meeting: output << "Meeting needs a new position. "; break;
+        case LocationBasis::aging: output << "Last signal is aging. "; break;
+        case LocationBasis::missing: output << "No confirmed position yet. "; break;
+        case LocationBasis::disconnected: output << "Game connection unavailable. "; break;
+        }
+        if (answer.last) output << "Last confirmed: " << answer.last->payload << ". ";
+        if (answer.refresh) output << "Refresh request " << answer.refresh << ". ";
+        output << '\n';
     } else if (words.size() == 7 && words[1] == "approve") {
         const auto address = app.companion_address();
         if (!address || address->session != positive_id(words[2])) throw std::invalid_argument("companion: stale session");
@@ -129,7 +141,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

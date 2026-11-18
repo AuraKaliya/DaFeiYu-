@@ -1,6 +1,8 @@
 #include "application.hpp"
+#include "application_commands.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <thread>
 
 namespace {
@@ -38,9 +40,24 @@ int wmain(int argc, wchar_t** argv) {
         check(application.companion_state(id)->link == app::CompanionLink::unknown, "implicit world read");
         const auto live = refresh(application, id);
         check(live.link == app::CompanionLink::available && live.last && !live.last->actor.empty(), "missing live state");
+        const auto recent = application.locate_companion(id, app::LocationPurpose::progress);
+        check(recent.basis == app::LocationBasis::recent && !recent.refresh, "recent progress queried again");
+        std::ostringstream readable;
+        app::application_command(application, "/companion where " + std::to_string(id), readable, std::cerr);
+        check(readable.str().find("Recent confirmed progress") != std::string::npos, "terminal missing decision basis");
+        const auto later = live.last->received + std::chrono::milliseconds(1500);
+        check(app::location_basis(live, app::LocationPurpose::progress, true, later, std::chrono::seconds(1)) == app::LocationBasis::aging &&
+            app::location_basis(live, app::LocationPurpose::progress, false, later, std::chrono::seconds(1)) == app::LocationBasis::recent,
+            "movement did not change freshness");
+        const auto meeting = application.locate_companion(id, app::LocationPurpose::meeting);
+        check(meeting.basis == app::LocationBasis::confirm_meeting && meeting.refresh && meeting.last, "meeting reused old coordinates");
+        app::application_command(application, "/companion where " + std::to_string(id) + " meet", readable, std::cerr);
+        check(readable.str().find(std::to_string(meeting.refresh)) != std::string::npos, "terminal did not reuse pending refresh");
         const auto lost = refresh(application, id);
         check(lost.link == app::CompanionLink::unbound && lost.last && lost.last->generation == live.last->generation &&
-            lost.last->received == live.last->received && lost.request != live.request, "old state presented as new");
+            lost.last->received == live.last->received && lost.request != live.request && lost.request == meeting.refresh &&
+            app::location_basis(lost, app::LocationPurpose::progress, false, later, std::chrono::seconds(1)) == app::LocationBasis::disconnected,
+            "old state presented as new");
         check(!application.companion_state(id + 1) && calls == 0, "wrong session or unexpected model");
         application.stop_companion(id);
         application.conversation().close();

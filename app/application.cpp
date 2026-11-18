@@ -314,6 +314,12 @@ std::optional<DeliveryStatus> Application::companion_delivery(runtime::DomainId 
 std::optional<MiningStatus> Application::companion_mining(runtime::DomainId session) const {
     return companion_ && companion_->id() == session ? std::optional(companion_->mining()) : std::nullopt;
 }
+// 为当前游戏角色处理进度或会合问题，不与在途模型竞争。
+LocationAnswer Application::locate_companion(runtime::DomainId session, LocationPurpose purpose) {
+    if (!companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale location query");
+    if (!session_.accepting()) return {LocationBasis::disconnected, companion_->state().last, 0};
+    return companion_->locate(purpose);
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {
