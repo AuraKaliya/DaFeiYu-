@@ -2,6 +2,7 @@
 #include "application_commands.hpp"
 #include "chat.hpp"
 #include "diagnostic_files.hpp"
+#include "support/compiled_replay.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -11,6 +12,7 @@ using namespace dfy;
 using runtime::OperationState;
 namespace fs = std::filesystem;
 enum class Trial { matches, differs, early_change, replaced, denied };
+constexpr std::string_view cases[]{"app_task_reconnect","app_task_mismatch","app_task_early_change","app_task_replaced","app_task_denied"};
 
 // 在观察证明或状态作用与约定不同时报告失败。
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -44,12 +46,12 @@ model::Response scripted(Trial trial, unsigned call, const model::Request& reque
 
 // 经正式终端验证真实面板与模型完成声明的交界。
 // 步骤：装配面板及固定响应 → 提交读回任务 → 按基线审批 → 检查实际宿主判定和退出。
-void verify(const fs::path& package, const fs::path& root, Trial trial) {
+void verify(const fs::path& package, const fs::path& root, Trial trial, std::ostream* evidence = nullptr) {
     const auto run = workspace(root);
     unsigned calls = 0;
     const app::ApplicationRunConfig run_config{
         [] { return agent::ToolTime{}; }, "offline-fixed-v1"};
-    app::Application application({},run/"plugins",run/"user",model::Backend{
+    app::Application application(tests::fixed_replay_model(),run/"plugins",run/"user",model::Backend{
         [&](const auto&, const auto& request) { return scripted(trial,++calls,request); }},run_config);
     auto& manager = application.plugins();
     auto& conversation = application.conversation();
@@ -131,6 +133,10 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     const auto summary = agent::review_timeline(diagnostic->timeline);
     check(summary.run_exited && summary.applied_effects == (has_readback ? 1u : 0u) && !summary.unknown_effects,
         "stopped or completed task lost the original exit or action effect");
+    const auto admitted_tools = std::ranges::count_if(diagnostic->timeline.nodes,[](const auto& node) {
+        return node.id.kind == agent::TraceNodeKind::tool && node.accepted == true;
+    });
+    check(admitted_tools == (has_readback ? 3 : trial == Trial::early_change ? 0 : 1),"unexpected tool work was admitted");
 
     if (trial == Trial::denied) {
         chat = connect();
@@ -164,6 +170,10 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");
+    if (evidence) {
+        const auto id = cases[static_cast<std::size_t>(trial)];
+        tests::write_compiled_replay(*evidence,{std::string(id),1,calls,calls},*diagnostic,static_cast<std::size_t>(admitted_tools));
+    }
 }
 
 // 保留窗口满后，旧任务号只能过期，不能变成第二次执行。
@@ -196,16 +206,20 @@ void retired_receipts(const fs::path& package, const fs::path& root) {
 }
 }
 
-// 使用固定模型和真实面板验证宿主端读回判定。
+// 使用固定模型和真实面板验证读回，也可独立采集终端重连及停止案例。
+// 步骤：检查包和隔离目录 → 运行指定采集或原矩阵 → 核对实际退出。
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 3,"status package and test workspace required");
-        verify(argv[1],argv[2],Trial::matches);
-        verify(argv[1],argv[2],Trial::differs);
-        verify(argv[1],argv[2],Trial::early_change);
-        verify(argv[1],argv[2],Trial::replaced);
-        verify(argv[1],argv[2],Trial::denied);
-        retired_receipts(argv[1],argv[2]);
+        check(argc == 3 || (argc == 5 && std::wstring_view(argv[3]) == L"--capture"),"expected package, workspace and optional --capture CASE");
+        if (argc == 5) {
+            const auto id = fs::path(argv[4]).string();
+            const auto found = std::find(std::begin(cases),std::end(cases),id);
+            check(found != std::end(cases),"unknown application replay case");
+            verify(argv[1],argv[2],static_cast<Trial>(found-std::begin(cases)),&std::cout);
+        } else {
+            for (std::size_t mode = 0; mode < std::size(cases); ++mode) verify(argv[1],argv[2],static_cast<Trial>(mode));
+            retired_receipts(argv[1],argv[2]);
+        }
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
