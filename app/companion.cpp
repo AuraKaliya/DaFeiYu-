@@ -137,7 +137,11 @@ void CompanionSession::accept_player() {
                 entry->sequence, entry->quantity, entry->text);
         return;
     }
-    if (entry->visit_place.empty() || (question && (question->phase == QuestionPhase::waiting || question->phase == QuestionPhase::authorized))) return;
+    const auto home = mining_.status().home.phase;
+    const bool returned = home == ReturnPhase::delivered || home == ReturnPhase::shortfall ||
+        (home == ReturnPhase::uncertain && !mining_.status().home.evidence.empty());
+    if (entry->visit_place.empty() || (question && (question->phase == QuestionPhase::waiting ||
+        (question->phase == QuestionPhase::authorized && !returned)))) return;
     CompanionVisit visit{*address_, entry->sequence, 0, inbox_.status().owner, entry->text, entry->visit_place};
     visit.task = send(*address_, CompanionMessageKind::delegation, messages_.next(CompanionSide::primary), 0, entry->text);
     visit_ = std::move(visit);

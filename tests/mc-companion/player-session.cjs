@@ -18,7 +18,7 @@ async function drive(exe, pkg, root, owner, evidence) {
   const records = [];
   const log = createInterface({ input: child.stdout });
   let issued = false;
-  let questionReady = false, questions = 0, answered = false;
+  let questionReady = false, questions = 0, answered = false, secondVisit = false;
   // 只在独立的玩家客户端与可信宿主都看见问题后给出一次答复。
   const answer = () => {
     if (questionReady && questions && !answered) {
@@ -35,9 +35,10 @@ async function drive(exe, pkg, root, owner, evidence) {
     records.push(line);
     if (line === 'DFY_LISTENING' && !issued) { issued = true; owner.chat('去山脚看看'); }
     if (line === 'DFY_QUESTION') { questionReady = true; answer(); }
+    if (line === 'DFY_NEXT_VISIT' && !secondVisit) { secondVisit = true; owner.chat('去山脚看看'); }
   });
   child.stderr.on('data', data => process.stderr.write(data));
-  const timer = setTimeout(() => child.kill(), ['collect-16', 'return-16', 'return-14'].includes(process.argv[4]) ? 150000 : 45000);
+  const timer = setTimeout(() => child.kill(), ['collect-16', 'return-16', 'return-14', 'next-visit'].includes(process.argv[4]) ? 150000 : 45000);
   try {
     const [code] = await once(child, 'close');
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
@@ -62,7 +63,7 @@ async function verify(fixture) {
     writeFileSync(join(settings, 'settings.json'), JSON.stringify({ channel: nativeChannel, bridgeKey: key }));
     const file = join(fixture.evidence, 'adapter.json');
     let observer;
-    const full = ['collect-16', 'return-16', 'return-14'].includes(variant);
+    const full = ['collect-16', 'return-16', 'return-14', 'next-visit'].includes(variant);
     if (variant === 'pickup-one' || full) {
       const marker = randomUUID();
       fixture.send('dfystonesample DfyOwner ' + marker);

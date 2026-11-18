@@ -43,7 +43,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
         const bool lost_send = argc == 4 && std::wstring_view(argv[3]) == L"lost-send";
         const bool lost_receipt = argc == 4 && std::wstring_view(argv[3]) == L"lost-receipt";
-        const bool back = argc == 4 && (std::wstring_view(argv[3]) == L"return-16" || std::wstring_view(argv[3]) == L"return-14");
+        const bool next_visit = argc == 4 && std::wstring_view(argv[3]) == L"next-visit";
+        const bool back = next_visit || (argc == 4 && (std::wstring_view(argv[3]) == L"return-16" || std::wstring_view(argv[3]) == L"return-14"));
         const bool loss = argc == 4 && std::wstring_view(argv[3]) == L"return-14";
         const bool complete = back || (argc == 4 && std::wstring_view(argv[3]) == L"collect-16");
         const bool pickup_one = complete || (argc == 4 && std::wstring_view(argv[3]) == L"pickup-one");
@@ -157,6 +158,13 @@ int wmain(int argc, wchar_t** argv) {
                     app::application_command(application, "/companion status", terminal, std::cerr);
                     check(terminal.str().find(loss ? "Self-collected carried 14..14" : "Self-collected carried 16..16") != std::string::npos,
                         "terminal lost actual carried quantity");
+                    if (next_visit) {
+                        std::cout << "DFY_NEXT_VISIT" << std::endl;
+                        until(application, [&] { const auto next = application.companion_visit(id);
+                            return next && next->task != visit->task && (next->phase == app::VisitPhase::arrived || next->phase == app::VisitPhase::observed); });
+                        check(application.companion_collection(id)->id == grant.id && application.companion_mining(id)->home.phase == app::ReturnPhase::delivered,
+                            "new inspection erased the previous delivery or authorized more mining");
+                    }
                 }
             }
         }
