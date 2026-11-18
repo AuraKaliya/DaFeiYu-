@@ -10,7 +10,7 @@ namespace {
 using namespace dfy;
 using runtime::OperationState;
 namespace fs = std::filesystem;
-enum class Trial { matches, differs, early_change, replaced };
+enum class Trial { matches, differs, early_change, replaced, denied };
 
 // 在观察证明或状态作用与约定不同时报告失败。
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -98,7 +98,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
                     "replacement terminal could not find the original pending task");
             }
             decision_key = std::to_string(pending.id)+' '+std::to_string(pending.revision);
-            chat->line("/approve "+decision_key);
+            chat->line((trial == Trial::denied ? "/deny " : "/approve ")+decision_key);
             approved = output.str().find("Approval recorded") != std::string::npos;
         }
         std::this_thread::yield();
@@ -122,10 +122,22 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         check(output.str().find("Request cancelled.\n") != std::string::npos,"terminal reported an exit wait after readback finished");
     const auto diagnostic = conversation.diagnostic();
     check(diagnostic && diagnostic->timeline.key == pending_diagnostic->timeline.key &&
-        agent::review_timeline(diagnostic->timeline).run_exited &&
         (!has_readback ? diagnostic->feedback.empty() :
             diagnostic->feedback.size() == 1 && diagnostic->feedback.front().verified == (trial == Trial::matches)),
         "retained diagnostic lost original evidence or run identity");
+    const auto summary = agent::review_timeline(diagnostic->timeline);
+    check(summary.run_exited && summary.applied_effects == (has_readback ? 1u : 0u) && !summary.unknown_effects,
+        "stopped or completed task lost the original exit or action effect");
+
+    if (trial == Trial::denied) {
+        chat = connect();
+        output.str("");
+        chat->line("/deny "+decision_key);
+        chat->line("/approve "+decision_key);
+        check(output.str().find("Refusal recorded") != std::string::npos &&
+            errors.str().find("decision receipt conflict") != std::string::npos && !conversation.busy() && calls == 3,
+            "denial did not survive reconnection or allowed later approval");
+    }
     const auto path = run/u8"面板诊断.json";
     const auto utf = path.u8string();
     chat->line("/diagnostic export \""+std::string(utf.begin(),utf.end())+"\"");
@@ -189,6 +201,7 @@ int wmain(int argc, wchar_t** argv) {
         verify(argv[1],argv[2],Trial::differs);
         verify(argv[1],argv[2],Trial::early_change);
         verify(argv[1],argv[2],Trial::replaced);
+        verify(argv[1],argv[2],Trial::denied);
         retired_receipts(argv[1],argv[2]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
