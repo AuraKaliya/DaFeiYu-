@@ -49,6 +49,13 @@ class Application {
     std::uint64_t refresh_companion(runtime::DomainId session);
     // 按原会话取得最近观察和可用性，不触发查询。
     std::optional<CompanionState> companion_state(runtime::DomainId session) const;
+    // 读取最近一次实际状态签发的当前地址。
+    std::optional<CompanionAddress> companion_address() const;
+    // 主会话向该地址投递一条委托或询问。
+    std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
+        std::uint64_t command, std::uint64_t reply_to, const std::string& text);
+    // 在可信入口按游标读取主子消息及缺口。
+    CompanionDelta companion_messages(runtime::DomainId id, std::uint64_t after) const;
     // 读取仍保留的指定子回合结算值。
     std::optional<CompletedTurn> companion_result(agent::RunId run) const;
     // 显式授予一个已加载实例的只读工具并提交用户目标。

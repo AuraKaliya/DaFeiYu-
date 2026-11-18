@@ -72,6 +72,11 @@ CompanionMessage CompanionMessages::post(const CompanionAddress& address, Compan
             if (from != CompanionSide::game || !inquiry || reply_to != inquiry) throw std::invalid_argument("companion: stale inquiry");
             inquiry = 0;
             break;
+        case CompanionMessageKind::failed:
+            if (from != CompanionSide::game || !reply_to || (reply_to != task && reply_to != inquiry))
+                throw std::invalid_argument("companion: wrong failed delivery");
+            if (reply_to == inquiry) inquiry = 0;
+            break;
         default: throw std::invalid_argument("companion: unknown message kind");
     }
     CompanionMessage accepted{address, from, kind, revision, command, task, reply_to, text};

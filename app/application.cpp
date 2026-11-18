@@ -246,14 +246,14 @@ runtime::DomainId Application::open_companion(const std::string& package) {
         if (!original.stopping && original.instance == instance->generation()) return original.session;
         throw std::logic_error("companion: previous session has not exited");
     }
-    companion_ = std::make_unique<CompanionSession>(instance, model_config_, channel_, model_backend_, labels_);
+    companion_ = std::make_unique<CompanionSession>(instance, model_config_, channel_, model_backend_, labels_, tool_clock_);
     return companion_->id();
 }
 
 // 将明确指定的用户意图投递到当前陪伴会话。
 agent::TurnDiagnostics Application::submit_companion(runtime::DomainId session, const std::string& prompt) {
     if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
-    return companion_->submit(prompt, tool_clock_);
+    return companion_->submit(prompt);
 }
 
 // 停止原游戏会话，旧界面不能停止替换后的实例。
@@ -270,7 +270,23 @@ std::optional<CompanionStatus> Application::companion_status() const {
 // 在同一个宿主推进节拍中请求原实例的状态。
 std::uint64_t Application::refresh_companion(runtime::DomainId session) {
     if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
-    return companion_->refresh(tool_clock_);
+    return companion_->refresh();
+}
+
+// 返回当前可接收消息的角色地址。
+std::optional<CompanionAddress> Application::companion_address() const {
+    return companion_ ? companion_->address() : std::nullopt;
+}
+// 由主侧向原会话发送业务消息，使用宿主绑定的方向。
+std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
+    std::uint64_t command, std::uint64_t reply_to, const std::string& text) {
+    if (!session_.accepting() || !companion_ || companion_->id() != address.session) throw std::invalid_argument("companion: stale session");
+    return companion_->send(address, kind, command, reply_to, text);
+}
+// 读取指定会话的业务历史，不将正文混入公开诊断。
+CompanionDelta Application::companion_messages(runtime::DomainId id, std::uint64_t after) const {
+    if (!companion_ || companion_->id() != id) throw std::invalid_argument("companion: stale session");
+    return companion_->messages(after);
 }
 
 // 查询原会话的世界观察，旧会话不能读到替换后的状态。
