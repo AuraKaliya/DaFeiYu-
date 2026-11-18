@@ -15,3 +15,5 @@
 设置中的地标使用 `"places":{"hillside":{"label":"山脚","dimension":"overworld","x":12,"y":-60,"z":0}}` 形状。首例游戏侧支持明确的“去山脚看看”“请去山脚看看”或“帮我去山脚看看”。它用对应的原玩家消息、世界代次和地标约束一次寻路；其他表达仍可作对话，不能仅因包含地名就取得移动许可。工具请求不能自行指定任意坐标。查看时关闭挖掘、垫方块与开门；到达后从角色视线确认圆石。动作租期需要调用方持续查询，撤销时等路径实际退出。
 
 构建目标 `dfy_mc_companion` 会在对应配置下生成 `mc.companion` 包目录。使用原终端的 `/plugins install "<包目录>"`、`/plugins load mc.companion` 显式装载，或由共享应用服务接入。普通模型问答保持独立。定向验收见 [MC 探针](../../tests/mc-companion/README.md)。
+
+在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`，再加载包。启动游戏适配器后，在终端输入 `/companion open mc.companion`。等 `/companion status` 显示 `listening`，绑定的玩家即可在游戏里发出“去山脚看看”。从收件开启时已有的聊天水位之后开始接纳，旧聊天不会自动补作委托。`/companion status` 可查看实际验收状态，`/companion stop 会话号` 向指定原会话请求停止。

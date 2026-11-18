@@ -1,7 +1,9 @@
 #include "application.hpp"
+#include "application_commands.hpp"
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <thread>
 
 namespace {
@@ -43,8 +45,9 @@ int wmain(int argc, wchar_t** argv) {
             [=](const auto&, const auto& request) { return fixture_model(request, skip, tamper); }});
         application.plugins().install(argv[1]);
         check(application.plugins().load("mc.companion") == 0, "plugin load");
-        const auto id = application.open_companion("mc.companion");
-        application.listen_companion(id);
+        std::ostringstream terminal;
+        check(app::application_command(application, "/companion open mc.companion", terminal, std::cerr), "terminal open");
+        const auto id = application.companion_status()->session;
         until(application, [&] { return application.companion_inbox(id)->ready; });
         check(application.companion_inbox(id)->cursor == 1, "wrong baseline");
         std::cout << "DFY_LISTENING" << std::endl;
@@ -63,7 +66,9 @@ int wmain(int argc, wchar_t** argv) {
                 "missing original observation");
             std::cout << evidence.dump() << '\n';
         }
-        application.stop_companion(id);
+        check(app::application_command(application, "/companion status", terminal, std::cerr), "terminal status");
+        check(terminal.str().find(skip || tamper ? "unverified" : "observed") != std::string::npos, "terminal missing evidence state");
+        check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");
         until(application, [&] { return application.companion_status()->closed; });
         application.conversation().close();
         check(application.close_plugins() == plugins::ShutdownResult::closed, "shutdown failed");

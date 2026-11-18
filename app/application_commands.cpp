@@ -69,13 +69,52 @@ void write_task_status(const Application& application, std::uint64_t request, st
         write_verification(snapshot->verification,output);
     } else output << "Run details are no longer retained.\n";
 }
+
+// 对显式加载的插件启用游戏收件，或按原会话查看、停止。
+// 步骤：分派受信命令 → 校验实例及会话身份 → 输出接纳和实际状态。
+void companion_command(Application& app, std::string_view command, std::ostream& output) {
+    const auto words = command_words(command);
+    if (words.size() == 3 && words[1] == "open") {
+        const auto original = app.companion_status();
+        const auto id = app.open_companion(words[2]);
+        try { app.listen_companion(id); }
+        catch (...) {
+            if (!original || original->session != id) app.stop_companion(id);
+            throw;
+        }
+        output << "Companion session " << id << " enabled.\n";
+    } else if (words.size() == 3 && words[1] == "stop") {
+        const auto id = positive_id(words[2]);
+        app.stop_companion(id);
+        output << "Stop requested for companion " << id << ".\n";
+    } else if (words.size() == 2 && words[1] == "status") {
+        const auto status = app.companion_status();
+        if (!status) { output << "No companion session.\n"; return; }
+        const auto input = app.companion_inbox(status->session);
+        output << "Companion " << status->session << " (" << status->package << ") "
+               << (status->closed ? "closed" : status->stopping ? "stopping" : input && input->ready ? "listening" : "waiting for game") << ".\n";
+        if (const auto visit = app.companion_visit(status->session)) {
+            output << "Visit " << visit->task << " at " << visit->place << ": ";
+            switch (visit->phase) {
+            case VisitPhase::queued: output << "queued"; break;
+            case VisitPhase::submitted: output << "submitted"; break;
+            case VisitPhase::arrived: output << "arrived"; break;
+            case VisitPhase::observed: output << "observed"; break;
+            case VisitPhase::failed: output << "unverified"; break;
+            case VisitPhase::withdrawn: output << "withdrawn"; break;
+            }
+            output << ".\n";
+        }
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION");
+}
 }
 
 // 处理明确的终端控制命令，保留原回执和插件分派。
 // 步骤：匹配命令族 → 读取确认或提交决定／目标 → 按原应用状态返回。
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
-    if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
+    if (name == "/companion") companion_command(application, command, output);
+    else if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
     else if (name == "/task") {
         const auto words = command_words(command);
         const bool numbered = words.size() == 7 && words[5] == "--request";
