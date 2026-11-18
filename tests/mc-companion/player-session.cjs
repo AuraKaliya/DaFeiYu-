@@ -37,7 +37,7 @@ async function drive(exe, pkg, root, owner, evidence) {
     if (line === 'DFY_QUESTION') { questionReady = true; answer(); }
   });
   child.stderr.on('data', data => process.stderr.write(data));
-  const timer = setTimeout(() => child.kill(), 45000);
+  const timer = setTimeout(() => child.kill(), process.argv[4] === 'collect-16' ? 150000 : 45000);
   try {
     const [code] = await once(child, 'close');
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
@@ -61,17 +61,27 @@ async function verify(fixture) {
     const nativeChannel = fault ? randomUUID() : channel;
     writeFileSync(join(settings, 'settings.json'), JSON.stringify({ channel: nativeChannel, bridgeKey: key }));
     const file = join(fixture.evidence, 'adapter.json');
+    let observer;
+    if (['pickup-one', 'collect-16'].includes(variant)) {
+      const marker = randomUUID();
+      fixture.send('dfystonesample DfyOwner ' + marker);
+      const source = await until(() => readStream(fixture.server).find(row => row.kind === 'sample' && row.request === marker), '固定同一服务器世界');
+      observer = { directory: join(fixture.server, 'plugins', 'DfyStoneObserver'), world: source.world, dimension: 'overworld' };
+    }
     writeFileSync(file, JSON.stringify({ channel, bridgeKey: key, host: '127.0.0.1', port: fixture.port,
-      auth: 'offline', username: 'DfyCompanion', owner: owner.player.uuid,
+      auth: 'offline', username: 'DfyCompanion', owner: owner.player.uuid, observer,
       places: { hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
         riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } } }));
     game = await launch(file);
     if (fault) proxy = await deliveryProxy(nativeChannel, channel, variant);
     await until(() => game.bot.player?.uuid && game.bot.entity, '适配器入场');
+    fixture.send('kill @e[type=item]');
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     fixture.send('setblock 15 -60 0 minecraft:cobblestone');
+    if (variant === 'collect-16') fixture.send('fill 15 -60 -1 18 -60 2 minecraft:cobblestone');
     fixture.send('clear DfyCompanion');
-    if (variant === 'mine-one') fixture.send('give DfyCompanion minecraft:iron_pickaxe 1');
+    if (['mine-one', 'pickup-one', 'collect-16'].includes(variant)) fixture.send('give DfyCompanion minecraft:iron_pickaxe 1');
+    if (observer) fixture.send('give DfyCompanion minecraft:cobblestone 5');
     await until(() => Math.abs(game.bot.entity.position.x - 0.5) < 0.25 &&
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '场地确认');
     const state = await query(channel, { version: 1, id: 'state', method: 'state.read' });
@@ -97,10 +107,16 @@ async function verify(fixture) {
     }
     const facts = readStream(fixture.server).slice(first);
     const breaks = facts.filter(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid);
-    if (variant === 'mine-one') {
+    if (['mine-one', 'pickup-one'].includes(variant)) {
       assert.equal(digCalls, 1);
       assert.equal(breaks.length, 1);
       assert.equal(breaks[0].candidateAmount, 1);
+      if (variant === 'pickup-one') assert.equal(game.bot.inventory.items().filter(item => item.name === 'cobblestone')
+        .reduce((sum, item) => sum + item.count, 0), 6);
+    } else if (variant === 'collect-16') {
+      assert.equal(digCalls, 16);
+      assert.equal(breaks.length, 16);
+      assert.equal(game.bot.inventory.items().filter(item => item.name === 'cobblestone').reduce((sum, item) => sum + item.count, 0), 21);
     } else {
       assert.equal(digCalls, 0);
       assert.equal(breaks.length, 0);

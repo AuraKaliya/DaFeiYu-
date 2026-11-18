@@ -9,6 +9,8 @@ struct MiningStatus {
     bool started = false;
     agent::ToolEffect effect = agent::ToolEffect::not_applied;
     std::string evidence;
+    std::uint64_t lower = 0, upper = 0;
+    std::vector<std::string> pickup_sources;
 };
 // 在游戏确认接单后驱动原授权的单块工作，入包证据由后续核验提供。
 class CompanionMining {
@@ -24,6 +26,8 @@ class CompanionMining {
     // 检查是否仍有原生票据待回收。
     bool busy() const noexcept { return static_cast<bool>(executor_); }
   private:
+    // 在一个已退出的单块工作上结算至多一份自采来源。
+    void credit(const std::string& evidence);
     MiningStatus status_;
     std::unique_ptr<agent::ToolExecutor> executor_;
     std::shared_ptr<agent::ToolRequest> work_;

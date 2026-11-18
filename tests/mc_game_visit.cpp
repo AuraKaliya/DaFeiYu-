@@ -43,7 +43,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
         const bool lost_send = argc == 4 && std::wstring_view(argv[3]) == L"lost-send";
         const bool lost_receipt = argc == 4 && std::wstring_view(argv[3]) == L"lost-receipt";
-        const bool mine_one = argc == 4 && std::wstring_view(argv[3]) == L"mine-one";
+        const bool complete = argc == 4 && std::wstring_view(argv[3]) == L"collect-16";
+        const bool pickup_one = complete || (argc == 4 && std::wstring_view(argv[3]) == L"pickup-one");
+        const bool mine_one = pickup_one || (argc == 4 && std::wstring_view(argv[3]) == L"mine-one");
         const bool game_answer = lost_send || lost_receipt || mine_one || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
         const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
@@ -122,12 +124,24 @@ int wmain(int argc, wchar_t** argv) {
                 {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}, {"accepted", true},
                 {"submissions", delivered.submissions}, {"checks", delivered.checks}}.dump() << '\n';
             if (mine_one) {
-                until(application, [&] { const auto phase = application.companion_mining(id)->phase;
-                    return phase == app::MiningPhase::client_finished || phase == app::MiningPhase::failed; });
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(complete ? 120 : 15);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    application.advance_plugins();
+                    const auto step = *application.companion_mining(id);
+                    if (step.phase == app::MiningPhase::failed || (step.phase == app::MiningPhase::client_finished && step.index == (complete ? 16u : 1u))) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+                }
                 const auto mined = *application.companion_mining(id);
-                check(mined.phase == app::MiningPhase::client_finished && mined.grant == grant.id && mined.index == 1 &&
+                check(mined.phase == app::MiningPhase::client_finished && mined.grant == grant.id && mined.index == (complete ? 16u : 1u) &&
                     mined.started && mined.effect == agent::ToolEffect::unknown, "uncorroborated mining or wrong action");
                 std::cout << mined.evidence << '\n';
+                const auto proof = nlohmann::json::parse(mined.evidence).at("pickup");
+                if (pickup_one) check(proof.is_object() && proof.at("lower") == 1 && proof.at("upper") == 1 &&
+                    proof.at("onGround") == false && mined.lower == mined.index && mined.upper == mined.index &&
+                    mined.pickup_sources.size() == mined.index, "real custody evidence missing");
+                else check(proof.is_null(), "missing observer credited inventory");
+                std::cout << nlohmann::json{{"index", mined.index}, {"lower", mined.lower}, {"upper", mined.upper},
+                    {"sources", mined.pickup_sources}}.dump() << '\n';
             }
         }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");

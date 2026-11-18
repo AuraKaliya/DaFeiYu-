@@ -1,7 +1,25 @@
 #include "companion_mining.hpp"
 #include <nlohmann/json.hpp>
+#include <algorithm>
 
 namespace dfy::app {
+// 按有界块编号结算一次；来源缺失保留范围，已经使用的产出不能重复增加数量。
+// 步骤：读取已验证的上下界 → 核对来源未用过 → 累加到本次委托。
+void CompanionMining::credit(const std::string& evidence) {
+    const auto value = nlohmann::json::parse(evidence, nullptr, false);
+    if (!value.is_object() || !value.contains("pickup") || !value.at("pickup").is_object()) {
+        ++status_.upper;
+        return;
+    }
+    const auto& pickup = value.at("pickup");
+    const auto lower = pickup.at("lower").get<std::uint64_t>(), upper = pickup.at("upper").get<std::uint64_t>();
+    if (lower > upper || upper > 1) { ++status_.upper; return; }
+    const auto source = pickup.at("stream").get<std::string>() + "/" + std::to_string(pickup.at("first").get<std::uint64_t>());
+    if (std::find(status_.pickup_sources.begin(), status_.pickup_sources.end(), source) != status_.pickup_sources.end()) return;
+    status_.pickup_sources.push_back(source);
+    status_.lower += lower;
+    status_.upper += upper;
+}
 // 从已接单范围提交采掘并读取原世界、原委托、原块的真实游戏回执。
 // 步骤：复核接单与绑定 → 推进在途工作或协作取消 → 验证客户端退出证据 → 按配额接纳首块。
 void CompanionMining::advance(const std::optional<CollectionGrant>& grant, const DeliveryStatus& delivery,
@@ -23,8 +41,10 @@ void CompanionMining::advance(const std::optional<CollectionGrant>& grant, const
                     value.at("grant") == std::to_string(grant->id) && value.at("index") == status_.index && value.at("exited") == true) {
                     status_.started = value.at("started").get<bool>();
                     status_.evidence = result.output;
-                    if (valid && result.succeeded && status_.started && value.at("phase") == "clientFinished" && work_->fault() == agent::ToolError::none)
+                    if (valid && result.succeeded && status_.started && value.at("phase") == "clientFinished" && work_->fault() == agent::ToolError::none) {
+                        credit(result.output);
                         status_.phase = MiningPhase::client_finished;
+                    }
                 }
             } catch (const std::exception&) { }
         }
@@ -32,15 +52,24 @@ void CompanionMining::advance(const std::optional<CollectionGrant>& grant, const
         executor_.reset();
         return;
     }
-    if (!valid || tool.empty() || status_.grant == grant->id || grant->quantity == 0) return;
+    if (!valid || tool.empty() || grant->quantity == 0) return;
+    const bool same = status_.grant == grant->id;
+    if (same && (status_.phase != MiningPhase::client_finished || status_.index >= grant->quantity)) return;
+    const auto index = same ? status_.index + 1 : 1;
     const auto args = nlohmann::json{{"generation", grant->address.world}, {"question", std::to_string(grant->question)},
-        {"grant", std::to_string(grant->id)}, {"index", 1}}.dump();
+        {"grant", std::to_string(grant->id)}, {"index", index}}.dump();
     auto scope = catalog.snapshot(std::span(&tool, 1), true).bind_arguments(tool, args);
     const auto definition = scope.definitions().front();
     const agent::RunId run{runtime::next_domain(), 1};
     auto executor = std::make_unique<agent::ToolExecutor>(run, std::move(scope), agent::ToolLimits{1, std::chrono::seconds(35)}, nullptr, clock);
     auto work = executor->submit({{run, 1}, 1}, {"mine", definition.name, args});
-    status_ = {grant->id, 1, MiningPhase::submitted, false, agent::ToolEffect::not_applied, {}};
+    if (!same) status_ = {};
+    status_.grant = grant->id;
+    status_.index = index;
+    status_.phase = MiningPhase::submitted;
+    status_.started = false;
+    status_.effect = agent::ToolEffect::not_applied;
+    status_.evidence.clear();
     executor_ = std::move(executor);
     work_ = std::move(work);
 }

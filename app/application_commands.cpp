@@ -115,6 +115,8 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             output << "Question " << question->id << " revision " << question->revision << ": " << question->text << '\n';
         if (const auto grant = app.companion_collection(status->session))
             output << "Collection " << grant->id << " authorized: " << grant->quantity << " " << grant->material << ".\n";
+        if (const auto mined = app.companion_mining(status->session); mined && mined->grant)
+            output << "Self-collected range " << mined->lower << ".." << mined->upper << ", current block " << mined->index << ".\n";
     } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
