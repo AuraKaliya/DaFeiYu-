@@ -10,6 +10,7 @@ const { connect, until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
 const { query } = require('./bridge-world.cjs');
 const { readStream } = require('./origins.cjs');
+const { deliveryProxy } = require('./delivery-proxy.cjs');
 
 // 让原生验证程序先确认当前聊天水位，此后才由真正的玩家协议发送新委托。
 async function drive(exe, pkg, root, owner, evidence) {
@@ -23,7 +24,7 @@ async function drive(exe, pkg, root, owner, evidence) {
     if (questionReady && questions && !answered) {
       answered = true;
       const variant = process.argv[4];
-      owner.chat(variant === 'approve-game' ? '采 16 块带回来' : variant === 'approve-center' ? '采 12 块带回来' : '不用了');
+      owner.chat(variant === 'approve-center' ? '采 12 块带回来' : variant === 'decline' ? '不用了' : '采 16 块带回来');
     }
   };
   const heard = text => {
@@ -41,7 +42,7 @@ async function drive(exe, pkg, root, owner, evidence) {
     const [code] = await once(child, 'close');
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
     if (!issued || code !== 0) throw new Error('宿主未完成真实玩家入口验收');
-    if (['decline', 'approve-game', 'approve-center'].includes(process.argv[4])) assert.ok(answered && questions === 1);
+    if (['decline', 'approve-game', 'approve-center', 'lost-send', 'lost-receipt'].includes(process.argv[4])) assert.ok(answered && questions === 1);
   } finally { clearTimeout(timer); log.close(); owner.removeListener('messagestr', heard); }
 }
 
@@ -49,19 +50,23 @@ async function drive(exe, pkg, root, owner, evidence) {
 // 步骤：建立账号与配置 → 打开适配器并准备场地 → 预置旧消息 → 驱动宿主 → 清理游戏连接。
 async function verify(fixture) {
   const owner = await connect('DfyOwner', fixture.port);
-  let game;
+  let game, proxy;
   try {
     const channel = randomUUID(), key = randomBytes(32).toString('hex');
     const root = join(fixture.evidence, 'host');
     const settings = join(root, 'user', 'plugins', 'mc.companion');
     mkdirSync(settings, { recursive: true });
-    writeFileSync(join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
+    const variant = process.argv[4];
+    const fault = ['lost-send', 'lost-receipt'].includes(variant);
+    const nativeChannel = fault ? randomUUID() : channel;
+    writeFileSync(join(settings, 'settings.json'), JSON.stringify({ channel: nativeChannel, bridgeKey: key }));
     const file = join(fixture.evidence, 'adapter.json');
     writeFileSync(file, JSON.stringify({ channel, bridgeKey: key, host: '127.0.0.1', port: fixture.port,
       auth: 'offline', username: 'DfyCompanion', owner: owner.player.uuid,
       places: { hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
         riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } } }));
     game = await launch(file);
+    if (fault) proxy = await deliveryProxy(nativeChannel, channel, variant);
     await until(() => game.bot.player?.uuid && game.bot.entity, '适配器入场');
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     fixture.send('setblock 15 -60 0 minecraft:cobblestone');
@@ -82,6 +87,12 @@ async function verify(fixture) {
     game.bot.dig = (...args) => { ++digCalls; return dig(...args); };
     const first = readStream(fixture.server).length;
     await drive(process.argv[2], process.argv[3], root, owner, fixture.evidence);
+    if (proxy) {
+      const expected = ['collection.admit', 'collection.receipt'];
+      if (variant === 'lost-send') expected.push('collection.admit');
+      assert.deepEqual(proxy.methods, expected);
+      writeFileSync(join(fixture.evidence, 'delivery-methods.json'), JSON.stringify(proxy.methods));
+    }
     const facts = readStream(fixture.server).slice(first);
     assert.equal(digCalls, 0);
     assert.ok(!facts.some(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid));
@@ -90,6 +101,7 @@ async function verify(fixture) {
       actor: game.bot.player.uuid, position: game.bot.entity.position, digCalls, facts }, null, 2));
   } finally {
     owner.quit();
+    if (proxy) await proxy.close();
     if (game) { game.stop(); await game.done; }
   }
 }

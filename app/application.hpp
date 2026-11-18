@@ -64,6 +64,8 @@ class Application {
         std::uint64_t command, std::uint64_t quantity);
     // 读取仍保留的采集委托回执。
     std::optional<CollectionGrant> companion_collection(runtime::DomainId session) const;
+    // 查询原游戏实际接单或仍待核实的状态。
+    std::optional<DeliveryStatus> companion_delivery(runtime::DomainId session) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

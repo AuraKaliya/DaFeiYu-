@@ -306,6 +306,10 @@ CollectionGrant Application::authorize_companion(const CompanionAddress& address
 std::optional<CollectionGrant> Application::companion_collection(runtime::DomainId session) const {
     return companion_ && companion_->id() == session ? companion_->collection() : std::nullopt;
 }
+// 只有当前会话的投递状态可以返回给可信调用者。
+std::optional<DeliveryStatus> Application::companion_delivery(runtime::DomainId session) const {
+    return companion_ && companion_->id() == session ? std::optional(companion_->delivery()) : std::nullopt;
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

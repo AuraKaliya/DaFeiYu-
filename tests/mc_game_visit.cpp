@@ -41,7 +41,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool skip = argc == 4 && std::wstring_view(argv[3]) == L"skip";
         const bool tamper = argc == 4 && std::wstring_view(argv[3]) == L"tamper";
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
-        const bool game_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-game";
+        const bool lost_send = argc == 4 && std::wstring_view(argv[3]) == L"lost-send";
+        const bool lost_receipt = argc == 4 && std::wstring_view(argv[3]) == L"lost-receipt";
+        const bool game_answer = lost_send || lost_receipt || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
         const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
@@ -111,8 +113,13 @@ int wmain(int argc, wchar_t** argv) {
             try { application.authorize_companion(stale, q.id, q.revision, 2, 16); }
             catch (const std::invalid_argument&) { refused = true; }
             check(refused, "old game answer accepted");
+            until(application, [&] { return application.companion_delivery(id)->phase == app::DeliveryPhase::accepted; });
+            const auto delivered = *application.companion_delivery(id);
+            check(delivered.grant == grant.id && delivered.submissions == (lost_send ? 2u : 1u) &&
+                delivered.checks == (lost_send || lost_receipt ? 1u : 0u), "incorrect delivery recovery");
             std::cout << nlohmann::json{{"collection", grant.id}, {"question", grant.question}, {"quantity", grant.quantity},
-                {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}}.dump() << '\n';
+                {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}, {"accepted", true},
+                {"submissions", delivered.submissions}, {"checks", delivered.checks}}.dump() << '\n';
         }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");
         until(application, [&] { return application.companion_status()->closed; });
