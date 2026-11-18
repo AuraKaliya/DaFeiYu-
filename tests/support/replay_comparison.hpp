@@ -18,6 +18,14 @@ struct ReplayComparison {
     std::vector<std::string_view> behavior;
 };
 
+// 为独立执行分配跨进程可区分的诊断命名空间。
+inline std::string replay_namespace() {
+    std::random_device source;
+    std::string name = "offline-replay";
+    for (unsigned i = 0; i < 4; ++i) name += "-"+std::to_string(source());
+    return name;
+}
+
 // 从严格固定的材料取得实际执行报告，策略字段由实际运行版本独立证明。
 // 步骤：解析并校验场景 → 固定其余输入与原预期的摘要 → 在原执行器中测量。
 inline ReplayEvidence measure_material(std::string_view text, agent::RunVersionLabels version_labels) {
@@ -27,8 +35,7 @@ inline ReplayEvidence measure_material(std::string_view text, agent::RunVersionL
     value.erase("timeout_ms");
     auto input_digest = platform::sha256(value.dump());
     auto report = measure_replay(std::move(scenario),std::move(version_labels));
-    std::random_device source;
-    for (unsigned i = 0; i < 4; ++i) report.diagnostic.timeline.key.name_space += "-"+std::to_string(source());
+    report.diagnostic.timeline.key.name_space = replay_namespace();
     return {std::move(input_digest),std::move(report)};
 }
 

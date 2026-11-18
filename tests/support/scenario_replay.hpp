@@ -30,6 +30,9 @@ struct ReplayReport {
     agent::DiagnosticSnapshot diagnostic;
     std::vector<std::string_view> failed_assertions;
 };
+// 为固定模型记录独立可比较的公开配置，后端始终由测试显式传入。
+inline model::Config fixed_replay_model() { return {"offline-fixed",{},"scenario-script",{},1000}; }
+
 // 在全新正式 Session 中重跑显式固定场景，只允许内存结果夹具，失败不回退真实 Provider。
 // 步骤：核对场景及夹具声明 → 建立固定模型和工具 → 提交预设决定 → 保留实际行为和不匹配断言。
 inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels version_labels = {}) {
@@ -58,8 +61,7 @@ inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels 
         });
     }
     auto channel = std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(16,64),1,8);
-    const model::Config fixed_model{"offline-fixed",{},"scenario-script",{},1000};
-    Session session(fixed_model,channel,model.backend()); ConfirmationCaller caller; RunOptions options;
+    Session session(fixed_replay_model(),channel,model.backend()); ConfirmationCaller caller; RunOptions options;
     if (!ids.empty()) options.tools = catalog.snapshot(ids,true);
     options.policy = scenario.policy; options.timeout = scenario.timeout; options.now = model.clock();
     options.confirmation_caller = caller; options.confirmation_limit = 64;

@@ -6,6 +6,14 @@
 namespace dfy::tests {
 inline constexpr std::size_t evidence_limit = 2*1024*1024;
 
+// 从原时间线恢复效果顺序和最后一次上下文提交计数。
+inline void replay_read_facts(ReplayReport& report) {
+    const auto& trace = report.diagnostic.timeline;
+    for (const auto& node : trace.nodes) if (node.id.kind == agent::TraceNodeKind::tool) report.effects.push_back(node.effect.value());
+    for (const auto& fact : trace.delta.facts)
+        if (fact.kind == agent::TraceFactKind::history_committed) report.history_messages = fact.history_messages;
+}
+
 // 编码固定场景的无正文执行证据，复用严格诊断时间线格式。
 // 步骤：编码原运行值 → 增加案例摘要和预算内断言统计 → 核对总大小。
 inline std::string encode_evidence(const ReplayEvidence& evidence) {
@@ -51,9 +59,7 @@ inline ReplayEvidence decode_evidence(std::string_view text) {
             throw std::invalid_argument("evidence: invalid assertion");
         report.failed_assertions.push_back(*known);
     }
-    for (const auto& node : trace.nodes) if (node.id.kind == agent::TraceNodeKind::tool) report.effects.push_back(node.effect.value());
-    for (const auto& fact : trace.delta.facts)
-        if (fact.kind == agent::TraceFactKind::history_committed) report.history_messages = fact.history_messages;
+    replay_read_facts(report);
     return evidence;
 }
 }

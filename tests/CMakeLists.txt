@@ -1,3 +1,28 @@
+# 给独立采集程序提供实际构建版本，保留未声明的源码版本为未知。
+function(dfy_replay_labels target)
+  target_compile_definitions(${target} PRIVATE
+    "DFY_REPLAY_COMMIT=\"${DFY_APPLICATION_COMMIT}\""
+    "DFY_REPLAY_BUILD=\"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}-${CMAKE_GENERATOR_PLATFORM}-$<CONFIG>\"")
+endfunction()
+
+# 固定编译案例的完整源码和显式夹具作为前提，变化后重新计算材料摘要。
+# 步骤：登记输入依赖 → 统一换行后逐文件摘要 → 绑定原案例材料及构建版本。
+function(dfy_compiled_replay target)
+  set(material "")
+  foreach(input IN LISTS ARGN)
+    set(path "${CMAKE_CURRENT_SOURCE_DIR}/${input}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${path}")
+    file(READ "${path}" contents)
+    string(REPLACE "\r\n" "\n" contents "${contents}")
+    string(SHA256 digest "${contents}")
+    string(APPEND material "${digest}\n")
+  endforeach()
+  string(SHA256 digest "${material}")
+  target_link_libraries(${target} PRIVATE dfy_digest nlohmann_json::nlohmann_json)
+  target_compile_definitions(${target} PRIVATE "DFY_REPLAY_MATERIAL=\"${digest}\"")
+  dfy_replay_labels(${target})
+endfunction()
+
 # 只在 GUI 构建中验证来源与 Frame 代次，不启动浏览器。
 if(BUILD_GUI)
   add_executable(dfy_ui_scope_tests ui_frame_scope.cpp)
@@ -272,9 +297,7 @@ set_tests_properties(agent.replay_material PROPERTIES TIMEOUT 20)
 # 固定材料评测命令随测试构建，不进入产品分发。
 add_executable(dfy_replay_evaluation replay_evaluation.cpp)
 target_link_libraries(dfy_replay_evaluation PRIVATE dfy_agent dfy_digest dfy_build_options nlohmann_json::nlohmann_json)
-target_compile_definitions(dfy_replay_evaluation PRIVATE
-  "DFY_REPLAY_COMMIT=\"${DFY_APPLICATION_COMMIT}\""
-  "DFY_REPLAY_BUILD=\"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}-${CMAKE_GENERATOR_PLATFORM}-$<CONFIG>\"")
+dfy_replay_labels(dfy_replay_evaluation)
 set_target_properties(dfy_replay_evaluation PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/replay_evaluation.cpp")
 add_test(NAME agent.replay_evaluation COMMAND dfy_replay_evaluation --capture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
@@ -347,10 +370,12 @@ set_tests_properties(agent.native_observation_rebind PROPERTIES TIMEOUT 15)
 
 add_executable(dfy_session_observation_rebind_tests session_observation_rebind.cpp)
 target_link_libraries(dfy_session_observation_rebind_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_session_observation_rebind_tests session_observation_rebind.cpp support/scripted_model.hpp)
 set_target_properties(dfy_session_observation_rebind_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/session_observation_rebind.cpp")
 add_test(NAME agent.session_observation_rebind COMMAND dfy_session_observation_rebind_tests)
-set_tests_properties(agent.session_observation_rebind PROPERTIES TIMEOUT 15)
+add_test(NAME agent.replay_observation_rebind COMMAND dfy_session_observation_rebind_tests --capture observation_rebind)
+set_tests_properties(agent.session_observation_rebind agent.replay_observation_rebind PROPERTIES TIMEOUT 15)
 
 add_executable(dfy_action_observation_refresh_tests action_observation_refresh.cpp)
 target_link_libraries(dfy_action_observation_refresh_tests PRIVATE dfy_agent dfy_build_options)
