@@ -37,6 +37,8 @@ class Conversation {
     // 返回原会话身份供界面关联本地回执。
     runtime::DomainId id() const noexcept { return session_.id(); }
   private:
+    // 同线程应用宿主可读取原回合以裁定受控命令。
+    friend class Application;
     agent::Session& session_;
     std::shared_ptr<agent::TurnRequest> current_;
     std::optional<agent::TurnDiagnostics> last_;

@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "chat.hpp"
+#include <dafeiyu/tool_abi_v2.h>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -98,6 +99,64 @@ void read_only(const fs::path& package, const fs::path& root) {
     chat.request_exit();
     check(chat.done() && application.close_plugins() == plugins::ShutdownResult::closed,"application tool test did not close");
 }
+
+// 只读复制测试 DLL 的真实效果计数，返回前释放临时代码持有。
+std::uint32_t effects(plugins::PluginManager& manager) {
+    auto code = manager.instance("test.tools")->retain_code();
+    auto call = code.enter();
+    const auto count = reinterpret_cast<std::uint32_t (DFY_V2_CALL*)(std::uint32_t)>(call.symbol("dfy_tool_test_count"));
+    return count(1);
+}
+
+// 用原生非幂等工具验证应用确认的零动作、单次执行及原回执复用。
+// 步骤：接纳待审动作 → 检查实际效果仍为零 → 拒绝旧修订 → 提交并重复决定 → 核对最终作用次数。
+void confirmation(const fs::path& package, const fs::path& root, bool approve) {
+    using namespace model;
+    const auto run = workspace(root);
+    app::Application application({},run/"plugins",run/"user",Backend{
+        // 从固定模型返回候选，并核对应用授权后的配对事实。
+        // 步骤：为本轮范围提出一次动作 → 分别验证执行或拒绝 → 返回预设说明。
+        [approve](const Config&, const Request& request) {
+            const auto& last = request.messages.back();
+            if (last.role == Role::user) {
+                check(request.tools.size() == 1 && request.tools[0].name.ends_with("_increment"),"wrong write scope");
+                return Response{{Role::assistant,"",{{"write-1",request.tools[0].name,"{}"}}},FinishReason::tool_calls};
+            }
+            check(last.role == Role::tool && last.tool_call_id == "write-1" &&
+                last.content.find(approve ? "output:\n1" : "status=rejected") != std::string::npos,"decision lost the original tool result");
+            return Response{{Role::assistant,"decision recorded"}};
+        }});
+    auto& manager = application.plugins();
+    manager.install(package);
+    check(manager.load("test.tools") == 0,"confirmation fixture did not load");
+    const auto before = effects(manager);
+    application.submit_confirmed("test.tools/increment","change");
+    std::ostringstream output, errors;
+    app::ChatController chat(application.conversation(),output,errors);
+
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    auto values = application.confirmations();
+    while (values.empty() && std::chrono::steady_clock::now() < deadline) {
+        application.advance_plugins();
+        chat.advance();
+        values = application.confirmations();
+        std::this_thread::yield();
+    }
+    check(values.size() == 1 && effects(manager) == before && values[0].state == agent::ConfirmationState::waiting &&
+        values[0].target.arguments == "{}","application ran a state change before confirmation");
+    const auto& pending = values[0];
+    bool stale = false;
+    try { application.decide(pending.id,pending.revision+1,approve); }
+    catch (const std::invalid_argument&) { stale = true; }
+    check(stale,"application accepted an incorrect decision revision");
+
+    const auto receipt = application.decide(pending.id,pending.revision,approve);
+    check(receipt == application.decide(pending.id,pending.revision,approve) && effects(manager) == before &&
+        receipt.state == (approve ? agent::ConfirmationState::approved : agent::ConfirmationState::denied),
+        "decision replay changed the receipt or executed inline");
+    check(finish(application,chat).confirmation_requests == 1 && effects(manager) == before+(approve ? 1u : 0u) &&
+        errors.str().empty(),"approval or refusal applied an incorrect number of real effects");
+}
 }
 
 // 验证共享应用中的只读工具装配，所有模型响应都来自替身。
@@ -105,6 +164,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"tool fixture and test workspace required");
         read_only(argv[1],argv[2]);
+        confirmation(argv[1],argv[2],true);
+        confirmation(argv[1],argv[2],false);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

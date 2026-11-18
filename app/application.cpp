@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include <dafeiyu/model_client.hpp>
+#include <algorithm>
 
 namespace dfy::app {
 // 装配内置结构化 Provider，普通问答沿用同一后端和上下文。
@@ -14,9 +15,19 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       plugins_(packages,user_data,channel_), session_(std::move(config),channel_,std::move(backend)),
       conversation_(session_) {}
 
-// 从用户指定的已加载实例授予一个只读工具。
-// 步骤：核对会话及工具身份 → 准备原实例注册 → 校验只读范围并接纳 → 保留注册直到退出或撤销。
+// 为用户指明的一个只读工具接纳运行。
 agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id, const std::string& prompt) {
+    return submit_tool(tool_id,prompt,false);
+}
+
+// 由用户指明一个工具，写入必须经过具体调用的确认。
+agent::TurnDiagnostics Application::submit_confirmed(const std::string& tool_id, const std::string& prompt) {
+    return submit_tool(tool_id,prompt,true);
+}
+
+// 从用户指定的已加载实例授予一个工具。
+// 步骤：核对会话及工具身份 → 准备原实例注册 → 固定确认策略和范围 → 接纳并保留原注册。
+agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes) {
     if (conversation_.busy()) throw std::logic_error("session: wait for the current request to finish");
     const auto separator = tool_id.find('/');
     if (separator == std::string::npos || !separator || separator+1 == tool_id.size())
@@ -27,22 +38,44 @@ agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id,
     const auto catalog = std::make_shared<agent::ToolCatalog>(64);
     auto registration = std::make_unique<plugins::PluginTools>(instance,catalog);
     agent::RunOptions options;
-    options.tools = catalog->snapshot(std::span(&tool_id,1));
+    options.tools = catalog->snapshot(std::span(&tool_id,1),confirm_changes);
+    options.policy.confirm_changes = confirm_changes;
+    if (confirm_changes) options.confirmation_caller = caller_;
 
     const auto accepted = conversation_.submit(prompt,std::move(options));
     tool_registration_.emplace(ToolRegistration{accepted.turn,instance,std::move(registration)});
     return accepted;
 }
 
-// 归还本轮工具注册并推进插件自己的异步工作。
-// 步骤：核对原运行和实例是否仍有效 → 撤销不再使用的注册 → 推进插件管理器。
+// 从原活动回合读取确认值。
+std::vector<agent::ConfirmationSnapshot> Application::confirmations() const {
+    if (conversation_.current_) return conversation_.current_->confirmations();
+    return {};
+}
+
+// 由宿主固定审批对象，用户命令只提供请求、修订和决定。
+// 步骤：撤销失效实例 → 查找原请求 → 以请求身份标识决定并交给会话复核。
+agent::ConfirmationReceipt Application::decide(runtime::DomainId request, std::uint64_t revision, bool approve) {
+    collect_tool_registration();
+    const auto values = confirmations();
+    const auto found = std::find_if(values.begin(),values.end(),[request](const auto& value) { return value.id == request; });
+    if (found == values.end()) throw std::invalid_argument("confirmation: request unavailable");
+
+    return session_.decide(caller_,{request,request,revision,found->target,approve});
+}
+
+// 按原运行身份与实例寿命撤销已失效的目录授权。
+void Application::collect_tool_registration() noexcept {
+    if (!tool_registration_) return;
+    const auto status = conversation_.status();
+    const auto instance = tool_registration_->instance.lock();
+    if (!status || status->turn != tool_registration_->turn || status->exit != runtime::OperationState::pending ||
+        !instance || instance->phase() != plugins::InstancePhase::active) tool_registration_.reset();
+}
+
+// 清理失效的工具范围后推进插件的异步通知与收尾。
 runtime::RunResult Application::advance_plugins() {
-    if (tool_registration_) {
-        const auto status = conversation_.status();
-        const auto instance = tool_registration_->instance.lock();
-        if (!status || status->turn != tool_registration_->turn || status->exit != runtime::OperationState::pending ||
-            !instance || instance->phase() != plugins::InstancePhase::active) tool_registration_.reset();
-    }
+    collect_tool_registration();
     return plugins_.advance();
 }
 
