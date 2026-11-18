@@ -2,9 +2,9 @@
 
 最小 Agent 基础阶段已完成，采用 C++20、CMake、VS2022 和 Windows x64。开发指导中的 R01～R16 已形成独立提交及验收记录，供统一审查。
 
-下述 R01～R16 和 U01 的全量数字属于各自历史基线；本轮新增工具循环、确认、追踪与观察基础只完成必要阶段检查，尚未做最终全量验收。最新完成范围见文末进度入口。
+当前终端已能接收用户明确委托的状态面板任务，经首读、人工确认、执行和读回给出状态证据。下述 R01～R16 和 U01 的全量数字属于各自历史基线，最新能力的阶段验收见 [11:00 检查点](docs/agent-progress-2026-11-18-1100.md)。
 
-随后已完成对这 35 个提交的[专项审查及修复](docs/review-2026-11-14.md)，修复 5 处可复现问题，并再次通过 Debug／Release 各 79／79 全量及 20／20 跨配置检查。[当前架构图](docs/architecture.md)按实际装配绘制，区分正式问答链路与可选基础接口。
+基础阶段曾完成 [35 个提交的专项审查及修复](docs/review-2026-11-14.md)，修复 5 处可复现问题，并再次通过 Debug／Release 各 79／79 全量及 20／20 跨配置检查。[项目架构](docs/architecture.md)同时提供当前装配及历史基线入口。
 
 最终从全新目录构建 Debug、Release，两种配置的完整 CTest 均为 **79／79**；另通过 **20／20** 项 Debug 宿主调用 Release DLL 的检查。DeepSeek 与 Qwen 均完成真实单次调用，以及空插件、加载观察包、卸载后的多轮上下文验收。详情见 [最终验收记录](docs/final-acceptance-2026-11-14.md) 和 [开发指导](docs/foundation-development-guide.md)。
 
@@ -27,7 +27,7 @@ cmake --build --preset windows-release
 .\build\rebuild\windows\bin\Release\dafeiyu.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
 ```
 
-支持 `--check-config FILE`、`--complete CONFIG PROMPT_FILE` 和 `--help`。配置检查不联网；单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
+支持 `--check-config FILE`、`--complete CONFIG PROMPT_FILE`、`--review-diagnostic FILE` 和 `--help`。配置检查及诊断回顾可以离线执行。单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
 
 生成独立运行目录：
 
@@ -53,6 +53,20 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 | `/plugins load <id>` | 明确创建并启动实例 |
 | `/plugins unload <id> [--linked]` | 卸载，或明确选择先停止依赖方 |
 | `/plugins remove <id>` | 实际卸载后移除，保留用户设置，可重试清理残留 |
+| `/run`、`/run-confirmed` | 为本轮明确授予一个已加载工具，变更候选需要确认 |
+| `/task`、`/task-status` | 接纳读、改、读任务，或按进程内请求号查原运行 |
+| `/confirmations`、`/approve`、`/deny` | 查看原候选并提交决定 |
+| `/verification`、`/diagnostic export` | 查看宿主读回判定，或导出有界无正文诊断 |
+
+安装并加载可选的状态面板，从终端提交一次切换任务。
+
+```text
+/plugins install "examples/plugins/example.status"
+/plugins load example.status
+/task example.status/read example.status/set_focus focus "把状态面板切换到专注模式" --request 1
+```
+
+首读完成后，输入 `/confirmations` 查看待确认动作，按显示的请求号和修订批准或拒绝。用 `/verification` 查询读回判定。示例状态随当前插件实例存活。完整操作见 [运行说明](docs/run-guide.md)。
 
 模型等待期间仍可使用本地命令，新的普通问答明确报告忙碌。正常输入 EOF 等待已接纳回答完成；明确退出请求取消当前问答。取消决定与后台实际退出分开，迟到回答不能恢复已取消结果。模型默认不自动重发失败请求。
 
@@ -74,7 +88,7 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 
 | 职责 | 入口 |
 |---|---|
-| App：启动、终端及管理命令 | [main.cpp](app/main.cpp)、[chat.cpp](app/chat.cpp)、[plugin_commands.cpp](app/plugin_commands.cpp) |
+| App：共享服务、终端及原生插件管理 | [Application](app/application.hpp)、[Conversation](app/conversation.hpp)、[终端命令](app/application_commands.cpp)、[插件命令](app/plugin_commands.cpp) |
 | Agent：唯一正式会话及历史提交 | [Session](agent/include/dafeiyu/session.hpp)、[实现](agent/session.cpp) |
 | Model：异步接纳及供应商协议 | [AsyncClient](model/include/dafeiyu/async_model.hpp)、[完整文本调用](model/client.cpp) |
 | Events：不可变交付与处理 | [广播](events/include/dafeiyu/broadcast_channel.hpp)、[处理](events/include/dafeiyu/processing.hpp)、[控制边界](events/include/dafeiyu/hooks.hpp) |
@@ -98,10 +112,14 @@ cmake --build build/rebuild/windows-tests --config Release
 ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 ```
 
+构建 Release 程序及示例后，可在 PowerShell 7 中运行独立安装目录检查。
+
+```powershell
+.\scripts\verify-agent-package.ps1 -Build .\build\rebuild\windows-tests
+```
+
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-工具循环、受控自动规划与“观察＋行动”顺序见 [主计划](docs/agent-capability-development-plan.md)。正式 Session 已支持规划、确认、反馈及运行内观察替换，保留原预算和效果；本地诊断文件与公开版本查询已有接口。观察规则仍只读，默认 CLI／GUI 尚未装配新控制和导出命令，原文本入口保留。范围见 [23:00 检查点](docs/agent-progress-2026-11-17-2300.md)，证据见 [开发记录](docs/agent-development-log.md)。
-
-计划包含 [统一策略、追踪与离线回放](docs/agent-cross-cutting-plan.md)。本轮截至 2026-11-17 北京时间 23:00，之后等待继续。下一步补明确自动观察变更规则，再推进 E03 同案例行为比较及 A09；公开版本差异不等于行为比较。本轮无新分发包，所有测试继续不调用真实模型。
+主线通过 [能力计划](docs/agent-capability-development-plan.md) 管理，统一策略、追踪和离线回放见 [横向计划](docs/agent-cross-cutting-plan.md)。2026-11-18 北京时间 11:00 已交付共享服务、首个终端任务和 SDK 样例，完成固定场景离线比较和独立 Release 目录验证。观察触发当前为只读。后续补齐 E03 场景证据并复核自动变更边界，之后进行 A09c 离线最终验收。逐步验证见 [开发记录](docs/agent-development-log.md)。
 
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。
