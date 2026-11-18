@@ -192,6 +192,47 @@ std::string question_request(std::string_view id, std::string_view key, std::str
     return value.dump();
 }
 
+// 核对本次世界、玩家、数量与会合区后生成有界请求。
+std::string delivery_request(bool admit, std::string_view id, std::string_view key, std::string_view arguments) {
+    auto grant = parse(arguments);
+    const auto decimal = [&](const char* field) {
+        const auto& text = grant.at(field).get_ref<const std::string&>();
+        return !text.empty() && text.size() <= 20 && text[0] != '0' && text.find_first_not_of("0123456789") == text.npos;
+    };
+    if (key.size() != 64 || grant.size() != 10 || !decimal("question") || !decimal("grant") || !decimal("command") ||
+        !uuid(grant.at("generation")) || !uuid(grant.at("owner")) || grant.at("material") != "minecraft:cobblestone" ||
+        !valid_channel(grant.at("returnPlace").get_ref<const std::string&>()) ||
+        !grant.at("quantity").is_number_unsigned() || grant.at("quantity") == 0 || grant.at("quantity") > 64 ||
+        !grant.at("order").is_number_unsigned() || grant.at("order") == 0 || grant.at("order") > 9007199254740991ULL ||
+        (grant.at("via") != "game" && grant.at("via") != "management")) throw std::invalid_argument("MC protocol: invalid collection grant");
+    Json frame{{"version", 1}, {"id", id}, {"key", key}, {"method", admit ? "collection.admit" : "collection.receipt"}};
+    if (admit) frame["grant"] = std::move(grant);
+    else for (auto name : {"generation", "question", "grant"}) frame[name] = grant.at(name);
+    return frame.dump();
+}
+
+// 核对送达的是原范围，查询空值不会生成新的接纳凭据。
+std::string delivery_reply(bool admit, std::string_view wire, std::string_view id, std::string_view arguments) {
+    const auto reply = parse(wire);
+    if (reply.size() != 3 || !reply.at("version").is_number_unsigned() || reply.at("version") != 1 ||
+        reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong collection reply");
+    const auto& receipt = reply.at("delivery");
+    if (receipt.is_null()) {
+        if (admit) throw std::invalid_argument("MC protocol: missing admission");
+        return "null";
+    }
+    auto expected = parse(arguments);
+    if (receipt.at("phase") == "unreceived") {
+        if (admit || receipt.size() != 4) throw std::invalid_argument("MC protocol: wrong absence receipt");
+        for (auto name : {"generation", "question", "grant"}) if (receipt.at(name) != expected.at(name))
+            throw std::invalid_argument("MC protocol: wrong absence identity");
+    } else {
+        expected["phase"] = "accepted";
+        if (receipt != expected) throw std::invalid_argument("MC protocol: changed collection scope");
+    }
+    return receipt.dump();
+}
+
 // 匹配具体发送回执，记录的是游戏角色已发出，不推断玩家已阅读。
 std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
     const auto reply = parse(wire), args = parse(arguments);

@@ -25,4 +25,8 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
 std::string question_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 校验原玩家、世界、查看委托与问题发送回执。
 std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments);
+// 验证完整委托并生成接单或只读回查帧。
+std::string delivery_request(bool admit, std::string_view id, std::string_view key, std::string_view arguments);
+// 核对原委托的接单回执，明确区分不可用、尚未接收和已接收。
+std::string delivery_reply(bool admit, std::string_view wire, std::string_view id, std::string_view arguments);
 }

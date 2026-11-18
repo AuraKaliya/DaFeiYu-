@@ -20,6 +20,12 @@ function readReply(input, world, inbox, key, actions) {
   if (request.method === 'chat.read' && inbox && Object.keys(request).length === 6 &&
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0)
     return { version: 1, id: request.id, inbox: inbox.read(request.generation, request.after) };
+  if (actions?.deliveries && request.method === 'collection.admit' && Object.keys(request).length === 5 && request.grant &&
+    typeof request.grant === 'object' && Object.keys(request.grant).length === 10)
+    return { version: 1, id: request.id, delivery: actions.deliveries.admit(request.grant) };
+  if (actions?.deliveries && request.method === 'collection.receipt' && Object.keys(request).length === 7 &&
+    typeof request.generation === 'string' && typeof request.question === 'string' && typeof request.grant === 'string')
+    return { version: 1, id: request.id, delivery: actions.deliveries.read(request.generation, request.question, request.grant) };
   if (actions && typeof request.generation === 'string' && Number.isSafeInteger(request.order) && request.order > 0) {
     if (request.method === 'question.open' && Object.keys(request).length === 7 && typeof request.question === 'string')
       return { version: 1, id: request.id, question: actions.ask(request.generation, request.order, request.question) };
