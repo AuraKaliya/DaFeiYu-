@@ -6,7 +6,7 @@
 namespace dfy::app {
 // 固定宿主会话与输出责任，不在构造阶段发起请求。
 ChatController::ChatController(agent::AsyncSession& session, std::ostream& output, std::ostream& errors, LocalCommand command)
-    : session_(session), output_(output), errors_(errors), command_(std::move(command)) {}
+    : conversation_(session), output_(output), errors_(errors), command_(std::move(command)) {}
 // 管理命令不发送给模型，普通输入只在会话实际空闲时接纳。
 // 步骤：忽略结束和空白 → 处理退出、取消、清空及诊断 → 转交本地管理 → 接受问答或独立报告拒绝。
 void ChatController::line(std::string text) {
@@ -16,58 +16,52 @@ void ChatController::line(std::string text) {
     try {
         if (text == "/exit") { request_exit(); return; }
         if (text == "/status") {
-            if (current_) write_turn_status(output_,current_->diagnostics());
-            else if (last_) write_turn_status(output_,*last_);
+            if (const auto status = conversation_.status()) write_turn_status(output_,*status);
             else output_ << "No accepted question in this session.\n";
             return;
         }
         if (text == "/cancel") {
-            if (current_ && current_->operation()->state() == runtime::OperationState::pending) current_->request_cancel(runtime::CancelReason::user);
-            else output_ << "No active request to cancel.\n";
+            if (!conversation_.cancel()) output_ << "No active request to cancel.\n";
             return;
         }
         if (text == "/clear") {
-            const auto receipt = session_.clear(); output_ << "Context cleared.\n";
-            write_observation_warning(errors_,session_.id(),0,"session_cleared",receipt); return;
+            const auto receipt = conversation_.clear(); output_ << "Context cleared.\n";
+            write_observation_warning(errors_,conversation_.id(),0,"session_cleared",receipt); return;
         }
         if (text.starts_with('/')) {
             if (!command_ || !command_(text)) errors_ << "Unknown command. Use /status, /clear, /cancel or /exit.\n";
             return;
         }
-        if (current_) throw std::logic_error("session: wait for the current request to finish");
-        current_ = session_.begin(text); reported_ = false; finished_notification_reported_ = false;
-        write_observation_warning(errors_,session_.id(),current_->turn(),"turn_started",*current_->notifications().started);
+        const auto status = conversation_.submit(text);
+        write_observation_warning(errors_,status.session,status.turn,"turn_started",*status.notifications.started);
     } catch (const std::exception& error) { errors_ << error.what() << '\n'; }
     catch (...) { errors_ << "Command failed.\n"; }
 }
-// 输出业务结果后继续跟踪后台退出，正常 EOF 不取消尚未完成的回答。
-// 步骤：推进会话 → 独立报告终态通知失败 → 输出唯一业务结果 → 保存最近快照并归还退出回合 → 按 EOF 状态关闭空闲会话。
+// 展示应用会话交付的唯一结果，正常 EOF 等待实际退出后关闭。
+// 步骤：推进应用会话 → 同步终态通知和业务结果 → 按 EOF 状态关闭空闲会话。
 void ChatController::advance() {
-    session_.advance();
-    if (current_ && !finished_notification_reported_ && current_->notifications().finished) {
-        finished_notification_reported_ = true;
-        const auto state = current_->operation()->state();
-        const auto kind = state == runtime::OperationState::succeeded ? "turn_completed" :
-            state == runtime::OperationState::cancelled ? "turn_cancelled" : "turn_failed";
-        write_observation_warning(errors_,session_.id(),current_->turn(),kind,*current_->notifications().finished);
-    }
-    if (current_ && !reported_ && current_->operation()->state() != runtime::OperationState::pending) {
-        reported_ = true;
-        if (current_->operation()->state() == runtime::OperationState::cancelled) output_ << "Request cancelled. Waiting for the current call to finish.\n";
+    if (const auto completed = conversation_.advance()) {
+        const auto& status = completed->status;
+        if (status.notifications.finished) {
+            const auto kind = status.result == runtime::OperationState::succeeded ? "turn_completed" :
+                status.result == runtime::OperationState::cancelled ? "turn_cancelled" : "turn_failed";
+            write_observation_warning(errors_,status.session,status.turn,kind,*status.notifications.finished);
+        }
+        if (status.result == runtime::OperationState::cancelled) output_ << "Request cancelled. Waiting for the current call to finish.\n";
         else {
-            try { output_ << current_->answer() << '\n'; }
+            try {
+                if (completed->error) std::rethrow_exception(completed->error);
+                output_ << completed->answer << '\n';
+            }
             catch (const std::exception& error) { errors_ << error.what() << '\n'; }
             catch (...) { errors_ << "Model request failed.\n"; }
         }
         output_ << std::flush; errors_ << std::flush;
     }
-    if (current_ && current_->exit()->state() != runtime::OperationState::pending) {
-        last_ = current_->diagnostics(); current_.reset();
-    }
-    if (ending_ && !session_.busy()) session_.close();
+    if (ending_ && !conversation_.busy()) conversation_.close();
 }
 // 明确退出请求停止新问答并协作取消当前调用，完成确认仍由 advance 处理。
-void ChatController::request_exit() { ending_ = true; session_.close(); }
+void ChatController::request_exit() { ending_ = true; conversation_.close(); }
 // 轮询适配器和宿主工作，不在模型请求或终端读调用上阻塞事件推进。
 // 步骤：展示操作提示 → 交替推进宿主与会话 → 分派有界输入 → 关闭输入并等待实际退出 → 返回输出状态。
 int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::ostream& output, std::ostream& errors,

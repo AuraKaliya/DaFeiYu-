@@ -1,3 +1,10 @@
+# 定义供终端和桌面入口复用的应用会话服务。
+add_library(dfy_application STATIC conversation.cpp conversation.hpp)
+target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(dfy_application PUBLIC dfy_agent PRIVATE dfy_build_options)
+set_target_properties(dfy_application PROPERTIES FOLDER "App")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/conversation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/conversation.hpp")
+
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
 add_library(dfy_terminal STATIC chat.cpp chat.hpp async_chat.hpp)
 target_sources(dfy_terminal PRIVATE diagnostics.cpp diagnostics.hpp)
@@ -8,7 +15,7 @@ target_sources(dfy_terminal PRIVATE plugin_commands.cpp plugin_commands.hpp)
 target_link_libraries(dfy_terminal PUBLIC dfy_plugins)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.hpp")
 target_include_directories(dfy_terminal PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(dfy_terminal PUBLIC dfy_agent dfy_input PRIVATE dfy_build_options)
+target_link_libraries(dfy_terminal PUBLIC dfy_application dfy_input PRIVATE dfy_build_options)
 set_target_properties(dfy_terminal PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/chat.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/chat.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/async_chat.hpp")
 

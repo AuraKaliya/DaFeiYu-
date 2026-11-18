@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "conversation.hpp"
 #include <dafeiyu/async_session.hpp>
 #include <dafeiyu/line_input.hpp>
 #include <functional>
@@ -23,16 +24,13 @@ class ChatController {
     // 判断是否停止接收后续输入。
     bool closing() const noexcept { return ending_; }
     // 判断会话及当前回合已实际结束。
-    bool done() const noexcept { return ending_ && session_.closed() && !current_; }
+    bool done() const noexcept { return ending_ && conversation_.closed(); }
   private:
-    agent::AsyncSession& session_;
+    Conversation conversation_;
     std::ostream& output_;
     std::ostream& errors_;
     LocalCommand command_;
-    std::shared_ptr<agent::TurnRequest> current_;
-    std::optional<agent::TurnDiagnostics> last_;
-    bool reported_ = false, ending_ = false;
-    bool finished_notification_reported_ = false;
+    bool ending_ = false;
 };
 // 轮询输入与会话，持续推进宿主事件；输入关闭和业务结果均不能提前退出资源回收。
 int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::ostream& output, std::ostream& errors,
