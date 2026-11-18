@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes } = require('node:crypto');
 const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,7 +15,8 @@ async function main() {
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
   fs.mkdirSync(config, { recursive: true });
   const channel = randomUUID();
-  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel }));
+  const key = randomBytes(32).toString('hex');
+  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -24,7 +25,16 @@ async function main() {
     read() { return ++reads === 1 ? state : null; },
     // 替身没有待释放的游戏资源。
     close() {},
-  });
+  }, {
+    // 返回特定来源的固定玩家原话，供私有收件读口验收。
+    read(generation, after) {
+      if (generation !== state.generation || reads !== 1) return null;
+      return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest: 1,
+        gap: false, more: false, messages: after === 0 ? [{ sequence: 1, text: '去山脚看看' }] : [] };
+    },
+    // 受控收件源不保留外部连接。
+    close() {},
+  }, key);
   try {
     const child = spawn(exe, [packagePath, root], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');

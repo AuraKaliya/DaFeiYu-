@@ -10,7 +10,9 @@
 struct dfy_v2_instance {
     std::uint64_t owner = 0, sequence = 0;
     bool running = false, pending = false, ready = false, success = false, exited = false;
-    std::string channel, id, output;
+    dfy::mc::BridgeConfig config;
+    std::string id, output, wire, arguments;
+    bool inbox = false;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
 };
 
@@ -58,7 +60,7 @@ dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_v
     if (free == slots.end()) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
     try {
         auto instance = std::make_unique<dfy_v2_instance>();
-        instance->channel = dfy::mc::configured_channel(text(config));
+        instance->config = dfy::mc::configured_bridge(text(config));
         auto previous = serial.load();
         do {
             if (previous == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
@@ -96,10 +98,10 @@ void DFY_V2_CALL destroy(dfy_v2_instance* raw) noexcept {
     *std::find(slots.begin(), slots.end(), raw) = nullptr;
     delete raw;
 }
-// 活动插件公开一个只读工具。
+// 活动插件按配对状态公开世界与私有收件读口。
 dfy_v2_status DFY_V2_CALL count(dfy_v2_instance* raw, uint32_t* value, dfy_v2_error* error) noexcept {
     if (!value) return report(DFY_V2_INVALID_ARGUMENT, error);
-    *value = owned(raw) && raw->running ? 1 : 0;
+    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 2u) : 0u;
     return report(*value ? DFY_V2_OK : DFY_V2_INVALID_CONTEXT, error);
 }
 // 返回世界状态的无参契约，工具描述与连接寿命无关。
@@ -108,9 +110,13 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     if (out->struct_size != sizeof(*out)) { out->struct_size = 0; return report(DFY_V2_ABI_MISMATCH, error); }
     *out = {};
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
-    if (index != 0) return report(DFY_V2_NOT_FOUND, error);
-    *out = {sizeof(*out), 1, 0, 0, view("world"), view("Read the current companion world and position."),
-        view(R"({"type":"object","properties":{},"additionalProperties":false})")};
+    if (!index) {
+        *out = {sizeof(*out), 1, 0, 0, view("world"), view("Read the current companion world and position."),
+            view(R"({"type":"object","properties":{},"additionalProperties":false})")};
+    } else if (index == 1 && !raw->config.key.empty()) {
+        *out = {sizeof(*out), 1, 0, 0, view("inbox"), view("Read messages from the bound player."),
+            view(R"({"type":"object","properties":{"generation":{"type":"string"},"after":{"type":"integer"}},"required":["generation","after"],"additionalProperties":false})")};
+    } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
 // 接纳具体运行的世界查询，此阶段不打开连接或执行游戏操作。
@@ -120,15 +126,21 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (!ticket) return report(DFY_V2_INVALID_ARGUMENT, error);
     *ticket = {};
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
-    if (text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
+    const bool inbox = text(name) == "inbox" && !raw->config.key.empty();
+    if (!inbox && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
-        text(call->call_id).empty() || call->call_id.length > 128 || !empty_args(text(call->arguments)))
+        text(call->call_id).empty() || call->call_id.length > 128 || (!inbox && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
     if (raw->pending) return report(DFY_V2_BUSY, error);
     if (raw->sequence == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
-    try { raw->id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1); }
-    catch (...) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
+    try {
+        raw->id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
+        raw->arguments = text(call->arguments);
+        raw->wire = inbox ? dfy::mc::inbox_request(raw->id, raw->config.key, raw->arguments) : dfy::mc::world_request(raw->id);
+    } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
+    catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
+    raw->inbox = inbox;
     raw->output.clear();
     raw->pending = true;
     raw->ready = raw->success = raw->exited = false;
@@ -148,9 +160,9 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         raw->exited = true;
     } else {
         try {
-            if (!raw->pipe) raw->pipe = std::make_unique<dfy::mc::PipeExchange>(raw->channel, dfy::mc::world_request(raw->id));
+            if (!raw->pipe) raw->pipe = std::make_unique<dfy::mc::PipeExchange>(raw->config.channel, raw->wire);
             if (auto reply = raw->pipe->poll()) {
-                raw->output = dfy::mc::world_reply(*reply, raw->id);
+                raw->output = raw->inbox ? dfy::mc::inbox_reply(*reply, raw->id, raw->arguments) : dfy::mc::world_reply(*reply, raw->id);
                 raw->success = raw->ready = true;
             }
         } catch (...) { raw->ready = true; }

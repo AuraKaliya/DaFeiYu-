@@ -34,15 +34,22 @@ void verify(const std::filesystem::path& package, const std::filesystem::path& r
     const auto offer = plugins::companion_offer(*manager.instance(manifest.id), *catalog);
     check(offer && offer->state_tool == "mc.companion/world" && offer->state_topic == "world" &&
         offer->generation == manager.instance(manifest.id)->generation(), "MC role not registered by active instance");
-    const std::array<std::string, 1> allowed{"mc.companion/world"};
+    const std::array<std::string, 2> allowed{"mc.companion/world", "mc.companion/inbox"};
     const auto scope = catalog->snapshot(allowed, false);
     const auto definitions = scope.definitions();
-    check(definitions.size() == 1, "MC world registration missing");
+    check(definitions.size() == 2, "MC world or inbox registration missing");
     const agent::RunId run{runtime::next_domain(), 1};
     agent::ToolExecutor executor(run, scope);
 
-    for (std::uint64_t step = 1; step <= 2; ++step) {
-        const auto work = executor.submit({{run, step}, 1}, {std::to_string(step), definitions.front().name, "{}"});
+    std::string generation;
+    for (std::uint64_t step = 1; step <= 3; ++step) {
+        const bool inbox = step == 2;
+        const auto member = std::find_if(definitions.begin(), definitions.end(), [&](const auto& tool) {
+            return tool.name.ends_with(inbox ? "_inbox" : "_world");
+        });
+        check(member != definitions.end(), "missing registered method");
+        const auto args = inbox ? nlohmann::json{{"generation", generation}, {"after", 0}}.dump() : "{}";
+        const auto work = executor.submit({{run, step}, 1}, {std::to_string(step), member->name, args});
         until(executor, [&] { return work->operation()->state() != OperationState::pending; });
         check(work->operation()->state() == OperationState::succeeded && work->exit()->state() == OperationState::pending &&
             manager.unload(manifest.id) == plugins::ShutdownResult::in_use, "MC result or busy lifetime incorrect");
@@ -50,12 +57,15 @@ void verify(const std::filesystem::path& package, const std::filesystem::path& r
         const auto outcome = work->outcome();
         check(outcome.effect == agent::ToolEffect::not_applied, "read changed game");
         const auto value = nlohmann::json::parse(outcome.output);
-        if (step == 1) check(value.at("dimension") == "overworld" && value.at("cobblestone") == 5, "wrong MC readback");
+        if (step == 1) {
+            check(value.at("dimension") == "overworld" && value.at("cobblestone") == 5, "wrong MC readback");
+            generation = value.at("generation").get<std::string>();
+        } else if (inbox) check(value.at("messages").at(0).at("text") == "去山脚看看", "wrong owner message");
         else check(value.is_null(), "revoked world reused");
     }
     registration.revoke();
     bool refused = false;
-    try { static_cast<void>(executor.submit({{run, 3}, 1}, {"3", definitions.front().name, "{}"})); }
+    try { static_cast<void>(executor.submit({{run, 4}, 1}, {"4", definitions.front().name, "{}"})); }
     catch (const std::invalid_argument&) { refused = true; }
     check(refused && manager.unload(manifest.id) == plugins::ShutdownResult::closed &&
         manager.close(), "revoked MC tool admitted or unload failed");
