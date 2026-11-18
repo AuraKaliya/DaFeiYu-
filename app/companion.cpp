@@ -46,7 +46,7 @@ void CompanionSession::advance() {
     inbox_.advance(*catalog_, clock_);
     questions_.advance();
     delivery_.advance(questions_.grant(), address_, *catalog_, admit_tool_, receipt_tool_, clock_);
-    mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, clock_);
+    mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, return_tool_, clock_);
     if (!stopping_ && inbox_.status().enabled && !reader_.state().pending && clock_() >= next_refresh_) {
         refresh();
         next_refresh_ = clock_() + std::chrono::seconds(1);
@@ -181,6 +181,7 @@ void CompanionSession::listen() {
     admit_tool_ = plugins::companion_route(*instance, *catalog_, "collect.admit", true).value_or("");
     receipt_tool_ = plugins::companion_route(*instance, *catalog_, "collect.receipt", false).value_or("");
     mine_tool_ = plugins::companion_route(*instance, *catalog_, "collect.mine", true).value_or("");
+    return_tool_ = plugins::companion_route(*instance, *catalog_, "collect.return", true).value_or("");
     visit_tool_ = *visit;
     inbox_.enable(*inbox);
 }

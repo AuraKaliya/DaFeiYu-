@@ -17,3 +17,7 @@
 构建目标 `dfy_mc_companion` 会在对应配置下生成 `mc.companion` 包目录。使用原终端的 `/plugins install "<包目录>"`、`/plugins load mc.companion` 显式装载，或由共享应用服务接入。普通模型问答保持独立。定向验收见 [MC 探针](../../tests/mc-companion/README.md)。
 
 在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`，再加载包。启动游戏适配器后，在终端输入 `/companion open mc.companion`。等 `/companion status` 显示 `listening`，绑定的玩家即可在游戏里发出“去山脚看看”。从收件开启时已有的聊天水位之后开始接纳，旧聊天不会自动补作委托。`/companion status` 可查看实际验收状态，`/companion stop 会话号` 向指定原会话请求停止。
+
+要使用采集返程，另配置本世界的 `riverside` 会合地标。当游戏角色私聊询问时可回复“采 16 块带回来”，也可在受信终端用 `/companion approve 会话号 问题号 修订 请求号 数量` 成立同一委托。包按原消息绑定接单，角色使用背包中的合适镐，在原地标附近只挖看得见、够得着的圆石，按授权上限执行并回会合区。当前接入支持明确数量 1～64。
+
+对于本地可控服务器，可在**适配器**配置中加 `observer`，其 `directory` 是只读观察端输出目录的绝对路径，`world` 是该服务器世界 UUID，`dimension` 是对应游戏维度。观察记录只用于判断实际拾取与带回。未配置或证据断档时仍可移动、采集，管理中心或终端只能据实展示已知库存和归属范围。查看、采掘和返程的验收分开保存。[本地验收说明](../../tests/mc-companion/README.md)

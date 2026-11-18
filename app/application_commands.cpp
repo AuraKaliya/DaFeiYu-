@@ -115,8 +115,20 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             output << "Question " << question->id << " revision " << question->revision << ": " << question->text << '\n';
         if (const auto grant = app.companion_collection(status->session))
             output << "Collection " << grant->id << " authorized: " << grant->quantity << " " << grant->material << ".\n";
-        if (const auto mined = app.companion_mining(status->session); mined && mined->grant)
+        if (const auto mined = app.companion_mining(status->session); mined && mined->grant) {
             output << "Self-collected range " << mined->lower << ".." << mined->upper << ", current block " << mined->index << ".\n";
+            const auto& home = mined->home;
+            if (home.phase == ReturnPhase::requested) output << "Return requested; awaiting arrival.\n";
+            else if (home.phase == ReturnPhase::failed) output << "Return not verified.\n";
+            else if (home.phase != ReturnPhase::idle) {
+                if (home.evidence.empty()) output << "Arrival unconfirmed.\n";
+                else {
+                    output << "At meeting point with " << home.stock << " total. ";
+                    if (home.lower && home.upper) output << "Self-collected carried " << *home.lower << ".." << *home.upper << ".\n";
+                    else output << "Carried origin unverified.\n";
+                }
+            }
+        }
     } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }

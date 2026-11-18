@@ -43,7 +43,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
         const bool lost_send = argc == 4 && std::wstring_view(argv[3]) == L"lost-send";
         const bool lost_receipt = argc == 4 && std::wstring_view(argv[3]) == L"lost-receipt";
-        const bool complete = argc == 4 && std::wstring_view(argv[3]) == L"collect-16";
+        const bool back = argc == 4 && (std::wstring_view(argv[3]) == L"return-16" || std::wstring_view(argv[3]) == L"return-14");
+        const bool loss = argc == 4 && std::wstring_view(argv[3]) == L"return-14";
+        const bool complete = back || (argc == 4 && std::wstring_view(argv[3]) == L"collect-16");
         const bool pickup_one = complete || (argc == 4 && std::wstring_view(argv[3]) == L"pickup-one");
         const bool mine_one = pickup_one || (argc == 4 && std::wstring_view(argv[3]) == L"mine-one");
         const bool game_answer = lost_send || lost_receipt || mine_one || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
@@ -142,6 +144,20 @@ int wmain(int argc, wchar_t** argv) {
                 else check(proof.is_null(), "missing observer credited inventory");
                 std::cout << nlohmann::json{{"index", mined.index}, {"lower", mined.lower}, {"upper", mined.upper},
                     {"sources", mined.pickup_sources}}.dump() << '\n';
+                if (back) {
+                    check(mined.home.phase == app::ReturnPhase::idle, "collected credited before return");
+                    until(application, [&] { return application.companion_mining(id)->home.phase != app::ReturnPhase::idle; });
+                    check(application.companion_mining(id)->home.phase == app::ReturnPhase::requested, "missing return admission");
+                    until(application, [&] { return application.companion_mining(id)->home.phase != app::ReturnPhase::requested; });
+                    const auto home = application.companion_mining(id)->home;
+                    std::cout << home.evidence << std::endl;
+                    check(home.phase == (loss ? app::ReturnPhase::shortfall : app::ReturnPhase::delivered) &&
+                        home.lower == (loss ? 14u : 16u) && home.upper == home.lower && home.stock == (loss ? 14u : 21u),
+                        "actual returned custody incorrect");
+                    app::application_command(application, "/companion status", terminal, std::cerr);
+                    check(terminal.str().find(loss ? "Self-collected carried 14..14" : "Self-collected carried 16..16") != std::string::npos,
+                        "terminal lost actual carried quantity");
+                }
             }
         }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");

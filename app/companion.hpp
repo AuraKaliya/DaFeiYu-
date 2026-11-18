@@ -99,7 +99,7 @@ class CompanionSession {
     CompanionQuestions questions_;
     std::string admit_tool_, receipt_tool_;
     CompanionDelivery delivery_;
-    std::string mine_tool_;
+    std::string mine_tool_, return_tool_;
     CompanionMining mining_;
     std::optional<CompanionVisit> visit_;
     std::shared_ptr<agent::TurnRequest> visit_work_;
