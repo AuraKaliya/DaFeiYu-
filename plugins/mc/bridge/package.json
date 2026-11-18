@@ -5,6 +5,7 @@
   "description": "大肥鱼独立游戏角色的 Minecraft 协议适配",
   "engines": { "node": ">=22" },
   "dependencies": {
-    "mineflayer": "4.39.0"
+    "mineflayer": "4.39.0",
+    "mineflayer-pathfinder": "2.4.5"
   }
 }

@@ -9,22 +9,29 @@ function pipeName(channel) {
 }
 
 // 处理一份有界状态查询，编号只用于关联，不承担授权含义。
-function readReply(input, world, inbox, key) {
+function readReply(input, world, inbox, key, actions) {
   const request = JSON.parse(input);
   if (!request || request.version !== 1 || typeof request.id !== 'string' ||
     !/^[0-9a-zA-Z.-]{1,96}$/.test(request.id)) throw new Error('invalid MC request');
   if (request.method === 'state.read' && Object.keys(request).length === 3)
     return { version: 1, id: request.id, state: world.read() };
-  if (request.method === 'chat.read' && inbox && key && typeof request.key === 'string' &&
-    /^[a-f0-9]{64}$/.test(request.key) && timingSafeEqual(Buffer.from(request.key), Buffer.from(key)) && Object.keys(request).length === 6 &&
+  if (!key || typeof request.key !== 'string' || !/^[a-f0-9]{64}$/.test(request.key) ||
+    !timingSafeEqual(Buffer.from(request.key), Buffer.from(key))) throw new Error('invalid MC pairing');
+  if (request.method === 'chat.read' && inbox && Object.keys(request).length === 6 &&
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0)
     return { version: 1, id: request.id, inbox: inbox.read(request.generation, request.after) };
+  if (actions && typeof request.generation === 'string' && Number.isSafeInteger(request.order) && request.order > 0) {
+    if (request.method === 'inspect.begin' && Object.keys(request).length === 7 && typeof request.place === 'string')
+      return { version: 1, id: request.id, action: actions.begin(request.generation, request.order, request.place) };
+    if (['inspect.read', 'inspect.stop'].includes(request.method) && Object.keys(request).length === 6)
+      return { version: 1, id: request.id, action: actions.poll(request.generation, request.order, request.method === 'inspect.stop') };
+  }
   throw new Error('invalid MC method');
 }
 
 // 在本机管道上接受一次一份的只读请求，关闭时使全部连接及原世界失效。
 // 步骤：限制请求长度与等待 → 校验协议并返回快照 → 关闭入口并等待连接释放。
-async function openBridge(channel, world, inbox = null, key = null) {
+async function openBridge(channel, world, inbox = null, key = null, actions = null) {
   const sockets = new Set();
   const server = net.createServer(socket => {
     sockets.add(socket);
@@ -42,7 +49,7 @@ async function openBridge(channel, world, inbox = null, key = null) {
       if (newline !== message.length - 1) return socket.destroy();
       replied = true;
       try {
-        const reply = readReply(new TextDecoder('utf-8', { fatal: true }).decode(message.subarray(0, newline)), world, inbox, key);
+        const reply = readReply(new TextDecoder('utf-8', { fatal: true }).decode(message.subarray(0, newline)), world, inbox, key, actions);
         socket.end(JSON.stringify(reply) + '\n');
       } catch {
         socket.destroy();
@@ -54,6 +61,7 @@ async function openBridge(channel, world, inbox = null, key = null) {
     server.listen(pipeName(channel));
     await once(server, 'listening');
   } catch (error) {
+    await actions?.close();
     inbox?.close();
     world.close();
     throw error;
@@ -61,13 +69,14 @@ async function openBridge(channel, world, inbox = null, key = null) {
   return {
     // 立即撤销观察绑定并等待管道停止监听，允许同一调用者重复关闭。
     async close() {
+      const stopping = actions?.close();
       inbox?.close();
       world.close();
-      if (!server.listening) return;
+      if (!server.listening) { await stopping; return; }
       const closed = once(server, 'close');
       server.close();
       for (const socket of sockets) socket.destroy();
-      await closed;
+      await Promise.all([closed, stopping]);
     },
   };
 }
