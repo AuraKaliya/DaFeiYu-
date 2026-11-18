@@ -17,6 +17,7 @@ New-Item -ItemType Directory -Path $results | Out-Null
 $groups = @(
     @{ Target='dfy_replay_evaluation'; Material='confirmed-counter.json'; Cases=@('confirmed-counter') },
     @{ Target='dfy_observation_controller_tests'; Cases=@('observation_dispatch_gap') },
+    @{ Target='dfy_observation_action_tests'; Cases=@('observation_action_applied','observation_action_denied','observation_action_changed_basis','observation_action_expired','observation_action_partial','observation_action_unknown','observation_action_omitted') },
     @{ Target='dfy_session_observation_rebind_tests'; Cases=@('observation_rebind','observation_rebind_cancel','observation_rebind_expire','observation_rebind_goal_change') },
     @{ Target='dfy_session_goal_revision_tests'; Cases=@('goal_revision','goal_revision_confirmed','goal_revision_limit') },
     @{ Target='dfy_session_replanning_tests'; Cases=@('plan_tail_revision','plan_tail_invalid_prefix','plan_tail_cancel','plan_tail_expire') },
