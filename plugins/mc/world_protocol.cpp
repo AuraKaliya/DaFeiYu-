@@ -126,8 +126,11 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         if (text.empty() || text.size() > 1024) throw std::invalid_argument("MC protocol: inbox text");
         if (message.contains("offer")) {
             const auto& offer = message.at("offer");
-            if (offer.size() != 2 || offer.at("purpose") != "visit.inspect" ||
-                !valid_channel(offer.at("place").get_ref<const std::string&>())) throw std::invalid_argument("MC protocol: inbox offer");
+            if (offer.size() != 2) throw std::invalid_argument("MC protocol: inbox offer shape");
+            const auto& purpose = offer.at("purpose");
+            if (purpose == "visit.inspect" && valid_channel(offer.at("place").get_ref<const std::string&>())) continue;
+            if (purpose == "question.decline" && valid_channel(offer.at("question").get_ref<const std::string&>())) continue;
+            throw std::invalid_argument("MC protocol: inbox offer");
         }
     }
     if (cursor > latest || (cursor < latest && messages.empty()) || inbox.at("more") != (cursor < latest))
@@ -176,5 +179,29 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
     auto evidence = action;
     if (arrived) evidence["observed"] = !action.at("stone").is_null();
     return {exited, arrived, action.at("moved").get<bool>(), evidence.dump()};
+}
+
+// 仅用原委托和固定问题号请求游戏侧提问。
+std::string question_request(std::string_view id, std::string_view key, std::string_view arguments) {
+    auto value = parse(arguments);
+    if (key.size() != 64 || value.size() != 3 || !uuid(value.at("generation")) || !value.at("order").is_number_unsigned() ||
+        value.at("order") == 0 || value.at("order") > 9007199254740991ULL || !value.at("question").is_string() ||
+        !valid_channel(value.at("question").get_ref<const std::string&>())) throw std::invalid_argument("MC protocol: invalid question");
+    value.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", "question.open"}});
+    return value.dump();
+}
+
+// 匹配具体发送回执，记录的是游戏角色已发出，不推断玩家已阅读。
+std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
+    const auto reply = parse(wire), args = parse(arguments);
+    if (reply.size() != 3 || !reply.at("version").is_number_unsigned() || reply.at("version") != 1 ||
+        reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong question reply");
+    const auto& value = reply.at("question");
+    if (value.size() != 7 || value.at("id") != args.at("question") || value.at("generation") != args.at("generation") ||
+        !value.at("order").is_number_unsigned() || value.at("order") != args.at("order") || !uuid(value.at("owner")) ||
+        !value.at("after").is_number_unsigned() || value.at("after") < args.at("order") || value.at("after") > 9007199254740991ULL ||
+        value.at("sent") != true || value.at("text").get_ref<const std::string&>().empty() ||
+        value.at("text").get_ref<const std::string&>().size() > 1024) throw std::invalid_argument("MC protocol: unbound question");
+    return value.dump();
 }
 }

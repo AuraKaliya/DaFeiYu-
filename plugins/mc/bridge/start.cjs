@@ -34,9 +34,10 @@ async function launch(file) {
   bot.on('error', error => { gameError = error; });
   const ended = new Promise(resolve => bot.once('end', resolve));
   const world = observeWorld(bot);
+  let actions;
   const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1', 32,
-    text => inspectionOffer(text, places));
-  const actions = places.size && owner ? inspectionService(bot, world, inbox, places) : null;
+    text => actions?.answerOffer(text) ?? inspectionOffer(text, places));
+  actions = places.size && owner ? inspectionService(bot, world, inbox, places) : null;
   let bridge;
   try {
     bridge = await openBridge(channel, world, inbox, key, actions);

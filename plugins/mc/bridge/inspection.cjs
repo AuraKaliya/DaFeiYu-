@@ -49,6 +49,7 @@ function inspectionService(bot, world, inbox, places) {
   let heartbeat = 0;
   let origin = null;
   let question = null;
+  let answered = false;
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;
@@ -98,7 +99,6 @@ function inspectionService(bot, world, inbox, places) {
         if (current.place !== placeId) throw new Error('查看目标冲突');
         return { ...current };
       }
-      if (question?.generation === generation) throw new Error('原玩家问题尚待答复');
       if (current && (!current.exited || (current.generation === generation && order <= current.order))) throw new Error('查看占用或过期');
       const place = places.get(placeId);
       const entry = inbox.get(generation, order);
@@ -106,6 +106,7 @@ function inspectionService(bot, world, inbox, places) {
         throw new Error('没有此地标的查看委托');
       origin = bot.entity.position.clone();
       question = null;
+      answered = false;
       current = { generation, order, place: placeId, phase: 'moving', exited: false, moved: false };
       heartbeat = performance.now();
       const deadline = heartbeat + 30000;
@@ -142,6 +143,13 @@ function inspectionService(bot, world, inbox, places) {
       bot.whisper(player.username, text);
       question.sent = true;
       return { ...question };
+    },
+    // 仅在原问题已发出后识别绑定玩家明确的拒绝，其余聊天保持普通消息。
+    answerOffer(text) {
+      if (!question?.sent || answered || world.read()?.generation !== question.generation) return null;
+      if (!['不用了', '不要采', '先别采了'].includes(text.trim().replace(/[。！!]$/u, ''))) return null;
+      answered = true;
+      return { purpose: 'question.decline', question: question.id };
     },
     // 关闭入口并等待本次路径结束，移除游戏事件监听。
     async close() {

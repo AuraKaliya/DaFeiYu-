@@ -21,4 +21,8 @@ struct InspectReply { bool exited, arrived, moved; std::string payload; };
 std::string inspect_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
 // 验证原世界及原委托的运动回执，成功到达必须有坐标和观察结果。
 InspectReply inspect_reply(std::string_view wire, std::string_view id, std::string_view arguments);
+// 生成对原观察的私有提问，问题号由宿主签发。
+std::string question_request(std::string_view id, std::string_view key, std::string_view arguments);
+// 校验原玩家、世界、查看委托与问题发送回执。
+std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 }
