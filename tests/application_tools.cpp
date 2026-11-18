@@ -108,9 +108,9 @@ std::uint32_t effects(plugins::PluginManager& manager) {
     return count(1);
 }
 
-// 用原生非幂等工具验证应用确认的零动作、单次执行及原回执复用。
-// 步骤：接纳待审动作 → 检查实际效果仍为零 → 拒绝旧修订 → 提交并重复决定 → 核对最终作用次数。
-void confirmation(const fs::path& package, const fs::path& root, bool approve) {
+// 用原生非幂等工具验证终端确认及 EOF 停止。
+// 步骤：接纳并显示待审动作 → 核对零效果 → 按决定或 EOF 推进 → 检查实际作用次数。
+void confirmation(const fs::path& package, const fs::path& root, std::optional<bool> approve) {
     using namespace model;
     const auto run = workspace(root);
     app::Application application({},run/"plugins",run/"user",Backend{
@@ -123,16 +123,18 @@ void confirmation(const fs::path& package, const fs::path& root, bool approve) {
                 return Response{{Role::assistant,"",{{"write-1",request.tools[0].name,"{}"}}},FinishReason::tool_calls};
             }
             check(last.role == Role::tool && last.tool_call_id == "write-1" &&
-                last.content.find(approve ? "output:\n1" : "status=rejected") != std::string::npos,"decision lost the original tool result");
+                approve && last.content.find(*approve ? "output:\n1" : "status=rejected") != std::string::npos,
+                "decision lost the original tool result");
             return Response{{Role::assistant,"decision recorded"}};
         }});
     auto& manager = application.plugins();
     manager.install(package);
     check(manager.load("test.tools") == 0,"confirmation fixture did not load");
     const auto before = effects(manager);
-    application.submit_confirmed("test.tools/increment","change");
     std::ostringstream output, errors;
-    app::ChatController chat(application.conversation(),output,errors);
+    app::ChatController chat(application.conversation(),output,errors,
+        [&](std::string_view line) { return app::application_command(application,line,output,errors); });
+    chat.line("/run-confirmed test.tools/increment change");
 
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
     auto values = application.confirmations();
@@ -145,16 +147,32 @@ void confirmation(const fs::path& package, const fs::path& root, bool approve) {
     check(values.size() == 1 && effects(manager) == before && values[0].state == agent::ConfirmationState::waiting &&
         values[0].target.arguments == "{}","application ran a state change before confirmation");
     const auto& pending = values[0];
-    bool stale = false;
-    try { application.decide(pending.id,pending.revision+1,approve); }
-    catch (const std::invalid_argument&) { stale = true; }
-    check(stale,"application accepted an incorrect decision revision");
+    chat.line("/confirmations");
+    check(output.str().find("test.tools/increment {}") != std::string::npos &&
+        output.str().find("Confirmation "+std::to_string(pending.id)+" revision "+std::to_string(pending.revision)) != std::string::npos,
+        "terminal did not show the exact pending action");
 
-    const auto receipt = application.decide(pending.id,pending.revision,approve);
-    check(receipt == application.decide(pending.id,pending.revision,approve) && effects(manager) == before &&
-        receipt.state == (approve ? agent::ConfirmationState::approved : agent::ConfirmationState::denied),
-        "decision replay changed the receipt or executed inline");
-    check(finish(application,chat).confirmation_requests == 1 && effects(manager) == before+(approve ? 1u : 0u) &&
+    if (!approve) {
+        chat.finish_input();
+        const auto close_deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (!chat.done() && std::chrono::steady_clock::now() < close_deadline) { application.advance_plugins(); chat.advance(); }
+        check(chat.done() && effects(manager) == before && application.conversation().status()->result == runtime::OperationState::cancelled &&
+            application.close_plugins() == plugins::ShutdownResult::closed,"EOF waited indefinitely or applied an unapproved action");
+        return;
+    }
+
+    const auto command = std::string(*approve ? "/approve " : "/deny ")+std::to_string(pending.id)+' ';
+    chat.line(command+std::to_string(pending.revision+1));
+    check(errors.str().find("stale decision") != std::string::npos,"terminal accepted an incorrect decision revision");
+    errors.str("");
+    output.str("");
+    chat.line(command+std::to_string(pending.revision));
+    const auto receipt = output.str();
+    output.str("");
+    chat.line(command+std::to_string(pending.revision));
+    check(output.str() == receipt && receipt.find(*approve ? "Approval recorded" : "Refusal recorded") != std::string::npos &&
+        effects(manager) == before,"terminal decision replay changed the original receipt or executed inline");
+    check(finish(application,chat).confirmation_requests == 1 && effects(manager) == before+(*approve ? 1u : 0u) &&
         errors.str().empty(),"approval or refusal applied an incorrect number of real effects");
 }
 }
@@ -166,6 +184,7 @@ int wmain(int argc, wchar_t** argv) {
         read_only(argv[1],argv[2]);
         confirmation(argv[1],argv[2],true);
         confirmation(argv[1],argv[2],false);
+        confirmation(argv[1],argv[2],std::nullopt);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

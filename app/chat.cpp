@@ -38,7 +38,7 @@ void ChatController::line(std::string text) {
     catch (...) { errors_ << "Command failed.\n"; }
 }
 // 展示应用会话交付的唯一结果，正常 EOF 等待实际退出后关闭。
-// 步骤：推进应用会话 → 同步终态通知和业务结果 → 按 EOF 状态关闭空闲会话。
+// 步骤：推进应用会话 → 同步终态通知和业务结果 → 在 EOF 时处理等待确认及关闭。
 void ChatController::advance() {
     if (const auto completed = conversation_.advance()) {
         const auto& status = completed->status;
@@ -58,7 +58,10 @@ void ChatController::advance() {
         }
         output_ << std::flush; errors_ << std::flush;
     }
-    if (ending_ && !conversation_.busy()) conversation_.close();
+    if (ending_) {
+        if (!conversation_.busy()) conversation_.close();
+        else if (const auto status = conversation_.status(); status && status->waiting_confirmations) conversation_.cancel();
+    }
 }
 // 明确退出请求停止新问答并协作取消当前调用，完成确认仍由 advance 处理。
 void ChatController::request_exit() { ending_ = true; conversation_.close(); }

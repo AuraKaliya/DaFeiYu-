@@ -93,7 +93,8 @@ int run(const std::vector<std::filesystem::path>& args) {
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
-            << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool for the run.\n";
+            << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
+            << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n";
         return help ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

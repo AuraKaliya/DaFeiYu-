@@ -16,7 +16,7 @@ class ChatController {
     void line(std::string text);
     // 推进会话并输出每轮唯一结果，实际退出前继续保留该回合。
     void advance();
-    // 输入正常结束时停止新输入，保留当前问答直到正常完成。
+    // 输入正常结束时停止新输入，保留获准工作并结束仍待人工确认的运行。
     void finish_input() noexcept { ending_ = true; }
     // 明确请求退出时取消当前问答，真实网络资源仍由会话继续回收。
     void request_exit();
