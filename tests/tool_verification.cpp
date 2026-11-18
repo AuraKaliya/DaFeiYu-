@@ -10,7 +10,7 @@ namespace {
 using namespace dfy;
 using runtime::OperationState;
 namespace fs = std::filesystem;
-enum class Trial { matches, differs, early_change };
+enum class Trial { matches, differs, early_change, replaced };
 
 // 在观察证明或状态作用与约定不同时报告失败。
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -87,6 +87,9 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         if (!attempted && !confirmations.empty()) {
             attempted = true;
             const auto& pending = confirmations[0];
+            if (trial == Trial::replaced)
+                check(manager.unload("example.status") == plugins::ShutdownResult::closed && manager.load("example.status") == 0,
+                    "could not replace instance while awaiting confirmation");
             if (trial == Trial::matches) {
                 chat = connect();
                 chat->line("/task-status 1");
@@ -102,10 +105,12 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     }
     const auto report = application.verification();
     const auto status = conversation.status();
+    const bool has_readback = trial == Trial::matches || trial == Trial::differs;
+    const unsigned expected_calls = has_readback ? 5u : trial == Trial::early_change ? 2u : 3u;
     const auto expected = trial == Trial::matches ? agent::ObservationMatch::satisfied :
         (trial == Trial::differs ? agent::ObservationMatch::not_satisfied : agent::ObservationMatch::unknown);
     check(report && report->run.sequence == accepted->turn && report->match == expected && attempted &&
-        approved == (trial != Trial::early_change) && calls == (trial == Trial::early_change ? 2u : 5u),
+        approved == has_readback && calls == expected_calls,
         "real plugin state did not produce the expected proof");
     chat->line("/verification");
     const char* message = trial == Trial::matches ? "matched the actual state." :
@@ -116,7 +121,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     const auto diagnostic = conversation.diagnostic();
     check(diagnostic && diagnostic->timeline.key == pending_diagnostic->timeline.key &&
         agent::review_timeline(diagnostic->timeline).run_exited &&
-        (trial == Trial::early_change ? diagnostic->feedback.empty() :
+        (!has_readback ? diagnostic->feedback.empty() :
             diagnostic->feedback.size() == 1 && diagnostic->feedback.front().verified == (trial == Trial::matches)),
         "retained diagnostic lost original evidence or run identity");
     const auto path = run/u8"面板诊断.json";
@@ -124,7 +129,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     chat->line("/diagnostic export \""+std::string(utf.begin(),utf.end())+"\"");
     const auto stored = app::read_diagnostic_file(path);
     check(stored.timeline.key == diagnostic->timeline.key && stored.feedback.size() == diagnostic->feedback.size() &&
-        output.str().find("Diagnostic exported") != std::string::npos && calls == (trial == Trial::early_change ? 2u : 5u),
+        output.str().find("Diagnostic exported") != std::string::npos && calls == expected_calls,
         "terminal diagnostic export lost evidence or invoked model");
     if (trial == Trial::matches) {
         chat = connect();
@@ -143,6 +148,35 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");
 }
+
+// 保留窗口满后，旧任务号只能过期，不能变成第二次执行。
+// 步骤：逐项接纳并取消 → 核对被换出的旧回执 → 重发旧编号并检查运行未变化。
+void retired_receipts(const fs::path& package, const fs::path& root) {
+    const auto run = workspace(root);
+    app::Application application({},run/"plugins",run/"user",model::Backend{
+        [](const auto&,const auto&) { return model::Response{{model::Role::assistant,"unused cancelled response"}}; }});
+    application.plugins().install(package);
+    check(application.plugins().load("example.status") == 0,"receipt test package did not load");
+    auto& conversation = application.conversation();
+    for (std::uint64_t request = 1; request <= 17; ++request) {
+        application.submit_verified_once(request,"example.status/read","example.status/set_focus","focus","set focus");
+        check(conversation.cancel(),"numbered task was not cancellable");
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (conversation.busy() && std::chrono::steady_clock::now() < deadline) {
+            application.advance_plugins();
+            conversation.advance();
+            std::this_thread::yield();
+        }
+        check(!conversation.busy() && conversation.status()->result == OperationState::cancelled,
+            "cancellation did not release the numbered run");
+    }
+
+    check(!application.task_run(1) && application.task_run(2) && application.task_run(17),"receipt retention boundary changed");
+    bool expired = false;
+    try { application.submit_verified_once(1,"example.status/read","example.status/set_focus","focus","set focus"); }
+    catch (const std::invalid_argument& error) { expired = std::string_view(error.what()).find("expired") != std::string_view::npos; }
+    check(expired && conversation.status()->turn == 17 && !conversation.busy(),"retired request reexecuted");
+}
 }
 
 // 使用固定模型和真实面板验证宿主端读回判定。
@@ -152,6 +186,8 @@ int wmain(int argc, wchar_t** argv) {
         verify(argv[1],argv[2],Trial::matches);
         verify(argv[1],argv[2],Trial::differs);
         verify(argv[1],argv[2],Trial::early_change);
+        verify(argv[1],argv[2],Trial::replaced);
+        retired_receipts(argv[1],argv[2]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
