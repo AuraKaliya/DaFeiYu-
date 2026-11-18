@@ -1,11 +1,12 @@
 # 定义供终端和桌面入口复用的应用会话服务。
-add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp)
+add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp tool_verification.cpp tool_verification.hpp)
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options)
 set_target_properties(dfy_application PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/application.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/conversation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/conversation.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/conversation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/conversation.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.hpp")
 
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
 add_library(dfy_terminal STATIC application_commands.cpp application_commands.hpp chat.cpp chat.hpp async_chat.hpp)
