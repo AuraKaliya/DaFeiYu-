@@ -1,4 +1,5 @@
 #include "support/compiled_replay.hpp"
+#include <dafeiyu/observation_controller.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>
 #include <dafeiyu/diagnostic_snapshot.hpp>
@@ -14,6 +15,7 @@ using namespace dfy::model;
 using namespace dfy::plugins;
 using namespace dfy::tests;
 constexpr std::string_view cases[]{"native_action_satisfied","native_action_mismatch","native_action_unknown"};
+constexpr std::string_view observed_cases[]{"native_observation_action","native_observation_revoked"};
 // 报告真实读取、动作和后续反馈的因果或效果错误。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 // 验证尚未实际退出或不属于原步骤的工具不能作为采样起点。
@@ -96,6 +98,59 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, s
     check(instance->shutdown() == ShutdownResult::closed,"feedback snapshots pinned native code");
     if (evidence) write_compiled_replay(*evidence,model.report(),*request,count(0)-starts-1);
 }
+
+// 以原生初读作为观察条件，验证审批后的实际动作及在途撤销仍保留效果。
+// 步骤：绑定实际初值和单工具 → 完成审批 → 检查退场前保持 DLL → 在成功或撤销后读回实际值。
+void observed_action(const Manifest& manifest, const std::filesystem::path& settings, bool revoke, std::ostream* evidence = nullptr) {
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),1,8);
+    auto instance = std::make_shared<PluginInstance>(manifest,settings,channel);
+    check(!instance->create() && !instance->start(),"native observation action setup failed");
+    auto catalog = std::make_shared<ToolCatalog>(); PluginTools registration(instance,catalog);
+    const std::vector<std::string> change_ids{"test.tools/increment"}, read_ids{"test.tools/read"};
+    const auto action = catalog->snapshot(change_ids,true), read = catalog->snapshot(read_ids);
+    const auto action_name = action.definitions()[0].name, read_name = read.definitions()[0].name;
+    const auto initial = initial_read(read,read_name);
+    check(initial.output == "0","native initial state was not reset");
+
+    ScriptStep candidate; candidate.tool_names = {action_name};
+    candidate.response = Response{{Role::assistant,"",{{"change",action_name,"{}"}}},FinishReason::tool_calls};
+    ScriptStep final; final.last_role = Role::tool; final.last_tool_id = "change"; final.tool_names = {action_name};
+    final.response = Response{{Role::assistant,"increment receipt recorded"}};
+    ScenarioSpec spec{1,std::string(observed_cases[revoke ? 1 : 0]),1,{},{candidate},1};
+    if (!revoke) { spec.steps.push_back(final); spec.expected_model_requests = 2; }
+    ScriptedModel model(std::move(spec)); Session session(fixed_replay_model(),channel,model.backend());
+    ConfirmationCaller caller;
+    ObservationSource source(instance->generation(),ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
+    inbox.accept(source.capture({"counter",1},1,{},ObservationTime{}+std::chrono::seconds(1),observed(initial)),{});
+    RunOptions options; options.now = model.clock(); options.tools = action;
+    options.policy.allow_observation = options.policy.confirm_changes = true;
+    options.confirmation_caller = caller; options.version_labels = compiled_replay_labels("none");
+    ObservationController controller(session,inbox,{source.id(),{"counter",1},2,1,2,std::chrono::milliseconds(1),ObservationTime{}+std::chrono::seconds(1)},
+        "increment on verified zero",options,ObservationAction{change_ids[0],"value",Value::from_uint64(0)});
+    controller.enable(); const auto request = controller.poll().request;
+    check(static_cast<bool>(request),"native observation did not admit a task");
+    until(session,[&] { return !request->confirmations().empty(); });
+    const auto pending = request->confirmations()[0];
+    check(!request->tool_steps()[0].accepted && pending.target.observation_binding == request->initial_observation_binding(),
+        "native change admitted before confirmation");
+    session.decide(caller,{1,pending.id,pending.revision,pending.target,true});
+    until(session,[&] { return request->tool_steps()[0].result == OperationState::succeeded; });
+    check(request->tool_steps()[0].exit == OperationState::pending && instance->shutdown() == ShutdownResult::in_use,
+        "native change result released code before actual exit");
+    if (revoke) {
+        source.revoke();
+        check(controller.poll().decision == TriggerDecision::stale,"revoked observation did not request original stop");
+    }
+    until(session,[&] { return !session.busy(); }); model.verify_complete();
+    const auto trace = run_timeline(*request,"native-observation-action");
+    const auto facts = review_timeline(trace);
+    check(facts.tools == 1 && facts.applied_effects == 1 && facts.run_exited && initial_read(read,read_name).output == "1" &&
+        request->operation()->state() == (revoke ? OperationState::cancelled : OperationState::succeeded),
+        "native readback or original exit lost the applied effect");
+    check(controller.poll().decision == (revoke ? TriggerDecision::stopped : TriggerDecision::duplicate) &&
+        instance->shutdown() == ShutdownResult::closed,"native rule restarted or retained released DLL");
+    if (evidence) write_compiled_replay(*evidence,model.report(),*request,1);
+}
 }
 // 以固定模型和指定测试包验证动作及反馈，或采集一个明确命名的案例。
 // 步骤：核对夹具及参数 → 运行指定案例或全部反馈场景 → 检查原生退出并输出。
@@ -107,10 +162,15 @@ int wmain(int argc, wchar_t** argv) {
         if (argc == 5) {
             const auto id = std::filesystem::path(argv[4]).string();
             const auto found = std::find(std::begin(cases),std::end(cases),id);
-            check(found != std::end(cases),"unknown native feedback replay case");
-            scenario(manifest,argv[2],static_cast<std::size_t>(found-std::begin(cases)),&std::cout);
+            if (found != std::end(cases)) scenario(manifest,argv[2],static_cast<std::size_t>(found-std::begin(cases)),&std::cout);
+            else {
+                check(id == observed_cases[0] || id == observed_cases[1],"unknown native feedback replay case");
+                observed_action(manifest,argv[2],id == observed_cases[1],&std::cout);
+            }
         } else {
             for (std::size_t mode = 0; mode < std::size(cases); ++mode) scenario(manifest,argv[2],mode);
+            observed_action(manifest,argv[2],false);
+            observed_action(manifest,argv[2],true);
             std::cout << "Native action feedback checks passed\n";
         }
         return 0;

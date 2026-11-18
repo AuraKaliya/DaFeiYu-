@@ -274,7 +274,9 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME agent.native_action_feedback COMMAND dfy_native_action_feedback_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>" "${CMAKE_CURRENT_BINARY_DIR}/native-feedback-data/$<CONFIG>")
 add_test(NAME agent.replay_action_feedback COMMAND dfy_native_action_feedback_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${CMAKE_CURRENT_BINARY_DIR}/native-feedback-replay/$<CONFIG>" --capture native_action_satisfied)
-set_tests_properties(agent.native_action_feedback agent.replay_action_feedback PROPERTIES TIMEOUT 15)
+add_test(NAME agent.replay_native_observation_action COMMAND dfy_native_action_feedback_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/native-observation-replay/$<CONFIG>" --capture native_observation_revoked)
+set_tests_properties(agent.native_action_feedback agent.replay_action_feedback agent.replay_native_observation_action PROPERTIES TIMEOUT 15)
 add_executable(dfy_tool_batch_tests tool_batch.cpp)
 target_link_libraries(dfy_tool_batch_tests PRIVATE dfy_agent dfy_build_options)
 set_target_properties(dfy_tool_batch_tests PROPERTIES FOLDER "Tests")

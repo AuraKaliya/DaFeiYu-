@@ -20,7 +20,7 @@ $groups = @(
     @{ Target='dfy_session_observation_rebind_tests'; Cases=@('observation_rebind','observation_rebind_cancel','observation_rebind_expire','observation_rebind_goal_change') },
     @{ Target='dfy_session_goal_revision_tests'; Cases=@('goal_revision','goal_revision_confirmed','goal_revision_limit') },
     @{ Target='dfy_session_replanning_tests'; Cases=@('plan_tail_revision','plan_tail_invalid_prefix','plan_tail_cancel','plan_tail_expire') },
-    @{ Target='dfy_native_action_feedback_tests'; Fixture='tests/fixtures/tools_v2/{0}'; Cases=@('native_action_satisfied','native_action_mismatch','native_action_unknown') },
+    @{ Target='dfy_native_action_feedback_tests'; Fixture='tests/fixtures/tools_v2/{0}'; Cases=@('native_action_satisfied','native_action_mismatch','native_action_unknown','native_observation_action','native_observation_revoked') },
     @{ Target='dfy_tool_verification_tests'; Fixture='plugins/examples/status/{0}/example.status'; Cases=@('app_task_reconnect','app_task_mismatch','app_task_early_change','app_task_replaced','app_task_denied') }
 )
 
