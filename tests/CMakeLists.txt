@@ -1,3 +1,14 @@
+# Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
+find_program(DFY_MC_NODE NAMES node)
+if(DFY_MC_NODE)
+  add_executable(dfy_mc_pipe_tests mc_pipe.cpp)
+  target_link_libraries(dfy_mc_pipe_tests PRIVATE dfy_mc_bridge dfy_build_options)
+  set_target_properties(dfy_mc_pipe_tests PROPERTIES FOLDER "Tests")
+  add_test(NAME mc.pipe COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/pipe-test.cjs" "$<TARGET_FILE:dfy_mc_pipe_tests>")
+  set_tests_properties(mc.pipe PROPERTIES TIMEOUT 15)
+  add_test(NAME mc.hillside_samples COMMAND "${DFY_MC_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/hillside.test.mjs")
+endif()
+
 # 给独立采集程序提供实际构建版本，保留未声明的源码版本为未知。
 function(dfy_replay_labels target)
   target_compile_definitions(${target} PRIVATE
