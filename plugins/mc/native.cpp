@@ -1,4 +1,5 @@
 #include "pipe_exchange.hpp"
+#include "inspect_work.hpp"
 #include "world_protocol.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
@@ -7,13 +8,21 @@
 #include <atomic>
 #include <memory>
 
-struct dfy_v2_instance {
-    std::uint64_t owner = 0, sequence = 0;
-    bool running = false, pending = false, ready = false, success = false, exited = false;
-    dfy::mc::BridgeConfig config;
+struct NativeJob {
+    std::uint64_t sequence = 0;
+    bool ready = false, success = false, exited = false;
     std::string id, output, wire, arguments;
     bool inbox = false;
+    bool cancelled = false;
+    std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
+    std::unique_ptr<dfy::mc::InspectWork> inspect;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
+};
+struct dfy_v2_instance {
+    std::uint64_t owner = 0, sequence = 0;
+    bool running = false;
+    dfy::mc::BridgeConfig config;
+    std::array<NativeJob, 4> jobs;
 };
 
 namespace {
@@ -38,8 +47,14 @@ bool owned(const dfy_v2_instance* raw) noexcept {
     return raw && std::find(slots.begin(), slots.end(), raw) != slots.end();
 }
 // 对照具体实例和工作序号核对原票据。
-bool matches(const dfy_v2_instance* instance, dfy_v2_tool_ticket ticket) noexcept {
-    return owned(instance) && instance->pending && instance->owner == ticket.owner && instance->sequence == ticket.sequence;
+NativeJob* find_job(dfy_v2_instance* instance, dfy_v2_tool_ticket ticket) noexcept {
+    if (!owned(instance) || !ticket.sequence || instance->owner != ticket.owner) return nullptr;
+    for (auto& job : instance->jobs) if (job.sequence == ticket.sequence) return &job;
+    return nullptr;
+}
+// 只有所有原生票据都归还后才允许停服或销毁。
+bool active_jobs(const dfy_v2_instance& instance) noexcept {
+    return std::any_of(instance.jobs.begin(), instance.jobs.end(), [](const auto& job) { return job.sequence != 0; });
 }
 // 只接收无参数对象，允许四种 JSON 空白。
 bool empty_args(std::string_view args) noexcept {
@@ -80,7 +95,7 @@ dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* raw, dfy_v2_error* error) noexc
 // 等待工作票据释放后关闭接纳。
 dfy_v2_status DFY_V2_CALL stop(dfy_v2_instance* raw, dfy_v2_error* error) noexcept {
     if (!owned(raw)) return report(DFY_V2_INVALID_HANDLE, error);
-    if (raw->pending) return report(DFY_V2_BUSY, error);
+    if (active_jobs(*raw)) return report(DFY_V2_BUSY, error);
     raw->running = false;
     return report(DFY_V2_OK, error);
 }
@@ -94,14 +109,14 @@ dfy_v2_status DFY_V2_CALL stopped(dfy_v2_instance* raw, uint32_t* value, dfy_v2_
 }
 // 只销毁实际停止且无剩余票据的原实例。
 void DFY_V2_CALL destroy(dfy_v2_instance* raw) noexcept {
-    if (!owned(raw) || raw->running || raw->pending) return;
+    if (!owned(raw) || raw->running || active_jobs(*raw)) return;
     *std::find(slots.begin(), slots.end(), raw) = nullptr;
     delete raw;
 }
 // 活动插件按配对状态公开世界与私有收件读口。
 dfy_v2_status DFY_V2_CALL count(dfy_v2_instance* raw, uint32_t* value, dfy_v2_error* error) noexcept {
     if (!value) return report(DFY_V2_INVALID_ARGUMENT, error);
-    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 2u) : 0u;
+    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 3u) : 0u;
     return report(*value ? DFY_V2_OK : DFY_V2_INVALID_CONTEXT, error);
 }
 // 返回世界状态的无参契约，工具描述与连接寿命无关。
@@ -116,35 +131,42 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     } else if (index == 1 && !raw->config.key.empty()) {
         *out = {sizeof(*out), 1, 0, 0, view("inbox"), view("Read messages from the bound player."),
             view(R"({"type":"object","properties":{"generation":{"type":"string"},"after":{"type":"integer"}},"required":["generation","after"],"additionalProperties":false})")};
+    } else if (index == 2 && !raw->config.key.empty()) {
+        *out = {sizeof(*out), 1, DFY_V2_TOOL_CHANGES_STATE, 0, view("inspect"), view("Visit the landmark identified by the player's original inspection order."),
+            view(R"({"type":"object","properties":{"generation":{"type":"string"},"order":{"type":"integer"},"place":{"type":"string"}},"required":["generation","order","place"],"additionalProperties":false})")};
     } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
-// 接纳具体运行的世界查询，此阶段不打开连接或执行游戏操作。
-// 步骤：核对实例和工具版本 → 检查调用身份与空参数 → 签发一次工作票据。
+// 将只读请求和独占移动分配到有界工作槽，接纳本身不执行游戏动作。
+// 步骤：校验能力与参数 → 核对移动互斥并分配独立槽位 → 签发工作票据。
 dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, const dfy_v2_tool_call* call,
     dfy_v2_tool_ticket* ticket, dfy_v2_error* error) noexcept {
     if (!ticket) return report(DFY_V2_INVALID_ARGUMENT, error);
     *ticket = {};
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
     const bool inbox = text(name) == "inbox" && !raw->config.key.empty();
-    if (!inbox && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
+    const bool inspect = text(name) == "inspect" && !raw->config.key.empty();
+    if (!inbox && !inspect && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
-        text(call->call_id).empty() || call->call_id.length > 128 || (!inbox && !empty_args(text(call->arguments))))
+        text(call->call_id).empty() || call->call_id.length > 128 || (!inbox && !inspect && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
-    if (raw->pending) return report(DFY_V2_BUSY, error);
+    if (inspect && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.inspect; }))
+        return report(DFY_V2_BUSY, error);
+    const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
+    if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
+    auto& job = *found;
     if (raw->sequence == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
     try {
-        raw->id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
-        raw->arguments = text(call->arguments);
-        raw->wire = inbox ? dfy::mc::inbox_request(raw->id, raw->config.key, raw->arguments) : dfy::mc::world_request(raw->id);
+        job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
+        job.arguments = text(call->arguments);
+        if (inspect) job.inspect = std::make_unique<dfy::mc::InspectWork>(raw->config, job.id, job.arguments);
+        else job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
     } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
     catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
-    raw->inbox = inbox;
-    raw->output.clear();
-    raw->pending = true;
-    raw->ready = raw->success = raw->exited = false;
-    *ticket = {raw->owner, ++raw->sequence};
+    job.inbox = inbox;
+    job.sequence = ++raw->sequence;
+    *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);
 }
 // 非等待推进原查询，将消息校验和资源实际退出分开报告。
@@ -154,34 +176,52 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
     if (out->struct_size != sizeof(*out)) { out->struct_size = 0; return report(DFY_V2_ABI_MISMATCH, error); }
     *out = {};
-    if (!matches(raw, ticket)) return report(DFY_V2_INVALID_HANDLE, error);
-    if (raw->ready) {
-        raw->pipe.reset();
-        raw->exited = true;
+    auto* job = find_job(raw, ticket);
+    if (!job) return report(DFY_V2_INVALID_HANDLE, error);
+    if (job->ready) {
+        job->pipe.reset();
+        job->exited = true;
+    } else if (job->inspect) {
+        try {
+            if (auto value = job->inspect->poll(job->cancelled)) {
+                job->output = std::move(value->payload);
+                job->effect = value->moved ? DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
+                job->success = value->arrived && !job->cancelled;
+                job->ready = true;
+            }
+        } catch (...) {
+            job->effect = job->inspect->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
+            job->ready = true;
+        }
     } else {
         try {
-            if (!raw->pipe) raw->pipe = std::make_unique<dfy::mc::PipeExchange>(raw->config.channel, raw->wire);
-            if (auto reply = raw->pipe->poll()) {
-                raw->output = raw->inbox ? dfy::mc::inbox_reply(*reply, raw->id, raw->arguments) : dfy::mc::world_reply(*reply, raw->id);
-                raw->success = raw->ready = true;
+            if (!job->pipe) job->pipe = std::make_unique<dfy::mc::PipeExchange>(raw->config.channel, job->wire);
+            if (auto reply = job->pipe->poll()) {
+                job->output = job->inbox ? dfy::mc::inbox_reply(*reply, job->id, job->arguments) : dfy::mc::world_reply(*reply, job->id);
+                job->success = job->ready = true;
             }
-        } catch (...) { raw->ready = true; }
+        } catch (...) { job->ready = true; }
     }
-    *out = {sizeof(*out), raw->ready, raw->success, DFY_V2_TOOL_NOT_APPLIED, raw->exited, 0, view(raw->output)};
+    *out = {sizeof(*out), job->ready, job->success, job->effect, job->exited, 0, view(job->output)};
     return report(DFY_V2_OK, error);
 }
 // 取消尚未交付结果的世界查询，原票据继续负责退出。
 dfy_v2_status DFY_V2_CALL cancel(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, uint32_t reason, dfy_v2_error* error) noexcept {
-    if (!matches(raw, ticket)) return report(DFY_V2_INVALID_HANDLE, error);
+    auto* job = find_job(raw, ticket);
+    if (!job) return report(DFY_V2_INVALID_HANDLE, error);
     if (reason < DFY_V2_CANCEL_USER || reason > DFY_V2_CANCEL_DEADLINE) return report(DFY_V2_INVALID_ARGUMENT, error);
-    raw->ready = true;
+    if (!job->ready) {
+        job->cancelled = true;
+        if (!job->inspect) job->ready = true;
+    }
     return report(DFY_V2_OK, error);
 }
 // 归还已退出的票据，未退出工作保持占用。
 dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, dfy_v2_error* error) noexcept {
-    if (!matches(raw, ticket)) return report(DFY_V2_INVALID_HANDLE, error);
-    if (!raw->exited) return report(DFY_V2_BUSY, error);
-    raw->pending = false;
+    auto* job = find_job(raw, ticket);
+    if (!job) return report(DFY_V2_INVALID_HANDLE, error);
+    if (!job->exited) return report(DFY_V2_BUSY, error);
+    *job = {};
     return report(DFY_V2_OK, error);
 }
 const dfy_v2_lifecycle_api lifecycle{{sizeof(dfy_v2_lifecycle_api), 1}, create, start, stop, stopped, destroy};

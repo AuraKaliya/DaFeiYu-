@@ -153,11 +153,11 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
     const auto& action = reply.at("action");
     if (action.at("generation") != args.at("generation") || !action.at("order").is_number_unsigned() ||
         action.at("order") != args.at("order") || action.at("place") != args.at("place") ||
-        !action.at("exited").is_boolean()) throw std::invalid_argument("MC protocol: wrong action");
+        !action.at("exited").is_boolean() || !action.at("moved").is_boolean()) throw std::invalid_argument("MC protocol: wrong action");
     const auto& phase = action.at("phase").get_ref<const std::string&>();
     const bool exited = action.at("exited"), arrived = phase == "arrived";
     if ((exited && !arrived && phase != "stopped" && phase != "failed") ||
-        (!exited && phase != "moving" && phase != "stopping") || action.size() != (arrived ? 7u : 5u))
+        (!exited && phase != "moving" && phase != "stopping") || action.size() != (arrived ? 8u : 6u))
         throw std::invalid_argument("MC protocol: inconsistent action phase");
     if (arrived) {
         const auto& position = action.at("position");
@@ -168,6 +168,6 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
                 (!stone.is_null() && !stone.at(axis).is_number_integer())) throw std::invalid_argument("MC protocol: observation coordinates");
         }
     }
-    return {exited, arrived, action.dump()};
+    return {exited, arrived, action.at("moved").get<bool>(), action.dump()};
 }
 }

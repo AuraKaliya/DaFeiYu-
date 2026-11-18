@@ -16,7 +16,7 @@ std::string world_reply(std::string_view wire, std::string_view expected_id);
 std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 只把与原查询相符且序号连续的玩家消息交给受信调用者。
 std::string inbox_reply(std::string_view wire, std::string_view id, std::string_view arguments);
-struct InspectReply { bool exited, arrived; std::string payload; };
+struct InspectReply { bool exited, arrived, moved; std::string payload; };
 // 由宿主选择查看控制方法，模型参数只描述原消息与地标。
 std::string inspect_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
 // 验证原世界及原委托的运动回执，成功到达必须有坐标和观察结果。

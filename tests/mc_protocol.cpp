@@ -31,7 +31,7 @@ void private_protocol() {
     const auto stop = Json::parse(dfy::mc::inspect_request("inspect.stop", "a", key, target));
     if (stop.contains("place") || stop.at("order") != 2) throw std::runtime_error("wrong stop scope");
     Json action = Json::parse(target);
-    action.update(Json{{"phase", "arrived"}, {"exited", true}, {"stone", nullptr}, {"position", {{"x", 10}, {"y", 2}, {"z", -1}}}});
+    action.update(Json{{"phase", "arrived"}, {"exited", true}, {"moved", true}, {"stone", nullptr}, {"position", {{"x", 10}, {"y", 2}, {"z", -1}}}});
     Json observed{{"version", 1}, {"id", "a"}, {"action", action}};
     if (!dfy::mc::inspect_reply(observed.dump(), "a", target).arrived) throw std::runtime_error("lost arrival");
     observed["action"]["exited"] = false;

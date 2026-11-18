@@ -41,6 +41,11 @@ function inspectionService(bot, world, inbox, places) {
   let done = Promise.resolve();
   let closed = false;
   let heartbeat = 0;
+  let origin = null;
+  // 在当前路径尚未退出时保存实际观察到的位移。
+  function moved() {
+    if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;
+  }
 
   // 停止本观察动作的路径和控制输入，实际退出由原工作处理。
   function stop() {
@@ -75,6 +80,7 @@ function inspectionService(bot, world, inbox, places) {
   }
   bot.on('respawn', stop);
   bot.on('end', stop);
+  bot.on('move', moved);
   return {
     // 精确复用同一委托，检查原文和目标后才允许开始一次移动。
     begin(generation, order, placeId) {
@@ -90,7 +96,8 @@ function inspectionService(bot, world, inbox, places) {
       const entry = inbox.get(generation, order);
       if (!place || snapshot.dimension !== place.dimension || !entry || !permitsInspection(entry.text, place.label))
         throw new Error('没有此地标的查看委托');
-      current = { generation, order, place: placeId, phase: 'moving', exited: false };
+      origin = bot.entity.position.clone();
+      current = { generation, order, place: placeId, phase: 'moving', exited: false, moved: false };
       heartbeat = performance.now();
       const deadline = heartbeat + 30000;
       timer = setInterval(() => {
@@ -114,6 +121,7 @@ function inspectionService(bot, world, inbox, places) {
       stop();
       bot.removeListener('respawn', stop);
       bot.removeListener('end', stop);
+      bot.removeListener('move', moved);
       await done;
     },
   };
