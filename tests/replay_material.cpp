@@ -1,4 +1,5 @@
 #include "support/replay_material.hpp"
+#include "support/replay_comparison.hpp"
 #include <iostream>
 
 namespace {
@@ -23,6 +24,46 @@ void invalid(const material::Json& original) {
     const auto text = original.dump(); rejects([&] { parse_replay_material("{\"schema_version\":1,"+text.substr(1)); });
     rejects([&] { parse_replay_material(std::string(2*1024*1024+1,' ')); });
 }
+
+// 用固定报告检验案例、版本及行为差异的边界。
+// 步骤：分别执行同一材料 → 校验代码版本变化及未知信息 → 以受控期限验证实际回归报告。
+void comparison(const material::Json& original) {
+    using dfy::agent::RunVersionLabels;
+    RunVersionLabels labels;
+    labels.application_commit = "fixture-source-a";
+    labels.build = "fixture-comparison";
+    const auto before = measure_material(original.dump(),labels);
+    labels.application_commit = "fixture-source-b";
+    const auto after = measure_material(original.dump(2),labels);
+    check(compare_replays(before,after).state == ReplayComparisonState::incomparable,"undeclared revision was comparable");
+    const auto same = compare_replays(before,after,{"application_commit"});
+    check(same.state == ReplayComparisonState::equivalent && same.behavior.empty() && same.versions.changed.size() == 1,
+        "same fixed inputs changed behavior");
+    labels.application_commit.reset();
+    const auto unknown = measure_material(original.dump(),labels);
+    check(compare_replays(before,unknown,{"application_commit"}).reason == "required versions are unknown","unknown versions compared as equal");
+    auto changed = original;
+    changed["version"] = 2;
+    check(compare_replays(before,measure_material(changed.dump(),labels)).reason == "case inputs differ","different cases were comparable");
+
+    auto deadline = material::parse(R"({
+      "schema_version":1,"id":"bounded-time","version":1,"prompt":"wait","timeout_ms":200,
+      "policy":{"revision":1,"model_limit":4,"tool_limit":4,"allow_observation":false,"confirm_changes":false},
+      "fixtures":[],"steps":[{"last_role":"user","tools":[],"advance_ms":50,"response":{"text":"answer","finish":"stop"}}],
+      "decisions":[],"expected":{"model_requests":1,"tool_calls":0,"history_messages":2,"result":"succeeded","stop_reason":"none","effects":[]}
+    })");
+    labels.application_commit = "fixture-source-a";
+    const auto allowed = measure_material(deadline.dump(),labels);
+    deadline["timeout_ms"] = 10;
+    const auto timed_out = measure_material(deadline.dump(),labels);
+    const auto changed_behavior = compare_replays(allowed,timed_out,{"execution_policy"});
+    check(changed_behavior.state == ReplayComparisonState::differs &&
+        std::find(changed_behavior.behavior.begin(),changed_behavior.behavior.end(),"stop_reason") != changed_behavior.behavior.end() &&
+        std::find(changed_behavior.behavior.begin(),changed_behavior.behavior.end(),"fact_order") != changed_behavior.behavior.end() &&
+        !timed_out.report.failed_assertions.empty(),"actual deadline regression was hidden");
+    std::cout << "Compared " << timed_out.report.model.case_id << " v" << timed_out.report.model.case_version << '\n';
+    for (const auto name : changed_behavior.behavior) std::cout << "Behavior changed " << name << '\n';
+}
 }
 // 读取固定 JSON 夹具后重跑两次，文件无法指定真实模型或任意执行函数。
 // 步骤：读取明确夹具 → 两次重跑核对行为 → 验证错误材料拒绝 → 报告结果。
@@ -39,7 +80,9 @@ int wmain(int argc, wchar_t** argv) {
             failed.failed_assertions == std::vector<std::string_view>{"tool_calls"} &&
             dfy::agent::review_timeline(failed.trace).run_exited,"wrong expectation erased actual replay evidence");
         rejects([&] { replay_scenario(changed_expectation); });
-        std::ifstream file(std::filesystem::path(argv[1]),std::ios::binary); material::Json original; file >> original; invalid(original);
+        std::ifstream file(std::filesystem::path(argv[1]),std::ios::binary); material::Json original; file >> original;
+        invalid(original);
+        comparison(original);
         std::cout << "Replay material checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -58,12 +58,14 @@ inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels 
         });
     }
     auto channel = std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(16,64),1,8);
-    Session session({},channel,model.backend()); ConfirmationCaller caller; RunOptions options;
+    const model::Config fixed_model{"offline-fixed",{},"scenario-script",{},1000};
+    Session session(fixed_model,channel,model.backend()); ConfirmationCaller caller; RunOptions options;
     if (!ids.empty()) options.tools = catalog.snapshot(ids,true);
     options.policy = scenario.policy; options.timeout = scenario.timeout; options.now = model.clock();
     options.confirmation_caller = caller; options.confirmation_limit = 64;
     options.version_labels = std::move(version_labels);
     options.version_labels.model_profile = "offline-fixed-v1";
+    options.version_labels.prompt_template = "none";
     const auto request = session.begin(scenario.prompt,options); std::size_t decisions = 0;
     const auto watchdog = std::chrono::steady_clock::now()+std::chrono::seconds(5);
     while (request->exit()->state() == OperationState::pending && std::chrono::steady_clock::now() < watchdog) {

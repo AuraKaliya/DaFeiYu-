@@ -49,9 +49,9 @@ inline Json parse(std::string_view text) {
 }
 // 从受限数据构造固定场景；解析只生成值和校验，不创建 Session 或执行工具。
 // 步骤：检查格式及预算 → 读取固定夹具和模型序列 → 读取控制及预期 → 复用现有契约验证。
-inline ReplayCase parse_replay_material(std::string_view text) {
+inline ReplayCase parse_replay_value(const material::Json& root) {
     using namespace agent; using namespace model; using namespace runtime; using namespace material;
-    const auto root = parse(text); keys(root,{"schema_version","id","version","prompt","timeout_ms","policy","fixtures","steps","decisions","expected"});
+    keys(root,{"schema_version","id","version","prompt","timeout_ms","policy","fixtures","steps","decisions","expected"});
     ReplayCase result; result.model.schema_version = static_cast<std::uint32_t>(number(root.at("schema_version"),1));
     result.model.id = root.at("id").get<std::string>(); result.model.version = static_cast<std::uint32_t>(number(root.at("version"),UINT32_MAX));
     result.prompt = root.at("prompt").get<std::string>(); result.timeout = std::chrono::milliseconds(number(root.at("timeout_ms"),3600000));
@@ -109,6 +109,9 @@ inline ReplayCase parse_replay_material(std::string_view text) {
     for (const auto& value : array(expected.at("effects"),64)) result.expected.effects.push_back(effect(value));
     ExecutionPolicy({1,1},1,result.policy); ScriptedModel verify(result.model,result.model.fixtures); return result;
 }
+// 严格解析原文本后校验场景契约。
+inline ReplayCase parse_replay_material(std::string_view text) { return parse_replay_value(material::parse(text)); }
+
 // 只读取宿主明确选择的有界场景文件，文件内容不能选择执行入口。
 // 步骤：打开指定文件 → 最多读取上限加一个字节 → 检查读取错误 → 解析固定场景值。
 inline ReplayCase load_replay_material(const std::filesystem::path& path) {
