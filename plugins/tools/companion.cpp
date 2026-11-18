@@ -35,4 +35,27 @@ std::optional<CompanionOffer> companion_offer(PluginInstance& instance, const ag
         descriptions.front().changes_state) throw std::invalid_argument("companion: unbound state tool");
     return result;
 }
+
+// 仅承认活动插件自己注册的同代工具，已配对实例可以提供额外的玩家入口。
+// 步骤：查询可选用途表 → 复制并限定局部 ID → 核对真实注册和副作用类别。
+std::optional<std::string> companion_route(PluginInstance& instance, const agent::ToolCatalog& catalog,
+    std::string_view purpose, bool changes_state) {
+    auto capability = instance.query<dfy_v2_companion_routes_api>(DFY_V2_COMPANION_ROUTES_INTERFACE, DFY_V2_COMPANION_ROUTES_VERSION);
+    if (!capability) return {};
+    auto local = instance.invoke(*capability, [&](const auto& api, auto* native) -> std::optional<std::string> {
+        if (!api.resolve) throw std::runtime_error("companion: invalid routes table");
+        dfy_v2_string_view output{};
+        dfy_v2_error error{};
+        const auto code = api.resolve(native, {purpose.data(), purpose.size()}, &output, &error);
+        if (code == DFY_V2_NOT_FOUND && !error.length && !output.data && !output.length) return {};
+        if (code != DFY_V2_OK || error.length) throw std::runtime_error("companion: route unavailable");
+        return local_name(output);
+    });
+    if (!local) return {};
+    std::string id = std::string(instance.plugin_id()) + "/" + *local;
+    const auto entries = catalog.snapshot(std::span(&id, 1), changes_state).descriptions();
+    if (entries.size() != 1 || entries.front().instance != instance.generation() || entries.front().changes_state != changes_state)
+        throw std::invalid_argument("companion: wrong route binding");
+    return id;
+}
 }

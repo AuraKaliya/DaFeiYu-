@@ -236,6 +236,18 @@ dfy_v2_status DFY_V2_CALL companion_info(dfy_v2_instance* raw, dfy_v2_companion_
     return report(DFY_V2_OK, error);
 }
 const dfy_v2_companion_api companion{{sizeof(dfy_v2_companion_api), 1}, companion_info};
+// 将业务用途映射到本实例实际登记的工具，未配对时不暴露私有或移动入口。
+dfy_v2_status DFY_V2_CALL route(dfy_v2_instance* raw, dfy_v2_string_view purpose, dfy_v2_string_view* out, dfy_v2_error* error) noexcept {
+    if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
+    *out = {};
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
+    if (!raw->config.key.empty()) {
+        if (text(purpose) == "player.inbox") *out = view("inbox");
+        else if (text(purpose) == "visit.inspect") *out = view("inspect");
+    }
+    return report(out->data ? DFY_V2_OK : DFY_V2_NOT_FOUND, error);
+}
+const dfy_v2_companion_routes_api routes{{sizeof(dfy_v2_companion_routes_api), 1}, route};
 // 返回固定版本的静态能力表。
 dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) noexcept {
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
@@ -243,6 +255,7 @@ dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const
     if (version == 1 && text(name) == DFY_V2_LIFECYCLE_INTERFACE) *out = &lifecycle;
     if (version == 1 && text(name) == DFY_V2_TOOL_INTERFACE) *out = &tools;
     if (version == DFY_V2_COMPANION_VERSION && text(name) == DFY_V2_COMPANION_INTERFACE) *out = &companion;
+    if (version == DFY_V2_COMPANION_ROUTES_VERSION && text(name) == DFY_V2_COMPANION_ROUTES_INTERFACE) *out = &routes;
     return report(*out ? DFY_V2_OK : DFY_V2_UNSUPPORTED, error);
 }
 const dfy_v2_plugin_api plugin{sizeof(dfy_v2_plugin_api), DFY_V2_ABI_VERSION, DFY_V2_ARCH_X64, 0, query};

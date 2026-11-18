@@ -67,3 +67,5 @@ cmake --build .\build-status --config Release
 ## 可选陪伴角色声明
 
 活动的可信插件可额外发布 [dfy.companion 版本 1](include/dafeiyu/companion_abi_v2.h)。宿主在原实例的调用保护内复制局部状态工具名与状态主题，并向同一代工具目录验证只读范围。此声明只提供发现信息，开局和委托仍由宿主显式接纳。缺少此接口的 v2 工具包沿用原生命周期。
+
+`dfy.companion.routes` 是独立的可选表。已配对实例可为 `player.inbox` 或 `visit.inspect` 返回本包当前登记的局部工具名，缺少用途返回 `NOT_FOUND`。宿主重新核对工具所属代次和只读／变更类别。

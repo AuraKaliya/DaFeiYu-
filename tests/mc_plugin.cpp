@@ -34,6 +34,9 @@ void verify(const std::filesystem::path& package, const std::filesystem::path& r
     const auto offer = plugins::companion_offer(*manager.instance(manifest.id), *catalog);
     check(offer && offer->state_tool == "mc.companion/world" && offer->state_topic == "world" &&
         offer->generation == manager.instance(manifest.id)->generation(), "MC role not registered by active instance");
+    check(plugins::companion_route(*manager.instance(manifest.id), *catalog, "player.inbox", false) == "mc.companion/inbox" &&
+        plugins::companion_route(*manager.instance(manifest.id), *catalog, "visit.inspect", true) == "mc.companion/inspect" &&
+        !plugins::companion_route(*manager.instance(manifest.id), *catalog, "other", false), "MC purpose registration");
     const std::array<std::string, 2> allowed{"mc.companion/world", "mc.companion/inbox"};
     const auto scope = catalog->snapshot(allowed, false);
     const auto definitions = scope.definitions();
