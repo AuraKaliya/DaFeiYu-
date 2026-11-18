@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_manager.hpp>
+#include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/tool_executor.hpp>
 #include <array>
@@ -30,6 +31,9 @@ void verify(const std::filesystem::path& package, const std::filesystem::path& r
     check(manifest.id == "mc.companion" && manager.load(manifest.id) == 0, "MC plugin load failed");
     auto catalog = std::make_shared<agent::ToolCatalog>();
     plugins::PluginTools registration(manager.instance(manifest.id), catalog);
+    const auto offer = plugins::companion_offer(*manager.instance(manifest.id), *catalog);
+    check(offer && offer->state_tool == "mc.companion/world" && offer->state_topic == "world" &&
+        offer->generation == manager.instance(manifest.id)->generation(), "MC role not registered by active instance");
     const std::array<std::string, 1> allowed{"mc.companion/world"};
     const auto scope = catalog->snapshot(allowed, false);
     const auto definitions = scope.definitions();

@@ -1,6 +1,7 @@
 #include "pipe_exchange.hpp"
 #include "world_protocol.hpp"
 #include <dafeiyu/tool_abi_v2.h>
+#include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -173,12 +174,23 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticke
 }
 const dfy_v2_lifecycle_api lifecycle{{sizeof(dfy_v2_lifecycle_api), 1}, create, start, stop, stopped, destroy};
 const dfy_v2_tool_api tools{{sizeof(dfy_v2_tool_api), 1}, count, describe, begin, poll, cancel, release};
+// 在活动实例内声明游戏陪伴的只读查询入口。
+dfy_v2_status DFY_V2_CALL companion_info(dfy_v2_instance* raw, dfy_v2_companion_description* out, dfy_v2_error* error) noexcept {
+    if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
+    if (out->struct_size != sizeof(*out)) { out->struct_size = 0; return report(DFY_V2_ABI_MISMATCH, error); }
+    *out = {};
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
+    *out = {sizeof(*out), 0, view("world"), view("world")};
+    return report(DFY_V2_OK, error);
+}
+const dfy_v2_companion_api companion{{sizeof(dfy_v2_companion_api), 1}, companion_info};
 // 返回固定版本的静态能力表。
 dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) noexcept {
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
     *out = nullptr;
     if (version == 1 && text(name) == DFY_V2_LIFECYCLE_INTERFACE) *out = &lifecycle;
     if (version == 1 && text(name) == DFY_V2_TOOL_INTERFACE) *out = &tools;
+    if (version == DFY_V2_COMPANION_VERSION && text(name) == DFY_V2_COMPANION_INTERFACE) *out = &companion;
     return report(*out ? DFY_V2_OK : DFY_V2_UNSUPPORTED, error);
 }
 const dfy_v2_plugin_api plugin{sizeof(dfy_v2_plugin_api), DFY_V2_ABI_VERSION, DFY_V2_ARCH_X64, 0, query};
