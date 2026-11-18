@@ -1,4 +1,5 @@
 #include "async_chat.hpp"
+#include <dafeiyu/async_session.hpp>
 #include <windows.h>
 #include <sstream>
 #include <iostream>
@@ -28,7 +29,8 @@ void commands() {
     // 步骤：报告已进入 → 等待测试放行 → 返回迟到文本。
     [&](const auto&,const auto&) { entered.set_value(); gate.wait(); return std::string("late answer"); });
     Release cleanup{release}; std::ostringstream output, errors; unsigned managed = 0;
-    ChatController chat(session,output,errors,[&](std::string_view text) { if (text == "/plugins list") { ++managed; return true; } return false; });
+    Conversation conversation(session);
+    ChatController chat(conversation,output,errors,[&](std::string_view text) { if (text == "/plugins list") { ++managed; return true; } return false; });
     chat.line("hello"); started.wait(); chat.line("another"); chat.line("/plugins list"); chat.line("/cancel"); chat.advance();
     check(managed == 1 && !errors.str().empty() && output.str().find("Request cancelled") != std::string::npos && session.busy(),
         "model wait blocked management or cancel lost original turn");
@@ -47,7 +49,8 @@ void input_loop() {
         dfy::platform::LineInput input(read,2,64);
         dfy::agent::AsyncSession session({},channel(),2,[](const auto&,const auto& messages) { return "reply:"+messages.back().content; });
         std::ostringstream output, errors; unsigned pumped = 0;
-        check(async_chat(session,input,output,errors,[&] { ++pumped; }) == 0 && output.str().find("reply:hello") != std::string::npos &&
+        Conversation conversation(session);
+        check(async_chat(conversation,input,output,errors,[&] { ++pumped; }) == 0 && output.str().find("reply:hello") != std::string::npos &&
             errors.str().empty() && pumped && session.message_count() == 2 && session.closed() && input.exited(),"EOF cancelled accepted answer or blocked host pump");
     }
     CloseHandle(read);
@@ -67,7 +70,8 @@ void command_flush() {
         dfy::agent::AsyncSession session({},channel(),1,[](const auto&,const auto&) -> std::string { throw std::runtime_error("local command reached model"); });
         SyncedBuffer buffer; std::ostream output(&buffer); std::ostringstream errors; bool sent_exit = false;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
-        check(async_chat(session,input,output,errors,
+        Conversation conversation(session);
+        check(async_chat(conversation,input,output,errors,
         // 只有本地回执真正刷新后才继续输入，超时明确暴露相互等待。
         // 步骤：核对截止 → 观察回执同步 → 一次发送退出命令。
         [&] {
@@ -95,7 +99,8 @@ void notification_warnings() {
             if (outcome == 1) throw std::runtime_error("controlled failure");
             return "ok";
         });
-        Release cleanup{release}; std::ostringstream output, errors; ChatController chat(session,output,errors);
+        Release cleanup{release}; std::ostringstream output, errors; Conversation conversation(session);
+        ChatController chat(conversation,output,errors);
         if (outcome) session.clear();
         chat.line("private prompt"); started.wait();
         check(outcome ? errors.str().find("turn_started notification not accepted") != std::string::npos : errors.str().empty(),
@@ -135,7 +140,8 @@ void status_queries() {
         if (calls == 2) throw std::runtime_error("private exception");
         return std::string(1024*1024,'x');
     });
-    Release cleanup{release}; std::ostringstream output, errors; ChatController chat(session,output,errors);
+    Release cleanup{release}; std::ostringstream output, errors; Conversation conversation(session);
+    ChatController chat(conversation,output,errors);
     chat.line("/status"); check(!calls && output.str().find("No accepted question") != std::string::npos,"empty status invoked model");
     chat.line("private prompt"); started.wait(); output.str(""); chat.line("/status");
     check(calls == 1 && output.str().find("Question=pending") != std::string::npos &&

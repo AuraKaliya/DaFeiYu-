@@ -1,5 +1,5 @@
 #include <dafeiyu/plugin_manager.hpp>
-#include <dafeiyu/session.hpp>
+#include "application.hpp"
 #include "../plugins/examples/observer/observer_api.h"
 #include <fstream>
 #include <iostream>
@@ -42,12 +42,35 @@ struct Release {
     // 一次解除正在进行的模型调用。
     void open() { promise.set_value(); released = true; }
 };
+
+// 在正式应用装配中验证空插件问答与关闭顺序。
+// 步骤：注入固定回答 → 接纳并检查活动时关闭拒绝 → 等待实际退出 → 关闭插件管理。
+void shared_application(const fs::path& run) {
+    dfy::app::Application application({},run/"shared-plugins",run/"shared-user",
+        [](const auto&, const auto& messages) { return "shared:"+messages.back().content; });
+    auto& conversation = application.conversation();
+    const auto accepted = conversation.submit("hello");
+    check(application.close_plugins() == ShutdownResult::busy,"shared application ended plugins before its conversation");
+
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    std::optional<dfy::app::CompletedTurn> result;
+    while (conversation.busy() && std::chrono::steady_clock::now() < deadline) {
+        if (auto latest = conversation.advance()) result = std::move(latest);
+        std::this_thread::yield();
+    }
+    check(result && result->answer == "shared:hello" && result->status.turn == accepted.turn &&
+        conversation.status()->exit == OperationState::succeeded,"shared application lost result or actual exit");
+
+    conversation.close();
+    check(conversation.closed() && application.close_plugins() == ShutdownResult::closed,"shared application could not finish shutdown");
+}
 }
 // 在一个真实宿主进程中完成空插件问答、安装、加载、事件消费、卸载、再次问答和移除。
 // 步骤：空插件建立上下文 → 安装加载并在模型等待时消费事件 → 验证失败隔离 → 卸载后继续上下文 → 移除并检查回收。
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
+        shared_application(run);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);
         auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,4,8);
         PluginManager manager(run/"plugins",run/"user",channel,4);

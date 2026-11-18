@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "conversation.hpp"
-#include <dafeiyu/async_session.hpp>
 #include <dafeiyu/line_input.hpp>
 #include <functional>
 #include <iosfwd>
@@ -12,7 +11,7 @@ using HostPump = std::function<void()>;
 class ChatController {
   public:
     // 借用会话与输出，管理命令处理器只在宿主线程调用。
-    ChatController(agent::AsyncSession& session, std::ostream& output, std::ostream& errors, LocalCommand command = {});
+    ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command = {});
     // 分派输入；忙碌时普通问答明确拒绝，本地管理及取消仍可使用。
     void line(std::string text);
     // 推进会话并输出每轮唯一结果，实际退出前继续保留该回合。
@@ -26,13 +25,13 @@ class ChatController {
     // 判断会话及当前回合已实际结束。
     bool done() const noexcept { return ending_ && conversation_.closed(); }
   private:
-    Conversation conversation_;
+    Conversation& conversation_;
     std::ostream& output_;
     std::ostream& errors_;
     LocalCommand command_;
     bool ending_ = false;
 };
 // 轮询输入与会话，持续推进宿主事件；输入关闭和业务结果均不能提前退出资源回收。
-int async_chat(agent::AsyncSession& session, platform::LineInput& input, std::ostream& output, std::ostream& errors,
+int async_chat(Conversation& conversation, platform::LineInput& input, std::ostream& output, std::ostream& errors,
     HostPump pump = {}, LocalCommand command = {});
 }
