@@ -1,4 +1,4 @@
-#include "support/scripted_model.hpp"
+#include "support/compiled_replay.hpp"
 #include <dafeiyu/observation_controller.hpp>
 #include <iostream>
 #include <thread>
@@ -80,9 +80,69 @@ void admission_clock_failure() {
     check(current->operation()->state() == OperationState::cancelled && current->exit()->state() == OperationState::succeeded &&
         controller.poll().decision == TriggerDecision::stopped,"clock failure prevented cleanup or restarted trigger");
 }
+
+// 采集 F07 断档、过期、重复及采样洪峰之后唯一接纳的原运行。
+// 步骤：验证失效采样与优先级 → 合并有界采样并拒绝迟到重采样 → 接纳完整基线 → 核对退出和重复。
+void dispatch_gap() {
+    ScriptStep observed; observed.response = Response{{Role::assistant,"observed complete sample"}};
+    ScriptedModel model({1,"observation_dispatch_gap",1,{},{observed},1});
+    const auto clock = model.clock();
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session(fixed_replay_model(),channel,model.backend());
+    ObservationSource source(1,ObservationTrust::external_data); ObservationInbox inbox({source.id()},1,{3,1024});
+    const auto data = payload();
+    // 总是用当前虚拟时间采样同一对象，固定过期窗口。
+    const auto sample = [&](std::uint64_t revision) {
+        const auto now = clock();
+        return source.capture({"object",1},revision,now,now+std::chrono::milliseconds(5),data);
+    };
+    RunOptions options; options.now = clock; options.policy.allow_observation = true;
+    options.version_labels = compiled_replay_labels("none");
+    options.version_labels.control_extension = "agent.observation-controller-v1";
+    ObservationController controller(session,inbox,{source.id(),{"object",1},1,1,2,std::chrono::milliseconds(1),
+        ObservationTime{}+std::chrono::seconds(1)},"observe complete state",options);
+    controller.enable();
+    check(controller.poll().decision == TriggerDecision::missing_observation,"empty inbox admitted run");
+
+    const auto first = sample(1);
+    check(inbox.accept(first,clock()).status == ObservationAdmission::inserted &&
+        inbox.accept(first,clock()).status == ObservationAdmission::duplicate,"same sample consumed twice");
+    auto held = inbox.latest(source.id(),"object");
+    model.advance_clock(std::chrono::milliseconds(5));
+    check(controller.poll().decision == TriggerDecision::stale && !controller.runs(),"expired sample admitted run");
+    check(inbox.accept(sample(3),clock()).revision_gap && controller.poll().decision == TriggerDecision::gap,"gap admitted run");
+    const auto late = inbox.refresh_ticket(source.id(),"object");
+    check(late.has_value(),"missing refresh watermark");
+    for (std::uint64_t revision = 4; revision <= 24; ++revision)
+        check(inbox.accept(sample(revision),clock()).revision_gap && controller.poll(true).decision == TriggerDecision::user_pending,
+            "sample flood took priority or cleared the gap");
+    check(inbox.refresh(*late,sample(25),clock()).status == ObservationAdmission::stale_refresh && controller.poll().decision == TriggerDecision::gap &&
+        held->metadata().revision == 1 && !model.report().attempted,"late refresh or flood changed retained facts");
+    held.reset();
+
+    const auto refresh = inbox.refresh_ticket(source.id(),"object");
+    check(refresh.has_value(),"missing current watermark");
+    const auto resampled = inbox.refresh(*refresh,sample(25),clock());
+    check(resampled.status == ObservationAdmission::replaced && !resampled.revision_gap,"complete resampling did not clear gap");
+    const auto admitted = controller.poll();
+    check(admitted.request && admitted.receipt && admitted.receipt->ticket.observation_revision == 25 && admitted.request->run_id() == admitted.receipt->run,
+        "wrong observation bound to new run");
+    drain(session); model.verify_complete();
+    check(admitted.request->answer() == "observed complete sample" && controller.poll().decision == TriggerDecision::duplicate && controller.runs() == 1,
+        "terminal receipt lost during sample deduplication");
+    write_compiled_replay(std::cout,model.report(),*admitted.request,0);
+}
 }
 // 使用正式 Session 和既有模型替身，不采集设备或运行真实模型。
-int main() {
-    try { dispatch(); refusals(); admission_clock_failure(); std::cout << "Observation controller checks passed\n"; return 0; }
+// 步骤：匹配固定采集名称或运行原控制器用例 → 核对实际运行及回执 → 返回结果。
+int main(int argc, char** argv) {
+    try {
+        if (argc == 3 && std::string_view(argv[1]) == "--capture" && std::string_view(argv[2]) == "observation_dispatch_gap") dispatch_gap();
+        else {
+            check(argc == 1,"usage: --capture observation_dispatch_gap");
+            dispatch(); refusals(); admission_clock_failure(); std::cout << "Observation controller checks passed\n";
+        }
+        return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
