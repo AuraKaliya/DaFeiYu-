@@ -40,8 +40,12 @@ async function limitCapacity(fixture, fish) {
 
 // 对比自然合堆和独立掉落，保存客户端拾取对象及完整服务端因果链。
 // 步骤：生成两份来源 → 核对实际合堆或保持独立 → 控制两个角色接近 → 验证归属范围。
-async function verifyCase(fixture, owner, fish, mode) {
+async function verifyCase(fixture, owner, fish, mode, initialStock = 0) {
   const target = await prepare(fixture, owner, fish);
+  if (initialStock > 0) {
+    fixture.send('give DfyCompanion minecraft:cobblestone ' + initialStock);
+    await until(() => stoneCount(fish) === initialStock, '读到原有库存');
+  }
   if (mode === 'split') await limitCapacity(fixture, fish);
   if (mode === 'separate') {
     fixture.send('tp DfyOwner -6.5 -60 0.5');
@@ -104,6 +108,7 @@ async function verifyCase(fixture, owner, fish, mode) {
     assert.equal(ownPickupRange(rows.filter(row => row.seq !== pickup.seq), self, gift, fish.player.uuid), null);
     writeFileSync(join(fixture.evidence, mode + '.json'), JSON.stringify({ mode, client, clientStock, pickup: pickup.seq,
       self: self.item, gift: gift.item, ownRange: range, rows }, null, 2));
+    return { range, cursor, self, gift };
   } finally {
     fish.removeListener('playerCollect', observedPickup);
   }
@@ -117,4 +122,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { collect, stoneCount };
+module.exports = { stoneCount, verifyCase };

@@ -2,3 +2,6 @@ name: DfyStoneObserver
 version: '0.1'
 main: dafeiyu.fixture.StoneObserver
 api-version: '1.21.4'
+commands:
+  dfystonesample:
+    description: Read one fixture player's position and stock

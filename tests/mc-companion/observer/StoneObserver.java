@@ -13,6 +13,8 @@ import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
@@ -140,6 +142,25 @@ public final class StoneObserver extends JavaPlugin implements Listener {
             if (stack != null && stack.getType() == Material.COBBLESTONE) count += stack.getAmount();
         }
         return count;
+    }
+
+    // 仅接受本机夹具控制台的采样请求，同时读取角色、世界、位置和库存。
+    // 步骤：核对控制台及请求标记 → 在同一服务器线程采样 → 记录独立回执。
+    @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (sender != Bukkit.getConsoleSender() || args.length != 2 || !args[1].matches("[a-zA-Z0-9-]{1,48}")) return false;
+        Player player = Bukkit.getPlayerExact(args[0]);
+        if (player == null) return false;
+        var row = event("sample", player.getLocation());
+        row.addProperty("actor", player.getUniqueId().toString());
+        row.addProperty("request", args[1]);
+        row.addProperty("stock", stock(player));
+        var stacks = new JsonArray();
+        for (var stack : player.getInventory().getStorageContents()) {
+            if (stack != null && stack.getType() == Material.COBBLESTONE) stacks.add(stack.getAmount());
+        }
+        row.add("stacks", stacks);
+        record(row);
+        return true;
     }
 
     // 保存合堆双方的事前数量，再从下一次服务器推进读回实际去向。
