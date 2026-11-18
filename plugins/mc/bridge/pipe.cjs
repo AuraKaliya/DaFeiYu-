@@ -21,6 +21,8 @@ function readReply(input, world, inbox, key, actions) {
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0)
     return { version: 1, id: request.id, inbox: inbox.read(request.generation, request.after) };
   if (actions && typeof request.generation === 'string' && Number.isSafeInteger(request.order) && request.order > 0) {
+    if (request.method === 'question.open' && Object.keys(request).length === 7 && typeof request.question === 'string')
+      return { version: 1, id: request.id, question: actions.ask(request.generation, request.order, request.question) };
     if (request.method === 'inspect.begin' && Object.keys(request).length === 7 && typeof request.place === 'string')
       return { version: 1, id: request.id, action: actions.begin(request.generation, request.order, request.place) };
     if (['inspect.read', 'inspect.stop'].includes(request.method) && Object.keys(request).length === 6)

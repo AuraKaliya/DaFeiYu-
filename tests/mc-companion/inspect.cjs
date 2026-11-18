@@ -58,7 +58,17 @@ async function verify(fixture, owner, fish) {
     const rows = readStream(fixture.server).slice(cursor);
     assert.ok(!rows.some(row => row.kind === 'blockBroken' && row.actor === fish.player.uuid));
     assert.deepEqual((await query(channel, request)).action, actual);
-    writeFileSync(join(fixture.evidence, 'inspect.json'), JSON.stringify({ started, actual, digs, rows }, null, 2));
+    let received = 0;
+    owner.on('messagestr', text => { if (text.includes('要我采一些带回来吗')) ++received; });
+    const ask = { version: 1, id: 'question-transport', method: 'question.open', key, generation, order: 2, question: 'q-1' };
+    const asked = (await query(channel, ask)).question;
+    await until(() => received === 1, '同场玩家实际收到提问');
+    assert.ok(asked.owner === owner.player.uuid && asked.id === 'q-1' && asked.sent && asked.after === 2);
+    assert.deepEqual((await query(channel, ask)).question, asked);
+    assert.equal(await query(channel, { ...ask, question: 'q-2' }), null);
+    await owner.waitForTicks(3);
+    assert.equal(received, 1);
+    writeFileSync(join(fixture.evidence, 'inspect.json'), JSON.stringify({ started, actual, digs, rows, asked, received }, null, 2));
   } finally {
     fish.dig = gameDig;
     await pipe.close();

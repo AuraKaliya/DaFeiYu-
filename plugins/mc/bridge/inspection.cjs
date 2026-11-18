@@ -48,6 +48,7 @@ function inspectionService(bot, world, inbox, places) {
   let closed = false;
   let heartbeat = 0;
   let origin = null;
+  let question = null;
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;
@@ -97,12 +98,14 @@ function inspectionService(bot, world, inbox, places) {
         if (current.place !== placeId) throw new Error('查看目标冲突');
         return { ...current };
       }
+      if (question?.generation === generation) throw new Error('原玩家问题尚待答复');
       if (current && (!current.exited || (current.generation === generation && order <= current.order))) throw new Error('查看占用或过期');
       const place = places.get(placeId);
       const entry = inbox.get(generation, order);
       if (!place || snapshot.dimension !== place.dimension || !entry || !permitsInspection(entry.text, place.label))
         throw new Error('没有此地标的查看委托');
       origin = bot.entity.position.clone();
+      question = null;
       current = { generation, order, place: placeId, phase: 'moving', exited: false, moved: false };
       heartbeat = performance.now();
       const deadline = heartbeat + 30000;
@@ -120,6 +123,25 @@ function inspectionService(bot, world, inbox, places) {
       heartbeat = performance.now();
       if (cancel) stop();
       return { ...current };
+    },
+    // 发现目标后向同场的绑定玩家私聊提问，同一问题重投只返回原发送回执。
+    // 步骤：复核原查看证据 → 找到绑定玩家 → 保存问题身份并发送一次。
+    ask(generation, order, id) {
+      if (closed || !/^[a-zA-Z0-9.-]{1,96}$/.test(id) || world.read()?.generation !== generation ||
+        current?.generation !== generation || current.order !== order || current.phase !== 'arrived' ||
+        !current.exited || !current.stone) throw new Error('没有可提问的观察');
+      if (question) {
+        if (question.id !== id || !question.sent) throw new Error('原问题冲突或发送未核实');
+        return { ...question };
+      }
+      const source = inbox.read(generation, 0);
+      const player = Object.values(bot.players).find(value => value.uuid === source?.owner);
+      if (!player || !/^[a-zA-Z0-9_]{1,16}$/.test(player.username)) throw new Error('原玩家不在场');
+      const text = '我在' + places.get(current.place).label + '看到了圆石。要我采一些带回来吗？';
+      question = { id, generation, order, owner: source.owner, after: source.latest, text, sent: false };
+      bot.whisper(player.username, text);
+      question.sent = true;
+      return { ...question };
     },
     // 关闭入口并等待本次路径结束，移除游戏事件监听。
     async close() {
