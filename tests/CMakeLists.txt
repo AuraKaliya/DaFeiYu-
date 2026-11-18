@@ -1,4 +1,8 @@
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
+add_executable(dfy_mc_protocol_tests mc_protocol.cpp)
+target_link_libraries(dfy_mc_protocol_tests PRIVATE dfy_mc_bridge nlohmann_json::nlohmann_json dfy_build_options)
+set_target_properties(dfy_mc_protocol_tests PROPERTIES FOLDER "Tests")
+add_test(NAME mc.protocol COMMAND dfy_mc_protocol_tests)
 find_program(DFY_MC_NODE NAMES node)
 if(DFY_MC_NODE)
   add_executable(dfy_mc_pipe_tests mc_pipe.cpp)
