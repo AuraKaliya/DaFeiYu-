@@ -34,4 +34,8 @@ struct MineReply { bool exited, finished, started; std::string payload; };
 std::string mine_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
 // 核对采掘是否实际开始及客户端是否结束，持有证据另行判定。
 MineReply mine_reply(std::string_view wire, std::string_view id, std::string_view arguments);
+// 仅按已接单且数量明确的原委托提交或查询返程。
+std::string return_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
+// 校验返程来源、位置、库存和可选的到达持有区间。
+InspectReply return_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 }

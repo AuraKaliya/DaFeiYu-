@@ -275,6 +275,41 @@ MineReply mine_reply(std::string_view wire, std::string_view id, std::string_vie
     return {exited, phase == "clientFinished", started, data.dump()};
 }
 
+// 地点和数量均取自原接单事实，控制帧不允许替换目的地。
+std::string return_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments) {
+    auto frame = parse(arguments);
+    if (key.size() != 64 || frame.size() != 3 || !uuid(frame.at("generation")) ||
+        !valid_channel(frame.at("question").get_ref<const std::string&>()) || !valid_channel(frame.at("grant").get_ref<const std::string&>()) ||
+        (method != "return.begin" && method != "return.read" && method != "return.stop")) throw std::invalid_argument("MC protocol: return");
+    frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", method}});
+    return frame.dump();
+}
+
+// 只将抵达时的联合读数作为带回数量证据。
+// 步骤：核对委托身份与阶段 → 检查到达位置 → 校验数量区间及观察来源。
+InspectReply return_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
+    const auto reply = parse(wire), args = parse(arguments);
+    if (reply.size() != 3 || !reply.at("version").is_number_unsigned() || reply.at("version") != 1 ||
+        reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong return reply");
+    const auto& data = reply.at("action");
+    if (data.size() != 9 || !valid_channel(data.at("place").get_ref<const std::string&>()))
+        throw std::invalid_argument("MC protocol: return shape");
+    for (auto key : {"generation", "question", "grant"}) if (data.at(key) != args.at(key)) throw std::invalid_argument("MC protocol: return identity");
+    const bool exited = data.at("exited").get<bool>(), arrived = data.at("phase") == "arrived";
+    if ((exited && !arrived && data.at("phase") != "failed" && data.at("phase") != "stopped") ||
+        (!exited && data.at("phase") != "returning" && data.at("phase") != "stopping")) throw std::invalid_argument("MC protocol: return phase");
+    if (arrived) {
+        if (!data.at("stock").is_number_unsigned() || data.at("position").size() != 3) throw std::invalid_argument("MC protocol: arrival stock");
+        for (auto axis : {"x", "y", "z"}) if (!data.at("position").at(axis).is_number()) throw std::invalid_argument("MC protocol: arrival position");
+        const auto& proof = data.at("carried");
+        if (!proof.is_null() && (proof.size() != 5 || !uuid(proof.at("stream")) || !proof.at("sample").is_number_unsigned() ||
+            proof.at("sample") == 0 || proof.at("stock") != data.at("stock") || !proof.at("lower").is_number_unsigned() ||
+            !proof.at("upper").is_number_unsigned() || proof.at("lower") > proof.at("upper") || proof.at("upper") > data.at("stock")))
+            throw std::invalid_argument("MC protocol: carried range");
+    }
+    return {exited, arrived, false, data.dump()};
+}
+
 // 匹配具体发送回执，记录的是游戏角色已发出，不推断玩家已阅读。
 std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
     const auto reply = parse(wire), args = parse(arguments);

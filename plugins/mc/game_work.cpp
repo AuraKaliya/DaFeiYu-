@@ -6,7 +6,8 @@ namespace dfy::mc {
 GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments)
     : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), deadline_(std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
     if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
-    else static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));
+    else if (action_ == GameAction::mine) static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));
+    else static_cast<void>(return_request("return.begin", id_, config_.key, arguments_));
 }
 
 // 每轮最多处理一次非等待本机收发，桥接异常后尝试停止同一动作。
@@ -22,7 +23,8 @@ std::optional<GameResult> GameWork::poll(bool cancelled) {
             if (stopping_) phase_ = Phase::stop;
             const char* verb = phase_ == Phase::begin ? ".begin" : phase_ == Phase::stop ? ".stop" : ".read";
             const auto frame = action_ == GameAction::inspect ? inspect_request(std::string("inspect") + verb, id_, config_.key, arguments_)
-                : mine_request(std::string("mine") + verb, id_, config_.key, arguments_);
+                : action_ == GameAction::mine ? mine_request(std::string("mine") + verb, id_, config_.key, arguments_)
+                : return_request(std::string("return") + verb, id_, config_.key, arguments_);
             pipe_ = std::make_unique<PipeExchange>(config_.channel, frame);
         }
         if (phase_ == Phase::begin) attempted_ = true;
@@ -32,9 +34,12 @@ std::optional<GameResult> GameWork::poll(bool cancelled) {
         if (action_ == GameAction::inspect) {
             auto value = inspect_reply(*wire, id_, arguments_);
             if (value.exited) return GameResult{value.arrived, value.moved ? GameEffect::observed : GameEffect::none, std::move(value.payload)};
-        } else {
+        } else if (action_ == GameAction::mine) {
             auto value = mine_reply(*wire, id_, arguments_);
             if (value.exited) return GameResult{value.finished, value.started ? GameEffect::unknown : GameEffect::none, std::move(value.payload)};
+        } else {
+            auto value = return_reply(*wire, id_, arguments_);
+            if (value.exited) return GameResult{value.arrived, GameEffect::unknown, std::move(value.payload)};
         }
         phase_ = Phase::read;
         next_ = now + std::chrono::milliseconds(80);

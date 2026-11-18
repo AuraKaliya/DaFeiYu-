@@ -4,7 +4,7 @@
 #include <memory>
 
 namespace dfy::mc {
-enum class GameAction { inspect, mine };
+enum class GameAction { inspect, mine, home };
 enum class GameEffect { none, observed, unknown };
 struct GameResult { bool success; GameEffect effect; std::string payload; };
 // 在原生工具票据内依次提交、查询、停止同一游戏动作，失联后不重发接纳。
