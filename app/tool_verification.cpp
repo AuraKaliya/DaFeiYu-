@@ -43,7 +43,8 @@ agent::ObservationGuard ToolVerification::observe(const agent::TurnRequest& run,
 
 // 只以真实且按顺序退出的工具工作验证动作结果。
 // 步骤：核对计划及调用顺序 → 接纳首次读取 → 在变更退出时签发反馈 → 用后续读取验证原步骤。
-void ToolVerification::advance(agent::Session& session, const agent::TurnRequest& run, const agent::ConfirmationCaller& caller) {
+void ToolVerification::advance(agent::Session& session, const agent::TurnRequest& run, const agent::ConfirmationCaller& caller,
+    agent::ObservationTime now) {
     using agent::ObservationMatch;
     using runtime::OperationState;
     if (match_) return;
@@ -53,7 +54,6 @@ void ToolVerification::advance(agent::Session& session, const agent::TurnRequest
     }
     const auto plan = run.plan();
     if (!plan || plan->steps.empty()) return;
-    const auto now = std::chrono::steady_clock::now();
     if (now >= deadline_) { unavailable(); return; }
 
     const auto steps = run.tool_steps();

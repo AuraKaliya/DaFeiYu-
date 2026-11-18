@@ -10,6 +10,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (current_) throw std::logic_error("session: wait for the current request to finish");
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
+    if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
     current_ = session_.begin(prompt,std::move(options));
     reported_ = false;
     return current_->diagnostics();

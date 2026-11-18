@@ -10,7 +10,7 @@ class ToolVerification {
     // 只有原读取实际退出且观察仍有效时，才允许批准指定动作。
     bool can_approve(const agent::ConfirmationTarget& target, agent::ObservationTime now) const noexcept;
     // 从原运行推进证据收集，不发起模型或工具调用。
-    void advance(agent::Session& session, const agent::TurnRequest& run, const agent::ConfirmationCaller& caller);
+    void advance(agent::Session& session, const agent::TurnRequest& run, const agent::ConfirmationCaller& caller, agent::ObservationTime now);
     // 标记无法核验，保留已经完成的明确判定。
     void unavailable() noexcept { if (!match_) match_ = agent::ObservationMatch::unknown; }
     // 返回现有判定，缺少值表示仍在等待证据。

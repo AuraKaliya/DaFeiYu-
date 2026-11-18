@@ -14,14 +14,19 @@ struct TaskAdmission {
     agent::TurnDiagnostics status;
     bool reused = false;
 };
+struct ApplicationRunConfig {
+    agent::ToolClock tool_clock = std::chrono::steady_clock::now;
+    std::optional<std::string> model_profile;
+};
 
 // 在一个宿主线程上组装会话、插件和共享事件，调用方负责定期推进。
 class Application {
   public:
     // 创建使用内置结构化 Provider 的独立应用实例。
     Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data);
-    // 以显式后端创建独立应用实例，缺少后端由原会话拒绝。
-    Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data, model::Backend backend);
+    // 以显式后端创建应用，可为工具运行指定统一时钟及公开模型档案。
+    Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data,
+        model::Backend backend, ApplicationRunConfig run = {});
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
     // 在原宿主线程使用应用拥有的插件命令入口。
@@ -79,6 +84,7 @@ class Application {
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
     void advance_verification();
 
+    const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
     plugins::PluginManager plugins_;
     std::optional<ToolRegistration> tool_registration_;

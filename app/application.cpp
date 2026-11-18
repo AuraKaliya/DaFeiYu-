@@ -7,11 +7,12 @@
 
 namespace dfy::app {
 namespace {
-// 固定编译此应用的配置与已知源码提交，运行时不查询工作区。
-agent::RunVersionLabels build_labels() {
+// 固定应用的编译配置、已知源码提交及后端公开档案。
+agent::RunVersionLabels build_labels(std::optional<std::string> model_profile) {
     agent::RunVersionLabels labels;
     labels.build = DFY_APPLICATION_BUILD;
     if (std::string_view(DFY_APPLICATION_COMMIT).size()) labels.application_commit = DFY_APPLICATION_COMMIT;
+    labels.model_profile = std::move(model_profile);
     return labels;
 }
 
@@ -36,12 +37,15 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     : Application(std::move(config),packages,user_data,model::Backend{model::complete_response}) {}
 
 // 让正式会话与插件共享同一有界事件通道。
-// 步骤：准备通道 → 创建插件目录与会话 → 绑定会话服务。
+// 步骤：固定工具时钟 → 创建插件目录与会话 → 绑定会话服务及公开构建标签。
 Application::Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data,
-    model::Backend backend)
-    : channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
+    model::Backend backend, ApplicationRunConfig run)
+    : tool_clock_(std::move(run.tool_clock)),
+      channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
       plugins_(packages,user_data,channel_), session_(std::move(config),channel_,std::move(backend)),
-      conversation_(session_,build_labels()) {}
+      conversation_(session_,build_labels(std::move(run.model_profile))) {
+    if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
+}
 
 // 为用户指明的一个只读工具接纳运行。
 agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id, const std::string& prompt) {
@@ -69,6 +73,7 @@ Application::PreparedTools Application::prepare_tools(std::string_view package) 
 agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes) {
     auto prepared = prepare_tools(package_of(tool_id));
     agent::RunOptions options;
+    options.now = tool_clock_;
     options.tools = prepared.catalog->snapshot(std::span(&tool_id,1),confirm_changes);
     options.policy.confirm_changes = confirm_changes;
     if (confirm_changes) options.confirmation_caller = caller_;
@@ -92,6 +97,7 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
     if (!write_scope.permits_state_changes()) throw std::invalid_argument("verification: state-changing tool required");
 
     agent::RunOptions options;
+    options.now = tool_clock_;
     const std::array ids{reader,change};
     options.tools = prepared.catalog->snapshot(ids,true);
     options.planning = agent::PlanLimits{1,1};
@@ -100,7 +106,10 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
     options.policy.tool_limit = 3;
     options.confirmation_limit = 1;
     options.version_labels.prompt_template = "app.verified-state-v1";
-    const auto deadline = options.now()+options.timeout;
+    const auto now = options.now();
+    const auto duration = std::chrono::duration_cast<agent::ToolTime::duration>(options.timeout);
+    if (now > agent::ToolTime::max()-duration) throw std::overflow_error("verification: deadline overflow");
+    const auto deadline = now+duration;
     options.deadline = deadline;
     auto verifier = std::make_unique<ToolVerification>(reader,change,expected,prepared.instance->generation(),deadline);
 
@@ -175,7 +184,7 @@ agent::ConfirmationReceipt Application::decide(runtime::DomainId request, std::u
     if (found == values.end()) throw std::invalid_argument("confirmation: request unavailable");
     if (approve && found->state == agent::ConfirmationState::waiting && verification_ &&
         found->target.attempt.step.run == verification_->run &&
-        (!verifier_ || !verifier_->can_approve(found->target,std::chrono::steady_clock::now())))
+        (!verifier_ || !verifier_->can_approve(found->target,tool_clock_())))
         throw std::invalid_argument("verification: original read evidence is unavailable");
 
     const auto receipt = session_.decide(caller_,{request,request,revision,found->target,approve});
@@ -200,7 +209,7 @@ void Application::advance_verification() {
     const auto& run = conversation_.current_;
     if (!run || run->run_id() != verification_->run || !tool_registration_) verifier_->unavailable();
     else {
-        try { verifier_->advance(session_,*run,caller_); }
+        try { verifier_->advance(session_,*run,caller_,tool_clock_()); }
         catch (...) { verifier_->unavailable(); }
     }
     if (const auto match = verifier_->match()) {
