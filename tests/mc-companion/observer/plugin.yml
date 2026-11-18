@@ -1,0 +1,4 @@
+name: DfyStoneObserver
+version: '0.1'
+main: dafeiyu.fixture.StoneObserver
+api-version: '1.21.4'
