@@ -3,11 +3,16 @@
 #include "tool_verification.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
+#include <array>
 
 namespace dfy::app {
 struct VerificationReport {
     agent::RunId run;
     std::optional<agent::ObservationMatch> match;
+};
+struct TaskAdmission {
+    agent::TurnDiagnostics status;
+    bool reused = false;
 };
 
 // 在一个宿主线程上组装会话、插件和共享事件，调用方负责定期推进。
@@ -28,6 +33,11 @@ class Application {
     // 提交同一实例的无参读取及变更工具，由宿主比对变更后的实际文本状态。
     agent::TurnDiagnostics submit_verified(const std::string& reader, const std::string& change, const std::string& expected,
         const std::string& prompt);
+    // 使用当前宿主的顺序请求号提交任务，同一已接纳命令复用原回执。
+    TaskAdmission submit_verified_once(std::uint64_t command, const std::string& reader, const std::string& change,
+        const std::string& expected, const std::string& prompt);
+    // 只读查询仍在保留范围的请求及原运行身份。
+    std::optional<agent::RunId> task_run(std::uint64_t command) const noexcept;
     // 查询当前或最近一次运行的实际验证判断。
     std::optional<VerificationReport> verification() const noexcept;
     // 为可信界面读取当前运行的确认记录和待审参数。
@@ -49,6 +59,11 @@ class Application {
         std::shared_ptr<agent::ToolCatalog> catalog;
         std::unique_ptr<plugins::PluginTools> registration;
     };
+    struct TaskReceipt {
+        std::uint64_t command = 0;
+        std::string digest;
+        agent::TurnDiagnostics accepted;
+    };
 
     // 针对用户明确选择的包，临时登记活动实例的工具。
     PreparedTools prepare_tools(std::string_view package);
@@ -67,5 +82,7 @@ class Application {
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
     std::unique_ptr<ToolVerification> verifier_;
+    std::uint64_t task_watermark_ = 0;
+    std::array<std::optional<TaskReceipt>,16> task_receipts_;
 };
 }

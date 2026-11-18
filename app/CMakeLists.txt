@@ -2,7 +2,7 @@
 add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp tool_verification.cpp tool_verification.hpp
   diagnostic_files.cpp diagnostic_files.hpp)
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
+target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options dfy_digest nlohmann_json::nlohmann_json)
 # 构建标签随二进制固定，源码提交仅在构建者明确提供时记录。
 set(DFY_APPLICATION_COMMIT "" CACHE STRING "Verified source commit of this application build")
 if(NOT DFY_APPLICATION_COMMIT STREQUAL "")

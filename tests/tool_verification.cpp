@@ -52,13 +52,23 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     auto& manager = application.plugins();
     auto& conversation = application.conversation();
     std::ostringstream output, errors;
-    app::ChatController chat(conversation,output,errors,
-        [&](std::string_view line) { return app::application_command(application,line,output,errors); });
+    // 重新连接的是终端视图，宿主保留原会话和回执。
+    const auto connect = [&] {
+        return std::make_unique<app::ChatController>(conversation,output,errors,
+            [&](std::string_view line) { return app::application_command(application,line,output,errors); });
+    };
+    auto chat = connect();
     manager.install(package);
     check(manager.load("example.status") == 0,"status package did not load");
-    chat.line(std::string("/task example.status/read example.status/set_focus ")+(trial == Trial::differs ? "idle" : "focus")+" \"set focus\"");
+    const auto command = std::string("/task example.status/read example.status/set_focus ")+(trial == Trial::differs ? "idle" : "focus")+" \"set focus\"";
+    if (trial == Trial::matches) {
+        chat->line(command+" --request 2");
+        check(!conversation.status() && errors.str().find("sequence gap") != std::string::npos,"task sequence gap admitted an operation");
+        errors.str("");
+    }
+    chat->line(trial == Trial::matches ? command+" --request 1" : command);
     const auto accepted = conversation.status();
-    chat.line("/verification");
+    chat->line("/verification");
     check(accepted && output.str().find("verification pending.") != std::string::npos && errors.str().empty(),
         "terminal did not show the accepted task and pending evidence");
     const auto pending_diagnostic = conversation.diagnostic();
@@ -71,12 +81,19 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     bool attempted = false, approved = false;
     while (conversation.busy() && std::chrono::steady_clock::now() < deadline) {
         check(application.advance_plugins() != runtime::RunResult::failed,"native panel advance failed");
-        chat.advance();
+        chat->advance();
         const auto confirmations = application.confirmations();
         if (!attempted && !confirmations.empty()) {
             attempted = true;
             const auto& pending = confirmations[0];
-            chat.line("/approve "+std::to_string(pending.id)+' '+std::to_string(pending.revision));
+            if (trial == Trial::matches) {
+                chat = connect();
+                chat->line("/task-status 1");
+                chat->line(command+" --request 1");
+                check(output.str().find("waiting=1") != std::string::npos && output.str().find("Original run ") != std::string::npos,
+                    "replacement terminal could not find the original pending task");
+            }
+            chat->line("/approve "+std::to_string(pending.id)+' '+std::to_string(pending.revision));
             approved = output.str().find("Approval recorded") != std::string::npos;
         }
         std::this_thread::yield();
@@ -88,7 +105,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     check(report && report->run.sequence == accepted->turn && report->match == expected && attempted &&
         approved == (trial != Trial::early_change) && calls == (trial == Trial::early_change ? 2u : 5u),
         "real plugin state did not produce the expected proof");
-    chat.line("/verification");
+    chat->line("/verification");
     const char* message = trial == Trial::matches ? "matched the actual state." :
         (trial == Trial::differs ? "found a state mismatch." : "could not establish evidence.");
     check(output.str().find(message) != std::string::npos &&
@@ -102,11 +119,21 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         "retained diagnostic lost original evidence or run identity");
     const auto path = run/u8"面板诊断.json";
     const auto utf = path.u8string();
-    chat.line("/diagnostic export \""+std::string(utf.begin(),utf.end())+"\"");
+    chat->line("/diagnostic export \""+std::string(utf.begin(),utf.end())+"\"");
     const auto stored = app::read_diagnostic_file(path);
     check(stored.timeline.key == diagnostic->timeline.key && stored.feedback.size() == diagnostic->feedback.size() &&
         output.str().find("Diagnostic exported") != std::string::npos && calls == (trial == Trial::early_change ? 2u : 5u),
         "terminal diagnostic export lost evidence or invoked model");
+    if (trial == Trial::matches) {
+        chat = connect();
+        output.str("");
+        chat->line("/task-status 1");
+        chat->line(command+" --request 1");
+        chat->line("/task example.status/read example.status/set_focus focus \"different goal\" --request 1");
+        check(output.str().find("Question=succeeded") != std::string::npos && output.str().find("Original run ") != std::string::npos &&
+            errors.str().find("conflicts with receipt") != std::string::npos && calls == 5 && !conversation.busy(),
+            "request replay or conflict started a new verified task");
+    }
     check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");

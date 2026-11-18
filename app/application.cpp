@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
 #include <array>
@@ -110,6 +111,37 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
     verification_.emplace(VerificationReport{{accepted.session,accepted.turn},{}});
     verifier_ = std::move(verifier);
     return accepted;
+}
+
+// 安全重复提交受控任务，不因丢失回执创建第二次动作。
+// 步骤：校验请求及范围 → 核对原回执或顺序 → 完整准备摘要 → 接纳一次并发布原回执。
+TaskAdmission Application::submit_verified_once(std::uint64_t command, const std::string& reader, const std::string& change,
+    const std::string& expected, const std::string& prompt) {
+    if (!command) throw std::invalid_argument("task: positive request required");
+    auto& slot = task_receipts_[(command-1)%task_receipts_.size()];
+    if (command <= task_watermark_ && (!slot || slot->command != command)) throw std::invalid_argument("task: request receipt expired");
+    if (command > task_watermark_ && command-task_watermark_ != 1) throw std::invalid_argument("task: request sequence gap");
+    if (reader.size() > 128 || change.size() > 128 || expected.size() > 1024 || prompt.size() > 1024*1024)
+        throw std::length_error("task: command exceeds input limits");
+
+    auto digest = platform::sha256(nlohmann::json::array({reader,change,expected,prompt}).dump());
+    if (command <= task_watermark_) {
+        if (slot->digest != digest) throw std::invalid_argument("task: request body conflicts with receipt");
+        return {slot->accepted,true};
+    }
+
+    const auto accepted = submit_verified(reader,change,expected,prompt);
+    slot.emplace(TaskReceipt{command,std::move(digest),accepted});
+    task_watermark_ = command;
+    return {accepted,false};
+}
+
+// 从有界回执取得原运行，缺失身份不解释成可以执行新任务。
+std::optional<agent::RunId> Application::task_run(std::uint64_t command) const noexcept {
+    if (!command) return {};
+    const auto& slot = task_receipts_[(command-1)%task_receipts_.size()];
+    if (!slot || slot->command != command) return {};
+    return agent::RunId{slot->accepted.session,slot->accepted.turn};
 }
 
 // 只报告与当前或最近一次运行关联的证据状态。

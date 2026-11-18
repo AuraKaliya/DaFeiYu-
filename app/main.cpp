@@ -102,7 +102,8 @@ int run(const std::vector<std::filesystem::path>& args) {
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"
-            << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" for a verified state change and /verification for its evidence.\n"
+            << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" [--request ID] for a verified state change.\n"
+            << "Use /verification or /task-status REQUEST to inspect evidence and retained status.\n"
             << "Use /diagnostic export \"FILE\" to save a local diagnostic.\n";
         return help ? 0 : 1;
     } catch (const std::exception& error) {

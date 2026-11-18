@@ -19,7 +19,7 @@ std::uint64_t positive_id(const std::string& text) {
     std::uint64_t value = 0;
     const auto result = std::from_chars(text.data(),text.data()+text.size(),value);
     if (result.ec != std::errc{} || result.ptr != text.data()+text.size() || !value)
-        throw std::invalid_argument("confirmation: expected a positive request and revision");
+        throw std::invalid_argument("command: expected a positive decimal identity");
     return value;
 }
 
@@ -58,6 +58,19 @@ void write_verification(const Application& application, std::ostream& output) {
     case agent::ObservationMatch::unknown: output << "could not establish evidence.\n"; break;
     }
 }
+
+// 查询已接纳请求及仍然保留的运行状态。
+// 步骤：定位原接纳 → 核对结果身份 → 输出实时或最近值，缺失时报告已超出保留范围。
+void write_task_status(Application& application, std::uint64_t request, std::ostream& output) {
+    const auto run = application.task_run(request);
+    if (!run) throw std::invalid_argument("task: request receipt unavailable");
+    output << "Task request " << request << " refers to run " << run->session << '/' << run->sequence << ".\n";
+    const auto status = application.conversation().status();
+    if (status && *run == agent::RunId{status->session,status->turn}) {
+        write_turn_status(output,*status);
+        write_verification(application,output);
+    } else output << "Run details are no longer retained.\n";
+}
 }
 
 // 处理明确的终端控制命令，保留原回执和插件分派。
@@ -67,9 +80,17 @@ bool application_command(Application& application, std::string_view command, std
     if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
     else if (name == "/task") {
         const auto words = command_words(command);
-        if (words.size() != 5) throw std::invalid_argument("Usage: /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\"");
-        const auto status = application.submit_verified(words[1],words[2],words[3],words[4]);
-        write_accepted(status,"Use /confirmations for pending actions and /verification for actual state evidence.",output,errors);
+        const bool numbered = words.size() == 7 && words[5] == "--request";
+        if (words.size() != 5 && !numbered)
+            throw std::invalid_argument("Usage: /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" [--request ID]");
+        const auto admission = numbered ? application.submit_verified_once(positive_id(words[6]),words[1],words[2],words[3],words[4]) :
+            TaskAdmission{application.submit_verified(words[1],words[2],words[3],words[4])};
+        if (admission.reused) output << "Original run " << admission.status.session << '/' << admission.status.turn << " retained.\n";
+        else write_accepted(admission.status,"Use /confirmations for pending actions and /verification for actual state evidence.",output,errors);
+    } else if (name == "/task-status") {
+        const auto words = command_words(command);
+        if (words.size() != 2) throw std::invalid_argument("Usage: /task-status REQUEST");
+        write_task_status(application,positive_id(words[1]),output);
     } else if (name == "/verification") {
         if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /verification");
         write_verification(application,output);
