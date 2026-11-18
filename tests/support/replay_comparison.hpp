@@ -49,6 +49,12 @@ inline auto replay_fact_values(const agent::TraceFact& fact) {
         fact.error,fact.fault,fact.control_point,fact.decision,fact.confirmation,fact.source_revision,fact.history_messages);
 }
 
+// 比较每个原模型调用使用的目标、计划及观察复核结果，绑定身份由各自的时间线校验。
+inline auto replay_model_context_values(const agent::ModelContextSnapshot& context) {
+    return std::tie(context.attempt.step.sequence,context.attempt.sequence,context.goal_revision,context.plan_revision,
+        context.purpose,context.plan_step,context.observations_current);
+}
+
 // 按同案例和已声明变化比较两次实际执行，缺材料或缺事实时明确不可比。
 // 步骤：核对案例输入 → 核对版本及声明 → 校验历史和身份 → 比较结构化行为。
 inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const ReplayEvidence& candidate,
@@ -85,8 +91,14 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
     difference("history_messages",left.history_messages,right.history_messages);
     difference("stop_reason",left.trace.stop_reason,right.trace.stop_reason);
     difference("failure",left.trace.failure,right.trace.failure);
+    difference("run_origin",left.trace.source,right.trace.source);
+    difference("goal_revision",left.trace.goal_revision,right.trace.goal_revision);
     difference("notification_issue",first.notification_issue,second.notification_issue);
     difference("assertions",left.failed_assertions,right.failed_assertions);
+    if (!std::equal(left.trace.model_contexts.begin(),left.trace.model_contexts.end(),
+        right.trace.model_contexts.begin(),right.trace.model_contexts.end(),
+        [](const auto& a,const auto& b) { return replay_model_context_values(a) == replay_model_context_values(b); }))
+        result.behavior.push_back("model_contexts");
     if (!std::equal(left.trace.nodes.begin(),left.trace.nodes.end(),right.trace.nodes.begin(),right.trace.nodes.end(),
         [](const auto& a,const auto& b) { return replay_node_values(a) == replay_node_values(b); })) result.behavior.push_back("nodes");
     if (!std::equal(left.trace.delta.facts.begin(),left.trace.delta.facts.end(),right.trace.delta.facts.begin(),right.trace.delta.facts.end(),

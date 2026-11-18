@@ -40,6 +40,15 @@ void comparison(const material::Json& original) {
     const auto same = compare_replays(decode_evidence(encode_evidence(before)),decode_evidence(encode_evidence(after)),source_change);
     check(same.state == ReplayComparisonState::equivalent && same.behavior.empty() && same.versions.changed.size() == 1,
         "same fixed inputs changed behavior");
+
+    auto revised = after;
+    ++revised.report.trace.goal_revision;
+    revised.report.trace.model_contexts.back().goal_revision = revised.report.trace.goal_revision;
+    const auto context_change = compare_replays(before,decode_evidence(encode_evidence(revised)),source_change);
+    check(context_change.state == ReplayComparisonState::differs &&
+        context_change.behavior == std::vector<std::string_view>{"goal_revision","model_contexts"},
+        "unchanged model nodes hid a change of goal context");
+
     labels.application_commit.reset();
     const auto unknown = measure_material(original.dump(),labels);
     check(compare_replays(before,unknown,source_change).reason == "required versions are unknown","unknown versions compared as equal");
