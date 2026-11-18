@@ -57,4 +57,4 @@ async function withPlayers(port, probe) {
   }
 }
 
-module.exports = { until, withPlayers, version };
+module.exports = { connect, until, withPlayers, version };

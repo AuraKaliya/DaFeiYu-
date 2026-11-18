@@ -43,6 +43,11 @@ void CompanionSession::advance() {
     if (!stopping_ && !bound()) close();
     reader_.advance();
     sync_binding();
+    inbox_.advance(*catalog_, clock_);
+    if (!stopping_ && inbox_.status().enabled && !reader_.state().pending && clock_() >= next_refresh_) {
+        refresh();
+        next_refresh_ = clock_() + std::chrono::seconds(1);
+    }
     if (auto completed = conversation_.advance()) {
         result_ = std::move(completed);
         if (delivering_) {
@@ -86,6 +91,7 @@ void CompanionSession::sync_binding() {
     if (address_) {
         messages_.bind(std::nullopt);
         address_.reset();
+        inbox_.bind(std::nullopt);
         queued_.reset();
         if (delivering_) conversation_.cancel();
         delivering_.reset();
@@ -94,8 +100,21 @@ void CompanionSession::sync_binding() {
         CompanionAddress fresh{id(), offer_.generation, observation.last->generation, runtime::next_domain()};
         actor_ = observation.last->actor;
         messages_.bind(fresh);
+        inbox_.bind(fresh);
         address_ = std::move(fresh);
     }
+}
+
+// 根据当前实例注册的用途开启私有收件，原游戏水位以前的聊天不补作委托。
+// 步骤：校验本实例 → 查询只读收件与受控查看 → 加入宿主定期推进。
+void CompanionSession::listen() {
+    if (stopping_ || !bound()) throw std::logic_error("companion: inactive player source");
+    const auto instance = instance_.lock();
+    const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
+    const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
+    if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
+    visit_tool_ = *visit;
+    inbox_.enable(*inbox);
 }
 
 // 保留一条待处理的主侧消息，原命令重试不重复启动模型。

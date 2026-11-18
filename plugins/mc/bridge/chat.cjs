@@ -1,6 +1,6 @@
 // 只从协议玩家消息取得绑定玩家的原话，显示名或系统广播不能成为授权来源。
 // 步骤：按实际世界重置窗口 → 观察绑定身份 → 按游标返回同一世界的有界增量。
-function ownerInbox(bot, world, owner, localFixture = false, capacity = 32) {
+function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, classify = () => null) {
   if (owner !== null && (typeof owner !== 'string' ||
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner))) throw new Error('无效玩家 UUID');
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 64) throw new Error('无效消息容量');
@@ -25,7 +25,10 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32) {
       (!localFixture && packet.verified !== true) || typeof packet.plainMessage !== 'string' ||
       !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024 || !sync()) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
-    entries.push({ sequence: ++sequence, text: packet.plainMessage });
+    const entry = { sequence: ++sequence, text: packet.plainMessage };
+    const offer = classify(entry.text);
+    if (offer) entry.offer = offer;
+    entries.push(entry);
     if (entries.length > capacity) entries.shift();
   }
   bot._client.on('playerChat', receive);
@@ -41,7 +44,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32) {
         if (entry.sequence <= after) continue;
         const size = Buffer.byteLength(JSON.stringify(entry));
         if (messages.length === 8 || bytes + size > 8192) break;
-        messages.push({ ...entry });
+        messages.push(structuredClone(entry));
         bytes += size;
       }
       return { generation, owner, oldest, latest: sequence, gap: after < oldest - 1,
@@ -51,7 +54,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32) {
     get(expected, number) {
       if (!sync() || expected !== generation) return null;
       const entry = entries.find(item => item.sequence === number);
-      return entry ? { ...entry } : null;
+      return entry ? structuredClone(entry) : null;
     },
     // 撤销监听并归还原话窗口。
     close() { closed = true; bot._client.removeListener('playerChat', receive); sync(); },

@@ -120,10 +120,15 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     if (!messages.is_array() || messages.size() > 8) throw std::invalid_argument("MC protocol: inbox size");
     auto cursor = std::max(after, oldest - 1);
     for (const auto& message : messages) {
-        if (message.size() != 2 || !message.at("sequence").is_number_unsigned() || message.at("sequence") != ++cursor ||
+        if (message.size() != (message.contains("offer") ? 3u : 2u) || !message.at("sequence").is_number_unsigned() || message.at("sequence") != ++cursor ||
             !message.at("text").is_string()) throw std::invalid_argument("MC protocol: inbox message");
         const auto& text = message.at("text").get_ref<const std::string&>();
         if (text.empty() || text.size() > 1024) throw std::invalid_argument("MC protocol: inbox text");
+        if (message.contains("offer")) {
+            const auto& offer = message.at("offer");
+            if (offer.size() != 2 || offer.at("purpose") != "visit.inspect" ||
+                !valid_channel(offer.at("place").get_ref<const std::string&>())) throw std::invalid_argument("MC protocol: inbox offer");
+        }
     }
     if (cursor > latest || (cursor < latest && messages.empty()) || inbox.at("more") != (cursor < latest))
         throw std::invalid_argument("MC protocol: inbox continuation");

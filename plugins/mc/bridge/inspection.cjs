@@ -22,6 +22,12 @@ function permitsInspection(text, label) {
   return [`去${label}看看`, `请去${label}看看`, `帮我去${label}看看`].includes(natural);
 }
 
+// 只为可精确绑定的查看原话提供单一地标候选。
+function inspectionOffer(text, places) {
+  for (const [place, info] of places) if (permitsInspection(text, info.label)) return { purpose: 'visit.inspect', place };
+  return null;
+}
+
 // 只记录角色从到达点真实可见的圆石位置。
 function visibleStone(bot) {
   const positions = bot.findBlocks({ matching: bot.registry.blocksByName.cobblestone.id, maxDistance: 8, count: 128 });
@@ -126,4 +132,4 @@ function inspectionService(bot, world, inbox, places) {
     },
   };
 }
-module.exports = { inspectionService, landmarks, permitsInspection };
+module.exports = { inspectionService, landmarks, permitsInspection, inspectionOffer };

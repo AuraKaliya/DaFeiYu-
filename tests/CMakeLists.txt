@@ -1,4 +1,8 @@
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
+add_executable(dfy_mc_owner_inbox_tests mc_owner_inbox.cpp)
+target_link_libraries(dfy_mc_owner_inbox_tests PRIVATE dfy_application dfy_build_options)
+add_dependencies(dfy_mc_owner_inbox_tests dfy_mc_companion)
+set_target_properties(dfy_mc_owner_inbox_tests PROPERTIES FOLDER "Tests")
 add_executable(dfy_mc_native_visit_tests mc_native_visit.cpp)
 target_link_libraries(dfy_mc_native_visit_tests PRIVATE dfy_plugin_tools nlohmann_json::nlohmann_json dfy_build_options)
 add_dependencies(dfy_mc_native_visit_tests dfy_mc_companion)

@@ -277,6 +277,16 @@ std::uint64_t Application::refresh_companion(runtime::DomainId session) {
 std::optional<CompanionAddress> Application::companion_address() const {
     return companion_ ? companion_->address() : std::nullopt;
 }
+// 显式启用原会话绑定的游戏玩家入口。
+void Application::listen_companion(runtime::DomainId session) {
+    if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
+    companion_->listen();
+}
+// 查询已验证的玩家身份及读取进度，不触发动作。
+std::optional<PlayerInboxStatus> Application::companion_inbox(runtime::DomainId session) const {
+    if (!companion_ || companion_->id() != session) return {};
+    return companion_->inbox_status();
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

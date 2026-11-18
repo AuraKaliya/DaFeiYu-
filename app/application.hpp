@@ -51,6 +51,10 @@ class Application {
     std::optional<CompanionState> companion_state(runtime::DomainId session) const;
     // 读取最近一次实际状态签发的当前地址。
     std::optional<CompanionAddress> companion_address() const;
+    // 允许当前已加载角色接收新玩家消息，从开启后的实际水位开始。
+    void listen_companion(runtime::DomainId session);
+    // 返回当前会话内的玩家收件状态。
+    std::optional<PlayerInboxStatus> companion_inbox(runtime::DomainId session) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

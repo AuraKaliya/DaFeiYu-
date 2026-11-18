@@ -4,7 +4,7 @@ const mineflayer = require('mineflayer');
 const { openBridge, pipeName } = require('./pipe.cjs');
 const { observeWorld } = require('./world.cjs');
 const { ownerInbox } = require('./chat.cjs');
-const { inspectionService, landmarks } = require('./inspection.cjs');
+const { inspectionService, landmarks, inspectionOffer } = require('./inspection.cjs');
 
 // 从用户选择的配置读取单个游戏角色，离线身份限回环夹具。
 // 步骤：校验配置与通道 → 选择独立角色的认证方式 → 将缓存定位到配置所在目录。
@@ -34,7 +34,8 @@ async function launch(file) {
   bot.on('error', error => { gameError = error; });
   const ended = new Promise(resolve => bot.once('end', resolve));
   const world = observeWorld(bot);
-  const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1');
+  const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1', 32,
+    text => inspectionOffer(text, places));
   const actions = places.size && owner ? inspectionService(bot, world, inbox, places) : null;
   let bridge;
   try {
