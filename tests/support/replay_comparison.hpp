@@ -67,6 +67,24 @@ inline auto replay_plan_key(const agent::PlanStepKey& key) {
     return std::tie(key.plan.goal_revision,key.plan.plan_revision,key.step);
 }
 
+// 提取原模型或工具工作在当前运行内的相对位置。
+inline auto replay_attempt_key(const agent::AttemptId& attempt) {
+    return std::tie(attempt.step.sequence,attempt.sequence);
+}
+
+// 比较计划及原步骤的结果、实际退出和宿主证据，不读取定义或证据正文。
+// 步骤：核对计划版本与停止状态 → 按顺序匹配步骤 → 比较原工作关联。
+inline bool replay_plan_equal(const agent::PlanDiagnostic& left, const agent::PlanDiagnostic& right) {
+    if (std::tie(left.binding.goal_revision,left.binding.plan_revision,left.stopped) !=
+        std::tie(right.binding.goal_revision,right.binding.plan_revision,right.stopped)) return false;
+    return std::equal(left.steps.begin(),left.steps.end(),right.steps.begin(),right.steps.end(),[](const auto& a,const auto& b) {
+        return replay_plan_key(a.key) == replay_plan_key(b.key) &&
+            std::tie(a.state,a.waiting,a.result,a.exit,a.has_evidence) == std::tie(b.state,b.waiting,b.result,b.exit,b.has_evidence) &&
+            a.execution.has_value() == b.execution.has_value() &&
+            (!a.execution || replay_attempt_key(*a.execution) == replay_attempt_key(*b.execution));
+    });
+}
+
 // 保留原观察对象、代次、修订和信任级别，来源编号按运行内关系比较。
 inline auto replay_observation_values(const agent::ObservationInputFact& value) {
     return std::tie(value.object.id,value.object.generation,value.revision,value.trust);
@@ -144,6 +162,8 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
         right_trace.model_contexts.begin(),right_trace.model_contexts.end(),
         [](const auto& a,const auto& b) { return replay_model_context_values(a) == replay_model_context_values(b); }))
         result.behavior.push_back("model_contexts");
+    if (!std::equal(left.diagnostic.plans.begin(),left.diagnostic.plans.end(),
+        right.diagnostic.plans.begin(),right.diagnostic.plans.end(),replay_plan_equal)) result.behavior.push_back("plans");
     if (!std::equal(left_trace.nodes.begin(),left_trace.nodes.end(),right_trace.nodes.begin(),right_trace.nodes.end(),
         [](const auto& a,const auto& b) { return replay_node_values(a) == replay_node_values(b); })) result.behavior.push_back("nodes");
     if (!std::equal(left_trace.delta.facts.begin(),left_trace.delta.facts.end(),right_trace.delta.facts.begin(),right_trace.delta.facts.end(),
