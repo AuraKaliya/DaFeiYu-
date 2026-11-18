@@ -268,6 +268,17 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
 add_test(NAME agent.replay_material COMMAND dfy_replay_material_tests "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
 set_tests_properties(agent.replay_material PROPERTIES TIMEOUT 20)
+
+# 固定材料评测命令随测试构建，不进入产品分发。
+add_executable(dfy_replay_evaluation replay_evaluation.cpp)
+target_link_libraries(dfy_replay_evaluation PRIVATE dfy_agent dfy_digest dfy_build_options nlohmann_json::nlohmann_json)
+target_compile_definitions(dfy_replay_evaluation PRIVATE
+  "DFY_REPLAY_COMMIT=\"${DFY_APPLICATION_COMMIT}\""
+  "DFY_REPLAY_BUILD=\"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}-${CMAKE_GENERATOR_PLATFORM}-$<CONFIG>\"")
+set_target_properties(dfy_replay_evaluation PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/replay_evaluation.cpp")
+add_test(NAME agent.replay_evaluation COMMAND dfy_replay_evaluation --capture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
+set_tests_properties(agent.replay_evaluation PROPERTIES TIMEOUT 20)
 add_executable(dfy_run_trace_tests run_trace.cpp)
 target_link_libraries(dfy_run_trace_tests PRIVATE dfy_agent dfy_build_options)
 set_target_properties(dfy_run_trace_tests PROPERTIES FOLDER "Tests")
