@@ -2,6 +2,20 @@
 #include <ostream>
 
 namespace dfy::app {
+// 只回顾文件中的值事实并显示未知版本。
+// 步骤：复核时间线关联 → 输出历史、实际退出和效果计数 → 提示公开版本。
+void write_diagnostic_review(std::ostream& output, const agent::DiagnosticSnapshot& snapshot) {
+    const auto& timeline = snapshot.timeline;
+    const auto review = agent::review_timeline(timeline);
+    output << "Diagnostic run " << timeline.key.name_space << '/' << timeline.key.run.session << '/' << timeline.key.run.sequence << '\n'
+           << "History=" << (review.complete_history ? "complete" : "has gaps")
+           << " exit=" << (review.run_exited ? "confirmed" : "pending") << '\n'
+           << "Model records=" << review.models << " tool records=" << review.tools << " confirmations=" << review.confirmations << '\n'
+           << "Applied effects=" << review.applied_effects << " unknown effects=" << review.unknown_effects << '\n'
+           << "Build=" << timeline.versions.build.value_or("unknown")
+           << " commit=" << timeline.versions.application_commit.value_or("unknown") << '\n';
+}
+
 namespace {
 // 把观察接纳状态映射为稳定名称，accepted 仅说明已进入通道。
 std::string_view observation_name(events::ObservationStatus status) noexcept {

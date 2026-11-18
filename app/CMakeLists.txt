@@ -1,18 +1,18 @@
 # 定义供终端和桌面入口复用的应用会话服务。
-add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp tool_verification.cpp tool_verification.hpp)
+add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp tool_verification.cpp tool_verification.hpp
+  diagnostic_files.cpp diagnostic_files.hpp)
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
 set_target_properties(dfy_application PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/application.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/conversation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/conversation.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.hpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.hpp")
 
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
 add_library(dfy_terminal STATIC application_commands.cpp application_commands.hpp chat.cpp chat.hpp async_chat.hpp)
 target_sources(dfy_terminal PRIVATE diagnostics.cpp diagnostics.hpp)
-target_sources(dfy_terminal PRIVATE diagnostic_files.cpp diagnostic_files.hpp)
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.hpp")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics.hpp")
 target_sources(dfy_terminal PRIVATE plugin_commands.cpp plugin_commands.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.hpp")

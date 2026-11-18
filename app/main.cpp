@@ -1,6 +1,8 @@
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "chat.hpp"
+#include "diagnostic_files.hpp"
+#include "diagnostics.hpp"
 #include "paths.hpp"
 #ifdef _WIN32
 #include "console.hpp"
@@ -45,6 +47,10 @@ int run(const std::vector<std::filesystem::path>& args) {
         const dfy::app::Utf8Console console;
 #endif
 
+        if (args.size() == 3 && args[1] == "--review-diagnostic") {
+            dfy::app::write_diagnostic_review(std::cout,dfy::app::read_diagnostic_file(args[2]));
+            return 0;
+        }
         if (args.size() == 3 && args[1] == "--check-config") {
             const auto config = dfy::model::load_config(args[2]);
             std::cout << "Configuration valid: " << config.provider << " / " << config.model
@@ -91,11 +97,13 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
-        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n"
+        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]"
+            << " | --review-diagnostic FILE]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"
-            << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" for a verified state change and /verification for its evidence.\n";
+            << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" for a verified state change and /verification for its evidence.\n"
+            << "Use /diagnostic export \"FILE\" to save a local diagnostic.\n";
         return help ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

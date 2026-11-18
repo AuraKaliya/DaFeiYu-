@@ -310,7 +310,7 @@ add_test(NAME agent.version_fingerprint COMMAND dfy_version_fingerprint_tests)
 set_tests_properties(agent.version_fingerprint PROPERTIES TIMEOUT 15)
 
 add_executable(dfy_diagnostic_files_tests diagnostic_files.cpp)
-target_link_libraries(dfy_diagnostic_files_tests PRIVATE dfy_terminal dfy_build_options)
+target_link_libraries(dfy_diagnostic_files_tests PRIVATE dfy_application dfy_build_options)
 set_target_properties(dfy_diagnostic_files_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.cpp")
 add_test(NAME app.diagnostic_files COMMAND dfy_diagnostic_files_tests "${CMAKE_CURRENT_BINARY_DIR}/diagnostic-files/$<CONFIG>")

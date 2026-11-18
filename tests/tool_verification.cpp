@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "chat.hpp"
+#include "diagnostic_files.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -97,6 +98,13 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         (trial == Trial::early_change ? diagnostic->feedback.empty() :
             diagnostic->feedback.size() == 1 && diagnostic->feedback.front().verified == (trial == Trial::matches)),
         "retained diagnostic lost original evidence or run identity");
+    const auto path = run/u8"面板诊断.json";
+    const auto utf = path.u8string();
+    chat.line("/diagnostic export \""+std::string(utf.begin(),utf.end())+"\"");
+    const auto stored = app::read_diagnostic_file(path);
+    check(stored.timeline.key == diagnostic->timeline.key && stored.feedback.size() == diagnostic->feedback.size() &&
+        output.str().find("Diagnostic exported") != std::string::npos && calls == (trial == Trial::early_change ? 2u : 5u),
+        "terminal diagnostic export lost evidence or invoked model");
     check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");

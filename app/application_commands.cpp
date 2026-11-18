@@ -1,5 +1,6 @@
 #include "application_commands.hpp"
 #include "application.hpp"
+#include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "plugin_commands.hpp"
 #include <charconv>
@@ -72,8 +73,15 @@ bool application_command(Application& application, std::string_view command, std
     } else if (name == "/verification") {
         if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /verification");
         write_verification(application,output);
-    }
-    else if (name == "/confirmations") {
+    } else if (name == "/diagnostic") {
+        const auto words = command_words(command);
+        if (words.size() != 3 || words[1] != "export") throw std::invalid_argument("Usage: /diagnostic export \"FILE\"");
+        const auto snapshot = application.conversation().diagnostic();
+        if (!snapshot) throw std::invalid_argument("diagnostic: no current or recent run");
+        const auto path = std::filesystem::path(std::u8string(words[2].begin(),words[2].end()));
+        write_diagnostic_file(path,*snapshot);
+        output << "Diagnostic exported for run " << snapshot->timeline.key.run.session << '/' << snapshot->timeline.key.run.sequence << ".\n";
+    } else if (name == "/confirmations") {
         if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /confirmations");
         write_pending(application,output);
     } else if (name == "/approve" || name == "/deny") {
