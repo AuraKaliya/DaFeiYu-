@@ -7,6 +7,12 @@
 
 namespace dfy::app {
 namespace {
+// 展示原应用接纳标识并报告独立的通知回执。
+void write_accepted(const agent::TurnDiagnostics& status, std::string_view next, std::ostream& output, std::ostream& errors) {
+    output << "Accepted run " << status.session << '/' << status.turn << ". " << next << '\n';
+    write_observation_warning(errors,status.session,status.turn,"turn_started",*status.notifications.started);
+}
+
 // 将请求及修订号解析为完整的非零十进制身份。
 std::uint64_t positive_id(const std::string& text) {
     std::uint64_t value = 0;
@@ -22,9 +28,7 @@ void submit(Application& application, std::string_view command, bool confirm, st
     const auto words = command_words(command);
     if (words.size() != 3) throw std::invalid_argument(confirm ? "Usage: /run-confirmed PACKAGE/TOOL \"GOAL\"" : "Usage: /run PACKAGE/TOOL \"GOAL\"");
     const auto status = confirm ? application.submit_confirmed(words[1],words[2]) : application.submit_read_only(words[1],words[2]);
-    output << "Accepted run " << status.session << '/' << status.turn
-           << (confirm ? ". Use /confirmations to inspect pending actions.\n" : ". Use /status to inspect it.\n");
-    write_observation_warning(errors,status.session,status.turn,"turn_started",*status.notifications.started);
+    write_accepted(status,confirm ? "Use /confirmations to inspect pending actions." : "Use /status to inspect it.",output,errors);
 }
 
 // 从受信任的本地入口展示待审目标与原参数。
@@ -38,6 +42,21 @@ void write_pending(const Application& application, std::ostream& output) {
     }
     if (!any) output << "No pending confirmations.\n";
 }
+
+// 展示与当前运行关联的宿主读回判定。
+// 步骤：取得原状态 → 处理未提交或仍等待 → 输出实际证据判断。
+void write_verification(const Application& application, std::ostream& output) {
+    const auto report = application.verification();
+    if (!report) { output << "No verified task in the current or latest run.\n"; return; }
+
+    output << "Run " << report->run.session << '/' << report->run.sequence << " verification ";
+    if (!report->match) { output << "pending.\n"; return; }
+    switch (*report->match) {
+    case agent::ObservationMatch::satisfied: output << "matched the actual state.\n"; break;
+    case agent::ObservationMatch::not_satisfied: output << "found a state mismatch.\n"; break;
+    case agent::ObservationMatch::unknown: output << "could not establish evidence.\n"; break;
+    }
+}
 }
 
 // 处理明确的终端控制命令，保留原回执和插件分派。
@@ -45,6 +64,15 @@ void write_pending(const Application& application, std::ostream& output) {
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
     if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
+    else if (name == "/task") {
+        const auto words = command_words(command);
+        if (words.size() != 5) throw std::invalid_argument("Usage: /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\"");
+        const auto status = application.submit_verified(words[1],words[2],words[3],words[4]);
+        write_accepted(status,"Use /confirmations for pending actions and /verification for actual state evidence.",output,errors);
+    } else if (name == "/verification") {
+        if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /verification");
+        write_verification(application,output);
+    }
     else if (name == "/confirmations") {
         if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /confirmations");
         write_pending(application,output);

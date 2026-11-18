@@ -765,7 +765,7 @@ set_tests_properties(plugins.status_example PROPERTIES TIMEOUT 15)
 
 add_executable(dfy_tool_verification_tests tool_verification.cpp)
 add_dependencies(dfy_tool_verification_tests dfy_status_example)
-target_link_libraries(dfy_tool_verification_tests PRIVATE dfy_application dfy_build_options)
+target_link_libraries(dfy_tool_verification_tests PRIVATE dfy_terminal dfy_build_options)
 set_target_properties(dfy_tool_verification_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.cpp")
 add_test(NAME app.tool_verification COMMAND dfy_tool_verification_tests "$<TARGET_FILE_DIR:dfy_status_example>" "${CMAKE_CURRENT_BINARY_DIR}/tool-verification/$<CONFIG>")

@@ -28,6 +28,8 @@
 | `/run-confirmed 包ID/工具ID "目标"` | 授予本轮一个指定工具，具体状态变更等待人工确认 |
 | `/confirmations` | 查询本轮待确认动作、参数、请求号和修订 |
 | `/approve 请求号 修订`、`/deny 请求号 修订` | 登记对原动作的批准或拒绝 |
+| `/task 读工具ID 改工具ID 期望状态 "目标"` | 启动同一实例内的单步读、改、读任务，由宿主核对实际状态 |
+| `/verification` | 查看当前或最近一轮验证任务的证据判断 |
 | `/status` | 查看当前回合；空闲时查看最近一轮的状态、耗时和通知接纳结果 |
 | `/cancel` | 取消当前问答，保留此前已提交上下文 |
 | `/clear` | 空闲时清空当前上下文 |
@@ -54,6 +56,14 @@
 /plugins load example.status
 /run example.status/read "读取状态面板的当前模式"
 ```
+
+下一轮可交代大肥鱼切换到专注模式并验证。
+
+```text
+/task example.status/read example.status/set_focus focus "把状态面板切换到专注模式"
+```
+
+首次读取完成后，用 `/confirmations` 查看待审调用，按显示的请求号和修订输入 `/approve` 或 `/deny`。批准后，`/verification` 显示重读结果是否与期望值一致。该路径要求同一插件实例的两个无参工具、三次单独的顺序调用和原变更的实际退出。目标为空、没有初读、读取不匹配或证据丢失时不能结算为成功。可将 `set_focus focus` 换为 `set_idle idle` 切回空闲。
 
 以下安装命令中的 `D:\DaFeiYu` 请替换为实际运行目录：
 
