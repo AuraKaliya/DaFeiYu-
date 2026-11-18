@@ -1,5 +1,5 @@
 #include "pipe_exchange.hpp"
-#include "inspect_work.hpp"
+#include "game_work.hpp"
 #include "world_protocol.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
@@ -16,7 +16,7 @@ struct NativeJob {
     bool attempted = false;
     bool cancelled = false;
     std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
-    std::unique_ptr<dfy::mc::InspectWork> inspect;
+    std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
 };
 struct dfy_v2_instance {
@@ -117,7 +117,7 @@ void DFY_V2_CALL destroy(dfy_v2_instance* raw) noexcept {
 // 活动插件按配对状态公开世界与私有收件读口。
 dfy_v2_status DFY_V2_CALL count(dfy_v2_instance* raw, uint32_t* value, dfy_v2_error* error) noexcept {
     if (!value) return report(DFY_V2_INVALID_ARGUMENT, error);
-    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 6u) : 0u;
+    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 7u) : 0u;
     return report(*value ? DFY_V2_OK : DFY_V2_INVALID_CONTEXT, error);
 }
 // 返回世界状态的无参契约，工具描述与连接寿命无关。
@@ -143,6 +143,9 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
         *out = {sizeof(*out), 1, admit ? DFY_V2_TOOL_CHANGES_STATE | DFY_V2_TOOL_IDEMPOTENT : 0u, 0,
             view(admit ? "admit" : "receipt"), view(admit ? "Admit the user's exact collection order." : "Read the original delivery receipt."),
             view(R"({"type":"object","properties":{"generation":{"type":"string"},"question":{"type":"string"},"grant":{"type":"string"},"owner":{"type":"string"},"order":{"type":"integer"},"quantity":{"type":"integer"},"material":{"type":"string"},"returnPlace":{"type":"string"},"via":{"type":"string"},"command":{"type":"string"}},"required":["generation","question","grant","owner","order","quantity","material","returnPlace","via","command"],"additionalProperties":false})")};
+    } else if (index == 6 && !raw->config.key.empty()) {
+        *out = {sizeof(*out), 1, DFY_V2_TOOL_CHANGES_STATE, 0, view("mine"), view("Mine one block under the admitted material order."),
+            view(R"({"type":"object","properties":{"generation":{"type":"string"},"question":{"type":"string"},"grant":{"type":"string"},"index":{"type":"integer"}},"required":["generation","question","grant","index"],"additionalProperties":false})")};
     } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
@@ -158,12 +161,13 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool ask = text(name) == "ask" && !raw->config.key.empty();
     const bool admit = text(name) == "admit" && !raw->config.key.empty();
     const bool receipt = text(name) == "receipt" && !raw->config.key.empty();
-    if (!inbox && !inspect && !ask && !admit && !receipt && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
+    const bool mine = text(name) == "mine" && !raw->config.key.empty();
+    if (!inbox && !inspect && !ask && !admit && !receipt && !mine && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
-    if (inspect && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.inspect; }))
+    if ((inspect || mine) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.action; }))
         return report(DFY_V2_BUSY, error);
     const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
@@ -172,7 +176,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (inspect) job.inspect = std::make_unique<dfy::mc::InspectWork>(raw->config, job.id, job.arguments);
+        if (inspect || mine) job.action = std::make_unique<dfy::mc::GameWork>(
+            mine ? dfy::mc::GameAction::mine : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (ask) job.wire = dfy::mc::question_request(job.id, raw->config.key, job.arguments);
         else if (admit || receipt) job.wire = dfy::mc::delivery_request(admit, job.id, raw->config.key, job.arguments);
         else job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
@@ -198,16 +203,20 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
     if (job->ready) {
         job->pipe.reset();
         job->exited = true;
-    } else if (job->inspect) {
+    } else if (job->action) {
         try {
-            if (auto value = job->inspect->poll(job->cancelled)) {
+            if (auto value = job->action->poll(job->cancelled)) {
                 job->output = std::move(value->payload);
-                job->effect = value->moved ? DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
-                job->success = value->arrived && !job->cancelled;
+                switch (value->effect) {
+                case dfy::mc::GameEffect::observed: job->effect = DFY_V2_TOOL_APPLIED; break;
+                case dfy::mc::GameEffect::none: job->effect = DFY_V2_TOOL_NOT_APPLIED; break;
+                case dfy::mc::GameEffect::unknown: job->effect = DFY_V2_TOOL_UNKNOWN; break;
+                }
+                job->success = value->success && !job->cancelled;
                 job->ready = true;
             }
         } catch (...) {
-            job->effect = job->inspect->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
+            job->effect = job->action->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
             job->ready = true;
         }
     } else {
@@ -248,7 +257,7 @@ dfy_v2_status DFY_V2_CALL cancel(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket
         job->cancelled = true;
         if ((job->method == NativeJob::Method::ask || job->method == NativeJob::Method::admit) && job->attempted)
             job->effect = DFY_V2_TOOL_UNKNOWN;
-        if (!job->inspect) job->ready = true;
+        if (!job->action) job->ready = true;
     }
     return report(DFY_V2_OK, error);
 }
@@ -283,6 +292,7 @@ dfy_v2_status DFY_V2_CALL route(dfy_v2_instance* raw, dfy_v2_string_view purpose
         else if (text(purpose) == "question.open") *out = view("ask");
         else if (text(purpose) == "collect.admit") *out = view("admit");
         else if (text(purpose) == "collect.receipt") *out = view("receipt");
+        else if (text(purpose) == "collect.mine") *out = view("mine");
     }
     return report(out->data ? DFY_V2_OK : DFY_V2_NOT_FOUND, error);
 }

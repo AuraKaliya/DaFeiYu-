@@ -29,4 +29,9 @@ std::string question_reply(std::string_view wire, std::string_view id, std::stri
 std::string delivery_request(bool admit, std::string_view id, std::string_view key, std::string_view arguments);
 // 核对原委托的接单回执，明确区分不可用、尚未接收和已接收。
 std::string delivery_reply(bool admit, std::string_view wire, std::string_view id, std::string_view arguments);
+struct MineReply { bool exited, finished, started; std::string payload; };
+// 创建原采集委托内一个具体块编号的控制请求。
+std::string mine_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
+// 核对采掘是否实际开始及客户端是否结束，持有证据另行判定。
+MineReply mine_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 }

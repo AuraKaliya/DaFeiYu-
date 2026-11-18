@@ -233,6 +233,39 @@ std::string delivery_reply(bool admit, std::string_view wire, std::string_view i
     return receipt.dump();
 }
 
+// 只为原世界、问题、委托和有界块编号建立采掘控制帧。
+std::string mine_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments) {
+    auto frame = parse(arguments);
+    if (key.size() != 64 || frame.size() != 4 || !uuid(frame.at("generation")) ||
+        !valid_channel(frame.at("grant").get_ref<const std::string&>()) || !valid_channel(frame.at("question").get_ref<const std::string&>()) ||
+        !frame.at("index").is_number_unsigned() || frame.at("index") == 0 || frame.at("index") > 64 ||
+        (method != "mine.begin" && method != "mine.read" && method != "mine.stop")) throw std::invalid_argument("MC protocol: invalid mining call");
+    frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", method}});
+    return frame.dump();
+}
+
+// 区分客户端调用开始、结束、协作停止和失败，不从客户端结束推断掉落。
+// 步骤：匹配原编号 → 验证阶段与退出 → 对已开始动作核对目标坐标。
+MineReply mine_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
+    const auto reply = parse(wire), args = parse(arguments);
+    if (reply.size() != 3 || !reply.at("version").is_number_unsigned() || reply.at("version") != 1 ||
+        reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong mine reply");
+    const auto& data = reply.at("action");
+    if (data.size() != 9) throw std::invalid_argument("MC protocol: invalid mine shape");
+    for (auto field : {"generation", "grant", "question", "index"})
+        if (data.at(field) != args.at(field)) throw std::invalid_argument("MC protocol: wrong block order");
+    const bool started = data.at("started").get<bool>(), exited = data.at("exited").get<bool>();
+    const auto& phase = data.at("phase").get_ref<const std::string&>();
+    const auto& target = data.at("target");
+    if (!data.at("stopping").is_boolean() || !data.at("index").is_number_unsigned() ||
+        (started && (target.size() != 3 || !target.at("x").is_number_integer() ||
+            !target.at("y").is_number_integer() || !target.at("z").is_number_integer())) || (!started && !target.is_null()) ||
+        (exited && phase != "clientFinished" && phase != "failed" && phase != "stopped") ||
+        (!exited && phase != "preparing" && phase != "digging") || ((phase == "clientFinished" || phase == "digging") && !started))
+        throw std::invalid_argument("MC protocol: inconsistent mining outcome");
+    return {exited, phase == "clientFinished", started, data.dump()};
+}
+
 // 匹配具体发送回执，记录的是游戏角色已发出，不推断玩家已阅读。
 std::string question_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
     const auto reply = parse(wire), args = parse(arguments);
