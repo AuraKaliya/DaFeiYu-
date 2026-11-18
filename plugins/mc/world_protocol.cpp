@@ -251,7 +251,7 @@ MineReply mine_reply(std::string_view wire, std::string_view id, std::string_vie
     if (reply.size() != 3 || !reply.at("version").is_number_unsigned() || reply.at("version") != 1 ||
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong mine reply");
     const auto& data = reply.at("action");
-    if (data.size() != 9) throw std::invalid_argument("MC protocol: invalid mine shape");
+    if (data.size() != (data.contains("pickup") ? 10u : 9u)) throw std::invalid_argument("MC protocol: invalid mine shape");
     for (auto field : {"generation", "grant", "question", "index"})
         if (data.at(field) != args.at(field)) throw std::invalid_argument("MC protocol: wrong block order");
     const bool started = data.at("started").get<bool>(), exited = data.at("exited").get<bool>();
@@ -261,8 +261,17 @@ MineReply mine_reply(std::string_view wire, std::string_view id, std::string_vie
         (started && (target.size() != 3 || !target.at("x").is_number_integer() ||
             !target.at("y").is_number_integer() || !target.at("z").is_number_integer())) || (!started && !target.is_null()) ||
         (exited && phase != "clientFinished" && phase != "failed" && phase != "stopped") ||
-        (!exited && phase != "preparing" && phase != "digging") || ((phase == "clientFinished" || phase == "digging") && !started))
+        (!exited && phase != "preparing" && phase != "digging" && phase != "gathering") ||
+        ((phase == "clientFinished" || phase == "digging" || phase == "gathering") && !started))
         throw std::invalid_argument("MC protocol: inconsistent mining outcome");
+    if (data.contains("pickup") && !data.at("pickup").is_null()) {
+        const auto& p = data.at("pickup");
+        if (!started || p.size() != 6 || !uuid(p.at("stream")) || !p.at("first").is_number_unsigned() ||
+            !p.at("last").is_number_unsigned() || p.at("first") == 0 || p.at("last") < p.at("first") ||
+            !p.at("lower").is_number_unsigned() || !p.at("upper").is_number_unsigned() ||
+            p.at("upper") > 1 || p.at("lower") > p.at("upper") || !p.at("onGround").is_boolean())
+            throw std::invalid_argument("MC protocol: invalid pickup bounds");
+    }
     return {exited, phase == "clientFinished", started, data.dump()};
 }
 

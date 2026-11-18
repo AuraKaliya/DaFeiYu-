@@ -42,7 +42,7 @@ function visibleStone(bot) {
 
 // 提供绑定到原世界和玩家消息的一次查看技能，路线执行交给游戏侧。
 // 步骤：固定零采掘的寻路策略 → 接纳或复用原动作 → 读回位置与视线 → 在撤销时停止并等待退出。
-function inspectionService(bot, world, inbox, places) {
+function inspectionService(bot, world, inbox, places, witness = null) {
   bot.loadPlugin(pathfinder);
   let current = null;
   let timer = null;
@@ -54,7 +54,7 @@ function inspectionService(bot, world, inbox, places) {
   let answered = false;
   const deliveries = collectionDesk(world, inbox, () => question);
   const mining = miningService(bot, world, deliveries, places, (generation, order) =>
-    current?.generation === generation && current.order === order ? current : null);
+    current?.generation === generation && current.order === order ? current : null, witness);
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;

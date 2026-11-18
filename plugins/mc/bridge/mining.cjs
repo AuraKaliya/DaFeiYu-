@@ -1,6 +1,10 @@
+const { goals, Movements } = require('mineflayer-pathfinder');
+const { setTimeout: delay } = require('node:timers/promises');
+const { pickupEvidence } = require('./stone-evidence.cjs');
+
 // 在已接单的地标区域内执行有界单块采掘，保留原编号的结果。
 // 步骤：查回世界与授权 → 复核可见方块和工具 → 执行或停止 → 保存客户端事实。
-function miningService(bot, world, deliveries, places, inspection) {
+function miningService(bot, world, deliveries, places, inspection, witness) {
   let batch = null, active = null, done = Promise.resolve(), timer;
   let lastPoll = 0, closed = false;
   let revoked = null;
@@ -17,6 +21,7 @@ function miningService(bot, world, deliveries, places, inspection) {
     if (!active || active.exited) return;
     active.stopping = true;
     if (bot.targetDigBlock) bot.stopDigging();
+    if (active.phase === 'gathering') { bot.pathfinder.setGoal(null); bot.clearControlStates(); }
   }
   // 只在查看过的地标附近选择角色当前看得见、够得着的约定方块。
   function target(grant) {
@@ -34,11 +39,20 @@ function miningService(bot, world, deliveries, places, inspection) {
   }
   // 装备后再次核对授权与同一对象，客户端完成不作为拾取或实际带回的证明。
   async function execute(action, grant) {
+    const clientDrops = new Set();
+    let overflow = false, mark = null;
+    const seenDrop = entity => {
+      if (entity.getDroppedItem()?.name !== 'cobblestone') return;
+      if (clientDrops.size < 128) clientDrops.add(entity.id); else overflow = true;
+    };
+    bot.on('itemDrop', seenDrop);
     try {
       const chosen = target(grant);
       const pick = bot.inventory.items().find(item => item.name.endsWith('_pickaxe') && chosen.canHarvest(item.type));
       if (!pick) throw new Error('缺少合适的工具');
       await bot.equip(pick, 'hand');
+      // 观察端不可用只降低归属证据，不把一次普通采集变成额外审批。
+      if (witness) try { mark = await witness.begin(bot.game.dimension); } catch { mark = null; }
       const current = bot.blockAt(chosen.position);
       if (action.stopping || !grantFor(grant.generation, grant.question, grant.grant) ||
         current?.type !== chosen.type || !bot.canSeeBlock(current) || !bot.canDigBlock(current)) throw new Error('目标变化');
@@ -46,12 +60,33 @@ function miningService(bot, world, deliveries, places, inspection) {
       action.started = true;
       action.phase = 'digging';
       await bot.dig(current);
+      if (!action.stopping && grantFor(grant.generation, grant.question, grant.grant)) {
+        action.phase = 'gathering';
+        const moves = new Movements(bot);
+        moves.canDig = moves.allow1by1towers = moves.canOpenDoors = moves.allowParkour = false;
+        moves.scafoldingBlocks = [];
+        bot.pathfinder.setMovements(moves);
+        await bot.pathfinder.goto(new goals.GoalNear(chosen.position.x, Math.floor(bot.entity.position.y), chosen.position.z, 0));
+        if (mark && !overflow) {
+          // 只在已经选择、挖掘并走近目标以后读取旁证，不用服务端记录寻找目标。
+          const until = performance.now() + 1200;
+          do {
+            try {
+              const rows = await witness.read(mark);
+              action.pickup = pickupEvidence(rows, bot.player.uuid, action.target, clientDrops);
+            } catch { action.pickup = null; break; }
+            if ((action.pickup && !action.pickup.onGround) || action.stopping) break;
+            await delay(80);
+          } while (performance.now() < until);
+        }
+      }
       action.phase = action.stopping ? 'stopped' : 'clientFinished';
     } catch {
       action.phase = action.stopping ? 'stopped' : 'failed';
     } finally {
       action.exited = true;
       clearInterval(timer);
+      bot.removeListener('itemDrop', seenDrop);
     }
   }
   bot.on('respawn', stop);
@@ -68,7 +103,7 @@ function miningService(bot, world, deliveries, places, inspection) {
       if (index <= batch.records.length) return { ...batch.records[index - 1] };
       if (index !== batch.records.length + 1 || (batch.records.length && active.phase !== 'clientFinished'))
         throw new Error('采掘前序尚未完成');
-      active = { generation, question, grant: id, index, phase: 'preparing', started: false, exited: false, stopping: false, target: null };
+      active = { generation, question, grant: id, index, phase: 'preparing', started: false, exited: false, stopping: false, target: null, pickup: null };
       batch.records.push(active);
       lastPoll = performance.now();
       const deadline = lastPoll + 20000;

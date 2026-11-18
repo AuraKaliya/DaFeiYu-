@@ -5,6 +5,7 @@ const { withPaper } = require('./paper.cjs');
 const { withPlayers, until } = require('./players.cjs');
 const { prepare, readStream } = require('./origins.cjs');
 const { ownPickupRange } = require('./pair-evidence.cjs');
+const { pickupEvidence } = require('../../plugins/mc/bridge/stone-evidence.cjs');
 
 // 从客户端当前存储栏汇总圆石，背包总量仅用作双端核对。
 function stoneCount(bot) {
@@ -55,8 +56,11 @@ async function verifyCase(fixture, owner, fish, mode, initialStock = 0) {
   const cursor = readStream(fixture.server).length;
   const events = () => readStream(fixture.server).slice(cursor);
   const client = [];
+  const visibleDrops = new Set();
+  const saw = entity => { if (entity.getDroppedItem()?.name === 'cobblestone') visibleDrops.add(entity.id); };
   const observedPickup = (who, item) => client.push({ collector: who.id, item: item.id });
   fish.on('playerCollect', observedPickup);
+  fish.on('itemDrop', saw);
   try {
     await fish.dig(fish.blockAt(target));
     await until(() => events().some(row => row.kind === 'blockDrop' && row.actor === fish.player.uuid), '服务端破坏确认');
@@ -105,12 +109,16 @@ async function verifyCase(fixture, owner, fish, mode, initialStock = 0) {
     const range = ownPickupRange(rows, self, gift, fish.player.uuid);
     assert.deepEqual(range, mode === 'split' ? [0, 1] : [1, 1]);
     assert.deepEqual(ownPickupRange([...rows, pickup], self, gift, fish.player.uuid), range);
+    const proof = pickupEvidence([...rows, pickup], fish.player.uuid, target, visibleDrops);
+    assert.deepEqual([proof?.lower, proof?.upper], range);
+    assert.equal(pickupEvidence(rows, fish.player.uuid, target, new Set()), null);
     assert.equal(ownPickupRange(rows.filter(row => row.seq !== pickup.seq), self, gift, fish.player.uuid), null);
     writeFileSync(join(fixture.evidence, mode + '.json'), JSON.stringify({ mode, client, clientStock, pickup: pickup.seq,
       self: self.item, gift: gift.item, ownRange: range, rows }, null, 2));
     return { range, cursor, self, gift };
   } finally {
     fish.removeListener('playerCollect', observedPickup);
+    fish.removeListener('itemDrop', saw);
   }
 }
 

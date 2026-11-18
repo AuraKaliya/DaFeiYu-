@@ -5,6 +5,7 @@ const { openBridge, pipeName } = require('./pipe.cjs');
 const { observeWorld } = require('./world.cjs');
 const { ownerInbox } = require('./chat.cjs');
 const { inspectionService, landmarks, inspectionOffer } = require('./inspection.cjs');
+const { stoneWitness } = require('./stone-evidence.cjs');
 
 // 从用户选择的配置读取单个游戏角色，离线身份限回环夹具。
 // 步骤：校验配置与通道 → 选择独立角色的认证方式 → 将缓存定位到配置所在目录。
@@ -21,14 +22,14 @@ function readConfig(file) {
   if (input.owner && (typeof input.bridgeKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.bridgeKey)))
     throw new Error('读取玩家私有消息需要独立桥接配置');
   return { channel, owner: input.owner ?? null, key: input.bridgeKey ?? null, places: landmarks(input.places),
-    game: { host, port, username, auth, version: '1.21.4',
+    witness: stoneWitness(input.observer), game: { host, port, username, auth, version: '1.21.4',
     profilesFolder: path.join(path.dirname(path.resolve(file)), 'profiles') } };
 }
 
 // 将同一个实际游戏连接装配成可撤销的本机桥接，退出时归还管道与客户端。
 // 步骤：建立角色和可见状态 → 发布管道 → 在主动停止或断开时收尾。
 async function launch(file) {
-  const { channel, game, owner, key, places } = readConfig(file);
+  const { channel, game, owner, key, places, witness } = readConfig(file);
   const bot = mineflayer.createBot(game);
   let gameError;
   bot.on('error', error => { gameError = error; });
@@ -37,7 +38,7 @@ async function launch(file) {
   let actions;
   const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1', 32,
     text => actions?.answerOffer(text) ?? inspectionOffer(text, places));
-  actions = places.size && owner ? inspectionService(bot, world, inbox, places) : null;
+  actions = places.size && owner ? inspectionService(bot, world, inbox, places, witness) : null;
   let bridge;
   try {
     bridge = await openBridge(channel, world, inbox, key, actions);
