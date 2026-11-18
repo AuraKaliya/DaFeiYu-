@@ -42,8 +42,9 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     model::Backend backend, ApplicationRunConfig run)
     : tool_clock_(std::move(run.tool_clock)),
       channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
-      plugins_(packages,user_data,channel_), session_(std::move(config),channel_,std::move(backend)),
-      conversation_(session_,build_labels(std::move(run.model_profile))) {
+      plugins_(packages,user_data,channel_), model_config_(std::move(config)), model_backend_(std::move(backend)),
+      labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
+      conversation_(session_,labels_) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
 }
 
@@ -234,16 +235,64 @@ void Application::advance_verification() {
     }
 }
 
-// 清理失效的工具范围后推进插件的异步通知与收尾。
+// 按活动插件实例启用独立陪伴会话。
+// 步骤：核对主入口和原会话 → 创建新绑定 → 发布宿主会话身份。
+runtime::DomainId Application::open_companion(const std::string& package) {
+    if (!session_.accepting()) throw std::logic_error("companion: application closing");
+    const auto instance = plugins_.instance(package);
+    if (instance->phase() != plugins::InstancePhase::active) throw std::invalid_argument("companion: inactive provider");
+    if (companion_ && !companion_->closed()) {
+        const auto original = companion_->status();
+        if (!original.stopping && original.instance == instance->generation()) return original.session;
+        throw std::logic_error("companion: previous session has not exited");
+    }
+    companion_ = std::make_unique<CompanionSession>(instance, model_config_, channel_, model_backend_, labels_);
+    return companion_->id();
+}
+
+// 将明确指定的用户意图投递到当前陪伴会话。
+agent::TurnDiagnostics Application::submit_companion(runtime::DomainId session, const std::string& prompt) {
+    if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
+    return companion_->submit(prompt, tool_clock_);
+}
+
+// 停止原游戏会话，旧界面不能停止替换后的实例。
+void Application::stop_companion(runtime::DomainId session) {
+    if (!companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
+    companion_->close();
+}
+
+// 复制最近的子会话状态，不推进模型或游戏。
+std::optional<CompanionStatus> Application::companion_status() const {
+    return companion_ ? std::optional(companion_->status()) : std::nullopt;
+}
+
+// 使用原会话和回合身份读取受信调用者需要的正文回执。
+std::optional<CompletedTurn> Application::companion_result(agent::RunId run) const {
+    if (!companion_ || companion_->id() != run.session) return {};
+    return companion_->result(run.sequence);
+}
+
+// 在宿主线程上推进子会话和插件，主会话的调用方仍拥有其结算回执。
+// 步骤：复核原工具范围 → 推进独立子会话 → 推进共享插件通知。
 runtime::RunResult Application::advance_plugins() {
     collect_tool_registration();
     advance_verification();
+    if (companion_ && !companion_->closed()) {
+        if (!session_.accepting()) companion_->close();
+        companion_->advance();
+    }
     return plugins_.advance();
 }
 
-// 确认会话已归还实际工作，再交给原管理器分步关闭。
+// 等两段会话的工作真正退出后再关闭共享插件。
+// 步骤：核对主会话收尾 → 关闭陪伴会话或等待 → 关闭原管理器。
 plugins::ShutdownResult Application::close_plugins() noexcept {
     if (!conversation_.closed()) return plugins::ShutdownResult::busy;
+    if (companion_ && !companion_->closed()) {
+        try { companion_->close(); } catch (...) { return plugins::ShutdownResult::failed; }
+        if (!companion_->closed()) return plugins::ShutdownResult::pending;
+    }
     tool_registration_.reset();
     plugins_.close();
     return plugins_.close_status();

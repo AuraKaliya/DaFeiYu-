@@ -237,6 +237,8 @@ class Session {
     void close();
     // 返回是否有尚未实际退出的回合。
     bool busy() const noexcept { return static_cast<bool>(active_); }
+    // 查询是否仍接纳新运行，关闭期间可能尚有在途工作。
+    bool accepting() const noexcept { return *accepting_; }
     // 判断已经停止接纳且后台调用真正退出。
     bool closed() const noexcept { return !*accepting_ && !active_; }
     // 返回宿主签发的独立会话身份。

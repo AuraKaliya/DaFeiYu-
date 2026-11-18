@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "conversation.hpp"
+#include "companion.hpp"
 #include "tool_verification.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
@@ -36,6 +37,16 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 在原宿主线程使用应用拥有的插件命令入口。
     plugins::PluginManager& plugins() noexcept { return plugins_; }
+    // 根据已加载实例的可选角色声明启用一个游戏会话。
+    runtime::DomainId open_companion(const std::string& package);
+    // 在原陪伴会话内提交用户委托。
+    agent::TurnDiagnostics submit_companion(runtime::DomainId session, const std::string& prompt);
+    // 只停止指定的原陪伴会话。
+    void stop_companion(runtime::DomainId session);
+    // 复制当前或最近已关闭的陪伴状态。
+    std::optional<CompanionStatus> companion_status() const;
+    // 读取仍保留的指定子回合结算值。
+    std::optional<CompletedTurn> companion_result(agent::RunId run) const;
     // 显式授予一个已加载实例的只读工具并提交用户目标。
     agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
@@ -94,9 +105,13 @@ class Application {
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
     plugins::PluginManager plugins_;
+    const model::Config model_config_;
+    const model::Backend model_backend_;
+    const agent::RunVersionLabels labels_;
     std::optional<ToolRegistration> tool_registration_;
     agent::Session session_;
     Conversation conversation_;
+    std::unique_ptr<CompanionSession> companion_;
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
     std::unique_ptr<ToolVerification> verifier_;

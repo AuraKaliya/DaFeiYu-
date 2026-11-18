@@ -1,4 +1,11 @@
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
+add_executable(dfy_companion_session_tests companion_session.cpp)
+target_link_libraries(dfy_companion_session_tests PRIVATE dfy_application dfy_build_options)
+add_dependencies(dfy_companion_session_tests dfy_mc_companion dfy_status_example)
+set_target_properties(dfy_companion_session_tests PROPERTIES FOLDER "Tests")
+add_test(NAME app.companion_session COMMAND dfy_companion_session_tests "$<TARGET_FILE_DIR:dfy_mc_companion>"
+  "$<TARGET_FILE_DIR:dfy_status_example>" "${CMAKE_CURRENT_BINARY_DIR}/companion-session")
+set_tests_properties(app.companion_session PROPERTIES TIMEOUT 20)
 add_executable(dfy_mc_protocol_tests mc_protocol.cpp)
 target_link_libraries(dfy_mc_protocol_tests PRIVATE dfy_mc_bridge nlohmann_json::nlohmann_json dfy_build_options)
 set_target_properties(dfy_mc_protocol_tests PROPERTIES FOLDER "Tests")
