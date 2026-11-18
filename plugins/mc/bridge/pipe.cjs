@@ -26,6 +26,14 @@ function readReply(input, world, inbox, key, actions) {
   if (actions?.deliveries && request.method === 'collection.receipt' && Object.keys(request).length === 7 &&
     typeof request.generation === 'string' && typeof request.question === 'string' && typeof request.grant === 'string')
     return { version: 1, id: request.id, delivery: actions.deliveries.read(request.generation, request.question, request.grant) };
+  if (actions?.mining && Object.keys(request).length === 8 && Number.isSafeInteger(request.index) && request.index > 0) {
+    if (request.method === 'mine.begin') return { version: 1, id: request.id,
+      action: actions.mining.begin(request.generation, request.question, request.grant, request.index) };
+    if (['mine.read', 'mine.stop'].includes(request.method)) return { version: 1, id: request.id,
+      action: actions.mining.poll(request.generation, request.question, request.grant, request.index, request.method === 'mine.stop') };
+  }
+  if (actions?.mining && request.method === 'mine.revoke' && Object.keys(request).length === 7)
+    return { version: 1, id: request.id, withdrawal: actions.mining.revoke(request.generation, request.question, request.grant) };
   if (actions && typeof request.generation === 'string' && Number.isSafeInteger(request.order) && request.order > 0) {
     if (request.method === 'question.open' && Object.keys(request).length === 7 && typeof request.question === 'string')
       return { version: 1, id: request.id, question: actions.ask(request.generation, request.order, request.question) };

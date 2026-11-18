@@ -38,3 +38,9 @@ G02 使用两个独立的本机协议身份，没有接触个人账号。它证�
 ## G08 游戏侧查看
 
 运行 `node tests/mc-companion/owner-chat.cjs` 和 `node tests/mc-companion/inspect.cjs`。前者核对绑定玩家原话、来源和游标；后者在真实游戏里发出委托，并以私有本机管道请求查看。测试开场把角色放在河边，随后她通过实际寻路抵达山脚，视线读到圆石。负例覆盖“先别去”、旧世界、替换目的地和重复受理；旁路观察与客户端挖掘调用共同核对零采掘。此项仅验证游戏侧执行与回读。
+
+## 正式应用和有界采掘
+
+在独立测试服已关停时，运行 `node tests/mc-companion/player-session.cjs <dfy_mc_game_visit_tests.exe> <MC包目录> <变体>`。不加变体执行正式查看。`skip`、`tamper` 分别验证模型仅声称完成和替换参数。`decline` 在游戏中拒绝。`approve-game` 和 `approve-center` 分别验证两个入口的授权、原游戏接单与相冲突的迟到答复。`lost-receipt` 在游戏接单后丢回执，宿主只能回查；`lost-send` 在转交前断线，查明尚未接单后用原身份重投一次。
+
+另运行 `node tests/mc-companion/inspect.cjs mine` 检查游戏侧的一块授权，验收未经接单、超量、旧世界、真实工具装备、实际采掘和重复回执。客户端动作返回后，独立观察端读到原玩家破坏及候选产出。运行 `node tests/mc-companion/inspect.cjs revoke` 验证开始前撤销保持零采掘。以上与入包或返程判定分别取证。

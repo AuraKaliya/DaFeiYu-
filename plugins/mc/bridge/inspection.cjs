@@ -1,5 +1,6 @@
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const { collectionDesk } = require('./delivery.cjs');
+const { miningService } = require('./mining.cjs');
 
 // 将用户设置里的语义地标复制为有限的游戏坐标，不接受模型给出的任意落点。
 function landmarks(input = {}) {
@@ -52,6 +53,8 @@ function inspectionService(bot, world, inbox, places) {
   let question = null;
   let answered = false;
   const deliveries = collectionDesk(world, inbox, () => question);
+  const mining = miningService(bot, world, deliveries, places, (generation, order) =>
+    current?.generation === generation && current.order === order ? current : null);
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;
@@ -93,6 +96,7 @@ function inspectionService(bot, world, inbox, places) {
   bot.on('move', moved);
   return {
     deliveries,
+    mining,
     // 精确复用同一委托，检查原文和目标后才允许开始一次移动。
     begin(generation, order, placeId) {
       const snapshot = world.read();
@@ -166,7 +170,7 @@ function inspectionService(bot, world, inbox, places) {
       bot.removeListener('respawn', stop);
       bot.removeListener('end', stop);
       bot.removeListener('move', moved);
-      await done;
+      await Promise.all([done, mining.close()]);
     },
   };
 }
