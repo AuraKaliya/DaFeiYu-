@@ -29,11 +29,16 @@ ObservationController::ObservationController(Session& session, ObservationInbox&
     if (!action_) return;
 
     const auto tools = options_.tools->descriptions(false);
-    if (tools.size() != 1 || tools.front().id != action_->tool_id || !options_.policy.confirm_changes ||
+    if (tools.size() != 1 || tools.front().id != action_->tool_id || !action_->schema || !options_.policy.confirm_changes ||
         !options_.confirmation_caller || options_.planning || options_.action_observations ||
         !options_.policy.tool_limit || options_.policy.tool_limit > 64 || !options_.confirmation_limit || options_.confirmation_limit > 64)
         throw std::invalid_argument("observation controller: one confirmed action required");
     ObservationExpectation::validate_condition(action_->field,action_->expected);
+    const auto fields = action_->schema->fields();
+    const auto field = std::find_if(fields.begin(),fields.end(),[this](const auto& value) { return value.name == action_->field; });
+    const auto kind = action_->expected.kind();
+    if (field == fields.end() || (field->kind != kind && !(field->nullable && kind == runtime::ValueKind::null_value)))
+        throw std::invalid_argument("observation controller: condition field does not match declared schema");
 }
 // 不接管会话销毁，只停止本规则及其已经接纳的运行。
 ObservationController::~ObservationController() { stop(); }
@@ -82,6 +87,7 @@ ObservationDispatch ObservationController::poll(bool user_pending) {
         if (action_) {
             const auto available = trigger_.inspect(*observation,started);
             if (available != TriggerDecision::ready) return {available,{},{}};
+            if (!observation->payload().descriptor()->equivalent(*action_->schema)) return {TriggerDecision::condition_unknown,{},{}};
             const auto sample = inbox_.guard(observation,started);
             const auto outcome = ObservationExpectation(sample,action_->field,action_->expected).assess(sample,started).match;
             if (outcome != ObservationMatch::satisfied)

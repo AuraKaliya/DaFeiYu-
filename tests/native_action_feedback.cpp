@@ -121,12 +121,13 @@ void observed_action(const Manifest& manifest, const std::filesystem::path& sett
     ScriptedModel model(std::move(spec)); Session session(fixed_replay_model(),channel,model.backend());
     ConfirmationCaller caller;
     ObservationSource source(instance->generation(),ObservationTrust::host_verified); ObservationInbox inbox({source.id()});
-    inbox.accept(source.capture({"counter",1},1,{},ObservationTime{}+std::chrono::seconds(1),observed(initial)),{});
+    const auto state = observed(initial);
+    inbox.accept(source.capture({"counter",1},1,{},ObservationTime{}+std::chrono::seconds(1),state),{});
     RunOptions options; options.now = model.clock(); options.tools = action;
     options.policy.allow_observation = options.policy.confirm_changes = true;
     options.confirmation_caller = caller; options.version_labels = compiled_replay_labels("none");
     ObservationController controller(session,inbox,{source.id(),{"counter",1},2,1,2,std::chrono::milliseconds(1),ObservationTime{}+std::chrono::seconds(1)},
-        "increment on verified zero",options,ObservationAction{change_ids[0],"value",Value::from_uint64(0)});
+        "increment on verified zero",options,ObservationAction{change_ids[0],"value",Value::from_uint64(0),state->descriptor()});
     controller.enable(); const auto request = controller.poll().request;
     check(static_cast<bool>(request),"native observation did not admit a task");
     until(session,[&] { return !request->confirmations().empty(); });

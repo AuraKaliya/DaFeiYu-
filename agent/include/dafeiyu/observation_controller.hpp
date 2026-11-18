@@ -12,6 +12,7 @@ struct ObservationDispatch {
 struct ObservationAction {
     std::string tool_id, field;
     runtime::Value expected;
+    std::shared_ptr<const runtime::StructDescriptor> schema;
 };
 // 将获准采样交给已有 Session；宿主保持会话及采样集合存活，并继续原 Session 的推进和收尾。
 class ObservationController {
