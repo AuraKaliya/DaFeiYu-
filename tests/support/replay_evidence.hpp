@@ -10,10 +10,10 @@ inline constexpr std::size_t evidence_limit = 2*1024*1024;
 // 步骤：编码原运行值 → 增加案例摘要和预算内断言统计 → 核对总大小。
 inline std::string encode_evidence(const ReplayEvidence& evidence) {
     const auto& report = evidence.report;
-    const auto timeline = agent::encode_diagnostic({report.trace,{},{}});
+    const auto diagnostic = agent::encode_diagnostic(report.diagnostic);
     auto text = material::Json{{"schema_version",1},{"input_digest",evidence.input_digest},
         {"case_id",report.model.case_id},{"case_version",report.model.case_version},{"model_calls",report.model.attempted},
-        {"tool_calls",report.tool_calls},{"failed_assertions",report.failed_assertions},{"diagnostic",material::Json::parse(timeline)}}.dump();
+        {"tool_calls",report.tool_calls},{"failed_assertions",report.failed_assertions},{"diagnostic",material::Json::parse(diagnostic)}}.dump();
     if (text.size() > evidence_limit) throw std::length_error("evidence: report limit exceeded");
     return text;
 }
@@ -36,13 +36,13 @@ inline ReplayEvidence decode_evidence(std::string_view text) {
         report.model.case_id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != std::string::npos ||
         !report.model.case_version) throw std::invalid_argument("evidence: invalid case identity");
 
-    auto diagnostic = agent::decode_diagnostic(value.at("diagnostic").dump());
-    report.trace = std::move(diagnostic.timeline);
-    const auto review = agent::review_timeline(report.trace);
+    report.diagnostic = agent::decode_diagnostic(value.at("diagnostic").dump());
+    const auto& trace = report.diagnostic.timeline;
+    const auto review = agent::review_timeline(trace);
     report.model.attempted = report.model.consumed = static_cast<std::size_t>(number(value.at("model_calls"),64));
     report.tool_calls = static_cast<std::size_t>(number(value.at("tool_calls"),64));
-    if (!diagnostic.plans.empty() || !diagnostic.feedback.empty() || !review.complete_history || !review.run_exited ||
-        report.trace.versions.model_profile != "offline-fixed-v1" || review.models != report.model.attempted || review.tools < report.tool_calls)
+    if (!review.complete_history || !review.run_exited || trace.versions.model_profile != "offline-fixed-v1" ||
+        review.models != report.model.attempted || review.tools < report.tool_calls)
         throw std::invalid_argument("evidence: report and execution facts disagree");
     for (const auto& item : array(value.at("failed_assertions"),std::size(names))) {
         const auto name = item.get<std::string>();
@@ -51,8 +51,8 @@ inline ReplayEvidence decode_evidence(std::string_view text) {
             throw std::invalid_argument("evidence: invalid assertion");
         report.failed_assertions.push_back(*known);
     }
-    for (const auto& node : report.trace.nodes) if (node.id.kind == agent::TraceNodeKind::tool) report.effects.push_back(node.effect.value());
-    for (const auto& fact : report.trace.delta.facts)
+    for (const auto& node : trace.nodes) if (node.id.kind == agent::TraceNodeKind::tool) report.effects.push_back(node.effect.value());
+    for (const auto& fact : trace.delta.facts)
         if (fact.kind == agent::TraceFactKind::history_committed) report.history_messages = fact.history_messages;
     return evidence;
 }

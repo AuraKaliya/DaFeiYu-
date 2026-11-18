@@ -28,7 +28,7 @@ inline ReplayEvidence measure_material(std::string_view text, agent::RunVersionL
     auto input_digest = platform::sha256(value.dump());
     auto report = measure_replay(std::move(scenario),std::move(version_labels));
     std::random_device source;
-    for (unsigned i = 0; i < 4; ++i) report.trace.key.name_space += "-"+std::to_string(source());
+    for (unsigned i = 0; i < 4; ++i) report.diagnostic.timeline.key.name_space += "-"+std::to_string(source());
     return {std::move(input_digest),std::move(report)};
 }
 
@@ -61,13 +61,15 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
     std::span<const std::string_view> declared = {}) {
     const auto& left = baseline.report;
     const auto& right = candidate.report;
+    const auto& left_trace = left.diagnostic.timeline;
+    const auto& right_trace = right.diagnostic.timeline;
     ReplayComparison result;
     if (left.model.case_id != right.model.case_id || left.model.case_version != right.model.case_version ||
         baseline.input_digest.empty() || baseline.input_digest != candidate.input_digest) {
         result.reason = "case inputs differ";
         return result;
     }
-    result.versions = agent::compare_public_versions(left.trace.versions,right.trace.versions);
+    result.versions = agent::compare_public_versions(left_trace.versions,right_trace.versions);
     // 此执行入口只使用内存工具夹具，因此没有可比较的原生插件版本。
     std::erase_if(result.versions.unknown,[](const auto& name) { return name.starts_with("tool/fixture/") && name.ends_with("/plugin"); });
     if (!result.versions.unknown.empty()) { result.reason = "required versions are unknown"; return result; }
@@ -76,8 +78,8 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
         return result;
     }
 
-    const auto first = agent::review_timeline(left.trace), second = agent::review_timeline(right.trace);
-    if (left.trace.key == right.trace.key || !first.complete_history || !second.complete_history || !first.run_exited || !second.run_exited) {
+    const auto first = agent::review_timeline(left_trace), second = agent::review_timeline(right_trace);
+    if (left_trace.key == right_trace.key || !first.complete_history || !second.complete_history || !first.run_exited || !second.run_exited) {
         result.reason = "independent complete histories required";
         return result;
     }
@@ -89,22 +91,22 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
     difference("tool_calls",left.tool_calls,right.tool_calls);
     difference("tool_effects",left.effects,right.effects);
     difference("history_messages",left.history_messages,right.history_messages);
-    difference("stop_reason",left.trace.stop_reason,right.trace.stop_reason);
-    difference("failure",left.trace.failure,right.trace.failure);
-    difference("run_origin",left.trace.source,right.trace.source);
-    difference("goal_revision",left.trace.goal_revision,right.trace.goal_revision);
+    difference("stop_reason",left_trace.stop_reason,right_trace.stop_reason);
+    difference("failure",left_trace.failure,right_trace.failure);
+    difference("run_origin",left_trace.source,right_trace.source);
+    difference("goal_revision",left_trace.goal_revision,right_trace.goal_revision);
     difference("notification_issue",first.notification_issue,second.notification_issue);
     difference("assertions",left.failed_assertions,right.failed_assertions);
-    if (!std::equal(left.trace.model_contexts.begin(),left.trace.model_contexts.end(),
-        right.trace.model_contexts.begin(),right.trace.model_contexts.end(),
+    if (!std::equal(left_trace.model_contexts.begin(),left_trace.model_contexts.end(),
+        right_trace.model_contexts.begin(),right_trace.model_contexts.end(),
         [](const auto& a,const auto& b) { return replay_model_context_values(a) == replay_model_context_values(b); }))
         result.behavior.push_back("model_contexts");
-    if (!std::equal(left.trace.nodes.begin(),left.trace.nodes.end(),right.trace.nodes.begin(),right.trace.nodes.end(),
+    if (!std::equal(left_trace.nodes.begin(),left_trace.nodes.end(),right_trace.nodes.begin(),right_trace.nodes.end(),
         [](const auto& a,const auto& b) { return replay_node_values(a) == replay_node_values(b); })) result.behavior.push_back("nodes");
-    if (!std::equal(left.trace.delta.facts.begin(),left.trace.delta.facts.end(),right.trace.delta.facts.begin(),right.trace.delta.facts.end(),
+    if (!std::equal(left_trace.delta.facts.begin(),left_trace.delta.facts.end(),right_trace.delta.facts.begin(),right_trace.delta.facts.end(),
         [&](const auto& a,const auto& b) {
             return replay_fact_values(a) == replay_fact_values(b) &&
-                replay_node_position(left.trace,a.subject) == replay_node_position(right.trace,b.subject);
+                replay_node_position(left_trace,a.subject) == replay_node_position(right_trace,b.subject);
         })) result.behavior.push_back("fact_order");
     result.state = result.behavior.empty() ? ReplayComparisonState::equivalent : ReplayComparisonState::differs;
     return result;

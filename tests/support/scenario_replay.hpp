@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "scripted_model.hpp"
-#include <dafeiyu/run_trace.hpp>
+#include <dafeiyu/diagnostic_snapshot.hpp>
 #include <thread>
 
 namespace dfy::tests {
@@ -27,7 +27,7 @@ struct ReplayReport {
     std::size_t tool_calls = 0;
     std::size_t history_messages = 0;
     std::vector<agent::ToolEffect> effects;
-    agent::RunTimeline trace;
+    agent::DiagnosticSnapshot diagnostic;
     std::vector<std::string_view> failed_assertions;
 };
 // 在全新正式 Session 中重跑显式固定场景，只允许内存结果夹具，失败不回退真实 Provider。
@@ -88,7 +88,8 @@ inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels 
     if (request->exit()->state() != OperationState::succeeded) throw std::runtime_error("replay: actual exit missing");
     model.verify_complete();
     if (decisions != scenario.decisions.size()) throw std::runtime_error("replay: unconsumed control events");
-    ReplayReport report; report.model = model.report(); report.trace = run_timeline(*request,"offline-replay");
+    ReplayReport report; report.model = model.report(); report.diagnostic = diagnostic_snapshot(*request,"offline-replay");
+    const auto& trace = report.diagnostic.timeline;
     for (const auto& state : states) {
         if (state->violations || state->used != state->results.size()) throw std::runtime_error("replay: tool fixture contract not satisfied");
         report.tool_calls += state->used;
@@ -97,13 +98,11 @@ inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels 
     report.history_messages = session.message_count();
     const auto& expected = scenario.expected;
     if (request->operation()->state() != expected.result) report.failed_assertions.push_back("result");
-    if (report.trace.stop_reason != expected.stop_reason) report.failed_assertions.push_back("stop_reason");
+    if (trace.stop_reason != expected.stop_reason) report.failed_assertions.push_back("stop_reason");
     if (report.tool_calls != expected.tool_calls) report.failed_assertions.push_back("tool_calls");
     if (report.effects != expected.effects) report.failed_assertions.push_back("effects");
     if (report.history_messages != expected.history_messages) report.failed_assertions.push_back("history_messages");
-    for (const auto& node : report.trace.nodes) if (node.parent && std::none_of(report.trace.nodes.begin(),report.trace.nodes.end(),
-        [&](const auto& parent) { return parent.id == *node.parent; })) throw std::runtime_error("replay: missing trace parent");
-    if (!review_timeline(report.trace).run_exited) throw std::runtime_error("replay: diagnostic review did not confirm actual exit");
+    if (!review_timeline(trace).run_exited) throw std::runtime_error("replay: diagnostic review did not confirm actual exit");
     return report;
 }
 

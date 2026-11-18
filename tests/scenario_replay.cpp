@@ -27,7 +27,8 @@ ReplayCase base() {
 void reproducible() {
     const auto first = replay_scenario(base()), second = replay_scenario(base());
     check(first.tool_calls == second.tool_calls && first.effects == second.effects && first.model.consumed == second.model.consumed &&
-        first.trace.key.run != second.trace.key.run && first.trace.versions.model_profile == "offline-fixed-v1","replay merged identity or changed facts");
+        first.diagnostic.timeline.key.run != second.diagnostic.timeline.key.run &&
+        first.diagnostic.timeline.versions.model_profile == "offline-fixed-v1","replay merged identity or changed facts");
     auto failure = base(); failure.model.steps[1].response.reset(); failure.model.steps[1].fail = true;
     failure.expected.result = OperationState::failed; failure.expected.history_messages = 3;
     check(replay_scenario(failure).effects == std::vector<ToolEffect>{ToolEffect::applied},"later model failure erased replay effect");

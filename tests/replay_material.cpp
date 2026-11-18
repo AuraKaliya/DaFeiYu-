@@ -42,8 +42,9 @@ void comparison(const material::Json& original) {
         "same fixed inputs changed behavior");
 
     auto revised = after;
-    ++revised.report.trace.goal_revision;
-    revised.report.trace.model_contexts.back().goal_revision = revised.report.trace.goal_revision;
+    auto& trace = revised.report.diagnostic.timeline;
+    ++trace.goal_revision;
+    trace.model_contexts.back().goal_revision = trace.goal_revision;
     const auto context_change = compare_replays(before,decode_evidence(encode_evidence(revised)),source_change);
     check(context_change.state == ReplayComparisonState::differs &&
         context_change.behavior == std::vector<std::string_view>{"goal_revision","model_contexts"},
@@ -98,7 +99,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto failed = measure_replay(changed_expectation);
         check(failed.tool_calls == first.tool_calls && failed.effects == first.effects &&
             failed.failed_assertions == std::vector<std::string_view>{"tool_calls"} &&
-            dfy::agent::review_timeline(failed.trace).run_exited,"wrong expectation erased actual replay evidence");
+            dfy::agent::review_timeline(failed.diagnostic.timeline).run_exited,"wrong expectation erased actual replay evidence");
         rejects([&] { replay_scenario(changed_expectation); });
         std::ifstream file(std::filesystem::path(argv[1]),std::ios::binary); material::Json original; file >> original;
         invalid(original);

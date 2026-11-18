@@ -30,7 +30,7 @@ int capture(const std::filesystem::path& path) {
 
 // 打印比较双方的独立版本和原断言状态。
 void write_source(std::string_view side, const ReplayEvidence& evidence) {
-    const auto& versions = evidence.report.trace.versions;
+    const auto& versions = evidence.report.diagnostic.timeline.versions;
     std::cout << side << " commit=" << versions.application_commit.value_or("unknown")
               << " build=" << versions.build.value_or("unknown") << '\n';
     for (const auto assertion : evidence.report.failed_assertions) std::cout << side << " failed assertion " << assertion << '\n';
