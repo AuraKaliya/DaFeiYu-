@@ -7,4 +7,5 @@
 /.vscode/
 /ui/web/node_modules/
 /ui/web/dist/
+/plugins/mc/bridge/node_modules/
 
