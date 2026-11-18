@@ -5,9 +5,9 @@ using runtime::OperationState;
 
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
 // 步骤：核对当前回合 → 通过原会话接纳 → 返回开始状态。
-agent::TurnDiagnostics Conversation::submit(const std::string& prompt) {
+agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options) {
     if (current_) throw std::logic_error("session: wait for the current request to finish");
-    current_ = session_.begin(prompt);
+    current_ = session_.begin(prompt,std::move(options));
     reported_ = false;
     return current_->diagnostics();
 }

@@ -18,8 +18,8 @@ class Conversation {
     Conversation(const Conversation&) = delete;
     // 禁止替换已经绑定的会话。
     Conversation& operator=(const Conversation&) = delete;
-    // 接纳问答并返回本轮开始状态。
-    agent::TurnDiagnostics submit(const std::string& prompt);
+    // 按应用宿主提供的范围接纳运行并返回本轮开始状态。
+    agent::TurnDiagnostics submit(const std::string& prompt, agent::RunOptions options = {});
     // 向尚待结算的回合登记用户取消。
     bool cancel();
     // 空闲时清空会话上下文，返回原通知回执。

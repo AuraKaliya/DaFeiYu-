@@ -1,7 +1,7 @@
 # 定义供终端和桌面入口复用的应用会话服务。
 add_library(dfy_application STATIC application.cpp application.hpp conversation.cpp conversation.hpp)
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(dfy_application PUBLIC dfy_agent dfy_plugins PRIVATE dfy_build_options)
+target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options)
 set_target_properties(dfy_application PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/application.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application.hpp"

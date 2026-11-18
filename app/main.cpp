@@ -73,7 +73,7 @@ int run(const std::vector<std::filesystem::path>& args) {
             dfy::platform::LineInput input;
             if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
             const auto result = dfy::app::async_chat(application.conversation(),input,std::cout,std::cerr,[&] {
-                if (manager.advance() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
+                if (application.advance_plugins() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
             },[&](std::string_view command) { return dfy::app::plugin_command(manager,command,std::cout,std::cerr); });
             const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
             auto shutdown = application.close_plugins();
@@ -81,7 +81,7 @@ int run(const std::vector<std::filesystem::path>& args) {
                 if (shutdown == dfy::plugins::ShutdownResult::failed || std::chrono::steady_clock::now() >= deadline) {
                     std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return 1;
                 }
-                if (manager.advance() == dfy::runtime::RunResult::failed) {
+                if (application.advance_plugins() == dfy::runtime::RunResult::failed) {
                     std::cerr << "Plugin stopping failed; its resources remain retained.\n"; return 1;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));

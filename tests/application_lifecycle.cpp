@@ -46,8 +46,10 @@ struct Release {
 // 在正式应用装配中验证空插件问答与关闭顺序。
 // 步骤：注入固定回答 → 接纳并检查活动时关闭拒绝 → 等待实际退出 → 关闭插件管理。
 void shared_application(const fs::path& run) {
-    dfy::app::Application application({},run/"shared-plugins",run/"shared-user",
-        [](const auto&, const auto& messages) { return "shared:"+messages.back().content; });
+    dfy::app::Application application({},run/"shared-plugins",run/"shared-user",dfy::model::Backend{
+        [](const auto&, const auto& request) {
+            return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+request.messages.back().content}};
+        }});
     auto& conversation = application.conversation();
     const auto accepted = conversation.submit("hello");
     check(application.close_plugins() == ShutdownResult::busy,"shared application ended plugins before its conversation");
