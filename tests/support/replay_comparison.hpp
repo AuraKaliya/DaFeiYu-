@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "replay_material.hpp"
 #include <dafeiyu/digest.hpp>
+#include <random>
+#include <span>
 #include <tuple>
 
 namespace dfy::tests {
@@ -24,7 +26,10 @@ inline ReplayEvidence measure_material(std::string_view text, agent::RunVersionL
     value.erase("policy");
     value.erase("timeout_ms");
     auto input_digest = platform::sha256(value.dump());
-    return {std::move(input_digest),measure_replay(std::move(scenario),std::move(version_labels))};
+    auto report = measure_replay(std::move(scenario),std::move(version_labels));
+    std::random_device source;
+    for (unsigned i = 0; i < 4; ++i) report.trace.key.name_space += "-"+std::to_string(source());
+    return {std::move(input_digest),std::move(report)};
 }
 
 // 保留节点的相对层级和业务状态，绝对身份及耗时已由回顾单独校验。
@@ -47,7 +52,7 @@ inline auto replay_fact_values(const agent::TraceFact& fact) {
 // 按同案例和已声明变化比较两次实际执行，缺材料或缺事实时明确不可比。
 // 步骤：核对案例输入 → 核对版本及声明 → 校验历史和身份 → 比较结构化行为。
 inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const ReplayEvidence& candidate,
-    std::initializer_list<std::string_view> declared = {}) {
+    std::span<const std::string_view> declared = {}) {
     const auto& left = baseline.report;
     const auto& right = candidate.report;
     ReplayComparison result;

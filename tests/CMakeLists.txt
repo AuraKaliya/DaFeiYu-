@@ -258,11 +258,13 @@ set_target_properties(dfy_timeline_review_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/timeline_review.cpp")
 add_test(NAME agent.timeline_review COMMAND dfy_timeline_review_tests)
 set_tests_properties(agent.timeline_review PROPERTIES TIMEOUT 20)
-add_executable(dfy_replay_material_tests replay_material.cpp support/replay_material.hpp support/replay_comparison.hpp fixtures/scenarios/confirmed-counter.json)
+add_executable(dfy_replay_material_tests replay_material.cpp support/replay_material.hpp support/replay_comparison.hpp
+  support/replay_evidence.hpp fixtures/scenarios/confirmed-counter.json)
 target_link_libraries(dfy_replay_material_tests PRIVATE dfy_agent dfy_digest dfy_build_options nlohmann_json::nlohmann_json)
 set_target_properties(dfy_replay_material_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/replay_material.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/support/replay_material.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/support/replay_comparison.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/support/replay_evidence.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
 add_test(NAME agent.replay_material COMMAND dfy_replay_material_tests "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
 set_tests_properties(agent.replay_material PROPERTIES TIMEOUT 20)

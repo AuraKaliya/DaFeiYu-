@@ -1,5 +1,5 @@
 #include "support/replay_material.hpp"
-#include "support/replay_comparison.hpp"
+#include "support/replay_evidence.hpp"
 #include <iostream>
 
 namespace {
@@ -36,12 +36,13 @@ void comparison(const material::Json& original) {
     labels.application_commit = "fixture-source-b";
     const auto after = measure_material(original.dump(2),labels);
     check(compare_replays(before,after).state == ReplayComparisonState::incomparable,"undeclared revision was comparable");
-    const auto same = compare_replays(before,after,{"application_commit"});
+    constexpr std::string_view source_change[] = {"application_commit"};
+    const auto same = compare_replays(decode_evidence(encode_evidence(before)),decode_evidence(encode_evidence(after)),source_change);
     check(same.state == ReplayComparisonState::equivalent && same.behavior.empty() && same.versions.changed.size() == 1,
         "same fixed inputs changed behavior");
     labels.application_commit.reset();
     const auto unknown = measure_material(original.dump(),labels);
-    check(compare_replays(before,unknown,{"application_commit"}).reason == "required versions are unknown","unknown versions compared as equal");
+    check(compare_replays(before,unknown,source_change).reason == "required versions are unknown","unknown versions compared as equal");
     auto changed = original;
     changed["version"] = 2;
     check(compare_replays(before,measure_material(changed.dump(),labels)).reason == "case inputs differ","different cases were comparable");
@@ -56,11 +57,21 @@ void comparison(const material::Json& original) {
     const auto allowed = measure_material(deadline.dump(),labels);
     deadline["timeout_ms"] = 10;
     const auto timed_out = measure_material(deadline.dump(),labels);
-    const auto changed_behavior = compare_replays(allowed,timed_out,{"execution_policy"});
+    constexpr std::string_view policy_change[] = {"execution_policy"};
+    const auto changed_behavior = compare_replays(decode_evidence(encode_evidence(allowed)),decode_evidence(encode_evidence(timed_out)),policy_change);
     check(changed_behavior.state == ReplayComparisonState::differs &&
         std::find(changed_behavior.behavior.begin(),changed_behavior.behavior.end(),"stop_reason") != changed_behavior.behavior.end() &&
         std::find(changed_behavior.behavior.begin(),changed_behavior.behavior.end(),"fact_order") != changed_behavior.behavior.end() &&
         !timed_out.report.failed_assertions.empty(),"actual deadline regression was hidden");
+    auto damaged = material::parse(encode_evidence(before));
+    damaged["model_calls"] = 99;
+    rejects([&] { decode_evidence(damaged.dump()); });
+    damaged = material::parse(encode_evidence(before));
+    damaged["failed_assertions"] = {"unknown assertion"};
+    rejects([&] { decode_evidence(damaged.dump()); });
+    damaged = material::parse(encode_evidence(before));
+    damaged["restore"] = true;
+    rejects([&] { decode_evidence(damaged.dump()); });
     std::cout << "Compared " << timed_out.report.model.case_id << " v" << timed_out.report.model.case_version << '\n';
     for (const auto name : changed_behavior.behavior) std::cout << "Behavior changed " << name << '\n';
 }
