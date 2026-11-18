@@ -1,6 +1,6 @@
 #include "application.hpp"
+#include "application_commands.hpp"
 #include "chat.hpp"
-#include "plugin_commands.hpp"
 #include "paths.hpp"
 #ifdef _WIN32
 #include "console.hpp"
@@ -74,7 +74,7 @@ int run(const std::vector<std::filesystem::path>& args) {
             if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
             const auto result = dfy::app::async_chat(application.conversation(),input,std::cout,std::cerr,[&] {
                 if (application.advance_plugins() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
-            },[&](std::string_view command) { return dfy::app::plugin_command(manager,command,std::cout,std::cerr); });
+            },[&](std::string_view command) { return dfy::app::application_command(application,command,std::cout,std::cerr); });
             const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
             auto shutdown = application.close_plugins();
             while (shutdown != dfy::plugins::ShutdownResult::closed) {
@@ -92,7 +92,8 @@ int run(const std::vector<std::filesystem::path>& args) {
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]]\n"
-            << "No arguments: chat with the bundled DeepSeek configuration.\n";
+            << "No arguments: chat with the bundled DeepSeek configuration.\n"
+            << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool for the run.\n";
         return help ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

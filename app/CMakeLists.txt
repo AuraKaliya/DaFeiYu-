@@ -8,7 +8,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/conversation.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/conversation.hpp")
 
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
-add_library(dfy_terminal STATIC chat.cpp chat.hpp async_chat.hpp)
+add_library(dfy_terminal STATIC application_commands.cpp application_commands.hpp chat.cpp chat.hpp async_chat.hpp)
 target_sources(dfy_terminal PRIVATE diagnostics.cpp diagnostics.hpp)
 target_sources(dfy_terminal PRIVATE diagnostic_files.cpp diagnostic_files.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.hpp")
@@ -18,7 +18,9 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 target_include_directories(dfy_terminal PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(dfy_terminal PUBLIC dfy_application dfy_input PRIVATE dfy_build_options)
 set_target_properties(dfy_terminal PROPERTIES FOLDER "App")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/chat.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/chat.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/async_chat.hpp")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/application_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application_commands.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/chat.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/chat.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/async_chat.hpp")
 
 # 定义终端应用目标，显式列出实现与内部头文件。
 add_executable(dafeiyu main.cpp console.hpp paths.cpp paths.hpp)

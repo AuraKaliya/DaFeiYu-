@@ -1,5 +1,8 @@
 #include "application.hpp"
+#include "application_commands.hpp"
+#include "chat.hpp"
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 namespace {
@@ -26,18 +29,18 @@ void rejects(app::Application& application, const std::string& tool) {
 }
 
 // 推进原应用直至业务结果及实际退出均可见。
-app::CompletedTurn finish(app::Application& application) {
+agent::TurnDiagnostics finish(app::Application& application, app::ChatController& chat) {
     auto& conversation = application.conversation();
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
-    std::optional<app::CompletedTurn> result;
     do {
         check(application.advance_plugins() != runtime::RunResult::failed,"application plugin advance failed");
-        if (auto next = conversation.advance()) result = std::move(next);
+        chat.advance();
         std::this_thread::yield();
     } while (conversation.busy() && std::chrono::steady_clock::now() < deadline);
-    check(result && !result->error && !conversation.busy() && conversation.status()->exit == runtime::OperationState::succeeded,
-        "application tool run did not finish");
-    return std::move(*result);
+    const auto status = conversation.status();
+    check(status && status->result == runtime::OperationState::succeeded && status->exit == runtime::OperationState::succeeded,
+        "terminal tool run did not finish");
+    return *status;
 }
 
 // 使用正式应用、真实只读 DLL 和固定结构化响应验证一次工具运行。
@@ -53,7 +56,7 @@ void read_only(const fs::path& package, const fs::path& root) {
             const auto& last = request.messages.back();
             switch (++calls) {
             case 1:
-                check(last.content == "read" && request.tools.size() == 1 && request.tools[0].name.ends_with("_read"),
+                check(last.content == "read the value" && request.tools.size() == 1 && request.tools[0].name.ends_with("_read"),
                     "application exposed a different tool scope");
                 return Response{{Role::assistant,"",{{"read-1",request.tools[0].name,"{}"}}},FinishReason::tool_calls};
             case 2:
@@ -73,17 +76,27 @@ void read_only(const fs::path& package, const fs::path& root) {
     check(manager.load("test.tools") == 0,"tool fixture did not load");
     rejects(application,"test.tools/increment");
     rejects(application,"test.tools/missing");
-    check(!application.conversation().status() && calls == 0,"rejected tool scope admitted a run");
+    std::ostringstream output, errors;
+    app::ChatController chat(application.conversation(),output,errors,
+        [&](std::string_view line) { return app::application_command(application,line,output,errors); });
+    chat.line("/run test.tools/read");
+    chat.line("/run test.tools/increment \"read the value\"");
+    check(!application.conversation().status() && calls == 0 && errors.str().find("Usage: /run") != std::string::npos &&
+        errors.str().find("not authorized") != std::string::npos,"rejected terminal grant admitted a run or hid its error");
 
-    const auto admitted = application.submit_read_only("test.tools/read","read");
-    const auto result = finish(application);
-    check(result.answer == "read verified" && result.status.turn == admitted.turn && result.status.tool_requests == 1,
-        "application read-only run lost result");
+    errors.str("");
+    chat.line("/run test.tools/read \"read the value\"");
+    const auto admitted = application.conversation().status();
+    const auto result = finish(application,chat);
+    check(admitted && result.turn == admitted->turn && result.tool_requests == 1 && errors.str().empty() &&
+        output.str().find("Accepted run ") != std::string::npos && output.str().find("read verified") != std::string::npos,
+        "terminal read-only run lost its receipt or answer");
     check(manager.unload("test.tools") == plugins::ShutdownResult::closed,"run scope pinned exited instance");
-    application.conversation().submit("plain");
-    check(finish(application).answer == "plain reply" && calls == 3,"ordinary question failed after tool use");
-    application.conversation().close();
-    check(application.close_plugins() == plugins::ShutdownResult::closed,"application tool test did not close");
+    chat.line("plain");
+    check(finish(application,chat).tool_requests == 0 && output.str().find("plain reply") != std::string::npos &&
+        calls == 3,"ordinary question failed after tool use");
+    chat.request_exit();
+    check(chat.done() && application.close_plugins() == plugins::ShutdownResult::closed,"application tool test did not close");
 }
 }
 
