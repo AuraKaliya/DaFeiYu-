@@ -1,4 +1,8 @@
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
+add_executable(dfy_companion_messages_tests companion_messages.cpp)
+target_link_libraries(dfy_companion_messages_tests PRIVATE dfy_application dfy_build_options)
+set_target_properties(dfy_companion_messages_tests PROPERTIES FOLDER "Tests")
+add_test(NAME app.companion_messages COMMAND dfy_companion_messages_tests)
 add_executable(dfy_companion_session_tests companion_session.cpp)
 target_link_libraries(dfy_companion_session_tests PRIVATE dfy_application dfy_build_options)
 add_dependencies(dfy_companion_session_tests dfy_mc_companion dfy_status_example)
