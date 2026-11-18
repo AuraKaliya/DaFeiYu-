@@ -8,11 +8,17 @@ struct ObservationDispatch {
     std::shared_ptr<TurnRequest> request;
     std::optional<TriggerReceipt> receipt;
 };
+// 观察命中条件时允许候选使用的唯一变更工具，其实际调用仍需要人工批准。
+struct ObservationAction {
+    std::string tool_id, field;
+    runtime::Value expected;
+};
 // 将获准采样交给已有 Session；宿主保持会话及采样集合存活，并继续原 Session 的推进和收尾。
 class ObservationController {
   public:
-    // 固定目标和规则，当前观察触发只允许文本及显式只读工具；状态变更留待行动前置复核。
-    ObservationController(Session& session, ObservationInbox& inbox, ObservationRule rule, std::string goal, RunOptions options);
+    // 固定目标和规则；显式变更配置必须绑定单工具、标量条件及确认调用者。
+    ObservationController(Session& session, ObservationInbox& inbox, ObservationRule rule, std::string goal, RunOptions options,
+        std::optional<ObservationAction> action = {});
     // 停止本控制器并取消自己接纳的在途运行，不关闭会话或取消其他用户运行。
     ~ObservationController();
     // 禁止复制触发接纳和停止责任。
@@ -34,9 +40,11 @@ class ObservationController {
     ObservationInbox& inbox_;
     const RunOptions options_;
     const std::string goal_;
+    const std::optional<ObservationAction> action_;
     ObservationTrigger trigger_;
     std::weak_ptr<TurnRequest> active_;
     std::weak_ptr<const ObservationRecord> active_observation_;
+    std::shared_ptr<TurnRequest> action_run_;
     bool polling_ = false;
 };
 }

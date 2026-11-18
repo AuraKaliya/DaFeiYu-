@@ -1,4 +1,5 @@
 #include <dafeiyu/tool_batch.hpp>
+#include <algorithm>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
 
@@ -143,12 +144,17 @@ bool ToolBatch::advance(const PolicyContext& current) {
             if (review(current)) admit(current);
             advancing_ = false; return false;
         }
+        const bool observed_change = bound_.origin == RunOrigin::observation_rule && tools_.permits_state_changes();
         executor_.advance(); bool complete = true;
         for (std::size_t index = 0; index < entries_.size(); ++index) {
             auto& entry = entries_[index]; if (entry.filled) continue;
             publish(index);
             if (entry.request->exit()->state() == OperationState::pending) { complete = false; continue; }
             entry.metadata.after = restrict_policy(policy_.after_tool(current,*entry.request),extension_,ControlPoint::tool_result,current);
+            if (observed_change && entry.metadata.after->verdict == PolicyVerdict::allow &&
+                (entry.request->operation()->state() != OperationState::succeeded || entry.request->fault() != ToolError::none ||
+                    entry.request->outcome().effect == ToolEffect::unknown))
+                entry.metadata.after = PolicyDecision{PolicyVerdict::deny,PolicyReason::invalid_result};
             publish_policy(index,ControlPoint::tool_result,*entry.metadata.after);
             if (entry.metadata.after->verdict != PolicyVerdict::allow) {
                 continuation_ = *entry.metadata.after; executor_.close(CancelReason::owner_stop);
@@ -157,6 +163,9 @@ bool ToolBatch::advance(const PolicyContext& current) {
             entry.filled = true;
         }
         if (complete) {
+            if (observed_change && continuation_.verdict == PolicyVerdict::allow &&
+                std::any_of(entries_.begin(),entries_.end(),[](const auto& entry) { return !entry.request; }))
+                continuation_ = {PolicyVerdict::deny,PolicyReason::invalid_result};
             context_.commit_tools(); const auto& messages = *context_.committed();
             for (std::size_t index = messages.size()-entries_.size(); index < messages.size(); ++index)
                 add_fingerprint(fingerprint_,messages[index].content);

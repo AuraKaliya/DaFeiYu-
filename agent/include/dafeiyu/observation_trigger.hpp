@@ -12,7 +12,8 @@ struct ObservationRule {
     std::chrono::milliseconds minimum_interval{1000};
     ObservationTime deadline;
 };
-enum class TriggerDecision { ready, disabled, stopped, expired, busy, run_limit, wrong_object, stale, gap, duplicate, throttled, invalid_clock, missing_observation, user_pending };
+enum class TriggerDecision { ready, disabled, stopped, expired, busy, run_limit, wrong_object, stale, gap, duplicate, throttled,
+    invalid_clock, missing_observation, user_pending, condition_not_met, condition_unknown };
 struct TriggerTicket {
     runtime::DomainId rule = 0, ticket = 0;
     std::uint64_t observation_revision = 0;

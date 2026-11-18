@@ -13,6 +13,8 @@ struct ObservationAssessment {
 // 宿主定义的顶层标量等值条件，不解释模型完成声明或通用可执行表达式。
 class ObservationExpectation {
   public:
+    // 在配置时检查字段及期望值的类型和容量。
+    static void validate_condition(std::string_view field, const runtime::Value& expected);
     // 固定原对象、schema、字段和期望；首版只接受 Bool、Int64、UInt64、String 和显式 Null。
     ObservationExpectation(ObservationGuard baseline, std::string field, runtime::Value expected);
     // 复制同一不可变条件及计费基线，复制不授予新的来源权限。

@@ -62,8 +62,12 @@ struct RunLoopState {
             record->initial_observation_binding_ = options.action_observations->binding();
         }
         const bool changes = options.tools && options.tools->permits_state_changes();
-        if (changes && options.origin == RunOrigin::observation_rule)
-            throw std::invalid_argument("run: observation origin does not authorize state changes");
+        const bool observed_change = changes && options.origin == RunOrigin::observation_rule;
+        if (observed_change != options.observation_action.has_value() ||
+            (observed_change && (!options.observation_action->matches(record->initial_observation_binding_) || options.planning ||
+                !options.confirmation_caller || !options.policy.confirm_changes || options.policy.tool_limit != 1 ||
+                options.tools->descriptions(false).size() != 1)))
+            throw std::invalid_argument("run: bound observation action required");
         if (changes && !options.observations.empty() && !options.action_observations)
             throw std::invalid_argument("run: observed changes require currentness guards");
         if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
@@ -480,6 +484,10 @@ struct RunLoopState {
                         const auto candidate = parse_plan_response(*planning_scope,planning_request->expected,*response);
                         record->plan_->install(planning_request->expected,candidate.steps()); planning_request.reset();
                     } else if (response->finish == model::FinishReason::stop) {
+                        if (options.observation_action && !record->tool_requests_) {
+                            stage = TurnFailure::control; record->stop_reason_ = PolicyReason::invalid_result;
+                            throw std::runtime_error("run: observed action has no tool receipt");
+                        }
                         stage = TurnFailure::history_commit;
                         if (plan_step) {
                             PlanStepOutput output{plan_step->key,record->attempt_,response->message.content};

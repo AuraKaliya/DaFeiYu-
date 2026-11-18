@@ -88,6 +88,7 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
         {"goal_update_limit",options.goal_update_limit},{"observation_rebind_limit",options.observation_rebind_limit},
         {"confirmation_limit",options.confirmation_limit},{"no_progress_limit",options.no_progress_limit},{"planning",nullptr},{"parent_budget",nullptr}};
     if (options.planning) policy["planning"] = {{"steps",options.planning->maximum_steps},{"revisions",options.planning->maximum_revisions},{"text_bytes",options.planning->maximum_text_bytes}};
+    if (options.observation_action) policy["observation_action_revision"] = options.observation_action->revision();
     if (options.budget) { const auto limit = options.budget->limit(); policy["parent_budget"] = {{"items",limit.items},{"bytes",limit.bytes}}; }
     result.execution_policy = "sha256:"+platform::sha256(policy.dump());
     if (options.tools) for (const auto& tool : options.tools->descriptions(false)) result.tools.push_back({tool.id,tool.version,tool.instance,tool.plugin_version,tool.schema_digest});

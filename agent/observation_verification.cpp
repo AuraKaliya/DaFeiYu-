@@ -7,10 +7,14 @@ namespace dfy::agent {
 // 步骤：检查字段及预期容量 → 限定首版值种类 → 保留原观察基线。
 ObservationExpectation::ObservationExpectation(ObservationGuard baseline, std::string field, runtime::Value expected)
     : baseline_(std::move(baseline)),field_(std::move(field)),expected_(expected) {
+    validate_condition(field_,expected_);
+}
+// 验证有界字段和支持的显式标量，配置阶段无需持有观察载荷。
+void ObservationExpectation::validate_condition(std::string_view field, const runtime::Value& expected) {
     using runtime::ValueKind;
-    if (field_.empty() || field_.size() > 64 || !runtime::valid_utf8(field_) || expected_.payload_bytes() > 2048)
+    if (field.empty() || field.size() > 64 || !runtime::valid_utf8(field) || expected.payload_bytes() > 2048)
         throw std::invalid_argument("observation verification: bounded field and expected value required");
-    const auto kind = expected_.kind();
+    const auto kind = expected.kind();
     if (kind != ValueKind::boolean && kind != ValueKind::int64 && kind != ValueKind::uint64 && kind != ValueKind::string && kind != ValueKind::null_value)
         throw std::invalid_argument("observation verification: unsupported expected type");
 }
