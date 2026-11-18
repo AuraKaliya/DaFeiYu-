@@ -15,10 +15,13 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockDropItemEvent;
+import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.ItemMergeEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -128,5 +131,59 @@ public final class StoneObserver extends JavaPlugin implements Listener {
         }
         row.add("nearbyStone", others);
         record(row);
+    }
+
+    // 返回玩家存储栏中实际携带的圆石数量，装备格不参与本夹具。
+    private int stock(Player player) {
+        int count = 0;
+        for (var stack : player.getInventory().getStorageContents()) {
+            if (stack != null && stack.getType() == Material.COBBLESTONE) count += stack.getAmount();
+        }
+        return count;
+    }
+
+    // 保存合堆双方的事前数量，再从下一次服务器推进读回实际去向。
+    // 步骤：绑定源和目标 → 保存候选转移 → 在下一 tick 读取双方的在场数量。
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void merged(ItemMergeEvent merge) {
+        Item source = merge.getEntity();
+        Item target = merge.getTarget();
+        if (source.getItemStack().getType() != Material.COBBLESTONE) return;
+        var row = event("merge", source.getLocation());
+        item(row, source);
+        row.addProperty("target", target.getUniqueId().toString());
+        row.addProperty("targetAmount", target.getItemStack().getAmount());
+        record(row);
+
+        Bukkit.getScheduler().runTask(this, () -> {
+            var after = event("mergeReadback", target.getLocation());
+            after.addProperty("cause", row.get("seq").getAsLong());
+            after.addProperty("sourceRemaining", source.isValid() ? source.getItemStack().getAmount() : 0);
+            after.addProperty("targetRemaining", target.isValid() ? target.getItemStack().getAmount() : 0);
+            record(after);
+        });
+    }
+
+    // 保存拾取候选并用玩家实存与地面余量读回实际效果。
+    // 步骤：核对角色与物品 → 保存拾取前数量 → 在下个 tick 读回，保留原候选关联。
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void pickup(EntityPickupItemEvent pickup) {
+        Item entity = pickup.getItem();
+        if (!(pickup.getEntity() instanceof Player player) || entity.getItemStack().getType() != Material.COBBLESTONE) return;
+        var row = event("pickup", entity.getLocation());
+        item(row, entity);
+        row.addProperty("actor", player.getUniqueId().toString());
+        row.addProperty("beforeStock", stock(player));
+        row.addProperty("remaining", pickup.getRemaining());
+        record(row);
+
+        Bukkit.getScheduler().runTask(this, () -> {
+            var after = event("pickupReadback", player.getLocation());
+            after.addProperty("cause", row.get("seq").getAsLong());
+            after.addProperty("actor", player.getUniqueId().toString());
+            after.addProperty("afterStock", stock(player));
+            after.addProperty("ground", entity.isValid() ? entity.getItemStack().getAmount() : 0);
+            record(after);
+        });
     }
 }

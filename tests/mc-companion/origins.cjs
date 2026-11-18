@@ -21,7 +21,7 @@ async function prepare(fixture, owner, fish) {
   for (const command of [
     'kill @e[type=item]', 'clear DfyOwner', 'clear DfyCompanion',
     'tp DfyOwner -1.5 -60 0.5', 'tp DfyCompanion -1.5 -60 0.5',
-    'setblock 1 -60 0 minecraft:cobblestone', 'give DfyOwner minecraft:cobblestone 1',
+    'setblock 1 -61 0 minecraft:grass_block', 'setblock 1 -60 0 minecraft:cobblestone', 'give DfyOwner minecraft:cobblestone 1',
     'give DfyCompanion minecraft:iron_pickaxe 1',
   ]) fixture.send(command);
   const target = fish.entity.position.clone().set(1, -60, 0);
