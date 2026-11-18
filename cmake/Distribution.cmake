@@ -32,6 +32,9 @@ install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/observer/observer.c" "${PR
   "${PROJECT_SOURCE_DIR}/plugins/examples/observer/plugin.json" "${PROJECT_SOURCE_DIR}/plugins/examples/observer/defaults.json"
   DESTINATION sdk/examples/observer CONFIGURATIONS Release COMPONENT SDK)
 install(FILES "${PROJECT_SOURCE_DIR}/cmake/ObserverSdkExample.cmake" DESTINATION sdk/examples/observer RENAME CMakeLists.txt CONFIGURATIONS Release COMPONENT SDK)
+install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/status/status.c" "${PROJECT_SOURCE_DIR}/plugins/examples/status/plugin.json"
+  "${PROJECT_SOURCE_DIR}/plugins/examples/status/CMakeLists.txt"
+  DESTINATION sdk/examples/status CONFIGURATIONS Release COMPONENT SDK)
 
 # 保留实际引入的第三方说明及原始 MIT 许可证。
 install(FILES "${PROJECT_SOURCE_DIR}/THIRD_PARTY.md" DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)

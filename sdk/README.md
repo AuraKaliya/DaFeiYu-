@@ -13,6 +13,17 @@ cmake --build .\build-observer --config Release
 
 生成包位于 `build-observer/Release/example.observer`。在运行中的宿主输入 `/plugins install "生成包的绝对路径"`，再明确 `/plugins load example.observer`。示例名称和配置都在包中，宿主没有固定必需插件清单。
 
+## 独立构建状态面板示例
+
+在已安装的 SDK 目录中，用相同的公开头编译纯 C 工具生产方。
+
+```powershell
+cmake -S .\examples\status -B .\build-status -G "Visual Studio 17 2022" -A x64
+cmake --build .\build-status --config Release
+```
+
+生成包位于 `build-status/Release/example.status`。用 `/plugins install` 和 `/plugins load example.status` 明确启动。面板演示无参只读工具加可确认的幂等状态变更，输出 `idle` 或 `focus`，可接宿主的 `/task` 做实际读回验证。结果可先于退出到达，票据仅在实际退出后释放。
+
 ## 入口与生命周期
 
 公开头文件位于 [include/dafeiyu](include/dafeiyu)。[plugin_abi.h](include/dafeiyu/plugin_abi.h) 的 v1 查询接口保持冻结；正式实例使用 [plugin_abi_v2.h](include/dafeiyu/plugin_abi_v2.h) 的独立 v2 导出及精确版本查询。定义 `DFY_PLUGIN_BUILD` 以导出入口。

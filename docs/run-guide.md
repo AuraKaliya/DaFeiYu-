@@ -106,6 +106,7 @@
 | `config` | 不含密钥的 DeepSeek／Qwen 示例 |
 | `plugins` | 用户明确安装的包，初始为空 |
 | `examples/plugins/example.observer` | 可安装的观察示例包 |
+| `examples/plugins/example.status` | 可安装的状态面板及读写工具 |
 | `sdk` | C ABI 头文件、开发说明及独立可构建示例 |
 | `licenses`、`THIRD_PARTY.md` | 第三方版权和许可证说明 |
 
