@@ -47,7 +47,11 @@ void ChatController::advance() {
                 status.result == runtime::OperationState::cancelled ? "turn_cancelled" : "turn_failed";
             write_observation_warning(errors_,status.session,status.turn,kind,*status.notifications.finished);
         }
-        if (status.result == runtime::OperationState::cancelled) output_ << "Request cancelled. Waiting for the current call to finish.\n";
+        if (status.result == runtime::OperationState::cancelled) {
+            output_ << "Request cancelled.";
+            if (status.exit == runtime::OperationState::pending) output_ << " Waiting for the current call to finish.";
+            output_ << '\n';
+        }
         else {
             try {
                 if (completed->error) std::rethrow_exception(completed->error);

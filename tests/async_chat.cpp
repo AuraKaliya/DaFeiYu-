@@ -32,7 +32,8 @@ void commands() {
     Conversation conversation(session);
     ChatController chat(conversation,output,errors,[&](std::string_view text) { if (text == "/plugins list") { ++managed; return true; } return false; });
     chat.line("hello"); started.wait(); chat.line("another"); chat.line("/plugins list"); chat.line("/cancel"); chat.advance();
-    check(managed == 1 && !errors.str().empty() && output.str().find("Request cancelled") != std::string::npos && session.busy(),
+    check(managed == 1 && !errors.str().empty() &&
+        output.str().find("Request cancelled. Waiting for the current call to finish.") != std::string::npos && session.busy(),
         "model wait blocked management or cancel lost original turn");
     const auto once = output.str(); chat.advance(); check(output.str() == once,"cancel result printed twice");
     cleanup.open(); chat.finish_input();

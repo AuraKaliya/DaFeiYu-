@@ -118,6 +118,8 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     check(output.str().find(message) != std::string::npos &&
         (trial == Trial::matches) == (output.str().find("the requested mode has been set") != std::string::npos),
         "terminal substituted a model completion for actual evidence");
+    if (trial == Trial::differs)
+        check(output.str().find("Request cancelled.\n") != std::string::npos,"terminal reported an exit wait after readback finished");
     const auto diagnostic = conversation.diagnostic();
     check(diagnostic && diagnostic->timeline.key == pending_diagnostic->timeline.key &&
         agent::review_timeline(diagnostic->timeline).run_exited &&
