@@ -1,4 +1,4 @@
-#include "support/scripted_model.hpp"
+#include "support/compiled_replay.hpp"
 #include <dafeiyu/session.hpp>
 #include <dafeiyu/run_trace.hpp>
 #include <atomic>
@@ -10,6 +10,9 @@ using namespace dfy::agent;
 using namespace dfy::runtime;
 using namespace dfy::model;
 using namespace dfy::tests;
+struct GoalCase { std::string_view id; bool confirmed, limited; };
+constexpr GoalCase cases[]{
+    {"goal_revision",false,false},{"goal_revision_confirmed",true,false},{"goal_revision_limit",false,true}};
 // 报告目标更新、历史状态或原运行预算错误。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 // 验证未授权、非边界或过量目标修订被拒绝。
@@ -29,10 +32,11 @@ void until(Session& session, const auto& ready) {
 }
 // 验证步骤边界目标更新保留原未验证或已验证工作，新目标不重置原总模型预算。
 // 步骤：取得原步骤结果 → 明确替换目标 → 拒绝旧版本及超量更新 → 核对新调用与旧事实。
-void revised(bool confirmed, bool limited) {
+void revised(const GoalCase& example, std::ostream* evidence = nullptr) {
+    const auto [id,confirmed,limited] = example;
     ScriptStep generation; generation.response = proposal(); ScriptStep first; first.response = Response{{Role::assistant,"old output"}};
     ScriptStep last; last.response = Response{{Role::assistant,"new output"}};
-    ScenarioSpec spec{1,"goal_revision",1,{},{generation,first},2};
+    ScenarioSpec spec{1,std::string(id),1,{},{generation,first},2};
     if (!limited) { spec.steps.push_back(generation); spec.steps.push_back(last); spec.expected_model_requests = 4; }
     ScriptedModel model(std::move(spec)); const auto fixed = model.backend(); std::atomic<bool> saw_goal = false, saw_facts = false;
     Backend backend{[&](const Config& config,const Request& input) {
@@ -42,7 +46,8 @@ void revised(bool confirmed, bool limited) {
         return fixed.complete(config,input);
     }};
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
-    Session session({},channel,backend); ConfirmationCaller caller, stranger; RunOptions options;
+    Session session(fixed_replay_model(),channel,backend); ConfirmationCaller caller, stranger; RunOptions options;
+    options.version_labels = compiled_replay_labels("agent.plan-request-v1");
     options.planning = PlanLimits{}; options.now = model.clock(); options.confirmation_caller = caller; options.goal_update_limit = 1;
     if (limited) options.policy.model_limit = 2;
     const auto request = session.begin("old goal",options);
@@ -80,6 +85,7 @@ void revised(bool confirmed, bool limited) {
         trace.model_contexts[1].goal_revision == 1 && (limited || trace.model_contexts[2].goal_revision == 2),"new target relabeled old model work");
     check(session.revise_goal(caller,original,"new goal") == target && request->plan_history()[0].steps[0].state == archive[0].steps[0].state,
         "terminal goal retry mutated original archive");
+    if (evidence) write_compiled_replay(*evidence,model.report(),*request,0);
 }
 // 验证在途模型不能被目标更新替换，原请求退出后才允许接纳新目标。
 // 步骤：阻塞当前步骤模型 → 拒绝更新且保持原版本 → 放行并接纳边界更新 → 取消尚未提交的新规划。
@@ -108,8 +114,21 @@ void inflight_boundary() {
         "goal boundary lost actual old model result");
 }
 }
-// 使用固定规划和文本响应验证用户目标更新，不调用真实模型。
-int main() {
-    try { revised(false,false); revised(true,false); revised(false,true); inflight_boundary(); std::cout << "Session goal revision checks passed\n"; return 0; }
+// 用固定规划和文本响应验证用户目标更新，并可采集指定案例。
+// 步骤：匹配显式采集名称或运行原矩阵 → 核对旧目标和实际退出 → 返回结果。
+int main(int argc, char** argv) {
+    try {
+        if (argc == 3 && std::string_view(argv[1]) == "--capture") {
+            const auto found = std::find_if(std::begin(cases),std::end(cases),[&](const auto& value) { return value.id == argv[2]; });
+            check(found != std::end(cases),"unknown goal revision replay case");
+            revised(*found,&std::cout);
+        } else {
+            check(argc == 1,"usage: --capture CASE");
+            for (const auto& example : cases) revised(example);
+            inflight_boundary();
+            std::cout << "Session goal revision checks passed\n";
+        }
+        return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
