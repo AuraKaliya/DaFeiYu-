@@ -16,7 +16,7 @@ void rejects(const auto& action) {
 RunTimeline timeline() {
     ScriptStep step; step.last_text = "goal"; step.response = Response{{Role::assistant,"answer"}};
     ReplayCase fixture; fixture.model = {1,"read_only_review",1,{},{step},1}; fixture.prompt = "goal";
-    fixture.expected.history_messages = 2; return replay_scenario(fixture).trace;
+    fixture.expected.history_messages = 2; return replay_scenario(fixture).diagnostic.timeline;
 }
 // 验证完整、分页、裁剪和投影故障的区别，不把诊断元数据当成可重跑材料。
 void completeness() {

@@ -17,7 +17,7 @@ void rejects(const auto& action) {
 DiagnosticSnapshot fixture() {
     ScriptStep step; step.last_text = "PRIVATE_FILE_GOAL"; step.response = dfy::model::Response{{dfy::model::Role::assistant,"PRIVATE_FILE_ANSWER"}};
     ReplayCase scenario; scenario.model = {1,"diagnostic_file",1,{},{step},1}; scenario.prompt = "PRIVATE_FILE_GOAL"; scenario.expected.history_messages = 2;
-    return {replay_scenario(scenario).trace,{},{}};
+    return replay_scenario(scenario).diagnostic;
 }
 // 在明确测试目录下新建独立目录，已有条目不删除或覆盖。
 std::filesystem::path directory(const std::filesystem::path& root) {
