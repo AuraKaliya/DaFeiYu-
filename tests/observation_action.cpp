@@ -8,9 +8,9 @@ using namespace dfy::agent;
 using namespace dfy::runtime;
 using namespace dfy::model;
 using namespace dfy::tests;
-enum class Outcome { applied, denied, changed_basis, expired, partial_failure, unknown_effect, omitted };
+enum class Outcome { applied, denied, changed_basis, expired, partial_failure, unknown_effect, omitted, multiple };
 constexpr std::string_view cases[]{"observation_action_applied","observation_action_denied","observation_action_changed_basis",
-    "observation_action_expired","observation_action_partial","observation_action_unknown","observation_action_omitted"};
+    "observation_action_expired","observation_action_partial","observation_action_unknown","observation_action_omitted","observation_action_multiple"};
 
 // 报告自动接纳、实际动作或停止不符合宿主规则。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
@@ -36,6 +36,7 @@ void verify(Outcome outcome, std::ostream* evidence = nullptr) {
     ScriptStep action; action.tool_names = {"apply"};
     action.response = outcome == Outcome::omitted ? Response{{Role::assistant,"I already did it"}} :
         Response{{Role::assistant,"",{{"one","apply","{}"}}},FinishReason::tool_calls};
+    if (outcome == Outcome::multiple) action.response->message.tool_calls.push_back({"two","apply","{}"});
     ScriptStep finish; finish.last_role = Role::tool; finish.last_tool_id = "one"; finish.tool_names = {"apply"};
     finish.response = Response{{Role::assistant,"recorded actual tool result"}};
     ScenarioSpec spec{1,std::string(cases[static_cast<std::size_t>(outcome)]),1,{},{action},1};
@@ -74,7 +75,8 @@ void verify(Outcome outcome, std::ostream* evidence = nullptr) {
     auto admitted = controller.poll(); auto request = std::move(admitted.request);
     check(request && admitted.receipt && admitted.receipt->run == request->run_id() && admitted.receipt->ticket.observation_revision == 3 &&
         request->initial_observation_binding() && request->diagnostics().source == RunOrigin::observation_rule,"condition lost its original binding");
-    if (outcome != Outcome::omitted) {
+    const bool offered = outcome != Outcome::omitted && outcome != Outcome::multiple;
+    if (offered) {
         until(session,[&] { return !request->confirmations().empty(); });
         const auto pending = request->confirmations()[0];
         check(!calls && pending.target.observation_binding == request->initial_observation_binding(),"waiting action used different evidence");
@@ -99,12 +101,13 @@ void verify(Outcome outcome, std::ostream* evidence = nullptr) {
     const auto effect = outcome == Outcome::unknown_effect ? ToolEffect::unknown : applied || outcome == Outcome::partial_failure ?
         ToolEffect::applied : ToolEffect::not_applied;
     const bool attempted = applied || outcome == Outcome::partial_failure || outcome == Outcome::unknown_effect;
+    const auto reason = applied ? PolicyReason::none : outcome == Outcome::multiple ? PolicyReason::tool_limit : PolicyReason::invalid_result;
     const auto steps = request->tool_steps();
     check(calls == static_cast<unsigned>(attempted) && request->exit()->state() == OperationState::succeeded &&
         request->operation()->state() == (applied ? OperationState::succeeded : OperationState::failed) &&
-        request->diagnostics().stop_reason == (applied ? PolicyReason::none : PolicyReason::invalid_result),
+        request->diagnostics().stop_reason == reason,
         "action did not report its actual execution and stop");
-    check(outcome == Outcome::omitted ? steps.empty() : steps.size() == 1 && steps[0].effect == effect,
+    check(offered ? steps.size() == 1 && steps[0].effect == effect : steps.empty() && request->confirmations().empty(),
         "observed action lost settled effect");
     if (applied) {
         check(controller.poll().decision == TriggerDecision::duplicate,"completed sample was replayed");
