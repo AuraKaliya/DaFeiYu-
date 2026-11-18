@@ -1,4 +1,4 @@
-#include "support/scripted_model.hpp"
+#include "support/compiled_replay.hpp"
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>
 #include <dafeiyu/diagnostic_snapshot.hpp>
@@ -13,6 +13,7 @@ using namespace dfy::runtime;
 using namespace dfy::model;
 using namespace dfy::plugins;
 using namespace dfy::tests;
+constexpr std::string_view cases[]{"native_action_satisfied","native_action_mismatch","native_action_unknown"};
 // 报告真实读取、动作和后续反馈的因果或效果错误。
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 // 验证尚未实际退出或不属于原步骤的工具不能作为采样起点。
@@ -44,7 +45,7 @@ ToolResult initial_read(const ToolSnapshot& tools, const std::string& name) {
 }
 // 验证真实读状态→原授权变更→同运行只读重查→新观察反馈，模型完成文字不能替代证据。
 // 步骤：读取初值并固定前置 → 执行获准动作 → 原动作退出后签发反馈 → 读取真实后值 → 按满足、不满足或未知分流。
-void scenario(const Manifest& manifest, const std::filesystem::path& settings, unsigned mode) {
+void scenario(const Manifest& manifest, const std::filesystem::path& settings, std::size_t mode, std::ostream* evidence = nullptr) {
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),1,8);
     auto instance = std::make_shared<PluginInstance>(manifest,settings,channel); check(!instance->create() && !instance->start(),"native setup failed");
     auto catalog = std::make_shared<ToolCatalog>(); PluginTools registration(instance,catalog);
@@ -63,8 +64,10 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, u
     ScriptStep read; read.last_role = Role::tool; read.last_tool_id = "change"; read.tool_names = {change_name,read_name};
     read.response = Response{{Role::assistant,"",{{"read",read_name,"{}"}}},FinishReason::tool_calls};
     ScriptStep final; final.last_role = Role::tool; final.last_tool_id = "read"; final.tool_names = {change_name,read_name}; final.response = Response{{Role::assistant,"model claims target reached"}};
-    ScriptedModel model({1,"native_action_feedback",1,{},{generation,action,read,final},4}); Session session({},channel,model.backend()); ConfirmationCaller caller;
+    ScriptedModel model({1,std::string(cases[mode]),1,{},{generation,action,read,final},4});
+    Session session(fixed_replay_model(),channel,model.backend()); ConfirmationCaller caller;
     RunOptions options; options.tools = scope; options.now = model.clock(); options.planning = PlanLimits{}; options.confirmation_caller = caller;
+    options.version_labels = compiled_replay_labels("agent.plan-request-v1");
     options.policy.confirm_changes = true; options.action_observations.emplace(std::vector<ObservationGuard>{baseline});
     const auto request = session.begin("increment once",options); until(session,[&] { return !request->confirmations().empty(); });
     const auto pending = request->confirmations()[0]; session.decide(caller,{1,pending.id,pending.revision,pending.target,true});
@@ -91,13 +94,25 @@ void scenario(const Manifest& manifest, const std::filesystem::path& settings, u
     check(count(0)-starts == 3 && count(1)-effects == 1 && count(2)-releases == 3 && request->tool_steps()[0].effect == ToolEffect::applied &&
         review_timeline(run_timeline(*request,"native-feedback")).run_exited,"feedback repeated action or lost actual exit");
     check(instance->shutdown() == ShutdownResult::closed,"feedback snapshots pinned native code");
+    if (evidence) write_compiled_replay(*evidence,model.report(),*request,count(0)-starts-1);
 }
 }
-// 只用固定模型响应，初读、变更和重读均调用真实测试 DLL。
+// 以固定模型和指定测试包验证动作及反馈，或采集一个明确命名的案例。
+// 步骤：核对夹具及参数 → 运行指定案例或全部反馈场景 → 检查原生退出并输出。
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 3,"expected package and settings"); const auto manifest = load_manifest(argv[1]);
-        for (unsigned mode = 0; mode < 3; ++mode) scenario(manifest,argv[2],mode);
-        std::cout << "Native action feedback checks passed\n"; return 0;
+        check(argc == 3 || (argc == 5 && std::wstring_view(argv[3]) == L"--capture"),"expected package, settings and optional --capture CASE");
+        const auto manifest = load_manifest(argv[1]);
+        check(manifest.id == "test.tools","unexpected native feedback fixture");
+        if (argc == 5) {
+            const auto id = std::filesystem::path(argv[4]).string();
+            const auto found = std::find(std::begin(cases),std::end(cases),id);
+            check(found != std::end(cases),"unknown native feedback replay case");
+            scenario(manifest,argv[2],static_cast<std::size_t>(found-std::begin(cases)),&std::cout);
+        } else {
+            for (std::size_t mode = 0; mode < std::size(cases); ++mode) scenario(manifest,argv[2],mode);
+            std::cout << "Native action feedback checks passed\n";
+        }
+        return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

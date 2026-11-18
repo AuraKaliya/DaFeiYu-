@@ -111,6 +111,38 @@ inline bool replay_rebind_equal(const agent::ObservationRebindReceipt& left, con
         replay_observations_equal(left.observations,right.observations);
 }
 
+// 从诊断找到反馈签发时实际引用的工具位置，零表示引用整个步骤。
+inline std::ptrdiff_t replay_feedback_tool(const agent::RunTimeline& trace, runtime::DomainId tool) {
+    if (!tool) return -1;
+    return std::find_if(trace.nodes.begin(),trace.nodes.end(),[tool](const auto& node) {
+        return node.id.kind == agent::TraceNodeKind::tool && node.id.local == tool;
+    })-trace.nodes.begin();
+}
+
+// 将反馈基线对应到原观察集合，独立的读回来源保留为集合外。
+inline std::ptrdiff_t replay_feedback_observation(const agent::RunTimeline& trace, const agent::ObservationInputFact& basis) {
+    return std::find_if(trace.observations.begin(),trace.observations.end(),[&](const auto& item) {
+        return item.source == basis.source && item.provider_instance == basis.provider_instance &&
+            item.object.id == basis.object.id && item.object.generation == basis.object.generation;
+    })-trace.observations.begin();
+}
+
+// 比较原工具和基线、检查次数及实际反馈结算，不把随机请求号当作行为。
+// 步骤：配对原步骤、工具及基线 → 比较检查和结果 → 校验末次采样的相对来源。
+inline bool replay_feedback_equal(const agent::PlanFeedbackSnapshot& a, const agent::RunTimeline& left,
+    const agent::PlanFeedbackSnapshot& b, const agent::RunTimeline& right) {
+    if (replay_plan_key(a.step) != replay_plan_key(b.step) || replay_attempt_key(a.issued_at) != replay_attempt_key(b.issued_at) ||
+        replay_feedback_tool(left,a.completed_tool) != replay_feedback_tool(right,b.completed_tool) ||
+        replay_observation_values(a.baseline) != replay_observation_values(b.baseline) ||
+        replay_feedback_observation(left,a.baseline) != replay_feedback_observation(right,b.baseline) ||
+        std::tie(a.expected_type,a.checks,a.verified,a.checks_saturated) != std::tie(b.expected_type,b.checks,b.verified,b.checks_saturated) ||
+        a.latest.has_value() != b.latest.has_value()) return false;
+    if (!a.latest) return true;
+    const auto& x = *a.latest; const auto& y = *b.latest;
+    return std::tie(x.match,x.issue,x.revision) == std::tie(y.match,y.issue,y.revision) &&
+        (x.source == a.baseline.source) == (y.source == b.baseline.source) && static_cast<bool>(x.source) == static_cast<bool>(y.source);
+}
+
 // 按同案例和已声明变化比较两次实际执行，缺材料或缺事实时明确不可比。
 // 步骤：核对案例输入 → 核对版本及声明 → 校验历史和身份 → 比较结构化行为。
 inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const ReplayEvidence& candidate,
@@ -164,6 +196,9 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
         result.behavior.push_back("model_contexts");
     if (!std::equal(left.diagnostic.plans.begin(),left.diagnostic.plans.end(),
         right.diagnostic.plans.begin(),right.diagnostic.plans.end(),replay_plan_equal)) result.behavior.push_back("plans");
+    if (!std::equal(left.diagnostic.feedback.begin(),left.diagnostic.feedback.end(),
+        right.diagnostic.feedback.begin(),right.diagnostic.feedback.end(),
+        [&](const auto& a,const auto& b) { return replay_feedback_equal(a,left_trace,b,right_trace); })) result.behavior.push_back("feedback");
     if (!std::equal(left_trace.nodes.begin(),left_trace.nodes.end(),right_trace.nodes.begin(),right_trace.nodes.end(),
         [](const auto& a,const auto& b) { return replay_node_values(a) == replay_node_values(b); })) result.behavior.push_back("nodes");
     if (!std::equal(left_trace.delta.facts.begin(),left_trace.delta.facts.end(),right_trace.delta.facts.begin(),right_trace.delta.facts.end(),
