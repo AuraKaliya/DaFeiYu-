@@ -32,6 +32,13 @@ int wmain(int argc, wchar_t** argv) {
         const auto first = replay_scenario(scenario), second = replay_scenario(scenario);
         check(first.tool_calls == 1 && second.tool_calls == 1 && first.effects == second.effects && first.model.consumed == 2,
             "file replay changed deterministic facts");
+        auto changed_expectation = scenario;
+        ++changed_expectation.expected.tool_calls;
+        const auto failed = measure_replay(changed_expectation);
+        check(failed.tool_calls == first.tool_calls && failed.effects == first.effects &&
+            failed.failed_assertions == std::vector<std::string_view>{"tool_calls"} &&
+            dfy::agent::review_timeline(failed.trace).run_exited,"wrong expectation erased actual replay evidence");
+        rejects([&] { replay_scenario(changed_expectation); });
         std::ifstream file(std::filesystem::path(argv[1]),std::ios::binary); material::Json original; file >> original; invalid(original);
         std::cout << "Replay material checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

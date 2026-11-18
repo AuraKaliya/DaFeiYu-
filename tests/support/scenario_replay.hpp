@@ -25,12 +25,14 @@ struct ReplayCase {
 struct ReplayReport {
     ScriptReport model;
     std::size_t tool_calls = 0;
+    std::size_t history_messages = 0;
     std::vector<agent::ToolEffect> effects;
     agent::RunTimeline trace;
+    std::vector<std::string_view> failed_assertions;
 };
 // 在全新正式 Session 中重跑显式固定场景，只允许内存结果夹具，失败不回退真实 Provider。
-// 步骤：核对场景及夹具声明 → 建立固定模型和工具 → 按语义等待点提交决定 → 核对全部材料及业务事实。
-inline ReplayReport replay_scenario(ReplayCase scenario) {
+// 步骤：核对场景及夹具声明 → 建立固定模型和工具 → 提交预设决定 → 保留实际行为和不匹配断言。
+inline ReplayReport measure_replay(ReplayCase scenario, agent::RunVersionLabels version_labels = {}) {
     using namespace agent;
     using namespace runtime;
     if (scenario.tools.size() > 64 || scenario.decisions.size() > 64) throw std::invalid_argument("replay: fixture or decision limit exceeded");
@@ -59,7 +61,9 @@ inline ReplayReport replay_scenario(ReplayCase scenario) {
     Session session({},channel,model.backend()); ConfirmationCaller caller; RunOptions options;
     if (!ids.empty()) options.tools = catalog.snapshot(ids,true);
     options.policy = scenario.policy; options.timeout = scenario.timeout; options.now = model.clock();
-    options.confirmation_caller = caller; options.confirmation_limit = 64; options.version_labels.model_profile = "offline-fixed-v1";
+    options.confirmation_caller = caller; options.confirmation_limit = 64;
+    options.version_labels = std::move(version_labels);
+    options.version_labels.model_profile = "offline-fixed-v1";
     const auto request = session.begin(scenario.prompt,options); std::size_t decisions = 0;
     const auto watchdog = std::chrono::steady_clock::now()+std::chrono::seconds(5);
     while (request->exit()->state() == OperationState::pending && std::chrono::steady_clock::now() < watchdog) {
@@ -88,13 +92,23 @@ inline ReplayReport replay_scenario(ReplayCase scenario) {
         report.tool_calls += state->used;
     }
     for (const auto& tool : request->tool_steps()) report.effects.push_back(tool.effect);
+    report.history_messages = session.message_count();
     const auto& expected = scenario.expected;
-    if (request->operation()->state() != expected.result || request->diagnostics().stop_reason != expected.stop_reason ||
-        report.tool_calls != expected.tool_calls || report.effects != expected.effects || session.message_count() != expected.history_messages)
-        throw std::runtime_error("replay: execution facts differ from explicit expectations");
+    if (request->operation()->state() != expected.result) report.failed_assertions.push_back("result");
+    if (report.trace.stop_reason != expected.stop_reason) report.failed_assertions.push_back("stop_reason");
+    if (report.tool_calls != expected.tool_calls) report.failed_assertions.push_back("tool_calls");
+    if (report.effects != expected.effects) report.failed_assertions.push_back("effects");
+    if (report.history_messages != expected.history_messages) report.failed_assertions.push_back("history_messages");
     for (const auto& node : report.trace.nodes) if (node.parent && std::none_of(report.trace.nodes.begin(),report.trace.nodes.end(),
         [&](const auto& parent) { return parent.id == *node.parent; })) throw std::runtime_error("replay: missing trace parent");
     if (!review_timeline(report.trace).run_exited) throw std::runtime_error("replay: diagnostic review did not confirm actual exit");
+    return report;
+}
+
+// 仅在所有固定场景断言均满足时通过原功能回归。
+inline ReplayReport replay_scenario(ReplayCase scenario) {
+    auto report = measure_replay(std::move(scenario));
+    if (!report.failed_assertions.empty()) throw std::runtime_error("replay: execution facts differ from explicit expectations");
     return report;
 }
 }
