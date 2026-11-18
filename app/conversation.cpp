@@ -5,9 +5,11 @@ namespace dfy::app {
 using runtime::OperationState;
 
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
-// 步骤：核对当前回合 → 通过原会话接纳 → 返回开始状态。
+// 步骤：核对当前回合 → 注入已知构建标签 → 通过原会话接纳并返回开始状态。
 agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options) {
     if (current_) throw std::logic_error("session: wait for the current request to finish");
+    if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
+    if (version_labels_.build) options.version_labels.build = version_labels_.build;
     current_ = session_.begin(prompt,std::move(options));
     reported_ = false;
     return current_->diagnostics();

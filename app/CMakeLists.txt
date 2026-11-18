@@ -3,6 +3,17 @@ add_library(dfy_application STATIC application.cpp application.hpp conversation.
   diagnostic_files.cpp diagnostic_files.hpp)
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
+# 构建标签随二进制固定，源码提交仅在构建者明确提供时记录。
+set(DFY_APPLICATION_COMMIT "" CACHE STRING "Verified source commit of this application build")
+if(NOT DFY_APPLICATION_COMMIT STREQUAL "")
+  string(LENGTH "${DFY_APPLICATION_COMMIT}" dfy_commit_length)
+  if(NOT DFY_APPLICATION_COMMIT MATCHES "^[0-9A-Fa-f]+$" OR (NOT dfy_commit_length EQUAL 40 AND NOT dfy_commit_length EQUAL 64))
+    message(FATAL_ERROR "DFY_APPLICATION_COMMIT requires a full source commit")
+  endif()
+endif()
+target_compile_definitions(dfy_application PRIVATE
+  "DFY_APPLICATION_COMMIT=\"${DFY_APPLICATION_COMMIT}\""
+  "DFY_APPLICATION_BUILD=\"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}-${CMAKE_GENERATOR_PLATFORM}-$<CONFIG>\"")
 set_target_properties(dfy_application PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/application.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application.hpp"

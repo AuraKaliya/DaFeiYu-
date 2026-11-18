@@ -6,6 +6,14 @@
 
 namespace dfy::app {
 namespace {
+// 固定编译此应用的配置与已知源码提交，运行时不查询工作区。
+agent::RunVersionLabels build_labels() {
+    agent::RunVersionLabels labels;
+    labels.build = DFY_APPLICATION_BUILD;
+    if (std::string_view(DFY_APPLICATION_COMMIT).size()) labels.application_commit = DFY_APPLICATION_COMMIT;
+    return labels;
+}
+
 // 从明确的包工具 ID 取得包名称，避免根据局部名称选择实例。
 std::string_view package_of(std::string_view id) {
     const auto separator = id.find('/');
@@ -32,7 +40,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     model::Backend backend)
     : channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
       plugins_(packages,user_data,channel_), session_(std::move(config),channel_,std::move(backend)),
-      conversation_(session_) {}
+      conversation_(session_,build_labels()) {}
 
 // 为用户指明的一个只读工具接纳运行。
 agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id, const std::string& prompt) {
@@ -90,6 +98,7 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
     options.policy.confirm_changes = true;
     options.policy.tool_limit = 3;
     options.confirmation_limit = 1;
+    options.version_labels.prompt_template = "app.verified-state-v1";
     const auto deadline = options.now()+options.timeout;
     options.deadline = deadline;
     auto verifier = std::make_unique<ToolVerification>(reader,change,expected,prepared.instance->generation(),deadline);

@@ -64,6 +64,8 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     const auto pending_diagnostic = conversation.diagnostic();
     check(pending_diagnostic && pending_diagnostic->timeline.key.run == agent::RunId{accepted->session,accepted->turn} &&
         !agent::review_timeline(pending_diagnostic->timeline).run_exited,"active diagnostic exposed the wrong run state");
+    check(pending_diagnostic->timeline.versions.build && !pending_diagnostic->timeline.versions.build->empty() &&
+        pending_diagnostic->timeline.versions.prompt_template == "app.verified-state-v1","application did not capture actual build and prompt labels");
 
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
     bool attempted = false, approved = false;
