@@ -153,13 +153,27 @@ std::optional<agent::RunId> Application::task_run(std::uint64_t command) const n
     return agent::RunId{slot->accepted.session,slot->accepted.turn};
 }
 
-// 只报告与当前或最近一次运行关联的证据状态。
-std::optional<VerificationReport> Application::verification() const noexcept {
+// 在一次只读查询中返回同一运行的状态和验证判断。
+// 步骤：读取状态并核对可查身份 → 匹配原读回记录 → 投影退出时的最终判断。
+std::optional<RunStatusSnapshot> Application::run_status(std::optional<agent::RunId> expected) const noexcept {
     const auto status = conversation_.status();
-    if (!status || !verification_ || verification_->run != agent::RunId{status->session,status->turn}) return {};
-    auto report = *verification_;
-    if (!report.match && status->exit != runtime::OperationState::pending) report.match = agent::ObservationMatch::unknown;
-    return report;
+    if (!status) return {};
+    const agent::RunId run{status->session,status->turn};
+    if (expected && *expected != run) return {};
+
+    RunStatusSnapshot snapshot{*status,{}};
+    if (verification_ && verification_->run == run) {
+        snapshot.verification = verification_;
+        if (!snapshot.verification->match && status->exit != runtime::OperationState::pending)
+            snapshot.verification->match = agent::ObservationMatch::unknown;
+    }
+    return snapshot;
+}
+
+// 复用同一运行快照给出原读回判断。
+std::optional<VerificationReport> Application::verification() const noexcept {
+    const auto snapshot = run_status();
+    return snapshot ? snapshot->verification : std::nullopt;
 }
 
 // 从原活动回合读取确认值。

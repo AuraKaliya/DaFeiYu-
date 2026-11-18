@@ -45,9 +45,8 @@ void write_pending(const Application& application, std::ostream& output) {
 }
 
 // 展示与当前运行关联的宿主读回判定。
-// 步骤：取得原状态 → 处理未提交或仍等待 → 输出实际证据判断。
-void write_verification(const Application& application, std::ostream& output) {
-    const auto report = application.verification();
+// 步骤：处理未提交或仍等待 → 输出实际证据判断。
+void write_verification(const std::optional<VerificationReport>& report, std::ostream& output) {
     if (!report) { output << "No verified task in the current or latest run.\n"; return; }
 
     output << "Run " << report->run.session << '/' << report->run.sequence << " verification ";
@@ -61,14 +60,13 @@ void write_verification(const Application& application, std::ostream& output) {
 
 // 查询已接纳请求及仍然保留的运行状态。
 // 步骤：定位原接纳 → 核对结果身份 → 输出实时或最近值，缺失时报告已超出保留范围。
-void write_task_status(Application& application, std::uint64_t request, std::ostream& output) {
+void write_task_status(const Application& application, std::uint64_t request, std::ostream& output) {
     const auto run = application.task_run(request);
     if (!run) throw std::invalid_argument("task: request receipt unavailable");
     output << "Task request " << request << " refers to run " << run->session << '/' << run->sequence << ".\n";
-    const auto status = application.conversation().status();
-    if (status && *run == agent::RunId{status->session,status->turn}) {
-        write_turn_status(output,*status);
-        write_verification(application,output);
+    if (const auto snapshot = application.run_status(*run)) {
+        write_turn_status(output,snapshot->status);
+        write_verification(snapshot->verification,output);
     } else output << "Run details are no longer retained.\n";
 }
 }
@@ -93,7 +91,7 @@ bool application_command(Application& application, std::string_view command, std
         write_task_status(application,positive_id(words[1]),output);
     } else if (name == "/verification") {
         if (command_words(command).size() != 1) throw std::invalid_argument("Usage: /verification");
-        write_verification(application,output);
+        write_verification(application.verification(),output);
     } else if (name == "/diagnostic") {
         const auto words = command_words(command);
         if (words.size() != 3 || words[1] != "export") throw std::invalid_argument("Usage: /diagnostic export \"FILE\"");

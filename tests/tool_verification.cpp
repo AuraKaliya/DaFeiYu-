@@ -64,6 +64,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial, std::ost
     auto chat = connect();
     manager.install(package);
     check(manager.load("example.status") == 0,"status package did not load");
+    check(!application.run_status(),"read-only query returned a run before admission");
     const auto command = std::string("/task example.status/read example.status/set_focus ")+(trial == Trial::differs ? "idle" : "focus")+" \"set focus\"";
     if (trial == Trial::matches) {
         chat->line(command+" --request 2");
@@ -75,8 +76,13 @@ void verify(const fs::path& package, const fs::path& root, Trial trial, std::ost
     chat->line("/verification");
     check(accepted && output.str().find("verification pending.") != std::string::npos && errors.str().empty(),
         "terminal did not show the accepted task and pending evidence");
+    const agent::RunId identity{accepted->session,accepted->turn};
+    const auto initial = application.run_status();
+    check(initial && initial->status.turn == identity.sequence && initial->verification && initial->verification->run == identity &&
+        !initial->verification->match && !application.run_status(agent::RunId{identity.session,identity.sequence+1}),
+        "read-only query did not bind pending evidence to the exact run");
     const auto pending_diagnostic = conversation.diagnostic();
-    check(pending_diagnostic && pending_diagnostic->timeline.key.run == agent::RunId{accepted->session,accepted->turn} &&
+    check(pending_diagnostic && pending_diagnostic->timeline.key.run == identity &&
         !agent::review_timeline(pending_diagnostic->timeline).run_exited,"active diagnostic exposed the wrong run state");
     check(pending_diagnostic->timeline.versions.build && !pending_diagnostic->timeline.versions.build->empty() &&
         pending_diagnostic->timeline.versions.prompt_template == "app.verified-state-v1" &&
@@ -92,6 +98,10 @@ void verify(const fs::path& package, const fs::path& root, Trial trial, std::ost
         if (!attempted && !confirmations.empty()) {
             attempted = true;
             const auto& pending = confirmations[0];
+            const auto waiting = application.run_status(identity);
+            check(waiting && waiting->status.waiting_confirmations == 1 && waiting->status.result == OperationState::pending &&
+                waiting->status.exit == OperationState::pending && waiting->verification && !waiting->verification->match,
+                "read-only query lost the original waiting action or advanced its state");
             if (trial == Trial::replaced)
                 check(manager.unload("example.status") == plugins::ShutdownResult::closed && manager.load("example.status") == 0,
                     "could not replace instance while awaiting confirmation");
@@ -108,13 +118,15 @@ void verify(const fs::path& package, const fs::path& root, Trial trial, std::ost
         }
         std::this_thread::yield();
     }
-    const auto report = application.verification();
-    const auto status = conversation.status();
+    const auto finished = application.run_status(identity);
+    check(finished.has_value(),"read-only query lost the original run after actual exit");
+    const auto& report = finished->verification;
+    const auto& status = finished->status;
     const bool has_readback = trial == Trial::matches || trial == Trial::differs;
     const unsigned expected_calls = has_readback ? 5u : trial == Trial::early_change ? 2u : 3u;
     const auto expected = trial == Trial::matches ? agent::ObservationMatch::satisfied :
         (trial == Trial::differs ? agent::ObservationMatch::not_satisfied : agent::ObservationMatch::unknown);
-    check(report && report->run.sequence == accepted->turn && report->match == expected && attempted &&
+    check(report && report->run == identity && report->match == expected && attempted &&
         approved == has_readback && calls == expected_calls,
         "real plugin state did not produce the expected proof");
     chat->line("/verification");
@@ -167,8 +179,8 @@ void verify(const fs::path& package, const fs::path& root, Trial trial, std::ost
             errors.str().find("conflicts with receipt") != std::string::npos && calls == 5 && !conversation.busy(),
             "task or decision replay lost its receipt or created a new effect");
     }
-    check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
-        status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
+    check(status.result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
+        status.exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");
     if (evidence) {
         const auto id = cases[static_cast<std::size_t>(trial)];
@@ -199,6 +211,8 @@ void retired_receipts(const fs::path& package, const fs::path& root) {
     }
 
     check(!application.task_run(1) && application.task_run(2) && application.task_run(17),"receipt retention boundary changed");
+    check(!application.run_status(*application.task_run(2)) && application.run_status(*application.task_run(17)),
+        "an old task receipt was matched to another run's details");
     bool expired = false;
     try { application.submit_verified_once(1,"example.status/read","example.status/set_focus","focus","set focus"); }
     catch (const std::invalid_argument& error) { expired = std::string_view(error.what()).find("expired") != std::string_view::npos; }

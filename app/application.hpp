@@ -10,6 +10,11 @@ struct VerificationReport {
     agent::RunId run;
     std::optional<agent::ObservationMatch> match;
 };
+// 同一运行的无正文状态与读回判定，可在宿主线程按原身份查询。
+struct RunStatusSnapshot {
+    agent::TurnDiagnostics status;
+    std::optional<VerificationReport> verification;
+};
 struct TaskAdmission {
     agent::TurnDiagnostics status;
     bool reused = false;
@@ -43,6 +48,8 @@ class Application {
         const std::string& expected, const std::string& prompt);
     // 只读查询仍在保留范围的请求及原运行身份。
     std::optional<agent::RunId> task_run(std::uint64_t command) const noexcept;
+    // 读取当前运行或空闲时最近退出的运行，指定身份不匹配时返回空值。
+    std::optional<RunStatusSnapshot> run_status(std::optional<agent::RunId> expected = {}) const noexcept;
     // 查询当前或最近一次运行的实际验证判断。
     std::optional<VerificationReport> verification() const noexcept;
     // 为可信界面读取当前运行的确认记录和待审参数。
