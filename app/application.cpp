@@ -160,8 +160,14 @@ std::vector<agent::ConfirmationSnapshot> Application::confirmations() const {
 }
 
 // 由宿主固定审批对象，用户命令只提供请求、修订和决定。
-// 步骤：撤销失效实例 → 查找原请求 → 以请求身份标识决定并交给会话复核。
+// 步骤：复用原决定或拒绝冲突 → 复核实例及证据 → 交给原会话 → 保留值回执。
 agent::ConfirmationReceipt Application::decide(runtime::DomainId request, std::uint64_t revision, bool approve) {
+    if (!request || !revision) throw std::invalid_argument("confirmation: request and revision required");
+    for (const auto& saved : decisions_) if (saved.receipt.request == request) {
+        if (saved.expected != revision || saved.approve != approve) throw std::invalid_argument("confirmation: decision receipt conflict");
+        return saved.receipt;
+    }
+
     collect_tool_registration();
     advance_verification();
     const auto values = confirmations();
@@ -172,7 +178,10 @@ agent::ConfirmationReceipt Application::decide(runtime::DomainId request, std::u
         (!verifier_ || !verifier_->can_approve(found->target,std::chrono::steady_clock::now())))
         throw std::invalid_argument("verification: original read evidence is unavailable");
 
-    return session_.decide(caller_,{request,request,revision,found->target,approve});
+    const auto receipt = session_.decide(caller_,{request,request,revision,found->target,approve});
+    decisions_[next_decision_] = {receipt,revision,approve};
+    next_decision_ = (next_decision_+1)%decisions_.size();
+    return receipt;
 }
 
 // 按原运行身份与实例寿命撤销已失效的目录授权。

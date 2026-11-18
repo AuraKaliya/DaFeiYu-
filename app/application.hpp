@@ -64,6 +64,11 @@ class Application {
         std::string digest;
         agent::TurnDiagnostics accepted;
     };
+    struct DecisionReceipt {
+        agent::ConfirmationReceipt receipt;
+        std::uint64_t expected = 0;
+        bool approve = false;
+    };
 
     // 针对用户明确选择的包，临时登记活动实例的工具。
     PreparedTools prepare_tools(std::string_view package);
@@ -84,5 +89,7 @@ class Application {
     std::unique_ptr<ToolVerification> verifier_;
     std::uint64_t task_watermark_ = 0;
     std::array<std::optional<TaskReceipt>,16> task_receipts_;
+    std::array<DecisionReceipt,64> decisions_{};
+    std::size_t next_decision_ = 0;
 };
 }

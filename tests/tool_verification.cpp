@@ -79,6 +79,7 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
 
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
     bool attempted = false, approved = false;
+    std::string decision_key;
     while (conversation.busy() && std::chrono::steady_clock::now() < deadline) {
         check(application.advance_plugins() != runtime::RunResult::failed,"native panel advance failed");
         chat->advance();
@@ -93,7 +94,8 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
                 check(output.str().find("waiting=1") != std::string::npos && output.str().find("Original run ") != std::string::npos,
                     "replacement terminal could not find the original pending task");
             }
-            chat->line("/approve "+std::to_string(pending.id)+' '+std::to_string(pending.revision));
+            decision_key = std::to_string(pending.id)+' '+std::to_string(pending.revision);
+            chat->line("/approve "+decision_key);
             approved = output.str().find("Approval recorded") != std::string::npos;
         }
         std::this_thread::yield();
@@ -129,10 +131,13 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
         output.str("");
         chat->line("/task-status 1");
         chat->line(command+" --request 1");
+        chat->line("/approve "+decision_key);
+        chat->line("/deny "+decision_key);
         chat->line("/task example.status/read example.status/set_focus focus \"different goal\" --request 1");
         check(output.str().find("Question=succeeded") != std::string::npos && output.str().find("Original run ") != std::string::npos &&
+            output.str().find("Approval recorded") != std::string::npos && errors.str().find("decision receipt conflict") != std::string::npos &&
             errors.str().find("conflicts with receipt") != std::string::npos && calls == 5 && !conversation.busy(),
-            "request replay or conflict started a new verified task");
+            "task or decision replay lost its receipt or created a new effect");
     }
     check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
