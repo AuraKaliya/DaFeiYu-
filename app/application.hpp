@@ -1,9 +1,15 @@
 ﻿#pragma once
 #include "conversation.hpp"
+#include "tool_verification.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 
 namespace dfy::app {
+struct VerificationReport {
+    agent::RunId run;
+    std::optional<agent::ObservationMatch> match;
+};
+
 // 在一个宿主线程上组装会话、插件和共享事件，调用方负责定期推进。
 class Application {
   public:
@@ -19,6 +25,11 @@ class Application {
     agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
     agent::TurnDiagnostics submit_confirmed(const std::string& tool_id, const std::string& prompt);
+    // 提交同一实例的无参读取及变更工具，由宿主比对变更后的实际文本状态。
+    agent::TurnDiagnostics submit_verified(const std::string& reader, const std::string& change, const std::string& expected,
+        const std::string& prompt);
+    // 查询当前或最近一次运行的实际验证判断。
+    std::optional<VerificationReport> verification() const noexcept;
     // 为可信界面读取当前运行的确认记录和待审参数。
     std::vector<agent::ConfirmationSnapshot> confirmations() const;
     // 根据当前运行的原请求及期望修订登记决定，同一决定复用原回执。
@@ -33,11 +44,20 @@ class Application {
         std::weak_ptr<plugins::PluginInstance> instance;
         std::unique_ptr<plugins::PluginTools> tools;
     };
+    struct PreparedTools {
+        std::shared_ptr<plugins::PluginInstance> instance;
+        std::shared_ptr<agent::ToolCatalog> catalog;
+        std::unique_ptr<plugins::PluginTools> registration;
+    };
 
+    // 针对用户明确选择的包，临时登记活动实例的工具。
+    PreparedTools prepare_tools(std::string_view package);
     // 准备并接纳一个工具范围，按入口的授权意图固定人工确认。
     agent::TurnDiagnostics submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes);
     // 撤销不属于当前运行或已失效实例的注册。
     void collect_tool_registration() noexcept;
+    // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
+    void advance_verification();
 
     std::shared_ptr<events::BroadcastChannel> channel_;
     plugins::PluginManager plugins_;
@@ -45,5 +65,7 @@ class Application {
     agent::Session session_;
     Conversation conversation_;
     agent::ConfirmationCaller caller_;
+    std::optional<VerificationReport> verification_;
+    std::unique_ptr<ToolVerification> verifier_;
 };
 }
