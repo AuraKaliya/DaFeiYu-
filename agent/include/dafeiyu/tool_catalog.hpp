@@ -30,6 +30,8 @@ class ToolSnapshot {
     bool permits_state_changes() const noexcept;
     // 从固定成员收紧步骤范围，保留原注册及撤销关系；不能补回外部工具或重绑新实例。
     ToolSnapshot restrict_to(std::span<const std::string> ids) const;
+    // 收紧到一个工具及一份已授权参数，后续缩小范围仍保留原值约束。
+    ToolSnapshot bind_arguments(const std::string& id, const std::string& arguments) const;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。
@@ -39,6 +41,7 @@ class ToolSnapshot {
     // 保留已完整校验的成员集合，不取得任何原生函数指针。
     explicit ToolSnapshot(std::vector<std::shared_ptr<ToolEntry>> entries) : entries_(std::move(entries)) {}
     std::vector<std::shared_ptr<ToolEntry>> entries_;
+    std::shared_ptr<const std::string> fixed_arguments_;
 };
 // 同一宿主线程内的有界描述目录，宿主授予工具 ID，模型只返回候选调用。
 class ToolCatalog {

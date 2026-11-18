@@ -15,6 +15,21 @@ struct ToolEntry {
     const ToolFactory factory;
     bool enabled = true, registered = true;
 };
+namespace {
+// 固定参数保留 JSON 类型和完整对象内容，重复字段不能形成多义授权。
+std::string exact_arguments(const std::string& text) {
+    using Json = nlohmann::json;
+    std::vector<std::set<std::string>> keys;
+    return Json::parse(text, [&](int depth, Json::parse_event_t event, Json& value) {
+        if (depth > 12) throw std::invalid_argument("tools: fixed arguments too deep");
+        if (event == Json::parse_event_t::object_start) keys.emplace_back();
+        else if (event == Json::parse_event_t::key && !keys.back().insert(value.get<std::string>()).second)
+            throw std::invalid_argument("tools: duplicate argument");
+        else if (event == Json::parse_event_t::object_end) keys.pop_back();
+        return true;
+    }).dump();
+}
+}
 // 校验固定槽数量后准备目录，不接受可导致无界分配的容量。
 ToolCatalog::ToolCatalog(std::size_t capacity) {
     if (!capacity || capacity > 64) throw std::invalid_argument("tools: capacity must be 1..64");
@@ -97,14 +112,33 @@ ToolSnapshot ToolSnapshot::restrict_to(std::span<const std::string> ids) const {
         if (entry == entries_.end()) throw std::invalid_argument("tools: subset outside original grant");
         selected.push_back(*entry);
     }
-    return ToolSnapshot(std::move(selected));
+    ToolSnapshot result(std::move(selected));
+    result.fixed_arguments_ = fixed_arguments_;
+    return result;
 }
+
+// 按宿主明确的委托把一个原注册及其参数完整固定。
+// 步骤：收紧到原成员 → 验证有效契约 → 保留规范参数，拒绝替换已有约束。
+ToolSnapshot ToolSnapshot::bind_arguments(const std::string& id, const std::string& arguments) const {
+    auto result = restrict_to(std::span(&id, 1));
+    const auto& entry = result.entries_.front();
+    if (!entry->registered || !entry->enabled || !entry->factory) throw std::invalid_argument("tools: unavailable binding");
+    entry->schema.validate(arguments);
+    const auto canonical = exact_arguments(arguments);
+    if (fixed_arguments_ && *fixed_arguments_ != canonical) throw std::invalid_argument("tools: cannot replace fixed arguments");
+    result.fixed_arguments_ = std::make_shared<const std::string>(canonical);
+    return result;
+}
+
 // 仅从本运行的成员中选择目标，并在使用前重新核对授权及参数。
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {
     for (const auto& entry : entries_) if (entry->description.model.name == name) {
         if (!entry->registered || !entry->enabled) throw std::invalid_argument("tools: revoked or disabled");
-        entry->schema.validate(arguments); return {entry->description,entry->registration};
+        entry->schema.validate(arguments);
+        if (fixed_arguments_ && exact_arguments(arguments) != *fixed_arguments_)
+            throw std::invalid_argument("tools: outside fixed arguments");
+        return {entry->description,entry->registration};
     }
     throw std::invalid_argument("tools: not granted");
 }

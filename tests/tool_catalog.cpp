@@ -92,8 +92,26 @@ void subsets() {
         "revoked subset invoked replacement or old tool");
 }
 }
+// 固定参数在重复收紧、重排字段和撤销时保持原边界。
+void exact_scope() {
+    using namespace dfy::agent;
+    ToolCatalog catalog;
+    auto description = tool("fixture/visit", "visit", 3, true);
+    description.model.parameters = R"({"type":"object","properties":{"order":{"type":"integer"},"place":{"type":"string"}},"required":["order","place"],"additionalProperties":false})";
+    const auto registration = catalog.add(description, [](const auto&) { return completed_tool({true, ToolEffect::applied, "ok", ToolError::none}); });
+    const std::vector<std::string> ids{"fixture/visit"};
+    auto base = catalog.snapshot(ids, true);
+    auto bound = base.bind_arguments(ids.front(), R"({"order":2,"place":"hill"})");
+    check(bound.resolve("visit", R"({ "place":"hill", "order":2 })").registration == registration, "original binding lost");
+    rejects([&] { bound.restrict_to(ids).resolve("visit", R"({"order":3,"place":"hill"})"); });
+    rejects([&] { bound.bind_arguments(ids.front(), R"({"order":2,"place":"other"})"); });
+    rejects([&] { bound.resolve("visit", R"({"order":1,"order":2,"place":"hill"})"); });
+    check(base.resolve("visit", R"({"order":3,"place":"hill"})").registration == registration, "parent scope narrowed");
+    catalog.remove(registration);
+    rejects([&] { bound.resolve("visit", R"({"order":2,"place":"hill"})"); });
+}
 // 运行工具描述与授权检查，本单元不执行模型或原生工具。
 int main() {
-    try { catalog(); lifetime(); subsets(); std::cout << "Tool catalog checks passed\n"; return 0; }
+    try { catalog(); lifetime(); subsets(); exact_scope(); std::cout << "Tool catalog checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
