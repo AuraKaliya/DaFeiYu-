@@ -3,10 +3,22 @@
 #include <string_view>
 
 namespace dfy::mc {
+struct BridgeConfig { std::string channel, key; };
+// 校验插件私有配置，配对键仅用于本机受信请求。
+BridgeConfig configured_bridge(std::string_view config);
 // 从独立插件配置中读取本机管道短名。
 std::string configured_channel(std::string_view config);
 // 创建带原请求身份的只读查询。
 std::string world_request(std::string_view id);
 // 核对版本、回显和状态形状，返回规范快照文本或表示撤销的 null。
 std::string world_reply(std::string_view wire, std::string_view expected_id);
+// 用原游戏代次与游标生成带私有配对凭据的收件查询。
+std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments);
+// 只把与原查询相符且序号连续的玩家消息交给受信调用者。
+std::string inbox_reply(std::string_view wire, std::string_view id, std::string_view arguments);
+struct InspectReply { bool exited, arrived; std::string payload; };
+// 由宿主选择查看控制方法，模型参数只描述原消息与地标。
+std::string inspect_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
+// 验证原世界及原委托的运动回执，成功到达必须有坐标和观察结果。
+InspectReply inspect_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 }

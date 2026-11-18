@@ -10,6 +10,36 @@ void rejects(const auto& action) {
     try { action(); } catch (const std::exception&) { return; }
     throw std::runtime_error("invalid MC message accepted");
 }
+
+// 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
+// 步骤：核对查询帧 → 注入收件断档或替换来源 → 验证到达和非法终态。
+void private_protocol() {
+    const std::string generation = "12345678-1234-1234-1234-123456789abc", key(64, 'a');
+    const auto args = Json{{"generation", generation}, {"after", 1}}.dump();
+    const auto request = Json::parse(dfy::mc::inbox_request("r", key, args));
+    if (request.at("method") != "chat.read" || request.at("key") != key) throw std::runtime_error("missing pairing");
+    Json reply{{"version", 1}, {"id", "r"}, {"inbox", {{"generation", generation}, {"owner", generation},
+        {"oldest", 2}, {"latest", 2}, {"gap", false}, {"more", false}, {"messages", {{{"sequence", 2}, {"text", "查看"}}}}}}};
+    if (Json::parse(dfy::mc::inbox_reply(reply.dump(), "r", args)) != reply.at("inbox")) throw std::runtime_error("inbox lost");
+    reply["inbox"]["gap"] = true;
+    rejects([&] { dfy::mc::inbox_reply(reply.dump(), "r", args); });
+    reply["inbox"]["gap"] = false;
+    reply["inbox"]["messages"][0]["sequence"] = 3;
+    rejects([&] { dfy::mc::inbox_reply(reply.dump(), "r", args); });
+
+    const auto target = Json{{"generation", generation}, {"order", 2}, {"place", "hillside"}}.dump();
+    const auto stop = Json::parse(dfy::mc::inspect_request("inspect.stop", "a", key, target));
+    if (stop.contains("place") || stop.at("order") != 2) throw std::runtime_error("wrong stop scope");
+    Json action = Json::parse(target);
+    action.update(Json{{"phase", "arrived"}, {"exited", true}, {"stone", nullptr}, {"position", {{"x", 10}, {"y", 2}, {"z", -1}}}});
+    Json observed{{"version", 1}, {"id", "a"}, {"action", action}};
+    if (!dfy::mc::inspect_reply(observed.dump(), "a", target).arrived) throw std::runtime_error("lost arrival");
+    observed["action"]["exited"] = false;
+    rejects([&] { dfy::mc::inspect_reply(observed.dump(), "a", target); });
+    observed["action"]["exited"] = true;
+    observed["action"]["order"] = 3;
+    rejects([&] { dfy::mc::inspect_reply(observed.dump(), "a", target); });
+}
 }
 
 // 用固定跨端消息覆盖有效、撤销、非法上限与错身份。
@@ -35,6 +65,7 @@ int main() {
         if (dfy::mc::world_reply(value.dump(), id) != "null" || dfy::mc::configured_channel(R"({"channel":"test"})") != "test") return 1;
         rejects([] { dfy::mc::configured_channel(R"({"channel":"ok","channel":"also-ok"})"); });
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
+        private_protocol();
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
