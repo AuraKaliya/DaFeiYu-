@@ -44,5 +44,8 @@ async function check(fixture, fish) {
   await assert.rejects(query(channel, request));
 }
 
-withPaper(fixture => withPlayers(fixture.port, (_owner, fish) => check(fixture, fish)))
-  .catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) {
+  withPaper(fixture => withPlayers(fixture.port, (_owner, fish) => check(fixture, fish)))
+    .catch(error => { console.error(error); process.exitCode = 1; });
+}
+module.exports = { query };
