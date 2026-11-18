@@ -59,6 +59,11 @@ class Application {
     std::optional<CompanionVisit> companion_visit(runtime::DomainId session) const;
     // 读取游戏侧和管理中心共用的原问题及状态。
     std::optional<CompanionQuestion> companion_question(runtime::DomainId session) const;
+    // 由可信管理入口答复原问题并建立一次采集委托。
+    CollectionGrant authorize_companion(const CompanionAddress& address, std::uint64_t question, std::uint64_t revision,
+        std::uint64_t command, std::uint64_t quantity);
+    // 读取仍保留的采集委托回执。
+    std::optional<CollectionGrant> companion_collection(runtime::DomainId session) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

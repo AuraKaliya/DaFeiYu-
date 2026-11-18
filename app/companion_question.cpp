@@ -10,7 +10,7 @@ void CompanionQuestions::open(const CompanionVisit& visit, agent::ToolSnapshot s
     if (executor_ || (question_ && question_->phase == QuestionPhase::waiting)) throw std::logic_error("question: outstanding");
     const auto definitions = scope.definitions();
     if (definitions.size() != 1 || !scope.permits_state_changes()) throw std::invalid_argument("question: incorrect capability");
-    CompanionQuestion question{visit.address, runtime::next_domain(), 1, visit.task, visit.order, 0, visit.owner, {}};
+    CompanionQuestion question{visit.address, runtime::next_domain(), 1, visit.task, visit.order, 0, visit.owner, {}, {}, {}};
     const agent::RunId run{question.id, 1};
     auto executor = std::make_unique<agent::ToolExecutor>(run, std::move(scope), agent::ToolLimits{1, std::chrono::seconds(5)}, nullptr, clock);
     const auto args = nlohmann::json{{"generation", visit.address.world}, {"order", visit.order}, {"question", std::to_string(question.id)}}.dump();
@@ -40,6 +40,10 @@ void CompanionQuestions::advance() {
                     if (!text.empty() && text.size() <= 1024) {
                         question.text = text;
                         question.after = value.at("after").get<std::uint64_t>();
+                        if (value.contains("material") && value.contains("returnPlace") && value.at("returnPlace").is_string()) {
+                            question.material = value.at("material").get<std::string>();
+                            question.return_place = value.at("returnPlace").get<std::string>();
+                        }
                         question.phase = QuestionPhase::waiting;
                     }
                 }
@@ -58,6 +62,31 @@ bool CompanionQuestions::decline(const CompanionAddress& address, std::string_vi
     question_->phase = QuestionPhase::declined;
     ++question_->revision;
     return true;
+}
+
+// 合并两个可信入口对同一问题的答复，只签发一次新委托。
+// 步骤：验证原身份与参数 → 检查已有决定及冲突 → 预备完整回执后一次发布。
+CollectionGrant CompanionQuestions::authorize(const CompanionAddress& address, const std::string& owner, std::uint64_t id,
+    std::uint64_t revision, AnswerEntry entry, std::uint64_t command, std::uint64_t quantity, const std::string& answer) {
+    if (!question_ || question_->address != address || question_->owner != owner || question_->id != id ||
+        !command || !revision || (entry != AnswerEntry::game && entry != AnswerEntry::management) ||
+        !quantity || quantity > 64 || answer.empty() || answer.size() > 1024 ||
+        (entry == AnswerEntry::game && command <= question_->after)) throw std::invalid_argument("companion: invalid player decision");
+    if (grant_ && grant_->question == id) {
+        if (grant_->question_revision != revision || grant_->quantity != quantity ||
+            (grant_->entry == entry && grant_->command == command && grant_->answer != answer))
+            throw std::invalid_argument("companion: conflicting player decision");
+        return *grant_;
+    }
+    if (question_->phase != QuestionPhase::waiting || question_->revision != revision ||
+        question_->material.empty() || question_->return_place.empty()) throw std::invalid_argument("companion: unavailable collection scope");
+    CollectionGrant next{address, runtime::next_domain(), id, revision, question_->task, question_->order,
+        command, quantity, entry, owner, question_->material, question_->return_place, answer};
+    auto receipt = next;
+    grant_ = std::move(next);
+    question_->phase = QuestionPhase::authorized;
+    ++question_->revision;
+    return receipt;
 }
 
 // 保留已解决问题的结论，未决问题在原绑定失效时关闭。

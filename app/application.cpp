@@ -295,6 +295,17 @@ std::optional<CompanionVisit> Application::companion_visit(runtime::DomainId ses
 std::optional<CompanionQuestion> Application::companion_question(runtime::DomainId session) const {
     return companion_ && companion_->id() == session ? companion_->question() : std::nullopt;
 }
+// 接纳管理中心的原用户决定，旧会话与关闭中的应用都不能签发新委托。
+CollectionGrant Application::authorize_companion(const CompanionAddress& address, std::uint64_t question,
+    std::uint64_t revision, std::uint64_t command, std::uint64_t quantity) {
+    if (!session_.accepting() || !companion_ || companion_->id() != address.session)
+        throw std::invalid_argument("companion: stale management decision");
+    return companion_->authorize(address, question, revision, command, quantity);
+}
+// 只读取得新委托、授权者和仍保留的原参数。
+std::optional<CollectionGrant> Application::companion_collection(runtime::DomainId session) const {
+    return companion_ && companion_->id() == session ? companion_->collection() : std::nullopt;
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

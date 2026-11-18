@@ -41,6 +41,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool skip = argc == 4 && std::wstring_view(argv[3]) == L"skip";
         const bool tamper = argc == 4 && std::wstring_view(argv[3]) == L"tamper";
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
+        const bool game_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-game";
+        const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
             [=](const auto&, const auto& request) { return fixture_model(request, skip, tamper); }});
@@ -82,6 +84,35 @@ int wmain(int argc, wchar_t** argv) {
             check(closed.id == original.id && closed.revision == original.revision + 1 &&
                 application.companion_visit(id)->phase == app::VisitPhase::observed, "decline altered original visit");
             std::cout << nlohmann::json{{"question", closed.id}, {"revision", closed.revision}, {"declined", true}, {"text", closed.text}}.dump() << '\n';
+        }
+        if (game_answer || center_answer) {
+            until(application, [&] { const auto q = application.companion_question(id); return q && q->phase == app::QuestionPhase::waiting; });
+            const auto q = *application.companion_question(id);
+            const auto address = *application.companion_address();
+            if (center_answer) {
+                const auto command = "/companion approve " + std::to_string(id) + " " + std::to_string(q.id) + " " +
+                    std::to_string(q.revision) + " 1 16";
+                check(app::application_command(application, command, terminal, std::cerr), "management answer not admitted");
+            }
+            std::cout << "DFY_QUESTION" << std::endl;
+            until(application, [&] { return application.companion_collection(id) && application.companion_inbox(id)->cursor > q.after; });
+            const auto grant = *application.companion_collection(id);
+            check(grant.quantity == 16 && grant.material == "minecraft:cobblestone" && grant.return_place == "riverside" &&
+                grant.question == q.id && grant.owner == q.owner && grant.source_task == visit->task && grant.address == address &&
+                grant.entry == (game_answer ? app::AnswerEntry::game : app::AnswerEntry::management), "grant lost scope");
+            check(application.authorize_companion(address, q.id, q.revision, 1, 16).id == grant.id, "duplicate created new collection");
+            bool conflict = false;
+            try { application.authorize_companion(address, q.id, q.revision, 1, 12); }
+            catch (const std::invalid_argument&) { conflict = true; }
+            check(conflict && application.companion_question(id)->revision == q.revision + 1, "changed quantity accepted");
+            auto stale = address;
+            ++stale.binding;
+            bool refused = false;
+            try { application.authorize_companion(stale, q.id, q.revision, 2, 16); }
+            catch (const std::invalid_argument&) { refused = true; }
+            check(refused, "old game answer accepted");
+            std::cout << nlohmann::json{{"collection", grant.id}, {"question", grant.question}, {"quantity", grant.quantity},
+                {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}}.dump() << '\n';
         }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");
         until(application, [&] { return application.companion_status()->closed; });

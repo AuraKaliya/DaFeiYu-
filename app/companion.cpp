@@ -124,10 +124,28 @@ void CompanionSession::accept_player() {
         questions_.decline(*address_, inbox_.status().owner, entry->sequence, entry->declined_question);
         return;
     }
-    if (entry->visit_place.empty() || (questions_.current() && questions_.current()->phase == QuestionPhase::waiting)) return;
+    const auto& question = questions_.current();
+    if (!entry->collection_question.empty()) {
+        if (question && question->phase == QuestionPhase::waiting && question->owner == inbox_.status().owner &&
+            question->address == *address_ && entry->sequence > question->after && std::to_string(question->id) == entry->collection_question &&
+            !question->return_place.empty())
+            questions_.authorize(*address_, question->owner, question->id, question->revision, AnswerEntry::game,
+                entry->sequence, entry->quantity, entry->text);
+        return;
+    }
+    if (entry->visit_place.empty() || (question && (question->phase == QuestionPhase::waiting || question->phase == QuestionPhase::authorized))) return;
     CompanionVisit visit{*address_, entry->sequence, 0, inbox_.status().owner, entry->text, entry->visit_place};
     visit.task = send(*address_, CompanionMessageKind::delegation, messages_.next(CompanionSide::primary), 0, entry->text);
     visit_ = std::move(visit);
+}
+
+// 管理中心的结构化决定必须对应当前游戏与原玩家，参数来自受信用户入口。
+CollectionGrant CompanionSession::authorize(const CompanionAddress& address, std::uint64_t question,
+    std::uint64_t revision, std::uint64_t command, std::uint64_t quantity) {
+    if (stopping_ || !bound() || !address_ || *address_ != address || !inbox_.status().ready)
+        throw std::invalid_argument("companion: stale decision source");
+    return questions_.authorize(address, inbox_.status().owner, question, revision, AnswerEntry::management,
+        command, quantity, "采 " + std::to_string(quantity) + " 块带回来");
 }
 
 // 从原始玩家消息生成固定参数，允许模型仅调用一次已授权的查看工具。

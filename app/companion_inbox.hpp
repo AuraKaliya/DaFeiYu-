@@ -5,7 +5,8 @@
 namespace dfy::app {
 struct PlayerUtterance {
     std::uint64_t sequence;
-    std::string text, visit_place, declined_question;
+    std::string text, visit_place, declined_question, collection_question;
+    std::uint64_t quantity = 0;
 };
 struct PlayerInboxStatus {
     bool enabled = false, ready = false, gap = false;

@@ -139,7 +139,9 @@ function inspectionService(bot, world, inbox, places) {
       const player = Object.values(bot.players).find(value => value.uuid === source?.owner);
       if (!player || !/^[a-zA-Z0-9_]{1,16}$/.test(player.username)) throw new Error('原玩家不在场');
       const text = '我在' + places.get(current.place).label + '看到了圆石。要我采一些带回来吗？';
-      question = { id, generation, order, owner: source.owner, after: source.latest, text, sent: false };
+      const meeting = places.get('riverside');
+      question = { id, generation, order, owner: source.owner, after: source.latest, text, sent: false,
+        material: 'minecraft:cobblestone', returnPlace: meeting?.dimension === world.read()?.dimension ? 'riverside' : null };
       bot.whisper(player.username, text);
       question.sent = true;
       return { ...question };
@@ -147,9 +149,12 @@ function inspectionService(bot, world, inbox, places) {
     // 仅在原问题已发出后识别绑定玩家明确的拒绝，其余聊天保持普通消息。
     answerOffer(text) {
       if (!question?.sent || answered || world.read()?.generation !== question.generation) return null;
-      if (!['不用了', '不要采', '先别采了'].includes(text.trim().replace(/[。！!]$/u, ''))) return null;
-      answered = true;
-      return { purpose: 'question.decline', question: question.id };
+      const answer = text.trim().replace(/[。！!]$/u, '');
+      if (['不用了', '不要采', '先别采了'].includes(answer))
+        return { purpose: 'question.decline', question: question.id };
+      const match = /^(?:采|请采|帮我采)\s*([1-9][0-9]?)\s*块(?:圆石)?带回来$/u.exec(answer);
+      if (!match || Number(match[1]) > 64 || !question.returnPlace) return null;
+      return { purpose: 'collect.return', question: question.id, quantity: Number(match[1]) };
     },
     // 关闭入口并等待本次路径结束，移除游戏事件监听。
     async close() {

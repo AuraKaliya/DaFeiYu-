@@ -83,6 +83,12 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             throw;
         }
         output << "Companion session " << id << " enabled.\n";
+    } else if (words.size() == 7 && words[1] == "approve") {
+        const auto address = app.companion_address();
+        if (!address || address->session != positive_id(words[2])) throw std::invalid_argument("companion: stale session");
+        const auto grant = app.authorize_companion(*address, positive_id(words[3]), positive_id(words[4]),
+            positive_id(words[5]), positive_id(words[6]));
+        output << "Collection " << grant.id << " authorized for " << grant.quantity << " at " << grant.return_place << ".\n";
     } else if (words.size() == 3 && words[1] == "stop") {
         const auto id = positive_id(words[2]);
         app.stop_companion(id);
@@ -107,7 +113,9 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         }
         if (const auto question = app.companion_question(status->session); question && question->phase == QuestionPhase::waiting)
             output << "Question " << question->id << " revision " << question->revision << ": " << question->text << '\n';
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION");
+        if (const auto grant = app.companion_collection(status->session))
+            output << "Collection " << grant->id << " authorized: " << grant->quantity << " " << grant->material << ".\n";
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

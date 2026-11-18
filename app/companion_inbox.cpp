@@ -40,13 +40,20 @@ void CompanionInbox::accept(const std::string& payload) {
     auto cursor = status_.cursor;
     auto pending = entries_;
     for (const auto& message : messages) {
-        PlayerUtterance entry{message.at("sequence").get<std::uint64_t>(), message.at("text").get<std::string>(), {}, {}};
+        PlayerUtterance entry{message.at("sequence").get<std::uint64_t>(), message.at("text").get<std::string>(), {}, {}, {}};
         if (entry.sequence != ++cursor || cursor > latest || entry.text.empty() || entry.text.size() > 1024)
             throw std::invalid_argument("companion: invalid player message");
         if (message.contains("offer") && message.at("offer").at("purpose") == "visit.inspect")
             entry.visit_place = message.at("offer").at("place").get<std::string>();
         if (message.contains("offer") && message.at("offer").at("purpose") == "question.decline")
             entry.declined_question = message.at("offer").at("question").get<std::string>();
+        if (message.contains("offer") && message.at("offer").at("purpose") == "collect.return") {
+            const auto& offer = message.at("offer");
+            if (!offer.at("quantity").is_number_unsigned() || offer.at("quantity") == 0 || offer.at("quantity") > 64)
+                throw std::invalid_argument("companion: invalid proposed quantity");
+            entry.quantity = offer.at("quantity").get<std::uint64_t>();
+            entry.collection_question = offer.at("question").get<std::string>();
+        }
         pending.push_back(std::move(entry));
     }
     if ((cursor < latest) != batch.at("more").get<bool>()) throw std::invalid_argument("companion: invalid inbox continuation");

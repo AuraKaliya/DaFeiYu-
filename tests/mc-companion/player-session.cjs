@@ -20,7 +20,11 @@ async function drive(exe, pkg, root, owner, evidence) {
   let questionReady = false, questions = 0, answered = false;
   // 只在独立的玩家客户端与可信宿主都看见问题后给出一次答复。
   const answer = () => {
-    if (questionReady && questions && !answered) { answered = true; owner.chat('不用了'); }
+    if (questionReady && questions && !answered) {
+      answered = true;
+      const variant = process.argv[4];
+      owner.chat(variant === 'approve-game' ? '采 16 块带回来' : variant === 'approve-center' ? '采 12 块带回来' : '不用了');
+    }
   };
   const heard = text => {
     if (text.includes('要我采一些带回来吗')) { ++questions; answer(); }
@@ -37,7 +41,7 @@ async function drive(exe, pkg, root, owner, evidence) {
     const [code] = await once(child, 'close');
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
     if (!issued || code !== 0) throw new Error('宿主未完成真实玩家入口验收');
-    if (process.argv[4] === 'decline') assert.ok(answered && questions === 1);
+    if (['decline', 'approve-game', 'approve-center'].includes(process.argv[4])) assert.ok(answered && questions === 1);
   } finally { clearTimeout(timer); log.close(); owner.removeListener('messagestr', heard); }
 }
 
@@ -55,7 +59,8 @@ async function verify(fixture) {
     const file = join(fixture.evidence, 'adapter.json');
     writeFileSync(file, JSON.stringify({ channel, bridgeKey: key, host: '127.0.0.1', port: fixture.port,
       auth: 'offline', username: 'DfyCompanion', owner: owner.player.uuid,
-      places: { hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 } } }));
+      places: { hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
+        riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } } }));
     game = await launch(file);
     await until(() => game.bot.player?.uuid && game.bot.entity, '适配器入场');
     fixture.send('tp DfyCompanion 0.5 -60 0.5');

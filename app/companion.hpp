@@ -43,6 +43,11 @@ class CompanionSession {
     std::optional<CompanionVisit> visit() const { return visit_; }
     // 游戏和管理中心读取同一份问题与发送修订。
     std::optional<CompanionQuestion> question() const { return questions_.current(); }
+    // 在可信管理入口按原问题修订授权精确数量。
+    CollectionGrant authorize(const CompanionAddress& address, std::uint64_t question, std::uint64_t revision,
+        std::uint64_t command, std::uint64_t quantity);
+    // 读取已登记的新委托及来源。
+    std::optional<CollectionGrant> collection() const { return questions_.grant(); }
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);
