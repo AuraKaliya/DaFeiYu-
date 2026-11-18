@@ -50,6 +50,18 @@ void comparison(const material::Json& original) {
         context_change.behavior == std::vector<std::string_view>{"goal_revision","model_contexts"},
         "unchanged model nodes hid a change of goal context");
 
+    auto observed_left = before; auto observed_right = after;
+    auto& left_samples = observed_left.report.diagnostic.timeline.observations;
+    auto& right_samples = observed_right.report.diagnostic.timeline.observations;
+    left_samples = {{1,2,{"first",1},1},{1,2,{"second",1},1}};
+    right_samples = {{5,6,{"first",1},1},{5,6,{"second",1},1}};
+    check(compare_replays(observed_left,observed_right,source_change).state == ReplayComparisonState::equivalent,
+        "independent observation IDs changed behavior");
+    right_samples[1].source = 7;
+    const auto source_split = compare_replays(observed_left,decode_evidence(encode_evidence(observed_right)),source_change);
+    check(source_split.state == ReplayComparisonState::differs && source_split.behavior == std::vector<std::string_view>{"observations"},
+        "observation source lineage changed without evidence");
+
     labels.application_commit.reset();
     const auto unknown = measure_material(original.dump(),labels);
     check(compare_replays(before,unknown,source_change).reason == "required versions are unknown","unknown versions compared as equal");

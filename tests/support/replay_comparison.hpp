@@ -62,6 +62,37 @@ inline auto replay_model_context_values(const agent::ModelContextSnapshot& conte
         context.purpose,context.plan_step,context.observations_current);
 }
 
+// 保留计划步骤的相对版本与业务标识，原运行归属已经由诊断校验。
+inline auto replay_plan_key(const agent::PlanStepKey& key) {
+    return std::tie(key.plan.goal_revision,key.plan.plan_revision,key.step);
+}
+
+// 保留原观察对象、代次、修订和信任级别，来源编号按运行内关系比较。
+inline auto replay_observation_values(const agent::ObservationInputFact& value) {
+    return std::tie(value.object.id,value.object.generation,value.revision,value.trust);
+}
+
+// 比较有序观察及同源、同实例关系，不要求两次执行分配相同进程内编号。
+// 步骤：核对集合大小和值 → 按前序位置核对来源及实例的复用关系。
+inline bool replay_observations_equal(const std::vector<agent::ObservationInputFact>& left, const std::vector<agent::ObservationInputFact>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        const auto& a = left[index]; const auto& b = right[index];
+        if (replay_observation_values(a) != replay_observation_values(b)) return false;
+        for (std::size_t prior = 0; prior < index; ++prior) {
+            if ((a.source == left[prior].source) != (b.source == right[prior].source) ||
+                (a.provider_instance == left[prior].provider_instance) != (b.provider_instance == right[prior].provider_instance)) return false;
+        }
+    }
+    return true;
+}
+
+// 比较替换发生的原步骤及模型边界，绑定链的原始身份已由时间线验证。
+inline bool replay_rebind_equal(const agent::ObservationRebindReceipt& left, const agent::ObservationRebindReceipt& right) {
+    return replay_plan_key(left.step) == replay_plan_key(right.step) && left.after_model_requests == right.after_model_requests &&
+        replay_observations_equal(left.observations,right.observations);
+}
+
 // 按同案例和已声明变化比较两次实际执行，缺材料或缺事实时明确不可比。
 // 步骤：核对案例输入 → 核对版本及声明 → 校验历史和身份 → 比较结构化行为。
 inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const ReplayEvidence& candidate,
@@ -104,6 +135,11 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
     difference("goal_revision",left_trace.goal_revision,right_trace.goal_revision);
     difference("notification_issue",first.notification_issue,second.notification_issue);
     difference("assertions",left.failed_assertions,right.failed_assertions);
+    if (static_cast<bool>(left_trace.initial_observation_binding) != static_cast<bool>(right_trace.initial_observation_binding) ||
+        !replay_observations_equal(left_trace.observations,right_trace.observations)) result.behavior.push_back("observations");
+    if (!std::equal(left_trace.observation_rebinds.begin(),left_trace.observation_rebinds.end(),
+        right_trace.observation_rebinds.begin(),right_trace.observation_rebinds.end(),replay_rebind_equal))
+        result.behavior.push_back("observation_rebinds");
     if (!std::equal(left_trace.model_contexts.begin(),left_trace.model_contexts.end(),
         right_trace.model_contexts.begin(),right_trace.model_contexts.end(),
         [](const auto& a,const auto& b) { return replay_model_context_values(a) == replay_model_context_values(b); }))
