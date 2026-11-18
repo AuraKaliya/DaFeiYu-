@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.UUID;
+import java.util.HashSet;
+import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -25,6 +27,7 @@ import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.ItemMergeEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 // 在独立测试世界旁路记录圆石来源，各处理器仅读取游戏对象。
@@ -32,6 +35,7 @@ public final class StoneObserver extends JavaPlugin implements Listener {
     private final String stream = UUID.randomUUID().toString();
     private long sequence;
     private BufferedWriter output;
+    private final HashSet<UUID> sampling = new HashSet<>();
 
     // 建立本次观察流并在文件可用后注册只读事件。
     // 步骤：创建专用目录 → 打开独立事件文件 → 登记监听。
@@ -142,6 +146,38 @@ public final class StoneObserver extends JavaPlugin implements Listener {
             if (stack != null && stack.getType() == Material.COBBLESTONE) count += stack.getAmount();
         }
         return count;
+    }
+
+    // 在玩家跨格后合并同 tick 的移动并从服务器重新读取实际落点与库存。
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void moved(PlayerMoveEvent move) {
+        var player = move.getPlayer();
+        var from = move.getFrom();
+        var to = move.getTo();
+        if (to == null || (from.getBlockX() == to.getBlockX() && from.getBlockY() == to.getBlockY() && from.getBlockZ() == to.getBlockZ())) return;
+        if (!sampling.add(player.getUniqueId())) return;
+        Bukkit.getScheduler().runTask(this, () -> {
+            sampling.remove(player.getUniqueId());
+            if (!player.isOnline()) return;
+            var row = event("positionStock", player.getLocation());
+            row.addProperty("actor", player.getUniqueId().toString());
+            row.addProperty("stock", stock(player));
+            record(row);
+        });
+    }
+
+    // 记录存储槽中圆石的减少，无法区分移位或消耗时由持有核验保守扣减。
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void changedSlot(PlayerInventorySlotChangeEvent changed) {
+        var before = changed.getOldItemStack();
+        var after = changed.getNewItemStack();
+        int original = before.getType() == Material.COBBLESTONE ? before.getAmount() : 0;
+        int current = after.getType() == Material.COBBLESTONE ? after.getAmount() : 0;
+        if (original <= current || changed.getSlot() < 0 || changed.getSlot() >= 36) return;
+        var row = event("stoneDebit", changed.getPlayer().getLocation());
+        row.addProperty("actor", changed.getPlayer().getUniqueId().toString());
+        row.addProperty("amount", original - current);
+        record(row);
     }
 
     // 仅接受本机夹具控制台的采样请求，同时读取角色、世界、位置和库存。

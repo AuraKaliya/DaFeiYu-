@@ -34,6 +34,12 @@ function readReply(input, world, inbox, key, actions) {
   }
   if (actions?.mining && request.method === 'mine.revoke' && Object.keys(request).length === 7)
     return { version: 1, id: request.id, withdrawal: actions.mining.revoke(request.generation, request.question, request.grant) };
+  if (actions?.returning && Object.keys(request).length === 7 && typeof request.grant === 'string' && typeof request.question === 'string') {
+    if (request.method === 'return.begin') return { version: 1, id: request.id,
+      action: actions.returning.begin(request.generation, request.question, request.grant) };
+    if (['return.read', 'return.stop'].includes(request.method)) return { version: 1, id: request.id,
+      action: actions.returning.poll(request.generation, request.question, request.grant, request.method === 'return.stop') };
+  }
   if (actions && typeof request.generation === 'string' && Number.isSafeInteger(request.order) && request.order > 0) {
     if (request.method === 'question.open' && Object.keys(request).length === 7 && typeof request.question === 'string')
       return { version: 1, id: request.id, question: actions.ask(request.generation, request.order, request.question) };

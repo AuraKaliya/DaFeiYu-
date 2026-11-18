@@ -52,7 +52,10 @@ function miningService(bot, world, deliveries, places, inspection, witness) {
       if (!pick) throw new Error('缺少合适的工具');
       await bot.equip(pick, 'hand');
       // 观察端不可用只降低归属证据，不把一次普通采集变成额外审批。
-      if (witness) try { mark = await witness.begin(bot.game.dimension); } catch { mark = null; }
+      if (witness) try {
+        mark = await witness.begin(bot.game.dimension);
+        if (action.index === 1) batch.mark = mark;
+      } catch { mark = null; }
       const current = bot.blockAt(chosen.position);
       if (action.stopping || !grantFor(grant.generation, grant.question, grant.grant) ||
         current?.type !== chosen.type || !bot.canSeeBlock(current) || !bot.canDigBlock(current)) throw new Error('目标变化');
@@ -92,6 +95,11 @@ function miningService(bot, world, deliveries, places, inspection, witness) {
   bot.on('respawn', stop);
   bot.on('end', stop);
   return {
+    // 只向同一已接单委托提供块证据与开始前的观察水位。
+    summary(generation, question, id) {
+      if (!batch || batch.generation !== generation || batch.grant !== id || batch.records[0]?.question !== question) return null;
+      return { mark: batch.mark, records: batch.records.map(record => ({ ...record })) };
+    },
     // 每个授权只能依次接纳配额内的新编号；重复编号复用原事实。
     begin(generation, question, id, index) {
       const grant = grantFor(generation, question, id);
