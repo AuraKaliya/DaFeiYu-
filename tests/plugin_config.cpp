@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_config.hpp>
+#include "support/filesystem_links.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -126,21 +127,24 @@ int main(int argc, char** argv) {
         rejects(manifest, users, "invalid user path");
         fs::remove(settings);
         write(run / "outside.json", "{}");
-        fs::create_symlink(fs::absolute(run / "outside.json"), settings);
+        dfy::tests::links::file(fs::absolute(run / "outside.json"), settings);
+        rejects(manifest, users, "invalid user path");
+        fs::remove(settings);
+        dfy::tests::links::marked_file(run / "outside.json", settings);
         rejects(manifest, users, "invalid user path");
         fs::remove(settings);
         write(settings, "{}");
-        fs::create_directory_symlink(fs::absolute(users), run / "linked-users");
+        dfy::tests::links::directory(fs::absolute(users), run / "linked-users");
         rejects(manifest, run / "linked-users", "invalid user path");
         fs::create_directory(run / "other-users");
-        fs::create_directory_symlink(fs::absolute(users / "plugins"), run / "other-users/plugins");
+        dfy::tests::links::directory(fs::absolute(users / "plugins"), run / "other-users/plugins");
         rejects(manifest, run / "other-users", "invalid user path");
         fs::create_directories(run / "linked-id/plugins");
-        fs::create_directory_symlink(fs::absolute(user_dir), run / "linked-id/plugins/sample.one");
+        dfy::tests::links::directory(fs::absolute(user_dir), run / "linked-id/plugins/sample.one");
         rejects(manifest, run / "linked-id", "invalid user path");
         fs::remove(root / "defaults.json");
         rejects(manifest, users, "default_config:");
-        fs::create_symlink(fs::absolute(run / "outside.json"), root / "defaults.json");
+        dfy::tests::links::file(fs::absolute(run / "outside.json"), root / "defaults.json");
         rejects(manifest, users, "default_config:");
         check(Json::parse(snapshot->json) == expected, "failed reload damaged prior snapshot");
         std::cout << "Plugin configuration checks passed\n";

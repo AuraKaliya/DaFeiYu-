@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_manifest.hpp>
+#include "support/filesystem_links.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -134,20 +135,24 @@ int main(int argc, char** argv) {
 
         fs::create_directory(run / "outside");
         write(run / "outside/outside.dll", "outside package");
-        fs::create_symlink(fs::absolute(run / "outside/outside.dll"), root / "link.dll");
-        fs::create_directory_symlink(fs::absolute(run / "outside"), root / "linked");
+        dfy::tests::links::file(fs::absolute(run / "outside/outside.dll"), root / "link.dll");
+        dfy::tests::links::directory(fs::absolute(run / "outside"), root / "linked");
         for (const auto* entry : {"link.dll", "linked/outside.dll"}) {
             value = valid;
             value["entry"] = entry;
             rejects(root, value.dump(), "entry:");
         }
+        dfy::tests::links::marked_file(root / u8"内容/入口.dll", root / "marked.dll");
+        value = valid;
+        value["entry"] = "marked.dll";
+        rejects(root, value.dump(), "entry:");
         value = valid;
         value["default_config"] = "link.dll";
         rejects(root, value.dump(), "default_config:");
         fs::create_directories(run / "linked-manifest");
         fs::create_directory(run / "empty-package");
-        fs::create_symlink(fs::absolute(root / "plugin.json"), run / "linked-manifest/plugin.json");
-        fs::create_directory_symlink(fs::absolute(root), run / "linked-package");
+        dfy::tests::links::file(fs::absolute(root / "plugin.json"), run / "linked-manifest/plugin.json");
+        dfy::tests::links::directory(fs::absolute(root), run / "linked-package");
         for (const auto* package : {"linked-manifest", "linked-package", "absent-package", "empty-package"}) {
             bool rejected = false;
             try {

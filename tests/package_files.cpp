@@ -1,4 +1,5 @@
 #include "../plugins/runtime/package_files.hpp"
+#include "support/filesystem_links.hpp"
 #include <fstream>
 #include <iostream>
 namespace {
@@ -28,10 +29,10 @@ int wmain(int argc, wchar_t** argv) {
         files::move(root,stage,root/"published"); rejects([&] { files::erase(root,root/"published"); });
         auto trash = files::temporary(root,".removed-"); fs::remove(trash); files::move(root,root/"published",trash); files::erase(root,trash);
         check(!fs::exists(trash) && fs::exists(outside/"keep.txt"),"private cleanup escaped root or left files");
-        stage = files::temporary(root,".install-"); fs::create_symlink(outside/"keep.txt",stage/"linked.txt");
+        stage = files::temporary(root,".install-"); dfy::tests::links::file(outside/"keep.txt",stage/"linked.txt");
         rejects([&] { (void)files::inspect(stage); }); rejects([&] { files::erase(root,stage); });
         check(fs::exists(outside/"keep.txt"),"link rejection removed external target"); fs::remove(stage/"linked.txt"); files::erase(root,stage);
-        fs::create_directory_symlink(outside,root/"junction"); rejects([&] { (void)files::directory(root/"junction"); });
+        dfy::tests::links::directory(outside,root/"junction"); rejects([&] { (void)files::directory(root/"junction"); });
         fs::remove(root/"junction"); std::cout << "Package filesystem checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

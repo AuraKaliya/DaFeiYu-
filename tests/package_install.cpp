@@ -1,5 +1,6 @@
 #include <dafeiyu/plugin_package.hpp>
 #include <dafeiyu/plugin_manager.hpp>
+#include "support/filesystem_links.hpp"
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -60,7 +61,7 @@ int wmain(int argc, wchar_t** argv) {
         rejects([&] { (void)install_package(run/"failed",malformed); });
         check(fs::is_empty(run/"failed"),"failed default validation left staging or a discoverable half-package");
         const auto linked = run/"linked"; fs::copy(fs::canonical(argv[1]),linked,fs::copy_options::recursive);
-        write(run/"outside.txt","outside"); fs::create_symlink(run/"outside.txt",linked/"extra.txt");
+        write(run/"outside.txt","outside"); dfy::tests::links::file(run/"outside.txt",linked/"extra.txt");
         rejects([&] { (void)install_package(run/"link-target",linked); });
         check(fs::exists(run/"outside.txt") && !fs::exists(run/"link-target"),"link rejection followed external data or published partly");
         check(manager.close(),"install manager could not close"); custom_limits(fs::canonical(argv[1]),run);

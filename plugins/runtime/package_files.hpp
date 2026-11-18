@@ -6,6 +6,8 @@
 namespace dfy::plugins::files {
 using Limits = PackageLimits;
 struct Item { std::filesystem::path relative; bool directory; };
+// 查询末级对象是否具有原生重解析属性；缺失和访问错误由调用者的路径检查处理。
+bool is_reparse_point(const std::filesystem::path& path) noexcept;
 // 逐层校验本地目录路径，拒绝任何重解析点；可明确创建缺失目录，返回规范绝对路径。
 std::filesystem::path directory(const std::filesystem::path& path, bool create = false);
 // 有界检查整棵包目录，只接受普通文件及目录，不跟随链接或设备路径。

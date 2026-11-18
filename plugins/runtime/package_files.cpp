@@ -9,6 +9,9 @@
 namespace dfy::plugins::files {
 namespace fs = std::filesystem;
 namespace {
+// 无效属性和实际重解析属性是不同的查询结果。
+bool reparse_attributes(DWORD value) noexcept { return value != INVALID_FILE_ATTRIBUTES && (value & FILE_ATTRIBUTE_REPARSE_POINT); }
+
 // 拒绝设备名、路径分隔、控制字符和 Windows 尾部别名，防止复制到特殊路径。
 bool portable(const fs::path& component) {
     const auto bytes = component.u8string(); const std::string value(bytes.begin(),bytes.end());
@@ -20,7 +23,7 @@ bool portable(const fs::path& component) {
 // 直接检查 Windows 属性，拒绝符号链接、目录联接和其他重解析点。
 DWORD attributes(const fs::path& path) {
     const auto result = GetFileAttributesW(path.c_str());
-    if (result == INVALID_FILE_ATTRIBUTES || (result & FILE_ATTRIBUTE_REPARSE_POINT)) throw std::runtime_error("package: missing path or reparse point");
+    if (result == INVALID_FILE_ATTRIBUTES || reparse_attributes(result)) throw std::runtime_error("package: missing path or reparse point");
     return result;
 }
 // 检查实际解析后的路径仍属于指定父目录，根自身不能成为清理目标。
@@ -36,6 +39,9 @@ fs::path child(const fs::path& root, const fs::path& target) {
     return result;
 }
 }
+// 从 Windows 原生属性判断重解析点，涵盖标准库状态仍报告为普通文件的标签。
+bool is_reparse_point(const fs::path& path) noexcept { return reparse_attributes(GetFileAttributesW(path.c_str())); }
+
 // 在任何创建前校验本地路径形式，逐层创建或核对，拒绝盘根和链接祖先。
 // 步骤：规范绝对路径 → 校验本地盘及组件 → 逐层核对或创建普通目录 → 返回实际目录。
 fs::path directory(const fs::path& path, bool create) {

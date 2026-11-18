@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_registry.hpp>
+#include "support/filesystem_links.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -68,7 +69,7 @@ int main(int argc, char** argv) {
         fs::create_directory(root / "bad");
         write(root / "bad/plugin.json", "{invalid-json}");
         write(root / "notes.txt", "ignored loose file");
-        fs::create_directory_symlink(fs::absolute(root / "a"), root / "linked");
+        dfy::tests::links::directory(fs::absolute(root / "a"), root / "linked");
         registry.refresh();
         const auto original = registry.snapshot();
         check(original->packages.size() == 2 && original->packages.begin()->first == "sample.a" &&

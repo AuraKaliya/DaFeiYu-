@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_config.hpp>
+#include "package_files.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <set>
@@ -14,7 +15,7 @@ using Json = nlohmann::json;
 // 步骤：有界读取文件 → 解析并检查对象键 → 确认根对象类型。
 Json read_object(const fs::path& path, const char* source) {
     const auto prefix = std::string("plugin config: ") + source;
-    if (!fs::is_regular_file(fs::symlink_status(path))) {
+    if (files::is_reparse_point(path) || !fs::is_regular_file(fs::symlink_status(path))) {
         throw std::runtime_error(prefix + ": expected regular file without links");
     }
     std::ifstream file(path, std::ios::binary);
@@ -66,6 +67,7 @@ std::optional<fs::path> user_file(const fs::path& user_root, const std::string& 
     fs::path parent;
     const fs::path parts[]{"plugins", id, "settings.json"};
     for (std::size_t i = 0; i < 4; ++i) {
+        if (files::is_reparse_point(path)) throw std::runtime_error("plugin config: invalid user path or link");
         std::error_code error;
         const auto status = fs::symlink_status(path, error);
         if (error && error != std::errc::no_such_file_or_directory) {

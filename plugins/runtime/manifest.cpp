@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_manifest.hpp>
+#include "package_files.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -47,6 +48,7 @@ fs::path package_file(const fs::path& root, const std::string& value, const char
             reject();
         }
         path /= part;
+        if (files::is_reparse_point(path)) reject();
         const auto status = fs::symlink_status(path);
         if (!fs::is_regular_file(status) && !fs::is_directory(status)) {
             reject();
@@ -70,7 +72,7 @@ Manifest load_manifest(const std::filesystem::path& directory) {
         if (location.has_relative_path() && location.filename().empty()) {
             location = location.parent_path();
         }
-        if (!fs::is_directory(fs::symlink_status(location))) {
+        if (files::is_reparse_point(location) || !fs::is_directory(fs::symlink_status(location))) {
             throw std::runtime_error("package: expected directory without links");
         }
         const auto root = fs::canonical(location);
