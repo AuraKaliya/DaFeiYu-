@@ -4,6 +4,7 @@
 #include "companion_messages.hpp"
 #include "companion_inbox.hpp"
 #include "companion_visit.hpp"
+#include "companion_question.hpp"
 #include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 
@@ -40,6 +41,8 @@ class CompanionSession {
     PlayerInboxStatus inbox_status() const { return inbox_.status(); }
     // 读取最近一次玩家查看委托和宿主证据。
     std::optional<CompanionVisit> visit() const { return visit_; }
+    // 游戏和管理中心读取同一份问题与发送修订。
+    std::optional<CompanionQuestion> question() const { return questions_.current(); }
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);
@@ -50,7 +53,7 @@ class CompanionSession {
     // 取得原会话身份，调用方用它指定停止或提问的目标。
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
-    bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy(); }
+    bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy() && !questions_.busy(); }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -80,6 +83,8 @@ class CompanionSession {
     CompanionInbox inbox_;
     agent::ToolTime next_refresh_{};
     std::string visit_tool_;
+    std::optional<std::string> ask_tool_;
+    CompanionQuestions questions_;
     std::optional<CompanionVisit> visit_;
     std::shared_ptr<agent::TurnRequest> visit_work_;
     std::optional<CompletedTurn> result_;

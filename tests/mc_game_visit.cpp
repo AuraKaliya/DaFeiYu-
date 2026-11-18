@@ -40,6 +40,7 @@ int wmain(int argc, wchar_t** argv) {
         check(argc == 3 || argc == 4, "package, test root, optional variant required");
         const bool skip = argc == 4 && std::wstring_view(argv[3]) == L"skip";
         const bool tamper = argc == 4 && std::wstring_view(argv[3]) == L"tamper";
+        const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
             [=](const auto&, const auto& request) { return fixture_model(request, skip, tamper); }});
@@ -68,6 +69,20 @@ int wmain(int argc, wchar_t** argv) {
         }
         check(app::application_command(application, "/companion status", terminal, std::cerr), "terminal status");
         check(terminal.str().find(skip || tamper ? "unverified" : "observed") != std::string::npos, "terminal missing evidence state");
+        if (decline) {
+            until(application, [&] { const auto q = application.companion_question(id); return q && q->phase == app::QuestionPhase::waiting; });
+            const auto original = *application.companion_question(id);
+            check(original.owner == visit->owner && original.task == visit->task && original.after >= visit->order && original.revision == 2,
+                "question not bound to original player and observation");
+            app::application_command(application, "/companion status", terminal, std::cerr);
+            check(terminal.str().find(original.text) != std::string::npos, "trusted surface did not see same question");
+            std::cout << "DFY_QUESTION" << std::endl;
+            until(application, [&] { return application.companion_question(id)->phase == app::QuestionPhase::declined; });
+            const auto closed = *application.companion_question(id);
+            check(closed.id == original.id && closed.revision == original.revision + 1 &&
+                application.companion_visit(id)->phase == app::VisitPhase::observed, "decline altered original visit");
+            std::cout << nlohmann::json{{"question", closed.id}, {"revision", closed.revision}, {"declined", true}, {"text", closed.text}}.dump() << '\n';
+        }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");
         until(application, [&] { return application.companion_status()->closed; });
         application.conversation().close();

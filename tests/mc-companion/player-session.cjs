@@ -17,9 +17,19 @@ async function drive(exe, pkg, root, owner, evidence) {
   const records = [];
   const log = createInterface({ input: child.stdout });
   let issued = false;
+  let questionReady = false, questions = 0, answered = false;
+  // 只在独立的玩家客户端与可信宿主都看见问题后给出一次答复。
+  const answer = () => {
+    if (questionReady && questions && !answered) { answered = true; owner.chat('不用了'); }
+  };
+  const heard = text => {
+    if (text.includes('要我采一些带回来吗')) { ++questions; answer(); }
+  };
+  owner.on('messagestr', heard);
   log.on('line', line => {
     records.push(line);
     if (line === 'DFY_LISTENING' && !issued) { issued = true; owner.chat('去山脚看看'); }
+    if (line === 'DFY_QUESTION') { questionReady = true; answer(); }
   });
   child.stderr.on('data', data => process.stderr.write(data));
   const timer = setTimeout(() => child.kill(), 45000);
@@ -27,7 +37,8 @@ async function drive(exe, pkg, root, owner, evidence) {
     const [code] = await once(child, 'close');
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
     if (!issued || code !== 0) throw new Error('宿主未完成真实玩家入口验收');
-  } finally { clearTimeout(timer); log.close(); }
+    if (process.argv[4] === 'decline') assert.ok(answered && questions === 1);
+  } finally { clearTimeout(timer); log.close(); owner.removeListener('messagestr', heard); }
 }
 
 // 从正式游戏适配器启动双方账号，在本机私有环境将真实原话送给应用。

@@ -57,6 +57,8 @@ class Application {
     std::optional<PlayerInboxStatus> companion_inbox(runtime::DomainId session) const;
     // 读取玩家委托的查看状态及其实际游戏回执。
     std::optional<CompanionVisit> companion_visit(runtime::DomainId session) const;
+    // 读取游戏侧和管理中心共用的原问题及状态。
+    std::optional<CompanionQuestion> companion_question(runtime::DomainId session) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

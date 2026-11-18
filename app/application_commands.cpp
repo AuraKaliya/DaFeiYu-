@@ -105,6 +105,8 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             }
             output << ".\n";
         }
+        if (const auto question = app.companion_question(status->session); question && question->phase == QuestionPhase::waiting)
+            output << "Question " << question->id << " revision " << question->revision << ": " << question->text << '\n';
     } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | stop SESSION");
 }
 }

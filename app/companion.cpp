@@ -44,6 +44,7 @@ void CompanionSession::advance() {
     reader_.advance();
     sync_binding();
     inbox_.advance(*catalog_, clock_);
+    questions_.advance();
     if (!stopping_ && inbox_.status().enabled && !reader_.state().pending && clock_() >= next_refresh_) {
         refresh();
         next_refresh_ = clock_() + std::chrono::seconds(1);
@@ -52,12 +53,14 @@ void CompanionSession::advance() {
     if (visit_work_ && visit_ && visit_work_->diagnostics().exit != runtime::OperationState::pending) {
         verify_visit(*visit_, *visit_work_, visit_tool_);
         visit_work_.reset();
+        if (ask_tool_ && visit_->phase == VisitPhase::observed && address_ && visit_->address == *address_)
+            questions_.open(*visit_, catalog_->snapshot(std::span(&*ask_tool_, 1), true), clock_);
     }
     if (result_ && delivering_ && !visit_work_) {
         finish_message(*delivering_, &*result_);
         delivering_.reset();
     }
-    if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && address_) accept_player();
+    if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
     if (queued_ && !delivering_ && !conversation_.busy()) {
         try {
             if (visit_ && visit_->task == queued_->revision) start_visit();
@@ -77,6 +80,7 @@ void CompanionSession::close() {
     stopping_ = true;
     registration_.revoke();
     reader_.revoke();
+    questions_.withdraw();
     sync_binding();
     conversation_.close();
 }
@@ -97,6 +101,7 @@ void CompanionSession::sync_binding() {
         messages_.bind(std::nullopt);
         address_.reset();
         inbox_.bind(std::nullopt);
+        questions_.withdraw();
         queued_.reset();
         if (delivering_) conversation_.cancel();
         if (visit_ && visit_->phase == VisitPhase::queued) visit_->phase = VisitPhase::withdrawn;
@@ -114,7 +119,12 @@ void CompanionSession::sync_binding() {
 // 只从已校验的玩家收件窗口创建业务委托，普通对话不取得工具范围。
 void CompanionSession::accept_player() {
     const auto entry = inbox_.take();
-    if (!entry || entry->visit_place.empty()) return;
+    if (!entry) return;
+    if (!entry->declined_question.empty()) {
+        questions_.decline(*address_, inbox_.status().owner, entry->sequence, entry->declined_question);
+        return;
+    }
+    if (entry->visit_place.empty() || (questions_.current() && questions_.current()->phase == QuestionPhase::waiting)) return;
     CompanionVisit visit{*address_, entry->sequence, 0, inbox_.status().owner, entry->text, entry->visit_place};
     visit.task = send(*address_, CompanionMessageKind::delegation, messages_.next(CompanionSide::primary), 0, entry->text);
     visit_ = std::move(visit);
@@ -145,6 +155,7 @@ void CompanionSession::listen() {
     const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
     const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
     if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
+    ask_tool_ = plugins::companion_route(*instance, *catalog_, "question.open", true);
     visit_tool_ = *visit;
     inbox_.enable(*inbox);
 }

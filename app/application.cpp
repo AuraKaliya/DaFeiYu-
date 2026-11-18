@@ -291,6 +291,10 @@ std::optional<PlayerInboxStatus> Application::companion_inbox(runtime::DomainId 
 std::optional<CompanionVisit> Application::companion_visit(runtime::DomainId session) const {
     return companion_ && companion_->id() == session ? companion_->visit() : std::nullopt;
 }
+// 在受信入口读取问题；旧会话不获得新问题的内容。
+std::optional<CompanionQuestion> Application::companion_question(runtime::DomainId session) const {
+    return companion_ && companion_->id() == session ? companion_->question() : std::nullopt;
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {
