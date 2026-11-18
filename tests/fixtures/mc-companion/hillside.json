@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "material": "minecraft:cobblestone",
+  "meeting": "riverside",
+  "inspect": { "id": "look-1", "text": "去山脚看看", "miningQuota": 0 },
+  "collect": { "id": "collect-2", "parent": "look-1", "answer": "采 16 块带回来", "quota": 16 },
+  "cases": [
+    {
+      "id": "self-16", "startingStock": 20,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["self", "pickup-1", 16], ["arrived", "riverside", 36]],
+      "expected": ["delivered", 16, 16, 36]
+    },
+    {
+      "id": "self-12-gift-4", "startingStock": 20,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["self", "pickup-1", 12], ["gift", "pickup-2", 4], ["arrived", "riverside", 36]],
+      "expected": ["short", 12, 12, 36]
+    },
+    {
+      "id": "declined", "startingStock": 20,
+      "events": [["observed"], ["declined"]],
+      "expected": ["declined", 0, 0, 20]
+    },
+    {
+      "id": "pickup-replayed", "startingStock": 0,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["self", "pickup-1", 8], ["self", "pickup-1", 8], ["self", "pickup-2", 8], ["arrived", "riverside", 16]],
+      "expected": ["delivered", 16, 16, 16]
+    },
+    {
+      "id": "known-loss", "startingStock": 0,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["self", "p1", 16], ["lostSelf", "drop-1", 2], ["gift", "p2", 2], ["arrived", "riverside", 16]],
+      "expected": ["short", 14, 14, 16]
+    },
+    {
+      "id": "mixed-loss", "startingStock": 5,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["self", "p1", 1], ["gift", "p2", 1], ["lostMixed", "drop-1", 1], ["arrived", "riverside", 6]],
+      "expected": ["uncertain", 0, 1, 6]
+    },
+    {
+      "id": "source-gap", "startingStock": 20,
+      "events": [["observed"], ["authorized"], ["accepted"], ["started"], ["gap"], ["arrived", "riverside", 36]],
+      "expected": ["unverified", null, null, 36]
+    }
+  ]
+}
