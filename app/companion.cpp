@@ -39,6 +39,7 @@ agent::TurnDiagnostics CompanionSession::submit(const std::string& prompt, const
 // 只推进本会话并保留首次业务结算，来源失效后进入原运行收尾。
 void CompanionSession::advance() {
     if (!stopping_ && !bound()) close();
+    reader_.advance();
     if (auto completed = conversation_.advance()) result_ = std::move(completed);
 }
 
@@ -47,7 +48,14 @@ void CompanionSession::close() {
     if (stopping_) return;
     stopping_ = true;
     registration_.revoke();
+    reader_.revoke();
     conversation_.close();
+}
+
+// 从实际注册中重新取得只读范围，不能向被替换的实例读取。
+std::uint64_t CompanionSession::refresh(const agent::ToolClock& clock) {
+    if (stopping_ || !bound()) throw std::logic_error("companion: binding unavailable");
+    return reader_.refresh(catalog_->snapshot(std::span(&offer_.state_tool, 1), false), clock);
 }
 
 // 获取可跨界面复制的最新回合状态。

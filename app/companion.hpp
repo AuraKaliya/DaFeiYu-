@@ -1,5 +1,6 @@
 #pragma once
 #include "conversation.hpp"
+#include "companion_state.hpp"
 #include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 
@@ -24,12 +25,16 @@ class CompanionSession {
     void advance();
     // 撤销工具并请求关闭，仍需推进到已退出。
     void close();
+    // 独立于对话回合，按需向原插件请求真实读回。
+    std::uint64_t refresh(const agent::ToolClock& clock);
+    // 复制已授权状态查询的结果及新旧标记。
+    CompanionState state() const { return reader_.state(); }
     // 返回无对话正文的状态副本。
     CompanionStatus status() const;
     // 取得原会话身份，调用方用它指定停止或提问的目标。
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
-    bool closed() const noexcept { return conversation_.closed(); }
+    bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending; }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -42,6 +47,7 @@ class CompanionSession {
     plugins::CompanionOffer offer_;
     agent::Session session_;
     Conversation conversation_;
+    CompanionStateReader reader_;
     std::optional<CompletedTurn> result_;
     bool stopping_ = false;
 };

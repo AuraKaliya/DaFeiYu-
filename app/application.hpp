@@ -45,6 +45,10 @@ class Application {
     void stop_companion(runtime::DomainId session);
     // 复制当前或最近已关闭的陪伴状态。
     std::optional<CompanionStatus> companion_status() const;
+    // 提交与模型等待独立的只读状态查询，返回本次或原在途请求身份。
+    std::uint64_t refresh_companion(runtime::DomainId session);
+    // 按原会话取得最近观察和可用性，不触发查询。
+    std::optional<CompanionState> companion_state(runtime::DomainId session) const;
     // 读取仍保留的指定子回合结算值。
     std::optional<CompletedTurn> companion_result(agent::RunId run) const;
     // 显式授予一个已加载实例的只读工具并提交用户目标。

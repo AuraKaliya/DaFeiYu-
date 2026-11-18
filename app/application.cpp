@@ -267,6 +267,18 @@ std::optional<CompanionStatus> Application::companion_status() const {
     return companion_ ? std::optional(companion_->status()) : std::nullopt;
 }
 
+// 在同一个宿主推进节拍中请求原实例的状态。
+std::uint64_t Application::refresh_companion(runtime::DomainId session) {
+    if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
+    return companion_->refresh(tool_clock_);
+}
+
+// 查询原会话的世界观察，旧会话不能读到替换后的状态。
+std::optional<CompanionState> Application::companion_state(runtime::DomainId session) const {
+    if (!companion_ || companion_->id() != session) return {};
+    return companion_->state();
+}
+
 // 使用原会话和回合身份读取受信调用者需要的正文回执。
 std::optional<CompletedTurn> Application::companion_result(agent::RunId run) const {
     if (!companion_ || companion_->id() != run.session) return {};
