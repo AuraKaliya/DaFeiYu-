@@ -754,6 +754,14 @@ set_target_properties(dfy_application_tools_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/application_tools.cpp")
 add_test(NAME app.tools COMMAND dfy_application_tools_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>" "${CMAKE_CURRENT_BINARY_DIR}/application-tools/$<CONFIG>")
 set_tests_properties(app.tools PROPERTIES TIMEOUT 20)
+
+add_executable(dfy_status_example_tests status_example.cpp)
+add_dependencies(dfy_status_example_tests dfy_status_example)
+target_link_libraries(dfy_status_example_tests PRIVATE dfy_plugin_tools dfy_build_options)
+set_target_properties(dfy_status_example_tests PROPERTIES FOLDER "Tests")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/status_example.cpp")
+add_test(NAME plugins.status_example COMMAND dfy_status_example_tests "$<TARGET_FILE_DIR:dfy_status_example>" "${CMAKE_CURRENT_BINARY_DIR}/status-example/$<CONFIG>")
+set_tests_properties(plugins.status_example PROPERTIES TIMEOUT 15)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证卸载后移除、用户配置保持及私有清理残留重试。

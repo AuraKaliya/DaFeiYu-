@@ -6,6 +6,9 @@ install(DIRECTORY DESTINATION plugins CONFIGURATIONS Release COMPONENT Runtime)
 install(TARGETS dfy_observer RUNTIME DESTINATION examples/plugins/example.observer CONFIGURATIONS Release COMPONENT Runtime)
 install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/observer/plugin.json" "${PROJECT_SOURCE_DIR}/plugins/examples/observer/defaults.json"
   DESTINATION examples/plugins/example.observer CONFIGURATIONS Release COMPONENT Runtime)
+install(TARGETS dfy_status_example RUNTIME DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
+install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/status/plugin.json"
+  DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/run-guide.md" DESTINATION . RENAME "运行说明.md" CONFIGURATIONS Release COMPONENT Runtime)
 
 # 只复制编译器提供的 Release 运行库，系统 UCRT 由 Windows 10／11 提供。

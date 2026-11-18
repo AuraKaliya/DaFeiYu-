@@ -42,6 +42,14 @@
 
 插件是同进程可信原生 DLL。默认包目录为程序目录下的 `plugins`；安装和发现都不会自动运行插件。分发目录的 `examples/plugins/example.observer` 是独立观察示例，默认不装入包目录。
 
+从运行目录启动终端后，可以安装并读取独立的状态面板示例。面板模式随当前实例存活，初始为 `idle`。
+
+```text
+/plugins install "examples/plugins/example.status"
+/plugins load example.status
+/run example.status/read "读取状态面板的当前模式"
+```
+
 以下安装命令中的 `D:\DaFeiYu` 请替换为实际运行目录：
 
 ```text
