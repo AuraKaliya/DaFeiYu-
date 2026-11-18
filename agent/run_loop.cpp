@@ -61,7 +61,10 @@ struct RunLoopState {
             options.observations = guarded;
             record->initial_observation_binding_ = options.action_observations->binding();
         }
-        if (options.tools && options.tools->permits_state_changes() && !options.observations.empty() && !options.action_observations)
+        const bool changes = options.tools && options.tools->permits_state_changes();
+        if (changes && options.origin == RunOrigin::observation_rule)
+            throw std::invalid_argument("run: observation origin does not authorize state changes");
+        if (changes && !options.observations.empty() && !options.action_observations)
             throw std::invalid_argument("run: observed changes require currentness guards");
         if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
         std::vector<std::string> inputs; inputs.reserve(options.observations.size()); record->observation_inputs_.reserve(options.observations.size());

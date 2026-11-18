@@ -84,6 +84,14 @@ void missing_guard() {
     ActionObservations original({inbox.guard(options.observations[0],{})}); const auto transferred = std::move(original);
     check(transferred.current({}) && !original.current({}),"moved observation set became a valid empty action basis");
     options.action_observations.emplace(original); rejects([&] { session.begin("host goal",options); }); model.verify_complete();
+    options.action_observations.emplace(transferred);
+    options.origin = RunOrigin::observation_rule; options.policy.allow_observation = true; options.policy.confirm_changes = true;
+    options.confirmation_caller.emplace();
+    rejects([&] { session.begin("observed goal",options); });
+    options.action_observations.reset(); options.observations.clear();
+    rejects([&] { session.begin("observed goal",options); });
+    check(!session.busy(),"observation origin gained implicit write admission");
+    model.verify_complete();
 }
 // 验证本运行开始一次变更后不能继续复用行动前观察，即使来源尚未推送新采样。
 // 步骤：接纳两个可并列准备的幂等候选 → 首个变更消费旧观察依据 → 第二个实际开始前拒绝 → 保留两份配对结果。
