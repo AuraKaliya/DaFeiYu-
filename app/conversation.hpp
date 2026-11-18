@@ -43,6 +43,7 @@ class Conversation {
   private:
     // 同线程应用宿主可读取原回合以裁定受控命令。
     friend class Application;
+    friend class CompanionSession;
     // 构造当前会话命名空间并从原回合提取诊断。
     agent::DiagnosticSnapshot capture_diagnostic() const;
 

@@ -3,6 +3,7 @@
 #include "companion_state.hpp"
 #include "companion_messages.hpp"
 #include "companion_inbox.hpp"
+#include "companion_visit.hpp"
 #include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 
@@ -37,6 +38,8 @@ class CompanionSession {
     void listen();
     // 查看玩家收件的可信来源、水位和缺口。
     PlayerInboxStatus inbox_status() const { return inbox_.status(); }
+    // 读取最近一次玩家查看委托和宿主证据。
+    std::optional<CompanionVisit> visit() const { return visit_; }
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);
@@ -57,6 +60,10 @@ class CompanionSession {
     void sync_binding();
     // 向原业务消息交付一次子会话输出或确定失败。
     void finish_message(const CompanionMessage& original, const CompletedTurn* turn);
+    // 从原玩家消息接纳单一地标查看。
+    void accept_player();
+    // 启动工具名和参数都已收紧的正式查看回合。
+    void start_visit();
     std::weak_ptr<plugins::PluginInstance> instance_;
     std::string package_;
     std::shared_ptr<agent::ToolCatalog> catalog_;
@@ -73,6 +80,8 @@ class CompanionSession {
     CompanionInbox inbox_;
     agent::ToolTime next_refresh_{};
     std::string visit_tool_;
+    std::optional<CompanionVisit> visit_;
+    std::shared_ptr<agent::TurnRequest> visit_work_;
     std::optional<CompletedTurn> result_;
     bool stopping_ = false;
 };

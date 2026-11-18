@@ -1,0 +1,72 @@
+#include "application.hpp"
+#include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include <thread>
+
+namespace {
+using namespace dfy;
+// 报告正式会话与真实游戏证据不符。
+void check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
+// 在限定时间内推进正式应用而不直接写游戏、消息或计划。
+void until(app::Application& app, const auto& ready) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+    while (!ready() && std::chrono::steady_clock::now() < deadline) {
+        app.advance_plugins();
+        app.conversation().advance();
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    }
+    check(ready(), "game delegation timeout");
+}
+
+// 按正式回合输入选择固定响应，保留跳过工具及非法改参数两条对照。
+model::Response fixture_model(const model::Request& request, bool skip, bool tamper) {
+    using model::Role;
+    if (request.messages.back().role == Role::tool || skip) return {{Role::assistant, "我已发现石料"}};
+    const auto& text = request.messages.back().content;
+    check(request.tools.size() == 1 && text.starts_with("去山脚看看"), "unexpected player or tool scope");
+    auto args = nlohmann::json::parse(text.substr(text.rfind('\n') + 1));
+    if (tamper) args["order"] = 1;
+    return {{Role::assistant, "", {{"visit", request.tools[0].name, args.dump()}}}, model::FinishReason::tool_calls};
+}
+}
+
+// 用真实游戏原话建立子会话，仅接受原工具执行后的观察。
+// 步骤：绑定独立应用和世界 → 等待新玩家消息 → 校验真实回执或拒绝 → 检查完整退出。
+int wmain(int argc, wchar_t** argv) {
+    try {
+        check(argc == 3 || argc == 4, "package, test root, optional variant required");
+        const bool skip = argc == 4 && std::wstring_view(argv[3]) == L"skip";
+        const bool tamper = argc == 4 && std::wstring_view(argv[3]) == L"tamper";
+        const std::filesystem::path root = argv[2];
+        app::Application application({}, root / "packages", root / "user", model::Backend{
+            [=](const auto&, const auto& request) { return fixture_model(request, skip, tamper); }});
+        application.plugins().install(argv[1]);
+        check(application.plugins().load("mc.companion") == 0, "plugin load");
+        const auto id = application.open_companion("mc.companion");
+        application.listen_companion(id);
+        until(application, [&] { return application.companion_inbox(id)->ready; });
+        check(application.companion_inbox(id)->cursor == 1, "wrong baseline");
+        std::cout << "DFY_LISTENING" << std::endl;
+        until(application, [&] { return application.companion_messages(id, 0).messages.size() >= 2; });
+        const auto visit = application.companion_visit(id);
+        check(visit && visit->order == 2 && visit->task == 1 && visit->text == "去山脚看看" && visit->run &&
+            visit->address.session == id && visit->owner == application.companion_inbox(id)->owner, "player causality");
+        const auto report = application.companion_messages(id, 1).messages.front();
+        if (skip || tamper) {
+            check(visit->phase == app::VisitPhase::failed && visit->evidence.empty() && report.kind == app::CompanionMessageKind::failed,
+                "model text or modified target became evidence");
+        } else {
+            const auto evidence = nlohmann::json::parse(visit->evidence);
+            check(visit->phase == app::VisitPhase::observed && evidence.at("moved") == true && evidence.at("observed") == true &&
+                evidence.at("stone").at("x") == 15 && report.kind == app::CompanionMessageKind::report && report.reply_to == visit->task,
+                "missing original observation");
+            std::cout << evidence.dump() << '\n';
+        }
+        application.stop_companion(id);
+        until(application, [&] { return application.companion_status()->closed; });
+        application.conversation().close();
+        check(application.close_plugins() == plugins::ShutdownResult::closed, "shutdown failed");
+        return 0;
+    } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+}

@@ -287,6 +287,10 @@ std::optional<PlayerInboxStatus> Application::companion_inbox(runtime::DomainId 
     if (!companion_ || companion_->id() != session) return {};
     return companion_->inbox_status();
 }
+// 按原会话取得最近一次玩家查看委托。
+std::optional<CompanionVisit> Application::companion_visit(runtime::DomainId session) const {
+    return companion_ && companion_->id() == session ? companion_->visit() : std::nullopt;
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

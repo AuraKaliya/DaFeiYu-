@@ -173,6 +173,8 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
                 (!stone.is_null() && !stone.at(axis).is_number_integer())) throw std::invalid_argument("MC protocol: observation coordinates");
         }
     }
-    return {exited, arrived, action.at("moved").get<bool>(), action.dump()};
+    auto evidence = action;
+    if (arrived) evidence["observed"] = !action.at("stone").is_null();
+    return {exited, arrived, action.at("moved").get<bool>(), evidence.dump()};
 }
 }

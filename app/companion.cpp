@@ -48,18 +48,23 @@ void CompanionSession::advance() {
         refresh();
         next_refresh_ = clock_() + std::chrono::seconds(1);
     }
-    if (auto completed = conversation_.advance()) {
-        result_ = std::move(completed);
-        if (delivering_) {
-            finish_message(*delivering_, &*result_);
-            delivering_.reset();
-        }
+    if (auto completed = conversation_.advance()) result_ = std::move(completed);
+    if (visit_work_ && visit_ && visit_work_->diagnostics().exit != runtime::OperationState::pending) {
+        verify_visit(*visit_, *visit_work_, visit_tool_);
+        visit_work_.reset();
     }
+    if (result_ && delivering_ && !visit_work_) {
+        finish_message(*delivering_, &*result_);
+        delivering_.reset();
+    }
+    if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && address_) accept_player();
     if (queued_ && !delivering_ && !conversation_.busy()) {
         try {
-            submit(queued_->text);
+            if (visit_ && visit_->task == queued_->revision) start_visit();
+            else submit(queued_->text);
             delivering_ = std::move(queued_);
         } catch (const std::exception&) {
+            if (visit_ && visit_->task == queued_->revision) visit_->phase = VisitPhase::failed;
             finish_message(*queued_, nullptr);
         }
         queued_.reset();
@@ -94,6 +99,7 @@ void CompanionSession::sync_binding() {
         inbox_.bind(std::nullopt);
         queued_.reset();
         if (delivering_) conversation_.cancel();
+        if (visit_ && visit_->phase == VisitPhase::queued) visit_->phase = VisitPhase::withdrawn;
         delivering_.reset();
     }
     if (live) {
@@ -103,6 +109,32 @@ void CompanionSession::sync_binding() {
         inbox_.bind(fresh);
         address_ = std::move(fresh);
     }
+}
+
+// 只从已校验的玩家收件窗口创建业务委托，普通对话不取得工具范围。
+void CompanionSession::accept_player() {
+    const auto entry = inbox_.take();
+    if (!entry || entry->visit_place.empty()) return;
+    CompanionVisit visit{*address_, entry->sequence, 0, inbox_.status().owner, entry->text, entry->visit_place};
+    visit.task = send(*address_, CompanionMessageKind::delegation, messages_.next(CompanionSide::primary), 0, entry->text);
+    visit_ = std::move(visit);
+}
+
+// 从原始玩家消息生成固定参数，允许模型仅调用一次已授权的查看工具。
+// 步骤：核对原绑定 → 固定工具与原参数 → 提交独立回合并保留实际工作。
+void CompanionSession::start_visit() {
+    if (!bound() || !address_ || visit_->address != *address_) throw std::logic_error("companion: expired visit");
+    const auto args = visit_arguments(*visit_);
+    agent::RunOptions options;
+    options.now = clock_;
+    options.tools = catalog_->snapshot(std::span(&visit_tool_, 1), true).bind_arguments(visit_tool_, args);
+    options.policy.tool_limit = 1;
+    const auto input = visit_->text + "\n宿主为原玩家委托固定的查看参数\n" + args;
+    const auto turn = conversation_.submit(input, std::move(options));
+    visit_work_ = conversation_.current_;
+    visit_->run = agent::RunId{turn.session, turn.turn};
+    visit_->phase = VisitPhase::submitted;
+    result_.reset();
 }
 
 // 根据当前实例注册的用途开启私有收件，原游戏水位以前的聊天不补作委托。
@@ -134,6 +166,13 @@ std::uint64_t CompanionSession::send(const CompanionAddress& address, CompanionM
 // 只把当前地址的输出关联到原任务或原询问，异常回执独立标记。
 void CompanionSession::finish_message(const CompanionMessage& original, const CompletedTurn* turn) {
     if (!address_ || original.address != *address_) return;
+    if (visit_ && visit_->task == original.revision) {
+        const bool observed = visit_->phase == VisitPhase::observed;
+        const bool arrived = visit_->phase == VisitPhase::arrived;
+        messages_.post(*address_, CompanionSide::game, (observed || arrived) ? CompanionMessageKind::report : CompanionMessageKind::failed,
+            messages_.next(CompanionSide::game), original.revision, observed ? "已到达地标并发现目标" : arrived ? "已到达地标，暂未发现目标" : "查看未取得到达证据");
+        return;
+    }
     const bool success = turn && turn->status.result == runtime::OperationState::succeeded &&
         !turn->error && !turn->answer.empty() && turn->answer.size() <= 4096;
     const auto kind = original.kind == CompanionMessageKind::inquiry ? CompanionMessageKind::answer : CompanionMessageKind::report;

@@ -1,4 +1,5 @@
 const { spawn } = require('node:child_process');
+const assert = require('node:assert/strict');
 const { randomUUID, randomBytes } = require('node:crypto');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
@@ -8,10 +9,11 @@ const { withPaper } = require('./paper.cjs');
 const { connect, until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
 const { query } = require('./bridge-world.cjs');
+const { readStream } = require('./origins.cjs');
 
 // 让原生验证程序先确认当前聊天水位，此后才由真正的玩家协议发送新委托。
 async function drive(exe, pkg, root, owner, evidence) {
-  const child = spawn(exe, [pkg, root], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(exe, [pkg, root, ...process.argv.slice(4)], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const records = [];
   const log = createInterface({ input: child.stdout });
   let issued = false;
@@ -59,7 +61,17 @@ async function verify(fixture) {
       if (!recorded) await game.bot.waitForTicks(1);
     }
     if (!recorded) throw new Error('旧消息未进入游戏源');
+    let digCalls = 0;
+    const dig = game.bot.dig.bind(game.bot);
+    game.bot.dig = (...args) => { ++digCalls; return dig(...args); };
+    const first = readStream(fixture.server).length;
     await drive(process.argv[2], process.argv[3], root, owner, fixture.evidence);
+    const facts = readStream(fixture.server).slice(first);
+    assert.equal(digCalls, 0);
+    assert.ok(!facts.some(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid));
+    if (['skip', 'tamper'].includes(process.argv[4])) assert.ok(Math.abs(game.bot.entity.position.x - 0.5) < 1);
+    writeFileSync(join(fixture.evidence, 'game-observation.json'), JSON.stringify({
+      actor: game.bot.player.uuid, position: game.bot.entity.position, digCalls, facts }, null, 2));
   } finally {
     owner.quit();
     if (game) { game.stop(); await game.done; }
