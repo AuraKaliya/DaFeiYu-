@@ -60,6 +60,9 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     chat.line("/verification");
     check(accepted && output.str().find("verification pending.") != std::string::npos && errors.str().empty(),
         "terminal did not show the accepted task and pending evidence");
+    const auto pending_diagnostic = conversation.diagnostic();
+    check(pending_diagnostic && pending_diagnostic->timeline.key.run == agent::RunId{accepted->session,accepted->turn} &&
+        !agent::review_timeline(pending_diagnostic->timeline).run_exited,"active diagnostic exposed the wrong run state");
 
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
     bool attempted = false, approved = false;
@@ -88,6 +91,12 @@ void verify(const fs::path& package, const fs::path& root, Trial trial) {
     check(output.str().find(message) != std::string::npos &&
         (trial == Trial::matches) == (output.str().find("the requested mode has been set") != std::string::npos),
         "terminal substituted a model completion for actual evidence");
+    const auto diagnostic = conversation.diagnostic();
+    check(diagnostic && diagnostic->timeline.key == pending_diagnostic->timeline.key &&
+        agent::review_timeline(diagnostic->timeline).run_exited &&
+        (trial == Trial::early_change ? diagnostic->feedback.empty() :
+            diagnostic->feedback.size() == 1 && diagnostic->feedback.front().verified == (trial == Trial::matches)),
+        "retained diagnostic lost original evidence or run identity");
     check(status && status->result == (trial == Trial::matches ? OperationState::succeeded : OperationState::cancelled) &&
         status->exit == OperationState::succeeded && manager.unload("example.status") == plugins::ShutdownResult::closed,
         "verification confused completion or retained native work");

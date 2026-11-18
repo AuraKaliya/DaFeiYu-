@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/diagnostic_snapshot.hpp>
 #include <exception>
 
 namespace dfy::app {
@@ -26,6 +27,8 @@ class Conversation {
     events::ObservationReceipt clear() { return session_.clear(); }
     // 查询当前或最近回合，不推进会话。
     std::optional<agent::TurnDiagnostics> status() const noexcept;
+    // 获取当前或最近回合的完整无正文诊断值。
+    std::optional<agent::DiagnosticSnapshot> diagnostic() const;
     // 推进原会话，首次结算时返回值结果，实际退出后保留最近状态。
     std::optional<CompletedTurn> advance();
     // 停止接纳并请求当前会话取消，后续仍须推进实际退出。
@@ -39,9 +42,15 @@ class Conversation {
   private:
     // 同线程应用宿主可读取原回合以裁定受控命令。
     friend class Application;
+    // 构造当前会话命名空间并从原回合提取诊断。
+    agent::DiagnosticSnapshot capture_diagnostic() const;
+
     agent::Session& session_;
     std::shared_ptr<agent::TurnRequest> current_;
     std::optional<agent::TurnDiagnostics> last_;
+    std::optional<agent::DiagnosticSnapshot> last_diagnostic_;
+    std::exception_ptr diagnostic_error_;
+    mutable std::string diagnostic_namespace_;
     bool reported_ = false;
 };
 }

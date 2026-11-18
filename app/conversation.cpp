@@ -1,4 +1,5 @@
 #include "conversation.hpp"
+#include <random>
 
 namespace dfy::app {
 using runtime::OperationState;
@@ -25,8 +26,27 @@ std::optional<agent::TurnDiagnostics> Conversation::status() const noexcept {
     return last_;
 }
 
+// 宿主生成跨进程可区分的会话命名空间。
+// 步骤：首个诊断时准备独立随机标识 → 复用同一会话标识 → 投影原回合。
+agent::DiagnosticSnapshot Conversation::capture_diagnostic() const {
+    if (diagnostic_namespace_.empty()) {
+        std::random_device source;
+        std::string name = "app";
+        for (unsigned i = 0; i < 4; ++i) name += "-"+std::to_string(source());
+        diagnostic_namespace_ = std::move(name);
+    }
+    return agent::diagnostic_snapshot(*current_,diagnostic_namespace_);
+}
+
+// 查询当前或最后一次诊断，失败按本轮错误独立报告。
+std::optional<agent::DiagnosticSnapshot> Conversation::diagnostic() const {
+    if (current_) return capture_diagnostic();
+    if (diagnostic_error_) std::rethrow_exception(diagnostic_error_);
+    return last_diagnostic_;
+}
+
 // 返回一次业务结算，同时继续跟踪实际退出。
-// 步骤：推进原会话 → 提取首次结算的结果或错误 → 实际退出后保存值状态并归还回合。
+// 步骤：推进原会话 → 提取首次结算的结果或错误 → 实际退出后保存状态及诊断值并归还回合。
 std::optional<CompletedTurn> Conversation::advance() {
     session_.advance();
     if (!current_) return {};
@@ -44,6 +64,8 @@ std::optional<CompletedTurn> Conversation::advance() {
 
     if (status.exit != OperationState::pending) {
         last_ = status;
+        try { last_diagnostic_.emplace(capture_diagnostic()); diagnostic_error_ = {}; }
+        catch (...) { last_diagnostic_.reset(); diagnostic_error_ = std::current_exception(); }
         current_.reset();
     }
     return completed;
