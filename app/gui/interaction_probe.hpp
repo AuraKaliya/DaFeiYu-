@@ -15,6 +15,10 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start();
     // 验证多次真实 Frame 销毁、重建和旧视图拒绝，不操作桌面。
     void start_lifecycle(std::shared_ptr<const FrameChecks> checks);
+#ifdef DFY_UI_RUN_STATUS_TEST
+    // 以原生测试命令推进状态面板并核对主文档收到的只读值。
+    void start_run_status(std::function<void()> submit, std::function<void()> approve);
+#endif
     // 在原生计时器中继续等待释放条件，不阻塞 STA 消息循环。
     void advance() noexcept { if (!waiting_) next(); }
     // 使晚到完成回调失效并归还浏览器持有。

@@ -4,6 +4,10 @@
 #include "interaction_probe.hpp"
 #include "probe_host.hpp"
 #include "browser_lifetime.hpp"
+#include "run_status_host.hpp"
+#ifdef DFY_UI_RUN_STATUS_TEST
+#include "ui_run_status_probe.hpp"
+#endif
 #include <windows.h>
 #include <objbase.h>
 #include <wrl.h>
@@ -34,6 +38,10 @@ struct Window : std::enable_shared_from_this<Window> {
     std::shared_ptr<dfy::ui::ProbeHost> host;
     std::shared_ptr<const dfy::ui::FrameChecks> checks;
     std::shared_ptr<dfy::ui::InteractionProbe> interaction;
+    std::unique_ptr<dfy::ui::RunStatusHost> run_status_host;
+#ifdef DFY_UI_RUN_STATUS_TEST
+    std::shared_ptr<dfy::tests::UiRunStatusProbe> run_status_probe;
+#endif
     std::chrono::steady_clock::time_point deadline;
     std::chrono::steady_clock::time_point close_deadline;
     const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
@@ -44,6 +52,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool closing = false, smoke = false, interaction_mode = false, lifecycle_mode = false, early = false, close_controller = false, navigation_bound = false;
     bool finish_posted = false, process_check_failed = false, close_warned = false;
     bool offline = false, offline_enabled = false;
+    bool business_mode = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -64,6 +73,7 @@ struct Window : std::enable_shared_from_this<Window> {
         ShowWindow(handle,SW_HIDE);
         KillTimer(handle,1); if (host) host->close();
         if (interaction) interaction->close();
+        if (run_status_host) run_status_host->close();
         if (environment) {
             try { processes.observe(environment.Get()); }
             catch (const std::exception& error) { process_check_failed = true; result = 1; std::fprintf(stderr,"%s\n",error.what()); }
@@ -81,12 +91,18 @@ struct Window : std::enable_shared_from_this<Window> {
     void finish_close() noexcept {
         const bool callbacks_done = !pending && (!interaction || !interaction->pending());
         const bool frames_done = !checks || (!checks->active && !checks->ready && !checks->live_channels);
-        if (callbacks_done && frames_done && processes.exited() && !process_check_failed && profile.cleanup()) {
+        const bool business_done = !run_status_host || run_status_host->exited();
+        if (business_done && run_status_host && run_status_host->failed()) result = 1;
+        if (callbacks_done && frames_done && business_done && processes.exited() && !process_check_failed && profile.cleanup()) {
             if (!finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
         } else if (std::chrono::steady_clock::now() >= close_deadline) {
             result = 1;
-            if (!close_warned) { close_warned = true; std::fputs("U01: shutdown incomplete; profile retained\n",stderr); }
-            if (callbacks_done && processes.exited() && !finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
+            if (!close_warned) {
+                close_warned = true;
+                std::fprintf(stderr,"UI: shutdown incomplete; profile retained (callbacks=%d frames=%d application=%d browsers=%d)\n",
+                    callbacks_done,frames_done,business_done,processes.exited());
+            }
+            if (callbacks_done && business_done && processes.exited() && !finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
         }
     }
     // 在控制器完成后配置本地资源与最小浏览设置，再异步导航。
@@ -97,7 +113,12 @@ struct Window : std::enable_shared_from_this<Window> {
         ComPtr<ICoreWebView2Settings> settings; require(view->get_Settings(&settings));
         require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(TRUE));
         const auto weak = weak_from_this();
-        host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); });
+        dfy::ui::ProbeHost::ReadRun read_run;
+        if (run_status_host) read_run = [weak] {
+            if (const auto self = weak.lock()) return self->run_status_host->snapshot();
+            return std::optional<dfy::app::RunStatusSnapshot>{};
+        };
+        host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },std::move(read_run));
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
         // 处理主文档导航回执，自动验收由计时器另行推进。
@@ -114,11 +135,19 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get(),&navigation));
         navigation_bound = true; resize();
-        if (smoke || interaction_mode) { deadline = std::chrono::steady_clock::now()+std::chrono::seconds(20); SetTimer(handle,1,20,nullptr); }
+        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(20);
+        if (smoke || interaction_mode || run_status_host) SetTimer(handle,1,20,nullptr);
         if (offline) prepare_offline(); else navigate();
     }
-    // 以固定验收片段选择页面检查，不向页面开放任意原生操作。
-    void navigate() { require(view->Navigate((std::wstring(page)+(offline ? L"#offline" : smoke ? L"#verify" : L"")).c_str())); }
+    // 以固定验收片段选择页面检查。
+    // 步骤：选择探针片段 → 导航至同一受信任的主文档。
+    void navigate() {
+        const wchar_t* fragment = offline ? L"#offline" : smoke ? L"#verify" : L"";
+#ifdef DFY_UI_RUN_STATUS_TEST
+        if (run_status_probe) fragment = L"#run-status";
+#endif
+        require(view->Navigate((std::wstring(page)+fragment).c_str()));
+    }
     // 导航前设置当前 WebView2 的离线模拟，不改变系统网络或其他浏览器。
     // 步骤：保留准备责任 → 提交固定 CDP 命令 → 核对结果 → 按关闭状态导航或回收。
     void prepare_offline() {
@@ -148,10 +177,12 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：分流收尾状态 → 启动或推进协议 → 核对完成条件与期限。
     void tick() noexcept {
         if (closing) { finish_close(); return; }
+        if (run_status_host && run_status_host->exited()) { fail("UI application host stopped"); return; }
+        if (!smoke && !interaction_mode) return;
         if (loaded && interaction_mode && !interaction) {
             try {
                 const auto weak = weak_from_this();
-                if (!lifecycle_mode) {
+                if (!lifecycle_mode && !run_status_host) {
                     const auto foreground = GetForegroundWindow();
                     require(controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC));
                     if (foreground != handle && GetForegroundWindow() == handle) throw std::runtime_error("U01: focus probe activated its window");
@@ -163,6 +194,13 @@ struct Window : std::enable_shared_from_this<Window> {
                         PostMessageW(self->handle,WM_CLOSE,0,0);
                     }
                 });
+#ifdef DFY_UI_RUN_STATUS_TEST
+                if (run_status_probe) {
+                    const auto probe = run_status_probe;
+                    interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
+                    return;
+                }
+#endif
                 if (lifecycle_mode) interaction->start_lifecycle(checks);
                 else interaction->start();
             } catch (const std::exception& error) { fail(error.what()); }
@@ -199,11 +237,32 @@ struct Window : std::enable_shared_from_this<Window> {
         if (FAILED(status)) { --pending; require(status); }
         if (close_controller) PostMessageW(handle,WM_CLOSE,0,0);
     }
+    // 在业务线程创建拥有运行状态的 Application，测试使用独占路径和显式替身。
+    // 步骤：选择固定测试入口或普通配置 → 移交业务线程 → 保留只读快照来源。
+    void start_application() {
+#ifdef DFY_UI_RUN_STATUS_TEST
+        if (run_status_probe) {
+            const auto probe = run_status_probe;
+            const auto work = profile.path()/L"agent";
+            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([probe,work] { return probe->open(work); },
+                [probe](auto& application) { probe->drive(application); });
+            return;
+        }
+#endif
+        if (business_mode) {
+            const auto root = assets.parent_path();
+            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([root] {
+                return std::make_unique<dfy::app::Application>(dfy::model::load_config(root/"config"/"deepseek.example.json"),
+                    root/"plugins",dfy::app::default_user_data());
+            });
+        }
+    }
     // 创建独立环境，配置路径与回调寿命由当前窗口拥有。
     // 步骤：检查离线入口 → 提交环境创建 → 接收环境或错误 → 按窗口状态继续或收尾。
     void start() {
         if (!std::filesystem::is_regular_file(assets/L"index.html")) throw std::runtime_error("UI assets missing");
         profile.create();
+        start_application();
         const auto weak = weak_from_this(); ++pending;
         const auto status = CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.path().c_str(),nullptr,
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
@@ -242,7 +301,7 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
     return DefWindowProcW(window,message,wparam,lparam);
 }
 }
-// 在 STA 中运行独立离线容器，验证入口不依赖终端、模型或插件。
+// 在 STA 中运行桌面容器，普通入口启用独立业务宿主。
 // 步骤：核对参数与运行库 → 创建窗口及环境 → 推进消息循环 → 释放 COM 公寓。
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool offline = __argc == 2 && std::wstring_view(__wargv[1]) == L"--offline";
@@ -252,7 +311,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool early = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-early";
     const bool close_controller = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-controller";
     const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
-    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime;
+#ifdef DFY_UI_RUN_STATUS_TEST
+    const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
+#else
+    const bool run_status_mode = false;
+#endif
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode;
     if (__argc > 1 && !automatic) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
@@ -266,9 +330,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             if (!automatic) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
             CoUninitialize(); return 4;
         }
-        auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
+        auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode || run_status_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
         state->close_controller = close_controller;
         state->offline = offline;
+        state->business_mode = !automatic;
+#ifdef DFY_UI_RUN_STATUS_TEST
+        if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
+#endif
         state->assets = dfy::app::executable_directory()/L"ui";
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");

@@ -1,12 +1,48 @@
 #include "probe_host.hpp"
 #include <nlohmann/json.hpp>
+#include <charconv>
 #include <limits>
 
 namespace dfy::ui {
+namespace {
+// 读取完整非零十进制身份，保留 64 位精度。
+std::uint64_t run_id_part(const nlohmann::json& value) {
+    const auto& text = value.get_ref<const std::string&>();
+    std::uint64_t id = 0;
+    const auto result = std::from_chars(text.data(),text.data()+text.size(),id);
+    if (result.ec != std::errc{} || result.ptr != text.data()+text.size() || !id)
+        throw std::invalid_argument("UI: invalid run identity");
+    return id;
+}
+
+// 将原业务及实际退出状态转换为稳定的界面状态名。
+std::string_view operation_state(runtime::OperationState state) noexcept {
+    switch (state) {
+    case runtime::OperationState::pending: return "pending";
+    case runtime::OperationState::succeeded: return "succeeded";
+    case runtime::OperationState::failed: return "failed";
+    case runtime::OperationState::cancelled: return "cancelled";
+    }
+    return "unknown";
+}
+
+// 区分普通回合、等待读回和已裁定的读回证据。
+nlohmann::json verification_state(const std::optional<app::VerificationReport>& report) {
+    if (!report) return nullptr;
+    if (!report->match) return "pending";
+    switch (*report->match) {
+    case agent::ObservationMatch::satisfied: return "satisfied";
+    case agent::ObservationMatch::not_satisfied: return "not_satisfied";
+    case agent::ObservationMatch::unknown: return "unknown";
+    }
+    return "unknown";
+}
+}
+
 // 创建和消息入口都只弱引用宿主，部分登记失败由临时实例回滚。
 // 步骤：持有浏览器 → 登记主页面消息 → 登记原生 Frame 创建 → 发布已准备宿主。
-std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure) {
-    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure))); self->view_ = view;
+std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run) {
+    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run))); self->view_ = view;
     const std::weak_ptr<ProbeHost> weak = self;
     const auto message = Callback<ICoreWebView2WebMessageReceivedEventHandler>([weak](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) return state->message(args);
@@ -26,14 +62,17 @@ std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<
     self->frames_.bind(source.Get(),&ICoreWebView2_4::remove_FrameCreated,[&](auto* token) { return source->add_FrameCreated(created.Get(),token); });
     return self;
 }
-// 只有主页面的固定申请可以取得新地址，正在运行或尚未绑定时拒绝重复申请。
-// 步骤：核对实际来源及消息 → 检查活动与序号 → 签发一次票据 → 发回地址。
+// 处理主文档的只读快照请求或固定 Frame 申请。
+// 步骤：核对原生来源及结构 → 按固定类型分发 → 为 Frame 申请签发一次票据。
 HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexcept {
     bool issued = false;
     try {
         if (!center_document(read_text([&](auto** value) { return args->get_Source(value); }))) return E_ACCESSDENIED;
         const auto message = nlohmann::json::parse(utf8(read_text([&](auto** value) { return args->get_WebMessageAsJson(value); })));
-        if (!message.is_object() || message.size() != 1 || message.value("type",std::string()) != "frame.open") return E_INVALIDARG;
+        if (!message.is_object()) return E_INVALIDARG;
+        const auto type = message.value("type",std::string());
+        if (type == "state.read") return run_status_reply(message);
+        if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
         if (next_ == std::numeric_limits<std::uint64_t>::max()) return E_FAIL;
         ticket_ = ++next_; issued = true;
@@ -42,6 +81,29 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (FAILED(status)) ticket_ = 0;
         return status;
     } catch (...) { if (issued) ticket_ = 0; return E_INVALIDARG; }
+}
+// 从副本构造有界运行摘要，并在发回前复核当前 WebView 文档。
+// 步骤：核对协议、请求及运行身份 → 复制并筛选快照 → 核对当前来源后发回 JSON。
+HRESULT ProbeHost::run_status_reply(const nlohmann::json& request) {
+    if ((request.size() != 4 && request.size() != 6) || request.at("version") != "1" || request.at("topic") != "run")
+        return E_INVALIDARG;
+    const auto& id = request.at("request").get_ref<const std::string&>();
+    if (id.empty() || id.size() > 64) return E_INVALIDARG;
+    std::optional<agent::RunId> expected;
+    if (request.size() == 6) expected = agent::RunId{run_id_part(request.at("session")),run_id_part(request.at("turn"))};
+
+    const auto snapshot = read_run_ ? read_run_() : std::nullopt;
+    nlohmann::json run = nullptr;
+    if (snapshot && (!expected || *expected == agent::RunId{snapshot->status.session,snapshot->status.turn})) {
+        const auto& status = snapshot->status;
+        run = {{"session",std::to_string(status.session)},{"turn",std::to_string(status.turn)},
+            {"result",operation_state(status.result)},{"exit",operation_state(status.exit)},
+            {"waiting_confirmations",status.waiting_confirmations},{"verification",verification_state(snapshot->verification)}};
+    }
+    if (!center_document(read_text([&](auto** value) { return view_->get_Source(value); }))) return E_ACCESSDENIED;
+    const nlohmann::json reply{{"event","state.snapshot"},{"version","1"},{"topic","run"},{"request",id},
+        {"available",static_cast<bool>(read_run_)},{"run",std::move(run)}};
+    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
 }
 // 归还旧对象后绑定新代次，真实销毁确认才通知主页面允许重新打开。
 // 步骤：核对票据与活动数 → 建立授权通道 → 登记销毁确认 → 消费票据。

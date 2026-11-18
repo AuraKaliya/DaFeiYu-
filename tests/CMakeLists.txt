@@ -33,6 +33,11 @@ if(BUILD_GUI)
     add_test(NAME "ui.${mode}" COMMAND dfy_ui_probe "--${mode}")
     set_tests_properties("ui.${mode}" PROPERTIES TIMEOUT 35)
   endforeach()
+  # 只读桥接验收使用构建目录内可写的临时配置根。
+  set(run_status_temp "${PROJECT_BINARY_DIR}/ui-run-temp")
+  file(MAKE_DIRECTORY "${run_status_temp}")
+  add_test(NAME ui.run_status COMMAND dfy_ui_probe --run-status "$<TARGET_FILE_DIR:dfy_status_example>")
+  set_tests_properties(ui.run_status PROPERTIES TIMEOUT 60 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
 endif()
 
 # 验证生产域签发器与同一内部算法的整数边界，不连接任何插件或模型服务。

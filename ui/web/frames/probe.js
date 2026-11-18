@@ -22,6 +22,7 @@ async function verify() {
   const echoed = await request('probe.echo');
   if (echoed.decision !== 'allowed' || echoed.text !== '你好，大肥鱼 🐟') throw new Error('中文回显失败');
   if ((await request('core.chat.submit')).decision !== 'forbidden_method') throw new Error('方法未拒绝');
+  if ((await request('state.read')).decision !== 'forbidden_method') throw new Error('运行状态越权未拒绝');
   if ((await request('probe.echo', 'old-view')).decision !== 'stale_view') throw new Error('旧代次未拒绝');
   if ((await request('probe.echo', view, { forged: true })).decision !== 'malformed') throw new Error('非法字段未拒绝');
   output.textContent = '中文回显、方法与代次拒绝已通过；改源导航由原生宿主核对撤销。';
