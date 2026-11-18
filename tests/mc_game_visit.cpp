@@ -43,7 +43,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool decline = argc == 4 && std::wstring_view(argv[3]) == L"decline";
         const bool lost_send = argc == 4 && std::wstring_view(argv[3]) == L"lost-send";
         const bool lost_receipt = argc == 4 && std::wstring_view(argv[3]) == L"lost-receipt";
-        const bool game_answer = lost_send || lost_receipt || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
+        const bool mine_one = argc == 4 && std::wstring_view(argv[3]) == L"mine-one";
+        const bool game_answer = lost_send || lost_receipt || mine_one || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
         const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
@@ -120,6 +121,14 @@ int wmain(int argc, wchar_t** argv) {
             std::cout << nlohmann::json{{"collection", grant.id}, {"question", grant.question}, {"quantity", grant.quantity},
                 {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}, {"accepted", true},
                 {"submissions", delivered.submissions}, {"checks", delivered.checks}}.dump() << '\n';
+            if (mine_one) {
+                until(application, [&] { const auto phase = application.companion_mining(id)->phase;
+                    return phase == app::MiningPhase::client_finished || phase == app::MiningPhase::failed; });
+                const auto mined = *application.companion_mining(id);
+                check(mined.phase == app::MiningPhase::client_finished && mined.grant == grant.id && mined.index == 1 &&
+                    mined.started && mined.effect == agent::ToolEffect::unknown, "uncorroborated mining or wrong action");
+                std::cout << mined.evidence << '\n';
+            }
         }
         check(app::application_command(application, "/companion stop " + std::to_string(id), terminal, std::cerr), "terminal stop");
         until(application, [&] { return application.companion_status()->closed; });

@@ -70,6 +70,8 @@ async function verify(fixture) {
     await until(() => game.bot.player?.uuid && game.bot.entity, '适配器入场');
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     fixture.send('setblock 15 -60 0 minecraft:cobblestone');
+    fixture.send('clear DfyCompanion');
+    if (variant === 'mine-one') fixture.send('give DfyCompanion minecraft:iron_pickaxe 1');
     await until(() => Math.abs(game.bot.entity.position.x - 0.5) < 0.25 &&
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '场地确认');
     const state = await query(channel, { version: 1, id: 'state', method: 'state.read' });
@@ -94,8 +96,15 @@ async function verify(fixture) {
       writeFileSync(join(fixture.evidence, 'delivery-methods.json'), JSON.stringify(proxy.methods));
     }
     const facts = readStream(fixture.server).slice(first);
-    assert.equal(digCalls, 0);
-    assert.ok(!facts.some(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid));
+    const breaks = facts.filter(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid);
+    if (variant === 'mine-one') {
+      assert.equal(digCalls, 1);
+      assert.equal(breaks.length, 1);
+      assert.equal(breaks[0].candidateAmount, 1);
+    } else {
+      assert.equal(digCalls, 0);
+      assert.equal(breaks.length, 0);
+    }
     if (['skip', 'tamper'].includes(process.argv[4])) assert.ok(Math.abs(game.bot.entity.position.x - 0.5) < 1);
     writeFileSync(join(fixture.evidence, 'game-observation.json'), JSON.stringify({
       actor: game.bot.player.uuid, position: game.bot.entity.position, digCalls, facts }, null, 2));

@@ -8,6 +8,7 @@ target_sources(dfy_application PRIVATE companion_inbox.cpp companion_inbox.hpp)
 target_sources(dfy_application PRIVATE companion_visit.cpp companion_visit.hpp)
 target_sources(dfy_application PRIVATE companion_question.cpp companion_question.hpp)
 target_sources(dfy_application PRIVATE companion_delivery.cpp companion_delivery.hpp)
+target_sources(dfy_application PRIVATE companion_mining.cpp companion_mining.hpp)
 target_link_libraries(dfy_application PUBLIC dfy_plugin_tools PRIVATE dfy_build_options dfy_digest nlohmann_json::nlohmann_json)
 # 构建标签随二进制固定，源码提交仅在构建者明确提供时记录。
 set(DFY_APPLICATION_COMMIT "" CACHE STRING "Verified source commit of this application build")
