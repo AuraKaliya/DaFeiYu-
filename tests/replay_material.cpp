@@ -97,6 +97,34 @@ void comparison(const material::Json& original) {
     std::cout << "Compared " << timed_out.report.model.case_id << " v" << timed_out.report.model.case_version << '\n';
     for (const auto name : changed_behavior.behavior) std::cout << "Behavior changed " << name << '\n';
 }
+
+// 改变同一尝试中确认所指的候选，其他结算记录保持可读且不变。
+// 步骤：运行两个工具的固定批次 → 换绑另一侧确认关联 → 验证比较识别结构变化。
+void confirmation_binding(material::Json original) {
+    auto second = original.at("fixtures").at(0);
+    second["id"] = "fixture/read"; second["name"] = "read"; second["changes_state"] = false;
+    second["results"][0]["effect"] = "not_applied";
+    original["fixtures"].push_back(std::move(second));
+    for (auto& step : original["steps"]) step["tools"].push_back("read");
+    original["steps"][0]["response"]["tool_calls"].push_back({{"id","two"},{"name","read"},{"arguments",material::Json::object()}});
+    original["steps"][1]["last_tool_id"] = "two";
+    original["expected"]["tool_calls"] = 2; original["expected"]["history_messages"] = 5;
+    original["expected"]["effects"].push_back("not_applied");
+    const auto material = original.dump();
+    dfy::agent::RunVersionLabels labels; labels.application_commit = "fixture-source"; labels.build = "fixture-comparison";
+    const auto baseline = measure_material(material,labels); auto changed = measure_material(material,labels);
+    auto& trace = changed.report.diagnostic.timeline;
+    using dfy::agent::TraceNodeKind;
+    const auto control = std::find_if(trace.nodes.begin(),trace.nodes.end(),[](const auto& node) { return node.id.kind == TraceNodeKind::control; });
+    const auto read = std::find_if(trace.nodes.begin(),trace.nodes.end(),[](const auto& node) { return node.tool_id == "fixture/read"; });
+    check(baseline.report.failed_assertions.empty() && changed.report.failed_assertions.empty() &&
+        control != trace.nodes.end() && read != trace.nodes.end() && control->related != read->id.local,"invalid comparison fixture");
+    control->related = read->id.local;
+    for (auto& fact : trace.delta.facts) if (fact.subject == control->id) fact.related = read->id.local;
+    const auto comparison = compare_replays(baseline,decode_evidence(encode_evidence(changed)));
+    check(comparison.state == ReplayComparisonState::differs && comparison.behavior == std::vector<std::string_view>{"nodes"},
+        "comparison hid a confirmation bound to a different candidate");
+}
 }
 // 读取固定 JSON 夹具后重跑两次，文件无法指定真实模型或任意执行函数。
 // 步骤：读取明确夹具 → 两次重跑核对行为 → 验证错误材料拒绝 → 报告结果。
@@ -116,6 +144,7 @@ int wmain(int argc, wchar_t** argv) {
         std::ifstream file(std::filesystem::path(argv[1]),std::ios::binary); material::Json original; file >> original;
         invalid(original);
         comparison(original);
+        confirmation_binding(original);
         std::cout << "Replay material checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

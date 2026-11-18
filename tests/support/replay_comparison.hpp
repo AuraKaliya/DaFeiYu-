@@ -50,6 +50,12 @@ inline std::ptrdiff_t replay_node_position(const agent::RunTimeline& timeline, c
     return std::find_if(timeline.nodes.begin(),timeline.nodes.end(),[&](const auto& node) { return node.id == id; })-timeline.nodes.begin();
 }
 
+// 确认关系按同一次尝试的原候选位置对齐；其他节点的归属由节点身份校验。
+inline std::ptrdiff_t replay_confirmation_target(const agent::RunTimeline& timeline, const agent::TraceNode& node) {
+    if (node.id.kind != agent::TraceNodeKind::control) return -1;
+    return replay_node_position(timeline,{node.id.run,agent::TraceNodeKind::tool,node.id.step,node.id.attempt,node.related});
+}
+
 // 保留有序的结算、效果、控制和上下文事实，不把宿主观察时刻当作行为差异。
 inline auto replay_fact_values(const agent::TraceFact& fact) {
     return std::tie(fact.kind,fact.result,fact.exit,fact.cancellation,fact.stop_reason,fact.model_outcome,fact.effect,
@@ -200,7 +206,10 @@ inline ReplayComparison compare_replays(const ReplayEvidence& baseline, const Re
         right.diagnostic.feedback.begin(),right.diagnostic.feedback.end(),
         [&](const auto& a,const auto& b) { return replay_feedback_equal(a,left_trace,b,right_trace); })) result.behavior.push_back("feedback");
     if (!std::equal(left_trace.nodes.begin(),left_trace.nodes.end(),right_trace.nodes.begin(),right_trace.nodes.end(),
-        [](const auto& a,const auto& b) { return replay_node_values(a) == replay_node_values(b); })) result.behavior.push_back("nodes");
+        [&](const auto& a,const auto& b) {
+            return replay_node_values(a) == replay_node_values(b) &&
+                replay_confirmation_target(left_trace,a) == replay_confirmation_target(right_trace,b);
+        })) result.behavior.push_back("nodes");
     if (!std::equal(left_trace.delta.facts.begin(),left_trace.delta.facts.end(),right_trace.delta.facts.begin(),right_trace.delta.facts.end(),
         [&](const auto& a,const auto& b) {
             return replay_fact_values(a) == replay_fact_values(b) &&
