@@ -1,8 +1,6 @@
-# 插件 C ABI v1 契约
+# 插件 C ABI v1 契约（冻结）
 
-本契约对应 [公开头文件](../sdk/include/dafeiyu/plugin_abi.h)。头文件、[纯 C 查询 DLL](../plugins/examples/query/query.c)、[C++ 查询测试](../tests/sdk_abi.cpp)及 [PluginModule 查询校验](../plugins/runtime/module.cpp)已实现。宿主服务、实例生命周期、活动调用计数和事件桥接尚未实现；相关条款是后续实现必须满足的约定，不表示现有宿主已支持插件运行。
-
-后续采用统一异步事件流并冻结 v1。R01a／R01b／R01c-1 已提供独立的 [v2 查询、引用与操作状态契约](plugin-abi-v2.md)及头文件，生产加载器仍仅支持 v1；R01c-2 另已固定取消请求契约；R02a／R02b 已提供宿主引用表与基础值，v2 C ABI 装配、操作执行、取消传播和通知调度尚未实现。本文仅记录 v1 布局与同步订阅契约，不把 v1 的成功返回解释为异步受理。
+v1 保留早期查询接口和当时的同步订阅约定。正式插件实例使用 v2 的引导入口、生命周期与可选能力协商。需要核对旧消费者布局时可查本页和 v1 头文件。[v1 公开头](../sdk/include/dafeiyu/plugin_abi.h) · [v2 契约](plugin-abi-v2.md) · [SDK 指南](../sdk/README.md)
 
 ## 平台、导出与布局
 

@@ -1,14 +1,10 @@
 # 大肥鱼
 
-最小 Agent 基础阶段已完成，采用 C++20、CMake、VS2022 和 Windows x64。开发指导中的 R01～R16 已形成独立提交及验收记录，供统一审查。
+大肥鱼采用 C++20、CMake、VS2022 和 Windows x64。正式程序支持配置模型问答、受控工具调用和运行回读；MC 伙伴通过可信插件使用独立玩家角色。桌面管理中心已有 WebView2 容器、只读状态查询和房间首屏预览。
 
-当前终端已能接收用户明确委托的状态面板任务，经首读、人工确认、执行和读回给出状态证据。A09c 离线最终验收通过，独立 Debug 和 Release 的完整 CTest 各 145／145，另有 31 个固定案例跨构建行为比较。下述 R01～R16 和 U01 的数字属于各自历史基线，当前验收边界见 [12:30 检查点](docs/archive/agent/agent-progress-2026-11-18-1230.md)。
-
-基础阶段曾完成 [35 个提交的专项审查及修复](docs/archive/foundation/review-2026-11-14.md)，修复 5 处可复现问题，并再次通过 Debug／Release 各 79／79 全量及 20／20 跨配置检查。[项目架构](docs/architecture.md)同时提供当前装配及历史基线入口。
-
-最终从全新目录构建 Debug、Release，两种配置的完整 CTest 均为 **79／79**；另通过 **20／20** 项 Debug 宿主调用 Release DLL 的检查。DeepSeek 与 Qwen 均完成真实单次调用，以及空插件、加载观察包、卸载后的多轮上下文验收。详情见 [最终验收记录](docs/archive/foundation/final-acceptance-2026-11-14.md) 和 [开发指导](docs/archive/foundation/foundation-development-guide.md)。
-
-[大肥鱼管理中心 UI 框架设计方案 V0.2](docs/ui-framework-design.md) 覆盖房间首页、组件库、UI 接口和两级插件界面规范；[技术选型](docs/ui-technology-decisions.md) 采用 Win32／WebView2、Vue 3／TypeScript 与独立来源的受限 iframe。[U01 独立验证窗口](docs/archive/ui/ui-u01-validation.md) 已完成离线、Frame 授权、协议输入／焦点及资源回收的自动验收，Debug／Release 各 86／86。正式问答仍使用终端，U02 业务界面接入尚未开始。
+- **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
+- **想审当前设计**，见[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)、[MC 能力清单](docs/mc-partner-capability-review.md)以及[主面板与内置房间](docs/main-agent-room-development-plan.md)。
+- **想了解工程**，见[当前架构](docs/architecture.md)、[文档导航](docs/README.md)和[阶段归档](docs/archive/README.md)。
 
 ## 运行与构建
 
@@ -120,6 +116,6 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-主线通过 [能力计划](docs/archive/agent/agent-capability-development-plan.md) 管理，统一策略、追踪和离线回放见 [横向计划](docs/archive/agent/agent-cross-cutting-plan.md)。原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。逐步验证见 [开发记录](docs/archive/agent/agent-development-log.md)。
+已完成的 Agent 基础建设可从[能力计划](docs/archive/agent/agent-capability-development-plan.md)回查，统一策略、追踪和离线回放的历史设计见[横向计划](docs/archive/agent/agent-cross-cutting-plan.md)。原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。逐步验证见 [开发记录](docs/archive/agent/agent-development-log.md)。
 
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。

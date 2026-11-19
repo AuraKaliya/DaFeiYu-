@@ -1,10 +1,6 @@
-# 插件 C ABI v2 最小接口契约
+# 插件 C ABI v2 接口契约
 
-当前基础阶段 R01～R16 已完成开发和自动验收，包含生产宿主、生命周期、完整组合数据、组消费、显式处理结束及正式 App 管理。观察包 0.7.0 可从分发 SDK 独立构建，跨配置与真实服务插件切换均已验证。完整范围见 [开发指导](archive/foundation/foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
-
-R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。当时的隔离验收不包含生产运行时；现已由独立 `PluginModuleV2`、`HostServices` 和 `PluginInstance` 装配生产能力，原 `PluginModule` 保持 v1。
-
-R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具](../tests/fixtures/query_v2/operation.c)和[隔离宿主](../tests/sdk_operations_v2.cpp)验证受理、快照读取、唯一终态和引用寿命。本步不提供生产操作执行、结果载荷读取、取消请求或完成通知。
+正式实例使用 v2 引导、生命周期和可选能力协商。接口名称、版本和结构布局以[公开头](../sdk/include/dafeiyu)为准。MC 伙伴的角色、用途与模型可见技能见[陪伴 ABI](../sdk/include/dafeiyu/companion_abi_v2.h)，集成方式见[SDK 指南](../sdk/README.md)。
 
 ## 显式处理能力
 
@@ -123,7 +119,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 ### 宿主引用服务
 
-`dfy_v2_reference_api` 的接口标识为 `dfy.references`，版本 1；表大小 24、对齐 8，`header`、`retain`、`release` 偏移为 0、8、16，两函数必须非空。这是宿主提供的服务，不能把插件的 `query_interface` 当作宿主服务发现入口。本步仅固定公开类型与契约；表在测试中由隔离宿主显式传给 C DLL，生产服务装配尚未实现。
+`dfy_v2_reference_api` 的接口标识为 `dfy.references`，版本 1；表大小 24、对齐 8，`header`、`retain`、`release` 偏移为 0、8、16，两函数必须非空。这是宿主提供的服务，不能把插件的 `query_interface` 当作宿主服务发现入口。
 
 | 操作 | 成功与失败责任 |
 |---|---|
@@ -132,7 +128,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 `retain` 的输出指针必需，缺失返回 `INVALID_ARGUMENT`；调用方须使用不承载另一未释放引用的输出存储。空来源或失效来源返回 `INVALID_HANDLE`；有效但不允许共享的来源返回 `UNSUPPORTED`，不能假定订阅、构造器、使用凭证或插件实例均可复制。容量或标识耗尽返回 `RESOURCE_EXHAUSTED`。`release` 对全零空值成功，对部分为零及失效引用返回 `INVALID_HANDLE`；重复释放同一个非空三元组不是幂等成功。错误缓冲沿用上述调用方所有权规则。
 
-引用服务限同一宿主线程，且不得同步调用业务处理者或抛出跨 ABI 异常。服务表和签发宿主须覆盖引用的全部使用及释放；借用服务表不能使宿主自身延寿。生产 C++ 包装层应移动转交，需共享时显式保留；本步未提供 RAII 包装器。
+引用服务限同一宿主线程，且不得同步调用业务处理者或抛出跨 ABI 异常。服务表和签发宿主须覆盖引用的全部使用及释放；借用服务表不能使宿主自身延寿。生产 C++ 包装层应移动转交，需共享时显式保留。
 
 释放引用不等于业务成功、取消、停止成功或异步资源回收完成。最后一个只读普通数据引用可以触发宿主数据回收；需要等待的任务或外部资源继续由宿主跟踪，不能因为局部引用消失而丢失清理责任。操作终态由 R01c 及后续执行单元另行表达。
 
@@ -167,7 +163,7 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 | `DFY_V2_OPERATION_FAILED` | 3 | 按该能力约定确定失败结果 |
 | `DFY_V2_OPERATION_CANCELLED` | 4 | 已确定取消结果，不等同于仅收到取消请求 |
 
-唯一状态迁移为 `Pending → Succeeded / Failed / Cancelled`。终态一经确定不可改写，包括重复结算为同一状态；消费者只有读取权限。具体的成功提交边界、取消请求和竞争裁定在 R01c-2 及对应能力中定稿，本步的取消终态由测试宿主手动设置，不代表取消接口已实现。
+唯一状态迁移为 `Pending → Succeeded / Failed / Cancelled`。终态一经确定不可改写，包括重复结算为同一状态；消费者只有读取权限。提交边界与取消请求的关系见下文取消契约。
 
 操作终态只证明该操作声明的完成条件。业务结果确定不代表相关清理结束，读取到流结束不代表消费任务退出；关闭、回收与 DLL 释放条件由各生命周期能力分别声明，不能仅凭任意操作进入终态就释放模块。
 
@@ -214,15 +210,11 @@ R01c-1 新增独立的宿主操作状态服务，使用[纯 C 状态消费夹具
 
 回执零值无效。已终态优先于已有请求，终态后的重复调用均返回 `ALREADY_SETTLED`。回执成功只说明请求已处理，不承诺结果是 `Cancelled`。`read(operation, &snapshot, error)` 只读首个原因，尚未请求时成功返回零；失败清空输出，空输出返回 `INVALID_ARGUMENT`，引用及支持性规则同上。
 
-取消请求与结果结算分开：业务在自己的提交边界检查请求并决定能否取消；已经发生的业务提交不能被取消回执回滚。取消请求之后仍可能成功或失败，先确定的正式终态永不改写。取消原因在终态后仍可查询，直到相应引用释放；任何终态都不替代实际退出与资源回收判断。生产调度与跨线程结果汇入在后续执行单元实现，本步只验证单宿主线程下的确定先后顺序。
+取消请求与结果结算分开：业务在自己的提交边界检查请求并决定能否取消；已经发生的业务提交不能被取消回执回滚。取消请求之后仍可能成功或失败，先确定的正式终态永不改写。取消原因在终态后仍可查询，直到相应引用释放；任何终态都不替代实际退出与资源回收判断。
 
 隔离宿主与纯 C `test.cancel@1` 验证三种原因、重复请求、完成先到及取消先到、不支持拒绝、错误布局和参数、过期句柄、独立引用以及请求后仍可成功／失败；不提供通知撤销或生产取消传播。
 
-R01c-2 验证：从 `59aa491` 开始；Debug／Release 主工程、Debug 测试构建通过，完整 CTest 13／13 通过，Debug 操作消费者调用 Release C DLL 通过。沿用下节同一组构建和跨配置命令；下一单元为 R01c-3 完成通知，仍按独立提交推进。
-
 ## R01c-3a 完成通知接口与布局
-
-R01c-3a 当次固定通知服务声明及 C11／C++20 布局，不提供可用的生产服务；随后 R01c-3b 已用隔离宿主与真实 DLL 验证下述行为，结果见后节。此处不是原同步事件回调接口的扩展。
 
 宿主能力 `dfy.operation.notify@1` 的 `dfy_v2_operation_notify_api` 大小 32、对齐 8，`header/subscribe/read/revoke` 偏移为 0/8/16/24。`dfy_v2_completion_fn` 是 8 字节 C 函数指针，签名为 `void callback(void* user, dfy_v2_handle operation)`，使用 `DFY_V2_CALL`。`dfy_v2_notification_snapshot` 大小 4、对齐 4，仅有偏移 0 的 uint32 `state`。所有服务入口和通知在同一宿主线程调用，禁止异常跨越 C ABI。
 
@@ -241,54 +233,4 @@ R01c-3a 当次固定通知服务声明及 C11／C++20 布局，不提供可用�
 
 宿主为登记保持独立的操作引用；回调得到一个仅在本次调用内有效的操作借用，其数值不必与提交登记时相同。原调用方释放操作引用不影响登记，回调可在有效借用期内 `retain` 操作以供稍后查询。回调进入前操作已经有终态；回调返回前不得释放它的借用支撑。服务表、用户上下文和 DLL 代码依赖必须覆盖排队、调用及必要收尾；状态达到 Delivered/Revoked 后该登记不得残留可能进入 DLL 的入口。
 
-本轮只通过真实 C DLL 和 C++ 宿主的编译确认布局及外层 pack 恢复，既有 13／13 CTest、Debug／Release 构建及跨配置操作测试通过。冻结的声明不表示通知已可运行；生产登记、调度与模块依赖仍归后续单元。
-
-## R01c-3b 通知行为隔离验收
-
-从 `d3a2481` 开始，新增 [sdk.notifications_v2](../tests/sdk_notifications_v2.cpp) 与[纯 C 回调夹具](../tests/fixtures/query_v2/notification.c)。夹具静态能力 `test.notification@1` 仅返回实际 C 回调，不伪装成生产宿主通知服务。隔离宿主使用两个通知槽和十二个引用槽，由测试显式完成操作和推进通知；不提供正式执行器、资源登记或自动 DLL 保持引用。
-
-验收覆盖：Pending 时不通知；先完成后登记仍不重入；每个登记最多调用一次；独立撤销及重复撤销；活动 C 回调自撤销返回 Busy；操作借用在 C 回调内可保留；原操作引用释放后仍能通知；回调中新登记留到下一轮；复用空槽不改变登记顺序；登记引用不可共享；释放客户端登记引用不隐式撤销；通知及引用容量不足时没有半登记；过期登记拒绝。
-
-真实 DLL 引用由测试宿主显式保持，先确认待调度集合和引用表均为空，再释放模块引用并再次推进以检查没有残留入口。这证明本隔离实现的责任与调用链可行，不替代 R04 的模块依赖管理或 R08 的生产插件完整链路。R01 的查询、引用、操作状态、取消与通知契约及隔离验收已齐备，下一单元进入 R02a 标识与代次的生产基础。
-
-验证：Debug／Release 主工程、Debug 测试构建成功，完整 CTest 14／14 通过；Release C DLL 构建及 Debug 的 `dfy_sdk_notifications_v2_tests.exe` 调用该 DLL 通过。新边界源码保留 UTF-8 BOM，不继承本体字符集选项。
-
-## 验收与下一单元
-
-`sdk.query_v2` 使用真实 C DLL 验证独立导出、主 ABI 拒绝、名称按长度匹配、大小写与版本精确匹配、缺失参数、失败清空输出、可空错误缓冲、重复查询及能力函数调用。C/C++ 两侧检查布局和外层 `pack(1)` 恢复，C++ 消费者同时包含 v1/v2 头文件；模块引用释放后只检查调用方诊断缓冲，不再访问借用表。
-
-夹具的 `test.query@1` 只有返回固定测试值的函数，定义位于 [夹具头文件](../tests/fixtures/query_v2/api.h)，不属于生产能力或公开 SDK 业务表。测试源码及公开头文件使用 UTF-8 BOM，夹具与消费者不继承本体字符集选项。
-
-R01a 当次验证命令及结果（保留历史记录）：
-
-| 命令（项目根目录） | 结果 |
-|---|---|
-| `cmake --preset windows`；`cmake --preset windows-tests` | 配置成功；测试配置有既有 `dfy_loader_x86` 的 CMP0225 开发者警告 |
-| `cmake --build --preset windows-debug`；`cmake --build --preset windows-release`；`cmake --build --preset windows-tests` | 均成功 |
-| `ctest --preset windows-tests` | 8／11 通过，包含 `sdk.query_v2`；三项既有测试在创建符号链接时因权限不足失败 |
-| `cmake --build build/rebuild/windows-tests --config Release --target dfy_query_v2_fixture` | 成功 |
-| `build/rebuild/windows-tests/tests/Debug/dfy_sdk_v2_tests.exe build/rebuild/windows-tests/tests/fixtures/query_v2/Release/dfy_query_v2_fixture.dll` | Debug 消费者调用 Release C DLL 成功 |
-
-未通过的 `plugins.manifest`、`plugins.registry`、`plugins.config` 均报告 `A required privilege is not held by the client`；当前进程特权列表没有 `SeCreateSymbolicLinkPrivilege`。这些测试和对应业务源码未修改，仍保留真实链接校验；需在具备创建链接权限的环境补跑完整 CTest，不能将本次记录视为全套通过。
-
-R01b 本次复用上述配置和三项构建命令，均成功；完整 `ctest --preset windows-tests` 为 9／12 通过，新增 `sdk.handles_v2` 通过，仍是上述三项真实符号链接测试因权限不足失败。测试配置仍有既有 CMP0225 开发者警告。
-
-`sdk.handles_v2` 在 C/C++ 两侧检查布局和打包恢复，并验证实际宿主回调、含零字节视图、独立保留、不可共享拒绝、容量耗尽、跨域／错误编号／过期代次拒绝、失败清空输出、重复释放、空句柄与代次耗尽。DLL 引用释放后从宿主持有引用重新读取数据，最终释放后确认宿主数据已回收；不会读取失效视图。
-
-另执行上述 Release 夹具构建命令，并分别使用 Debug 的 `dfy_sdk_v2_tests.exe` 和 `dfy_sdk_handles_v2_tests.exe` 调用该 Release DLL，均通过。后者命令为 `build/rebuild/windows-tests/tests/Debug/dfy_sdk_handles_v2_tests.exe build/rebuild/windows-tests/tests/fixtures/query_v2/Release/dfy_query_v2_fixture.dll`。新增源码和公开头文件保持 UTF-8 BOM，夹具与独立消费者不继承本体字符集选项。
-
-以上 R01b 记录保留历史状态；R01c 分为状态读取、取消请求和完成通知三个独立审查单元。本次 R01c-1 只固定状态读取契约及隔离验收，下一单元为 R01c-2 取消请求。每个单元分别验证、提交并停止审查。
-
-R01c-1 从 `7275306` 的干净工作区开始，先重新配置并构建测试，改动前完整 CTest 为 12／12 通过。此前三项符号链接测试本次已通过，未修改测试或跳过任何校验。以下命令中的 CMake／CTest 使用本机已安装工具的完整路径调用，预设仍选择 VS2022：
-
-| 命令（项目根目录） | R01c-1 结果 |
-|---|---|
-| `cmake --preset windows`；`cmake --preset windows-tests` | 配置成功 |
-| `cmake --build --preset windows-debug`；`cmake --build --preset windows-release`；`cmake --build --preset windows-tests` | 均成功 |
-| `ctest --preset windows-tests` | 13／13 通过，包含新增 `sdk.operations_v2` 及全部真实链接测试 |
-| `cmake --build build/rebuild/windows-tests --config Release --target dfy_query_v2_fixture` | 成功 |
-| Debug 的 `dfy_sdk_v2_tests.exe`、`dfy_sdk_handles_v2_tests.exe`、`dfy_sdk_operations_v2_tests.exe` 分别调用 Release 夹具 DLL | 三项均通过 |
-
-跨配置操作验收的完整命令为 `build/rebuild/windows-tests/tests/Debug/dfy_sdk_operations_v2_tests.exe build/rebuild/windows-tests/tests/fixtures/query_v2/Release/dfy_query_v2_fixture.dll`。
-
-新增验收覆盖 C11／C++20 布局及外层打包恢复、错误服务版本／大小／入口、受理拒绝与输出清空、只读 Pending 查询、对象种类和过期引用拒绝、三种终态及重复结算拒绝、独立引用、旧快照保持、最后一份客户端引用释放后宿主继续承担工作，以及消费 DLL 释放后宿主仍能结算。状态来自隔离宿主手动推进，不把这些断言当作生产执行器、取消竞争或通知寿命的验收。
+各阶段的隔离验证、跨配置命令及当时的限制见[早期验证记录](archive/foundation/abi-v2-validation.md)。

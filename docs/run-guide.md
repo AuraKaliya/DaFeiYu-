@@ -21,6 +21,8 @@
 
 ## 会话操作
 
+使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
+
 | 输入 | 行为 |
 |---|---|
 | 普通文字 | 空闲时开始一轮问答 |

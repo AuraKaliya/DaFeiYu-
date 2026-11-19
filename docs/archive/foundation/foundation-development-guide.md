@@ -99,7 +99,7 @@
 | R09f 实际观察插件有界组合消费 | `2117c24` | 42／42 |
 | R09f-2 消费预算精确边界 | `a03479c` | 42／42 |
 
-R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](../../plugin-abi-v2.md#验收与下一单元)。
+R01a 当次验证：Debug、Release 主工程及 Debug 测试构建通过；新查询测试与 Debug 消费者调用 Release C DLL 通过。完整离线 CTest 为 8／11 通过，`plugins.manifest`、`plugins.registry`、`plugins.config` 在创建真实符号链接时因当前进程缺少权限而失败，未完成这些用例的全部断言；本次未修改这三项测试及其业务实现，也未跳过链接校验。复验命令见 [v2 验收记录](abi-v2-validation.md#验收与下一单元)。
 
 R01b 当次验证：Debug／Release 主工程、Debug 测试构建及 Debug 消费者调用 Release C DLL 通过；完整离线 CTest 为 9／12 通过，`sdk.handles_v2` 通过，上述三项测试仍因符号链接权限不足失败。正式引用运行时、业务完成及异步回收不在该步范围内。
 
