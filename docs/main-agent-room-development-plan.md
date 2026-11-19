@@ -154,6 +154,19 @@ flowchart LR
 
 ## 9. 参考实现与评审点
 
+### 角色与房间的视觉评审（待定）
+
+当前首屏用房间底图和角色位置标记评审信息布局。角色造型等参考图评审后再定，外部角色文件未纳入工程。
+
+| 看哪一张 | 本轮想确认什么 | 素材边界 |
+|---|---|---|
+| feiyu-room-template 的[待机立绘](https://github.com/sh2234113/feiyu-room-template/blob/201a4ecad48e7e77cfdd6422fb8f55a77a7b9f5f/public/room/assets/pet/idle.png)与[桌前工作帧](https://github.com/sh2234113/feiyu-room-template/blob/201a4ecad48e7e77cfdd6422fb8f55a77a7b9f5f/public/room/assets/pet/desk_code.png) | 比较同一 Q 版人物的长蓝发、鳍状侧饰、白色头饰、深蓝女仆裙与鲸纹围裙。工作帧用姿态和道具交代动作；去窗边这一幕应取相应的移动姿态。 | 2D 帧改编自 PC2005-cloud/dsh-pet，模板列为 CC BY-NC-SA 4.0。另附的 3D 模型限随模板个人、非商业展示，独立移植或改作需另查作者许可。[逐项声明](https://github.com/sh2234113/feiyu-room-template/blob/201a4ecad48e7e77cfdd6422fb8f55a77a7b9f5f/THIRD_PARTY_NOTICES.md) |
+| DSH-cozy-room 的[日间房间实景](https://github.com/Frey-Good/DSH-cozy-room/blob/8c2b17ac9d7b0dc395d9ab9303e60dbb9a931846/anime-room/preview/my-room-day.png) | 看人物在等距房间里的身高、落脚点和家具比例。可借鉴角色生活在房间里的感觉，首页仍把对话和待决定事项放在玩家手边。 | 房间代码为 MIT，角色动画另列上游和非商业、公开署名要求。两套房间的这组 2D 动画同源。[NOTICE](https://github.com/Frey-Good/DSH-cozy-room/blob/8c2b17ac9d7b0dc395d9ab9303e60dbb9a931846/NOTICE) · [素材清单](https://github.com/Frey-Good/DSH-cozy-room/blob/8c2b17ac9d7b0dc395d9ab9303e60dbb9a931846/anime-room/CREDITS.md) |
+
+上游将形象原型归于上善无形的「溟月」，女仆鲸鱼娘二创设计归于 ZipZipPipe。dsh-pet 的代码采用 MIT，素材另见其形象授权和公开二创署名说明。若选用非商业素材，逐件保留来源、署名、许可及修改记录。造型一致性还可以看六视图；房间的桌椅可独立选用有明确 CC0 声明的家具包。[上游许可与作者说明](https://github.com/PC2005-cloud/dsh-pet/tree/fb38ce620576f5ed3735a99536d2b1a4a9eb313f#许可) · [六视图与许可](https://github.com/xiaoweigen/deepseek-dafeiyu-assets) · [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit)
+
+### 实现参考
+
 - Cabin World 的房间把路径、家具和身体分开管理，到达和动作各有回执。借鉴这一点来定义书桌、窗边和台灯的可验证行为。[房间绘制](https://github.com/BabyBus2022/cabin-world/blob/4fac686768b73dfa1875d3f54d3912475f514e6a/game/entities/room.gd) · [动作协议](https://github.com/BabyBus2022/cabin-world/blob/4fac686768b73dfa1875d3f54d3912475f514e6a/docs/PROTOCOL.md)
 - feiyu-room-template 将房间事实、行为与 Three.js 表现分开，聊天可在房间中展开和收起。此处的会话统一由大肥鱼本体持有。[房间状态](https://github.com/sh2234113/feiyu-room-template/blob/201a4ecad48e7e77cfdd6422fb8f55a77a7b9f5f/src/home-state.js) · [房间交互](https://github.com/sh2234113/feiyu-room-template/blob/201a4ecad48e7e77cfdd6422fb8f55a77a7b9f5f/public/room/app.js#L1868)
 - 忙时输入参考 Codex 的本轮引导、下一轮队列与独立中断，以及 DeepSeek Harness 的步骤边界。此处由共享应用服务和 Session 实现，适配已有的完整文本响应。[Codex 忙时输入](https://learn.chatgpt.com/docs/prompting#steering-and-queuing) · [Codex 中断接口](https://learn.chatgpt.com/docs/app-server#interrupt-a-turn) · [DeepSeek Harness 的 Agent 接口](https://github.com/deepseek-ai/deepseek-harness/blob/2e39e70496aa02986ca6a820c5d497e816b69d7e/packages/core/agent/src/runtime-types.ts)

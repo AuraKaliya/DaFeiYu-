@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import room from './art/study.png?no-inline';
-import fish from './art/fish.png?no-inline';
 
 const props = defineProps<{ initialBusy: boolean }>();
 const busy = ref(props.initialBusy);
@@ -35,7 +34,7 @@ function enter(event: KeyboardEvent): void {
 
 <template>
   <main class="room-preview" :data-sample="busy ? 'busy' : 'idle'">
-    <header class="mast"><span class="emblem" aria-hidden="true"><img :src="fish" alt=""></span>
+    <header class="mast"><span class="emblem" aria-hidden="true"><i></i></span>
       <h1>大肥鱼管理中心</h1>
       <div class="samples" aria-label="首屏预览样本"><small>首屏预览</small>
         <button id="sample-idle" :aria-pressed="!busy" @click="selectSample(false)">空闲</button>
@@ -47,7 +46,7 @@ function enter(event: KeyboardEvent): void {
         <span class="presence" :class="{ working: busy && !stopped }"><i></i>{{ busy && !stopped ? '正在前往窗边' : stopped ? '已在途中停下' : '在书桌旁 · 可以聊天' }}</span>
       </div>
       <div class="scene" role="img" :aria-label="busy ? '大肥鱼在书桌和窗边之间，右侧是屏风' : '大肥鱼在书桌前，窗外是青山，桌上有台灯'">
-        <img class="backdrop" :src="room" alt=""><img class="resident" :class="{ walking: busy }" :src="fish" alt="">
+        <img class="backdrop" :src="room" alt=""><span class="resident" :class="{ walking: busy }" aria-hidden="true">大肥鱼</span>
       </div>
     </section>
     <section class="conversation" aria-labelledby="chat-heading">

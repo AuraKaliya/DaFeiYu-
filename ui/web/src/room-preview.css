@@ -7,7 +7,8 @@
 .mast,.room-bar,.chat-bar,.samples,.compose { display:flex; align-items:center }
 .mast { min-height:62px; gap:10px; border-bottom:1px solid #d8dcd0; margin-bottom:14px }
 .emblem { width:36px; height:34px; display:grid; place-items:center; background:#dce5d8; border-radius:10px }
-.emblem img { width:31px; image-rendering:pixelated }
+.emblem i { width:16px; height:18px; border:2px solid #476c5a; border-radius:6px 6px 2px 2px;
+  background:linear-gradient(90deg,transparent 44%,#476c5a 44% 56%,transparent 56%),linear-gradient(0deg,transparent 41%,#476c5a 41% 54%,transparent 54%) }
 .mast h1 { margin:0; font-size:clamp(16px,2vw,21px); letter-spacing:.05em }
 .samples { margin-left:auto; gap:2px; background:#e7e8dc; padding:3px; border-radius:9px; font-size:13px }
 .samples small { padding:0 8px; color:#536356 }
@@ -21,7 +22,10 @@
 .presence.working { color:#825727 } .working i { background:#ac7739 }
 .scene { position:relative; overflow:hidden; line-height:0; background:#ddbe99 }
 .backdrop { width:100%; display:block; image-rendering:pixelated }
-.resident { position:absolute; left:47%; top:56%; width:11%; image-rendering:pixelated } .resident.walking { left:35%; top:59% }
+.resident { position:absolute; left:50%; top:62%; padding:5px 9px; border-radius:6px; background:#354f42; color:#fffbea;
+  font-size:12px; line-height:1.35; letter-spacing:.06em; box-shadow:0 2px 4px #3c493428 }
+.resident::after { content:""; position:absolute; left:45%; bottom:-5px; border:5px solid transparent; border-top-color:#354f42; border-bottom:0 }
+.resident.walking { left:35%; top:65% }
 .conversation { margin-top:12px; padding:12px 18px 10px }
 .chat-bar { min-height:28px; gap:12px }
 .chat-bar h2 { flex:1 }
@@ -46,7 +50,7 @@
   .samples small { font-size:10px; padding:0 2px } .samples button { padding:5px 6px }
   .room-bar,.conversation { padding:10px 12px } .scene { aspect-ratio:2/1 }
   .backdrop { height:100%; object-fit:cover; object-position:50% 55% }
-  .resident { width:16%; left:46% } .resident.walking { left:29% }
+  .resident { left:48% } .resident.walking { left:29% }
   .chat-bar { gap:3px; flex-wrap:wrap } .chat-bar h2 { font-size:15px }
   .sample-lines { display:block } .send { padding:7px 9px }
 }
