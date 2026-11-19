@@ -25,19 +25,19 @@ cmake --build --preset windows-ui-debug
 
 ## U01b Frame 授权规则
 
-[FrameScope](../ui/host/frame_scope.hpp) 仅在首次导航到宿主签发的精确地址时激活，来源、视图代次和固定方法分别核对；任何重新导航或显式撤销都会使旧授权永久失效。U01 只允许 `probe.echo`，不暴露模型或插件业务方法。固定本地资源来源包含专用的未授权反向测试来源，不能接受相似域名或其他协议。
+[FrameScope](../../../ui/host/frame_scope.hpp) 仅在首次导航到宿主签发的精确地址时激活，来源、视图代次和固定方法分别核对；任何重新导航或显式撤销都会使旧授权永久失效。U01 只允许 `probe.echo`，不暴露模型或插件业务方法。固定本地资源来源包含专用的未授权反向测试来源，不能接受相似域名或其他协议。
 
 仅构建 `dfy_ui_scope_tests` 并运行 Debug `ui.frame_scope`，1／1 通过，覆盖未激活、相似域、来源冒用、旧代次、业务方法越权、重载和销毁后重放。规则尚需下一单元与真实 Frame 事件结合验证，不能把纯规则测试当作浏览器授权已经验收。
 
 ## U01c 本地来源与事件回收
 
-[LocalContent](../ui/host/local_content.cpp) 在导航前映射固定资源来源，限制主页面导航和弹窗，未登记页面资源由原生处理器返回本地 403。COM 事件登记由不可复制的登记对象管理，部分初始化失败及重复关闭均归还此前责任。构建每次同步页面资产，避免仅修改页面时仍运行旧文件。
+[LocalContent](../../../ui/host/local_content.cpp) 在导航前映射固定资源来源，限制主页面导航和弹窗，未登记页面资源由原生处理器返回本地 403。COM 事件登记由不可复制的登记对象管理，部分初始化失败及重复关闭均归还此前责任。构建每次同步页面资产，避免仅修改页面时仍运行旧文件。
 
 定向构建 GUI 与授权规则目标，Debug `ui.frame_scope` 1／1 通过。真实浏览器探针允许一个固定的测试图片地址通过页面 CSP，再验证原生层确实拦截该请求；该请求不交给网络获取，导航及关闭成功。测试只说明页面资源边界，不声称禁用了操作系统或 Evergreen 更新器的网络。尚未验证真实 Frame 消息、中文输入或浏览器进程最终退出。
 
 ## U01d 真实 Frame 消息与导航授权
 
-[FrameChannel](../ui/host/frame_channel.cpp) 将一个具体原生 Frame 与宿主签发的视图绑定，验证实际 Source、有界 JSON、精确字段、代次和固定方法。页面使用独立本地来源及 `allow-scripts allow-same-origin` 受限 iframe，不能取得主页面来源；同来源前提不能通过路径模拟。
+[FrameChannel](../../../ui/host/frame_channel.cpp) 将一个具体原生 Frame 与宿主签发的视图绑定，验证实际 Source、有界 JSON、精确字段、代次和固定方法。页面使用独立本地来源及 `allow-scripts allow-same-origin` 受限 iframe，不能取得主页面来源；同来源前提不能通过路径模拟。
 
 只构建 Debug GUI 目标并运行真实隐藏窗口探针。中文及 emoji 的 JSON 回显、业务方法越权、旧视图、非法字段拒绝，以及改源导航触发原生授权撤销均通过。导航期间的页面消息不作为撤销证明，宿主直接核对事件处理后的授权状态。关闭或销毁后晚到回调先检查通道有效性，不再访问已释放 Frame。此处中文回显仅证明编码链路，实际输入法、焦点及重复回收仍待后续单元验证。
 
@@ -57,13 +57,13 @@ cmake --build --preset windows-ui-debug
 
 ## U01g 宿主签发与 Frame 反复回收
 
-[ProbeHost](../ui/host/probe_host.cpp) 由原生主页面入口签发下一视图地址，并绑定实际创建的 Frame；页面不猜测代次。只有收到真实 Frame 销毁确认后才能重新打开。销毁回调归还事件、原生 Frame 接口与通道对象，统计副本不持有浏览器。测试窗口增加不激活样式，资源检查不申请键盘焦点。
+[ProbeHost](../../../ui/host/probe_host.cpp) 由原生主页面入口签发下一视图地址，并绑定实际创建的 Frame；页面不猜测代次。只有收到真实 Frame 销毁确认后才能重新打开。销毁回调归还事件、原生 Frame 接口与通道对象，统计副本不持有浏览器。测试窗口增加不激活样式，资源检查不申请键盘焦点。
 
 新增 `--lifecycle` 隐藏验证模式，104 个协议及原生等待步骤完成 20 次 Frame 创建和销毁，逐轮确认活动、就绪与对象存活数归零；新文档重放上一代身份得到原生 `stale_view`。定向 GUI 构建、真实授权探针和 43 步输入检查再次通过。此单元确认 Frame 资源，浏览器进程组与临时目录的最终回收在下一单元处理。
 
 ## U01h 浏览器进程与临时配置回收
 
-[BrowserProcesses 与 ProbeProfile](../ui/host/browser_lifetime.cpp) 为每次验证创建独立临时配置，只观察对应 WebView2 环境返回的进程。关闭时停止入口、归还 Frame 和浏览器接口，并继续推进 STA 消息，直到异步创建回调、CDP 调用及已观察进程的内核句柄全部结束。尚有控制器创建回调时保留环境，回调交还后重新观察可能新增的进程。
+[BrowserProcesses 与 ProbeProfile](../../../ui/host/browser_lifetime.cpp) 为每次验证创建独立临时配置，只观察对应 WebView2 环境返回的进程。关闭时停止入口、归还 Frame 和浏览器接口，并继续推进 STA 消息，直到异步创建回调、CDP 调用及已观察进程的内核句柄全部结束。尚有控制器创建回调时保留环境，回调交还后重新观察可能新增的进程。
 
 临时目录只在解析后的绝对路径仍位于本次专用根、且树内没有重解析点时删除；文件锁未解除会有界重试，失败保留并报告，不清理旧验证缓存或其他浏览器配置。最终窗口销毁延后到下一条原生消息，避免在 COM 回调栈内释放窗口。
 
@@ -109,7 +109,7 @@ Debug 的离线、输入、20 轮 Frame 回收和初始化中止模式均确认�
 
 该次分发运行中主文档导航记录为 250～268 毫秒，仅作为本机测量记录；它不包含完整产品业务就绪，也不是跨框架性能比较。测试未调用 DeepSeek／Qwen，未把本地回显计为供应商成功。
 
-记录位于忽略的 `build/u01-final-build-*.log`、`build/u01-final-ctest-*.log`、`build/u01-cross-*.log` 与 `build/ui-package-check/22ee7c63a0884dd586640fed841bc631/`。分发检查可用 [verify-ui-package.ps1](../scripts/verify-ui-package.ps1) 重现；运行方法见 [验证窗口说明](ui-probe-run-guide.md)。
+记录位于忽略的 `build/u01-final-build-*.log`、`build/u01-final-ctest-*.log`、`build/u01-cross-*.log` 与 `build/ui-package-check/22ee7c63a0884dd586640fed841bc631/`。分发检查可用 [verify-ui-package.ps1](../../../scripts/verify-ui-package.ps1) 重现；运行方法见 [验证窗口说明](../../ui-probe-run-guide.md)。
 
 运行目录为 `build/u01-delivery/DaFeiYu`，归档为 `DaFeiYu-U01-20261115-windows-x64.zip`，附 SHA-256。内含验证窗口、原终端、静态页面、SDK 示例及完整第三方声明；Evergreen Runtime 是独立先决条件，包内说明提供官方离线安装途径。本次没有在空白系统上实际安装运行库，也没有改变本机运行库或系统网络。
 

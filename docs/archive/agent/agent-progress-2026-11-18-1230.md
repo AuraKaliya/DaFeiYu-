@@ -31,7 +31,7 @@ flowchart LR
 
 沿用版本 1 证据封套和严格诊断读取。执行证据保存时间线、计划和反馈。比较核对原目标及计划版本、采样关系、动作效果、审批所指原候选和事实顺序，再按相对位置对齐独立运行分配的临时身份。执行时由固定场景和允许的测试夹具提供行为；证据文件的读取及比较不会执行工作。
 
-批量入口使用实际构建标签和固定案例材料摘要。从两个源码基线执行同一案例时，只按显式声明允许对应版本项变化。场景采集失败、字段差异和不可比均保留到相应报告，最终通过数只统计实际能比较且断言通过的场景。 [批量比较入口](../scripts/verify-agent-replay.ps1)
+批量入口使用实际构建标签和固定案例材料摘要。从两个源码基线执行同一案例时，只按显式声明允许对应版本项变化。场景采集失败、字段差异和不可比均保留到相应报告，最终通过数只统计实际能比较且断言通过的场景。 [批量比较入口](../../../scripts/verify-agent-replay.ps1)
 
 ## 功能场景覆盖
 
@@ -46,7 +46,7 @@ flowchart LR
 | F07 观察输入 | `agent.observation_inbox`、`agent.replay_observation_dispatch`、`agent.replay_observation_rebind`、`agent.observation_action` |
 | F08 计划及目标 | `agent.session_replanning`、`agent.replay_plan_revision`、`agent.replay_goal_revision` |
 | F09 行动后确认 | `agent.native_action_feedback`、`agent.replay_action_feedback`、`agent.replay_observation_action` |
-| F10 应用、重连及分发 | `app.tool_verification`、`app.replay_task`、[分发检查脚本](../scripts/verify-agent-package.ps1) |
+| F10 应用、重连及分发 | `app.tool_verification`、`app.replay_task`、[分发检查脚本](../../../scripts/verify-agent-package.ps1) |
 
 本轮测试使用预设模型响应、传输替身或纯本地命令。真实模型选工具、生成计划和判断观察表现仍在仅记录范围。原生 DLL、线程和文件按场景实际执行。
 
@@ -74,4 +74,4 @@ A09c 在上述离线范围内通过。两套完整 CTest 日志及 JUnit XML 在
 
 ## 后续
 
-下一步按用户选择接入 U02 桌面业务桥接，并复用同一 Application、审批和只读查询。长期记忆、跨进程任务恢复、多 Agent 和真实设备适配保留独立审查边界。普通终端的可复现操作见 [运行说明](run-guide.md)，独立提交见 [开发记录](agent-development-log.md)。
+下一步按用户选择接入 U02 桌面业务桥接，并复用同一 Application、审批和只读查询。长期记忆、跨进程任务恢复、多 Agent 和真实设备适配保留独立审查边界。普通终端的可复现操作见 [运行说明](../../run-guide.md)，独立提交见 [开发记录](agent-development-log.md)。

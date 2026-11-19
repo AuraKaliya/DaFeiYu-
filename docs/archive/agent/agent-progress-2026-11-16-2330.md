@@ -59,4 +59,4 @@ flowchart TB
 
 恢复后从 A07c 的正式运行装配继续：明确计划步骤与原模型／工具工作的映射、每步工具范围、有限重规划和目标修订，随后接入 P03／A08 的变化后复核与行动确认，再完成 T03／E03、A09 应用接入及最终离线全量验收。
 
-阅读入口：[触发控制器](../agent/include/dafeiyu/observation_controller.hpp) → [观察数据](../agent/observation_input.cpp) → [计划定义](../agent/include/dafeiyu/plan_definition.hpp) → [计划记录](../agent/include/dafeiyu/plan_book.hpp) → [规划协议](../agent/include/dafeiyu/plan_protocol.hpp)。前一轮范围见 [21:30 检查点](agent-progress-2026-11-16-2130.md)。
+阅读入口：[触发控制器](../../../agent/include/dafeiyu/observation_controller.hpp) → [观察数据](../../../agent/observation_input.cpp) → [计划定义](../../../agent/include/dafeiyu/plan_definition.hpp) → [计划记录](../../../agent/include/dafeiyu/plan_book.hpp) → [规划协议](../../../agent/include/dafeiyu/plan_protocol.hpp)。前一轮范围见 [21:30 检查点](agent-progress-2026-11-16-2130.md)。

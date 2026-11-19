@@ -1,6 +1,6 @@
 # 插件 C ABI v2 最小接口契约
 
-当前基础阶段 R01～R16 已完成开发和自动验收，包含生产宿主、生命周期、完整组合数据、组消费、显式处理结束及正式 App 管理。观察包 0.7.0 可从分发 SDK 独立构建，跨配置与真实服务插件切换均已验证。完整范围见 [开发指导](foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
+当前基础阶段 R01～R16 已完成开发和自动验收，包含生产宿主、生命周期、完整组合数据、组消费、显式处理结束及正式 App 管理。观察包 0.7.0 可从分发 SDK 独立构建，跨配置与真实服务插件切换均已验证。完整范围见 [开发指导](archive/foundation/foundation-development-guide.md)，后文各 R01 单元保留其当次边界。
 
 R01a 固定独立查询与静态能力协商，R01b 增加句柄表示、宿主引用服务及借用期契约，均见 [SDK 头文件](../sdk/include/dafeiyu/plugin_abi_v2.h)。[纯 C11 查询夹具](../tests/fixtures/query_v2/query.c)和 [C++20 消费者](../tests/sdk_abi_v2.cpp)验收查询；[借用夹具](../tests/fixtures/query_v2/borrow.c)和 [隔离测试宿主](../tests/sdk_handles_v2.cpp)验收引用行为。当时的隔离验收不包含生产运行时；现已由独立 `PluginModuleV2`、`HostServices` 和 `PluginInstance` 装配生产能力，原 `PluginModule` 保持 v1。
 

@@ -77,4 +77,4 @@ flowchart TB
 
 真实设备、长期记忆、跨会话恢复、多 Agent 及完整管理中心 UI 均未在本轮展开。当前仍只承诺进程内状态和显式原生控制，不把诊断或反馈值当作可恢复检查点。
 
-阅读入口：[正式会话](../agent/include/dafeiyu/session.hpp) → [原运行协调器](../agent/run_loop.cpp) → [动作观察绑定](../agent/include/dafeiyu/action_observations.hpp) → [确定性判定](../agent/include/dafeiyu/observation_verification.hpp) → [反馈请求](../agent/include/dafeiyu/plan_feedback.hpp) → [真实原生反馈场景](../tests/native_action_feedback.cpp)。前一基线见 [23:30 检查点](agent-progress-2026-11-16-2330.md)。
+阅读入口：[正式会话](../../../agent/include/dafeiyu/session.hpp) → [原运行协调器](../../../agent/run_loop.cpp) → [动作观察绑定](../../../agent/include/dafeiyu/action_observations.hpp) → [确定性判定](../../../agent/include/dafeiyu/observation_verification.hpp) → [反馈请求](../../../agent/include/dafeiyu/plan_feedback.hpp) → [真实原生反馈场景](../../../tests/native_action_feedback.cpp)。前一基线见 [23:30 检查点](agent-progress-2026-11-16-2330.md)。

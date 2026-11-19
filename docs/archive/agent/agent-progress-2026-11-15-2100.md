@@ -58,4 +58,4 @@ flowchart TB
 
 尚未具备：真实人工确认交互、完整多步追踪／导出、诊断文件重跑和版本比较、环境感知接纳、自动规划、行动后目标验证、默认 CLI 插件工具自动装配，以及管理中心业务页面和插件 UI 注册。当前运行结束不等于已经证明复杂现实目标达成。
 
-阅读入口：[主计划](agent-capability-development-plan.md) → [横向计划](agent-cross-cutting-plan.md) → [正式会话](../agent/session.cpp) → [运行协调器](../agent/run_loop.cpp) → [工具批次](../agent/tool_batch.cpp) → [原生集成测试](../tests/session_tool_loop.cpp)。
+阅读入口：[主计划](agent-capability-development-plan.md) → [横向计划](agent-cross-cutting-plan.md) → [正式会话](../../../agent/session.cpp) → [运行协调器](../../../agent/run_loop.cpp) → [工具批次](../../../agent/tool_batch.cpp) → [原生集成测试](../../../tests/session_tool_loop.cpp)。

@@ -23,7 +23,7 @@
 
 | 阅读入口 | 已有能力 | 本次需要补的部分 |
 |---|---|---|
-| [桌面容器](ui-u01-validation.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 页面](../ui/web/src/App.vue) | Win32、WebView2、本地资源、中文输入与焦点已有探针。可信主文档能读取当前或最近运行摘要。 | 普通用户可启动的主面板、受信命令、授权的对话正文与消息投递状态。探针模式保留独立入口。 |
+| [桌面容器](archive/ui/ui-u01-validation.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 页面](../ui/web/src/App.vue) | Win32、WebView2、本地资源、中文输入与焦点已有探针。可信主文档能读取当前或最近运行摘要。 | 普通用户可启动的主面板、受信命令、授权的对话正文与消息投递状态。探针模式保留独立入口。 |
 | [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/gui/run_status_host.cpp) | 发送、取消、空闲清空及结果与退出已有接口。原生业务线程推进应用，当前桌面只发布无正文摘要。 | 由同一推进者接收并保存本进程的对话结果。扩展忙时消息接纳，维持一个活动主回合。 |
 | [工具目录](../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。应用现有工具准备入口按已加载插件实例组装。 | 本体为房间签发实例身份并绑定本地工具实现。沿用同一执行约束，普通问答和内置房间都可在空插件环境工作。 |
 | [观察收件](../agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../agent/include/dafeiyu/run_journal.hpp) | 已有来源、代次、修订、时效、重复、断档及重采样语义。 | 在进入角色可读记录前判定空间与感官可达性，复用已有记录与水位机制。 |

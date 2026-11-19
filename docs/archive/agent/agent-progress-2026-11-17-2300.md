@@ -55,4 +55,4 @@ flowchart TB
 
 下一步先补观察规则允许变更时的明确触发条件、授权及失败停止，默认仍只读；再推进 E03 的同案例同输入前提下的离线行为比较、场景扩展，以及 A09 共享服务、CLI／样例、重试／重连和最终验收。T03 的默认命令及构建标签装配随应用入口完成。长期记忆、跨会话恢复、多 Agent、真实设备及完整管理中心 UI 未在本轮展开。
 
-阅读入口：[刷新接口](../agent/include/dafeiyu/observation_rebind.hpp) → [原运行](../agent/run_loop.cpp) → [诊断快照](../agent/include/dafeiyu/diagnostic_snapshot.hpp) → [编码／读取](../agent/include/dafeiyu/diagnostic_json.hpp) → [本地文件](../app/diagnostic_files.hpp) → [版本查询](../agent/include/dafeiyu/trace_identity.hpp)。此前范围见 [17:00 检查点](agent-progress-2026-11-17-1700.md)。
+阅读入口：[刷新接口](../../../agent/include/dafeiyu/observation_rebind.hpp) → [原运行](../../../agent/run_loop.cpp) → [诊断快照](../../../agent/include/dafeiyu/diagnostic_snapshot.hpp) → [编码／读取](../../../agent/include/dafeiyu/diagnostic_json.hpp) → [本地文件](../../../app/diagnostic_files.hpp) → [版本查询](../../../agent/include/dafeiyu/trace_identity.hpp)。此前范围见 [17:00 检查点](agent-progress-2026-11-17-1700.md)。

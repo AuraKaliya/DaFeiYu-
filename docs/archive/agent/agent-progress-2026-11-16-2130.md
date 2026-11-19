@@ -73,4 +73,4 @@ flowchart TB
 
 恢复后从 A06c 的显式观察触发、频率／运行预算和停止边界开始，再进入 A07 受控顺序计划，随后 P03／A08 的变化后复核及行动确认、T03／E03 和 A09 应用接入与最终验收。长期记忆、跨会话恢复、多 Agent 和完整管理中心业务 UI 仍不在本轮自动展开。
 
-阅读顺序：[主计划](agent-capability-development-plan.md) → [横向计划](agent-cross-cutting-plan.md) → [确认接口](../agent/include/dafeiyu/confirmation.hpp) → [多步查询](../agent/include/dafeiyu/run_trace.hpp) → [受限场景材料](../tests/support/replay_material.hpp) → [观察接纳](../agent/include/dafeiyu/observation_inbox.hpp)。
+阅读顺序：[主计划](agent-capability-development-plan.md) → [横向计划](agent-cross-cutting-plan.md) → [确认接口](../../../agent/include/dafeiyu/confirmation.hpp) → [多步查询](../../../agent/include/dafeiyu/run_trace.hpp) → [受限场景材料](../../../tests/support/replay_material.hpp) → [观察接纳](../../../agent/include/dafeiyu/observation_inbox.hpp)。

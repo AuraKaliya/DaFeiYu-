@@ -14,7 +14,7 @@
 /task example.status/read example.status/set_focus focus "把状态面板切换到专注模式" --request 1
 ```
 
-首读后用 `/confirmations` 查看待审调用。按实际显示的请求号和修订输入 `/approve 请求号 修订` 或 `/deny 请求号 修订`，再用 `/status` 和 `/verification` 查看运行与证据。样例提供 `idle` 和 `focus` 两态，状态随当前实例存活，第一次加载为 `idle`。完整命令见 [运行说明](run-guide.md)。
+首读后用 `/confirmations` 查看待审调用。按实际显示的请求号和修订输入 `/approve 请求号 修订` 或 `/deny 请求号 修订`，再用 `/status` 和 `/verification` 查看运行与证据。样例提供 `idle` 和 `focus` 两态，状态随当前实例存活，第一次加载为 `idle`。完整命令见 [运行说明](../../run-guide.md)。
 
 ## 架构与边界
 
@@ -55,7 +55,7 @@ flowchart TB
 
 - Debug 逐步验证 `app.lifecycle`、`app.tools`、`app.async_chat`、`app.diagnostic_files`、`app.tool_verification`、`plugins.status_example`、`agent.session_confirmation`、`agent.scenario_replay`、`agent.replay_material`、`agent.replay_evaluation` 和 `model.complete`。新增拒绝场景连续三次通过 `app.tool_verification`。并行编译期间有一次定向测试超时，编译完成后复测通过。收尾重建直接受影响的应用、样例和比较目标，定向 CTest 8／8。
 - 原生应用测试覆盖匹配、不匹配、缺首读、实例替换及拒绝。核对实际写入次数、退出和证据；重连后重复提交或决定保持原回执。Release 安装程序离线回顾从 Debug 导出的两份中文路径诊断，确认普通批准和拒绝分别记录一次及零次已发生效果，两次实际退出均已确认。
-- Release 定向验证了样例工具、应用闭环、材料读取和离线比较的实际构建入口。用 [分发检查脚本](../scripts/verify-agent-package.ps1) 从独立目录启动正式程序，两个无密钥配置均通过检查；状态包从默认空目录完成安装、加载、卸载和移除，保留已有用户设置。
+- Release 定向验证了样例工具、应用闭环、材料读取和离线比较的实际构建入口。用 [分发检查脚本](../../../scripts/verify-agent-package.ps1) 从独立目录启动正式程序，两个无密钥配置均通过检查；状态包从默认空目录完成安装、加载、卸载和移除，保留已有用户设置。
 - 从安装后的 SDK 独立生成 Release 状态面板，由 Debug 宿主实际装入并执行。另以 `11d877c` 的 Debug 和 Release 分别采集同一固定案例，明确允许构建配置变化时结果一致，未声明该变化时报告不可比。无源码标签时同样报告不可比。
 
 开发、回归及分发检查均使用固定响应、传输替身或纯本地命令，无 Computer Use。真实模型选工具与规划表现仅记录。最终全量 CTest、完整场景矩阵与整体跨配置验收留在 A09c。
@@ -66,4 +66,4 @@ flowchart TB
 2. 审查并补齐自动观察变更的明确触发、授权、时效复核及失败停止；异常或未知效果应有可见结算。长期记忆、跨进程恢复、多 Agent 和桌面业务桥接另行审查。
 3. 条件齐备后执行 A09c 的离线全量、相关跨配置和最终分发验收。
 
-阅读入口为 [共享应用](../app/application.cpp)、[证据判断](../app/tool_verification.cpp)、[原生样例测试](../tests/tool_verification.cpp)、[离线比较入口](../tests/replay_evaluation.cpp)、[主计划](agent-capability-development-plan.md) 和 [逐步开发记录](agent-development-log.md)。
+阅读入口为 [共享应用](../../../app/application.cpp)、[证据判断](../../../app/tool_verification.cpp)、[原生样例测试](../../../tests/tool_verification.cpp)、[离线比较入口](../../../tests/replay_evaluation.cpp)、[主计划](agent-capability-development-plan.md) 和 [逐步开发记录](agent-development-log.md)。

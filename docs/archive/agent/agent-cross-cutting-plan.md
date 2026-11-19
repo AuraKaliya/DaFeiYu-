@@ -68,7 +68,7 @@ P03 区分“允许动作”和“确认目标完成”两类决定。人工确�
 
 固定材料已有测试构建中的独立采集和比较入口。核对两个源码状态后，分别配置 `DFY_APPLICATION_COMMIT` 并构建 `dfy_replay_evaluation`。用各自的程序执行同一案例 `--capture 材料.json`，将标准输出保存为两个 UTF-8 文件，再执行 `--compare 基线.json 候选.json application_commit`。比较时可追加明确允许变化的版本字段，例如允许构建配置和策略变化时指定 `build` 或 `execution_policy`。基本退出状态为相同且断言通过（0）、存在差异或断言失败（1）、不可比或证据不可读（2）。采集断言失败时也保留执行证据。
 
-[批量比较脚本](../scripts/verify-agent-replay.ps1) 使用 VS 测试构建中已编译的固定案例，保存两份证据及逐案差异。编译案例的材料摘要绑定到场景源码和显式测试夹具，文件内的诊断只用于严格读取。原生用例使用各构建生成的指定测试包和独立数据目录。只变更配置的同一源码构建可用 PowerShell 7 运行以下命令。
+[批量比较脚本](../../../scripts/verify-agent-replay.ps1) 使用 VS 测试构建中已编译的固定案例，保存两份证据及逐案差异。编译案例的材料摘要绑定到场景源码和显式测试夹具，文件内的诊断只用于严格读取。原生用例使用各构建生成的指定测试包和独立数据目录。只变更配置的同一源码构建可用 PowerShell 7 运行以下命令。
 
 ```powershell
 .\scripts\verify-agent-replay.ps1 -BaselineBuild .\build\rebuild\windows-tests
@@ -141,7 +141,7 @@ flowchart LR
 | F09 行动后确认 | A08／E03a | 状态已达到、未达到和效果未知分别处理；未确认不冒充达成，不盲目重放非幂等动作 |
 | F10 应用命令与重连 | A09a／b／E03b | 同请求返回原 Run／决定；断开后可查询，重复提交不重做动作；原生／固定协议测试，不用 Computer Use |
 
-F07～F10 的独立采集入口及 F01～F10 的断言映射见 [12:30 检查点](agent-progress-2026-11-18-1230.md)。F10 的同进程重连、历史回执、拒绝及实例换代见 [正式应用用例](../tests/tool_verification.cpp)。Release 安装目录的配置、包管理及退出由 [分发检查脚本](../scripts/verify-agent-package.ps1) 复现。
+F07～F10 的独立采集入口及 F01～F10 的断言映射见 [12:30 检查点](agent-progress-2026-11-18-1230.md)。F10 的同进程重连、历史回执、拒绝及实例换代见 [正式应用用例](../../../tests/tool_verification.cpp)。Release 安装目录的配置、包管理及退出由 [分发检查脚本](../../../scripts/verify-agent-package.ps1) 复现。
 
 ## 5 验收记录与 UI 衔接
 

@@ -22,15 +22,15 @@
 
 | 领域 | 当前事实与阅读入口 | 本阶段需要补齐 |
 |---|---|---|
-| 模型协议 | [统一消息](../model/include/dafeiyu/model_messages.hpp) 接入工具和观察，内置结构化 Provider 已接 CLI | 供应商的实际选工具与计划表现仅记录 |
-| Agent | [Session](../agent/session.cpp)／[RunLoop](../agent/run_loop.cpp) 支持有界循环、确认、观察替换及显式反馈 | 更长的产品工作流和跨进程恢复单独审查 |
-| 执行记录 | [RunTimeline](../agent/include/dafeiyu/run_trace.hpp) 提供当前节点、有限增量、版本与缺口；终端支持无正文导出和离线回顾 | U02 复用值查询；分发时由构建者记录核实的源码版本 |
-| 工具与插件 | [目录](../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../agent/include/dafeiyu/tool_executor.hpp) 和 [原生注册](../plugins/tools/include/dafeiyu/plugin_tools.hpp) 已用于终端；状态面板随分发附带 | 其他插件场景按业务需求接入 |
-| 执行控制 | 当前任务共享原 [预算](../runtime/include/dafeiyu/budget.hpp) 和 [调度](../runtime/include/dafeiyu/owner_scheduler.hpp)；确认、编号命令重发和实际退出有独立状态 | 真实动作重试仍受已发生与未知效果约束 |
-| 观察输入 | [接纳集合](../agent/include/dafeiyu/observation_inbox.hpp) 提供当前性检查；[观察控制器](../agent/include/dafeiyu/observation_controller.hpp) 可经确定条件发起单一待审批动作 | CLI 目前提供主动委托，观察规则配置及真实设备入口另议 |
-| 受控规划 | [顺序记录](../agent/include/dafeiyu/plan_book.hpp) 已由原 Run 执行，宿主支持尾部修订和步骤边界目标更新；终端任务使用单步模板 | 多步计划及目标修订的产品交互待接入 |
-| 策略与验证 | [反馈请求](../agent/include/dafeiyu/plan_feedback.hpp) 用新证据验证原步骤；E03 收录 F07～F10 的固定案例及应用分发证据 | U02 继续使用同一功能场景与审批边界 |
-| UI | [U01](ui-u01-validation.md) 验证离线容器、Frame、输入焦点和回收；共享服务已供 CLI 使用 | U02 生产桥接、运行及计划视图 |
+| 模型协议 | [统一消息](../../../model/include/dafeiyu/model_messages.hpp) 接入工具和观察，内置结构化 Provider 已接 CLI | 供应商的实际选工具与计划表现仅记录 |
+| Agent | [Session](../../../agent/session.cpp)／[RunLoop](../../../agent/run_loop.cpp) 支持有界循环、确认、观察替换及显式反馈 | 更长的产品工作流和跨进程恢复单独审查 |
+| 执行记录 | [RunTimeline](../../../agent/include/dafeiyu/run_trace.hpp) 提供当前节点、有限增量、版本与缺口；终端支持无正文导出和离线回顾 | U02 复用值查询；分发时由构建者记录核实的源码版本 |
+| 工具与插件 | [目录](../../../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../../../agent/include/dafeiyu/tool_executor.hpp) 和 [原生注册](../../../plugins/tools/include/dafeiyu/plugin_tools.hpp) 已用于终端；状态面板随分发附带 | 其他插件场景按业务需求接入 |
+| 执行控制 | 当前任务共享原 [预算](../../../runtime/include/dafeiyu/budget.hpp) 和 [调度](../../../runtime/include/dafeiyu/owner_scheduler.hpp)；确认、编号命令重发和实际退出有独立状态 | 真实动作重试仍受已发生与未知效果约束 |
+| 观察输入 | [接纳集合](../../../agent/include/dafeiyu/observation_inbox.hpp) 提供当前性检查；[观察控制器](../../../agent/include/dafeiyu/observation_controller.hpp) 可经确定条件发起单一待审批动作 | CLI 目前提供主动委托，观察规则配置及真实设备入口另议 |
+| 受控规划 | [顺序记录](../../../agent/include/dafeiyu/plan_book.hpp) 已由原 Run 执行，宿主支持尾部修订和步骤边界目标更新；终端任务使用单步模板 | 多步计划及目标修订的产品交互待接入 |
+| 策略与验证 | [反馈请求](../../../agent/include/dafeiyu/plan_feedback.hpp) 用新证据验证原步骤；E03 收录 F07～F10 的固定案例及应用分发证据 | U02 继续使用同一功能场景与审批边界 |
+| UI | [U01](../ui/ui-u01-validation.md) 验证离线容器、Frame、输入焦点和回收；共享服务已供 CLI 使用 | U02 生产桥接、运行及计划视图 |
 
 当前文本失败保持原上下文，工具批次事实则独立提交。后续模型失败、用户取消或通知丢失，都不能使已执行／效果未知的动作从所需上下文中消失；只读诊断不能替代这些权威事实。
 
@@ -48,7 +48,7 @@
 | [Pi Agent](https://github.com/earendil-works/pi/blob/76c79d8bbe66993f2006b3c070544ca7c61150de/packages/agent/README.md)、[循环实现](https://github.com/earendil-works/pi/blob/76c79d8bbe66993f2006b3c070544ca7c61150de/packages/agent/src/agent-loop.ts) | 清晰的工具循环，应用消息转为模型消息，上下文变换，追加输入与引导输入区分 | 采纳小型循环与上下文入口；先串行工具，普通观察通知继续不阻塞业务结算 |
 | [AI-Vtuber 后端](https://github.com/Ikaros-521/AI-Vtuber/blob/c430ee71f208f45850c1ab25c85f2a70e9b09d72/docs/backend-architecture.md)、[输入处理](https://github.com/Ikaros-521/AI-Vtuber/blob/c430ee71f208f45850c1ab25c85f2a70e9b09d72/luna/core/my_handle.py) | 来源统一接入、输入缓冲、慢处理与接收分开、合成与播放分阶段 | 采纳观察接纳、时效与输出完成区分；不直接照搬全局状态和锁布局 |
 
-Coopanion 与 whale-room-guide 继续作为房间界面、能力入口和视图生命周期参考，见 [UI 方案](ui-framework-design.md) 的参考资料；它们不作为引入多 Agent、记忆或自动后台工作的充分理由。
+Coopanion 与 whale-room-guide 继续作为房间界面、能力入口和视图生命周期参考，见 [UI 方案](../../ui-framework-design.md) 的参考资料；它们不作为引入多 Agent、记忆或自动后台工作的充分理由。
 
 ## 4 目标运行流程与职责
 
@@ -162,7 +162,7 @@ P／T／E 也遵循本规则。评测和版本比较使用固定响应、代码�
 
 | UI 单元 | 衔接规则 |
 |---|---|
-| U02 应用服务与桥接 | 复用已在 CLI 运行的 [Application](../app/application.hpp) 和 [Conversation](../app/conversation.hpp)，按 A01 身份、P02 确认、T02 快照／增量对齐。先接查询、取消及审批，再复用同一任务提交入口 |
+| U02 应用服务与桥接 | 复用已在 CLI 运行的 [Application](../../../app/application.hpp) 和 [Conversation](../../../app/conversation.hpp)，按 A01 身份、P02 确认、T02 快照／增量对齐。先接查询、取消及审批，再复用同一任务提交入口 |
 | U03 组件 | 可独立建设状态、表单、列表和错误组件；规划与工具专用视图等对应数据契约确定后再接入 |
 | U04 内置页面 | 配置与现有诊断可先做；完整执行视图在 A05 后接入，A07 增加计划视图 |
 | U05 插件 UI 注册 | 视图注册和工具注册分别建模；共用提供实例身份、业务能力引用和代码生命周期，避免两套相互绕过的命令入口 |
