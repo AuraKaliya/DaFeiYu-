@@ -4,6 +4,8 @@
 #define DFY_V2_COMPANION_VERSION UINT32_C(1)
 #define DFY_V2_COMPANION_ROUTES_INTERFACE "dfy.companion.routes"
 #define DFY_V2_COMPANION_ROUTES_VERSION UINT32_C(1)
+#define DFY_V2_COMPANION_SKILLS_INTERFACE "dfy.companion.skills"
+#define DFY_V2_COMPANION_SKILLS_VERSION UINT32_C(1)
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +28,11 @@ typedef struct dfy_v2_companion_routes_api {
     dfy_v2_status (DFY_V2_CALL *resolve)(dfy_v2_instance* instance, dfy_v2_string_view purpose, dfy_v2_string_view* local_tool,
         dfy_v2_error* error);
 } dfy_v2_companion_routes_api;
+typedef struct dfy_v2_companion_skills_api {
+    dfy_v2_api_header header;
+    // 限原实例宿主线程；从零枚举接收宿主上下文信封的模型技能，末尾返回 NOT_FOUND，名称在调用内复制。
+    dfy_v2_status (DFY_V2_CALL *at)(dfy_v2_instance* instance, uint32_t index, dfy_v2_string_view* local_tool, dfy_v2_error* error);
+} dfy_v2_companion_skills_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

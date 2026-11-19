@@ -13,5 +13,6 @@ _Static_assert(sizeof(dfy_v2_tool_api) == 56 && offsetof(dfy_v2_tool_api, releas
 _Static_assert(sizeof(dfy_v2_companion_description) == 40 && offsetof(dfy_v2_companion_description, state_topic) == 24, "companion layout");
 _Static_assert(sizeof(dfy_v2_companion_api) == 16 && offsetof(dfy_v2_companion_api, describe) == 8, "companion table");
 _Static_assert(sizeof(dfy_v2_companion_routes_api) == 16 && offsetof(dfy_v2_companion_routes_api, resolve) == 8, "role routes");
+_Static_assert(sizeof(dfy_v2_companion_skills_api) == 16 && offsetof(dfy_v2_companion_skills_api, at) == 8, "role skills");
 // 从纯 C 消费者按值返回工作票据，验证宽整数与调用约定。
 dfy_v2_tool_ticket DFY_V2_CALL dfy_test_tool_ticket(dfy_v2_tool_ticket value) { return value; }

@@ -15,6 +15,29 @@ std::string local_name(dfy_v2_string_view value) {
 }
 }
 
+// 读取插件声明的伙伴技能集合，不把消息收件和管理命令自动暴露给模型。
+// 步骤：查询可选表 → 逐项复制有界局部名 → 核对同实例注册及唯一性。
+std::vector<std::string> companion_skills(PluginInstance& instance, const agent::ToolCatalog& catalog) {
+    auto capability = instance.query<dfy_v2_companion_skills_api>(DFY_V2_COMPANION_SKILLS_INTERFACE, DFY_V2_COMPANION_SKILLS_VERSION);
+    if (!capability) return {};
+    auto ids = instance.invoke(*capability, [&](const auto& api, auto* native) {
+        std::vector<std::string> result;
+        if (!api.at) throw std::runtime_error("companion: incomplete skills table");
+        for (uint32_t index = 0; index <= 64; ++index) {
+            dfy_v2_error error{};
+            dfy_v2_string_view value{};
+            const auto code = api.at(native, index, &value, &error);
+            if (code == DFY_V2_NOT_FOUND && !error.length) return result;
+            if (index == 64 || code != DFY_V2_OK || error.length) throw std::runtime_error("companion: invalid skills table");
+            result.push_back(std::string(instance.plugin_id()) + "/" + local_name(value));
+        }
+        throw std::logic_error("companion: unterminated skills table");
+    });
+    const auto entries = catalog.snapshot(ids, true).descriptions();
+    if (entries.size() != ids.size() || std::ranges::any_of(entries, [&](const auto& entry) { return entry.instance != instance.generation(); }))
+        throw std::invalid_argument("companion: invalid skill registration");
+    return ids;
+}
 // 读取可选角色声明，以同代只读工具检查状态查询。
 // 步骤：查询可选能力 → 在调用内复制借用字段 → 验证原实例的只读登记。
 std::optional<CompanionOffer> companion_offer(PluginInstance& instance, const agent::ToolCatalog& catalog) {

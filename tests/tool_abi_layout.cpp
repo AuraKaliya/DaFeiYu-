@@ -12,6 +12,7 @@ static_assert(sizeof(dfy_v2_tool_api) == 56 && offsetof(dfy_v2_tool_api, release
 static_assert(sizeof(dfy_v2_companion_description) == 40 && offsetof(dfy_v2_companion_description, state_topic) == 24);
 static_assert(sizeof(dfy_v2_companion_api) == 16 && offsetof(dfy_v2_companion_api, describe) == 8);
 static_assert(sizeof(dfy_v2_companion_routes_api) == 16 && offsetof(dfy_v2_companion_routes_api, resolve) == 8);
+static_assert(sizeof(dfy_v2_companion_skills_api) == 16 && offsetof(dfy_v2_companion_skills_api, at) == 8);
 // 在独立 C 消费者中往返票据，不依赖本体 C++ 运行时类型。
 extern "C" dfy_v2_tool_ticket DFY_V2_CALL dfy_test_tool_ticket(dfy_v2_tool_ticket value);
 // 验证 C 与 C++ 对票据的宽整数传递，布局同时由两种语言的静态断言约束。
