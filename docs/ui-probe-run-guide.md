@@ -2,6 +2,12 @@
 
 `dafeiyu-ui-probe.exe` 是管理中心的原生容器验证程序，提供运行状态只读查询、本地输入、对话框和独立 Frame 页面。正式问答使用 `dafeiyu.exe`。
 
+## 房间首屏预览
+
+在同一 GUI 构建的可执行文件旁运行 `dafeiyu-ui-probe.exe --room-preview idle` 或 `dafeiyu-ui-probe.exe --room-preview busy`。右上角可以切换两份固定样本。空闲时可直接输入；忙时可选择追加本轮或排到下一轮，独立停止入口保留排队消息。对话旁展开待决定事项可查看依据。输入、决定和停止只改变当前预览样本，切换样本会复位。预览不开启 Application，宿主关闭该页面的 Web 消息入口。
+
+定向 CTest 为 `ui.room_preview_idle` 和 `ui.room_preview_busy`，均使用隐藏 WebView2 和固定浏览器协议检查真实页面。
+
 ## 运行环境
 
 需要 Windows x64 和 Microsoft Edge WebView2 Evergreen Runtime。运行目录已包含前端静态资产及 MSVC Release 运行库，不需要 Node.js、源码目录或页面服务器。

@@ -53,6 +53,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool finish_posted = false, process_check_failed = false, close_warned = false;
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
+    bool room_preview = false, room_busy = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -111,7 +112,7 @@ struct Window : std::enable_shared_from_this<Window> {
         require(controller->get_CoreWebView2(&view));
         content = dfy::ui::LocalContent::attach(environment.Get(),view.Get(),assets);
         ComPtr<ICoreWebView2Settings> settings; require(view->get_Settings(&settings));
-        require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(TRUE));
+        require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(!room_preview));
         const auto weak = weak_from_this();
         dfy::ui::ProbeHost::ReadRun read_run;
         if (run_status_host) read_run = [weak] {
@@ -143,6 +144,7 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：选择探针片段 → 导航至同一受信任的主文档。
     void navigate() {
         const wchar_t* fragment = offline ? L"#offline" : smoke ? L"#verify" : L"";
+        if (room_preview) fragment = room_busy ? L"#room-busy" : L"#room-idle";
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_probe) fragment = L"#run-status";
 #endif
@@ -195,6 +197,7 @@ struct Window : std::enable_shared_from_this<Window> {
                     }
                 });
 #ifdef DFY_UI_RUN_STATUS_TEST
+                if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -311,13 +314,17 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool early = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-early";
     const bool close_controller = __argc == 2 && std::wstring_view(__wargv[1]) == L"--close-controller";
     const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
+    const bool sample = __argc == 3 && (std::wstring_view(__wargv[2]) == L"idle" || std::wstring_view(__wargv[2]) == L"busy");
+    const bool room_preview = sample && std::wstring_view(__wargv[1]) == L"--room-preview";
 #ifdef DFY_UI_RUN_STATUS_TEST
+    const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
 #else
+    const bool room_check = false;
     const bool run_status_mode = false;
 #endif
-    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode;
-    if (__argc > 1 && !automatic) return 2;
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check;
+    if (__argc > 1 && !automatic && !room_preview) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     try {
@@ -333,7 +340,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode || run_status_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
         state->close_controller = close_controller;
         state->offline = offline;
-        state->business_mode = !automatic;
+        state->room_preview = room_preview || room_check;
+        state->room_busy = state->room_preview && std::wstring_view(__wargv[2]) == L"busy";
+        state->interaction_mode |= room_check;
+        state->business_mode = !automatic && !room_preview;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
 #endif
@@ -341,7 +351,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");
         const DWORD extended = automatic ? WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW : 0;
-        state->handle = CreateWindowExW(extended,kind.lpszClassName,L"大肥鱼管理中心 · U01 验证",WS_OVERLAPPEDWINDOW,
+        state->handle = CreateWindowExW(extended,kind.lpszClassName,state->room_preview ? L"大肥鱼管理中心 · 首屏预览" : L"大肥鱼管理中心 · U01 验证",WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
         ShowWindow(state->handle,automatic ? SW_HIDE : show);
