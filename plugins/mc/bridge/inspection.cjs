@@ -3,6 +3,7 @@ const { collectionDesk } = require('./delivery.cjs');
 const { miningService } = require('./mining.cjs');
 const { returnService } = require('./returning.cjs');
 const { exploration, sampleView } = require('./exploration.cjs');
+const { partnerService } = require('./partner.cjs');
 
 // 将用户设置里的语义地标复制为有限的游戏坐标，不接受模型给出的任意落点。
 function landmarks(input = {}) {
@@ -44,7 +45,7 @@ function visibleStone(bot) {
 
 // 提供绑定到原世界和玩家消息的一次查看技能，路线执行交给游戏侧。
 // 步骤：固定零采掘的寻路策略 → 接纳或复用原动作 → 读回位置与视线 → 在撤销时停止并等待退出。
-function inspectionService(bot, world, inbox, places, witness = null) {
+function inspectionService(bot, world, inbox, places, witness = null, modelLed = false, owner = null) {
   bot.loadPlugin(pathfinder);
   let current = null;
   let timer = null;
@@ -79,6 +80,7 @@ function inspectionService(bot, world, inbox, places, witness = null) {
   const mining = miningService(bot, world, deliveries, places, (generation, order) =>
     current?.generation === generation && current.order === order ? current : null, witness);
   const returning = returnService(bot, world, deliveries, mining, places, witness);
+  const partner = modelLed ? partnerService(bot, world, inbox, places, owner) : null;
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;
@@ -134,7 +136,7 @@ function inspectionService(bot, world, inbox, places, witness = null) {
     bot.removeListener('forcedMove', gap);
     bot.removeListener('path_update', pathUpdate);
     bot.removeListener('path_reset', pathReset);
-    await Promise.all([done, mining.close(), returning.close()]);
+    await Promise.all([done, mining.close(), returning.close(), partner?.close()]);
   }
   // 一次接管只关联原游戏代次，重投不覆盖首个来源或再次停止。
   function releaseControl(generation, order = 0) {
@@ -148,6 +150,7 @@ function inspectionService(bot, world, inbox, places, witness = null) {
     return { ...release };
   }
   return {
+    partner,
     releaseControl,
     // 私有收件同时返回原接管回执，普通状态和其他世界不暴露这项玩家决定。
     controlReceipt(generation) { return release?.generation === generation ? { ...release } : null; },
@@ -155,7 +158,7 @@ function inspectionService(bot, world, inbox, places, witness = null) {
     playerCommand(text, generation, order) {
       if (closed) return null;
       if (/^停[，,]\s*我来[。！!]?$/u.test(text.trim())) { releaseControl(generation, order); return null; }
-      return this.answerOffer(text);
+      return modelLed ? null : this.answerOffer(text);
     },
     // 只返回同一游戏来源和原查看消息的观察。
     progress(generation) {

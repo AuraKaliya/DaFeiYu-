@@ -21,7 +21,8 @@ function readConfig(file) {
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(input.owner))) throw new Error('无效玩家 UUID');
   if (input.owner && (typeof input.bridgeKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.bridgeKey)))
     throw new Error('读取玩家私有消息需要独立桥接配置');
-  return { channel, owner: input.owner ?? null, key: input.bridgeKey ?? null, places: landmarks(input.places),
+  if (input.mode !== undefined && !['partner', 'scenario'].includes(input.mode)) throw new Error('未知游戏会话模式');
+  return { channel, partner: input.mode === 'partner', owner: input.owner ?? null, key: input.bridgeKey ?? null, places: landmarks(input.places),
     witness: stoneWitness(input.observer), game: { host, port, username, auth, version: '1.21.4',
     profilesFolder: path.join(path.dirname(path.resolve(file)), 'profiles') } };
 }
@@ -29,7 +30,7 @@ function readConfig(file) {
 // 将同一个实际游戏连接装配成可撤销的本机桥接，退出时归还管道与客户端。
 // 步骤：建立角色和可见状态 → 发布管道 → 在主动停止或断开时收尾。
 async function launch(file) {
-  const { channel, game, owner, key, places, witness } = readConfig(file);
+  const { channel, game, owner, key, places, witness, partner } = readConfig(file);
   const bot = mineflayer.createBot(game);
   let gameError;
   bot.on('error', error => { gameError = error; });
@@ -37,8 +38,8 @@ async function launch(file) {
   const world = observeWorld(bot);
   let actions;
   const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1', 32,
-    (text, generation, sequence) => actions?.playerCommand(text, generation, sequence) ?? inspectionOffer(text, places));
-  actions = places.size && owner ? inspectionService(bot, world, inbox, places, witness) : null;
+    (text, generation, sequence) => actions?.playerCommand(text, generation, sequence) ?? (partner ? null : inspectionOffer(text, places)));
+  actions = (partner || places.size) && owner ? inspectionService(bot, world, inbox, places, witness, partner, owner) : null;
   let bridge;
   try {
     bridge = await openBridge(channel, world, inbox, key, actions);

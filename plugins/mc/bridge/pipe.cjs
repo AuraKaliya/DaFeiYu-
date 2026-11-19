@@ -33,6 +33,12 @@ function readReply(input, world, inbox, key, actions) {
   }
   if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')
     return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };
+  if (actions?.partner) {
+    if (!['partner.begin', 'partner.read', 'partner.stop'].includes(request.method) ||
+      !['observe', 'move', 'collect', 'reply'].includes(request.skill)) throw new Error('不是伙伴会话的能力');
+    const receipt = actions.partner.call(request.method, request.id, request.context, request.skill, request.arguments);
+    return { version: 1, id: request.id, action: receipt };
+  }
   if (actions?.deliveries && request.method === 'collection.admit' && Object.keys(request).length === 5 && request.grant &&
     typeof request.grant === 'object' && Object.keys(request.grant).length === 10)
     return { version: 1, id: request.id, delivery: actions.deliveries.admit(request.grant) };
