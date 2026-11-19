@@ -14,14 +14,14 @@ std::string identity(const nlohmann::json& value, const char* key) {
 
 // 直接提交宿主状态读取，不启动模型，也不占用子会话的对话回合。
 // 步骤：复用在途请求 → 核对单一只读范围 → 创建独立工作并发布编号。
-std::uint64_t CompanionStateReader::refresh(agent::ToolSnapshot scope, const agent::ToolClock& clock) {
+std::uint64_t CompanionStateReader::refresh(agent::ToolSnapshot scope, const agent::ToolClock& clock, std::string arguments) {
     if (revoked_) throw std::logic_error("companion: state source revoked");
     if (state_.pending) return state_.request;
     const auto definitions = scope.definitions();
     if (definitions.size() != 1 || scope.permits_state_changes() || !clock) throw std::invalid_argument("companion: invalid state scope");
     const agent::RunId run{runtime::next_domain(), 1};
     auto executor = std::make_unique<agent::ToolExecutor>(run, std::move(scope), agent::ToolLimits{1, std::chrono::seconds(4)}, nullptr, clock);
-    auto work = executor->submit({{run, 1}, 1}, {"state", definitions.front().name, "{}"});
+    auto work = executor->submit({{run, 1}, 1}, {"state", definitions.front().name, std::move(arguments)});
     clock_ = clock;
     executor_ = std::move(executor);
     work_ = std::move(work);

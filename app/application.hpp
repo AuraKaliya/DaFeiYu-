@@ -70,6 +70,8 @@ class Application {
     std::optional<MiningStatus> companion_mining(runtime::DomainId session) const;
     // 在可信主入口询问位置，返回所用最近观察或新读取编号。
     LocationAnswer locate_companion(runtime::DomainId session, LocationPurpose purpose);
+    // 查询本局最近的探索介入依据与后续答复。
+    std::optional<ExplorationReview> companion_review(runtime::DomainId session) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

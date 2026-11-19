@@ -43,6 +43,10 @@ class CompanionMessages {
     CompanionDelta since(std::uint64_t after) const;
     // 返回当前发送方的下一顺序号，供宿主分配内部回报身份。
     std::uint64_t next(CompanionSide side) const;
+    // 返回当前委托身份，避免旧游戏观察触发新委托的介入。
+    std::uint64_t task() const noexcept { return task_; }
+    // 判断已有询问是否仍在等待答复。
+    bool awaiting_answer() const noexcept { return inquiry_ != 0; }
   private:
     std::size_t limit_;
     std::optional<CompanionAddress> current_;

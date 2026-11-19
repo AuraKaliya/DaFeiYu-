@@ -17,6 +17,14 @@ function readReply(input, world, inbox, key, actions) {
     return { version: 1, id: request.id, state: world.read() };
   if (!key || typeof request.key !== 'string' || !/^[a-f0-9]{64}$/.test(request.key) ||
     !timingSafeEqual(Buffer.from(request.key), Buffer.from(key))) throw new Error('invalid MC pairing');
+  const explain = request.method === 'survey.read' && Object.keys(request).length === 6 &&
+    Number.isSafeInteger(request.order) && request.order > 0 && typeof request.inquiry === 'string' && /^[1-9][0-9]{0,19}$/.test(request.inquiry);
+  if (request.method === 'survey.read' && (Object.keys(request).length === 4 || explain)) {
+    const state = world.read();
+    const survey = state && actions?.progress?.(state.generation);
+    const answer = state && explain && actions?.explain?.(state.generation, request.order, request.inquiry);
+    return { version: 1, id: request.id, state: state ? { ...state, ...(survey && { survey }), ...(answer && { answer }) } : null };
+  }
   if (request.method === 'chat.read' && inbox && Object.keys(request).length === 6 &&
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0)
     return { version: 1, id: request.id, inbox: inbox.read(request.generation, request.after) };

@@ -11,7 +11,9 @@ std::string configured_channel(std::string_view config);
 // 创建带原请求身份的只读查询。
 std::string world_request(std::string_view id);
 // 核对版本、回显和状态形状，返回规范快照文本或表示撤销的 null。
-std::string world_reply(std::string_view wire, std::string_view expected_id);
+std::string world_reply(std::string_view wire, std::string_view expected_id, bool with_survey = false);
+// 为可信宿主生成包含探索依据的配对读请求。
+std::string survey_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 用原游戏代次与游标生成带私有配对凭据的收件查询。
 std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 只把与原查询相符且序号连续的玩家消息交给受信调用者。

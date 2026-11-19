@@ -44,6 +44,12 @@ bool dimension(const Json& value) {
         return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || std::string_view(":/._-").find(c) != std::string_view::npos;
     });
 }
+// 询问修订使用非零十进制文本，避免 JavaScript 数值精度损失。
+bool inquiry_id(const Json& value) {
+    if (!value.is_string()) return false;
+    const auto& id = value.get_ref<const std::string&>();
+    return !id.empty() && id.size() <= 20 && id.front() != '0' && id.find_first_not_of("0123456789") == id.npos;
+}
 }
 
 // 读取独立通道及可选私有配对键，错误配置在实例建立前失败。
@@ -70,7 +76,7 @@ std::string world_request(std::string_view id) {
 
 // 校验原查询对应的世界观测，继续保留客户端数量和服务端信号年龄的语义。
 // 步骤：核对信封和身份 → 处理已撤销世界 → 校验字段类型与范围并返回值副本。
-std::string world_reply(std::string_view wire, std::string_view expected_id) {
+std::string world_reply(std::string_view wire, std::string_view expected_id, bool with_survey) {
     const auto reply = parse(wire);
     if (reply.size() != 3 || !reply.at("version").is_number_unsigned() ||
         reply.at("version") != 1 || !reply.at("id").is_string() || reply.at("id").get_ref<const std::string&>() != expected_id)
@@ -78,7 +84,9 @@ std::string world_reply(std::string_view wire, std::string_view expected_id) {
     const auto& state = reply.at("state");
     if (state.is_null()) return "null";
 
-    if (state.size() != 6 || !uuid(state.at("generation")) || !uuid(state.at("actor")) ||
+    const bool has_survey = with_survey && state.contains("survey");
+    const bool has_answer = with_survey && state.contains("answer");
+    if (state.size() != 6u + has_survey + has_answer || !uuid(state.at("generation")) || !uuid(state.at("actor")) ||
         !dimension(state.at("dimension")) || !state.at("cobblestone").is_number_unsigned() || state.at("cobblestone") > 9007199254740991ULL ||
         !state.at("signalAgeMs").is_number_unsigned() || state.at("signalAgeMs") > 9007199254740991ULL)
         throw std::invalid_argument("MC protocol: wrong world state");
@@ -87,7 +95,42 @@ std::string world_reply(std::string_view wire, std::string_view expected_id) {
     for (const auto* key : {"x", "y", "z"})
         if (!pos.at(key).is_number() || !std::isfinite(pos.at(key).get<double>()))
             throw std::invalid_argument("MC protocol: wrong coordinate");
+    if (has_survey) {
+        const auto& s = state.at("survey");
+        if (s.size() != 7 || !s.at("area").is_string() || !s.at("returns").is_array() || s.at("returns").size() != 3)
+            throw std::invalid_argument("MC protocol: invalid return window");
+        const auto& area = s.at("area").get_ref<const std::string&>();
+        if (area.empty() || area.size() > 48 || area.find_first_not_of("0123456789-,") != area.npos)
+            throw std::invalid_argument("MC protocol: invalid survey area");
+        for (auto field : {"order", "window", "sample", "gained", "seen"})
+            if (!s.at(field).is_number_unsigned() || s.at(field) > 9007199254740991ULL)
+                throw std::invalid_argument("MC protocol: survey counter");
+        std::uint64_t last = 0;
+        for (const auto& id : s.at("returns")) {
+            if (!id.is_number_unsigned() || id <= last || id > s.at("sample")) throw std::invalid_argument("MC protocol: return order");
+            last = id.get<std::uint64_t>();
+        }
+        if (s.at("order") == 0 || s.at("window") == 0 || s.at("gained") > s.at("seen") || s.at("seen") > 256)
+            throw std::invalid_argument("MC protocol: survey coverage");
+    }
+    if (has_answer) {
+        const auto& a = state.at("answer");
+        if (a.size() != 3 || !a.at("order").is_number_unsigned() || a.at("order") == 0 ||
+            !inquiry_id(a.at("inquiry")) ||
+            !a.at("text").is_string() || a.at("text").get_ref<const std::string&>().empty() ||
+            a.at("text").get_ref<const std::string&>().size() > 512) throw std::invalid_argument("MC protocol: route answer");
+    }
     return state.dump();
+}
+
+// 只有配置过配对键的原生实例可以请求角色的探索摘要。
+std::string survey_request(std::string_view id, std::string_view key, std::string_view arguments) {
+    auto frame = parse(arguments);
+    if (key.size() != 64 || !frame.is_object() || (!frame.empty() && (frame.size() != 2 || !frame.at("order").is_number_unsigned() ||
+        frame.at("order") == 0 || frame.at("order") > 9007199254740991ULL || !inquiry_id(frame.at("inquiry")))))
+        throw std::invalid_argument("MC protocol: route inquiry");
+    frame.update(Json{{"version", 1}, {"method", "survey.read"}, {"id", id}, {"key", key}});
+    return frame.dump();
 }
 
 // 从受控参数建立私有玩家消息查询。

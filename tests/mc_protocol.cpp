@@ -54,6 +54,14 @@ int main() {
         if (Json::parse(dfy::mc::world_request(id)).at("method") != "state.read" ||
             Json::parse(dfy::mc::world_reply(value.dump(), id)) != value.at("state")) return 1;
         rejects([&] { dfy::mc::world_reply(value.dump(), "wrong"); });
+        auto exploration = value;
+        auto& survey = exploration["state"]["survey"];
+        survey = {{"order", 2}, {"window", 1}, {"area", "0,-1,2"}, {"sample", 7}, {"returns", {3, 5, 7}}, {"seen", 4}, {"gained", 3}};
+        if (Json::parse(dfy::mc::world_reply(exploration.dump(), id, true)).at("survey") != survey) return 1;
+        rejects([&] { dfy::mc::world_reply(exploration.dump(), id); });
+        survey["returns"] = {3, 3, 7};
+        rejects([&] { dfy::mc::world_reply(exploration.dump(), id, true); });
+        rejects([&] { dfy::mc::survey_request(id, std::string(64, 'a'), R"({"order":2,"inquiry":"wrong"})"); });
         const Json bad_fields{{"generation", "old"}, {"actor", 1}, {"dimension", "\n"},
             {"position", {{"x", false}, {"y", 0}, {"z", 0}}}, {"cobblestone", -1}, {"signalAgeMs", 1.5}};
         for (const auto& [key, bad] : bad_fields.items()) {

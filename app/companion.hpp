@@ -12,6 +12,14 @@
 #include <dafeiyu/plugin_tools.hpp>
 
 namespace dfy::app {
+enum class ReviewStage { exploring, rechecking, asked, recovered, interrupted };
+struct ExplorationReview {
+    CompanionAddress address;
+    ReviewStage stage = ReviewStage::exploring;
+    std::uint64_t task = 0, order = 0, window = 0, sample = 0, coverage = 0, last_return = 0;
+    std::uint64_t report = 0, inquiry = 0, answer_request = 0, answer = 0, recovery = 0, recovery_sample = 0;
+    std::string area, basis, reply, verification;
+};
 struct CompanionStatus {
     runtime::DomainId session = 0, instance = 0;
     std::string package, topic;
@@ -57,6 +65,8 @@ class CompanionSession {
     MiningStatus mining() const { return mining_.status(); }
     // 为进度或会合查询选择最近确认的位置或另行重读。
     LocationAnswer locate(LocationPurpose purpose);
+    // 返回原探索任务最近一次介入的依据、消息修订和后续验证。
+    const std::optional<ExplorationReview>& review() const noexcept { return review_; }
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);
@@ -82,6 +92,8 @@ class CompanionSession {
     void accept_player();
     // 启动工具名和参数都已收紧的正式查看回合。
     void start_visit();
+    // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。
+    void review_exploration();
     std::weak_ptr<plugins::PluginInstance> instance_;
     std::string package_;
     std::shared_ptr<agent::ToolCatalog> catalog_;
@@ -90,6 +102,9 @@ class CompanionSession {
     agent::Session session_;
     Conversation conversation_;
     CompanionStateReader reader_;
+    std::optional<std::string> survey_tool_;
+    std::optional<ExplorationReview> review_;
+    std::uint64_t reviewed_request_ = 0;
     CompanionMessages messages_;
     std::optional<CompanionAddress> address_;
     std::string actor_;

@@ -2,6 +2,7 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const { collectionDesk } = require('./delivery.cjs');
 const { miningService } = require('./mining.cjs');
 const { returnService } = require('./returning.cjs');
+const { exploration, sampleView } = require('./exploration.cjs');
 
 // 将用户设置里的语义地标复制为有限的游戏坐标，不接受模型给出的任意落点。
 function landmarks(input = {}) {
@@ -51,6 +52,26 @@ function inspectionService(bot, world, inbox, places, witness = null) {
   let closed = false;
   let heartbeat = 0;
   let origin = null;
+  let survey = null;
+  let routeState = '正在计算路径';
+  let resetReason = '';
+  // 只引用寻路器实际报告的状态，路径计划与实地观察各自留证。
+  function pathUpdate(result) {
+    if (current?.phase !== 'moving') return;
+    routeState = { success: '已规划可行路径', partial: '仍在计算后续路径', timeout: '本次寻路计算超时',
+      noPath: '本次寻路没有找到可行路径' }[result.status] ?? '等待新的路径状态';
+  }
+  // 保存当前动作最近一次可辨认的重算原因，普通位置回读不生成原因。
+  function pathReset(reason) {
+    if (current?.phase !== 'moving') return;
+    resetReason = { stuck: '移动停滞', block_updated: '方块发生变化', chunk_loaded: '新区块已载入',
+      goal_moved: '目标位置变化' }[reason] ?? '';
+  }
+  // 仅在本次地标查看的移动阶段收集角色可见事实。
+  function observe() {
+    if (survey && current?.phase === 'moving' && !current.exited) sampleView(bot, survey, performance.now());
+  }
+  const gap = () => survey?.reset();
   let question = null;
   let answered = false;
   const deliveries = collectionDesk(world, inbox, () => question);
@@ -96,7 +117,22 @@ function inspectionService(bot, world, inbox, places, witness = null) {
   bot.on('respawn', stop);
   bot.on('end', stop);
   bot.on('move', moved);
+  bot.on('physicsTick', observe);
+  bot.on('forcedMove', gap);
+  bot.on('path_update', pathUpdate);
+  bot.on('path_reset', pathReset);
   return {
+    // 只返回同一游戏来源和原查看消息的观察。
+    progress(generation) {
+      return current && generation === current.generation && current.phase === 'moving' ? survey?.read(performance.now()) ?? null : null;
+    },
+    // 直接回答当前动作的路线询问，不中断移动或占用另一次模型调用。
+    explain(generation, order, inquiry) {
+      if (!current || current.generation !== generation || current.order !== order) return null;
+      const label = places.get(current.place).label;
+      const destination = current.phase === 'moving' ? `我正在前往${label}。` : `前往${label}的动作已离开移动阶段（${current.phase}）。`;
+      return { order, inquiry, text: destination + routeState + '。' + (resetReason ? `上次重算路径的原因是${resetReason}。` : '') };
+    },
     deliveries,
     mining,
     returning,
@@ -115,6 +151,9 @@ function inspectionService(bot, world, inbox, places, witness = null) {
       if (!place || snapshot.dimension !== place.dimension || !entry || !permitsInspection(entry.text, place.label))
         throw new Error('没有此地标的查看委托');
       origin = bot.entity.position.clone();
+      survey = exploration(order);
+      routeState = '正在计算路径';
+      resetReason = '';
       question = null;
       answered = false;
       current = { generation, order, place: placeId, phase: 'moving', exited: false, moved: false };
@@ -173,6 +212,10 @@ function inspectionService(bot, world, inbox, places, witness = null) {
       bot.removeListener('respawn', stop);
       bot.removeListener('end', stop);
       bot.removeListener('move', moved);
+      bot.removeListener('physicsTick', observe);
+      bot.removeListener('forcedMove', gap);
+      bot.removeListener('path_update', pathUpdate);
+      bot.removeListener('path_reset', pathReset);
       await Promise.all([done, mining.close(), returning.close()]);
     },
   };

@@ -18,7 +18,7 @@ struct CompanionState {
 class CompanionStateReader {
   public:
     // 对同一在途读取复用编号，新读取只授予一个只读工具。
-    std::uint64_t refresh(agent::ToolSnapshot scope, const agent::ToolClock& clock);
+    std::uint64_t refresh(agent::ToolSnapshot scope, const agent::ToolClock& clock, std::string arguments = "{}");
     // 推进原工作至实际退出，之后才发布新观察或故障。
     void advance();
     // 使当前绑定立即不可用，保留最后一次确认的只读值。

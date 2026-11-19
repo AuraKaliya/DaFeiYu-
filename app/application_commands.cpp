@@ -123,6 +123,12 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             }
             output << ".\n";
         }
+        if (const auto review = app.companion_review(status->session)) {
+            output << "探索记录 " << review->task << '/' << review->report << "  " << review->basis << '\n';
+            if (review->inquiry) output << "主 Agent 追问 #" << review->inquiry << '\n';
+            if (review->answer) output << "游戏答复 #" << review->answer << "  " << review->reply << '\n';
+            if (!review->verification.empty()) output << review->verification << '\n';
+        }
         if (const auto question = app.companion_question(status->session); question && question->phase == QuestionPhase::waiting)
             output << "Question " << question->id << " revision " << question->revision << ": " << question->text << '\n';
         if (const auto grant = app.companion_collection(status->session))

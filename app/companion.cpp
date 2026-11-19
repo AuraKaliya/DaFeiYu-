@@ -44,6 +44,7 @@ void CompanionSession::advance() {
     if (!stopping_ && !bound()) close();
     reader_.advance();
     sync_binding();
+    review_exploration();
     inbox_.advance(*catalog_, clock_);
     questions_.advance();
     delivery_.advance(questions_.grant(), address_, *catalog_, admit_tool_, receipt_tool_, clock_);
@@ -93,7 +94,8 @@ void CompanionSession::close() {
 // 从实际注册中重新取得只读范围，不能向被替换的实例读取。
 std::uint64_t CompanionSession::refresh() {
     if (stopping_ || !bound()) throw std::logic_error("companion: binding unavailable");
-    return reader_.refresh(catalog_->snapshot(std::span(&offer_.state_tool, 1), false), clock_);
+    const auto& tool = survey_tool_ ? *survey_tool_ : offer_.state_tool;
+    return reader_.refresh(catalog_->snapshot(std::span(&tool, 1), false), clock_);
 }
 
 // 换世界、断线及撤销时封闭旧信箱，迟到结果仍可归还原运行资源。
@@ -103,6 +105,10 @@ void CompanionSession::sync_binding() {
     const bool live = !stopping_ && observation.link == CompanionLink::available && observation.last.has_value();
     if (live && address_ && address_->world == observation.last->generation && actor_ == observation.last->actor) return;
     if (address_) {
+        if (review_ && !review_->recovery) {
+            review_->stage = ReviewStage::interrupted;
+            review_->verification = "原世界绑定已失效，最后一次观察之后的进展未核实";
+        }
         messages_.bind(std::nullopt);
         address_.reset();
         inbox_.bind(std::nullopt);
@@ -182,6 +188,7 @@ void CompanionSession::listen() {
     const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
     const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
     if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
+    survey_tool_ = plugins::companion_route(*instance, *catalog_, "search.progress", false);
     ask_tool_ = plugins::companion_route(*instance, *catalog_, "question.open", true);
     admit_tool_ = plugins::companion_route(*instance, *catalog_, "collect.admit", true).value_or("");
     receipt_tool_ = plugins::companion_route(*instance, *catalog_, "collect.receipt", false).value_or("");

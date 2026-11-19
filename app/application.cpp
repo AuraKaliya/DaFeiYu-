@@ -320,6 +320,10 @@ LocationAnswer Application::locate_companion(runtime::DomainId session, Location
     if (!session_.accepting()) return {LocationBasis::disconnected, companion_->state().last, 0};
     return companion_->locate(purpose);
 }
+// 只在原陪伴会话中读取已记录的探索事实。
+std::optional<ExplorationReview> Application::companion_review(runtime::DomainId session) const {
+    return companion_ && companion_->id() == session ? companion_->review() : std::nullopt;
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

@@ -47,6 +47,10 @@ async function verify(fixture, owner, fish) {
     assert.equal(started.phase, 'moving');
     assert.equal((await query(channel, request)).action.order, started.order);
     const poll = { version: 1, method: 'inspect.read', id: 'look-read', key, generation, order: 2 };
+    const inquiry = { version: 1, method: 'survey.read', id: 'survey', key, order: 2, inquiry: '47' };
+    const routeAnswer = (await query(channel, inquiry)).state.answer;
+    assert.ok(routeAnswer.order === 2 && routeAnswer.inquiry === '47' && routeAnswer.text.includes('山脚'));
+    assert.equal((await query(channel, { ...inquiry, order: 1 })).state.answer, undefined);
     let actual = started;
     const deadline = performance.now() + 20000;
     while (!actual.exited && performance.now() < deadline) {
