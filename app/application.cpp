@@ -278,9 +278,9 @@ std::optional<CompanionAddress> Application::companion_address() const {
     return companion_ ? companion_->address() : std::nullopt;
 }
 // 显式启用原会话绑定的游戏玩家入口。
-void Application::listen_companion(runtime::DomainId session) {
+void Application::listen_companion(runtime::DomainId session, CompanionMode mode) {
     if (!session_.accepting() || !companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
-    companion_->listen();
+    companion_->listen(mode);
 }
 // 查询已验证的玩家身份及读取进度，不触发动作。
 std::optional<PlayerInboxStatus> Application::companion_inbox(runtime::DomainId session) const {

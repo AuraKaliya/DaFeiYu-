@@ -14,6 +14,7 @@
 #include <array>
 
 namespace dfy::app {
+enum class CompanionMode { scenario, partner };
 struct CompanionStatus {
     runtime::DomainId session = 0, instance = 0;
     std::string package, topic;
@@ -44,7 +45,7 @@ class CompanionSession {
     // 返回仅从原插件读回签发的游戏消息地址。
     std::optional<CompanionAddress> address() const { return address_; }
     // 显式启用本实例的玩家消息入口。
-    void listen();
+    void listen(CompanionMode mode = CompanionMode::partner);
     // 查看玩家收件的可信来源、水位和缺口。
     PlayerInboxStatus inbox_status() const { return inbox_.status(); }
     // 读取最近一次玩家查看委托和宿主证据。
@@ -77,7 +78,7 @@ class CompanionSession {
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
     bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy() && !questions_.busy() &&
-        !delivery_.busy() && !mining_.busy() && !control_executor_; }
+        !delivery_.busy() && !mining_.busy() && !control_executor_ && !reply_executor_; }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -89,6 +90,22 @@ class CompanionSession {
     void finish_message(const CompanionMessage& original, const CompletedTurn* turn);
     // 从原玩家消息接纳单一地标查看。
     void accept_player();
+    // 推进由当前模型处理的原玩家消息，变更委托后收回旧回合的游戏权限。
+    void advance_partner();
+    // 向原世界投递模型最终文本，并等待原游戏实际发送回执。
+    void start_partner_reply(const std::string& text);
+    struct PartnerOrder {
+        CompanionAddress address;
+        std::uint64_t order, message;
+        std::string text, reply;
+    };
+    std::optional<PartnerOrder> partner_order_;
+    std::vector<std::string> partner_tools_;
+    std::string partner_reply_tool_;
+    std::string interrupted_text_;
+    bool reset_partner_history_ = false;
+    std::unique_ptr<agent::ToolExecutor> reply_executor_;
+    std::shared_ptr<agent::ToolRequest> reply_work_;
     // 启动工具名和参数都已收紧的正式查看回合。
     void start_visit();
     // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。

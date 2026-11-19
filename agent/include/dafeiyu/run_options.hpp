@@ -44,5 +44,7 @@ struct RunOptions {
     std::size_t trace_capacity = 256;
     RunVersionLabels version_labels;
     std::shared_ptr<runtime::Budget> budget;
+    // 宿主为本轮提供的角色引导，仅在构造模型请求时注入。
+    std::string system_instructions;
 };
 }

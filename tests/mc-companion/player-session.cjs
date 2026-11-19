@@ -78,7 +78,7 @@ async function verify(fixture) {
       const source = await until(() => readStream(fixture.server).find(row => row.kind === 'sample' && row.request === marker), '固定同一服务器世界');
       observer = { directory: join(fixture.server, 'plugins', 'DfyStoneObserver'), world: source.world, dimension: 'overworld' };
     }
-    writeFileSync(file, JSON.stringify({ channel, bridgeKey: key, host: '127.0.0.1', port: fixture.port,
+    writeFileSync(file, JSON.stringify({ mode: 'scenario', channel, bridgeKey: key, host: '127.0.0.1', port: fixture.port,
       auth: 'offline', username: 'DfyCompanion', owner: owner.player.uuid, observer,
       places: { hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
         riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } } }));

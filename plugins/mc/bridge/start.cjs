@@ -22,7 +22,7 @@ function readConfig(file) {
   if (input.owner && (typeof input.bridgeKey !== 'string' || !/^[a-f0-9]{64}$/.test(input.bridgeKey)))
     throw new Error('读取玩家私有消息需要独立桥接配置');
   if (input.mode !== undefined && !['partner', 'scenario'].includes(input.mode)) throw new Error('未知游戏会话模式');
-  return { channel, partner: input.mode === 'partner', owner: input.owner ?? null, key: input.bridgeKey ?? null, places: landmarks(input.places),
+  return { channel, partner: input.mode !== 'scenario', owner: input.owner ?? null, key: input.bridgeKey ?? null, places: landmarks(input.places),
     witness: stoneWitness(input.observer), game: { host, port, username, auth, version: '1.21.4',
     profilesFolder: path.join(path.dirname(path.resolve(file)), 'profiles') } };
 }

@@ -31,6 +31,18 @@ BoardTask CompanionSession::current_board_task() const {
 // 步骤：列出有界保留任务 → 定位当前或历史查看 → 筛选同一来源和任务的消息。
 CompanionBoard CompanionSession::board(std::optional<std::uint64_t> task, std::uint64_t after) const {
     CompanionBoard result{id(), {}, discarded_through_, false, false, {}, messages_.since(after)};
+    if (!partner_tools_.empty()) {
+        result.partner = true;
+        const auto history = messages_.since(0);
+        for (const auto& msg : history.messages) {
+            if (std::find(result.tasks.begin(), result.tasks.end(), msg.task) == result.tasks.end()) result.tasks.push_back(msg.task);
+            if (!task || *task == msg.task) result.binding_current = address_ == msg.address && bound();
+        }
+        if (task) std::erase_if(result.messages.messages, [&](const auto& msg) { return msg.task != *task; });
+        result.historical = task && !result.tasks.empty() && *task != result.tasks.back();
+        result.discarded_through = history.gap ? history.oldest - 1 : 0;
+        return result;
+    }
     for (std::size_t n = 0; n < past_visits_.size(); ++n) {
         const auto& old = past_visits_[(next_past_ + n) % past_visits_.size()];
         if (!old) continue;

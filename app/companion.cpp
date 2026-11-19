@@ -68,8 +68,9 @@ void CompanionSession::advance() {
         finish_message(*delivering_, &*result_);
         delivering_.reset();
     }
-    if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
-    if (queued_ && !delivering_ && !conversation_.busy()) {
+    if (!partner_tools_.empty()) advance_partner();
+    else if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
+    if (queued_ && !delivering_ && !conversation_.busy() && !partner_order_) {
         try {
             if (visit_ && visit_->task == queued_->revision) start_visit();
             else submit(queued_->text);
@@ -91,6 +92,7 @@ void CompanionSession::close() {
     questions_.withdraw();
     delivery_.close();
     mining_.close();
+    if (reply_executor_) reply_executor_->close();
     sync_binding();
     conversation_.close();
 }
@@ -154,6 +156,12 @@ void CompanionSession::sync_binding() {
     const bool live = !stopping_ && observation.link == CompanionLink::available && observation.last.has_value();
     if (live && address_ && address_->world == observation.last->generation && actor_ == observation.last->actor) return;
     if (address_) {
+        if (!partner_tools_.empty()) {
+            reset_partner_history_ = true;
+            interrupted_text_.clear();
+            if (partner_order_) conversation_.cancel();
+            if (reply_executor_) reply_executor_->close();
+        }
         if (review_ && !review_->recovery) {
             review_->stage = ReviewStage::interrupted;
             review_->verification = "原世界绑定已失效，最后一次观察之后的进展未核实";
@@ -245,10 +253,24 @@ void CompanionSession::start_visit() {
 
 // 根据当前实例注册的用途开启私有收件，原游戏水位以前的聊天不补作委托。
 // 步骤：校验本实例 → 查询只读收件与受控查看 → 加入宿主定期推进。
-void CompanionSession::listen() {
+void CompanionSession::listen(CompanionMode mode) {
     if (stopping_ || !bound()) throw std::logic_error("companion: inactive player source");
     const auto instance = instance_.lock();
     const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
+    if (inbox_.status().enabled && (partner_tools_.empty() != (mode == CompanionMode::scenario)))
+        throw std::logic_error("companion: stop before changing mode");
+    if (mode == CompanionMode::partner) {
+        if (!inbox) throw std::invalid_argument("companion: player inbox unavailable");
+        auto tools = plugins::companion_skills(*instance, *catalog_);
+        const auto reply = plugins::companion_route(*instance, *catalog_, "partner.reply", true);
+        if (!reply || std::ranges::find(tools, *reply) == tools.end()) throw std::invalid_argument("companion: partner reply unavailable");
+        control_tool_ = plugins::companion_route(*instance, *catalog_, "control.release", true);
+        if (!control_tool_) throw std::invalid_argument("companion: partner release unavailable");
+        inbox_.enable(*inbox);
+        partner_reply_tool_ = *reply;
+        partner_tools_ = std::move(tools);
+        return;
+    }
     const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
     if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
     survey_tool_ = plugins::companion_route(*instance, *catalog_, "search.progress", false);
@@ -268,6 +290,7 @@ std::uint64_t CompanionSession::send(const CompanionAddress& address, CompanionM
     std::uint64_t reply_to, const std::string& text) {
     if (stopping_ || !bound() || !address_ || address != *address_) throw std::invalid_argument("companion: stale address");
     const bool fresh = command == messages_.next(CompanionSide::primary);
+    if (fresh && partner_order_) throw std::logic_error("companion: player turn in progress");
     if (fresh && (queued_ || (delivering_ && kind == CompanionMessageKind::delegation)))
         throw std::logic_error("companion: message delivery pending");
     auto message = messages_.post(address, CompanionSide::primary, kind, command, reply_to, text);

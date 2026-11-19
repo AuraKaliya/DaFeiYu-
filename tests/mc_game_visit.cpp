@@ -61,7 +61,7 @@ int wmain(int argc, wchar_t** argv) {
         application.plugins().install(argv[1]);
         check(application.plugins().load("mc.companion") == 0, "plugin load");
         std::ostringstream terminal;
-        check(app::application_command(application, "/companion open mc.companion", terminal, std::cerr), "terminal open");
+        check(app::application_command(application, "/companion scenario mc.companion", terminal, std::cerr), "terminal scenario");
         const auto id = application.companion_status()->session;
         until(application, [&] { return application.companion_inbox(id)->ready; });
         check(application.companion_inbox(id)->cursor == 1, "wrong baseline");

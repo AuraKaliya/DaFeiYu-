@@ -33,5 +33,6 @@ struct CompanionBoard {
     bool historical = false, binding_current = false;
     std::optional<BoardTask> selected;
     CompanionDelta messages;
+    bool partner = false;
 };
 }

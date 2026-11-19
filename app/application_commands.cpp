@@ -77,6 +77,13 @@ void write_board(const CompanionBoard& board, std::optional<std::uint64_t> reque
     output << "计划板 · 会话 " << board.session << " · 可查委托";
     for (auto task : board.tasks) output << ' ' << task;
     output << '\n';
+    if (board.partner) {
+        if (board.messages.gap) output << "早期消息已超出保留窗口。\n";
+        if (board.messages.messages.empty()) output << "没有匹配的游戏对话。\n";
+        for (const auto& msg : board.messages.messages)
+            output << '#' << msg.revision << (msg.from == CompanionSide::primary ? " 玩家 " : " 大肥鱼 ") << msg.text << '\n';
+        return;
+    }
     if (!board.selected) {
         output << (requested && *requested <= board.discarded_through ? "该委托已超出保留窗口。\n" : "没有匹配的查看委托。\n");
         return;
@@ -128,10 +135,10 @@ void write_board(const CompanionBoard& board, std::optional<std::uint64_t> reque
 // 步骤：分派受信命令 → 校验实例及会话身份 → 输出接纳和实际状态。
 void companion_command(Application& app, std::string_view command, std::ostream& output) {
     const auto words = command_words(command);
-    if (words.size() == 3 && words[1] == "open") {
+    if (words.size() == 3 && (words[1] == "open" || words[1] == "scenario")) {
         const auto original = app.companion_status();
         const auto id = app.open_companion(words[2]);
-        try { app.listen_companion(id); }
+        try { app.listen_companion(id, words[1] == "open" ? CompanionMode::partner : CompanionMode::scenario); }
         catch (...) {
             if (!original || original->session != id) app.stop_companion(id);
             throw;
@@ -213,7 +220,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

@@ -23,7 +23,7 @@ int wmain(int argc, wchar_t** argv) {
         app.plugins().install(argv[1]);
         if (app.plugins().load("mc.companion")) return 1;
         const auto id = app.open_companion("mc.companion");
-        app.listen_companion(id);
+        app.listen_companion(id, dfy::app::CompanionMode::scenario);
         until(app, [&] { return app.companion_inbox(id)->ready; });
         const auto baseline = *app.companion_inbox(id);
         if (baseline.cursor != 1 || baseline.owner.empty() || !app.companion_messages(id, 0).messages.empty()) return 1;

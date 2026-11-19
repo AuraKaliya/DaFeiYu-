@@ -25,7 +25,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto session = host.open_companion("mc.companion");
         const auto empty = host.companion_board(session);
         check(empty && empty->tasks.empty() && !empty->selected && !host.companion_board(session + 1), "wrong initial board");
-        host.listen_companion(session);
+        host.listen_companion(session, app::CompanionMode::scenario);
 
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (host.companion_messages(session, 0).latest < 80 && std::chrono::steady_clock::now() < deadline) {

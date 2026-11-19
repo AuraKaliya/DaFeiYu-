@@ -4,6 +4,7 @@ add_library(dfy_application STATIC application.cpp application.hpp conversation.
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_sources(dfy_application PRIVATE companion.cpp companion.hpp companion_state.cpp companion_state.hpp)
 target_sources(dfy_application PRIVATE companion_messages.cpp companion_messages.hpp)
+target_sources(dfy_application PRIVATE companion_partner.cpp)
 target_sources(dfy_application PRIVATE companion_inbox.cpp companion_inbox.hpp)
 target_sources(dfy_application PRIVATE companion_visit.cpp companion_visit.hpp)
 target_sources(dfy_application PRIVATE companion_question.cpp companion_question.hpp)
@@ -34,6 +35,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
 add_library(dfy_terminal STATIC application_commands.cpp application_commands.hpp chat.cpp chat.hpp async_chat.hpp)
 target_sources(dfy_terminal PRIVATE diagnostics.cpp diagnostics.hpp)
+target_sources(dfy_terminal PRIVATE companion_host.cpp companion_host.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostics.hpp")
 target_sources(dfy_terminal PRIVATE plugin_commands.cpp plugin_commands.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.hpp")

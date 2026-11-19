@@ -32,7 +32,7 @@ void verify(const std::filesystem::path& pkg, const std::filesystem::path& root,
     app.plugins().install(pkg);
     if (app.plugins().load("mc.companion")) throw std::runtime_error("plugin load failed");
     const auto id = app.open_companion("mc.companion");
-    app.listen_companion(id);
+    app.listen_companion(id, dfy::app::CompanionMode::scenario);
     const auto review = [&] { return app.companion_review(id); };
     until(app, [&] { return review().has_value(); });
     const auto first = *review();

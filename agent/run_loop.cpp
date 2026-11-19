@@ -385,6 +385,12 @@ struct RunLoopState {
         const auto& scope = record->plan_ ? step_tools : options.tools;
         model::Request input = planning_request ? planning_request->request :
             model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
+        if (!options.system_instructions.empty()) {
+            if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
+            if (input.messages.front().role == model::Role::system) input.messages.front().content =
+                options.system_instructions + "\n" + input.messages.front().content;
+            else input.messages.insert(input.messages.begin(), {model::Role::system, options.system_instructions});
+        }
         ModelContextSnapshot context{current.attempt,options.goal_revision};
         context.observation_binding = current.observation_binding;
         if (current.observation_binding) context.observations_current = current.observations_current;

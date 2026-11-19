@@ -52,7 +52,7 @@ class Application {
     // 读取最近一次实际状态签发的当前地址。
     std::optional<CompanionAddress> companion_address() const;
     // 允许当前已加载角色接收新玩家消息，从开启后的实际水位开始。
-    void listen_companion(runtime::DomainId session);
+    void listen_companion(runtime::DomainId session, CompanionMode mode = CompanionMode::partner);
     // 返回当前会话内的玩家收件状态。
     std::optional<PlayerInboxStatus> companion_inbox(runtime::DomainId session) const;
     // 读取玩家委托的查看状态及其实际游戏回执。
