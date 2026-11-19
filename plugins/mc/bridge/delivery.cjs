@@ -1,5 +1,5 @@
 // 在当前游戏世界保存宿主签发的新委托，接单本身不启动采掘。
-function collectionDesk(world, inbox, currentQuestion) {
+function collectionDesk(world, inbox, currentQuestion, accepting = () => true) {
   let accepted = null;
   // 查询当前世界能否明确证明某项委托已接收或尚未接收。
   function read(generation, question, id) {
@@ -30,6 +30,7 @@ function collectionDesk(world, inbox, currentQuestion) {
         for (const key of Object.keys(value)) if (value[key] !== receipt[key]) throw new Error('委托参数冲突');
         return receipt;
       }
+      if (!accepting()) throw new Error('角色已停止接纳委托');
       if (via === 'game') {
         const sequence = Number(command);
         const response = inbox.get(generation, sequence);

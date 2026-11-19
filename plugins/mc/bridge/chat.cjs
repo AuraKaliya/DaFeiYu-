@@ -26,7 +26,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024 || !sync()) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
     const entry = { sequence: ++sequence, text: packet.plainMessage };
-    const offer = classify(entry.text);
+    const offer = classify(entry.text, generation, sequence);
     if (offer) entry.offer = offer;
     entries.push(entry);
     if (entries.length > capacity) entries.shift();

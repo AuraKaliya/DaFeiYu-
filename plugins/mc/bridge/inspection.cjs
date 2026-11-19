@@ -74,7 +74,8 @@ function inspectionService(bot, world, inbox, places, witness = null) {
   const gap = () => survey?.reset();
   let question = null;
   let answered = false;
-  const deliveries = collectionDesk(world, inbox, () => question);
+  let release = null;
+  const deliveries = collectionDesk(world, inbox, () => question, () => !closed);
   const mining = miningService(bot, world, deliveries, places, (generation, order) =>
     current?.generation === generation && current.order === order ? current : null, witness);
   const returning = returnService(bot, world, deliveries, mining, places, witness);
@@ -121,7 +122,41 @@ function inspectionService(bot, world, inbox, places, witness = null) {
   bot.on('forcedMove', gap);
   bot.on('path_update', pathUpdate);
   bot.on('path_reset', pathReset);
+  // 先封闭全部动作入口，再等原寻路、采掘和返程的异步调用实际返回。
+  // 步骤：撤销接纳 → 停止游戏输入 → 解除监听并等待各工作退出。
+  async function close() {
+    closed = true;
+    stop();
+    bot.removeListener('respawn', stop);
+    bot.removeListener('end', stop);
+    bot.removeListener('move', moved);
+    bot.removeListener('physicsTick', observe);
+    bot.removeListener('forcedMove', gap);
+    bot.removeListener('path_update', pathUpdate);
+    bot.removeListener('path_reset', pathReset);
+    await Promise.all([done, mining.close(), returning.close()]);
+  }
+  // 一次接管只关联原游戏代次，重投不覆盖首个来源或再次停止。
+  function releaseControl(generation, order = 0) {
+    if (world.read()?.generation !== generation || (release && release.generation !== generation))
+      throw new Error('接管的游戏绑定已失效');
+    if (!release) {
+      const record = { generation, order, phase: 'requested' };
+      release = record;
+      close().then(() => { record.phase = 'released'; }, () => { record.phase = 'unconfirmed'; });
+    }
+    return { ...release };
+  }
   return {
+    releaseControl,
+    // 私有收件同时返回原接管回执，普通状态和其他世界不暴露这项玩家决定。
+    controlReceipt(generation) { return release?.generation === generation ? { ...release } : null; },
+    // 仅已验证的原玩家可以通过明确短句接管，优先于模型、动作队列和待答问题。
+    playerCommand(text, generation, order) {
+      if (closed) return null;
+      if (/^停[，,]\s*我来[。！!]?$/u.test(text.trim())) { releaseControl(generation, order); return null; }
+      return this.answerOffer(text);
+    },
     // 只返回同一游戏来源和原查看消息的观察。
     progress(generation) {
       return current && generation === current.generation && current.phase === 'moving' ? survey?.read(performance.now()) ?? null : null;
@@ -206,18 +241,7 @@ function inspectionService(bot, world, inbox, places, witness = null) {
       return { purpose: 'collect.return', question: question.id, quantity: Number(match[1]) };
     },
     // 关闭入口并等待本次路径结束，移除游戏事件监听。
-    async close() {
-      closed = true;
-      stop();
-      bot.removeListener('respawn', stop);
-      bot.removeListener('end', stop);
-      bot.removeListener('move', moved);
-      bot.removeListener('physicsTick', observe);
-      bot.removeListener('forcedMove', gap);
-      bot.removeListener('path_update', pathUpdate);
-      bot.removeListener('path_reset', pathReset);
-      await Promise.all([done, mining.close(), returning.close()]);
-    },
+    close,
   };
 }
 module.exports = { inspectionService, landmarks, permitsInspection, inspectionOffer };

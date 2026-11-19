@@ -37,7 +37,7 @@ async function launch(file) {
   const world = observeWorld(bot);
   let actions;
   const inbox = ownerInbox(bot, world, owner, game.auth === 'offline' && game.host === '127.0.0.1', 32,
-    text => actions?.answerOffer(text) ?? inspectionOffer(text, places));
+    (text, generation, sequence) => actions?.playerCommand(text, generation, sequence) ?? inspectionOffer(text, places));
   actions = places.size && owner ? inspectionService(bot, world, inbox, places, witness) : null;
   let bridge;
   try {

@@ -26,8 +26,13 @@ function readReply(input, world, inbox, key, actions) {
     return { version: 1, id: request.id, state: state ? { ...state, ...(survey && { survey }), ...(answer && { answer }) } : null };
   }
   if (request.method === 'chat.read' && inbox && Object.keys(request).length === 6 &&
-    typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0)
-    return { version: 1, id: request.id, inbox: inbox.read(request.generation, request.after) };
+    typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0) {
+    const batch = inbox.read(request.generation, request.after);
+    const control = actions?.controlReceipt?.(request.generation);
+    return { version: 1, id: request.id, inbox: batch && control ? { ...batch, control } : batch };
+  }
+  if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')
+    return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };
   if (actions?.deliveries && request.method === 'collection.admit' && Object.keys(request).length === 5 && request.grant &&
     typeof request.grant === 'object' && Object.keys(request.grant).length === 10)
     return { version: 1, id: request.id, delivery: actions.deliveries.admit(request.grant) };
