@@ -1,0 +1,11 @@
+{
+  "name": "dafeiyu-local-browser-player",
+  "version": "0.1.0",
+  "private": true,
+  "description": "本机 MC 体验服的第一人称玩家入口",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "express": "4.22.3",
+    "ws": "8.21.3"
+  }
+}

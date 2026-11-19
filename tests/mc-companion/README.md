@@ -10,6 +10,12 @@
 
 用同一启动命令加 `-Probe` 可先做无人预演。专用协议玩家读取服务端公布的资源包、下载并核对 SHA-1，与大肥鱼完成同一聊天和采石回合，将亲自收到的消息保存为 `player.json`。原版客户端的画面、玩家对提示语和行动节奏的感受留给人工体验。桌面计划板联调和 G20 的最终全量验收是后续单元。
 
+### 用浏览器进服
+
+运行 `./tests/mc-companion/browser-player/start.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。脚本验证并展开 WebMC 2.4.0 的官方发布包，启动体验服及本机连接服务，用 D 盘独立浏览器资料打开入口。加 `-PrepareOnly` 可以只准备服务。已在运行时可直接打开 [浏览器玩家入口](http://127.0.0.1:25582/)，点击“进入河边体验”。[上游项目与协议兼容范围](https://github.com/zardoy/minecraft-web-client) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
+
+你使用独立的本地玩家名 `DfyVisitor`。点击游戏画面后用 WASD 走动、鼠标转向，按 T 输入“去山脚看看”并回车。大肥鱼会向你的原玩家身份提问，你可继续用普通聊天答复或叫停。浏览器按大肥鱼的离线 UUID 为其玩家模型加载已准备的皮肤。关闭游戏页面将离服，重开一轮可再运行启动脚本。此入口只连接本机 `127.0.0.1:25580` 的离线体验服。
+
 G01 直接运行 `node --test tests/mc-companion/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
 
 ## G02 双角色只读探针

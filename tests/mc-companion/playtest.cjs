@@ -64,6 +64,7 @@ async function play(fixture, exe, pkg) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
+    if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '山脚与工具就绪');
     child = spawn(exe, [pkg, root], { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -106,7 +107,8 @@ async function main() {
   const pack = fs.readFileSync(path.join(process.env.DFY_MC_TEST_ROOT, 'appearance/companion-1.21.4.zip'));
   const httpd = http.createServer((req, res) => {
     if (req.url !== '/companion.zip' || !['GET', 'HEAD'].includes(req.method)) { res.writeHead(404).end(); return; }
-    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': pack.length });
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Length': pack.length,
+      'Access-Control-Allow-Origin': 'http://127.0.0.1:25582' });
     res.end(req.method === 'HEAD' ? undefined : pack);
   });
   httpd.listen(25581, '127.0.0.1');

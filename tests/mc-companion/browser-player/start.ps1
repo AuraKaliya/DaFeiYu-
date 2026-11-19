@@ -1,0 +1,72 @@
+# 准备上游浏览器客户端并打开本机体验服；试玩的下载、缓存和浏览器资料均放在指定目录。
+[CmdletBinding()]
+param([Parameter(Mandatory)][string]$FixtureRoot, [switch]$PrepareOnly)
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path -LiteralPath $FixtureRoot).Path
+$dir = Join-Path $root 'mwc'
+$env:TEMP = $env:TMP = Join-Path $root 'tmp'
+$env:npm_config_cache = Join-Path $root 'npm-cache'
+$env:DFY_MC_TEST_ROOT = $root
+$env:NODE_PATH = Join-Path $dir 'relay/node_modules'
+$relay = Join-Path $dir 'relay'
+[void](New-Item -ItemType Directory -Force -Path $relay)
+
+$archive = Join-Path $dir 'self-host-v2.4.0.zip'
+if (-not (Test-Path -LiteralPath $archive)) {
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/zardoy/minecraft-web-client/releases/download/v2.4.0/self-host.zip' -OutFile $archive
+}
+if ((Get-FileHash -LiteralPath $archive).Hash -ne '6580af1f2850b2e492998520a3ee66f97142d1ac62b2ea125b6f3be121958f4f') {
+    throw 'WebMC 发布包校验不符'
+}
+if (-not (Test-Path -LiteralPath (Join-Path $dir '2.4.0/dist/index.html'))) {
+    Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $dir '2.4.0') -Force
+}
+$lock = Join-Path $PSScriptRoot 'package-lock.json'
+$stamp = Join-Path $relay 'installed-lock.txt'
+$digest = (Get-FileHash -LiteralPath $lock).Hash
+if (-not (Test-Path -LiteralPath $stamp) -or (Get-Content -LiteralPath $stamp -Raw).Trim() -ne $digest -or
+    -not (Test-Path -LiteralPath (Join-Path $env:NODE_PATH 'ws/package.json'))) {
+    Copy-Item -LiteralPath $lock,(Join-Path $PSScriptRoot 'package.json') -Destination $relay
+    & npm.cmd ci --prefix $relay --no-audit --no-fund --ignore-scripts
+    if ($LASTEXITCODE) { throw '本机连接依赖安装失败' }
+    Set-Content -LiteralPath $stamp -Value $digest
+}
+
+# 核对本机 TCP 监听是否存在，避免重复启动体验进程。
+function Test-Listening([int]$Port) {
+    $client = [Net.Sockets.TcpClient]::new()
+    try { $client.Connect('127.0.0.1', $Port); return $true }
+    catch { return $false }
+    finally { $client.Dispose() }
+}
+
+$stampTime = Get-Date -Format 'yyyyMMdd-HHmmssfff'
+if (-not (Test-Listening 25580)) {
+    $paper = Join-Path (Split-Path $PSScriptRoot) 'start-playtest.ps1'
+    $out = Join-Path $dir "$stampTime-paper.log"
+    $err = Join-Path $dir "$stampTime-paper.err"
+    $job = Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -PassThru -ArgumentList @(
+        '-NoProfile','-File',('"' + $paper + '"'),'-FixtureRoot',('"' + $root + '"')) -RedirectStandardOutput $out -RedirectStandardError $err
+    $until = (Get-Date).AddSeconds(90)
+    while (-not (Select-String -Path $out -SimpleMatch '127.0.0.1:25580' -Quiet -ErrorAction SilentlyContinue)) {
+        if ($job.HasExited -or (Get-Date) -gt $until) { throw "体验服未就绪，详见 $err 和 $out" }
+        Start-Sleep -Milliseconds 350
+    }
+}
+if (-not (Test-Listening 25582)) {
+    $err = Join-Path $dir "$stampTime-web.err"
+    $job = Start-Process -FilePath (Get-Command node).Source -WindowStyle Hidden -PassThru -ArgumentList @(
+        ('"' + (Join-Path $PSScriptRoot 'serve.cjs') + '"')) -RedirectStandardOutput (Join-Path $dir "$stampTime-web.log") -RedirectStandardError $err
+    $until = (Get-Date).AddSeconds(10)
+    while (-not (Test-Listening 25582)) {
+        if ($job.HasExited -or (Get-Date) -gt $until) { throw "浏览器入口未就绪，详见 $err" }
+        Start-Sleep -Milliseconds 200
+    }
+}
+$url = 'http://127.0.0.1:25582'
+if ((Invoke-RestMethod "$url/health").service -ne 'dafeiyu-webmc') { throw '浏览器端口未返回本项目的就绪信息' }
+if (-not $PrepareOnly) {
+    $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
+    Start-Process -FilePath $edge -ArgumentList @(('--user-data-dir="' + (Join-Path $dir 'player-profile') + '"'),'--no-first-run',$url)
+}
+Write-Output $url
