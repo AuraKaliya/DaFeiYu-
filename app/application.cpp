@@ -324,6 +324,12 @@ LocationAnswer Application::locate_companion(runtime::DomainId session, Location
 std::optional<ExplorationReview> Application::companion_review(runtime::DomainId session) const {
     return companion_ && companion_->id() == session ? companion_->review() : std::nullopt;
 }
+// 读取保留的原会话计划板，不发起世界重读、模型请求或游戏动作。
+std::optional<CompanionBoard> Application::companion_board(runtime::DomainId session,
+    std::optional<std::uint64_t> task, std::uint64_t after_message) const {
+    if (!companion_ || companion_->id() != session) return {};
+    return companion_->board(task, after_message);
+}
 // 由主侧向原会话发送业务消息，使用宿主绑定的方向。
 std::uint64_t Application::send_companion(const CompanionAddress& address, CompanionMessageKind kind,
     std::uint64_t command, std::uint64_t reply_to, const std::string& text) {

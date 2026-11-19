@@ -1,4 +1,5 @@
 #include "companion.hpp"
+#include <algorithm>
 
 namespace dfy::app {
 namespace {
@@ -127,7 +128,8 @@ void CompanionSession::sync_binding() {
     }
 }
 
-// 只从已校验的玩家收件窗口创建业务委托，普通对话不取得工具范围。
+// 按原玩家意图处理答复或建立查看委托，并保留被接替任务的计划板。
+// 步骤：分派原问题答复 → 核对新查看的条件 → 接纳新任务并轮换历史。
 void CompanionSession::accept_player() {
     const auto entry = inbox_.take();
     if (!entry) return;
@@ -150,7 +152,20 @@ void CompanionSession::accept_player() {
     if (entry->visit_place.empty() || (question && (question->phase == QuestionPhase::waiting ||
         (question->phase == QuestionPhase::authorized && !returned)))) return;
     CompanionVisit visit{*address_, entry->sequence, 0, inbox_.status().owner, entry->text, entry->visit_place};
+    // 在新任务接纳前准备旧任务的值副本，接纳成功后才替换历史槽。
+    std::optional<BoardTask> previous;
+    if (visit_) {
+        // 历史副本内存不足时仍接纳新委托，并在查询时标记缺口。
+        try { previous = current_board_task(); }
+        catch (const std::bad_alloc&) { previous.reset(); }
+    }
     visit.task = send(*address_, CompanionMessageKind::delegation, messages_.next(CompanionSide::primary), 0, entry->text);
+    if (previous) {
+        auto& slot = past_visits_[next_past_];
+        if (slot) discarded_through_ = std::max(discarded_through_, slot->visit.task);
+        slot = std::move(previous);
+        next_past_ = (next_past_ + 1) % past_visits_.size();
+    } else if (visit_) discarded_through_ = visit_->task;
     visit_ = std::move(visit);
 }
 

@@ -9,7 +9,8 @@ const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 // 用独立目录的插件配置把真实 DLL 接到受控世界来源。
 // 步骤：签发管道短名并保存用户设置 → 运行原生安装与执行探针 → 核对调用数并关闭。
 async function main() {
-  const [exe, packagePath, temp] = process.argv.slice(2);
+  const [exe, packagePath, temp, variant] = process.argv.slice(2);
+  const boardWindow = variant === 'board-window';
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -18,17 +19,27 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
+  let baselineRead = false;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
     // 第二次查询模拟原世界已撤销。
-    read() { return ++reads === 1 ? state : null; },
+    read() { ++reads; return boardWindow || reads === 1 ? state : null; },
     // 替身没有待释放的游戏资源。
     close() {},
   }, {
     // 返回特定来源的固定玩家原话，供私有收件读口验收。
     read(generation, after) {
-      if (generation !== state.generation || reads !== 1) return null;
+      if (generation !== state.generation || (!boardWindow && reads !== 1)) return null;
+      if (boardWindow) {
+        const latest = baselineRead ? 40 : 0;
+        baselineRead = true;
+        const end = Math.min(latest, after + 8);
+        const messages = [];
+        for (let sequence = after + 1; sequence <= end; ++sequence)
+          messages.push({ sequence, text: '固定查看 ' + sequence, offer: { purpose: 'visit.inspect', place: 'hillside' } });
+        return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest, gap: false, more: end < latest, messages };
+      }
       return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest: 1,
         gap: false, more: false, messages: after === 0 ? [{ sequence: 1, text: '去山脚看看' }] : [] };
     },
@@ -39,7 +50,7 @@ async function main() {
     const child = spawn(exe, [packagePath, root], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
-    assert.equal(reads, 2);
+    if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {
     await bridge.close();
   }

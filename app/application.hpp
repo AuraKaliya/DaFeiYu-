@@ -72,6 +72,9 @@ class Application {
     LocationAnswer locate_companion(runtime::DomainId session, LocationPurpose purpose);
     // 查询本局最近的探索介入依据与后续答复。
     std::optional<ExplorationReview> companion_review(runtime::DomainId session) const;
+    // 可信入口按原会话和可选任务读取计划板；跨会话查询返回空值。
+    std::optional<CompanionBoard> companion_board(runtime::DomainId session, std::optional<std::uint64_t> task = {},
+        std::uint64_t after_message = 0) const;
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);

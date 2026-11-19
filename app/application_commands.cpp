@@ -3,6 +3,7 @@
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "plugin_commands.hpp"
+#include <array>
 #include <charconv>
 #include <ostream>
 
@@ -70,6 +71,59 @@ void write_task_status(const Application& application, std::uint64_t request, st
     } else output << "Run details are no longer retained.\n";
 }
 
+// 展示一个原任务的来源链，缺失回执与已证实的效果分别标明。
+// 步骤：核对保留窗口 → 展示原话、观察与答复 → 读取原游戏的接单和到场证据。
+void write_board(const CompanionBoard& board, std::optional<std::uint64_t> requested, std::ostream& output) {
+    output << "计划板 · 会话 " << board.session << " · 可查委托";
+    for (auto task : board.tasks) output << ' ' << task;
+    output << '\n';
+    if (!board.selected) {
+        output << (requested && *requested <= board.discarded_through ? "该委托已超出保留窗口。\n" : "没有匹配的查看委托。\n");
+        return;
+    }
+    const auto& task = *board.selected;
+    const auto& visit = task.visit;
+    constexpr std::array visits{"待执行", "已提交", "到达", "已发现", "未核实", "已撤回"};
+    output << (board.historical ? "历史查看 #" : "查看 #") << visit.task << " · 玩家消息 #" << visit.order << " · " << visit.text << '\n'
+           << visits.at(static_cast<std::size_t>(visit.phase)) << " · " << visit.place << '\n'
+           << "世界 " << visit.address.world << " · 绑定 " << visit.address.binding
+           << (board.binding_current ? "（当前绑定）\n" : "（历史绑定）\n");
+    if (!visit.evidence.empty()) output << "查看回执 " << visit.evidence << '\n';
+    if (task.player_input_gap.value_or(false)) output << "玩家原话的读取窗口有缺口。\n";
+    if (board.messages.gap) output << "主子消息有缺口，最早保留修订 #" << board.messages.oldest << "。\n";
+    for (const auto& msg : board.messages.messages)
+        output << "消息 #" << msg.revision << " ← #" << msg.reply_to << "  " << msg.text << '\n';
+    if (task.review) output << "介入依据 #" << task.review->report << "  " << task.review->basis << "  " << task.review->verification << '\n';
+    if (task.question) {
+        constexpr std::array phases{"发送中", "待答", "已拒绝", "未核实", "已撤回", "已授权"};
+        const auto& q = *task.question;
+        output << "问题 #" << q.id << " 修订 " << q.revision << " · " << phases.at(static_cast<std::size_t>(q.phase)) << "  " << q.text << '\n';
+    }
+    if (!task.collection) return;
+
+    const auto& collection = *task.collection;
+    const auto& g = collection.grant;
+    output << "采集 #" << g.id << " ← 问题 #" << g.question << " 修订 " << g.question_revision
+           << (g.entry == AnswerEntry::game ? " · 游戏答复 #" : " · 管理入口答复 #") << g.command << "  " << g.answer << '\n';
+    constexpr std::array receipts{"等游戏接收", "核实接单中", "游戏已接单", "原绑定已失效", "接单未核实"};
+    output << (collection.delivery ? receipts.at(static_cast<std::size_t>(collection.delivery->phase)) : "已授权，暂无投递回执")
+           << " · " << g.quantity << " × " << g.material << " → " << g.return_place << '\n';
+    if (!collection.mining) return;
+    const auto& mining = *collection.mining;
+    constexpr std::array mining_phases{"空闲", "已提交采掘", "客户端已完成", "采掘失败", "采掘已撤回"};
+    output << mining_phases.at(static_cast<std::size_t>(mining.phase)) << " · 已核对自采范围 "
+           << mining.lower << "～" << mining.upper << " · 块编号 " << mining.index << '\n';
+    if (mining.home.phase == ReturnPhase::requested) output << "已请求返程，等待到达回执。\n";
+    if (mining.home.phase == ReturnPhase::failed || (mining.home.phase == ReturnPhase::uncertain && mining.home.evidence.empty()))
+        output << "返程未核实。\n";
+    if (!mining.home.evidence.empty()) {
+        output << "到场总库存 " << mining.home.stock;
+        if (mining.home.lower && mining.home.upper) output << " · 本次实带 " << *mining.home.lower << "～" << *mining.home.upper;
+        else output << " · 实带来源未核实";
+        output << "\n到达回执 " << mining.home.evidence << '\n';
+    }
+}
+
 // 对显式加载的插件启用游戏收件，或按原会话查看、停止。
 // 步骤：分派受信命令 → 校验实例及会话身份 → 输出接纳和实际状态。
 void companion_command(Application& app, std::string_view command, std::ostream& output) {
@@ -105,6 +159,11 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto id = positive_id(words[2]);
         app.stop_companion(id);
         output << "Stop requested for companion " << id << ".\n";
+    } else if ((words.size() == 3 || words.size() == 4) && words[1] == "board") {
+        const auto task = words.size() == 4 ? std::optional(positive_id(words[3])) : std::nullopt;
+        const auto board = app.companion_board(positive_id(words[2]), task);
+        if (!board) throw std::invalid_argument("companion: unknown board session");
+        write_board(*board, task, output);
     } else if (words.size() == 2 && words[1] == "status") {
         const auto status = app.companion_status();
         if (!status) { output << "No companion session.\n"; return; }
@@ -147,7 +206,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

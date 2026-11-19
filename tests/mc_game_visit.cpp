@@ -101,6 +101,14 @@ int wmain(int argc, wchar_t** argv) {
                 const auto command = "/companion approve " + std::to_string(id) + " " + std::to_string(q.id) + " " +
                     std::to_string(q.revision) + " 1 16";
                 check(app::application_command(application, command, terminal, std::cerr), "management answer not admitted");
+                const auto pending = application.companion_board(id, visit->task);
+                check(pending && pending->selected && pending->selected->collection &&
+                    !pending->selected->collection->delivery && !pending->selected->collection->mining,
+                    "board query started delivery or mining");
+                std::ostringstream waiting;
+                app::application_command(application, "/companion board " + std::to_string(id), waiting, std::cerr);
+                check(waiting.str().find("暂无投递回执") != std::string::npos && waiting.str().find("游戏已接单") == std::string::npos,
+                    "board presented an authorization as game acceptance");
             }
             std::cout << "DFY_QUESTION" << std::endl;
             until(application, [&] { return application.companion_collection(id) && application.companion_inbox(id)->cursor > q.after; });
@@ -155,6 +163,22 @@ int wmain(int argc, wchar_t** argv) {
                     check(home.phase == (loss ? app::ReturnPhase::shortfall : app::ReturnPhase::delivered) &&
                         home.lower == (loss ? 14u : 16u) && home.upper == home.lower && home.stock == (loss ? 14u : 21u),
                         "actual returned custody incorrect");
+                    const auto board = application.companion_board(id, visit->task);
+                    check(board && board->binding_current && !board->historical && board->selected &&
+                        board->selected->collection && board->selected->question, "delivery chain missing");
+                    const auto& plan = *board->selected;
+                    const auto& collection = *plan.collection;
+                    check(plan.visit.evidence == visit->evidence && collection.grant.answer == grant.answer &&
+                        plan.question->id == collection.grant.question && plan.question->revision > collection.grant.question_revision &&
+                        collection.delivery && collection.delivery->receipt == delivered.receipt && collection.mining &&
+                        collection.mining->pickup_sources.size() == 16 && collection.mining->home.evidence == home.evidence,
+                        "board did not link the delivery to its answer and original observation");
+                    std::ostringstream board_text;
+                    app::application_command(application, "/companion board " + std::to_string(id) + " " +
+                        std::to_string(visit->task), board_text, std::cerr);
+                    check(board_text.str().find(grant.answer) != std::string::npos && board_text.str().find(home.evidence) != std::string::npos,
+                        "terminal board omitted original facts");
+                    std::ofstream(root / "board.txt", std::ios::binary) << board_text.str();
                     app::application_command(application, "/companion status", terminal, std::cerr);
                     check(terminal.str().find(loss ? "Self-collected carried 14..14" : "Self-collected carried 16..16") != std::string::npos,
                         "terminal lost actual carried quantity");
@@ -164,6 +188,13 @@ int wmain(int argc, wchar_t** argv) {
                             return next && next->task != visit->task && (next->phase == app::VisitPhase::arrived || next->phase == app::VisitPhase::observed); });
                         check(application.companion_collection(id)->id == grant.id && application.companion_mining(id)->home.phase == app::ReturnPhase::delivered,
                             "new inspection erased the previous delivery or authorized more mining");
+                        const auto latest = application.companion_board(id);
+                        const auto prior = application.companion_board(id, visit->task, board->messages.latest);
+                        check(latest && latest->selected && !latest->selected->collection &&
+                            (!latest->selected->question || latest->selected->question->id != q.id) &&
+                            prior && prior->historical && prior->selected && prior->selected->collection &&
+                            prior->selected->collection->mining && prior->selected->collection->mining->home.evidence == home.evidence &&
+                            prior->messages.messages.empty(), "follow-up mixed separate board tasks");
                     }
                 }
             }

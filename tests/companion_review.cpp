@@ -81,6 +81,10 @@ void verify(const std::filesystem::path& pkg, const std::filesystem::path& root,
     std::ostringstream output;
     app::application_command(app, "/companion status", output, std::cerr);
     if (output.str().find(review()->basis) == std::string::npos) throw std::runtime_error("review missing from trusted status");
+    const auto board = app.companion_board(id, first.task);
+    if (!board || !board->selected || !board->selected->review || board->selected->review->report != review()->report ||
+        board->selected->review->verification != review()->verification || board->binding_current == (mode == L"disconnect"))
+        throw std::runtime_error("board lost original intervention or binding");
     std::ofstream transcript(root / "review.txt", std::ios::binary);
     transcript.exceptions(std::ios::badbit | std::ios::failbit);
     transcript << output.str() << "\n主子消息记录\n";

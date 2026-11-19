@@ -8,18 +8,12 @@
 #include "companion_delivery.hpp"
 #include "companion_mining.hpp"
 #include "companion_location.hpp"
+#include "companion_board.hpp"
 #include <dafeiyu/plugin_companion.hpp>
 #include <dafeiyu/plugin_tools.hpp>
+#include <array>
 
 namespace dfy::app {
-enum class ReviewStage { exploring, rechecking, asked, recovered, interrupted };
-struct ExplorationReview {
-    CompanionAddress address;
-    ReviewStage stage = ReviewStage::exploring;
-    std::uint64_t task = 0, order = 0, window = 0, sample = 0, coverage = 0, last_return = 0;
-    std::uint64_t report = 0, inquiry = 0, answer_request = 0, answer = 0, recovery = 0, recovery_sample = 0;
-    std::string area, basis, reply, verification;
-};
 struct CompanionStatus {
     runtime::DomainId session = 0, instance = 0;
     std::string package, topic;
@@ -72,6 +66,8 @@ class CompanionSession {
         std::uint64_t reply_to, const std::string& text);
     // 读取有界业务消息，供可信界面和主 Agent 使用。
     CompanionDelta messages(std::uint64_t after) const { return messages_.since(after); }
+    // 取得指定查看委托的计划板，消息游标沿用本会话的原修订。
+    CompanionBoard board(std::optional<std::uint64_t> task, std::uint64_t after) const;
     // 返回无对话正文的状态副本。
     CompanionStatus status() const;
     // 取得原会话身份，调用方用它指定停止或提问的目标。
@@ -94,6 +90,8 @@ class CompanionSession {
     void start_visit();
     // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。
     void review_exploration();
+    // 从原业务记录复制当前查看及其精确匹配的后续事实。
+    BoardTask current_board_task() const;
     std::weak_ptr<plugins::PluginInstance> instance_;
     std::string package_;
     std::shared_ptr<agent::ToolCatalog> catalog_;
@@ -120,6 +118,9 @@ class CompanionSession {
     std::string mine_tool_, return_tool_;
     CompanionMining mining_;
     std::optional<CompanionVisit> visit_;
+    std::array<std::optional<BoardTask>, 8> past_visits_;
+    std::size_t next_past_ = 0;
+    std::uint64_t discarded_through_ = 0;
     std::shared_ptr<agent::TurnRequest> visit_work_;
     std::optional<CompletedTurn> result_;
     bool stopping_ = false;
