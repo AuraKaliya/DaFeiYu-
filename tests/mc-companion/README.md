@@ -4,19 +4,19 @@
 
 ## 首次真人体验
 
-准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`，运行 `./tests/mc-companion/start-playtest.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。正式入口使用配置的模型，仅在收到玩家消息后发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
+准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`，运行 `./tests/mc-companion/start-playtest.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
 
 1. 用 Java 1.21.4 直接连接 `127.0.0.1:25580`，或使用下方浏览器入口。两种方式都用独立玩家身份见到大肥鱼；原版客户端接受本服的[角色资源包](appearance.md)。
-2. 收到“我在河边”后，在普通聊天里随意说话。例如先打个招呼，再说“大肥鱼，帮我采俩泥土”。你可以临时改主意。要立即接管时说“停，我来”。本机离线服上的 `/msg` 私聊缺少可核对的发送者身份。
-3. 接管或离服会结束本场。启动时打印的宿主目录中，`board.txt` 记录游戏对话，`game-actions.jsonl` 按世界、玩家消息号和工作号记录游戏侧实际执行的参数与结果。无人进服时，在该目录创建空文件 `stop` 可正常结束。
+2. 进场后可在普通聊天里随意说话。例如先打个招呼，再说“大肥鱼，帮我采俩泥土”。你可以临时改主意；即使说“停，我来”，她也会根据现场自行决定如何处理。本机离线服上的 `/msg` 私聊缺少可核对的发送者身份。
+3. 离服时，体验宿主给离场事件留出处理时间，再收尾。启动时打印的宿主目录中，`board.txt` 记录游戏对话，`game-actions.jsonl` 按世界、玩家消息号和工作号记录游戏侧实际执行的参数与结果。无人进服时，在该目录创建空文件 `stop` 可正常结束。
 
-**定向验收**另需构建 `dfy_mc_playtest`。加 `-PartnerProbe` 会以固定响应验证自由原话进入模型、前文可用、四种技能、已有回复去重、途中改口和服务故障反馈。加 `-Probe` 仍跑旧的圆石授权与实带 16 块场景。两种验收均使用真实 Paper 和独立协议玩家，模型使用替身。自然语言理解质量留给真人游玩。
+**定向验收**另需构建 `dfy_mc_playtest`。加 `-PartnerProbe` 以可控模型记录收到的入场、离场和玩家原话；两次发出相同插话，分别选择保留或中止正在执行的移动。核对动作回执及玩家所见发言与模型选择，服务故障查宿主状态。输入和决定的证据在 `host/model-events.jsonl`，游戏实效在 `host/game-actions.jsonl`。加 `-Probe` 仍跑旧的圆石授权与实带 16 块场景。两种验收均使用真实 Paper 和独立协议玩家，模型使用替身。自然语言理解质量留给真人游玩。
 
 ### 用浏览器进服
 
 运行 `./tests/mc-companion/browser-player/start.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。脚本验证并展开 WebMC 2.4.0 的官方发布包，启动体验服及本机连接服务，用 D 盘独立浏览器资料打开入口。加 `-PrepareOnly` 可以只准备服务。已在运行时可直接打开 [浏览器玩家入口](http://127.0.0.1:25582/)，点击“进入河边体验”。[上游项目与协议兼容范围](https://github.com/zardoy/minecraft-web-client) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
 
-你使用独立的本地玩家名 `DfyVisitor`。点击游戏画面后用 WASD 走动、鼠标转向，按 T 输入原话并回车。大肥鱼会向你的原玩家身份回复，你可继续用普通聊天答复或叫停。浏览器按大肥鱼的离线 UUID 为其玩家模型加载已准备的皮肤。关闭游戏页面将离服，重开一轮可再运行启动脚本。此入口只连接本机 `127.0.0.1:25580` 的离线体验服。
+你使用独立的本地玩家名 `DfyVisitor`。点击游戏画面后用 WASD 走动、鼠标转向，按 T 输入原话并回车。是否向你的玩家身份发言或继续行动，由大肥鱼结合上下文决定。浏览器按大肥鱼的离线 UUID 为其玩家模型加载已准备的皮肤。关闭游戏页面将离服，重开一轮可再运行启动脚本。此入口只连接本机 `127.0.0.1:25580` 的离线体验服。
 
 G01 直接运行 `node --test tests/mc-companion/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
 

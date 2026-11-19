@@ -76,25 +76,36 @@ async function play(fixture, exe, pkg, mode, config) {
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '山脚与工具就绪');
+    if (mode === '--partner-probe') await until(() => [3, 4].every(x =>
+      game.bot.blockAt(game.bot.entity.position.clone().set(x, -60, 0))?.name === 'dirt'), '客户端读回探针布置的两块泥土');
     const args = mode === '--live' ? ['--mc-partner', config, pkg, root] :
       mode === '--partner-probe' ? [pkg, root, mode] : [pkg, root];
     child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
     exit = once(child, 'close');
     exit.catch(() => {});
     const lines = createInterface({ input: child.stdout });
+    let departureSettled = false;
     lines.on('line', line => {
-      if (line === 'DFY_LISTENING') game.bot.whisper(owner, mode === '--probe' ?
-        '我在河边。你可以说“去山脚看看”，途中叫我“停，我来”就交给你。' :
-        '我在河边。直接用普通聊天跟我说话吧，有什么打算？要接管时说“停，我来”。');
+      if (line === 'DFY_LISTENING') fixture.listening = true;
+      const settled = /^DFY_EVENT_SETTLED (\d+)( left)?$/.exec(line);
+      if (settled) {
+        fixture.settled = Number(settled[1]);
+        departureSettled = Boolean(settled[2]);
+      }
     });
-    while (child.exitCode === null && !child.signalCode && present.has(owner) && !stopped() && !gameEnded) await sleep(250);
+    let absentSince;
+    while (child.exitCode === null && !child.signalCode && !stopped() && !gameEnded) {
+      if (present.has(owner)) absentSince = undefined;
+      else {
+        absentSince ??= performance.now();
+        // 给真实离场事实留出本轮处理时间；失联、显式停服和模型超时仍可回收。
+        if (mode === '--probe' || departureSettled || performance.now() - absentSince > 120000) break;
+      }
+      await sleep(100);
+    }
     fs.closeSync(fs.openSync(stop, 'a'));
     const [code] = await exit;
     if (code !== 0) throw new Error('体验宿主退出码 ' + code);
-    if (present.has(owner) && !gameEnded && running()) {
-      game.bot.whisper(owner, '这轮已结束，我先下线了。');
-      await sleep(750);
-    }
   } finally {
     fs.closeSync(fs.openSync(stop, 'a'));
     try { if (exit) await exit; }
@@ -105,11 +116,26 @@ async function play(fixture, exe, pkg, mode, config) {
 // 在同一次体验服生命周期内运行真实协议玩家；任一方失败都先回收本轮宿主。
 async function rehearse(fixture, exe, pkg, mode) {
   const host = play(fixture, exe, pkg, mode);
-  const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode === '--partner-probe').finally(() => {
+  const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode === '--partner-probe').catch(error => {
     fs.closeSync(fs.openSync(path.join(fixture.evidence, 'host/stop'), 'a'));
+    throw error;
   });
   const results = await Promise.allSettled([host, guest]);
   for (const result of results) if (result.status === 'rejected') throw result.reason;
+  if (mode === '--partner-probe') {
+    const assert = require('node:assert/strict');
+    const seen = fs.readFileSync(path.join(fixture.evidence, 'host/model-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const turns = seen.filter(record => record.events);
+    assert.ok(turns.every(turn => turn.player === offlineId('DfyGuestCheck') && turn.generation === turns[0].generation));
+    const facts = seen.flatMap(record => record.events ?? []);
+    assert.deepEqual(facts.map(f => f.sequence), [1,2,3,4,5,6,7,8,9]);
+    assert.deepEqual(facts[0], { sequence: 1, type: 'player.entered' });
+    assert.deepEqual(facts.at(-1), { sequence: 9, type: 'player.left' });
+    assert.ok(facts.slice(1,-1).every(f => f.type === 'player.message'));
+    assert.deepEqual(facts.slice(1,-1).map(f => f.text),
+      ['大家叫我小叶', '大肥鱼，帮我采俩泥土', '这回带我往前走走', '停，我来', '再走回这边', '停，我来', '模拟一次服务故障']);
+    assert.deepEqual(seen.filter(r => r.check).map(r => [r.check.at(-1).text, r.stop]), [['停，我来',false], ['停，我来',true]]);
+  }
 }
 
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。

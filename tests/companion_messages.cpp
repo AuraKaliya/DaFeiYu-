@@ -42,6 +42,11 @@ int main() {
         auto other = messages.post(next, Side::primary, Kind::delegation, 1, 0, "新世界");
         check(other.revision == 6 && other.task != task.task && messages.since(5).messages.size() == 1);
         rejects([&] { messages.since(7); });
+        const auto entered = messages.post(next, Side::primary, Kind::event, 2, 0, "player.entered");
+        const auto words = messages.post(next, Side::primary, Kind::utterance, 3, 0, "停，我来");
+        check(!entered.task && !words.task && messages.task() == other.task);
+        const auto spoken = messages.post(next, Side::game, Kind::report, 1, words.revision, "自选发言");
+        check(!spoken.task && spoken.reply_to == words.revision);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

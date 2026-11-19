@@ -154,12 +154,6 @@ function inspectionService(bot, world, inbox, places, witness = null, modelLed =
     releaseControl,
     // 私有收件同时返回原接管回执，普通状态和其他世界不暴露这项玩家决定。
     controlReceipt(generation) { return release?.generation === generation ? { ...release } : null; },
-    // 仅已验证的原玩家可以通过明确短句接管，优先于模型、动作队列和待答问题。
-    playerCommand(text, generation, order) {
-      if (closed) return null;
-      if (/^停[，,]\s*我来[。！!]?$/u.test(text.trim())) { releaseControl(generation, order); return null; }
-      return modelLed ? null : this.answerOffer(text);
-    },
     // 只返回同一游戏来源和原查看消息的观察。
     progress(generation) {
       return current && generation === current.generation && current.phase === 'moving' ? survey?.read(performance.now()) ?? null : null;

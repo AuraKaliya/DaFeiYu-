@@ -52,13 +52,23 @@ CompanionMessage CompanionMessages::post(const CompanionAddress& address, Compan
     if (command != next(from) || latest_ == UINT64_MAX) throw std::invalid_argument("companion: command sequence");
     const auto revision = latest_ + 1;
     auto task = task_, inquiry = inquiry_;
+    const bool fact = kind == CompanionMessageKind::event || kind == CompanionMessageKind::utterance;
+    const bool answers_fact = reply_to && std::any_of(history_.rbegin(), history_.rend(), [&](const auto& entry) {
+        return entry.revision == reply_to && entry.address == address &&
+            (entry.kind == CompanionMessageKind::event || entry.kind == CompanionMessageKind::utterance);
+    });
     switch (kind) {
+        case CompanionMessageKind::event:
+        case CompanionMessageKind::utterance:
+            if (from != CompanionSide::primary || reply_to) throw std::invalid_argument("companion: invalid input fact");
+            break;
         case CompanionMessageKind::delegation:
             if (from != CompanionSide::primary || reply_to || inquiry) throw std::invalid_argument("companion: invalid delegation");
             task = revision;
             break;
+        case CompanionMessageKind::status:
         case CompanionMessageKind::report:
-            if (from != CompanionSide::game || !task || reply_to != task) throw std::invalid_argument("companion: invalid report");
+            if (from != CompanionSide::game || !reply_to || (!answers_fact && reply_to != task)) throw std::invalid_argument("companion: invalid report");
             break;
         case CompanionMessageKind::inquiry: {
             const bool known = reply_to == task || std::any_of(history_.begin(), history_.end(), [&](const auto& entry) {
@@ -73,13 +83,13 @@ CompanionMessage CompanionMessages::post(const CompanionAddress& address, Compan
             inquiry = 0;
             break;
         case CompanionMessageKind::failed:
-            if (from != CompanionSide::game || !reply_to || (reply_to != task && reply_to != inquiry))
+            if (from != CompanionSide::game || !reply_to || (!answers_fact && reply_to != task && reply_to != inquiry))
                 throw std::invalid_argument("companion: wrong failed delivery");
             if (reply_to == inquiry) inquiry = 0;
             break;
         default: throw std::invalid_argument("companion: unknown message kind");
     }
-    CompanionMessage accepted{address, from, kind, revision, command, task, reply_to, text};
+    CompanionMessage accepted{address, from, kind, revision, command, fact || answers_fact ? 0 : task, reply_to, text};
     history_.push_back(accepted);
     if (history_.size() > limit_) history_.pop_front();
     latest_ = revision;

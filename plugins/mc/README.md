@@ -1,8 +1,8 @@
 # Minecraft 游戏陪伴插件
 
-本页说明当前可运行版本。关于普通聊天全量进入模型、移除固定开场和快捷口令的目标流程，见[待评审的通用交互设计](../../docs/mc-companion-development-plan.md)。
+本页说明当前可运行版本。伙伴将绑定玩家的在场变化和原话按序交给模型；发言和是否停手均由模型决定。[通用交互设计与实施进度](../../docs/mc-companion-development-plan.md)
 
-默认伙伴模式让绑定玩家的普通聊天进入游戏会话。宿主使用所选 DeepSeek 或 Qwen 配置，模型可以直接回复，也可以调用观察、移动、采集和回复工具。`mc.companion/world` 返回角色 UUID、出生代次、维度、坐标、背包圆石总数和最近游戏信号的年龄。世界撤销时可读到 `null`，连接失败时工具返回失败。总库存只描述当前持有量。
+默认伙伴模式让绑定玩家的普通聊天进入游戏会话。宿主使用所选 DeepSeek 或 Qwen 配置，模型可观察、移动、采集、通过回复工具发言或安静结束本轮。`mc.companion/world` 返回角色 UUID、出生代次、维度、坐标、背包圆石总数和最近游戏信号的年龄。世界撤销时可读到 `null`，连接失败时工具返回失败。总库存只描述当前持有量。
 
 在 D 盘等指定运行目录准备 Node 22 或以上环境，并按 `bridge/package-lock.json` 安装依赖。若将依赖装在源码目录外，设置 `NODE_PATH` 指向对应的 `node_modules`。为自己的连接在该运行目录创建 JSON 配置，例如隔离的本机测试服使用：
 
@@ -18,9 +18,9 @@
 
 构建目标 `dfy_mc_companion` 会在对应配置下生成 `mc.companion` 包目录。使用原终端的 `/plugins install "<包目录>"`、`/plugins load mc.companion` 显式装载，或由共享应用服务接入。普通模型问答保持独立。定向验收见 [MC 探针](../../tests/mc-companion/README.md)。
 
-在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。等状态显示 `listening` 后可正常聊天或委托。宿主将原世界和玩家消息号附在每次技能调用上，并把最终答复送回原玩家。新原话会中断正在执行的旧回合，再由模型结合前文和游戏读回决定下一步。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。
+在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。等状态显示 `listening` 后可正常聊天或委托。每次技能调用绑定原世界和事件号。玩家在场、离场和原话分别进入模型。工作进行中收到新事件时，由同一配置的模型决定是否提前停止该项工作；随后在决策边界处理新事实。玩家可见文字来自实际发言工具，内部回合收尾不会变成第二句聊天。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。
 
-真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。宿主将对话写入 `RUN_DIR/board.txt`，体验服适配器将技能参数、原消息号和游戏结果写入 `RUN_DIR/game-actions.jsonl`。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。缺少凭据或模型回合失败时会在游戏里给出提示。凭据由现有模型层从配置中的环境变量读取。[启动与验收](../../tests/mc-companion/README.md#首次真人体验)
+真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。宿主将对话写入 `RUN_DIR/board.txt`，体验服适配器将技能参数、原消息号和游戏结果写入 `RUN_DIR/game-actions.jsonl`。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。[启动与验收](../../tests/mc-companion/README.md#首次真人体验)
 
 ## 固定圆石场景
 
@@ -34,7 +34,7 @@
 
 ## 回顾一项委托
 
-在游戏聊天中由绑定玩家说“停，我来”，或在终端输入 `/companion stop 会话号`，会结束本次陪伴控制。在途工作退出前状态为“已请求停止”，只有来自原游戏代次的回执才能确认释放。断线则显示“游戏控制释放未核实”。此前已经核实的入包数量仍可在计划板查看。再次陪玩时启动新的适配器连接并打开新的陪伴会话。
+“停，我来”与其他玩家原话使用同一入口。宿主操作者可通过终端 `/companion stop 会话号` 显式请求回收。回收状态根据实际退出更新。
 
 使用 `/companion board 会话号` 查看最近的玩家委托及可查任务号，使用 `/companion board 会话号 任务号` 回顾指定的查看。可从到岸回执沿采集委托、原问题和答复修订追到玩家原话与山脚观察。刚授权时显示“已授权，暂无投递回执”，投递后再显示游戏是否接单。G14 的介入与答复也按原任务关联。
 

@@ -74,14 +74,18 @@ void write_task_status(const Application& application, std::uint64_t request, st
 // 展示一个原任务的来源链，缺失回执与已证实的效果分别标明。
 // 步骤：核对保留窗口 → 展示原话、观察与答复 → 读取原游戏的接单和到场证据。
 void write_board(const CompanionBoard& board, std::optional<std::uint64_t> requested, std::ostream& output) {
-    output << "计划板 · 会话 " << board.session << " · 可查委托";
+    output << "计划板 · 会话 " << board.session << (board.partner ? " · 可查事件" : " · 可查委托");
     for (auto task : board.tasks) output << ' ' << task;
     output << '\n';
     if (board.partner) {
         if (board.messages.gap) output << "早期消息已超出保留窗口。\n";
         if (board.messages.messages.empty()) output << "没有匹配的游戏对话。\n";
-        for (const auto& msg : board.messages.messages)
-            output << '#' << msg.revision << (msg.from == CompanionSide::primary ? " 玩家 " : " 大肥鱼 ") << msg.text << '\n';
+        for (const auto& msg : board.messages.messages) {
+            const bool system = msg.kind == CompanionMessageKind::failed || msg.kind == CompanionMessageKind::status;
+            const auto label = msg.kind == CompanionMessageKind::event ? " 现场 " :
+                system ? " 系统 " : msg.from == CompanionSide::primary ? " 玩家 " : " 大肥鱼 ";
+            output << '#' << msg.revision << label << msg.text << '\n';
+        }
         return;
     }
     if (!board.selected) {

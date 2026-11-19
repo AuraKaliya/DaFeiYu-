@@ -8,7 +8,7 @@
 
 namespace dfy::app {
 enum class CompanionSide { primary, game };
-enum class CompanionMessageKind { delegation, report, inquiry, answer, failed };
+enum class CompanionMessageKind { delegation, report, inquiry, answer, failed, event, utterance, status };
 struct CompanionAddress {
     runtime::DomainId session = 0, instance = 0;
     std::string world;

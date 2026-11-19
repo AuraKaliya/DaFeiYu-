@@ -7,6 +7,7 @@ struct PlayerUtterance {
     std::uint64_t sequence;
     std::string text, visit_place, declined_question, collection_question;
     std::uint64_t quantity = 0;
+    std::string type = "player.message";
 };
 enum class ControlPhase { requested, released, unconfirmed };
 struct ControlReceipt {
@@ -19,6 +20,7 @@ struct PlayerInboxStatus {
     std::uint64_t cursor = 0;
     std::string owner;
     std::optional<ControlReceipt> control;
+    std::uint64_t departed = 0;
 };
 
 // 只接受由当前插件真实回执提供的玩家原话，初次绑定时从当前水位开始。
@@ -34,6 +36,8 @@ class CompanionInbox {
     const PlayerInboxStatus& status() const noexcept { return status_; }
     // 消费一条本代次已经验证的玩家原话。
     std::optional<PlayerUtterance> take();
+    // 借用当前绑定下已校验、尚未处理的原始事件。
+    const std::deque<PlayerUtterance>& pending() const noexcept { return entries_; }
     // 查询是否仍持有未退出的原生读取。
     bool busy() const noexcept { return static_cast<bool>(executor_); }
   private:

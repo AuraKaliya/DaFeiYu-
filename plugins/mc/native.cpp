@@ -40,7 +40,7 @@ constexpr std::array<PartnerSkill, 4> partner_skills{{
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", true},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. Reports broken blocks and actual inventory changes.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true},
-    {"reply", "partner.reply", "Send one short private message to the bound player in this game. Final assistant text is delivered automatically.",
+    {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true}
 }};
 

@@ -2,6 +2,8 @@
 #include "application.hpp"
 #include <algorithm>
 #include <iostream>
+#include <fstream>
+#include <mutex>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -16,43 +18,52 @@ dfy::model::Response sample_turn(const dfy::model::Request& request) {
     if (!args.is_object() || !args.contains("order") || !args.contains("place")) return {{Role::assistant, "我在这里。"}};
     return {{Role::assistant, "", {{"visit", request.tools.front().name, args.dump()}}}, FinishReason::tool_calls};
 }
-// 用固定选择检验原话、工具发现、真实结果反馈和跨回合上下文，隔离外部模型服务。
-// 步骤：核对当前消息与工具 → 根据上一步实际结果选择下一技能 → 返回聊天或交付结论。
-dfy::model::Response partner_sample(const dfy::model::Request& request) {
+// 仅向离线探针记下真实进入后端的事实和替身选中的结果，供外部玩家对照。
+void record_input(const std::filesystem::path& root, const nlohmann::json& record) {
+    static std::mutex lock;
+    std::lock_guard guard(lock);
+    std::ofstream(root / "model-events.jsonl", std::ios::app | std::ios::binary) << record.dump() << '\n';
+}
+
+// 在固定外部输入下提供不同可控选择；输出文字不参与动作分支判定。
+// 步骤：记录原始事件 → 选择继续或停止在途工作 → 按实际工具回执决定行动及是否发言。
+dfy::model::Response partner_sample(const dfy::model::Request& request, const std::filesystem::path& root) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto& last = request.messages.back();
+    const auto speak = [&](std::string message) {
+        return Response{{Role::assistant, std::move(message)}, FinishReason::stop};
+    };
     const auto call = [&](const std::string& skill, const Json& arguments) -> Response {
         const auto tool = std::ranges::find_if(request.tools, [&](const auto& def) { return def.name.ends_with("_" + skill); });
         if (tool == request.tools.end()) throw std::runtime_error("missing registered skill: " + skill);
+        record_input(root, {{"call",skill},{"arguments",arguments}});
         return {{Role::assistant, "", {{skill, tool->name, arguments.dump()}}}, FinishReason::tool_calls};
     };
-    if (request.tools.size() != 4 || request.messages.front().role != Role::system ||
-        std::ranges::count_if(request.messages, [](const auto& msg) { return msg.role == Role::system; }) != 1)
-        throw std::runtime_error("wrong partner guidance or skill scope");
+    if (request.tools.size() == 1 && request.tools.front().name == "stop_current_work") {
+        const auto input = Json::parse(last.content);
+        const bool stop = input.at("currentEvents").back().at("sequence") == 6;
+        record_input(root, {{"check", input.at("newEvents")}, {"work",input.at("work")}, {"stop",stop}});
+        if (!stop) return speak("continue");
+        return {{Role::assistant, "", {{"choice","stop_current_work","{}"}}}, FinishReason::tool_calls};
+    }
+    if (request.tools.size() != 4 || request.messages.front().role != Role::system) throw std::runtime_error("invalid partner scope");
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
-        const auto& raw = input.at("messages").back().at("text");
-        if (raw == "大家叫我小叶") return {{Role::assistant, "小叶，我记住了。"}};
-        if (raw == "这回带我往前走走") return call("move", {{"x",32},{"y",-60},{"z",-4}});
-        if (raw == "改主意了，先站这儿" && input.value("interruptedRequest", "") == "这回带我往前走走")
-            return {{Role::assistant, "好，我停在这儿。"}};
-        if (raw == "模拟一次服务故障") throw std::runtime_error("fixture provider unavailable");
-        if (raw != "大肥鱼，帮我采俩泥土" || !std::ranges::any_of(request.messages, [](const auto& m) {
-            return m.role == Role::assistant && m.content == "小叶，我记住了。";
-        })) throw std::runtime_error("missing original or previous exchange");
-        return call("observe", {{"block","dirt"}});
+        record_input(root, input);
+        const auto& event = input.at("events").back();
+        if (event.at("type") != "player.message") return speak("内部结算：暂时安静");
+        const auto seq = event.at("sequence").get<unsigned>();
+        if (seq == 2 || seq == 7) return call("reply", {{"text",root.parent_path().filename().string() + "-" + std::to_string(seq)}});
+        if (seq == 3) return call("observe", {{"block","dirt"}});
+        if (seq == 4 || seq == 6) return call("move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
+        if (seq == 8) throw std::runtime_error("fixture provider unavailable");
+        return speak("内部结算：等待");
     }
     const auto result = Json::parse(last.content.substr(last.content.find('{')));
-    if (result.at("status") != "done") throw std::runtime_error("skill blocked: " + result.dump());
-    if (last.tool_call_id == "observe" && !result.at("visible").empty())
-        return call("move", {{"x",1},{"y",-60},{"z",0}});
-    if (last.tool_call_id == "move" && result.contains("position"))
-        return call("collect", {{"block","minecraft:dirt"},{"count",2}});
-    if (last.tool_call_id == "collect" && result.at("broken") == 2 && result.at("inventoryDelta").at("dirt") == 2)
-        return call("reply", {{"text","小叶，背包里多了两块泥土。"}});
-    if (last.tool_call_id == "reply" && result.at("sent") == true) return {{Role::assistant, "小叶，背包里多了两块泥土。"}};
-    throw std::runtime_error("unexpected game receipt");
+    if (result.at("status") != "done") return speak("内部结算：已读受阻结果");
+    if (last.tool_call_id == "observe" && !result.at("visible").empty()) return call("collect", {{"block","dirt"},{"count",2}});
+    return speak("内部结算：已读工作回执");
 }
 }
 
@@ -65,7 +76,7 @@ int wmain(int argc, wchar_t** argv) {
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner](const auto&, const auto& request) { return partner ? partner_sample(request) : sample_turn(request); }});
+            [partner, root](const auto&, const auto& request) { return partner ? partner_sample(request, root) : sample_turn(request); }});
         app::run_companion_host(host, argv[1], root, partner ? app::CompanionMode::partner : app::CompanionMode::scenario);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -94,7 +94,7 @@ function partnerService(bot, world, inbox, places, owner) {
   let active, previous, closed = false, done = Promise.resolve();
   let source = null;
   const records = new Map();
-  // 核对原消息仍是本世界最近的玩家指令。
+  // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
     return !closed && world.read()?.generation === context.generation && inbox.get(context.generation, context.order) &&
       inbox.read(context.generation, context.order)?.latest === context.order;
@@ -110,7 +110,7 @@ function partnerService(bot, world, inbox, places, owner) {
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
-    const check = () => { if (job.cancelled || !current(r)) throw new Error('原委托已中断或游戏绑定已失效'); };
+    const check = () => { if (job.cancelled || closed || world.read()?.generation !== r.generation) throw new Error('原工作已中断或游戏绑定已失效'); };
     try {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
@@ -135,6 +135,7 @@ function partnerService(bot, world, inbox, places, owner) {
           e.receipt.result.sent && e.args.text === args.text);
         result.sent = repeated || tellOwner(bot, owner, args.text);
         result.reused = repeated;
+        if (result.sent) result.text = args.text;
         if (!result.sent) throw new Error('原玩家不在场，回复未发出');
       } else if (r.skill === 'move') {
         const named = Object.hasOwn(args, 'place');
@@ -161,7 +162,7 @@ function partnerService(bot, world, inbox, places, owner) {
     }
   }
   return {
-    // 只对同一业务编号启动一次工作，失联或新消息到达时收回游戏控制。
+    // 只对同一业务编号启动一次工作，原票据负责轮询、取消以及失联收尾。
     call(method, id, context, skill, args) {
       const key = context.generation + '/' + context.order;
       if (!Number.isSafeInteger(context.order) || context.order <= 0 || typeof context.generation !== 'string')
@@ -186,7 +187,7 @@ function partnerService(bot, world, inbox, places, owner) {
       const job = { id, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(id, job);
       active = job;
-      const timer = setInterval(() => { if (!current(context) || performance.now() - job.polled > 4000) cancel(); }, 150);
+      const timer = setInterval(() => { if (world.read()?.generation !== context.generation || performance.now() - job.polled > 4000) cancel(); }, 150);
       done = run(job, args).finally(() => clearInterval(timer));
       return job.receipt;
     },

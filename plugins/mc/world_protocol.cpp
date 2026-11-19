@@ -122,6 +122,12 @@ std::string world_request(std::string_view id) {
     return Json{{"version", 1}, {"method", "state.read"}, {"id", id}}.dump();
 }
 
+// 判断在场事实的来源游标与种类，不从文本推断玩家状态。
+static bool presence_fact(const Json& value) {
+    return value.is_object() && value.size() == 2 && value.contains("sequence") &&
+        value.at("sequence").is_number_unsigned() && value.at("sequence") != 0 &&
+        (value.value("type", "") == "player.entered" || value.value("type", "") == "player.left");
+}
 // 校验原查询对应的世界观测，继续保留客户端数量和服务端信号年龄的语义。
 // 步骤：核对信封和身份 → 处理已撤销世界 → 校验字段类型与范围并返回值副本。
 std::string world_reply(std::string_view wire, std::string_view expected_id, bool with_survey) {
@@ -199,11 +205,13 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong private reply");
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
-    if (inbox.size() != (inbox.contains("control") ? 8u : 7u) || inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
+    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") || inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
     const auto oldest = inbox.at("oldest").get<std::uint64_t>(), latest = inbox.at("latest").get<std::uint64_t>();
     const auto after = query.at("after").get<std::uint64_t>();
+    if (inbox.contains("presence") && (!presence_fact(inbox.at("presence")) || inbox.at("presence").at("sequence") > latest))
+        throw std::invalid_argument("MC protocol: invalid player presence");
     if (inbox.contains("control") && (!control_receipt(inbox.at("control"), query.at("generation")) ||
         inbox.at("control").at("order") > latest)) throw std::invalid_argument("MC: stop cursor");
     if (latest > 9007199254740991ULL || !oldest || (latest ? oldest > latest : oldest != 1) || after > latest ||
@@ -213,8 +221,19 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     if (!messages.is_array() || messages.size() > 8) throw std::invalid_argument("MC protocol: inbox size");
     auto cursor = std::max(after, oldest - 1);
     for (const auto& message : messages) {
-        if (message.size() != (message.contains("offer") ? 3u : 2u) || !message.at("sequence").is_number_unsigned() || message.at("sequence") != ++cursor ||
-            !message.at("text").is_string()) throw std::invalid_argument("MC protocol: inbox message");
+        if (!message.at("sequence").is_number_unsigned() || message.at("sequence") != ++cursor)
+            throw std::invalid_argument("MC protocol: event sequence");
+        if (presence_fact(message)) {
+            if (!inbox.contains("presence") || cursor > inbox.at("presence").at("sequence") ||
+                (cursor == inbox.at("presence").at("sequence") && message != inbox.at("presence")))
+                throw std::invalid_argument("MC protocol: inconsistent player presence");
+            continue;
+        }
+        if (inbox.contains("presence") && cursor == inbox.at("presence").at("sequence"))
+            throw std::invalid_argument("MC protocol: player speech at presence cursor");
+        if (message.size() != 2u + message.count("offer") + message.count("type") ||
+            message.value("type", "player.message") != "player.message" || !message.at("text").is_string())
+            throw std::invalid_argument("MC protocol: inbox message");
         const auto& text = message.at("text").get_ref<const std::string&>();
         if (text.empty() || text.size() > 1024) throw std::invalid_argument("MC protocol: inbox text");
         if (message.contains("offer")) {

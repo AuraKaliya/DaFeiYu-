@@ -105,11 +105,13 @@ async function verify(fixture) {
     }
     if (!recorded) throw new Error('旧消息未进入游戏源');
     const actor = game.bot.player.uuid;
-    let digCalls = 0;
+    let digCalls = 0, externalStop;
     const dig = game.bot.dig.bind(game.bot);
     game.bot.dig = (...args) => {
       ++digCalls;
-      if (variant === 'stop-game' && digCalls === 2) owner.chat('停，我来');
+      if (variant === 'stop-game' && digCalls === 2)
+        externalStop = query(channel, { version: 1, method: 'control.stop', generation: state.state.generation, id: 'fixture-stop', key })
+          .catch(() => null);
       if (variant === 'stop-disconnect' && digCalls === 2) setImmediate(game.stop);
       return dig(...args);
     };
@@ -123,6 +125,7 @@ async function verify(fixture) {
       }
     });
     await drive(process.argv[2], process.argv[3], root, owner, fixture.evidence);
+    if (variant === 'stop-game') assert.ok((await externalStop)?.control);
     if (proxy) {
       const expected = ['collection.admit', 'collection.receipt'];
       if (variant === 'lost-send') expected.push('collection.admit');

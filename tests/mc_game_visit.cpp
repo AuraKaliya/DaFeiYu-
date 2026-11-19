@@ -152,7 +152,7 @@ int wmain(int argc, wchar_t** argv) {
                 until(application, [&] { return application.companion_status()->closed; });
                 const auto control = application.companion_status()->control;
                 check(control && control->phase == (disconnected ? app::ControlPhase::unconfirmed : app::ControlPhase::released) && control->world == address.world &&
-                    (player_stop ? control->order == 4 : control->order == 0), "game release receipt or origin lost");
+                    control->order == 0, "game release receipt or origin lost");
                 const auto mining = application.companion_mining(id);
                 check(mining && mining->index == 2 && mining->lower >= 1 && mining->home.phase == app::ReturnPhase::idle,
                     "late actions or lost prior pickups");

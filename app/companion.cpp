@@ -18,7 +18,7 @@ plugins::CompanionOffer require_offer(plugins::PluginInstance& instance, const a
 CompanionSession::CompanionSession(const std::shared_ptr<plugins::PluginInstance>& instance, const model::Config& config,
     const std::shared_ptr<events::BroadcastChannel>& channel, const model::Backend& backend, const agent::RunVersionLabels& labels,
     agent::ToolClock clock)
-    : instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
+    : event_config_(config), event_model_(1, backend), instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
       registration_(instance, catalog_), offer_(require_offer(*instance, *catalog_)), session_(config, channel, backend),
       conversation_(session_, labels), clock_(std::move(clock)) {}
 
@@ -57,6 +57,7 @@ void CompanionSession::advance() {
         refresh();
         next_refresh_ = clock_() + state_refresh_interval;
     }
+    if (!partner_tools_.empty()) review_partner_events();
     if (auto completed = conversation_.advance()) result_ = std::move(completed);
     if (visit_work_ && visit_ && visit_work_->diagnostics().exit != runtime::OperationState::pending) {
         verify_visit(*visit_, *visit_work_, visit_tool_);
@@ -92,7 +93,7 @@ void CompanionSession::close() {
     questions_.withdraw();
     delivery_.close();
     mining_.close();
-    if (reply_executor_) reply_executor_->close();
+    event_model_.close();
     sync_binding();
     conversation_.close();
 }
@@ -158,9 +159,10 @@ void CompanionSession::sync_binding() {
     if (address_) {
         if (!partner_tools_.empty()) {
             reset_partner_history_ = true;
-            interrupted_text_.clear();
+            prior_activity_.clear();
+            settled_event_ = 0;
             if (partner_order_) conversation_.cancel();
-            if (reply_executor_) reply_executor_->close();
+            if (event_check_) event_check_->request_cancel(runtime::CancelReason::owner_stop);
         }
         if (review_ && !review_->recovery) {
             review_->stage = ReviewStage::interrupted;
@@ -318,7 +320,7 @@ void CompanionSession::finish_message(const CompanionMessage& original, const Co
 
 // 获取可跨界面复制的最新回合状态。
 CompanionStatus CompanionSession::status() const {
-    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status(), control_};
+    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status(), control_, settled_event_};
 }
 
 // 仅返回仍与原回合匹配的可信结算结果。

@@ -14,6 +14,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
     const auto id = host.open_companion("mc.companion");
     host.listen_companion(id, mode);
     bool listening = false;
+    std::uint64_t reported_event = 0;
     std::string previous;
     auto next = std::chrono::steady_clock::now();
     while (!host.companion_status()->closed) {
@@ -21,6 +22,12 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         if (!listening && host.companion_inbox(id)->ready) {
             listening = true;
             std::cout << "DFY_LISTENING" << std::endl;
+        }
+        const auto settled = host.companion_status()->settled_event;
+        if (reported_event != settled) {
+            reported_event = settled;
+            if (settled) std::cout << "DFY_EVENT_SETTLED " << settled <<
+                (host.companion_inbox(id)->departed == settled ? " left" : "") << std::endl;
         }
         if (std::chrono::steady_clock::now() >= next || host.companion_status()->closed) {
             if (std::filesystem::exists(root / "stop")) host.stop_companion(id);

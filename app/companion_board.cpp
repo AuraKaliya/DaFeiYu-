@@ -34,11 +34,14 @@ CompanionBoard CompanionSession::board(std::optional<std::uint64_t> task, std::u
     if (!partner_tools_.empty()) {
         result.partner = true;
         const auto history = messages_.since(0);
+        // 自然事件按原事实修订回看；记录玩家开口本身不建立委托。
+        const auto group = [](const CompanionMessage& msg) { return msg.task ? msg.task : msg.reply_to ? msg.reply_to : msg.revision; };
         for (const auto& msg : history.messages) {
-            if (std::find(result.tasks.begin(), result.tasks.end(), msg.task) == result.tasks.end()) result.tasks.push_back(msg.task);
-            if (!task || *task == msg.task) result.binding_current = address_ == msg.address && bound();
+            const auto id = group(msg);
+            if (std::find(result.tasks.begin(), result.tasks.end(), id) == result.tasks.end()) result.tasks.push_back(id);
+            if (!task || *task == id) result.binding_current = address_ == msg.address && bound();
         }
-        if (task) std::erase_if(result.messages.messages, [&](const auto& msg) { return msg.task != *task; });
+        if (task) std::erase_if(result.messages.messages, [&](const auto& msg) { return group(msg) != *task; });
         result.historical = task && !result.tasks.empty() && *task != result.tasks.back();
         result.discarded_through = history.gap ? history.oldest - 1 : 0;
         return result;

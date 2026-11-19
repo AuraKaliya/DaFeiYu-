@@ -21,6 +21,7 @@ struct CompanionStatus {
     bool stopping = false, closed = false;
     std::optional<agent::TurnDiagnostics> turn;
     std::optional<ControlReceipt> control;
+    std::uint64_t settled_event = 0;
 };
 
 // 在应用宿主线程拥有同一玩家个体的一段游戏会话，工具绑定限原插件实例。
@@ -78,7 +79,7 @@ class CompanionSession {
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
     bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy() && !questions_.busy() &&
-        !delivery_.busy() && !mining_.busy() && !control_executor_ && !reply_executor_; }
+        !delivery_.busy() && !mining_.busy() && !control_executor_ && !event_check_; }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -92,20 +93,27 @@ class CompanionSession {
     void accept_player();
     // 推进由当前模型处理的原玩家消息，变更委托后收回旧回合的游戏权限。
     void advance_partner();
-    // 向原世界投递模型最终文本，并等待原游戏实际发送回执。
-    void start_partner_reply(const std::string& text);
+    // 有技能在执行时让同一配置的模型判断新事实是否值得中止原工作。
+    void review_partner_events();
     struct PartnerOrder {
         CompanionAddress address;
         std::uint64_t order, message;
-        std::string text, reply;
+        std::string facts;
+        std::shared_ptr<agent::TurnRequest> run;
+        std::shared_ptr<bool> newer;
+        std::uint64_t reviewed = 0;
+        bool stop_requested = false;
+        std::vector<std::pair<std::uint64_t, std::string>> decisions;
     };
     std::optional<PartnerOrder> partner_order_;
     std::vector<std::string> partner_tools_;
     std::string partner_reply_tool_;
-    std::string interrupted_text_;
+    std::string prior_activity_;
     bool reset_partner_history_ = false;
-    std::unique_ptr<agent::ToolExecutor> reply_executor_;
-    std::shared_ptr<agent::ToolRequest> reply_work_;
+    std::uint64_t settled_event_ = 0, check_candidate_ = 0, check_turn_ = 0, check_binding_ = 0, check_cursor_ = 0;
+    const model::Config event_config_;
+    model::AsyncClient event_model_;
+    std::shared_ptr<model::ModelRequest> event_check_;
     // 启动工具名和参数都已收紧的正式查看回合。
     void start_visit();
     // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。

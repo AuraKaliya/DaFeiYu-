@@ -26,7 +26,7 @@ async function verify(fixture, owner, fish) {
     riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } });
   let actions;
   const inbox = ownerInbox(fish, world, owner.player.uuid, true, 32,
-    (text, generation, sequence) => actions?.playerCommand(text, generation, sequence) ?? inspectionOffer(text, places));
+    text => actions?.answerOffer(text) ?? inspectionOffer(text, places));
   actions = inspectionService(fish, world, inbox, places);
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
@@ -101,10 +101,10 @@ async function verify(fixture, owner, fish) {
       let action = (await query(channel, begin)).action;
       if (process.argv[2] === 'takeover') {
         await until(() => digs === 1, '角色实际开始挖掘');
-        owner.chat('停，我来');
-        await until(() => actions.controlReceipt(generation)?.phase === 'released', '原玩家接管并实际归还控制');
         const stop = { version: 1, method: 'control.stop', generation, id: 'host-stop', key };
-        assert.deepEqual((await query(channel, stop)).control, { generation, order: 4, phase: 'released' });
+        await query(channel, stop);
+        await until(() => actions.controlReceipt(generation)?.phase === 'released', '显式控制请求实际退出');
+        assert.deepEqual((await query(channel, stop)).control, { generation, order: 0, phase: 'released' });
         assert.equal(await query(channel, { ...stop, generation: randomUUID() }), null);
         assert.equal(await query(channel, { ...stop, key: '0'.repeat(64) }), null);
         assert.equal(await query(channel, begin), null);

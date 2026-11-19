@@ -21,6 +21,18 @@ void private_protocol() {
     Json reply{{"version", 1}, {"id", "r"}, {"inbox", {{"generation", generation}, {"owner", generation},
         {"oldest", 2}, {"latest", 2}, {"gap", false}, {"more", false}, {"messages", {{{"sequence", 2}, {"text", "查看"}}}}}}};
     if (Json::parse(dfy::mc::inbox_reply(reply.dump(), "r", args)) != reply.at("inbox")) throw std::runtime_error("inbox lost");
+    auto presence = reply;
+    const Json entered{{"sequence",2},{"type","player.entered"}};
+    presence["inbox"]["presence"] = entered;
+    presence["inbox"]["messages"][0] = entered;
+    if (Json::parse(dfy::mc::inbox_reply(presence.dump(), "r", args)) != presence.at("inbox")) throw std::runtime_error("lost presence");
+    presence["inbox"]["messages"][0]["text"] = "invented";
+    rejects([&] { dfy::mc::inbox_reply(presence.dump(), "r", args); });
+    presence["inbox"]["messages"][0] = entered;
+    presence["inbox"]["presence"]["type"] = "player.left";
+    rejects([&] { dfy::mc::inbox_reply(presence.dump(), "r", args); });
+    presence["inbox"]["presence"]["sequence"] = 3;
+    rejects([&] { dfy::mc::inbox_reply(presence.dump(), "r", args); });
     reply["inbox"]["gap"] = true;
     rejects([&] { dfy::mc::inbox_reply(reply.dump(), "r", args); });
     reply["inbox"]["gap"] = false;

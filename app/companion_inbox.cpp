@@ -40,20 +40,34 @@ void CompanionInbox::accept(const std::string& payload) {
         control = ControlReceipt{address_->world, order, phase == "released" ? ControlPhase::released :
             phase == "requested" ? ControlPhase::requested : ControlPhase::unconfirmed};
     }
+    std::optional<PlayerUtterance> presence;
+    if (batch.contains("presence")) {
+        const auto& p = batch.at("presence");
+        const auto seq = p.at("sequence").get<std::uint64_t>();
+        const auto type = p.at("type").get<std::string>();
+        if (!seq || seq > latest || (type != "player.entered" && type != "player.left")) throw std::invalid_argument("companion: invalid presence");
+        presence = PlayerUtterance{seq, {}, {}, {}, {}, 0, type};
+    }
     if (!status_.ready || batch.at("gap").get<bool>() || entries_.size() + messages.size() > 32) {
+        const auto previous = status_.cursor;
         status_.gap = status_.gap || status_.ready;
         status_.ready = true;
         status_.owner = owner;
         status_.cursor = latest;
         status_.control = std::move(control);
         entries_.clear();
+        // 首次收件以水位排除历史聊天，但将真实的在场快照交给会话一次。
+        if (presence && presence->sequence > previous) entries_.push_back(*presence);
+        if (presence) status_.departed = presence->type == "player.left" ? presence->sequence : 0;
         return;
     }
     auto cursor = status_.cursor;
     auto pending = entries_;
     for (const auto& message : messages) {
-        PlayerUtterance entry{message.at("sequence").get<std::uint64_t>(), message.at("text").get<std::string>(), {}, {}, {}};
-        if (entry.sequence != ++cursor || cursor > latest || entry.text.empty() || entry.text.size() > 1024)
+        PlayerUtterance entry{message.at("sequence").get<std::uint64_t>(), message.value("text", ""), {}, {}, {}, 0, message.value("type", "player.message")};
+        const bool speech = entry.type == "player.message";
+        if (entry.sequence != ++cursor || cursor > latest || entry.text.size() > 1024 ||
+            (speech ? entry.text.empty() : (!entry.text.empty() || (entry.type != "player.entered" && entry.type != "player.left"))))
             throw std::invalid_argument("companion: invalid player message");
         if (message.contains("offer") && message.at("offer").at("purpose") == "visit.inspect")
             entry.visit_place = message.at("offer").at("place").get<std::string>();
@@ -72,6 +86,7 @@ void CompanionInbox::accept(const std::string& payload) {
     entries_.swap(pending);
     status_.cursor = cursor;
     status_.control = std::move(control);
+    if (presence) status_.departed = presence->type == "player.left" ? presence->sequence : 0;
 }
 
 // 通过真正登记的只读工具读取玩家增量，守住原世界及原实例。

@@ -1,6 +1,6 @@
 // 只从协议玩家消息取得绑定玩家的原话，显示名或系统广播不能成为授权来源。
 // 步骤：按实际世界重置窗口 → 观察绑定身份 → 按游标返回同一世界的有界增量。
-function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, classify = () => null) {
+function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, classify = () => null, withPresence = false) {
   if (owner !== null && (typeof owner !== 'string' ||
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner))) throw new Error('无效玩家 UUID');
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 64) throw new Error('无效消息容量');
@@ -8,6 +8,20 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   let sequence = 0;
   let closed = false;
   const entries = [];
+  let presence = null, trackingPresence = false;
+
+  // 同一游戏代次内所有事实共享一个有界游标。
+  function append(fact) {
+    if (sequence >= Number.MAX_SAFE_INTEGER) return null;
+    const entry = { sequence: ++sequence, ...fact };
+    entries.push(entry);
+    if (entries.length > capacity) entries.shift();
+    return entry;
+  }
+  // 记录绑定玩家的实际在场变化，重复名单通知复用原事实。
+  function recordPresence(type) {
+    if (presence?.type !== type) presence = append({ type }) ?? presence;
+  }
 
   // 以游戏读回维护会话边界，换世界后原游标和旧消息停止流转。
   function sync() {
@@ -16,6 +30,8 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       generation = next;
       sequence = 0;
       entries.length = 0;
+      presence = null;
+      trackingPresence = false;
     }
     return generation;
   }
@@ -25,18 +41,22 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       (!localFixture && packet.verified !== true) || typeof packet.plainMessage !== 'string' ||
       !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024 || !sync()) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
-    const entry = { sequence: ++sequence, text: packet.plainMessage };
-    const offer = classify(entry.text, generation, sequence);
-    if (offer) entry.offer = offer;
-    entries.push(entry);
-    if (entries.length > capacity) entries.shift();
+    const offer = classify(packet.plainMessage, generation, sequence + 1);
+    append({ text: packet.plainMessage, ...(withPresence && { type: 'player.message' }), ...(offer && { offer }) });
   }
   bot._client.on('playerChat', receive);
+  const joined = player => { if (player.uuid === owner && sync() && trackingPresence) recordPresence('player.entered'); };
+  const left = player => { if (player.uuid === owner && sync() && trackingPresence) recordPresence('player.left'); };
+  if (withPresence) { bot.on('playerJoined', joined); bot.on('playerLeft', left); }
   return {
     // 按指定世界游标读取玩家消息，避免把其他绑定或缺失历史拼成完整记录。
     read(expected, after) {
       if (!owner || !sync() || expected !== generation) return null;
       if (!Number.isSafeInteger(after) || after < 0 || after > sequence) throw new Error('无效玩家消息游标');
+      if (withPresence && !trackingPresence) {
+        trackingPresence = true;
+        if (Object.values(bot.players).some(p => p.uuid === owner)) recordPresence('player.entered');
+      }
       const oldest = entries[0]?.sequence ?? 1;
       const messages = [];
       let bytes = 0;
@@ -48,7 +68,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
         bytes += size;
       }
       return { generation, owner, oldest, latest: sequence, gap: after < oldest - 1,
-        more: (messages.at(-1)?.sequence ?? after) < sequence, messages };
+        more: (messages.at(-1)?.sequence ?? after) < sequence, messages, ...(presence && { presence: { ...presence } }) };
     },
     // 仅在同一游戏来源中取得仍保留的原指令。
     get(expected, number) {
@@ -57,7 +77,13 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       return entry ? structuredClone(entry) : null;
     },
     // 撤销监听并归还原话窗口。
-    close() { closed = true; bot._client.removeListener('playerChat', receive); sync(); },
+    close() {
+      closed = true;
+      bot._client.removeListener('playerChat', receive);
+      bot.removeListener('playerJoined', joined);
+      bot.removeListener('playerLeft', left);
+      sync();
+    },
   };
 }
 // 只向仍在原游戏中的绑定玩家私聊，聊天失败不改变已经发生的游戏事实。
