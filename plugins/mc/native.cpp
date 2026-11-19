@@ -32,6 +32,18 @@ namespace {
 thread_local std::array<dfy_v2_instance*, 16> slots{};
 std::atomic_uint64_t serial{0};
 
+struct PartnerSkill { std::string_view name, purpose, description, schema; bool changes; };
+constexpr std::array<PartnerSkill, 4> partner_skills{{
+    {"observe", "partner.observe", "Read your position, player position, landmarks, inventory and previous action. Optional block registry name scans visible nearby targets.",
+        R"({"type":"object","properties":{"block":{"type":"string"}},"additionalProperties":false})", false},
+    {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
+        R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", true},
+    {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. Reports broken blocks and actual inventory changes.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true},
+    {"reply", "partner.reply", "Send one short private message to the bound player in this game. Final assistant text is delivered automatically.",
+        R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true}
+}};
+
 // 限长读取 ABI 借用文本，非法空指针不形成视图。
 std::string_view text(dfy_v2_string_view value) noexcept {
     if (!value.data || value.length > 65536) return {};
@@ -118,7 +130,7 @@ void DFY_V2_CALL destroy(dfy_v2_instance* raw) noexcept {
 // 活动插件按配对状态公开世界与私有收件读口。
 dfy_v2_status DFY_V2_CALL count(dfy_v2_instance* raw, uint32_t* value, dfy_v2_error* error) noexcept {
     if (!value) return report(DFY_V2_INVALID_ARGUMENT, error);
-    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 10u) : 0u;
+    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 10u + static_cast<uint32_t>(partner_skills.size())) : 0u;
     return report(*value ? DFY_V2_OK : DFY_V2_INVALID_CONTEXT, error);
 }
 // 返回世界状态的无参契约，工具描述与连接寿命无关。
@@ -156,6 +168,10 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     } else if (index == 9 && !raw->config.key.empty()) {
         *out = {sizeof(*out), 1, DFY_V2_TOOL_CHANGES_STATE | DFY_V2_TOOL_IDEMPOTENT, 0, view("stop"), view("Release control of the original game actor."),
             view(R"({"type":"object","properties":{"generation":{"type":"string"}},"required":["generation"],"additionalProperties":false})")};
+    } else if (index >= 10 && index - 10 < partner_skills.size() && !raw->config.key.empty()) {
+        const auto& skill = partner_skills[index - 10];
+        *out = {sizeof(*out), 1, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
+            view(skill.name), view(skill.description), view(skill.schema)};
     } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
@@ -175,12 +191,13 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool home = text(name) == "return" && !raw->config.key.empty();
     const bool survey = text(name) == "survey" && !raw->config.key.empty();
     const bool control = text(name) == "stop" && !raw->config.key.empty();
-    if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
+    const bool partner = !raw->config.key.empty() && std::ranges::any_of(partner_skills, [&](const auto& skill) { return skill.name == text(name); });
+    if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
-    if ((inspect || mine || home) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.action; }))
+    if ((partner || inspect || mine || home) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.action; }))
         return report(DFY_V2_BUSY, error);
     const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
@@ -189,7 +206,9 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
+        if (partner) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
+            job.id, job.arguments, std::string(text(name)));
+        else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
         else if (survey) job.wire = dfy::mc::survey_request(job.id, raw->config.key, job.arguments);
@@ -323,6 +342,10 @@ dfy_v2_status DFY_V2_CALL route(dfy_v2_instance* raw, dfy_v2_string_view purpose
     *out = {};
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
     if (!raw->config.key.empty()) {
+        for (const auto& skill : partner_skills) if (text(purpose) == skill.purpose) {
+            *out = view(skill.name);
+            return report(DFY_V2_OK, error);
+        }
         if (text(purpose) == "player.inbox") *out = view("inbox");
         else if (text(purpose) == "control.release") *out = view("stop");
         else if (text(purpose) == "search.progress") *out = view("survey");

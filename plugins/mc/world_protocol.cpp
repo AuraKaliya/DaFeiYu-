@@ -58,6 +58,32 @@ bool control_receipt(const Json& value, const Json& generation) {
 }
 }
 
+// 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
+std::string partner_request(std::string_view method, std::string_view id, std::string_view key,
+    std::string_view skill, std::string_view arguments) {
+    const auto envelope = parse(arguments);
+    const auto& context = envelope.at("context");
+    if (key.size() != 64 || envelope.size() != 2 || !envelope.at("arguments").is_object() || context.size() != 2 ||
+        !uuid(context.at("generation")) || !context.at("order").is_number_unsigned() || context.at("order") == 0 ||
+        context.at("order") > 9007199254740991ULL) throw std::invalid_argument("MC: invalid partner context");
+    Json frame{{"version",1},{"id",id},{"key",key},{"method",method},{"context",context},{"skill",skill}};
+    if (method == "partner.begin") frame["arguments"] = envelope.at("arguments");
+    return frame.dump();
+}
+// 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
+InspectReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
+    const auto frame = parse(wire), context = parse(arguments).at("context");
+    const auto& action = frame.at("action");
+    if (frame.at("version") != 1 || frame.at("id").get_ref<const std::string&>() != id ||
+        action.at("skill").get_ref<const std::string&>() != skill || action.at("generation") != context.at("generation") ||
+        action.at("order") != context.at("order") || !action.at("exited").is_boolean() || !action.at("result").is_object())
+        throw std::invalid_argument("MC: invalid partner receipt");
+    const bool exited = action.at("exited");
+    const auto& result = action.at("result");
+    if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
+        throw std::invalid_argument("MC: invalid partner outcome");
+    return {exited, exited && result.at("status") == "done", false, exited ? result.dump() : std::string{}};
+}
 // 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments) {
     auto frame = parse(arguments);

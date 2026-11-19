@@ -74,6 +74,17 @@ int main() {
         rejects([] { dfy::mc::configured_channel(R"({"channel":"ok","channel":"also-ok"})"); });
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
         private_protocol();
+        const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
+        const auto envelope = Json{{"context",source},{"arguments",{{"block","dirt"},{"count",2}}}}.dump();
+        const auto frame = Json::parse(dfy::mc::partner_request("partner.begin", "work", std::string(64,'a'), "collect", envelope));
+        if (frame.at("context") != source || frame.at("arguments").at("block") != "dirt") return 1;
+        auto action = source;
+        action.update(Json{{"skill","collect"},{"exited",true},{"result",{{"status","blocked"},{"broken",1}}}});
+        Json receipt{{"version",1},{"id","work"},{"action",action}};
+        const auto partial = dfy::mc::partner_reply(receipt.dump(), "work", "collect", envelope);
+        if (!partial.exited || partial.arrived || Json::parse(partial.payload).at("broken") != 1) return 1;
+        receipt["action"]["order"] = 1;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(), "work", "collect", envelope); });
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

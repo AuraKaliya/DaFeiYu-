@@ -23,6 +23,11 @@ std::string inbox_request(std::string_view id, std::string_view key, std::string
 // 只把与原查询相符且序号连续的玩家消息交给受信调用者。
 std::string inbox_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 struct InspectReply { bool exited, arrived, moved; std::string payload; };
+// 把已绑定的玩家上下文与模型提供的技能参数发送给配对的游戏角色。
+std::string partner_request(std::string_view method, std::string_view id, std::string_view key,
+    std::string_view skill, std::string_view arguments);
+// 核对同一技能、世界及消息号，只在退出后交付包含实际效果的业务结果。
+InspectReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments);
 // 由宿主选择查看控制方法，模型参数只描述原消息与地标。
 std::string inspect_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments);
 // 验证原世界及原委托的运动回执，成功到达必须有坐标和观察结果。

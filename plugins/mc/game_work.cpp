@@ -3,9 +3,10 @@
 
 namespace dfy::mc {
 // 构造时仅校验输入，实际接纳由第一次原生轮询执行。
-GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments)
-    : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), deadline_(std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
-    if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
+GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments, std::string skill)
+    : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), skill_(std::move(skill)), deadline_(std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
+    if (action_ == GameAction::partner) static_cast<void>(partner_request("partner.begin", id_, config_.key, skill_, arguments_));
+    else if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
     else if (action_ == GameAction::mine) static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));
     else static_cast<void>(return_request("return.begin", id_, config_.key, arguments_));
 }
@@ -22,7 +23,8 @@ std::optional<GameResult> GameWork::poll(bool cancelled) {
         if (!pipe_) {
             if (stopping_) phase_ = Phase::stop;
             const char* verb = phase_ == Phase::begin ? ".begin" : phase_ == Phase::stop ? ".stop" : ".read";
-            const auto frame = action_ == GameAction::inspect ? inspect_request(std::string("inspect") + verb, id_, config_.key, arguments_)
+            const auto frame = action_ == GameAction::partner ? partner_request(std::string("partner") + verb, id_, config_.key, skill_, arguments_)
+                : action_ == GameAction::inspect ? inspect_request(std::string("inspect") + verb, id_, config_.key, arguments_)
                 : action_ == GameAction::mine ? mine_request(std::string("mine") + verb, id_, config_.key, arguments_)
                 : return_request(std::string("return") + verb, id_, config_.key, arguments_);
             pipe_ = std::make_unique<PipeExchange>(config_.channel, frame);
@@ -31,7 +33,11 @@ std::optional<GameResult> GameWork::poll(bool cancelled) {
         auto wire = pipe_->poll();
         if (!wire) return {};
         pipe_.reset();
-        if (action_ == GameAction::inspect) {
+        if (action_ == GameAction::partner) {
+            auto value = partner_reply(*wire, id_, skill_, arguments_);
+            if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :
+                value.arrived ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};
+        } else if (action_ == GameAction::inspect) {
             auto value = inspect_reply(*wire, id_, arguments_);
             if (value.exited) return GameResult{value.arrived, value.moved ? GameEffect::observed : GameEffect::none, std::move(value.payload)};
         } else if (action_ == GameAction::mine) {
