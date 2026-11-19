@@ -32,6 +32,8 @@ class ToolSnapshot {
     ToolSnapshot restrict_to(std::span<const std::string> ids) const;
     // 收紧到一个工具及一份已授权参数，后续缩小范围仍保留原值约束。
     ToolSnapshot bind_arguments(const std::string& id, const std::string& arguments) const;
+    // 为支持信封的工具附加宿主上下文，模型仍只能填写原工具契约中的参数。
+    ToolSnapshot bind_context(const std::string& context) const;
     // 按模型名称解析已授权工具并校验参数，旧实例和已禁用成员拒绝。
     ToolSelection resolve(const std::string& name, const std::string& arguments) const;
     // 校验调用并准备延后执行的驱动，首次实际调用前再次核对原注册授权。
@@ -42,6 +44,7 @@ class ToolSnapshot {
     explicit ToolSnapshot(std::vector<std::shared_ptr<ToolEntry>> entries) : entries_(std::move(entries)) {}
     std::vector<std::shared_ptr<ToolEntry>> entries_;
     std::shared_ptr<const std::string> fixed_arguments_;
+    std::shared_ptr<const std::string> context_;
 };
 // 同一宿主线程内的有界描述目录，宿主授予工具 ID，模型只返回候选调用。
 class ToolCatalog {

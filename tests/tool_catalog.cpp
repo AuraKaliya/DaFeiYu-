@@ -110,8 +110,24 @@ void exact_scope() {
     catalog.remove(registration);
     rejects([&] { bound.resolve("visit", R"({"order":2,"place":"hill"})"); });
 }
+// 验证工具子范围保留宿主来源，同时拒绝从模型参数替换它。
+void context_scope() {
+    ToolCatalog scoped;
+    std::string received;
+    scoped.add(tool("fixture/read","read",2),[&](const ToolInvocation& input) {
+        received = input.call.arguments;
+        return completed_tool({true,ToolEffect::not_applied,"ok",ToolError::none});
+    });
+    const std::vector<std::string> ids{"fixture/read"};
+    auto source = scoped.snapshot(ids).bind_context(R"({"order":7})").restrict_to(ids);
+    rejects([&] { source.bind_context(R"({"order":8})"); });
+    rejects([&] { source.resolve("read",R"({"context":{"order":8}})"); });
+    auto work = source.prepare({{{1,1},1},1},{"read","read","{}"});
+    work->advance();
+    check(received == R"({"context":{"order":7},"arguments":{}})", "native context lost");
+}
 // 运行工具描述与授权检查，本单元不执行模型或原生工具。
 int main() {
-    try { catalog(); lifetime(); subsets(); exact_scope(); std::cout << "Tool catalog checks passed\n"; return 0; }
+    try { catalog(); lifetime(); subsets(); exact_scope(); context_scope(); std::cout << "Tool catalog checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

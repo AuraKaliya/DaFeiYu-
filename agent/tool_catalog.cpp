@@ -114,6 +114,18 @@ ToolSnapshot ToolSnapshot::restrict_to(std::span<const std::string> ids) const {
     }
     ToolSnapshot result(std::move(selected));
     result.fixed_arguments_ = fixed_arguments_;
+    result.context_ = context_;
+    return result;
+}
+
+// 固定由宿主签发的来源，子范围不得替换该来源。
+ToolSnapshot ToolSnapshot::bind_context(const std::string& context) const {
+    if (context.size() > 4096) throw std::invalid_argument("tools: oversized context");
+    const auto canonical = exact_arguments(context);
+    if (canonical.front() != '{' || (context_ && *context_ != canonical))
+        throw std::invalid_argument("tools: invalid context binding");
+    auto result = *this;
+    result.context_ = std::make_shared<const std::string>(canonical);
     return result;
 }
 
@@ -148,10 +160,13 @@ std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::Tool
     const auto selection = resolve(call.name,call.arguments);
     for (const auto& entry : entries_) if (entry->registration == selection.registration) {
         if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
-        ToolFactory guarded = [entry](const ToolInvocation& input) {
+        ToolFactory guarded = [entry, context = context_](const ToolInvocation& input) {
             if (!entry->registered || !entry->enabled)
                 return completed_tool({false,ToolEffect::not_applied,{},ToolError::unavailable});
-            return entry->factory(input);
+            if (!context) return entry->factory(input);
+            auto native = input;
+            native.call.arguments = "{\"context\":" + *context + ",\"arguments\":" + input.call.arguments + "}";
+            return entry->factory(native);
         };
         return std::make_unique<ToolDriver>(ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(guarded),std::move(resources));
     }
