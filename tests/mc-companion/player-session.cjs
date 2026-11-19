@@ -19,6 +19,7 @@ async function drive(exe, pkg, root, owner, evidence) {
   const log = createInterface({ input: child.stdout });
   let issued = false;
   let questionReady = false, questions = 0, answered = false, secondVisit = false;
+  const arrivalReports = [];
   // 只在独立的玩家客户端与可信宿主都看见问题后给出一次答复。
   const answer = () => {
     if (questionReady && questions && !answered) {
@@ -29,6 +30,7 @@ async function drive(exe, pkg, root, owner, evidence) {
   };
   const heard = text => {
     if (text.includes('要我采一些带回来吗')) { ++questions; answer(); }
+    if (text.includes('我到河边了')) arrivalReports.push(text);
   };
   owner.on('messagestr', heard);
   log.on('line', line => {
@@ -44,6 +46,11 @@ async function drive(exe, pkg, root, owner, evidence) {
     writeFileSync(join(evidence, 'host-results.json'), JSON.stringify(records, null, 2));
     if (!issued || code !== 0) throw new Error('宿主未完成真实玩家入口验收');
     if (['decline', 'approve-game', 'approve-center', 'lost-send', 'lost-receipt'].includes(process.argv[4])) assert.ok(answered && questions === 1);
+    if (['return-16', 'return-14', 'next-visit'].includes(process.argv[4])) {
+      const expected = process.argv[4] === 'return-14' ? 14 : 16;
+      await until(() => arrivalReports.length, '原玩家收到到岸回报');
+      assert.ok(arrivalReports.length === 1 && arrivalReports[0].includes(`这次带回了 ${expected} 块圆石`));
+    } else assert.equal(arrivalReports.length, 0);
   } finally { clearTimeout(timer); log.close(); owner.removeListener('messagestr', heard); }
 }
 

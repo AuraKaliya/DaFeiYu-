@@ -1,5 +1,6 @@
 const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
+const { tellOwner } = require('./chat.cjs');
 
 // 用抵达后的服务器联合采样及原拾取证据计算仍持有的自采量。
 // 步骤：定位同一角色的新到达样本 → 核对每个来源 → 用途中材料减少及库存上限收紧范围。
@@ -36,7 +37,7 @@ function returnService(bot, world, deliveries, mining, places, witness) {
     bot.clearControlStates();
   }
   // 按游戏自身可见状态步行，达到目的地后读取新观察。
-  async function walk(action, destination, summary) {
+  async function walk(action, destination, summary, owner) {
     try {
       let departure = null;
       if (witness && summary.mark) try { departure = await witness.begin(bot.game.dimension); } catch { }
@@ -62,6 +63,10 @@ function returnService(bot, world, deliveries, mining, places, witness) {
       } while (performance.now() < until);
       if (closed || action.phase === 'stopping' || world.read()?.generation !== action.generation) throw new Error('返程已撤销');
       action.phase = 'arrived';
+      const amount = action.carried;
+      const report = amount && amount.lower === amount.upper ? `这次带回了 ${amount.lower} 块圆石。` :
+        `身上共有 ${action.stock} 块圆石。`;
+      tellOwner(bot, owner, `我到${destination.label}了，${report}`);
     } catch {
       action.phase = action.phase === 'stopping' ? 'stopped' : 'failed';
     } finally {
@@ -89,7 +94,7 @@ function returnService(bot, world, deliveries, mining, places, witness) {
       const deadline = lastPoll + 30000;
       timer = setInterval(() => { if (performance.now() - lastPoll > 4000 || performance.now() >= deadline) stop(); }, 200);
       timer.unref();
-      done = walk(current, destination, summary);
+      done = walk(current, destination, summary, receipt.owner);
       return { ...current };
     },
     // 查询或停止同一趟返程，未取得到达采样不能显示已交付。
