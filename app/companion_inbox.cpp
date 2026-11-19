@@ -29,6 +29,7 @@ void CompanionInbox::accept(const std::string& payload) {
     const auto& messages = batch.at("messages");
     if (owner.empty() || owner.size() > 128 || !messages.is_array() || messages.size() > 8 || latest < status_.cursor ||
         (status_.ready && owner != status_.owner)) throw std::invalid_argument("companion: invalid inbox");
+    auto control = status_.control;
     if (batch.contains("control")) {
         const auto& record = batch.at("control");
         const auto order = record.at("order").get<std::uint64_t>();
@@ -36,7 +37,7 @@ void CompanionInbox::accept(const std::string& payload) {
             throw std::invalid_argument("companion: invalid control receipt");
         const auto& phase = record.at("phase");
         if (phase != "released" && phase != "requested" && phase != "unconfirmed") throw std::invalid_argument("companion: invalid control phase");
-        status_.control = ControlReceipt{address_->world, order, phase == "released" ? ControlPhase::released :
+        control = ControlReceipt{address_->world, order, phase == "released" ? ControlPhase::released :
             phase == "requested" ? ControlPhase::requested : ControlPhase::unconfirmed};
     }
     if (!status_.ready || batch.at("gap").get<bool>() || entries_.size() + messages.size() > 32) {
@@ -44,6 +45,7 @@ void CompanionInbox::accept(const std::string& payload) {
         status_.ready = true;
         status_.owner = owner;
         status_.cursor = latest;
+        status_.control = std::move(control);
         entries_.clear();
         return;
     }
@@ -69,6 +71,7 @@ void CompanionInbox::accept(const std::string& payload) {
     if ((cursor < latest) != batch.at("more").get<bool>()) throw std::invalid_argument("companion: invalid inbox continuation");
     entries_.swap(pending);
     status_.cursor = cursor;
+    status_.control = std::move(control);
 }
 
 // 通过真正登记的只读工具读取玩家增量，守住原世界及原实例。
