@@ -33,7 +33,7 @@ function prepareScene(send) {
 
 // 只让本次回环服先到场的玩家发出委托，同时保留这次真实交互的宿主证据。
 // 步骤：等待玩家入场 → 绑定角色和观察端 → 运行宿主至接管或离场 → 收尾本次连接。
-async function play(fixture, exe, pkg) {
+async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
   const root = path.join(evidence, 'host');
   const stop = path.join(root, 'stop');
@@ -50,12 +50,17 @@ async function play(fixture, exe, pkg) {
   const file = path.join(evidence, 'adapter.json');
   fs.writeFileSync(path.join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey }));
   fs.writeFileSync(file, JSON.stringify({ host: '127.0.0.1', port, username: 'DfyCompanion', auth: 'offline',
-    owner: offlineId(owner), channel, bridgeKey, places: {
+    mode: mode === '--probe' ? 'scenario' : 'partner', owner: offlineId(owner), channel, bridgeKey, places: {
       hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
       riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } },
     observer: { directory: path.join(server, 'plugins/DfyStoneObserver'), dimension: 'overworld',
       world: formatId(fs.readFileSync(path.join(server, 'playtest-world/uid.dat'))) } }));
   const game = await launch(file);
+  // 将游戏侧真实退出与原消息编号关联；日志写入失败不会改变玩家已产生的效果。
+  game.bot.on('partnerSkillExit', receipt => {
+    try { fs.appendFileSync(path.join(root, 'game-actions.jsonl'), JSON.stringify(receipt) + '\n'); }
+    catch (error) { console.error('游戏回执写入失败：' + error.message); }
+  });
   let child, exit;
   let gameEnded = false;
   const gameDone = game.done.finally(() => { gameEnded = true; });
@@ -64,15 +69,23 @@ async function play(fixture, exe, pkg) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
+    if (mode !== '--probe') {
+      send('fill 3 -60 0 4 -60 0 minecraft:dirt');
+      send('setblock 5 -60 1 minecraft:oak_log');
+    }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '山脚与工具就绪');
-    child = spawn(exe, [pkg, root], { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
+    const args = mode === '--live' ? ['--mc-partner', config, pkg, root] :
+      mode === '--partner-probe' ? [pkg, root, mode] : [pkg, root];
+    child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
     exit = once(child, 'close');
     exit.catch(() => {});
     const lines = createInterface({ input: child.stdout });
     lines.on('line', line => {
-      if (line === 'DFY_LISTENING') game.bot.whisper(owner, '我在河边。你可以说“去山脚看看”，途中叫我“停，我来”就交给你。');
+      if (line === 'DFY_LISTENING') game.bot.whisper(owner, mode === '--probe' ?
+        '我在河边。你可以说“去山脚看看”，途中叫我“停，我来”就交给你。' :
+        '我在河边。直接用普通聊天跟我说话吧，有什么打算？要接管时说“停，我来”。');
     });
     while (child.exitCode === null && !child.signalCode && present.has(owner) && !stopped() && !gameEnded) await sleep(250);
     fs.closeSync(fs.openSync(stop, 'a'));
@@ -90,9 +103,9 @@ async function play(fixture, exe, pkg) {
 }
 
 // 在同一次体验服生命周期内运行真实协议玩家；任一方失败都先回收本轮宿主。
-async function rehearse(fixture, exe, pkg) {
-  const host = play(fixture, exe, pkg);
-  const guest = require('./playtest-check.cjs').checkPlayer(fixture).finally(() => {
+async function rehearse(fixture, exe, pkg, mode) {
+  const host = play(fixture, exe, pkg, mode);
+  const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode === '--partner-probe').finally(() => {
     fs.closeSync(fs.openSync(path.join(fixture.evidence, 'host/stop'), 'a'));
   });
   const results = await Promise.allSettled([host, guest]);
@@ -101,7 +114,9 @@ async function rehearse(fixture, exe, pkg) {
 
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
-  const [exe, pkg] = process.argv.slice(2);
+  const [exe, pkg, mode, config] = process.argv.slice(2);
+  if (!['--live', '--probe', '--partner-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
+    throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
     throw new Error('需要已构建的体验宿主和 MC 包');
   const pack = fs.readFileSync(path.join(process.env.DFY_MC_TEST_ROOT, 'appearance/companion-1.21.4.zip'));
@@ -114,7 +129,7 @@ async function main() {
   httpd.listen(25581, '127.0.0.1');
   await once(httpd, 'listening');
   try {
-    await withPaper(fixture => process.argv[4] === '--probe' ? rehearse(fixture, exe, pkg) : play(fixture, exe, pkg), true);
+    await withPaper(fixture => mode === '--live' ? play(fixture, exe, pkg, mode, config) : rehearse(fixture, exe, pkg, mode), true);
   }
   finally { httpd.close(); }
 }
