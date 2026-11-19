@@ -1,5 +1,7 @@
 # Minecraft 本地协议探针
 
+本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../../docs/mc-companion-development-plan.md#外部试玩怎样评)，记录现场、可能的解释与实际效果。
+
 ## 首次真人体验
 
 准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`，运行 `./tests/mc-companion/start-playtest.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。正式入口使用配置的模型，仅在收到玩家消息后发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
