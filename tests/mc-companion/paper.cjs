@@ -6,10 +6,11 @@ const { until } = require('./players.cjs');
 
 // 只选用显式准备的回环测试服，沿用其世界，不创建或接受许可。
 // 步骤：定位指定测试目录 → 核对监听及身份配置 → 返回运行位置。
-function fixturePaths() {
+function fixturePaths(playtest) {
   const root = process.env.DFY_MC_TEST_ROOT;
   if (!root || !path.isAbsolute(root)) throw new Error('请指定独立的 DFY_MC_TEST_ROOT');
-  const server = path.join(root, 'servers', 'stone-1.21.4');
+  const server = path.join(root, 'servers', playtest ? 'playtest-1.21.4' : 'stone-1.21.4');
+  const port = playtest ? 25580 : 25579;
   const properties = fs.readFileSync(path.join(server, 'server.properties'), 'utf8');
   const settings = new Map();
   for (const line of properties.split(/\r?\n/)) {
@@ -18,17 +19,17 @@ function fixturePaths() {
     if (!match || line.endsWith('\\') || settings.has(match[1])) throw new Error('测试配置不是唯一的单行键值');
     settings.set(match[1], match[2]);
   }
-  for (const [key, value] of Object.entries({ 'server-ip': '127.0.0.1', 'server-port': '25579',
-    'online-mode': 'false', 'enable-rcon': 'false', 'enable-query': 'false', 'level-name': 'fixture-world' })) {
+  for (const [key, value] of Object.entries({ 'server-ip': '127.0.0.1', 'server-port': String(port),
+    'online-mode': 'false', 'enable-rcon': 'false', 'enable-query': 'false', 'level-name': playtest ? 'playtest-world' : 'fixture-world' })) {
     if (settings.get(key) !== value) throw new Error('隔离测试服配置不符：' + key);
   }
-  return { root, server };
+  return { root, server, port };
 }
 
 // 启动并独占本次服务器进程，向夹具提供本地控制台与独立证据目录。
 // 步骤：打开日志并等待就绪 → 执行协议探针 → 请求正常停服并核对实际退出。
-async function withPaper(probe) {
-  const { root, server } = fixturePaths();
+async function withPaper(probe, playtest = false) {
+  const { root, server, port } = fixturePaths(playtest);
   const java = process.env.DFY_MC_JAVA;
   const jar = process.env.DFY_MC_PAPER_JAR;
   if (!java || !jar || !path.isAbsolute(java) || !path.isAbsolute(jar))
@@ -41,10 +42,17 @@ async function withPaper(probe) {
   let ready = false;
   let closed = false;
   let startupError;
+  const present = new Set();
   // 仅识别本进程的启动记录，输出仍完整保留供复核。
   lines.on('line', line => {
     fs.writeSync(log, line + '\n');
     if (/\]: Done \([\d.]+s\)!/.test(line)) ready = true;
+    if (playtest) {
+      const join = /^\[[^\]]+ INFO\]: (\w{1,16})\[\/127\.0\.0\.1:\d+\] logged in with entity id /.exec(line);
+      const leave = /^\[[^\]]+ INFO\]: (\w{1,16}) lost connection:/.exec(line);
+      if (join) present.add(join[1]);
+      if (leave) present.delete(leave[1]);
+    }
   });
   child.stderr.on('data', chunk => fs.writeSync(log, chunk));
   child.stdin.on('error', error => { startupError = error; });
@@ -60,7 +68,7 @@ async function withPaper(probe) {
     const send = line => child.stdin.write(line + '\n');
     send('gamerule spawnRadius 0');
     send('setworldspawn 0 -60 0');
-    return await probe({ send, port: 25579, evidence, server });
+    return await probe({ send, port, evidence, server, present, running: () => !closed });
   } finally {
     try {
       if (!closed) {

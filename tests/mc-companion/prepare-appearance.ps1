@@ -18,13 +18,22 @@ $temporary = Join-Path $directory ([guid]::NewGuid().ToString() + '.zip')
 try {
     $archive = [IO.Compression.ZipFile]::Open($temporary, 'Create')
     try {
-        $metadata = $archive.CreateEntry('pack.mcmeta').Open()
+        $timestamp = [DateTimeOffset]::new(2026, 11, 7, 0, 0, 0, [TimeSpan]::Zero)
+        $entry = $archive.CreateEntry('pack.mcmeta')
+        $entry.LastWriteTime = $timestamp
+        $metadata = $entry.Open()
         try {
             $bytes = [Text.Encoding]::UTF8.GetBytes('{"pack":{"pack_format":46,"description":"大肥鱼 · DeepSeek大肥鱼 / Lemon_Cat_Tea · LittleSkin 926524"}}')
             $metadata.Write($bytes, 0, $bytes.Length)
         } finally { $metadata.Dispose() }
         # Java 1.21.4 用离线 UUID 的 Java 哈希在 18 个默认模型中选取，DfyCompanion 对应第 8 项（从零计数）。
-        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $skin, 'assets/minecraft/textures/entity/player/slim/zuri.png')
+        $texture = $archive.CreateEntry('assets/minecraft/textures/entity/player/slim/zuri.png')
+        $texture.LastWriteTime = $timestamp
+        $output = $texture.Open()
+        try {
+            $pixels = [IO.File]::ReadAllBytes($skin)
+            $output.Write($pixels, 0, $pixels.Length)
+        } finally { $output.Dispose() }
     } finally { $archive.Dispose() }
     Copy-Item -LiteralPath $temporary -Destination $pack -Force
 } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }
