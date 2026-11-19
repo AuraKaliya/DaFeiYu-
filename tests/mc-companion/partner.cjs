@@ -30,19 +30,20 @@ async function exercise(fixture, player, fish) {
     fixture.send('tp DfyOwner -4 -60 2');
     fixture.send('clear DfyCompanion');
     fixture.send('fill 3 -60 0 4 -60 0 minecraft:dirt');
-    fixture.send('setblock 5 -60 1 minecraft:oak_log');
+    fixture.send('setblock 12 -60 2 minecraft:oak_log');
     await until(() => fish.blockAt(fish.entity.position.clone().set(4, -60, 0))?.name === 'dirt', '泥土实际就绪');
     player.chat('给小屋备点材料吧');
     await until(() => inbox.get(context.generation, 1), '收到原话');
     assert.ok((await invoke('observe', { block: 'dirt' })).visible.length);
     assert.equal((await invoke('move', { x: 1, y: -60, z: 0 })).status, 'done');
     for (const [block, count] of [['dirt', 2], ['oak_log', 1]]) {
-      const result = await invoke('collect', { block, count });
+      const args = block === 'oak_log' ? { block, count, x: 12, y: -60, z: 2 } : { block, count };
+      const result = await invoke('collect', args);
       assert.equal(result.status, 'done', JSON.stringify(result));
       assert.equal(result.broken, count);
       assert.equal(result.inventoryDelta[block], count, JSON.stringify(result));
     }
-    assert.equal((await invoke('collect', { block: 'oak_log', count: 1, x: 5, y: -60, z: 1 })).status, 'blocked');
+    assert.equal((await invoke('collect', { block: 'oak_log', count: 1, x: 12, y: -60, z: 2 })).status, 'blocked');
     const heard = [];
     player.on('messagestr', text => heard.push(text));
     assert.equal((await invoke('reply', { text: '材料在我背包里了。' })).sent, true);
@@ -50,6 +51,13 @@ async function exercise(fixture, player, fish) {
     player.chat('现在先歇会儿');
     await until(() => inbox.get(context.generation, 2), '新消息到达');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), context, 'collect', { block: 'dirt', count: 2 }));
+    const current = { ...context, order: 2 }, move = randomUUID();
+    actions.partner.call('partner.begin', move, current, 'move', { x: 28, y: -60, z: -4 });
+    await until(() => fish.entity.position.x > 14, '接管前确实正在移动');
+    assert.equal(actions.releaseControl(current.generation, 2).phase, 'requested');
+    await until(() => actions.controlReceipt(current.generation)?.phase === 'released', '游戏确认已释放');
+    assert.equal(actions.partner.call('partner.read', move, current, 'move').result.status, 'interrupted');
+    assert.throws(() => actions.partner.call('partner.begin', randomUUID(), current, 'move', { place: 'player' }));
   } finally { await actions.close(); inbox.close(); world.close(); }
 }
 withPaper(fixture => withPlayers(fixture.port, (owner, fish) => exercise(fixture, owner, fish)))

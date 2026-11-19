@@ -68,6 +68,7 @@ async function collect(bot, args, check, result) {
       const here = bot.blockAt(pos);
       if (!here || here.type !== type.id || !here.canHarvest(bot.heldItem?.type) || !bot.canDigBlock(here) || !bot.canSeeBlock(here))
         throw new Error('目标、距离或工具已不满足采掘条件');
+      if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('走近后目标位于脚下');
       await bot.dig(here, true);
       const after = bot.blockAt(pos);
       if (!after || after.type === type.id) throw new Error('方块变化未核实');
@@ -116,11 +117,16 @@ function partnerService(bot, world, inbox, places, owner) {
       if (r.skill === 'observe') {
         result.position = bot.entity.position.clone();
         result.dimension = bot.game.dimension;
-        result.player = player?.entity?.position ?? null;
+        result.player = player?.entity?.position?.clone() ?? null;
         result.landmarks = Object.fromEntries([...places].filter(([, p]) => p.dimension === bot.game.dimension));
         result.inventory = inventory(bot);
         result.ground = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
-        if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position);
+        const sight = bot.blockAtCursor(16);
+        if (sight) result.lookingAt = { block: sight.name, position: sight.position.clone() };
+        result.nearby = Object.values(bot.entities).filter(e => e !== bot.entity && e.position.distanceTo(bot.entity.position) <= 16)
+          .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
+          .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
+        if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position.clone());
         if (previous) result.lastAction = previous;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
@@ -128,11 +134,13 @@ function partnerService(bot, world, inbox, places, owner) {
         const repeated = [...records.values()].some(e => e.receipt !== r && e.receipt.skill === 'reply' &&
           e.receipt.result.sent && e.args.text === args.text);
         result.sent = repeated || tellOwner(bot, owner, args.text);
+        result.reused = repeated;
         if (!result.sent) throw new Error('原玩家不在场，回复未发出');
       } else if (r.skill === 'move') {
         const named = Object.hasOwn(args, 'place');
         if (named && ['x','y','z'].some(k => Object.hasOwn(args,k))) throw new Error('请选择地标或坐标之一');
-        const point = args.place === 'player' ? player?.entity?.position?.floored() : places.get(args.place);
+        const point = args.place === 'player' ? player?.entity?.position?.floored() :
+          places.get(args.place) ?? [...places.values()].find(p => p.label === args.place);
         if (named && (!point || (point.dimension && point.dimension !== bot.game.dimension))) throw new Error('地标未知或玩家不在视野');
         const pos = targetPoint(bot, named ? point : args);
         await walk(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 1));
@@ -149,6 +157,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } finally {
       r.exited = true;
       if (['move', 'collect'].includes(r.skill)) previous = { order: r.order, skill: r.skill, ...result };
+      bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
   }
   return {
@@ -174,7 +183,7 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       if (method !== 'partner.begin' || !current(context) || (active && !active.receipt.exited) || records.size >= 64)
         throw new Error('游戏工作已失效或正忙');
-      const job = { args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
+      const job = { id, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(id, job);
       active = job;
       const timer = setInterval(() => { if (!current(context) || performance.now() - job.polled > 4000) cancel(); }, 150);
