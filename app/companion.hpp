@@ -19,6 +19,7 @@ struct CompanionStatus {
     std::string package, topic;
     bool stopping = false, closed = false;
     std::optional<agent::TurnDiagnostics> turn;
+    std::optional<ControlReceipt> control;
 };
 
 // 在应用宿主线程拥有同一玩家个体的一段游戏会话，工具绑定限原插件实例。
@@ -34,6 +35,8 @@ class CompanionSession {
     void advance();
     // 撤销工具并请求关闭，仍需推进到已退出。
     void close();
+    // 停止接纳并向原游戏取得实际释放回执。
+    void request_stop();
     // 独立于对话回合，按需向原插件请求真实读回。
     std::uint64_t refresh();
     // 复制已授权状态查询的结果及新旧标记。
@@ -74,7 +77,7 @@ class CompanionSession {
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
     bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy() && !questions_.busy() &&
-        !delivery_.busy() && !mining_.busy(); }
+        !delivery_.busy() && !mining_.busy() && !control_executor_; }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -92,6 +95,12 @@ class CompanionSession {
     void review_exploration();
     // 从原业务记录复制当前查看及其精确匹配的后续事实。
     BoardTask current_board_task() const;
+    // 在收尾期间独立结算同一世界的接管回执。
+    void advance_control();
+    std::optional<std::string> control_tool_;
+    std::optional<ControlReceipt> control_;
+    std::unique_ptr<agent::ToolExecutor> control_executor_;
+    std::shared_ptr<agent::ToolRequest> control_work_;
     std::weak_ptr<plugins::PluginInstance> instance_;
     std::string package_;
     std::shared_ptr<agent::ToolCatalog> catalog_;

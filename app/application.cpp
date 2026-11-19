@@ -259,7 +259,7 @@ agent::TurnDiagnostics Application::submit_companion(runtime::DomainId session, 
 // 停止原游戏会话，旧界面不能停止替换后的实例。
 void Application::stop_companion(runtime::DomainId session) {
     if (!companion_ || companion_->id() != session) throw std::invalid_argument("companion: stale session");
-    companion_->close();
+    companion_->request_stop();
 }
 
 // 复制最近的子会话状态，不推进模型或游戏。

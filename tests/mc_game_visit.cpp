@@ -49,7 +49,11 @@ int wmain(int argc, wchar_t** argv) {
         const bool complete = back || (argc == 4 && std::wstring_view(argv[3]) == L"collect-16");
         const bool pickup_one = complete || (argc == 4 && std::wstring_view(argv[3]) == L"pickup-one");
         const bool mine_one = pickup_one || (argc == 4 && std::wstring_view(argv[3]) == L"mine-one");
-        const bool game_answer = lost_send || lost_receipt || mine_one || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
+        const bool player_stop = argc == 4 && std::wstring_view(argv[3]) == L"stop-game";
+        const bool host_stop = argc == 4 && std::wstring_view(argv[3]) == L"stop-host";
+        const bool disconnected = argc == 4 && std::wstring_view(argv[3]) == L"stop-disconnect";
+        const bool takeover = player_stop || host_stop || disconnected;
+        const bool game_answer = takeover || lost_send || lost_receipt || mine_one || (argc == 4 && std::wstring_view(argv[3]) == L"approve-game");
         const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
@@ -134,6 +138,28 @@ int wmain(int argc, wchar_t** argv) {
             std::cout << nlohmann::json{{"collection", grant.id}, {"question", grant.question}, {"quantity", grant.quantity},
                 {"source", game_answer ? "game" : "management"}, {"return", grant.return_place}, {"accepted", true},
                 {"submissions", delivered.submissions}, {"checks", delivered.checks}}.dump() << '\n';
+            if (takeover) {
+                until(application, [&] { return application.companion_mining(id)->index >= 2; });
+                if (disconnected) {
+                    until(application, [&] { return !application.companion_address(); });
+                    application.stop_companion(id);
+                }
+                if (host_stop) {
+                    application.stop_companion(id);
+                    check(application.companion_status()->control->phase == app::ControlPhase::requested, "release inferred at admission");
+                    check(application.plugins().unload("mc.companion") == plugins::ShutdownResult::in_use, "unload before release");
+                }
+                until(application, [&] { return application.companion_status()->closed; });
+                const auto control = application.companion_status()->control;
+                check(control && control->phase == (disconnected ? app::ControlPhase::unconfirmed : app::ControlPhase::released) && control->world == address.world &&
+                    (player_stop ? control->order == 4 : control->order == 0), "game release receipt or origin lost");
+                const auto mining = application.companion_mining(id);
+                check(mining && mining->index == 2 && mining->lower >= 1 && mining->home.phase == app::ReturnPhase::idle,
+                    "late actions or lost prior pickups");
+                app::application_command(application, "/companion status", terminal, std::cerr);
+                std::ofstream(root / "control.txt", std::ios::binary) << terminal.str();
+                check(application.plugins().unload("mc.companion") == plugins::ShutdownResult::closed, "unload after local exit");
+            }
             if (mine_one) {
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(complete ? 120 : 15);
                 while (std::chrono::steady_clock::now() < deadline) {

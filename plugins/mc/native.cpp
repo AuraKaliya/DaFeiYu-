@@ -12,7 +12,8 @@ struct NativeJob {
     std::uint64_t sequence = 0;
     bool ready = false, success = false, exited = false;
     std::string id, output, wire, arguments;
-    enum class Method { world, survey, inbox, ask, admit, receipt } method = Method::world;
+    enum class Method { world, survey, inbox, ask, admit, receipt, control } method = Method::world;
+    std::chrono::steady_clock::time_point next{};
     bool attempted = false;
     bool cancelled = false;
     std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
@@ -117,7 +118,7 @@ void DFY_V2_CALL destroy(dfy_v2_instance* raw) noexcept {
 // 活动插件按配对状态公开世界与私有收件读口。
 dfy_v2_status DFY_V2_CALL count(dfy_v2_instance* raw, uint32_t* value, dfy_v2_error* error) noexcept {
     if (!value) return report(DFY_V2_INVALID_ARGUMENT, error);
-    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 9u) : 0u;
+    *value = owned(raw) && raw->running ? (raw->config.key.empty() ? 1u : 10u) : 0u;
     return report(*value ? DFY_V2_OK : DFY_V2_INVALID_CONTEXT, error);
 }
 // 返回世界状态的无参契约，工具描述与连接寿命无关。
@@ -152,6 +153,9 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     } else if (index == 8 && !raw->config.key.empty()) {
         *out = {sizeof(*out), 1, 0, 0, view("survey"), view("Read the current world and observed exploration coverage."),
             view(R"({"type":"object","properties":{"order":{"type":"integer"},"inquiry":{"type":"string"}},"additionalProperties":false})")};
+    } else if (index == 9 && !raw->config.key.empty()) {
+        *out = {sizeof(*out), 1, DFY_V2_TOOL_CHANGES_STATE | DFY_V2_TOOL_IDEMPOTENT, 0, view("stop"), view("Release control of the original game actor."),
+            view(R"({"type":"object","properties":{"generation":{"type":"string"}},"required":["generation"],"additionalProperties":false})")};
     } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
@@ -170,7 +174,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool mine = text(name) == "mine" && !raw->config.key.empty();
     const bool home = text(name) == "return" && !raw->config.key.empty();
     const bool survey = text(name) == "survey" && !raw->config.key.empty();
-    if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
+    const bool control = text(name) == "stop" && !raw->config.key.empty();
+    if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
@@ -186,13 +191,15 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.arguments = text(call->arguments);
         if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
+        else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
         else if (survey) job.wire = dfy::mc::survey_request(job.id, raw->config.key, job.arguments);
         else if (ask) job.wire = dfy::mc::question_request(job.id, raw->config.key, job.arguments);
         else if (admit || receipt) job.wire = dfy::mc::delivery_request(admit, job.id, raw->config.key, job.arguments);
         else job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
     } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
     catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
-    if (survey) job.method = NativeJob::Method::survey;
+    if (control) job.method = NativeJob::Method::control;
+    else if (survey) job.method = NativeJob::Method::survey;
     else if (admit) job.method = NativeJob::Method::admit;
     else if (receipt) job.method = NativeJob::Method::receipt;
     else if (ask) job.method = NativeJob::Method::ask;
@@ -229,12 +236,22 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
             job->effect = job->action->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
             job->ready = true;
         }
-    } else {
+    } else if (std::chrono::steady_clock::now() >= job->next) {
         try {
             if (!job->pipe) job->pipe = std::make_unique<dfy::mc::PipeExchange>(raw->config.channel, job->wire);
             job->attempted = true;
             if (auto reply = job->pipe->poll()) {
                 switch (job->method) {
+                case NativeJob::Method::control:
+                    job->output = dfy::mc::control_reply(*reply, job->id, job->arguments);
+                    job->effect = DFY_V2_TOOL_APPLIED;
+                    if (job->output.empty()) {
+                        job->pipe.reset();
+                        job->next = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+                        *out = {sizeof(*out), 0, 0, job->effect, 0, 0, {}};
+                        return report(DFY_V2_OK, error);
+                    }
+                    break;
                 case NativeJob::Method::world: job->output = dfy::mc::world_reply(*reply, job->id); break;
                 case NativeJob::Method::survey: job->output = dfy::mc::world_reply(*reply, job->id, true); break;
                 case NativeJob::Method::inbox: job->output = dfy::mc::inbox_reply(*reply, job->id, job->arguments); break;
@@ -259,7 +276,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                     return report(DFY_V2_OK, error);
                 } catch (...) {}
             }
-            if ((job->method == NativeJob::Method::ask || job->method == NativeJob::Method::admit) && job->attempted)
+            if ((job->method == NativeJob::Method::ask || job->method == NativeJob::Method::admit || job->method == NativeJob::Method::control) && job->attempted)
                 job->effect = DFY_V2_TOOL_UNKNOWN;
             job->ready = true;
         }
@@ -274,7 +291,7 @@ dfy_v2_status DFY_V2_CALL cancel(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket
     if (reason < DFY_V2_CANCEL_USER || reason > DFY_V2_CANCEL_DEADLINE) return report(DFY_V2_INVALID_ARGUMENT, error);
     if (!job->ready) {
         job->cancelled = true;
-        if ((job->method == NativeJob::Method::ask || job->method == NativeJob::Method::admit) && job->attempted)
+        if ((job->method == NativeJob::Method::ask || job->method == NativeJob::Method::admit || job->method == NativeJob::Method::control) && job->attempted)
             job->effect = DFY_V2_TOOL_UNKNOWN;
         if (!job->action) job->ready = true;
     }
@@ -307,6 +324,7 @@ dfy_v2_status DFY_V2_CALL route(dfy_v2_instance* raw, dfy_v2_string_view purpose
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT, error);
     if (!raw->config.key.empty()) {
         if (text(purpose) == "player.inbox") *out = view("inbox");
+        else if (text(purpose) == "control.release") *out = view("stop");
         else if (text(purpose) == "search.progress") *out = view("survey");
         else if (text(purpose) == "visit.inspect") *out = view("inspect");
         else if (text(purpose) == "question.open") *out = view("ask");

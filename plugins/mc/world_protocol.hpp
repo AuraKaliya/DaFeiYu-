@@ -4,6 +4,10 @@
 
 namespace dfy::mc {
 struct BridgeConfig { std::string channel, key; };
+// 为配对的角色生成原世界的幂等接管请求。
+std::string control_request(std::string_view id, std::string_view key, std::string_view arguments);
+// 校验接管来源，尚未释放时返回空串供继续轮询。
+std::string control_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 // 校验插件私有配置，配对键仅用于本机受信请求。
 BridgeConfig configured_bridge(std::string_view config);
 // 从独立插件配置中读取本机管道短名。

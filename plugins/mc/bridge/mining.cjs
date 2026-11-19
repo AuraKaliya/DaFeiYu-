@@ -62,7 +62,8 @@ function miningService(bot, world, deliveries, places, inspection, witness) {
       action.target = { x: current.position.x, y: current.position.y, z: current.position.z };
       action.started = true;
       action.phase = 'digging';
-      await bot.dig(current);
+      // 直接对准已核验的方块，避免断线后还在等待下一次物理更新才能进入可取消的挖掘。
+      await bot.dig(current, true);
       if (!action.stopping && grantFor(grant.generation, grant.question, grant.grant)) {
         action.phase = 'gathering';
         const moves = new Movements(bot);

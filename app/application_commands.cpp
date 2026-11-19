@@ -170,6 +170,13 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto input = app.companion_inbox(status->session);
         output << "Companion " << status->session << " (" << status->package << ") "
                << (status->closed ? "closed" : status->stopping ? "stopping" : input && input->ready ? "listening" : "waiting for game") << ".\n";
+        if (status->control) {
+            const auto& control = *status->control;
+            if (control.order) output << "游戏玩家消息 #" << control.order;
+            else output << "管理入口";
+            output << " · " << (control.phase == ControlPhase::released ? "游戏已释放控制" :
+                control.phase == ControlPhase::requested ? "已请求停止，等待游戏退出" : "游戏控制释放未核实") << '\n';
+        }
         if (const auto visit = app.companion_visit(status->session)) {
             output << "Visit " << visit->task << " at " << visit->place << ": ";
             switch (visit->phase) {

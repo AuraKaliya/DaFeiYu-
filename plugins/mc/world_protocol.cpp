@@ -50,6 +50,28 @@ bool inquiry_id(const Json& value) {
     const auto& id = value.get_ref<const std::string&>();
     return !id.empty() && id.size() <= 20 && id.front() != '0' && id.find_first_not_of("0123456789") == id.npos;
 }
+// 核对接管回执来自指定游戏代次，序号零表示管理入口先提出停止。
+bool control_receipt(const Json& value, const Json& generation) {
+    return value.is_object() && value.size() == 3 && value.at("generation") == generation &&
+        value.at("order").is_number_unsigned() && value.at("order") <= 9007199254740991ULL &&
+        (value.at("phase") == "requested" || value.at("phase") == "released" || value.at("phase") == "unconfirmed");
+}
+}
+
+// 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。
+std::string control_request(std::string_view id, std::string_view key, std::string_view arguments) {
+    auto frame = parse(arguments);
+    if (key.size() != 64 || frame.size() != 1 || !uuid(frame.at("generation"))) throw std::invalid_argument("MC: stop identity");
+    frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", "control.stop"}});
+    return frame.dump();
+}
+// 只让原请求关联到对应代次的实际释放，待退出的回执留给原票据继续轮询。
+std::string control_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
+    const auto reply = parse(wire);
+    if (reply.size() != 3 || reply.at("id").get_ref<const std::string&>() != id || reply.at("version") != 1 ||
+        !control_receipt(reply.at("control"), parse(arguments).at("generation"))) throw std::invalid_argument("MC: stop reply");
+    const auto& value = reply.at("control");
+    return value.at("phase") == "requested" ? std::string{} : value.dump();
 }
 
 // 读取独立通道及可选私有配对键，错误配置在实例建立前失败。
@@ -151,11 +173,13 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong private reply");
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
-    if (inbox.size() != 7 || inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
+    if (inbox.size() != (inbox.contains("control") ? 8u : 7u) || inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
     const auto oldest = inbox.at("oldest").get<std::uint64_t>(), latest = inbox.at("latest").get<std::uint64_t>();
     const auto after = query.at("after").get<std::uint64_t>();
+    if (inbox.contains("control") && (!control_receipt(inbox.at("control"), query.at("generation")) ||
+        inbox.at("control").at("order") > latest)) throw std::invalid_argument("MC: stop cursor");
     if (latest > 9007199254740991ULL || !oldest || (latest ? oldest > latest : oldest != 1) || after > latest ||
         inbox.at("gap") != (after < oldest - 1)) throw std::invalid_argument("MC protocol: inbox cursor");
 

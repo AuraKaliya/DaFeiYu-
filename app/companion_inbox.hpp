@@ -8,10 +8,17 @@ struct PlayerUtterance {
     std::string text, visit_place, declined_question, collection_question;
     std::uint64_t quantity = 0;
 };
+enum class ControlPhase { requested, released, unconfirmed };
+struct ControlReceipt {
+    std::string world;
+    std::uint64_t order = 0;
+    ControlPhase phase = ControlPhase::requested;
+};
 struct PlayerInboxStatus {
     bool enabled = false, ready = false, gap = false;
     std::uint64_t cursor = 0;
     std::string owner;
+    std::optional<ControlReceipt> control;
 };
 
 // 只接受由当前插件真实回执提供的玩家原话，初次绑定时从当前水位开始。

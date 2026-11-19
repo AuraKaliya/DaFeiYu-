@@ -63,7 +63,8 @@ async function verify(fixture) {
     writeFileSync(join(settings, 'settings.json'), JSON.stringify({ channel: nativeChannel, bridgeKey: key }));
     const file = join(fixture.evidence, 'adapter.json');
     let observer;
-    const full = ['collect-16', 'return-16', 'return-14', 'next-visit'].includes(variant);
+    const takeover = ['stop-game', 'stop-host', 'stop-disconnect'].includes(variant);
+    const full = ['collect-16', 'return-16', 'return-14', 'next-visit'].includes(variant) || takeover;
     if (variant === 'pickup-one' || full) {
       const marker = randomUUID();
       fixture.send('dfystonesample DfyOwner ' + marker);
@@ -96,9 +97,15 @@ async function verify(fixture) {
       if (!recorded) await game.bot.waitForTicks(1);
     }
     if (!recorded) throw new Error('旧消息未进入游戏源');
+    const actor = game.bot.player.uuid;
     let digCalls = 0;
     const dig = game.bot.dig.bind(game.bot);
-    game.bot.dig = (...args) => { ++digCalls; return dig(...args); };
+    game.bot.dig = (...args) => {
+      ++digCalls;
+      if (variant === 'stop-game' && digCalls === 2) owner.chat('停，我来');
+      if (variant === 'stop-disconnect' && digCalls === 2) setImmediate(game.stop);
+      return dig(...args);
+    };
     const first = readStream(fixture.server).length;
     let removed = false;
     if (variant === 'return-14') game.bot.on('move', () => {
@@ -116,13 +123,16 @@ async function verify(fixture) {
       writeFileSync(join(fixture.evidence, 'delivery-methods.json'), JSON.stringify(proxy.methods));
     }
     const facts = readStream(fixture.server).slice(first);
-    const breaks = facts.filter(row => row.kind === 'blockBroken' && row.actor === game.bot.player.uuid);
+    const breaks = facts.filter(row => row.kind === 'blockBroken' && row.actor === actor);
     if (['mine-one', 'pickup-one'].includes(variant)) {
       assert.equal(digCalls, 1);
       assert.equal(breaks.length, 1);
       assert.equal(breaks[0].candidateAmount, 1);
       if (variant === 'pickup-one') assert.equal(game.bot.inventory.items().filter(item => item.name === 'cobblestone')
         .reduce((sum, item) => sum + item.count, 0), 6);
+    } else if (takeover) {
+      assert.ok(digCalls >= 1 && digCalls <= 2 && breaks.length >= 1 && breaks.length <= digCalls);
+      if (variant === 'stop-game') assert.equal(digCalls, 2);
     } else if (full) {
       assert.equal(digCalls, 16);
       assert.equal(breaks.length, 16);
@@ -136,11 +146,15 @@ async function verify(fixture) {
     }
     if (['skip', 'tamper'].includes(process.argv[4])) assert.ok(Math.abs(game.bot.entity.position.x - 0.5) < 1);
     writeFileSync(join(fixture.evidence, 'game-observation.json'), JSON.stringify({
-      actor: game.bot.player.uuid, position: game.bot.entity.position, digCalls, facts }, null, 2));
+      actor, position: game.bot.entity.position, digCalls, facts }, null, 2));
   } finally {
     owner.quit();
     if (proxy) await proxy.close();
-    if (game) { game.stop(); await game.done; }
+    if (game) {
+      game.stop();
+      let exited = false;
+      await Promise.race([game.done.then(() => { exited = true; }), until(() => exited, '适配器实际退出', 5000)]);
+    }
   }
 }
 withPaper(verify).catch(error => { console.error(error); process.exitCode = 1; });

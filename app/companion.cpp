@@ -1,5 +1,6 @@
 #include "companion.hpp"
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 namespace dfy::app {
 namespace {
@@ -42,11 +43,13 @@ agent::TurnDiagnostics CompanionSession::submit(const std::string& prompt) {
 // 从真实状态同步绑定、推进子运行并投递至多一条待处理消息。
 // 步骤：复核来源 → 结算原回合并回报 → 空闲时启动当前世界的委托或询问。
 void CompanionSession::advance() {
+    advance_control();
     if (!stopping_ && !bound()) close();
     reader_.advance();
     sync_binding();
     review_exploration();
     inbox_.advance(*catalog_, clock_);
+    if (!stopping_ && inbox_.status().control) request_stop();
     questions_.advance();
     delivery_.advance(questions_.grant(), address_, *catalog_, admit_tool_, receipt_tool_, clock_);
     mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, return_tool_, clock_);
@@ -90,6 +93,51 @@ void CompanionSession::close() {
     mining_.close();
     sync_binding();
     conversation_.close();
+}
+
+// 先为原绑定保留接管票据，再协作关闭所有普通工作；失败时保留未核实结论。
+// 步骤：核对游戏回执或签发停止 → 提交独立票据 → 关闭普通接纳。
+void CompanionSession::request_stop() {
+    if (stopping_) return;
+    if (address_) {
+        control_ = inbox_.status().control.value_or(ControlReceipt{address_->world});
+        if (control_->phase == ControlPhase::requested) try {
+            if (!control_tool_) throw std::logic_error("companion: no release route");
+            const auto args = nlohmann::json{{"generation", address_->world}}.dump();
+            auto scope = catalog_->snapshot(std::span(&*control_tool_, 1), true).bind_arguments(*control_tool_, args);
+            const auto name = scope.definitions().at(0).name;
+            const agent::RunId run{runtime::next_domain(), 1};
+            auto executor = std::make_unique<agent::ToolExecutor>(run, std::move(scope), agent::ToolLimits{1, std::chrono::seconds(5)}, nullptr, clock_);
+            control_work_ = executor->submit({{run, 1}, 1}, {"release", name, args});
+            executor->advance();
+            control_executor_ = std::move(executor);
+        } catch (const std::exception&) { control_->phase = ControlPhase::unconfirmed; }
+    } else {
+        const auto& last = reader_.state().last;
+        control_ = ControlReceipt{last ? last->generation : std::string{}, 0, ControlPhase::unconfirmed};
+    }
+    close();
+}
+
+// 只按游戏侧实际退出回执公布控制释放，失联或本地关闭均保留未核实。
+// 步骤：等待原票据退出 → 核对世界及来源 → 记录结论并归还资源。
+void CompanionSession::advance_control() {
+    if (!control_executor_) return;
+    control_executor_->advance();
+    if (control_work_->exit()->state() == runtime::OperationState::pending) return;
+    const auto& outcome = control_work_->outcome();
+    control_->phase = ControlPhase::unconfirmed;
+    if (outcome.succeeded && control_work_->fault() == agent::ToolError::none && outcome.output.size() < 1024) {
+        const auto data = nlohmann::json::parse(outcome.output, nullptr, false);
+        if (data.is_object() && data.contains("generation") && data["generation"] == control_->world &&
+            data.contains("phase") && data["phase"] == "released" && data.contains("order") && data["order"].is_number_unsigned() &&
+            (!control_->order || control_->order == data["order"])) {
+            control_->order = data.at("order").get<std::uint64_t>();
+            control_->phase = ControlPhase::released;
+        }
+    }
+    control_work_.reset();
+    control_executor_.reset();
 }
 
 // 从实际注册中重新取得只读范围，不能向被替换的实例读取。
@@ -204,6 +252,7 @@ void CompanionSession::listen() {
     const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
     if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
     survey_tool_ = plugins::companion_route(*instance, *catalog_, "search.progress", false);
+    control_tool_ = plugins::companion_route(*instance, *catalog_, "control.release", true);
     ask_tool_ = plugins::companion_route(*instance, *catalog_, "question.open", true);
     admit_tool_ = plugins::companion_route(*instance, *catalog_, "collect.admit", true).value_or("");
     receipt_tool_ = plugins::companion_route(*instance, *catalog_, "collect.receipt", false).value_or("");
@@ -246,7 +295,7 @@ void CompanionSession::finish_message(const CompanionMessage& original, const Co
 
 // 获取可跨界面复制的最新回合状态。
 CompanionStatus CompanionSession::status() const {
-    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status()};
+    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status(), control_};
 }
 
 // 仅返回仍与原回合匹配的可信结算结果。

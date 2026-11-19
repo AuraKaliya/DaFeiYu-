@@ -29,6 +29,16 @@ void CompanionInbox::accept(const std::string& payload) {
     const auto& messages = batch.at("messages");
     if (owner.empty() || owner.size() > 128 || !messages.is_array() || messages.size() > 8 || latest < status_.cursor ||
         (status_.ready && owner != status_.owner)) throw std::invalid_argument("companion: invalid inbox");
+    if (batch.contains("control")) {
+        const auto& record = batch.at("control");
+        const auto order = record.at("order").get<std::uint64_t>();
+        if (record.at("generation") != address_->world || !record.at("order").is_number_unsigned() || order > latest)
+            throw std::invalid_argument("companion: invalid control receipt");
+        const auto& phase = record.at("phase");
+        if (phase != "released" && phase != "requested" && phase != "unconfirmed") throw std::invalid_argument("companion: invalid control phase");
+        status_.control = ControlReceipt{address_->world, order, phase == "released" ? ControlPhase::released :
+            phase == "requested" ? ControlPhase::requested : ControlPhase::unconfirmed};
+    }
     if (!status_.ready || batch.at("gap").get<bool>() || entries_.size() + messages.size() > 32) {
         status_.gap = status_.gap || status_.ready;
         status_.ready = true;
