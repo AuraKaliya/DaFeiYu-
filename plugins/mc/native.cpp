@@ -50,8 +50,8 @@ constexpr std::array<PartnerSkill, 5> partner_skills{{
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true},
     {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true},
-    {"collect_confirmed", "partner.collect_confirmed", "Ask the main Agent to route player consent for a fixed collection. The same original collection runs only after valid consent.",
-        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true}
+    {"collect_confirmed", "partner.collect_confirmed", "Request player consent for a fixed collection. Route 'game' asks in the game; route 'main' lets the main Agent select a channel. The original collection runs only after consent.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true}
 }};
 
 // 限长读取 ABI 借用文本，非法空指针不形成视图。

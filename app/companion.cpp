@@ -258,11 +258,13 @@ void CompanionSession::listen(CompanionMode mode) {
     if (mode == CompanionMode::partner) {
         if (partner_) return;
         switch_partner(*instance,true);
-        const events::MailboxId sender_box{instance->mailbox_addresses().outbound};
+        const auto addresses = instance->mailbox_addresses();
+        const events::MailboxId sender_box{addresses.outbound};
         if (mailboxes_.network->sender(mailboxes_.identity,sender_box) != instance->generation())
             throw std::logic_error("companion: plugin did not bind its own mailbox");
         partner_.emplace();
         partner_->inbox = sender_box;
+        partner_->outgoing = {addresses.inbound};
         partner_->input.enabled = true;
         return;
     }

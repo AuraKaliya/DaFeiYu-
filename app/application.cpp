@@ -389,6 +389,7 @@ runtime::RunResult Application::advance_plugins() {
     }
     const auto plugins = plugins_.advance();
     const auto mail = mailbox_intake_.advance();
+    advance_companion_confirmation();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }
 

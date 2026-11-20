@@ -92,6 +92,10 @@ class Application {
     CompanionDelta companion_messages(runtime::DomainId id, std::uint64_t after) const;
     // 读取仍保留的指定子回合结算值。
     std::optional<CompletedTurn> companion_result(agent::RunId run) const;
+    // 读取原伙伴升级的确认及已知裁定。
+    std::optional<CompanionConfirmation> companion_confirmation() const;
+    // 由受信本体用户回复原伙伴确认，实际结果以插件回执为准。
+    void decide_companion_confirmation(std::uint64_t id, std::uint64_t revision, bool approve);
     // 显式授予一个已加载实例的只读工具并提交用户目标。
     agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
@@ -146,6 +150,8 @@ class Application {
     void collect_tool_registration() noexcept;
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
     void advance_verification();
+    // 当主会话可接纳时，使用原确认事项唤醒主 Agent 选择投递渠道。
+    void advance_companion_confirmation();
 
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
@@ -163,6 +169,8 @@ class Application {
     MailboxIntake mailbox_intake_;
     std::shared_ptr<Subagents> subagents_;
     std::unique_ptr<CompanionSession> companion_;
+    std::shared_ptr<agent::ToolCatalog> confirmation_channels_;
+    std::uint64_t routed_confirmation_ = 0;
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
     std::unique_ptr<ToolVerification> verifier_;

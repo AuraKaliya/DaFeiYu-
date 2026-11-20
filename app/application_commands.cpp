@@ -166,6 +166,12 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto grant = app.authorize_companion(*address, positive_id(words[3]), positive_id(words[4]),
             positive_id(words[5]), positive_id(words[6]));
         output << "Collection " << grant.id << " authorized for " << grant.quantity << " at " << grant.return_place << ".\n";
+    } else if (words.size() == 5 && words[1] == "confirm" && (words[4] == "approve" || words[4] == "deny")) {
+        const auto id = positive_id(words[2]);
+        app.decide_companion_confirmation(id,positive_id(words[3]),words[4] == "approve");
+        const auto confirmation = app.companion_confirmation();
+        if (!confirmation->decision.empty()) output << "Original decision " << confirmation->decision << " for " << id << ".\n";
+        else output << "Player decision sent for " << id << ". Waiting for the original game receipt.\n";
     } else if (words.size() == 3 && words[1] == "stop") {
         const auto id = positive_id(words[2]);
         app.stop_companion(id);
@@ -187,6 +193,12 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             else output << "管理入口";
             output << " · " << (control.phase == ControlPhase::released ? "游戏已释放控制" :
                 control.phase == ControlPhase::requested ? "已请求停止，等待游戏退出" : "游戏控制释放未核实") << '\n';
+        }
+        if (const auto question = app.companion_confirmation()) {
+            output << "确认 #" << question->id << " · " << question->question << '\n';
+            if (!question->decision.empty()) output << "游戏已裁定 " << question->decision << "（" << question->source << "）\n";
+            else if (question->answered) output << "本体答复已投递，等待游戏裁定。\n";
+            else output << "/companion confirm " << question->id << ' ' << question->revision << " approve|deny\n";
         }
         if (const auto visit = app.companion_visit(status->session)) {
             output << "Visit " << visit->task << " at " << visit->place << ": ";
@@ -224,7 +236,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

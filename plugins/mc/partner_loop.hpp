@@ -1,5 +1,6 @@
 #pragma once
 #include "partner_feed.hpp"
+#include "game_work.hpp"
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <dafeiyu/mailbox_abi_v2.h>
@@ -52,6 +53,8 @@ class PartnerLoop {
     void advance_confirmation();
     // 在宿主绑定的入站信箱读取至多一条确认消息。
     void intake_confirmation();
+    // 依据主侧选择或本地策略向同一玩家呈现原问题，并保留实际发言回执。
+    void advance_confirmation_presentation(const BridgeConfig& config, std::uint64_t instance, bool closing);
 
     PartnerFeed feed_;
     const dfy_v2_agent_api* agent_ = nullptr;
@@ -77,9 +80,15 @@ class PartnerLoop {
         std::string world, player, question;
         nlohmann::json arguments, decision;
         std::chrono::steady_clock::time_point deadline;
-        bool ask_game = false;
+        bool ask_game = false, presentation_attempted = false;
     };
     std::optional<Confirmation> confirmation_;
+    struct Presentation {
+        std::uint64_t request, order;
+        std::string world, player;
+        std::unique_ptr<GameWork> work;
+    };
+    std::optional<Presentation> presentation_;
     std::array<nlohmann::json,8> decisions_{};
     std::size_t next_decision_ = 0;
     // 裁定唯一原候选，结果一旦发布便不被迟到消息覆盖。

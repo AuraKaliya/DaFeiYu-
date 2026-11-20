@@ -1,5 +1,6 @@
 #include "companion_host.hpp"
 #include "application_commands.hpp"
+#include <dafeiyu/line_input.hpp>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -14,11 +15,30 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
     const auto id = host.open_companion("mc.companion");
     host.listen_companion(id, mode);
     bool listening = false;
-    std::uint64_t reported_event = 0;
+    std::uint64_t reported_event = 0, presented = 0;
+    std::unique_ptr<platform::LineInput> input;
+    if (mode == CompanionMode::partner) {
+        try { input = std::make_unique<platform::LineInput>(); }
+        catch (const std::exception&) { }
+    }
     std::string previous;
     auto next = std::chrono::steady_clock::now();
     while (!host.companion_status()->closed) {
-        host.advance_plugins();
+        if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("game host step failed");
+        host.conversation().advance();
+        if (const auto question = host.companion_confirmation(); question && question->channel == "panel" &&
+            question->decision.empty() && presented != question->id) {
+            presented = question->id;
+            std::cout << question->question << "\n/companion confirm " << question->id << ' ' << question->revision << " approve|deny" << std::endl;
+        }
+        if (input) {
+            const auto line = input->poll();
+            if (line.state == platform::InputState::line && line.line.starts_with("/companion confirm ")) {
+                try { application_command(host,line.line,std::cout,std::cerr); }
+                catch (const std::exception& error) { std::cerr << error.what() << '\n'; }
+            }
+            input->advance();
+        }
         if (!listening && host.companion_inbox(id)->ready) {
             listening = true;
             std::cout << "DFY_LISTENING" << std::endl;
@@ -43,6 +63,11 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     host.conversation().close();
+    while (!host.conversation().closed()) {
+        host.advance_plugins();
+        host.conversation().advance();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     while (host.close_plugins() == plugins::ShutdownResult::pending) host.advance_plugins();
     if (host.close_plugins() != plugins::ShutdownResult::closed) throw std::runtime_error("game host did not exit");
 }

@@ -24,6 +24,12 @@ struct CompanionStatus {
     std::optional<ControlReceipt> control;
     std::uint64_t settled_event = 0;
 };
+struct CompanionConfirmation {
+    std::uint64_t id = 0, revision = 0, order = 0;
+    std::string world, player, question, arguments;
+    std::string channel, presentation, decision, source;
+    bool answered = false;
+};
 
 // 在应用宿主线程拥有同一玩家个体的一段游戏会话，工具绑定限原插件实例。
 class CompanionSession {
@@ -83,6 +89,12 @@ class CompanionSession {
         !delivery_.busy() && !mining_.busy() && !control_executor_ && (!partner_ || partner_->closed); }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
+    // 取得来自原插件的明确确认事项和已有业务裁定。
+    const std::optional<CompanionConfirmation>& confirmation() const noexcept { return confirmation_; }
+    // 固定由主 Agent 选中的询问渠道，原问题不接受模型重写。
+    std::string route_confirmation(std::uint64_t id, bool game);
+    // 按原身份投递可信本体用户的决定，状态等待插件裁定。
+    void reply_confirmation(std::uint64_t id, std::uint64_t revision, bool approve);
   private:
     // 检查实例仍活动且属于原注册。
     bool bound() const noexcept;
@@ -98,8 +110,10 @@ class CompanionSession {
     void switch_partner(plugins::PluginInstance& instance, bool listen);
     // 把一件经过原实例信箱交付的事实投影到当前角色。
     void accept_partner(const runtime::StructValue& payload);
+    // 把原候选、呈现回执及唯一实际确认映射给主会话。
+    void accept_confirmation(std::string_view type, std::string_view data);
     struct PartnerProjection {
-        events::MailboxId inbox;
+        events::MailboxId inbox, outgoing;
         PlayerInboxStatus input;
         std::array<std::pair<std::uint64_t,std::uint64_t>,64> revisions{};
         std::uint64_t settled = 0;
@@ -107,6 +121,7 @@ class CompanionSession {
     };
     plugins::PluginMailboxHost mailboxes_;
     std::optional<PartnerProjection> partner_;
+    std::optional<CompanionConfirmation> confirmation_;
     // 启动工具名和参数都已收紧的正式查看回合。
     void start_visit();
     // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。

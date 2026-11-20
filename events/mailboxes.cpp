@@ -66,6 +66,14 @@ DeliveryReceipt Mailboxes::deliver(runtime::DomainId sender, MailboxId target, s
     return {DeliveryState::accepted,event};
 }
 
+// 为原本地发送者在同一次调用中分配编号并投递。
+DeliveryReceipt Mailboxes::deliver_next(runtime::DomainId sender, MailboxId target, std::shared_ptr<const runtime::StructValue> payload) {
+    const auto entry = find(target);
+    if (entry->sender != sender) throw std::invalid_argument("mailboxes: sender not bound");
+    if (entry->accepted == UINT64_MAX) throw std::overflow_error("mailboxes: delivery sequence exhausted");
+    return deliver(sender,target,entry->accepted+1,std::move(payload));
+}
+
 // 向绑定接收方转交首件，读到最新到件信号后清除唤醒。
 // 步骤：检查接收权 → 转交队首 → 按读出身份清除已消费唤醒。
 QueueRead Mailboxes::read(runtime::DomainId receiver, MailboxId target) {

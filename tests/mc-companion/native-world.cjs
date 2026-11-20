@@ -13,7 +13,9 @@ async function main() {
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
   const confirm = variant === 'partner-confirm';
-  const partnerLoop = variant === 'partner-loop' || interrupt || confirm;
+  const route = variant?.startsWith('partner-route-');
+  const showGame = route && variant !== 'partner-route-panel';
+  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || route;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -22,7 +24,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
-  let baselineRead = false, replies = 0, stopped = 0, releases = 0, moveId;
+  let baselineRead = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -38,8 +40,9 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : interrupt && moveId ? 3 : 2;
-        const messages = [presence, { sequence: 2, text: 'play with me' }, { sequence: 3, text: 'stop for now' }];
+        const latest = initial ? 1 : (interrupt && moveId) || approvedId ? 3 : 2;
+        const messages = [presence, { sequence: 2, text: 'play with me' },
+          { sequence: 3, text: approvedId ? 'approve ' + approvedId : 'stop for now' }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
@@ -60,10 +63,18 @@ async function main() {
   }, key, partnerLoop ? { partner: {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
-      if (confirm) {
+      if (showGame && skill === 'reply') {
+        assert.equal(method, 'partner.begin');
+        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        const match = /确认 (\d+) 或 拒绝 \1$/.exec(args.text);
+        assert.ok(match && !approvedId);
+        approvedId = match[1];
+        return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
+      }
+      if (confirm || route) {
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
-        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        assert.deepEqual(context, { generation: state.generation, order: showGame ? 3 : 2 });
         assert.deepEqual(args, { count: 2, block: 'dirt' });
         ++replies;
         return { ...context, skill, exited: true, result: { status: 'done', collected: 2 } };
@@ -87,14 +98,15 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: interrupt ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
+    return { generation, order: interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || route ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
+    if (showGame) assert.ok(approvedId);
     if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);

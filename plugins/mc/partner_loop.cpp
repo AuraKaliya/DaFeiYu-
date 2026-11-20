@@ -12,7 +12,7 @@ constexpr std::array skills{view("mc.companion/observe"),view("mc.companion/move
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
-    "如果这次采集的范围需要玩家明确批准，用 collect_confirmed，由本体选择询问渠道。");
+    "如果这次采集需要玩家明确批准，用 collect_confirmed。route=game 时先在游戏问，route=main 时由本体选择询问渠道。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
 }
@@ -64,6 +64,7 @@ void PartnerLoop::reset() noexcept {
     mail_text_ = nullptr;
     refs_ = nullptr;
     confirmation_.reset();
+    presentation_.reset();
     outbound_.clear();
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
@@ -269,15 +270,16 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         release_->deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
         feed_.clear();
     }
+    advance_confirmation_presentation(config,instance,closing);
     const bool replaced = session_ && feed_.world() != session_world_;
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
     if (closing) {
-        if (review_.request || !release_game(config,instance) || !outbound_.empty()) return;
+        if (review_.request || presentation_ || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
     if (replaced) retire();
-    if (feed_.ready() && !feed_.pending().empty() && outbound_.size() <= 54) submit();
+    if (!presentation_ && feed_.ready() && !feed_.pending().empty() && outbound_.size() <= 54) submit();
 }
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。

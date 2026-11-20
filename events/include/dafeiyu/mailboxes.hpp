@@ -43,6 +43,8 @@ class Mailboxes {
     // 发送序号在目标信箱内从 1 连续递增；窗口内重投只读取原回执，消息正文仍取自首次接纳。
     DeliveryReceipt deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
         std::shared_ptr<const runtime::StructValue> payload);
+    // 由独占本地发送方接纳下一顺序号，拒收时不推进水位。
+    DeliveryReceipt deliver_next(runtime::DomainId sender, MailboxId target, std::shared_ptr<const runtime::StructValue> payload);
     // 向原接收方转交队首数据，已读数据可以独立于信箱保留。
     QueueRead read(runtime::DomainId receiver, MailboxId target);
     // 在同宿主线程借用当前队首，用于准备读取方的持有引用。
