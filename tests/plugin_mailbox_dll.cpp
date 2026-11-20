@@ -158,7 +158,7 @@ int wmain(int argc, wchar_t** argv) {
 
         auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32}));
         auto body = std::make_shared<const StructValue>(StructValue::create(std::move(type),{},0));
-        check(host.network->deliver(host.identity,{addresses.inbound},1,std::move(body)).state == DeliveryState::accepted,
+        check(host.network->deliver(host.identity,{addresses.inbound},1,body).state == DeliveryState::accepted,
             "host request was not admitted");
         {
             const auto reply = instance->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
@@ -168,6 +168,10 @@ int wmain(int argc, wchar_t** argv) {
         auto answer = host.network->read(host.identity,{addresses.outbound});
         check(answer.event.get().payload->descriptor()->name() == "test.reply" &&
             answer.event.get().payload->find("text")->as_string() == "received","host received invalid reply");
+        check(host.network->deliver(host.identity,{addresses.inbound},2,body).state == DeliveryState::accepted,
+            "activity request was not admitted");
+        check(manager.advance() == RunResult::executed && host.network->read(host.identity,{addresses.outbound}).event.get().id.sequence == 2,
+            "scheduler did not advance the plugin's independent loop");
         check(manager.unload("test.mail") == ShutdownResult::closed && !instance->mailbox_addresses().inbound,"mailbox blocked clean unload");
         check(manager.control_hook(control) == DFY_V2_HOOK_ALLOW,"unloaded Hook was used");
         check(manager.load("test.mail") == DFY_V2_OK && manager.instance("test.mail")->mailbox_addresses().outbound != addresses.outbound,

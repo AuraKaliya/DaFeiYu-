@@ -4,6 +4,7 @@
 #include "package_files.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 
 namespace dfy::plugins {
 namespace {
@@ -41,6 +42,8 @@ struct PluginManager::State {
         std::shared_ptr<PluginInstance> instance; runtime::Handle owner;
         std::uint64_t registration = 0;
         bool stopping = false, owner_stopped = false, faulted = false; DependencyStop stop_mode = DependencyStop::refuse_dependents;
+        std::chrono::steady_clock::time_point next_activity{};
+        bool activity_queued = false;
     };
     struct Hook {
         std::shared_ptr<PluginInstance> instance;
@@ -105,6 +108,21 @@ struct PluginManager::State {
             scheduler.remove(entry.owner); item = instances.erase(item); hooks_dirty = true;
         }
     }
+    // 每实例至多排队一步，复用插件通知的所有者公平通路。
+    // 步骤：核对运行资格与节拍 → 排入一步 → 派发时复核实例并更新下次时间。
+    void schedule_activity(Entry& entry) {
+        if (!accepting || entry.activity_queued || !entry.instance->has_activity() ||
+            entry.next_activity > std::chrono::steady_clock::now() || !scheduler.available(entry.owner,runtime::TaskPriority::low)) return;
+        scheduler.post(entry.owner,[this,&entry] {
+            entry.activity_queued = false;
+            if (!accepting || entry.faulted || !entry.instance->has_activity()) return;
+            try {
+                const auto wait = entry.instance->advance_activity();
+                entry.next_activity = std::chrono::steady_clock::now()+std::chrono::milliseconds(wait);
+            } catch (...) { entry.faulted = true; hooks_dirty = true; throw; }
+        },{},runtime::TaskPriority::low);
+        entry.activity_queued = true;
+    }
     // 正常停止等待继续轮询，生命周期失败保留给显式重试，不自动反复调用失败入口。
     // 步骤：推进停止或通知 → 执行一个所有者步骤 → 回收已退出实例。
     runtime::RunResult advance() {
@@ -116,7 +134,10 @@ struct PluginManager::State {
                     entry.stopping = result == ShutdownResult::pending;
                     if (result == ShutdownResult::failed) { failed = true; if (!accepting) close_result = result; }
                 }
-                else if (!entry.faulted && entry.instance->phase() == InstancePhase::active) entry.instance->advance(scheduler,entry.owner);
+                else if (!entry.faulted && entry.instance->phase() == InstancePhase::active) {
+                    entry.instance->advance(scheduler,entry.owner);
+                    schedule_activity(entry);
+                }
             } catch (...) { entry.faulted = true; entry.stopping = false; hooks_dirty = true; failed = true; if (!accepting) close_result = ShutdownResult::failed; }
         }
         const auto result = scheduler.run_one(); collect(); return failed ? runtime::RunResult::failed : result;

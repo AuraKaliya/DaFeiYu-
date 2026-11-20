@@ -47,6 +47,7 @@ cmake --build .\build-status --config Release
 | `dfy.subscriptions` | 1：独立订阅接纳、关闭和状态 |
 | [信箱](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox@1`：启用后可接入本体，按独立地址交付、去重及读取 |
 | [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1`：插件可以独立创建会话，排队提交回合并在实际退出后读取结果 |
+| [后台推进](include/dafeiyu/activity_abi_v2.h) | 插件可公开 `dfy.activity@1`，宿主公平调度非阻塞步骤，每个实例最多排队一步 |
 | `dfy.groups` | 1：宿主明确授予组时加入、退出和查看本成员状态 |
 | `dfy.processing` | 1：宿主明确提供处理记录时的开始、业务结算、实际退出、取消和载荷 |
 

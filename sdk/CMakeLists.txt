@@ -3,6 +3,7 @@ add_library(dfy_sdk INTERFACE include/dafeiyu/plugin_abi.h include/dafeiyu/plugi
 target_include_directories(dfy_sdk INTERFACE include)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/mailbox_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/agent_abi_v2.h)
+target_sources(dfy_sdk PRIVATE include/dafeiyu/activity_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/hook_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/tool_abi_v2.h)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/dafeiyu/tool_abi_v2.h")

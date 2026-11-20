@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <dafeiyu/hook_abi_v2.h>
+#include <dafeiyu/activity_abi_v2.h>
 
 _Static_assert(sizeof(dfy_v2_mailbox_api) == 32 && offsetof(dfy_v2_mailbox_api,poll) == 24,"mailbox ABI");
 _Static_assert(sizeof(dfy_v2_mailbox_message) == 40 && offsetof(dfy_v2_mailbox_message,payload) == 16,"mailbox message ABI");
@@ -110,6 +111,14 @@ static dfy_v2_status DFY_V2_CALL decide_hook(dfy_v2_instance* instance, uint32_t
 }
 static const dfy_v2_hook_api hooks = {{sizeof(dfy_v2_hook_api),1},describe_hook,decide_hook};
 
+// 每步最多消费一封本体来信；信箱为空时等下一次推进。
+static dfy_v2_status DFY_V2_CALL step(dfy_v2_instance* instance, uint32_t* wait_ms, dfy_v2_error* error) {
+    const dfy_v2_status status = reply(instance,error);
+    *wait_ms = 1;
+    return status == DFY_V2_NOT_FOUND ? DFY_V2_OK : status;
+}
+static const dfy_v2_activity_api activity = {{sizeof(dfy_v2_activity_api),1},step};
+
 // 按精确名称和版本返回生命周期、Hook 或测试驱动接口。
 static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) {
     *out = NULL;
@@ -121,6 +130,8 @@ static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version
         *out = &exercise;
     if (name.length == sizeof(DFY_V2_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_HOOK_INTERFACE,name.length))
         *out = &hooks;
+    if (name.length == sizeof(DFY_V2_ACTIVITY_INTERFACE)-1 && !memcmp(name.data,DFY_V2_ACTIVITY_INTERFACE,name.length))
+        *out = &activity;
     return *out ? DFY_V2_OK : DFY_V2_UNSUPPORTED;
 }
 

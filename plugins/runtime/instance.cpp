@@ -1,5 +1,6 @@
 #include <dafeiyu/plugin_instance.hpp>
 #include <dafeiyu/plugin_config.hpp>
+#include <dafeiyu/activity_abi_v2.h>
 
 namespace dfy::plugins {
 PluginInstance::State* PluginInstance::retained_ = nullptr;
@@ -41,7 +42,7 @@ struct PluginInstance::State {
             if (phase == InstancePhase::unloaded) return ShutdownResult::closed;
             if (module.active_calls()) return ShutdownResult::busy;
             if (host.processing_busy() || host.agents_busy()) return ShutdownResult::busy;
-            if (module.code_leases() > (lifecycle ? 1 : 0) + host.code_holds()) return ShutdownResult::in_use;
+            if (module.code_leases() > (lifecycle ? 1 : 0) + (activity ? 1 : 0) + host.code_holds()) return ShutdownResult::in_use;
             if (phase == InstancePhase::broken) return ShutdownResult::failed;
             if (!host.begin_shutdown()) { error = DFY_V2_FAILED; return ShutdownResult::failed; }
             if (phase != InstancePhase::destroyed) phase = InstancePhase::stopping;
@@ -67,6 +68,7 @@ struct PluginInstance::State {
                 phase = InstancePhase::destroyed;
             }
             if (!host.finish_shutdown()) { error = DFY_V2_FAILED; return ShutdownResult::failed; }
+            activity.reset();
             lifecycle.reset();
             const auto result = module.close();
             if (result != platform::ModuleClose::closed) return result == platform::ModuleClose::busy ? ShutdownResult::busy : ShutdownResult::in_use;
@@ -79,6 +81,7 @@ struct PluginInstance::State {
     HostServices host;
     std::shared_ptr<const EffectiveConfig> config;
     std::optional<Capability<dfy_v2_lifecycle_api>> lifecycle;
+    std::optional<Capability<dfy_v2_activity_api>> activity;
     std::vector<dfy_v2_hook_description> hook_registrations;
     std::string id;
     std::string version;
@@ -142,7 +145,12 @@ uint32_t PluginInstance::start() noexcept {
     auto status = state_->invoke([&](const auto& api, auto* error) { return api.start(state_->instance, error); });
     if (!status) {
         state_->phase = InstancePhase::active;
-        try { state_->hook_registrations = load_hooks(); }
+        try {
+            auto activity = state_->module.query<dfy_v2_activity_api>(DFY_V2_ACTIVITY_INTERFACE,DFY_V2_ACTIVITY_VERSION);
+            if (activity && !activity->enter().api().step) throw std::invalid_argument("instance: incomplete activity interface");
+            state_->hook_registrations = load_hooks();
+            state_->activity = std::move(activity);
+        }
         catch (...) { state_->phase = InstancePhase::created; status = DFY_V2_FAILED; }
     }
     if (status) { state_->error = status; try { (void)state_->host.begin_shutdown(); } catch (...) {} }
@@ -152,6 +160,21 @@ uint32_t PluginInstance::start() noexcept {
 std::span<const dfy_v2_hook_description> PluginInstance::hooks() const noexcept {
     return phase() == InstancePhase::active ? std::span<const dfy_v2_hook_description>{state_->hook_registrations}
         : std::span<const dfy_v2_hook_description>{};
+}
+// 仅活动实例可被调度进入插件外层循环。
+bool PluginInstance::has_activity() const noexcept { return phase() == InstancePhase::active && state_->activity.has_value(); }
+
+// 执行已协商的原生步骤，将超出契约的返回视为插件活动故障。
+// 步骤：核对阶段 → 绑定宿主与代码寿命 → 执行一次并校验建议等待时间。
+std::uint32_t PluginInstance::advance_activity() {
+    if (!has_activity()) throw std::logic_error("instance: activity unavailable");
+    auto binding = bind_active();
+    auto call = state_->activity->enter();
+    uint32_t wait = 0;
+    dfy_v2_error error{};
+    if (call.api().step(state_->instance,&wait,&error) || error.length || wait > DFY_V2_ACTIVITY_MAX_WAIT_MS)
+        throw std::runtime_error("instance: activity step failed");
+    return wait;
 }
 // 推进同一实例的关停记录，不制造第二个销毁流程。
 ShutdownResult PluginInstance::shutdown() noexcept { return state_->shutdown(); }

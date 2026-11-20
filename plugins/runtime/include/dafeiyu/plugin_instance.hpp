@@ -60,6 +60,10 @@ class PluginInstance {
     std::span<const dfy_v2_hook_description> hooks() const noexcept;
     // 在原实例的活动保护内调用注册序号对应的 Hook。
     uint32_t decide_hook(std::size_t index, const dfy_v2_hook_input& input);
+    // 查询实例启动时协商的可选后台推进能力。
+    bool has_activity() const noexcept;
+    // 在原实例保护中执行一步，返回下次推进的建议等待时间。
+    std::uint32_t advance_activity();
     // 推进一次关停，活动或外部代码持有时不改状态；成功阶段不重放。
     ShutdownResult shutdown() noexcept;
     // 返回当前生命周期阶段副本。
