@@ -5,6 +5,7 @@
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "paths.hpp"
+#include "trace_commands.hpp"
 #ifdef _WIN32
 #include "console.hpp"
 #endif
@@ -50,6 +51,12 @@ int run(const std::vector<std::filesystem::path>& args) {
 
         if (args.size() == 3 && args[1] == "--review-diagnostic") {
             dfy::app::write_diagnostic_review(std::cout,dfy::app::read_diagnostic_file(args[2]));
+            return 0;
+        }
+        if ((args.size() == 3 || args.size() == 5) && args[1] == "--review-trace") {
+            std::optional<dfy::agent::RunId> selected;
+            if (args.size() == 5) selected = dfy::agent::RunId{dfy::app::trace_id(args[3]),dfy::app::trace_id(args[4])};
+            dfy::app::review_trace(args[2],selected,std::cout);
             return 0;
         }
         if (args.size() == 3 && args[1] == "--check-config") {
@@ -112,7 +119,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
-            << " | --review-diagnostic FILE | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
+            << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"

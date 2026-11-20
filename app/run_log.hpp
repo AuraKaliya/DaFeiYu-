@@ -11,6 +11,8 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
   public:
     // 为一次宿主启动分配独立目录，历史记录继续保留。
     explicit RunLog(const std::filesystem::path& root);
+    // 所有共享记录者退出后标记本次日志结束。
+    ~RunLog();
     // 返回本次运行的实际日志文件。
     const std::filesystem::path& path() const noexcept { return path_; }
     // 把同一输出绑定到指定来源的 Agent 会话。

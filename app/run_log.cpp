@@ -61,6 +61,9 @@ RunLog::RunLog(const std::filesystem::path& root) : path_(log_path(root)), outpu
     if (failed_) throw std::runtime_error("trace: cannot initialize log");
 }
 
+// 已退出的共享记录者不再追加，请求异常终止时保留可见的缺尾。
+RunLog::~RunLog() { append("trace.closed",Json::object()); }
+
 // 为原 Agent 来源签发同一份日志的记录回调。
 agent::RunCaptureSinks RunLog::sinks(std::string source) {
     const auto log = shared_from_this();
