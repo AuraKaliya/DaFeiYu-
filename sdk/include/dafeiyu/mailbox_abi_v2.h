@@ -2,6 +2,8 @@
 #include <dafeiyu/plugin_abi_v2.h>
 #define DFY_V2_MAILBOX_INTERFACE "dfy.mailbox"
 #define DFY_V2_MAILBOX_VERSION UINT32_C(1)
+#define DFY_V2_MAILBOX_TEXT_INTERFACE "dfy.mailbox.text"
+#define DFY_V2_MAILBOX_TEXT_VERSION UINT32_C(1)
 #define DFY_V2_MAILBOX_ACCEPTED UINT32_C(1)
 #define DFY_V2_MAILBOX_REPEATED UINT32_C(2)
 #define DFY_V2_MAILBOX_EXPIRED UINT32_C(3)
@@ -33,6 +35,15 @@ typedef struct dfy_v2_mailbox_api {
     // 非阻塞读取；空箱返回 NOT_FOUND，成功转交结构载荷引用，由消费者释放。
     dfy_v2_status (DFY_V2_CALL *poll)(dfy_v2_mailbox_message* output, dfy_v2_error* error);
 } dfy_v2_mailbox_api;
+typedef struct dfy_v2_mailbox_text {
+    dfy_v2_string_view category, text;
+    uint32_t version, reserved;
+} dfy_v2_mailbox_text;
+typedef struct dfy_v2_mailbox_text_api {
+    dfy_v2_api_header header;
+    // 从收件引用中同时读取可信分类和单文本载荷，视图借用至引用释放。
+    dfy_v2_status (DFY_V2_CALL *inspect)(dfy_v2_handle payload, dfy_v2_mailbox_text* output, dfy_v2_error* error);
+} dfy_v2_mailbox_text_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

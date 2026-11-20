@@ -93,11 +93,34 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_mailbox_message* output, dfy_v2_error* err
         return DFY_V2_OK;
     });
 }
+
+// 以一次调用读取原单文本结构和可信分类，保持原持有引用的借用期。
+// 步骤：校验引用和正文类型 → 获取原描述 → 返回借用视图。
+dfy_v2_status DFY_V2_CALL inspect(dfy_v2_handle reference, dfy_v2_mailbox_text* output, dfy_v2_error* error) {
+    if (output) *output = {};
+    return boundary(error,[&](auto& host) {
+        if (!output) return DFY_V2_INVALID_ARGUMENT;
+        const auto& value = object<runtime::StructValue>(host,reference);
+        const auto& type = value.descriptor();
+        const auto* field = value.find("text");
+        if (!field || field->kind() != runtime::ValueKind::string || type->fields().size() != 1) return DFY_V2_UNSUPPORTED;
+        const auto input = field->as_string();
+        const auto category = type->name();
+        *output = {{category.data(),category.size()},{input.data(),input.size()},type->version(),0};
+        return DFY_V2_OK;
+    });
+}
 }
 
 // 返回信箱接入及读写能力的固定版本表。
 const dfy_v2_mailbox_api& mailbox_api() {
     static const dfy_v2_mailbox_api api{{sizeof(dfy_v2_mailbox_api),DFY_V2_MAILBOX_VERSION},attach,post,poll};
+    return api;
+}
+
+// 公布一次性读取文本及分类的能力表，不改变原信箱布局。
+const dfy_v2_mailbox_text_api& mailbox_text_api() {
+    static const dfy_v2_mailbox_text_api api{{sizeof(dfy_v2_mailbox_text_api),DFY_V2_MAILBOX_TEXT_VERSION},inspect};
     return api;
 }
 }

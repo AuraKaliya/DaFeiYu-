@@ -55,6 +55,8 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::size_t callback_pins = 0;
 };
 inline thread_local HostState* current_host = nullptr;
+// 返回信箱文本消息读取能力版本 1。
+const dfy_v2_mailbox_text_api& mailbox_text_api();
 // 返回宿主子会话能力版本 1。
 const dfy_v2_agent_api& agent_api();
 // 撤销原实例的子会话接纳并请求收尾。

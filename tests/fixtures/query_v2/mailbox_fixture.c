@@ -12,6 +12,7 @@ _Static_assert(sizeof(dfy_v2_agent_api) == 48 && sizeof(dfy_v2_agent_input) == 6
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
     const dfy_v2_mailbox_api* mail;
+    const dfy_v2_mailbox_text_api* text;
     const dfy_v2_reference_api* refs;
     const dfy_v2_agent_api* agent;
     uint64_t session;
@@ -31,15 +32,17 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
 // 在实例载入阶段显式注册双向信箱。
 // 步骤：协商信箱及引用版本 → 校验布局 → 接入并保留接口。
 static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* error) {
-    const void *mail = NULL, *refs = NULL, *agent = NULL;
+    const void *mail = NULL, *refs = NULL, *agent = NULL, *text = NULL;
     dfy_v2_mailbox_pair addresses = {0};
     dfy_v2_status status = DFY_V2_OK;
     if (instance->host((dfy_v2_string_view){DFY_V2_MAILBOX_INTERFACE,sizeof(DFY_V2_MAILBOX_INTERFACE)-1},1,&mail,error) ||
+        instance->host((dfy_v2_string_view){DFY_V2_MAILBOX_TEXT_INTERFACE,sizeof(DFY_V2_MAILBOX_TEXT_INTERFACE)-1},1,&text,error) ||
         instance->host((dfy_v2_string_view){DFY_V2_REFERENCE_INTERFACE,sizeof(DFY_V2_REFERENCE_INTERFACE)-1},1,&refs,error))
         return DFY_V2_UNSUPPORTED;
     if (!mail || !refs || ((const dfy_v2_api_header*)mail)->struct_size != sizeof(dfy_v2_mailbox_api) ||
         ((const dfy_v2_api_header*)refs)->struct_size != sizeof(dfy_v2_reference_api)) return DFY_V2_UNSUPPORTED;
     instance->mail = mail;
+    instance->text = text;
     instance->refs = refs;
     status = instance->mail->attach(&addresses,error);
     if (status) return status;
@@ -51,11 +54,19 @@ static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* 
 }
 
 // 消费真实队首并按原测试序号向本体回信。
+// 步骤：取件并读取原分类和正文 → 释放独立引用 → 发送对应回信。
 static dfy_v2_status DFY_V2_CALL reply(dfy_v2_instance* instance, dfy_v2_error* error) {
     dfy_v2_mailbox_message input = {0};
+    dfy_v2_mailbox_text body = {0};
     dfy_v2_mailbox_receipt sent = {0};
     dfy_v2_status status = instance->mail->poll(&input,error);
     if (status) return status;
+    status = instance->text->inspect(input.payload,&body,error);
+    if (status || body.version != 1 || body.category.length != 12 || memcmp(body.category.data,"test.request",12) ||
+        body.text.length != 6 || memcmp(body.text.data,"source",6)) {
+        instance->refs->release(input.payload,error);
+        return DFY_V2_FAILED;
+    }
     status = instance->refs->release(input.payload,error);
     if (status) return status;
     return instance->mail->post(input.sequence,(dfy_v2_string_view){"test.reply",10},1,(dfy_v2_string_view){"received",8},&sent,error);

@@ -144,8 +144,7 @@ void main_inbox(const fs::path& root) {
     const auto instance = app.plugins().instance("test.mail");
     const auto& mail = app.mailbox_host();
     const auto address = instance->mailbox_addresses();
-    const auto body = std::make_shared<const StructValue>(StructValue::create(
-        std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32})),{},0));
+    const auto body = mailbox_text("test.request",1,"source",64);
     // 推进正式调度直到实际 DLL 向本体投递预期回件。
     const auto send = [&](uint64_t sequence) {
         mail.network->deliver(mail.identity,{address.inbound},sequence,body);
@@ -208,8 +207,7 @@ int wmain(int argc, wchar_t** argv) {
         scoped.owner = next_domain();
         check(manager.control_hook(scoped) == DFY_V2_HOOK_ALLOW,"Hook exceeded its registered scope");
 
-        auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32}));
-        auto body = std::make_shared<const StructValue>(StructValue::create(std::move(type),{},0));
+        const auto body = mailbox_text("test.request",1,"source",64);
         check(host.network->deliver(host.identity,{addresses.inbound},1,body).state == DeliveryState::accepted,
             "host request was not admitted");
         {
