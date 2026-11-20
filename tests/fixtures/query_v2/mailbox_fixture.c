@@ -129,9 +129,31 @@ static dfy_v2_status DFY_V2_CALL describe_text(dfy_v2_instance* instance, uint32
     dfy_v2_text_hook_description* out, dfy_v2_error* error) {
     if (error) error->length = 0;
     *out = (dfy_v2_text_hook_description){0};
+    if (instance->converter == 'e' && index < DFY_V2_TEXT_HOOK_REPLY) {
+        *out = (dfy_v2_text_hook_description){index+1,DFY_V2_HOOK_MAIN_SESSION,0};
+        return DFY_V2_OK;
+    }
     if (index || !instance->converter) return DFY_V2_NOT_FOUND;
     *out = (dfy_v2_text_hook_description){DFY_V2_TEXT_HOOK_INPUT,DFY_V2_HOOK_MAIN_SESSION,
         instance->converter == 'b' ? DFY_V2_TEXT_HOOK_CHAIN : 0};
+    return DFY_V2_OK;
+}
+
+// 在正式回合中分别验证入轮、请求、响应、工具候选和回复投递字段。
+// 步骤：根据阶段匹配原值 → 决定目标正文 → 把结果复制到宿主缓冲。
+static dfy_v2_status rewrite_turn(uint32_t index, dfy_v2_string_view value, char* output, uint64_t capacity, uint64_t* written) {
+    const char* target = NULL;
+    if (index == 0 && value.length == 10 && !memcmp(value.data,"hook input",10)) target = "rewritten prompt";
+    if (index == 1 && !value.length) target = "hook system";
+    if (index == 2 && value.length == 3 && !memcmp(value.data,"raw",3)) target = "model text";
+    if (index == 3 && value.length == 9 && !memcmp(value.data,"{\"bad\":1}",9)) target = "{}";
+    if (index == 4 && value.length == 10 && !memcmp(value.data,"model text",10)) target = "visible reply";
+    if (target) {
+        const size_t size = strlen(target);
+        if (size > capacity) return DFY_V2_RESOURCE_EXHAUSTED;
+        memcpy(output,target,size);
+        *written = size;
+    }
     return DFY_V2_OK;
 }
 
@@ -141,7 +163,9 @@ static dfy_v2_status DFY_V2_CALL rewrite_text(dfy_v2_instance* instance, uint32_
     const dfy_v2_text_hook_input* input, char* output, uint64_t capacity, uint64_t* written, dfy_v2_error* error) {
     if (error) error->length = 0;
     *written = DFY_V2_TEXT_HOOK_UNCHANGED;
-    if (index || !input->session || !output || !capacity) return DFY_V2_INVALID_ARGUMENT;
+    if (!input->session || !output || !capacity) return DFY_V2_INVALID_ARGUMENT;
+    if (instance->converter == 'e') return rewrite_turn(index,input->value,output,capacity,written);
+    if (index) return DFY_V2_INVALID_ARGUMENT;
     if (input->field.length != 5 || memcmp(input->field.data,"probe",5)) return DFY_V2_OK;
     if (instance->converter == 'z') { *written = capacity+1; return DFY_V2_OK; }
     if (input->value.length != 1) return DFY_V2_FAILED;

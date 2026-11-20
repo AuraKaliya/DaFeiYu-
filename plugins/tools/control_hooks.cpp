@@ -24,4 +24,25 @@ agent::PolicyExtension plugin_controls(PluginManager& manager, runtime::DomainId
         return PolicyDecision{PolicyVerdict::deny,PolicyReason::policy_failed};
     };
 }
+
+// 把原运行的有界文本字段投影到原生插件契约，权限与回执留在 Agent。
+agent::TextHook plugin_text_hooks(PluginManager& manager, runtime::DomainId owner) {
+    // 映射运行阶段并将原字段借给插件管理器。
+    // 步骤：定位 ABI 阶段 → 复制权威运行身份 → 合并已注册的字段改写。
+    return [&manager,owner](agent::TextHookPoint point, const agent::PolicyContext& context, std::string_view field,
+        std::string_view value, std::size_t limit) {
+        using agent::TextHookPoint;
+        uint32_t hook_point = 0;
+        switch (point) {
+        case TextHookPoint::input: hook_point = DFY_V2_TEXT_HOOK_INPUT; break;
+        case TextHookPoint::model_request: hook_point = DFY_V2_TEXT_HOOK_MODEL_REQUEST; break;
+        case TextHookPoint::model_response: hook_point = DFY_V2_TEXT_HOOK_MODEL_RESPONSE; break;
+        case TextHookPoint::tool_arguments: hook_point = DFY_V2_TEXT_HOOK_TOOL_ARGUMENTS; break;
+        case TextHookPoint::reply: hook_point = DFY_V2_TEXT_HOOK_REPLY; break;
+        }
+        const auto attempt = context.attempt;
+        return manager.rewrite_hook({hook_point,0,attempt.step.run.session,attempt.step.run.sequence,
+            attempt.step.sequence,attempt.sequence,owner,context.goal_revision,{field.data(),field.size()},{value.data(),value.size()}},limit);
+    };
+}
 }

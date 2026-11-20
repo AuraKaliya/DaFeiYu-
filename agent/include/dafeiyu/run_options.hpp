@@ -22,6 +22,8 @@ class ObservationActionAuthorization {
     runtime::DomainId binding_;
     std::uint64_t revision_;
 };
+enum class TextHookPoint { input, model_request, model_response, tool_arguments, reply };
+using TextHook = std::function<std::optional<std::string>(TextHookPoint,const PolicyContext&,std::string_view,std::string_view,std::size_t)>;
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
     std::optional<ToolSnapshot> tools;
@@ -39,6 +41,7 @@ struct RunOptions {
     std::size_t no_progress_limit = 3;
     ToolClock now = std::chrono::steady_clock::now;
     PolicyExtension extension;
+    TextHook text_hook;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;
     std::size_t trace_capacity = 256;

@@ -148,6 +148,14 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
         const auto decision = rule ? rule(point,context) : PolicyDecision{PolicyVerdict::allow,PolicyReason::none};
         return *gate ? decision : PolicyDecision{PolicyVerdict::deny,PolicyReason::cancelled};
     };
+    if (options.text_hook) {
+        // 会话在原生回调中关停时，结束该字段的处理且不派发新工作。
+        options.text_hook = [gate = accepting_,hook = std::move(options.text_hook)](auto point,const auto& context,auto field,auto value,auto limit) {
+            auto changed = hook(point,context,field,value,limit);
+            if (!*gate) throw std::logic_error("session: closed during text hook");
+            return changed;
+        };
+    }
     working_ = true;
     try {
         for (auto& slot : records_) if (!slot) {

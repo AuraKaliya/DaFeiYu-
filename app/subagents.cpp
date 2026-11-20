@@ -115,6 +115,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     options.version_labels = labels_;
     options.system_instructions = std::move(input.instructions);
     options.extension = plugins::plugin_controls(plugins_,slot.owner);
+    options.text_hook = plugins::plugin_text_hooks(plugins_,slot.owner);
     if (!input.tools.empty()) {
         auto catalog = std::make_shared<agent::ToolCatalog>(64);
         slot.registration = std::make_unique<plugins::PluginTools>(instance,catalog);

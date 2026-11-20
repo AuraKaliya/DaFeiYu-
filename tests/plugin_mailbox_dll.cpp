@@ -115,6 +115,57 @@ void main_hook(const fs::path& root, const fs::path& status_package) {
     check(app.close_plugins() == ShutdownResult::closed,"Hook application did not release resources");
 }
 
+// 在正式主会话验证各字段实际进入模型、审批与输出，下一轮仍读取原上下文文字。
+// 步骤：载入转换插件与业务工具 → 核对改写参数的批准和退出 → 检查回复投递与历史边界。
+void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& status_package) {
+    using namespace dfy::app;
+    using namespace dfy::model;
+    const auto packages = root/"text-hook-app";
+    converter(packages,dll,"test.e",'e');
+    std::atomic<unsigned> calls{0};
+    Application app({},packages,root/"text-hook-data",Backend{[&](const auto&,const Request& input) {
+        if (++calls == 1) {
+            check(input.messages.at(0).content == "hook system" && input.messages.back().content == "rewritten prompt",
+                "original request did not pass through both text Hooks");
+            return Response{{Role::assistant,"",{{"read",input.tools.at(0).name,R"({"bad":1})"}}},FinishReason::tool_calls};
+        }
+        if (calls == 2) {
+            check(input.messages.back().role == Role::tool && input.messages.back().content.find("idle") != std::string::npos,
+                "transformed tool did not deliver its original effect");
+            return Response{{Role::assistant,"raw"}};
+        }
+        check(input.messages.at(input.messages.size()-2).content == "model text","delivery Hook rewrote authoritative history");
+        return Response{{Role::assistant,"done"}};
+    }});
+    app.plugins().install(status_package);
+    check(!app.plugins().load("test.e") && !app.plugins().load("example.status"),"could not start text Hook fixture");
+    // 推进原 Agent 到业务结算和实际退出，保留导致失败的精确异常。
+    const auto finish = [&]() {
+        std::optional<CompletedTurn> result;
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while (app.conversation().busy() && std::chrono::steady_clock::now() < deadline) {
+            if (auto report = app.conversation().advance()) result = std::move(report);
+            std::this_thread::yield();
+        }
+        check(result.has_value() && !app.conversation().busy(),"text Hook turn did not exit");
+        if (result->error) std::rethrow_exception(result->error);
+        return result->answer;
+    };
+    app.submit_read_only("example.status/read","hook input");
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    while (app.conversation().busy() && app.confirmations().empty() && std::chrono::steady_clock::now() < deadline) {
+        app.conversation().advance();
+        std::this_thread::yield();
+    }
+    const auto tickets = app.confirmations();
+    check(tickets.size() == 1 && tickets[0].target.arguments == "{}" && calls == 1,"approval did not bind transformed arguments once");
+    app.decide(tickets[0].id,tickets[0].revision,true);
+    check(finish() == "visible reply","model response and reply delivery did not apply in sequence");
+    check(app.plugins().unload("test.e") == ShutdownResult::closed,"idle Hook fixture did not unload");
+    app.submit_dialogue("another turn");
+    check(finish() == "done" && calls == 3,"unload changed conversation history or retained Hook");
+}
+
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。
 // 步骤：建立两个会话及释放前取消 → 推进固定回答 → 分别核对历史与身份。
 void subagents(const fs::path& root) {
@@ -275,6 +326,7 @@ int wmain(int argc, wchar_t** argv) {
         subagents(root);
         main_inbox(root);
         text_hooks(root.parent_path(),argv[1]);
+        run_text_hooks(root.parent_path(),argv[1],argv[3]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -1,6 +1,7 @@
 #include <dafeiyu/run_loop.hpp>
 #include <dafeiyu/plan_protocol.hpp>
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -71,6 +72,7 @@ struct RunLoopState {
         if (changes && !options.observations.empty() && !options.action_observations)
             throw std::invalid_argument("run: observed changes require currentness guards");
         if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
+        rewrite(TextHookPoint::input,control(),"prompt",prompt);
         std::vector<std::string> inputs; inputs.reserve(options.observations.size()); record->observation_inputs_.reserve(options.observations.size());
         for (const auto& observation : options.observations) {
             if (!observation) throw std::invalid_argument("run: observation required");
@@ -125,6 +127,26 @@ struct RunLoopState {
             context.observations_current = action_basis->available && action_basis->observations->current(context.now);
         }
         return context;
+    }
+    // 接纳当前字段的可选改写，所有 Agent 调用者共用相同的文本边界。
+    // 步骤：调用明确的宿主转换 → 核对输出容量与编码 → 更新原字段。
+    bool rewrite(TextHookPoint point, const PolicyContext& context, std::string_view field, std::string& value,
+        std::size_t limit = 1024*1024) {
+        if (!options.text_hook) return false;
+        auto changed = options.text_hook(point,context,field,value,limit);
+        if (!changed) return false;
+        if (changed->size() > limit || !runtime::valid_utf8(*changed)) throw std::invalid_argument("run: invalid transformed field");
+        value = std::move(*changed);
+        return true;
+    }
+    // 使用改写后的模型文本和参数进入正常响应校验，保留模型调用身份和工具元数据。
+    // 步骤：改写助手文本 → 逐个改写同名工具的原参数 → 复核完整响应。
+    void rewrite_response(model::Response& response) {
+        const auto current = control();
+        auto changed = rewrite(TextHookPoint::model_response,current,"content",response.message.content);
+        for (auto& call : response.message.tool_calls)
+            changed = rewrite(TextHookPoint::tool_arguments,current,call.name,call.arguments,64*1024) || changed;
+        if (changed) model::validate_response(response);
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
@@ -391,6 +413,13 @@ struct RunLoopState {
                 options.system_instructions + "\n" + input.messages.front().content;
             else input.messages.insert(input.messages.begin(), {model::Role::system, options.system_instructions});
         }
+        const bool has_system = input.messages.front().role == model::Role::system;
+        std::string instructions = has_system ? input.messages.front().content : std::string{};
+        if (rewrite(TextHookPoint::model_request,current,"system",instructions,64*1024)) {
+            if (has_system && instructions.empty()) input.messages.erase(input.messages.begin());
+            else if (has_system) input.messages.front().content = std::move(instructions);
+            else if (!instructions.empty()) input.messages.insert(input.messages.begin(),{model::Role::system,std::move(instructions)});
+        }
         ModelContextSnapshot context{current.attempt,options.goal_revision};
         context.observation_binding = current.observation_binding;
         if (current.observation_binding) context.observations_current = current.observations_current;
@@ -433,6 +462,9 @@ struct RunLoopState {
         if (!std::all_of(snapshot.steps.begin(),snapshot.steps.end(),[](const auto& step) {
             return step.state == PlanStepState::completed || step.state == PlanStepState::skipped;
         })) return;
+        stage = TurnFailure::control;
+        rewrite(TextHookPoint::reply,control(),"answer",record->answer_);
+        interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         record->result_.settle(runtime::OperationState::succeeded);
         record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
     }
@@ -485,6 +517,11 @@ struct RunLoopState {
                 catch (...) { collect_model(); throw; }
                 collect_model(); interrupt();
                 if (response && record->operation()->state() == OperationState::pending) {
+                    stage = TurnFailure::model_response;
+                    rewrite_response(*response);
+                    interrupt();
+                }
+                if (response && record->operation()->state() == OperationState::pending) {
                     if (planning_request) {
                         stage = TurnFailure::model_response;
                         const auto candidate = parse_plan_response(*planning_scope,planning_request->expected,*response);
@@ -502,9 +539,16 @@ struct RunLoopState {
                             plan_step->answer = std::move(response->message.content);
                             plan_step->result.settle(OperationState::succeeded); plan_step->exit.settle(OperationState::succeeded);
                         } else {
-                            record->context_->finish_text(response->message.content); record->record_history();
-                            record->answer_ = std::move(response->message.content); record->result_.settle(OperationState::succeeded);
-                            record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
+                            auto answer = response->message.content;
+                            stage = TurnFailure::control;
+                            rewrite(TextHookPoint::reply,control(),"answer",answer);
+                            interrupt();
+                            if (record->operation()->state() == OperationState::pending) {
+                                stage = TurnFailure::history_commit;
+                                record->context_->finish_text(std::move(response->message.content)); record->record_history();
+                                record->answer_ = std::move(answer); record->result_.settle(OperationState::succeeded);
+                                record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
+                            }
                         }
                     } else if (response->finish == model::FinishReason::tool_calls && record->tools_) {
                         stage = TurnFailure::tool_execution; const auto count = response->message.tool_calls.size();

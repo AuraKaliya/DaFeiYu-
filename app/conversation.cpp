@@ -11,6 +11,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
+    if (text_hooks_) options.text_hook = text_hooks_;
     if (controls_) {
         if (options.extension) {
             options.extension = [host = controls_, local = std::move(options.extension)](auto point, const auto& context) {
