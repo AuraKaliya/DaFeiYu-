@@ -12,6 +12,12 @@ struct MailboxLimits {
     std::size_t queue_depth;
     std::size_t outstanding_events;
     std::size_t payload_bytes;
+    std::size_t receipt_window = 64;
+};
+enum class DeliveryState { accepted, repeated, expired, out_of_order };
+struct DeliveryReceipt {
+    DeliveryState state;
+    EventId event;
 };
 
 // 在宿主线程上管理定向信箱。读取方和发送方必须来自宿主绑定的身份。
@@ -25,8 +31,9 @@ class Mailboxes {
     Mailboxes& operator=(const Mailboxes&) = delete;
     // 绑定接收方与允许投递的一方，签发进程期不复用的信箱地址。
     MailboxId open(runtime::DomainId receiver, runtime::DomainId sender);
-    // 写入不可变消息并返回接纳身份，分类与版本取自载荷描述。
-    EventId deliver(runtime::DomainId sender, MailboxId target, std::shared_ptr<const runtime::StructValue> payload);
+    // 发送序号在目标信箱内从 1 连续递增；窗口内重投只读取原回执，消息正文仍取自首次接纳。
+    DeliveryReceipt deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
+        std::shared_ptr<const runtime::StructValue> payload);
     // 向原接收方转交队首数据，已读数据可以独立于信箱保留。
     QueueRead read(runtime::DomainId receiver, MailboxId target);
     // 撤销地址并放弃未读消息，已经交付的数据持有仍可读取。
@@ -37,6 +44,7 @@ class Mailboxes {
         MailboxId id;
         runtime::DomainId receiver, sender;
         std::unique_ptr<SubscriptionQueue> queue;
+        std::uint64_t accepted = 0;
     };
     // 查找当前目录中的有效地址，未知或已关闭的地址返回拒绝。
     std::vector<Entry>::iterator find(MailboxId target);

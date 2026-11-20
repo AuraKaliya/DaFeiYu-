@@ -6,7 +6,7 @@ namespace dfy::events {
 // 为全部信箱建立共享消息预算，关闭后仍由读出事件持有的消息继续计费。
 // 步骤：校验信箱与消息容量 → 建立共享预算 → 预留目录槽位。
 Mailboxes::Mailboxes(MailboxLimits limits) : limits_(limits) {
-    if (!limits.mailboxes || !limits.queue_depth || !limits.outstanding_events)
+    if (!limits.mailboxes || !limits.queue_depth || !limits.outstanding_events || !limits.receipt_window)
         throw std::invalid_argument("mailboxes: positive capacities required");
 
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
@@ -28,11 +28,23 @@ MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender) 
     return id;
 }
 
-// 仅允许绑定的发送方写入目标信箱。
-EventId Mailboxes::deliver(runtime::DomainId sender, MailboxId target, std::shared_ptr<const runtime::StructValue> payload) {
+// 仅接纳绑定发送者的下一个消息编号，重投归还本箱的原接纳身份。
+// 步骤：校验发送方和消息 → 按水位分流重投或跳号 → 成功入队后提交水位。
+DeliveryReceipt Mailboxes::deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
+    std::shared_ptr<const runtime::StructValue> payload) {
     const auto entry = find(target);
     if (entry->sender != sender) throw std::invalid_argument("mailboxes: sender not bound");
-    return entry->queue->accept(std::move(payload));
+    if (!sequence || !payload) throw std::invalid_argument("mailboxes: sequence and payload required");
+
+    if (sequence <= entry->accepted) {
+        if (entry->accepted - sequence >= limits_.receipt_window) return {DeliveryState::expired,{}};
+        return {DeliveryState::repeated,{target.value,sequence}};
+    }
+    if (sequence - entry->accepted != 1) return {DeliveryState::out_of_order,{}};
+
+    const auto event = entry->queue->accept(std::move(payload));
+    entry->accepted = sequence;
+    return {DeliveryState::accepted,event};
 }
 
 // 仅向绑定的接收方转交队首数据。
