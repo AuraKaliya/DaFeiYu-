@@ -21,6 +21,36 @@ void CompanionSession::switch_partner(plugins::PluginInstance& instance, bool li
     });
 }
 
+// 验证主会话工具授予的地址仍指向当前配对玩家和世界。
+bool CompanionSession::accepts_partner_messages(const CompanionAddress& address) const noexcept {
+    return partner_ && !stopping_ && partner_->input.ready && !partner_->input.departed && bound() && address_ == address;
+}
+
+// 按宿主侧当前序号和原任务关联投递，模型只能提交消息正文。
+std::uint64_t CompanionSession::send_partner(const CompanionAddress& address, CompanionMessageKind kind, const std::string& text) {
+    if (!accepts_partner_messages(address)) throw std::invalid_argument("companion: partner world unavailable");
+    return send(address,kind,messages_.next(CompanionSide::primary),kind == CompanionMessageKind::inquiry ? messages_.task() : 0,text);
+}
+
+// 借用同一世界内的最近回执，避免覆盖原任务事实或触发新工作。
+// 步骤：核对当前地址 → 筛选原任务及消息类型 → 返回有限的最近记录。
+std::string CompanionSession::partner_receipts(const CompanionAddress& address) const {
+    if (!accepts_partner_messages(address)) throw std::invalid_argument("companion: partner world unavailable");
+    auto values = nlohmann::json::array();
+    const auto delta = messages_.since(0);
+    const auto task = messages_.task();
+    std::size_t bytes = 0;
+    if (task) for (auto item = delta.messages.rbegin(); item != delta.messages.rend() && values.size() < 6; ++item) {
+        if (item->address != address || item->task != task) continue;
+        nlohmann::json value{{"id",item->revision},{"replyTo",item->reply_to},
+            {"origin",item->from == CompanionSide::game ? "game" : "main"},{"text",item->text}};
+        bytes += value.dump().size();
+        if (bytes >= 24*1024) break;
+        values.push_back(std::move(value));
+    }
+    return nlohmann::json{{"task",task},{"windowGap",delta.gap},{"latestFirst",std::move(values)}}.dump();
+}
+
 // 读取插件自己的状态及信箱事实，宿主只维护可供界面查询的值快照。
 // 步骤：核对原实例 → 复制角色状态及绑定 → 投影已收到的事实 → 在正式停止后释放原地址。
 void CompanionSession::advance_partner() {

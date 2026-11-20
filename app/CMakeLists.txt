@@ -6,6 +6,7 @@ target_sources(dfy_application PRIVATE companion.cpp companion.hpp companion_sta
 target_sources(dfy_application PRIVATE subagents.cpp subagents.hpp)
 target_sources(dfy_application PRIVATE mailbox_intake.cpp mailbox_intake.hpp)
 target_sources(dfy_application PRIVATE companion_confirmation.cpp)
+target_sources(dfy_application PRIVATE companion_exchange.cpp)
 target_sources(dfy_application PRIVATE companion_messages.cpp companion_messages.hpp)
 target_sources(dfy_application PRIVATE companion_partner.cpp)
 target_sources(dfy_application PRIVATE companion_inbox.cpp companion_inbox.hpp)

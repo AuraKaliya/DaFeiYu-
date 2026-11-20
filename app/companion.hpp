@@ -76,6 +76,12 @@ class CompanionSession {
     // 由主 Agent 向当前世界投递委托或询问，重试返回原修订。
     std::uint64_t send(const CompanionAddress& address, CompanionMessageKind kind, std::uint64_t command,
         std::uint64_t reply_to, const std::string& text);
+    // 检查当前地址可作为插件信箱入口，场景模式沿原业务入口运行。
+    bool accepts_partner_messages(const CompanionAddress& address) const noexcept;
+    // 由已固定当前地址的主 Agent 向插件信箱发送一次意图。
+    std::uint64_t send_partner(const CompanionAddress& address, CompanionMessageKind kind, const std::string& text);
+    // 读取原地址当前委托内最近的消息及实际动作回执。
+    std::string partner_receipts(const CompanionAddress& address) const;
     // 读取有界业务消息，供可信界面和主 Agent 使用。
     CompanionDelta messages(std::uint64_t after) const { return messages_.since(after); }
     // 取得指定查看委托的计划板，消息游标沿用本会话的原修订。

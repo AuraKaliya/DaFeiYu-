@@ -148,6 +148,9 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             throw;
         }
         output << "Companion session " << id << " enabled.\n";
+    } else if (words.size() == 3 && words[1] == "consult") {
+        const auto run = app.submit_companion_exchange(words[2]);
+        output << "Accepted run " << run.session << '/' << run.turn << ". View game receipts with /companion board.\n";
     } else if ((words.size() == 3 || (words.size() == 4 && words[3] == "meet")) && words[1] == "where") {
         const auto answer = app.locate_companion(positive_id(words[2]), words.size() == 4 ? LocationPurpose::meeting : LocationPurpose::progress);
         switch (answer.basis) {
@@ -236,7 +239,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | consult \"GOAL\" | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

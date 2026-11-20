@@ -381,6 +381,7 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 runtime::RunResult Application::advance_plugins() {
     collect_tool_registration();
     advance_verification();
+    if (!conversation_.busy()) companion_exchange_tools_.reset();
     if (!session_.accepting()) subagents_->stop();
     subagents_->advance();
     if (companion_ && !companion_->closed()) {
@@ -404,6 +405,7 @@ plugins::ShutdownResult Application::close_plugins() noexcept {
         if (!companion_->closed()) return plugins::ShutdownResult::pending;
     }
     tool_registration_.reset();
+    companion_exchange_tools_.reset();
     plugins_.close();
     return plugins_.close_status();
 }

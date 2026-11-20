@@ -88,6 +88,8 @@ class Application {
     // 主会话向该地址投递一条委托或询问。
     std::uint64_t send_companion(const CompanionAddress& address, CompanionMessageKind kind,
         std::uint64_t command, std::uint64_t reply_to, const std::string& text);
+    // 显式授权主 Agent 询问、委托或读取当前游戏回执。
+    agent::TurnDiagnostics submit_companion_exchange(const std::string& prompt);
     // 在可信入口按游标读取主子消息及缺口。
     CompanionDelta companion_messages(runtime::DomainId id, std::uint64_t after) const;
     // 读取仍保留的指定子回合结算值。
@@ -170,6 +172,7 @@ class Application {
     std::shared_ptr<Subagents> subagents_;
     std::unique_ptr<CompanionSession> companion_;
     std::shared_ptr<agent::ToolCatalog> confirmation_channels_;
+    std::shared_ptr<agent::ToolCatalog> companion_exchange_tools_;
     std::uint64_t routed_confirmation_ = 0;
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
