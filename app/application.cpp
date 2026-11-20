@@ -251,7 +251,7 @@ runtime::DomainId Application::open_companion(const std::string& package) {
         if (!original.stopping && original.instance == instance->generation()) return original.session;
         throw std::logic_error("companion: previous session has not exited");
     }
-    companion_ = std::make_unique<CompanionSession>(instance, model_config_, channel_, model_backend_, labels_, tool_clock_);
+    companion_ = std::make_unique<CompanionSession>(instance, model_config_, channel_, model_backend_, labels_, tool_clock_, mailbox_host_);
     return companion_->id();
 }
 

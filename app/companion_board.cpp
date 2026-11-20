@@ -31,7 +31,7 @@ BoardTask CompanionSession::current_board_task() const {
 // 步骤：列出有界保留任务 → 定位当前或历史查看 → 筛选同一来源和任务的消息。
 CompanionBoard CompanionSession::board(std::optional<std::uint64_t> task, std::uint64_t after) const {
     CompanionBoard result{id(), {}, discarded_through_, false, false, {}, messages_.since(after)};
-    if (!partner_tools_.empty()) {
+    if (partner_) {
         result.partner = true;
         const auto history = messages_.since(0);
         // 自然事件按原事实修订回看；记录玩家开口本身不建立委托。

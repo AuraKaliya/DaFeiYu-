@@ -10,6 +10,7 @@
 #include "companion_location.hpp"
 #include "companion_board.hpp"
 #include <dafeiyu/plugin_companion.hpp>
+#include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <array>
 
@@ -30,7 +31,7 @@ class CompanionSession {
     // 从活动实例建立独立会话、只读目录及可撤销角色声明。
     CompanionSession(const std::shared_ptr<plugins::PluginInstance>& instance, const model::Config& config,
         const std::shared_ptr<events::BroadcastChannel>& channel, const model::Backend& backend,
-        const agent::RunVersionLabels& labels, agent::ToolClock clock);
+        const agent::RunVersionLabels& labels, agent::ToolClock clock, plugins::PluginMailboxHost mailboxes);
     // 接纳该会话的只读委托，插件重载时原会话拒绝新动作。
     agent::TurnDiagnostics submit(const std::string& prompt);
     // 推进子会话的结算与实际退出，保留最近一次可信回执。
@@ -48,7 +49,7 @@ class CompanionSession {
     // 显式启用本实例的玩家消息入口。
     void listen(CompanionMode mode = CompanionMode::partner);
     // 查看玩家收件的可信来源、水位和缺口。
-    PlayerInboxStatus inbox_status() const { return inbox_.status(); }
+    PlayerInboxStatus inbox_status() const { return partner_ ? partner_->input : inbox_.status(); }
     // 读取最近一次玩家查看委托和宿主证据。
     std::optional<CompanionVisit> visit() const { return visit_; }
     // 游戏和管理中心读取同一份问题与发送修订。
@@ -79,7 +80,7 @@ class CompanionSession {
     runtime::DomainId id() const noexcept { return conversation_.id(); }
     // 判断会话已停止接纳且所有在途工作已退出。
     bool closed() const noexcept { return conversation_.closed() && !reader_.state().pending && !inbox_.busy() && !questions_.busy() &&
-        !delivery_.busy() && !mining_.busy() && !control_executor_ && !event_check_; }
+        !delivery_.busy() && !mining_.busy() && !control_executor_ && (!partner_ || partner_->closed); }
     // 读取仍保留的原回合结算值副本。
     std::optional<CompletedTurn> result(std::uint64_t turn) const;
   private:
@@ -91,29 +92,21 @@ class CompanionSession {
     void finish_message(const CompanionMessage& original, const CompletedTurn* turn);
     // 从原玩家消息接纳单一地标查看。
     void accept_player();
-    // 推进由当前模型处理的原玩家消息，变更委托后收回旧回合的游戏权限。
+    // 把插件伙伴的业务事实投影到应用计划板。
     void advance_partner();
-    // 有技能在执行时让同一配置的模型判断新事实是否值得中止原工作。
-    void review_partner_events();
-    struct PartnerOrder {
-        CompanionAddress address;
-        std::uint64_t order, message;
-        std::string facts;
-        std::shared_ptr<agent::TurnRequest> run;
-        std::shared_ptr<bool> newer;
-        std::uint64_t reviewed = 0;
-        bool stop_requested = false;
-        std::vector<std::pair<std::uint64_t, std::string>> decisions;
+    // 请求活动插件开始或停止伙伴循环。
+    void switch_partner(plugins::PluginInstance& instance, bool listen);
+    // 把一件经过原实例信箱交付的事实投影到当前角色。
+    void accept_partner(const runtime::StructValue& payload);
+    struct PartnerProjection {
+        events::MailboxId inbox;
+        PlayerInboxStatus input;
+        std::array<std::pair<std::uint64_t,std::uint64_t>,64> revisions{};
+        std::uint64_t settled = 0;
+        bool closed = false;
     };
-    std::optional<PartnerOrder> partner_order_;
-    std::vector<std::string> partner_tools_;
-    std::string partner_reply_tool_;
-    std::string prior_activity_;
-    bool reset_partner_history_ = false;
-    std::uint64_t settled_event_ = 0, check_candidate_ = 0, check_turn_ = 0, check_binding_ = 0, check_cursor_ = 0;
-    const model::Config event_config_;
-    model::AsyncClient event_model_;
-    std::shared_ptr<model::ModelRequest> event_check_;
+    plugins::PluginMailboxHost mailboxes_;
+    std::optional<PartnerProjection> partner_;
     // 启动工具名和参数都已收紧的正式查看回合。
     void start_visit();
     // 在新状态读回上核对探索覆盖并决定是否重读、追问或验证恢复。

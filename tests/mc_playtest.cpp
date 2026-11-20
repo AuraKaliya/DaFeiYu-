@@ -40,12 +40,11 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
         record_input(root, {{"call",skill},{"arguments",arguments}});
         return {{Role::assistant, "", {{skill, tool->name, arguments.dump()}}}, FinishReason::tool_calls};
     };
-    if (request.tools.size() == 1 && request.tools.front().name == "stop_current_work") {
+    if (request.tools.empty()) {
         const auto input = Json::parse(last.content);
         const bool stop = input.at("currentEvents").back().at("sequence") == 6;
         record_input(root, {{"check", input.at("newEvents")}, {"work",input.at("work")}, {"stop",stop}});
-        if (!stop) return speak("continue");
-        return {{Role::assistant, "", {{"choice","stop_current_work","{}"}}}, FinishReason::tool_calls};
+        return speak(stop ? "stop" : "continue");
     }
     if (request.tools.size() != 4 || request.messages.front().role != Role::system) throw std::runtime_error("invalid partner scope");
     if (last.role == Role::user) {

@@ -17,8 +17,8 @@ plugins::CompanionOffer require_offer(plugins::PluginInstance& instance, const a
 // 步骤：登记当前实例工具 → 验证可选角色声明 → 创建独立会话。
 CompanionSession::CompanionSession(const std::shared_ptr<plugins::PluginInstance>& instance, const model::Config& config,
     const std::shared_ptr<events::BroadcastChannel>& channel, const model::Backend& backend, const agent::RunVersionLabels& labels,
-    agent::ToolClock clock)
-    : event_config_(config), event_model_(1, backend), instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
+    agent::ToolClock clock, plugins::PluginMailboxHost mailboxes)
+    : mailboxes_(std::move(mailboxes)), instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
       registration_(instance, catalog_), offer_(require_offer(*instance, *catalog_)), session_(config, channel, backend),
       conversation_(session_, labels), clock_(std::move(clock)) {}
 
@@ -46,18 +46,20 @@ void CompanionSession::advance() {
     advance_control();
     if (!stopping_ && !bound()) close();
     reader_.advance();
-    sync_binding();
-    review_exploration();
-    inbox_.advance(*catalog_, clock_);
-    if (!stopping_ && inbox_.status().control) request_stop();
-    questions_.advance();
-    delivery_.advance(questions_.grant(), address_, *catalog_, admit_tool_, receipt_tool_, clock_);
-    mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, return_tool_, clock_);
-    if (!stopping_ && inbox_.status().enabled && !reader_.state().pending && clock_() >= next_refresh_) {
+    if (partner_) advance_partner();
+    else {
+        sync_binding();
+        review_exploration();
+        inbox_.advance(*catalog_, clock_);
+        if (!stopping_ && inbox_.status().control) request_stop();
+        questions_.advance();
+        delivery_.advance(questions_.grant(), address_, *catalog_, admit_tool_, receipt_tool_, clock_);
+        mining_.advance(questions_.grant(), delivery_.status(), address_, *catalog_, mine_tool_, return_tool_, clock_);
+    }
+    if (!stopping_ && (partner_ || inbox_.status().enabled) && !reader_.state().pending && clock_() >= next_refresh_) {
         refresh();
         next_refresh_ = clock_() + state_refresh_interval;
     }
-    if (!partner_tools_.empty()) review_partner_events();
     if (auto completed = conversation_.advance()) result_ = std::move(completed);
     if (visit_work_ && visit_ && visit_work_->diagnostics().exit != runtime::OperationState::pending) {
         verify_visit(*visit_, *visit_work_, visit_tool_);
@@ -69,9 +71,8 @@ void CompanionSession::advance() {
         finish_message(*delivering_, &*result_);
         delivering_.reset();
     }
-    if (!partner_tools_.empty()) advance_partner();
-    else if (!stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
-    if (queued_ && !delivering_ && !conversation_.busy() && !partner_order_) {
+    if (!partner_ && !stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
+    if (!stopping_ && queued_ && !delivering_ && !conversation_.busy()) {
         try {
             if (visit_ && visit_->task == queued_->revision) start_visit();
             else submit(queued_->text);
@@ -87,14 +88,14 @@ void CompanionSession::advance() {
 // 先撤销新工具接纳，再关闭会话并保留实际退出责任。
 void CompanionSession::close() {
     if (stopping_) return;
+    if (partner_ && bound()) switch_partner(*instance_.lock(),false);
     stopping_ = true;
     registration_.revoke();
     reader_.revoke();
     questions_.withdraw();
     delivery_.close();
     mining_.close();
-    event_model_.close();
-    sync_binding();
+    if (!partner_) sync_binding();
     conversation_.close();
 }
 
@@ -102,6 +103,7 @@ void CompanionSession::close() {
 // 步骤：核对游戏回执或签发停止 → 提交独立票据 → 关闭普通接纳。
 void CompanionSession::request_stop() {
     if (stopping_) return;
+    if (partner_) { close(); return; }
     if (address_) {
         control_ = inbox_.status().control.value_or(ControlReceipt{address_->world});
         if (control_->phase == ControlPhase::requested) try {
@@ -157,13 +159,6 @@ void CompanionSession::sync_binding() {
     const bool live = !stopping_ && observation.link == CompanionLink::available && observation.last.has_value();
     if (live && address_ && address_->world == observation.last->generation && actor_ == observation.last->actor) return;
     if (address_) {
-        if (!partner_tools_.empty()) {
-            reset_partner_history_ = true;
-            prior_activity_.clear();
-            settled_event_ = 0;
-            if (partner_order_) conversation_.cancel();
-            if (event_check_) event_check_->request_cancel(runtime::CancelReason::owner_stop);
-        }
         if (review_ && !review_->recovery) {
             review_->stage = ReviewStage::interrupted;
             review_->verification = "原世界绑定已失效，最后一次观察之后的进展未核实";
@@ -258,21 +253,20 @@ void CompanionSession::start_visit() {
 void CompanionSession::listen(CompanionMode mode) {
     if (stopping_ || !bound()) throw std::logic_error("companion: inactive player source");
     const auto instance = instance_.lock();
-    const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
-    if (inbox_.status().enabled && (partner_tools_.empty() != (mode == CompanionMode::scenario)))
+    if ((partner_ && mode == CompanionMode::scenario) || (inbox_.status().enabled && mode == CompanionMode::partner))
         throw std::logic_error("companion: stop before changing mode");
     if (mode == CompanionMode::partner) {
-        if (!inbox) throw std::invalid_argument("companion: player inbox unavailable");
-        auto tools = plugins::companion_skills(*instance, *catalog_);
-        const auto reply = plugins::companion_route(*instance, *catalog_, "partner.reply", true);
-        if (!reply || std::ranges::find(tools, *reply) == tools.end()) throw std::invalid_argument("companion: partner reply unavailable");
-        control_tool_ = plugins::companion_route(*instance, *catalog_, "control.release", true);
-        if (!control_tool_) throw std::invalid_argument("companion: partner release unavailable");
-        inbox_.enable(*inbox);
-        partner_reply_tool_ = *reply;
-        partner_tools_ = std::move(tools);
+        if (partner_) return;
+        switch_partner(*instance,true);
+        const events::MailboxId sender_box{instance->mailbox_addresses().outbound};
+        if (mailboxes_.network->sender(mailboxes_.identity,sender_box) != instance->generation())
+            throw std::logic_error("companion: plugin did not bind its own mailbox");
+        partner_.emplace();
+        partner_->inbox = sender_box;
+        partner_->input.enabled = true;
         return;
     }
+    const auto inbox = plugins::companion_route(*instance, *catalog_, "player.inbox", false);
     const auto visit = plugins::companion_route(*instance, *catalog_, "visit.inspect", true);
     if (!inbox || !visit) throw std::invalid_argument("companion: player route not available");
     survey_tool_ = plugins::companion_route(*instance, *catalog_, "search.progress", false);
@@ -292,7 +286,6 @@ std::uint64_t CompanionSession::send(const CompanionAddress& address, CompanionM
     std::uint64_t reply_to, const std::string& text) {
     if (stopping_ || !bound() || !address_ || address != *address_) throw std::invalid_argument("companion: stale address");
     const bool fresh = command == messages_.next(CompanionSide::primary);
-    if (fresh && partner_order_) throw std::logic_error("companion: player turn in progress");
     if (fresh && (queued_ || (delivering_ && kind == CompanionMessageKind::delegation)))
         throw std::logic_error("companion: message delivery pending");
     auto message = messages_.post(address, CompanionSide::primary, kind, command, reply_to, text);
@@ -320,7 +313,7 @@ void CompanionSession::finish_message(const CompanionMessage& original, const Co
 
 // 获取可跨界面复制的最新回合状态。
 CompanionStatus CompanionSession::status() const {
-    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status(), control_, settled_event_};
+    return {id(), offer_.generation, package_, offer_.state_topic, stopping_, closed(), conversation_.status(), control_, partner_ ? partner_->settled : 0};
 }
 
 // 仅返回仍与原回合匹配的可信结算结果。
