@@ -67,7 +67,7 @@ cmake --build .\build-status --config Release
 
 在启动阶段调用 `dfy.mailbox@1` 的 `attach` 取得收、发地址。宿主绑定当前实例与本体的发送权。`post` 从 1 开始使用连续序号，容量不足保留原编号和正文，待后续活动步骤重投。`poll` 每次转交队首和一项独立载荷引用。通过 `dfy.mailbox.text@1` 读取分类、版本和正文，复制需要留用的数据后释放引用。`ACCEPTED` 和 `REPEATED` 是本进程内的接纳回执，业务结果需通过关联请求编号另送。
 
-在 `dfy.activity@1` 的 `step` 中推进收件、原生工作或子会话。`dfy.agent@1` 的 `submit` 复制有界输入并排队，宿主在离开原插件调用后派发相同执行器。每个子会话独立保存上下文，工具范围限本实例当前注册。插件通过 `status` 查询原回合，发出 `cancel` 或 `close` 后仍由宿主推进实际退出。忙碌实例拒绝直接卸载。[子会话契约](include/dafeiyu/agent_abi_v2.h) · [活动契约](include/dafeiyu/activity_abi_v2.h) · [MC 循环示例](../plugins/mc/partner_loop.cpp)
+在 `dfy.activity@1` 的 `step` 中推进收件、原生工作或子会话。`dfy.agent@1` 的 `submit` 复制有界输入并排队，宿主在离开原插件调用后派发相同执行器。每个子会话独立保存上下文，工具范围限本实例当前注册。插件通过 `status` 查询原回合，发出 `cancel` 或 `close` 后仍由宿主推进实际退出。忙碌实例拒绝直接卸载。[子会话契约](include/dafeiyu/agent_abi_v2.h) · [活动契约](include/dafeiyu/activity_abi_v2.h)
 
 ## Hook 注册与改写规则
 
