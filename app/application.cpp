@@ -47,6 +47,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
       conversation_(session_,labels_,plugins::plugin_controls(plugins_)),
+      mailbox_intake_(mailbox_host_,conversation_),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
@@ -369,7 +370,9 @@ runtime::RunResult Application::advance_plugins() {
         if (!session_.accepting()) companion_->close();
         companion_->advance();
     }
-    return plugins_.advance();
+    const auto plugins = plugins_.advance();
+    const auto mail = mailbox_intake_.advance();
+    return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }
 
 // 等两段会话的工作真正退出后再关闭共享插件。

@@ -36,6 +36,8 @@ class Conversation {
     void close() { session_.close(); }
     // 查询是否还有未退出的会话工作。
     bool busy() const noexcept { return session_.busy(); }
+    // 返回是否可继续接纳新回合。
+    bool accepting() const noexcept { return session_.accepting(); }
     // 确认会话关闭且本服务已经结算退出。
     bool closed() const noexcept { return session_.closed() && !current_; }
     // 返回原会话身份供界面关联本地回执。

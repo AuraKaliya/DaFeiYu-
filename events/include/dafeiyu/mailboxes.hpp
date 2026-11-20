@@ -43,6 +43,8 @@ class Mailboxes {
     QueueRead read(runtime::DomainId receiver, MailboxId target);
     // 在同宿主线程借用当前队首，用于准备读取方的持有引用。
     const EventRecord* front(runtime::DomainId receiver, MailboxId target);
+    // 返回接收方当前信箱绑定的可信发送者。
+    runtime::DomainId sender(runtime::DomainId receiver, MailboxId target);
     // 由接收方配置新消息的唤醒分类，空列表恢复主动收件。
     void wake_on(runtime::DomainId receiver, MailboxId target, std::span<const MailboxCategory> categories);
     // 查询尚未读取的最晚唤醒身份，读取已到该身份后自动清除。

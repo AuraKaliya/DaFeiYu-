@@ -2,7 +2,7 @@
 #include <dafeiyu/tool_catalog.hpp>
 
 namespace dfy::agent {
-enum class RunOrigin { user_request, observation_rule };
+enum class RunOrigin { user_request, observation_rule, mailbox };
 enum class PolicyVerdict { allow, deny, wait };
 enum class ControlPoint { model_request, tool_start, tool_result };
 enum class PolicyReason {

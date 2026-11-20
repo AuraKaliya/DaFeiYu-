@@ -69,6 +69,13 @@ const EventRecord* Mailboxes::front(runtime::DomainId receiver, MailboxId target
     return entry->queue->front();
 }
 
+// 只允许原接收方查看送件身份。
+runtime::DomainId Mailboxes::sender(runtime::DomainId receiver, MailboxId target) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
+    return entry->sender;
+}
+
 // 用接收方声明的精确分类替换后续投递的唤醒规则。
 // 步骤：核对接收权及分类数 → 预检名称与版本 → 原子替换并清除旧规则信号。
 void Mailboxes::wake_on(runtime::DomainId receiver, MailboxId target, std::span<const MailboxCategory> categories) {

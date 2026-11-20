@@ -129,6 +129,58 @@ void subagents(const fs::path& root) {
     app.advance_plugins();
     check(agents.empty() && app.close_plugins() == ShutdownResult::closed,"child sessions did not release before shutdown");
 }
+
+// 用真实插件信箱验证被动审查与分类触发共享可信来源。
+// 步骤：检查无信号时保留来信 → 主动处理且不启动模型 → 指定分类到达后启动原会话。
+void main_inbox(const fs::path& root) {
+    using namespace dfy::model;
+    using namespace dfy::app;
+    std::atomic<unsigned> calls{0};
+    Application app({},root,root.parent_path()/"intake-data",Backend{[&](const auto&,const Request& input) {
+        ++calls;
+        return Response{{Role::assistant,input.messages.back().content}};
+    }});
+    check(!app.plugins().load("test.mail"),"mail route sender was not loaded");
+    const auto instance = app.plugins().instance("test.mail");
+    const auto& mail = app.mailbox_host();
+    const auto address = instance->mailbox_addresses();
+    const auto body = std::make_shared<const StructValue>(StructValue::create(
+        std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32})),{},0));
+    // 推进正式调度直到实际 DLL 向本体投递预期回件。
+    const auto send = [&](uint64_t sequence) {
+        mail.network->deliver(mail.identity,{address.inbound},sequence,body);
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < deadline) {
+            app.advance_plugins();
+            if (mail.network->front(mail.identity,{address.outbound}) || app.conversation().busy()) return;
+            std::this_thread::yield();
+        }
+        throw std::runtime_error("mailbox input did not arrive");
+    };
+    auto& intake = app.mailbox_intake();
+    intake.watch({address.outbound},{},[&](const auto& delivery) -> std::optional<std::string> {
+        check(delivery.sender == instance->generation() && delivery.event.id.sequence == 1,"passive review lost identity");
+        return {};
+    });
+    send(1);
+    check(!app.conversation().busy() && !calls && intake.review({address.outbound}) == MailboxIntakeResult::handled,
+        "passive route incorrectly woke the model");
+    const MailboxCategory wake[] = {{"test.reply",1}};
+    intake.watch({address.outbound},wake,[](const auto& delivery) -> std::optional<std::string> {
+        return std::string(delivery.event.payload->find("text")->as_string());
+    });
+    send(2);
+    check(app.conversation().busy() && app.conversation().status()->source == dfy::agent::RunOrigin::mailbox,
+        "configured arrival did not reach the main Agent");
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    std::optional<CompletedTurn> result;
+    while (app.conversation().busy() && std::chrono::steady_clock::now() < deadline) {
+        if (auto value = app.conversation().advance()) result = std::move(value);
+        std::this_thread::yield();
+    }
+    check(result && result->answer.find("test.reply") != std::string::npos && result->answer.find("received") != std::string::npos &&
+        calls == 1,"main inbox lost its category or payload");
+}
 }
 
 // 验证从正式插件管理器载入的 C DLL 可以收到本体请求并回信。
@@ -179,6 +231,7 @@ int wmain(int argc, wchar_t** argv) {
         check(manager.close(),"mailbox manager did not close");
         main_hook(root,argv[3]);
         subagents(root);
+        main_inbox(root);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

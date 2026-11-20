@@ -3,6 +3,7 @@
 #include "companion.hpp"
 #include "tool_verification.hpp"
 #include "subagents.hpp"
+#include "mailbox_intake.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <array>
@@ -42,6 +43,8 @@ class Application {
     const plugins::PluginMailboxHost& mailbox_host() const noexcept { return mailbox_host_; }
     // 借用宿主的插件子会话服务。
     Subagents& subagents() noexcept { return *subagents_; }
+    // 提供可信入口配置主会话按分类收件与发送方审查。
+    MailboxIntake& mailbox_intake() noexcept { return mailbox_intake_; }
     // 根据已加载实例的可选角色声明启用一个游戏会话。
     runtime::DomainId open_companion(const std::string& package);
     // 在原陪伴会话内提交用户委托。
@@ -152,6 +155,7 @@ class Application {
     std::optional<ToolRegistration> tool_registration_;
     agent::Session session_;
     Conversation conversation_;
+    MailboxIntake mailbox_intake_;
     std::shared_ptr<Subagents> subagents_;
     std::unique_ptr<CompanionSession> companion_;
     agent::ConfirmationCaller caller_;
