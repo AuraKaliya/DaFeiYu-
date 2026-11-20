@@ -46,7 +46,8 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
-      conversation_(session_,labels_,plugins::plugin_controls(plugins_)) {
+      conversation_(session_,labels_,plugins::plugin_controls(plugins_)),
+      subagents_(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
 }
 
@@ -361,6 +362,8 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 runtime::RunResult Application::advance_plugins() {
     collect_tool_registration();
     advance_verification();
+    if (!session_.accepting()) subagents_.stop();
+    subagents_.advance();
     if (companion_ && !companion_->closed()) {
         if (!session_.accepting()) companion_->close();
         companion_->advance();
@@ -372,6 +375,8 @@ runtime::RunResult Application::advance_plugins() {
 // 步骤：核对主会话收尾 → 关闭陪伴会话或等待 → 关闭原管理器。
 plugins::ShutdownResult Application::close_plugins() noexcept {
     if (!conversation_.closed()) return plugins::ShutdownResult::busy;
+    subagents_.stop();
+    if (!subagents_.empty()) return plugins::ShutdownResult::pending;
     if (companion_ && !companion_->closed()) {
         try { companion_->close(); } catch (...) { return plugins::ShutdownResult::failed; }
         if (!companion_->closed()) return plugins::ShutdownResult::pending;

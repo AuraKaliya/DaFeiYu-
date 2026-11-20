@@ -70,6 +70,46 @@ void main_hook(const fs::path& root, const fs::path& status_package) {
     app.conversation().close();
     check(app.close_plugins() == ShutdownResult::closed,"Hook application did not release resources");
 }
+
+// 验证同一插件的子会话没有共享历史，且提交与模型派发分离。
+// 步骤：建立两个会话及释放前取消 → 推进固定回答 → 分别核对历史与身份。
+void subagents(const fs::path& root) {
+    using namespace dfy::model;
+    using namespace dfy::app;
+    std::atomic<unsigned> calls{0};
+    Application app({},root,root.parent_path()/"subagent-data",Backend{[&](const auto&,const Request& request) {
+        ++calls;
+        return Response{{Role::assistant,std::to_string(request.messages.size())}};
+    }});
+    check(!app.plugins().load("test.mail"),"could not start subagent owner");
+    const auto instance = app.plugins().instance("test.mail");
+    auto& agents = app.subagents();
+    const auto owner = instance->generation();
+    const auto a = agents.open(instance), b = agents.open(instance);
+    check(agents.submit(owner,a,{"first"}) == 1 && agents.busy(owner) && calls == 0,"queued turn dispatched inline");
+    check(agents.submit(owner,b,{"cancelled"}) == 1 && agents.cancel(owner,b,1),"queued cancellation failed");
+    bool denied = false;
+    try { (void)agents.status(next_domain(),a); } catch (const std::invalid_argument&) { denied = true; }
+    check(denied,"another owner read an isolated session");
+    // 等待当前回合实际退出并返回值结果。
+    const auto settle = [&](auto session) {
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < deadline) {
+            app.advance_plugins();
+            const auto state = agents.status(owner,session);
+            if (state.phase == SubagentPhase::succeeded) return std::string(state.answer);
+            std::this_thread::yield();
+        }
+        throw std::runtime_error("subagent did not settle");
+    };
+    check(settle(a) == "1" && calls == 1,"first session or queued cancellation was incorrect");
+    check(agents.submit(owner,a,{"second"}) == 2 && settle(a) == "3","child context did not persist");
+    check(agents.submit(owner,b,{"independent"}) == 2 && settle(b) == "1","child context crossed sessions");
+    app.conversation().close();
+    check(app.close_plugins() == ShutdownResult::pending,"shutdown did not account for child sessions");
+    app.advance_plugins();
+    check(agents.empty() && app.close_plugins() == ShutdownResult::closed,"child sessions did not release before shutdown");
+}
 }
 
 // 验证从正式插件管理器载入的 C DLL 可以收到本体请求并回信。
@@ -115,6 +155,7 @@ int wmain(int argc, wchar_t** argv) {
             "reload reused old mailbox routing");
         check(manager.close(),"mailbox manager did not close");
         main_hook(root,argv[3]);
+        subagents(root);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
