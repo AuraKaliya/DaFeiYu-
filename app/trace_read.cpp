@@ -37,6 +37,8 @@ void summarize(const Json& record, std::ostream& output) {
     const auto& kind = record.at("kind");
     if (kind == "run.exited")
         output << "session " << record.at("session") << " run " << record.at("run") << ' ' << record.at("source") << ' ' << record.at("result") << '\n';
+    if (kind == "subagent.accepted")
+        output << "child session " << record.at("session") << " request " << record.at("request") << " -> run " << record.at("run") << '\n';
     if (kind != "mail.received") return;
     const auto& category = record.at("category");
     const auto& body = record.at("body");

@@ -59,6 +59,10 @@ int run(const std::vector<std::filesystem::path>& args) {
             dfy::app::review_trace(args[2],selected,std::cout);
             return 0;
         }
+        if (args.size() == 5 && args[1] == "--replay-trace") {
+            dfy::app::replay_trace(args[2],{dfy::app::trace_id(args[3]),dfy::app::trace_id(args[4])},std::cout);
+            return 0;
+        }
         if (args.size() == 3 && args[1] == "--check-config") {
             const auto config = dfy::model::load_config(args[2]);
             std::cout << "Configuration valid: " << config.provider << " / " << config.model
@@ -119,7 +123,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
-            << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
+            << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --replay-trace FILE SESSION RUN | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"

@@ -9,4 +9,6 @@ namespace dfy::app {
 runtime::DomainId trace_id(const std::filesystem::path& value);
 // 只读列出日志中的运行或打印指定运行，缺尾时保留早期可读事实。
 void review_trace(const std::filesystem::path& file, std::optional<agent::RunId> run, std::ostream& output);
+// 用已录制的响应和工具退出离线重跑一轮直接运行。
+void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostream& output);
 }

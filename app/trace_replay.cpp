@@ -1,0 +1,189 @@
+#include "trace_commands.hpp"
+#include "trace_model.hpp"
+#include "trace_read.hpp"
+#include <dafeiyu/run_loop.hpp>
+#include <dafeiyu/session.hpp>
+#include <algorithm>
+#include <ostream>
+#include <thread>
+
+namespace dfy::app {
+namespace {
+using namespace trace_format;
+using agent::ToolResult;
+
+// 解码日志使用的固定标签，未知标签不能降级为默认值。
+template<typename Enum, std::size_t Count>
+Enum tagged(const Json& field, const std::array<const char*,Count>& names) {
+    const auto name = field.get<std::string>();
+    const auto found = std::find(names.begin(),names.end(),name);
+    if (found == names.end()) throw std::invalid_argument("replay: unknown protocol label");
+    return static_cast<Enum>(found-names.begin());
+}
+
+// 还原包含配对身份和完整调用的统一消息。
+model::Message decode_message(const Json& value) {
+    model::Message message{tagged<model::Role>(value.at("role"),roles),value.at("content"),{},value.at("toolCallId")};
+    for (const auto& call : value.at("toolCalls"))
+        message.tool_calls.push_back({call.at("id"),call.at("name"),call.at("arguments")});
+    return message;
+}
+
+// 还原原响应正文、结束标签与可选用量。
+model::Response decode_response(const Json& value) {
+    model::Response response{decode_message(value.at("message")),tagged<model::FinishReason>(value.at("finish"),finishes)};
+    if (const auto& usage = value.at("usage"); !usage.is_null())
+        response.usage = model::Usage{usage.at("inputTokens"),usage.at("outputTokens")};
+    return response;
+}
+
+// 匹配原工具步骤和配对信息，不使用新进程生成的工作号。
+bool matches_call(const Json& record, agent::AttemptId attempt, const model::ToolCall& call) {
+    return record.at("step") == attempt.step.sequence && record.at("attempt") == attempt.sequence &&
+        record.at("callId") == call.id && record.at("name") == call.name && record.at("arguments") == call.arguments;
+}
+
+struct RecordedModel { Json input, exit; std::optional<model::Response> response; };
+struct RecordedTool { Json exit; bool invoked = false, observed = false; };
+struct RecordedRun {
+    std::vector<RecordedModel> models;
+    std::vector<RecordedTool> tools;
+    Json terminal;
+};
+constexpr std::array turn_failures{"none","model","history_commit","model_response","control","tool_execution","model_request"};
+
+// 只装入有确定边界的直接运行，等待人为输入及中断的运行留给原日志审阅。
+// 步骤：按原身份收取事件 → 配对模型输入及退出 → 验证终态和可重跑边界。
+RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
+    RecordedRun result;
+    read_trace(file,[&](const Json& row) {
+        if (!matches_run(row,run)) return;
+        const auto& kind = row.at("kind");
+        if (kind == "model.prepared") {
+            if (result.models.size() == 64 || row.at("step") != result.models.size()+1 || row.at("attempt") != 1 ||
+                (!result.models.empty() && result.models.back().exit.is_null()))
+                throw std::invalid_argument("replay: unsupported model schedule");
+            result.models.push_back({row.at("input"),{}});
+        } else if (kind == "model.exited") {
+            if (result.models.empty() || row.at("step") != result.models.size() || row.at("attempt") != 1 ||
+                !result.models.back().exit.is_null() ||
+                (row.at("callOutcome") != "threw" && !(row.at("callOutcome") == "returned" && row.contains("output"))) ||
+                row.at("result") == "cancelled")
+                throw std::invalid_argument("replay: unsupported model exit");
+            result.models.back().exit = row;
+            if (row.contains("output")) result.models.back().response = decode_response(row.at("output"));
+        } else if (kind == "tool.exited") {
+            if (result.tools.size() == 64 || row.contains("confirmation") || row.at("fault") != "none" ||
+                row.at("result") == "cancelled")
+                throw std::invalid_argument("replay: unsupported tool exit");
+            result.tools.push_back({row});
+        } else if (kind == "model.rewritten") {
+            throw std::invalid_argument("replay: model response was rewritten by a live hook");
+        } else if (kind == "run.exited") {
+            if (!result.terminal.is_null()) throw std::invalid_argument("replay: duplicate run exit");
+            result.terminal = row;
+        }
+    });
+    if (result.terminal.is_null() || result.models.empty() || result.models.back().exit.is_null())
+        throw std::invalid_argument("replay: complete run with model input and exit required");
+    const auto& diagnostic = result.terminal.at("diagnostic").at("data");
+    const auto& timeline = diagnostic.at("timeline");
+    if ((result.terminal.at("result") != "succeeded" && result.terminal.at("result") != "failed") ||
+        !diagnostic.at("plans").empty() || !timeline.at("observations").empty() ||
+        timeline.at("stop_reason") != "none" || timeline.at("source") == "observation_rule")
+        throw std::invalid_argument("replay: run requires control inputs outside a direct replay");
+    return result;
+}
+}
+
+// 用固定证据驱动正式运行协调器，比较实际送模上下文、工具回执与最终结果。
+// 步骤：恢复首轮历史和工具定义 → 绑定纯离线替身 → 推进正式回合 → 核对首个差异和原终态。
+void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostream& output) {
+    using runtime::OperationState;
+    auto original = recorded_run(file,run);
+    const auto& first = original.models.front().input;
+    auto history = std::make_shared<agent::MessageHistory>();
+    for (const auto& item : first.at("messages")) history->push_back(decode_message(item));
+    if (history->empty() || history->back().role != model::Role::user)
+        throw std::invalid_argument("replay: final initial user message required");
+    auto prompt = std::move(history->back().content);
+    history->pop_back();
+
+    std::string tool_difference, model_difference;
+    std::size_t model_index = 0;
+    agent::ToolCatalog catalog;
+    agent::RunOptions options;
+    std::vector<std::string> ids;
+    for (const auto& tool : first.at("tools")) {
+        model::ToolDefinition definition{tool.at("name"),tool.at("description"),tool.at("parameters")};
+        ids.push_back("replay/"+definition.name);
+        catalog.add({ids.back(),runtime::next_domain(),1,std::move(definition)},
+        // 按原步骤和精确参数兑现一次固定结果，永不接触游戏执行器。
+        [&](const agent::ToolInvocation& invocation) {
+            for (auto& candidate : original.tools) {
+                const auto& row = candidate.exit;
+                if (candidate.invoked || row.at("accepted") != true || !matches_call(row,invocation.attempt,invocation.call)) continue;
+                candidate.invoked = true;
+                return agent::completed_tool(ToolResult{row.at("succeeded"),tagged<agent::ToolEffect>(row.at("effect"),effects),
+                    row.at("output"),tagged<agent::ToolError>(row.at("error"),faults)});
+            }
+            if (tool_difference.empty()) tool_difference = "unexpected tool invocation "+invocation.call.id;
+            throw std::runtime_error("replay: unexpected tool invocation");
+        });
+    }
+    if (!ids.empty()) options.tools = catalog.snapshot(ids);
+    options.tool_capture = [&](const agent::ToolCapture& capture) {
+        if (capture.phase != agent::ToolCapturePhase::exited) return;
+        for (auto& candidate : original.tools) {
+            const auto& row = candidate.exit;
+            if (candidate.observed || row.at("accepted") != capture.candidate.accepted ||
+                !matches_call(row,capture.candidate.attempt,capture.call)) continue;
+            const auto* request = capture.request;
+            const auto status = request ? request->operation()->state() : capture.candidate.result;
+            const auto outcome = request ? request->outcome() :
+                ToolResult{false,capture.candidate.effect,{},capture.candidate.error};
+            if (row.at("result") != states.at(static_cast<std::size_t>(status)) || row.at("succeeded") != outcome.succeeded ||
+                row.at("effect") != effects.at(static_cast<std::size_t>(outcome.effect)) ||
+                row.at("error") != faults.at(static_cast<std::size_t>(outcome.error)) || row.at("output") != outcome.output) break;
+            candidate.observed = true;
+            return;
+        }
+        if (tool_difference.empty()) tool_difference = "tool exit differs for "+capture.call.id;
+    };
+    const auto& service = original.models.front().exit;
+    agent::RunLoop loop(run,model::Config{service.at("provider"),{},service.at("model")},
+        // 后台仅对照完整请求和取回原结果。主线程等模型退出后才访问比对状态。
+        model::Backend{[&](const model::Config&,const model::Request& input) {
+            const auto index = model_index++;
+            if (index >= original.models.size() || encode_request(input) != original.models[index].input) {
+                model_difference = "model request "+std::to_string(index+1)+" differs";
+                throw std::runtime_error("replay: input differs");
+            }
+            const auto& exit = original.models[index].exit;
+            if (exit.at("callOutcome") == "threw") throw std::runtime_error("replay: recorded model failure");
+            return *original.models[index].response;
+        }},std::move(history),std::move(prompt),std::move(options));
+    const auto request = loop.request();
+    const auto until = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while (request->exit()->state() == OperationState::pending && std::chrono::steady_clock::now() < until) {
+        loop.advance();
+        if (request->exit()->state() == OperationState::pending) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    loop.wait_model();
+    if (request->exit()->state() == OperationState::pending) throw std::runtime_error("replay: offline coordinator did not exit");
+    if (!model_difference.empty()) throw std::runtime_error("replay: "+model_difference);
+    if (!tool_difference.empty()) throw std::runtime_error("replay: "+tool_difference);
+    if (model_index != original.models.size() ||
+        std::any_of(original.tools.begin(),original.tools.end(),[](const auto& entry) {
+            return !entry.observed || entry.invoked != entry.exit.at("accepted");
+        })) throw std::runtime_error("replay: recorded model or tool events were not consumed");
+    const auto state = request->operation()->state();
+    if (original.terminal.at("result") != states.at(static_cast<std::size_t>(state)) ||
+        original.terminal.at("diagnostic").at("data").at("timeline").at("failure") !=
+            turn_failures.at(static_cast<std::size_t>(request->diagnostics().failure)) ||
+        (state == OperationState::succeeded && original.terminal.at("answer") != request->answer()))
+        throw std::runtime_error("replay: final result differs");
+    output << "Replay matched session " << run.session << " run " << run.sequence << ": " << model_index
+        << " model requests, " << original.tools.size() << " tool exits, " << states.at(static_cast<std::size_t>(state)) << '\n';
+}
+}

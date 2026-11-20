@@ -1,4 +1,5 @@
 #include "run_log.hpp"
+#include "trace_model.hpp"
 #include <dafeiyu/diagnostic_json.hpp>
 #include <array>
 #include <iostream>
@@ -6,40 +7,10 @@
 
 namespace dfy::app {
 namespace {
-using Json = nlohmann::json;
-constexpr std::array roles{"user","assistant","system","tool"};
-constexpr std::array finishes{"stop","tool_calls","length","content_filter"};
-constexpr std::array states{"pending","succeeded","failed","cancelled"};
+using namespace trace_format;
 constexpr std::array outcomes{"pending","returned","threw"};
 constexpr std::array phases{"model.prepared","model.submitted","model.exited","model.rewritten"};
 constexpr std::array tool_phases{"tool.candidate","tool.admitted","tool.exited"};
-constexpr std::array effects{"not_applied","applied","unknown"};
-constexpr std::array faults{"none","failed","unavailable","invalid_result","cancel_failed","read_failed","release_failed","cancelled","deadline"};
-
-// 保留统一模型协议的消息顺序、工具请求和配对身份。
-Json encode_message(const dfy::model::Message& message) {
-    Json calls = Json::array();
-    for (const auto& call : message.tool_calls)
-        calls.push_back({{"id",call.id},{"name",call.name},{"arguments",call.arguments}});
-    return {{"role",roles.at(static_cast<std::size_t>(message.role))},{"content",message.content},
-        {"toolCalls",std::move(calls)},{"toolCallId",message.tool_call_id}};
-}
-
-// 原样保留送入模型的消息、工具定义与输出容量。
-Json encode_request(const dfy::model::Request& input) {
-    Json messages = Json::array(), tools = Json::array();
-    for (const auto& message : input.messages) messages.push_back(encode_message(message));
-    for (const auto& tool : input.tools)
-        tools.push_back({{"name",tool.name},{"description",tool.description},{"parameters",tool.parameters}});
-    return {{"messages",std::move(messages)},{"tools",std::move(tools)},
-        {"maxOutputTokens",input.max_output_tokens ? Json(*input.max_output_tokens) : Json(nullptr)}};
-}
-
-// 保存模型正文和用量，原始响应与后续有效响应由事件类型区分。
-Json encode_response(const dfy::model::Response& output) {
-    return {{"message",encode_message(output.message)},{"finish",finishes.at(static_cast<std::size_t>(output.finish))},
-        {"usage",output.usage ? Json{{"inputTokens",output.usage->input_tokens},{"outputTokens",output.usage->output_tokens}} : Json(nullptr)}};
-}
 
 // 依次尝试新目录，同一夹具可保留多轮证据。
 std::filesystem::path log_path(const std::filesystem::path& root) {
