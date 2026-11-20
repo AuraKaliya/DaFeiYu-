@@ -1,0 +1,37 @@
+#pragma once
+#include <array>
+#include <cstdint>
+#include <string_view>
+
+namespace dfy::mc {
+// 行为分类使用稳定键，回合控制工具常驻并单独标注。
+inline constexpr std::array categories{"movement","dig_break","place","use_item","attack","block_interaction",
+    "entity_interaction","inventory","craft_process","communication","observation","query"};
+enum class SkillCategory : std::uint8_t {
+    movement,dig_break,place,use_item,attack,block_interaction,entity_interaction,inventory,craft_process,
+    communication,observation,query,control
+};
+enum class SkillKind { game, confirmed, task, catalog };
+struct PartnerSkill {
+    std::string_view name, purpose, description, schema;
+    SkillCategory category;
+    bool changes;
+    SkillKind kind = SkillKind::game;
+};
+inline constexpr std::array<PartnerSkill,7> partner_skills{{
+    {"observe", "partner.observe", "Read your position, player position, landmarks, inventory and previous action. Optional block registry name scans visible nearby targets.",
+        R"({"type":"object","properties":{"block":{"type":"string"}},"additionalProperties":false})", SkillCategory::observation, false},
+    {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
+        R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
+    {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. Reports broken blocks and actual inventory changes.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true},
+    {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
+        R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", SkillCategory::communication, true},
+    {"collect_confirmed", "partner.collect_confirmed", "Request player consent for a fixed collection. Route 'game' asks in the game; route 'main' lets the main Agent select a channel. The original collection runs only after consent.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::confirmed},
+    {"task_update", "partner.task_update", "Update the shared task within this world. Use the latest revision, retain known facts and uncertainties in detail. next: continue after this turn, scene on observed change, player on new input, done when complete.",
+        R"({"type":"object","properties":{"revision":{"type":"integer"},"goal":{"type":"string"},"detail":{"type":"string"},"next":{"type":"string","enum":["continue","scene","player","done"]}},"required":["revision","goal","next"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::task},
+    {"skills", "partner.skills", "List Minecraft skill categories and availability. Request up to three category keys in categories to include their available tools with full parameters in the next decision.",
+        R"({"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"}}},"additionalProperties":false})", SkillCategory::query, true, SkillKind::catalog}
+}};
+}

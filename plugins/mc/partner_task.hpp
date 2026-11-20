@@ -15,6 +15,8 @@ class PartnerTask {
     void record(const nlohmann::json& receipt);
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
     std::string_view trigger(const nlohmann::json& scene) const;
+    // 返回本次玩家窗口内是否还有自主回合额度。
+    bool can_continue() const noexcept { return remaining_ != 0; }
     // 消费唤醒条件，每次自主提交扣除一轮额度，新玩家事件恢复额度。
     void submitted(bool new_game_event, bool autonomous);
     // 撤销在途唤醒，仍保留当前玩家已知任务，供后续原话处理。

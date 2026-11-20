@@ -26,8 +26,13 @@ int wmain(int argc, wchar_t** argv) {
                     assessment.at("work").at("skill") == "move" && assessment.at("currentEvents").back().at("sequence") == 2;
                 return {{Role::assistant,assessed ? "stop" : "continue"}};
             }
-            if (request.tools.size() != 6) throw std::runtime_error("partner granted unintended tools");
             if (last.role == Role::tool) {
+                if (last.tool_call_id == "expand") {
+                    const auto result = nlohmann::json::parse(last.content.substr(last.content.find('{')));
+                    if (result.at("status") != "scheduled" || result.at("categories").size() != 12 || result.at("wake") != true)
+                        throw std::runtime_error("discovery did not report the available categories");
+                    return {{Role::assistant,"ready for expanded scope"}};
+                }
                 if (task && last.tool_call_id == "task") {
                     if (last.content.find("\"status\":\"updated\"") == std::string::npos)
                         throw std::runtime_error("shared task was not accepted");
@@ -37,6 +42,15 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"internal settlement"}};
             }
             const auto input = nlohmann::json::parse(last.content);
+            if (input.at("trigger") == "skills.expanded") {
+                const auto wanted = confirm ? "_collect_confirmed" : "_move";
+                const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
+                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 6 : 5) ||
+                    !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
+                    throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
+                return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2})" :
+                    R"({"place":"player"})"}}},FinishReason::tool_calls};
+            }
             if (task && input.at("trigger") == "task.continue") {
                 if (!input.at("events").empty() || input.at("task").at("goal") != "resume the wall" ||
                     input.at("task").at("detail") != "check the corner" || input.at("task").at("revision") != 1)
@@ -51,16 +65,19 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
+            if (request.tools.size() != 4) throw std::runtime_error("initial scope leaked detailed actions");
             if (task) {
                 const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
                 return {{Role::assistant,"",{{"task",task_tool->name,
                     R"({"revision":0,"goal":"resume the wall","detail":"check the corner","next":"continue"})"}}},FinishReason::tool_calls};
             }
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& tool) {
-                return tool.name.ends_with(confirm ? "_collect_confirmed" : interrupt ? "_move" : "_reply");
+                return tool.name.ends_with(confirm || interrupt ? "_skills" : "_reply");
             });
-            const auto args = confirm ? R"({"block":"dirt","count":2})" : interrupt ? R"({"place":"player"})" : R"({"text":"ready to play"})";
-            return {{Role::assistant,"",{{"chosen",tool->name,args}}},FinishReason::tool_calls};
+            if (tool == request.tools.end()) throw std::runtime_error("initial control skill missing");
+            const auto args = confirm ? R"({"categories":["dig_break"]})" : interrupt ? R"({"categories":["movement"]})" :
+                R"({"text":"ready to play"})";
+            return {{Role::assistant,"",{{confirm || interrupt ? "expand" : "chosen",tool->name,args}}},FinishReason::tool_calls};
         }});
         app.plugins().install(argv[1]);
         if (app.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");

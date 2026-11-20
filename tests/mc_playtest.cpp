@@ -37,8 +37,11 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
     const auto call = [&](const std::string& skill, const Json& arguments) -> Response {
         const auto tool = std::ranges::find_if(request.tools, [&](const auto& def) { return def.name.ends_with("_" + skill); });
         if (tool == request.tools.end()) throw std::runtime_error("missing registered skill: " + skill);
-        record_input(root, {{"call",skill},{"arguments",arguments}});
+        if (skill != "skills") record_input(root, {{"call",skill},{"arguments",arguments}});
         return {{Role::assistant, "", {{skill, tool->name, arguments.dump()}}}, FinishReason::tool_calls};
+    };
+    const auto has = [&](const std::string& skill) {
+        return std::ranges::any_of(request.tools,[&](const auto& tool) { return tool.name.ends_with("_" + skill); });
     };
     if (request.tools.empty()) {
         const auto input = Json::parse(last.content);
@@ -46,22 +49,35 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
         record_input(root, {{"check", input.at("newEvents")}, {"work",input.at("work")}, {"stop",stop}});
         return speak(stop ? "stop" : "continue");
     }
-    if (request.tools.size() != 6 || request.messages.front().role != Role::system) throw std::runtime_error("invalid partner scope");
+    if (!has("skills") || !has("observe") || !has("reply") || request.messages.front().role != Role::system)
+        throw std::runtime_error("invalid partner scope");
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
         record_input(root, input);
-        const auto& event = input.at("events").back();
+        const bool expanded = input.at("trigger") == "skills.expanded";
+        const auto& event = input.at(expanded ? "recentEvents" : "events").back();
         if (event.at("type") != "player.message") return speak("内部结算：暂时安静");
         const auto seq = event.at("sequence").get<unsigned>();
         if (seq == 2 || seq == 7) return call("reply", {{"text",root.parent_path().filename().string() + "-" + std::to_string(seq)}});
-        if (seq == 3) return call("observe", {{"block","dirt"}});
-        if (seq == 4 || seq == 6) return call("move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
+        if (seq == 3) {
+            if (!expanded) return call("observe", {{"block","dirt"}});
+            if (!input.at("task").at("lastAction").at("result").at("visible").empty())
+                return call("collect", {{"block","dirt"},{"count",2}});
+        }
+        if (seq == 4 || seq == 6) {
+            if (!has("move")) return call("skills",{{"categories",{"movement"}}});
+            return call("move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
+        }
         if (seq == 8) throw std::runtime_error("fixture provider unavailable");
         return speak("内部结算：等待");
     }
+    if (last.tool_call_id == "skills") return speak("内部结算：已选择下一轮工具");
     const auto result = Json::parse(last.content.substr(last.content.find('{')));
     if (result.at("status") != "done") return speak("内部结算：已读受阻结果");
-    if (last.tool_call_id == "observe" && !result.at("visible").empty()) return call("collect", {{"block","dirt"},{"count",2}});
+    if (last.tool_call_id == "observe" && !result.at("visible").empty()) {
+        if (has("collect")) return call("collect", {{"block","dirt"},{"count",2}});
+        return call("skills", {{"categories",{"dig_break"}}});
+    }
     return speak("内部结算：已读工作回执");
 }
 }

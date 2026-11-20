@@ -31,8 +31,15 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"",{{"present",panel ? "present_confirmation_on_panel" : "present_confirmation_in_game","{}"}}},FinishReason::tool_calls};
             }
             if (last.role == Role::tool) return {{Role::assistant,"collection finished"}};
-            const auto event = Json::parse(last.content).at("events").back();
+            const auto body = Json::parse(last.content);
+            const auto expanded = body.at("trigger") == "skills.expanded";
+            const auto& event = body.at(expanded ? "recentEvents" : "events").back();
             if (event.at("sequence") != 2) return {{Role::assistant,"no game action"}};
+            if (!expanded) {
+                const auto directory = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_skills"); });
+                if (directory == input.tools.end()) throw std::runtime_error("skill directory unavailable");
+                return {{Role::assistant,"",{{"expand",directory->name,R"({"categories":["dig_break"]})"}}},FinishReason::tool_calls};
+            }
             const auto tool = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_collect_confirmed"); });
             if (tool == input.tools.end()) throw std::runtime_error("confirmed collection unavailable");
             const auto args = Json{{"block","dirt"},{"count",2},{"route",local ? "game" : "main"}}.dump();

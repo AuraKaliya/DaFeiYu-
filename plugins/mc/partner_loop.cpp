@@ -7,19 +7,24 @@ using Json = nlohmann::json;
 
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
-constexpr std::array skills{view("mc.companion/observe"),view("mc.companion/move"),
-    view("mc.companion/collect"),view("mc.companion/reply"),view("mc.companion/collect_confirmed"),view("mc.companion/task_update")};
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
+    "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
     "如果这次采集需要玩家明确批准，用 collect_confirmed。route=game 时先在游戏问，route=main 时由本体选择询问渠道。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
 constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体，保留原编号。核对现场后回答委托。"
     "这个委托不代表游戏玩家已批准操作，需要采集时使用 collect_confirmed。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
+
+// 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
+bool base_category(SkillCategory category) noexcept {
+    return category == SkillCategory::control || category == SkillCategory::query || category == SkillCategory::observation ||
+        category == SkillCategory::communication;
+}
 }
 
 // 由玩家入口显式启用，插件加载本身不读取游戏或提交模型。
@@ -64,6 +69,8 @@ void PartnerLoop::stop() noexcept { if (phase_ == DFY_V2_PARTNER_LISTENING) phas
 void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
+    expanded_.reset();
+    expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
     agent_ = nullptr;
     mail_ = nullptr;
@@ -81,6 +88,7 @@ void PartnerLoop::reset() noexcept {
     session_ = request_ = order_ = settled_ = 0;
     review_ = {};
     events_.clear();
+    recent_events_.clear();
     previous_.clear();
     reviewed_ = 0;
     stopped_work_ = false;
@@ -98,8 +106,11 @@ bool PartnerLoop::settle(bool cancel) {
         if (cancel) agent_->cancel(session_,request_,nullptr);
         return false;
     }
-    settled_ = order_;
-    if (!active_delegation_ && (cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) task_.disarm();
+    if (!active_delegation_ && (cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) {
+        task_.disarm();
+        expansion_pending_ = false;
+    }
+    if (cancel || autonomous_wake().empty()) settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     if (active_delegation_) {
         const bool answered = !cancel && state.phase == DFY_V2_AGENT_SUCCEEDED && state.answer.length && state.answer.length <= 2048;
@@ -118,6 +129,9 @@ void PartnerLoop::retire() {
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
+    expanded_.reset();
+    expansion_pending_ = false;
+    recent_events_.clear();
     previous_.clear();
 }
 
@@ -131,24 +145,39 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
-    const bool autonomous = wake == "task.continue" || wake == "scene.changed";
+    const bool autonomous = facts.empty() && !delegated;
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
+    if (autonomous) input["recentEvents"] = recent_events_;
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
     const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
+    std::array<std::string,partner_skills.size()> ids;
+    std::array<dfy_v2_string_view,partner_skills.size()> visible{};
+    std::size_t count = 0;
+    if (!delegated) for (const auto& skill : partner_skills) {
+        const auto category = skill.category;
+        if (!base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
+        ids[count] = "mc.companion/"+std::string(skill.name);
+        visible[count] = view(ids[count]);
+        ++count;
+    }
     const dfy_v2_agent_input run{view(prompt),delegated ? delegation_instructions : instructions,view(binding),
-        delegated ? delegated_skills.data() : skills.data(),
-        static_cast<uint32_t>(delegated ? delegated_skills.size() : skills.size()),DFY_V2_AGENT_ALLOW_CHANGES};
+        delegated ? delegated_skills.data() : visible.data(),
+        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
-    if (!delegated) task_.submitted(!facts.empty(),autonomous);
+    if (!delegated) {
+        task_.submitted(!facts.empty(),autonomous);
+        expansion_pending_ = false;
+    }
     order_ = order;
     reviewed_ = 0;
     stopped_work_ = false;
     events_ = std::move(facts);
+    if (!events_.empty()) recent_events_ = events_;
     if (delegated) { active_delegation_ = std::move(awaiting_delegation_); awaiting_delegation_.reset(); }
     for (const auto& fact : events_) publish("mc.partner.event",{{"generation",session_world_},{"event",fact}});
     previous_.clear();
@@ -161,15 +190,51 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
         feed_.pending().empty() && !feed_.gap());
 }
 
-// 只有处理当前世界的原子会话能更新任务；待处理的新玩家信息可撤销旧回合的控制权。
-Json PartnerLoop::update_task(std::uint64_t session, std::string_view envelope) {
+// 只有处理当前世界的原子会话能修改局内状态，旧事件不能更新任务或展开范围。
+Json PartnerLoop::local_skill(std::uint64_t session, std::string_view skill, std::string_view envelope) {
     if (session != session_ || !request_ || active_delegation_ || !permits(session) || feed_.departed() || !feed_.ready())
         throw std::invalid_argument("MC partner: task owner unavailable");
     const auto input = Json::parse(envelope);
     const auto& source = input.at("context");
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
-    return task_.update(input.at("arguments"),feed_.observation());
+    const auto& args = input.at("arguments");
+    return skill == "skills" ? discover(args) : task_.update(args,feed_.observation());
+}
+
+// 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。
+// 步骤：核对选择 → 汇总实现状态 → 在选择实际变化后登记一次唤醒。
+Json PartnerLoop::discover(const Json& arguments) {
+    const auto wanted = arguments.value("categories",std::vector<std::string>{});
+    if (wanted.size() > 3) throw std::length_error("MC skills: choose up to three categories");
+    std::bitset<categories.size()> next;
+    for (const auto& name : wanted) {
+        const auto found = std::find(categories.begin(),categories.end(),name);
+        if (found == categories.end()) throw std::invalid_argument("MC skills: unknown category");
+        next.set(found-categories.begin());
+    }
+    Json directory = Json::array();
+    for (std::size_t index = 0; index < categories.size(); ++index) {
+        Json names = Json::array();
+        for (const auto& skill : partner_skills) if (static_cast<std::size_t>(skill.category) == index)
+            names.push_back(skill.name);
+        if (names.empty() || base_category(static_cast<SkillCategory>(index))) next.reset(index);
+        directory.push_back({{"category",categories[index]},{"available",!names.empty()},{"tools",std::move(names)}});
+    }
+    const bool changed = next.any() && next != expanded_;
+    if (changed) {
+        expanded_ = next;
+        expansion_pending_ = true;
+    }
+    return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},
+        {"wake",expansion_pending_ && task_.can_continue()}};
+}
+
+// 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
+std::string_view PartnerLoop::autonomous_wake() const {
+    if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
+    if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
+    return task_.trigger(feed_.observation());
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。
@@ -271,7 +336,7 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
         review_ = {};
     }
     if (closing || !request_ || !work.invocation || stopped_work_ || feed_.pending().empty() || feed_.cursor() <= reviewed_) return;
-    const auto input = Json{{"currentEvents",events_},{"newEvents",feed_.pending()},
+    const auto input = Json{{"currentEvents",events_.empty() ? recent_events_ : events_},{"newEvents",feed_.pending()},
         {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},
         {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}}.dump();
     reviewed_ = feed_.cursor();
@@ -322,13 +387,15 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         retire(); reset(); return;
     }
     if (replaced) retire();
-    if (feed_.departed()) task_ = {};
+    if (feed_.departed()) {
+        task_ = {};
+        expanded_.reset();
+        expansion_pending_ = false;
+    }
     if (presentation_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
     else if (awaiting_delegation_) submit("main.delegation");
-    else if (!feed_.gap() && !feed_.departed()) {
-        if (const auto wake = task_.trigger(feed_.observation()); !wake.empty()) submit(wake);
-    }
+    else if (const auto wake = autonomous_wake(); !wake.empty()) submit(wake);
 }
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。
