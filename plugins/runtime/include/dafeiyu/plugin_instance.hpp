@@ -2,6 +2,7 @@
 #include <dafeiyu/plugin_module_v2.hpp>
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/lifecycle_abi_v2.h>
+#include <dafeiyu/hook_abi_v2.h>
 #include <string>
 #include <vector>
 #include <functional>
@@ -53,6 +54,10 @@ class PluginInstance {
     void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app);
     // 取得当前实例已接入的定向地址，未接入或停止后返回零。
     dfy_v2_mailbox_pair mailbox_addresses() const;
+    // 借用启动后固定的 Hook 元数据，只在实例活动期间提供。
+    std::span<const dfy_v2_hook_description> hooks() const noexcept;
+    // 在原实例的活动保护内调用注册序号对应的 Hook。
+    uint32_t decide_hook(std::size_t index, const dfy_v2_hook_input& input);
     // 推进一次关停，活动或外部代码持有时不改状态；成功阶段不重放。
     ShutdownResult shutdown() noexcept;
     // 返回当前生命周期阶段副本。
@@ -92,6 +97,8 @@ class PluginInstance {
     // 在主宿主线程逐项重试保留实例，返回仍未完成的数量。
     static std::size_t retry_retained();
   private:
+    // 协商、枚举并验证当前启动的实例声明。
+    std::vector<dfy_v2_hook_description> load_hooks();
     // 只向活动实例提供能力查询入口。
     PluginModuleV2& active_module();
     // 核对活动阶段并建立本次原生调用的宿主上下文。

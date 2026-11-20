@@ -2,6 +2,12 @@
 
 正式实例使用 v2 引导、生命周期和可选能力协商。接口名称、版本和结构布局以[公开头](../sdk/include/dafeiyu)为准。MC 伙伴的角色、用途与模型可见技能见[陪伴 ABI](../sdk/include/dafeiyu/companion_abi_v2.h)，集成方式见[SDK 指南](../sdk/README.md)。
 
+## Agent 控制 Hook
+
+[hook_abi_v2.h](../sdk/include/dafeiyu/hook_abi_v2.h) 定义插件提供的 `dfy.hooks@1`。实例启动时宿主按索引读取声明并固定顺序。结束返回 `NOT_FOUND` 并清零声明。当前声明覆盖模型请求、工具启动和工具结果，作用域可含主会话、自有子会话和其他子会话。
+
+`decide` 在原实例的宿主线程同步调用，输入视图仅在本次调用有效。返回允许或拒绝，工具启动点还可以请求现有审批。错误或无效决定由宿主按控制失败裁定。
+
 ## 定向信箱
 
 [mailbox_abi_v2.h](../sdk/include/dafeiyu/mailbox_abi_v2.h) 定义 `dfy.mailbox@1`。启用信箱的实例可在绑定线程调用 `attach`，使用宿主确定的身份取得两个定向地址，重复接入返回原地址。实例开始停止时撤销两条路线。

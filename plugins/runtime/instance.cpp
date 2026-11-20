@@ -79,6 +79,7 @@ struct PluginInstance::State {
     HostServices host;
     std::shared_ptr<const EffectiveConfig> config;
     std::optional<Capability<dfy_v2_lifecycle_api>> lifecycle;
+    std::vector<dfy_v2_hook_description> hook_registrations;
     std::string id;
     std::string version;
     dfy_v2_instance* instance = nullptr;
@@ -126,14 +127,24 @@ uint32_t PluginInstance::create() noexcept {
     else (void)state_->shutdown();
     return state_->error;
 }
-// 启动失败立即关闭宿主入口，保留插件私有状态供停止与重试。
+// 启动后验证可选 Hook 注册，失败时关闭宿主入口并等待正常收尾。
+// 步骤：提交一次启动 → 枚举并验证能力 → 发布成功状态或关闭宿主入口。
 uint32_t PluginInstance::start() noexcept {
     if (state_->phase != InstancePhase::created || state_->start_attempted) return DFY_V2_BUSY;
     state_->start_attempted = true;
-    const auto status = state_->invoke([&](const auto& api, auto* error) { return api.start(state_->instance, error); });
-    if (!status) state_->phase = InstancePhase::active;
-    else { state_->error = status; try { (void)state_->host.begin_shutdown(); } catch (...) {} }
+    auto status = state_->invoke([&](const auto& api, auto* error) { return api.start(state_->instance, error); });
+    if (!status) {
+        state_->phase = InstancePhase::active;
+        try { state_->hook_registrations = load_hooks(); }
+        catch (...) { state_->phase = InstancePhase::created; status = DFY_V2_FAILED; }
+    }
+    if (status) { state_->error = status; try { (void)state_->host.begin_shutdown(); } catch (...) {} }
     return status;
+}
+// 只暴露活动实例的固定注册顺序。
+std::span<const dfy_v2_hook_description> PluginInstance::hooks() const noexcept {
+    return phase() == InstancePhase::active ? std::span<const dfy_v2_hook_description>{state_->hook_registrations}
+        : std::span<const dfy_v2_hook_description>{};
 }
 // 推进同一实例的关停记录，不制造第二个销毁流程。
 ShutdownResult PluginInstance::shutdown() noexcept { return state_->shutdown(); }

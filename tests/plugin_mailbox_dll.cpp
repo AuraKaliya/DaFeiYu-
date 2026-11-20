@@ -39,6 +39,11 @@ int wmain(int argc, wchar_t** argv) {
         const auto instance = manager.instance("test.mail");
         const auto addresses = instance->mailbox_addresses();
         check(addresses.inbound && addresses.outbound,"manager lost registered mailbox addresses");
+        const auto hooks = instance->hooks();
+        const dfy_v2_hook_input control{DFY_V2_HOOK_TOOL_START,0,1,1,1,1,0,1,{}};
+        check(hooks.size() == 2 && hooks[0].point == DFY_V2_HOOK_MODEL_REQUEST &&
+            hooks[1].sessions == (DFY_V2_HOOK_MAIN_SESSION|DFY_V2_HOOK_OWN_SESSION) &&
+            instance->decide_hook(1,control) == DFY_V2_HOOK_CONFIRM,"instance lost its C Hook registration");
 
         auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32}));
         auto body = std::make_shared<const StructValue>(StructValue::create(std::move(type),{},0));

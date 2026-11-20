@@ -2,9 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <dafeiyu/hook_abi_v2.h>
 
 _Static_assert(sizeof(dfy_v2_mailbox_api) == 32 && offsetof(dfy_v2_mailbox_api,poll) == 24,"mailbox ABI");
 _Static_assert(sizeof(dfy_v2_mailbox_message) == 40 && offsetof(dfy_v2_mailbox_message,payload) == 16,"mailbox message ABI");
+_Static_assert(sizeof(dfy_v2_hook_api) == 24 && sizeof(dfy_v2_hook_input) == 72,"hook ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
     const dfy_v2_mailbox_api* mail;
@@ -64,7 +66,29 @@ static void DFY_V2_CALL destroy(dfy_v2_instance* instance) { free(instance); }
 static const dfy_v2_lifecycle_api lifecycle = {{sizeof(dfy_v2_lifecycle_api),1},create,start,stop,stopped,destroy};
 static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply};
 
-// 按精确名称和版本返回生命周期或测试驱动接口。
+// 依次注册主会话模型前检查及工具确认。
+static dfy_v2_status DFY_V2_CALL describe_hook(dfy_v2_instance* instance, uint32_t index,
+    dfy_v2_hook_description* out, dfy_v2_error* error) {
+    (void)instance;
+    if (error) error->length = 0;
+    *out = (dfy_v2_hook_description){0};
+    if (index == 0) *out = (dfy_v2_hook_description){DFY_V2_HOOK_MODEL_REQUEST,DFY_V2_HOOK_MAIN_SESSION};
+    if (index == 1) *out = (dfy_v2_hook_description){DFY_V2_HOOK_TOOL_START,DFY_V2_HOOK_MAIN_SESSION|DFY_V2_HOOK_OWN_SESSION};
+    return out->point ? DFY_V2_OK : DFY_V2_NOT_FOUND;
+}
+
+// 按原注册返回决定，并验证宿主调用传入原实例和有效会话。
+static dfy_v2_status DFY_V2_CALL decide_hook(dfy_v2_instance* instance, uint32_t index,
+    const dfy_v2_hook_input* input, uint32_t* verdict, dfy_v2_error* error) {
+    if (error) error->length = 0;
+    *verdict = 0;
+    if (!input->session || !instance->mail) return DFY_V2_INVALID_ARGUMENT;
+    *verdict = index == 1 ? DFY_V2_HOOK_CONFIRM : DFY_V2_HOOK_ALLOW;
+    return DFY_V2_OK;
+}
+static const dfy_v2_hook_api hooks = {{sizeof(dfy_v2_hook_api),1},describe_hook,decide_hook};
+
+// 按精确名称和版本返回生命周期、Hook 或测试驱动接口。
 static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) {
     *out = NULL;
     if (error) error->length = 0;
@@ -73,6 +97,8 @@ static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version
         *out = &lifecycle;
     if (name.length == sizeof(DFY_TEST_MAILBOX_INTERFACE)-1 && !memcmp(name.data,DFY_TEST_MAILBOX_INTERFACE,name.length))
         *out = &exercise;
+    if (name.length == sizeof(DFY_V2_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_HOOK_INTERFACE,name.length))
+        *out = &hooks;
     return *out ? DFY_V2_OK : DFY_V2_UNSUPPORTED;
 }
 
