@@ -29,7 +29,7 @@ MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender) 
 }
 
 // 仅接纳绑定发送者的下一个消息编号，重投归还本箱的原接纳身份。
-// 步骤：校验发送方和消息 → 按水位分流重投或跳号 → 成功入队后提交水位。
+// 步骤：校验发送方和消息 → 按水位分流重投或跳号 → 成功入队后提交水位及唤醒身份。
 DeliveryReceipt Mailboxes::deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
     std::shared_ptr<const runtime::StructValue> payload) {
     const auto entry = find(target);
@@ -42,16 +42,24 @@ DeliveryReceipt Mailboxes::deliver(runtime::DomainId sender, MailboxId target, s
     }
     if (sequence - entry->accepted != 1) return {DeliveryState::out_of_order,{}};
 
+    const auto descriptor = payload->descriptor();
+    const bool wakes = std::ranges::any_of(entry->wake_categories,[&](const auto& category) {
+        return category.name == descriptor->name() && category.version == descriptor->version();
+    });
     const auto event = entry->queue->accept(std::move(payload));
     entry->accepted = sequence;
+    if (wakes) entry->wake = event;
     return {DeliveryState::accepted,event};
 }
 
-// 仅向绑定的接收方转交队首数据。
+// 向绑定接收方转交首件，读到最新到件信号后清除唤醒。
+// 步骤：检查接收权 → 转交队首 → 按读出身份清除已消费唤醒。
 QueueRead Mailboxes::read(runtime::DomainId receiver, MailboxId target) {
     const auto entry = find(target);
     if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
-    return entry->queue->poll();
+    auto result = entry->queue->poll();
+    if (entry->wake && result.event && result.event.get().id == *entry->wake) entry->wake.reset();
+    return result;
 }
 
 // 核对接收方后借用首件，准备失败时消息仍留在原队列。
@@ -59,6 +67,26 @@ const EventRecord* Mailboxes::front(runtime::DomainId receiver, MailboxId target
     const auto entry = find(target);
     if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
     return entry->queue->front();
+}
+
+// 用接收方声明的精确分类替换后续投递的唤醒规则。
+// 步骤：核对接收权及分类数 → 预检名称与版本 → 原子替换并清除旧规则信号。
+void Mailboxes::wake_on(runtime::DomainId receiver, MailboxId target, std::span<const MailboxCategory> categories) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver || categories.size() > 16)
+        throw std::invalid_argument("mailboxes: invalid wake registration");
+    for (const auto& category : categories)
+        if (category.name.empty() || category.name.size() > 128 || !category.version)
+            throw std::invalid_argument("mailboxes: invalid wake category");
+    entry->wake_categories = std::vector<MailboxCategory>(categories.begin(),categories.end());
+    entry->wake.reset();
+}
+
+// 查询轻量到件信号，当前读取量及消息队列保持不动。
+std::optional<EventId> Mailboxes::pending_wake(runtime::DomainId receiver, MailboxId target) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
+    return entry->wake;
 }
 
 // 撤销本方的信箱地址并释放队列持有。

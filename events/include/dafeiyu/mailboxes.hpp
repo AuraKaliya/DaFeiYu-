@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/subscription_queue.hpp>
+#include <span>
 
 namespace dfy::events {
 struct MailboxId {
@@ -18,6 +19,10 @@ enum class DeliveryState { accepted, repeated, expired, out_of_order };
 struct DeliveryReceipt {
     DeliveryState state;
     EventId event;
+};
+struct MailboxCategory {
+    std::string name;
+    std::uint32_t version;
 };
 
 // 在宿主线程上管理定向信箱。读取方和发送方必须来自宿主绑定的身份。
@@ -38,6 +43,10 @@ class Mailboxes {
     QueueRead read(runtime::DomainId receiver, MailboxId target);
     // 在同宿主线程借用当前队首，用于准备读取方的持有引用。
     const EventRecord* front(runtime::DomainId receiver, MailboxId target);
+    // 由接收方配置新消息的唤醒分类，空列表恢复主动收件。
+    void wake_on(runtime::DomainId receiver, MailboxId target, std::span<const MailboxCategory> categories);
+    // 查询尚未读取的最晚唤醒身份，读取已到该身份后自动清除。
+    std::optional<EventId> pending_wake(runtime::DomainId receiver, MailboxId target);
     // 撤销地址并放弃未读消息，已经交付的数据持有仍可读取。
     void close(runtime::DomainId receiver, MailboxId target);
     // 撤销已退出一方参与的所有信箱，地址与未读消息同时撤销。
@@ -51,6 +60,8 @@ class Mailboxes {
         runtime::DomainId receiver, sender;
         std::unique_ptr<SubscriptionQueue> queue;
         std::uint64_t accepted = 0;
+        std::vector<MailboxCategory> wake_categories{};
+        std::optional<EventId> wake{};
     };
     // 查找当前目录中的有效地址，未知或已关闭的地址返回拒绝。
     std::vector<Entry>::iterator find(MailboxId target);

@@ -16,8 +16,8 @@ void rejects(Action action) {
 }
 
 // 创建指定分类的不可变测试载荷。
-std::shared_ptr<const StructValue> message(std::string_view name) {
-    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create(name,1,{}, {0,32}));
+std::shared_ptr<const StructValue> message(std::string_view name, std::uint32_t version = 1) {
+    auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create(name,version,{}, {0,32}));
     return std::make_shared<const StructValue>(StructValue::create(std::move(type),{},0));
 }
 
@@ -95,6 +95,28 @@ void receipt_window() {
     check(network.read(plugin,box).event.get().id.sequence == 2 && network.read(plugin,box).state == PollState::empty,
         "expired sequence was reaccepted");
 }
+
+// 验证指定分类触发唤醒，普通消息保留队列顺序且重投不重新唤醒。
+// 步骤：配置分类 → 投递普通及唤醒消息 → 顺序消费并检查信号 → 重投并验证。
+void wake_categories() {
+    Mailboxes network({1,3,3,0});
+    const auto app = next_domain(), plugin = next_domain();
+    const auto box = network.open(app,plugin);
+    const MailboxCategory wake[] = {{"plugin.help",1}};
+    rejects<std::invalid_argument>([&] { network.wake_on(plugin,box,wake); });
+    network.wake_on(app,box,wake);
+    network.deliver(plugin,box,1,message("plugin.help",2));
+    check(!network.pending_wake(app,box),"unknown message version triggered an Agent wake");
+    const auto help = message("plugin.help");
+    const auto second = network.deliver(plugin,box,2,help).event;
+    const auto last = network.deliver(plugin,box,3,help).event;
+    check(network.pending_wake(app,box) == last,"independent wake did not track most recent help");
+    check(network.read(app,box).event.get().id.sequence == 1 && network.read(app,box).event.get().id == second &&
+        network.pending_wake(app,box) == last,"wake skipped queued messages or cleared too soon");
+    check(network.read(app,box).event.get().id == last && !network.pending_wake(app,box),"wake outlived its message");
+    check(network.deliver(plugin,box,3,help).state == DeliveryState::repeated && !network.pending_wake(app,box),
+        "replayed ACK caused another wake");
+}
 }
 
 // 运行定向信箱与生命周期检查。
@@ -103,6 +125,7 @@ int main() {
         directed_delivery();
         retained_budget();
         receipt_window();
+        wake_categories();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
