@@ -2,6 +2,14 @@
 
 正式实例使用 v2 引导、生命周期和可选能力协商。接口名称、版本和结构布局以[公开头](../sdk/include/dafeiyu)为准。MC 伙伴的角色、用途与模型可见技能见[陪伴 ABI](../sdk/include/dafeiyu/companion_abi_v2.h)，集成方式见[SDK 指南](../sdk/README.md)。
 
+## 定向信箱
+
+[mailbox_abi_v2.h](../sdk/include/dafeiyu/mailbox_abi_v2.h) 定义 `dfy.mailbox@1`。启用信箱的实例可在绑定线程调用 `attach`，使用宿主确定的身份取得两个定向地址，重复接入返回原地址。实例开始停止时撤销两条路线。
+
+`post` 在出站信箱上使用从 1 连续递增的发送序号。分类使用完整结构类型名及精确版本，正文为 UTF-8 文本，交付时由宿主复制到结构的 `text` 字段。首次接纳和窗口内重投返回原事件身份。超出回执窗口或跳号时返回对应状态，事件身份为零。接纳只证明本进程队列已收件。
+
+`poll` 非阻塞读取队首载荷引用，空箱返回 `NOT_FOUND`。引用耗尽时首件保留在信箱。消费者可用结构及值服务读取，并通过引用服务释放。读取后的持有可以覆盖信箱关闭，由原宿主引用域管理。
+
 ## 显式处理能力
 
 [processing_abi_v2.h](../sdk/include/dafeiyu/processing_abi_v2.h) 定义 `dfy.processing@1`：56 字节表含 `read`、`start`、`complete`、`finish`、`cancel`、`payload`。48 字节快照包含 phase、result、exit、cancel_reason 四个 uint32，以及事件域／序号、顺序域／序号四个 uint64；order_domain 位于偏移 32。C11／C++20 均检查布局及外层打包恢复。

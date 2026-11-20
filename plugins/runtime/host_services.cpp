@@ -31,6 +31,7 @@ HostServices::HostServices(std::size_t capacity, std::size_t reader_capacity)
     : state_(std::make_shared<detail::HostState>(capacity, reader_capacity)) {}
 // 在已无资源责任时关闭空所有者；活动绑定保持状态，未完成清理不得以析构代替。
 HostServices::~HostServices() {
+    detail::revoke_mailboxes(*state_);
     if (!state_->resources.size() && !state_->resources.incoming_uses() && !state_->resources.outgoing_uses()) {
         state_->resources.stop_accepting();
         state_->resources.finish_close();
@@ -156,6 +157,7 @@ bool HostServices::begin_shutdown() {
     state_->require_owner();
     if (processing_busy() || (state_->notifications && state_->notifications->running())) return false;
     state_->resources.stop_accepting();
+    detail::revoke_mailboxes(*state_);
     if (state_->notifications) state_->notifications->revoke_pending();
     if (state_->processing) state_->processing->close(events::CloseMode::cancel);
     if (!state_->processing_resource.empty()) {
@@ -224,6 +226,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_OPERATION_CANCEL_INTERFACE) *output = &detail::cancel_api();
         else if (requested == DFY_V2_OPERATION_NOTIFY_INTERFACE && host.notifications) *output = &detail::notification_api();
         else if (requested == DFY_V2_SUBSCRIPTION_INTERFACE && host.channel) *output = &detail::subscription_api();
+        else if (requested == DFY_V2_MAILBOX_INTERFACE && host.mailboxes) *output = &detail::mailbox_api();
         else if (requested == DFY_V2_GROUP_INTERFACE && host.group) *output = &detail::group_api();
         else if (requested == DFY_V2_PROCESSING_INTERFACE && host.processing) *output = &detail::processing_api();
         else return DFY_V2_UNSUPPORTED;

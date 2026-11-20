@@ -36,8 +36,14 @@ class Mailboxes {
         std::shared_ptr<const runtime::StructValue> payload);
     // 向原接收方转交队首数据，已读数据可以独立于信箱保留。
     QueueRead read(runtime::DomainId receiver, MailboxId target);
+    // 在同宿主线程借用当前队首，用于准备读取方的持有引用。
+    const EventRecord* front(runtime::DomainId receiver, MailboxId target);
     // 撤销地址并放弃未读消息，已经交付的数据持有仍可读取。
     void close(runtime::DomainId receiver, MailboxId target);
+    // 撤销已退出一方参与的所有信箱，地址与未读消息同时撤销。
+    void revoke(runtime::DomainId participant) noexcept;
+    // 读取单条消息正文上限，发送方可在复制前校验。
+    std::size_t payload_limit() const noexcept { return limits_.payload_bytes; }
 
   private:
     struct Entry {

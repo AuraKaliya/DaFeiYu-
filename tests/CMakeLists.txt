@@ -702,6 +702,10 @@ target_link_libraries(dfy_plugin_subscriptions_tests PRIVATE dfy_plugins dfy_bui
 set_target_properties(dfy_plugin_subscriptions_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_subscriptions.cpp")
 add_test(NAME plugins.subscriptions COMMAND dfy_plugin_subscriptions_tests)
+add_executable(dfy_plugin_mailboxes_tests plugin_mailboxes.cpp)
+target_link_libraries(dfy_plugin_mailboxes_tests PRIVATE dfy_plugins dfy_build_options)
+set_target_properties(dfy_plugin_mailboxes_tests PROPERTIES FOLDER "Tests")
+add_test(NAME plugins.mailboxes COMMAND dfy_plugin_mailboxes_tests)
 set_tests_properties(plugins.subscriptions PROPERTIES TIMEOUT 15)
 
 # 真实 C 实例验证停止受理与停止完成分离，保持 v1 生命周期契约冻结。

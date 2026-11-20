@@ -13,6 +13,9 @@ EventId SubscriptionQueue::accept(std::shared_ptr<const runtime::StructValue> pa
     return id;
 }
 
+// 借用仍由队列持有的首件，空队列返回空。
+const EventRecord* SubscriptionQueue::front() const { return size_ ? &store_->get(slots_[head_]) : nullptr; }
+
 // 移动数据持有，避免覆盖原引用时遗漏归还。
 // 步骤：处理自移动 → 归还旧引用 → 转交存储及来源标识。
 EventLease& EventLease::operator=(EventLease&& other) noexcept {

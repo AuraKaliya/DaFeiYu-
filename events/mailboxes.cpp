@@ -54,11 +54,23 @@ QueueRead Mailboxes::read(runtime::DomainId receiver, MailboxId target) {
     return entry->queue->poll();
 }
 
+// 核对接收方后借用首件，准备失败时消息仍留在原队列。
+const EventRecord* Mailboxes::front(runtime::DomainId receiver, MailboxId target) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
+    return entry->queue->front();
+}
+
 // 撤销本方的信箱地址并释放队列持有。
 void Mailboxes::close(runtime::DomainId receiver, MailboxId target) {
     const auto entry = find(target);
     if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
     entries_.erase(entry);
+}
+
+// 同时撤销旧实例的发送及接收地址，已读数据由原持有者管理。
+void Mailboxes::revoke(runtime::DomainId participant) noexcept {
+    std::erase_if(entries_,[=](const auto& entry) { return entry.receiver == participant || entry.sender == participant; });
 }
 
 // 在当前目录中查找非过期地址。

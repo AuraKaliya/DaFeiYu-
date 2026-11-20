@@ -36,6 +36,9 @@ struct HostState : std::enable_shared_from_this<HostState> {
     const std::thread::id owner;
     std::vector<ReaderSlot> readers;
     std::shared_ptr<events::BroadcastChannel> channel;
+    std::shared_ptr<events::Mailboxes> mailboxes;
+    runtime::DomainId mailbox_app = 0, mailbox_plugin = 0;
+    dfy_v2_mailbox_pair mailbox_pair{};
     std::size_t request_capacity = 0;
     std::shared_ptr<events::ConsumerGroup> group;
     std::size_t group_request_capacity = 0;
@@ -101,6 +104,10 @@ const dfy_v2_operation_cancel_api& cancel_api();
 const dfy_v2_operation_notify_api& notification_api();
 // 返回独立订阅的接纳与关闭服务。
 const dfy_v2_subscription_api& subscription_api();
+// 返回由当前插件身份授予的信箱接入及读写接口。
+const dfy_v2_mailbox_api& mailbox_api();
+// 撤销原实例参与的全部信箱，保留已交付数据的寿命。
+void revoke_mailboxes(HostState& host) noexcept;
 // 返回仅管理当前上下文组成员的加入、退出和状态服务。
 const dfy_v2_group_api& group_api();
 // 返回独立业务结算、实际退出和数据持有的处理服务。

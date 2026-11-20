@@ -58,6 +58,8 @@ class SubscriptionQueue {
     void push(runtime::Handle source);
     // 接纳一条新事件并交付到本队列，队列拒收时不签发事件身份。
     EventId accept(std::shared_ptr<const runtime::StructValue> payload);
+    // 借用当前队首，用于准备外部读取引用；有效期到本队列下一次改动。
+    const EventRecord* front() const;
     // 转交队首引用，分别返回事件、暂时为空或流结束，不代表处理任务退出。
     QueueRead poll();
     // 停止接纳并选择排空或取消；排空可升级取消，已关闭状态不再改写。

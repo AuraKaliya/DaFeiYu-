@@ -6,6 +6,8 @@
 #include <dafeiyu/group_reader.hpp>
 #include <dafeiyu/processing_queue.hpp>
 #include <dafeiyu/broadcast_channel.hpp>
+#include <dafeiyu/mailboxes.hpp>
+#include <dafeiyu/mailbox_abi_v2.h>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
@@ -56,6 +58,10 @@ class HostServices {
     void advance();
     // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。
     void enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity);
+    // 为原实例授予与本体双向建立信箱的能力，注册由该实例发起。
+    void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app, runtime::DomainId plugin);
+    // 获取实际接入的地址，未接入时两个地址均为零。
+    dfy_v2_mailbox_pair mailbox_addresses() const;
     // 为当前实例授予一个组的成员接入能力，固定请求预算，不授予共享组关闭权。
     void enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity);
     // 为本实例建立独立有界处理域，默认串行，不允许重复配置。
