@@ -12,6 +12,8 @@ constexpr std::array skills{view("mc.companion/observe"),view("mc.companion/move
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。");
+constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
+    "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
 }
 
 // 由玩家入口显式启用，插件加载本身不读取游戏或提交模型。
@@ -40,6 +42,11 @@ void PartnerLoop::reset() noexcept {
     agent_ = nullptr;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
+    review_ = {};
+    events_.clear();
+    previous_.clear();
+    reviewed_ = 0;
+    stopped_work_ = false;
 }
 
 // 子回合业务结算及真正退出均由原会话报告。
@@ -55,6 +62,7 @@ bool PartnerLoop::settle(bool cancel) {
         return false;
     }
     settled_ = order_;
+    if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     request_ = 0;
     return true;
 }
@@ -64,6 +72,7 @@ void PartnerLoop::retire() {
     if (session_) agent_->close(session_,nullptr);
     session_world_.clear();
     session_ = order_ = settled_ = 0;
+    previous_.clear();
 }
 
 // 将按序收到的原始事实及绑定游戏数据送入同一子会话。
@@ -74,9 +83,10 @@ void PartnerLoop::submit() {
         if (agent_->open(&session_,nullptr)) throw std::runtime_error("MC partner: cannot open child session");
         session_world_ = std::move(world);
     }
-    const auto& facts = feed_.pending();
+    auto facts = feed_.pending();
     const auto order = facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()}};
+    if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
     const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
@@ -84,19 +94,69 @@ void PartnerLoop::submit() {
         static_cast<uint32_t>(skills.size()),DFY_V2_AGENT_ALLOW_CHANGES};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     order_ = order;
+    reviewed_ = 0;
+    stopped_work_ = false;
+    events_ = std::move(facts);
+    previous_.clear();
     feed_.consumed();
+}
+
+// 检查已观察到的新事实是否使旧回合失去继续接纳权限。
+bool PartnerLoop::permits(std::uint64_t session) const noexcept {
+    return session != session_ || (phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ &&
+        feed_.pending().empty() && !feed_.gap());
+}
+
+// 判断原生动作是否需要提前请求停止，保持业务处置与原动作退出分离。
+// 步骤：检查原判断关联 → 忽略过期或非明确答复 → 在有效新事件上登记一次新判断。
+void PartnerLoop::review(PartnerWork work, bool closing) {
+    if (review_.request) {
+        const bool current = !closing && request_ && review_.origin == request_ && review_.work == work.invocation &&
+            review_.cursor == feed_.cursor();
+        dfy_v2_agent_status status{};
+        const auto result = agent_->status(review_.session,&status,nullptr);
+        if (!result && (status.phase == DFY_V2_AGENT_QUEUED || status.phase == DFY_V2_AGENT_RUNNING)) {
+            if (!current) agent_->cancel(review_.session,review_.request,nullptr);
+            return;
+        }
+        if (!result && current && status.request == review_.request && status.phase == DFY_V2_AGENT_SUCCEEDED &&
+            std::string_view(status.answer.data,status.answer.length) == "stop") {
+            stopped_work_ = agent_->cancel(session_,request_,nullptr) == DFY_V2_OK;
+        }
+        agent_->close(review_.session,nullptr);
+        review_ = {};
+    }
+    if (closing || !request_ || !work.invocation || stopped_work_ || feed_.pending().empty() || feed_.cursor() <= reviewed_) return;
+    const auto input = Json{{"currentEvents",events_},{"newEvents",feed_.pending()},
+        {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},
+        {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}}.dump();
+    reviewed_ = feed_.cursor();
+    const dfy_v2_agent_input assessment{view(input),review_instructions,{},{},0,0};
+    if (agent_->open(&review_.session,nullptr)) return;
+    if (agent_->submit(review_.session,&assessment,&review_.request,nullptr)) {
+        agent_->close(review_.session,nullptr);
+        review_ = {};
+        return;
+    }
+    review_.origin = request_;
+    review_.work = work.invocation;
+    review_.cursor = reviewed_;
 }
 
 // 驱动插件自己的事件与行动循环，游戏解绑优先结束原请求。
 // 步骤：推进原生读取 → 核对在途回合 → 释放旧上下文或接纳最新事件。
-void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance) {
+void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work) {
     if (phase_ == DFY_V2_PARTNER_CLOSED) return;
     const bool closing = phase_ == DFY_V2_PARTNER_STOPPING;
     if (closing) feed_.clear();
     else feed_.advance(config,instance);
     const bool replaced = session_ && feed_.world() != session_world_;
+    review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
-    if (closing) { retire(); reset(); return; }
+    if (closing) {
+        if (review_.request) return;
+        retire(); reset(); return;
+    }
     if (replaced) retire();
     if (feed_.ready() && !feed_.pending().empty()) submit();
 }

@@ -11,7 +11,8 @@ const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
-  const partnerLoop = variant === 'partner-loop';
+  const interrupt = variant === 'partner-interrupt';
+  const partnerLoop = variant === 'partner-loop' || interrupt;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -20,7 +21,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
-  let baselineRead = false, replies = 0;
+  let baselineRead = false, replies = 0, stopped = 0, moveId;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -36,8 +37,10 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest: initial ? 1 : 2,
-          gap: false, more: false, presence, messages: initial ? [presence] : after === 1 ? [{ sequence: 2, text: 'play with me' }] : [] };
+        const latest = initial ? 1 : interrupt && moveId ? 3 : 2;
+        const messages = [presence, { sequence: 2, text: 'play with me' }, { sequence: 3, text: 'stop for now' }];
+        return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
+          gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
       if (boardWindow) {
         const latest = baselineRead ? 40 : 0;
@@ -56,6 +59,14 @@ async function main() {
   }, key, partnerLoop ? { partner: {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      if (interrupt) {
+        assert.equal(skill, 'move');
+        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, { place: 'player' }); }
+        else assert.equal(id, moveId);
+        if (method === 'partner.stop') ++stopped;
+        return { ...context, skill, exited: stopped > 0, result: stopped ? { status: 'interrupted' } : {} };
+      }
       assert.equal(method, 'partner.begin');
       assert.deepEqual(context, { generation: state.generation, order: 2 });
       assert.equal(skill, 'reply');
@@ -65,10 +76,11 @@ async function main() {
     },
   }, close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
-    if (partnerLoop) assert.equal(replies, 1);
+    if (interrupt) assert.equal(stopped, 1);
+    else if (partnerLoop) assert.equal(replies, 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {
     await bridge.close();

@@ -3,6 +3,7 @@
 #include "world_protocol.hpp"
 #include "partner_loop.hpp"
 #include <dafeiyu/activity_abi_v2.h>
+#include <dafeiyu/hook_abi_v2.h>
 #include <dafeiyu/tool_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
@@ -19,6 +20,8 @@ struct NativeJob {
     bool attempted = false;
     bool cancelled = false;
     std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
+    std::uint64_t partner_session = 0, invocation = 0;
+    std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
 };
@@ -197,7 +200,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool home = text(name) == "return" && !raw->config.key.empty();
     const bool survey = text(name) == "survey" && !raw->config.key.empty();
     const bool control = text(name) == "stop" && !raw->config.key.empty();
-    const bool partner = !raw->config.key.empty() && std::ranges::any_of(partner_skills, [&](const auto& skill) { return skill.name == text(name); });
+    const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
+    const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
@@ -229,6 +233,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     else if (receipt) job.method = NativeJob::Method::receipt;
     else if (ask) job.method = NativeJob::Method::ask;
     else if (inbox) job.method = NativeJob::Method::inbox;
+    if (partner) {
+        job.partner_session = call->session;
+        job.invocation = call->invocation;
+        job.skill = skill->name;
+    }
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);
@@ -405,7 +414,11 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
     *wait = 0;
     if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
     try {
-        raw->partner.advance(raw->config,raw->owner);
+        dfy::mc::PartnerWork work;
+        const auto session = raw->partner.status().session;
+        for (const auto& job : raw->jobs) if (session && job.partner_session == session && job.sequence && !job.ready &&
+            (job.skill == "move" || job.skill == "collect")) work = {job.invocation,job.skill};
+        raw->partner.advance(raw->config,raw->owner,work);
         *wait = raw->partner.status().phase == DFY_V2_PARTNER_CLOSED ? 100 : 5;
         return report(DFY_V2_OK,error);
     } catch (...) { return report(DFY_V2_FAILED,error); }
@@ -414,6 +427,28 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
 const dfy_v2_companion_partner_api partner{{sizeof(dfy_v2_companion_partner_api),DFY_V2_COMPANION_PARTNER_VERSION},
     listen_partner,stop_partner,partner_status};
 const dfy_v2_activity_api activity{{sizeof(dfy_v2_activity_api),DFY_V2_ACTIVITY_VERSION},advance_partner};
+
+// 伙伴只控制自己的旧模型与待开始技能，已发生效果由工具照常记录。
+dfy_v2_status DFY_V2_CALL describe_partner_hook(dfy_v2_instance* raw, uint32_t index, dfy_v2_hook_description* out,
+    dfy_v2_error* error) noexcept {
+    if (!out) return report(DFY_V2_INVALID_ARGUMENT,error);
+    *out = {};
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    if (index > 1 || raw->config.key.empty()) return report(DFY_V2_NOT_FOUND,error);
+    *out = {index ? DFY_V2_HOOK_TOOL_START : DFY_V2_HOOK_MODEL_REQUEST,DFY_V2_HOOK_OWN_SESSION};
+    return report(DFY_V2_OK,error);
+}
+
+// 使用当前事件和接管状态裁定尚未接纳的旧步骤。
+dfy_v2_status DFY_V2_CALL decide_partner_hook(dfy_v2_instance* raw, uint32_t index, const dfy_v2_hook_input* input,
+    uint32_t* verdict, dfy_v2_error* error) noexcept {
+    if (!verdict) return report(DFY_V2_INVALID_ARGUMENT,error);
+    *verdict = 0;
+    if (!owned(raw) || !raw->running || !input || index > 1) return report(DFY_V2_INVALID_CONTEXT,error);
+    *verdict = raw->partner.permits(input->session) ? DFY_V2_HOOK_ALLOW : DFY_V2_HOOK_DENY;
+    return report(DFY_V2_OK,error);
+}
+const dfy_v2_hook_api hooks{{sizeof(dfy_v2_hook_api),DFY_V2_HOOK_VERSION},describe_partner_hook,decide_partner_hook};
 // 返回固定版本的静态能力表。
 dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) noexcept {
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
@@ -425,6 +460,7 @@ dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const
     if (version == DFY_V2_COMPANION_SKILLS_VERSION && text(name) == DFY_V2_COMPANION_SKILLS_INTERFACE) *out = &skills;
     if (version == DFY_V2_COMPANION_PARTNER_VERSION && text(name) == DFY_V2_COMPANION_PARTNER_INTERFACE) *out = &partner;
     if (version == DFY_V2_ACTIVITY_VERSION && text(name) == DFY_V2_ACTIVITY_INTERFACE) *out = &activity;
+    if (version == DFY_V2_HOOK_VERSION && text(name) == DFY_V2_HOOK_INTERFACE) *out = &hooks;
     return report(*out ? DFY_V2_OK : DFY_V2_UNSUPPORTED, error);
 }
 const dfy_v2_plugin_api plugin{sizeof(dfy_v2_plugin_api), DFY_V2_ABI_VERSION, DFY_V2_ARCH_X64, 0, query};
