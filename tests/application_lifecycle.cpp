@@ -1,8 +1,10 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include "application.hpp"
+#include "trace_commands.hpp"
 #include "../plugins/examples/observer/observer_api.h"
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <thread>
 namespace {
 using namespace dfy::runtime;
@@ -49,7 +51,7 @@ void shared_application(const fs::path& run) {
     dfy::app::Application application({},run/"shared-plugins",run/"shared-user",dfy::model::Backend{
         [](const auto&, const auto& request) {
             return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+request.messages.back().content}};
-        }});
+        }},dfy::app::ApplicationRunConfig{.trace_directory = run/"direct-trace"});
     auto& conversation = application.conversation();
     const std::string prompt = "hello-"+std::string(20*1024,'a');
     const auto accepted = application.submit_dialogue(prompt);
@@ -66,6 +68,14 @@ void shared_application(const fs::path& run) {
     }
     check(result && result->answer == "shared:"+prompt && result->status.turn == accepted.turn &&
         conversation.status()->exit == OperationState::succeeded,"shared application lost result or actual exit");
+    std::ostringstream observed, replay;
+    const dfy::agent::RunId id{accepted.session,accepted.turn};
+    dfy::app::review_trace(application.trace_file(),id,observed);
+    dfy::app::replay_trace(application.trace_file(),id,replay);
+    check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
+        observed.str().find("\"category\":\"dialogue.text\"") != std::string::npos &&
+        replay.str().find("1 model requests, 0 tool exits, succeeded") != std::string::npos,
+        "direct mailbox was not linked to its replayed model run");
 
     conversation.close();
     check(conversation.closed() && application.close_plugins() == ShutdownResult::closed,"shared application could not finish shutdown");
@@ -78,7 +88,7 @@ void room_mailbox(const fs::path& run, bool automatic) {
     using namespace dfy::model;
     Application application({},run/"room-plugins",run/"room-user",Backend{[](const auto&,const Request& request) {
         return Response{{Role::assistant,request.messages.back().content}};
-    }},ApplicationRunConfig{.wake_for_room_address = automatic});
+    }},ApplicationRunConfig{.wake_for_room_address = automatic,.trace_directory = run/"room-trace"});
     check(application.post_room_event(RoomEvent::presence_changed,"room-1","joined").state == dfy::events::DeliveryState::accepted,
         "presence fact did not enter its mailbox");
     application.advance_plugins();
@@ -102,6 +112,11 @@ void room_mailbox(const fs::path& run, bool automatic) {
     }
     check(result && result->answer.find("room.addressed") != std::string::npos && result->answer.find("hello fish") != std::string::npos &&
         result->answer.find("joined") == std::string::npos,"room envelope lost its source or leaked a filtered fact");
+    std::ostringstream observed;
+    review_trace(application.trace_file(),dfy::agent::RunId{result->status.session,result->status.turn},observed);
+    check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
+        observed.str().find("room.addressed") != std::string::npos && observed.str().find("joined") == std::string::npos,
+        "filtered room presence was incorrectly linked to a model run");
 }
 }
 // 在一个真实宿主进程中完成空插件问答、安装、加载、事件消费、卸载、再次问答和移除。

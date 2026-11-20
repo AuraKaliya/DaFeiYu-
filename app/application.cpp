@@ -53,7 +53,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),
       session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
       conversation_(session_,labels_,&plugins_),
-      mailbox_intake_(mailbox_host_,conversation_),
+      mailbox_intake_(mailbox_host_,conversation_,run_log_),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)),
       wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
@@ -79,8 +79,15 @@ agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
         events::mailbox_text("dialogue.text",1,text,dialogue_limit));
     if (receipt.state != events::DeliveryState::accepted) throw std::logic_error("dialogue: unexpected acceptance state");
     ++dialogue_sequence_;
+    if (run_log_) run_log_->mail("mail.accepted",dialogue_mailbox_.value,dialogue_sender_,receipt.event,"dialogue.text",text);
     const auto received = mail.read(mailbox_host_.identity,dialogue_mailbox_);
-    return conversation_.submit(std::string(received.event.get().payload->find("text")->as_string()));
+    const auto& event = received.event.get();
+    const auto original = event.payload->find("text")->as_string();
+    if (run_log_) run_log_->mail("mail.received",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original);
+    const auto result = conversation_.submit(std::string(original));
+    if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original,
+        agent::RunId{result.session,result.turn});
+    return result;
 }
 
 // 为用户指明的一个只读工具接纳运行。

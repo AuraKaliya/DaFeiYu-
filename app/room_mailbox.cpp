@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "run_log.hpp"
 #include <nlohmann/json.hpp>
 
 namespace dfy::app {
@@ -14,8 +15,11 @@ events::DeliveryReceipt Application::post_room_event(RoomEvent event, const std:
     default: throw std::invalid_argument("room: unknown event class");
     }
     const auto data = nlohmann::json{{"room",room},{"text",text}}.dump();
-    return mailbox_host_.network->deliver_next(room_sender_,room_mailbox_,
+    const auto receipt = mailbox_host_.network->deliver_next(room_sender_,room_mailbox_,
         events::mailbox_text(category,1,data,mailbox_host_.network->payload_limit()));
+    if (run_log_ && receipt.state == events::DeliveryState::accepted)
+        run_log_->mail("mail.accepted",room_mailbox_.value,room_sender_,receipt.event,category,data);
+    return receipt;
 }
 
 // 在房间地址上执行同一事件规范下的主动分流。

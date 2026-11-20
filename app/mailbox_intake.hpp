@@ -4,6 +4,7 @@
 #include <functional>
 
 namespace dfy::app {
+class RunLog;
 struct MailboxDelivery {
     events::MailboxId mailbox;
     runtime::DomainId sender;
@@ -17,8 +18,8 @@ enum class MailboxIntakeResult { idle, handled, submitted, rejected };
 class MailboxIntake {
   public:
     // 绑定本体收件身份和主会话，由该应用线程推进。
-    MailboxIntake(plugins::PluginMailboxHost host, Conversation& conversation)
-        : host_(std::move(host)), conversation_(conversation) {}
+    MailboxIntake(plugins::PluginMailboxHost host, Conversation& conversation, std::shared_ptr<RunLog> log = {})
+        : host_(std::move(host)), conversation_(conversation), log_(std::move(log)) {}
     // 登记已存在信箱及审查回调，空触发列表表示只主动收件。
     void watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review);
     // 在主会话可接纳时主动处理一封，队首按本收件地址的规则审查。
@@ -36,6 +37,7 @@ class MailboxIntake {
 
     plugins::PluginMailboxHost host_;
     Conversation& conversation_;
+    std::shared_ptr<RunLog> log_;
     std::array<std::optional<Route>,36> routes_{};
     std::size_t cursor_ = 0;
     bool working_ = false;

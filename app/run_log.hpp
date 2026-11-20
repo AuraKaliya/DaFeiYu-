@@ -1,5 +1,6 @@
 #pragma once
 #include <dafeiyu/run_capture.hpp>
+#include <dafeiyu/event_store.hpp>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -19,6 +20,9 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
     agent::RunCaptureSinks sinks(std::string source);
     // 在宿主线程追加已核对的事件，记录失败独立于业务处理。
     void append(std::string_view kind, nlohmann::json fields) noexcept;
+    // 记录本体文本信件的原地址、发送者、接纳序号及可选目标回合。
+    void mail(std::string_view kind, runtime::DomainId mailbox, runtime::DomainId sender, events::EventId id,
+        std::string_view category, std::string_view body, std::optional<agent::RunId> run = {}) noexcept;
   private:
     // 写入一次模型记录，供后续按原请求身份复盘。
     void model(std::string_view source, const agent::ModelCapture& value);

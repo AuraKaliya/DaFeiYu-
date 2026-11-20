@@ -84,6 +84,19 @@ void RunLog::append(std::string_view kind, Json fields) noexcept {
     std::cerr << "Trace writing stopped; evidence is incomplete.\n";
 }
 
+// 保存本体收到的原文本和关联身份，记录失败不影响原队列及主会话。
+void RunLog::mail(std::string_view kind, runtime::DomainId mailbox, runtime::DomainId sender, events::EventId id,
+    std::string_view category, std::string_view body, std::optional<agent::RunId> run) noexcept {
+    try {
+        Json fields{{"mailbox",mailbox},{"sender",sender},{"domain",id.domain},{"message",id.sequence},{"category",category},{"body",body}};
+        if (run) {
+            fields["session"] = run->session;
+            fields["run"] = run->sequence;
+        }
+        append(kind,std::move(fields));
+    } catch (...) {}
+}
+
 // 保留每次模型请求及其真正退出，不以准备状态推断服务已调用。
 // 步骤：固定运行与步骤身份 → 加入实际输入或输出 → 记录调用时刻与结果。
 void RunLog::model(std::string_view source, const agent::ModelCapture& value) {
