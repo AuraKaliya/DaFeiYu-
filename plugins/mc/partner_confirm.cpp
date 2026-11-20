@@ -130,7 +130,8 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
         const auto receipt = Json::parse(result->payload,nullptr,false);
         const bool sent = receipt.is_object() && receipt.value("sent",false);
         publish("mc.confirmation.presentation",{{"id",pending.request},{"revision",1},{"order",pending.order},
-            {"generation",pending.world},{"player",pending.player},{"status",sent ? "sent" : "unconfirmed"}});
+            {"generation",pending.world},{"player",pending.player},{"bridgeWork",pending.work_id},
+            {"status",sent ? "sent" : "unconfirmed"}});
         presentation_.reset();
     }
     if (closing || !confirmation_ || !confirmation_->decision.is_null()) return;
@@ -145,9 +146,9 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
     const auto number = std::to_string(item.request);
     const auto question = item.question+" 回复 确认 "+number+" 或 拒绝 "+number;
     const auto envelope = Json{{"context",{{"generation",item.world},{"order",item.order}}},{"arguments",{{"text",question}}}}.dump();
-    const auto role = "confirm."+std::to_string(instance)+"."+number;
+    auto role = "confirm."+std::to_string(instance)+"."+number;
     auto work = std::make_unique<GameWork>(GameAction::partner,config,role,envelope,"reply");
-    presentation_ = Presentation{item.request,item.order,item.world,item.player,std::move(work)};
+    presentation_ = Presentation{item.request,item.order,item.world,item.player,std::move(role),std::move(work)};
     item.presentation_attempted = true;
 }
 }

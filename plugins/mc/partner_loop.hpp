@@ -107,7 +107,7 @@ class PartnerLoop {
     std::optional<Confirmation> confirmation_;
     struct Presentation {
         std::uint64_t request, order;
-        std::string world, player;
+        std::string world, player, work_id;
         std::unique_ptr<GameWork> work;
     };
     std::optional<Presentation> presentation_;

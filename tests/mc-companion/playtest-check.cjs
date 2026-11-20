@@ -95,5 +95,11 @@ async function checkWall(fixture, player, whispers) {
   const placements = work.filter(row => row.skill === 'place');
   assert.deepEqual(placements.map(row => [row.order, row.result.placementAttempted, row.result.placed]), [[3,false,false],[3,true,true],[4,true,true]]);
   assert.deepEqual(placements.at(-1).arguments, { block: 'oak_door', x: 4, y: -60, z: -3 });
+  const trace = readFileSync(join(fixture.evidence, 'host/trace/events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  const presentation = trace.find(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.presentation');
+  assert.ok(presentation && work.some(row => row.work === presentation.body.bridgeWork && row.result.sent));
+  assert.ok(trace.some(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.decision' &&
+    row.body.id === presentation.body.id && row.body.status === 'approved'));
+  assert.ok(trace.every(row => row.kind !== 'model.prepared' || row.input.tools.length > 0));
 }
 module.exports = { checkPlayer };

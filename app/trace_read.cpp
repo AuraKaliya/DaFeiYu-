@@ -90,6 +90,7 @@ runtime::DomainId trace_id(const std::filesystem::path& value) {
 // 步骤：扫描有序数据 → 按身份输出原记录 → 提示记录是否缺少完整退出。
 void review_trace(const std::filesystem::path& file, std::optional<agent::RunId> run, std::ostream& output) {
     runtime::DomainId child_request = 0;
+    std::set<runtime::DomainId> invocations;
     bool found = false, ended = false;
     const auto complete = read_trace(file,[&](const Json& record) {
         if (!run) { summarize(record,output); return; }
@@ -98,10 +99,16 @@ void review_trace(const std::filesystem::path& file, std::optional<agent::RunId>
             found = true;
             ended |= kind == "run.exited";
             if (kind == "subagent.accepted") child_request = record.at("request").get<runtime::DomainId>();
+            if (kind == "tool.admitted") invocations.insert(record.at("invocation").get<runtime::DomainId>());
             output << record.dump() << '\n';
-        } else if (child_request && kind == "mail.received") {
+        } else if (kind == "mail.received") {
             const auto& body = record.at("body");
-            if (body.contains("session") && body.contains("request") && body.at("session") == run->session && body.at("request") == child_request)
+            const auto& category = record.at("category").get_ref<const std::string&>();
+            const bool related = child_request && body.contains("session") && body.contains("request") &&
+                body.at("session") == run->session && body.at("request") == child_request;
+            const bool confirmation = category.starts_with("mc.confirmation.") && body.contains("id") &&
+                body.at("id").is_number_unsigned() && invocations.contains(body.at("id").get<runtime::DomainId>());
+            if (related || confirmation)
                 output << record.dump() << '\n';
         }
     });

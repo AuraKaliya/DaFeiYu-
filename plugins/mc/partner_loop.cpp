@@ -338,6 +338,9 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
         review_ = {};
     }
     if (closing || !request_ || !work.invocation || stopped_work_ || feed_.pending().empty() || feed_.cursor() <= reviewed_) return;
+    // 与当前在途动作完全对应的唯一批准仍留在收件记录，已由确认状态机处理。
+    if (confirmation_ && confirmation_->request == work.invocation && confirmation_->approved_order == feed_.cursor() &&
+        feed_.pending().size() == 1 && confirmation_->approved_order > confirmation_->order) return;
     const auto input = Json{{"currentEvents",events_.empty() ? recent_events_ : events_},{"newEvents",feed_.pending()},
         {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},
         {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}}.dump();
