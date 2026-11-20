@@ -114,7 +114,7 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 .\scripts\verify-agent-package.ps1 -Build .\build\rebuild\windows-tests
 ```
 
-所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
+所有开发、回归和最终验收测试均使用固定模型响应或传输替身。按功能需要使用真实线程、Windows 管道、符号链接、DLL 和隔离 Paper。涉及真实模型的产品体验由用户在架构审查后操作，首轮主题是[接续我已经搭的墙](tests/mc-companion/README.md#首轮实机接续我已经搭的墙)。旧真实服务脚本及结果可从 Git 历史回查。
 
 原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。[Agent 会话与工具流程](docs/architecture.md#agent-会话与工具流程)
 
