@@ -27,6 +27,12 @@
 - 核对放置坐标与实际方块。比较改动前后的墙、门洞和材料余量，并记录发言与实效是否一致。可按现场情况改变分工或请她停手。
 - 记下关键原话和大致时间。一局结束后按玩家消息号、子回合和工作号串查实际送模上下文、工具范围、响应、回执及实际发言。首轮评审记录事实、判断和待核实项。[日志审阅与离线回放](../../docs/run-guide.md)
 
+工程回归可在准备好的**独立 Paper 夹具**中运行模式 `--wall-probe`。沿用探针的 Java、Paper、Node 与素材设置，把 `DFY_MC_TEST_ROOT` 指向隔离目录，加载固定模型的 `dfy_mc_playtest` 和当前插件包。协议玩家核对原墙、占用格零动作、补墙、批准前的空门洞以及门的上下两格。输出中的 `DFY_TRACE` 和同目录的 `game-actions.jsonl` 提供复盘材料。
+
+```powershell
+node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
+```
+
 ### 用浏览器进服
 
 运行 `./tests/mc-companion/browser-player/start.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。脚本验证并展开 WebMC 2.4.0 的官方发布包，启动体验服及本机连接服务，用 D 盘独立浏览器资料打开入口。加 `-PrepareOnly` 可以只准备服务。已在运行时可直接打开 [浏览器玩家入口](http://127.0.0.1:25582/)，点击“进入河边体验”。[上游项目与协议兼容范围](https://github.com/zardoy/minecraft-web-client) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
