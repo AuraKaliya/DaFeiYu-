@@ -23,6 +23,8 @@
 
 使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
 
+MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响应、改写结果和运行退出摘要。重复使用运行目录时，后续日志保存在新的 `trace-N` 子目录。启动输出中的 `DFY_TRACE` 给出实际文件位置。普通终端会话可用 `--chat CONFIG --trace DIR` 开启同一格式。文件包含本局对话与工具正文，留在运行机器的指定目录。
+
 | 输入 | 行为 |
 |---|---|
 | 普通文字 | 空闲时开始一轮问答 |

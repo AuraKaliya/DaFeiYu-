@@ -1,4 +1,6 @@
 #include "subagents.hpp"
+#include "run_log.hpp"
+#include <nlohmann/json.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
 #include <algorithm>
 
@@ -6,8 +8,8 @@ namespace dfy::app {
 struct Subagents::Slot {
     // 保存原实例弱引用并建立独立的 Agent 上下文。
     Slot(const std::shared_ptr<plugins::PluginInstance>& plugin, const model::Config& config,
-        const std::shared_ptr<events::BroadcastChannel>& events, const model::Backend& backend)
-        : owner(plugin->generation()), instance(plugin), session(config,events,backend) {}
+        const std::shared_ptr<events::BroadcastChannel>& events, const model::Backend& backend, agent::RunCaptureSinks capture)
+        : owner(plugin->generation()), instance(plugin), session(config,events,backend,4,std::move(capture)) {}
     const runtime::DomainId owner;
     std::weak_ptr<plugins::PluginInstance> instance;
     std::unique_ptr<plugins::PluginTools> registration;
@@ -22,9 +24,9 @@ struct Subagents::Slot {
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
 Subagents::Subagents(plugins::PluginManager& plugins, model::Config config, std::shared_ptr<events::BroadcastChannel> events,
-    model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock)
+    model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock, std::shared_ptr<RunLog> log)
     : plugins_(plugins), config_(std::move(config)), events_(std::move(events)), backend_(std::move(backend)),
-      labels_(std::move(labels)), clock_(std::move(clock)) {}
+      labels_(std::move(labels)), clock_(std::move(clock)), log_(std::move(log)) {}
 
 // 释放槽位，原会话仍负责协作取消和等待正在使用的资源。
 Subagents::~Subagents() = default;
@@ -35,7 +37,7 @@ runtime::DomainId Subagents::open(const std::shared_ptr<plugins::PluginInstance>
         instance->phase() != plugins::InstancePhase::active)) throw std::invalid_argument("subagent: owner unavailable");
     const auto free = std::ranges::find_if(slots_,[](const auto& slot) { return !slot; });
     if (free == slots_.end()) throw std::length_error("subagent: session capacity exhausted");
-    *free = std::make_unique<Slot>(instance,config_,events_,backend_);
+    *free = std::make_unique<Slot>(instance,config_,events_,backend_,log_ ? log_->sinks("plugin") : agent::RunCaptureSinks{});
     return (*free)->session.id();
 }
 
@@ -123,6 +125,13 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         options.tools = catalog->snapshot(input.tools,input.allow_changes).bind_context(input.binding);
     }
     slot.active = slot.session.begin(input.prompt,std::move(options));
+    if (log_) {
+        try {
+            const auto id = slot.active->run_id();
+            log_->append("subagent.accepted",{{"session",id.session},{"run",id.sequence},{"plugin",instance->plugin_id()},
+                {"instance",slot.owner},{"request",slot.request}});
+        } catch (...) {}
+    }
 }
 
 // 推进每个槽位，回执在实际退出后才变为终态。

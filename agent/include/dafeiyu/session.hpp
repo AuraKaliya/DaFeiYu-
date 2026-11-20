@@ -201,7 +201,7 @@ class Session {
         std::size_t result_capacity = 4, model::Completion completion = {});
     // 使用显式结构化模型后端，复用同一会话、历史和结果生命周期。
     Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events,
-        model::Backend backend, std::size_t result_capacity = 4);
+        model::Backend backend, std::size_t result_capacity = 4, RunCaptureSinks capture = {});
     // 取消并等待仍在使用会话输入的模型调用退出，外部回合结果继续有效。
     ~Session();
     // 禁止复制会话身份、历史及后台责任。
@@ -263,6 +263,7 @@ class Session {
     std::unique_ptr<RunLoop> active_;
     std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
     const model::Backend backend_;
+    const RunCaptureSinks capture_;
     std::shared_ptr<bool> accepting_ = std::make_shared<bool>(true);
     bool working_ = false;
 };

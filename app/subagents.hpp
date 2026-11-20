@@ -6,6 +6,7 @@
 #include <array>
 
 namespace dfy::app {
+class RunLog;
 using plugins::SubagentInput;
 using plugins::SubagentPhase;
 using plugins::SubagentStatus;
@@ -15,7 +16,7 @@ class Subagents final : public plugins::PluginAgents {
   public:
     // 固定共享后端、通知、时钟及原插件目录。
     Subagents(plugins::PluginManager& plugins, model::Config config, std::shared_ptr<events::BroadcastChannel> events,
-        model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock);
+        model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock, std::shared_ptr<RunLog> log = {});
     // 释放已完成的会话并按 Agent 约定保留实际未退出的工作。
     ~Subagents() override;
     // 为原插件创建一个独立上下文，允许在 DLL 启动时登记。
@@ -51,6 +52,7 @@ class Subagents final : public plugins::PluginAgents {
     model::Backend backend_;
     agent::RunVersionLabels labels_;
     agent::ToolClock clock_;
+    std::shared_ptr<RunLog> log_;
     std::array<std::unique_ptr<Slot>,16> slots_;
     bool stopping_ = false;
 };

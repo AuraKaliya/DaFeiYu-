@@ -60,7 +60,10 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         if (args.size() == 5 && args[1] == "--mc-partner") {
             const auto& root = args[4];
-            dfy::app::Application application(dfy::model::load_config(args[2]), root / "packages", root / "user");
+            dfy::app::ApplicationRunConfig run;
+            run.trace_directory = root;
+            dfy::app::Application application(dfy::model::load_config(args[2]), root / "packages", root / "user",
+                dfy::model::Backend{dfy::model::complete_response},std::move(run));
             dfy::app::run_companion_host(application, args[3], root, dfy::app::CompanionMode::partner);
             return 0;
         }
@@ -73,15 +76,18 @@ int run(const std::vector<std::filesystem::path>& args) {
         if (args.size() == 1 || (args.size() >= 3 && args[1] == "--chat")) {
             const auto configuration = args.size() == 1 ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
             std::filesystem::path plugins, user_data;
+            dfy::app::ApplicationRunConfig run;
             for (std::size_t index = 3; index < args.size(); index += 2) {
                 if (index+1 >= args.size() || args[index+1].empty()) throw std::invalid_argument("app: option path required");
                 if (args[index] == "--plugins" && plugins.empty()) plugins = args[index+1];
                 else if (args[index] == "--data" && user_data.empty()) user_data = args[index+1];
+                else if (args[index] == "--trace" && run.trace_directory.empty()) run.trace_directory = args[index+1];
                 else throw std::invalid_argument("app: unknown or duplicate option");
             }
             if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
             if (user_data.empty()) user_data = dfy::app::default_user_data();
-            dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data);
+            dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data,
+                dfy::model::Backend{dfy::model::complete_response},std::move(run));
             auto& manager = application.plugins();
             dfy::platform::LineInput input;
             if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
@@ -105,7 +111,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
-        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR]"
+        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
             << " | --review-diagnostic FILE | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"

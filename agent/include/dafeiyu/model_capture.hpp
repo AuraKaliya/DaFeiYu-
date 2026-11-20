@@ -18,4 +18,10 @@ struct ModelCapture {
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;
+class TurnRequest;
+using TurnExitSink = std::function<void(const TurnRequest&)>;
+struct RunCaptureSinks {
+    ModelCaptureSink model;
+    TurnExitSink exit;
+};
 }

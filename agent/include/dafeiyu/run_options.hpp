@@ -44,6 +44,7 @@ struct RunOptions {
     PolicyExtension extension;
     TextHook text_hook;
     ModelCaptureSink model_capture;
+    TurnExitSink exit_capture;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;
     std::size_t trace_capacity = 256;

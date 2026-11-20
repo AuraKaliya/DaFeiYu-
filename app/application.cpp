@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "run_log.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
@@ -48,10 +49,12 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_limit)),
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
-      labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
+      labels_(build_labels(std::move(run.model_profile))),
+      run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),
+      session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
       conversation_(session_,labels_,&plugins_),
       mailbox_intake_(mailbox_host_,conversation_),
-      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)),
+      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)),
       wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
@@ -62,6 +65,9 @@ Application::Application(model::Config config, const std::filesystem::path& pack
             return std::string(item.event.payload->find("text")->as_string());
         });
 }
+
+// 只读取本次记录位置，不打开原始会话或推进工作。
+std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
 // 在独立地址上交付受信终端原话，普通问答沿用单回合接纳。
 // 步骤：核对主会话空闲 → 投递原正文并取得接纳序号 → 从本体信箱读回并接纳问答。

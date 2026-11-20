@@ -114,9 +114,10 @@ Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel>
     std::size_t result_capacity, model::Completion completion)
     : Session(std::move(config),std::move(events),text_backend(std::move(completion)),result_capacity) {}
 // 完整准备结构化后端，状态仍由原会话的结果和退出操作负责。
-Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events, model::Backend backend, std::size_t result_capacity)
+Session::Session(model::Config config, std::shared_ptr<events::BroadcastChannel> events, model::Backend backend,
+    std::size_t result_capacity, RunCaptureSinks capture)
     : config_(std::move(config)), events_(std::move(events)), descriptor_(event_descriptor()), id_(next_domain()),
-      records_(result_capacity), backend_(std::move(backend)) {
+      records_(result_capacity), backend_(std::move(backend)), capture_(std::move(capture)) {
     if (!events_ || !result_capacity || !backend_.complete) throw std::invalid_argument("session: channel, backend and result capacity required");
 }
 // 兜底关闭时先保留所有回合责任，实际模型退出后再结算回合退出。
@@ -141,6 +142,8 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
     if (prompt.empty() || prompt.find_first_not_of(" \t\r\n") == std::string::npos || prompt.size() > 1024*1024)
         throw std::invalid_argument("session: nonblank prompt within 1 MiB required");
     if (turn_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("session: turn exhausted");
+    if (!options.model_capture) options.model_capture = capture_.model;
+    if (!options.exit_capture) options.exit_capture = capture_.exit;
     if (!options.extension && !options.text_hook && !options.version_labels.control_extension) options.version_labels.control_extension = "none";
     // 用独立会话门保护规则回调，关闭发生在回调内时仍能阻止新的受控调用。
     // 步骤：调用明确规则 → 重查会话门 → 返回原决定或关闭拒绝。

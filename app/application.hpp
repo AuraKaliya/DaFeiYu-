@@ -9,6 +9,7 @@
 #include <array>
 
 namespace dfy::app {
+class RunLog;
 struct VerificationReport {
     agent::RunId run;
     std::optional<agent::ObservationMatch> match;
@@ -27,6 +28,7 @@ struct ApplicationRunConfig {
     std::optional<std::string> model_profile;
     bool wake_for_room_address = true;
     bool wake_for_companion_confirmation = true;
+    std::filesystem::path trace_directory;
 };
 enum class RoomEvent { presence_changed, addressed };
 
@@ -38,6 +40,8 @@ class Application {
     // 以显式后端创建应用，可为工具运行指定统一时钟及公开模型档案。
     Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data,
         model::Backend backend, ApplicationRunConfig run = {});
+    // 返回本次宿主运行的本机日志位置，未开启时返回空路径。
+    std::filesystem::path trace_file() const;
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
@@ -177,6 +181,7 @@ class Application {
     const model::Backend model_backend_;
     const agent::RunVersionLabels labels_;
     std::optional<ToolRegistration> tool_registration_;
+    std::shared_ptr<RunLog> run_log_;
     agent::Session session_;
     Conversation conversation_;
     MailboxIntake mailbox_intake_;

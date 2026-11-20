@@ -10,6 +10,7 @@ namespace dfy::app {
 // 启动独立角色，通过正式应用读取原话、推进模型与插件工作并保存同局对话。
 // 步骤：安装并加载本地包 → 等待玩家聊天水位 → 推进及发布进展 → 停止并回收。
 void run_companion_host(Application& host, const std::filesystem::path& package, const std::filesystem::path& root, CompanionMode mode) {
+    if (const auto path = host.trace_file(); !path.empty()) std::cout << "DFY_TRACE " << path.generic_string() << std::endl;
     host.plugins().install(package);
     if (host.plugins().load("mc.companion") != 0) throw std::runtime_error("load MC plugin failed");
     const auto id = host.open_companion("mc.companion");

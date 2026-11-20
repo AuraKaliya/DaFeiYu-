@@ -74,8 +74,11 @@ int wmain(int argc, wchar_t** argv) {
         const bool partner = argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
+        app::ApplicationRunConfig run;
+        if (partner) run.trace_directory = root;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner, root](const auto&, const auto& request) { return partner ? partner_sample(request, root) : sample_turn(request); }});
+            [partner, root](const auto&, const auto& request) { return partner ? partner_sample(request, root) : sample_turn(request); }},
+            std::move(run));
         app::run_companion_host(host, argv[1], root, partner ? app::CompanionMode::partner : app::CompanionMode::scenario);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
