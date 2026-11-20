@@ -34,7 +34,7 @@ int wmain(int argc, wchar_t** argv) {
             if (!body.contains("delegation")) return {{Role::assistant,"game fact acknowledged"}};
             if (++delegated != 1 || body.at("delegation").at("text") != "give a local greeting" || !body.at("events").empty() ||
                 input.tools.size() != 3 || std::ranges::any_of(input.tools,[](const auto& tool) {
-                    return tool.name.ends_with("_move") || tool.name.ends_with("_collect");
+                    return tool.name.ends_with("_move") || tool.name.ends_with("_skills") || tool.name.ends_with("_collect_confirmed");
                 })) throw std::runtime_error("delegation lost source or widened authority");
             const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
             while (!permit && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));

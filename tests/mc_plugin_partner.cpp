@@ -43,12 +43,12 @@ int wmain(int argc, wchar_t** argv) {
             }
             const auto input = nlohmann::json::parse(last.content);
             if (input.at("trigger") == "skills.expanded") {
-                const auto wanted = confirm ? "_collect_confirmed" : "_move";
+                const auto wanted = confirm ? "_collect" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 6 : 5) ||
+                if (chosen == request.tools.end() || request.tools.size() != 5 ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
-                return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2})" :
+                return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"main"})" :
                     R"({"place":"player"})"}}},FinishReason::tool_calls};
             }
             if (task && input.at("trigger") == "task.continue") {
@@ -106,7 +106,8 @@ int wmain(int argc, wchar_t** argv) {
                 const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
                 if (type == "mc.confirmation.request") {
                     confirmation = fact;
-                    if (fact.at("arguments").at("count") != 2) throw std::runtime_error("wrong original candidate");
+                    if (fact.at("skill") != "collect" || fact.at("arguments").at("count") != 2 ||
+                        fact.at("arguments").contains("approval")) throw std::runtime_error("wrong original candidate");
                     reply(1,true,true);
                     reply(2,true,false);
                 } else if (type == "mc.confirmation.decision") {

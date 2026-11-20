@@ -49,7 +49,7 @@ bool Application::review_companion_confirmation() {
         options.system_instructions = "伙伴从原游戏信箱请求玩家批准。调用一个工具选择问题的投递渠道。"
             "批准或拒绝只能由玩家作出。选择本体渠道后，把工具返回的原问题和操作命令告诉用户。";
         const auto prompt = nlohmann::json{{"category","mc.confirmation.request"},{"id",pending.id},{"revision",pending.revision},
-            {"question",pending.question},{"arguments",nlohmann::json::parse(pending.arguments)},{"game",pending.world}}.dump();
+            {"skill",pending.skill},{"question",pending.question},{"arguments",nlohmann::json::parse(pending.arguments)},{"game",pending.world}}.dump();
         conversation_.submit(prompt,std::move(options));
         confirmation_channels_ = std::move(catalog);
         return true;

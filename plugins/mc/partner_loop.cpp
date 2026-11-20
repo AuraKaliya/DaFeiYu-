@@ -7,18 +7,18 @@ using Json = nlohmann::json;
 
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
-constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
+constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
-    "如果这次采集需要玩家明确批准，用 collect_confirmed。route=game 时先在游戏问，route=main 时由本体选择询问渠道。");
+    "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
 constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体，保留原编号。核对现场后回答委托。"
-    "这个委托不代表游戏玩家已批准操作，需要采集时使用 collect_confirmed。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
+    "委托中的采集须征求当前玩家批准，默认由本体选择渠道。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
 
 // 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
 bool base_category(SkillCategory category) noexcept {
@@ -159,6 +159,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
     std::size_t count = 0;
     if (!delegated) for (const auto& skill : partner_skills) {
+        if (skill.kind == SkillKind::confirmed) continue;
         const auto category = skill.category;
         if (!base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
@@ -216,7 +217,7 @@ Json PartnerLoop::discover(const Json& arguments) {
     Json directory = Json::array();
     for (std::size_t index = 0; index < categories.size(); ++index) {
         Json names = Json::array();
-        for (const auto& skill : partner_skills) if (static_cast<std::size_t>(skill.category) == index)
+        for (const auto& skill : partner_skills) if (skill.kind != SkillKind::confirmed && static_cast<std::size_t>(skill.category) == index)
             names.push_back(skill.name);
         if (names.empty() || base_category(static_cast<SkillCategory>(index))) next.reset(index);
         directory.push_back({{"category",categories[index]},{"available",!names.empty()},{"tools",std::move(names)}});

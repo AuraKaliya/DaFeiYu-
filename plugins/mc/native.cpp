@@ -196,7 +196,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool control = text(name) == "stop" && !raw->config.key.empty();
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
-    const bool confirmed = partner && skill->kind == SkillKind::confirmed;
+    const bool legacy = partner && skill->kind == SkillKind::confirmed;
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
@@ -211,11 +211,17 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
     auto& job = *found;
     if (raw->sequence == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
+    bool confirmed = legacy;
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
+        if (partner && skill->supports_approval) {
+            const auto args = nlohmann::json::parse(job.arguments).at("arguments");
+            confirmed = args.contains("approval") || raw->partner.delegated(call->session);
+        }
         if (confirmed) {
-            if (!raw->partner.confirm_collect(call->session,call->invocation,job.arguments)) return report(DFY_V2_INVALID_CONTEXT,error);
+            if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments))
+                return report(DFY_V2_INVALID_CONTEXT,error);
         } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
             job.id, job.arguments, std::string(text(name)));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
@@ -237,7 +243,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (partner) {
         job.partner_session = call->session;
         job.invocation = call->invocation;
-        job.skill = confirmed ? "collect" : skill->name;
+        job.skill = legacy ? "collect" : skill->name;
         job.confirmation = job.waiting = confirmed;
     }
     job.sequence = ++raw->sequence;
@@ -273,7 +279,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                     job->output = R"({"status":"blocked","reason":"confirmation did not authorize this action"})";
                     job->ready = true;
                 } else job->action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job->id,
-                    std::move(*decision),"collect");
+                    std::move(*decision),std::string(job->skill));
             }
         } catch (...) { job->ready = true; }
     } else if (job->action) {

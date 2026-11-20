@@ -3,26 +3,41 @@
 namespace dfy::mc {
 using Json = nlohmann::json;
 
-// 从原生已接纳候选建立一次业务确认，正文保留原参数及原配对玩家。
-// 步骤：核对回合身份 → 校验精确采集范围 → 登记候选与期限并按指定渠道发起请求。
-bool PartnerLoop::confirm_collect(std::uint64_t session, std::uint64_t request, std::string_view envelope) {
+namespace {
+// 为受支持的原生动作生成问题，业务参数保留完整坐标和材料。
+std::string confirmation_question(std::string_view skill, const Json& args) {
+    const auto& block = args.at("block").get_ref<const std::string&>();
+    if (block.empty() || block.size() > 64 || block.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_:") != block.npos)
+        throw std::invalid_argument("MC confirmation: invalid block identity");
+    if (skill == "collect") {
+        const auto& count = args.at("count");
+        if (!count.is_number_unsigned() || count == 0 || count > 32)
+            throw std::invalid_argument("MC confirmation: invalid collection count");
+        return "是否采集 "+count.dump()+" 块 "+block+"？";
+    }
+    throw std::invalid_argument("MC confirmation: unsupported action");
+}
+}
+
+// 为任一支持确认的候选固定原参数、玩家和渠道。
+// 步骤：核对回合身份 → 分离执行参数和确认渠道 → 登记原候选及期限并投递请求。
+bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope) {
     if (!request || session != session_ || !request_ || confirmation_ || !permits(session) || !feed_.ready()) return false;
     const auto original = Json::parse(envelope);
     const auto& context = original.at("context");
     if (context.at("generation") != session_world_ || context.at("order") != order_) return false;
     auto args = original.at("arguments");
-    const auto route = args.value("route","main");
+    const bool legacy = skill == "collect_confirmed";
+    if (legacy) skill = "collect";
+    const auto route = args.value(legacy ? "route" : "approval","main");
     if (route != "main" && route != "game") return false;
     args.erase("route");
-    const auto& block = args.at("block").get_ref<const std::string&>();
-    const auto& count = args.at("count");
-    if (block.empty() || block.size() > 64 || block.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_:") != block.npos ||
-        !count.is_number_unsigned() || count == 0 || count > 32) return false;
-    const auto question = "是否采集 "+count.dump()+" 块 "+block+"？";
-    Confirmation item{request,order_,0,session_world_,feed_.owner(),question,std::move(args),{},
+    args.erase("approval");
+    auto question = confirmation_question(skill,args);
+    Confirmation item{request,order_,0,session_world_,feed_.owner(),std::string(skill),std::move(question),std::move(args),{},
         std::chrono::steady_clock::now()+std::chrono::seconds(25),route == "game"};
     if (!item.ask_game) publish("mc.confirmation.request",{{"id",request},{"revision",1},{"generation",item.world},
-        {"player",item.player},{"order",item.order},{"arguments",item.arguments},{"question",item.question}});
+        {"player",item.player},{"order",item.order},{"skill",item.skill},{"arguments",item.arguments},{"question",item.question}});
     confirmation_ = std::move(item);
     return true;
 }
@@ -42,7 +57,7 @@ void PartnerLoop::confirm_once(std::string_view status, std::string_view source,
     auto& item = *confirmation_;
     if (!item.decision.is_null()) return;
     Json fact{{"id",item.request},{"revision",1},{"generation",item.world},{"player",item.player},
-        {"order",item.order},{"status",status},{"source",source}};
+        {"order",item.order},{"skill",item.skill},{"status",status},{"source",source}};
     publish("mc.confirmation.decision",fact);
     item.decision = std::move(fact);
     item.approved_order = approved_order;

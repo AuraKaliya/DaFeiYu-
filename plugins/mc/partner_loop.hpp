@@ -30,8 +30,10 @@ class PartnerLoop {
         std::string work, std::string output) noexcept;
     // 执行当前原子会话的局内任务或工具目录操作。
     nlohmann::json local_skill(std::uint64_t session, std::string_view skill, std::string_view envelope);
-    // 保留原采集候选，只允许当前插件角色创建确认。
-    bool confirm_collect(std::uint64_t session, std::uint64_t request, std::string_view envelope);
+    // 判断来自本体委托的当前可变更技能是否需要强制确认。
+    bool delegated(std::uint64_t session) const noexcept { return session == session_ && active_delegation_.has_value(); }
+    // 为游戏动作固定原参数和确认渠道，只允许当前插件角色提出。
+    bool confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope);
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
     std::optional<std::string> confirm_result(std::uint64_t request) const;
     // 归还原确认并保存其终态，迟到回信可重读原决定。
@@ -97,7 +99,7 @@ class PartnerLoop {
     std::uint64_t release_sequence_ = 0;
     struct Confirmation {
         std::uint64_t request, order, approved_order = 0;
-        std::string world, player, question;
+        std::string world, player, skill, question;
         nlohmann::json arguments, decision;
         std::chrono::steady_clock::time_point deadline;
         bool ask_game = false, presentation_attempted = false;

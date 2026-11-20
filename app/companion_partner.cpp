@@ -222,7 +222,7 @@ void CompanionSession::accept_confirmation(std::string_view type, std::string_vi
         if (!id || stopping_ || !address_ || world != address_->world || player != partner_->input.owner) return;
         if (confirmation_ && confirmation_->id == id) return;
         confirmation_ = CompanionConfirmation{id,1,data.at("order").get<std::uint64_t>(),world,player,
-            data.at("question").get<std::string>(),data.at("arguments").dump()};
+            data.at("question").get<std::string>(),data.at("arguments").dump(),data.value("skill","collect")};
     } else if (confirmation_ && confirmation_->id == id && confirmation_->world == world &&
         confirmation_->player == player && type == "mc.confirmation.presentation") {
         confirmation_->presentation = data.at("status");

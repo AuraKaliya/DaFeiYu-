@@ -26,7 +26,7 @@ int wmain(int argc, wchar_t** argv) {
                 ++main_calls;
                 if (last.role == Role::tool) return {{Role::assistant,"routing finished"}};
                 const auto mail = Json::parse(last.content);
-                if (mail.at("arguments").at("count") != 2 || mail.at("category") != "mc.confirmation.request")
+                if (mail.at("skill") != "collect" || mail.at("arguments").at("count") != 2 || mail.at("category") != "mc.confirmation.request")
                     throw std::runtime_error("main did not receive original candidate");
                 return {{Role::assistant,"",{{"present",panel ? "present_confirmation_on_panel" : "present_confirmation_in_game","{}"}}},FinishReason::tool_calls};
             }
@@ -40,9 +40,9 @@ int wmain(int argc, wchar_t** argv) {
                 if (directory == input.tools.end()) throw std::runtime_error("skill directory unavailable");
                 return {{Role::assistant,"",{{"expand",directory->name,R"({"categories":["dig_break"]})"}}},FinishReason::tool_calls};
             }
-            const auto tool = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_collect_confirmed"); });
+            const auto tool = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); });
             if (tool == input.tools.end()) throw std::runtime_error("confirmed collection unavailable");
-            const auto args = Json{{"block","dirt"},{"count",2},{"route",local ? "game" : "main"}}.dump();
+            const auto args = Json{{"block","dirt"},{"count",2},{"approval",local ? "game" : "main"}}.dump();
             return {{Role::assistant,"",{{"collect",tool->name,args}}},FinishReason::tool_calls};
         }});
         host.plugins().install(argv[1]);

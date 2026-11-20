@@ -27,7 +27,7 @@ struct CompanionStatus {
 };
 struct CompanionConfirmation {
     std::uint64_t id = 0, revision = 0, order = 0;
-    std::string world, player, question, arguments;
+    std::string world, player, question, arguments, skill;
     std::string channel, presentation, decision, source;
     bool answered = false;
 };
