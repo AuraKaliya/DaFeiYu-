@@ -14,7 +14,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
-        if (argc != 3 && !interrupt && !confirm) throw std::runtime_error("package and test directory required");
+        const bool task = argc == 4 && std::wstring_view(argv[3]) == L"partner-task";
+        if (argc != 3 && !interrupt && !confirm && !task) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
         std::atomic_bool actual_reply = false, assessed = false, interruption_seen = false;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
@@ -25,12 +26,24 @@ int wmain(int argc, wchar_t** argv) {
                     assessment.at("work").at("skill") == "move" && assessment.at("currentEvents").back().at("sequence") == 2;
                 return {{Role::assistant,assessed ? "stop" : "continue"}};
             }
-            if (request.tools.size() != 5) throw std::runtime_error("partner granted unintended tools");
+            if (request.tools.size() != 6) throw std::runtime_error("partner granted unintended tools");
             if (last.role == Role::tool) {
+                if (task && last.tool_call_id == "task") {
+                    if (last.content.find("\"status\":\"updated\"") == std::string::npos)
+                        throw std::runtime_error("shared task was not accepted");
+                    return {{Role::assistant,"turn finished"}};
+                }
                 actual_reply = last.content.find(confirm ? "\"collected\":2" : "\"sent\":true") != std::string::npos;
                 return {{Role::assistant,"internal settlement"}};
             }
             const auto input = nlohmann::json::parse(last.content);
+            if (task && input.at("trigger") == "task.continue") {
+                if (!input.at("events").empty() || input.at("task").at("goal") != "resume the wall" ||
+                    input.at("task").at("detail") != "check the corner" || input.at("task").at("revision") != 1)
+                    throw std::runtime_error("autonomous turn lost the task or invented new chat");
+                const auto reply_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_reply"); });
+                return {{Role::assistant,"",{{"reply",reply_tool->name,R"({"text":"ready to play"})"}}},FinishReason::tool_calls};
+            }
             if (input.at("events").back().at("type") == "player.entered") return {{Role::assistant,"silent baseline"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
                 interruption_seen = input.at("previousActivity").at("stopRequested") == true;
@@ -38,6 +51,11 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
+            if (task) {
+                const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
+                return {{Role::assistant,"",{{"task",task_tool->name,
+                    R"({"revision":0,"goal":"resume the wall","detail":"check the corner","next":"continue"})"}}},FinishReason::tool_calls};
+            }
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& tool) {
                 return tool.name.ends_with(confirm ? "_collect_confirmed" : interrupt ? "_move" : "_reply");
             });
@@ -49,7 +67,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto instance = app.plugins().instance("mc.companion");
         unsigned game_receipts = 0;
         unsigned decisions = 0;
-        bool control_released = false;
+        bool control_released = false, continuation_closed = false;
         nlohmann::json confirmation;
         const auto& mails = app.mailbox_host();
         // 回复原升级请求，投递编号由实际宿主信箱维护。
@@ -79,6 +97,8 @@ int wmain(int argc, wchar_t** argv) {
                         throw std::runtime_error("late answer changed original decision");
                     if (++decisions == 1) reply(3,false,false);
                 } else if (type == "mc.partner.control") control_released = fact.at("phase") == "released";
+                else if (task && type == "mc.partner.turn" && fact.at("order") == 2 && fact.at("request") == 3)
+                    continuation_closed = fact.at("failed") == false;
                 else if (type == "mc.partner.action") {
                     if (fact.at("order") != 2 || fact.at("invocation") == 0 || (confirm ? fact.at("result").at("collected") != 2 :
                         interrupt ? fact.at("result").at("status") != "interrupted" : fact.at("result").at("sent") != true))
@@ -100,7 +120,8 @@ int wmain(int argc, wchar_t** argv) {
                     dfy_v2_partner_status state{};
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
-                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED : state.ready && state.session && state.settled == (interrupt ? 3u : 2u)) return;
+                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED :
+                        state.ready && state.session && state.settled == (interrupt ? 3u : 2u) && (!task || continuation_closed)) return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
                 throw std::runtime_error("plugin did not reach expected boundary");

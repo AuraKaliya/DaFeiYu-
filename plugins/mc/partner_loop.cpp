@@ -8,11 +8,13 @@ using Json = nlohmann::json;
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
 constexpr std::array skills{view("mc.companion/observe"),view("mc.companion/move"),
-    view("mc.companion/collect"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
+    view("mc.companion/collect"),view("mc.companion/reply"),view("mc.companion/collect_confirmed"),view("mc.companion/task_update")};
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
+    "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
+    "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "如果这次采集需要玩家明确批准，用 collect_confirmed。route=game 时先在游戏问，route=main 时由本体选择询问渠道。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
@@ -61,6 +63,7 @@ void PartnerLoop::stop() noexcept { if (phase_ == DFY_V2_PARTNER_LISTENING) phas
 // 在宿主已撤销全部子会话工作后释放插件本地读口。
 void PartnerLoop::reset() noexcept {
     feed_.clear();
+    task_ = {};
     phase_ = DFY_V2_PARTNER_CLOSED;
     agent_ = nullptr;
     mail_ = nullptr;
@@ -96,6 +99,7 @@ bool PartnerLoop::settle(bool cancel) {
         return false;
     }
     settled_ = order_;
+    if (!active_delegation_ && (cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) task_.disarm();
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     if (active_delegation_) {
         const bool answered = !cancel && state.phase == DFY_V2_AGENT_SUCCEEDED && state.answer.length && state.answer.length <= 2048;
@@ -113,21 +117,24 @@ void PartnerLoop::retire() {
     if (session_) agent_->close(session_,nullptr);
     session_world_.clear();
     session_ = order_ = settled_ = 0;
+    task_ = {};
     previous_.clear();
 }
 
 // 将按序收到的原始事实及绑定游戏数据送入同一子会话。
 // 步骤：创建或复用上下文 → 定格原玩家及候选范围 → 接纳后消费事实。
-void PartnerLoop::submit() {
+void PartnerLoop::submit(std::string_view wake) {
     if (!session_) {
         auto world = feed_.world();
         if (agent_->open(&session_,nullptr)) throw std::runtime_error("MC partner: cannot open child session");
         session_world_ = std::move(world);
     }
     auto facts = feed_.pending();
-    const bool delegated = facts.empty() && awaiting_delegation_.has_value();
-    const auto order = delegated ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
-    Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()}};
+    const bool delegated = wake == "main.delegation";
+    const bool autonomous = wake == "task.continue" || wake == "scene.changed";
+    const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
+    Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
+        {"task",task_.context()},{"trigger",wake}};
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
@@ -137,6 +144,7 @@ void PartnerLoop::submit() {
         delegated ? delegated_skills.data() : skills.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : skills.size()),DFY_V2_AGENT_ALLOW_CHANGES};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
+    if (!delegated) task_.submitted(!facts.empty(),autonomous);
     order_ = order;
     reviewed_ = 0;
     stopped_work_ = false;
@@ -151,6 +159,17 @@ void PartnerLoop::submit() {
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
     return session != session_ || (phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ &&
         feed_.pending().empty() && !feed_.gap());
+}
+
+// 只有处理当前世界的原子会话能更新任务；待处理的新玩家信息可撤销旧回合的控制权。
+Json PartnerLoop::update_task(std::uint64_t session, std::string_view envelope) {
+    if (session != session_ || !request_ || active_delegation_ || !permits(session) || feed_.departed() || !feed_.ready())
+        throw std::invalid_argument("MC partner: task owner unavailable");
+    const auto input = Json::parse(envelope);
+    const auto& source = input.at("context");
+    if (source.at("generation") != session_world_ || source.at("order") != order_)
+        throw std::invalid_argument("MC partner: stale task context");
+    return task_.update(input.at("arguments"),feed_.observation());
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。
@@ -176,6 +195,7 @@ void PartnerLoop::report_actions() {
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
+        if (!active_delegation_) task_.record(fact);
         publish("mc.partner.action",fact);
         action = {};
     }
@@ -302,7 +322,13 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         retire(); reset(); return;
     }
     if (replaced) retire();
-    if (!presentation_ && feed_.ready() && (!feed_.pending().empty() || awaiting_delegation_) && outbound_.size() <= 54) submit();
+    if (feed_.departed()) task_ = {};
+    if (presentation_ || !feed_.ready() || outbound_.size() > 54) return;
+    if (!feed_.pending().empty()) submit("game.event");
+    else if (awaiting_delegation_) submit("main.delegation");
+    else if (!feed_.gap() && !feed_.departed()) {
+        if (const auto wake = task_.trigger(feed_.observation()); !wake.empty()) submit(wake);
+    }
 }
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。

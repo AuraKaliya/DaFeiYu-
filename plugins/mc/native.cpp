@@ -15,7 +15,7 @@ struct NativeJob {
     std::uint64_t sequence = 0;
     bool ready = false, success = false, exited = false;
     std::string id, output, wire, arguments;
-    enum class Method { world, survey, inbox, ask, admit, receipt, control } method = Method::world;
+    enum class Method { world, survey, inbox, ask, admit, receipt, control, task } method = Method::world;
     std::chrono::steady_clock::time_point next{};
     bool attempted = false;
     bool cancelled = false;
@@ -41,7 +41,7 @@ thread_local std::array<dfy_v2_instance*, 16> slots{};
 std::atomic_uint64_t serial{0};
 
 struct PartnerSkill { std::string_view name, purpose, description, schema; bool changes; };
-constexpr std::array<PartnerSkill, 5> partner_skills{{
+constexpr std::array<PartnerSkill, 6> partner_skills{{
     {"observe", "partner.observe", "Read your position, player position, landmarks, inventory and previous action. Optional block registry name scans visible nearby targets.",
         R"({"type":"object","properties":{"block":{"type":"string"}},"additionalProperties":false})", false},
     {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
@@ -51,7 +51,9 @@ constexpr std::array<PartnerSkill, 5> partner_skills{{
     {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true},
     {"collect_confirmed", "partner.collect_confirmed", "Request player consent for a fixed collection. Route 'game' asks in the game; route 'main' lets the main Agent select a channel. The original collection runs only after consent.",
-        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true}
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true},
+    {"task_update", "partner.task_update", "Update the shared task within this world. Use the latest revision, retain known facts and uncertainties in detail. next: continue after this turn, scene on observed change, player on new input, done when complete.",
+        R"({"type":"object","properties":{"revision":{"type":"integer"},"goal":{"type":"string"},"detail":{"type":"string"},"next":{"type":"string","enum":["continue","scene","player","done"]}},"required":["revision","goal","next"],"additionalProperties":false})", true}
 }};
 
 // 限长读取 ABI 借用文本，非法空指针不形成视图。
@@ -206,6 +208,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool confirmed = partner && skill->name == "collect_confirmed";
+    const bool local_task = partner && skill->name == "task_update";
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
@@ -224,7 +227,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.arguments = text(call->arguments);
         if (confirmed) {
             if (!raw->partner.confirm_collect(call->session,call->invocation,job.arguments)) return report(DFY_V2_INVALID_CONTEXT,error);
-        } else if (partner) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
+        } else if (partner && !local_task) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
             job.id, job.arguments, std::string(text(name)));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
@@ -232,10 +235,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         else if (survey) job.wire = dfy::mc::survey_request(job.id, raw->config.key, job.arguments);
         else if (ask) job.wire = dfy::mc::question_request(job.id, raw->config.key, job.arguments);
         else if (admit || receipt) job.wire = dfy::mc::delivery_request(admit, job.id, raw->config.key, job.arguments);
-        else job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
+        else if (!local_task) job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
     } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
     catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
-    if (control) job.method = NativeJob::Method::control;
+    if (local_task) job.method = NativeJob::Method::task;
+    else if (control) job.method = NativeJob::Method::control;
     else if (survey) job.method = NativeJob::Method::survey;
     else if (admit) job.method = NativeJob::Method::admit;
     else if (receipt) job.method = NativeJob::Method::receipt;
@@ -263,6 +267,14 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
     if (job->ready) {
         job->pipe.reset();
         job->exited = true;
+    } else if (job->method == NativeJob::Method::task) {
+        try {
+            const auto result = raw->partner.update_task(job->partner_session,job->arguments);
+            job->success = result.at("status") == "updated";
+            job->effect = job->success ? DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
+            job->output = result.dump();
+        } catch (...) {}
+        job->ready = true;
     } else if (job->waiting) {
         try {
             if (auto decision = raw->partner.confirm_result(job->invocation)) {
@@ -318,6 +330,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                     job->output = dfy::mc::delivery_reply(job->method == NativeJob::Method::admit, *reply, job->id, job->arguments);
                     if (job->method == NativeJob::Method::admit && job->output != "null") job->effect = DFY_V2_TOOL_APPLIED;
                     break;
+                case NativeJob::Method::task: break;
                 }
                 job->success = job->ready = true;
             }
@@ -357,7 +370,7 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticke
     if (!job) return report(DFY_V2_INVALID_HANDLE, error);
     if (!job->exited) return report(DFY_V2_BUSY, error);
     if (job->confirmation) raw->partner.confirm_exited(job->invocation);
-    if (job->partner_session) raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,
+    if (job->partner_session && job->method != NativeJob::Method::task) raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,
         std::move(job->id),std::move(job->output));
     *job = {};
     return report(DFY_V2_OK, error);

@@ -13,11 +13,12 @@ async function main() {
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
   const confirm = variant === 'partner-confirm';
+  const task = variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
   const exchange = variant === 'partner-exchange';
   const showGame = route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual';
-  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || route || exchange;
+  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || task || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -105,7 +106,7 @@ async function main() {
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || route || exchange ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || task || route || exchange ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);

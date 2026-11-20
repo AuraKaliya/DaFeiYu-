@@ -84,6 +84,9 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_partner_confirmation COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-confirm)
   set_tests_properties(plugins.mc_partner_confirmation PROPERTIES TIMEOUT 25)
+  add_test(NAME plugins.mc_partner_task COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+    "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-task)
+  set_tests_properties(plugins.mc_partner_task PROPERTIES TIMEOUT 25)
   add_executable(dfy_mc_confirmation_route_tests mc_confirmation_route.cpp)
   target_link_libraries(dfy_mc_confirmation_route_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
   add_dependencies(dfy_mc_confirmation_route_tests dfy_mc_companion)

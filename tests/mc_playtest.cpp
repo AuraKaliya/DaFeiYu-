@@ -46,7 +46,7 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
         record_input(root, {{"check", input.at("newEvents")}, {"work",input.at("work")}, {"stop",stop}});
         return speak(stop ? "stop" : "continue");
     }
-    if (request.tools.size() != 5 || request.messages.front().role != Role::system) throw std::runtime_error("invalid partner scope");
+    if (request.tools.size() != 6 || request.messages.front().role != Role::system) throw std::runtime_error("invalid partner scope");
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
         record_input(root, input);

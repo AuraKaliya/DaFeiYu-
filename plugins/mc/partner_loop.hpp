@@ -1,6 +1,7 @@
 #pragma once
 #include "partner_feed.hpp"
 #include "game_work.hpp"
+#include "partner_task.hpp"
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <dafeiyu/mailbox_abi_v2.h>
@@ -25,6 +26,8 @@ class PartnerLoop {
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
+    // 在当前有权操作的子回合修改局内任务，并返回结构化结果。
+    nlohmann::json update_task(std::uint64_t session, std::string_view envelope);
     // 保留原采集候选，只允许当前插件角色创建确认。
     bool confirm_collect(std::uint64_t session, std::uint64_t request, std::string_view envelope);
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
@@ -36,8 +39,8 @@ class PartnerLoop {
   private:
     // 当前回合实际退出后可发布原结算，或请求取消并继续等待。
     bool settle(bool cancel);
-    // 用原游戏游标、观察及四项技能构造一轮，接纳后消费原件。
-    void submit();
+    // 用原游戏游标、新事件或局内任务信号构造一轮，接纳后消费原件。
+    void submit(std::string_view wake);
     // 结束旧游戏绑定对应的 Agent 上下文。
     void retire();
     // 单独判断新事实是否应中止原生在途动作，过期判断不得中止替代动作。
@@ -62,6 +65,7 @@ class PartnerLoop {
     void advance_confirmation_presentation(const BridgeConfig& config, std::uint64_t instance, bool closing);
 
     PartnerFeed feed_;
+    PartnerTask task_;
     const dfy_v2_agent_api* agent_ = nullptr;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
