@@ -1,6 +1,8 @@
 #include "pipe_exchange.hpp"
 #include "game_work.hpp"
 #include "world_protocol.hpp"
+#include "partner_loop.hpp"
+#include <dafeiyu/activity_abi_v2.h>
 #include <dafeiyu/tool_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
@@ -24,6 +26,8 @@ struct dfy_v2_instance {
     std::uint64_t owner = 0, sequence = 0;
     bool running = false;
     dfy::mc::BridgeConfig config;
+    dfy_v2_query_interface_fn host = nullptr;
+    dfy::mc::PartnerLoop partner;
     std::array<NativeJob, 4> jobs;
 };
 
@@ -90,6 +94,7 @@ dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_v
     try {
         auto instance = std::make_unique<dfy_v2_instance>();
         instance->config = dfy::mc::configured_bridge(text(config));
+        instance->host = host;
         auto previous = serial.load();
         do {
             if (previous == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
@@ -110,6 +115,7 @@ dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* raw, dfy_v2_error* error) noexc
 dfy_v2_status DFY_V2_CALL stop(dfy_v2_instance* raw, dfy_v2_error* error) noexcept {
     if (!owned(raw)) return report(DFY_V2_INVALID_HANDLE, error);
     if (active_jobs(*raw)) return report(DFY_V2_BUSY, error);
+    raw->partner.reset();
     raw->running = false;
     return report(DFY_V2_OK, error);
 }
@@ -369,6 +375,45 @@ dfy_v2_status DFY_V2_CALL skill_at(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     return report(DFY_V2_OK, error);
 }
 const dfy_v2_companion_skills_api skills{{sizeof(dfy_v2_companion_skills_api), 1}, skill_at};
+
+// 把显式使用伙伴的请求交给本实例外层循环。
+dfy_v2_status DFY_V2_CALL listen_partner(dfy_v2_instance* raw, dfy_v2_error* error) noexcept {
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    try { return report(raw->partner.listen(raw->host,raw->config),error); }
+    catch (...) { return report(DFY_V2_FAILED,error); }
+}
+
+// 只请求已有伙伴会话退出，后台步骤负责继续收尾。
+dfy_v2_status DFY_V2_CALL stop_partner(dfy_v2_instance* raw, dfy_v2_error* error) noexcept {
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    raw->partner.stop();
+    return report(DFY_V2_OK,error);
+}
+
+// 读取插件当前伙伴状态，字符串视图不脱离原调用。
+dfy_v2_status DFY_V2_CALL partner_status(dfy_v2_instance* raw, dfy_v2_partner_status* out, dfy_v2_error* error) noexcept {
+    if (!out) return report(DFY_V2_INVALID_ARGUMENT,error);
+    *out = {};
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    *out = raw->partner.status();
+    return report(DFY_V2_OK,error);
+}
+
+// 在公平调度下推进一小步，空闲时降低宿主轮询频率。
+dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, dfy_v2_error* error) noexcept {
+    if (!wait) return report(DFY_V2_INVALID_ARGUMENT,error);
+    *wait = 0;
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    try {
+        raw->partner.advance(raw->config,raw->owner);
+        *wait = raw->partner.status().phase == DFY_V2_PARTNER_CLOSED ? 100 : 5;
+        return report(DFY_V2_OK,error);
+    } catch (...) { return report(DFY_V2_FAILED,error); }
+}
+
+const dfy_v2_companion_partner_api partner{{sizeof(dfy_v2_companion_partner_api),DFY_V2_COMPANION_PARTNER_VERSION},
+    listen_partner,stop_partner,partner_status};
+const dfy_v2_activity_api activity{{sizeof(dfy_v2_activity_api),DFY_V2_ACTIVITY_VERSION},advance_partner};
 // 返回固定版本的静态能力表。
 dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const void** out, dfy_v2_error* error) noexcept {
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
@@ -378,6 +423,8 @@ dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const
     if (version == DFY_V2_COMPANION_VERSION && text(name) == DFY_V2_COMPANION_INTERFACE) *out = &companion;
     if (version == DFY_V2_COMPANION_ROUTES_VERSION && text(name) == DFY_V2_COMPANION_ROUTES_INTERFACE) *out = &routes;
     if (version == DFY_V2_COMPANION_SKILLS_VERSION && text(name) == DFY_V2_COMPANION_SKILLS_INTERFACE) *out = &skills;
+    if (version == DFY_V2_COMPANION_PARTNER_VERSION && text(name) == DFY_V2_COMPANION_PARTNER_INTERFACE) *out = &partner;
+    if (version == DFY_V2_ACTIVITY_VERSION && text(name) == DFY_V2_ACTIVITY_INTERFACE) *out = &activity;
     return report(*out ? DFY_V2_OK : DFY_V2_UNSUPPORTED, error);
 }
 const dfy_v2_plugin_api plugin{sizeof(dfy_v2_plugin_api), DFY_V2_ABI_VERSION, DFY_V2_ARCH_X64, 0, query};

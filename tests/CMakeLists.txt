@@ -71,6 +71,13 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_world COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-world")
   set_tests_properties(plugins.mc_world PROPERTIES TIMEOUT 20)
+  add_executable(dfy_mc_plugin_partner_tests mc_plugin_partner.cpp)
+  target_link_libraries(dfy_mc_plugin_partner_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
+  add_dependencies(dfy_mc_plugin_partner_tests dfy_mc_companion)
+  set_target_properties(dfy_mc_plugin_partner_tests PROPERTIES FOLDER "Tests")
+  add_test(NAME plugins.mc_partner COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+    "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-loop)
+  set_tests_properties(plugins.mc_partner PROPERTIES TIMEOUT 25)
   add_executable(dfy_mc_pipe_tests mc_pipe.cpp)
   target_link_libraries(dfy_mc_pipe_tests PRIVATE dfy_mc_bridge dfy_build_options nlohmann_json::nlohmann_json)
   set_target_properties(dfy_mc_pipe_tests PROPERTIES FOLDER "Tests")
