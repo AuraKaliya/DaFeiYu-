@@ -4,7 +4,7 @@
 
 - **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
 - **想审当前设计**，见[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)、[MC 能力清单](docs/mc-partner-capability-review.md)以及[主面板与内置房间](docs/main-agent-room-development-plan.md)。
-- **想了解工程**，见[当前架构](docs/architecture.md)、[文档导航](docs/README.md)和[阶段归档](docs/archive/README.md)。
+- **想了解工程**，见[当前架构与流程图](docs/architecture.md)和[文档导航](docs/README.md)。
 
 ## 运行与构建
 
@@ -31,7 +31,7 @@ cmake --build --preset windows-release
 cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/package/DaFeiYu"
 ```
 
-分发包含程序、Release 运行库、无密钥配置、初始空插件目录、独立示例包、SDK 和第三方许可，不依赖源码、`Old` 或测试目录。详见 [运行说明](docs/run-guide.md) 与 [SDK 开发说明](sdk/README.md)。
+分发包含程序、Release 运行库、无密钥配置、初始空插件目录、独立示例包、SDK 和第三方许可，安装目录可以独立运行。[运行说明](docs/run-guide.md) · [SDK 开发说明](sdk/README.md)
 
 ## 会话与本地命令
 
@@ -85,7 +85,7 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 | 职责 | 入口 |
 |---|---|
 | App：共享服务、终端及原生插件管理 | [Application](app/application.hpp)、[Conversation](app/conversation.hpp)、[终端命令](app/application_commands.cpp)、[插件命令](app/plugin_commands.cpp) |
-| Agent：唯一正式会话及历史提交 | [Session](agent/include/dafeiyu/session.hpp)、[实现](agent/session.cpp) |
+| Agent：会话、运行与历史提交 | [Session](agent/include/dafeiyu/session.hpp)、[实现](agent/session.cpp) |
 | Model：异步接纳及供应商协议 | [AsyncClient](model/include/dafeiyu/async_model.hpp)、[完整文本调用](model/client.cpp) |
 | Events：不可变交付与处理 | [广播](events/include/dafeiyu/broadcast_channel.hpp)、[处理](events/include/dafeiyu/processing.hpp)、[控制边界](events/include/dafeiyu/hooks.hpp) |
 | Runtime：预算、调度、结果及重试 | [预算](runtime/include/dafeiyu/budget.hpp)、[调度](runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](runtime/include/dafeiyu/result_group.hpp)、[重试](runtime/include/dafeiyu/retry_controller.hpp) |
@@ -94,7 +94,7 @@ cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/pack
 | SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
 | Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application_lifecycle.cpp) |
 
-VS 按 App、Agent、Model、Platform、SDK、Plugins、可选 Tests 分组，只建立已实现目标。独立同步 `Bus` 保留为早期基础及其测试，正式 Agent 不再依赖它。`Old/` 保留重建前工程，只供参考，不参与新根工程构建。
+VS 按 App、Agent、Model、Platform、SDK、Plugins、可选 Tests 分组，只建立已实现目标。正式会话使用有界事件通道，独立同步 `Bus` 有自己的测试。
 
 ## 验证方式
 
@@ -116,6 +116,6 @@ ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
 
 所有开发、回归和最终验收测试均使用可控模型响应或传输替身，不调用远程或本地真实模型。真实线程、Windows 管道、符号链接和 DLL 按功能需要实际执行；UI 不采用 Computer Use 检查。依赖真实模型表现的事项仅记录、不执行，不计入测试通过率或验收门槛。旧 [verify-live.ps1](scripts/verify-live.ps1) 及已有真实服务记录只保留历史用途，不纳入当前验证流程。
 
-已完成的 Agent 基础建设可从[能力计划](docs/archive/agent/agent-capability-development-plan.md)回查，统一策略、追踪和离线回放的历史设计见[横向计划](docs/archive/agent/agent-cross-cutting-plan.md)。原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。逐步验证见 [开发记录](docs/archive/agent/agent-development-log.md)。
+原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。[Agent 会话与工具流程](docs/architecture.md#agent-会话与工具流程)
 
 第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。

@@ -23,12 +23,12 @@
 
 | 阅读入口 | 已有能力 | 本次需要补的部分 |
 |---|---|---|
-| [桌面容器](archive/ui/ui-u01-validation.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 页面](../ui/web/src/App.vue) | Win32、WebView2、本地资源、中文输入与焦点已有探针。可信主文档能读取当前或最近运行摘要。 | 普通用户可启动的主面板、受信命令、授权的对话正文与消息投递状态。探针模式保留独立入口。 |
+| [桌面容器](ui-probe-run-guide.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 页面](../ui/web/src/App.vue) | Win32、WebView2、本地资源、中文输入与焦点已有探针。可信主文档能读取当前或最近运行摘要。 | 普通用户可启动的主面板、受信命令、授权的对话正文与消息投递状态。探针模式保留独立入口。 |
 | [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/gui/run_status_host.cpp) | 发送、取消、空闲清空及结果与退出已有接口。原生业务线程推进应用，当前桌面只发布无正文摘要。 | 由同一推进者接收并保存本进程的对话结果。扩展忙时消息接纳，维持一个活动主回合。 |
 | [工具目录](../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。应用现有工具准备入口按已加载插件实例组装。 | 本体为房间签发实例身份并绑定本地工具实现。沿用同一执行约束，普通问答和内置房间都可在空插件环境工作。 |
 | [观察收件](../agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../agent/include/dafeiyu/run_journal.hpp) | 已有来源、代次、修订、时效、重复、断档及重采样语义。 | 在进入角色可读记录前判定空间与感官可达性，复用已有记录与水位机制。 |
 
-本方案细化 [UI 总体方案](ui-framework-design.md) 中 U02 的命令桥接、U04 的主会话与 U07 的内置房间。MC 的 G14～G20 依照[游戏陪伴计划](mc-companion-development-plan.md)独立推进。主体面板的里程碑可以仅用本地宿主和可控模型替身完成。
+本方案细化 UI 总体方案中 U02 的命令桥接、U04 的主会话与 U07 的内置房间。主体面板的里程碑可以用本地宿主和可控模型替身完成。游戏伙伴有自己的交互方案和评审顺序。[UI 总体方案](ui-framework-design.md) · [MC 伙伴交互方案](mc-companion-development-plan.md)
 
 两条开发线各按依赖接续。主面板从 01 的空闲与忙时首屏开始，用空插件样本评审。MC 从 G14 剩余的受阻分析开始，用宿主与终端验证何时继续探索、何时追问及改道后是否恢复。首次联调建议让玩家在主面板答完游戏里提出的问题。两处引用同一问题号和修订，桌面重发沿用原命令号，并分别展示宿主已授权和游戏已接单的回执。
 
