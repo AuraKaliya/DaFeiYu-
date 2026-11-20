@@ -103,7 +103,7 @@ void diagnostic_boundary() {
     check(!client.size() && snapshot.request,"diagnostic snapshot retained a model slot");
 }
 // 验证结构化后端复用原操作生命周期，按预设调用结果推进且不回退真实服务。
-// 步骤：拒绝空后端与错误选项 → 返回固定工具调用 → 回填固定结果 → 取消后丢弃迟到响应。
+// 步骤：拒绝空后端与错误选项 → 返回固定工具调用 → 回填固定结果 → 验证取消及迟到诊断。
 void structured() {
     rejects<std::invalid_argument>([] { AsyncClient invalid(1,Backend{}); });
     const Request input{{{Role::system,"rules"},{Role::user,"goal"}},{{"read","read","{}"}},32};
@@ -133,6 +133,13 @@ void structured() {
     cancelled->request_cancel(CancelReason::user); drain(client,cancelled);
     check(cancelled->operation()->state() == OperationState::cancelled,"late structured response replaced cancellation");
     rejects<std::runtime_error>([&] { (void)cancelled->response(); });
+    check(!cancelled->observed_response(),"ordinary cancellation retained discarded response");
+    cancelled.reset(); client.collect();
+    auto observed = client.submit_request({},next,true);
+    observed->request_cancel(CancelReason::user); drain(client,observed);
+    check(observed->operation()->state() == OperationState::cancelled && observed->observed_response() &&
+        observed->observed_response()->message.content == "done","explicit capture lost late response or changed outcome");
+    rejects<std::runtime_error>([&] { (void)observed->response(); });
 }
 }
 // 验收真实后台线程与宿主唯一结算，所有模型结果使用可控离线替身。

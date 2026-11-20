@@ -141,12 +141,21 @@ struct RunLoopState {
     }
     // 使用改写后的模型文本和参数进入正常响应校验，保留模型调用身份和工具元数据。
     // 步骤：改写助手文本 → 逐个改写同名工具的原参数 → 复核完整响应。
-    void rewrite_response(model::Response& response) {
+    bool rewrite_response(model::Response& response) {
         const auto current = control();
         auto changed = rewrite(TextHookPoint::model_response,current,"content",response.message.content);
         for (auto& call : response.message.tool_calls)
             changed = rewrite(TextHookPoint::tool_arguments,current,call.name,call.arguments,64*1024) || changed;
         if (changed) model::validate_response(response);
+        return changed;
+    }
+    // 在宿主线程发布可选的取证记录。采集失败不改变原运行裁定。
+    void capture(ModelCapturePhase phase, AttemptId attempt, const model::Request* input = nullptr,
+        const model::Response* output = nullptr, const model::CallDiagnostics* call = nullptr,
+        runtime::OperationState result = runtime::OperationState::pending) noexcept {
+        if (!options.model_capture) return;
+        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result}); }
+        catch (...) {}
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
     void stop_children(runtime::CancelReason reason) {
@@ -426,12 +435,15 @@ struct RunLoopState {
         if (planning_request) { context.purpose = ModelPurpose::plan_generation; context.plan_revision = planning_request->expected.plan_revision+1; }
         else if (plan_step) { context.purpose = ModelPurpose::plan_step; context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->key.step; }
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
-        auto request = models.submit_request(config,std::move(input));
+        capture(ModelCapturePhase::prepared,current.attempt,&input);
+        auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
         record->model_contexts_.push_back(std::move(context));
         TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
+        const auto call = record->model_->diagnostics();
+        capture(ModelCapturePhase::submitted,current.attempt,nullptr,nullptr,&call);
     }
     // 将下一计划步骤交给原模型工具循环，工作成功仍须另行由宿主验证。
     // 步骤：取得下一未完成步骤 → 收紧原工具范围并预留工作 → 准备步骤输入与关联 → 提交原模型入口。
@@ -474,6 +486,7 @@ struct RunLoopState {
         ModelStepSnapshot value{record->attempt_,record->model_->diagnostics(),record->model_->operation()->state(),record->model_->exit()->state()};
         if (value.result == runtime::OperationState::succeeded) value.usage = record->model_->response().usage;
         value.observed_exit = std::chrono::steady_clock::now();
+        capture(ModelCapturePhase::exited,value.attempt,nullptr,record->model_->observed_response(),&value.call,value.result);
         record->model_steps_.push_back(value); record->completed_call_ = value.call;
         record->completed_model_result_ = value.result; record->completed_model_exit_ = value.exit;
         TraceFact fact; fact.subject = {record->run_id(),TraceNodeKind::model,value.attempt.step.sequence,value.attempt.sequence,value.call.request};
@@ -518,7 +531,10 @@ struct RunLoopState {
                 collect_model(); interrupt();
                 if (response && record->operation()->state() == OperationState::pending) {
                     stage = TurnFailure::model_response;
-                    rewrite_response(*response);
+                    if (rewrite_response(*response)) {
+                        const auto& call = record->completed_call_;
+                        capture(ModelCapturePhase::rewritten,record->attempt_,nullptr,&*response,&call,OperationState::succeeded);
+                    }
                     interrupt();
                 }
                 if (response && record->operation()->state() == OperationState::pending) {

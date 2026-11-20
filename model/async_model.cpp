@@ -75,7 +75,7 @@ std::shared_ptr<ModelRequest> AsyncClient::submit(Config config, std::vector<Mes
 }
 // 将完整输入独立转交后台，异步提交之后只有不会失败的槽位提交。
 // 步骤：回收并校验接纳、协议及后端能力 → 准备结果及输入捕获 → 提交后台调用 → 保存宿主责任。
-std::shared_ptr<ModelRequest> AsyncClient::submit_request(Config config, Request input) {
+std::shared_ptr<ModelRequest> AsyncClient::submit_request(Config config, Request input, bool capture_discarded) {
     collect();
     if (!accepting_) throw std::logic_error("model: async admission closed");
     validate_request(input);
@@ -86,6 +86,7 @@ std::shared_ptr<ModelRequest> AsyncClient::submit_request(Config config, Request
     }
     for (auto& slot : requests_) if (!slot) {
         auto request = std::shared_ptr<ModelRequest>(new ModelRequest());
+        request->capture_discarded_ = capture_discarded;
         request->progress_->submitted = std::chrono::steady_clock::now();
         request->worker_ = std::async(std::launch::async,
         // 在后台发布调用阶段，完整响应或原异常仍仅通过 future 交还宿主。
@@ -113,9 +114,13 @@ void AsyncClient::advance() {
         try {
             auto response = request->worker_.get();
             if (request->operation()->state() == OperationState::pending) {
-                validate_response(response);
+                try { validate_response(response); }
+                catch (...) {
+                    if (request->capture_discarded_) request->discarded_.emplace(std::move(response));
+                    throw;
+                }
                 request->response_ = std::move(response); request->result_.settle(OperationState::succeeded);
-            }
+            } else if (request->capture_discarded_) request->discarded_.emplace(std::move(response));
         } catch (...) {
             if (request->operation()->state() == OperationState::pending) {
                 request->error_ = std::current_exception(); request->result_.settle(OperationState::failed);
@@ -123,6 +128,11 @@ void AsyncClient::advance() {
         }
         request->exit_.settle(OperationState::succeeded);
     }
+}
+// 借用真实返回的响应。失败或取消即使留有正文，也不会改变原业务终态。
+const Response* ModelRequest::observed_response() const noexcept {
+    if (operation()->state() == OperationState::succeeded) return &response_;
+    return discarded_ ? &*discarded_ : nullptr;
 }
 // 关闭接纳并请求取消，已经完成的结果及首个取消原因保持不变。
 // 步骤：停止新请求 → 登记各请求停止原因 → 非阻塞推进已有结果。

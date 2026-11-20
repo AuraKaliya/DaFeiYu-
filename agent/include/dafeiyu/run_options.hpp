@@ -5,6 +5,7 @@
 #include <dafeiyu/observation_input.hpp>
 #include <dafeiyu/plan_definition.hpp>
 #include <dafeiyu/action_observations.hpp>
+#include <dafeiyu/model_capture.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -42,6 +43,7 @@ struct RunOptions {
     ToolClock now = std::chrono::steady_clock::now;
     PolicyExtension extension;
     TextHook text_hook;
+    ModelCaptureSink model_capture;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;
     std::size_t trace_capacity = 256;

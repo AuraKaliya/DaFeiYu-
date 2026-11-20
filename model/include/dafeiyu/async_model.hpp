@@ -39,6 +39,8 @@ class ModelRequest {
     const std::string& answer() const;
     // 成功后借用完整结构化响应；协议成功不代表工具已经执行或任务完成。
     const Response& response() const;
+    // 供可信本机记录读取后台退出时交还的响应，包括未采纳的迟到响应。
+    const Response* observed_response() const noexcept;
     // 在宿主线程读取后台已发布的单调时间快照，不推进结果或持有正文与凭据。
     CallDiagnostics diagnostics() const noexcept;
   private:
@@ -50,6 +52,8 @@ class ModelRequest {
     runtime::OperationSource result_{true}, exit_;
     std::future<Response> worker_;
     Response response_;
+    std::optional<Response> discarded_;
+    bool capture_discarded_ = false;
     std::exception_ptr error_;
 };
 
@@ -69,7 +73,7 @@ class AsyncClient {
     // 完整准备输入和结果后提交后台调用，容量不足不发起请求，也不内联通知。
     std::shared_ptr<ModelRequest> submit(Config config, std::vector<Message> messages);
     // 接纳经过校验的结构化请求，文本替身不支持的字段在提交前拒绝。
-    std::shared_ptr<ModelRequest> submit_request(Config config, Request request);
+    std::shared_ptr<ModelRequest> submit_request(Config config, Request request, bool capture_discarded = false);
     // 非阻塞裁定取消与就绪结果，并确认工作实际退出，不执行消费者回调。
     void advance();
     // 停止新请求接纳并请求取消，实际网络退出仍按原超时边界等待。
