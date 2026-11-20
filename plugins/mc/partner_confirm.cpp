@@ -69,7 +69,7 @@ void PartnerLoop::advance_confirmation() {
     const auto token = std::to_string(item.request);
     for (const auto& event : feed_.pending()) {
         const auto sequence = event.at("sequence").get<std::uint64_t>();
-        if (sequence <= item.order || sequence != feed_.cursor() || event.at("type") != "player.message") continue;
+        if (sequence <= item.order || event.at("type") != "player.message") continue;
         const auto& text = event.at("text");
         if (text == "确认 "+token || text == "approve "+token) { confirm_once("approved","game",sequence); return; }
         if (text == "拒绝 "+token || text == "deny "+token) { confirm_once("denied","game"); return; }
@@ -93,7 +93,7 @@ void PartnerLoop::intake_confirmation(bool present, const Json& body) {
     const auto& item = *confirmation_;
     if (same(item.decision)) { publish("mc.confirmation.decision",item.decision); return; }
     if (present) { confirmation_->ask_game = true; return; }
-    if (feed_.cursor() != item.order || !feed_.ready()) return;
+    if (!feed_.ready()) return;
     if (body.at("approve") == true) confirm_once("approved","main",item.order);
     else confirm_once("denied","main");
 }

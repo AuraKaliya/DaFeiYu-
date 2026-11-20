@@ -25,7 +25,10 @@ struct TaskAdmission {
 struct ApplicationRunConfig {
     agent::ToolClock tool_clock = std::chrono::steady_clock::now;
     std::optional<std::string> model_profile;
+    bool wake_for_room_address = true;
+    bool wake_for_companion_confirmation = true;
 };
+enum class RoomEvent { presence_changed, addressed };
 
 // 在一个宿主线程上组装会话、插件和共享事件，调用方负责定期推进。
 class Application {
@@ -39,6 +42,10 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
     agent::TurnDiagnostics submit_dialogue(const std::string& text);
+    // 受信房间服务把已知事实投递到单独地址，接纳回执独立于主回合。
+    events::DeliveryReceipt post_room_event(RoomEvent event, const std::string& room, const std::string& text);
+    // 在当前主会话允许时主动审查一封房间来信。
+    MailboxIntakeResult review_room();
     // 在原宿主线程使用应用拥有的插件命令入口。
     plugins::PluginManager& plugins() noexcept { return plugins_; }
     // 借用本体持有的信箱目录及主体身份供宿主入口使用。
@@ -98,6 +105,10 @@ class Application {
     std::optional<CompanionConfirmation> companion_confirmation() const;
     // 由受信本体用户回复原伙伴确认，实际结果以插件回执为准。
     void decide_companion_confirmation(std::uint64_t id, std::uint64_t revision, bool approve);
+    // 主动审查最近的原确认事项；已呈现或较旧的事项不再次启动模型。
+    bool review_companion_confirmation();
+    // 设置随后到件是否自动进入确认分流，手动取件入口仍可使用。
+    void wake_for_companion_confirmation(bool enabled) noexcept { wake_for_companion_confirmation_ = enabled; }
     // 显式授予一个已加载实例的只读工具并提交用户目标。
     agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
@@ -152,8 +163,6 @@ class Application {
     void collect_tool_registration() noexcept;
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
     void advance_verification();
-    // 当主会话可接纳时，使用原确认事项唤醒主 Agent 选择投递渠道。
-    void advance_companion_confirmation();
 
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
@@ -161,6 +170,8 @@ class Application {
     const runtime::DomainId dialogue_sender_;
     const events::MailboxId dialogue_mailbox_;
     std::uint64_t dialogue_sequence_ = 0;
+    const runtime::DomainId room_sender_;
+    const events::MailboxId room_mailbox_;
     plugins::PluginManager plugins_;
     const model::Config model_config_;
     const model::Backend model_backend_;
@@ -174,6 +185,7 @@ class Application {
     std::shared_ptr<agent::ToolCatalog> confirmation_channels_;
     std::shared_ptr<agent::ToolCatalog> companion_exchange_tools_;
     std::uint64_t routed_confirmation_ = 0;
+    bool wake_for_companion_confirmation_;
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
     std::unique_ptr<ToolVerification> verifier_;

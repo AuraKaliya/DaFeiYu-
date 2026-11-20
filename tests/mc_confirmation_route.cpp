@@ -14,7 +14,9 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc != 4) throw std::runtime_error("package, test directory and route are required");
         const std::filesystem::path root = argv[2];
-        const bool panel = std::wstring_view(argv[3]) == L"partner-route-panel";
+        const bool manual = std::wstring_view(argv[3]) == L"partner-route-manual";
+        const bool first = std::wstring_view(argv[3]) == L"partner-route-first";
+        const bool panel = manual || std::wstring_view(argv[3]) == L"partner-route-panel";
         const bool local = std::wstring_view(argv[3]) == L"partner-route-local";
         std::atomic_uint main_calls = 0;
         // 分别提供子 Agent 的原候选和主 Agent 的固定渠道选择。
@@ -37,21 +39,27 @@ int wmain(int argc, wchar_t** argv) {
             return {{Role::assistant,"",{{"collect",tool->name,args}}},FinishReason::tool_calls};
         }});
         host.plugins().install(argv[1]);
+        host.wake_for_companion_confirmation(!manual);
         if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto id = host.open_companion("mc.companion");
         host.listen_companion(id);
         bool requested_stop = false;
+        unsigned manual_wait = 0;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(15);
         while (std::chrono::steady_clock::now() < deadline) {
             if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("confirmation work failed");
             host.conversation().advance();
             const auto state = host.companion_status();
             const auto question = host.companion_confirmation();
+            if (manual && question && manual_wait < 5) {
+                if (main_calls != 0 || host.conversation().busy()) throw std::runtime_error("passive confirmation woke the Agent");
+                if (++manual_wait == 5 && !host.review_companion_confirmation()) throw std::runtime_error("manual confirmation did not reach main Agent");
+            }
             if (panel && question && question->channel == "panel" && !question->answered) {
                 host.decide_companion_confirmation(question->id,question->revision,true);
                 host.decide_companion_confirmation(question->id,question->revision,false);
             }
-            if (!requested_stop && state->settled_event == (panel ? 2u : 3u) &&
+            if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
                 (local || (question && question->decision == "approved" && question->source == (panel ? "main" : "game") &&
                     (panel || question->presentation == "sent")))) {
                 host.stop_companion(id);

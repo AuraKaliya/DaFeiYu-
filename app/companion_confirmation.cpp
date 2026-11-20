@@ -15,12 +15,12 @@ void Application::decide_companion_confirmation(std::uint64_t id, std::uint64_t 
 
 // 从原信箱确认唤醒主 Agent，并且只授予当前问题的两种呈现工具。
 // 步骤：检查主会话空闲及原确认未路由 → 绑定无参数渠道工具 → 接纳主回合并保持权限到退出。
-void Application::advance_companion_confirmation() {
-    if (conversation_.busy()) return;
+bool Application::review_companion_confirmation() {
+    if (conversation_.busy()) return false;
     confirmation_channels_.reset();
-    if (!conversation_.accepting() || !companion_ || companion_->closed() || !companion_->confirmation()) return;
+    if (!conversation_.accepting() || !companion_ || companion_->closed() || !companion_->confirmation()) return false;
     const auto& pending = *companion_->confirmation();
-    if (pending.id == routed_confirmation_ || !pending.decision.empty() || pending.answered) return;
+    if (pending.id == routed_confirmation_ || !pending.decision.empty() || pending.answered) return false;
     routed_confirmation_ = pending.id;
     try {
         auto catalog = std::make_shared<agent::ToolCatalog>(2);
@@ -52,8 +52,10 @@ void Application::advance_companion_confirmation() {
             {"question",pending.question},{"arguments",nlohmann::json::parse(pending.arguments)},{"game",pending.world}}.dump();
         conversation_.submit(prompt,std::move(options));
         confirmation_channels_ = std::move(catalog);
+        return true;
     } catch (const std::exception&) {
         // 原问题仍可在受信入口读取，模型故障不改变业务裁定。
+        return false;
     }
 }
 }

@@ -151,6 +151,11 @@ void companion_command(Application& app, std::string_view command, std::ostream&
     } else if (words.size() == 3 && words[1] == "consult") {
         const auto run = app.submit_companion_exchange(words[2]);
         output << "Accepted run " << run.session << '/' << run.turn << ". View game receipts with /companion board.\n";
+    } else if (words.size() == 3 && words[1] == "wake" && (words[2] == "auto" || words[2] == "manual")) {
+        app.wake_for_companion_confirmation(words[2] == "auto");
+        output << "Companion confirmation wake set to " << words[2] << ".\n";
+    } else if (words.size() == 2 && words[1] == "review") {
+        output << (app.review_companion_confirmation() ? "Confirmation review started.\n" : "No new confirmation ready for review.\n");
     } else if ((words.size() == 3 || (words.size() == 4 && words[3] == "meet")) && words[1] == "where") {
         const auto answer = app.locate_companion(positive_id(words[2]), words.size() == 4 ? LocationPurpose::meeting : LocationPurpose::progress);
         switch (answer.basis) {
@@ -239,7 +244,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | consult \"GOAL\" | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | consult \"GOAL\" | wake auto|manual | review | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 

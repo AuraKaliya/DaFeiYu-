@@ -14,8 +14,9 @@ async function main() {
   const interrupt = variant === 'partner-interrupt';
   const confirm = variant === 'partner-confirm';
   const route = variant?.startsWith('partner-route-');
+  const first = variant === 'partner-route-first';
   const exchange = variant === 'partner-exchange';
-  const showGame = route && variant !== 'partner-route-panel';
+  const showGame = route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual';
   const partnerLoop = variant === 'partner-loop' || interrupt || confirm || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
@@ -41,9 +42,9 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : (interrupt && moveId) || approvedId ? 3 : 2;
+        const latest = initial ? 1 : first && approvedId ? 4 : (interrupt && moveId) || approvedId ? 3 : 2;
         const messages = [presence, { sequence: 2, text: 'play with me' },
-          { sequence: 3, text: approvedId ? 'approve ' + approvedId : 'stop for now' }];
+          { sequence: 3, text: approvedId ? 'approve ' + approvedId : 'stop for now' }, { sequence: 4, text: 'deny ' + approvedId }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
@@ -73,6 +74,7 @@ async function main() {
         return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
       }
       if (confirm || route) {
+        assert.ok(!first, 'an approval with a newer game fact must not run the stale candidate');
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
         assert.deepEqual(context, { generation: state.generation, order: showGame ? 3 : 2 });
@@ -99,7 +101,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
+    return { generation, order: first ? 4 : interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
   try {
@@ -109,7 +111,7 @@ async function main() {
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
     if (interrupt) assert.equal(stopped, 1);
-    else if (partnerLoop) assert.equal(replies, 1);
+    else if (partnerLoop) assert.equal(replies, first ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {
     await bridge.close();

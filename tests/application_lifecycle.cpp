@@ -70,6 +70,39 @@ void shared_application(const fs::path& run) {
     conversation.close();
     check(conversation.closed() && application.close_plugins() == ShutdownResult::closed,"shared application could not finish shutdown");
 }
+
+// 验证房间信箱与直接对话独立，自动和主动审查共用分类边界。
+// 步骤：投递环境变化及被点名事件 → 验证唤醒模式 → 核对受信来源及模型请求。
+void room_mailbox(const fs::path& run, bool automatic) {
+    using namespace dfy::app;
+    using namespace dfy::model;
+    Application application({},run/"room-plugins",run/"room-user",Backend{[](const auto&,const Request& request) {
+        return Response{{Role::assistant,request.messages.back().content}};
+    }},ApplicationRunConfig{.wake_for_room_address = automatic});
+    check(application.post_room_event(RoomEvent::presence_changed,"room-1","joined").state == dfy::events::DeliveryState::accepted,
+        "presence fact did not enter its mailbox");
+    application.advance_plugins();
+    check(!application.conversation().busy(),"presence fact woke the main Agent");
+    check(application.post_room_event(RoomEvent::addressed,"room-1","hello fish").state == dfy::events::DeliveryState::accepted,
+        "room address did not queue independently");
+    application.advance_plugins();
+    application.advance_plugins();
+    if (!automatic) {
+        check(!application.conversation().busy(),"passive room route woke the Agent");
+        check(application.review_room() == MailboxIntakeResult::handled && application.review_room() == MailboxIntakeResult::submitted,
+            "review did not filter room presence before direct address");
+    }
+    check(application.conversation().busy() && application.conversation().status()->source == dfy::agent::RunOrigin::mailbox,
+        "direct room address did not reach main Agent");
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    std::optional<CompletedTurn> result;
+    while (application.conversation().busy() && std::chrono::steady_clock::now() < deadline) {
+        if (auto completion = application.conversation().advance()) result = std::move(completion);
+        std::this_thread::yield();
+    }
+    check(result && result->answer.find("room.addressed") != std::string::npos && result->answer.find("hello fish") != std::string::npos &&
+        result->answer.find("joined") == std::string::npos,"room envelope lost its source or leaked a filtered fact");
+}
 }
 // 在一个真实宿主进程中完成空插件问答、安装、加载、事件消费、卸载、再次问答和移除。
 // 步骤：空插件建立上下文 → 安装加载并在模型等待时消费事件 → 验证失败隔离 → 卸载后继续上下文 → 移除并检查回收。
@@ -77,6 +110,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
         shared_application(run);
+        room_mailbox(run,true);
+        room_mailbox(run,false);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);
         auto channel = std::make_shared<dfy::events::BroadcastChannel>(store,4,8);
         PluginManager manager(run/"plugins",run/"user",channel,4);

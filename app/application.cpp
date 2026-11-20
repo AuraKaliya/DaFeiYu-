@@ -47,13 +47,21 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
       dialogue_sender_(runtime::next_domain()),
       dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_limit)),
+      room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
       conversation_(session_,labels_,plugins::plugin_controls(plugins_),plugins::plugin_text_hooks(plugins_)),
       mailbox_intake_(mailbox_host_,conversation_),
-      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)) {
+      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)),
+      wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
+    const events::MailboxCategory enabled[] = {{"room.addressed",1}};
+    mailbox_intake_.watch(room_mailbox_,run.wake_for_room_address ? std::span<const events::MailboxCategory>(enabled) :
+        std::span<const events::MailboxCategory>{},[](const auto& item) -> std::optional<std::string> {
+            if (item.event.payload->descriptor()->name() != "room.addressed") return {};
+            return std::string(item.event.payload->find("text")->as_string());
+        });
 }
 
 // 在独立地址上交付受信终端原话，普通问答沿用单回合接纳。
@@ -389,8 +397,8 @@ runtime::RunResult Application::advance_plugins() {
         companion_->advance();
     }
     const auto plugins = plugins_.advance();
+    if (wake_for_companion_confirmation_) review_companion_confirmation();
     const auto mail = mailbox_intake_.advance();
-    advance_companion_confirmation();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }
 
