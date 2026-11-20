@@ -43,7 +43,12 @@ bool matches_call(const Json& record, agent::AttemptId attempt, const model::Too
         record.at("callId") == call.id && record.at("name") == call.name && record.at("arguments") == call.arguments;
 }
 
-struct RecordedModel { Json input, exit; std::optional<model::Response> response; };
+struct RecordedModel {
+    Json input, exit;
+    std::optional<model::Response> response, rewritten;
+    std::size_t rewritten_arguments = 0;
+    bool rewrite_observed = false;
+};
 struct RecordedTool { Json exit; bool invoked = false, observed = false; };
 struct RecordedRun {
     std::vector<RecordedModel> models;
@@ -54,6 +59,24 @@ struct RecordedRun {
 constexpr std::array turn_failures{"none","model","history_commit","model_response","control","tool_execution","model_request"};
 constexpr std::array policy_reasons{"none","invalid_context","stale_goal","stale_policy","cancelled","deadline","model_limit","tool_limit",
     "source_denied","confirmation_required","work_pending","invalid_result","no_progress","policy_failed"};
+
+// 保留原模型输出，仅接纳 Hook 可修改的正文与逐项参数。
+// 步骤：校验同一调用退出 → 复制允许改写的字段 → 对照其余身份与元数据。
+void record_rewrite(RecordedModel& entry, const Json& row) {
+    if (!entry.response || entry.rewritten || entry.exit.at("request") != row.at("request") ||
+        row.at("callOutcome") != "returned" || row.at("result") != "succeeded")
+        throw std::invalid_argument("replay: invalid model rewrite identity");
+    const auto& recorded = row.at("output");
+    const auto replacement = decode_response(recorded);
+    auto effective = *entry.response;
+    if (effective.message.tool_calls.size() != replacement.message.tool_calls.size())
+        throw std::invalid_argument("replay: model rewrite changed tool count");
+    effective.message.content = replacement.message.content;
+    for (std::size_t i = 0; i < effective.message.tool_calls.size(); ++i)
+        effective.message.tool_calls[i].arguments = replacement.message.tool_calls[i].arguments;
+    if (encode_response(effective) != recorded) throw std::invalid_argument("replay: model rewrite changed immutable fields");
+    entry.rewritten = std::move(effective);
+}
 
 // 只有原诊断明确记录的终止门才能作为离线输入，避免从终态倒推出不存在的控制事件。
 bool denied_model_after(const Json& timeline, std::size_t expected_step) {
@@ -92,7 +115,9 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
                 throw std::invalid_argument("replay: unsupported tool exit");
             result.tools.push_back({row});
         } else if (kind == "model.rewritten") {
-            throw std::invalid_argument("replay: model response was rewritten by a live hook");
+            if (result.models.empty() || row.at("step") != result.models.size() || row.at("attempt") != 1)
+                throw std::invalid_argument("replay: unexpected model rewrite");
+            record_rewrite(result.models.back(),row);
         } else if (kind == "run.exited") {
             if (!result.terminal.is_null()) throw std::invalid_argument("replay: duplicate run exit");
             result.terminal = row;
@@ -114,6 +139,46 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
     }
     return result;
 }
+
+// 离线复用原 Hook 的输出，并由正式模型改写阶段检查字段边界及产出。
+// 步骤：依据步骤绑定原改写 → 按调用顺序返回正文和参数 → 核对正式协调器发出的有效响应。
+void bind_rewrites(RecordedRun& original, agent::RunOptions& options, std::string& difference) {
+    // 根据原模型步骤及有序字段返回同一份改写值。
+    // 步骤：匹配文本边界 → 核对原字段 → 返回对应的有效值或报告差异。
+    options.text_hook = [&](agent::TextHookPoint point, const agent::PolicyContext& context, std::string_view field,
+        std::string_view value, std::size_t) -> std::optional<std::string> {
+        const auto step = context.attempt.step.sequence;
+        if (step == 0 || step > original.models.size() ||
+            (point != agent::TextHookPoint::model_response && point != agent::TextHookPoint::tool_arguments)) return {};
+        auto& entry = original.models[step-1];
+        if (!entry.rewritten) return {};
+        const auto& raw = entry.response->message;
+        const auto& effective = entry.rewritten->message;
+        if (point == agent::TextHookPoint::model_response && field == "content" && value == raw.content)
+            return effective.content;
+        if (point == agent::TextHookPoint::tool_arguments && entry.rewritten_arguments < raw.tool_calls.size()) {
+            const auto index = entry.rewritten_arguments++;
+            if (field == raw.tool_calls[index].name && value == raw.tool_calls[index].arguments)
+                return effective.tool_calls[index].arguments;
+        }
+        difference = "model rewrite input differs at step "+std::to_string(step);
+        return {};
+    };
+    // 以运行时产出的有效响应逐项核对已记录的改写。
+    options.model_capture = [&](const agent::ModelCapture& capture) {
+        if (capture.phase != agent::ModelCapturePhase::rewritten) return;
+        const auto step = capture.attempt.step.sequence;
+        if (step > 0 && step <= original.models.size()) {
+            auto& entry = original.models[step-1];
+            if (entry.rewritten && !entry.rewrite_observed && entry.rewritten_arguments == entry.rewritten->message.tool_calls.size() &&
+                capture.output && encode_response(*capture.output) == encode_response(*entry.rewritten)) {
+                entry.rewrite_observed = true;
+                return;
+            }
+        }
+        difference = "model rewrite output differs at step "+std::to_string(step);
+    };
+}
 }
 
 // 用固定证据驱动正式运行协调器，比较实际送模上下文、工具回执与最终结果。
@@ -129,10 +194,12 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     auto prompt = std::move(history->back().content);
     history->pop_back();
 
-    std::string tool_difference, model_difference;
+    std::string tool_difference, model_difference, rewrite_difference;
     std::size_t model_index = 0;
     agent::ToolCatalog catalog;
     agent::RunOptions options;
+    if (std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) { return entry.rewritten.has_value(); }))
+        bind_rewrites(original,options,rewrite_difference);
     bool denied_seen = false;
     if (original.next_model_denied) {
         // 重用记录中的宿主控制输入，重跑时仍由正式协调器产生终止和退出。
@@ -203,9 +270,13 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     loop.wait_model();
     if (request->exit()->state() == OperationState::pending) throw std::runtime_error("replay: offline coordinator did not exit");
     if (!model_difference.empty()) throw std::runtime_error("replay: "+model_difference);
+    if (!rewrite_difference.empty()) throw std::runtime_error("replay: "+rewrite_difference);
     if (!tool_difference.empty()) throw std::runtime_error("replay: "+tool_difference);
     if (model_index != original.models.size() ||
         denied_seen != original.next_model_denied.has_value() ||
+        std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) {
+            return entry.rewritten.has_value() != entry.rewrite_observed;
+        }) ||
         std::any_of(original.tools.begin(),original.tools.end(),[](const auto& entry) {
             return !entry.observed || entry.invoked != entry.exit.at("accepted");
         })) throw std::runtime_error("replay: recorded model or tool events were not consumed");

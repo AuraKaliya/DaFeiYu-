@@ -1,7 +1,9 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include "application.hpp"
+#include "run_log.hpp"
 #include "trace_commands.hpp"
 #include "../plugins/examples/observer/observer_api.h"
+#include <dafeiyu/run_loop.hpp>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -81,6 +83,55 @@ void shared_application(const fs::path& run) {
     check(conversation.closed() && application.close_plugins() == ShutdownResult::closed,"shared application could not finish shutdown");
 }
 
+// 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。
+// 步骤：记录固定模型及有序改写 → 比对工具回执 → 脱离原 Hook 重新执行。
+void trace_rewrites(const fs::path& run) {
+    using namespace dfy::agent;
+    using namespace dfy::model;
+    constexpr const char* name = "read_cell";
+    const RunId id{next_domain(),1};
+    const auto trace = std::make_shared<dfy::app::RunLog>(run/"rewritten-trace");
+    const auto capture = trace->sinks("fixture");
+    std::vector<std::string> effective_arguments;
+    ToolCatalog catalog;
+    const std::vector<std::string> ids{"fixture/cell"};
+    catalog.add({ids.front(),next_domain(),1,{name,"Read a cell",
+        R"({"type":"object","properties":{"cell":{"type":"integer"}},"required":["cell"],"additionalProperties":false})"}},
+        [&](const ToolInvocation& invocation) {
+            effective_arguments.push_back(invocation.call.arguments);
+            return completed_tool({true,ToolEffect::not_applied,invocation.call.arguments,ToolError::none});
+        });
+    RunOptions options;
+    options.tools = catalog.snapshot(ids);
+    options.model_capture = capture.model;
+    options.tool_capture = capture.tool;
+    options.exit_capture = capture.exit;
+    options.text_hook = [](TextHookPoint point,const auto&,auto,std::string_view value,std::size_t) -> std::optional<std::string> {
+        if (point == TextHookPoint::model_response) return std::string(value)+" after hook";
+        if (point == TextHookPoint::tool_arguments) return value == R"({"cell":1})" ? R"({"cell":11})" : R"({"cell":22})";
+        return {};
+    };
+    RunLoop loop(id,{},Backend{[&](const auto&,const Request& input) {
+        if (input.messages.back().role == Role::user)
+            return Response{{Role::assistant,"reading",{{"cell-1",name,R"({"cell":1})"},{"cell-2",name,R"({"cell":2})"}}},FinishReason::tool_calls};
+        return Response{{Role::assistant,"finished"}};
+    }},std::make_shared<MessageHistory>(),"read two cells",std::move(options));
+
+    const auto request = loop.request();
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (request->exit()->state() == OperationState::pending && std::chrono::steady_clock::now() < deadline) {
+        loop.advance();
+        std::this_thread::yield();
+    }
+    check(request->exit()->state() == OperationState::succeeded && request->answer() == "finished after hook" &&
+        effective_arguments == std::vector<std::string>{R"({"cell":11})",R"({"cell":22})"},"fixture did not use ordered rewrite results");
+
+    std::ostringstream replay;
+    dfy::app::replay_trace(trace->path(),id,replay);
+    check(replay.str().find("2 model requests, 2 tool exits, succeeded") != std::string::npos,
+        "replay lost response rewrite or effective tool arguments");
+}
+
 // 验证房间信箱与直接对话独立，自动和主动审查共用分类边界。
 // 步骤：投递环境变化及被点名事件 → 验证唤醒模式 → 核对受信来源及模型请求。
 void room_mailbox(const fs::path& run, bool automatic) {
@@ -125,6 +176,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
         shared_application(run);
+        trace_rewrites(run);
         room_mailbox(run,true);
         room_mailbox(run,false);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);
