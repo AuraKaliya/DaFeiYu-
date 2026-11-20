@@ -13,7 +13,8 @@ int wmain(int argc, wchar_t** argv) {
     using namespace model;
     try {
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
-        if (argc != 3 && !interrupt) throw std::runtime_error("package and test directory required");
+        const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
+        if (argc != 3 && !interrupt && !confirm) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
         std::atomic_bool actual_reply = false, assessed = false, interruption_seen = false;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
@@ -24,9 +25,9 @@ int wmain(int argc, wchar_t** argv) {
                     assessment.at("work").at("skill") == "move" && assessment.at("currentEvents").back().at("sequence") == 2;
                 return {{Role::assistant,assessed ? "stop" : "continue"}};
             }
-            if (request.tools.size() != 4) throw std::runtime_error("partner granted unintended tools");
+            if (request.tools.size() != 5) throw std::runtime_error("partner granted unintended tools");
             if (last.role == Role::tool) {
-                actual_reply = last.content.find("\"sent\":true") != std::string::npos;
+                actual_reply = last.content.find(confirm ? "\"collected\":2" : "\"sent\":true") != std::string::npos;
                 return {{Role::assistant,"internal settlement"}};
             }
             const auto input = nlohmann::json::parse(last.content);
@@ -37,14 +38,55 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
-            const auto tool = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(interrupt ? "_move" : "_reply"); });
-            return {{Role::assistant,"",{{"chosen",tool->name,interrupt ? R"({"place":"player"})" : R"({"text":"ready to play"})"}}},FinishReason::tool_calls};
+            const auto tool = std::ranges::find_if(request.tools,[&](const auto& tool) {
+                return tool.name.ends_with(confirm ? "_collect_confirmed" : interrupt ? "_move" : "_reply");
+            });
+            const auto args = confirm ? R"({"block":"dirt","count":2})" : interrupt ? R"({"place":"player"})" : R"({"text":"ready to play"})";
+            return {{Role::assistant,"",{{"chosen",tool->name,args}}},FinishReason::tool_calls};
         }});
         app.plugins().install(argv[1]);
         if (app.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto instance = app.plugins().instance("mc.companion");
         unsigned game_receipts = 0;
+        unsigned decisions = 0;
         bool control_released = false;
+        nlohmann::json confirmation;
+        const auto& mails = app.mailbox_host();
+        // 回复原升级请求，投递编号由实际宿主信箱维护。
+        const auto reply = [&](std::uint64_t number, bool approve, bool stale) {
+            const auto payload = nlohmann::json{{"id",confirmation.at("id")},{"revision",1},{"player",confirmation.at("player")},
+                {"generation",stale ? nlohmann::json("old-world") : confirmation.at("generation")},{"approve",approve}}.dump();
+            mails.network->deliver(mails.identity,{instance->mailbox_addresses().inbound},number,
+                events::mailbox_text("mc.confirmation.response",1,payload,1024));
+        };
+        // 记录原动作及业务裁定，确认接纳和动作执行来自不同消息。
+        // 步骤：逐件读取原箱 → 处理升级请求及迟到答复 → 核对真实效果和释放。
+        const auto drain = [&] {
+            const auto address = events::MailboxId{instance->mailbox_addresses().outbound};
+            for (;;) {
+                auto mail = mails.network->read(mails.identity,address);
+                if (!mail.event) break;
+                const auto payload = mail.event.get().payload;
+                const auto type = payload->descriptor()->name();
+                const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
+                if (type == "mc.confirmation.request") {
+                    confirmation = fact;
+                    if (fact.at("arguments").at("count") != 2) throw std::runtime_error("wrong original candidate");
+                    reply(1,true,true);
+                    reply(2,true,false);
+                } else if (type == "mc.confirmation.decision") {
+                    if (fact.at("status") != "approved" || fact.at("source") != "main" || fact.at("id") != confirmation.at("id"))
+                        throw std::runtime_error("late answer changed original decision");
+                    if (++decisions == 1) reply(3,false,false);
+                } else if (type == "mc.partner.control") control_released = fact.at("phase") == "released";
+                else if (type == "mc.partner.action") {
+                    if (fact.at("order") != 2 || fact.at("invocation") == 0 || (confirm ? fact.at("result").at("collected") != 2 :
+                        interrupt ? fact.at("result").at("status") != "interrupted" : fact.at("result").at("sent") != true))
+                        throw std::runtime_error("game action mailbox lost the original exit receipt");
+                    ++game_receipts;
+                }
+            }
+        };
         {
             const auto api = instance->query<dfy_v2_companion_partner_api>(DFY_V2_COMPANION_PARTNER_INTERFACE,DFY_V2_COMPANION_PARTNER_VERSION);
             if (!api || instance->invoke(*api,[](const auto& fn, auto* native) { return fn.listen(native,nullptr); }))
@@ -54,6 +96,7 @@ int wmain(int argc, wchar_t** argv) {
                 const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(8);
                 while (std::chrono::steady_clock::now() < deadline) {
                     if (app.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plugin loop failed");
+                    drain();
                     dfy_v2_partner_status state{};
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
@@ -68,25 +111,9 @@ int wmain(int argc, wchar_t** argv) {
             if (instance->invoke(*api,[](const auto& fn, auto* native) { return fn.stop(native,nullptr); }))
                 throw std::runtime_error("could not stop plugin-owned partner");
             wait(true);
-            const auto& mails = app.mailbox_host();
-            const auto address = events::MailboxId{instance->mailbox_addresses().outbound};
-            for (;;) {
-                auto mail = mails.network->read(mails.identity,address);
-                if (!mail.event) break;
-                const auto payload = mail.event.get().payload;
-                if (payload->descriptor()->name() == "mc.partner.control") {
-                    control_released = nlohmann::json::parse(payload->find("text")->as_string()).at("phase") == "released";
-                    continue;
-                }
-                if (payload->descriptor()->name() != "mc.partner.action") continue;
-                const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
-                if (fact.at("order") != 2 || fact.at("invocation") == 0 ||
-                    (interrupt ? fact.at("result").at("status") != "interrupted" : fact.at("result").at("sent") != true))
-                    throw std::runtime_error("game action mailbox lost the original exit receipt");
-                ++game_receipts;
-            }
         }
-        if (game_receipts != 1 || !control_released) throw std::runtime_error("expected original effect and confirmed control release");
+        if (game_receipts != 1 || !control_released || (confirm && decisions != 2))
+            throw std::runtime_error("expected original effect, confirmation or confirmed control release");
         if (app.plugins().unload("mc.companion") != plugins::ShutdownResult::closed) throw std::runtime_error("MC unload failed");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

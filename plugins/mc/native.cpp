@@ -21,6 +21,7 @@ struct NativeJob {
     bool cancelled = false;
     std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
     std::uint64_t partner_session = 0, invocation = 0;
+    bool confirmation = false, waiting = false;
     std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
@@ -40,7 +41,7 @@ thread_local std::array<dfy_v2_instance*, 16> slots{};
 std::atomic_uint64_t serial{0};
 
 struct PartnerSkill { std::string_view name, purpose, description, schema; bool changes; };
-constexpr std::array<PartnerSkill, 4> partner_skills{{
+constexpr std::array<PartnerSkill, 5> partner_skills{{
     {"observe", "partner.observe", "Read your position, player position, landmarks, inventory and previous action. Optional block registry name scans visible nearby targets.",
         R"({"type":"object","properties":{"block":{"type":"string"}},"additionalProperties":false})", false},
     {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
@@ -48,7 +49,9 @@ constexpr std::array<PartnerSkill, 4> partner_skills{{
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. Reports broken blocks and actual inventory changes.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true},
     {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
-        R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true}
+        R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", true},
+    {"collect_confirmed", "partner.collect_confirmed", "Ask the main Agent to route player consent for a fixed collection. The same original collection runs only after valid consent.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", true}
 }};
 
 // 限长读取 ABI 借用文本，非法空指针不形成视图。
@@ -202,12 +205,15 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool control = text(name) == "stop" && !raw->config.key.empty();
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
+    const bool confirmed = partner && skill->name == "collect_confirmed";
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
-    if ((partner || inspect || mine || home) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence && job.action; }))
+    if ((partner || inspect || mine || home) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) {
+        return job.sequence && (job.action || job.confirmation);
+    }))
         return report(DFY_V2_BUSY, error);
     const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
@@ -216,7 +222,9 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (partner) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
+        if (confirmed) {
+            if (!raw->partner.confirm_collect(call->session,call->invocation,job.arguments)) return report(DFY_V2_INVALID_CONTEXT,error);
+        } else if (partner) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
             job.id, job.arguments, std::string(text(name)));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
@@ -236,14 +244,15 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (partner) {
         job.partner_session = call->session;
         job.invocation = call->invocation;
-        job.skill = skill->name;
+        job.skill = confirmed ? "collect" : skill->name;
+        job.confirmation = job.waiting = confirmed;
     }
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);
 }
 // 非等待推进原查询，将消息校验和资源实际退出分开报告。
-// 步骤：核对票据 → 打开并推进管道或进入退出阶段 → 复制稳定的结果值。
+// 步骤：核对票据 → 检查原确认状态或推进游戏工作 → 复制稳定的结果值。
 dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, dfy_v2_tool_progress* out,
     dfy_v2_error* error) noexcept {
     if (!out) return report(DFY_V2_INVALID_ARGUMENT, error);
@@ -254,6 +263,17 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
     if (job->ready) {
         job->pipe.reset();
         job->exited = true;
+    } else if (job->waiting) {
+        try {
+            if (auto decision = raw->partner.confirm_result(job->invocation)) {
+                job->waiting = false;
+                if (decision->empty()) {
+                    job->output = R"({"status":"blocked","reason":"confirmation did not authorize this action"})";
+                    job->ready = true;
+                } else job->action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job->id,
+                    std::move(*decision),"collect");
+            }
+        } catch (...) { job->ready = true; }
     } else if (job->action) {
         try {
             if (auto value = job->action->poll(job->cancelled)) {
@@ -336,6 +356,7 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticke
     auto* job = find_job(raw, ticket);
     if (!job) return report(DFY_V2_INVALID_HANDLE, error);
     if (!job->exited) return report(DFY_V2_BUSY, error);
+    if (job->confirmation) raw->partner.confirm_exited(job->invocation);
     if (job->partner_session) raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,std::move(job->output));
     *job = {};
     return report(DFY_V2_OK, error);
@@ -417,7 +438,7 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
     try {
         dfy::mc::PartnerWork work;
         const auto session = raw->partner.status().session;
-        for (const auto& job : raw->jobs) if (session && job.partner_session == session && job.sequence && !job.ready &&
+        for (const auto& job : raw->jobs) if (session && job.partner_session == session && job.sequence && job.action && !job.ready &&
             (job.skill == "move" || job.skill == "collect")) work = {job.invocation,job.skill};
         raw->partner.advance(raw->config,raw->owner,work);
         *wait = raw->partner.status().phase == DFY_V2_PARTNER_CLOSED ? 100 : 5;

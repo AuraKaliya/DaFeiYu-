@@ -12,7 +12,8 @@ async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
-  const partnerLoop = variant === 'partner-loop' || interrupt;
+  const confirm = variant === 'partner-confirm';
+  const partnerLoop = variant === 'partner-loop' || interrupt || confirm;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -59,6 +60,14 @@ async function main() {
   }, key, partnerLoop ? { partner: {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      if (confirm) {
+        assert.equal(method, 'partner.begin');
+        assert.equal(skill, 'collect');
+        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        assert.deepEqual(args, { count: 2, block: 'dirt' });
+        ++replies;
+        return { ...context, skill, exited: true, result: { status: 'done', collected: 2 } };
+      }
       if (interrupt) {
         assert.equal(skill, 'move');
         assert.deepEqual(context, { generation: state.generation, order: 2 });
@@ -82,7 +91,7 @@ async function main() {
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);

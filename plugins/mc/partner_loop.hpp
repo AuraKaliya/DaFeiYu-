@@ -23,6 +23,12 @@ class PartnerLoop {
     bool permits(std::uint64_t session) const noexcept;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect, std::string output) noexcept;
+    // 保留原采集候选，只允许当前插件角色创建确认。
+    bool confirm_collect(std::uint64_t session, std::uint64_t request, std::string_view envelope);
+    // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
+    std::optional<std::string> confirm_result(std::uint64_t request) const;
+    // 归还原确认并保存其终态，迟到回信可重读原决定。
+    void confirm_exited(std::uint64_t request) noexcept;
     // 查询已绑定玩家和实际回合水位。
     dfy_v2_partner_status status() const noexcept;
   private:
@@ -42,10 +48,16 @@ class PartnerLoop {
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
     bool release_game(const BridgeConfig& config, std::uint64_t instance);
+    // 按原配对身份处理游戏回复、主信箱回信或业务超时。
+    void advance_confirmation();
+    // 在宿主绑定的入站信箱读取至多一条确认消息。
+    void intake_confirmation();
 
     PartnerFeed feed_;
     const dfy_v2_agent_api* agent_ = nullptr;
     const dfy_v2_mailbox_api* mail_ = nullptr;
+    const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
+    const dfy_v2_reference_api* refs_ = nullptr;
     std::uint64_t sent_ = 0;
     struct Frame { std::string_view category; std::string body; };
     std::deque<Frame> outbound_;
@@ -60,6 +72,18 @@ class PartnerLoop {
     };
     std::optional<Release> release_;
     std::uint64_t release_sequence_ = 0;
+    struct Confirmation {
+        std::uint64_t request, order, approved_order = 0;
+        std::string world, player, question;
+        nlohmann::json arguments, decision;
+        std::chrono::steady_clock::time_point deadline;
+        bool ask_game = false;
+    };
+    std::optional<Confirmation> confirmation_;
+    std::array<nlohmann::json,8> decisions_{};
+    std::size_t next_decision_ = 0;
+    // 裁定唯一原候选，结果一旦发布便不被迟到消息覆盖。
+    void confirm_once(std::string_view status, std::string_view source, std::uint64_t approved_order = 0);
     std::string session_world_;
     std::uint64_t session_ = 0, request_ = 0, order_ = 0, settled_ = 0;
     struct Review {
