@@ -25,6 +25,8 @@ class PartnerFeed {
     std::uint64_t departed() const noexcept { return departed_; }
     // 借用本次原生读取的世界和位置事实。
     const nlohmann::json& observation() const noexcept { return observation_; }
+    // 当前世界收到的最新私有现场修订，零表示来源暂未提供。
+    std::uint64_t scene_revision() const noexcept { return scene_revision_; }
     // 借用由原游戏主动提出的当前接管回执。
     const nlohmann::json& control() const noexcept { return control_; }
     // 借用待交付原始事件，按真实游戏次序排列。
@@ -46,7 +48,7 @@ class PartnerFeed {
     nlohmann::json pending_ = nlohmann::json::array();
     std::unique_ptr<PipeExchange> pipe_;
     std::chrono::steady_clock::time_point next_{}, world_due_{};
-    std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0;
+    std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, scene_revision_ = 0;
     bool reading_world_ = false, ready_ = false, more_ = false, gap_ = false;
 };
 }

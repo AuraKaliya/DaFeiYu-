@@ -230,7 +230,8 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong private reply");
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
-    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") || inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
+    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") ||
+        inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
     const auto oldest = inbox.at("oldest").get<std::uint64_t>(), latest = inbox.at("latest").get<std::uint64_t>();
@@ -239,6 +240,9 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         throw std::invalid_argument("MC protocol: invalid player presence");
     if (inbox.contains("control") && (!control_receipt(inbox.at("control"), query.at("generation")) ||
         inbox.at("control").at("order") > latest)) throw std::invalid_argument("MC: stop cursor");
+    if (inbox.contains("sceneRevision") && (!inbox.at("sceneRevision").is_number_unsigned() ||
+        inbox.at("sceneRevision") == 0 || inbox.at("sceneRevision") > 9007199254740991ULL))
+        throw std::invalid_argument("MC: invalid scene revision");
     if (latest > 9007199254740991ULL || !oldest || (latest ? oldest > latest : oldest != 1) || after > latest ||
         inbox.at("gap") != (after < oldest - 1)) throw std::invalid_argument("MC protocol: inbox cursor");
 

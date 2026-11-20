@@ -2,6 +2,7 @@
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
 #include <atomic>
+#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -14,7 +15,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
-        const bool task = argc == 4 && std::wstring_view(argv[3]) == L"partner-task";
+        const bool scene = argc == 4 && std::wstring_view(argv[3]) == L"partner-scene";
+        const bool task = scene || (argc == 4 && std::wstring_view(argv[3]) == L"partner-task");
         if (argc != 3 && !interrupt && !confirm && !task) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
         std::atomic_bool actual_reply = false, assessed = false, interruption_seen = false;
@@ -36,6 +38,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (task && last.tool_call_id == "task") {
                     if (last.content.find("\"status\":\"updated\"") == std::string::npos)
                         throw std::runtime_error("shared task was not accepted");
+                    if (scene) std::ofstream(root/"scene-changed").put('1');
                     return {{Role::assistant,"turn finished"}};
                 }
                 actual_reply = last.content.find(confirm ? "\"collected\":2" : "\"sent\":true") != std::string::npos;
@@ -51,9 +54,10 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"main"})" :
                     R"({"place":"player"})"}}},FinishReason::tool_calls};
             }
-            if (task && input.at("trigger") == "task.continue") {
+            if (task && input.at("trigger") == (scene ? "scene.changed" : "task.continue")) {
                 if (!input.at("events").empty() || input.at("task").at("goal") != "resume the wall" ||
-                    input.at("task").at("detail") != "check the corner" || input.at("task").at("revision") != 1)
+                    input.at("task").at("detail") != "check the corner" || input.at("task").at("revision") != 1 ||
+                    (scene && input.at("sceneRevision") != 2))
                     throw std::runtime_error("autonomous turn lost the task or invented new chat");
                 const auto reply_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_reply"); });
                 return {{Role::assistant,"",{{"reply",reply_tool->name,R"({"text":"ready to play"})"}}},FinishReason::tool_calls};
@@ -68,8 +72,9 @@ int wmain(int argc, wchar_t** argv) {
             if (request.tools.size() != 4) throw std::runtime_error("initial scope leaked detailed actions");
             if (task) {
                 const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
-                return {{Role::assistant,"",{{"task",task_tool->name,
-                    R"({"revision":0,"goal":"resume the wall","detail":"check the corner","next":"continue"})"}}},FinishReason::tool_calls};
+                const auto args = nlohmann::json{{"revision",0},{"goal","resume the wall"},{"detail","check the corner"},
+                    {"next",scene ? "scene" : "continue"}}.dump();
+                return {{Role::assistant,"",{{"task",task_tool->name,args}}},FinishReason::tool_calls};
             }
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& tool) {
                 return tool.name.ends_with(confirm || interrupt ? "_skills" : "_reply");

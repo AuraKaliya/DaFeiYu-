@@ -13,7 +13,8 @@ async function main() {
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
   const confirm = variant === 'partner-confirm';
-  const task = variant === 'partner-task';
+  const scene = variant === 'partner-scene';
+  const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
   const exchange = variant === 'partner-exchange';
@@ -64,6 +65,11 @@ async function main() {
     // 受控收件源不保留外部连接。
     close() {},
   }, key, partnerLoop ? { partner: {
+    // 受控游戏场景只有在原任务完成登记后才产生新修订。
+    scene(generation) {
+      assert.equal(generation, state.generation);
+      return scene ? (fs.existsSync(path.join(root, 'scene-changed')) ? 2 : 1) : null;
+    },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (showGame && skill === 'reply') {

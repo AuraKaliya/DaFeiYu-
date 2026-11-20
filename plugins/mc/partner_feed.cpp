@@ -7,6 +7,7 @@ using Json = nlohmann::json;
 void PartnerFeed::reset_binding() noexcept {
     owner_.clear();
     cursor_ = departed_ = 0;
+    scene_revision_ = 0;
     ready_ = more_ = gap_ = false;
     pending_.clear();
     control_ = nullptr;
@@ -60,6 +61,11 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     }
     if (presence != batch.end()) departed_ = presence->at("type") == "player.left" ? presence->at("sequence").get<std::uint64_t>() : 0;
     if (batch.contains("control")) control_ = batch.at("control");
+    if (batch.contains("sceneRevision")) {
+        const auto revision = batch.at("sceneRevision").get<std::uint64_t>();
+        if (revision < scene_revision_) throw std::invalid_argument("MC feed: scene revision regressed");
+        scene_revision_ = revision;
+    }
     owner_ = std::move(owner);
     ready_ = true;
 }

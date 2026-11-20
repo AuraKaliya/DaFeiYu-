@@ -29,7 +29,9 @@ function readReply(input, world, inbox, key, actions) {
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0) {
     const batch = inbox.read(request.generation, request.after);
     const control = actions?.controlReceipt?.(request.generation);
-    return { version: 1, id: request.id, inbox: batch && control ? { ...batch, control } : batch };
+    const sceneRevision = batch && actions?.partner?.scene?.(request.generation);
+    return { version: 1, id: request.id, inbox: batch && { ...batch, ...(control && { control }),
+      ...(sceneRevision != null && { sceneRevision }) } };
   }
   if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')
     return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };

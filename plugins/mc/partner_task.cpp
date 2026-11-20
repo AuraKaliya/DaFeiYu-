@@ -7,12 +7,12 @@ namespace {
 using Json = nlohmann::json;
 constexpr unsigned continuation_budget = 4;
 
-// 提取可用于唤醒的实际地点和库存，忽略采样时间与小幅位置抖动。
-Json scene_key(const Json& scene) {
+// 提取现场变化修订与实际地点，忽略采样时间和小幅位置抖动。
+Json scene_key(const Json& scene, std::uint64_t revision) {
     if (!scene.is_object()) return nullptr;
     const auto& position = scene.at("position");
     return {scene.at("dimension"),std::floor(position.at("x").get<double>()),std::floor(position.at("y").get<double>()),
-        std::floor(position.at("z").get<double>()),scene.at("cobblestone")};
+        std::floor(position.at("z").get<double>()),scene.at("cobblestone"),revision};
 }
 }
 
@@ -25,7 +25,7 @@ Json PartnerTask::context() const {
 
 // 每次任务修改使用原版本，不以模型描述替代现场回执。
 // 步骤：核对任务修订和正文 → 保存新的约定与观察基线 → 设置一次唤醒。
-Json PartnerTask::update(const Json& input, const Json& scene) {
+Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision) {
     if (input.at("revision") != revision_ || revision_ == UINT64_MAX)
         return {{"status","stale"},{"task",context()}};
     auto goal = input.at("goal").get<std::string>();
@@ -34,7 +34,7 @@ Json PartnerTask::update(const Json& input, const Json& scene) {
     if (goal.empty() || goal.size() > 1024 || detail.size() > 2048 ||
         (next != "continue" && next != "scene" && next != "player" && next != "done"))
         throw std::invalid_argument("MC partner: invalid task update");
-    auto baseline = next == "scene" ? scene_key(scene) : Json{};
+    auto baseline = next == "scene" ? scene_key(scene,scene_revision) : Json{};
     goal_ = std::move(goal);
     detail_ = std::move(detail);
     next_ = std::move(next);
@@ -51,10 +51,10 @@ void PartnerTask::record(const Json& receipt) {
 }
 
 // 只在任务明确要求继续或收到所等观察变化时唤醒，单次额度耗尽后等待新玩家事件。
-std::string_view PartnerTask::trigger(const Json& scene) const {
+std::string_view PartnerTask::trigger(const Json& scene, std::uint64_t scene_revision) const {
     if (!armed_ || !remaining_) return {};
     if (next_ == "continue") return "task.continue";
-    if (next_ == "scene" && !baseline_.is_null() && scene_key(scene) != baseline_) return "scene.changed";
+    if (next_ == "scene" && !baseline_.is_null() && scene_key(scene,scene_revision) != baseline_) return "scene.changed";
     return {};
 }
 

@@ -10,11 +10,11 @@ class PartnerTask {
     // 返回任务及最近的独立现场回执，供下一回合使用。
     nlohmann::json context() const;
     // 按模型看到的原版本更新分工，接纳后返回当前版本和约定。
-    nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene);
+    nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision);
     // 归档原动作证据，以独立字段保留来源。
     void record(const nlohmann::json& receipt);
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
-    std::string_view trigger(const nlohmann::json& scene) const;
+    std::string_view trigger(const nlohmann::json& scene, std::uint64_t scene_revision) const;
     // 返回本次玩家窗口内是否还有自主回合额度。
     bool can_continue() const noexcept { return remaining_ != 0; }
     // 消费唤醒条件，每次自主提交扣除一轮额度，新玩家事件恢复额度。

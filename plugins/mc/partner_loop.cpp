@@ -149,6 +149,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
+    if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
     if (autonomous) input["recentEvents"] = recent_events_;
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
@@ -200,7 +201,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::string_view skill, std
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
-    return skill == "skills" ? discover(args) : task_.update(args,feed_.observation());
+    return skill == "skills" ? discover(args) : task_.update(args,feed_.observation(),feed_.scene_revision());
 }
 
 // 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。
@@ -235,7 +236,7 @@ Json PartnerLoop::discover(const Json& arguments) {
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
-    return task_.trigger(feed_.observation());
+    return task_.trigger(feed_.observation(),feed_.scene_revision());
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。

@@ -95,6 +95,7 @@ async function collect(bot, args, check, result) {
 function partnerService(bot, world, inbox, places, owner) {
   let active, previous, closed = false, done = Promise.resolve();
   let source = null;
+  let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
@@ -108,6 +109,28 @@ function partnerService(bot, world, inbox, places, owner) {
     bot.pathfinder.setGoal(null);
     if (bot.targetDigBlock) bot.stopDigging();
     bot.clearControlStates();
+  }
+  // 从私有配对读口定期取样，只有实际视域网格或背包变化才递增修订。
+  function scene(generation) {
+    if (closed || world.read()?.generation !== generation) return null;
+    if (sceneWorld !== generation) {
+      sceneWorld = generation;
+      sceneRevision = sceneNext = 0;
+      sceneKey = undefined;
+    }
+    const now = performance.now();
+    if (now < sceneNext) return sceneRevision;
+    const actor = bot.entity.position;
+    const player = Object.values(bot.players).find(p => p.uuid === owner)?.entity?.position;
+    const center = player && player.distanceTo(actor) <= 24 ? player : actor;
+    const key = JSON.stringify([blockSurvey(bot, center), Object.entries(inventory(bot)).sort()]);
+    if (sceneKey !== key) {
+      if (sceneRevision >= Number.MAX_SAFE_INTEGER) throw new Error('现场修订号已用尽');
+      ++sceneRevision;
+      sceneKey = key;
+    }
+    sceneNext = now + 500;
+    return sceneRevision;
   }
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
@@ -169,6 +192,7 @@ function partnerService(bot, world, inbox, places, owner) {
     }
   }
   return {
+    scene,
     // 只对同一业务编号启动一次工作，原票据负责轮询、取消以及失联收尾。
     call(method, id, context, skill, args) {
       const key = context.generation + '/' + context.order;
