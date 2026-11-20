@@ -102,7 +102,7 @@ bool PartnerLoop::settle(bool cancel) {
         const auto text = answered ? std::string(state.answer.data,state.answer.length) : std::string("伙伴未交付本次委托的文字答复，请查实际回执");
         publish("mc.partner.report",{{"generation",active_delegation_->world},{"id",active_delegation_->id},{"ok",answered},{"text",text}});
         active_delegation_.reset();
-    } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},
+    } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
         {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel}});
     request_ = 0;
     return true;
@@ -154,9 +154,10 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。
-void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect, std::string output) noexcept {
+void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
+    std::string work, std::string output) noexcept {
     if (!session_ || session != session_ || !request_ || action_count_ >= actions_.size()) return;
-    actions_[action_count_++] = {invocation,skill,effect,std::move(output)};
+    actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
 }
 
 // 用固定分类封装已校验事实，消息正文大小保持在信箱上限内。
@@ -170,7 +171,8 @@ void PartnerLoop::publish(std::string_view category, const Json& payload) {
 void PartnerLoop::report_actions() {
     for (std::size_t index = 0; index < action_count_; ++index) {
         auto& action = actions_[index];
-        Json fact{{"generation",session_world_},{"order",order_},{"invocation",action.id},{"skill",action.skill},{"effect",action.effect}};
+        Json fact{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
+            {"invocation",action.id},{"skill",action.skill},{"effect",action.effect},{"bridgeWork",action.work}};
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;

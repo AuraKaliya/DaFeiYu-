@@ -5,7 +5,7 @@
 #include <dafeiyu/observation_input.hpp>
 #include <dafeiyu/plan_definition.hpp>
 #include <dafeiyu/action_observations.hpp>
-#include <dafeiyu/model_capture.hpp>
+#include <dafeiyu/run_capture.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -45,6 +45,7 @@ struct RunOptions {
     TextHook text_hook;
     ModelCaptureSink model_capture;
     TurnExitSink exit_capture;
+    ToolCaptureSink tool_capture;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;
     std::size_t trace_capacity = 256;

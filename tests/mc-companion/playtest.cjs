@@ -135,6 +135,21 @@ async function rehearse(fixture, exe, pkg, mode) {
     assert.deepEqual(facts.slice(1,-1).map(f => f.text),
       ['大家叫我小叶', '大肥鱼，帮我采俩泥土', '这回带我往前走走', '停，我来', '再走回这边', '停，我来', '模拟一次服务故障']);
     assert.deepEqual(seen.filter(r => r.check).map(r => [r.check.at(-1).text, r.stop]), [['停，我来',false], ['停，我来',true]]);
+    const trace = fs.readFileSync(path.join(fixture.evidence, 'host/trace/events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const actions = fs.readFileSync(path.join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const replies = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+      row.body.skill === 'reply' && row.body.result?.sent);
+    assert.equal(replies.length, 2);
+    for (const { body } of replies) {
+      const game = actions.find(row => row.work === body.bridgeWork);
+      const tool = trace.find(row => row.kind === 'tool.exited' && row.invocation === body.invocation);
+      const model = trace.find(row => row.kind === 'model.prepared' && row.session === tool?.session && row.run === tool?.run && row.step === tool?.step);
+      assert.ok(model && game);
+      assert.equal(JSON.parse(tool.arguments).text, game.result.text);
+      assert.equal(JSON.parse(tool.output).text, body.result.text);
+      assert.ok(trace.some(row => row.kind === 'mail.received' && row.category === 'mc.partner.event' &&
+        row.body.generation === game.generation && row.body.event.sequence === game.order));
+    }
   }
 }
 

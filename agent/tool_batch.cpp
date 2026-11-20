@@ -14,8 +14,10 @@ void add_fingerprint(std::uint64_t& hash, std::string_view text) noexcept {
 // 准备有界工具批次，任何拒绝都产生配对回执而不执行该候选动作。
 // 步骤：检查总调用预算 → 准备元数据和完整上下文 → 裁定候选及确认 → 全部就绪才接纳。
 ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
-    const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension, ConfirmationBook* confirmations, RunJournal* journal)
-    : context_(context), executor_(executor), tools_(tools), confirmations_(confirmations), journal_(journal), policy_(std::move(policy)), bound_(control), extension_(std::move(extension)) {
+    const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension, ConfirmationBook* confirmations,
+    RunJournal* journal, ToolCaptureSink capture)
+    : context_(context), executor_(executor), tools_(tools), confirmations_(confirmations), journal_(journal), policy_(std::move(policy)),
+      bound_(control), extension_(std::move(extension)), capture_(std::move(capture)) {
     const auto count = assistant.tool_calls.size(), limit = policy_.settings().tool_limit;
     if (!count || control.tool_requests > limit || count > limit-control.tool_requests) throw std::length_error("batch: tool limit exhausted");
     entries_.resize(count);
@@ -33,8 +35,17 @@ ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::M
         catch (const std::length_error&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
     }
     context_.prepare_tools(assistant,tools.definitions());
-    for (std::size_t index = 0; index < count; ++index) publish(index,TraceFactKind::tool_candidate);
+    for (std::size_t index = 0; index < count; ++index) {
+        publish(index,TraceFactKind::tool_candidate);
+        this->capture(entries_[index],ToolCapturePhase::candidate);
+    }
     if (review(control)) admit(control);
+}
+// 递交只读阶段和借用对象，记录器失败不影响原工具批次。
+void ToolBatch::capture(const Entry& entry, ToolCapturePhase phase) noexcept {
+    if (!capture_) return;
+    try { capture_({phase,entry.metadata,entry.call,entry.request.get()}); }
+    catch (...) {}
 }
 // 在原状态变化后记录投影，结果成功与资源仍待退出可以同时出现。
 // 步骤：读取原工具或候选状态 → 跳过重复投影 → 签发来源修订并写入有界记录。
@@ -63,6 +74,7 @@ void ToolBatch::reject(std::size_t index, ConfirmationState reason) {
     context_.set_tool_result(index,{false,ToolEffect::not_applied,{},ToolError::unavailable},runtime::OperationState::failed,ToolError::none,false);
     entry.metadata.result = runtime::OperationState::failed; entry.metadata.exit = runtime::OperationState::succeeded; entry.filled = true;
     publish(index);
+    capture(entry,ToolCapturePhase::exited);
 }
 // 将候选和决定维持为值记录，等待不能占用执行顺序或工具工作资源。
 // 步骤：读取原确认状态 → 重新解析授权与策略 → 登记必要确认 → 汇总批次是否可以接纳。
@@ -105,6 +117,7 @@ void ToolBatch::admit(const PolicyContext& current) {
             entry.request = executor_.submit(current.attempt,entry.call); entry.metadata.accepted = true;
             entry.metadata.invocation = entry.request->invocation().invocation;
             publish(index);
+            capture(entry,ToolCapturePhase::admitted);
         } catch (...) { reject(index); }
     }
     admitted_ = true;
@@ -164,6 +177,7 @@ bool ToolBatch::advance(const PolicyContext& current) {
             }
             context_.set_tool_result(index,entry.request->outcome(),entry.request->operation()->state(),entry.request->fault());
             entry.filled = true;
+            capture(entry,ToolCapturePhase::exited);
         }
         if (complete) {
             if (observed_change && continuation_.verdict == PolicyVerdict::allow &&

@@ -12,6 +12,9 @@ constexpr std::array finishes{"stop","tool_calls","length","content_filter"};
 constexpr std::array states{"pending","succeeded","failed","cancelled"};
 constexpr std::array outcomes{"pending","returned","threw"};
 constexpr std::array phases{"model.prepared","model.submitted","model.exited","model.rewritten"};
+constexpr std::array tool_phases{"tool.candidate","tool.admitted","tool.exited"};
+constexpr std::array effects{"not_applied","applied","unknown"};
+constexpr std::array faults{"none","failed","unavailable","invalid_result","cancel_failed","read_failed","release_failed","cancelled","deadline"};
 
 // 保留统一模型协议的消息顺序、工具请求和配对身份。
 Json encode_message(const dfy::model::Message& message) {
@@ -62,7 +65,33 @@ RunLog::RunLog(const std::filesystem::path& root) : path_(log_path(root)), outpu
 agent::RunCaptureSinks RunLog::sinks(std::string source) {
     const auto log = shared_from_this();
     return {[log, source](const auto& value) { log->model(source,value); },
-        [log, source](const auto& record) { log->exit(source,record); }};
+        [log, source](const auto& record) { log->exit(source,record); },
+        [log, source](const auto& value) { log->tool(source,value); }};
+}
+
+// 串联候选参数、已接纳调用和原退出回执。
+// 步骤：写入候选身份 → 区分派发状态 → 附上实际结果或拒绝事实。
+void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
+    const auto& entry = value.candidate;
+    const auto attempt = entry.attempt;
+    const auto state = value.request ? value.request->operation()->state() : entry.result;
+    Json item{{"source",source},{"session",attempt.step.run.session},{"run",attempt.step.run.sequence},
+        {"step",attempt.step.sequence},{"attempt",attempt.sequence},{"candidate",entry.candidate},
+        {"invocation",entry.invocation},{"accepted",entry.accepted},{"callId",value.call.id},
+        {"name",value.call.name},{"arguments",value.call.arguments}};
+    if (entry.tool_id) item["toolId"] = *entry.tool_id;
+    if (entry.confirmation) item["confirmation"] = entry.confirmation;
+    if (value.phase == agent::ToolCapturePhase::exited) {
+        const auto* request = value.request;
+        const auto& outcome = request ? request->outcome() : agent::ToolResult{false,entry.effect,{},entry.error};
+        item["result"] = states.at(static_cast<std::size_t>(state));
+        item["effect"] = effects.at(static_cast<std::size_t>(outcome.effect));
+        item["succeeded"] = outcome.succeeded;
+        item["output"] = outcome.output;
+        item["error"] = faults.at(static_cast<std::size_t>(outcome.error));
+        item["fault"] = faults.at(static_cast<std::size_t>(request ? request->fault() : entry.fault));
+    }
+    append(tool_phases.at(static_cast<std::size_t>(value.phase)),std::move(item));
 }
 
 // 在每条记录上固定顺序和相对时钟，失败后停止写入并报告证据缺口。

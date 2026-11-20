@@ -15,6 +15,7 @@
 #include <array>
 
 namespace dfy::app {
+class RunLog;
 enum class CompanionMode { scenario, partner };
 struct CompanionStatus {
     runtime::DomainId session = 0, instance = 0;
@@ -37,7 +38,8 @@ class CompanionSession {
     // 从活动实例建立独立会话、只读目录及可撤销角色声明。
     CompanionSession(const std::shared_ptr<plugins::PluginInstance>& instance, const model::Config& config,
         const std::shared_ptr<events::BroadcastChannel>& channel, const model::Backend& backend,
-        const agent::RunVersionLabels& labels, agent::ToolClock clock, plugins::PluginMailboxHost mailboxes);
+        const agent::RunVersionLabels& labels, agent::ToolClock clock, plugins::PluginMailboxHost mailboxes,
+        std::shared_ptr<RunLog> log = {});
     // 接纳该会话的只读委托，插件重载时原会话拒绝新动作。
     agent::TurnDiagnostics submit(const std::string& prompt);
     // 推进子会话的结算与实际退出，保留最近一次可信回执。
@@ -129,6 +131,7 @@ class CompanionSession {
         bool closed = false;
     };
     plugins::PluginMailboxHost mailboxes_;
+    std::shared_ptr<RunLog> log_;
     std::optional<PartnerProjection> partner_;
     std::optional<CompanionConfirmation> confirmation_;
     // 启动工具名和参数都已收紧的正式查看回合。

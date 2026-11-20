@@ -1,4 +1,5 @@
 #include "companion.hpp"
+#include "run_log.hpp"
 #include <dafeiyu/companion_abi_v2.h>
 #include <nlohmann/json.hpp>
 
@@ -90,7 +91,19 @@ void CompanionSession::advance_partner() {
     for (std::size_t count = 0; count < 16; ++count) {
         auto item = mailboxes_.network->read(mailboxes_.identity,projection.inbox);
         if (!item.event) break;
-        try { accept_partner(*item.event.get().payload); }
+        const auto& record = item.event.get();
+        if (log_) {
+            try {
+                const auto& payload = *record.payload;
+                const auto* text = payload.find("text");
+                if (text && text->kind() == runtime::ValueKind::string) {
+                    log_->append("mail.received",{{"mailbox",projection.inbox.value},{"domain",record.id.domain},
+                        {"message",record.id.sequence},{"instance",offer_.generation},{"category",payload.descriptor()->name()},
+                        {"body",nlohmann::json::parse(text->as_string(),nullptr,false)}});
+                }
+            } catch (...) {}
+        }
+        try { accept_partner(*record.payload); }
         catch (const nlohmann::json::exception&) { projection.input.gap = true; }
     }
     projection.closed = phase == DFY_V2_PARTNER_CLOSED;
@@ -120,8 +133,14 @@ void CompanionSession::flush_partner_message() {
         {"id",item.revision},{"task",item.task},{"text",item.text}}.dump();
     const auto category = delegation ? "mc.partner.delegate" : "mc.partner.query";
     try {
-        mailboxes_.network->deliver_next(mailboxes_.identity,partner_->outgoing,
+        const auto receipt = mailboxes_.network->deliver_next(mailboxes_.identity,partner_->outgoing,
             events::mailbox_text(category,1,body,mailboxes_.network->payload_limit()));
+        if (log_) {
+            try {
+                log_->append("mail.accepted",{{"mailbox",partner_->outgoing.value},{"domain",receipt.event.domain},
+                    {"message",receipt.event.sequence},{"category",category},{"body",nlohmann::json::parse(body)}});
+            } catch (...) {}
+        }
     } catch (const std::length_error&) { return; }
     (delegation ? partner_->delegation : partner_->inquiry) = item.revision;
     queued_.reset();

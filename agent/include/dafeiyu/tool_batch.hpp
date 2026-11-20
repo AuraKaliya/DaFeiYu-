@@ -4,6 +4,7 @@
 #include <dafeiyu/tool_executor.hpp>
 #include <dafeiyu/confirmation.hpp>
 #include <dafeiyu/run_journal.hpp>
+#include <dafeiyu/run_capture.hpp>
 
 namespace dfy::agent {
 struct BatchToolSnapshot {
@@ -27,7 +28,7 @@ class ToolBatch {
     // 动作前预留回填并检查策略；确认账本须存活到批次销毁，等待时不接纳工具。
     ToolBatch(RunContext& context, ToolExecutor& executor, const model::Message& assistant,
         const ToolSnapshot& tools, ExecutionPolicy policy, PolicyContext control, PolicyExtension extension = {}, ConfirmationBook* confirmations = nullptr,
-        RunJournal* journal = nullptr);
+        RunJournal* journal = nullptr, ToolCaptureSink capture = {});
     // 未完成时仅请求取消，实际工作责任仍由执行器保留，不提交伪造结果。
     ~ToolBatch();
     // 禁止复制批次结果回填责任。
@@ -48,6 +49,8 @@ class ToolBatch {
     std::optional<ToolResult> result(runtime::DomainId candidate) const;
   private:
     struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; std::optional<TraceFact> last; bool filled = false; };
+    // 按阶段发布工具实际参数，记录异常不改变接纳或结果。
+    void capture(const Entry& entry, ToolCapturePhase phase) noexcept;
     // 在原工具状态发生变化时记录无正文事实，重复推进不追加相同状态。
     void publish(std::size_t index, TraceFactKind kind = TraceFactKind::tool_changed) noexcept;
     // 记录候选控制决定，不替代执行入口的权限或参数检查。
@@ -66,6 +69,7 @@ class ToolBatch {
     const ExecutionPolicy policy_;
     const PolicyContext bound_;
     const PolicyExtension extension_;
+    const ToolCaptureSink capture_;
     std::vector<Entry> entries_;
     PolicyDecision continuation_{PolicyVerdict::allow,PolicyReason::none};
     std::uint64_t fingerprint_ = UINT64_C(14695981039346656037);

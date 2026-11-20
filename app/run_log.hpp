@@ -1,5 +1,5 @@
 #pragma once
-#include <dafeiyu/model_capture.hpp>
+#include <dafeiyu/run_capture.hpp>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -20,6 +20,8 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
   private:
     // 写入一次模型记录，供后续按原请求身份复盘。
     void model(std::string_view source, const agent::ModelCapture& value);
+    // 写入候选、实际接纳及退出时的原工作证据。
+    void tool(std::string_view source, const agent::ToolCapture& value);
     // 写入已经退出的运行，包括元数据与实际内部结算。
     void exit(std::string_view source, const agent::TurnRequest& request);
 

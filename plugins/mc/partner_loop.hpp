@@ -23,7 +23,8 @@ class PartnerLoop {
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
-    void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect, std::string output) noexcept;
+    void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
+        std::string work, std::string output) noexcept;
     // 保留原采集候选，只允许当前插件角色创建确认。
     bool confirm_collect(std::uint64_t session, std::uint64_t request, std::string_view envelope);
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
@@ -71,7 +72,7 @@ class PartnerLoop {
     struct Delegation { std::uint64_t id; std::string world, text; };
     std::optional<Delegation> awaiting_delegation_, active_delegation_;
     std::uint64_t last_task_ = 0;
-    struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string body; };
+    struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string work, body; };
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     struct Release {

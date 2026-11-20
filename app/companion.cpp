@@ -1,4 +1,5 @@
 #include "companion.hpp"
+#include "run_log.hpp"
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
@@ -17,9 +18,10 @@ plugins::CompanionOffer require_offer(plugins::PluginInstance& instance, const a
 // 步骤：登记当前实例工具 → 验证可选角色声明 → 创建独立会话。
 CompanionSession::CompanionSession(const std::shared_ptr<plugins::PluginInstance>& instance, const model::Config& config,
     const std::shared_ptr<events::BroadcastChannel>& channel, const model::Backend& backend, const agent::RunVersionLabels& labels,
-    agent::ToolClock clock, plugins::PluginMailboxHost mailboxes)
-    : mailboxes_(std::move(mailboxes)), instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
-      registration_(instance, catalog_), offer_(require_offer(*instance, *catalog_)), session_(config, channel, backend),
+    agent::ToolClock clock, plugins::PluginMailboxHost mailboxes, std::shared_ptr<RunLog> log)
+    : mailboxes_(std::move(mailboxes)), log_(std::move(log)), instance_(instance), package_(instance->plugin_id()), catalog_(std::make_shared<agent::ToolCatalog>()),
+      registration_(instance, catalog_), offer_(require_offer(*instance, *catalog_)),
+      session_(config,channel,backend,4,log_ ? log_->sinks("companion") : agent::RunCaptureSinks{}),
       conversation_(session_, labels), clock_(std::move(clock)) {}
 
 // 重新核对原代次与活动状态，弱引用不阻止空闲 DLL 卸载。

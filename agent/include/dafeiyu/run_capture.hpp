@@ -18,10 +18,22 @@ struct ModelCapture {
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;
+enum class ToolCapturePhase { candidate, admitted, exited };
+struct BatchToolSnapshot;
+class ToolRequest;
+// 工具阶段记录只借用原候选、命令及已接纳工作，拒绝时没有工作引用。
+struct ToolCapture {
+    ToolCapturePhase phase;
+    const BatchToolSnapshot& candidate;
+    const model::ToolCall& call;
+    const ToolRequest* request;
+};
+using ToolCaptureSink = std::function<void(const ToolCapture&)>;
 class TurnRequest;
 using TurnExitSink = std::function<void(const TurnRequest&)>;
 struct RunCaptureSinks {
     ModelCaptureSink model;
     TurnExitSink exit;
+    ToolCaptureSink tool;
 };
 }

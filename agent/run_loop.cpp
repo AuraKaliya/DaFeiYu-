@@ -576,7 +576,8 @@ struct RunLoopState {
                             stage = TurnFailure::control; record->stop_reason_ = PolicyReason::tool_limit; throw std::length_error("run: tool limit exhausted");
                         }
                         const auto& scope = record->plan_ ? step_tools : options.tools;
-                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*scope,*policy,control(),options.extension,record->confirmations_.get(),&record->journal_);
+                        auto next_batch = std::make_unique<ToolBatch>(*record->context_,*record->tools_,response->message,*scope,*policy,control(),
+                            options.extension,record->confirmations_.get(),&record->journal_,options.tool_capture);
                         batch = next_batch.get(); record->batches_.push_back(std::move(next_batch)); record->tool_requests_ += count;
                     } else { stage = TurnFailure::model_response; throw std::runtime_error("run: unsupported model response"); }
                 }
