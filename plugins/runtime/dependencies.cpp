@@ -31,7 +31,7 @@ runtime::Handle PluginDependencies::bind(std::shared_ptr<PluginInstance> consume
     if (cyclic(consumer.get(),provider.get())) throw std::logic_error("dependencies: cycle");
     auto binding = std::shared_ptr<const DependencyBinding>(new DependencyBinding(std::move(consumer),std::move(provider)));
     const auto handle = references_.insert(std::make_shared<Reference>(Reference{std::move(binding)}),false);
-    *slot = handle; return handle;
+    *slot = handle; ++revision_; return handle;
 }
 // 新绑定准备失败保留旧路径，新绑定成功也不擅自终止旧使用。
 runtime::Handle PluginDependencies::rebind(runtime::Handle old_binding, std::shared_ptr<PluginInstance> provider) {
@@ -41,7 +41,16 @@ runtime::Handle PluginDependencies::rebind(runtime::Handle old_binding, std::sha
 void PluginDependencies::release(runtime::Handle binding) {
     (void)references_.get(binding);
     const auto slot = std::find(slots_.begin(),slots_.end(),binding);
-    references_.release(binding); *slot = {};
+    references_.release(binding); *slot = {}; ++revision_;
+}
+// 复制固定实例的直接提供方标识，原实例继续由依赖目录持有。
+std::vector<std::string_view> PluginDependencies::providers(const PluginInstance& consumer) const {
+    std::vector<std::string_view> result;
+    for (const auto handle : slots_) if (!handle.empty()) {
+        const auto& binding = references_.get(handle).binding;
+        if (binding->consumer().get() == &consumer) result.push_back(binding->provider()->plugin_id());
+    }
+    return result;
 }
 // 先固定依赖闭包，再按无剩余使用者的叶子取出，所有计划分配发生在停止前。
 // 步骤：收集递归依赖方 → 反复选择无在途依赖方的实例 → 返回消费者先于提供方的计划。
@@ -94,7 +103,7 @@ ShutdownResult PluginDependencies::stop_instance(const std::shared_ptr<PluginIns
     const auto result = instance->shutdown();
     if (result == ShutdownResult::closed)
         for (auto& handle : slots_) if (!handle.empty() && references_.get(handle).binding->consumer() == instance) {
-            references_.release(handle); handle = {};
+            references_.release(handle); handle = {}; ++revision_;
         }
     return result;
 }

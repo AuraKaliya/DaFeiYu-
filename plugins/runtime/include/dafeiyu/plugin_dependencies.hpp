@@ -53,6 +53,10 @@ class PluginDependencies {
     std::vector<InstanceShutdown> shutdown_all(std::span<const std::shared_ptr<PluginInstance>> providers);
     // 返回目录中仍未归还的绑定数，旧绑定在重新绑定后仍占名额。
     std::size_t size() const noexcept { return references_.size(); }
+    // 返回消费者当前实例的直接提供方，供宿主构造完整 Hook 图。
+    std::vector<std::string_view> providers(const PluginInstance& consumer) const;
+    // 检测运行期绑定变化，未更改时复用已发布 Hook 计划。
+    std::uint64_t revision() const noexcept { return revision_; }
   private:
     struct Reference { std::shared_ptr<const DependencyBinding> binding; };
     // 检查提供方是否已经直接或间接依赖消费者，防止新边成环。
@@ -63,5 +67,6 @@ class PluginDependencies {
     ShutdownResult stop_instance(const std::shared_ptr<PluginInstance>& instance);
     runtime::HandleRegistry<Reference> references_;
     std::vector<runtime::Handle> slots_;
+    std::uint64_t revision_ = 0;
 };
 }

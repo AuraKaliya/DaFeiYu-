@@ -1,6 +1,9 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_package.hpp>
+#include <dafeiyu/plugin_order.hpp>
 #include "package_files.hpp"
+#include <algorithm>
+#include <array>
 
 namespace dfy::plugins {
 namespace {
@@ -13,8 +16,16 @@ std::size_t bounded(std::size_t capacity) {
 struct PluginManager::State {
     struct Entry {
         std::shared_ptr<PluginInstance> instance; runtime::Handle owner;
+        std::uint64_t registration = 0;
         bool stopping = false, owner_stopped = false, faulted = false; DependencyStop stop_mode = DependencyStop::refuse_dependents;
     };
+    struct Hook {
+        std::shared_ptr<PluginInstance> instance;
+        std::size_t index;
+        uint32_t sessions;
+        bool faulted;
+    };
+    using HookList = std::vector<Hook>;
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
         std::shared_ptr<events::BroadcastChannel> events, std::size_t limit, PluginMailboxHost mail)
@@ -26,6 +37,40 @@ struct PluginManager::State {
             throw std::invalid_argument("plugins: mail network and host identity must be supplied together");
         try { registry.refresh(); } catch (const std::runtime_error& error) { directory_error = error.what(); }
     }
+    // 发布按控制点索引的不可变调用表，依赖排序覆盖没有注册 Hook 的节点。
+    // 步骤：按注册顺序建立活动节点 → 复制完整边并排序 → 分派各索引到其控制点 → 原子替换。
+    void publish_hooks() {
+        std::vector<const Entry*> active;
+        for (const auto& [id, entry] : instances)
+            if (entry.instance && entry.instance->phase() == InstancePhase::active) active.push_back(&entry);
+        std::ranges::sort(active,{},[](const auto* entry) { return entry->registration; });
+
+        std::vector<std::vector<std::string_view>> edges;
+        std::vector<PluginOrderNode> graph;
+        edges.reserve(active.size());
+        graph.reserve(active.size());
+        for (const auto* entry : active) {
+            auto& providers = edges.emplace_back(dependencies.providers(*entry->instance));
+            std::erase_if(providers,[&](const auto id) { return !std::ranges::any_of(active,[&](const auto* item) {
+                return item->instance->plugin_id() == id;
+            }); });
+            graph.push_back({entry->instance->plugin_id(),providers});
+        }
+
+        std::array<HookList,3> lists;
+        for (const auto node : stable_plugin_order(graph)) {
+            const auto& instance = active[node]->instance;
+            const auto registered = instance->hooks();
+            for (std::size_t index = 0; index < registered.size(); ++index) {
+                const auto& hook = registered[index];
+                lists.at(hook.point-1).push_back({instance,index,hook.sessions,active[node]->faulted});
+            }
+        }
+        auto updated = std::make_shared<const std::array<HookList,3>>(std::move(lists));
+        hook_order = std::move(updated);
+        hook_revision = dependencies.revision();
+        hooks_dirty = false;
+    }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
     // 步骤：筛选已卸载实例 → 停止其调度接纳 → 等待包装排空 → 归还名额与实例持有。
     void collect() {
@@ -34,7 +79,7 @@ struct PluginManager::State {
             if (entry.instance->phase() != InstancePhase::unloaded) { ++item; continue; }
             if (!entry.owner_stopped) { scheduler.stop(entry.owner); entry.owner_stopped = true; }
             if (scheduler.size(entry.owner)) { ++item; continue; }
-            scheduler.remove(entry.owner); item = instances.erase(item);
+            scheduler.remove(entry.owner); item = instances.erase(item); hooks_dirty = true;
         }
     }
     // 正常停止等待继续轮询，生命周期失败保留给显式重试，不自动反复调用失败入口。
@@ -49,7 +94,7 @@ struct PluginManager::State {
                     if (result == ShutdownResult::failed) { failed = true; if (!accepting) close_result = result; }
                 }
                 else if (!entry.faulted && entry.instance->phase() == InstancePhase::active) entry.instance->advance(scheduler,entry.owner);
-            } catch (...) { entry.faulted = true; entry.stopping = false; failed = true; if (!accepting) close_result = ShutdownResult::failed; }
+            } catch (...) { entry.faulted = true; entry.stopping = false; hooks_dirty = true; failed = true; if (!accepting) close_result = ShutdownResult::failed; }
         }
         const auto result = scheduler.run_one(); collect(); return failed ? runtime::RunResult::failed : result;
     }
@@ -80,8 +125,10 @@ struct PluginManager::State {
     PluginMailboxHost mailboxes;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
+    std::shared_ptr<const std::array<HookList,3>> hook_order;
+    std::uint64_t registration = 0, hook_revision = 0;
     std::string directory_error;
-    bool accepting = true;
+    bool accepting = true, hooks_dirty = false;
     ShutdownResult close_result = ShutdownResult::closed;
     State* next = nullptr;
 };
@@ -132,6 +179,11 @@ std::uint32_t PluginManager::load(const std::string& id) {
     }
     auto status = item->second.instance->create();
     if (!status) status = item->second.instance->start();
+    if (!status) {
+        item->second.registration = ++state_->registration;
+        try { state_->publish_hooks(); }
+        catch (...) { status = DFY_V2_FAILED; }
+    }
     if (status) (void)unload(id);
     return status;
 }
@@ -166,10 +218,35 @@ ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode)
     const auto item = state_->instances.find(id);
     if (item == state_->instances.end()) throw std::invalid_argument("plugins: id is not loaded");
     const auto result = state_->dependencies.shutdown(item->second.instance,mode).result;
-    item->second.stopping = result == ShutdownResult::pending; item->second.stop_mode = mode; state_->collect(); return result;
+    item->second.stopping = result == ShutdownResult::pending; item->second.stop_mode = mode; state_->collect();
+    if (result == ShutdownResult::pending) state_->hooks_dirty = true;
+    return result;
 }
 // 将宿主一次推进转交给管理状态，保留单步公平调度。
 runtime::RunResult PluginManager::advance() { return state_->advance(); }
+// 在同一份注册快照上依次调用适用实例，拒绝立即停止，确认条件累计到本步。
+// 步骤：检查调用点 → 取得或刷新固定计划 → 按会话过滤及裁定。
+uint32_t PluginManager::control_hook(const dfy_v2_hook_input& input) {
+    if (!input.session || !input.run || input.reserved ||
+        input.point < DFY_V2_HOOK_MODEL_REQUEST || input.point > DFY_V2_HOOK_TOOL_RESULT)
+        throw std::invalid_argument("hooks: invalid execution context");
+    if (state_->hooks_dirty || state_->hook_revision != state_->dependencies.revision()) state_->publish_hooks();
+    const auto snapshot = state_->hook_order;
+    if (!snapshot) return DFY_V2_HOOK_ALLOW;
+
+    auto result = DFY_V2_HOOK_ALLOW;
+    for (const auto& hook : snapshot->at(input.point-1)) {
+        if (hook.instance->phase() != InstancePhase::active) continue;
+        const auto scope = !input.owner ? DFY_V2_HOOK_MAIN_SESSION : input.owner == hook.instance->generation()
+            ? DFY_V2_HOOK_OWN_SESSION : DFY_V2_HOOK_OTHER_SESSION;
+        if (!(scope & hook.sessions)) continue;
+        if (hook.faulted) throw std::runtime_error("hooks: registered controller is faulted");
+        const auto verdict = hook.instance->decide_hook(hook.index,input);
+        if (verdict == DFY_V2_HOOK_DENY) return verdict;
+        if (verdict == DFY_V2_HOOK_CONFIRM) result = verdict;
+    }
+    return result;
+}
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。
 bool PluginManager::close() noexcept { return state_->close(); }
 // 只报告本轮批量关闭的裁定，历史生命周期错误继续留在实例诊断中。

@@ -40,6 +40,8 @@ class PluginManager {
     ShutdownResult unload(const std::string& id, DependencyStop mode = DependencyStop::refuse_dependents);
     // 推进全部实例的就绪通知及正常停止等待，每次只执行一个公平调度步骤。
     runtime::RunResult advance();
+    // 按已发布计划执行当前范围的控制 Hook，拒绝优先于确认和允许。
+    uint32_t control_hook(const dfy_v2_hook_input& input);
     // 停止新加载并尝试有序关闭全部实例，失败责任仍可显式重试。
     bool close() noexcept;
     // 在调用 close 后查询本轮关闭结果，不用实例历史错误码推断本轮是否失败。

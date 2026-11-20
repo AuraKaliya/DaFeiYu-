@@ -44,6 +44,12 @@ int wmain(int argc, wchar_t** argv) {
         check(hooks.size() == 2 && hooks[0].point == DFY_V2_HOOK_MODEL_REQUEST &&
             hooks[1].sessions == (DFY_V2_HOOK_MAIN_SESSION|DFY_V2_HOOK_OWN_SESSION) &&
             instance->decide_hook(1,control) == DFY_V2_HOOK_CONFIRM,"instance lost its C Hook registration");
+        auto scoped = control;
+        check(manager.control_hook(scoped) == DFY_V2_HOOK_CONFIRM,"main session skipped its control Hook");
+        scoped.owner = instance->generation();
+        check(manager.control_hook(scoped) == DFY_V2_HOOK_CONFIRM,"owned session skipped its control Hook");
+        scoped.owner = next_domain();
+        check(manager.control_hook(scoped) == DFY_V2_HOOK_ALLOW,"Hook exceeded its registered scope");
 
         auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create("test.request",1,{}, {0,32}));
         auto body = std::make_shared<const StructValue>(StructValue::create(std::move(type),{},0));
@@ -58,6 +64,7 @@ int wmain(int argc, wchar_t** argv) {
         check(answer.event.get().payload->descriptor()->name() == "test.reply" &&
             answer.event.get().payload->find("text")->as_string() == "received","host received invalid reply");
         check(manager.unload("test.mail") == ShutdownResult::closed && !instance->mailbox_addresses().inbound,"mailbox blocked clean unload");
+        check(manager.control_hook(control) == DFY_V2_HOOK_ALLOW,"unloaded Hook was used");
         check(manager.load("test.mail") == DFY_V2_OK && manager.instance("test.mail")->mailbox_addresses().outbound != addresses.outbound,
             "reload reused old mailbox routing");
         check(manager.close(),"mailbox manager did not close");
