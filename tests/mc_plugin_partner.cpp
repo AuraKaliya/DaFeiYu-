@@ -44,6 +44,7 @@ int wmain(int argc, wchar_t** argv) {
         if (app.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto instance = app.plugins().instance("mc.companion");
         unsigned game_receipts = 0;
+        bool control_released = false;
         {
             const auto api = instance->query<dfy_v2_companion_partner_api>(DFY_V2_COMPANION_PARTNER_INTERFACE,DFY_V2_COMPANION_PARTNER_VERSION);
             if (!api || instance->invoke(*api,[](const auto& fn, auto* native) { return fn.listen(native,nullptr); }))
@@ -73,6 +74,10 @@ int wmain(int argc, wchar_t** argv) {
                 auto mail = mails.network->read(mails.identity,address);
                 if (!mail.event) break;
                 const auto payload = mail.event.get().payload;
+                if (payload->descriptor()->name() == "mc.partner.control") {
+                    control_released = nlohmann::json::parse(payload->find("text")->as_string()).at("phase") == "released";
+                    continue;
+                }
                 if (payload->descriptor()->name() != "mc.partner.action") continue;
                 const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
                 if (fact.at("order") != 2 || fact.at("invocation") == 0 ||
@@ -81,7 +86,7 @@ int wmain(int argc, wchar_t** argv) {
                 ++game_receipts;
             }
         }
-        if (game_receipts != 1) throw std::runtime_error("expected one actual effect report from the plugin");
+        if (game_receipts != 1 || !control_released) throw std::runtime_error("expected original effect and confirmed control release");
         if (app.plugins().unload("mc.companion") != plugins::ShutdownResult::closed) throw std::runtime_error("MC unload failed");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

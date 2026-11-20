@@ -21,7 +21,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
-  let baselineRead = false, replies = 0, stopped = 0, moveId;
+  let baselineRead = false, replies = 0, stopped = 0, releases = 0, moveId;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -74,11 +74,18 @@ async function main() {
       ++replies;
       return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
     },
-  }, close() {} } : null);
+  },
+  // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
+  releaseControl(generation) {
+    assert.equal(generation, state.generation);
+    return { generation, order: interrupt ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
+  },
+  close() {} } : null);
   try {
     const child = spawn(exe, [packagePath, root, ...(interrupt ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
+    if (partnerLoop) assert.equal(releases, 2);
     if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);

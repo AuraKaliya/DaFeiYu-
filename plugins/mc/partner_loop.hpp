@@ -40,6 +40,8 @@ class PartnerLoop {
     void report_actions();
     // 在本地有界保留结构化事实，等本体接纳后归还。
     void publish(std::string_view category, const nlohmann::json& payload);
+    // 推进原世界接管并发布其真实释放结果。
+    bool release_game(const BridgeConfig& config, std::uint64_t instance);
 
     PartnerFeed feed_;
     const dfy_v2_agent_api* agent_ = nullptr;
@@ -50,6 +52,14 @@ class PartnerLoop {
     struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string body; };
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
+    struct Release {
+        std::string world, id, arguments;
+        std::unique_ptr<PipeExchange> pipe;
+        std::chrono::steady_clock::time_point deadline, next;
+        bool done = false;
+    };
+    std::optional<Release> release_;
+    std::uint64_t release_sequence_ = 0;
     std::string session_world_;
     std::uint64_t session_ = 0, request_ = 0, order_ = 0, settled_ = 0;
     struct Review {

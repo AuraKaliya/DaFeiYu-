@@ -52,6 +52,7 @@ void PartnerLoop::reset() noexcept {
     agent_ = nullptr;
     mail_ = nullptr;
     outbound_.clear();
+    release_.reset();
     while (action_count_) actions_[--action_count_] = {};
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
@@ -164,6 +165,40 @@ void PartnerLoop::flush() {
     outbound_.pop_front();
 }
 
+// 原回合已退出后完成接管收尾，失联或超时仅能报告未获确认。
+// 步骤：使用固定编号重读或提交 → 校验实际回执 → 发布释放或未核实结论。
+bool PartnerLoop::release_game(const BridgeConfig& config, std::uint64_t instance) {
+    using namespace std::chrono;
+    auto& release = *release_;
+    if (release.done) return true;
+    const auto now = steady_clock::now();
+    if (now >= release.deadline || release.world.empty()) {
+        release.pipe.reset();
+        publish("mc.partner.control",{{"generation",release.world},{"order",0},{"phase","unconfirmed"}});
+        return release.done = true;
+    }
+    if (now < release.next) return false;
+    try {
+        if (release.id.empty()) {
+            if (release_sequence_ == UINT64_MAX) throw std::overflow_error("MC partner: release sequence exhausted");
+            release.id = "release."+std::to_string(instance)+"."+std::to_string(++release_sequence_);
+            release.arguments = Json{{"generation",release.world}}.dump();
+        }
+        if (!release.pipe)
+            release.pipe = std::make_unique<PipeExchange>(config.channel,control_request(release.id,config.key,release.arguments));
+        const auto wire = release.pipe->poll();
+        if (!wire) return false;
+        release.pipe.reset();
+        const auto result = control_reply(*wire,release.id,release.arguments);
+        if (!result.empty()) {
+            publish("mc.partner.control",Json::parse(result));
+            return release.done = true;
+        }
+    } catch (const std::exception&) { release.pipe.reset(); }
+    release.next = now+milliseconds(50);
+    return false;
+}
+
 // 判断原生动作是否需要提前请求停止，保持业务处置与原动作退出分离。
 // 步骤：检查原判断关联 → 忽略过期或非明确答复 → 在有效新事件上登记一次新判断。
 void PartnerLoop::review(PartnerWork work, bool closing) {
@@ -206,14 +241,22 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     if (phase_ == DFY_V2_PARTNER_CLOSED) return;
     report_actions();
     flush();
+    if (phase_ == DFY_V2_PARTNER_LISTENING) {
+        feed_.advance(config,instance);
+        if (!feed_.control().is_null()) stop();
+    }
     const bool closing = phase_ == DFY_V2_PARTNER_STOPPING;
-    if (closing) feed_.clear();
-    else feed_.advance(config,instance);
+    if (closing && !release_) {
+        release_.emplace();
+        release_->world = feed_.world().empty() ? session_world_ : feed_.world();
+        release_->deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        feed_.clear();
+    }
     const bool replaced = session_ && feed_.world() != session_world_;
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
     if (closing) {
-        if (review_.request || !outbound_.empty()) return;
+        if (review_.request || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
     if (replaced) retire();

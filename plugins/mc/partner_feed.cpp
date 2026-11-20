@@ -9,6 +9,7 @@ void PartnerFeed::reset_binding() noexcept {
     cursor_ = departed_ = 0;
     ready_ = more_ = gap_ = false;
     pending_.clear();
+    control_ = nullptr;
 }
 
 // 停止读口并撤销原世界状态。
@@ -58,6 +59,7 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         more_ = batch.at("more").get<bool>();
     }
     if (presence != batch.end()) departed_ = presence->at("type") == "player.left" ? presence->at("sequence").get<std::uint64_t>() : 0;
+    if (batch.contains("control")) control_ = batch.at("control");
     owner_ = std::move(owner);
     ready_ = true;
 }
