@@ -336,6 +336,7 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticke
     auto* job = find_job(raw, ticket);
     if (!job) return report(DFY_V2_INVALID_HANDLE, error);
     if (!job->exited) return report(DFY_V2_BUSY, error);
+    if (job->partner_session) raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,std::move(job->output));
     *job = {};
     return report(DFY_V2_OK, error);
 }

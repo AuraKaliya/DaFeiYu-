@@ -17,6 +17,7 @@ constexpr auto review_instructions = view("你是正在游戏里行动的大肥�
 }
 
 // 由玩家入口显式启用，插件加载本身不读取游戏或提交模型。
+// 步骤：协商子会话及通信接口 → 建立定向地址 → 开启配对玩家事件循环。
 uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, const BridgeConfig& config) {
     if (phase_ == DFY_V2_PARTNER_LISTENING) return DFY_V2_OK;
     if (phase_ == DFY_V2_PARTNER_STOPPING) return DFY_V2_BUSY;
@@ -27,7 +28,16 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, const BridgeConfig&
     const auto& agent = *static_cast<const dfy_v2_agent_api*>(api);
     if (agent.header.struct_size != sizeof(agent) || agent.header.interface_version != DFY_V2_AGENT_VERSION ||
         !agent.open || !agent.submit || !agent.status || !agent.cancel || !agent.close) return DFY_V2_ABI_MISMATCH;
+    api = nullptr;
+    if (const auto status = host(view(DFY_V2_MAILBOX_INTERFACE),DFY_V2_MAILBOX_VERSION,&api,nullptr); status || !api)
+        return status ? status : DFY_V2_UNSUPPORTED;
+    const auto& mail = *static_cast<const dfy_v2_mailbox_api*>(api);
+    if (mail.header.struct_size != sizeof(mail) || mail.header.interface_version != DFY_V2_MAILBOX_VERSION ||
+        !mail.attach || !mail.post || !mail.poll) return DFY_V2_ABI_MISMATCH;
+    dfy_v2_mailbox_pair addresses{};
+    if (const auto status = mail.attach(&addresses,nullptr)) return status;
     agent_ = &agent;
+    mail_ = &mail;
     phase_ = DFY_V2_PARTNER_LISTENING;
     return DFY_V2_OK;
 }
@@ -40,6 +50,9 @@ void PartnerLoop::reset() noexcept {
     feed_.clear();
     phase_ = DFY_V2_PARTNER_CLOSED;
     agent_ = nullptr;
+    mail_ = nullptr;
+    outbound_.clear();
+    while (action_count_) actions_[--action_count_] = {};
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
     review_ = {};
@@ -63,6 +76,8 @@ bool PartnerLoop::settle(bool cancel) {
     }
     settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
+    publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},
+        {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel}});
     request_ = 0;
     return true;
 }
@@ -97,6 +112,7 @@ void PartnerLoop::submit() {
     reviewed_ = 0;
     stopped_work_ = false;
     events_ = std::move(facts);
+    for (const auto& fact : events_) publish("mc.partner.event",{{"generation",session_world_},{"event",fact}});
     previous_.clear();
     feed_.consumed();
 }
@@ -105,6 +121,47 @@ void PartnerLoop::submit() {
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
     return session != session_ || (phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ &&
         feed_.pending().empty() && !feed_.gap());
+}
+
+// 把原退出票据的效果与正文移动到本轮预留槽位。
+void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect, std::string output) noexcept {
+    if (!session_ || session != session_ || !request_ || action_count_ >= actions_.size()) return;
+    actions_[action_count_++] = {invocation,skill,effect,std::move(output)};
+}
+
+// 用固定分类封装已校验事实，消息正文大小保持在信箱上限内。
+void PartnerLoop::publish(std::string_view category, const Json& payload) {
+    if (outbound_.size() >= 128) throw std::logic_error("MC partner: outbox capacity exhausted");
+    outbound_.push_back({category,payload.dump()});
+}
+
+// 交付实际退出的动作，每份回执保留原游戏、动作编号和效果类别。
+// 步骤：按原票据顺序记录 → 提取实际游戏正文或注明省略 → 发布信箱事实并归还槽位。
+void PartnerLoop::report_actions() {
+    for (std::size_t index = 0; index < action_count_; ++index) {
+        auto& action = actions_[index];
+        Json fact{{"generation",session_world_},{"order",order_},{"invocation",action.id},{"skill",action.skill},{"effect",action.effect}};
+        if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
+        else if (!action.body.empty()) fact["bodyOmitted"] = true;
+        publish("mc.partner.action",fact);
+        action = {};
+    }
+    action_count_ = 0;
+}
+
+// ACK 只确认收进本体信箱，重投用同一发送序号。
+// 步骤：检查队首及编号 → 投递 → 收到接纳回执后归还本地持有。
+void PartnerLoop::flush() {
+    if (outbound_.empty()) return;
+    if (sent_ == UINT64_MAX) throw std::overflow_error("MC partner: outbox sequence exhausted");
+    const auto& front = outbound_.front();
+    dfy_v2_mailbox_receipt receipt{};
+    const auto response = mail_->post(sent_+1,view(front.category),1,view(front.body),&receipt,nullptr);
+    if (response == DFY_V2_BUSY || response == DFY_V2_RESOURCE_EXHAUSTED) return;
+    if (response || (receipt.state != DFY_V2_MAILBOX_ACCEPTED && receipt.state != DFY_V2_MAILBOX_REPEATED))
+        throw std::runtime_error("MC partner: invalid mailbox delivery");
+    ++sent_;
+    outbound_.pop_front();
 }
 
 // 判断原生动作是否需要提前请求停止，保持业务处置与原动作退出分离。
@@ -147,6 +204,8 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
 // 步骤：推进原生读取 → 核对在途回合 → 释放旧上下文或接纳最新事件。
 void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work) {
     if (phase_ == DFY_V2_PARTNER_CLOSED) return;
+    report_actions();
+    flush();
     const bool closing = phase_ == DFY_V2_PARTNER_STOPPING;
     if (closing) feed_.clear();
     else feed_.advance(config,instance);
@@ -154,11 +213,11 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
     if (closing) {
-        if (review_.request) return;
+        if (review_.request || !outbound_.empty()) return;
         retire(); reset(); return;
     }
     if (replaced) retire();
-    if (feed_.ready() && !feed_.pending().empty()) submit();
+    if (feed_.ready() && !feed_.pending().empty() && outbound_.size() <= 60) submit();
 }
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。
