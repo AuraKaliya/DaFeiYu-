@@ -8,6 +8,7 @@
 
 namespace dfy::app {
 namespace {
+constexpr std::size_t dialogue_limit = 1024*1024;
 // 固定应用的编译配置、已知源码提交及后端公开档案。
 agent::RunVersionLabels build_labels(std::optional<std::string> model_profile) {
     agent::RunVersionLabels labels;
@@ -44,6 +45,8 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     : tool_clock_(std::move(run.tool_clock)),
       channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
       mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
+      dialogue_sender_(runtime::next_domain()),
+      dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_limit)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
       conversation_(session_,labels_,plugins::plugin_controls(plugins_)),
@@ -51,6 +54,20 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
+}
+
+// 在独立地址上交付受信终端原话，普通问答沿用单回合接纳。
+// 步骤：核对主会话空闲 → 投递原正文并取得接纳序号 → 从本体信箱读回并接纳问答。
+agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
+    if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
+    if (dialogue_sequence_ == UINT64_MAX) throw std::overflow_error("dialogue: mailbox sequence exhausted");
+    auto& mail = *mailbox_host_.network;
+    const auto receipt = mail.deliver(dialogue_sender_,dialogue_mailbox_,dialogue_sequence_+1,
+        events::mailbox_text("dialogue.text",1,text,dialogue_limit));
+    if (receipt.state != events::DeliveryState::accepted) throw std::logic_error("dialogue: unexpected acceptance state");
+    ++dialogue_sequence_;
+    const auto received = mail.read(mailbox_host_.identity,dialogue_mailbox_);
+    return conversation_.submit(std::string(received.event.get().payload->find("text")->as_string()));
 }
 
 // 为用户指明的一个只读工具接纳运行。

@@ -7,11 +7,12 @@
 namespace dfy::app {
 using LocalCommand = std::function<bool(std::string_view)>;
 using HostPump = std::function<void()>;
+using ChatSubmit = std::function<agent::TurnDiagnostics(const std::string&)>;
 // 同宿主线程的终端交互状态，问答等待不阻挡取消或本地管理命令。
 class ChatController {
   public:
     // 借用会话与输出，管理命令处理器只在宿主线程调用。
-    ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command = {});
+    ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command = {}, ChatSubmit submit = {});
     // 分派输入；忙碌时普通问答明确拒绝，本地管理及取消仍可使用。
     void line(std::string text);
     // 推进会话并输出每轮唯一结果，实际退出前继续保留该回合。
@@ -29,9 +30,10 @@ class ChatController {
     std::ostream& output_;
     std::ostream& errors_;
     LocalCommand command_;
+    ChatSubmit submit_;
     bool ending_ = false;
 };
 // 轮询输入与会话，持续推进宿主事件；输入关闭和业务结果均不能提前退出资源回收。
 int async_chat(Conversation& conversation, platform::LineInput& input, std::ostream& output, std::ostream& errors,
-    HostPump pump = {}, LocalCommand command = {});
+    HostPump pump = {}, LocalCommand command = {}, ChatSubmit submit = {});
 }

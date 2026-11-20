@@ -37,6 +37,8 @@ class Application {
         model::Backend backend, ApplicationRunConfig run = {});
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
+    // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
+    agent::TurnDiagnostics submit_dialogue(const std::string& text);
     // 在原宿主线程使用应用拥有的插件命令入口。
     plugins::PluginManager& plugins() noexcept { return plugins_; }
     // 借用本体持有的信箱目录及主体身份供宿主入口使用。
@@ -148,6 +150,9 @@ class Application {
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
     plugins::PluginMailboxHost mailbox_host_;
+    const runtime::DomainId dialogue_sender_;
+    const events::MailboxId dialogue_mailbox_;
+    std::uint64_t dialogue_sequence_ = 0;
     plugins::PluginManager plugins_;
     const model::Config model_config_;
     const model::Backend model_backend_;

@@ -5,8 +5,8 @@
 
 namespace dfy::app {
 // 固定宿主会话与输出责任，不在构造阶段发起请求。
-ChatController::ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command)
-    : conversation_(conversation), output_(output), errors_(errors), command_(std::move(command)) {}
+ChatController::ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command, ChatSubmit submit)
+    : conversation_(conversation), output_(output), errors_(errors), command_(std::move(command)), submit_(std::move(submit)) {}
 // 管理命令不发送给模型，普通输入只在会话实际空闲时接纳。
 // 步骤：忽略结束和空白 → 处理退出、取消、清空及诊断 → 转交本地管理 → 接受问答或独立报告拒绝。
 void ChatController::line(std::string text) {
@@ -32,7 +32,7 @@ void ChatController::line(std::string text) {
             if (!command_ || !command_(text)) errors_ << "Unknown command. Use /status, /clear, /cancel or /exit.\n";
             return;
         }
-        const auto status = conversation_.submit(text);
+        const auto status = submit_ ? submit_(text) : conversation_.submit(text);
         write_observation_warning(errors_,status.session,status.turn,"turn_started",*status.notifications.started);
     } catch (const std::exception& error) { errors_ << error.what() << '\n'; }
     catch (...) { errors_ << "Command failed.\n"; }
@@ -72,8 +72,8 @@ void ChatController::request_exit() { ending_ = true; conversation_.close(); }
 // 轮询适配器和宿主工作，不在模型请求或终端读调用上阻塞事件推进。
 // 步骤：展示操作提示 → 交替推进宿主与会话 → 分派有界输入 → 关闭输入并等待实际退出 → 返回输出状态。
 int async_chat(Conversation& conversation, platform::LineInput& input, std::ostream& output, std::ostream& errors,
-    HostPump pump, LocalCommand command) {
-    ChatController controller(conversation,output,errors,std::move(command)); bool input_failed = false, input_closing = false;
+    HostPump pump, LocalCommand command, ChatSubmit submit) {
+    ChatController controller(conversation,output,errors,std::move(command),std::move(submit)); bool input_failed = false, input_closing = false;
     output << "DaFeiYu\nEnter a message, /status, /clear, /cancel or /exit. Local commands remain available while waiting.\n" << std::flush;
     while (!controller.done() || !input.exited()) {
         if (pump) pump(); controller.advance();

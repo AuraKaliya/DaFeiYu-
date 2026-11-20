@@ -25,6 +25,10 @@ struct MailboxCategory {
     std::uint32_t version;
 };
 
+// 创建由宿主拥有的单文本分类载荷，适用于原生服务及本体发送入口。
+std::shared_ptr<const runtime::StructValue> mailbox_text(std::string_view category, std::uint32_t version,
+    std::string_view text, std::size_t limit);
+
 // 在宿主线程上管理定向信箱。读取方和发送方必须来自宿主绑定的身份。
 class Mailboxes {
   public:
@@ -35,7 +39,7 @@ class Mailboxes {
     // 禁止赋值或隐式移动信箱目录。
     Mailboxes& operator=(const Mailboxes&) = delete;
     // 绑定接收方与允许投递的一方，签发进程期不复用的信箱地址。
-    MailboxId open(runtime::DomainId receiver, runtime::DomainId sender);
+    MailboxId open(runtime::DomainId receiver, runtime::DomainId sender, std::size_t payload_limit = 0);
     // 发送序号在目标信箱内从 1 连续递增；窗口内重投只读取原回执，消息正文仍取自首次接纳。
     DeliveryReceipt deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
         std::shared_ptr<const runtime::StructValue> payload);

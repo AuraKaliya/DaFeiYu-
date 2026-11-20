@@ -51,7 +51,11 @@ void shared_application(const fs::path& run) {
             return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+request.messages.back().content}};
         }});
     auto& conversation = application.conversation();
-    const auto accepted = conversation.submit("hello");
+    const std::string prompt = "hello-"+std::string(20*1024,'a');
+    const auto accepted = application.submit_dialogue(prompt);
+    bool busy = false;
+    try { (void)application.submit_dialogue("another line"); } catch (const std::logic_error&) { busy = true; }
+    check(busy,"mailbox changed direct chat busy semantics");
     check(application.close_plugins() == ShutdownResult::busy,"shared application ended plugins before its conversation");
 
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
@@ -60,7 +64,7 @@ void shared_application(const fs::path& run) {
         if (auto latest = conversation.advance()) result = std::move(latest);
         std::this_thread::yield();
     }
-    check(result && result->answer == "shared:hello" && result->status.turn == accepted.turn &&
+    check(result && result->answer == "shared:"+prompt && result->status.turn == accepted.turn &&
         conversation.status()->exit == OperationState::succeeded,"shared application lost result or actual exit");
 
     conversation.close();

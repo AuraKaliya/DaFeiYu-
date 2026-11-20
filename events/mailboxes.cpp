@@ -3,6 +3,20 @@
 #include <limits>
 
 namespace dfy::events {
+// 将已知分类与有界 UTF-8 正文建立为同一不可变消息。
+// 步骤：校验分类及正文上限 → 建立文本字段 → 固定完整载荷。
+std::shared_ptr<const runtime::StructValue> mailbox_text(std::string_view name, std::uint32_t version,
+    std::string_view text, std::size_t limit) {
+    using namespace runtime;
+    constexpr std::size_t name_limit = 128;
+    if (name.empty() || name.size() > name_limit || !version) throw std::invalid_argument("mailboxes: invalid category");
+    if (text.size() > limit) throw std::length_error("mailboxes: text exceeds message capacity");
+    const FieldDescriptor fields[] = {{"text",ValueKind::string,limit}};
+    auto descriptor = std::make_shared<const StructDescriptor>(StructDescriptor::create(name,version,fields,{1,name_limit+4}));
+    const NamedValue contents[] = {{"text",Value::from_string(text,limit)}};
+    return std::make_shared<const StructValue>(StructValue::create(std::move(descriptor),contents,limit));
+}
+
 // 为全部信箱建立共享消息预算，关闭后仍由读出事件持有的消息继续计费。
 // 步骤：校验信箱与消息容量 → 建立共享预算 → 预留目录槽位。
 Mailboxes::Mailboxes(MailboxLimits limits) : limits_(limits) {
@@ -18,11 +32,11 @@ Mailboxes::Mailboxes(MailboxLimits limits) : limits_(limits) {
 
 // 在有界目录中建立与原发送者和接收者绑定的独立队列。
 // 步骤：检查双方身份及槽位 → 为独立序号准备事件存储 → 提交队列与地址。
-MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender) {
+MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender, std::size_t payload_limit) {
     if (!receiver || !sender) throw std::invalid_argument("mailboxes: sender and receiver required");
     if (entries_.size() == limits_.mailboxes) throw std::length_error("mailboxes: directory full");
 
-    auto store = std::make_shared<EventStore>(limits_.outstanding_events,limits_.payload_bytes,budget_);
+    auto store = std::make_shared<EventStore>(limits_.outstanding_events,payload_limit ? payload_limit : limits_.payload_bytes,budget_);
     const MailboxId id{store->domain()};
     entries_.push_back({id,receiver,sender,std::make_unique<SubscriptionQueue>(std::move(store),limits_.queue_depth)});
     return id;

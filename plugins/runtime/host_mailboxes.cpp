@@ -50,21 +50,6 @@ dfy_v2_status DFY_V2_CALL attach(dfy_v2_mailbox_pair* output, dfy_v2_error* erro
     });
 }
 
-// 将分类及文本复制为宿主不可变载荷。
-std::shared_ptr<const runtime::StructValue> make_text(dfy_v2_string_view category, uint32_t version,
-    dfy_v2_string_view text, std::size_t limit) {
-    using namespace runtime;
-    constexpr std::size_t name_limit = 128;
-    if (!category.data || !category.length || category.length > name_limit || !version || (!text.data && text.length))
-        throw std::invalid_argument("host: invalid mailbox message");
-    if (text.length > limit) throw std::length_error("host: mailbox text exceeds capacity");
-    const FieldDescriptor fields[] = {{"text",ValueKind::string,limit}};
-    auto descriptor = std::make_shared<const StructDescriptor>(
-        StructDescriptor::create({category.data,category.length},version,fields,{1,name_limit+4}));
-    const NamedValue contents[] = {{"text",Value::from_string(text.data ? std::string_view{text.data,text.length} : std::string_view{},limit)}};
-    return std::make_shared<const StructValue>(StructValue::create(std::move(descriptor),contents,limit));
-}
-
 // 写入当前实例的出站信箱，C 消费者不提交或伪造发送者身份。
 // 步骤：校验并清空输出 → 准备宿主载荷 → 投递或复用回执 → 转换接纳状态。
 dfy_v2_status DFY_V2_CALL post(uint64_t sequence, dfy_v2_string_view category, uint32_t version,
@@ -73,8 +58,10 @@ dfy_v2_status DFY_V2_CALL post(uint64_t sequence, dfy_v2_string_view category, u
     if (!output || !sequence) { if (error) error->length = 0; return DFY_V2_INVALID_ARGUMENT; }
     return boundary(error,[&](auto& host) {
         if (!host.mailbox_pair.outbound) return DFY_V2_UNSUPPORTED;
+        if (!category.data || !category.length || (!text.data && text.length)) return DFY_V2_INVALID_ARGUMENT;
         const auto receipt = host.mailboxes->deliver(host.mailbox_plugin,{host.mailbox_pair.outbound},sequence,
-            make_text(category,version,text,host.mailboxes->payload_limit()));
+            events::mailbox_text({category.data,category.length},version,text.length ? std::string_view(text.data,text.length) : std::string_view{},
+                host.mailboxes->payload_limit()));
         uint32_t state = 0;
         switch (receipt.state) {
         case events::DeliveryState::accepted: state = DFY_V2_MAILBOX_ACCEPTED; break;
