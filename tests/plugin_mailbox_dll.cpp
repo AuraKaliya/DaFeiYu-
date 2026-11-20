@@ -105,6 +105,25 @@ void subagents(const fs::path& root) {
     check(settle(a) == "1" && calls == 1,"first session or queued cancellation was incorrect");
     check(agents.submit(owner,a,{"second"}) == 2 && settle(a) == "3","child context did not persist");
     check(agents.submit(owner,b,{"independent"}) == 2 && settle(b) == "1","child context crossed sessions");
+    {
+        const auto controller = instance->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+        std::uint64_t request = 0;
+        check(controller && instance->invoke(*controller,[&](const auto& api, auto* plugin) {
+            return api.ask(plugin,&request,nullptr);
+        }) == DFY_V2_OK && request == 1 && calls == 3,"native ABI dispatched before leaving plugin callback");
+    }
+    check(app.plugins().unload("test.mail") == ShutdownResult::busy,"queued native subagent allowed unload");
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    do { app.advance_plugins(); std::this_thread::yield(); }
+    while (agents.busy(owner) && std::chrono::steady_clock::now() < deadline);
+    {
+        const auto controller = instance->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+        check(controller && instance->invoke(*controller,[](const auto& api, auto* plugin) -> uint32_t {
+            dfy_v2_agent_status status{};
+            return !api.agent_result(plugin,&status,nullptr) && status.phase == DFY_V2_AGENT_SUCCEEDED &&
+                std::string_view(status.answer.data,status.answer.length) == "1" ? DFY_V2_OK : DFY_V2_FAILED;
+        }) == DFY_V2_OK,"native subagent did not yield an isolated result");
+    }
     app.conversation().close();
     check(app.close_plugins() == ShutdownResult::pending,"shutdown did not account for child sessions");
     app.advance_plugins();

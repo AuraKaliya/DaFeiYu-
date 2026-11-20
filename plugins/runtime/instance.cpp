@@ -40,7 +40,7 @@ struct PluginInstance::State {
         try {
             if (phase == InstancePhase::unloaded) return ShutdownResult::closed;
             if (module.active_calls()) return ShutdownResult::busy;
-            if (host.processing_busy()) return ShutdownResult::busy;
+            if (host.processing_busy() || host.agents_busy()) return ShutdownResult::busy;
             if (module.code_leases() > (lifecycle ? 1 : 0) + host.code_holds()) return ShutdownResult::in_use;
             if (phase == InstancePhase::broken) return ShutdownResult::failed;
             if (!host.begin_shutdown()) { error = DFY_V2_FAILED; return ShutdownResult::failed; }
@@ -107,6 +107,13 @@ void PluginInstance::enable_mailboxes(std::shared_ptr<events::Mailboxes> network
     if (state_->create_attempted || state_->phase != InstancePhase::loaded)
         throw std::logic_error("instance: cannot attach new services after create");
     state_->host.enable_mailboxes(std::move(network),app,state_->generation);
+}
+
+// 只为实际传入的原实例配置子会话权限。
+void PluginInstance::enable_agents(std::weak_ptr<PluginAgents> service, const std::shared_ptr<PluginInstance>& instance) {
+    if (instance.get() != this || state_->create_attempted || state_->phase != InstancePhase::loaded)
+        throw std::logic_error("instance: invalid agent service attachment");
+    state_->host.enable_agents(std::move(service),instance,state_->generation);
 }
 
 // 读取当前实例持有的信箱地址。

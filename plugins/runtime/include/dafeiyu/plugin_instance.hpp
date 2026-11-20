@@ -52,6 +52,8 @@ class PluginInstance {
     uint32_t start() noexcept;
     // 在创建开始前以原实例代次装配信箱宿主服务。
     void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app);
+    // 在创建前将子会话服务绑定到本实例。
+    void enable_agents(std::weak_ptr<PluginAgents> service, const std::shared_ptr<PluginInstance>& instance);
     // 取得当前实例已接入的定向地址，未接入或停止后返回零。
     dfy_v2_mailbox_pair mailbox_addresses() const;
     // 借用启动后固定的 Hook 元数据，只在实例活动期间提供。

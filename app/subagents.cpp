@@ -82,6 +82,15 @@ bool Subagents::cancel(runtime::DomainId owner, runtime::DomainId id, std::uint6
 // 标记关停，由宿主推进真实取消与退出。
 void Subagents::close(runtime::DomainId owner, runtime::DomainId id) { find(owner,id).closing = true; }
 
+// 回收原实例尚未发出的提交并标记全部会话停止。
+void Subagents::close_owner(runtime::DomainId owner) noexcept {
+    for (auto& slot : slots_) if (slot && slot->owner == owner) {
+        if (slot->phase != SubagentPhase::running) { slot.reset(); continue; }
+        slot->closing = true;
+        slot->queued.reset();
+    }
+}
+
 // 检查原所有者的排队或尚未退出的工作。
 bool Subagents::busy(runtime::DomainId owner) const noexcept {
     return std::ranges::any_of(slots_,[owner](const auto& slot) {

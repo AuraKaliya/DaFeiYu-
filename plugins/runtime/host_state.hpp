@@ -4,6 +4,7 @@
 #include <dafeiyu/data_abi_v2.h>
 #include <dafeiyu/event_abi_v2.h>
 #include <dafeiyu/group_abi_v2.h>
+#include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/processing_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
@@ -39,6 +40,9 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::shared_ptr<events::Mailboxes> mailboxes;
     runtime::DomainId mailbox_app = 0, mailbox_plugin = 0;
     dfy_v2_mailbox_pair mailbox_pair{};
+    std::weak_ptr<PluginAgents> agents;
+    std::weak_ptr<PluginInstance> agent_instance;
+    runtime::DomainId agent_owner = 0;
     std::size_t request_capacity = 0;
     std::shared_ptr<events::ConsumerGroup> group;
     std::size_t group_request_capacity = 0;
@@ -51,6 +55,10 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::size_t callback_pins = 0;
 };
 inline thread_local HostState* current_host = nullptr;
+// 返回宿主子会话能力版本 1。
+const dfy_v2_agent_api& agent_api();
+// 撤销原实例的子会话接纳并请求收尾。
+void revoke_agents(HostState& host) noexcept;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。
 inline runtime::Handle native(dfy_v2_handle value) noexcept { return {value.domain, value.id, value.generation}; }
 // 将宿主引用身份复制为固定 C 表示。

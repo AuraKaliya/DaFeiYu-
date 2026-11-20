@@ -7,10 +7,13 @@
 _Static_assert(sizeof(dfy_v2_mailbox_api) == 32 && offsetof(dfy_v2_mailbox_api,poll) == 24,"mailbox ABI");
 _Static_assert(sizeof(dfy_v2_mailbox_message) == 40 && offsetof(dfy_v2_mailbox_message,payload) == 16,"mailbox message ABI");
 _Static_assert(sizeof(dfy_v2_hook_api) == 24 && sizeof(dfy_v2_hook_input) == 72,"hook ABI");
+_Static_assert(sizeof(dfy_v2_agent_api) == 48 && sizeof(dfy_v2_agent_input) == 64 && sizeof(dfy_v2_agent_status) == 32,"agent ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
     const dfy_v2_mailbox_api* mail;
     const dfy_v2_reference_api* refs;
+    const dfy_v2_agent_api* agent;
+    uint64_t session;
 };
 
 // 为纯 C 插件分配独立实例并保存宿主查询入口。
@@ -27,8 +30,9 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
 // 在实例载入阶段显式注册双向信箱。
 // 步骤：协商信箱及引用版本 → 校验布局 → 接入并保留接口。
 static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* error) {
-    const void *mail = NULL, *refs = NULL;
+    const void *mail = NULL, *refs = NULL, *agent = NULL;
     dfy_v2_mailbox_pair addresses = {0};
+    dfy_v2_status status = DFY_V2_OK;
     if (instance->host((dfy_v2_string_view){DFY_V2_MAILBOX_INTERFACE,sizeof(DFY_V2_MAILBOX_INTERFACE)-1},1,&mail,error) ||
         instance->host((dfy_v2_string_view){DFY_V2_REFERENCE_INTERFACE,sizeof(DFY_V2_REFERENCE_INTERFACE)-1},1,&refs,error))
         return DFY_V2_UNSUPPORTED;
@@ -36,7 +40,13 @@ static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* 
         ((const dfy_v2_api_header*)refs)->struct_size != sizeof(dfy_v2_reference_api)) return DFY_V2_UNSUPPORTED;
     instance->mail = mail;
     instance->refs = refs;
-    return instance->mail->attach(&addresses,error);
+    status = instance->mail->attach(&addresses,error);
+    if (status) return status;
+    status = instance->host((dfy_v2_string_view){DFY_V2_AGENT_INTERFACE,sizeof(DFY_V2_AGENT_INTERFACE)-1},1,&agent,error);
+    if (status == DFY_V2_UNSUPPORTED) return DFY_V2_OK;
+    if (status || !agent || ((const dfy_v2_api_header*)agent)->struct_size != sizeof(dfy_v2_agent_api)) return DFY_V2_UNSUPPORTED;
+    instance->agent = agent;
+    return instance->agent->open(&instance->session,error);
 }
 
 // 消费真实队首并按原测试序号向本体回信。
@@ -48,6 +58,17 @@ static dfy_v2_status DFY_V2_CALL reply(dfy_v2_instance* instance, dfy_v2_error* 
     status = instance->refs->release(input.payload,error);
     if (status) return status;
     return instance->mail->post(input.sequence,(dfy_v2_string_view){"test.reply",10},1,(dfy_v2_string_view){"received",8},&sent,error);
+}
+
+// 以纯 C 接口向启动时建立的原会话提交一轮。
+static dfy_v2_status DFY_V2_CALL ask(dfy_v2_instance* instance, uint64_t* request, dfy_v2_error* error) {
+    const dfy_v2_agent_input input = {{"fixture",7},{0},{0},NULL,0,0};
+    return instance->agent->submit(instance->session,&input,request,error);
+}
+
+// 返回原子会话的状态与借用正文。
+static dfy_v2_status DFY_V2_CALL agent_result(dfy_v2_instance* instance, dfy_v2_agent_status* result, dfy_v2_error* error) {
+    return instance->agent->status(instance->session,result,error);
 }
 
 // 夹具没有背景动作，停止提交可直接接受。
@@ -64,7 +85,7 @@ static dfy_v2_status DFY_V2_CALL stopped(dfy_v2_instance* instance, uint32_t* ou
 // 由分配该实例的 DLL 归还私有内存。
 static void DFY_V2_CALL destroy(dfy_v2_instance* instance) { free(instance); }
 static const dfy_v2_lifecycle_api lifecycle = {{sizeof(dfy_v2_lifecycle_api),1},create,start,stop,stopped,destroy};
-static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply};
+static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply,ask,agent_result};
 
 // 依次注册主会话模型前检查及工具确认。
 static dfy_v2_status DFY_V2_CALL describe_hook(dfy_v2_instance* instance, uint32_t index,

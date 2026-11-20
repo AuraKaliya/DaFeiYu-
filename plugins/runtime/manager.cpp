@@ -146,6 +146,7 @@ struct PluginManager::State {
     runtime::OwnerScheduler scheduler;
     PluginDependencies dependencies;
     PluginMailboxHost mailboxes;
+    std::weak_ptr<PluginAgents> agents;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
     std::shared_ptr<const std::array<HookList,3>> hook_order;
@@ -171,6 +172,12 @@ PluginManager::~PluginManager() {
 void PluginManager::refresh() {
     try { state_->registry.refresh(); state_->directory_error.clear(); }
     catch (const std::runtime_error& error) { state_->directory_error = error.what(); throw; }
+}
+// 在任何实例创建前固定可选子会话服务。
+void PluginManager::enable_agents(const std::shared_ptr<PluginAgents>& service) {
+    if (!service || !state_->accepting || state_->registration || !state_->instances.empty() || !state_->agents.expired())
+        throw std::logic_error("plugins: cannot attach agent service");
+    state_->agents = service;
 }
 // 返回当前描述目录的独立共享快照。
 std::shared_ptr<const Catalog> PluginManager::catalog() const { return state_->registry.snapshot(); }
@@ -203,6 +210,7 @@ std::uint32_t PluginManager::load(const std::string& id) {
         item->second.instance = std::make_shared<PluginInstance>(found->second,state_->user_data,state_->channel);
         if (state_->mailboxes.network)
             item->second.instance->enable_mailboxes(state_->mailboxes.network,state_->mailboxes.identity);
+        if (!state_->agents.expired()) item->second.instance->enable_agents(state_->agents,item->second.instance);
     } catch (...) {
         if (!item->second.owner.empty()) { state_->scheduler.stop(item->second.owner); state_->scheduler.remove(item->second.owner); }
         state_->instances.erase(item); throw;
@@ -216,7 +224,10 @@ std::uint32_t PluginManager::load(const std::string& id) {
                 (void)state_->dependencies.bind(item->second.instance,state_->instances.at(provider).instance);
             state_->publish_hooks();
         }
-        catch (...) { status = DFY_V2_FAILED; }
+        catch (...) {
+            if (const auto agents = state_->agents.lock()) agents->close_owner(item->second.instance->generation());
+            status = DFY_V2_FAILED;
+        }
     }
     if (status) (void)unload(id);
     return status;

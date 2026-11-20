@@ -8,6 +8,7 @@
 #include <dafeiyu/broadcast_channel.hpp>
 #include <dafeiyu/mailboxes.hpp>
 #include <dafeiyu/mailbox_abi_v2.h>
+#include <dafeiyu/plugin_agents.hpp>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
@@ -62,6 +63,10 @@ class HostServices {
     void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app, runtime::DomainId plugin);
     // 获取实际接入的地址，未接入时两个地址均为零。
     dfy_v2_mailbox_pair mailbox_addresses() const;
+    // 给原实例绑定可选的子会话服务，不延长实例或应用寿命。
+    void enable_agents(std::weak_ptr<PluginAgents> service, const std::shared_ptr<PluginInstance>& instance, runtime::DomainId owner);
+    // 查询原实例尚未退出的子会话工作，供卸载前检查。
+    bool agents_busy() const;
     // 为当前实例授予一个组的成员接入能力，固定请求预算，不授予共享组关闭权。
     void enable_group(std::shared_ptr<events::ConsumerGroup> group, std::size_t request_capacity);
     // 为本实例建立独立有界处理域，默认串行，不允许重复配置。
