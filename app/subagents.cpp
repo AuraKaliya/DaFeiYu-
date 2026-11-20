@@ -113,6 +113,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     agent::RunOptions options;
     options.now = clock_;
     options.version_labels = labels_;
+    options.version_labels.control_extension = plugins_.hook_version();
     options.system_instructions = std::move(input.instructions);
     options.extension = plugins::plugin_controls(plugins_,slot.owner);
     options.text_hook = plugins::plugin_text_hooks(plugins_,slot.owner);

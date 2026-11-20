@@ -35,7 +35,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/host_enums.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/host_constraints.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/host_unions.cpp")
 target_include_directories(dfy_plugins PUBLIC include)
-target_link_libraries(dfy_plugins PUBLIC dfy_library dfy_sdk dfy_runtime dfy_event_streams PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
+target_link_libraries(dfy_plugins PUBLIC dfy_library dfy_sdk dfy_runtime dfy_event_streams PRIVATE dfy_build_options dfy_digest nlohmann_json::nlohmann_json)
 
 # 组织 IDE 展示：按 Plugins 职责分组，源码保持模块内实际目录。
 set_target_properties(dfy_plugins PROPERTIES FOLDER "Plugins")

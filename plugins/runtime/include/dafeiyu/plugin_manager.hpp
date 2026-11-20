@@ -46,6 +46,8 @@ class PluginManager {
     uint32_t control_hook(const dfy_v2_hook_input& input);
     // 收敛同一字段的修改，冲突或回调错误时拒绝；无修改时返回空可选值。
     std::optional<std::string> rewrite_hook(const dfy_v2_text_hook_input& input, std::size_t limit);
+    // 返回本次接纳使用的公开 Hook 登记版本，不包含插件私有设置。
+    std::string hook_version();
     // 停止新加载并尝试有序关闭全部实例，失败责任仍可显式重试。
     bool close() noexcept;
     // 在调用 close 后查询本轮关闭结果，不用实例历史错误码推断本轮是否失败。

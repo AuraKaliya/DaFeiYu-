@@ -287,6 +287,8 @@ int wmain(int argc, wchar_t** argv) {
         auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),2,2);
         PluginManager manager(root,root.parent_path()/"data",channel,1,host);
         check(manager.load("test.mail") == DFY_V2_OK,"mailbox plugin failed to attach at load");
+        const auto registered = manager.hook_version();
+        check(registered.starts_with("hooks-v1:sha256:"),"registered policy lacked a public version");
         const auto instance = manager.instance("test.mail");
         const auto addresses = instance->mailbox_addresses();
         check(addresses.inbound && addresses.outbound,"manager lost registered mailbox addresses");
@@ -318,9 +320,10 @@ int wmain(int argc, wchar_t** argv) {
         check(manager.advance() == RunResult::executed && host.network->read(host.identity,{addresses.outbound}).event.get().id.sequence == 2,
             "scheduler did not advance the plugin's independent loop");
         check(manager.unload("test.mail") == ShutdownResult::closed && !instance->mailbox_addresses().inbound,"mailbox blocked clean unload");
-        check(manager.control_hook(control) == DFY_V2_HOOK_ALLOW,"unloaded Hook was used");
+        check(manager.control_hook(control) == DFY_V2_HOOK_ALLOW && manager.hook_version() == "none","unloaded Hook remained active or versioned");
         check(manager.load("test.mail") == DFY_V2_OK && manager.instance("test.mail")->mailbox_addresses().outbound != addresses.outbound,
             "reload reused old mailbox routing");
+        check(manager.hook_version() == registered,"instance generation changed the public registration version");
         check(manager.close(),"mailbox manager did not close");
         main_hook(root,argv[3]);
         subagents(root);

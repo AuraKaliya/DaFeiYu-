@@ -1,4 +1,6 @@
 #include "conversation.hpp"
+#include <dafeiyu/digest.hpp>
+#include <dafeiyu/plugin_hooks.hpp>
 #include <random>
 
 namespace dfy::app {
@@ -11,13 +13,21 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
-    if (text_hooks_) options.text_hook = text_hooks_;
-    if (controls_) {
+    if (plugins_) {
+        auto version = plugins_->hook_version();
+        auto host = plugins::plugin_controls(*plugins_);
+        options.text_hook = plugins::plugin_text_hooks(*plugins_);
         if (options.extension) {
-            options.extension = [host = controls_, local = std::move(options.extension)](auto point, const auto& context) {
+            if (options.version_labels.control_extension && version != "none")
+                options.version_labels.control_extension = "sha256:"+platform::sha256(version+"/"+*options.version_labels.control_extension);
+            // 保留调用者已固定的基础策略，插件只能使用宿主规则收紧本轮边界。
+            options.extension = [host = std::move(host), local = std::move(options.extension)](auto point, const auto& context) {
                 return agent::restrict_policy(host(point,context),local,point,context);
             };
-        } else options.extension = controls_;
+        } else {
+            options.version_labels.control_extension = std::move(version);
+            options.extension = std::move(host);
+        }
     }
     current_ = session_.begin(prompt,std::move(options));
     reported_ = false;

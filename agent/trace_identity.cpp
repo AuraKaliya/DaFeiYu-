@@ -80,7 +80,7 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     auto result = public_model_versions(config); const auto& labels = options.version_labels;
     result.application_commit = labels.application_commit; result.build = labels.build; result.prompt_template = labels.prompt_template;
     result.model_profile = labels.model_profile; result.policy = options.policy.revision; result.control_extension = labels.control_extension;
-    if (!options.extension && !result.control_extension) result.control_extension = "none";
+    if (!options.extension && !options.text_hook && !result.control_extension) result.control_extension = "none";
     if (result.provider && result.model && config.timeout_ms > 0) result.public_model_config = "sha256:"+platform::sha256(Json{
         {"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}}.dump());
     Json policy{{"revision",options.policy.revision},{"model_limit",options.policy.model_limit},{"tool_limit",options.policy.tool_limit},

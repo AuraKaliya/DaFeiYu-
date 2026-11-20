@@ -1,11 +1,13 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_package.hpp>
 #include <dafeiyu/plugin_order.hpp>
+#include <dafeiyu/digest.hpp>
 #include "package_files.hpp"
 #include <algorithm>
 #include <array>
 #include <bitset>
 #include <chrono>
+#include <nlohmann/json.hpp>
 
 namespace dfy::plugins {
 namespace {
@@ -69,6 +71,7 @@ struct PluginManager::State {
         std::array<HookList,3> controls;
         std::array<std::vector<TextHook>,DFY_V2_TEXT_HOOK_REPLY> rewrites;
         std::array<PluginSet,PluginInstance::maximum_instances> ancestors;
+        std::string version = "none";
     };
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
@@ -102,6 +105,7 @@ struct PluginManager::State {
         }
 
         auto updated = std::make_shared<HookPlan>();
+        auto registration = nlohmann::json::array();
         for (const auto node : stable_plugin_order(graph)) {
             const auto& instance = active[node]->instance;
             auto& ancestry = updated->ancestors[node];
@@ -111,20 +115,35 @@ struct PluginManager::State {
                 ancestry |= updated->ancestors[static_cast<std::size_t>(found-graph.begin())];
             }
             const auto registered = instance->hooks();
+            auto controls = nlohmann::json::array();
             for (std::size_t index = 0; index < registered.size(); ++index) {
                 const auto& hook = registered[index];
                 updated->controls.at(hook.point-1).push_back({instance,index,hook.sessions,active[node]->faulted});
+                controls.push_back({hook.point,hook.sessions});
             }
             const auto rewrites = instance->text_hooks();
+            auto fields = nlohmann::json::array();
             for (std::size_t index = 0; index < rewrites.size(); ++index) {
                 const auto& hook = rewrites[index];
                 updated->rewrites.at(hook.point-1).push_back({{instance,index,hook.sessions,active[node]->faulted},node,
                     (hook.flags & DFY_V2_TEXT_HOOK_CHAIN) != 0});
+                fields.push_back({hook.point,hook.sessions,hook.flags});
             }
+            if (controls.empty() && fields.empty()) continue;
+            auto providers = nlohmann::json::array();
+            for (std::size_t i = 0; i < graph.size(); ++i) if (i != node && ancestry.test(i)) providers.push_back(graph[i].id);
+            registration.push_back({instance->plugin_id(),instance->plugin_version(),active[node]->faulted,
+                std::move(providers),std::move(controls),std::move(fields)});
         }
+        if (!registration.empty()) updated->version = "hooks-v1:sha256:"+platform::sha256(registration.dump());
         hook_order = std::move(updated);
         hook_revision = dependencies.revision();
         hooks_dirty = false;
+    }
+    // 同一宿主线程按依赖或实例状态变化更新固定快照。
+    std::shared_ptr<const HookPlan> hook_plan() {
+        if (hooks_dirty || hook_revision != dependencies.revision()) publish_hooks();
+        return hook_order;
     }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
     // 步骤：筛选已卸载实例 → 停止其调度接纳 → 等待包装排空 → 归还名额与实例持有。
@@ -325,8 +344,7 @@ uint32_t PluginManager::control_hook(const dfy_v2_hook_input& input) {
     if (!input.session || !input.run || input.reserved ||
         input.point < DFY_V2_HOOK_MODEL_REQUEST || input.point > DFY_V2_HOOK_TOOL_RESULT)
         throw std::invalid_argument("hooks: invalid execution context");
-    if (state_->hooks_dirty || state_->hook_revision != state_->dependencies.revision()) state_->publish_hooks();
-    const auto snapshot = state_->hook_order;
+    const auto snapshot = state_->hook_plan();
     if (!snapshot) return DFY_V2_HOOK_ALLOW;
 
     auto result = DFY_V2_HOOK_ALLOW;
@@ -347,8 +365,7 @@ std::optional<std::string> PluginManager::rewrite_hook(const dfy_v2_text_hook_in
         (input.value.length && !input.value.data) || !limit || limit > 1024*1024 ||
         input.point < DFY_V2_TEXT_HOOK_INPUT || input.point > DFY_V2_TEXT_HOOK_REPLY)
         throw std::invalid_argument("text hooks: invalid context or limit");
-    if (state_->hooks_dirty || state_->hook_revision != state_->dependencies.revision()) state_->publish_hooks();
-    const auto snapshot = state_->hook_order;
+    const auto snapshot = state_->hook_plan();
     if (!snapshot) return std::nullopt;
 
     State::PluginSet producers;
@@ -370,6 +387,11 @@ std::optional<std::string> PluginManager::rewrite_hook(const dfy_v2_text_hook_in
         value = std::move(replacement);
     }
     return value;
+}
+// 把当前可复现的登记版本用于运行接纳和离线比较。
+std::string PluginManager::hook_version() {
+    const auto snapshot = state_->hook_plan();
+    return snapshot ? snapshot->version : "none";
 }
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。
 bool PluginManager::close() noexcept { return state_->close(); }

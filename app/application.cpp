@@ -1,7 +1,6 @@
 #include "application.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
-#include <dafeiyu/plugin_hooks.hpp>
 #include <algorithm>
 #include <array>
 #include <nlohmann/json.hpp>
@@ -50,7 +49,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
-      conversation_(session_,labels_,plugins::plugin_controls(plugins_),plugins::plugin_text_hooks(plugins_)),
+      conversation_(session_,labels_,&plugins_),
       mailbox_intake_(mailbox_host_,conversation_),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_)),
       wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
