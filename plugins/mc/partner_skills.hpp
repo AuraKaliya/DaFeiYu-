@@ -20,8 +20,8 @@ struct PartnerSkill {
     bool supports_approval = false;
 };
 inline constexpr std::array<PartnerSkill,7> partner_skills{{
-    {"observe", "partner.observe", "Read your position, player position, landmarks, inventory and previous action. Optional block registry name scans visible nearby targets.",
-        R"({"type":"object","properties":{"block":{"type":"string"}},"additionalProperties":false})", SkillCategory::observation, false},
+    {"observe", "partner.observe", "Read current positions, landmarks and inventory. Optional block registry name lists visible matches. For structures use around=player or self. survey contains client-loaded blocks from origin, with x increasing across each row, z across rows, y across layers. Palette decodes block symbols; dot is air, question mark is unloaded, asterisk is an unlisted block.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. When consent is needed, set approval to game or main. Reports broken blocks and actual inventory changes.",

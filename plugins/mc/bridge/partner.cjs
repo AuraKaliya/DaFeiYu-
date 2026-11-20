@@ -1,6 +1,7 @@
 const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
+const { blockSurvey } = require('./block-survey.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -127,6 +128,7 @@ function partnerService(bot, world, inbox, places, owner) {
           .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
         if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position.clone());
+        if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
         if (previous) result.lastAction = previous;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
