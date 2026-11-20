@@ -46,7 +46,7 @@ void CompanionSession::advance() {
     advance_control();
     if (!stopping_ && !bound()) close();
     reader_.advance();
-    if (partner_) advance_partner();
+    if (partner_) { advance_partner(); flush_partner_message(); }
     else {
         sync_binding();
         review_exploration();
@@ -72,7 +72,7 @@ void CompanionSession::advance() {
         delivering_.reset();
     }
     if (!partner_ && !stopping_ && !queued_ && !delivering_ && !conversation_.busy() && !questions_.busy() && address_) accept_player();
-    if (!stopping_ && queued_ && !delivering_ && !conversation_.busy()) {
+    if (!partner_ && !stopping_ && queued_ && !delivering_ && !conversation_.busy()) {
         try {
             if (visit_ && visit_->task == queued_->revision) start_visit();
             else submit(queued_->text);
@@ -288,6 +288,14 @@ std::uint64_t CompanionSession::send(const CompanionAddress& address, CompanionM
     std::uint64_t reply_to, const std::string& text) {
     if (stopping_ || !bound() || !address_ || address != *address_) throw std::invalid_argument("companion: stale address");
     const bool fresh = command == messages_.next(CompanionSide::primary);
+    if (partner_ && fresh) {
+        if (kind != CompanionMessageKind::delegation && kind != CompanionMessageKind::inquiry)
+            throw std::invalid_argument("companion: expected delegation or inquiry");
+        if (!partner_->input.ready || partner_->input.departed || text.size() > 2048)
+            throw std::invalid_argument("companion: paired player or bounded message required");
+        if (kind == CompanionMessageKind::delegation && partner_->delegation)
+            throw std::logic_error("companion: original delegation is still pending");
+    }
     if (fresh && (queued_ || (delivering_ && kind == CompanionMessageKind::delegation)))
         throw std::logic_error("companion: message delivery pending");
     auto message = messages_.post(address, CompanionSide::primary, kind, command, reply_to, text);

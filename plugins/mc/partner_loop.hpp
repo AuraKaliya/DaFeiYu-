@@ -51,8 +51,12 @@ class PartnerLoop {
     bool release_game(const BridgeConfig& config, std::uint64_t instance);
     // 按原配对身份处理游戏回复、主信箱回信或业务超时。
     void advance_confirmation();
-    // 在宿主绑定的入站信箱读取至多一条确认消息。
-    void intake_confirmation();
+    // 在宿主绑定的入站信箱读取至多一条请求并按分类处理。
+    void intake(PartnerWork work);
+    // 核对原收件的世界、任务和玩家，处理本体委托或只读询问。
+    void intake_task(std::string_view category, const nlohmann::json& body, PartnerWork work);
+    // 按原信箱请求处理批准和游戏投递指令。
+    void intake_confirmation(bool present, const nlohmann::json& body);
     // 依据主侧选择或本地策略向同一玩家呈现原问题，并保留实际发言回执。
     void advance_confirmation_presentation(const BridgeConfig& config, std::uint64_t instance, bool closing);
 
@@ -64,6 +68,9 @@ class PartnerLoop {
     std::uint64_t sent_ = 0;
     struct Frame { std::string_view category; std::string body; };
     std::deque<Frame> outbound_;
+    struct Delegation { std::uint64_t id; std::string world, text; };
+    std::optional<Delegation> awaiting_delegation_, active_delegation_;
+    std::uint64_t last_task_ = 0;
     struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string body; };
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;

@@ -106,6 +106,8 @@ class CompanionSession {
     void accept_player();
     // 把插件伙伴的业务事实投影到应用计划板。
     void advance_partner();
+    // 递交原队首命令；信箱满时保留消息到后续步骤。
+    void flush_partner_message();
     // 请求活动插件开始或停止伙伴循环。
     void switch_partner(plugins::PluginInstance& instance, bool listen);
     // 把一件经过原实例信箱交付的事实投影到当前角色。
@@ -117,6 +119,7 @@ class CompanionSession {
         PlayerInboxStatus input;
         std::array<std::pair<std::uint64_t,std::uint64_t>,64> revisions{};
         std::uint64_t settled = 0;
+        std::uint64_t delegation = 0, inquiry = 0;
         bool closed = false;
     };
     plugins::PluginMailboxHost mailboxes_;

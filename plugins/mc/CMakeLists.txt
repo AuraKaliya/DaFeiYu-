@@ -7,7 +7,7 @@ target_compile_definitions(dfy_mc_bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 set_target_properties(dfy_mc_bridge PROPERTIES FOLDER "Plugins")
 
 # 生成独立可安装的可信原生包，保持宿主默认插件目录为空。
-add_library(dfy_mc_companion SHARED native.cpp partner_loop.cpp partner_loop.hpp partner_confirm.cpp)
+add_library(dfy_mc_companion SHARED native.cpp partner_loop.cpp partner_loop.hpp partner_confirm.cpp partner_mailbox.cpp)
 target_link_libraries(dfy_mc_companion PRIVATE dfy_mc_bridge dfy_sdk dfy_build_options nlohmann_json::nlohmann_json)
 target_compile_definitions(dfy_mc_companion PRIVATE DFY_PLUGIN_BUILD)
 set_target_properties(dfy_mc_companion PROPERTIES FOLDER "Plugins"

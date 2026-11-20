@@ -2,10 +2,6 @@
 
 namespace dfy::mc {
 using Json = nlohmann::json;
-namespace {
-// 借用经宿主校验并由原收件引用持有的文本。
-std::string_view borrowed(dfy_v2_string_view value) { return {value.data,value.length}; }
-}
 
 // 从原生已接纳候选建立一次业务确认，正文保留原参数及原配对玩家。
 // 步骤：核对回合身份 → 校验精确采集范围 → 登记候选与期限并按指定渠道发起请求。
@@ -80,28 +76,9 @@ void PartnerLoop::advance_confirmation() {
     }
 }
 
-// 以本体身份已绑定的定向信箱接收同一确认回复，已裁定时回传原结果。
-// 步骤：取件并复制正文 → 核对原编号与来源 → 裁定或复用原业务回执。
-void PartnerLoop::intake_confirmation() {
-    if (outbound_.size() > 120) return;
-    dfy_v2_mailbox_message message{};
-    if (mail_->poll(&message,nullptr)) return;
-    Json body;
-    bool present = false;
-    {
-        struct Release {
-            const dfy_v2_reference_api* refs;
-            dfy_v2_handle payload;
-            // 归还已转交的原收件载荷引用。
-            ~Release() { refs->release(payload,nullptr); }
-        } release{refs_,message.payload};
-        dfy_v2_mailbox_text text{};
-        if (!mail_text_->inspect(message.payload,&text,nullptr) && text.version == 1) {
-            const auto category = borrowed(text.category);
-            present = category == "mc.confirmation.present";
-            if (present || category == "mc.confirmation.response") body = Json::parse(borrowed(text.text),nullptr,false);
-        }
-    }
+// 处理同一确认的本体回信，已裁定时回传原结果。
+// 步骤：核对正文和原编号 → 复用已经裁定的结果 → 呈现问题或采用有效答复。
+void PartnerLoop::intake_confirmation(bool present, const Json& body) {
     if (!body.is_object() || !body.contains("id") || !body.at("id").is_number_unsigned() ||
         !body.contains("revision") || body.at("revision") != 1 || (!present && (!body.contains("approve") || !body.at("approve").is_boolean())) ||
         !body.contains("generation") || !body.at("generation").is_string() || !body.contains("player") || !body.at("player").is_string()) return;

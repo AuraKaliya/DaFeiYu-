@@ -14,8 +14,9 @@ async function main() {
   const interrupt = variant === 'partner-interrupt';
   const confirm = variant === 'partner-confirm';
   const route = variant?.startsWith('partner-route-');
+  const exchange = variant === 'partner-exchange';
   const showGame = route && variant !== 'partner-route-panel';
-  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || route;
+  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -90,7 +91,7 @@ async function main() {
       assert.equal(method, 'partner.begin');
       assert.deepEqual(context, { generation: state.generation, order: 2 });
       assert.equal(skill, 'reply');
-      assert.deepEqual(args, { text: 'ready to play' });
+      assert.deepEqual(args, { text: exchange ? 'delegated hello' : 'ready to play' });
       ++replies;
       return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
     },
@@ -102,7 +103,7 @@ async function main() {
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || route ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || route || exchange ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);

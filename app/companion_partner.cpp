@@ -28,6 +28,7 @@ void CompanionSession::advance_partner() {
     if (!bound()) {
         projection.closed = true;
         projection.input.ready = false;
+        queued_.reset();
         address_.reset();
         messages_.bind(std::nullopt);
         return;
@@ -52,6 +53,8 @@ void CompanionSession::advance_partner() {
         messages_.bind(current);
         address_ = std::move(current);
         projection.revisions.fill({});
+        projection.delegation = projection.inquiry = 0;
+        queued_.reset();
         projection.input.gap = false;
     }
     for (std::size_t count = 0; count < 16; ++count) {
@@ -65,7 +68,33 @@ void CompanionSession::advance_partner() {
     if (projection.closed || (world.empty() && phase == DFY_V2_PARTNER_LISTENING)) {
         address_.reset();
         messages_.bind(std::nullopt);
+        projection.delegation = projection.inquiry = 0;
+        queued_.reset();
     }
+}
+
+// 把原信任入口接受的命令实际投递给插件，接纳只表明进入信箱。
+// 步骤：核对原绑定 → 构造有界分类信封 → 容量足够时转交并等待独立答复。
+void CompanionSession::flush_partner_message() {
+    if (!queued_ || !partner_) return;
+    auto& item = *queued_;
+    if (!address_ || item.address != *address_) { queued_.reset(); return; }
+    const bool delegation = item.kind == CompanionMessageKind::delegation;
+    if (stopping_) {
+        messages_.post(*address_,CompanionSide::game,CompanionMessageKind::failed,messages_.next(CompanionSide::game),item.revision,
+            "伙伴已停止，原消息未投递");
+        queued_.reset();
+        return;
+    }
+    const auto body = nlohmann::json{{"generation",item.address.world},{"player",partner_->input.owner},
+        {"id",item.revision},{"task",item.task},{"text",item.text}}.dump();
+    const auto category = delegation ? "mc.partner.delegate" : "mc.partner.query";
+    try {
+        mailboxes_.network->deliver_next(mailboxes_.identity,partner_->outgoing,
+            events::mailbox_text(category,1,body,mailboxes_.network->payload_limit()));
+    } catch (const std::length_error&) { return; }
+    (delegation ? partner_->delegation : partner_->inquiry) = item.revision;
+    queued_.reset();
 }
 
 // 将原角色已观察或真正完成的事实投影为原计划板消息。
@@ -87,6 +116,16 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
         return;
     }
     if (!address_ || data.at("generation") != address_->world) return;
+    if (type == "mc.partner.report" || type == "mc.partner.answer") {
+        const bool report = type == "mc.partner.report";
+        auto& pending = report ? partner_->delegation : partner_->inquiry;
+        if (!pending || data.at("id") != pending) return;
+        const auto kind = !data.at("ok").get<bool>() ? CompanionMessageKind::failed :
+            report ? CompanionMessageKind::report : CompanionMessageKind::answer;
+        messages_.post(*address_,CompanionSide::game,kind,messages_.next(CompanionSide::game),pending,data.at("text"));
+        pending = 0;
+        return;
+    }
     if (type == "mc.partner.event") {
         const auto& fact = data.at("event");
         const auto order = fact.at("sequence").get<std::uint64_t>();
@@ -99,6 +138,16 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
         return;
     }
     if (type != "mc.partner.action" && type != "mc.partner.turn") return;
+    if (type == "mc.partner.action" && data.contains("task")) {
+        if (data.at("task") == messages_.task()) {
+            auto brief = std::string(text->as_string());
+            if (brief.size() > 4096) brief = nlohmann::json{{"skill",data.at("skill")},{"effect",data.at("effect")},
+                {"invocation",data.at("invocation")},{"bodyOmitted",true}}.dump();
+            messages_.post(*address_,CompanionSide::game,CompanionMessageKind::status,messages_.next(CompanionSide::game),
+                messages_.task(),brief);
+        }
+        return;
+    }
     const auto order = data.at("order").get<std::uint64_t>();
     const auto [known,revision] = partner_->revisions[order%partner_->revisions.size()];
     if (known != order || !revision) return;

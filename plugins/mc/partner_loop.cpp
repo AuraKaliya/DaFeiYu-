@@ -9,12 +9,15 @@ using Json = nlohmann::json;
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
 constexpr std::array skills{view("mc.companion/observe"),view("mc.companion/move"),
     view("mc.companion/collect"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
+constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect_confirmed")};
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
     "如果这次采集需要玩家明确批准，用 collect_confirmed。route=game 时先在游戏问，route=main 时由本体选择询问渠道。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
+constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体，保留原编号。核对现场后回答委托。"
+    "这个委托不代表游戏玩家已批准操作，需要采集时使用 collect_confirmed。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
 }
 
 // 由玩家入口显式启用，插件加载本身不读取游戏或提交模型。
@@ -65,6 +68,9 @@ void PartnerLoop::reset() noexcept {
     refs_ = nullptr;
     confirmation_.reset();
     presentation_.reset();
+    awaiting_delegation_.reset();
+    active_delegation_.reset();
+    last_task_ = 0;
     outbound_.clear();
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
@@ -83,15 +89,20 @@ bool PartnerLoop::settle(bool cancel) {
     if (!request_) return true;
     dfy_v2_agent_status state{};
     const auto result = agent_->status(session_,&state,nullptr);
-    if (result == DFY_V2_INVALID_ARGUMENT && cancel) { request_ = 0; return true; }
-    if (result || state.request != request_) throw std::runtime_error("MC partner: original turn unavailable");
+    if (result == DFY_V2_INVALID_ARGUMENT && cancel) state.phase = DFY_V2_AGENT_CANCELLED;
+    else if (result || state.request != request_) throw std::runtime_error("MC partner: original turn unavailable");
     if (state.phase == DFY_V2_AGENT_QUEUED || state.phase == DFY_V2_AGENT_RUNNING) {
         if (cancel) agent_->cancel(session_,request_,nullptr);
         return false;
     }
     settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
-    publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},
+    if (active_delegation_) {
+        const bool answered = !cancel && state.phase == DFY_V2_AGENT_SUCCEEDED && state.answer.length && state.answer.length <= 4096;
+        const auto text = answered ? std::string(state.answer.data,state.answer.length) : std::string("伙伴未交付本次委托的文字答复，请查实际回执");
+        publish("mc.partner.report",{{"generation",active_delegation_->world},{"id",active_delegation_->id},{"ok",answered},{"text",text}});
+        active_delegation_.reset();
+    } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},
         {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel}});
     request_ = 0;
     return true;
@@ -114,19 +125,23 @@ void PartnerLoop::submit() {
         session_world_ = std::move(world);
     }
     auto facts = feed_.pending();
-    const auto order = facts.back().at("sequence").get<std::uint64_t>();
+    const bool delegated = facts.empty() && awaiting_delegation_.has_value();
+    const auto order = delegated ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()}};
+    if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
     const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
-    const dfy_v2_agent_input run{view(prompt),instructions,view(binding),skills.data(),
-        static_cast<uint32_t>(skills.size()),DFY_V2_AGENT_ALLOW_CHANGES};
+    const dfy_v2_agent_input run{view(prompt),delegated ? delegation_instructions : instructions,view(binding),
+        delegated ? delegated_skills.data() : skills.data(),
+        static_cast<uint32_t>(delegated ? delegated_skills.size() : skills.size()),DFY_V2_AGENT_ALLOW_CHANGES};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     order_ = order;
     reviewed_ = 0;
     stopped_work_ = false;
     events_ = std::move(facts);
+    if (delegated) { active_delegation_ = std::move(awaiting_delegation_); awaiting_delegation_.reset(); }
     for (const auto& fact : events_) publish("mc.partner.event",{{"generation",session_world_},{"event",fact}});
     previous_.clear();
     feed_.consumed();
@@ -156,6 +171,7 @@ void PartnerLoop::report_actions() {
     for (std::size_t index = 0; index < action_count_; ++index) {
         auto& action = actions_[index];
         Json fact{{"generation",session_world_},{"order",order_},{"invocation",action.id},{"skill",action.skill},{"effect",action.effect}};
+        if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
         publish("mc.partner.action",fact);
@@ -260,7 +276,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         if (!feed_.control().is_null()) stop();
         if (phase_ == DFY_V2_PARTNER_LISTENING) {
             advance_confirmation();
-            intake_confirmation();
+            intake(work);
         }
     }
     const bool closing = phase_ == DFY_V2_PARTNER_STOPPING;
@@ -271,6 +287,11 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         feed_.clear();
     }
     advance_confirmation_presentation(config,instance,closing);
+    if (awaiting_delegation_ && (closing || awaiting_delegation_->world != feed_.world() || feed_.departed())) {
+        publish("mc.partner.report",{{"generation",awaiting_delegation_->world},{"id",awaiting_delegation_->id},{"ok",false},
+            {"text","原游戏世界或配对玩家已离开"}});
+        awaiting_delegation_.reset();
+    }
     const bool replaced = session_ && feed_.world() != session_world_;
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
@@ -279,7 +300,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         retire(); reset(); return;
     }
     if (replaced) retire();
-    if (!presentation_ && feed_.ready() && !feed_.pending().empty() && outbound_.size() <= 54) submit();
+    if (!presentation_ && feed_.ready() && (!feed_.pending().empty() || awaiting_delegation_) && outbound_.size() <= 54) submit();
 }
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。
