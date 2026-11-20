@@ -1,0 +1,58 @@
+#include <dafeiyu/mailboxes.hpp>
+#include <algorithm>
+#include <limits>
+
+namespace dfy::events {
+// 为全部信箱建立共享消息预算，关闭后仍由读出事件持有的消息继续计费。
+// 步骤：校验信箱与消息容量 → 建立共享预算 → 预留目录槽位。
+Mailboxes::Mailboxes(MailboxLimits limits) : limits_(limits) {
+    if (!limits.mailboxes || !limits.queue_depth || !limits.outstanding_events)
+        throw std::invalid_argument("mailboxes: positive capacities required");
+
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    const auto bytes = limits.payload_bytes > maximum / limits.outstanding_events
+        ? maximum : limits.payload_bytes * limits.outstanding_events;
+    budget_ = std::make_shared<runtime::Budget>(runtime::BudgetAmount{limits.outstanding_events,bytes});
+    entries_.reserve(limits.mailboxes);
+}
+
+// 在有界目录中建立与原发送者和接收者绑定的独立队列。
+// 步骤：检查双方身份及槽位 → 为独立序号准备事件存储 → 提交队列与地址。
+MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender) {
+    if (!receiver || !sender) throw std::invalid_argument("mailboxes: sender and receiver required");
+    if (entries_.size() == limits_.mailboxes) throw std::length_error("mailboxes: directory full");
+
+    auto store = std::make_shared<EventStore>(limits_.outstanding_events,limits_.payload_bytes,budget_);
+    const MailboxId id{store->domain()};
+    entries_.push_back({id,receiver,sender,std::make_unique<SubscriptionQueue>(std::move(store),limits_.queue_depth)});
+    return id;
+}
+
+// 仅允许绑定的发送方写入目标信箱。
+EventId Mailboxes::deliver(runtime::DomainId sender, MailboxId target, std::shared_ptr<const runtime::StructValue> payload) {
+    const auto entry = find(target);
+    if (entry->sender != sender) throw std::invalid_argument("mailboxes: sender not bound");
+    return entry->queue->accept(std::move(payload));
+}
+
+// 仅向绑定的接收方转交队首数据。
+QueueRead Mailboxes::read(runtime::DomainId receiver, MailboxId target) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
+    return entry->queue->poll();
+}
+
+// 撤销本方的信箱地址并释放队列持有。
+void Mailboxes::close(runtime::DomainId receiver, MailboxId target) {
+    const auto entry = find(target);
+    if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
+    entries_.erase(entry);
+}
+
+// 在当前目录中查找非过期地址。
+std::vector<Mailboxes::Entry>::iterator Mailboxes::find(MailboxId target) {
+    const auto entry = std::ranges::find(entries_,target,&Entry::id);
+    if (entry == entries_.end()) throw std::invalid_argument("mailboxes: address unavailable");
+    return entry;
+}
+}

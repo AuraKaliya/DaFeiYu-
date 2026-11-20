@@ -1,6 +1,18 @@
 #include <dafeiyu/subscription_queue.hpp>
 
 namespace dfy::events {
+// 将新载荷交付给独立队列，并返回本次接纳身份。
+// 步骤：预检队列状态及容量 → 签发新事件 → 转交持有并返回身份。
+EventId SubscriptionQueue::accept(std::shared_ptr<const runtime::StructValue> payload) {
+    if (state_ != QueueState::open) throw std::logic_error("subscription: not open");
+    if (!available()) throw std::length_error("subscription: queue full");
+
+    auto owned = store_->accept(std::move(payload));
+    const auto id = store_->get(owned).id;
+    append_owned(owned);
+    return id;
+}
+
 // 移动数据持有，避免覆盖原引用时遗漏归还。
 // 步骤：处理自移动 → 归还旧引用 → 转交存储及来源标识。
 EventLease& EventLease::operator=(EventLease&& other) noexcept {

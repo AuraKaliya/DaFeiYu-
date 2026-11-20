@@ -56,6 +56,8 @@ class SubscriptionQueue {
     SubscriptionQueue& operator=(const SubscriptionQueue&) = delete;
     // 显式保留来源事件入队，拒绝时不消耗来源引用或改动队列。
     void push(runtime::Handle source);
+    // 接纳一条新事件并交付到本队列，队列拒收时不签发事件身份。
+    EventId accept(std::shared_ptr<const runtime::StructValue> payload);
     // 转交队首引用，分别返回事件、暂时为空或流结束，不代表处理任务退出。
     QueueRead poll();
     // 停止接纳并选择排空或取消；排空可升级取消，已关闭状态不再改写。
