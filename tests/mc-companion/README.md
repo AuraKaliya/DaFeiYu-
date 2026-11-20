@@ -4,7 +4,13 @@
 
 ## 首次真人体验
 
-准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`，运行 `./tests/mc-companion/start-playtest.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
+准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`。在项目根目录通过 Windows PowerShell 5.1 或 PowerShell 7 启动，`-BuildDirectory` 指向实际的构建目录。
+
+```powershell
+.\tests\mc-companion\start-playtest.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\windows-tests'
+```
+
+正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
 
 1. 用 Java 1.21.4 直接连接 `127.0.0.1:25580`，或使用下方浏览器入口。两种方式都用独立玩家身份见到大肥鱼；原版客户端接受本服的[角色资源包](appearance.md)。
 2. 进场后可在普通聊天里随意说话。例如先打个招呼，再说“大肥鱼，帮我采俩泥土”。你可以临时改主意；即使说“停，我来”，她也会根据现场自行决定如何处理。本机离线服上的 `/msg` 私聊缺少可核对的发送者身份。

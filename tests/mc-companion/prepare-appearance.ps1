@@ -1,4 +1,4 @@
-# 为回环体验服准备大肥鱼的原版细臂皮肤，素材仅保存在指定测试目录。
+﻿# 为回环体验服准备大肥鱼的原版细臂皮肤，素材仅保存在指定测试目录。
 [CmdletBinding()]
 param([string]$FixtureRoot = $env:DFY_MC_TEST_ROOT)
 $ErrorActionPreference = 'Stop'

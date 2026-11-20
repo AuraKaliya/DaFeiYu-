@@ -1,4 +1,4 @@
-# 在已接受协议的本机测试环境旁启动独立的真人体验世界。
+﻿# 在已接受协议的本机测试环境旁启动独立的真人体验世界。
 [CmdletBinding()]
 param([string]$FixtureRoot = $env:DFY_MC_TEST_ROOT, [string]$BuildDirectory, [string]$Configuration = 'Debug',
     [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG, [switch]$Probe, [switch]$PartnerProbe)

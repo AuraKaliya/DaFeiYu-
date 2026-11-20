@@ -1,4 +1,4 @@
-# 准备上游浏览器客户端并打开本机体验服；试玩的下载、缓存和浏览器资料均放在指定目录。
+﻿# 准备上游浏览器客户端并打开本机体验服；试玩的下载、缓存和浏览器资料均放在指定目录。
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$FixtureRoot, [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG, [switch]$PrepareOnly)
 $ErrorActionPreference = 'Stop'
