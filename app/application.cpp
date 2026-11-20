@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
+#include <dafeiyu/plugin_hooks.hpp>
 #include <algorithm>
 #include <array>
 #include <nlohmann/json.hpp>
@@ -45,7 +46,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
-      conversation_(session_,labels_) {
+      conversation_(session_,labels_,plugins::plugin_controls(plugins_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
 }
 
@@ -78,7 +79,7 @@ agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, cons
     options.now = tool_clock_;
     options.tools = prepared.catalog->snapshot(std::span(&tool_id,1),confirm_changes);
     options.policy.confirm_changes = confirm_changes;
-    if (confirm_changes) options.confirmation_caller = caller_;
+    options.confirmation_caller = caller_;
 
     const auto accepted = conversation_.submit(prompt,std::move(options));
     tool_registration_.emplace(ToolRegistration{accepted.turn,prepared.instance,std::move(prepared.registration)});

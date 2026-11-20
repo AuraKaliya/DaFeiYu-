@@ -78,6 +78,7 @@ bool ToolBatch::review(const PolicyContext& current) {
             const auto selected = tools_.resolve(entry.call.name,entry.call.arguments);
             entry.metadata.tool_id = selected.description.id;
             auto candidate = current; candidate.tool_requests = bound_.tool_requests+index;
+            candidate.tool_id = selected.description.id;
             const auto previous = entry.metadata.before;
             entry.metadata.before = restrict_policy(policy_.before_tool(candidate,selected),extension_,ControlPoint::tool_start,candidate);
             if (previous != entry.metadata.before) publish_policy(index,ControlPoint::tool_start,*entry.metadata.before);
@@ -150,7 +151,9 @@ bool ToolBatch::advance(const PolicyContext& current) {
             auto& entry = entries_[index]; if (entry.filled) continue;
             publish(index);
             if (entry.request->exit()->state() == OperationState::pending) { complete = false; continue; }
-            entry.metadata.after = restrict_policy(policy_.after_tool(current,*entry.request),extension_,ControlPoint::tool_result,current);
+            auto completed = current;
+            completed.tool_id = entry.metadata.tool_id.value();
+            entry.metadata.after = restrict_policy(policy_.after_tool(completed,*entry.request),extension_,ControlPoint::tool_result,completed);
             if (observed_change && entry.metadata.after->verdict == PolicyVerdict::allow &&
                 (entry.request->operation()->state() != OperationState::succeeded || entry.request->fault() != ToolError::none ||
                     entry.request->outcome().effect == ToolEffect::unknown))

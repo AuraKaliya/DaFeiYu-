@@ -83,7 +83,8 @@ static dfy_v2_status DFY_V2_CALL decide_hook(dfy_v2_instance* instance, uint32_t
     if (error) error->length = 0;
     *verdict = 0;
     if (!input->session || !instance->mail) return DFY_V2_INVALID_ARGUMENT;
-    *verdict = index == 1 ? DFY_V2_HOOK_CONFIRM : DFY_V2_HOOK_ALLOW;
+    *verdict = index == 1 ? DFY_V2_HOOK_CONFIRM :
+        (!input->owner && input->run == 2 ? DFY_V2_HOOK_DENY : DFY_V2_HOOK_ALLOW);
     return DFY_V2_OK;
 }
 static const dfy_v2_hook_api hooks = {{sizeof(dfy_v2_hook_api),1},describe_hook,decide_hook};

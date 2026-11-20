@@ -1,7 +1,10 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include "fixtures/query_v2/mailbox_fixture.h"
+#include "application.hpp"
 #include <fstream>
 #include <iostream>
+#include <atomic>
+#include <thread>
 
 namespace {
 using namespace dfy::events;
@@ -24,13 +27,56 @@ fs::path package(const fs::path& root, const fs::path& dll) {
         return path.parent_path();
     }
 }
+
+// 通过正式应用验证 Hook 可以拒绝主回合并给原生工具加审批。
+// 步骤：装配固定后端与原生包 → 批准原候选并核对实效 → 拒绝新请求 → 卸载后恢复普通问答。
+void main_hook(const fs::path& root, const fs::path& status_package) {
+    using namespace dfy::model;
+    std::atomic<unsigned> calls{0};
+    dfy::app::Application app({},root,root.parent_path()/"app-data",Backend{
+        [&](const auto&,const Request& request) {
+            ++calls;
+            if (request.messages.back().content == "read mode")
+                return Response{{Role::assistant,"",{{"read",request.tools.at(0).name,"{}"}}},FinishReason::tool_calls};
+            return Response{{Role::assistant,request.messages.back().role == Role::tool ? request.messages.back().content : "allowed"}};
+        }});
+    app.plugins().install(status_package);
+    check(!app.plugins().load("test.mail") && !app.plugins().load("example.status"),"Hook application setup failed");
+    // 推进原会话直到等待审批或报告结算并实际退出。
+    const auto advance = [&](bool approval) {
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        std::optional<dfy::app::CompletedTurn> result;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (approval && !app.confirmations().empty()) return dfy::app::CompletedTurn{};
+            if (auto polled = app.conversation().advance()) result = std::move(polled);
+            if (result && !app.conversation().busy()) return *result;
+            std::this_thread::yield();
+        }
+        throw std::runtime_error("Hook application did not reach expected boundary");
+    };
+    app.submit_read_only("example.status/read","read mode");
+    advance(true);
+    const auto waiting = app.confirmations();
+    check(waiting.size() == 1 && waiting[0].state == dfy::agent::ConfirmationState::waiting && calls == 1,"tool Hook did not wait for approval");
+    app.decide(waiting[0].id,waiting[0].revision,true);
+    check(advance(false).answer.find("idle") != std::string::npos && calls == 2,"approved Hook candidate did not execute original tool");
+    bool blocked = false;
+    try { app.conversation().submit("blocked"); }
+    catch (const std::runtime_error& error) { blocked = std::string_view(error.what()) == "run: model request denied"; }
+    check(blocked && calls == 2,"deny Hook did not prevent model dispatch");
+    check(app.plugins().unload("test.mail") == ShutdownResult::closed,"control Hook held an idle plugin");
+    app.conversation().submit("hello");
+    check(advance(false).answer == "allowed" && calls == 3,"unloaded Hook continued to deny");
+    app.conversation().close();
+    check(app.close_plugins() == ShutdownResult::closed,"Hook application did not release resources");
+}
 }
 
 // 验证从正式插件管理器载入的 C DLL 可以收到本体请求并回信。
 // 步骤：加载并定位信箱 → 投递与回信 → 检查实际分类 → 卸载并阻止旧地址复用。
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 3,"mailbox DLL and workspace required");
+        check(argc == 4,"mailbox DLL, workspace and status package required");
         const auto root = package(argv[2],argv[1]);
         PluginMailboxHost host{std::make_shared<Mailboxes>(MailboxLimits{2,2,4,64}),next_domain()};
         auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),2,2);
@@ -68,6 +114,7 @@ int wmain(int argc, wchar_t** argv) {
         check(manager.load("test.mail") == DFY_V2_OK && manager.instance("test.mail")->mailbox_addresses().outbound != addresses.outbound,
             "reload reused old mailbox routing");
         check(manager.close(),"mailbox manager did not close");
+        main_hook(root,argv[3]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -13,9 +13,9 @@ struct CompletedTurn {
 // 在宿主线程接纳问答并提供值快照，实际退出后归还回合引用。
 class Conversation {
   public:
-    // 借用寿命更长的会话，并保存应用提供的公开构建标签。
-    explicit Conversation(agent::Session& session, agent::RunVersionLabels version_labels = {}) noexcept
-        : session_(session), version_labels_(std::move(version_labels)) {}
+    // 借用寿命更长的会话，并保存应用构建标签与宿主级控制规则。
+    explicit Conversation(agent::Session& session, agent::RunVersionLabels version_labels = {}, agent::PolicyExtension controls = {}) noexcept
+        : session_(session), version_labels_(std::move(version_labels)), controls_(std::move(controls)) {}
     // 只由原服务承担回合输出和实际退出责任。
     Conversation(const Conversation&) = delete;
     // 禁止替换已经绑定的会话。
@@ -49,6 +49,7 @@ class Conversation {
 
     agent::Session& session_;
     const agent::RunVersionLabels version_labels_;
+    const agent::PolicyExtension controls_;
     std::shared_ptr<agent::TurnRequest> current_;
     std::optional<agent::TurnDiagnostics> last_;
     std::optional<agent::DiagnosticSnapshot> last_diagnostic_;
