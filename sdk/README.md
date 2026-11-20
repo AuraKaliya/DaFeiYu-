@@ -49,6 +49,7 @@ cmake --build .\build-status --config Release
 | [信箱文本](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox.text@1`：从已收信件读取分类、版本和单文本正文 |
 | [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1`：插件可以独立创建会话，排队提交回合并在实际退出后读取结果 |
 | [后台推进](include/dafeiyu/activity_abi_v2.h) | 插件可公开 `dfy.activity@1`，宿主公平调度非阻塞步骤，每个实例最多排队一步 |
+| [Hook](include/dafeiyu/hook_abi_v2.h) | 插件可公开 `dfy.hooks@1` 控制模型请求、工具启动、工具结果，以及 `dfy.hook.text@1` 改写指定阶段的文本字段 |
 | `dfy.groups` | 1：宿主明确授予组时加入、退出和查看本成员状态 |
 | `dfy.processing` | 1：宿主明确提供处理记录时的开始、业务结算、实际退出、取消和载荷 |
 
@@ -61,6 +62,28 @@ cmake --build .\build-status --config Release
 订阅引用释放不关闭订阅，组成员引用释放不退出成员；使用明确关闭／退出入口或实例停止协议。组成员退出不关闭整个组。已领取的数据与尚未领取的交付分别管理，不因成员离开自动重放已经开始的处理。
 
 处理记录的业务结果和实际退出分开。取得顺序资格、成功读取、成功报告业务结果都不能替代 `finish`；只有消费者确定本项处理不会继续执行后才能确认退出。处理控制引用不可复制，不能提前丢弃控制句柄来解除忙碌。等待、结果保留、通知和引用都有容量上限，资源耗尽应作为可报告的拒绝处理。
+
+## 插件循环与定向收件
+
+在启动阶段调用 `dfy.mailbox@1` 的 `attach` 取得收、发地址。宿主绑定当前实例与本体的发送权。`post` 从 1 开始使用连续序号，容量不足保留原编号和正文，待后续活动步骤重投。`poll` 每次转交队首和一项独立载荷引用。通过 `dfy.mailbox.text@1` 读取分类、版本和正文，复制需要留用的数据后释放引用。`ACCEPTED` 和 `REPEATED` 是本进程内的接纳回执，业务结果需通过关联请求编号另送。
+
+在 `dfy.activity@1` 的 `step` 中推进收件、原生工作或子会话。`dfy.agent@1` 的 `submit` 复制有界输入并排队，宿主在离开原插件调用后派发相同执行器。每个子会话独立保存上下文，工具范围限本实例当前注册。插件通过 `status` 查询原回合，发出 `cancel` 或 `close` 后仍由宿主推进实际退出。忙碌实例拒绝直接卸载。[子会话契约](include/dafeiyu/agent_abi_v2.h) · [活动契约](include/dafeiyu/activity_abi_v2.h) · [MC 循环示例](../plugins/mc/partner_loop.cpp)
+
+## Hook 注册与改写规则
+
+`describe` 在启动后枚举，最多 32 项。声明主会话、所属子会话或其他子会话范围。宿主加载时完成依赖与循环校验，按稳定拓扑顺序发布各点；依赖已满足的处理器遵循插件和处理器的注册顺序。实际调用持有顺序快照与原实例代码。[Hook 契约](include/dafeiyu/hook_abi_v2.h)
+
+`dfy.hooks@1` 的 `decide` 同步返回 `ALLOW`、`DENY` 或工具启动专用的 `CONFIRM`。等待由当前运行的确认账本管理，批准后按原工具和精确参数再校验。工具结果阶段的决定控制后续调度，已发生的效果继续由原票据记录。
+
+| 文本阶段 | `field` |
+| --- | --- |
+| `INPUT` | `prompt` |
+| `MODEL_REQUEST` | `system` |
+| `MODEL_RESPONSE` | `content` |
+| `TOOL_ARGUMENTS` | 模型可见的工具名，`value` 为原 JSON 参数 |
+| `REPLY` | `answer`，仅用于最终投递 |
+
+`rewrite` 使用宿主提供的缓冲区写 UTF-8，`DFY_V2_TEXT_HOOK_UNCHANGED` 保留原字段，零长度表示显式清空。独立改写者同时提出不同值时，该字段失败。只有声明 `CHAIN` 并依赖当前全部改写者的处理器才能接续。宿主重新验证改写后的模型或工具输入，参数授权及批准从最终候选计算。字段转换回调同步返回，后台工作由活动接口调度。
 
 ## 包布局
 
