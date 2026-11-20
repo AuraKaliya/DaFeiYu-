@@ -12,6 +12,29 @@ std::size_t bounded(std::size_t capacity) {
     if (!capacity || capacity > PluginInstance::maximum_instances) throw std::invalid_argument("plugins: capacity must be 1..64");
     return capacity;
 }
+
+// 在装载 DLL 前检查所选包的传递依赖，其他包的声明保持独立。
+// 步骤：收集依赖闭包 → 构建完整有向图 → 检查缺失及环路。
+void validate_dependencies(const Catalog& catalog, const Manifest& selected) {
+    std::vector<const Manifest*> closure{&selected};
+    for (std::size_t index = 0; index < closure.size(); ++index) {
+        for (const auto& id : closure[index]->dependencies) {
+            const auto found = catalog.packages.find(id);
+            if (found == catalog.packages.end()) throw std::invalid_argument("missing plugin dependency: "+id);
+            if (std::ranges::find(closure,&found->second) == closure.end()) closure.push_back(&found->second);
+        }
+    }
+
+    std::vector<std::vector<std::string_view>> edges;
+    std::vector<PluginOrderNode> graph;
+    edges.reserve(closure.size());
+    graph.reserve(closure.size());
+    for (const auto* item : closure) {
+        auto& providers = edges.emplace_back(item->dependencies.begin(),item->dependencies.end());
+        graph.push_back({item->id,providers});
+    }
+    (void)stable_plugin_order(graph);
+}
 }
 struct PluginManager::State {
     struct Entry {
@@ -160,13 +183,20 @@ std::vector<LoadedPlugin> PluginManager::loaded() const {
     return result;
 }
 // 为实例预留目录与调度名额，再执行一次创建及启动，失败沿既有生命周期回收。
-// 步骤：校验目录及加载接纳 → 预留管理记录和调度者 → 装配实例或回滚 → 创建启动并处理失败。
+// 步骤：检查所选包及依赖 → 装配并启动实例 → 绑定提供方及发布 Hook 顺序 → 失败时有序回收。
 std::uint32_t PluginManager::load(const std::string& id) {
     state_->collect();
     if (!state_->accepting || state_->instances.contains(id)) return DFY_V2_BUSY;
     const auto snapshot = catalog(); const auto found = snapshot->packages.find(id);
     if (found == snapshot->packages.end()) throw std::invalid_argument("plugins: unknown or unavailable id");
     if (state_->instances.size() == state_->capacity) return DFY_V2_RESOURCE_EXHAUSTED;
+    const auto& required = found->second.dependencies;
+    if (!required.empty()) validate_dependencies(*snapshot,found->second);
+    for (const auto& provider : required) {
+        const auto dep = state_->instances.find(provider);
+        if (dep == state_->instances.end() || dep->second.instance->phase() != InstancePhase::active || dep->second.faulted)
+            throw std::logic_error("plugin dependency must be active: "+provider);
+    }
     auto item = state_->instances.try_emplace(id).first;
     try {
         item->second.owner = state_->scheduler.add_owner(1,8,2);
@@ -181,7 +211,11 @@ std::uint32_t PluginManager::load(const std::string& id) {
     if (!status) status = item->second.instance->start();
     if (!status) {
         item->second.registration = ++state_->registration;
-        try { state_->publish_hooks(); }
+        try {
+            for (const auto& provider : required)
+                (void)state_->dependencies.bind(item->second.instance,state_->instances.at(provider).instance);
+            state_->publish_hooks();
+        }
         catch (...) { status = DFY_V2_FAILED; }
     }
     if (status) (void)unload(id);

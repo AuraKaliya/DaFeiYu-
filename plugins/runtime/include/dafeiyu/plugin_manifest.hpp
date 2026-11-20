@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace dfy::plugins {
 struct Manifest {
@@ -13,6 +14,7 @@ struct Manifest {
     std::uint32_t abi_version;
     std::filesystem::path entry;
     std::optional<std::filesystem::path> default_config;
+    std::vector<std::string> dependencies{};
 
     // 比较清单描述和规范化路径，不比较引用文件的内容或修改时间。
     bool operator==(const Manifest&) const = default;

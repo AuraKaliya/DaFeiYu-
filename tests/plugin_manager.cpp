@@ -16,6 +16,39 @@ std::shared_ptr<const dfy::runtime::StructValue> payload() {
     const auto type = std::make_shared<const dfy::runtime::StructDescriptor>(dfy::runtime::StructDescriptor::create("test.manager",1,{}, {0,32}));
     return std::make_shared<const dfy::runtime::StructValue>(dfy::runtime::StructValue::create(type,{},0));
 }
+
+// 验证静态包依赖在加载前检查并在加载后约束卸载。
+// 步骤：准备提供方及依赖方 → 拒绝先加载依赖方 → 核对真实绑定 → 验证带名称的循环诊断。
+void declared_dependencies(const fs::path& run, const fs::path& observer, const fs::path& lifecycle) {
+    const auto root = run/"declared";
+    fs::create_directories(root);
+    fs::copy(observer,root/"observer",fs::copy_options::recursive);
+    // 为测试复制普通生命周期 DLL 并写入指定依赖，避免修改原始包。
+    const auto add = [&](std::string_view id, std::string_view provider) {
+        const auto path = root/std::string(id);
+        fs::create_directories(path);
+        fs::copy_file(lifecycle,path/"entry.dll");
+        std::ofstream file(path/"plugin.json");
+        file << R"({"manifest_version":1,"id":")" << id << R"(","name":"dependent","version":"1","abi_version":2,"entry":"entry.dll","dependencies":[")"
+             << provider << R"("]})";
+    };
+    add("test.declared","example.observer");
+    add("test.cycle_a","test.cycle_b");
+    add("test.cycle_b","test.cycle_a");
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),4,4);
+    PluginManager manager(root,run/"declared-data",channel,4);
+    bool requires_provider = false, has_cycle = false;
+    try { manager.load("test.declared"); }
+    catch (const std::logic_error&) { requires_provider = true; }
+    try { manager.load("test.cycle_a"); }
+    catch (const std::logic_error& error) {
+        has_cycle = std::string_view(error.what()).find("test.cycle_a -> test.cycle_b -> test.cycle_a") != std::string_view::npos;
+    }
+    check(requires_provider && has_cycle && manager.loaded().empty(),"invalid dependency reached native startup");
+    check(!manager.load("example.observer") && !manager.load("test.declared") && manager.dependencies().size() == 1,
+        "declared dependency was not bound");
+    check(manager.unload("example.observer") == ShutdownResult::in_use && manager.close(),"provider unloaded before its dependent");
+}
 // 验证批量关闭只尝试一次共享依赖，失败不能被同一轮的另一个根重复调用。
 // 步骤：建立消费者及提供方 → 固定停止失败 → 记录一次批量关闭的调用增量 → 修复并清理。
 void close_once(const fs::path& root, const fs::path& data, const std::shared_ptr<dfy::events::BroadcastChannel>& channel) {
@@ -77,6 +110,7 @@ int wmain(int argc, wchar_t** argv) {
         manager.advance(); check(manager.loaded().empty(),"manager lost linked stop policy while waiting"); mode(0); control.close();
         check(manager.close(),"empty manager did not close");
         close_once(root,data,channel);
+        declared_dependencies(run,argv[1],argv[2]);
 
         {
             auto retained = std::make_unique<PluginManager>(root,data,channel,4); check(!retained->load("example.observer"),"retained manager setup failed");

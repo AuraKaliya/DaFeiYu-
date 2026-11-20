@@ -32,6 +32,8 @@ cmake --build .\build-status --config Release
 
 [lifecycle_abi_v2.h](include/dafeiyu/lifecycle_abi_v2.h) 规定创建、启动、停止请求、停止轮询和单次销毁。停止请求成功只表示接受请求，`STOPPED` 才表示插件自己的任务已退出；停止失败不能继续释放仍被使用的代码。实例由创建方销毁，不能跨 CRT 释放对方分配的内存。
 
+插件清单可以声明 `"dependencies": ["example.provider"]`。宿主加载前检查所选包的传递依赖及环路，直接提供方须已显式加载。启动成功后绑定实际实例，该关系进入 Hook 排序及卸载检查。
+
 ## 宿主能力
 
 | 能力 | 当前版本和职责 |

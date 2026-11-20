@@ -34,6 +34,30 @@ bool safe_name(const std::string& value) {
            value.find_first_of("\\/:*?\"<>|") == std::string::npos && !std::regex_match(value, reserved);
 }
 
+// 检查包标识可在清单、依赖图和 Windows 目录中一致使用。
+bool package_id(const std::string& value) {
+    static const std::regex grammar(R"([a-z][a-z0-9]*([._-][a-z0-9]+)*)");
+    return value.size() <= 64 && std::regex_match(value,grammar) && safe_name(value);
+}
+
+// 复制有界的直接依赖列表，保留原声明顺序以便诊断。
+// 步骤：识别可选数组 → 验证每个包标识及唯一性 → 返回有界声明。
+std::vector<std::string> read_dependencies(const Json& object) {
+    const auto items = object.find("dependencies");
+    if (items == object.end()) return {};
+    if (!items->is_array() || items->size() > 64) throw std::runtime_error("dependencies: expected at most 64 package IDs");
+
+    std::vector<std::string> result;
+    for (const auto& item : *items) {
+        if (!item.is_string()) throw std::runtime_error("dependencies: expected package ID string");
+        const auto& id = item.get_ref<const std::string&>();
+        if (!package_id(id) || std::ranges::find(result,id) != result.end())
+            throw std::runtime_error("dependencies: invalid or duplicate package ID");
+        result.push_back(id);
+    }
+    return result;
+}
+
 // 校验包内相对文件路径，逐段拒绝链接并确认最终文件仍位于包内。
 // 步骤：检查路径形式 → 核对路径分量及文件类型 → 规范化并检查包边界。
 fs::path package_file(const fs::path& root, const std::string& value, const char* field) {
@@ -65,7 +89,7 @@ fs::path package_file(const fs::path& root, const std::string& value, const char
 }
 
 // 离线读取插件描述与文件位置，不执行入口代码，也不解析默认配置内容。
-// 步骤：确认包目录并有界读取清单 → 校验对象字段与版本 → 提取描述 → 校验入口和可选配置路径。
+// 步骤：确认目录并读取清单 → 校验字段与版本 → 提取标识和依赖 → 核对入口及配置路径。
 Manifest load_manifest(const std::filesystem::path& directory) {
     try {
         auto location = fs::absolute(directory).lexically_normal();
@@ -94,7 +118,7 @@ Manifest load_manifest(const std::filesystem::path& directory) {
             }
             return true;
         });
-        const std::set<std::string> allowed{"manifest_version", "id", "name", "version", "abi_version", "entry", "default_config"};
+        const std::set<std::string> allowed{"manifest_version", "id", "name", "version", "abi_version", "entry", "default_config", "dependencies"};
         if (!object.is_object()) {
             throw std::runtime_error("manifest: expected object");
         }
@@ -114,9 +138,10 @@ Manifest load_manifest(const std::filesystem::path& directory) {
 
         Manifest manifest{root, text(object, "id", 64), text(object, "name", 256), text(object, "version", 64),
             object["abi_version"].get<std::uint32_t>(), {}, {}};
-        if (!std::regex_match(manifest.id, std::regex(R"([a-z][a-z0-9]*([._-][a-z0-9]+)*)")) || !safe_name(manifest.id)) {
+        if (!package_id(manifest.id)) {
             throw std::runtime_error("id: expected lowercase portable identifier");
         }
+        manifest.dependencies = read_dependencies(object);
         const auto entry = text(object, "entry", 1024);
         if (!std::regex_search(entry, std::regex(R"(\.dll$)", std::regex::icase))) {
             throw std::runtime_error("entry: expected .dll filename");

@@ -74,6 +74,12 @@ int main(int argc, char** argv) {
         loaded = dfy::plugins::load_manifest(root);
         check(loaded.default_config == fs::canonical(root / "defaults.json") && loaded.abi_version == 4294967295U,
             "optional config or future ABI rejected");
+        value["dependencies"] = {"example.first","example.second"};
+        write(root/"plugin.json",value.dump());
+        check(dfy::plugins::load_manifest(root).dependencies == std::vector<std::string>{"example.first","example.second"},
+            "required providers were not retained");
+        value["dependencies"] = {"example.first","example.first"};
+        rejects(root,value.dump(),"dependencies:");
 
         for (const auto* field : {"id", "name", "version"}) {
             const std::size_t limit = std::string(field) == "name" ? 256 : 64;
