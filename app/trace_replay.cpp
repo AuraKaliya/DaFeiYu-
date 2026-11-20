@@ -49,8 +49,22 @@ struct RecordedRun {
     std::vector<RecordedModel> models;
     std::vector<RecordedTool> tools;
     Json terminal;
+    std::optional<agent::PolicyReason> next_model_denied;
 };
 constexpr std::array turn_failures{"none","model","history_commit","model_response","control","tool_execution","model_request"};
+constexpr std::array policy_reasons{"none","invalid_context","stale_goal","stale_policy","cancelled","deadline","model_limit","tool_limit",
+    "source_denied","confirmation_required","work_pending","invalid_result","no_progress","policy_failed"};
+
+// 只有原诊断明确记录的终止门才能作为离线输入，避免从终态倒推出不存在的控制事件。
+bool denied_model_after(const Json& timeline, std::size_t expected_step) {
+    const auto& delta = timeline.at("delta");
+    if (delta.at("gap") == true || delta.at("more") == true || delta.at("projection_failed") == true) return false;
+    return std::any_of(delta.at("facts").begin(),delta.at("facts").end(),[&](const Json& event) {
+        return event.at("kind") == "policy_decision" && event.at("control_point") == "model_request" &&
+            event.at("subject").at("step") == expected_step && event.at("decision").at("verdict") == "deny" &&
+            event.at("decision").at("reason") == timeline.at("stop_reason");
+    });
+}
 
 // 只装入有确定边界的直接运行，等待人为输入及中断的运行留给原日志审阅。
 // 步骤：按原身份收取事件 → 配对模型输入及退出 → 验证终态和可重跑边界。
@@ -88,10 +102,16 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
         throw std::invalid_argument("replay: complete run with model input and exit required");
     const auto& diagnostic = result.terminal.at("diagnostic").at("data");
     const auto& timeline = diagnostic.at("timeline");
+    const auto reason = tagged<agent::PolicyReason>(timeline.at("stop_reason"),policy_reasons);
     if ((result.terminal.at("result") != "succeeded" && result.terminal.at("result") != "failed") ||
         !diagnostic.at("plans").empty() || !timeline.at("observations").empty() ||
-        timeline.at("stop_reason") != "none" || timeline.at("source") == "observation_rule")
+        (reason != agent::PolicyReason::none && reason != agent::PolicyReason::source_denied) || timeline.at("source") == "observation_rule")
         throw std::invalid_argument("replay: run requires control inputs outside a direct replay");
+    if (reason == agent::PolicyReason::source_denied) {
+        if (timeline.at("failure") != "control" || !denied_model_after(timeline,result.models.size()+1))
+            throw std::invalid_argument("replay: original model boundary decision unavailable");
+        result.next_model_denied = reason;
+    }
     return result;
 }
 }
@@ -113,6 +133,17 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     std::size_t model_index = 0;
     agent::ToolCatalog catalog;
     agent::RunOptions options;
+    bool denied_seen = false;
+    if (original.next_model_denied) {
+        // 重用记录中的宿主控制输入，重跑时仍由正式协调器产生终止和退出。
+        options.extension = [&](agent::ControlPoint point, const agent::PolicyContext& context) {
+            if (point == agent::ControlPoint::model_request && context.attempt.step.sequence == original.models.size()+1) {
+                denied_seen = true;
+                return agent::PolicyDecision{agent::PolicyVerdict::deny,*original.next_model_denied};
+            }
+            return agent::PolicyDecision{agent::PolicyVerdict::allow,agent::PolicyReason::none};
+        };
+    }
     std::vector<std::string> ids;
     for (const auto& tool : first.at("tools")) {
         model::ToolDefinition definition{tool.at("name"),tool.at("description"),tool.at("parameters")};
@@ -174,13 +205,15 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     if (!model_difference.empty()) throw std::runtime_error("replay: "+model_difference);
     if (!tool_difference.empty()) throw std::runtime_error("replay: "+tool_difference);
     if (model_index != original.models.size() ||
+        denied_seen != original.next_model_denied.has_value() ||
         std::any_of(original.tools.begin(),original.tools.end(),[](const auto& entry) {
             return !entry.observed || entry.invoked != entry.exit.at("accepted");
         })) throw std::runtime_error("replay: recorded model or tool events were not consumed");
     const auto state = request->operation()->state();
+    const auto& timeline = original.terminal.at("diagnostic").at("data").at("timeline");
     if (original.terminal.at("result") != states.at(static_cast<std::size_t>(state)) ||
-        original.terminal.at("diagnostic").at("data").at("timeline").at("failure") !=
-            turn_failures.at(static_cast<std::size_t>(request->diagnostics().failure)) ||
+        timeline.at("failure") != turn_failures.at(static_cast<std::size_t>(request->diagnostics().failure)) ||
+        timeline.at("stop_reason") != policy_reasons.at(static_cast<std::size_t>(request->diagnostics().stop_reason)) ||
         (state == OperationState::succeeded && original.terminal.at("answer") != request->answer()))
         throw std::runtime_error("replay: final result differs");
     output << "Replay matched session " << run.session << " run " << run.sequence << ": " << model_index
