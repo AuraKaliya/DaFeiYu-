@@ -449,7 +449,7 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
         dfy::mc::PartnerWork work;
         const auto session = raw->partner.status().session;
         for (const auto& job : raw->jobs) if (session && job.partner_session == session && job.sequence && job.action && !job.ready &&
-            (job.skill == "move" || job.skill == "collect")) work = {job.invocation,job.skill};
+            (job.skill == "move" || job.skill == "collect" || job.skill == "place")) work = {job.invocation,job.skill};
         raw->partner.advance(raw->config,raw->owner,work);
         *wait = raw->partner.status().phase == DFY_V2_PARTNER_CLOSED ? 100 : 5;
         return report(DFY_V2_OK,error);

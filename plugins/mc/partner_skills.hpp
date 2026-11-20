@@ -19,7 +19,7 @@ struct PartnerSkill {
     SkillKind kind = SkillKind::game;
     bool supports_approval = false;
 };
-inline constexpr std::array<PartnerSkill,7> partner_skills{{
+inline constexpr std::array<PartnerSkill,8> partner_skills{{
     {"observe", "partner.observe", "Read current positions, landmarks and inventory. Optional block registry name lists visible matches. For structures use around=player or self. survey contains client-loaded blocks from origin, with x increasing across each row, z across rows, y across layers. Palette decodes block symbols; dot is air, question mark is unloaded, asterisk is an unlisted block.",
         R"({"type":"object","properties":{"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
@@ -28,6 +28,8 @@ inline constexpr std::array<PartnerSkill,7> partner_skills{{
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},
     {"reply", "partner.reply", "Speak to the bound player in this game. Call only when you choose to speak. Internal turn completion is silent.",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", SkillCategory::communication, true},
+    {"place", "partner.place", "Place one inventory block at the exact empty x, y, z cell, or one door with its lower half at that cell. Survey the intended structure first. Uses a visible support and reads back the changed cells. Optional approval selects game or main.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::place, true, SkillKind::game, true},
     {"collect_confirmed", "partner.collect_confirmed", "Request player consent for a fixed collection. Route 'game' asks in the game; route 'main' lets the main Agent select a channel. The original collection runs only after consent.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::confirmed},
     {"task_update", "partner.task_update", "Update the shared task within this world. Use the latest revision, retain known facts and uncertainties in detail. next: continue after this turn, scene on observed change, player on new input, done when complete.",

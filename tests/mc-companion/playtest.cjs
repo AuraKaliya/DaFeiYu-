@@ -69,7 +69,12 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
-    if (mode !== '--probe') {
+    if (mode === '--wall-probe') {
+      for (const command of ['fill 2 -60 -3 2 -59 -3 minecraft:dirt', 'fill 6 -60 -3 6 -59 -3 minecraft:dirt',
+        'setblock 3 -60 -3 minecraft:dirt', 'fill -3 -60 1 -3 -59 1 minecraft:oak_planks',
+        'tp DfyGuestCheck 3.5 -60 -0.5', 'give DfyCompanion minecraft:dirt 8', 'give DfyCompanion minecraft:oak_door 1'])
+        send(command);
+    } else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
     }
@@ -78,8 +83,9 @@ async function play(fixture, exe, pkg, mode, config) {
       game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '山脚与工具就绪');
     if (mode === '--partner-probe') await until(() => [3, 4].every(x =>
       game.bot.blockAt(game.bot.entity.position.clone().set(x, -60, 0))?.name === 'dirt'), '客户端读回探针布置的两块泥土');
-    const args = mode === '--live' ? ['--mc-partner', config, pkg, root] :
-      mode === '--partner-probe' ? [pkg, root, mode] : [pkg, root];
+    if (mode === '--wall-probe') await until(() => game.bot.inventory.items().some(item => item.name === 'oak_door') &&
+      game.bot.blockAt(game.bot.entity.position.clone().set(2, -59, -3))?.name === 'dirt', '原墙和建材就绪');
+    const args = mode === '--live' ? ['--mc-partner', config, pkg, root] : mode === '--probe' ? [pkg, root] : [pkg, root, mode];
     child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
     exit = once(child, 'close');
     exit.catch(() => {});
@@ -117,7 +123,7 @@ async function play(fixture, exe, pkg, mode, config) {
 // 在同一次体验服生命周期内运行真实协议玩家；任一方失败都先回收本轮宿主。
 async function rehearse(fixture, exe, pkg, mode) {
   const host = play(fixture, exe, pkg, mode);
-  const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode === '--partner-probe').catch(error => {
+  const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode).catch(error => {
     fs.closeSync(fs.openSync(path.join(fixture.evidence, 'host/stop'), 'a'));
     throw error;
   });
@@ -157,7 +163,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
-  if (!['--live', '--probe', '--partner-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
+  if (!['--live', '--probe', '--partner-probe', '--wall-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
     throw new Error('需要已构建的体验宿主和 MC 包');

@@ -80,6 +80,62 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
     }
     return speak("内部结算：已读工作回执");
 }
+
+// 从原观察网格读取一个已知坐标，缺格无法用样本中的预期值补齐。
+std::string survey_block(const nlohmann::json& survey, int x, int y, int z) {
+    const auto& origin = survey.at("origin");
+    const auto row = survey.at("layers").at(y-origin.at("y").get<int>()).at(z-origin.at("z").get<int>()).get<std::string>();
+    const std::string glyph(1,row.at(x-origin.at("x").get<int>()));
+    return survey.at("palette").value(glyph,glyph);
+}
+
+// 用固定模型验证墙体目标跨回合、观察、范围展开和原候选确认。
+// 步骤：保存原分工 → 核实玩家附近结构 → 先拒绝覆盖再补一格 → 等待游戏玩家确认门。
+dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto& last = request.messages.back();
+    const auto say = [](std::string text) { return Response{{Role::assistant,std::move(text)}}; };
+    const auto call = [&](std::string skill, std::string id, const Json& args) -> Response {
+        const auto found = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with("_"+skill); });
+        if (found == request.tools.end()) throw std::runtime_error("wall probe: skill outside current scope: "+skill);
+        record_input(root,{{"call",skill},{"id",id},{"arguments",args}});
+        return {{Role::assistant,"",{{std::move(id),found->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    if (request.tools.empty()) return say("continue");
+    if (last.role == Role::tool) {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        if (last.tool_call_id == "save" || last.tool_call_id == "directory") return say("fixed round done");
+        if (last.tool_call_id == "survey") {
+            const auto& survey = result.at("survey");
+            if (survey_block(survey,2,-59,-3) != "dirt" || survey_block(survey,3,-59,-3) != "." ||
+                survey_block(survey,3,-60,-3) != "dirt")
+                throw std::runtime_error("wall probe: survey did not locate the wall and gap");
+            return call("skills","directory",{{"categories",{"place"}}});
+        }
+        if (last.tool_call_id == "occupied" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
+            return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
+        if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
+            return call("place","door",{{"block","oak_door"},{"x",4},{"y",-60},{"z",-3},{"approval","game"}});
+        return say("fixed action ended");
+    }
+    const auto input = Json::parse(last.content);
+    record_input(root,input);
+    if (input.at("trigger") == "skills.expanded") {
+        if (input.at("task").at("goal") != "continue existing two-layer dirt wall and door" ||
+            input.at("task").at("lastAction").at("skill") != "observe" || !input.at("events").empty())
+            throw std::runtime_error("wall probe: expansion lost prior goal or environment");
+        return call("place","occupied",{{"block","dirt"},{"x",2},{"y",-60},{"z",-3}});
+    }
+    const auto& event = input.at("events").back();
+    if (event.at("sequence") == 2)
+        return call("task_update","save",{{"revision",0},{"goal","continue existing two-layer dirt wall and door"},
+            {"detail","Find the player's original wall and leave the intended doorway"},{"next","player"}});
+    if (event.at("sequence") == 3 && event.at("text") == "我在墙边上" &&
+        input.at("task").at("goal") == "continue existing two-layer dirt wall and door")
+        return call("observe","survey",{{"around","player"}});
+    return say("fixed event read");
+}
 }
 
 // 保持真人体验的正式宿主运行，向本地日志发布进展和计划板并完整收尾。
@@ -87,13 +143,17 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
 int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     try {
-        const bool partner = argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe";
+        const bool wall = argc == 4 && std::wstring_view(argv[3]) == L"--wall-probe";
+        const bool partner = wall || (argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe");
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner, root](const auto&, const auto& request) { return partner ? partner_sample(request, root) : sample_turn(request); }},
+            [partner,wall,root](const auto&, const auto& request) {
+                if (wall) return wall_sample(request,root);
+                return partner ? partner_sample(request,root) : sample_turn(request);
+            }},
             std::move(run));
         app::run_companion_host(host, argv[1], root, partner ? app::CompanionMode::partner : app::CompanionMode::scenario);
         return 0;

@@ -15,6 +15,11 @@ std::string confirmation_question(std::string_view skill, const Json& args) {
             throw std::invalid_argument("MC confirmation: invalid collection count");
         return "是否采集 "+count.dump()+" 块 "+block+"？";
     }
+    if (skill == "place") {
+        for (const auto axis : {"x","y","z"}) if (!args.at(axis).is_number_integer() || args.at(axis).get<double>() < -30000000 ||
+            args.at(axis).get<double>() > 30000000) throw std::invalid_argument("MC confirmation: invalid placement coordinate");
+        return "是否在 ("+args.at("x").dump()+", "+args.at("y").dump()+", "+args.at("z").dump()+") 放置 "+block+"？";
+    }
     throw std::invalid_argument("MC confirmation: unsupported action");
 }
 }

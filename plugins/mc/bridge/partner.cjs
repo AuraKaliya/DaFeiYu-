@@ -2,6 +2,7 @@ const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
 const { blockSurvey } = require('./block-survey.cjs');
+const { placeBlock } = require('./placement.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -89,7 +90,7 @@ async function collect(bot, args, check, result) {
   }
 }
 
-// 为当前玩家原话提供观察、移动、采集和回复；一轮中重读同一动作只返回已有回执。
+// 为当前玩家提供独立读写技能，重读同一动作只返回已有回执。
 // 步骤：验证消息与世界 → 串行接纳技能 → 执行或协作取消 → 原票据读回实际结果。
 function partnerService(bot, world, inbox, places, owner) {
   let active, previous, closed = false, done = Promise.resolve();
@@ -111,6 +112,7 @@ function partnerService(bot, world, inbox, places, owner) {
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
+    if (r.skill === 'place') result.placementAttempted = result.placed = false;
     const check = () => { if (job.cancelled || closed || world.read()?.generation !== r.generation) throw new Error('原工作已中断或游戏绑定已失效'); };
     try {
       check();
@@ -151,6 +153,9 @@ function partnerService(bot, world, inbox, places, owner) {
         result.position = bot.entity.position.clone();
         if (bot.entity.position.floored().distanceTo(pos) > 1) throw new Error('到达未核实');
       } else if (r.skill === 'collect') await collect(bot, args, check, result);
+      else if (r.skill === 'place') {
+        await placeBlock(bot, targetPoint(bot, args), blockType(bot, args.block), check, walk, result);
+      }
       else throw new Error('未知游戏能力');
       check();
       result.status = 'done';
@@ -159,7 +164,7 @@ function partnerService(bot, world, inbox, places, owner) {
       result.reason = String(error.message).slice(0, 240);
     } finally {
       r.exited = true;
-      if (['move', 'collect'].includes(r.skill)) previous = { order: r.order, skill: r.skill, ...result };
+      if (['move', 'collect', 'place'].includes(r.skill)) previous = { order: r.order, skill: r.skill, ...result };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
   }

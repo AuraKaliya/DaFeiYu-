@@ -7,7 +7,8 @@ const { until } = require('./players.cjs');
 
 // 用独立协议玩家走同一真人入口，核对资源包、可见角色和完整聊天回合。
 // 步骤：从服务端收到资源包 → 等待收件就绪 → 交叉核对模型输入、游戏动作与真实发言。
-async function checkPlayer(fixture, partner = false) {
+async function checkPlayer(fixture, mode) {
+  const partner = mode !== '--probe';
   const player = mineflayer.createBot({ host: '127.0.0.1', port: fixture.port, username: 'DfyGuestCheck',
     auth: 'offline', version: '1.21.4' });
   let pack;
@@ -27,7 +28,9 @@ async function checkPlayer(fixture, partner = false) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
-    if (partner) {
+    if (mode === '--wall-probe') {
+      await checkWall(fixture, player, whispers);
+    } else if (partner) {
       assert.deepEqual(whispers, []);
       const settled = seq => until(() => fixture.settled === seq, '处理到玩家事件 ' + seq, 50000);
       player.chat('大家叫我小叶');
@@ -65,5 +68,32 @@ async function checkPlayer(fixture, partner = false) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 独立玩家在本地 Paper 上核对原墙、放置后的两格门和批准前的世界状态。
+// 步骤：发起分工并补报位置 → 等候实际放置与询问 → 确认后读回两格门及原痕迹。
+async function checkWall(fixture, player, whispers) {
+  const block = (x, y, z) => player.blockAt(player.entity.position.clone().set(x, y, z));
+  await until(() => block(2, -59, -3)?.name === 'dirt', '玩家看到原墙');
+  assert.equal(block(3, -59, -3).name, 'air');
+  player.chat('我们接着搭我围的墙，两层泥土，给我留扇木门。');
+  await until(() => fixture.settled === 2, '保存原分工');
+  player.chat('我在墙边上');
+  const token = await until(() => whispers.map(text => /确认 (\d+) 或 拒绝 \1$/.exec(text)).find(Boolean)?.[1],
+    '原候选发出实际确认问题', 45000);
+  assert.equal(block(2, -59, -3).name, 'dirt');
+  assert.equal(block(3, -59, -3).name, 'dirt');
+  assert.equal(block(4, -60, -3).name, 'air');
+  assert.equal(block(4, -59, -3).name, 'air');
+  player.chat('确认 ' + token);
+  await until(() => block(4, -60, -3)?.name === 'oak_door' && block(4, -59, -3)?.name === 'oak_door',
+    '玩家读回放置后的两格门', 30000);
+  assert.equal(block(4, -60, -3).getProperties().half, 'lower');
+  assert.equal(block(4, -59, -3).getProperties().half, 'upper');
+  await until(() => fixture.settled === 4, '同一确认及游戏回合结算');
+  const work = readFileSync(join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  const placements = work.filter(row => row.skill === 'place');
+  assert.deepEqual(placements.map(row => [row.order, row.result.placementAttempted, row.result.placed]), [[3,false,false],[3,true,true],[4,true,true]]);
+  assert.deepEqual(placements.at(-1).arguments, { block: 'oak_door', x: 4, y: -60, z: -3 });
 }
 module.exports = { checkPlayer };

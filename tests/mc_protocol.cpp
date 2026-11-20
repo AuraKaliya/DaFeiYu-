@@ -97,6 +97,16 @@ int main() {
         if (!partial.exited || partial.arrived || Json::parse(partial.payload).at("broken") != 1) return 1;
         receipt["action"]["order"] = 1;
         rejects([&] { dfy::mc::partner_reply(receipt.dump(), "work", "collect", envelope); });
+        const auto placement = Json{{"context",source},{"arguments",{{"block","minecraft:oak_door"},{"x",1},{"y",-60},{"z",3}}}}.dump();
+        action = source;
+        action.update(Json{{"skill","place"},{"exited",true},{"result",{{"status","interrupted"},{"placementAttempted",true},
+            {"placed",true},{"blocks",Json::array({{{"block","oak_door"},{"x",1},{"y",-60},{"z",3},{"half","lower"}},
+                {{"block","oak_door"},{"x",1},{"y",-59},{"z",3},{"half","upper"}}})}}}});
+        receipt["action"] = action;
+        const auto placed = dfy::mc::partner_reply(receipt.dump(),"work","place",placement);
+        if (!placed.exited || placed.arrived || !placed.placement_verified || !placed.placement_attempted) return 1;
+        receipt["action"]["result"]["blocks"][1]["z"] = 4;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","place",placement); });
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

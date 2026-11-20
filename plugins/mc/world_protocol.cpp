@@ -56,6 +56,22 @@ bool control_receipt(const Json& value, const Json& generation) {
         value.at("order").is_number_unsigned() && value.at("order") <= 9007199254740991ULL &&
         (value.at("phase") == "requested" || value.at("phase") == "released" || value.at("phase") == "unconfirmed");
 }
+
+// 将已证明的放置结果逐格对应到原命令；门必须产生两份位置和半门属性。
+void verify_placement(const Json& result, const Json& args) {
+    auto name = args.at("block").get<std::string>();
+    if (name.starts_with("minecraft:")) name.erase(0,10);
+    const bool door = name.ends_with("_door");
+    const auto& cells = result.at("blocks");
+    if (!cells.is_array() || cells.size() != (door ? 2u : 1u)) throw std::invalid_argument("MC: invalid placement evidence");
+    for (std::size_t index = 0; index < cells.size(); ++index) {
+        const auto& cell = cells.at(index);
+        if (cell.at("block") != name || cell.at("x") != args.at("x") || cell.at("z") != args.at("z") ||
+            cell.at("y") != args.at("y").get<std::int64_t>()+static_cast<std::int64_t>(index) ||
+            (door && cell.at("half") != (index ? "upper" : "lower")))
+            throw std::invalid_argument("MC: placement evidence differs from target");
+    }
+}
 }
 
 // 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
@@ -71,8 +87,9 @@ std::string partner_request(std::string_view method, std::string_view id, std::s
     return frame.dump();
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
-InspectReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire), context = parse(arguments).at("context");
+PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
+    const auto frame = parse(wire), envelope = parse(arguments);
+    const auto& context = envelope.at("context");
     const auto& action = frame.at("action");
     if (frame.at("version") != 1 || frame.at("id").get_ref<const std::string&>() != id ||
         action.at("skill").get_ref<const std::string&>() != skill || action.at("generation") != context.at("generation") ||
@@ -82,7 +99,15 @@ InspectReply partner_reply(std::string_view wire, std::string_view id, std::stri
     const auto& result = action.at("result");
     if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
         throw std::invalid_argument("MC: invalid partner outcome");
-    return {exited, exited && result.at("status") == "done", false, exited ? result.dump() : std::string{}};
+    bool attempted = false, verified = false;
+    if (exited && skill == "place") {
+        attempted = result.at("placementAttempted").get<bool>();
+        verified = result.at("placed").get<bool>();
+        if ((verified && !attempted) || (!verified && result.at("status") == "done"))
+            throw std::invalid_argument("MC: inconsistent placement status");
+        if (verified) verify_placement(result,envelope.at("arguments"));
+    }
+    return {exited, exited && result.at("status") == "done", attempted, verified, exited ? result.dump() : std::string{}};
 }
 // 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments) {
