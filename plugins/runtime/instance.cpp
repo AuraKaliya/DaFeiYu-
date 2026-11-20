@@ -83,6 +83,7 @@ struct PluginInstance::State {
     std::optional<Capability<dfy_v2_lifecycle_api>> lifecycle;
     std::optional<Capability<dfy_v2_activity_api>> activity;
     std::vector<dfy_v2_hook_description> hook_registrations;
+    std::vector<dfy_v2_text_hook_description> text_hook_registrations;
     std::string id;
     std::string version;
     dfy_v2_instance* instance = nullptr;
@@ -149,6 +150,7 @@ uint32_t PluginInstance::start() noexcept {
             auto activity = state_->module.query<dfy_v2_activity_api>(DFY_V2_ACTIVITY_INTERFACE,DFY_V2_ACTIVITY_VERSION);
             if (activity && !activity->enter().api().step) throw std::invalid_argument("instance: incomplete activity interface");
             state_->hook_registrations = load_hooks();
+            state_->text_hook_registrations = load_text_hooks();
             state_->activity = std::move(activity);
         }
         catch (...) { state_->phase = InstancePhase::created; status = DFY_V2_FAILED; }
@@ -160,6 +162,11 @@ uint32_t PluginInstance::start() noexcept {
 std::span<const dfy_v2_hook_description> PluginInstance::hooks() const noexcept {
     return phase() == InstancePhase::active ? std::span<const dfy_v2_hook_description>{state_->hook_registrations}
         : std::span<const dfy_v2_hook_description>{};
+}
+// 只借用活动实例原有的字段注册顺序。
+std::span<const dfy_v2_text_hook_description> PluginInstance::text_hooks() const noexcept {
+    return phase() == InstancePhase::active ? std::span<const dfy_v2_text_hook_description>{state_->text_hook_registrations}
+        : std::span<const dfy_v2_text_hook_description>{};
 }
 // 仅活动实例可被调度进入插件外层循环。
 bool PluginInstance::has_activity() const noexcept { return phase() == InstancePhase::active && state_->activity.has_value(); }

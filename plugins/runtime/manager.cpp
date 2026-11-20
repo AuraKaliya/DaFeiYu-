@@ -4,6 +4,7 @@
 #include "package_files.hpp"
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <chrono>
 
 namespace dfy::plugins {
@@ -12,6 +13,12 @@ namespace {
 std::size_t bounded(std::size_t capacity) {
     if (!capacity || capacity > PluginInstance::maximum_instances) throw std::invalid_argument("plugins: capacity must be 1..64");
     return capacity;
+}
+
+// 计算单次调用与原插件实例之间的会话范围。
+uint32_t hook_scope(uint64_t owner, const PluginInstance& instance) {
+    return !owner ? DFY_V2_HOOK_MAIN_SESSION : owner == instance.generation()
+        ? DFY_V2_HOOK_OWN_SESSION : DFY_V2_HOOK_OTHER_SESSION;
 }
 
 // 在装载 DLL 前检查所选包的传递依赖，其他包的声明保持独立。
@@ -52,6 +59,17 @@ struct PluginManager::State {
         bool faulted;
     };
     using HookList = std::vector<Hook>;
+    using PluginSet = std::bitset<PluginInstance::maximum_instances>;
+    struct TextHook {
+        Hook hook;
+        std::size_t node;
+        bool chain;
+    };
+    struct HookPlan {
+        std::array<HookList,3> controls;
+        std::array<std::vector<TextHook>,DFY_V2_TEXT_HOOK_REPLY> rewrites;
+        std::array<PluginSet,PluginInstance::maximum_instances> ancestors;
+    };
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
         std::shared_ptr<events::BroadcastChannel> events, std::size_t limit, PluginMailboxHost mail)
@@ -83,16 +101,27 @@ struct PluginManager::State {
             graph.push_back({entry->instance->plugin_id(),providers});
         }
 
-        std::array<HookList,3> lists;
+        auto updated = std::make_shared<HookPlan>();
         for (const auto node : stable_plugin_order(graph)) {
             const auto& instance = active[node]->instance;
+            auto& ancestry = updated->ancestors[node];
+            ancestry.set(node);
+            for (const auto provider : edges[node]) {
+                const auto found = std::ranges::find(graph,provider,&PluginOrderNode::id);
+                ancestry |= updated->ancestors[static_cast<std::size_t>(found-graph.begin())];
+            }
             const auto registered = instance->hooks();
             for (std::size_t index = 0; index < registered.size(); ++index) {
                 const auto& hook = registered[index];
-                lists.at(hook.point-1).push_back({instance,index,hook.sessions,active[node]->faulted});
+                updated->controls.at(hook.point-1).push_back({instance,index,hook.sessions,active[node]->faulted});
+            }
+            const auto rewrites = instance->text_hooks();
+            for (std::size_t index = 0; index < rewrites.size(); ++index) {
+                const auto& hook = rewrites[index];
+                updated->rewrites.at(hook.point-1).push_back({{instance,index,hook.sessions,active[node]->faulted},node,
+                    (hook.flags & DFY_V2_TEXT_HOOK_CHAIN) != 0});
             }
         }
-        auto updated = std::make_shared<const std::array<HookList,3>>(std::move(lists));
         hook_order = std::move(updated);
         hook_revision = dependencies.revision();
         hooks_dirty = false;
@@ -170,7 +199,7 @@ struct PluginManager::State {
     std::weak_ptr<PluginAgents> agents;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
-    std::shared_ptr<const std::array<HookList,3>> hook_order;
+    std::shared_ptr<const HookPlan> hook_order;
     std::uint64_t registration = 0, hook_revision = 0;
     std::string directory_error;
     bool accepting = true, hooks_dirty = false;
@@ -301,17 +330,46 @@ uint32_t PluginManager::control_hook(const dfy_v2_hook_input& input) {
     if (!snapshot) return DFY_V2_HOOK_ALLOW;
 
     auto result = DFY_V2_HOOK_ALLOW;
-    for (const auto& hook : snapshot->at(input.point-1)) {
+    for (const auto& hook : snapshot->controls.at(input.point-1)) {
         if (hook.instance->phase() != InstancePhase::active) continue;
-        const auto scope = !input.owner ? DFY_V2_HOOK_MAIN_SESSION : input.owner == hook.instance->generation()
-            ? DFY_V2_HOOK_OWN_SESSION : DFY_V2_HOOK_OTHER_SESSION;
-        if (!(scope & hook.sessions)) continue;
+        if (!(hook_scope(input.owner,*hook.instance) & hook.sessions)) continue;
         if (hook.faulted) throw std::runtime_error("hooks: registered controller is faulted");
         const auto verdict = hook.instance->decide_hook(hook.index,input);
         if (verdict == DFY_V2_HOOK_DENY) return verdict;
         if (verdict == DFY_V2_HOOK_CONFIRM) result = verdict;
     }
     return result;
+}
+// 只合并可归因于当前字段的提案，独立改写发生冲突时拒绝整个字段。
+// 步骤：固定调用快照 → 按作用域选择处理器 → 检查接续依赖并裁定各提案。
+std::optional<std::string> PluginManager::rewrite_hook(const dfy_v2_text_hook_input& input, std::size_t limit) {
+    if (!input.session || !input.run || input.reserved || !input.field.data || !input.field.length || input.field.length > 256 ||
+        (input.value.length && !input.value.data) || !limit || limit > 1024*1024 ||
+        input.point < DFY_V2_TEXT_HOOK_INPUT || input.point > DFY_V2_TEXT_HOOK_REPLY)
+        throw std::invalid_argument("text hooks: invalid context or limit");
+    if (state_->hooks_dirty || state_->hook_revision != state_->dependencies.revision()) state_->publish_hooks();
+    const auto snapshot = state_->hook_order;
+    if (!snapshot) return std::nullopt;
+
+    State::PluginSet producers;
+    std::optional<std::string> value;
+    std::vector<char> output;
+    for (const auto& item : snapshot->rewrites.at(input.point-1)) {
+        const auto& hook = item.hook;
+        if (hook.instance->phase() != InstancePhase::active || !(hook_scope(input.owner,*hook.instance) & hook.sessions)) continue;
+        if (hook.faulted) throw std::runtime_error("text hooks: registered converter is faulted");
+        auto candidate = input;
+        const bool follows = value && item.chain && (producers & ~snapshot->ancestors[item.node]).none();
+        if (follows) candidate.value = {value->data(),value->size()};
+        if (output.empty()) output.resize(limit);
+        auto replacement = hook.instance->rewrite_hook(hook.index,candidate,output);
+        if (!replacement || *replacement == std::string_view(candidate.value.data ? candidate.value.data : "",candidate.value.length)) continue;
+        if (value && !follows && *replacement != *value) throw std::runtime_error("text hooks: conflicting proposals for field "+
+            std::string(input.field.data,input.field.length));
+        producers.set(item.node);
+        value = std::move(replacement);
+    }
+    return value;
 }
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。
 bool PluginManager::close() noexcept { return state_->close(); }

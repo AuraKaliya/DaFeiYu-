@@ -28,6 +28,50 @@ fs::path package(const fs::path& root, const fs::path& dll) {
     }
 }
 
+// 以同一 C DLL 构建独立的实例，依赖声明及默认配置在包内固定。
+void converter(const fs::path& root, const fs::path& dll, std::string_view name, char mode, std::string_view provider = {}) {
+    const auto path = root/name;
+    fs::create_directories(path);
+    fs::copy_file(dll,path/"entry.dll");
+    std::ofstream defaults(path/"defaults.json");
+    defaults << "{\"mode\":\"" << mode << "\"}";
+    std::ofstream manifest(path/"plugin.json");
+    manifest << R"({"manifest_version":1,"id":")" << name <<
+        R"(","name":"converter","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json")";
+    if (!provider.empty()) manifest << R"(,"dependencies":[")" << provider << R"("])";
+    manifest << '}';
+}
+
+// 在原加载顺序内验证独立、接续及非法返回的字段改写。
+// 步骤：加载提供方及多个改写者 → 校验冲突和作用域 → 替换成依赖接续 → 检查非法长度。
+void text_hooks(const fs::path& root, const fs::path& dll) {
+    const auto packages = root/"converters";
+    converter(packages,dll,"test.a",'a');
+    converter(packages,dll,"test.b",'b',"test.a");
+    converter(packages,dll,"test.c",'c');
+    converter(packages,dll,"test.d",'d');
+    converter(packages,dll,"test.z",'z');
+    PluginMailboxHost host{std::make_shared<Mailboxes>(MailboxLimits{10,2,20,64}),next_domain()};
+    auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),2,2);
+    PluginManager manager(packages,root/"converter-data",channel,5,host);
+    dfy_v2_text_hook_input event{DFY_V2_TEXT_HOOK_INPUT,0,1,1,0,0,0,1,{"probe",5},{"?",1}};
+    check(!manager.load("test.a") && !manager.load("test.d") && manager.rewrite_hook(event,8) == "a","equal independent changes failed");
+    check(!manager.load("test.c"),"conflict DLL failed to load");
+    bool conflict = false;
+    try { (void)manager.rewrite_hook(event,8); }
+    catch (const std::runtime_error& issue) { conflict = std::string_view(issue.what()).find("conflicting proposals") != std::string_view::npos; }
+    check(conflict,"independent field conflict was silently ordered");
+    event.owner = next_domain();
+    check(!manager.rewrite_hook(event,8),"field Hook exceeded its session scope");
+    event.owner = 0;
+    check(manager.unload("test.c") == ShutdownResult::closed && manager.unload("test.d") == ShutdownResult::closed &&
+        !manager.load("test.b") && manager.rewrite_hook(event,8) == "b","declared dependency lost preceding change");
+    check(!manager.load("test.z"),"invalid result DLL failed to load");
+    bool bounded = false;
+    try { (void)manager.rewrite_hook(event,8); } catch (const std::length_error&) { bounded = true; }
+    check(bounded && manager.close(),"oversized field result or cleanup was not enforced");
+}
+
 // 通过正式应用验证 Hook 可以拒绝主回合并给原生工具加审批。
 // 步骤：装配固定后端与原生包 → 批准原候选并核对实效 → 拒绝新请求 → 卸载后恢复普通问答。
 void main_hook(const fs::path& root, const fs::path& status_package) {
@@ -230,6 +274,7 @@ int wmain(int argc, wchar_t** argv) {
         main_hook(root,argv[3]);
         subagents(root);
         main_inbox(root);
+        text_hooks(root.parent_path(),argv[1]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

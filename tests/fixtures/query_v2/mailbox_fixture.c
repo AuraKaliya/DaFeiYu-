@@ -8,6 +8,7 @@
 _Static_assert(sizeof(dfy_v2_mailbox_api) == 32 && offsetof(dfy_v2_mailbox_api,poll) == 24,"mailbox ABI");
 _Static_assert(sizeof(dfy_v2_mailbox_message) == 40 && offsetof(dfy_v2_mailbox_message,payload) == 16,"mailbox message ABI");
 _Static_assert(sizeof(dfy_v2_hook_api) == 24 && sizeof(dfy_v2_hook_input) == 72,"hook ABI");
+_Static_assert(sizeof(dfy_v2_text_hook_api) == 24 && sizeof(dfy_v2_text_hook_input) == 88,"text hook ABI");
 _Static_assert(sizeof(dfy_v2_agent_api) == 48 && sizeof(dfy_v2_agent_input) == 64 && sizeof(dfy_v2_agent_status) == 32,"agent ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
@@ -16,16 +17,17 @@ struct dfy_v2_instance {
     const dfy_v2_reference_api* refs;
     const dfy_v2_agent_api* agent;
     uint64_t session;
+    char converter;
 };
 
 // 为纯 C 插件分配独立实例并保存宿主查询入口。
 static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_view config,
     dfy_v2_instance** out, dfy_v2_error* error) {
-    (void)config;
     if (error) error->length = 0;
     *out = calloc(1,sizeof(**out));
     if (!*out) return DFY_V2_RESOURCE_EXHAUSTED;
     (*out)->host = host;
+    if (config.length == 12 && !memcmp(config.data,"{\"mode\":\"",9)) (*out)->converter = config.data[9];
     return DFY_V2_OK;
 }
 
@@ -122,6 +124,34 @@ static dfy_v2_status DFY_V2_CALL decide_hook(dfy_v2_instance* instance, uint32_t
 }
 static const dfy_v2_hook_api hooks = {{sizeof(dfy_v2_hook_api),1},describe_hook,decide_hook};
 
+// 独立或递进转换均在启动阶段注册，运行时只检查字段名。
+static dfy_v2_status DFY_V2_CALL describe_text(dfy_v2_instance* instance, uint32_t index,
+    dfy_v2_text_hook_description* out, dfy_v2_error* error) {
+    if (error) error->length = 0;
+    *out = (dfy_v2_text_hook_description){0};
+    if (index || !instance->converter) return DFY_V2_NOT_FOUND;
+    *out = (dfy_v2_text_hook_description){DFY_V2_TEXT_HOOK_INPUT,DFY_V2_HOOK_MAIN_SESSION,
+        instance->converter == 'b' ? DFY_V2_TEXT_HOOK_CHAIN : 0};
+    return DFY_V2_OK;
+}
+
+// 给定不同实例配置，验证同源、串行接续、平行冲突及非法回调结果。
+// 步骤：匹配字段 → 校验输入来源 → 写出声明的结果。
+static dfy_v2_status DFY_V2_CALL rewrite_text(dfy_v2_instance* instance, uint32_t index,
+    const dfy_v2_text_hook_input* input, char* output, uint64_t capacity, uint64_t* written, dfy_v2_error* error) {
+    if (error) error->length = 0;
+    *written = DFY_V2_TEXT_HOOK_UNCHANGED;
+    if (index || !input->session || !output || !capacity) return DFY_V2_INVALID_ARGUMENT;
+    if (input->field.length != 5 || memcmp(input->field.data,"probe",5)) return DFY_V2_OK;
+    if (instance->converter == 'z') { *written = capacity+1; return DFY_V2_OK; }
+    if (input->value.length != 1) return DFY_V2_FAILED;
+    if (instance->converter == 'b' ? input->value.data[0] != 'a' : input->value.data[0] != '?') return DFY_V2_FAILED;
+    output[0] = instance->converter == 'd' ? 'a' : instance->converter;
+    *written = 1;
+    return DFY_V2_OK;
+}
+static const dfy_v2_text_hook_api text_hooks = {{sizeof(dfy_v2_text_hook_api),1},describe_text,rewrite_text};
+
 // 每步最多消费一封本体来信；信箱为空时等下一次推进。
 static dfy_v2_status DFY_V2_CALL step(dfy_v2_instance* instance, uint32_t* wait_ms, dfy_v2_error* error) {
     const dfy_v2_status status = reply(instance,error);
@@ -141,6 +171,8 @@ static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version
         *out = &exercise;
     if (name.length == sizeof(DFY_V2_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_HOOK_INTERFACE,name.length))
         *out = &hooks;
+    if (name.length == sizeof(DFY_V2_TEXT_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_TEXT_HOOK_INTERFACE,name.length))
+        *out = &text_hooks;
     if (name.length == sizeof(DFY_V2_ACTIVITY_INTERFACE)-1 && !memcmp(name.data,DFY_V2_ACTIVITY_INTERFACE,name.length))
         *out = &activity;
     return *out ? DFY_V2_OK : DFY_V2_UNSUPPORTED;

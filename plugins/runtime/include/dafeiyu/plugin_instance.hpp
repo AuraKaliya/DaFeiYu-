@@ -60,6 +60,10 @@ class PluginInstance {
     std::span<const dfy_v2_hook_description> hooks() const noexcept;
     // 在原实例的活动保护内调用注册序号对应的 Hook。
     uint32_t decide_hook(std::size_t index, const dfy_v2_hook_input& input);
+    // 借用启动时已校验的文本 Hook 注册。
+    std::span<const dfy_v2_text_hook_description> text_hooks() const noexcept;
+    // 执行一个字段转换，验证并复制返回值；空可选值表示保持原字段。
+    std::optional<std::string> rewrite_hook(std::size_t index, const dfy_v2_text_hook_input& input, std::span<char> output);
     // 查询实例启动时协商的可选后台推进能力。
     bool has_activity() const noexcept;
     // 在原实例保护中执行一步，返回下次推进的建议等待时间。
@@ -105,6 +109,8 @@ class PluginInstance {
   private:
     // 协商、枚举并验证当前启动的实例声明。
     std::vector<dfy_v2_hook_description> load_hooks();
+    // 协商并核对可选的文本 Hook 枚举。
+    std::vector<dfy_v2_text_hook_description> load_text_hooks();
     // 只向活动实例提供能力查询入口。
     PluginModuleV2& active_module();
     // 核对活动阶段并建立本次原生调用的宿主上下文。
