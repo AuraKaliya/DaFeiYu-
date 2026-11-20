@@ -49,6 +49,10 @@ class PluginInstance {
     uint32_t create() noexcept;
     // 启动一次，部分失败先关闭宿主入口，保留实例供停止收尾。
     uint32_t start() noexcept;
+    // 在创建开始前以原实例代次装配信箱宿主服务。
+    void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app);
+    // 取得当前实例已接入的定向地址，未接入或停止后返回零。
+    dfy_v2_mailbox_pair mailbox_addresses() const;
     // 推进一次关停，活动或外部代码持有时不改状态；成功阶段不重放。
     ShutdownResult shutdown() noexcept;
     // 返回当前生命周期阶段副本。

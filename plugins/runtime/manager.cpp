@@ -17,11 +17,13 @@ struct PluginManager::State {
     };
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
-        std::shared_ptr<events::BroadcastChannel> events, std::size_t limit)
+        std::shared_ptr<events::BroadcastChannel> events, std::size_t limit, PluginMailboxHost mail)
         : registry(package_root), root(std::filesystem::absolute(package_root).lexically_normal()),
           user_data(std::filesystem::absolute(data).lexically_normal()), channel(std::move(events)), scheduler(bounded(limit)),
-          dependencies(bounded(limit)*bounded(limit)), capacity(limit) {
+          dependencies(bounded(limit)*bounded(limit)), mailboxes(std::move(mail)), capacity(limit) {
         if (!channel || data.empty()) throw std::invalid_argument("plugins: channel and user data path required");
+        if (static_cast<bool>(mailboxes.network) != (mailboxes.identity != 0))
+            throw std::invalid_argument("plugins: mail network and host identity must be supplied together");
         try { registry.refresh(); } catch (const std::runtime_error& error) { directory_error = error.what(); }
     }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
@@ -75,6 +77,7 @@ struct PluginManager::State {
     std::shared_ptr<events::BroadcastChannel> channel;
     runtime::OwnerScheduler scheduler;
     PluginDependencies dependencies;
+    PluginMailboxHost mailboxes;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
     std::string directory_error;
@@ -85,8 +88,8 @@ struct PluginManager::State {
 PluginManager::State* PluginManager::retained_ = nullptr;
 // 完整创建管理状态后发布控制器，失败不留下局部实例。
 PluginManager::PluginManager(const std::filesystem::path& root, const std::filesystem::path& user_data,
-    std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity)
-    : state_(std::make_unique<State>(root,user_data,std::move(channel),capacity)) {}
+    std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity, PluginMailboxHost mailboxes)
+    : state_(std::make_unique<State>(root,user_data,std::move(channel),capacity,std::move(mailboxes))) {}
 // 失败保留链节点已在状态内预留，不在退出时申请新内存。
 // 步骤：保留已报告失败或尝试停止 → 将未完成状态转交保留链，不隐式重试已知失败。
 PluginManager::~PluginManager() {
@@ -121,6 +124,8 @@ std::uint32_t PluginManager::load(const std::string& id) {
     try {
         item->second.owner = state_->scheduler.add_owner(1,8,2);
         item->second.instance = std::make_shared<PluginInstance>(found->second,state_->user_data,state_->channel);
+        if (state_->mailboxes.network)
+            item->second.instance->enable_mailboxes(state_->mailboxes.network,state_->mailboxes.identity);
     } catch (...) {
         if (!item->second.owner.empty()) { state_->scheduler.stop(item->second.owner); state_->scheduler.remove(item->second.owner); }
         state_->instances.erase(item); throw;

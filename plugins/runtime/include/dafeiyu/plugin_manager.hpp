@@ -6,12 +6,16 @@
 namespace dfy::plugins {
 struct LoadedPlugin { std::string id; InstancePhase phase; std::uint32_t error; };
 struct ManagedRemoval { ShutdownResult status; RemovalReceipt files; };
+struct PluginMailboxHost {
+    std::shared_ptr<events::Mailboxes> network;
+    runtime::DomainId identity = 0;
+};
 // 宿主线程的插件目录及实例管理，不自动加载发现的插件，也不绑定必需插件角色。
 class PluginManager {
   public:
-    // 固定包目录、独立用户数据目录、事件通道和实例上限，创建时只扫描描述。
+    // 固定包目录、独立设置、事件通道、实例上限及可选本体信箱身份，创建时只扫描描述。
     PluginManager(const std::filesystem::path& root, const std::filesystem::path& user_data,
-        std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity = 16);
+        std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity = 16, PluginMailboxHost mailboxes = {});
     // 尝试关闭所有实例，未完成责任连同调度器和依赖目录转入有界保留链。
     ~PluginManager();
     // 禁止复制目录、实例与调度所有权。

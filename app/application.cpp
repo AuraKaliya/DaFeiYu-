@@ -36,13 +36,14 @@ void require_parameterless(const agent::ToolSnapshot& scope) {
 Application::Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data)
     : Application(std::move(config),packages,user_data,model::Backend{model::complete_response}) {}
 
-// 让正式会话与插件共享同一有界事件通道。
-// 步骤：固定工具时钟 → 创建插件目录与会话 → 绑定会话服务及公开构建标签。
+// 用同一宿主身份装配信箱，并让正式会话与插件共享有界事件通道。
+// 步骤：固定工具时钟与通信资源 → 创建插件目录与会话 → 绑定会话服务及公开构建标签。
 Application::Application(model::Config config, const std::filesystem::path& packages, const std::filesystem::path& user_data,
     model::Backend backend, ApplicationRunConfig run)
     : tool_clock_(std::move(run.tool_clock)),
       channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
-      plugins_(packages,user_data,channel_), model_config_(std::move(config)), model_backend_(std::move(backend)),
+      mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
+      plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))), session_(model_config_,channel_,model_backend_),
       conversation_(session_,labels_) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");

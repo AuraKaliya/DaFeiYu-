@@ -706,6 +706,12 @@ add_executable(dfy_plugin_mailboxes_tests plugin_mailboxes.cpp)
 target_link_libraries(dfy_plugin_mailboxes_tests PRIVATE dfy_plugins dfy_build_options)
 set_target_properties(dfy_plugin_mailboxes_tests PROPERTIES FOLDER "Tests")
 add_test(NAME plugins.mailboxes COMMAND dfy_plugin_mailboxes_tests)
+add_executable(dfy_plugin_mailbox_dll_tests plugin_mailbox_dll.cpp)
+target_link_libraries(dfy_plugin_mailbox_dll_tests PRIVATE dfy_plugins dfy_build_options)
+add_dependencies(dfy_plugin_mailbox_dll_tests dfy_mailbox_fixture)
+set_target_properties(dfy_plugin_mailbox_dll_tests PROPERTIES FOLDER "Tests")
+add_test(NAME plugins.mailbox_dll COMMAND dfy_plugin_mailbox_dll_tests "$<TARGET_FILE:dfy_mailbox_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/mailbox-dll")
 set_tests_properties(plugins.subscriptions PROPERTIES TIMEOUT 15)
 
 # 真实 C 实例验证停止受理与停止完成分离，保持 v1 生命周期契约冻结。

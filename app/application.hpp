@@ -37,6 +37,8 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 在原宿主线程使用应用拥有的插件命令入口。
     plugins::PluginManager& plugins() noexcept { return plugins_; }
+    // 借用本体持有的信箱目录及主体身份供宿主入口使用。
+    const plugins::PluginMailboxHost& mailbox_host() const noexcept { return mailbox_host_; }
     // 根据已加载实例的可选角色声明启用一个游戏会话。
     runtime::DomainId open_companion(const std::string& package);
     // 在原陪伴会话内提交用户委托。
@@ -139,6 +141,7 @@ class Application {
 
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
+    plugins::PluginMailboxHost mailbox_host_;
     plugins::PluginManager plugins_;
     const model::Config model_config_;
     const model::Backend model_backend_;

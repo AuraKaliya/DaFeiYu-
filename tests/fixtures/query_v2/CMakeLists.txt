@@ -7,6 +7,10 @@ target_sources(dfy_query_v2_fixture PRIVATE enums.c unions.c composite_arrays.c 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/enums.c" "${CMAKE_CURRENT_SOURCE_DIR}/unions.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/composite_arrays.c" "${CMAKE_CURRENT_SOURCE_DIR}/composite_maps.c")
 target_compile_definitions(dfy_query_v2_fixture PRIVATE DFY_PLUGIN_BUILD)
+add_library(dfy_mailbox_fixture SHARED mailbox_fixture.c mailbox_fixture.h)
+target_link_libraries(dfy_mailbox_fixture PRIVATE dfy_sdk)
+target_compile_definitions(dfy_mailbox_fixture PRIVATE DFY_PLUGIN_BUILD)
+set_target_properties(dfy_mailbox_fixture PROPERTIES FOLDER "Tests")
 set_target_properties(dfy_query_v2_fixture PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/query.c" "${CMAKE_CURRENT_SOURCE_DIR}/borrow.c"

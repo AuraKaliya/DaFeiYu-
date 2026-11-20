@@ -101,6 +101,16 @@ PluginInstance::~PluginInstance() {
         retained_ = state_.release();
     }
 }
+// 创建前把信箱权限固定到已签发的实例代次。
+void PluginInstance::enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app) {
+    if (state_->create_attempted || state_->phase != InstancePhase::loaded)
+        throw std::logic_error("instance: cannot attach new services after create");
+    state_->host.enable_mailboxes(std::move(network),app,state_->generation);
+}
+
+// 读取当前实例持有的信箱地址。
+dfy_v2_mailbox_pair PluginInstance::mailbox_addresses() const { return state_->host.mailbox_addresses(); }
+
 // 接受一次创建，失败指针违反契约时保留模块，不调用未知实例地址。
 // 步骤：核对阶段 → 在保护内创建 → 固定成功或故障状态 → 对正常失败推进宿主清理。
 uint32_t PluginInstance::create() noexcept {
