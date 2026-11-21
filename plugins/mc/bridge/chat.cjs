@@ -1,3 +1,11 @@
+// 复制收到聊天时客户端已知的玩家位置，保留未跟踪实体的情况。
+function sceneAtMessage(bot, owner, dimension) {
+  const position = Object.values(bot.players).find(player => player.uuid === owner)?.entity?.position;
+  const known = position && [position.x, position.y, position.z].every(Number.isFinite);
+  return { dimension, sampledAtMs: Math.floor(performance.now()),
+    position: known ? { x: position.x, y: position.y, z: position.z } : null };
+}
+
 // 只从协议玩家消息取得绑定玩家的原话，显示名或系统广播不能成为授权来源。
 // 步骤：按实际世界重置窗口 → 观察绑定身份 → 按游标返回同一世界的有界增量。
 function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, classify = () => null, withPresence = false) {
@@ -24,8 +32,8 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   }
 
   // 以游戏读回维护会话边界，换世界后原游标和旧消息停止流转。
-  function sync() {
-    const next = closed ? null : world.read()?.generation ?? null;
+  function sync(snapshot = closed ? null : world.read()) {
+    const next = snapshot?.generation ?? null;
     if (generation !== next) {
       generation = next;
       sequence = 0;
@@ -39,10 +47,14 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   function receive(packet) {
     if (!owner || packet.sender !== owner || packet.sender === bot.player?.uuid ||
       (!localFixture && packet.verified !== true) || typeof packet.plainMessage !== 'string' ||
-      !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024 || !sync()) return;
+      !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024) return;
+    const snapshot = closed ? null : world.read();
+    if (!sync(snapshot)) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
     const offer = classify(packet.plainMessage, generation, sequence + 1);
-    append({ text: packet.plainMessage, ...(withPresence && { type: 'player.message' }), ...(offer && { offer }) });
+    append({ text: packet.plainMessage, ...(withPresence && {
+      type: 'player.message', sceneAtMessage: sceneAtMessage(bot, owner, snapshot.dimension),
+    }), ...(offer && { offer }) });
   }
   bot._client.on('playerChat', receive);
   const joined = player => { if (player.uuid === owner && sync() && trackingPresence) recordPresence('player.entered'); };

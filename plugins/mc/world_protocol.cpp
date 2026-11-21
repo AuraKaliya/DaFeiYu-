@@ -153,6 +153,18 @@ static bool presence_fact(const Json& value) {
         value.at("sequence").is_number_unsigned() && value.at("sequence") != 0 &&
         (value.value("type", "") == "player.entered" || value.value("type", "") == "player.left");
 }
+
+// 校验原话现场的采样时间、维度和可选玩家坐标。
+static bool message_scene(const Json& value) {
+    if (!value.is_object() || value.size() != 3 || !dimension(value.at("dimension")) ||
+        !value.at("sampledAtMs").is_number_unsigned() || value.at("sampledAtMs") > 9007199254740991ULL) return false;
+    const auto& position = value.at("position");
+    if (position.is_null()) return true;
+    if (!position.is_object() || position.size() != 3) return false;
+    for (const auto* axis : {"x","y","z"})
+        if (!position.at(axis).is_number() || !std::isfinite(position.at(axis).get<double>())) return false;
+    return true;
+}
 // 校验原查询对应的世界观测，继续保留客户端数量和服务端信号年龄的语义。
 // 步骤：核对信封和身份 → 处理已撤销世界 → 校验字段类型与范围并返回值副本。
 std::string world_reply(std::string_view wire, std::string_view expected_id, bool with_survey) {
@@ -260,9 +272,11 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         }
         if (inbox.contains("presence") && cursor == inbox.at("presence").at("sequence"))
             throw std::invalid_argument("MC protocol: player speech at presence cursor");
-        if (message.size() != 2u + message.count("offer") + message.count("type") ||
+        if (message.size() != 2u + message.count("offer") + message.count("type") + message.count("sceneAtMessage") ||
             message.value("type", "player.message") != "player.message" || !message.at("text").is_string())
             throw std::invalid_argument("MC protocol: inbox message");
+        if (message.contains("sceneAtMessage") && !message_scene(message.at("sceneAtMessage")))
+            throw std::invalid_argument("MC protocol: invalid scene at message");
         const auto& text = message.at("text").get_ref<const std::string&>();
         if (text.empty() || text.size() > 1024) throw std::invalid_argument("MC protocol: inbox text");
         if (message.contains("offer")) {

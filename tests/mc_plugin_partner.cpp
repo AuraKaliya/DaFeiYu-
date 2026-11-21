@@ -63,6 +63,12 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"",{{"reply",reply_tool->name,R"({"text":"ready to play"})"}}},FinishReason::tool_calls};
             }
             if (input.at("events").back().at("type") == "player.entered") return {{Role::assistant,"silent baseline"}};
+            if (input.at("events").back().at("sequence") == 2) {
+                const auto& captured = input.at("events").back().at("sceneAtMessage");
+                if (captured.at("sampledAtMs") != 42 || captured.at("dimension") != "overworld" ||
+                    captured.at("position").at("x") != -0.5 || input.at("lastObservation").at("position").at("x") != -1.5)
+                    throw std::runtime_error("original player scene was lost or replaced by the live actor position");
+            }
             if (confirm && input.at("events").back().at("sequence") == 3) return {{Role::assistant,"approval observed"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
                 interruption_seen = input.at("previousActivity").at("stopRequested") == true;

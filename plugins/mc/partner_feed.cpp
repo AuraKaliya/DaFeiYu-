@@ -54,6 +54,7 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         for (const auto& fact : facts) {
             Json event{{"sequence",fact.at("sequence")},{"type",fact.value("type","player.message")}};
             if (fact.contains("text")) event["text"] = fact.at("text");
+            if (fact.contains("sceneAtMessage")) event["sceneAtMessage"] = fact.at("sceneAtMessage");
             pending_.push_back(std::move(event));
             cursor_ = fact.at("sequence").get<std::uint64_t>();
         }

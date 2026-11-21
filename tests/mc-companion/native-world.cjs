@@ -46,7 +46,8 @@ async function main() {
         const initial = !baselineRead;
         baselineRead = true;
         const latest = initial ? 1 : first && approvedId ? 4 : (interrupt && moveId) || approvedId ? 3 : 2;
-        const messages = [presence, { sequence: 2, text: 'play with me' },
+        const messages = [presence, { sequence: 2, text: 'play with me',
+          sceneAtMessage: { dimension: 'overworld', sampledAtMs: 42, position: { x: -0.5, y: -57, z: 9.25 } } },
           { sequence: 3, text: approvedId ? 'approve ' + approvedId : 'stop for now' }, { sequence: 4, text: 'deny ' + approvedId }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
