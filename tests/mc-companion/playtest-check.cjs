@@ -71,6 +71,11 @@ async function checkFollow(fixture, player, whispers, course) {
   assert.deepEqual(replies.map(row => [row.body.order, row.body.result.text]), [[3, whispers[0]], [4, whispers[1]]]);
   assert.ok(replies.every(row => row.seq < exit.seq && actions.some(game => game.work === row.body.bridgeWork && game.result.sent)));
   const trace = readRows(fixture, 'trace/events.jsonl');
+  const settings = trace.filter(row => row.kind === 'model.submitted');
+  assert.ok(settings.length > 0 && settings.every(row => row.thinking === true && row.model === 'fixed-follow'));
+  assert.ok(trace.some(row => row.kind === 'model.prepared' && row.input.messages.some(msg =>
+    msg.role === 'assistant' && msg.reasoningContent === 'fixed provider continuation')));
+  assert.ok(!whispers.some(text => text.includes('fixed provider continuation')));
   const queue = received('mc.partner.queue');
   assert.deepEqual(queue.map(row => row.body.status), ['queued', 'cleared', 'queued']);
   assert.equal(queue[0].body.works[0], queue[1].body.works[0]);

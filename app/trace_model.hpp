@@ -12,13 +12,16 @@ inline constexpr std::array states{"pending","succeeded","failed","cancelled"};
 inline constexpr std::array effects{"not_applied","applied","unknown"};
 inline constexpr std::array faults{"none","failed","unavailable","invalid_result","cancel_failed","read_failed","release_failed","cancelled","deadline"};
 
-// 保留统一模型协议的消息顺序、工具请求和配对身份。
+// 保留统一模型协议中的工具配对及可选供应商续行内容。
+// 步骤：序列化有序工具请求 → 保存消息正文和原配对身份 → 附上可选续行内容。
 inline Json encode_message(const model::Message& message) {
     Json calls = Json::array();
     for (const auto& call : message.tool_calls)
         calls.push_back({{"id",call.id},{"name",call.name},{"arguments",call.arguments}});
-    return {{"role",roles.at(static_cast<std::size_t>(message.role))},{"content",message.content},
+    Json item{{"role",roles.at(static_cast<std::size_t>(message.role))},{"content",message.content},
         {"toolCalls",std::move(calls)},{"toolCallId",message.tool_call_id}};
+    if (message.reasoning_content) item["reasoningContent"] = *message.reasoning_content;
+    return item;
 }
 
 // 原样保留送入模型的消息、工具定义与输出容量。

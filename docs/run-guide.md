@@ -23,7 +23,7 @@
 
 使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
 
-MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响应、改写结果和运行退出摘要。重复使用运行目录时，后续日志保存在新的 `trace-N` 子目录。启动输出中的 `DFY_TRACE` 给出实际文件位置。普通终端会话可用 `--chat CONFIG --trace DIR` 开启同一格式。文件包含本局对话与工具正文，留在运行机器的指定目录。
+MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响应、改写结果和运行退出摘要。重复使用运行目录时，后续日志保存在新的 `trace-N` 子目录。启动输出中的 `DFY_TRACE` 给出实际文件位置。普通终端会话可用 `--chat CONFIG --trace DIR` 开启同一格式。文件包含本局对话与工具正文。模型记录用 `thinking` 标记模式，DeepSeek 返回的 `reasoningContent` 随本地记录保存，用于还原同一工具链的实际上下文。玩家可见输出仍取正文和实际发言回执。
 
 工具记录区分候选、接纳和退出，保存原调用编号以及有效参数和实际结果。MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
 

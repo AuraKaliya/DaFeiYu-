@@ -461,13 +461,23 @@ int wmain(int argc, wchar_t** argv) {
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
-        app::Application host({}, root / "packages", root / "user", model::Backend{
+        model::Config config;
+        if (follow) {
+            config.provider = "deepseek";
+            config.model = "fixed-follow";
+            config.thinking = true;
+        }
+        app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
             [partner,wall,follow,door,materials,water,ask,gap,root](const auto&, const auto& request) {
                 if (water) return water_sample(request);
                 if (materials) return materials_sample(request);
                 if (door) return door_sample(request);
                 if (wall) return wall_sample(request,root,ask,gap);
-                if (follow) return follow_sample(request);
+                if (follow) {
+                    auto response = follow_sample(request);
+                    response.message.reasoning_content = "fixed provider continuation";
+                    return response;
+                }
                 return partner ? partner_sample(request,root) : sample_turn(request);
             }},
             std::move(run));

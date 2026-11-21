@@ -50,9 +50,39 @@ void protocol() {
     document = fixture(); document["choices"][0] = {{"finish_reason","stop"},{"message",{{"role","assistant"},{"content","answer"}}}};
     check(decode_response(document.dump()).message.content == "answer","plain response lost text");
 }
+
+// 用录制形状验证 DeepSeek 在带工具回合延续供应商推理字段。
+// 步骤：解码固定工具响应 → 编码续行及跨轮历史 → 检查关闭和无工具边界。
+void thinking_protocol() {
+    auto recorded = fixture();
+    recorded["choices"][0]["message"]["reasoning_content"] = "fixed inference before tool";
+    const auto response = decode_response(recorded.dump());
+    check(response.message.reasoning_content == "fixed inference before tool","tool continuation was not captured");
+    Request request{{{Role::user,"previous"},{Role::assistant,"answer",{},{},"fixed inference before text"},
+        {Role::user,"goal"},response.message,{Role::tool,"state",{},"call_1"}},
+        {{"read_state","read","{\"type\":\"object\"}"}},64};
+    Config config;
+    config.provider = "deepseek";
+    config.thinking = true;
+    auto body = Json::parse(encode_request(config,request));
+    check(body["thinking"]["type"] == "enabled" && body["messages"][1]["reasoning_content"] == "fixed inference before text" &&
+        body["messages"][3]["reasoning_content"] == "fixed inference before tool" &&
+        body["messages"][4]["tool_call_id"] == "call_1","thinking continuation lost original ordering");
+    config.thinking = false;
+    body = Json::parse(encode_request(config,request));
+    check(!body["messages"][1].contains("reasoning_content") && !body["messages"][3].contains("reasoning_content"),
+        "thinking disabled request forwarded reasoning");
+    config.thinking = true;
+    request.messages.resize(3);
+    request.tools.clear();
+    check(!Json::parse(encode_request(config,request))["messages"][1].contains("reasoning_content"),
+        "request without tools forwarded reasoning");
+    recorded["choices"][0]["message"]["reasoning_content"] = 42;
+    rejects(recorded);
+}
 }
 // 只执行固定协议样本并报告结果。
 int main() {
-    try { protocol(); std::cout << "Model protocol checks passed\n"; return 0; }
+    try { protocol(); thinking_protocol(); std::cout << "Model protocol checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -73,6 +73,10 @@ int main() {
                       : sent.at("enable_thinking") == false && !sent.contains("thinking"),
                 "provider options mixed");
         }
+        auto thinking = config;
+        thinking.thinking = true;
+        check(dfy::model::complete(thinking,prompt) == "你好！\n完整回答" &&
+            sent.at("thinking").at("type") == "enabled","thinking text transport lost final text or mode");
 
         using dfy::model::Role;
         using Messages = std::vector<dfy::model::Message>;

@@ -62,7 +62,7 @@ std::string complete(const Config& config, const std::vector<Message>& messages)
 
     Json request{{"model", config.model}, {"stream", false}, {"messages", std::move(serialized)}};
     if (config.provider == "deepseek") {
-        request["thinking"] = {{"type", "disabled"}};
+        request["thinking"] = {{"type", config.thinking ? "enabled" : "disabled"}};
     } else if (config.provider == "qwen") {
         request["enable_thinking"] = false;
     } else {

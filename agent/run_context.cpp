@@ -123,15 +123,19 @@ void RunContext::refresh_observations(runtime::DomainId binding, std::vector<std
 }
 // 步骤文本与工具事实分别提交，后续失败不会回滚已发布内容。
 // 步骤：核对事务阶段 → 复制完整输入并追加回答 → 校验预算 → 发布步骤历史。
-void RunContext::commit_step_text(std::string answer) {
+void RunContext::commit_step_text(std::string answer, std::optional<std::string> reasoning) {
     if (finished_ || !replies_.empty()) throw std::logic_error("context: invalid final text phase");
-    model::Request prepared{messages()}; prepared.messages.push_back({model::Role::assistant,std::move(answer)});
+    model::Request prepared{messages()};
+    prepared.messages.push_back({model::Role::assistant,std::move(answer),{},{},std::move(reasoning)});
     model::validate_request(prepared);
     auto committed = std::make_shared<const MessageHistory>(std::move(prepared.messages));
     committed_ = std::move(committed); pending_.reset();
 }
 // 最终回答复用完整文本提交，成功后封闭后续步骤入口。
-void RunContext::finish_text(std::string answer) { commit_step_text(std::move(answer)); finished_ = true; }
+void RunContext::finish_text(std::string answer, std::optional<std::string> reasoning) {
+    commit_step_text(std::move(answer),std::move(reasoning));
+    finished_ = true;
+}
 // 封闭不含待提交工具的事务，取消或失败不会抹去先前工具结果。
 void RunContext::seal() {
     if (!replies_.empty()) throw std::logic_error("context: pending tool facts cannot be discarded");

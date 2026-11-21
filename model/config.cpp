@@ -70,7 +70,7 @@ Config load_config(const std::filesystem::path& path) {
         throw std::runtime_error("config: cannot read file");
     }
 
-    const std::set<std::string> allowed{"provider", "base_url", "model", "api_key_env", "timeout_ms"};
+    const std::set<std::string> allowed{"provider", "base_url", "model", "api_key_env", "timeout_ms", "thinking"};
     if (!object.is_object()) {
         throw std::runtime_error("config: expected an object");
     }
@@ -95,6 +95,11 @@ Config load_config(const std::filesystem::path& path) {
             throw std::runtime_error("timeout_ms: expected an integer from 1 to 600000");
         }
         config.timeout_ms = timeout.get<int>();
+    }
+    if (object.contains("thinking")) {
+        if (!object.at("thinking").is_boolean()) throw std::runtime_error("thinking: expected a boolean");
+        config.thinking = object.at("thinking").get<bool>();
+        if (config.thinking && config.provider != "deepseek") throw std::runtime_error("thinking: enabled only for deepseek");
     }
     return config;
 }

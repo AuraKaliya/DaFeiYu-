@@ -24,6 +24,7 @@ Enum tagged(const Json& field, const std::array<const char*,Count>& names) {
 // 还原包含配对身份和完整调用的统一消息。
 model::Message decode_message(const Json& value) {
     model::Message message{tagged<model::Role>(value.at("role"),roles),value.at("content"),{},value.at("toolCallId")};
+    if (value.contains("reasoningContent")) message.reasoning_content = value.at("reasoningContent").get<std::string>();
     for (const auto& call : value.at("toolCalls"))
         message.tool_calls.push_back({call.at("id"),call.at("name"),call.at("arguments")});
     return message;

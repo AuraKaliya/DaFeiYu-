@@ -38,6 +38,8 @@ std::string encode_request(const Config& config, const Request& request) {
                     {"function",{{"name",call.name},{"arguments",call.arguments}}}});
             }
             if (message.role == Role::tool) item["tool_call_id"] = message.tool_call_id;
+            if (config.provider == "deepseek" && config.thinking && !request.tools.empty() && message.reasoning_content)
+                item["reasoning_content"] = *message.reasoning_content;
             messages.push_back(std::move(item));
         }
         Json body{{"model",config.model},{"stream",false},{"messages",std::move(messages)}};
@@ -47,7 +49,7 @@ std::string encode_request(const Config& config, const Request& request) {
                 {"function",{{"name",tool.name},{"description",tool.description},{"parameters",Json::parse(tool.parameters)}}}});
         }
         if (request.max_output_tokens) body["max_tokens"] = *request.max_output_tokens;
-        if (config.provider == "deepseek") body["thinking"] = {{"type","disabled"}};
+        if (config.provider == "deepseek") body["thinking"] = {{"type",config.thinking ? "enabled" : "disabled"}};
         else if (config.provider == "qwen") body["enable_thinking"] = false;
         else throw std::invalid_argument("provider: expected deepseek or qwen");
         return body.dump();
@@ -64,6 +66,8 @@ Response decode_response(const std::string& body) {
         if (message.at("role") != "assistant") throw std::runtime_error("model: response role is not assistant");
         Response result; result.finish = finish_reason(choice.at("finish_reason").get<std::string>());
         if (message.contains("content") && !message.at("content").is_null()) result.message.content = message.at("content").get<std::string>();
+        if (message.contains("reasoning_content") && !message.at("reasoning_content").is_null())
+            result.message.reasoning_content = message.at("reasoning_content").get<std::string>();
         if (message.contains("tool_calls") && !message.at("tool_calls").is_null()) {
             const auto& calls = message.at("tool_calls");
             if (!calls.is_array() || calls.size() > 64) throw std::runtime_error("model: invalid tool call list");

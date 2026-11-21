@@ -80,7 +80,8 @@ void plan_steps() {
     context.begin_step(R"({"objective":"read","completion_criterion":"host verifies"})");
     check(context.committed() == empty && context.messages().size() == 2 && context.messages()[1].role == Role::user,
         "step input committed early or changed role");
-    context.commit_step_text("model says done"); const auto first = context.committed();
+    context.commit_step_text("model says done","fixed reasoning"); const auto first = context.committed();
+    check(first->back().reasoning_content == "fixed reasoning","step history lost model continuation");
     check(first->size() == 3 && first->back().content == "model says done","step text not recorded");
     rejects([&] { context.begin_step(std::string(64*1024+1,'x')); });
     rejects([&] { context.begin_step(std::string(1,static_cast<char>(0xff))); });

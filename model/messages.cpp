@@ -44,6 +44,10 @@ void validate_request(const Request& request) {
     for (std::size_t i = 0; i < request.messages.size(); ++i) {
         const auto& message = request.messages[i];
         account(bytes,message.content); account(bytes,message.tool_call_id);
+        if (message.reasoning_content) {
+            if (message.role != Role::assistant) throw std::invalid_argument("model: misplaced reasoning");
+            account(bytes,*message.reasoning_content);
+        }
         if (message.role != Role::user && message.role != Role::assistant && message.role != Role::system && message.role != Role::tool)
             throw std::invalid_argument("model: unsupported role");
         if ((message.role == Role::system && i != 0) || (message.role != Role::tool && !pending.empty()))
@@ -84,6 +88,7 @@ void validate_response(const Response& response) {
         throw std::invalid_argument("model: empty final text");
 
     std::size_t bytes = 0; account(bytes,message.content,8*max_bytes);
+    if (message.reasoning_content) account(bytes,*message.reasoning_content,8*max_bytes);
     std::set<std::string> calls;
     for (const auto& call : message.tool_calls) {
         account(bytes,call.id,8*max_bytes); account(bytes,call.name,8*max_bytes); account(bytes,call.arguments,8*max_bytes);

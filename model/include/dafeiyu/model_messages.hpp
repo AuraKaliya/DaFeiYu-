@@ -12,6 +12,7 @@ struct Message {
     std::string content;
     std::vector<ToolCall> tool_calls;
     std::string tool_call_id;
+    std::optional<std::string> reasoning_content;
 };
 // 参数描述保留为 JSON 文本，供应商与 JSON 库类型不进入 Agent 公共接口。
 struct ToolDefinition { std::string name, description, parameters; };

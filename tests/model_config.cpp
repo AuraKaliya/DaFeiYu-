@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         const auto path = work / u8"配置 测试.json";
         for (const auto* provider : {"deepseek", "qwen"}) {
             const auto config = dfy::model::load_config(examples / (std::string(provider) + ".example.json"));
-            check(config.provider == provider && config.timeout_ms == 60000, "example configuration changed");
+            check(config.provider == provider && config.timeout_ms == 60000 && !config.thinking, "example configuration changed");
             check(!config.base_url.empty() && !config.model.empty() && !config.api_key_env.empty(),
                 "missing model settings");
         }
@@ -60,6 +60,17 @@ int main(int argc, char** argv) {
         check(loaded.timeout_ms == 60000 && !loaded.base_url.ends_with('/'), "default or normalization failed");
         check(
             loaded.model == "future-model" && loaded.api_key_env == "DFY_CONFIG_TEST_KEY", "settings were overwritten");
+        auto thinking = valid;
+        thinking["thinking"] = "true";
+        rejects(path,thinking.dump(),"thinking");
+        thinking["thinking"] = true;
+        rejects(path,thinking.dump(),"thinking");
+        thinking["provider"] = "deepseek";
+        {
+            std::ofstream file(path,std::ios::binary);
+            file << thinking.dump();
+        }
+        check(dfy::model::load_config(path).thinking,"explicit thinking ignored");
         for (int timeout : {1, 600000}) {
             auto value = valid;
             value["timeout_ms"] = timeout;

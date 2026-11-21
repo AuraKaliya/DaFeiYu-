@@ -155,7 +155,7 @@ struct RunLoopState {
         const model::Response* output = nullptr, const model::CallDiagnostics* call = nullptr,
         runtime::OperationState result = runtime::OperationState::pending) noexcept {
         if (!options.model_capture) return;
-        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result}); }
+        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking}); }
         catch (...) {}
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
@@ -559,7 +559,8 @@ struct RunLoopState {
                         stage = TurnFailure::history_commit;
                         if (plan_step) {
                             PlanStepOutput output{plan_step->key,record->attempt_,response->message.content};
-                            record->context_->commit_step_text(response->message.content); record->record_history();
+                            record->context_->commit_step_text(response->message.content,std::move(response->message.reasoning_content));
+                            record->record_history();
                             record->plan_outputs_.push_back(std::move(output));
                             plan_step->answer = std::move(response->message.content);
                             plan_step->result.settle(OperationState::succeeded); plan_step->exit.settle(OperationState::succeeded);
@@ -570,7 +571,8 @@ struct RunLoopState {
                             interrupt();
                             if (record->operation()->state() == OperationState::pending) {
                                 stage = TurnFailure::history_commit;
-                                record->context_->finish_text(std::move(response->message.content)); record->record_history();
+                                record->context_->finish_text(std::move(response->message.content),std::move(response->message.reasoning_content));
+                                record->record_history();
                                 record->answer_ = std::move(answer); record->result_.settle(OperationState::succeeded);
                                 record->settled_ = std::chrono::steady_clock::now(); record->record_fact(RunFactKind::settled);
                             }

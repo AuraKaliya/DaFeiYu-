@@ -31,9 +31,9 @@ class RunContext {
     // 在无未完成工具时追加新观察封套，不删除旧输入、动作或效果；准备失败保持原上下文。
     void refresh_observations(runtime::DomainId binding, std::vector<std::string> observations);
     // 提交一个步骤的模型文本并保留后续输入入口；文本不表示宿主已验证目标。
-    void commit_step_text(std::string answer);
+    void commit_step_text(std::string answer, std::optional<std::string> reasoning = {});
     // 准备并提交最终文本；失败不会回滚已提交工具事实。
-    void finish_text(std::string answer);
+    void finish_text(std::string answer, std::optional<std::string> reasoning = {});
     // 丢弃未提交的纯文本输入并封闭事务；不允许丢弃尚待结果的工具批次。
     void seal();
   private:

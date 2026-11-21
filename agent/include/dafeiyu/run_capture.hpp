@@ -6,7 +6,7 @@
 namespace dfy::agent {
 enum class ModelCapturePhase { prepared, submitted, exited, rewritten };
 
-// 仅在宿主同步回调期间借用模型内容。请求配置只提供模型和供应商标签。
+// 仅在宿主同步回调期间借用模型内容。请求配置只提供模型、供应商和思考模式。
 struct ModelCapture {
     ModelCapturePhase phase;
     AttemptId attempt;
@@ -15,6 +15,7 @@ struct ModelCapture {
     const model::Response* output = nullptr;
     const model::CallDiagnostics* call = nullptr;
     runtime::OperationState result = runtime::OperationState::pending;
+    bool thinking = false;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;
