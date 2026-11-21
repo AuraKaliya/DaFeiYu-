@@ -28,17 +28,22 @@ bool cell_near_anchor(const Json& cell, const Json& position) {
     return true;
 }
 
-// 解析原话观察中的候选，仅使用游戏生成的方格列。
-// 步骤：查找候选 → 核对高度 → 展开其一格或两格坐标。
+// 解析原话观察中的开口候选，仅使用游戏生成的范围。
+// 步骤：查找候选 → 核对范围及轴向 → 展开为确切方格。
 Json candidate_cells(const Json& observation, const Json& candidate) {
     const auto& gaps = observation.at("playerFocus").at("candidates");
     const auto choice = std::ranges::find_if(gaps,[&](const auto& gap) { return gap.at("id") == candidate; });
     if (choice == gaps.end()) return nullptr;
     const auto height = choice->at("height").get<int>();
-    if (height < 1 || height > 2) return nullptr;
+    const auto width = choice->value("width",1);
+    const auto axis = choice->at("axis").get<std::string>();
+    if (height < 1 || height > 2 || width < 1 || width > 4 || (axis != "x" && axis != "z")) return nullptr;
+    const auto x = choice->at("x").get<std::int64_t>();
+    const auto y = choice->at("y").get<std::int64_t>();
+    const auto z = choice->at("z").get<std::int64_t>();
     Json cells = Json::array();
-    for (int offset = 0; offset < height; ++offset)
-        cells.push_back({{"x",choice->at("x")},{"y",choice->at("y").get<int>()+offset},{"z",choice->at("z")}});
+    for (int dy = 0; dy < height; ++dy) for (int offset = 0; offset < width; ++offset)
+        cells.push_back({{"x",x+(axis == "x" ? offset : 0)},{"y",y+dy},{"z",z+(axis == "z" ? offset : 0)}});
     return cells;
 }
 

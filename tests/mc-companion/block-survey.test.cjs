@@ -87,3 +87,28 @@ test('original sight distinguishes a wall gap, a doorway and unavailable samples
   occluded = true;
   assert.equal(playerFocus(bot, { eye, facing }, center).status, 'unavailable');
 });
+
+// 原话命中宽开口的第二列，移动到门洞旁的角色仍能识别原开口。
+test('a wide wall gap has one identity distinct from the narrow doorway', () => {
+  const center = new Position(3.5, -60, -2.5);
+  const eye = center.offset(0, 1.62, 0);
+  const facing = { yaw: 0, pitch: -0.36 };
+  let supportLoaded = true;
+  const bot = {
+    entity: { position: new Position(7.5, -60, -4.5) },
+    // 模拟两格宽开口、分开的门洞与其中一个未知支撑格。
+    blockAt({ x, y, z }) {
+      if (x === 3 && y === -61 && z === -5 && !supportLoaded) return null;
+      const side = x >= 0 && x <= 8 && ![2, 3, 7].includes(x);
+      const filled = z === -5 && (y === -61 || (side && (y === -60 || y === -59)));
+      return filled ? { name: 'dirt', boundingBox: 'block' } : { name: 'air', boundingBox: 'empty' };
+    },
+  };
+  const focus = playerFocus(bot, { eye, facing }, center);
+  assert.equal(focus.choice, '2,-60,-5:x');
+  assert.deepEqual(focus.candidates.map(({ id, width, height, pointed }) => [id, width, height, pointed]), [
+    ['2,-60,-5:x', 2, 2, true], ['7,-60,-5:x', 1, 2, false]
+  ]);
+  supportLoaded = false;
+  assert.ok(!playerFocus(bot, { eye, facing }, center).candidates.some(gap => gap.width === 2));
+});

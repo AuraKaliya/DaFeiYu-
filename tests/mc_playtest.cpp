@@ -455,10 +455,21 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
                 sample.at("verified").size() != 4 || !std::ranges::all_of(sample.at("verified"),[](const auto& cell) {
                 return cell.at("block") == "air";
             })) throw std::runtime_error("fill-four probe: missing real empty cells");
+            const auto& gaps = sample.at("views").front().at("playerFocus").at("candidates");
+            const auto gap = std::ranges::find_if(gaps,[](const auto& candidate) {
+                return candidate.at("id") == "3,-60,-3:x" && candidate.at("width") == 2 && candidate.at("height") == 2;
+            });
+            const auto door = std::ranges::find_if(gaps,[](const auto& candidate) {
+                return candidate.at("id") == "7,-60,-3:x" && candidate.at("width") == 1 && candidate.at("height") == 2;
+            });
+            if (gap == gaps.end() || door == gaps.end()) throw std::runtime_error("fill-four probe: two openings were not distinct");
             return call("task_update",{{"goal","补上指定的四个墙格"},{"next","player"},{"collection","ground"},
-                {"target",{{"message",2},{"cells",cells}}}});
+                {"target",{{"message",2},{"candidate",gap->at("id")}}}});
         }
-        if (last.tool_call_id == "task_update") return call("skills",{{"categories",{"dig_break","query"}}});
+        if (last.tool_call_id == "task_update") {
+            if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
+            return call("skills",{{"categories",{"dig_break","query"}}});
+        }
         if (last.tool_call_id == "knowledge") {
             if (result.at("version") != "1.21.4" || result.at("entries").front().at("facts").at("defaultDrop") != "dirt")
                 throw std::runtime_error("fill-four probe: unsupported grass drop rule");
