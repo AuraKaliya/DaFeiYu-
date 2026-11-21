@@ -11,6 +11,10 @@ constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {byt
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
 constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
     "sceneAtMessage 是收到对应原话时看到的玩家位置，position 为空表示当时未跟踪到玩家。"
+    "facing 是客户端当时已知的玩家头部朝向，弧度值，可用来辅助比较候选。"
+    "玩家指这里、旁边的缺口时，用 observe 的 message 参数扫描原位置；别把后来读到的玩家位置当成原目标。"
+    "用 task_update.target 保存原消息号 message。有多个候选时先问清楚，再保存确切 cells。"
+    "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
     "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
@@ -230,7 +234,21 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         motion_->stopping = true;
         return {{"status","stopping"},{"work",motion_->work}};
     }
-    return skill == "skills" ? discover(args) : task_.update(args,feed_.observation(),feed_.scene_revision());
+    if (skill == "skills") return discover(args);
+    const auto target = args.find("target");
+    const auto anchor = target != args.end() && target->contains("message") ?
+        feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
+    return task_.update(args,feed_.observation(),feed_.scene_revision(),anchor);
+}
+
+// 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
+bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope) const {
+    if (session != session_ || !task_.has_target()) return true;
+    auto input = Json::parse(envelope);
+    if (!permits(session) || input.at("context").at("generation") != session_world_ ||
+        input.at("context").at("order") != order_ || !task_.bind_placement(input.at("arguments"))) return false;
+    envelope = input.dump();
+    return true;
 }
 
 // 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。

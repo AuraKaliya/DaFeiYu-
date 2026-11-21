@@ -43,6 +43,9 @@ async function exercise(fixture, player, fish) {
       assert.equal(result.broken, count);
       assert.equal(result.inventoryDelta[block], count, JSON.stringify(result));
     }
+    const occupied = await invoke('place', { block: 'dirt', x: 1, y: -61, z: 0 });
+    assert.equal(occupied.status, 'blocked');
+    assert.equal(occupied.placementAttempted, false);
     assert.equal((await invoke('collect', { block: 'oak_log', count: 1, x: 12, y: -60, z: 2 })).status, 'blocked');
     const heard = [];
     player.on('messagestr', text => heard.push(text));

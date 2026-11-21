@@ -10,6 +10,7 @@ void PartnerFeed::reset_binding() noexcept {
     scene_revision_ = 0;
     ready_ = more_ = gap_ = false;
     pending_.clear();
+    anchored_messages_.clear();
     control_ = nullptr;
 }
 
@@ -24,6 +25,13 @@ void PartnerFeed::clear() noexcept {
 
 // 仅在子会话接纳后丢弃待交付窗口。
 void PartnerFeed::consumed() { pending_.clear(); gap_ = false; }
+
+// 只从当前世界已收的原消息中查找对应现场。
+const Json* PartnerFeed::message_scene(std::uint64_t sequence) const noexcept {
+    for (const auto& event : anchored_messages_)
+        if (event.at("sequence") == sequence) return &event.at("sceneAtMessage");
+    return nullptr;
+}
 
 // 核对原世界阶段并更新本轮可用观察。
 void PartnerFeed::accept_world(std::string_view wire) {
@@ -42,6 +50,9 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     auto owner = batch.at("owner").get<std::string>();
     if (!owner_.empty() && owner != owner_) { clear(); return; }
     const auto latest = batch.at("latest").get<std::uint64_t>();
+    const auto oldest = batch.at("oldest").get<std::uint64_t>();
+    while (!anchored_messages_.empty() && anchored_messages_.front().at("sequence").get<std::uint64_t>() < oldest)
+        anchored_messages_.pop_front();
     const auto& facts = batch.at("messages");
     const auto presence = batch.find("presence");
     if (!ready_ || batch.at("gap") == true || pending_.size()+facts.size() > 32) {
@@ -54,7 +65,11 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         for (const auto& fact : facts) {
             Json event{{"sequence",fact.at("sequence")},{"type",fact.value("type","player.message")}};
             if (fact.contains("text")) event["text"] = fact.at("text");
-            if (fact.contains("sceneAtMessage")) event["sceneAtMessage"] = fact.at("sceneAtMessage");
+            if (fact.contains("sceneAtMessage")) {
+                event["sceneAtMessage"] = fact.at("sceneAtMessage");
+                if (anchored_messages_.size() >= 32) anchored_messages_.pop_front();
+                anchored_messages_.push_back(event);
+            }
             pending_.push_back(std::move(event));
             cursor_ = fact.at("sequence").get<std::uint64_t>();
         }

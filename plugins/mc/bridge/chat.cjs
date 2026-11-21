@@ -1,9 +1,12 @@
 // 复制收到聊天时客户端已知的玩家位置，保留未跟踪实体的情况。
 function sceneAtMessage(bot, owner, dimension) {
-  const position = Object.values(bot.players).find(player => player.uuid === owner)?.entity?.position;
+  const entity = Object.values(bot.players).find(player => player.uuid === owner)?.entity;
+  const position = entity?.position;
   const known = position && [position.x, position.y, position.z].every(Number.isFinite);
+  const facing = known && [entity.headYaw, entity.pitch].every(Number.isFinite);
   return { dimension, sampledAtMs: Math.floor(performance.now()),
-    position: known ? { x: position.x, y: position.y, z: position.z } : null };
+    position: known ? { x: position.x, y: position.y, z: position.z } : null,
+    ...(facing && { facing: { yaw: entity.headYaw, pitch: entity.pitch } }) };
 }
 
 // 只从协议玩家消息取得绑定玩家的原话，显示名或系统广播不能成为授权来源。

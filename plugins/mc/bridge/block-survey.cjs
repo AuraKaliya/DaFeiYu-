@@ -14,12 +14,12 @@ function blockToken(block, palette) {
 
 // 读取玩家或角色附近已加载的格子，输出从西北底层开始的紧凑体积。
 // 步骤：校验扫描中心 → 按层和行采样 → 交付坐标原点、调色表和网格。
-function blockSurvey(bot, center) {
+function blockSurvey(bot, center, depthBelow = 1) {
   if (!center || center.distanceTo(bot.entity.position) > 24) throw new Error('观察中心不在当前角色可检查的范围内');
-  const origin = center.floored().offset(-5, -1, -5);
+  const origin = center.floored().offset(-5, -depthBelow, -5);
   const palette = new Map();
   const layers = [];
-  for (let dy = 0; dy < 4; ++dy) {
+  for (let dy = 0; dy < depthBelow + 3; ++dy) {
     const rows = [];
     for (let dz = 0; dz < 11; ++dz) {
       let row = '';

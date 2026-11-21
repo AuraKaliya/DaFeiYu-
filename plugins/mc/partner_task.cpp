@@ -1,4 +1,5 @@
 #include "partner_task.hpp"
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -14,18 +15,30 @@ Json scene_key(const Json& scene, std::uint64_t revision) {
     return {scene.at("dimension"),std::floor(position.at("x").get<double>()),std::floor(position.at("y").get<double>()),
         std::floor(position.at("z").get<double>()),scene.at("cobblestone"),revision};
 }
+
+// 核对选定的方块在原话能够扫描的坐标窗口内。
+bool cell_near_anchor(const Json& cell, const Json& position) {
+    if (!cell.is_object() || cell.size() != 3) return false;
+    for (const auto* axis : {"x","y","z"}) {
+        if (!cell.at(axis).is_number_integer()) return false;
+        const auto offset = cell.at(axis).get<double>()-std::floor(position.at(axis).get<double>());
+        if (axis == std::string_view("y") ? offset < -4 || offset > 2 : std::abs(offset) > 5) return false;
+    }
+    return true;
+}
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
 Json PartnerTask::context() const {
     Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_}};
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
+    if (has_target()) value["target"] = target_;
     return value;
 }
 
 // 每次任务修改使用原版本，不以模型描述替代现场回执。
-// 步骤：核对任务修订和正文 → 保存新的约定与观察基线 → 设置一次唤醒。
-Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision) {
+// 步骤：核对任务修订和正文 → 校验原话与目标格 → 保存约定和观察基线并登记一次唤醒。
+Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor) {
     if (input.at("revision") != revision_ || revision_ == UINT64_MAX)
         return {{"status","stale"},{"task",context()}};
     auto goal = input.at("goal").get<std::string>();
@@ -35,13 +48,48 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
         (next != "continue" && next != "scene" && next != "player" && next != "done"))
         throw std::invalid_argument("MC partner: invalid task update");
     auto baseline = next == "scene" ? scene_key(scene,scene_revision) : Json{};
+    auto target = target_;
+    if (input.contains("target")) {
+        target = input.at("target");
+        if (target.empty()) target = nullptr;
+        else {
+            if (!anchor || anchor->at("position").is_null() || anchor->at("dimension") != scene.at("dimension"))
+                return {{"status","invalid_target"},{"reason","original player position unavailable"}};
+            if (target.contains("cells")) {
+                const auto& cells = target.at("cells");
+                if (!cells.is_array() || cells.empty() || cells.size() > 16 ||
+                    !std::ranges::all_of(cells,[&](const auto& cell) { return cell_near_anchor(cell,anchor->at("position")); }))
+                    return {{"status","invalid_target"},{"reason","target cells outside the original survey"}};
+            }
+            target["anchor"] = *anchor;
+        }
+    }
     goal_ = std::move(goal);
     detail_ = std::move(detail);
     next_ = std::move(next);
     baseline_ = std::move(baseline);
+    target_ = std::move(target);
     armed_ = true;
     ++revision_;
     return {{"status","updated"},{"task",context()}};
+}
+
+// 将实际写入的每个方块与当前任务选择核对，再固定原话和任务修订。
+// 步骤：读取所需格 → 逐格检查是否属于原目标 → 绑定实际动作。
+bool PartnerTask::bind_placement(Json& arguments) const {
+    if (!target_.contains("cells")) return false;
+    const auto& y = arguments.at("y");
+    if (!y.is_number_integer() || std::abs(y.get<double>()) > 30000000) return false;
+    const auto& cells = target_.at("cells");
+    const auto& material = arguments.at("block").get_ref<const std::string&>();
+    const int count = material.ends_with("_door") ? 2 : 1;
+    for (int index = 0; index < count; ++index) {
+        const Json cell{{"x",arguments.at("x")},{"y",y.get<std::int64_t>()+index},{"z",arguments.at("z")}};
+        if (std::ranges::find(cells,cell) == cells.end()) return false;
+    }
+    arguments["sourceMessage"] = target_.at("message");
+    arguments["taskRevision"] = revision_;
+    return true;
 }
 
 // 记录最近一次有现场内容的工作，发言与任务更新无法冒充现场证据。

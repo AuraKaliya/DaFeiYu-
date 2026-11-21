@@ -229,11 +229,15 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (partner && skill->supports_approval) {
+        const bool target_blocked = partner && skill->name == "place" && !raw->partner.bind_placement(call->session,job.arguments);
+        if (!target_blocked && partner && skill->supports_approval) {
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
         }
-        if (confirmed) {
+        if (target_blocked) {
+            job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
+            job.ready = job.success = true;
+        } else if (confirmed) {
             if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments))
                 return report(DFY_V2_INVALID_CONTEXT,error);
         } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
@@ -281,7 +285,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
     } else if (job->method == NativeJob::Method::local) {
         try {
             const auto result = raw->partner.local_skill(job->partner_session,job->invocation,job->skill,job->arguments);
-            job->success = result.at("status") != "stale";
+            job->success = result.at("status") != "stale" && result.at("status") != "invalid_target";
             job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" ||
                 result.at("status") == "recorded" || result.at("status") == "stopping" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;

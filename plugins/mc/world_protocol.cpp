@@ -59,6 +59,9 @@ bool control_receipt(const Json& value, const Json& generation) {
 
 // 将已证明的放置结果逐格对应到原命令；门必须产生两份位置和半门属性。
 void verify_placement(const Json& result, const Json& args) {
+    if (args.contains("sourceMessage") && (result.at("sourceMessage") != args.at("sourceMessage") ||
+        result.at("taskRevision") != args.at("taskRevision")))
+        throw std::invalid_argument("MC: placement evidence differs from original message");
     auto name = args.at("block").get<std::string>();
     if (name.starts_with("minecraft:")) name.erase(0,10);
     const bool door = name.ends_with("_door");
@@ -168,13 +171,19 @@ static bool presence_fact(const Json& value) {
 
 // 校验原话现场的采样时间、维度和可选玩家坐标。
 static bool message_scene(const Json& value) {
-    if (!value.is_object() || value.size() != 3 || !dimension(value.at("dimension")) ||
+    if (!value.is_object() || value.size() != 3u + value.count("facing") || !dimension(value.at("dimension")) ||
         !value.at("sampledAtMs").is_number_unsigned() || value.at("sampledAtMs") > 9007199254740991ULL) return false;
     const auto& position = value.at("position");
-    if (position.is_null()) return true;
+    if (position.is_null()) return !value.contains("facing");
     if (!position.is_object() || position.size() != 3) return false;
     for (const auto* axis : {"x","y","z"})
         if (!position.at(axis).is_number() || !std::isfinite(position.at(axis).get<double>())) return false;
+    if (value.contains("facing")) {
+        const auto& facing = value.at("facing");
+        if (!facing.is_object() || facing.size() != 2) return false;
+        for (const auto* angle : {"yaw","pitch"})
+            if (!facing.at(angle).is_number() || !std::isfinite(facing.at(angle).get<double>())) return false;
+    }
     return true;
 }
 // 校验原查询对应的世界观测，继续保留客户端数量和服务端信号年龄的语义。

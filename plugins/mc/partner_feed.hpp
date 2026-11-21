@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <cstdint>
 #include <memory>
+#include <deque>
 
 namespace dfy::mc {
 // 插件直接订阅可信玩家事实，按世界代次独立保存游标与待处理事件。
@@ -31,6 +32,8 @@ class PartnerFeed {
     const nlohmann::json& control() const noexcept { return control_; }
     // 借用待交付原始事件，按真实游戏次序排列。
     const nlohmann::json& pending() const noexcept { return pending_; }
+    // 查询当前原话窗口中已验证的现场快照。
+    const nlohmann::json* message_scene(std::uint64_t sequence) const noexcept;
     // 返回待交付事件之前是否丢失完整窗口。
     bool gap() const noexcept { return gap_; }
     // 清除已经交给原世界子会话的批次。
@@ -46,6 +49,7 @@ class PartnerFeed {
     std::string generation_, owner_, id_, arguments_;
     nlohmann::json observation_, control_;
     nlohmann::json pending_ = nlohmann::json::array();
+    std::deque<nlohmann::json> anchored_messages_;
     std::unique_ptr<PipeExchange> pipe_;
     std::chrono::steady_clock::time_point next_{}, world_due_{};
     std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, scene_revision_ = 0;

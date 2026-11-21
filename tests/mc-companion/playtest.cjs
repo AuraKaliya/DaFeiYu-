@@ -72,7 +72,9 @@ async function play(fixture, exe, pkg, mode, config) {
     prepareScene(send);
     if (wallProbe) {
       for (const command of ['gamerule randomTickSpeed 0', 'fill 2 -60 -3 2 -59 -3 minecraft:dirt', 'fill 6 -60 -3 6 -59 -3 minecraft:dirt',
-        'setblock 3 -60 -3 minecraft:dirt', 'fill -3 -60 1 -3 -59 1 minecraft:oak_planks',
+        'setblock 3 -60 -3 minecraft:dirt', 'setblock 3 -59 -3 minecraft:air',
+        'fill 7 -60 -3 7 -59 -3 minecraft:air', 'fill 4 -60 -3 4 -59 -3 minecraft:dirt',
+        'fill 8 -60 -3 8 -59 -3 minecraft:dirt', 'fill -3 -60 1 -3 -59 1 minecraft:oak_planks',
         'tp DfyGuestCheck 3.5 -60 -0.5', 'give DfyCompanion minecraft:dirt 8', 'give DfyCompanion minecraft:oak_door 1'])
         send(command);
     } else if (mode !== '--probe') {

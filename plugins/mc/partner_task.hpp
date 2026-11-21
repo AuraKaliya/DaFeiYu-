@@ -10,7 +10,12 @@ class PartnerTask {
     // 返回任务及最近的独立现场回执，供下一回合使用。
     nlohmann::json context() const;
     // 按模型看到的原版本更新分工，接纳后返回当前版本和约定。
-    nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision);
+    nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
+        const nlohmann::json* anchor);
+    // 判断当前任务是否带有需要遵循的原话目标。
+    bool has_target() const noexcept { return !target_.is_null(); }
+    // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
+    bool bind_placement(nlohmann::json& arguments) const;
     // 归档原动作证据，以独立字段保留来源。
     void record(const nlohmann::json& receipt);
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
@@ -26,6 +31,6 @@ class PartnerTask {
     std::string goal_, detail_, next_ = "player";
     unsigned remaining_ = 0;
     bool armed_ = false;
-    nlohmann::json baseline_, receipt_;
+    nlohmann::json baseline_, receipt_, target_;
 };
 }

@@ -107,6 +107,14 @@ function partnerService(bot, world, inbox, places, owner) {
     return !closed && world.read()?.generation === context.generation && inbox.get(context.generation, context.order) &&
       inbox.read(context.generation, context.order)?.latest === context.order;
   }
+  // 从原始收件记录取出当时的现场，玩家后来移动不会改写中心。
+  function messageAnchor(generation, sequence) {
+    const anchor = Number.isSafeInteger(sequence) && sequence > 0 &&
+      inbox.get(generation, sequence)?.sceneAtMessage;
+    if (!anchor?.position || anchor.dimension !== bot.game.dimension) throw new Error('原消息的现场位置不可用');
+    const { x, y, z } = anchor.position;
+    return { anchor, center: bot.entity.position.clone().set(x, y, z) };
+  }
   // 撤销正在执行的输入，实际退出仍等待原异步操作结束。
   function cancel() {
     if (!active || active.receipt.exited) return;
@@ -158,7 +166,12 @@ function partnerService(bot, world, inbox, places, owner) {
           .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
         if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position.clone());
-        if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
+        if (args.message !== undefined) {
+          if (args.around) throw new Error('请选择原消息或当前观察中心');
+          const { anchor, center } = messageAnchor(r.generation, args.message);
+          result.anchor = { message: args.message, ...anchor };
+          result.survey = blockSurvey(bot, center, 4);
+        } else if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
         if (previous?.generation === r.generation) result.lastAction = previous;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
@@ -171,20 +184,30 @@ function partnerService(bot, world, inbox, places, owner) {
         if (!result.sent) throw new Error('原玩家不在场，回复未发出');
       } else if (r.skill === 'move') {
         const named = Object.hasOwn(args, 'place');
+        const anchored = Object.hasOwn(args, 'message');
         if (named && ['x','y','z'].some(k => Object.hasOwn(args,k))) throw new Error('请选择地标或坐标之一');
+        if (anchored && (named || ['x','y','z'].some(k => Object.hasOwn(args,k)))) throw new Error('请选择一个移动目标');
         const point = args.place === 'player' ? player?.entity?.position?.floored() :
           places.get(args.place) ?? [...places.values()].find(p => p.label === args.place);
         if (named && (!point || (point.dimension && point.dimension !== bot.game.dimension))) throw new Error('地标未知或玩家不在视野');
-        const pos = targetPoint(bot, named ? point : args);
-        await walk(bot, new goals.GoalNear(pos.x, pos.y, pos.z, 1));
+        const target = anchored ? messageAnchor(r.generation, args.message).center.floored() : named ? point : args;
+        const pos = targetPoint(bot, target);
+        const goal = new goals.GoalNear(pos.x, pos.y, pos.z, anchored ? 3 : 1);
+        if (anchored) result.sourceMessage = args.message;
+        await walk(bot, goal);
         check();
         result.position = bot.entity.position.clone();
-        if (bot.entity.position.floored().distanceTo(pos) > 1) throw new Error('到达未核实');
+        if (!goal.isEnd(bot.entity.position.floored())) throw new Error('到达未核实');
       } else if (r.skill === 'follow') {
         prepareWalking(bot);
         await followPlayer(bot, owner, args.distance ?? 3, check, result);
       } else if (r.skill === 'collect') await collect(bot, args, check, result);
       else if (r.skill === 'place') {
+        if (args.sourceMessage !== undefined) {
+          messageAnchor(r.generation, args.sourceMessage);
+          result.sourceMessage = args.sourceMessage;
+          result.taskRevision = args.taskRevision;
+        }
         await placeBlock(bot, targetPoint(bot, args), blockType(bot, args.block), check, walk, result);
       }
       else throw new Error('未知游戏能力');
@@ -222,7 +245,7 @@ function partnerService(bot, world, inbox, places, owner) {
         throw new Error('游戏工作已失效或正忙');
       // 只回收已经退出且原消息不可能再次接纳的票据。
       if (records.size >= 64) {
-        const reclaimable = [...records].find(([, entry]) => entry.receipt.exited &&
+        const reclaimable = [...records].find(([, entry]) => entry !== active && entry.receipt.exited &&
           (entry.receipt.generation !== context.generation || entry.receipt.order !== context.order));
         if (!reclaimable) throw new Error('游戏工作回执已满');
         records.delete(reclaimable[0]);

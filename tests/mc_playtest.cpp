@@ -106,7 +106,7 @@ dfy::model::Response main_ask_sample(const dfy::model::Request& request, bool re
 }
 
 // 用固定模型验证墙体目标跨回合、观察、范围展开和原候选确认。
-// 步骤：保存原分工 → 核实玩家附近结构 → 先拒绝覆盖再补一格 → 等待游戏玩家确认门。
+// 步骤：保存原分工及指向 → 对照旧位置和后来位置 → 拒绝错误门洞并补一格 → 等待游戏玩家确认门。
 dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root, std::string_view ask_path) {
     using namespace dfy::model;
     using Json = nlohmann::json;
@@ -123,43 +123,55 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (request.tools.empty()) return say("continue");
     if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
-        if (last.tool_call_id == "save" || last.tool_call_id == "directory" || last.tool_call_id == "question") return say("fixed round done");
+        if (last.tool_call_id == "save" || last.tool_call_id == "point" || last.tool_call_id == "directory" ||
+            last.tool_call_id == "question") return say("fixed round done");
         if (last.tool_call_id == "survey" || last.tool_call_id == "resurvey") {
             const auto& survey = result.at("survey");
             if (survey_block(survey,2,-59,-3) != "dirt" || survey_block(survey,3,-59,-3) != "." ||
-                survey_block(survey,3,-60,-3) != "dirt")
-                throw std::runtime_error("wall probe: survey did not locate the wall and gap");
+                survey_block(survey,3,-60,-3) != "dirt" || survey_block(survey,7,-59,-3) != "." ||
+                result.at("anchor").at("message") != 3 || result.at("anchor").at("position").at("x") >= 4 ||
+                result.at("player").at("x") < 7)
+                throw std::runtime_error("wall probe: survey lost the original gap or the separate live player position");
             if (!ask_path.empty() && last.tool_call_id == "survey")
                 return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
             return call("skills","directory",{{"categories",{"place"}}});
         }
-        if (last.tool_call_id == "occupied" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
+        if (last.tool_call_id == "bind" && result.at("status") == "updated")
+            return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
+        if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
             return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
         if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
-            return call("place","door",{{"block","oak_door"},{"x",4},{"y",-60},{"z",-3},{"approval","game"}});
+            return call("task_update","door-plan",{{"revision",result.at("taskRevision")},{"goal","put the agreed door in its opening"},
+                {"next","player"},{"target",Json::object()}});
+        if (last.tool_call_id == "door-plan" && result.at("status") == "updated")
+            return call("place","door",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3},{"approval","game"}});
         return say("fixed action ended");
     }
     const auto input = Json::parse(last.content);
     record_input(root,input);
     if (input.at("trigger") == "skills.expanded") {
-        if (input.at("task").at("goal") != "continue existing two-layer dirt wall and door" ||
+        const auto& task = input.at("task");
+        if (task.at("goal") != "continue existing two-layer dirt wall and door" || task.at("target").at("message") != 3 ||
             input.at("task").at("lastAction").at("skill") != "observe" || !input.at("events").empty())
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
-        return call("place","occupied",{{"block","dirt"},{"x",2},{"y",-60},{"z",-3}});
+        return call("task_update","bind",{{"revision",task.at("revision")},{"goal",task.at("goal")},{"next","player"},
+            {"target",{{"message",3},{"cells",Json::array({{{"x",3},{"y",-59},{"z",-3}}})}}}});
     }
     if (input.at("trigger") == "question.result") {
         if (input.at("questionResult").at("answer") != "靠河那段，留木门" ||
             input.at("task").at("goal") != "continue existing two-layer dirt wall and door")
             throw std::runtime_error("wall probe: clarification lost the original task");
-        return call("observe","resurvey",{{"around","player"}});
+        return call("observe","resurvey",{{"message",input.at("task").at("target").at("message")}});
     }
     const auto& event = input.at("events").back();
     if (event.at("sequence") == 2)
         return call("task_update","save",{{"revision",0},{"goal","continue existing two-layer dirt wall and door"},
             {"detail","Find the player's original wall and leave the intended doorway"},{"next","player"}});
-    if (event.at("sequence") == 3 && event.at("text") == "我在墙边上" &&
-        input.at("task").at("goal") == "continue existing two-layer dirt wall and door")
-        return call("observe","survey",{{"around","player"}});
+    if (event.at("sequence") == 3 && event.at("text") == "看我旁边的这块缺口")
+        return call("task_update","point",{{"revision",input.at("task").at("revision")},{"goal",input.at("task").at("goal")},
+            {"next","player"},{"target",{{"message",3}}}});
+    if (event.at("sequence") == 4 && event.at("text") == "先补刚才指的缺口，门洞留空")
+        return call("observe","survey",{{"message",input.at("task").at("target").at("message")}});
     return say("fixed event read");
 }
 }
