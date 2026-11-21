@@ -20,7 +20,7 @@ DFY_NAMES(ControlPoint,"model_request","tool_start","tool_result");
 DFY_NAMES(PolicyVerdict,"allow","deny","wait");
 DFY_NAMES(ConfirmationState,"waiting","approved","denied","cancelled","expired","invalidated","consumed");
 DFY_NAMES(ObservationTrust,"external_data","host_verified");
-DFY_NAMES(RunOrigin,"user_request","observation_rule");
+DFY_NAMES(RunOrigin,"user_request","observation_rule","mailbox");
 DFY_NAMES(ModelPurpose,"direct","plan_generation","plan_step");
 DFY_NAMES(TurnFailure,"none","model","history_commit","model_response","control","tool_execution","model_request");
 DFY_NAMES(PlanStepState,"pending","running","completed","failed","cancelled","skipped");

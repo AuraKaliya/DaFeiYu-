@@ -135,6 +135,9 @@ async function checkWall(fixture, player, whispers, mode) {
     else {
       assert.ok(main.some(row => row.input.tools.some(tool => tool.name === 'ask')));
       assert.ok(main.some(row => row.input.tools.some(tool => tool.name === 'mail_reply')));
+      const exits = trace.filter(row => row.kind === 'run.exited' && row.source === 'main');
+      assert.equal(exits.length, 2);
+      assert.ok(exits.every(row => row.diagnostic?.data.timeline.source === 'mailbox'));
       assert.ok(trace.some(row => row.kind === 'interaction.delivered' && row.ask === ask[0].ask &&
         row.category === 'interaction.mail.reply' && row.body.answer === '靠河那段，留木门'));
     }

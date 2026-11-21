@@ -125,6 +125,8 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
     });
     if (result.terminal.is_null() || result.models.empty() || result.models.back().exit.is_null())
         throw std::invalid_argument("replay: complete run with model input and exit required");
+    if (!result.terminal.contains("diagnostic"))
+        throw std::invalid_argument("replay: original run diagnostics missing");
     const auto& diagnostic = result.terminal.at("diagnostic").at("data");
     const auto& timeline = diagnostic.at("timeline");
     const auto reason = tagged<agent::PolicyReason>(timeline.at("stop_reason"),policy_reasons);
@@ -198,6 +200,8 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     std::size_t model_index = 0;
     agent::ToolCatalog catalog;
     agent::RunOptions options;
+    constexpr std::array origins{"user_request","observation_rule","mailbox"};
+    options.origin = tagged<agent::RunOrigin>(original.terminal.at("diagnostic").at("data").at("timeline").at("source"),origins);
     if (std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) { return entry.rewritten.has_value(); }))
         bind_rewrites(original,options,rewrite_difference);
     bool denied_seen = false;

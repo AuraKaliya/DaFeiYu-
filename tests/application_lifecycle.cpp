@@ -217,6 +217,10 @@ void room_mailbox(const fs::path& run, bool automatic) {
         result->answer.find("joined") == std::string::npos,"room envelope lost its source or leaked a filtered fact");
     std::ostringstream observed;
     review_trace(application.trace_file(),dfy::agent::RunId{result->status.session,result->status.turn},observed);
+    std::ostringstream replay;
+    replay_trace(application.trace_file(),{result->status.session,result->status.turn},replay);
+    check(replay.str().find("1 model requests, 0 tool exits, succeeded") != std::string::npos,
+        "mailbox run did not replay from its own origin");
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
         observed.str().find("room.addressed") != std::string::npos && observed.str().find("joined") == std::string::npos,
         "filtered room presence was incorrectly linked to a model run");
