@@ -22,6 +22,14 @@ node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\D
 
 脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
 
+「跟随中挖一格」与「取材后补四格」的后续基线可传入两局证据目录：
+
+```powershell
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\Debug\dafeiyu.exe <run-FX9QKV目录> <run-rg8RdZ目录>
+```
+
+分别核对原跟随工作号、挖掘后的实际入包、取材确认过期或观察被新事件中断，以及两局均无放置回执。可独立重跑的六轮使用录制模型响应。外部事件导致的回合退出以原 Trace 与游戏回执为准。
+
 ### 实机比较思考模式
 
 DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同一模型、同一场地和同一句「把你旁边那个木门拆下来，装到我指的这个缺口」，两次独立开局，只改变思考模式。分别记录玩家发话到首次观察、首次有效动作、完工和发言的耗时，检查原洞口是否保持、询问是否有必要。再用边走边聊确认模型处理期间跟随仍沿用原工作号。先比较思考模式，后续提示改动使用相同的对照条件单独比较。
