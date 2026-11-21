@@ -100,7 +100,7 @@ async function checkPlayer(fixture, mode) {
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
     const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner ? await until(() => readArena(player, wallProbe), '独立客户端读回验收场地') : null;
+    const arena = partner ? await until(() => readArena(player, wallProbe, mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
@@ -308,6 +308,7 @@ async function checkGap(fixture, player, whispers, block, ambiguous) {
   assert.equal(block(...wall.repair).name, 'dirt');
   assert.equal(block(...wall.doorLower).name, 'air');
   assert.equal(block(...wall.doorUpper).name, 'air');
+  if (!ambiguous) assert.ok(wall.existingDoor.every(pos => block(...pos).name === 'oak_door'));
   assert.ok(!actions.some(row => row.skill === 'collect'));
   assert.ok(trace().some(row => row.kind === 'tool.exited' && row.callId === 'wrong-gap' &&
     JSON.parse(row.output).placementAttempted === false));

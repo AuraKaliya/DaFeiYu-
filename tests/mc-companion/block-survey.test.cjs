@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { blockSurvey } = require('../../plugins/mc/bridge/block-survey.cjs');
+const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 
 // 用最少的坐标运算模拟真实客户端给出的观测中心和样本格。
@@ -40,6 +40,29 @@ test('the survey projects the existing wall and its gap against an exact origin'
   assert.equal(cell(-1, -60, 0), '.');
   assert.equal(cell(0, -60, 0), '?');
   assert.throws(() => blockSurvey(bot, new Position(40, -60, 0)), /范围/);
+});
+
+// 用实机旧门的两格坐标验证合并，并区分只看到一半和另一半不可读取。
+test('the two observed halves are one door at the lower cell', () => {
+  const lower = new Position(7, -60, -3);
+  const upper = lower.offset(0, 1, 0);
+  // 按实际方块属性提供朝向、合页和所在半格。
+  const door = (position, half, facing = 'south') => ({
+    name: 'oak_door', position, getProperties: () => ({ half, facing, hinge: 'left' }),
+  });
+  const halves = [door(lower, 'lower'), door(upper, 'upper')];
+  const bot = {
+    // 对照已加载的方块，缺失表示不可验证。
+    blockAt: pos => halves.find(b => b.position.distanceTo(pos) === 0),
+  };
+  const complete = [{ id: '7,-60,-3', block: 'oak_door', status: 'complete', lower, upper }];
+  assert.deepEqual(observedDoors(bot, [halves[1], halves[0]]), complete);
+  assert.deepEqual(observedDoors(bot, [halves[1]]), complete);
+  halves.shift();
+  const incomplete = [{ id: '7,-60,-3', block: 'oak_door', status: 'incomplete', upper }];
+  assert.deepEqual(observedDoors(bot, halves), incomplete);
+  halves.push(door(lower, 'lower', 'north'));
+  assert.deepEqual(observedDoors(bot, [halves[0]]), incomplete);
 });
 
 // 两个可能的开口只在已知视线穿过一处时给出默认候选。

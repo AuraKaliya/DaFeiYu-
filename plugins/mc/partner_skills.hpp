@@ -20,7 +20,7 @@ struct PartnerSkill {
     bool supports_approval = false;
 };
 inline constexpr std::array<PartnerSkill,13> partner_skills{{
-    {"observe", "partner.observe", "Read current positions and inventory. Use message=<original sequence> to re-read its world and playerFocus for 'this gap'. player is live, selfLook is your own view. survey uses x across rows, z across lines and y across layers. Dot is air, '?' is unloaded.",
+    {"observe", "partner.observe", "Read current positions and inventory. Use message=<original sequence> to re-read its world and playerFocus for 'this gap'. player is live, selfLook is your own view. blockSearch states the search scope; visible matches require your line of sight. doors groups verified halves by lower cell; incomplete doors are unconfirmed. survey uses x across rows, z across lines and y across layers. Dot is air, '?' is unloaded.",
         R"({"type":"object","properties":{"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]},"message":{"type":"integer"}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a landmark, player (place=player), or integer x,y,z. An accepted result is a running work ID. Read actual arrival in the next activity context.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},

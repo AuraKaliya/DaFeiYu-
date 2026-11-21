@@ -173,6 +173,11 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (request.tools.empty()) return {{Role::assistant,"continue"}};
     const bool ambiguous = ask_path == "local";
     const auto survey_original = [&] { return call("observe","survey",{{"message",3}}); };
+    // 限制补墙使用游戏生成的旧消息候选。
+    const auto bind_gap = [&] {
+        return call("task_update","bind",{{"goal","continue existing two-layer dirt wall and door"},{"next","player"},
+            {"target",{{"message",3},{"candidate","3,-59,-3:x"}}}});
+    };
     // 输入中的原话位置只用于走近，实际站位必须与当时的方块高度对应。
     const auto check_arrival = [&](const Json& result) {
         if (result.at("status") != "done" || result.at("sourceMessage") != 3 ||
@@ -208,8 +213,19 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             })) throw std::runtime_error("wall probe: original player view did not identify gap A with a separate gap B");
             if (!ask_path.empty() && last.tool_call_id == "survey")
                 return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
-            return call("task_update","bind",{{"goal","continue existing two-layer dirt wall and door"},{"next","player"},
-                {"target",{{"message",3},{"candidate","3,-59,-3:x"}}}});
+            if (gap_only && !ambiguous) return call("observe","current-view",{{"around","player"},{"block","oak_door"}});
+            return bind_gap();
+        }
+        if (last.tool_call_id == "current-view") {
+            const auto& search = result.at("blockSearch");
+            const Json door{{"id","4,-60,2"},{"block","oak_door"},{"status","complete"},
+                {"lower",{{"x",4},{"y",-60},{"z",2}}},{"upper",{{"x",4},{"y",-59},{"z",2}}}};
+            if (result.contains("anchor") || result.at("player").at("x") < 7 ||
+                search.at("center").at("x") != 7 || search.at("block") != "oak_door" ||
+                survey_block(result.at("survey"),7,-59,-3) != "." ||
+                result.at("doors") != Json::array({door}))
+                throw std::runtime_error("gap probe: live search did not distinguish the existing door from the opening");
+            return bind_gap();
         }
         if (last.tool_call_id == "gather" && (result.at("status") != "waiting" || !result.contains("item")))
             throw std::runtime_error("gap probe: collection did not enter the waiting state");
@@ -249,6 +265,10 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             return internal("原位置已知，等玩家指定目标");
         }
         const auto& observation = task.at("lastAction").at("result");
+        if (gap_only && !ambiguous && (observation.contains("anchor") ||
+            task.at("targetObservation").at("message") != 3 ||
+            task.at("targetObservation").at("playerFocus").at("choice") != "3,-59,-3:x"))
+            throw std::runtime_error("gap probe: the live observation replaced the original pointing evidence");
         if (task.at("goal") != "continue existing two-layer dirt wall and door" || task.at("target").at("message") != 3 ||
             task.at("detail") != "Find the player's original wall and leave the intended doorway" ||
             !observation.value("surveyAvailable",false) || observation.contains("survey") || !observation.contains("sampledAtMs") ||

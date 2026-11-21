@@ -75,7 +75,7 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
-    if (wallProbe) prepareWall(send, withDirt);
+    if (wallProbe) prepareWall(send, withDirt, mode === '--gap-probe');
     else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');

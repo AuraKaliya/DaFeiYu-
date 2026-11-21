@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <map>
 #include <string_view>
 #include <nlohmann/json.hpp>
 
@@ -20,7 +21,7 @@ class PartnerTask {
     bool target_ready() const noexcept { return target_.contains("cells"); }
     // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
     bool bind_placement(nlohmann::json& arguments) const;
-    // 归档原动作证据，以独立字段保留来源。
+    // 更新最近动作，按原消息号独立保存指向证据。
     void record(const nlohmann::json& receipt);
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
     std::string_view trigger(const nlohmann::json& scene, std::uint64_t scene_revision) const;
@@ -36,5 +37,6 @@ class PartnerTask {
     unsigned remaining_ = 0;
     bool armed_ = false;
     nlohmann::json baseline_, receipt_, target_;
+    std::map<std::uint64_t,nlohmann::json> observations_;
 };
 }

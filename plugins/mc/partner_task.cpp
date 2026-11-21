@@ -7,6 +7,7 @@ namespace dfy::mc {
 namespace {
 using Json = nlohmann::json;
 constexpr unsigned continuation_budget = 4;
+constexpr std::size_t observation_limit = 32;
 
 // 提取现场变化修订与实际地点，忽略采样时间和小幅位置抖动。
 Json scene_key(const Json& scene, std::uint64_t revision) {
@@ -27,15 +28,11 @@ bool cell_near_anchor(const Json& cell, const Json& position) {
     return true;
 }
 
-// 从最近一次同原话的观察解析候选，仅使用游戏生成的方格列。
-// 步骤：核对读回来源 → 查找候选 → 展开其一格或两格坐标。
-Json candidate_cells(const Json& receipt, const Json& target) {
-    if (receipt.is_null() || receipt.at("skill") != "observe") return nullptr;
-    const auto& result = receipt.at("result");
-    if (!result.contains("anchor") || result.at("anchor").at("message") != target.at("message") ||
-        !result.contains("playerFocus")) return nullptr;
-    const auto& gaps = result.at("playerFocus").at("candidates");
-    const auto choice = std::ranges::find_if(gaps,[&](const auto& gap) { return gap.at("id") == target.at("candidate"); });
+// 解析原话观察中的候选，仅使用游戏生成的方格列。
+// 步骤：查找候选 → 核对高度 → 展开其一格或两格坐标。
+Json candidate_cells(const Json& observation, const Json& candidate) {
+    const auto& gaps = observation.at("playerFocus").at("candidates");
+    const auto choice = std::ranges::find_if(gaps,[&](const auto& gap) { return gap.at("id") == candidate; });
     if (choice == gaps.end()) return nullptr;
     const auto height = choice->at("height").get<int>();
     if (height < 1 || height > 2) return nullptr;
@@ -50,7 +47,11 @@ Json candidate_cells(const Json& receipt, const Json& target) {
 Json PartnerTask::context() const {
     Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_}};
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
-    if (has_target()) value["target"] = target_;
+    if (has_target()) {
+        value["target"] = target_;
+        const auto original = observations_.find(target_.at("message").get<std::uint64_t>());
+        if (original != observations_.end()) value["targetObservation"] = original->second;
+    }
     return value;
 }
 
@@ -74,7 +75,8 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                 return {{"status","invalid_target"},{"reason","original player position unavailable"}};
             if (target.contains("candidate")) {
                 if (target.contains("cells")) return {{"status","invalid_target"},{"reason","choose a candidate or cells"}};
-                auto cells = candidate_cells(receipt_,target);
+                const auto original = observations_.find(target.at("message").get<std::uint64_t>());
+                auto cells = original == observations_.end() ? Json{} : candidate_cells(original->second,target.at("candidate"));
                 if (cells.is_null()) return {{"status","invalid_target"},{"reason","candidate missing from original message observation"}};
                 target["cells"] = std::move(cells);
             }
@@ -115,11 +117,17 @@ bool PartnerTask::bind_placement(Json& arguments) const {
     return true;
 }
 
-// 记录最近一次有现场内容的工作，发言与任务更新无法冒充现场证据。
+// 将原话指向证据与最近一次动作分开保存。
+// 步骤：归档有来源的观察并限制窗口 → 缩减网格 → 更新最近动作。
 void PartnerTask::record(const Json& receipt) {
     if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
     auto summary = receipt;
     auto& result = summary.at("result");
+    if (receipt.at("skill") == "observe" && result.contains("anchor") && result.contains("playerFocus")) {
+        const auto message = result.at("anchor").at("message").get<std::uint64_t>();
+        observations_[message] = {{"message",message},{"sampledAtMs",result.at("sampledAtMs")},{"playerFocus",result.at("playerFocus")}};
+        if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+    }
     if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
     if (summary.dump().size() <= 4096) receipt_ = std::move(summary);
 }

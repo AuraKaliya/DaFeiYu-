@@ -31,4 +31,25 @@ function blockSurvey(bot, center, depthBelow = 1) {
   return { origin, palette: Object.fromEntries([...palette].map(([name, key]) => [key, name])), layers };
 }
 
-module.exports = { blockSurvey };
+// 将同一扇门的观察归到下半格，缺失或不相配的半扇保留为未确认。
+// 步骤：从命中的半格定位下半格 → 读回另一半并核对门的状态 → 按下半格去重。
+function observedDoors(bot, blocks) {
+  const doors = new Map();
+  for (const block of blocks) {
+    const state = block.getProperties();
+    if (state.half !== 'lower' && state.half !== 'upper') continue;
+    const lower = block.position.offset(0, state.half === 'upper' ? -1 : 0, 0);
+    const id = `${lower.x},${lower.y},${lower.z}`;
+    if (doors.has(id)) continue;
+    const other = bot.blockAt(block.position.offset(0, state.half === 'upper' ? -1 : 1, 0));
+    const otherState = other?.name === block.name ? other.getProperties() : null;
+    const paired = otherState && (state.half === 'lower' ? otherState.half === 'upper' : otherState.half === 'lower') &&
+      otherState.facing === state.facing && otherState.hinge === state.hinge;
+    const door = { id, block: block.name, status: paired ? 'complete' : 'incomplete', [state.half]: block.position.clone() };
+    if (paired) door[otherState.half] = other.position.clone();
+    doors.set(id, door);
+  }
+  return [...doors.values()];
+}
+
+module.exports = { blockSurvey, observedDoors };

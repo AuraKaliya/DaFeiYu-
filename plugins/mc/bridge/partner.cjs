@@ -1,7 +1,7 @@
 const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
-const { blockSurvey } = require('./block-survey.cjs');
+const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
@@ -29,10 +29,10 @@ function targetPoint(bot, args) {
   return point;
 }
 
-// 仅选择在客户端视线内可见且不在自己脚下的候选方块。
-function visible(bot, type) {
+// 在指定中心附近搜索，仅返回角色可见且不在自己脚下的候选方块。
+function visible(bot, type, center = bot.entity.position) {
   const feet = bot.entity.position.floored();
-  return bot.findBlocks({ matching: type.id, maxDistance: 16, count: 96 })
+  return bot.findBlocks({ matching: type.id, point: center, maxDistance: 16, count: 96 })
     .map(pos => bot.blockAt(pos)).filter(block => block && bot.canSeeBlock(block) &&
       !(block.position.x === feet.x && block.position.z === feet.z && block.position.y < feet.y));
 }
@@ -167,14 +167,22 @@ function partnerService(bot, world, inbox, places, owner) {
         result.nearby = Object.values(bot.entities).filter(e => e !== bot.entity && e.position.distanceTo(bot.entity.position) <= 16)
           .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
-        if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position.clone());
+        let center = args.around === 'player' ? player?.entity?.position : bot.entity.position;
         if (args.message !== undefined) {
           if (args.around) throw new Error('请选择原消息或当前观察中心');
-          const { anchor, center } = messageAnchor(r.generation, args.message);
+          const { anchor, center: original } = messageAnchor(r.generation, args.message);
+          center = original;
           result.anchor = { message: args.message, ...anchor };
           result.survey = blockSurvey(bot, center, 4);
           result.playerFocus = playerFocus(bot, anchor, center);
-        } else if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
+        } else if (args.around) result.survey = blockSurvey(bot, center);
+        if (args.block) {
+          const type = blockType(bot, args.block);
+          const blocks = visible(bot, type, center).slice(0, 10);
+          result.blockSearch = { block: type.name, center: center.floored(), radius: 16, coverage: 'loaded_visible_only' };
+          result.visible = blocks.map(block => block.position.clone());
+          if (type.name.endsWith('_door')) result.doors = observedDoors(bot, blocks);
+        }
         if (previous?.generation === r.generation) result.lastAction = previous;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))

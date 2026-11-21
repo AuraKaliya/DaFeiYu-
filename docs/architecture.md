@@ -199,6 +199,7 @@ flowchart TB
 ```
 
 - **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。插件核对当前回合的任务变更并分配修订，跨回合保留原消息号及已选方块。模型回合结算后，插件按新玩家事实、动作退出、任务继续、私有现场变化或目录展开选择是否开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
+- **门和洞口的观察。** 方块搜索返回实际中心和半径，只列当前角色能看见的匹配。木门以核对过的上下两格归为一个对象，另一半尚不可验证时标记为未确认。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
 - **在途工作和发言。** 局内移动、跟随、采集和放置由游戏接纳后交还工具，插件持原票据推进。需确认的局内动作先将待办交给插件循环，等待和执行期间可继续观察和发言。角色操作共享独占游戏控制。`activeMotion` 提供原工作进度，`finishedWork` 把实际退出交给下一次局内决策。显式停止、离场、换世界和关闭触发原动作回收。本体主动委托经原工具等待结果后回报。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [跟随](../plugins/mc/bridge/follow.cjs)
 - **玩家回复与结算。** `reply` 立即提交私聊。处理玩家原话时，若本轮尚未请求发言或提问，插件会把普通最终文本送入同一个游戏回复通道。空文本和 `{"internal":"…"}` 用于内部结算。无新聊天的唤醒可用 `reply` 主动发言，主 Agent 委托的最终文本仍作为委托报告。纯文本私聊回执在 `mc.partner.action` 标记 `source=final_text`，按原会话、子请求和 `bridgeWork` 关联。 [回合结算](../plugins/mc/partner_loop.cpp) · [实际发言](../plugins/mc/bridge/partner.cjs)
 - **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察只带概要和采样信息，地图用 `observe` 重新读取。工具目录保留已选择的类别，有原话锚点时提供移动，选定目标格后下一轮提供放置。宿主在本轮内固定工具契约，游戏侧校验实际动作。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
