@@ -52,12 +52,14 @@ async function checkFollow(fixture, player, whispers, course) {
 
   player.chat('先别跟了');
   const exit = await until(() => received('mc.partner.action').find(row => row.body.skill === 'follow'), '跟随的实际退出');
+  const replacement = await until(() => received('mc.partner.action').find(row => row.body.skill === 'move'), '替代移动实际退出');
   await until(() => readRows(fixture, 'trace/events.jsonl').some(row => row.kind === 'tool.exited' &&
     row.callId === 'task_update' && JSON.parse(row.output).task?.next === 'done'), '实际退出后结束局内任务');
   const work = accepted.body.action.bridgeWork;
   const phases = motions();
-  assert.equal(phases.filter(row => row.body.status === 'accepted').length, 1);
-  assert.ok(phases.every(row => row.body.action.bridgeWork === work));
+  const following = phases.filter(row => row.body.action.skill === 'follow');
+  assert.equal(following.filter(row => row.body.status === 'accepted').length, 1);
+  assert.ok(following.every(row => row.body.action.bridgeWork === work));
   assert.equal(resumed.body.action.bridgeWork, work);
   assert.equal(exit.body.bridgeWork, work);
   assert.equal(exit.body.result.status, 'interrupted');
@@ -69,7 +71,15 @@ async function checkFollow(fixture, player, whispers, course) {
   assert.deepEqual(replies.map(row => [row.body.order, row.body.result.text]), [[3, whispers[0]], [4, whispers[1]]]);
   assert.ok(replies.every(row => row.seq < exit.seq && actions.some(game => game.work === row.body.bridgeWork && game.result.sent)));
   const trace = readRows(fixture, 'trace/events.jsonl');
-  const stop = trace.find(row => row.kind === 'tool.exited' && row.callId === 'stop_motion');
+  const queue = received('mc.partner.queue');
+  assert.deepEqual(queue.map(row => row.body.status), ['queued', 'cleared', 'queued']);
+  assert.equal(queue[0].body.works[0], queue[1].body.works[0]);
+  assert.ok(!actions.some(row => row.work === queue[0].body.works[0]));
+  assert.equal(replacement.body.bridgeWork, queue[2].body.works[0]);
+  assert.ok(exit.seq < replacement.seq);
+  assert.equal(replacement.body.result.status, 'done');
+  const stop = trace.find(row => row.kind === 'tool.exited' && row.callId === 'queue_actions' &&
+    JSON.parse(row.arguments).operation === 'replace');
   assert.equal(JSON.parse(stop.arguments).work, work);
   assert.ok(replies[1].seq < stop.seq && stop.seq < exit.seq);
   assert.deepEqual(trace.filter(row => row.kind === 'tool.exited' && row.callId === 'task_update')

@@ -11,7 +11,7 @@ enum class SkillCategory : std::uint8_t {
     movement,dig_break,place,use_item,attack,block_interaction,entity_interaction,inventory,craft_process,
     communication,observation,query,control
 };
-enum class SkillKind { game, confirmed, task, catalog, question, motion, motion_stop, approval_withdraw };
+enum class SkillKind { game, confirmed, task, catalog, question, motion, motion_stop, approval_withdraw, action_queue };
 struct PartnerSkill {
     std::string_view name, purpose, description, schema;
     SkillCategory category;
@@ -19,7 +19,7 @@ struct PartnerSkill {
     SkillKind kind = SkillKind::game;
     bool supports_approval = false;
 };
-inline constexpr std::array<PartnerSkill,13> partner_skills{{
+inline constexpr std::array<PartnerSkill,14> partner_skills{{
     {"observe", "partner.observe", "Read current positions and inventory. Use message=<original sequence> to re-read its world and playerFocus for 'this gap'. player is live, selfLook is your own view. blockSearch states the search scope; visible matches require your line of sight. doors groups verified halves by lower cell; incomplete doors are unconfirmed. survey uses x across rows, z across lines and y across layers. Dot is air, '?' is unloaded.",
         R"({"type":"object","properties":{"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]},"message":{"type":"integer"}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a landmark, player (place=player), or integer x,y,z. An accepted result is a running work ID. Read actual arrival in the next activity context.",
@@ -30,6 +30,8 @@ inline constexpr std::array<PartnerSkill,13> partner_skills{{
         R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Request cancellation of the matching work ID from activeMotion. Wait for its exit before starting another physical action.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
+    {"queue_actions", "partner.queue_actions", "Append up to four authorized steps. Each step uses skill move, follow, collect or place and its arguments. Queue collect requires one exact block; place needs a bound target. Clear discards only waiting steps. Replace names the current work to stop before starting the new steps. A failed prerequisite discards its successors.",
+        R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace"]},"work":{"type":"string"},"steps":{"type":"array","items":{"type":"object","properties":{"skill":{"type":"string","enum":["move","follow","collect","place"]},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. Set approval to game or main when consent is needed. For accepted work, read actual broken blocks and inventory changes on exit.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},
     {"reply", "partner.reply", "Send a one-line private message to the bound player now. Once called, final text is internal and is not sent again.",

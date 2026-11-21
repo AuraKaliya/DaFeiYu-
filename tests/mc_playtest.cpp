@@ -109,6 +109,16 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
         return {{Role::assistant,"",{{skill,tool->name,args.dump()}}},FinishReason::tool_calls};
     };
     const auto& last = request.messages.back();
+    if (last.role == Role::tool && last.tool_call_id == "queue_actions") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto input = Json::parse(request.messages.at(1).content);
+        const auto text = input.at("events").back().at("text");
+        if (text == "到哪了" && result.at("status") == "queued")
+            return call("reply",{{"text","我还在跟着你。"}});
+        if (text == "继续边走边聊" && result.at("status") == "cleared")
+            return {{Role::assistant,"我继续跟着你。"}};
+        return {{Role::assistant,R"({"internal":"queued replacement"})"}};
+    }
     if (last.role == Role::tool && last.tool_call_id == "task_update") {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         const auto& task = result.at("task");
@@ -119,6 +129,7 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "motion.finished") {
             const auto& work = input.at("finishedWork");
+            if (work.at("skill") == "move") return {{Role::assistant,R"({"internal":"replacement finished"})"}};
             if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
                 throw std::runtime_error("follow probe: actual exit missing from the task");
             return call("task_update",{{"goal","跟着玩家走"},{"next","done"}});
@@ -130,9 +141,16 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
             const auto& motion = input.at("activeMotion");
             if (motion.at("order") != 2 || motion.at("skill") != "follow" || input.at("task").at("revision") != 1)
                 throw std::runtime_error("follow probe: original work or task revision lost");
-            if (text == "到哪了") return call("reply",{{"text","我还在跟着你。"}});
-            if (text == "继续边走边聊") return {{Role::assistant,"我继续跟着你。"}};
-            if (text == "先别跟了") return call("stop_motion",{{"work",motion.at("work")}});
+            const Json steps = Json::array({{{"skill","move"},{"arguments",{{"x",-6},{"y",-60},{"z",-6}}}}});
+            if (text == "到哪了") {
+                std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                return call("queue_actions",{{"operation","append"},{"steps",steps}});
+            }
+            if (text == "继续边走边聊") {
+                if (input.at("queuedActions").size() != 1) throw std::runtime_error("follow probe: waiting step lost");
+                return call("queue_actions",{{"operation","clear"}});
+            }
+            if (text == "先别跟了") return call("queue_actions",{{"operation","replace"},{"work",motion.at("work")},{"steps",steps}});
         }
     }
     return {{Role::assistant,R"({"internal":"processed"})"}};

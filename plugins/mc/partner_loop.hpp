@@ -35,6 +35,8 @@ class PartnerLoop {
     void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work, std::unique_ptr<GameWork>& action);
     // 判断角色的移动控制是否仍由原工作持有。
     bool has_motion() const noexcept { return motion_.has_value(); }
+    // 有待执行步骤时，直接动作不得越过队列。
+    bool has_queued_action() const noexcept { return !queued_.empty(); }
     // 执行当前原子会话的局内任务或工具目录操作。
     nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
     // 在动作接纳前把当前原话目标绑定到放置参数。
@@ -77,6 +79,12 @@ class PartnerLoop {
     void report_actions();
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
     void advance_motion(bool stopping);
+    // 接纳、清空或替换当前任务修订下尚未执行的步骤。
+    nlohmann::json queue_actions(std::uint64_t invocation, const nlohmann::json& arguments);
+    // 在角色空闲且原前置工作已核实后提交一个步骤。
+    void advance_queue(const BridgeConfig& config, bool closing, bool body_busy);
+    // 批量结算未执行的步骤并释放队列。
+    void clear_queue(std::string_view reason);
     // 在本地有界保留结构化事实，等本体接纳后归还。
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
@@ -130,8 +138,17 @@ class PartnerLoop {
         bool stopping = false, announced = false;
         std::string last_phase;
         bool accepted = true;
+        std::string pickup;
     };
     std::optional<Motion> motion_;
+    struct QueuedAction {
+        std::uint64_t order, request, invocation, revision;
+        std::string work;
+        std::string_view skill;
+        nlohmann::json arguments;
+    };
+    std::deque<QueuedAction> queued_;
+    bool replacing_motion_ = false;
     nlohmann::json finished_work_;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;

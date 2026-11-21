@@ -25,6 +25,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
     "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。动作返回 accepted 时使用原工作号，结束结果见 finishedWork。"
     "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
+    "queue_actions 可预先登记少量相互依赖的动作。queuedActions 仍未进入游戏；clear 可以取消待执行步骤，replace 停止指定工作后再执行新步骤。"
     "已接纳和正在移动都不等于已到达，要按真实回执回答。"
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。任务修订由插件分配。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
@@ -244,6 +245,11 @@ void PartnerLoop::submit(std::string_view wake) {
             {"status",motion_->stopping ? "stopping" : motion_->accepted ? "running" : "starting"}};
         if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
     }
+    if (!queued_.empty() && !delegated) {
+        input["queuedActions"] = Json::array();
+        for (const auto& step : queued_)
+            input["queuedActions"].push_back({{"work",step.work},{"skill",step.skill},{"arguments",step.arguments}});
+    }
     if (autonomous) input["recentEvents"] = recent_events_;
     if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
@@ -315,6 +321,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
+    if (skill == "queue_actions") return queue_actions(invocation,args);
     if (skill == "ask_player") {
         auto question = open_question(invocation,args);
         reply_requested_ = true;
@@ -322,6 +329,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     if (skill == "stop_motion") {
         if (!motion_ || args.at("work") != motion_->work) return {{"status","stale"}};
+        clear_queue("stopped");
         motion_->stopping = true;
         return {{"status","stopping"},{"work",motion_->work}};
     }
@@ -475,6 +483,13 @@ void PartnerLoop::advance_motion(bool stopping) {
         result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
     fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
     publish("mc.partner.action",fact);
+    const auto& receipt = fact.at("result");
+    const bool verified = receipt.at("status") == "done" && (motion.pickup.empty() ||
+        receipt.value("inventoryDelta",Json::object()).value(motion.pickup,0) > 0);
+    if (!queued_.empty() && !verified &&
+        !(replacing_motion_ && receipt.at("status") == "interrupted"))
+        clear_queue("prerequisite_failed");
+    replacing_motion_ = false;
     if (!stopping) {
         task_.record(fact);
         finished_work_ = std::move(fact);
@@ -603,6 +618,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     const bool replaced = session_ && feed_.world() != session_world_;
     advance_motion(closing || replaced || feed_.departed());
     advance_confirmed_work(config,closing || replaced || feed_.departed(),body_busy);
+    advance_queue(config,closing || replaced || feed_.departed(),body_busy);
     review(work,closing || replaced);
     if (!settle(config,instance,closing || replaced)) return;
     if (closing) {
