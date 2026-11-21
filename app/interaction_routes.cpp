@@ -47,7 +47,13 @@ void InteractionRoutes::accept(plugins::RoutedEvent event) {
         if (log_) log_->append("ask."+action,{{"ask",ask},{"instance",event.owner},{"accepted",accepted},{"body",body}});
         return;
     }
-    const bool main = event.kind == DFY_V2_EVENT_MAIL;
+    if (event.kind == DFY_V2_EVENT_MAIL) {
+        if (exchanges_.size() == 16) throw std::length_error("interaction: pending route capacity exhausted");
+        const auto box = main_box(event);
+        exchanges_.push_back({std::move(event),0,0,0,clock_()+std::chrono::seconds(120),box});
+        return;
+    }
+    const bool main = event.kind == DFY_V2_EVENT_ASK_VIA_MAIL;
     if (event.kind != DFY_V2_EVENT_ASK && !main) return;
     const auto item = identity(body.at("item")), revision = identity(body.at("revision"));
     const auto milliseconds = identity(body.at("waitMs"));
@@ -92,13 +98,14 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     if (!exchange.ask) {
         if (clock_() >= exchange.deadline) {
             if (log_) log_->append("interaction.expired",{{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
-                {"item",exchange.item},{"stage","awaiting_ask"}});
+                {"item",exchange.item},{"stage",exchange.initial_queued ? "awaiting_ask" : "awaiting_mailbox"}});
             return true;
         }
         if (!exchange.initial_queued) {
             auto message = Json::parse(exchange.origin.projection);
             message["eventDomain"] = exchange.origin.id.domain;
             message["event"] = exchange.origin.id.sequence;
+            message["requiresAsk"] = bool(exchange.item);
             const auto& rule = exchange.origin.mailbox;
             try {
                 const auto receipt = post(exchange.origin.owner,exchange.main_box,rule.category,rule.version,message.dump());
@@ -108,7 +115,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
                     {"wake",bool(auto_wake_ && (rule.flags & DFY_V2_MAIL_WAKE))}});
             } catch (const std::length_error&) {}
         }
-        return false;
+        return !exchange.item && exchange.initial_queued;
     }
     const auto* request = asks_.status(exchange.ask);
     const bool pending = request->phase == AskPhase::presenting || request->phase == AskPhase::waiting;
@@ -119,10 +126,11 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     }
     const bool to_main = !pending && exchange.main_box.value && !exchange.reply_requested;
     if (to_main && exchange.result_queued) return false;
-    const char* category = pending ? "interaction.ask.present" : to_main ? "interaction.ask.completed" :
+    const char* completion = exchange.origin.mailbox.flags & DFY_V2_MAIL_WAKE ? "interaction.ask.completed" : "interaction.ask.completed.passive";
+    const char* category = pending ? "interaction.ask.present" : to_main ? completion :
         exchange.main_box.value ? "interaction.mail.reply" : "interaction.ask.result";
     Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",request->spec.recipient},
-        {"channel",request->spec.channel}};
+        {"channel",request->spec.channel},{"requiresAsk",true}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
     else { message["status"] = ask_phase(request->phase); message["answer"] = request->answer; }
     message["eventDomain"] = exchange.origin.id.domain;
@@ -189,14 +197,16 @@ events::MailboxId InteractionRoutes::main_box(const plugins::RoutedEvent& origin
     if (!origin.mailbox.version) throw std::invalid_argument("interaction: plugin mailbox policy required");
     if (const auto known = main_boxes_.find(origin.owner); known != main_boxes_.end()) return known->second;
     const auto box = mail_.network->open(mail_.identity,origin.owner);
-    const events::MailboxCategory wake[]{{origin.mailbox.category,origin.mailbox.version},{"interaction.ask.completed",1}};
+    std::vector<events::MailboxCategory> wake{{"interaction.ask.completed",1}};
+    for (const auto& rule : origin.mailbox_categories)
+        if (rule.flags & DFY_V2_MAIL_WAKE) wake.push_back({rule.category,rule.version});
     try {
         main_boxes_.emplace(origin.owner,box);
-        intake_.watch(box,origin.mailbox.flags & DFY_V2_MAIL_WAKE ? std::span<const events::MailboxCategory>(wake) :
-            std::span<const events::MailboxCategory>{},
+        intake_.watch(box,wake,
             [this](const MailboxDelivery& delivery) -> std::optional<std::string> {
-                if (!original(delivery)) return {};
-                return std::string(delivery.event.payload->find("text")->as_string());
+                const auto wire = delivery.event.payload->find("text")->as_string();
+                if (Json::parse(wire).at("requiresAsk") == true && !original(delivery)) return {};
+                return std::string(wire);
             },origin.mailbox.flags & DFY_V2_MAIL_HIGH ? MailboxPriority::high : MailboxPriority::normal,
             [this](const MailboxDelivery& delivery, agent::RunOptions& options) { configure_main(delivery,options); },
             [this] { return auto_wake_; });
@@ -212,8 +222,9 @@ events::MailboxId InteractionRoutes::main_box(const plugins::RoutedEvent& origin
 // 步骤：核对事项和回合阶段 → 登记带身份闭包的工具 → 固定本轮快照。
 void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::RunOptions& options) {
     auto* exchange = original(delivery);
-    if (!exchange) throw std::invalid_argument("interaction: expired mail context");
-    const bool reply = delivery.event.payload->descriptor()->name() == "interaction.ask.completed";
+    if (!exchange) return;
+    const auto category = delivery.event.payload->descriptor()->name();
+    const bool reply = category == "interaction.ask.completed" || category == "interaction.ask.completed.passive";
     const auto id = exchange->origin.id;
     constexpr std::string_view ask_tool = "interaction/ask", reply_tool = "interaction/reply";
     const std::string tool(reply ? reply_tool : ask_tool);

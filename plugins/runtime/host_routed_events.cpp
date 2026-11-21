@@ -21,7 +21,7 @@ struct EventRoutes {
     bool decoding = false;
     std::vector<Schema> schemas;
     std::deque<std::shared_ptr<const Item>> pending, recent;
-    RoutedMailbox mailbox;
+    std::vector<RoutedMailbox> mail;
 };
 
 namespace {
@@ -85,15 +85,21 @@ dfy_v2_status DFY_V2_CALL register_event(dfy_v2_string_view type, uint32_t versi
     });
 }
 
-// 核对并固定原实例提交的主信箱策略建议。
+// 核对并固定原实例提交的主信箱分类与策略建议。
+// 步骤：验证注册阶段与类别 → 核对箱级优先级及重复 → 追加原类别。
 dfy_v2_status DFY_V2_CALL register_mailbox(dfy_v2_string_view type, uint32_t version, uint32_t flags, dfy_v2_error* error) {
     return boundary(error,[&](HostState& host) {
         if (host.event_routes_sealed || host.resources.state() != runtime::OwnerState::open) return DFY_V2_INVALID_CONTEXT;
         const auto name = bytes(type,96);
-        if (!namespaced(name) || !version || flags & ~(DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE)) return DFY_V2_INVALID_ARGUMENT;
+        if (!namespaced(name) || name.starts_with("interaction.") || !version || flags & ~(DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE))
+            return DFY_V2_INVALID_ARGUMENT;
         if (!host.event_routes) host.event_routes = std::make_shared<EventRoutes>();
-        if (host.event_routes->mailbox.version) return DFY_V2_BUSY;
-        host.event_routes->mailbox = {std::string(name),version,flags};
+        auto& mail = host.event_routes->mail;
+        if (!mail.empty() && ((mail.front().flags ^ flags) & DFY_V2_MAIL_HIGH)) return DFY_V2_INVALID_ARGUMENT;
+        if (std::ranges::any_of(mail,[&](const auto& entry) { return entry.category == name && entry.version == version; }))
+            return DFY_V2_BUSY;
+        if (mail.size() == 15) return DFY_V2_RESOURCE_EXHAUSTED;
+        mail.push_back({std::string(name),version,flags});
         return DFY_V2_OK;
     });
 }
@@ -166,13 +172,32 @@ std::optional<RoutedEvent> HostServices::take_routed_event() {
     try {
         result.status = schema.decoder(schema.context,{item.payload.data(),item.payload.size()},&output);
         if (!result.status) {
-            if (output.kind < DFY_V2_EVENT_ASK || output.kind > DFY_V2_EVENT_ASK_FEEDBACK || !output.length ||
+            if (output.kind < DFY_V2_EVENT_ASK || output.kind > DFY_V2_EVENT_ASK_VIA_MAIL || !output.length ||
                 output.length > sizeof(output.json)) throw std::invalid_argument("route: invalid projection");
             const std::string_view projection(output.json,output.length);
-            (void)detail::object_from(projection);
+            auto body = detail::object_from(projection);
             result.projection = projection;
             result.kind = output.kind;
-            if (output.kind == DFY_V2_EVENT_MAIL) result.mailbox = routes->mailbox;
+            if (output.kind == DFY_V2_EVENT_MAIL || output.kind == DFY_V2_EVENT_ASK_VIA_MAIL) {
+                const auto& mail = routes->mail;
+                if (mail.size() == 1 && !body.contains("mailCategory") && !body.contains("mailVersion")) {
+                    result.mailbox = mail.front();
+                } else {
+                    const auto category = body.at("mailCategory");
+                    const auto version = body.at("mailVersion");
+                    if (!category.is_string() || !version.is_number_unsigned())
+                        throw std::invalid_argument("route: invalid mailbox category");
+                    const auto found = std::ranges::find_if(mail,[&](const auto& rule) {
+                        return category == rule.category && version == rule.version;
+                    });
+                    if (found == mail.end()) throw std::invalid_argument("route: mailbox category not registered");
+                    result.mailbox = *found;
+                    body.erase("mailCategory");
+                    body.erase("mailVersion");
+                    result.projection = body.dump();
+                }
+                result.mailbox_categories = mail;
+            }
         }
     } catch (...) { result.status = DFY_V2_FAILED; }
     routes->decoding = false;

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/event_store.hpp>
 #include <string>
+#include <vector>
 
 namespace dfy::plugins {
 struct RoutedMailbox {
@@ -14,5 +15,6 @@ struct RoutedEvent {
     std::string plugin, type, payload, projection;
     std::uint32_t version = 0, kind = 0, status = 0;
     RoutedMailbox mailbox;
+    std::vector<RoutedMailbox> mailbox_categories;
 };
 }

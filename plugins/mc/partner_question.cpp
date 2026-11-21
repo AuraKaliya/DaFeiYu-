@@ -30,7 +30,7 @@ uint32_t DFY_V2_CALL decode_help(void*, dfy_v2_string_view raw, dfy_v2_event_pro
         if (reason == "action_approval") body["choices"] = {"approve","deny"};
         body["context"] = Json::parse(body.at("context").get<std::string>());
         body.erase("path");
-        return project(body,mode == "main" ? DFY_V2_EVENT_MAIL : DFY_V2_EVENT_ASK,out);
+        return project(body,mode == "main" ? DFY_V2_EVENT_ASK_VIA_MAIL : DFY_V2_EVENT_ASK,out);
     } catch (...) { return DFY_V2_FAILED; }
 }
 

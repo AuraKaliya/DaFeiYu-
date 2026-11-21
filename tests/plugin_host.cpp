@@ -35,10 +35,20 @@ void verify_routed_events() {
     const dfy_v2_string_view capability{DFY_V2_ROUTED_EVENT_INTERFACE,sizeof(DFY_V2_ROUTED_EVENT_INTERFACE)-1};
     check(HostServices::query(capability,1,&table,nullptr) == DFY_V2_OK,"missing routed event ABI");
     const auto& api = *static_cast<const dfy_v2_routed_event_api*>(table);
+    constexpr dfy_v2_string_view mailbox_capability{DFY_V2_ROUTED_MAILBOX_INTERFACE,sizeof(DFY_V2_ROUTED_MAILBOX_INTERFACE)-1};
+    check(HostServices::query(mailbox_capability,1,&table,nullptr) == DFY_V2_OK,"missing routed mailbox ABI");
+    const auto& mailbox = *static_cast<const dfy_v2_routed_mailbox_api*>(table);
     uint32_t ask = DFY_V2_EVENT_ASK, mail = DFY_V2_EVENT_MAIL;
     const dfy_v2_string_view type{"fixture.help",12}, second{"fixture.mail",12}, schema{R"({"id":"uint"})",13};
+    constexpr std::string_view mail_schema = R"({"mailCategory":"string","mailVersion":"uint","id":"uint"})";
+    constexpr std::string_view note = R"({"mailCategory":"fixture.note","mailVersion":2,"id":5})";
+    constexpr dfy_v2_string_view note_type{"fixture.note",12};
+    check(mailbox.register_mailbox(second,1,DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE,nullptr) == DFY_V2_OK &&
+        mailbox.register_mailbox(note_type,2,0,nullptr) == DFY_V2_INVALID_ARGUMENT &&
+        mailbox.register_mailbox(note_type,2,DFY_V2_MAIL_HIGH,nullptr) == DFY_V2_OK &&
+        mailbox.register_mailbox(note_type,2,DFY_V2_MAIL_HIGH,nullptr) == DFY_V2_BUSY,"class or independent wake policy lost");
     check(api.register_event(type,1,schema,decode_route,&ask,nullptr) == DFY_V2_OK &&
-        api.register_event(second,1,schema,decode_route,&mail,nullptr) == DFY_V2_OK,"registration failed");
+        api.register_event(second,1,{mail_schema.data(),mail_schema.size()},decode_route,&mail,nullptr) == DFY_V2_OK,"registration failed");
     host.seal_event_routes();
     check(api.register_event(type,2,schema,decode_route,&ask,nullptr) == DFY_V2_INVALID_CONTEXT,"registration changed after start");
     dfy_v2_event_receipt receipt{};
@@ -50,12 +60,18 @@ void verify_routed_events() {
     const auto domain = receipt.domain;
     check(api.emit(type,1,1,first,&receipt,nullptr) == DFY_V2_OK && receipt.repeated && receipt.domain == domain &&
         api.emit(type,1,1,next,&receipt,nullptr) == DFY_V2_INVALID_ARGUMENT &&
-        api.emit(second,1,2,next,&receipt,nullptr) == DFY_V2_OK,"duplicate event changed original");
+        api.emit(second,1,2,{note.data(),note.size()},&receipt,nullptr) == DFY_V2_OK,"duplicate event changed original");
     const auto a = host.take_routed_event(), b = host.take_routed_event();
     check(a && b && a->id.domain == domain && a->kind == ask && !a->status && a->projection == R"({"id":4})" &&
-        b->id.sequence == 2 && b->kind == mail && !b->status && !host.take_routed_event(),"decode or ordering mismatch");
-    check(api.emit(type,1,3,first,&receipt,nullptr) == DFY_V2_OK && host.begin_shutdown() && !host.take_routed_event() &&
-        api.emit(type,1,4,first,&receipt,nullptr) == DFY_V2_INVALID_CONTEXT && host.finish_shutdown(),"old route survived shutdown");
+        b->id.sequence == 2 && b->kind == mail && !b->status && b->projection == R"({"id":5})" &&
+        b->mailbox.category == "fixture.note" && b->mailbox.version == 2 && b->mailbox.flags == DFY_V2_MAIL_HIGH &&
+        b->mailbox_categories.size() == 2 && b->mailbox_categories.front().flags == (DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE) &&
+        !host.take_routed_event(),"decode or ordering mismatch");
+    constexpr std::string_view unknown = R"({"mailCategory":"fixture.note","mailVersion":3,"id":6})";
+    check(api.emit(second,1,3,{unknown.data(),unknown.size()},&receipt,nullptr) == DFY_V2_OK &&
+        host.take_routed_event()->status == DFY_V2_FAILED,"unregistered mail category was routed");
+    check(api.emit(type,1,4,first,&receipt,nullptr) == DFY_V2_OK && host.begin_shutdown() && !host.take_routed_event() &&
+        api.emit(type,1,5,first,&receipt,nullptr) == DFY_V2_INVALID_CONTEXT && host.finish_shutdown(),"old route survived shutdown");
 }
 // 验证纯 C 对未预编译结构的枚举及宿主描述引用寿命。
 // 步骤：建立六种字段的描述 → 查询并消费反射服务 → 拒绝索引及种类错误 → 保留后重新借用并回收。
