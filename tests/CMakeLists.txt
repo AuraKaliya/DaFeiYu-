@@ -46,6 +46,7 @@ if(DFY_MC_NODE)
   add_test(NAME mc.exploration COMMAND "${DFY_MC_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/exploration.test.cjs")
   add_test(NAME mc.player_events COMMAND "${DFY_MC_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/chat-events.test.cjs")
   add_test(NAME mc.block_survey COMMAND "${DFY_MC_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/block-survey.test.cjs")
+  add_test(NAME mc.partner_observe COMMAND "${DFY_MC_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/partner-observe.test.cjs")
   foreach(mode IN ITEMS exploring blocked disconnect recheck gap)
     add_test(NAME app.review_${mode} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/exploration-host.cjs"
       "$<TARGET_FILE:dfy_companion_review_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-review" ${mode})

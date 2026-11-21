@@ -138,6 +138,18 @@ void PartnerTask::record(const Json& receipt) {
         observations_[message] = {{"message",message},{"sampledAtMs",result.at("sampledAtMs")},{"playerFocus",result.at("playerFocus")}};
         if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
     }
+    if (receipt.at("skill") == "observe" && result.contains("observation")) {
+        auto& samples = result["observation"]["samples"];
+        for (auto& sample : samples) for (auto& view : sample["views"]) {
+            if (view.erase("grid")) view["gridAvailable"] = true;
+            if (!view.contains("playerFocus")) continue;
+            const auto message = view.at("message").get<std::uint64_t>();
+            observations_[message] = {{"message",message},{"sampledAtMs",sample.at("sampledAtMs")},
+                {"playerFocus",view.at("playerFocus")}};
+        }
+        for (auto& sample : samples) sample.erase("palette");
+        while (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+    }
     if ((receipt.at("skill") == "collect" || receipt.at("skill") == "place") && result.contains("changes")) {
         for (auto cell : result.at("changes")) {
             cell["work"] = receipt.at("bridgeWork");

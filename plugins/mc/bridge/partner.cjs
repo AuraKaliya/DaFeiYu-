@@ -3,6 +3,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
+const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, collectReadback } = require('./collection.cjs');
@@ -112,6 +113,7 @@ function partnerService(bot, world, inbox, places, owner) {
   let active, previous, closed = false, done = Promise.resolve();
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
+  const observations = new Set();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
     return !closed && world.read()?.generation === context.generation && inbox.get(context.generation, context.order) &&
@@ -163,7 +165,11 @@ function partnerService(bot, world, inbox, places, owner) {
     try {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
-      if (r.skill === 'observe') {
+      if (r.skill === 'observe' && ['sources','radius','detail','samples'].some(key => Object.hasOwn(args, key))) {
+        await observeWindow(bot, args, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
+          player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
+          messageAnchor: order => messageAnchor(r.generation, order), inventory: () => inventory(bot) });
+      } else if (r.skill === 'observe') {
         result.sampledAtMs = Math.floor(performance.now());
         result.position = bot.entity.position.clone();
         result.dimension = bot.game.dimension;
@@ -266,11 +272,16 @@ function partnerService(bot, world, inbox, places, owner) {
           known.polled = performance.now();
           if (method === 'partner.stop') cancel();
         }
+        if (method === 'partner.stop' && known.abort && !receipt.exited) {
+          known.cancelled = true;
+          known.abort.abort();
+        }
         return receipt;
       }
       const controlsBody = skill !== 'reply' && skill !== 'observe';
       if (method !== 'partner.begin' || !current(context) || (controlsBody && active && !active.receipt.exited))
         throw new Error('游戏工作已失效或正忙');
+      if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
       // 只回收已经退出且原消息不可能再次接纳的票据。
       if (records.size >= 64) {
         const reclaimable = [...records].find(([, entry]) => entry !== active && entry.receipt.exited &&
@@ -286,11 +297,20 @@ function partnerService(bot, world, inbox, places, owner) {
           if (active === job && (world.read()?.generation !== context.generation || performance.now() - job.polled > 4000)) cancel();
         }, 150);
         done = run(job, args).finally(() => clearInterval(timer));
+      } else if (skill === 'observe') {
+        job.abort = new AbortController();
+        observations.add(job);
+        job.done = run(job, args).finally(() => observations.delete(job));
       } else void run(job, args);
       return job.receipt;
     },
     // 立即关闭接纳，等原工作归还后才允许报告释放。
-    async close() { closed = true; cancel(); await done; },
+    async close() {
+      closed = true;
+      cancel();
+      for (const job of observations) { job.cancelled = true; job.abort.abort(); }
+      await Promise.all([done, ...[...observations].map(job => job.done)]);
+    },
   };
 }
 module.exports = { partnerService };
