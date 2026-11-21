@@ -25,6 +25,21 @@ function supportGoal(bot, point, door) {
   return new goals.GoalPlaceBlock(point, bot.world, { range: 4.3, faces });
 }
 
+// 预选净空及可见支撑面都成立的站位，避免寻路器在洞口或遮挡边缘停住。
+// 步骤：扫描目标附近的完整地面 → 核对站姿和视线 → 组成可替代的精确站位。
+function approachGoal(bot, point, support) {
+  const stands = [];
+  for (let y = -2; y <= 2; ++y) for (let z = -3; z <= 3; ++z) for (let x = -3; x <= 3; ++x) {
+    const feet = point.offset(x, y, z);
+    if (!vacant.has(bot.blockAt(feet)?.name) || !vacant.has(bot.blockAt(feet.offset(0, 1, 0))?.name) ||
+        !bot.blockAt(feet.offset(0, -1, 0))?.shapes?.some(s => s.join(',') === '0,0,0,1,1,1') ||
+        support.isStandingIn(feet) || !support.getFaceAndRef(feet.offset(0.5, bot.entity.eyeHeight, 0.5))) continue;
+    stands.push(new goals.GoalBlock(feet.x, feet.y, feet.z));
+  }
+  if (!stands.length) throw new Error('洞口附近没有读到能看到支撑面的站位');
+  return new goals.GoalCompositeAny(stands);
+}
+
 // 从真实背包读取同名材料总量，跨栈数量也参与核对。
 function stock(bot, name) {
   return bot.inventory.items().filter(item => item.name === name).reduce((sum, item) => sum + item.count, 0);
@@ -42,7 +57,10 @@ async function placeBlock(bot, point, type, check, walk, result) {
 
   const eye = () => bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
   const goal = supportGoal(bot, point, door);
-  if (!goal.getFaceAndRef(eye())) await walk(bot, goal);
+  if (!goal.getFaceAndRef(eye())) {
+    try { await walk(bot, door ? approachGoal(bot, point, goal) : goal); }
+    finally { result.approachPosition = bot.entity.position.clone(); }
+  }
   check();
   const item = bot.inventory.items().find(stack => stack.name === type.name);
   if (!item) throw new Error('建材已不在背包');

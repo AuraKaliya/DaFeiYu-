@@ -36,7 +36,8 @@ function prepareScene(send) {
 // 步骤：等待玩家入场 → 绑定角色和观察端 → 运行宿主至接管或离场 → 收尾本次连接。
 async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
-  const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
+  const doorProbe = mode === '--door-probe';
+  const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
   const withDirt = mode !== '--gap-ambiguous-probe';
   const root = path.join(evidence, 'host');
   const stop = path.join(root, 'stop');
@@ -75,7 +76,7 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
-    if (wallProbe) prepareWall(send, withDirt, mode === '--gap-probe');
+    if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
     else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
@@ -92,7 +93,7 @@ async function play(fixture, exe, pkg, mode, config) {
       game.bot.blockAt(game.bot.entity.position.clone().set(x, -60, 0))?.name === 'dirt'), '客户端读回探针布置的两块泥土');
     if (wallProbe) {
       const block = (x, y) => game.bot.blockAt(game.bot.entity.position.clone().set(x,y,-3))?.name;
-      await until(() => game.bot.inventory.items().some(item => item.name === 'oak_door') &&
+      await until(() => fixture.materialCount('oak_door') === (doorProbe ? 0 : 1) &&
         fixture.materialCount('dirt') === (withDirt ? 8 : 0) &&
         block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === 'dirt' && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
@@ -190,7 +191,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe'].includes(mode) ||
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--door-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

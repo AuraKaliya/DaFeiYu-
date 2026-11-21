@@ -1,9 +1,29 @@
 #include "partner_loop.hpp"
+#include <algorithm>
+#include <cmath>
 
 namespace dfy::mc {
 using Json = nlohmann::json;
 
 namespace {
+// 将两种原版注册名写法归一，比较动作是否仍可能涉及受保护的目标。
+// 步骤：核对材料 → 对照可选固定方格 → 识别同一扇门的两半。
+bool same_action(std::string_view skill, const Json& a, const Json& b) {
+    const auto material = [](const Json& args) {
+        auto name = args.value("block",std::string{});
+        if (name.starts_with("minecraft:")) name.erase(0,10);
+        return name;
+    };
+    const auto block = material(a);
+    if (block != material(b)) return false;
+    if (!a.contains("x") || !a.contains("y") || !a.contains("z") ||
+        !b.contains("x") || !b.contains("y") || !b.contains("z")) return skill == "collect";
+    if (a.at("x") != b.at("x") || a.at("z") != b.at("z")) return false;
+    if (a.at("y") == b.at("y")) return true;
+    return skill == "collect" && block.ends_with("_door") &&
+        std::abs(a.at("y").get<double>()-b.at("y").get<double>()) == 1;
+}
+
 // 为受支持的原生动作生成问题，业务参数保留完整坐标和材料。
 std::string confirmation_question(std::string_view skill, const Json& args) {
     const auto& block = args.at("block").get_ref<const std::string&>();
@@ -41,6 +61,10 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     args.erase("route");
     args.erase("approval");
     auto question = confirmation_question(skill,args);
+    const bool recorded = std::ranges::any_of(guarded_actions_,[&](const auto& action) {
+        return action.first == skill && action.second == args;
+    });
+    if (!recorded && guarded_actions_.size() >= 128) return false;
     const auto now = std::chrono::steady_clock::now();
     Confirmation item{request,order_,0,session_world_,feed_.owner(),std::string(skill),std::move(question),std::move(args),{},
         now+std::chrono::seconds(25),route == "game"};
@@ -49,8 +73,16 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
         question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",item.deadline};
         question_->approval = true;
     }
+    if (!recorded) guarded_actions_.emplace_back(skill,item.arguments);
     confirmation_ = std::move(item);
     return true;
+}
+
+// 已到期、撤回或拒绝的候选仍须以新确认才可再次执行。
+bool PartnerLoop::requires_approval(std::string_view skill, const Json& args) const {
+    return awaiting_approval(skill) || std::ranges::any_of(guarded_actions_,[&](const auto& action) {
+        return action.first == skill && same_action(skill,action.second,args);
+    });
 }
 
 // 判断当前技能是否仍持有等待或已批准但尚未执行的候选。

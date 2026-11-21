@@ -75,13 +75,19 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
 
 // 保留原世界、玩家和问题，等待插件循环开始呈现。
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
-    if (!question_events_ || !id) throw std::invalid_argument("MC question: unavailable");
+    if (!id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
     if (question_work_) return {{"status","busy"}};
-    const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("direct"));
-    if (text.empty() || text.size() > 400 || (path != "local" && path != "direct" && path != "main"))
+    const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("local"));
+    const auto options = args.value("options",Json::array());
+    if (text.empty() || text.size() > 400 || !options.is_array() || options.size() > 4 ||
+        (path != "local" && (!question_events_ || (path != "direct" && path != "main"))))
         throw std::invalid_argument("MC question: invalid request");
+    for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
+        option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
     question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
+    question_->options = options;
+    question_->task_revision = task_.revision();
     question_result_.clear();
     return {{"status","recorded"},{"item",id}};
 }
@@ -129,6 +135,7 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
         return;
     }
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
+    if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
     question_.reset();
     question_wake_ = true;
 }
@@ -156,7 +163,8 @@ void PartnerLoop::flush_question_events() {
 // 用选定的唯一路径推进实际呈现及可信玩家答复。
 // 步骤：结算原发言 → 核对世界与本地时限 → 消费答复或推进既定路径。
 void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing) {
-    const bool live = !closing && question_ && question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed();
+    const bool live = !closing && question_ && question_->world == feed_.world() && question_->player == feed_.owner() &&
+        !feed_.departed() && (question_->path != "local" || question_->task_revision == task_.revision());
     if (question_work_) {
         std::optional<GameResult> result;
         try { result = question_work_->poll(!live); }
@@ -168,6 +176,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             const auto receipt = Json::parse(result->payload,nullptr,false);
             question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
             if (question.path == "local" && !question.presented) { complete_question("unavailable",{}); return; }
+            if (question.path == "local") remember_dialogue("companion",question.order,question.text);
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
                 {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}});
@@ -184,14 +193,15 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             const auto text = event.value("text",std::string{});
             if (event.at("sequence") <= q.order) continue;
             std::string answer;
-            if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
+            if (local && std::ranges::find(q.options,Json(text)) != q.options.end()) answer = text;
+            else if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
             else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
-            else if (text.starts_with(prefix)) answer = text.substr(prefix.size());
+            else if (!local && text.starts_with(prefix)) answer = text.substr(prefix.size());
             if (answer.empty() || (q.approval && answer != "approve" && answer != "deny")) continue;
+            q.answer_order = event.at("sequence");
             if (local) { complete_question("answered",answer); return; }
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
                 {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}});
-            q.answer_order = event.at("sequence");
             q.forwarded = true;
             break;
         }
@@ -215,7 +225,8 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             return;
         }
         const auto token = std::to_string(q.ask ? q.ask : q.item);
-        const auto prompt = q.text+(q.approval ? " 回复 确认 "+token+" 或 拒绝 "+token : " 回复 答复 "+token+" <回答>");
+        const auto prompt = local ? q.text : q.text+
+            (q.approval ? " 回复 确认 "+token+" 或 拒绝 "+token : " 回复 答复 "+token+" <回答>");
         const auto arguments = Json{{"context",{{"generation",q.world},{"order",feed_.cursor()}}},
             {"arguments",{{"text",prompt}}}}.dump();
         question_work_ = std::make_unique<GameWork>(GameAction::partner,config,

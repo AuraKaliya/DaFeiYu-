@@ -210,6 +210,8 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             {"next","player"},{"target",Json::object()}});
     };
     if (last.role == Role::tool) {
+        if (last.tool_call_id == "approval-bypass")
+            return call("reply","received-material",{{"text","收到泥土，我补刚才那处。"}});
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         if (last.tool_call_id == "save" || last.tool_call_id == "point" || last.tool_call_id == "directory" ||
             last.tool_call_id == "question") return internal("fixed round done");
@@ -229,6 +231,9 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 focus.at("choice") != "3,-59,-3:x") || !std::ranges::any_of(focus.at("candidates"),[](const auto& gap) {
                 return gap.at("id") == "7,-60,-3:x" && gap.at("height") == 2;
             })) throw std::runtime_error("wall probe: original player view did not identify gap A with a separate gap B");
+            if (ambiguous && last.tool_call_id == "survey")
+                return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},
+                    {"options",{"靠河那段，留木门","靠木屋那段"}}});
             if (!ask_path.empty() && last.tool_call_id == "survey")
                 return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
             if (gap_only && !ambiguous) return call("observe","current-view",{{"around","player"},{"block","oak_door"}});
@@ -253,7 +258,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             return call("withdraw_confirmation","withdraw",{{"item",original.at("pendingApproval").at("item")}});
         }
         if (last.tool_call_id == "withdraw" && result.at("status") == "withdrawn")
-            return call("reply","received-material",{{"text","收到泥土，我补刚才那处。"}});
+            return call("collect","approval-bypass",{{"block","minecraft:dirt"},{"count",1}});
         if (last.tool_call_id == "received-material" && result.at("sent") == true)
             return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
         if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
@@ -323,6 +328,50 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     }
     return internal("fixed event read");
 }
+
+// 用一条玩家原话触发门的识别及持续拆装，模型只在接纳和读回边界作决策。
+// 步骤：绑定玩家指向 → 展开采集并识别现成门 → 提交拆装步骤 → 据实际安装发言。
+dfy::model::Response door_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string name, Json args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with("_"+name); });
+        if (tool == request.tools.end()) throw std::runtime_error("door probe: missing "+name);
+        return {{Role::assistant,"",{{name,tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "skills.expanded" && !input.contains("activeMotion") &&
+            std::ranges::any_of(request.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); }))
+            return call("observe",{{"around","self"},{"block","oak_door"}});
+        if (input.at("trigger") == "motion.finished" && input.at("finishedWork").at("skill") == "place" &&
+            input.at("finishedWork").at("result").at("placed") == true)
+            return call("reply",{{"text","门已经装到你指的缺口了。"}});
+        if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
+            return call("observe",{{"message",2}});
+    } else if (last.role == Role::tool && last.tool_call_id == "observe") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        if (result.contains("anchor")) {
+            if (result.at("playerFocus").at("choice") != "7,-60,-3:x")
+                throw std::runtime_error("door probe: wrong opening for the original player view");
+            return call("task_update",{{"goal","把现成门装到玩家指的缺口"},{"next","player"},
+                {"target",{{"message",2},{"candidate","7,-60,-3:x"}}}});
+        }
+        if (result.at("doors").size() != 1 || result.at("doors").front().at("status") != "complete")
+            throw std::runtime_error("door probe: existing door not verified");
+        const auto& source = result.at("doors").front().at("lower");
+        auto collect = source;
+        collect["block"] = "oak_door";
+        collect["count"] = 1;
+        return call("queue_actions",{{"operation","append"},{"steps",Json::array({
+            {{"skill","collect"},{"arguments",std::move(collect)}},
+            {{"skill","place"},{"arguments",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3}}}}
+        })}});
+    } else if (last.role == Role::tool && last.tool_call_id == "task_update")
+        return call("skills",{{"categories",{"dig_break"}}});
+    return {{Role::assistant,R"({"internal":"waiting for verified door work"})"}};
+}
 }
 
 // 保持真人体验的正式宿主运行，向本地日志发布进展和计划板并完整收尾。
@@ -337,14 +386,16 @@ int wmain(int argc, wchar_t** argv) {
         const bool gap = mode == L"--gap-probe" || mode == L"--gap-ambiguous-probe";
         const bool wall = !ask.empty() || mode == L"--wall-probe" || gap;
         const bool follow = mode == L"--follow-probe";
-        const bool partner = wall || follow || mode == L"--partner-probe";
+        const bool door = mode == L"--door-probe";
+        const bool partner = wall || follow || door || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,ask,gap,root](const auto&, const auto& request) {
+                if (door) return door_sample(request);
                 if (wall) return wall_sample(request,root,ask,gap);
                 if (follow) return follow_sample(request);
                 return partner ? partner_sample(request,root) : sample_turn(request);

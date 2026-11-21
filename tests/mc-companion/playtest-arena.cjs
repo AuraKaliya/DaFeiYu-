@@ -8,13 +8,18 @@ const course = [
 ];
 
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
-function prepareWall(send, withDirt, withExistingDoor) {
+function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
+  if (moveDoor) {
+    send('fill 2 -61 -4 10 -61 3 minecraft:grass_block');
+    send('fill 2 -60 -4 10 -58 3 minecraft:air');
+  }
   for (const command of ['gamerule randomTickSpeed 0',
     'fill 2 -60 -3 8 -59 -3 minecraft:dirt', 'setblock 3 -59 -3 minecraft:air',
     'fill 7 -60 -3 7 -59 -3 minecraft:air', 'fill -3 -60 1 -3 -59 1 minecraft:oak_planks',
     'fill 1 -60 -3 1 -59 -3 minecraft:oak_planks', 'fill 9 -60 -3 9 -59 -3 minecraft:oak_log',
-    `tp DfyGuestCheck ${wall.repairStand.join(' ')} facing 3.5 -58.5 -3`,
-    'give DfyCompanion minecraft:oak_door 1']) send(command);
+    `tp DfyGuestCheck ${wall.repairStand.join(' ')} facing 3.5 -58.5 -3`]) send(command);
+  if (moveDoor) send(`tp DfyGuestCheck ${wall.doorStand.join(' ')} 180 4`);
+  else send('give DfyCompanion minecraft:oak_door 1');
   if (withDirt) send('give DfyCompanion minecraft:dirt 8');
   if (withExistingDoor) {
     send('setblock 4 -61 2 minecraft:stone');

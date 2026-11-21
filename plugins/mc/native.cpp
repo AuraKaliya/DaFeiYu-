@@ -239,7 +239,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
         }
         pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
-        if (partner_turn && !confirmed && raw->partner.awaiting_approval(skill->name))
+        if (partner_turn && !confirmed && skill->supports_approval &&
+            raw->partner.requires_approval(skill->name,nlohmann::json::parse(job.arguments).at("arguments")))
             return report(DFY_V2_BUSY,error);
         if (controls_body && !target_blocked && !pending_approval &&
             (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw)))

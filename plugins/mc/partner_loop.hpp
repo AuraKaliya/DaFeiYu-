@@ -48,6 +48,8 @@ class PartnerLoop {
         std::string work = {});
     // 防止同技能重提绕过已登记的局内候选。
     bool awaiting_approval(std::string_view skill) const noexcept;
+    // 对仍待确认或历史上受确认约束的同一动作保持约束。
+    bool requires_approval(std::string_view skill, const nlohmann::json& arguments) const;
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
     std::optional<std::string> confirm_result(std::uint64_t request) const;
     // 归还原确认并保存其终态，迟到回信可重读原决定。
@@ -119,6 +121,8 @@ class PartnerLoop {
         bool started = false, presented = false, dispatched = false, forwarded = false;
         bool approval = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
+        std::uint64_t task_revision = 0;
+        nlohmann::json options;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;
@@ -149,6 +153,7 @@ class PartnerLoop {
     };
     std::deque<QueuedAction> queued_;
     bool replacing_motion_ = false;
+    std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
     nlohmann::json finished_work_;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;

@@ -52,7 +52,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
         if (skill == partner_skills.end() || !valid_step(name,parameters) ||
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
-            (name == "place" && !task_.target_ready()) || awaiting_approval(name))
+            (name == "place" && !task_.target_ready()) || requires_approval(name,parameters))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
@@ -86,7 +86,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (closing || feed_.gap() || step.revision != task_.revision()) { clear_queue("stale"); return; }
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
-    if (awaiting_approval(step.skill) || (step.skill == "place" && !task_.bind_placement(args))) {
+    if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args))) {
         clear_queue("blocked");
         return;
     }

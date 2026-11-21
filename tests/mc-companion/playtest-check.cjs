@@ -109,12 +109,15 @@ async function checkPlayer(fixture, mode) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
-    const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner ? await until(() => readArena(player, wallProbe, mode === '--gap-probe'), '独立客户端读回验收场地') : null;
+    const doorProbe = mode === '--door-probe';
+    const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
+    const arena = partner ? await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
-    if (wallProbe) {
+    if (doorProbe) {
+      await checkDoor(fixture, player, whispers);
+    } else if (wallProbe) {
       await checkWall(fixture, player, whispers, mode);
     } else if (mode === '--follow-probe') {
       await checkFollow(fixture, player, whispers, arena.course);
@@ -165,6 +168,26 @@ async function checkPlayer(fixture, mode) {
   } finally { player.quit(); }
 }
 
+// 只发一条指令，独立客户端分别复核原门、安装洞口和唯一完工发言。
+// 步骤：确认玩家视角 → 等待实际完工 → 比对原门、库存和安装回执。
+async function checkDoor(fixture, player, whispers) {
+  await until(() => Math.floor(fixture.ownerEntity()?.position.x) === 7 && Math.cos(fixture.ownerEntity().yaw) > 0.99,
+    '陪玩角色读到安装洞口视角');
+  player.chat('把你旁边那个木门拆下来，装到我指的这个缺口');
+  await until(() => whispers.includes('门已经装到你指的缺口了。'), '一句话拆装完成', 25000);
+  const mutations = readRows(fixture, 'game-actions.jsonl').filter(row => ['collect', 'place'].includes(row.skill));
+  assert.deepEqual(mutations.map(row => row.skill), ['collect', 'place']);
+  assert.deepEqual(mutations[0].result.inventoryDelta, { oak_door: 1 });
+  assert.equal(mutations[1].result.sourceMessage, 2);
+  assert.equal(mutations[1].result.blocks.length, 2);
+  const block = pos => player.blockAt(player.entity.position.clone().set(...pos))?.name;
+  assert.ok(wall.existingDoor.every(pos => block(pos) === 'air'));
+  assert.ok([wall.doorLower, wall.doorUpper].every(pos => block(pos) === 'oak_door'));
+  assert.equal(block(wall.repair), 'air');
+  assert.deepEqual(whispers, ['门已经装到你指的缺口了。']);
+  assert.ok(!readRows(fixture, 'trace/events.jsonl').some(row => row.kind === 'ask.opened'));
+}
+
 // 独立玩家核对补墙、门洞及不同澄清路径上的世界实际状态。
 // 步骤：保存发话指向并移到门洞 → 按需澄清 → 核对空门洞或批准后读回两格门。
 async function checkWall(fixture, player, whispers, mode) {
@@ -189,7 +212,11 @@ async function checkWall(fixture, player, whispers, mode) {
   await until(() => fixture.settled === 3 && player.entity.position.x > 7 && fixture.ownerEntity()?.position.x > 7,
     '保存玩家原指向且两端均看到玩家已到门洞旁');
   player.chat('先补刚才指的缺口，门洞留空');
-  if (askPath) {
+  if (ambiguous) {
+    await until(() => whispers.includes('你指靠河的那段，还是靠木屋的那段？'), '自然追问实际送达');
+    assert.equal(block(3, -59, -3).name, 'air');
+    player.chat('靠河那段，留木门');
+  } else if (askPath) {
     if (manual) {
       await until(() => readTrace().some(row => row.kind === 'interaction.queued' && !row.wake), '手动信箱有待收问题');
       assert.ok(!readTrace().some(row => row.kind === 'model.prepared' && row.source === 'main'));
@@ -303,7 +330,8 @@ async function checkGap(fixture, player, whispers, block, ambiguous) {
     assert.equal(withdrawal.body.status, 'withdrawn');
     assert.equal(withdrawal.body.execution, 'skipped');
     assert.equal(String(withdrawal.body.id), token);
-    assert.equal(whispers.filter(text => /回复 答复 \d+ <回答>$/.test(text)).length, 1);
+    assert.equal(whispers.filter(text => /回复 答复 \d+ <回答>$/.test(text)).length, 0);
+    assert.equal(whispers.filter(text => text === '你指靠河的那段，还是靠木屋的那段？').length, 1);
     assert.ok(!trace().some(row => row.kind === 'ask.opened'));
     assert.equal(whispers.filter(text => /确认 (\d+) 或 拒绝 \1$/.test(text)).length, 1);
     player.chat('确认 ' + token);

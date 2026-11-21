@@ -115,6 +115,9 @@ void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
     motion_.reset();
+    queued_.clear();
+    replacing_motion_ = false;
+    guarded_actions_.clear();
     finished_work_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
@@ -212,6 +215,7 @@ void PartnerLoop::retire() {
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
+    guarded_actions_.clear();
     finished_work_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
@@ -253,7 +257,8 @@ void PartnerLoop::submit(std::string_view wake) {
     if (autonomous) input["recentEvents"] = recent_events_;
     if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
-    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path}};
+    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
+        {"options",question_->options}};
     if (confirmation_ && confirmation_->work && !delegated) {
         const auto& candidate = *confirmation_;
         input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
@@ -270,7 +275,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
-        if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
+        if (skill.kind == SkillKind::confirmed) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
