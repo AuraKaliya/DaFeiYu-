@@ -31,7 +31,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (last.role == Role::tool) return {{Role::assistant,"report from partner"}};
             const auto body = Json::parse(last.content);
-            if (!body.contains("delegation")) return {{Role::assistant,"game fact acknowledged"}};
+            if (!body.contains("delegation")) return {{Role::assistant,R"({"internal":"game fact acknowledged"})"}};
             if (++delegated != 1 || body.at("delegation").at("text") != "give a local greeting" || !body.at("events").empty() ||
                 input.tools.size() != 3 || std::ranges::any_of(input.tools,[](const auto& tool) {
                     return tool.name.ends_with("_move") || tool.name.ends_with("_skills") || tool.name.ends_with("_collect_confirmed");

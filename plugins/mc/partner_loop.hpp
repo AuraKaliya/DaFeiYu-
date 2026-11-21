@@ -51,7 +51,9 @@ class PartnerLoop {
     dfy_v2_partner_status status() const noexcept;
   private:
     // 当前回合实际退出后可发布原结算，或请求取消并继续等待。
-    bool settle(bool cancel);
+    bool settle(const BridgeConfig& config, std::uint64_t instance, bool cancel);
+    // 以原游戏工作提交玩家可见的最终文本，等待实际发言回执。
+    bool settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel);
     // 用原游戏游标、新事件或局内任务信号构造一轮，接纳后消费原件。
     void submit(std::string_view wake);
     // 分组查看已实现能力，并安排在下一轮更换可见的详细契约。
@@ -136,6 +138,8 @@ class PartnerLoop {
     struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string work, body; };
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
+    std::unique_ptr<GameWork> final_reply_;
+    bool reply_requested_ = false;
     struct Release {
         std::string world, id, arguments;
         std::unique_ptr<PipeExchange> pipe;

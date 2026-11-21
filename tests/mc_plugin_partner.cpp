@@ -35,17 +35,17 @@ int wmain(int argc, wchar_t** argv) {
                     const auto result = nlohmann::json::parse(last.content.substr(last.content.find('{')));
                     if (result.at("status") != "scheduled" || result.at("categories").size() != 12 || result.at("wake") != true)
                         throw std::runtime_error("discovery did not report the available categories");
-                    return {{Role::assistant,"ready for expanded scope"}};
+                    return {{Role::assistant,R"({"internal":"ready for expanded scope"})"}};
                 }
                 if (task && last.tool_call_id == "task") {
                     if (last.content.find("\"status\":\"updated\"") == std::string::npos)
                         throw std::runtime_error("shared task was not accepted");
                     if (scene) std::ofstream(root/"scene-changed").put('1');
-                    return {{Role::assistant,"turn finished"}};
+                    return {{Role::assistant,R"({"internal":"turn finished"})"}};
                 }
                 if (!motion || last.tool_call_id == "reply")
                     actual_reply = last.content.find(confirm ? "\"collected\":2" : "\"sent\":true") != std::string::npos;
-                return {{Role::assistant,"internal settlement"}};
+                return {{Role::assistant,R"({"internal":"tool receipt read"})"}};
             }
             const auto input = nlohmann::json::parse(last.content);
             if (input.at("trigger") == "skills.expanded") {
@@ -77,6 +77,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (follow && (active.at("skill") != "follow" || active.at("progress").at("distance") != 4.5))
                     throw std::runtime_error("tracked progress missing from the active follow");
                 const auto reply = input.at("events").back().at("sequence") == 3;
+                if (reply && !follow) return {{Role::assistant,"still moving"}};
                 const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) {
                     return item.name.ends_with(reply ? "_reply" : "_stop_motion");
                 });
@@ -90,10 +91,11 @@ int wmain(int argc, wchar_t** argv) {
                     captured.at("position").at("x") != -0.5 || input.at("lastObservation").at("position").at("x") != -1.5)
                     throw std::runtime_error("original player scene was lost or replaced by the live actor position");
             }
-            if (confirm && input.at("events").back().at("sequence") == 3) return {{Role::assistant,"approval observed"}};
+            if (confirm && input.at("events").back().at("sequence") == 3)
+                return {{Role::assistant,R"({"internal":"approval observed"})"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
                 interruption_seen = input.at("previousActivity").at("stopRequested") == true;
-                return {{Role::assistant,"original work settled"}};
+                return {{Role::assistant,R"({"internal":"original work settled"})"}};
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
@@ -147,7 +149,8 @@ int wmain(int argc, wchar_t** argv) {
                     if (motion) {
                         const bool reply = fact.at("skill") == "reply";
                         if (accepted_motion.empty() || fact.at("order") != (reply ? 3 : 2) ||
-                            (reply ? fact.at("result").at("sent") != true || game_receipts != 0 :
+                            (reply ? fact.at("result").at("sent") != true || game_receipts != 0 ||
+                                (fact.at("invocation") == 0) == follow :
                                 fact.at("bridgeWork") != accepted_motion ||
                                 fact.at("result").at("status") != "interrupted" || game_receipts != 1))
                             throw std::runtime_error("motion and reply receipts lost their original identities or order");

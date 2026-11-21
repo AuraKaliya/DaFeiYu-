@@ -31,9 +31,11 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto& last = request.messages.back();
-    const auto speak = [&](std::string message) {
+    const auto speak = [](std::string message) {
         return Response{{Role::assistant, std::move(message)}, FinishReason::stop};
     };
+    const auto internal = [&](std::string text) { return speak(Json{{"internal",text}}.dump()); };
+    const std::string reply = "我在呢，就在你下面不远的地方。看你站在上面一层，我这边是山脚附近，有块小台地可以上去。要不要我上去跟你汇合？";
     const auto call = [&](const std::string& skill, const Json& arguments) -> Response {
         const auto tool = std::ranges::find_if(request.tools, [&](const auto& def) { return def.name.ends_with("_" + skill); });
         if (tool == request.tools.end()) throw std::runtime_error("missing registered skill: " + skill);
@@ -56,9 +58,10 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
         record_input(root, input);
         const bool expanded = input.at("trigger") == "skills.expanded";
         const auto& event = input.at(expanded ? "recentEvents" : "events").back();
-        if (event.at("type") != "player.message") return speak("内部结算：暂时安静");
+        if (event.at("type") != "player.message") return internal("暂时安静");
         const auto seq = event.at("sequence").get<unsigned>();
-        if (seq == 2 || seq == 7) return call("reply", {{"text",root.parent_path().filename().string() + "-" + std::to_string(seq)}});
+        if (seq == 2) return call("observe", {{"around","player"}});
+        if (seq == 7) return call("reply", {{"text",reply}});
         if (seq == 3) {
             if (!expanded) return call("observe", {{"block","dirt"}});
             if (!input.at("task").at("lastAction").at("result").at("visible").empty())
@@ -69,16 +72,18 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
             return call("move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
         }
         if (seq == 8) throw std::runtime_error("fixture provider unavailable");
-        return speak("内部结算：等待");
+        return internal("等待");
     }
-    if (last.tool_call_id == "skills") return speak("内部结算：已选择下一轮工具");
+    if (last.tool_call_id == "skills") return internal("已选择下一轮工具");
+    if (last.tool_call_id == "reply") return speak(reply);
     const auto result = Json::parse(last.content.substr(last.content.find('{')));
-    if (result.at("status") != "done") return speak("内部结算：已读受阻结果");
+    if (result.at("status") != "done") return internal("已读受阻结果");
+    if (last.tool_call_id == "observe" && result.contains("survey")) return speak(reply);
     if (last.tool_call_id == "observe" && !result.at("visible").empty()) {
         if (has("collect")) return call("collect", {{"block","dirt"},{"count",2}});
         return call("skills", {{"categories",{"dig_break"}}});
     }
-    return speak("内部结算：已读工作回执");
+    return internal("已读工作回执");
 }
 
 // 从原观察网格读取一个已知坐标，缺格无法用样本中的预期值补齐。
@@ -113,18 +118,18 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     const auto main = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name == "ask" || tool.name == "mail_reply"; });
     if (main != request.tools.end()) return main_ask_sample(request,main->name == "mail_reply");
     const auto& last = request.messages.back();
-    const auto say = [](std::string text) { return Response{{Role::assistant,std::move(text)}}; };
+    const auto internal = [](std::string text) { return Response{{Role::assistant,Json{{"internal",std::move(text)}}.dump()}}; };
     const auto call = [&](std::string skill, std::string id, const Json& args) -> Response {
         const auto found = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with("_"+skill); });
         if (found == request.tools.end()) throw std::runtime_error("wall probe: skill outside current scope: "+skill);
         record_input(root,{{"call",skill},{"id",id},{"arguments",args}});
         return {{Role::assistant,"",{{std::move(id),found->name,args.dump()}}},FinishReason::tool_calls};
     };
-    if (request.tools.empty()) return say("continue");
+    if (request.tools.empty()) return {{Role::assistant,"continue"}};
     if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         if (last.tool_call_id == "save" || last.tool_call_id == "point" || last.tool_call_id == "directory" ||
-            last.tool_call_id == "question") return say("fixed round done");
+            last.tool_call_id == "question") return internal("fixed round done");
         if (last.tool_call_id == "survey" || last.tool_call_id == "resurvey") {
             const auto& survey = result.at("survey");
             if (survey_block(survey,2,-59,-3) != "dirt" || survey_block(survey,3,-59,-3) != "." ||
@@ -145,7 +150,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 {"next","player"},{"target",Json::object()}});
         if (last.tool_call_id == "door-plan" && result.at("status") == "updated")
             return call("place","door",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3},{"approval","game"}});
-        return say("fixed action ended");
+        return internal("fixed action ended");
     }
     const auto input = Json::parse(last.content);
     record_input(root,input);
@@ -172,7 +177,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             {"next","player"},{"target",{{"message",3}}}});
     if (event.at("sequence") == 4 && event.at("text") == "先补刚才指的缺口，门洞留空")
         return call("observe","survey",{{"message",input.at("task").at("target").at("message")}});
-    return say("fixed event read");
+    return internal("fixed event read");
 }
 }
 

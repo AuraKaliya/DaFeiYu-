@@ -1,5 +1,6 @@
 #include "partner_loop.hpp"
 #include <dafeiyu/tool_abi_v2.h>
+#include <algorithm>
 #include <array>
 
 namespace dfy::mc {
@@ -16,7 +17,9 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "用 task_update.target 保存原消息号 message。有多个候选时先问清楚，再保存确切 cells。"
     "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
-    "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
+    "reply 会立即向玩家发言。处理玩家原话时，未调用 reply 或 ask_player 的普通最终文本也会发给玩家。"
+    "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
+    "其他唤醒的最终文本用于内部结算；需要主动发言时调用 reply。"
     "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
     "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。"
     "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
@@ -34,6 +37,32 @@ constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体�
 bool base_category(SkillCategory category) noexcept {
     return category == SkillCategory::control || category == SkillCategory::query || category == SkillCategory::observation ||
         category == SkillCategory::communication;
+}
+
+// 将最终文本按发言契约整理为游戏聊天行，显式内部结算留在原回合。
+// 步骤：识别内部结算 → 整理控制字符和空白 → 按聊天长度裁剪到完整字符。
+std::string player_reply(std::string_view answer) {
+    const auto first = answer.find_first_not_of(" \t\r\n");
+    if (first == answer.npos) return {};
+    answer.remove_prefix(first);
+    if (answer.front() == '{') {
+        const auto envelope = Json::parse(answer,nullptr,false);
+        if (envelope.is_object() && envelope.contains("internal")) return {};
+    }
+    std::string text(answer);
+    std::replace_if(text.begin(),text.end(),[](unsigned char byte) { return byte < ' '; },' ');
+    const auto start = text.find_first_not_of(' ');
+    if (start == text.npos) return {};
+    text.erase(0,start);
+    unsigned units = 0;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        if ((byte & 0xc0) == 0x80) continue;
+        units += byte >= 0xf0 ? 2 : 1;
+        if (units > 220) { text.resize(index); break; }
+    }
+    text.erase(text.find_last_not_of(' ')+1);
+    return text;
 }
 }
 
@@ -96,6 +125,8 @@ void PartnerLoop::reset() noexcept {
     outbound_.clear();
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
+    final_reply_.reset();
+    reply_requested_ = false;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
     review_ = {};
@@ -107,9 +138,9 @@ void PartnerLoop::reset() noexcept {
     question_.reset(); question_work_.reset(); question_result_.clear(); question_wake_ = false; question_outbound_.clear();
 }
 
-// 子回合业务结算及真正退出均由原会话报告。
-// 步骤：核对请求 → 按需要提出取消 → 保留在途状态或记录实际退出水位。
-bool PartnerLoop::settle(bool cancel) {
+// 等待原子回合退出并结算该回合关联的实际发言。
+// 步骤：核对请求并按需取消 → 等待游戏发言回执 → 记录原回合结算水位。
+bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, bool cancel) {
     if (!request_) return true;
     dfy_v2_agent_status state{};
     const auto result = agent_->status(session_,&state,nullptr);
@@ -119,6 +150,9 @@ bool PartnerLoop::settle(bool cancel) {
         if (cancel) agent_->cancel(session_,request_,nullptr);
         return false;
     }
+    const auto answer = state.answer.length ? std::string_view(state.answer.data,state.answer.length) : std::string_view{};
+    if (!settle_reply(config,instance,answer,cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) return false;
+
     if (!active_delegation_ && (cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) {
         task_.disarm();
         expansion_pending_ = false;
@@ -133,6 +167,34 @@ bool PartnerLoop::settle(bool cancel) {
     } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
         {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel}});
     request_ = 0;
+    return true;
+}
+
+// 把玩家原话回合的纯文本接回原游戏回复通道，一个回合至多启动一次。
+// 步骤：核对发言归属与绑定 → 推进原回复票据 → 发布已验证的实际结果。
+bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel) {
+    const auto work = "reply."+std::to_string(instance)+"."+std::to_string(session_)+"."+std::to_string(request_);
+    if (!final_reply_) {
+        if (cancel || reply_requested_ || active_delegation_ || !permits(session_) || !feed_.ready() ||
+            feed_.departed() || events_.empty() || events_.back().at("type") != "player.message") return true;
+        auto text = player_reply(answer);
+        if (text.empty()) return true;
+        const auto envelope = Json{{"context",{{"generation",session_world_},{"order",order_}}},
+            {"arguments",{{"text",std::move(text)}}}}.dump();
+        final_reply_ = std::make_unique<GameWork>(GameAction::partner,config,work,envelope,"reply");
+    }
+
+    std::optional<GameResult> result;
+    try { result = final_reply_->poll(cancel || feed_.departed()); }
+    catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
+    if (!result) return false;
+
+    const auto effect = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
+        result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
+    if (result->payload.empty()) result->payload = R"({"status":"unconfirmed","sent":false})";
+    record(session_,0,"reply",effect,work,std::move(result->payload));
+    report_actions();
+    final_reply_.reset();
     return true;
 }
 
@@ -203,6 +265,7 @@ void PartnerLoop::submit(std::string_view wake) {
         motion_wake_ = false;
     }
     order_ = order;
+    reply_requested_ = false;
     reviewed_ = 0;
     stopped_work_ = false;
     events_ = std::move(facts);
@@ -228,7 +291,11 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
-    if (skill == "ask_player") return open_question(invocation,args);
+    if (skill == "ask_player") {
+        auto question = open_question(invocation,args);
+        reply_requested_ = true;
+        return question;
+    }
     if (skill == "stop_motion") {
         if (!motion_ || args.at("work") != motion_->work) return {{"status","stale"}};
         motion_->stopping = true;
@@ -290,7 +357,9 @@ std::string_view PartnerLoop::autonomous_wake() const {
 // 把原退出票据的效果与正文移动到本轮预留槽位。
 void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
     std::string work, std::string output) noexcept {
-    if (!session_ || session != session_ || !request_ || action_count_ >= actions_.size()) return;
+    if (!session_ || session != session_ || !request_) return;
+    if (invocation && skill == "reply") reply_requested_ = true;
+    if (action_count_ >= actions_.size()) return;
     actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
 }
 
@@ -307,6 +376,7 @@ void PartnerLoop::report_actions() {
         auto& action = actions_[index];
         Json fact{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
             {"invocation",action.id},{"skill",action.skill},{"effect",action.effect},{"bridgeWork",action.work}};
+        if (!action.id) fact["source"] = "final_text";
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
@@ -480,7 +550,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     const bool replaced = session_ && feed_.world() != session_world_;
     advance_motion(closing || replaced || feed_.departed());
     review(work,closing || replaced);
-    if (!settle(closing || replaced)) return;
+    if (!settle(config,instance,closing || replaced)) return;
     if (closing) {
         if (motion_ || review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;

@@ -103,11 +103,11 @@ int wmain(int argc, wchar_t** argv) {
                     FinishReason::tool_calls};
             }
             if (input.tools.empty()) return {{Role::assistant,"continue"}};
-            if (last.role == Role::tool) return {{Role::assistant,"collection finished"}};
+            if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"collection finished"})"}};
             const auto body = Json::parse(last.content);
             const auto expanded = body.at("trigger") == "skills.expanded";
             const auto& event = body.at(expanded ? "recentEvents" : "events").back();
-            if (event.at("sequence") != 2) return {{Role::assistant,"no game action"}};
+            if (event.at("sequence") != 2) return {{Role::assistant,R"({"internal":"no game action"})"}};
             if (!expanded) {
                 const auto directory = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_skills"); });
                 if (directory == input.tools.end()) throw std::runtime_error("skill directory unavailable");

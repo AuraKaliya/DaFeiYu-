@@ -33,8 +33,11 @@ async function checkPlayer(fixture, mode) {
     } else if (partner) {
       assert.deepEqual(whispers, []);
       const settled = seq => until(() => fixture.settled === seq, '处理到玩家事件 ' + seq, 50000);
-      player.chat('大家叫我小叶');
+      player.chat('大肥鱼，你在吗');
       await settled(2);
+      const answer = '我在呢，就在你下面不远的地方。看你站在上面一层，我这边是山脚附近，有块小台地可以上去。要不要我上去跟你汇合？';
+      await until(() => whispers.length > 0, '仅返回最终文本时的游戏回复', 4000);
+      assert.deepEqual(whispers, [answer]);
       player.chat('大肥鱼，帮我采俩泥土');
       await settled(3);
       player.chat('这回带我往前走走');
@@ -54,12 +57,13 @@ async function checkPlayer(fixture, mode) {
       const receipts = readFileSync(join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const inputs = readFileSync(join(fixture.evidence, 'host/model-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const chosen = inputs.filter(record => record.call);
-      assert.deepEqual(receipts.map(r => [r.skill, r.arguments]), chosen.map(r => [r.call, r.arguments]));
+      assert.deepEqual(receipts.filter(r => !r.work.startsWith('reply.')).map(r => [r.skill, r.arguments]),
+        chosen.map(r => [r.call, r.arguments]));
       assert.ok(receipts.some(r => r.order === 4 && r.skill === 'move' && r.result.status === 'done'));
       assert.ok(receipts.some(r => r.order === 6 && r.skill === 'move' && r.result.status === 'interrupted'));
       const sent = receipts.filter(r => r.skill === 'reply' && r.result.sent && !r.result.reused);
-      assert.deepEqual(sent.map(r => r.arguments.text), chosen.filter(r => r.call === 'reply').map(r => r.arguments.text));
-      assert.deepEqual(whispers, sent.map(r => r.arguments.text));
+      assert.deepEqual(sent.map(r => [r.order, r.arguments.text]), [[2, answer], [7, answer]]);
+      assert.deepEqual(whispers, [answer, answer]);
     } else {
       player.chat('去山脚看看');
       await until(() => chat.some(line => line.includes('要我采一些带回来吗')), '游戏内提问', 20000);
