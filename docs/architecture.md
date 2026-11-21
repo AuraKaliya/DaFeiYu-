@@ -160,9 +160,10 @@ flowchart TB
     Loop["MC PartnerLoop<br/>保存目标、修订与动作回执"] -->|新事实或任务可继续| Turn
     Turn["宿主子会话<br/>运行模型与已注册 Hook"] --> Look["MC 围绕原消息位置重读已加载方块"]
     Look -->|有明确缺口| Bind
-    Look -->|缺口仍有歧义| Local["MC 登记待答事项<br/>先问玩家，局内等待"]
+    Look -->|缺口仍有歧义| Question["MC 登记待答事项<br/>为原问题选定一条路径"]
+    Question -->|插件局内提问| Local["游戏呈现一次，局内等待"]
     Local -->|收到有效答复| Resurvey
-    Local -->|等待期满| Event["插件发出待答事项超时事件"]
+    Question -->|直接 ASK 或交给主 Agent| Event["插件发出待答事项事件"]
     Event --> Capture["宿主捕获，校验并分配原事件身份"]
     Capture --> Decode["宿主按类型和版本调用插件解析器"]
     Decode --> Dispatch["本体分派器校验投影<br/>事件分派 Hook 可阻断新路线"]

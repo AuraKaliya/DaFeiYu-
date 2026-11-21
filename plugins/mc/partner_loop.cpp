@@ -241,7 +241,7 @@ void PartnerLoop::submit(std::string_view wake) {
     if (autonomous) input["recentEvents"] = recent_events_;
     if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
-    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"escalated",question_->escalated}};
+    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path}};
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;

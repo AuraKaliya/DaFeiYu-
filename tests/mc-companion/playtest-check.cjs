@@ -183,8 +183,8 @@ async function checkWall(fixture, player, whispers, mode) {
       assert.ok(!readTrace().some(row => row.kind === 'model.prepared' && row.source === 'main'));
       fixture.reviewMail();
     }
-    const opened = await until(() => whispers.map(text => /回复 答复 (\d+) <回答>$/.exec(text)).filter(Boolean)[1]?.[1],
-      'ASK 实际发出第二个问题', 45000);
+    const opened = await until(() => whispers.map(text => /回复 答复 (\d+) <回答>$/.exec(text)).find(Boolean)?.[1],
+      '选定的 ASK 路线呈现问题', 45000);
     assert.equal(block(3, -59, -3).name, 'air');
     player.chat('答复 ' + opened + ' 靠河那段，留木门');
     if (manual) {
@@ -222,6 +222,7 @@ async function checkWall(fixture, player, whispers, mode) {
     row.body.id === presentation.body.id && row.body.status === 'approved'));
   assert.ok(trace.every(row => row.kind !== 'model.prepared' || row.input.tools.length > 0));
   if (askPath) {
+    assert.equal(whispers.filter(text => /回复 答复 \d+ <回答>$/.test(text)).length, 1);
     const ask = trace.filter(row => row.kind === 'ask.opened');
     assert.equal(ask.length, 1);
     assert.equal(ask[0].path, askPath);

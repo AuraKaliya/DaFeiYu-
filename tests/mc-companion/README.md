@@ -62,7 +62,7 @@ node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\windows-tests\bin
 node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
 ```
 
-同一墙体夹具支持三种 ASK 验证，替换命令末尾的模式即可。每次单独启动一个本地 Paper 实例。协议玩家听到两次实际询问，向升级后的编号答复“靠河那段，留木门”，再确认原门洞候选。
+同一墙体夹具支持三种 ASK 验证，替换命令末尾的模式即可。每次单独启动一个本地 Paper 实例。协议玩家收到一次实际询问，按呈现的编号答复“靠河那段，留木门”，再确认原门洞候选。
 
 | 模式 | 核对的路径 |
 | --- | --- |

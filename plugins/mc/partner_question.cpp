@@ -25,7 +25,7 @@ uint32_t DFY_V2_CALL decode_help(void*, dfy_v2_string_view raw, dfy_v2_event_pro
     try {
         auto body = Json::parse(std::string_view(raw.data,raw.length));
         const auto reason = body.at("reason");
-        if (reason != "local_timeout" && reason != "action_approval") return DFY_V2_INVALID_ARGUMENT;
+        if (reason != "clarification" && reason != "action_approval") return DFY_V2_INVALID_ARGUMENT;
         const auto mode = body.at("path");
         if (mode != "main" && mode != "direct") return DFY_V2_INVALID_ARGUMENT;
         if (reason == "action_approval") body["choices"] = {"approve","deny"};
@@ -78,9 +78,9 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!question_events_ || !id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
     const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("direct"));
-    if (text.empty() || text.size() > 400 || (path != "direct" && path != "main")) throw std::invalid_argument("MC question: invalid request");
-    const auto now = std::chrono::steady_clock::now();
-    question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,now+std::chrono::seconds(6),now+std::chrono::seconds(40)};
+    if (text.empty() || text.size() > 400 || (path != "local" && path != "direct" && path != "main"))
+        throw std::invalid_argument("MC question: invalid request");
+    question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
     question_result_.clear();
     return {{"status","recorded"},{"item",id}};
 }
@@ -152,8 +152,8 @@ void PartnerLoop::flush_question_events() {
     question_outbound_.pop_front();
 }
 
-// 推进本地问题、超时升级、实际呈现及可信玩家答复。
-// 步骤：结算原发言 → 核对世界与时限 → 尝试答复、升级或开启呈现。
+// 用选定的唯一路径推进实际呈现及可信玩家答复。
+// 步骤：结算原发言 → 核对世界与本地时限 → 消费答复或推进既定路径。
 void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing) {
     const bool live = !closing && question_ && question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed();
     if (question_work_) {
@@ -166,6 +166,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             auto& question = *question_;
             const auto receipt = Json::parse(result->payload,nullptr,false);
             question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
+            if (question.path == "local" && !question.presented) { complete_question("unavailable",{}); return; }
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
                 {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}});
@@ -173,8 +174,8 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     }
     if (!live) { question_.reset(); flush_question_events(); return; }
     auto& q = *question_;
-    const auto now = std::chrono::steady_clock::now();
-    if (!q.escalated && now >= q.local_answer_deadline) { complete_question("expired",{}); return; }
+    const bool local = q.path == "local";
+    if (local && std::chrono::steady_clock::now() >= q.local_answer_deadline) { complete_question("expired",{}); return; }
     if (q.presented && !q.forwarded) {
         const auto prefix = "答复 "+std::to_string(q.ask ? q.ask : q.item)+" ";
         const auto token = std::to_string(q.ask);
@@ -186,8 +187,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
             else if (text.starts_with(prefix)) answer = text.substr(prefix.size());
             if (answer.empty() || (q.approval && answer != "approve" && answer != "deny")) continue;
-            if (!q.escalated) { complete_question("answered",answer); return; }
-            if (!q.ask) continue;
+            if (local) { complete_question("answered",answer); return; }
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
                 {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}});
             q.answer_order = event.at("sequence");
@@ -195,21 +195,21 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             break;
         }
     }
-    if (!q.escalated && now >= q.local) {
+    if (!local && !q.dispatched) {
         Json context = Json::object();
         if (q.approval) context = {{"generation",q.world},{"order",q.order},{"skill",confirmation_->skill},
             {"arguments",confirmation_->arguments}};
         question_outbound_.emplace_back(help_type,Json{{"item",q.item},{"revision",1},{"question",q.text},
-            {"reason",q.approval ? "action_approval" : "local_timeout"},{"context",context.dump()},
+            {"reason",q.approval ? "action_approval" : "clarification"},{"context",context.dump()},
             {"path",q.path},{"recipient",q.player},{"channel","game"},{"waitMs",24000}});
-        q.escalated = true;
+        q.dispatched = true;
     }
-    const bool start = (!q.initial_started || (q.ask && !q.ask_started)) && feed_.ready();
+    const bool start = !q.started && (local || q.ask) && feed_.ready();
     if (start) {
         if (q.approval && feed_.cursor() != q.order) {
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},
                 {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}});
-            q.ask_started = true;
+            q.started = true;
             flush_question_events();
             return;
         }
@@ -219,8 +219,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             {"arguments",{{"text",prompt}}}}.dump();
         question_work_ = std::make_unique<GameWork>(GameAction::partner,config,
             "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token,arguments,"reply");
-        if (q.ask) q.ask_started = true;
-        q.initial_started = true;
+        q.started = true;
     }
     flush_question_events();
 }

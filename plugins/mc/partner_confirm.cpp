@@ -44,8 +44,7 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     Confirmation item{request,order_,0,session_world_,feed_.owner(),std::string(skill),std::move(question),std::move(args),{},
         now+std::chrono::seconds(25),route == "game"};
     if (!item.ask_game) {
-        question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",now,item.deadline};
-        question_->initial_started = true;
+        question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",item.deadline};
         question_->approval = true;
     }
     confirmation_ = std::move(item);

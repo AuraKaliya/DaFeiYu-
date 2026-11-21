@@ -90,7 +90,7 @@ class PartnerLoop {
     nlohmann::json open_question(std::uint64_t id, const nlohmann::json& arguments);
     // 按事项原身份接收通用 ASK 渠道请求或结果。
     void intake_question(std::string_view category, const nlohmann::json& body, const dfy_v2_mailbox_message& message);
-    // 推进本地等待、必要升级、实际呈现与玩家答复。
+    // 推进选定渠道的实际呈现与玩家答复。
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
     void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
@@ -102,8 +102,8 @@ class PartnerLoop {
     struct Question {
         std::uint64_t item, order, ask = 0;
         std::string world, player, text, path;
-        std::chrono::steady_clock::time_point local, local_answer_deadline;
-        bool initial_started = false, ask_started = false, presented = false, escalated = false, forwarded = false;
+        std::chrono::steady_clock::time_point local_answer_deadline;
+        bool started = false, presented = false, dispatched = false, forwarded = false;
         bool approval = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
     };
