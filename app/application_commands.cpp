@@ -152,10 +152,10 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto run = app.submit_companion_exchange(words[2]);
         output << "Accepted run " << run.session << '/' << run.turn << ". View game receipts with /companion board.\n";
     } else if (words.size() == 3 && words[1] == "wake" && (words[2] == "auto" || words[2] == "manual")) {
-        app.wake_for_companion_confirmation(words[2] == "auto");
-        output << "Companion confirmation wake set to " << words[2] << ".\n";
+        app.wake_for_plugin_mail(words[2] == "auto");
+        output << "Plugin mailbox wake set to " << words[2] << ".\n";
     } else if (words.size() == 2 && words[1] == "review") {
-        output << (app.review_companion_confirmation() ? "Confirmation review started.\n" : "No new confirmation ready for review.\n");
+        application_command(app,"/mail review",output,output);
     } else if ((words.size() == 3 || (words.size() == 4 && words[3] == "meet")) && words[1] == "where") {
         const auto answer = app.locate_companion(positive_id(words[2]), words.size() == 4 ? LocationPurpose::meeting : LocationPurpose::progress);
         switch (answer.basis) {
@@ -174,12 +174,6 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto grant = app.authorize_companion(*address, positive_id(words[3]), positive_id(words[4]),
             positive_id(words[5]), positive_id(words[6]));
         output << "Collection " << grant.id << " authorized for " << grant.quantity << " at " << grant.return_place << ".\n";
-    } else if (words.size() == 5 && words[1] == "confirm" && (words[4] == "approve" || words[4] == "deny")) {
-        const auto id = positive_id(words[2]);
-        app.decide_companion_confirmation(id,positive_id(words[3]),words[4] == "approve");
-        const auto confirmation = app.companion_confirmation();
-        if (!confirmation->decision.empty()) output << "Original decision " << confirmation->decision << " for " << id << ".\n";
-        else output << "Player decision sent for " << id << ". Waiting for the original game receipt.\n";
     } else if (words.size() == 3 && words[1] == "stop") {
         const auto id = positive_id(words[2]);
         app.stop_companion(id);
@@ -201,12 +195,6 @@ void companion_command(Application& app, std::string_view command, std::ostream&
             else output << "管理入口";
             output << " · " << (control.phase == ControlPhase::released ? "游戏已释放控制" :
                 control.phase == ControlPhase::requested ? "已请求停止，等待游戏退出" : "游戏控制释放未核实") << '\n';
-        }
-        if (const auto question = app.companion_confirmation()) {
-            output << "确认 #" << question->id << " · " << question->question << '\n';
-            if (!question->decision.empty()) output << "游戏已裁定 " << question->decision << "（" << question->source << "）\n";
-            else if (question->answered) output << "本体答复已投递，等待游戏裁定。\n";
-            else output << "/companion confirm " << question->id << ' ' << question->revision << " approve|deny\n";
         }
         if (const auto visit = app.companion_visit(status->session)) {
             output << "Visit " << visit->task << " at " << visit->place << ": ";
@@ -244,7 +232,7 @@ void companion_command(Application& app, std::string_view command, std::ostream&
                 }
             }
         }
-    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | consult \"GOAL\" | wake auto|manual | review | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | confirm ID REVISION approve|deny | approve SESSION QUESTION REVISION REQUEST COUNT");
+    } else throw std::invalid_argument("Usage: /companion open PACKAGE | scenario PACKAGE | consult \"GOAL\" | wake auto|manual | review | status | board SESSION [TASK] | where SESSION [meet] | stop SESSION | approve SESSION QUESTION REVISION REQUEST COUNT");
 }
 }
 
@@ -255,7 +243,12 @@ bool application_command(Application& application, std::string_view command, std
     if (name == "/companion") companion_command(application, command, output);
     else if (name == "/mail") {
         const auto words = command_words(command);
-        if (words.size() != 2 || words[1] != "review") throw std::invalid_argument("Usage: /mail review");
+        if (words.size() == 3 && words[1] == "wake" && (words[2] == "auto" || words[2] == "manual")) {
+            application.wake_for_plugin_mail(words[2] == "auto");
+            output << "Plugin mailbox wake set to " << words[2] << ".\n";
+            return true;
+        }
+        if (words.size() != 2 || words[1] != "review") throw std::invalid_argument("Usage: /mail review | /mail wake auto|manual");
         const auto result = application.review_mail();
         if (result == MailboxIntakeResult::rejected) throw std::runtime_error("Mailbox review failed.");
         output << (result == MailboxIntakeResult::idle ? "No mailbox item ready for review.\n" : "Mailbox item reviewed.\n");

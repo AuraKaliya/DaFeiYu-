@@ -18,6 +18,8 @@ class InteractionRoutes {
     std::optional<std::pair<std::uint64_t,AskSpec>> console_question() const;
     // 记录原终端渠道已显示或提交原真人答复。
     bool console_answer(std::uint64_t id, std::optional<std::string> answer);
+    // 暂停或恢复已登记插件地址上的自动唤醒。
+    void set_auto_wake(bool enabled) noexcept { auto_wake_ = enabled; }
   private:
     struct Exchange {
         plugins::RoutedEvent origin;

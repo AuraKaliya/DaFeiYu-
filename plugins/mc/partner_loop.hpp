@@ -64,14 +64,12 @@ class PartnerLoop {
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
     bool release_game(const BridgeConfig& config, std::uint64_t instance);
-    // 按原配对身份处理游戏回复、主信箱回信或业务超时。
+    // 按原配对身份处理本地游戏回复或原动作时限。
     void advance_confirmation();
     // 在宿主绑定的入站信箱读取至多一条请求并按分类处理。
     void intake(PartnerWork work);
     // 核对原收件的世界、任务和玩家，处理本体委托或只读询问。
     void intake_task(std::string_view category, const nlohmann::json& body, PartnerWork work);
-    // 按原信箱请求处理批准和游戏投递指令。
-    void intake_confirmation(bool present, const nlohmann::json& body);
     // 依据主侧选择或本地策略向同一玩家呈现原问题，并保留实际发言回执。
     void advance_confirmation_presentation(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 建立原子会话的待答事项，原答案只在匹配当前世界时生效。
@@ -81,7 +79,7 @@ class PartnerLoop {
     // 推进本地等待、必要升级、实际呈现与玩家答复。
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
-    void complete_question(std::string_view status, std::string answer);
+    void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
     // 保留并按序提交原生渠道事件。
     void flush_question_events();
 
@@ -90,6 +88,8 @@ class PartnerLoop {
         std::string world, player, text, path;
         std::chrono::steady_clock::time_point local, deadline;
         bool initial_started = false, ask_started = false, presented = false, escalated = false, forwarded = false;
+        bool approval = false;
+        std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;
@@ -138,8 +138,6 @@ class PartnerLoop {
         std::unique_ptr<GameWork> work;
     };
     std::optional<Presentation> presentation_;
-    std::array<nlohmann::json,8> decisions_{};
-    std::size_t next_decision_ = 0;
     // 裁定唯一原候选，结果一旦发布便不被迟到消息覆盖。
     void confirm_once(std::string_view status, std::string_view source, std::uint64_t approved_order = 0);
     std::string session_world_;

@@ -18,7 +18,7 @@ async function main() {
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
   const exchange = variant === 'partner-exchange';
-  const showGame = route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual';
+  const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual');
   const partnerLoop = variant === 'partner-loop' || interrupt || confirm || task || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));

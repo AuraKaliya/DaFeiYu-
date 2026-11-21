@@ -24,7 +24,7 @@ class MailboxIntake {
         : host_(std::move(host)), conversation_(conversation), log_(std::move(log)) {}
     // 登记已存在信箱及审查回调，空触发列表表示只主动收件。
     void watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review,
-        MailboxPriority priority = MailboxPriority::normal, MailboxOptions options = {});
+        MailboxPriority priority = MailboxPriority::normal, MailboxOptions options = {}, std::function<bool()> wake_enabled = {});
     // 在主会话可接纳时主动处理一封，队首按本收件地址的规则审查。
     MailboxIntakeResult review(events::MailboxId mailbox);
     // 在有待处理到件信号时推进一个信箱，保持箱内 FIFO。
@@ -38,6 +38,7 @@ class MailboxIntake {
         MailboxReview review;
         MailboxPriority priority;
         MailboxOptions options;
+        std::function<bool()> wake_enabled;
     };
     // 交付一封已绑定地址的原件，并在审查通过时提交带来源信息的主回合。
     MailboxIntakeResult dispatch(const Route& route);

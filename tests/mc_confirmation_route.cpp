@@ -22,14 +22,27 @@ int wmain(int argc, wchar_t** argv) {
         // 分别提供子 Agent 的原候选和主 Agent 的固定渠道选择。
         app::Application host({},root/"packages",root/"user",Backend{[&](const auto&,const Request& input) -> Response {
             const auto& last = input.messages.back();
-            if (input.tools.size() == 2) {
+            const auto routed = std::ranges::find_if(input.tools,[](const auto& tool) {
+                return tool.name == "ask" || tool.name == "mail_reply";
+            });
+            if (routed != input.tools.end()) {
                 ++main_calls;
                 if (last.role == Role::tool) return {{Role::assistant,"routing finished"}};
-                const auto mail = Json::parse(last.content);
-                if (mail.at("skill") != "collect" || mail.at("arguments").at("count") != 2 || mail.at("category") != "mc.confirmation.request")
+                const auto envelope = Json::parse(last.content);
+                const auto mail = Json::parse(envelope.at("content").get<std::string>());
+                if (routed->name == "mail_reply") {
+                    if (envelope.at("category") != "interaction.ask.completed" || mail.at("answer") != "approve")
+                        throw std::runtime_error("main did not receive original answer");
+                    return {{Role::assistant,"",{{"reply","mail_reply","{}"}}},FinishReason::tool_calls};
+                }
+                const auto& context = mail.at("context");
+                if (context.at("skill") != "collect" || context.at("arguments").at("count") != 2 ||
+                    context.at("arguments").contains("approval") || envelope.at("category") != "mc.partner.question")
                     throw std::runtime_error("main did not receive original candidate");
-                return {{Role::assistant,"",{{"present",panel ? "present_confirmation_on_panel" : "present_confirmation_in_game","{}"}}},FinishReason::tool_calls};
+                return {{Role::assistant,"",{{"present","ask",panel ? R"({"channel":"terminal"})" : R"({"channel":"game"})"}}},
+                    FinishReason::tool_calls};
             }
+            if (input.tools.empty()) return {{Role::assistant,"continue"}};
             if (last.role == Role::tool) return {{Role::assistant,"collection finished"}};
             const auto body = Json::parse(last.content);
             const auto expanded = body.at("trigger") == "skills.expanded";
@@ -46,34 +59,38 @@ int wmain(int argc, wchar_t** argv) {
             return {{Role::assistant,"",{{"collect",tool->name,args}}},FinishReason::tool_calls};
         }});
         host.plugins().install(argv[1]);
-        host.wake_for_companion_confirmation(!manual);
+        host.wake_for_plugin_mail(!manual);
         if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto id = host.open_companion("mc.companion");
         host.listen_companion(id);
         bool requested_stop = false;
-        unsigned manual_wait = 0;
+        unsigned manual_wait = 0, reviews = 0;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(15);
         while (std::chrono::steady_clock::now() < deadline) {
             if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("confirmation work failed");
             host.conversation().advance();
             const auto state = host.companion_status();
-            const auto question = host.companion_confirmation();
-            if (manual && question && manual_wait < 5) {
+            if (manual && !reviews) {
                 if (main_calls != 0 || host.conversation().busy()) throw std::runtime_error("passive confirmation woke the Agent");
-                if (++manual_wait == 5 && !host.review_companion_confirmation()) throw std::runtime_error("manual confirmation did not reach main Agent");
+                if (++manual_wait > 5 && host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
             }
-            if (panel && question && question->channel == "panel" && !question->answered) {
-                host.decide_companion_confirmation(question->id,question->revision,true);
-                host.decide_companion_confirmation(question->id,question->revision,false);
+            if (panel) if (const auto question = host.console_ask()) {
+                if (host.answer_console_ask(question->first,"approve") ||
+                    !host.answer_console_ask(question->first,{}) ||
+                    !host.answer_console_ask(question->first,"approve") ||
+                    !host.answer_console_ask(question->first,"approve") ||
+                    host.answer_console_ask(question->first,"deny"))
+                    throw std::runtime_error("terminal answer was accepted before display or overwritten");
             }
+            if (manual && reviews == 1 && main_calls == 2 && host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
             if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
-                (local || (question && question->decision == "approved" && question->source == (panel ? "main" : "game") &&
-                    (panel || question->presentation == "sent")))) {
+                (local || (main_calls == 4 && !host.conversation().busy()))) {
                 host.stop_companion(id);
                 requested_stop = true;
             }
             if (requested_stop && state->closed) {
-                if (main_calls != (local ? 0u : 2u) || !state->control || state->control->phase != app::ControlPhase::released)
+                if (main_calls != (local ? 0u : 4u) || (manual && reviews != 2) ||
+                    !state->control || state->control->phase != app::ControlPhase::released)
                     throw std::runtime_error("channel, model routing or original game exit not verified");
                 host.conversation().close();
                 if (host.close_plugins() != plugins::ShutdownResult::closed) throw std::runtime_error("game plugin failed to close");

@@ -154,7 +154,6 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
     const auto type = descriptor->name();
     const auto* text = payload.find("text");
     if (!text || text->kind() != runtime::ValueKind::string) return;
-    if (type.starts_with("mc.confirmation.")) { accept_confirmation(type,text->as_string()); return; }
     const auto data = nlohmann::json::parse(text->as_string(),nullptr,false);
     if (!data.is_object() || !data.contains("generation")) return;
     if (type == "mc.partner.control") {
@@ -207,63 +206,5 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
         if (result.value("sent",false) && !result.value("reused",false))
             messages_.post(*address_,CompanionSide::game,CompanionMessageKind::report,messages_.next(CompanionSide::game),revision,result.at("text"));
     }
-}
-
-// 从原插件的已验证地址取得业务请求与最终裁定，迟到回执不覆盖新请求。
-// 步骤：匹配当前世界和身份 → 登记原候选或匹配回执 → 保存唯一结果。
-void CompanionSession::accept_confirmation(std::string_view type, std::string_view bytes) {
-    const auto data = nlohmann::json::parse(bytes,nullptr,false);
-    if (!data.is_object() || !data.at("id").is_number_unsigned() || !data.at("revision").is_number_unsigned() ||
-        data.at("revision") != 1 || !data.at("generation").is_string() || !data.at("player").is_string()) return;
-    const auto id = data.at("id").get<std::uint64_t>();
-    const auto& world = data.at("generation").get_ref<const std::string&>();
-    const auto& player = data.at("player").get_ref<const std::string&>();
-    if (type == "mc.confirmation.request") {
-        if (!id || stopping_ || !address_ || world != address_->world || player != partner_->input.owner) return;
-        if (confirmation_ && confirmation_->id == id) return;
-        confirmation_ = CompanionConfirmation{id,1,data.at("order").get<std::uint64_t>(),world,player,
-            data.at("question").get<std::string>(),data.at("arguments").dump(),data.value("skill","collect")};
-    } else if (confirmation_ && confirmation_->id == id && confirmation_->world == world &&
-        confirmation_->player == player && type == "mc.confirmation.presentation") {
-        confirmation_->presentation = data.at("status");
-    } else if (confirmation_ && confirmation_->id == id && confirmation_->world == world &&
-        confirmation_->player == player && type == "mc.confirmation.decision") {
-        if (!confirmation_->decision.empty()) return;
-        confirmation_->decision = data.at("status");
-        confirmation_->source = data.at("source");
-    }
-}
-
-// 路由原问题，模型选择通道后由宿主提交对应动作。
-// 步骤：核对原请求 → 固定首次渠道 → 提交游戏投递或产生本体可见问题。
-std::string CompanionSession::route_confirmation(std::uint64_t request, bool game) {
-    if (!partner_ || !confirmation_ || confirmation_->id != request || !confirmation_->decision.empty() ||
-        !address_ || confirmation_->world != address_->world || stopping_ || !bound())
-        throw std::invalid_argument("companion: confirmation is no longer current");
-    auto& item = *confirmation_;
-    if (!item.channel.empty()) throw std::logic_error("companion: confirmation channel already selected");
-    if (game) {
-        const auto message = nlohmann::json{{"id",item.id},{"revision",item.revision},{"generation",item.world},{"player",item.player}}.dump();
-        mailboxes_.network->deliver_next(mailboxes_.identity,partner_->outgoing,
-            events::mailbox_text("mc.confirmation.present",1,message,mailboxes_.network->payload_limit()));
-        item.channel = "game";
-        return "Game presentation was queued. Wait for the separate player decision and delivery receipt.";
-    }
-    item.channel = "panel";
-    return item.question+"  /companion confirm "+std::to_string(item.id)+" "+std::to_string(item.revision)+" approve|deny";
-}
-
-// 转发本体用户的原决定，输送到信箱仅表示接纳。
-// 步骤：核对原问题和修订 → 按当前会话发送决定 → 保留已送状态供重复查询。
-void CompanionSession::reply_confirmation(std::uint64_t id, std::uint64_t revision, bool approve) {
-    if (!partner_ || !confirmation_ || confirmation_->id != id || confirmation_->revision != revision)
-        throw std::invalid_argument("companion: confirmation or revision unavailable");
-    auto& item = *confirmation_;
-    if (!item.decision.empty() || item.answered) return;
-    if (stopping_ || !bound() || !address_ || item.world != address_->world) throw std::invalid_argument("companion: confirmation binding expired");
-    const auto decision = nlohmann::json{{"id",id},{"revision",revision},{"generation",item.world},{"player",item.player},{"approve",approve}}.dump();
-    mailboxes_.network->deliver_next(mailboxes_.identity,partner_->outgoing,
-        events::mailbox_text("mc.confirmation.response",1,decision,mailboxes_.network->payload_limit()));
-    item.answered = true;
 }
 }

@@ -121,7 +121,8 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     if (to_main && exchange.result_queued) return false;
     const char* category = pending ? "interaction.ask.present" : to_main ? "interaction.ask.completed" :
         exchange.main_box.value ? "interaction.mail.reply" : "interaction.ask.result";
-    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",request->spec.recipient}};
+    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",request->spec.recipient},
+        {"channel",request->spec.channel}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
     else { message["status"] = ask_phase(request->phase); message["answer"] = request->answer; }
     message["eventDomain"] = exchange.origin.id.domain;
@@ -191,13 +192,14 @@ events::MailboxId InteractionRoutes::main_box(const plugins::RoutedEvent& origin
     const events::MailboxCategory wake[]{{origin.mailbox.category,origin.mailbox.version},{"interaction.ask.completed",1}};
     try {
         main_boxes_.emplace(origin.owner,box);
-        intake_.watch(box,auto_wake_ && (origin.mailbox.flags & DFY_V2_MAIL_WAKE) ? std::span<const events::MailboxCategory>(wake) :
+        intake_.watch(box,origin.mailbox.flags & DFY_V2_MAIL_WAKE ? std::span<const events::MailboxCategory>(wake) :
             std::span<const events::MailboxCategory>{},
             [this](const MailboxDelivery& delivery) -> std::optional<std::string> {
                 if (!original(delivery)) return {};
                 return std::string(delivery.event.payload->find("text")->as_string());
             },origin.mailbox.flags & DFY_V2_MAIL_HIGH ? MailboxPriority::high : MailboxPriority::normal,
-            [this](const MailboxDelivery& delivery, agent::RunOptions& options) { configure_main(delivery,options); });
+            [this](const MailboxDelivery& delivery, agent::RunOptions& options) { configure_main(delivery,options); },
+            [this] { return auto_wake_; });
     } catch (...) {
         main_boxes_.erase(origin.owner);
         mail_.network->close(mail_.identity,box);

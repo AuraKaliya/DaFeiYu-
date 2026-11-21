@@ -7,14 +7,14 @@ namespace dfy::app {
 // 安装收件身份与审查回调，接收方独占唤醒规则。
 // 步骤：核对当前入口 → 查询原绑定 → 固定槽位并发布分类策略。
 void MailboxIntake::watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review,
-    MailboxPriority priority, MailboxOptions options) {
+    MailboxPriority priority, MailboxOptions options, std::function<bool()> wake_enabled) {
     if (working_ || !review) throw std::invalid_argument("mailbox intake: invalid registration");
     const auto sender = host_.network->sender(host_.identity,mailbox);
     auto slot = std::ranges::find_if(routes_,[&](const auto& route) { return route && route->mailbox == mailbox; });
     if (slot == routes_.end()) slot = std::ranges::find_if(routes_,[](const auto& route) { return !route; });
     if (slot == routes_.end()) throw std::length_error("mailbox intake: capacity exhausted");
     host_.network->wake_on(host_.identity,mailbox,wake);
-    *slot = Route{mailbox,sender,std::move(review),priority,std::move(options)};
+    *slot = Route{mailbox,sender,std::move(review),priority,std::move(options),std::move(wake_enabled)};
 }
 
 // 按可信信箱处理一件原始事实，记录来源后才交给主 Agent。
@@ -72,7 +72,7 @@ MailboxIntakeResult MailboxIntake::advance(bool only_wake) {
         for (std::size_t offset = 0; offset < routes_.size(); ++offset) {
             const auto index = (start+offset)%routes_.size();
             auto& route = routes_[index];
-            if (!route || route->priority != priority) continue;
+            if (!route || route->priority != priority || (only_wake && route->wake_enabled && !route->wake_enabled())) continue;
             try {
                 if (only_wake ? bool(host_.network->pending_wake(host_.identity,route->mailbox)) :
                     host_.network->front(host_.identity,route->mailbox) != nullptr) return index;

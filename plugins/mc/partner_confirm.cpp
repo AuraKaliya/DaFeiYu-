@@ -36,13 +36,18 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     if (legacy) skill = "collect";
     const auto route = args.value(legacy ? "route" : "approval","main");
     if (route != "main" && route != "game") return false;
+    if (route == "main" && (!question_events_ || question_ || question_work_)) return false;
     args.erase("route");
     args.erase("approval");
     auto question = confirmation_question(skill,args);
+    const auto now = std::chrono::steady_clock::now();
     Confirmation item{request,order_,0,session_world_,feed_.owner(),std::string(skill),std::move(question),std::move(args),{},
-        std::chrono::steady_clock::now()+std::chrono::seconds(25),route == "game"};
-    if (!item.ask_game) publish("mc.confirmation.request",{{"id",request},{"revision",1},{"generation",item.world},
-        {"player",item.player},{"order",item.order},{"skill",item.skill},{"arguments",item.arguments},{"question",item.question}});
+        now+std::chrono::seconds(25),route == "game"};
+    if (!item.ask_game) {
+        question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",now,item.deadline};
+        question_->initial_started = true;
+        question_->approval = true;
+    }
     confirmation_ = std::move(item);
     return true;
 }
@@ -68,13 +73,11 @@ void PartnerLoop::confirm_once(std::string_view status, std::string_view source,
     item.approved_order = approved_order;
 }
 
-// 保留真实业务裁定供原身份重读，释放后不给新动作继承旧批准。
-// 步骤：检查唯一待定对象 → 尝试记录失效 → 保留终态并归还原候选。
+// 释放原候选与其提问，保留已经发布的唯一裁定。
 void PartnerLoop::confirm_exited(std::uint64_t request) noexcept {
     if (!confirmation_ || confirmation_->request != request) return;
     try { confirm_once("withdrawn","host"); } catch (...) {}
-    decisions_[next_decision_] = std::move(confirmation_->decision);
-    next_decision_ = (next_decision_+1)%decisions_.size();
+    if (question_ && question_->approval && question_->item == request) question_.reset();
     confirmation_.reset();
 }
 
@@ -85,7 +88,7 @@ void PartnerLoop::advance_confirmation() {
     const auto& item = *confirmation_;
     if (feed_.world() != item.world || feed_.owner() != item.player || feed_.gap()) { confirm_once("withdrawn","host"); return; }
     if (std::chrono::steady_clock::now() >= item.deadline) { confirm_once("expired","host"); return; }
-    if (!feed_.ready()) return;
+    if (!item.ask_game || !feed_.ready()) return;
     const auto token = std::to_string(item.request);
     for (const auto& event : feed_.pending()) {
         const auto sequence = event.at("sequence").get<std::uint64_t>();
@@ -94,28 +97,6 @@ void PartnerLoop::advance_confirmation() {
         if (text == "确认 "+token || text == "approve "+token) { confirm_once("approved","game",sequence); return; }
         if (text == "拒绝 "+token || text == "deny "+token) { confirm_once("denied","game"); return; }
     }
-}
-
-// 处理同一确认的本体回信，已裁定时回传原结果。
-// 步骤：核对正文和原编号 → 复用已经裁定的结果 → 呈现问题或采用有效答复。
-void PartnerLoop::intake_confirmation(bool present, const Json& body) {
-    if (!body.is_object() || !body.contains("id") || !body.at("id").is_number_unsigned() ||
-        !body.contains("revision") || body.at("revision") != 1 || (!present && (!body.contains("approve") || !body.at("approve").is_boolean())) ||
-        !body.contains("generation") || !body.at("generation").is_string() || !body.contains("player") || !body.at("player").is_string()) return;
-    const auto id = body.at("id").get<std::uint64_t>();
-    const auto same = [&body,id](const Json& item) {
-        return item.is_object() && item.at("id") == id && item.at("generation") == body.value("generation","") &&
-            item.at("player") == body.value("player","");
-    };
-    for (const auto& decision : decisions_) if (same(decision)) { publish("mc.confirmation.decision",decision); return; }
-    if (!confirmation_ || confirmation_->request != id || confirmation_->world != body.value("generation","") ||
-        confirmation_->player != body.value("player","")) return;
-    const auto& item = *confirmation_;
-    if (same(item.decision)) { publish("mc.confirmation.decision",item.decision); return; }
-    if (present) { confirmation_->ask_game = true; return; }
-    if (!feed_.ready()) return;
-    if (body.at("approve") == true) confirm_once("approved","main",item.order);
-    else confirm_once("denied","main");
 }
 
 // 经实际游戏发言票据呈现原问题，显示渠道和最终批准各自留有回执。

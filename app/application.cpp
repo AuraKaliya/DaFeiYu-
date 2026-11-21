@@ -55,8 +55,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       conversation_(session_,labels_,&plugins_),
       mailbox_intake_(mailbox_host_,conversation_,run_log_),
       interactions_(plugins_,mailbox_host_,mailbox_intake_,tool_clock_,run_log_,run.wake_for_plugin_mail),
-      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)),
-      wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
+      subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
     const events::MailboxCategory enabled[] = {{"room.addressed",1}};
@@ -411,7 +410,6 @@ runtime::RunResult Application::advance_plugins() {
     }
     const auto plugins = plugins_.advance();
     interactions_.advance();
-    if (wake_for_companion_confirmation_) review_companion_confirmation();
     const auto mail = mailbox_intake_.advance();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }

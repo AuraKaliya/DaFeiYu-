@@ -48,10 +48,10 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != 5 ||
+                if (chosen == request.tools.end() || request.tools.size() != 6 ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
-                return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"main"})" :
+                return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :
                     R"({"place":"player"})"}}},FinishReason::tool_calls};
             }
             if (task && input.at("trigger") == (scene ? "scene.changed" : "task.continue")) {
@@ -63,13 +63,14 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"",{{"reply",reply_tool->name,R"({"text":"ready to play"})"}}},FinishReason::tool_calls};
             }
             if (input.at("events").back().at("type") == "player.entered") return {{Role::assistant,"silent baseline"}};
+            if (confirm && input.at("events").back().at("sequence") == 3) return {{Role::assistant,"approval observed"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
                 interruption_seen = input.at("previousActivity").at("stopRequested") == true;
                 return {{Role::assistant,"original work settled"}};
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
-            if (request.tools.size() != 4) throw std::runtime_error("initial scope leaked detailed actions");
+            if (request.tools.size() != 5) throw std::runtime_error("initial scope leaked detailed actions");
             if (task) {
                 const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
                 const auto args = nlohmann::json{{"revision",0},{"goal","resume the wall"},{"detail","check the corner"},
@@ -90,17 +91,9 @@ int wmain(int argc, wchar_t** argv) {
         unsigned game_receipts = 0;
         unsigned decisions = 0;
         bool control_released = false, continuation_closed = false;
-        nlohmann::json confirmation;
         const auto& mails = app.mailbox_host();
-        // 回复原升级请求，投递编号由实际宿主信箱维护。
-        const auto reply = [&](std::uint64_t number, bool approve, bool stale) {
-            const auto payload = nlohmann::json{{"id",confirmation.at("id")},{"revision",1},{"player",confirmation.at("player")},
-                {"generation",stale ? nlohmann::json("old-world") : confirmation.at("generation")},{"approve",approve}}.dump();
-            mails.network->deliver(mails.identity,{instance->mailbox_addresses().inbound},number,
-                events::mailbox_text("mc.confirmation.response",1,payload,1024));
-        };
         // 记录原动作及业务裁定，确认接纳和动作执行来自不同消息。
-        // 步骤：逐件读取原箱 → 处理升级请求及迟到答复 → 核对真实效果和释放。
+        // 步骤：逐件读取原箱 → 关联本地游戏裁定 → 核对实际效果及释放。
         const auto drain = [&] {
             const auto address = events::MailboxId{instance->mailbox_addresses().outbound};
             for (;;) {
@@ -109,16 +102,10 @@ int wmain(int argc, wchar_t** argv) {
                 const auto payload = mail.event.get().payload;
                 const auto type = payload->descriptor()->name();
                 const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
-                if (type == "mc.confirmation.request") {
-                    confirmation = fact;
-                    if (fact.at("skill") != "collect" || fact.at("arguments").at("count") != 2 ||
-                        fact.at("arguments").contains("approval")) throw std::runtime_error("wrong original candidate");
-                    reply(1,true,true);
-                    reply(2,true,false);
-                } else if (type == "mc.confirmation.decision") {
-                    if (fact.at("status") != "approved" || fact.at("source") != "main" || fact.at("id") != confirmation.at("id"))
-                        throw std::runtime_error("late answer changed original decision");
-                    if (++decisions == 1) reply(3,false,false);
+                if (type == "mc.confirmation.decision") {
+                    if (fact.at("status") != "approved" || fact.at("source") != "game" || fact.at("skill") != "collect")
+                        throw std::runtime_error("original candidate did not receive the local approval");
+                    ++decisions;
                 } else if (type == "mc.partner.control") control_released = fact.at("phase") == "released";
                 else if (task && type == "mc.partner.turn" && fact.at("order") == 2 && fact.at("request") == 3)
                     continuation_closed = fact.at("failed") == false;
@@ -144,19 +131,19 @@ int wmain(int argc, wchar_t** argv) {
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
                     if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED :
-                        state.ready && state.session && state.settled == (interrupt ? 3u : 2u) && (!task || continuation_closed)) return;
+                        state.ready && state.session && state.settled == (interrupt || confirm ? 3u : 2u) && (!task || continuation_closed)) return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
                 throw std::runtime_error("plugin did not reach expected boundary");
             };
             wait(false);
-            if ((interrupt ? !assessed || !interruption_seen : !actual_reply) || app.conversation().status())
+            if ((interrupt ? !assessed || !interruption_seen : confirm ? game_receipts != 1 : !actual_reply) || app.conversation().status())
                 throw std::runtime_error("reply or interruption missing, or shared context");
             if (instance->invoke(*api,[](const auto& fn, auto* native) { return fn.stop(native,nullptr); }))
                 throw std::runtime_error("could not stop plugin-owned partner");
             wait(true);
         }
-        if (game_receipts != 1 || !control_released || (confirm && decisions != 2))
+        if (game_receipts != 1 || !control_released || (confirm && decisions != 1))
             throw std::runtime_error("expected original effect, confirmation or confirmed control release");
         if (app.plugins().unload("mc.companion") != plugins::ShutdownResult::closed) throw std::runtime_error("MC unload failed");
         return 0;

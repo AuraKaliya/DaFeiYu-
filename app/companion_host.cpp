@@ -19,7 +19,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
     const auto id = host.open_companion("mc.companion");
     host.listen_companion(id, mode);
     bool listening = false;
-    std::uint64_t reported_event = 0, presented = 0;
+    std::uint64_t reported_event = 0;
     std::unique_ptr<platform::LineInput> input;
     if (mode == CompanionMode::partner) {
         try { input = std::make_unique<platform::LineInput>(); }
@@ -31,14 +31,9 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("game host step failed");
         host.conversation().advance();
         present_console_ask(host,std::cout);
-        if (const auto question = host.companion_confirmation(); question && question->channel == "panel" &&
-            question->decision.empty() && presented != question->id) {
-            presented = question->id;
-            std::cout << question->question << "\n/companion confirm " << question->id << ' ' << question->revision << " approve|deny" << std::endl;
-        }
         if (input) {
             const auto line = input->poll();
-            if (line.state == platform::InputState::line && (line.line.starts_with("/companion confirm ") ||
+            if (line.state == platform::InputState::line && (line.line.starts_with("/companion wake ") || line.line == "/companion review" ||
                 line.line.starts_with("/ask ") || line.line.starts_with("/mail "))) {
                 try { application_command(host,line.line,std::cout,std::cerr); }
                 catch (const std::exception& error) { std::cerr << error.what() << '\n'; }

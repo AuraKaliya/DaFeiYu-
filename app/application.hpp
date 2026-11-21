@@ -28,7 +28,6 @@ struct ApplicationRunConfig {
     agent::ToolClock tool_clock = std::chrono::steady_clock::now;
     std::optional<std::string> model_profile;
     bool wake_for_room_address = true;
-    bool wake_for_companion_confirmation = true;
     bool wake_for_plugin_mail = true;
     std::filesystem::path trace_directory;
 };
@@ -107,20 +106,14 @@ class Application {
     CompanionDelta companion_messages(runtime::DomainId id, std::uint64_t after) const;
     // 读取仍保留的指定子回合结算值。
     std::optional<CompletedTurn> companion_result(agent::RunId run) const;
-    // 读取原伙伴升级的确认及已知裁定。
-    std::optional<CompanionConfirmation> companion_confirmation() const;
-    // 由受信本体用户回复原伙伴确认，实际结果以插件回执为准。
-    void decide_companion_confirmation(std::uint64_t id, std::uint64_t revision, bool approve);
-    // 主动审查最近的原确认事项；已呈现或较旧的事项不再次启动模型。
-    bool review_companion_confirmation();
     // 宿主主动处理已登记的信箱，等待当前主回合退出。
     MailboxIntakeResult review_mail() { return mailbox_intake_.advance(false); }
     // 取得通用 ASK 的终端问题。
     auto console_ask() const { return interactions_.console_question(); }
     // 提交终端呈现回执或原真人答复。
     bool answer_console_ask(std::uint64_t id, std::optional<std::string> answer) { return interactions_.console_answer(id,std::move(answer)); }
-    // 设置随后到件是否自动进入确认分流，手动取件入口仍可使用。
-    void wake_for_companion_confirmation(bool enabled) noexcept { wake_for_companion_confirmation_ = enabled; }
+    // 设置插件信箱的自动唤醒模式，主动收件继续可用。
+    void wake_for_plugin_mail(bool enabled) noexcept { interactions_.set_auto_wake(enabled); }
     // 显式授予一个已加载实例的只读工具并提交用户目标。
     agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
@@ -196,10 +189,7 @@ class Application {
     InteractionRoutes interactions_;
     std::shared_ptr<Subagents> subagents_;
     std::unique_ptr<CompanionSession> companion_;
-    std::shared_ptr<agent::ToolCatalog> confirmation_channels_;
     std::shared_ptr<agent::ToolCatalog> companion_exchange_tools_;
-    std::uint64_t routed_confirmation_ = 0;
-    bool wake_for_companion_confirmation_;
     agent::ConfirmationCaller caller_;
     std::optional<VerificationReport> verification_;
     std::unique_ptr<ToolVerification> verifier_;

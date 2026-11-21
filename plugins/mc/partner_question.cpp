@@ -23,9 +23,12 @@ uint32_t project(const Json& body, uint32_t kind, dfy_v2_event_projection* out) 
 uint32_t DFY_V2_CALL decode_help(void*, dfy_v2_string_view raw, dfy_v2_event_projection* out) {
     try {
         auto body = Json::parse(std::string_view(raw.data,raw.length));
-        if (body.at("reason") != "local_timeout") return DFY_V2_INVALID_ARGUMENT;
+        const auto reason = body.at("reason");
+        if (reason != "local_timeout" && reason != "action_approval") return DFY_V2_INVALID_ARGUMENT;
         const auto mode = body.at("path");
         if (mode != "main" && mode != "direct") return DFY_V2_INVALID_ARGUMENT;
+        if (reason == "action_approval") body["choices"] = {"approve","deny"};
+        body["context"] = Json::parse(body.at("context").get<std::string>());
         body.erase("path");
         return project(body,mode == "main" ? DFY_V2_EVENT_MAIL : DFY_V2_EVENT_ASK,out);
     } catch (...) { return DFY_V2_FAILED; }
@@ -47,10 +50,10 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     if (!events || events->header.struct_size != sizeof(*events) || events->header.interface_version != 1 ||
         !events->register_event || !events->emit) return DFY_V2_ABI_MISMATCH;
     if (const auto status = events->register_event(view(help_type),1,
-        view(R"({"item":"uint","revision":"uint","question":"string","reason":"string","path":"string","recipient":"string","channel":"string","waitMs":"uint"})"),
+        view(R"({"item":"uint","revision":"uint","question":"string","reason":"string","path":"string","recipient":"string","channel":"string","waitMs":"uint","context":"string"})"),
         decode_help,nullptr,nullptr); status) return status;
     if (const auto status = events->register_event(view(feedback_type),1,
-        view(R"({"ask":"uint","channel":"string","action":"string","delivered":"bool","recipient":"string","answer":"string"})"),
+        view(R"({"ask":"uint","channel":"string","action":"string","delivered":"bool","recipient":"string","answer":"string","bridgeWork":"string"})"),
         decode_feedback,nullptr,nullptr); status) return status;
     if (const auto status = host(view(DFY_V2_ROUTED_MAILBOX_INTERFACE),1,&table,nullptr); status) return status;
     const auto* mail = static_cast<const dfy_v2_routed_mailbox_api*>(table);
@@ -76,6 +79,8 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
 void PartnerLoop::intake_question(std::string_view category, const Json& body) {
     if (!question_ || !body.is_object() || body.value("item",std::uint64_t{}) != question_->item ||
         body.value("revision",0) != 1 || body.value("recipient",std::string{}) != question_->player ||
+        body.value("eventDomain",std::uint64_t{}) != question_->event_domain ||
+        body.value("event",std::uint64_t{}) != question_->event_sequence || !question_->event_sequence ||
         question_->world != feed_.world() || question_->player != feed_.owner() || feed_.departed()) return;
     const auto id = body.value("ask",std::uint64_t{});
     if (category == "interaction.ask.present") {
@@ -84,12 +89,24 @@ void PartnerLoop::intake_question(std::string_view category, const Json& body) {
             question_->presented = false;
         }
     } else if (id && (!question_->ask || question_->ask == id)) {
-        complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>());
+        complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
     }
 }
 
 // 把已核对的答复作为插件局内事实提交给后续上下文。
-void PartnerLoop::complete_question(std::string_view status, std::string answer) {
+void PartnerLoop::complete_question(std::string_view status, std::string answer, std::string_view channel) {
+    if (question_->approval) {
+        if (confirmation_ && confirmation_->request == question_->item) {
+            const auto order = channel == "game" ? question_->answer_order : question_->order;
+            const auto source = channel == "game" ? "game" : "main";
+            if (status == "answered" && answer == "approve" && order) confirm_once("approved",source,order);
+            else if (status == "answered" && answer == "deny") confirm_once("denied",source);
+            else if (status == "expired") confirm_once("expired","host");
+            else confirm_once("withdrawn","host");
+        }
+        question_.reset();
+        return;
+    }
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     question_.reset();
     question_wake_ = true;
@@ -103,6 +120,10 @@ void PartnerLoop::flush_question_events() {
     const auto status = question_events_->emit(view(type),1,question_sequence_+1,view(body),&receipt,nullptr);
     if (status == DFY_V2_RESOURCE_EXHAUSTED) return;
     if (status || receipt.sequence != question_sequence_+1) throw std::runtime_error("MC question: event rejected");
+    if (type == help_type && question_) {
+        question_->event_domain = receipt.domain;
+        question_->event_sequence = receipt.sequence;
+    }
     ++question_sequence_;
     question_outbound_.pop_front();
 }
@@ -112,14 +133,18 @@ void PartnerLoop::flush_question_events() {
 void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing) {
     const bool live = !closing && question_ && question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed();
     if (question_work_) {
-        const auto result = question_work_->poll(!live);
+        std::optional<GameResult> result;
+        try { result = question_work_->poll(!live); }
+        catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
         question_work_.reset();
         if (live) {
             auto& question = *question_;
-            question.presented = result->success;
+            const auto receipt = Json::parse(result->payload,nullptr,false);
+            question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
-                {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""}}.dump());
+                {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
+                {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}}.dump());
         }
     }
     if (!live) { question_.reset(); question_outbound_.clear(); return; }
@@ -128,28 +153,46 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     if (now >= q.deadline) { complete_question("expired",{}); return; }
     if (q.presented && !q.forwarded) {
         const auto prefix = "答复 "+std::to_string(q.ask ? q.ask : q.item)+" ";
+        const auto token = std::to_string(q.ask);
         for (const auto& event : feed_.pending()) {
             const auto text = event.value("text",std::string{});
-            if (event.at("sequence") <= q.order || !text.starts_with(prefix) || text.size() == prefix.size()) continue;
-            const auto answer = text.substr(prefix.size());
+            if (event.at("sequence") <= q.order) continue;
+            std::string answer;
+            if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
+            else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
+            else if (text.starts_with(prefix)) answer = text.substr(prefix.size());
+            if (answer.empty() || (q.approval && answer != "approve" && answer != "deny")) continue;
             if (!q.escalated) { complete_question("answered",answer); return; }
             if (!q.ask) continue;
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
-                {"delivered",false},{"recipient",q.player},{"answer",answer}}.dump());
+                {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}}.dump());
+            q.answer_order = event.at("sequence");
             q.forwarded = true;
             break;
         }
     }
     if (!q.escalated && now >= q.local) {
-        question_outbound_.emplace_back(help_type,Json{{"item",q.item},{"revision",1},{"question",q.text},{"reason","local_timeout"},
+        Json context = Json::object();
+        if (q.approval) context = {{"generation",q.world},{"order",q.order},{"skill",confirmation_->skill},
+            {"arguments",confirmation_->arguments}};
+        question_outbound_.emplace_back(help_type,Json{{"item",q.item},{"revision",1},{"question",q.text},
+            {"reason",q.approval ? "action_approval" : "local_timeout"},{"context",context.dump()},
             {"path",q.path},{"recipient",q.player},{"channel","game"},{"waitMs",24000}}.dump());
         q.escalated = true;
     }
     const bool start = (!q.initial_started || (q.ask && !q.ask_started)) && feed_.ready();
     if (start) {
+        if (q.approval && feed_.cursor() != q.order) {
+            question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},
+                {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}}.dump());
+            q.ask_started = true;
+            flush_question_events();
+            return;
+        }
         const auto token = std::to_string(q.ask ? q.ask : q.item);
+        const auto prompt = q.text+(q.approval ? " 回复 确认 "+token+" 或 拒绝 "+token : " 回复 答复 "+token+" <回答>");
         const auto arguments = Json{{"context",{{"generation",q.world},{"order",feed_.cursor()}}},
-            {"arguments",{{"text",q.text+" 回复 答复 "+token+" <回答>"}}}}.dump();
+            {"arguments",{{"text",prompt}}}}.dump();
         question_work_ = std::make_unique<GameWork>(GameAction::partner,config,
             "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token,arguments,"reply");
         if (q.ask) q.ask_started = true;
