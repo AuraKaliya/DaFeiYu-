@@ -20,7 +20,8 @@ async function main() {
   const departure = variant === 'partner-departure';
   const revision = variant?.startsWith('partner-revision-');
   const notes = variant === 'partner-revision-notes';
-  const correction = variant === 'partner-revision-correction';
+  const correction = variant?.startsWith('partner-revision-correction');
+  const correctionLost = variant === 'partner-revision-correction-lost';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const questionExpiry = variant === 'partner-revision-question-expiry';
@@ -185,7 +186,7 @@ async function main() {
           assert.ok(!notes && x === 1 && !nextBlock);
           ++stopped;
         }
-        const exited = x === 2 || (notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped >= 2);
+        const exited = !correctionLost && (x === 2 || (notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped >= 2));
         if (!exited) return { ...context, skill, exited: false, result: {} };
         if (x === 1) collectExited = true;
         const status = notes || variant === 'partner-revision-goal' ? 'done' : 'interrupted';
@@ -294,10 +295,11 @@ async function main() {
       assert.equal(badObservations, repairObserve ? 2 : 0);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
-      assert.equal(stopped, notes ? 0 : 2);
-      assert.ok(collectExited);
+      if (correctionLost) assert.ok(stopped >= 2);
+      else assert.equal(stopped, notes ? 0 : 2);
+      assert.equal(collectExited, !correctionLost);
       assert.equal(nextBlock, notes);
-      assert.equal(wallFilled, correction);
+      assert.equal(wallFilled, !!correction && !correctionLost);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);

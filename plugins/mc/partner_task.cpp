@@ -75,7 +75,10 @@ Json PartnerTask::context() const {
     Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_},
         {"collection",collection_}};
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
-    if (correcting()) value["pendingCorrection"] = correction_;
+    if (correcting()) {
+        value["pendingCorrection"] = correction_;
+        if (!unconfirmed_work_.empty()) value["pendingCorrection"]["unconfirmedWork"] = unconfirmed_work_;
+    }
     if (!changes_.empty()) value["worldChanges"] = changes_;
     if (has_target()) {
         value["target"] = target_;
@@ -99,6 +102,11 @@ Json PartnerTask::begin_correction(const Json& event,const Json& scene) {
     return {{"status","correction_recorded"},{"correction",correction_}};
 }
 
+// 记住当前纠正需要等待的旧执行器身份。
+void PartnerTask::hold_correction(std::string work) {
+    if (correcting()) unconfirmed_work_ = std::move(work);
+}
+
 // 保存当前任务说明，只在执行条件变化时推进插件持有的任务修订。
 // 步骤：校验正文与原话目标 → 核对执行范围 → 保存约定和唤醒条件。
 Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor,
@@ -111,6 +119,8 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     if (commit && (!correcting() || input.at("message") != correction_.at("message") ||
         revision_ != correction_.at("baseRevision") || scene.at("dimension") != correction_.at("dimension")))
         return {{"status","stale_correction"}};
+    if (commit && !unconfirmed_work_.empty())
+        return {{"status","old_work_exit_unconfirmed"},{"work",unconfirmed_work_}};
     if (correcting() && !commit && (goal != goal_ || collection != collection_ || input.contains("target")))
         return {{"status","correction_pending"},{"correction",correction_}};
     if (commit && (!input.contains("target") || input.at("target").empty()))

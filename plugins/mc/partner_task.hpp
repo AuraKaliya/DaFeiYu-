@@ -20,6 +20,8 @@ class PartnerTask {
         const nlohmann::json* anchor, std::uint64_t player_order = 0);
     // 将当前原话登记为待完成的任务纠正。
     nlohmann::json begin_correction(const nlohmann::json& event, const nlohmann::json& scene);
+    // 保存无法证实已退出的旧工作身份，暂停这次世界绑定中的纠正提交。
+    void hold_correction(std::string work);
     // 判断旧目标是否正在等待玩家纠正落地。
     bool correcting() const noexcept { return !correction_.is_null(); }
     // 判断当前任务是否带有需要遵循的原话目标。
@@ -54,6 +56,7 @@ class PartnerTask {
     std::uint64_t revision_ = 0;
     std::uint64_t last_correction_ = 0;
     std::string goal_, detail_, next_ = "player", collection_ = "visible";
+    std::string unconfirmed_work_;
     unsigned remaining_ = 0;
     bool armed_ = false;
     nlohmann::json baseline_, receipt_, target_, correction_, changes_ = nlohmann::json::array();

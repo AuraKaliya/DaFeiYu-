@@ -677,6 +677,8 @@ void PartnerLoop::advance_motion(bool stopping) {
     fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
     const auto& receipt = fact.at("result");
     const bool departed = receipt.at("status") == "unconfirmed";
+    if (departed && result->effect == GameEffect::unknown && motion.stopping && motion.skill != "follow")
+        task_.hold_correction(motion.work);
     const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !departed;
     if (motion.skill == "follow" && follow_) {
         fact["transition"] = paused ? "paused" : "exited";

@@ -128,7 +128,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool notes = variant == L"partner-revision-notes";
     const bool approval = variant == L"partner-revision-approval";
     const bool goal = variant == L"partner-revision-goal";
-    const bool correction = variant == L"partner-revision-correction";
+    const bool correction = variant.starts_with(L"partner-revision-correction");
+    const bool correction_lost = variant == L"partner-revision-correction-lost";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
@@ -196,6 +197,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (last.role == Role::tool) {
+            if (last.tool_call_id == "lost-correction") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (result.at("status") != "old_work_exit_unconfirmed" || !result.at("work").get_ref<const std::string&>().starts_with("plan."))
+                    throw std::runtime_error("unconfirmed work did not hold the new target");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
             if (last.tool_call_id == "register-correction") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (result.at("status") != "correction_recorded" || result.at("correction").at("message") != 3)
@@ -242,6 +250,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& first = layers.at(0).at("nodes").at(0);
             const auto& second = layers.at(1).at("nodes").at(0).at("result");
             const auto& result = first.at("result");
+            if (correction_lost) {
+                if (plan.at("status") != "cancelled" || plan.at("revision") != 1 || second.at("status") != "skipped" ||
+                    result.at("status") != "unconfirmed" || input.at("task").at("pendingCorrection").at("unconfirmedWork") != first.at("work"))
+                    throw std::runtime_error("missing original unconfirmed work");
+                return call("_task_update","lost-correction",{{"operation","commit_correction"},{"message",3},
+                    {"goal","竖着补墙"},{"next","player"},{"target",{{"message",2},{"cells",wall}}}});
+            }
             if (checked || plan.at("revision") != 1 || input.at("task").at("revision") != revision || layers.size() != 2 ||
                 plan.at("status") != (notes ? "done" : "cancelled") ||
                 first.at("work") != plan.at("nodes").at(0).at("work") || result.at("inventoryDelta").at("dirt") != 1 ||
