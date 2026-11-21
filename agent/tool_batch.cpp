@@ -186,6 +186,7 @@ bool ToolBatch::advance(const PolicyContext& current) {
             context_.commit_tools(); const auto& messages = *context_.committed();
             for (std::size_t index = messages.size()-entries_.size(); index < messages.size(); ++index)
                 add_fingerprint(fingerprint_,messages[index].content);
+            extension_ = {};
             done_ = true;
         }
     } catch (...) { advancing_ = false; throw; }

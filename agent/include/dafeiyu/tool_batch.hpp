@@ -68,7 +68,7 @@ class ToolBatch {
     RunJournal* const journal_;
     const ExecutionPolicy policy_;
     const PolicyContext bound_;
-    const PolicyExtension extension_;
+    PolicyExtension extension_;
     const ToolCaptureSink capture_;
     std::vector<Entry> entries_;
     PolicyDecision continuation_{PolicyVerdict::allow,PolicyReason::none};

@@ -2,10 +2,10 @@
 
 namespace dfy::plugins {
 // 将内部执行点及借用上下文投影为 ABI 值，复用 Agent 的拒绝与审批语义。
-agent::PolicyExtension plugin_controls(PluginManager& manager, runtime::DomainId owner) {
+agent::PolicyExtension plugin_controls(const PluginHookSnapshot& snapshot, runtime::DomainId owner) {
     // 从原运行和工具身份构造 ABI 调用并转换插件结果。
     // 步骤：映射控制点 → 提交插件裁定 → 返回基础策略可合并的决定。
-    return [&manager,owner](agent::ControlPoint point, const agent::PolicyContext& context) {
+    return [control = snapshot.control,owner](agent::ControlPoint point, const agent::PolicyContext& context) {
         using namespace dfy::agent;
         uint32_t hook_point = 0;
         switch (point) {
@@ -16,7 +16,7 @@ agent::PolicyExtension plugin_controls(PluginManager& manager, runtime::DomainId
         const auto attempt = context.attempt;
         const dfy_v2_hook_input input{hook_point,0,attempt.step.run.session,attempt.step.run.sequence,
             attempt.step.sequence,attempt.sequence,owner,context.goal_revision,{context.tool_id.data(),context.tool_id.size()}};
-        switch (manager.control_hook(input)) {
+        switch (control(input)) {
         case DFY_V2_HOOK_ALLOW: return PolicyDecision{PolicyVerdict::allow,PolicyReason::none};
         case DFY_V2_HOOK_CONFIRM: return PolicyDecision{PolicyVerdict::wait,PolicyReason::confirmation_required};
         case DFY_V2_HOOK_DENY: return PolicyDecision{PolicyVerdict::deny,PolicyReason::source_denied};
@@ -26,10 +26,10 @@ agent::PolicyExtension plugin_controls(PluginManager& manager, runtime::DomainId
 }
 
 // 把原运行的有界文本字段投影到原生插件契约，权限与回执留在 Agent。
-agent::TextHook plugin_text_hooks(PluginManager& manager, runtime::DomainId owner) {
+agent::TextHook plugin_text_hooks(const PluginHookSnapshot& snapshot, runtime::DomainId owner) {
     // 映射运行阶段并将原字段借给插件管理器。
     // 步骤：定位 ABI 阶段 → 复制权威运行身份 → 合并已注册的字段改写。
-    return [&manager,owner](agent::TextHookPoint point, const agent::PolicyContext& context, std::string_view field,
+    return [rewrite = snapshot.rewrite,owner](agent::TextHookPoint point, const agent::PolicyContext& context, std::string_view field,
         std::string_view value, std::size_t limit) {
         using agent::TextHookPoint;
         uint32_t hook_point = 0;
@@ -41,7 +41,7 @@ agent::TextHook plugin_text_hooks(PluginManager& manager, runtime::DomainId owne
         case TextHookPoint::reply: hook_point = DFY_V2_TEXT_HOOK_REPLY; break;
         }
         const auto attempt = context.attempt;
-        return manager.rewrite_hook({hook_point,0,attempt.step.run.session,attempt.step.run.sequence,
+        return rewrite({hook_point,0,attempt.step.run.session,attempt.step.run.sequence,
             attempt.step.sequence,attempt.sequence,owner,context.goal_revision,{field.data(),field.size()},{value.data(),value.size()}},limit);
     };
 }

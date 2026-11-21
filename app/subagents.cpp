@@ -115,10 +115,11 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     agent::RunOptions options;
     options.now = clock_;
     options.version_labels = labels_;
-    options.version_labels.control_extension = plugins_.hook_version();
+    const auto snapshot = plugins_.capture_hooks(slot.owner);
+    options.version_labels.control_extension = snapshot.version;
     options.system_instructions = std::move(input.instructions);
-    options.extension = plugins::plugin_controls(plugins_,slot.owner);
-    options.text_hook = plugins::plugin_text_hooks(plugins_,slot.owner);
+    options.extension = plugins::plugin_controls(snapshot,slot.owner);
+    options.text_hook = plugins::plugin_text_hooks(snapshot,slot.owner);
     if (!input.tools.empty()) {
         auto catalog = std::make_shared<agent::ToolCatalog>(64);
         slot.registration = std::make_unique<plugins::PluginTools>(instance,catalog);

@@ -14,9 +14,10 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
     if (plugins_) {
-        auto version = plugins_->hook_version();
-        auto host = plugins::plugin_controls(*plugins_);
-        options.text_hook = plugins::plugin_text_hooks(*plugins_);
+        const auto snapshot = plugins_->capture_hooks();
+        auto version = snapshot.version;
+        auto host = plugins::plugin_controls(snapshot);
+        options.text_hook = plugins::plugin_text_hooks(snapshot);
         if (options.extension) {
             if (options.version_labels.control_extension && version != "none")
                 options.version_labels.control_extension = "sha256:"+platform::sha256(version+"/"+*options.version_labels.control_extension);

@@ -286,6 +286,7 @@ int wmain(int argc, wchar_t** argv) {
         PluginMailboxHost host{std::make_shared<Mailboxes>(MailboxLimits{2,2,4,64}),next_domain()};
         auto channel = std::make_shared<BroadcastChannel>(std::make_shared<EventStore>(8,64),2,2);
         PluginManager manager(root,root.parent_path()/"data",channel,1,host);
+        const auto before_load = manager.capture_hooks();
         check(manager.load("test.mail") == DFY_V2_OK,"mailbox plugin failed to attach at load");
         const auto registered = manager.hook_version();
         check(registered.starts_with("hooks-v1:sha256:"),"registered policy lacked a public version");
@@ -303,6 +304,14 @@ int wmain(int argc, wchar_t** argv) {
         check(manager.control_hook(scoped) == DFY_V2_HOOK_CONFIRM,"owned session skipped its control Hook");
         scoped.owner = next_domain();
         check(manager.control_hook(scoped) == DFY_V2_HOOK_ALLOW,"Hook exceeded its registered scope");
+        {
+            const auto active = manager.capture_hooks();
+            check(before_load.version == "none" && before_load.control(control) == DFY_V2_HOOK_ALLOW &&
+                active.version == registered && active.control(control) == DFY_V2_HOOK_CONFIRM,
+                "active run changed its Hook plan across a plugin load");
+            check(manager.unload("test.mail") == ShutdownResult::in_use && active.control(control) == DFY_V2_HOOK_CONFIRM,
+                "unload invalidated the controller held by an active run");
+        }
 
         const auto body = mailbox_text("test.request",1,"source",64);
         check(host.network->deliver(host.identity,{addresses.inbound},1,body).state == DeliveryState::accepted,
