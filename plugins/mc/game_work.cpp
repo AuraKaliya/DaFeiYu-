@@ -13,7 +13,7 @@ GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id
 
 // 每轮最多处理一次非等待本机收发，桥接异常后尝试停止同一动作。
 // 步骤：处理取消和期限 → 提交或查询原命令 → 校验退出或安排下一次读回。
-std::optional<GameResult> GameWork::poll(bool cancelled) {
+std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
     const auto now = std::chrono::steady_clock::now();
     stopping_ = stopping_ || cancelled || now >= deadline_;
     if (stopping_ && !attempted_) return GameResult{false, GameEffect::none, {}};
@@ -39,6 +39,10 @@ std::optional<GameResult> GameWork::poll(bool cancelled) {
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :
                 value.arrived ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};
+            if (defer && phase_ == Phase::begin && !stopping_) {
+                phase_ = Phase::read;
+                return GameResult{true, GameEffect::observed, {}, true};
+            }
         } else if (action_ == GameAction::inspect) {
             auto value = inspect_reply(*wire, id_, arguments_);
             if (value.exited) return GameResult{value.arrived, value.moved ? GameEffect::observed : GameEffect::none, std::move(value.payload)};

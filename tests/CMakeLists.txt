@@ -82,6 +82,9 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_partner_interrupt COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-interrupt)
   set_tests_properties(plugins.mc_partner_interrupt PROPERTIES TIMEOUT 25)
+  add_test(NAME plugins.mc_partner_motion COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+    "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-motion)
+  set_tests_properties(plugins.mc_partner_motion PROPERTIES TIMEOUT 25)
   add_test(NAME plugins.mc_partner_confirmation COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-confirm)
   set_tests_properties(plugins.mc_partner_confirmation PROPERTIES TIMEOUT 25)

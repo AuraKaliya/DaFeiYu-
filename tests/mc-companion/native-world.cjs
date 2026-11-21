@@ -12,6 +12,7 @@ async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
+  const motion = variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
   const task = scene || variant === 'partner-task';
@@ -20,7 +21,7 @@ async function main() {
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || confirm || task || route || exchange;
+  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -45,10 +46,12 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : first && approvedId ? 4 : (interrupt && moveId) || approvedId ? 3 : 2;
+        const latest = initial ? 1 : first && approvedId || motion && replies ? 4 :
+          (interrupt || motion) && moveId || approvedId ? 3 : 2;
         const messages = [presence, { sequence: 2, text: 'play with me',
           sceneAtMessage: { dimension: 'overworld', sampledAtMs: 42, position: { x: -0.5, y: -57, z: 9.25 } } },
-          { sequence: 3, text: approvedId ? 'approve ' + approvedId : 'stop for now' }, { sequence: 4, text: 'deny ' + approvedId }];
+          { sequence: 3, text: motion ? 'where are you' : approvedId ? 'approve ' + approvedId : 'stop for now' },
+          { sequence: 4, text: motion ? 'stop for now' : 'deny ' + approvedId }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
@@ -91,7 +94,15 @@ async function main() {
         ++replies;
         return { ...context, skill, exited: true, result: { status: 'done', collected: 2 } };
       }
-      if (interrupt) {
+      if (motion && skill === 'reply') {
+        assert.equal(method, 'partner.begin');
+        assert.equal(context.order, 3);
+        assert.equal(args.text, 'still moving');
+        assert.ok(moveId && stopped === 0);
+        ++replies;
+        return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+      }
+      if (interrupt || motion) {
         assert.equal(skill, 'move');
         assert.deepEqual(context, { generation: state.generation, order: 2 });
         if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, { place: 'player' }); }
@@ -110,16 +121,17 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: first ? 4 : interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
+    return { generation, order: first || motion ? 4 : interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || confirm || task || route || exchange ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
+    const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange ? [variant] : [])], { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
-    if (interrupt) assert.equal(stopped, 1);
+    if (motion) { assert.equal(replies, 1); assert.equal(stopped, 1); }
+    else if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, first || delayed ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {

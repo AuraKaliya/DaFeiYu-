@@ -31,6 +31,10 @@ class PartnerLoop {
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
+    // 接纳已经由游戏启动且尚未退出的原工作，接管轮询和停止。
+    void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work, std::unique_ptr<GameWork>& action);
+    // 判断角色的移动控制是否仍由原工作持有。
+    bool has_motion() const noexcept { return motion_.has_value(); }
     // 执行当前原子会话的局内任务或工具目录操作。
     nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
     // 判断来自本体委托的当前可变更技能是否需要强制确认。
@@ -60,6 +64,8 @@ class PartnerLoop {
     void flush();
     // 把本轮已经退出的游戏动作转换为独立信箱事实。
     void report_actions();
+    // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
+    void advance_motion(bool stopping);
     // 在本地有界保留结构化事实，等本体接纳后归还。
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
@@ -103,6 +109,15 @@ class PartnerLoop {
 
     PartnerFeed feed_;
     PartnerTask task_;
+    struct Motion {
+        std::uint64_t order, session, request, invocation;
+        std::string world, work;
+        std::string_view skill;
+        std::unique_ptr<GameWork> action;
+        bool stopping = false, announced = false;
+    };
+    std::optional<Motion> motion_;
+    bool motion_wake_ = false;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;
     const dfy_v2_agent_api* agent_ = nullptr;

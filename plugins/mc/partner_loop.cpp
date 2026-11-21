@@ -1,4 +1,5 @@
 #include "partner_loop.hpp"
+#include <dafeiyu/tool_abi_v2.h>
 #include <array>
 
 namespace dfy::mc {
@@ -12,6 +13,9 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "sceneAtMessage 是收到对应原话时看到的玩家位置，position 为空表示当时未跟踪到玩家。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
+    "要边走边继续陪伴时用 start_move。activeMotion 是正在运行的游戏动作，可在此期间观察和回复。"
+    "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
+    "已接纳和正在移动都不等于已到达，要按真实回执回答。"
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
@@ -70,6 +74,8 @@ void PartnerLoop::stop() noexcept { if (phase_ == DFY_V2_PARTNER_LISTENING) phas
 void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
+    motion_.reset();
+    motion_wake_ = false;
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -131,6 +137,7 @@ void PartnerLoop::retire() {
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
+    motion_wake_ = false;
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
@@ -149,12 +156,14 @@ void PartnerLoop::submit(std::string_view wake) {
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
     const bool answer = wake == "question.result";
-    const bool autonomous = facts.empty() && !delegated && !answer;
+    const bool autonomous = facts.empty() && !delegated && !answer && !motion_wake_;
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
     if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
-    if (autonomous) input["recentEvents"] = recent_events_;
+    if (motion_) input["activeMotion"] = {{"work",motion_->work},{"skill",motion_->skill},{"order",motion_->order},
+        {"status",motion_->stopping ? "stopping" : "running"}};
+    if (autonomous || (motion_wake_ && facts.empty())) input["recentEvents"] = recent_events_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"escalated",question_->escalated}};
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
@@ -167,6 +176,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     if (!delegated) for (const auto& skill : partner_skills) {
         if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
+        if (skill.kind == SkillKind::motion_stop && !motion_) continue;
         const auto category = skill.category;
         if (!base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
@@ -181,6 +191,7 @@ void PartnerLoop::submit(std::string_view wake) {
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
         expansion_pending_ = false;
+        motion_wake_ = false;
     }
     order_ = order;
     reviewed_ = 0;
@@ -209,6 +220,11 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
     if (skill == "ask_player") return open_question(invocation,args);
+    if (skill == "stop_motion") {
+        if (!motion_ || args.at("work") != motion_->work) return {{"status","stale"}};
+        motion_->stopping = true;
+        return {{"status","stopping"},{"work",motion_->work}};
+    }
     return skill == "skills" ? discover(args) : task_.update(args,feed_.observation(),feed_.scene_revision());
 }
 
@@ -244,6 +260,7 @@ Json PartnerLoop::discover(const Json& arguments) {
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
+    if (motion_) return {};
     return task_.trigger(feed_.observation(),feed_.scene_revision());
 }
 
@@ -275,6 +292,40 @@ void PartnerLoop::report_actions() {
         action = {};
     }
     action_count_ = 0;
+}
+
+// 移交已接纳的原工作和不可随新回合改写的关联身份。
+void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
+    std::unique_ptr<GameWork>& action) {
+    if (motion_) throw std::logic_error("MC partner: motion already active");
+    motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
+}
+
+// 独立于模型回合轮询已接纳的动作，并记录原动作的真实终态。
+// 步骤：发布接纳 → 处理停止条件并重读 → 归档归属和结果并唤醒。
+void PartnerLoop::advance_motion(bool stopping) {
+    if (!motion_) return;
+    auto& motion = *motion_;
+    Json fact{{"generation",motion.world},{"order",motion.order},{"session",motion.session},
+        {"request",motion.request},{"invocation",motion.invocation},{"skill",motion.skill},{"bridgeWork",motion.work}};
+    if (!motion.announced) {
+        publish("mc.partner.motion",{{"action",fact},{"status","accepted"}});
+        motion.announced = true;
+    }
+    motion.stopping = motion.stopping || stopping;
+    std::optional<GameResult> result;
+    try { result = motion.action->poll(motion.stopping); }
+    catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
+    if (!result) return;
+    fact["effect"] = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
+        result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
+    fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
+    publish("mc.partner.action",fact);
+    if (!stopping) {
+        task_.record(fact);
+        motion_wake_ = true;
+    }
+    motion_.reset();
 }
 
 // ACK 只确认收进本体信箱，重投用同一发送序号。
@@ -396,15 +447,20 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         awaiting_delegation_.reset();
     }
     const bool replaced = session_ && feed_.world() != session_world_;
+    advance_motion(closing || replaced || feed_.departed());
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
     if (closing) {
-        if (review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
+        if (motion_ || review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
-    if (replaced) retire();
+    if (replaced) {
+        if (motion_) return;
+        retire();
+    }
     if (feed_.departed()) {
         task_ = {};
+        motion_wake_ = false;
         expanded_.reset();
         expansion_pending_ = false;
         question_.reset(); question_result_.clear(); question_wake_ = false;
@@ -413,6 +469,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     if (!feed_.pending().empty()) submit("game.event");
     else if (question_wake_) submit("question.result");
     else if (awaiting_delegation_) submit("main.delegation");
+    else if (motion_wake_) submit("motion.finished");
     else if (const auto wake = autonomous_wake(); !wake.empty()) submit(wake);
 }
 
