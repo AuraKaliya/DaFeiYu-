@@ -37,8 +37,11 @@ EventRoute parse_route(const plugins::RoutedEvent& event) {
     case DFY_V2_EVENT_ASK_RECEIPT: {
         const auto disposition = body.at("disposition").get<std::string>();
         if (disposition != "matched" && disposition != "stale") throw std::invalid_argument("event: invalid ASK receipt");
+        events::EventId message{};
+        if (event.version != 1 || body.contains("mailbox") || body.contains("message"))
+            message = {route_id(body,"mailbox"),route_id(body,"message")};
         return AskReceipt{{route_id(body,"eventDomain"),route_id(body,"event")},route_id(body,"ask",true),route_id(body,"item"),
-            route_id(body,"revision"),disposition};
+            route_id(body,"revision"),disposition,message};
     }
     default: throw std::invalid_argument("event: unknown route");
     }

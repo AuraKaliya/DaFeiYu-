@@ -25,6 +25,7 @@ struct AskReceipt {
     events::EventId origin;
     std::uint64_t ask, item, revision;
     std::string disposition;
+    events::EventId message{};
 };
 using EventRoute = std::variant<MailRoute,AskRoute,AskFeedback,AskReceipt>;
 

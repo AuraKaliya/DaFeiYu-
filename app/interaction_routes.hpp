@@ -3,6 +3,7 @@
 #include "event_dispatch.hpp"
 #include "mailbox_intake.hpp"
 #include "mail_reply_tool.hpp"
+#include "reply_delivery.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 
 namespace dfy::app {
@@ -36,12 +37,12 @@ class InteractionRoutes {
         agent::ToolTime answer_deadline;
         events::MailboxId main_box{};
         bool initial_queued = false, sent = false;
-        bool plugin_queued = false, acknowledged = false;
         bool unavailable = false;
         std::optional<AskRoute> question;
         ReplyState reply = ReplyState::pending;
         events::EventId main_result{};
         agent::RunId review_run{};
+        std::optional<ReplyDelivery> delivery;
     };
     // 核对原插件及其当前接收地址。
     events::MailboxId destination(const plugins::RoutedEvent& event) const;

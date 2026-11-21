@@ -62,8 +62,8 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     if (const auto status = events->register_event(view(feedback_type),1,
         view(R"({"ask":"uint","channel":"string","action":"string","delivered":"bool","recipient":"string","answer":"string","bridgeWork":"string"})"),
         decode_feedback,nullptr,nullptr); status) return status;
-    if (const auto status = events->register_event(view(receipt_type),1,
-        view(R"({"ask":"uint","item":"uint","revision":"uint","eventDomain":"uint","event":"uint","disposition":"string"})"),
+    if (const auto status = events->register_event(view(receipt_type),2,
+        view(R"({"ask":"uint","item":"uint","revision":"uint","eventDomain":"uint","event":"uint","disposition":"string","mailbox":"uint","message":"uint"})"),
         decode_receipt,nullptr,nullptr); status) return status;
     if (const auto status = host(view(DFY_V2_ROUTED_MAILBOX_INTERFACE),1,&table,nullptr); status) return status;
     const auto* mail = static_cast<const dfy_v2_routed_mailbox_api*>(table);
@@ -87,7 +87,7 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
 
 // 确认收到终态，只有仍匹配的事项可以消费答复。
 // 步骤：读取事项与原事件身份 → 分流呈现或终态 → 结算业务并确认收件。
-void PartnerLoop::intake_question(std::string_view category, const Json& body) {
+void PartnerLoop::intake_question(std::string_view category, const Json& body, const dfy_v2_mailbox_message& message) {
     if (!question_events_ || !body.is_object()) return;
     const auto item = body.value("item",std::uint64_t{});
     const auto domain = body.value("eventDomain",std::uint64_t{}), event = body.value("event",std::uint64_t{});
@@ -109,7 +109,7 @@ void PartnerLoop::intake_question(std::string_view category, const Json& body) {
     if (matched)
         complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
     question_outbound_.emplace_back(receipt_type,Json{{"ask",id},{"item",item},{"revision",1},{"eventDomain",domain},
-        {"event",event},{"disposition",current ? "matched" : "stale"}});
+        {"event",event},{"disposition",current ? "matched" : "stale"},{"mailbox",message.mailbox},{"message",message.sequence}});
 }
 
 // 把已核对的答复作为插件局内事实提交给后续上下文。
@@ -141,7 +141,7 @@ void PartnerLoop::flush_question_events() {
     const auto& [type,body] = question_outbound_.front();
     const auto wire = body.dump();
     dfy_v2_event_receipt receipt{};
-    const auto status = question_events_->emit(view(type),1,question_sequence_+1,view(wire),&receipt,nullptr);
+    const auto status = question_events_->emit(view(type),type == receipt_type ? 2 : 1,question_sequence_+1,view(wire),&receipt,nullptr);
     if (status == DFY_V2_RESOURCE_EXHAUSTED) return;
     if (status || receipt.sequence != question_sequence_+1) throw std::runtime_error("MC question: event rejected");
     if (type == help_type) {

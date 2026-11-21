@@ -184,6 +184,33 @@ void ask_lifecycle() {
         ask.status(id)->phase == AskPhase::answered,"ask deadline changed original terminal result");
 }
 
+// 验证原终态可在满箱后重试，且只由原信箱实际收件凭据结算。
+// 步骤：填满原地址 → 重试同一正文 → 拒绝错绑回执 → 复用同一收件结果。
+void reply_delivery() {
+    using namespace dfy::app;
+    using namespace dfy::events;
+    Mailboxes boxes({2,1,4,1024});
+    const auto inbox = boxes.open(3,2);
+    boxes.deliver_next(2,inbox,mailbox_text("test.prior",1,"previous",1024));
+    const AskReceipt original{{7,2},12,9,1,{}};
+    ReplyDelivery delivery(3,original,inbox,"interaction.ask.result",R"({"answer":"river"})");
+    delivery.advance(boxes,2,nullptr);
+    check(boxes.read(3,inbox).event.get().id.sequence == 1 && !boxes.front(3,inbox),"full inbox displaced an original message");
+    delivery.advance(boxes,2,nullptr);
+    delivery.advance(boxes,2,nullptr);
+    const auto message = boxes.read(3,inbox);
+    check(message.event.get().id == EventId{inbox.value,2} && !boxes.front(3,inbox),"delivery was dropped or repeated");
+    auto receipt = original;
+    receipt.disposition = "matched";
+    receipt.message = {inbox.value,1};
+    check(!delivery.acknowledge(3,receipt,nullptr),"wrong message acknowledged");
+    receipt.message = {inbox.value+1,2};
+    check(!delivery.acknowledge(3,receipt,nullptr),"wrong inbox acknowledged");
+    receipt.message = message.event.get().id;
+    check(!delivery.acknowledge(4,receipt,nullptr) && delivery.acknowledge(3,receipt,nullptr) &&
+        delivery.acknowledge(3,receipt,nullptr) && delivery.acknowledged(),"owner or duplicate acknowledgement was lost");
+}
+
 // 验证房间信箱与直接对话独立，自动和主动审查共用分类边界。
 // 步骤：投递环境变化及被点名事件 → 验证唤醒模式 → 核对受信来源及模型请求。
 void room_mailbox(const fs::path& run, bool automatic) {
@@ -253,6 +280,7 @@ int wmain(int argc, wchar_t** argv) {
         trace_rewrites(run);
         priority_mailboxes(run);
         ask_lifecycle();
+        reply_delivery();
         room_mailbox(run,true);
         room_mailbox(run,false);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);

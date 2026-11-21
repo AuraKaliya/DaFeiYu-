@@ -75,7 +75,7 @@ class PartnerLoop {
     // 建立原子会话的待答事项，原答案只在匹配当前世界时生效。
     nlohmann::json open_question(std::uint64_t id, const nlohmann::json& arguments);
     // 按事项原身份接收通用 ASK 渠道请求或结果。
-    void intake_question(std::string_view category, const nlohmann::json& body);
+    void intake_question(std::string_view category, const nlohmann::json& body, const dfy_v2_mailbox_message& message);
     // 推进本地等待、必要升级、实际呈现与玩家答复。
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。

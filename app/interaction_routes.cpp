@@ -36,12 +36,7 @@ bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route) {
     if (!destination(event).value) return false;
     if (const auto* receipt = std::get_if<AskReceipt>(&route)) {
         auto* exchange = find(receipt->origin);
-        if (!exchange || exchange->origin.owner != event.owner || !exchange->plugin_queued || exchange->acknowledged ||
-            receipt->ask != exchange->ask || receipt->item != exchange->item || receipt->revision != exchange->revision) return false;
-        exchange->acknowledged = true;
-        if (log_) log_->append("interaction.acknowledged",{{"eventDomain",receipt->origin.domain},{"event",receipt->origin.sequence},
-            {"ask",receipt->ask},{"item",receipt->item},{"revision",receipt->revision},{"disposition",receipt->disposition}});
-        return true;
+        return exchange && exchange->delivery && exchange->delivery->acknowledge(event.owner,*receipt,log_.get());
     }
     if (const auto* feedback = std::get_if<AskFeedback>(&route)) {
         const bool presented = feedback->action == AskFeedback::Action::presented;
@@ -86,7 +81,7 @@ std::vector<std::string_view> InteractionRoutes::available_channels(std::string_
 
 // 创建并记录原事项的唯一提问，重试复用同一票据。
 void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
-    if (exchange.unavailable || exchange.plugin_queued) throw std::invalid_argument("interaction: ASK route has ended");
+    if (exchange.unavailable || exchange.delivery) throw std::invalid_argument("interaction: ASK route has ended");
     const auto& question = exchange.question.value();
     const auto channels = available_channels(question.channel);
     if (std::ranges::find(channels,channel) == channels.end()) {
@@ -110,15 +105,19 @@ void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
 // 步骤：校验收件回执及原实例 → 推进首次投递或呈现 → 排队终态并等待确认。
 bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     const auto inbox = destination(exchange.origin);
-    if (exchange.acknowledged || !inbox.value) {
+    const bool acknowledged = exchange.delivery && exchange.delivery->acknowledged();
+    if (acknowledged || !inbox.value) {
         asks_.cancel(exchange.ask,exchange.origin.owner);
         asks_.release(exchange.ask);
-        if (!inbox.value && !exchange.acknowledged && exchange.item && log_) log_->append("interaction.abandoned",
+        if (!inbox.value && !acknowledged && exchange.item && log_) log_->append("interaction.abandoned",
             {{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
              {"item",exchange.item},{"reason","original_instance_unavailable"}});
-        return true;
+        return !inbox.value || !exchange.review_run.session || !intake_.busy();
     }
-    if (exchange.plugin_queued) return false;
+    if (exchange.delivery) {
+        exchange.delivery->advance(*mail_.network,mail_.identity,log_.get());
+        return false;
+    }
     if (exchange.question && !exchange.ask && !terminal_available_ && exchange.question->channel == "terminal") exchange.unavailable = true;
     if (!exchange.ask && !exchange.unavailable && clock_() < exchange.answer_deadline) {
         if (!exchange.initial_queued) {
@@ -158,6 +157,12 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     }
     message["eventDomain"] = exchange.origin.id.domain;
     message["event"] = exchange.origin.id.sequence;
+    if (!pending && !to_main) {
+        exchange.delivery.emplace(exchange.origin.owner,AskReceipt{exchange.origin.id,exchange.ask,exchange.item,exchange.revision,{}},
+            inbox,category,message.dump());
+        exchange.delivery->advance(*mail_.network,mail_.identity,log_.get());
+        return false;
+    }
     try {
         const auto box = to_main ? exchange.main_box : inbox;
         const auto receipt = post(to_main ? exchange.origin.owner : mail_.identity,box,category,1,message.dump());
@@ -167,8 +172,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
             {"message",receipt.event.sequence},{"body",message}});
     } catch (const std::length_error&) { return false; }
     if (to_main) exchange.reply = ReplyState::queued;
-    else if (pending) exchange.sent = true;
-    else exchange.plugin_queued = true;
+    else exchange.sent = true;
     return false;
 }
 
@@ -214,7 +218,7 @@ InteractionRoutes::Exchange* InteractionRoutes::find(events::EventId event) {
 InteractionRoutes::Exchange* InteractionRoutes::original(const MailboxDelivery& delivery) {
     const auto body = Json::parse(delivery.event.payload->find("text")->as_string());
     auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
-    if (!exchange || exchange->plugin_queued || exchange->unavailable || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
+    if (!exchange || exchange->delivery || exchange->unavailable || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
         return nullptr;
     return exchange;
 }

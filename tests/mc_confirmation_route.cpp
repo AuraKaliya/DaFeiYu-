@@ -24,7 +24,9 @@ bool received(const std::filesystem::path& file, bool stale) {
     }
     if (acknowledgement.is_null()) return false;
     if (delivery.is_null() || delivery.at("body").at("answer") != "approve" || delivery.at("ask") != acknowledgement.at("ask") ||
-        delivery.at("seq") >= acknowledgement.at("seq") || acknowledgement.at("disposition") != (stale ? "stale" : "matched"))
+        delivery.at("seq") >= acknowledgement.at("seq") || acknowledgement.at("disposition") != (stale ? "stale" : "matched") ||
+        delivery.at("message") != acknowledgement.at("message") || delivery.at("mailbox") != acknowledgement.at("mailbox") ||
+        acknowledgement.at("legacyReceipt") != false)
         throw std::runtime_error("original answer delivery and plugin receipt were not independently verified");
     if (captured.is_null() || decoded.is_null() || dispatched.is_null() || captured.at("eventDomain") != decoded.at("eventDomain") ||
         captured.at("event") != decoded.at("event") || captured.at("seq") >= decoded.at("seq") ||
@@ -70,7 +72,7 @@ int wmain(int argc, wchar_t** argv) {
                     if (last.tool_call_id == "lost")
                         return {{Role::assistant,"",{{"present","ask",R"({"channel":"game"})"}}},FinishReason::tool_calls};
                     if (last.tool_call_id == "forged")
-                        return {{Role::assistant,"",{{"reply","mail_reply","{}"}}},FinishReason::tool_calls};
+                        return {{Role::assistant,"",{{"reply","mail_reply","{}"},{"repeat","mail_reply","{}"}}},FinishReason::tool_calls};
                     return {{Role::assistant,"routing finished"}};
                 }
                 const auto envelope = Json::parse(last.content);

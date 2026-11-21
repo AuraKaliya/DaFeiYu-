@@ -7,6 +7,7 @@
 #define DFY_V2_EVENT_ASK_FEEDBACK UINT32_C(3)
 #define DFY_V2_EVENT_ASK_VIA_MAIL UINT32_C(4)
 // 终态收件投影携带 ask、item、revision、eventDomain、event 和 disposition。
+// 事件版本 2 起同时携带 mailbox 和 message，即实际收件的信箱及序号。
 #define DFY_V2_EVENT_ASK_RECEIPT UINT32_C(5)
 #define DFY_V2_EVENT_ROUTE_CAPACITY 8192
 #define DFY_V2_ROUTED_MAILBOX_INTERFACE "dfy.mailbox.rules"
