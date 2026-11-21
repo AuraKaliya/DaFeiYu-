@@ -59,6 +59,8 @@ void verify_target_evidence() {
         throw std::runtime_error("a later view overwrote the original target");
     if (update(fixed,anchor,{{"message",3},{"cells",Json::array({other})},{"replace",true}},3) != "updated")
         throw std::runtime_error("the current explicit replacement was not accepted");
+    if (fixed.revision() != 2 || update(fixed,anchor,{{"message",3},{"cells",Json::array({other})}}) != "updated" ||
+        fixed.revision() != 2) throw std::runtime_error("binding the same target again changed the execution revision");
     Json ground{{"source","ground"}};
     fixed.bind_collection(ground);
     if (ground.at("protectedCells") != Json::array({other})) throw std::runtime_error("gathering lost the bound target protection");
@@ -82,8 +84,107 @@ void verify_target_evidence() {
     observe();
     auto args = position;
     args["block"] = "dirt";
-    if (update(approach,unknown,target) != "updated" || !approach.bind_placement(args) || args.at("sourceMode") != "approach" ||
+    if (update(approach,unknown,target) != "updated" || approach.revision() != 2 || !approach.bind_placement(args) || args.at("sourceMode") != "approach" ||
         args.at("sourceMessage") != 7) throw std::runtime_error("verified approach lost its original placement provenance");
+}
+
+// 验证任务修订与授权变化对同一在途计划的影响，保留可离线查看的宿主 Trace。
+// 步骤：提交带依赖的计划 → 在首个动作接纳后更新任务或授权 → 核对原工作结果和后继状态。
+int verify_plan_revision(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
+    using namespace dfy;
+    using namespace model;
+    using Json = nlohmann::json;
+    const bool notes = variant == L"partner-revision-notes";
+    const bool approval = variant == L"partner-revision-approval";
+    const bool goal = variant == L"partner-revision-goal";
+    const auto revision = notes || approval ? 1 : 2;
+    const auto reason = approval ? "approval_changed" : "task_changed";
+    std::atomic_bool checked = false;
+    app::ApplicationRunConfig run;
+    run.trace_directory = root;
+    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+        // 固定响应仅使用本轮实际开放的工具名。
+        const auto call = [&](std::string_view name, std::string id, const Json& args) -> Response {
+            const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(name); });
+            if (tool == request.tools.end()) throw std::runtime_error("revision probe missing required tool");
+            return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
+        };
+        const auto& last = request.messages.back();
+        if (last.role == Role::tool) {
+            if (last.tool_call_id == "start-task") return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
+            if (last.tool_call_id == "allow-dig") {
+                const Json first{{"id","first"},{"skill","dig_block"},
+                    {"arguments",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2}}}};
+                auto second = first;
+                second["id"] = "second";
+                second["after"] = {"first"};
+                second["arguments"]["x"] = 2;
+                return call("_queue_actions","planned",{{"operation","plan"},{"steps",Json::array({first,second})}});
+            }
+            if (last.tool_call_id == "update-task") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto& task = result.at("task");
+                if (result.at("executionChanged") != !notes || task.at("revision") != revision ||
+                    (notes && (task.at("detail") != "补记角落" || task.at("next") != "continue")))
+                    throw std::runtime_error("task update did not classify the execution change");
+                std::ofstream(root/"revision-updated").put('1');
+            }
+            return {{Role::assistant,R"({"internal":"receipt stored"})"}};
+        }
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "plan.finished") {
+            const auto& plan = input.at("taskPlan");
+            const auto& layers = input.at("planSettlements");
+            const auto& first = layers.at(0).at("nodes").at(0);
+            const auto& second = layers.at(1).at("nodes").at(0).at("result");
+            const auto& result = first.at("result");
+            if (checked || plan.at("revision") != 1 || input.at("task").at("revision") != revision || layers.size() != 2 ||
+                plan.at("status") != (notes ? "done" : "cancelled") ||
+                first.at("work") != plan.at("nodes").at(0).at("work") || result.at("inventoryDelta").at("dirt") != 1 ||
+                result.at("changes").at(0).at("x") != 1 || result.at("status") != (notes || goal ? "done" : "interrupted") ||
+                second.at("status") != (notes ? "done" : "skipped") ||
+                (!notes && (plan.at("cancelReason") != reason || second.at("reason") != reason)))
+                throw std::runtime_error("plan did not retain its original executor exit and dependent outcome");
+            checked = true;
+            return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+        } else if (!input.at("events").empty()) {
+            const auto& event = input.at("events").back();
+            if (event.at("sequence") == 2) return call("_task_update","start-task",{{"goal","清理门边"},{"next","player"}});
+            if (event.at("sequence") == 3) {
+                if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
+                if (approval) return call("_dig_block","require-approval",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2},{"approval","game"}});
+                Json update{{"goal",goal ? "改清理另一处" : "清理门边"},{"next",notes ? "continue" : "player"}};
+                if (notes) update["detail"] = "补记角落";
+                if (!notes && !goal) update["collection"] = "ground";
+                return call("_task_update","update-task",update);
+            }
+        }
+        return {{Role::assistant,R"({"internal":"observed"})"}};
+    }},std::move(run));
+    host.plugins().install(package);
+    if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load plan package");
+    const auto id = host.open_companion("mc.companion");
+    host.listen_companion(id);
+    // 等待验证回合真正退出，再关闭伴玩会话。
+    const auto receipt_turn_finished = [&] {
+        std::ifstream trace(host.trace_file());
+        for (std::string line; std::getline(trace,line);)
+            if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
+                line.find("plan exit checked") != line.npos) return true;
+        return false;
+    };
+    bool stopping = false;
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(8);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
+        if (stopping && host.companion_status()->closed) return 0;
+        if (!stopping && checked && host.companion_status()->settled_event == 3 && receipt_turn_finished()) {
+            host.stop_companion(id);
+            stopping = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    throw std::runtime_error("plan revision did not reach the expected boundary");
 }
 }
 
@@ -93,6 +194,8 @@ int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     using namespace model;
     try {
+        if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
+            return verify_plan_revision(argv[1],argv[2],argv[3]);
         if (argc == 3) { verify_collection_effect(); verify_target_evidence(); verify_knowledge(); }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");

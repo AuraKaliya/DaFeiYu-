@@ -99,6 +99,10 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     }
     if (!recorded) guarded_actions_.emplace_back(skill,item.arguments);
     confirmation_ = std::move(item);
+    if (plan_ && plan_->active && std::ranges::any_of(plan_->nodes,[&](const auto& node) {
+        return (node.state == PlanNode::State::pending || node.state == PlanNode::State::running) &&
+            plan_action_requires_approval(node.skill,node.arguments);
+    })) cancel_plan("approval_changed");
     return true;
 }
 

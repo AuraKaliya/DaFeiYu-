@@ -46,6 +46,16 @@ Json plan_evidence(const Json& result) {
 }
 }
 
+// 按执行器使用的采掘或逐格放置参数检查计划的当前授权条件。
+bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Json& args) const {
+    if (skill == "gather_ground" || skill == "dig_block") return requires_approval("collect",args);
+    if (skill != "fill_target" || !task_.target_ready()) return false;
+    return std::ranges::any_of(task_.target_cells(),[&](auto cell) {
+        cell["block"] = args.at("block");
+        return requires_approval("place",cell);
+    });
+}
+
 // 在当前世界验证一到四个节点及全部依赖，再原子替换上次任务图。
 // 步骤：校验槽位和节点参数 → 固定前置编号 → 拓扑分层并登记。
 Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
@@ -65,6 +75,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             (skill != "craft" && tool == partner_skills.end()) || step.contains("pickup") ||
             !prepare_action(skill,args) || (skill == "fill_target" && !task_.target_ready()))
             return {{"status","invalid_plan"}};
+        if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : tool->name,std::move(args)});
     }
@@ -103,8 +114,11 @@ Json PartnerLoop::plan_context() const {
         nodes.push_back({{"id",node.id},{"skill",node.skill},{"layer",node.layer},{"work",node.work},
             {"status",statuses.at(static_cast<std::size_t>(node.state))}});
     const auto complete = std::ranges::all_of(plan.nodes,[](const auto& node) { return node.state == PlanNode::State::done; });
-    return {{"id",plan.id},{"revision",plan.revision},{"supersedes",plan.supersedes},{"order",plan.order},
-        {"status",plan.active ? "running" : plan.cancelled ? "cancelled" : complete ? "done" : "blocked"},{"nodes",std::move(nodes)}};
+    Json context{{"id",plan.id},{"revision",plan.revision},{"supersedes",plan.supersedes},{"order",plan.order},
+        {"status",plan.active ? "running" : !plan.cancellation.empty() ? "cancelled" : complete ? "done" : "blocked"},
+        {"nodes",std::move(nodes)}};
+    if (!plan.cancellation.empty()) context["cancelReason"] = plan.cancellation;
+    return context;
 }
 
 // 记录一次确切节点退出，以实际动作验证决定能否解除后续依赖。
@@ -118,8 +132,8 @@ void PartnerLoop::finish_plan_node(std::size_t index, bool ok, const Json& resul
 // 停止未接纳节点并让已接纳的前后台动作进行真实取消。
 // 步骤：标记计划取消 → 清除等待队列 → 保留在途动作直至读回。
 void PartnerLoop::cancel_plan(std::string_view reason) {
-    if (!plan_ || !plan_->active || plan_->cancelled) return;
-    plan_->cancelled = true;
+    if (!plan_ || !plan_->active || !plan_->cancellation.empty()) return;
+    plan_->cancellation = reason;
     clear_queue(reason,plan_->id);
     if (motion_ && motion_->plan_node) motion_->stopping = true;
     for (auto& node : plan_->nodes) if (node.state == PlanNode::State::pending) {
@@ -134,7 +148,8 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
     if (!plan_ || !plan_->active) return;
     auto& plan = *plan_;
     using State = PlanNode::State;
-    if (closing || feed_.gap() || plan.revision != task_.revision()) cancel_plan("stale");
+    if (closing || feed_.gap()) cancel_plan("stale");
+    else if (plan.revision != task_.revision()) cancel_plan("task_changed");
 
     const auto can_start = feed_.ready() && feed_.pending().empty() && (!request_ || order_ <= plan.order);
     Json results = Json::array();
@@ -160,7 +175,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
         }
         if (node.reading) {
             std::optional<GameResult> read;
-            try { read = node.reading->poll(plan.cancelled); }
+            try { read = node.reading->poll(!plan.cancellation.empty()); }
             catch (...) { read = GameResult{false,GameEffect::unknown,{}}; }
             if (read) {
                 const auto result = read->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(read->payload);
@@ -178,6 +193,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
     const auto members = std::ranges::count(plan.nodes,plan.layer,&PlanNode::layer);
     if (results.size() != static_cast<std::size_t>(members)) return;
     Json layer{{"status","settled"},{"plan",plan.id},{"layer",plan.layer},{"nodes",std::move(results)}};
+    if (!plan.cancellation.empty()) layer["cancelReason"] = plan.cancellation;
     publish("mc.partner.plan",layer);
     plan_receipts_.push_back(std::move(layer));
     ++plan.layer;

@@ -99,6 +99,11 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_partner_task COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-task)
   set_tests_properties(plugins.mc_partner_task PROPERTIES TIMEOUT 25)
+  foreach(change notes goal scope approval)
+    add_test(NAME plugins.mc_partner_revision_${change} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+      "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-revision-${change})
+    set_tests_properties(plugins.mc_partner_revision_${change} PROPERTIES TIMEOUT 25)
+  endforeach()
   add_test(NAME plugins.mc_partner_scene COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-scene)
   set_tests_properties(plugins.mc_partner_scene PROPERTIES TIMEOUT 25)

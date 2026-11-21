@@ -394,9 +394,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
     const auto prior_revision = task_.revision();
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
-    if (motion_ && motion_->skill == "fill_target" && task_.revision() != prior_revision &&
-        args.contains("target") && (args.at("target").empty() || args.at("target").value("replace",false)))
-        motion_->stopping = true;
+    if (task_.revision() != prior_revision) {
+        cancel_plan("task_changed");
+        if (motion_ && motion_->skill == "fill_target") motion_->stopping = true;
+    }
     expansion_pending_ |= (scope() & ~prior_scope).any();
     return result;
 }

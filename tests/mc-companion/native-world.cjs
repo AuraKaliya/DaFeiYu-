@@ -18,13 +18,15 @@ async function main() {
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
   const departure = variant === 'partner-departure';
+  const revision = variant?.startsWith('partner-revision-');
+  const notes = variant === 'partner-revision-notes';
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure;
+  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -35,6 +37,7 @@ async function main() {
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let following, collecting, resumed, collectExited = false;
+  let planReading = false, nextBlock = false;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -51,7 +54,8 @@ async function main() {
         const left = { sequence: 3, type: 'player.left' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
+        const latest = initial ? 1 : revision ? (planReading ? 3 : 2) :
+          departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
           first && approvedId || motion && replies || confirm && pendingChat ? 4 :
           (interrupt || motion) && moveId || approvedId || delayed && fs.existsSync(path.join(root, 'new-instruction')) ? 3 : 2;
@@ -61,6 +65,11 @@ async function main() {
           { sequence: 4, text: suspend ? 'can you hear me' : motion ? 'stop for now' : (confirm ? 'approve ' : 'deny ') + approvedId },
           { sequence: 5, text: 'stop following' }];
         if (departure) messages[2] = left;
+        if (revision) {
+          messages[1].text = '清理门边两格草方块';
+          messages[2].text = notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
+            variant === 'partner-revision-scope' ? '只从地面取材' : '这次采掘先问我确认';
+        }
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence: departure && latest === 3 ? left : entered, messages: messages.slice(after, latest) };
       }
@@ -86,6 +95,30 @@ async function main() {
     },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      if (revision) {
+        if (skill === 'reply' && variant === 'partner-revision-approval') {
+          assert.match(args.text, /确认 \d+/);
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        assert.equal(skill, 'collect');
+        const x = id === collecting || !collecting ? 1 : 2;
+        if (method === 'partner.begin') {
+          assert.deepEqual(args, { block: 'grass_block', x, y: -61, z: 2, count: 1, source: 'visible' });
+          if (x === 1) { assert.equal(context.order, 2); collecting = id; }
+          else { assert.ok(notes && collectExited && !nextBlock); assert.equal(context.order, 3); nextBlock = true; }
+        }
+        if (method === 'partner.read' && x === 1) planReading = true;
+        if (method === 'partner.stop') {
+          assert.ok(!notes && x === 1 && !nextBlock);
+          ++stopped;
+        }
+        const exited = x === 2 || (notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped >= 2);
+        if (!exited) return { ...context, skill, exited: false, result: {} };
+        if (x === 1) collectExited = true;
+        const status = notes || variant === 'partner-revision-goal' ? 'done' : 'interrupted';
+        return { ...context, skill, exited: true, result: { status, broken: 1,
+          changes: [{ x, y: -61, z: 2, before: 'grass_block', after: 'air' }], inventoryDelta: { dirt: 1 } } };
+      }
       if (suspend) {
         const receipt = (exited, result) => ({ ...context, skill, exited, result });
         if (skill === 'follow') {
@@ -168,18 +201,23 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: first || motion || confirm ? 4 : interrupt || showGame || delayed || departure ? 3 : 2,
+    return { generation, order: first || motion || confirm ? 4 : interrupt || showGame || delayed || departure || revision ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure ? [variant] : [])],
+    const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision ? [variant] : [])],
       { stdio: 'inherit', windowsHide: true });
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
-    if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
+    if (revision) {
+      assert.equal(stopped, notes ? 0 : 2);
+      assert.ok(collectExited);
+      assert.equal(nextBlock, notes);
+      console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, first || delayed || departure ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);

@@ -59,6 +59,15 @@ bool valid_cells(const Json& cells) {
     }
     return true;
 }
+
+// 比较真正会改变执行范围的目标字段，候选说明和同一组格子的顺序可补记。
+bool same_target_scope(const Json& a, const Json& b) {
+    if (a == b) return true;
+    if (a.is_null() || b.is_null() || a.at("message") != b.at("message") ||
+        a.at("anchor").at("dimension") != b.at("anchor").at("dimension") ||
+        a.value("approach",false) != b.value("approach",false) || a.contains("cells") != b.contains("cells")) return false;
+    return !a.contains("cells") || std::ranges::is_permutation(a.at("cells"),b.at("cells"));
+}
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
@@ -75,11 +84,10 @@ Json PartnerTask::context() const {
     return value;
 }
 
-// 用插件持有的修订提交来自当前回合的任务意图。
-// 步骤：校验正文与原话目标 → 保存约定和观察基线 → 分配新修订及唤醒条件。
+// 保存当前任务说明，只在执行条件变化时推进插件持有的任务修订。
+// 步骤：校验正文与原话目标 → 核对执行范围 → 保存约定和唤醒条件。
 Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor,
     std::uint64_t player_order) {
-    if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
     auto goal = input.at("goal").get<std::string>();
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
@@ -90,6 +98,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
         throw std::invalid_argument("MC partner: invalid task update");
     auto baseline = next == "scene" ? scene_key(scene,scene_revision) : Json{};
     auto target = target_;
+    std::uint64_t binding_message = 0;
     if (input.contains("target")) {
         target = input.at("target");
         if (target.empty()) target = nullptr;
@@ -121,8 +130,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                 const auto previous = bound_cells_.find(message);
                 if (previous != bound_cells_.end() && !std::ranges::is_permutation(previous->second,cells))
                     return {{"status","invalid_target"},{"reason","original target cells cannot be changed"}};
-                bound_cells_[message] = cells;
-                if (bound_cells_.size() > observation_limit) bound_cells_.erase(bound_cells_.begin());
+                binding_message = message;
             } else if (existing && target_.contains("cells")) {
                 return {{"status","invalid_target"},{"reason","original target is already bound"}};
             }
@@ -130,6 +138,14 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             target["anchor"] = *anchor;
         }
     }
+    const bool same_target = same_target_scope(target_,target);
+    const bool execution_changed = goal_ != goal || collection_ != collection || !same_target;
+    if (execution_changed && revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
+    if (binding_message && !bound_cells_.contains(binding_message)) {
+        bound_cells_.emplace(binding_message,target.at("cells"));
+        if (bound_cells_.size() > observation_limit) bound_cells_.erase(bound_cells_.begin());
+    }
+    if (same_target && target.contains("cells")) target["cells"] = target_.at("cells");
     goal_ = std::move(goal);
     detail_ = std::move(detail);
     next_ = std::move(next);
@@ -137,8 +153,8 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     baseline_ = std::move(baseline);
     target_ = std::move(target);
     armed_ = true;
-    ++revision_;
-    return {{"status","updated"},{"task",context()}};
+    if (execution_changed) ++revision_;
+    return {{"status","updated"},{"executionChanged",execution_changed},{"task",context()}};
 }
 
 // 允许原接近请求在实际到达后使用现场明确读回的空格。

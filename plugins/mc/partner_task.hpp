@@ -11,9 +11,9 @@ class PartnerTask {
   public:
     // 返回任务及最近的独立现场回执，供下一回合使用。
     nlohmann::json context() const;
-    // 返回当前任务修订，供待确认动作核对原目标。
+    // 返回执行修订，供计划、待执行动作和确认核对原目标与范围。
     std::uint64_t revision() const noexcept { return revision_; }
-    // 更新来自当前回合的分工，由插件分配并返回新修订。
+    // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
         const nlohmann::json* anchor, std::uint64_t player_order = 0);
     // 判断当前任务是否带有需要遵循的原话目标。

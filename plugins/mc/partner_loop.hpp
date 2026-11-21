@@ -109,6 +109,8 @@ class PartnerLoop {
     void advance_plan(const BridgeConfig& config, bool closing);
     // 标注仍未执行的节点，并等待在途工作实际退出。
     void cancel_plan(std::string_view reason);
+    // 检查计划节点是否受当前候选确认约束。
+    bool plan_action_requires_approval(std::string_view skill, const nlohmann::json& arguments) const;
     // 用原节点和真实退出结果结算，不重复发布已终结节点。
     void finish_plan_node(std::size_t index, bool ok, const nlohmann::json& result);
     // 返回任务图及各节点状态，供普通聊天与任务续行共用。
@@ -205,7 +207,8 @@ class PartnerLoop {
         std::uint64_t id, revision, order, request, supersedes;
         std::vector<PlanNode> nodes;
         std::size_t layer = 1;
-        bool active = true, cancelled = false;
+        bool active = true;
+        std::string cancellation;
     };
     std::optional<Plan> plan_;
     nlohmann::json plan_receipts_ = nlohmann::json::array();
