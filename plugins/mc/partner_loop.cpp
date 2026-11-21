@@ -22,6 +22,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "recentDialogue 记录已处理的原话和实际发出的答复。task.lastAction 保留上次工具事实，task.targetObservation 保留当前目标的原话指向。"
     "task.worldChanges 是实际读回的近期逐格变化。玩家要求从地上取材或保留建筑时，先把 task_update.collection 设为 ground，再提交采集。"
+    "玩家指明要挖一个方块时，在确定坐标和原方块名称后调用 dig_block。跟随会自动暂停和恢复。"
     "需重新查看方块地图时调用 observe。"
     "reply 会立即向玩家发言。处理玩家原话时，未调用 reply 或 ask_player 的普通最终文本也会发给玩家。"
     "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
@@ -290,7 +291,7 @@ void PartnerLoop::submit(std::string_view wake) {
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
-        if (skill.kind != SkillKind::catalog && skill.name != "follow" && !base_category(category) &&
+        if (skill.kind != SkillKind::catalog && skill.name != "follow" && skill.name != "dig_block" && !base_category(category) &&
             !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);

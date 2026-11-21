@@ -146,7 +146,8 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
         clear_queue("blocked",step.invocation);
         return;
     }
-    if (step.skill == "collect") task_.bind_collection(args);
+    // 直接指定单格的挖掘已固定范围，普通队列采集继承任务的取材约束。
+    if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
         {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));

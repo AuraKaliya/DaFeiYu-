@@ -211,6 +211,9 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
+    const bool exact_dig = partner && skill->name == "dig_block";
+    const auto game_skill = legacy || exact_dig ? std::string_view("collect") :
+        partner && skill->name == "start_move" ? std::string_view("move") : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
@@ -233,6 +236,13 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
+        if (exact_dig) {
+            auto input = nlohmann::json::parse(job.arguments);
+            auto& args = input.at("arguments");
+            args["count"] = 1;
+            args["source"] = "visible";
+            job.arguments = input.dump();
+        }
         if (partner_turn && (skill->name == "collect" || legacy)) raw->partner.bind_collection(call->session,job.arguments);
         const bool target_blocked = partner && skill->name == "place" && !raw->partner.bind_placement(call->session,job.arguments);
         if (!target_blocked && partner && skill->supports_approval) {
@@ -241,14 +251,14 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         }
         pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
         if (partner_turn && !confirmed && skill->supports_approval &&
-            raw->partner.requires_approval(skill->name,nlohmann::json::parse(job.arguments).at("arguments")))
+            raw->partner.requires_approval(game_skill,nlohmann::json::parse(job.arguments).at("arguments")))
             return report(DFY_V2_BUSY,error);
         const bool busy = controls_body && !target_blocked && !pending_approval &&
             (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw));
         if (busy) {
             if (!partner_turn || confirmed || skill->name == "follow" || body_job(*raw) ||
-                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,
-                    skill->name == "start_move" ? "move" : skill->name,job.arguments)) return report(DFY_V2_BUSY,error);
+                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,game_skill,job.arguments))
+                return report(DFY_V2_BUSY,error);
             job.output = nlohmann::json{{"status","queued"},{"work",job.id}}.dump();
             job.ready = job.success = true;
             job.effect = DFY_V2_TOOL_APPLIED;
@@ -257,12 +267,12 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.ready = job.success = true;
         } else if (confirmed) {
             if (pending_approval) job.output = nlohmann::json{{"status","waiting"},{"item",call->invocation}}.dump();
-            if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments,
+            if (!raw->partner.confirm_action(call->session,call->invocation,exact_dig ? game_skill : skill->name,job.arguments,
                 pending_approval ? job.id : std::string{}))
                 return report(DFY_V2_INVALID_CONTEXT,error);
             if (pending_approval) job.ready = job.success = true;
         } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
-            job.id, job.arguments, skill->name == "start_move" ? "move" : std::string(text(name)));
+            job.id, job.arguments, std::string(game_skill));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
@@ -282,7 +292,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (partner) {
         job.partner_session = call->session;
         job.invocation = call->invocation;
-        job.skill = legacy ? "collect" : skill->name == "start_move" ? "move" : skill->name;
+        job.skill = game_skill;
         job.confirmation = job.waiting = confirmed && !pending_approval;
     }
     job.controls_body = controls_body && !pending_approval;

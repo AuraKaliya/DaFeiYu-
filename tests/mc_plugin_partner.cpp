@@ -98,6 +98,12 @@ int wmain(int argc, wchar_t** argv) {
         std::string follow_work, resumed_work;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
             const auto& last = request.messages.back();
+            if (suspend && last.role == Role::tool && last.tool_call_id == "dig-scope") {
+                const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_dig_block"); });
+                if (tool == request.tools.end()) throw std::runtime_error("exact digging required discovery");
+                return {{Role::assistant,"",{{"dig-one",tool->name,R"({"block":"grass_block","x":1,"y":-61,"z":2})"}}},
+                    FinishReason::tool_calls};
+            }
             if (last.role == Role::tool) {
                 if (suspend) return {{Role::assistant,R"({"internal":"receipt stored"})"}};
                 if (last.tool_call_id == "expand") {
@@ -128,12 +134,15 @@ int wmain(int argc, wchar_t** argv) {
                     return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
                 };
                 const auto& events = input.at("events");
-                if (input.at("trigger") == "skills.expanded")
-                    return call("_collect",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2},{"count",1}});
                 if (!events.empty() && events.back().at("type") == "player.message") {
                     switch (events.back().at("sequence").get<int>()) {
                     case 2: return call("_follow",{{"distance",4}});
-                    case 3: return call("_skills",{{"categories",{"dig_break"}}});
+                    case 3: {
+                        auto result = call("_task_update",{{"goal","Ground collection is the previous scope"},{"next","player"},
+                            {"collection","ground"}});
+                        result.message.tool_calls.front().id = "dig-scope";
+                        return result;
+                    }
                     case 4:
                         if (input.at("following").at("status") != "paused") throw std::runtime_error("follow is not paused");
                         return call("_reply",{{"text","I can hear you"}});
@@ -153,7 +162,7 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : motion ? "_start_move" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 8u : 9u) ||
+                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 9u : 10u) ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :
@@ -211,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 2 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost current raw text or carried previous model history");
-            if (request.tools.size() != 7 || std::ranges::none_of(request.tools,[](const auto& tool) {
+            if (request.tools.size() != 8 || std::ranges::none_of(request.tools,[](const auto& tool) {
                 return tool.name.ends_with("_queue_actions");
             })) throw std::runtime_error("initial scope lost queue control or leaked detailed actions");
             if (follow) {

@@ -102,7 +102,10 @@ async function main() {
         }
         assert.equal(skill, 'collect');
         assert.equal(stopped, 1);
-        if (method === 'partner.begin') { collecting = id; assert.equal(args.block, 'grass_block'); }
+        if (method === 'partner.begin') {
+          collecting = id;
+          assert.deepEqual(args, { block: 'grass_block', x: 1, y: -61, z: 2, count: 1, source: 'visible' });
+        }
         assert.equal(id, collecting);
         if (!replies) return receipt(false, {});
         collectExited = true;
