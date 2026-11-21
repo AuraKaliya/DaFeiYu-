@@ -10,8 +10,12 @@ struct MailboxDelivery {
     runtime::DomainId sender;
     const events::EventRecord& event;
 };
+struct MailboxProjection {
+    std::string text;
+    bool bound = false;
+};
 // 回调可在宿主内处理原件；返回正文时交给主 Agent，空值表示处理完毕。
-using MailboxReview = std::function<std::optional<std::string>(const MailboxDelivery&)>;
+using MailboxReview = std::function<std::optional<MailboxProjection>(const MailboxDelivery&)>;
 using MailboxOptions = std::function<void(const MailboxDelivery&,agent::RunOptions&)>;
 using MailboxAccepted = std::function<void(const MailboxDelivery&,agent::RunId)>;
 enum class MailboxIntakeResult { idle, handled, submitted, rejected };
@@ -21,12 +25,13 @@ enum class MailboxPriority { normal, high };
 class MailboxIntake {
   public:
     // 绑定本体收件身份和主会话，由该应用线程推进。
-    MailboxIntake(plugins::PluginMailboxHost host, Conversation& conversation, std::shared_ptr<RunLog> log = {})
-        : host_(std::move(host)), conversation_(conversation), log_(std::move(log)) {}
+    MailboxIntake(plugins::PluginMailboxHost host, Conversation& conversation, std::shared_ptr<RunLog> log = {},
+        plugins::PluginManager* plugins = nullptr)
+        : host_(std::move(host)), conversation_(conversation), log_(std::move(log)), plugins_(plugins) {}
     // 登记已存在信箱及审查回调，空触发列表表示只主动收件。
     void watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review,
         MailboxPriority priority = MailboxPriority::normal, MailboxOptions options = {}, std::function<bool()> wake_enabled = {},
-        MailboxAccepted accepted = {});
+        MailboxAccepted accepted = {}, bool host_source = false);
     // 在主会话可接纳时主动处理一封，队首按本收件地址的规则审查。
     MailboxIntakeResult review(events::MailboxId mailbox);
     // 在有待处理到件信号时推进一个信箱，保持箱内 FIFO。
@@ -44,6 +49,7 @@ class MailboxIntake {
         MailboxOptions options;
         std::function<bool()> wake_enabled;
         MailboxAccepted accepted;
+        bool host_source;
     };
     // 交付一封已绑定地址的原件，并在审查通过时提交带来源信息的主回合。
     MailboxIntakeResult dispatch(const Route& route, const std::string* dialogue = nullptr, agent::TurnDiagnostics* accepted = nullptr);
@@ -53,6 +59,7 @@ class MailboxIntake {
     plugins::PluginMailboxHost host_;
     Conversation& conversation_;
     std::shared_ptr<RunLog> log_;
+    plugins::PluginManager* plugins_;
     std::array<std::optional<Route>,36> routes_{};
     std::array<std::size_t,2> cursors_{};
     std::size_t high_streak_ = 0;

@@ -53,7 +53,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),
       session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
       conversation_(session_,labels_,&plugins_),
-      mailbox_intake_(mailbox_host_,conversation_,run_log_),
+      mailbox_intake_(mailbox_host_,conversation_,run_log_,&plugins_),
       interactions_(plugins_,mailbox_host_,mailbox_intake_,tool_clock_,run_log_,run.wake_for_plugin_mail),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
@@ -64,10 +64,10 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     });
     const events::MailboxCategory enabled[] = {{"room.addressed",1}};
     mailbox_intake_.watch(room_mailbox_,run.wake_for_room_address ? std::span<const events::MailboxCategory>(enabled) :
-        std::span<const events::MailboxCategory>{},[](const auto& item) -> std::optional<std::string> {
+        std::span<const events::MailboxCategory>{},[](const auto& item) -> std::optional<MailboxProjection> {
             if (item.event.payload->descriptor()->name() != "room.addressed") return {};
-            return std::string(item.event.payload->find("text")->as_string());
-        });
+            return MailboxProjection{std::string(item.event.payload->find("text")->as_string())};
+        },MailboxPriority::normal,{},{},{},true);
 }
 
 // 只读取本次记录位置，不打开原始会话或推进工作。

@@ -20,6 +20,21 @@
 #define DFY_V2_TEXT_HOOK_REPLY UINT32_C(5)
 #define DFY_V2_TEXT_HOOK_CHAIN UINT32_C(1)
 #define DFY_V2_TEXT_HOOK_UNCHANGED UINT64_MAX
+#define DFY_V2_TRANSITION_HOOK_INTERFACE "dfy.hook.transition"
+#define DFY_V2_TRANSITION_HOOK_VERSION UINT32_C(1)
+#define DFY_V2_TRANSITION_EVENT_CAPTURED UINT32_C(1)
+#define DFY_V2_TRANSITION_EVENT_DECODED UINT32_C(2)
+#define DFY_V2_TRANSITION_EVENT_BEFORE_DISPATCH UINT32_C(3)
+#define DFY_V2_TRANSITION_EVENT_DISPATCHED UINT32_C(4)
+#define DFY_V2_TRANSITION_MAIL_CONTEXT UINT32_C(5)
+#define DFY_V2_TRANSITION_ASK_PRESENTED UINT32_C(6)
+#define DFY_V2_TRANSITION_ASK_ANSWERED UINT32_C(7)
+#define DFY_V2_TRANSITION_ASK_ENDED UINT32_C(8)
+#define DFY_V2_TRANSITION_REPLY_ENQUEUED UINT32_C(9)
+#define DFY_V2_TRANSITION_REPLY_ACKNOWLEDGED UINT32_C(10)
+#define DFY_V2_TRANSITION_RUN_EXITED UINT32_C(11)
+#define DFY_V2_TRANSITION_CAN_DENY UINT32_C(1)
+#define DFY_V2_TRANSITION_CAN_REWRITE UINT32_C(2)
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +73,20 @@ typedef struct dfy_v2_text_hook_api {
     dfy_v2_status (DFY_V2_CALL *rewrite)(dfy_v2_instance*, uint32_t index, const dfy_v2_text_hook_input*,
         char* output, uint64_t capacity, uint64_t* written, dfy_v2_error*);
 } dfy_v2_text_hook_api;
+
+typedef struct dfy_v2_transition_hook_input {
+    uint32_t point, permissions, status, reserved;
+    uint64_t owner, domain, sequence, ask, mailbox, message;
+    dfy_v2_string_view category, value;
+} dfy_v2_transition_hook_input;
+typedef struct dfy_v2_transition_hook_api {
+    dfy_v2_api_header header;
+    // 启动后按登记顺序枚举；作用域以事件发送方或回合所有者为准。
+    dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_instance*, uint32_t index, dfy_v2_hook_description*, dfy_v2_error*);
+    // 在宿主线程同步执行；只可按 permissions 拒绝或改写借用字段，written 全一表示不改写。
+    dfy_v2_status (DFY_V2_CALL *apply)(dfy_v2_instance*, uint32_t index, const dfy_v2_transition_hook_input*,
+        char* output, uint64_t capacity, uint32_t* verdict, uint64_t* written, dfy_v2_error*);
+} dfy_v2_transition_hook_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

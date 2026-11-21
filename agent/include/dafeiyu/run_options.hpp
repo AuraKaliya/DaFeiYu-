@@ -43,6 +43,9 @@ struct RunOptions {
     ToolClock now = std::chrono::steady_clock::now;
     PolicyExtension extension;
     TextHook text_hook;
+    // 结构化信件由宿主包装，协议工具保留模型传回的原参数。
+    bool preserve_prompt = false;
+    std::string immutable_tool_arguments;
     ModelCaptureSink model_capture;
     TurnExitSink exit_capture;
     ToolCaptureSink tool_capture;

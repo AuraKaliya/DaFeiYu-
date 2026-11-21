@@ -743,7 +743,7 @@ target_link_libraries(dfy_plugin_mailboxes_tests PRIVATE dfy_plugins dfy_build_o
 set_target_properties(dfy_plugin_mailboxes_tests PROPERTIES FOLDER "Tests")
 add_test(NAME plugins.mailboxes COMMAND dfy_plugin_mailboxes_tests)
 add_executable(dfy_plugin_mailbox_dll_tests plugin_mailbox_dll.cpp)
-target_link_libraries(dfy_plugin_mailbox_dll_tests PRIVATE dfy_application dfy_build_options)
+target_link_libraries(dfy_plugin_mailbox_dll_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
 add_dependencies(dfy_plugin_mailbox_dll_tests dfy_mailbox_fixture dfy_status_example)
 set_target_properties(dfy_plugin_mailbox_dll_tests PROPERTIES FOLDER "Tests")
 add_test(NAME plugins.mailbox_dll COMMAND dfy_plugin_mailbox_dll_tests "$<TARGET_FILE:dfy_mailbox_fixture>"

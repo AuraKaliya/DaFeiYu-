@@ -84,6 +84,7 @@ struct PluginInstance::State {
     std::optional<Capability<dfy_v2_activity_api>> activity;
     std::vector<dfy_v2_hook_description> hook_registrations;
     std::vector<dfy_v2_text_hook_description> text_hook_registrations;
+    std::vector<dfy_v2_hook_description> transition_registrations;
     std::string id;
     std::string version;
     dfy_v2_instance* instance = nullptr;
@@ -151,6 +152,7 @@ uint32_t PluginInstance::start() noexcept {
             if (activity && !activity->enter().api().step) throw std::invalid_argument("instance: incomplete activity interface");
             state_->hook_registrations = load_hooks();
             state_->text_hook_registrations = load_text_hooks();
+            state_->transition_registrations = load_transition_hooks();
             state_->host.seal_event_routes();
             state_->activity = std::move(activity);
         }
@@ -192,6 +194,11 @@ std::span<const dfy_v2_hook_description> PluginInstance::hooks() const noexcept 
 std::span<const dfy_v2_text_hook_description> PluginInstance::text_hooks() const noexcept {
     return phase() == InstancePhase::active ? std::span<const dfy_v2_text_hook_description>{state_->text_hook_registrations}
         : std::span<const dfy_v2_text_hook_description>{};
+}
+// 借用已启动实例的系统阶段登记表。
+std::span<const dfy_v2_hook_description> PluginInstance::transition_hooks() const noexcept {
+    return phase() == InstancePhase::active ? std::span<const dfy_v2_hook_description>{state_->transition_registrations}
+        : std::span<const dfy_v2_hook_description>{};
 }
 // 仅活动实例可被调度进入插件外层循环。
 bool PluginInstance::has_activity() const noexcept { return phase() == InstancePhase::active && state_->activity.has_value(); }

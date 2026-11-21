@@ -16,7 +16,7 @@ class InteractionRoutes {
     InteractionRoutes(plugins::PluginManager& plugins, plugins::PluginMailboxHost mail, MailboxIntake& intake,
         agent::ToolClock clock, std::shared_ptr<RunLog> log, bool auto_wake);
     // 分派已校验的定向信件、提问或渠道回执。
-    bool dispatch(plugins::RoutedEvent event, EventRoute route);
+    bool dispatch(plugins::RoutedEvent event, EventRoute route, bool denied = false);
     // 推进在途呈现与结果投递。
     void advance();
     // 为一次显式收件恢复等待复审的原答复。
@@ -37,7 +37,7 @@ class InteractionRoutes {
         agent::ToolTime answer_deadline;
         events::MailboxId main_box{};
         bool initial_queued = false, sent = false;
-        bool unavailable = false;
+        std::string_view failure;
         std::optional<AskRoute> question;
         ReplyState reply = ReplyState::pending;
         events::EventId main_result{};

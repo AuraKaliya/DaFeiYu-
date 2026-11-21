@@ -66,6 +66,11 @@ class PluginInstance {
     uint32_t decide_hook(std::size_t index, const dfy_v2_hook_input& input);
     // 借用启动时已校验的文本 Hook 注册。
     std::span<const dfy_v2_text_hook_description> text_hooks() const noexcept;
+    // 借用插件启动时的系统阶段登记。
+    std::span<const dfy_v2_hook_description> transition_hooks() const noexcept;
+    // 在原实例上调用系统阶段处理器并验证其裁定。
+    std::pair<bool,std::optional<std::string>> apply_transition(std::size_t index, const dfy_v2_transition_hook_input& input,
+        std::span<char> output);
     // 执行一个字段转换，验证并复制返回值；空可选值表示保持原字段。
     std::optional<std::string> rewrite_hook(std::size_t index, const dfy_v2_text_hook_input& input, std::span<char> output);
     // 查询实例启动时协商的可选后台推进能力。
@@ -115,6 +120,8 @@ class PluginInstance {
     std::vector<dfy_v2_hook_description> load_hooks();
     // 协商并核对可选的文本 Hook 枚举。
     std::vector<dfy_v2_text_hook_description> load_text_hooks();
+    // 读取并校验启动时登记的系统阶段处理器。
+    std::vector<dfy_v2_hook_description> load_transition_hooks();
     // 只向活动实例提供能力查询入口。
     PluginModuleV2& active_module();
     // 核对活动阶段并建立本次原生调用的宿主上下文。

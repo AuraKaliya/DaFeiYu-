@@ -147,7 +147,7 @@ void priority_mailboxes(const fs::path& run) {
     std::vector<MailboxId> seen;
     bool reject_once = false;
     const MailboxCategory categories[]{{"fixture.note",1}};
-    const auto review = [&](const MailboxDelivery& item) -> std::optional<std::string> {
+    const auto review = [&](const MailboxDelivery& item) -> std::optional<MailboxProjection> {
         if (reject_once) { reject_once = false; throw std::runtime_error("fixture admission failed"); }
         seen.push_back(item.mailbox);
         return {};

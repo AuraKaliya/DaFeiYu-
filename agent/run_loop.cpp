@@ -72,7 +72,7 @@ struct RunLoopState {
         if (changes && !options.observations.empty() && !options.action_observations)
             throw std::invalid_argument("run: observed changes require currentness guards");
         if (options.observations.size() > 4) throw std::length_error("run: observation count exceeded");
-        rewrite(TextHookPoint::input,control(),"prompt",prompt);
+        if (!options.preserve_prompt) rewrite(TextHookPoint::input,control(),"prompt",prompt);
         std::vector<std::string> inputs; inputs.reserve(options.observations.size()); record->observation_inputs_.reserve(options.observations.size());
         for (const auto& observation : options.observations) {
             if (!observation) throw std::invalid_argument("run: observation required");
@@ -145,7 +145,8 @@ struct RunLoopState {
         const auto current = control();
         auto changed = rewrite(TextHookPoint::model_response,current,"content",response.message.content);
         for (auto& call : response.message.tool_calls)
-            changed = rewrite(TextHookPoint::tool_arguments,current,call.name,call.arguments,64*1024) || changed;
+            if (call.name != options.immutable_tool_arguments)
+                changed = rewrite(TextHookPoint::tool_arguments,current,call.name,call.arguments,64*1024) || changed;
         if (changed) model::validate_response(response);
         return changed;
     }

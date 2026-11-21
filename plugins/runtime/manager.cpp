@@ -72,6 +72,7 @@ struct PluginManager::State {
     struct HookPlan {
         std::array<HookList,3> controls;
         std::array<std::vector<TextHook>,DFY_V2_TEXT_HOOK_REPLY> rewrites;
+        std::array<HookList,DFY_V2_TRANSITION_RUN_EXITED> transitions;
         std::array<PluginSet,PluginInstance::maximum_instances> ancestors;
         std::string version = "none";
         // 在当前登记表中执行指定会话的控制点。
@@ -135,11 +136,20 @@ struct PluginManager::State {
                     (hook.flags & DFY_V2_TEXT_HOOK_CHAIN) != 0});
                 fields.push_back({hook.point,hook.sessions,hook.flags});
             }
-            if (controls.empty() && fields.empty()) continue;
+            const auto transitions = instance->transition_hooks();
+            auto stages = nlohmann::json::array();
+            for (std::size_t index = 0; index < transitions.size(); ++index) {
+                const auto& hook = transitions[index];
+                updated->transitions.at(hook.point-1).push_back({instance,index,hook.sessions,active[node]->faulted});
+                stages.push_back({hook.point,hook.sessions});
+            }
+            if (controls.empty() && fields.empty() && stages.empty()) continue;
             auto providers = nlohmann::json::array();
             for (std::size_t i = 0; i < graph.size(); ++i) if (i != node && ancestry.test(i)) providers.push_back(graph[i].id);
-            manifest.push_back({instance->plugin_id(),instance->plugin_version(),*active[node]->faulted,
+            auto entry = nlohmann::json::array({instance->plugin_id(),instance->plugin_version(),*active[node]->faulted,
                 std::move(providers),std::move(controls),std::move(fields)});
+            if (!stages.empty()) entry.push_back(std::move(stages));
+            manifest.push_back(std::move(entry));
         }
         if (!manifest.empty()) updated->version = "hooks-v1:sha256:"+platform::sha256(manifest.dump());
         hook_order = std::move(updated);
@@ -446,6 +456,40 @@ PluginHookSnapshot PluginManager::capture_hooks(runtime::DomainId owner) {
 std::string PluginManager::hook_version() {
     const auto snapshot = state_->hook_plan();
     return snapshot ? snapshot->version : "none";
+}
+// 每次系统转换使用同一发布表，后续处理器看到前序提交的上下文副本。
+// 步骤：校验阶段和权限 → 按登记顺序调用 → 累计观察错误并结算可选分流。
+TransitionDecision PluginManager::transition_hook(const dfy_v2_transition_hook_input& input, std::size_t limit) {
+    const auto point = input.point;
+    const auto permissions = input.permissions;
+    const auto allowed = point == DFY_V2_TRANSITION_MAIL_CONTEXT ? DFY_V2_TRANSITION_CAN_DENY|DFY_V2_TRANSITION_CAN_REWRITE :
+        point == DFY_V2_TRANSITION_EVENT_BEFORE_DISPATCH ? DFY_V2_TRANSITION_CAN_DENY : 0;
+    if (point < DFY_V2_TRANSITION_EVENT_CAPTURED || point > DFY_V2_TRANSITION_RUN_EXITED || input.reserved ||
+        !input.domain || !input.sequence || (permissions & ~allowed) ||
+        bool(permissions & DFY_V2_TRANSITION_CAN_REWRITE) != bool(limit) || limit > 16*1024)
+        throw std::invalid_argument("transition hooks: invalid context");
+    const auto plan = state_->hook_plan();
+    TransitionDecision result;
+    std::vector<char> output;
+    for (const auto& hook : plan->transitions.at(point-1)) {
+        if (hook.instance->phase() != InstancePhase::active || !(hook_scope(input.owner,*hook.instance) & hook.sessions)) continue;
+        ++result.observed;
+        try {
+            if (*hook.faulted) throw std::runtime_error("transition hooks: registered handler is faulted");
+            auto candidate = input;
+            if (result.value) candidate.value = {result.value->data(),result.value->size()};
+            if (limit && output.empty()) output.resize(limit);
+            auto [allow,replacement] = hook.instance->apply_transition(hook.index,candidate,output);
+            if (replacement) result.value = std::move(replacement);
+            result.allowed = allow;
+        } catch (...) {
+            ++result.errors;
+            if (permissions) result.allowed = false;
+        }
+        if (!result.allowed) break;
+    }
+    if (result.observed) result.version = plan->version;
+    return result;
 }
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。
 bool PluginManager::close() noexcept { return state_->close(); }

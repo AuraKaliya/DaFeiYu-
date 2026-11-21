@@ -15,6 +15,12 @@ struct PluginHookSnapshot {
     std::function<uint32_t(const dfy_v2_hook_input&)> control;
     std::function<std::optional<std::string>(const dfy_v2_text_hook_input&,std::size_t)> rewrite;
 };
+struct TransitionDecision {
+    bool allowed = true;
+    unsigned observed = 0, errors = 0;
+    std::optional<std::string> value;
+    std::string version;
+};
 // 宿主线程的插件目录及实例管理，不自动加载发现的插件，也不绑定必需插件角色。
 class PluginManager {
   public:
@@ -59,6 +65,8 @@ class PluginManager {
     std::string hook_version();
     // 为一个会话固定 Hook 表及实际参与的原生模块。
     PluginHookSnapshot capture_hooks(runtime::DomainId owner = 0);
+    // 执行当前系统边界的已登记处理器，记录只读观察失败。
+    TransitionDecision transition_hook(const dfy_v2_transition_hook_input& input, std::size_t limit = 0);
     // 停止新加载并尝试有序关闭全部实例，失败责任仍可显式重试。
     bool close() noexcept;
     // 在调用 close 后查询本轮关闭结果，不用实例历史错误码推断本轮是否失败。

@@ -17,6 +17,7 @@ std::shared_ptr<agent::ToolCatalog> bind_mail_reply(runtime::DomainId host, Repl
             return result;
         });
     options.tools = catalog->snapshot(std::span(&id,1),true).bind_arguments(id,"{}");
+    options.immutable_tool_arguments = "mail_reply";
     options.system_instructions += " 本轮收到原问题的答复，调用 mail_reply 把原结果送回提问者。";
     return catalog;
 }

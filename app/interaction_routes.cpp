@@ -32,7 +32,7 @@ events::MailboxId InteractionRoutes::destination(const plugins::RoutedEvent& eve
 
 // 将类型化路由应用到原事项或渠道。
 // 步骤：核对原地址 → 处理渠道协议 → 接纳有界的新事项。
-bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route) {
+bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route, bool denied) {
     if (!destination(event).value) return false;
     if (const auto* receipt = std::get_if<AskReceipt>(&route)) {
         auto* exchange = find(receipt->origin);
@@ -51,6 +51,7 @@ bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route) {
     }
     if (exchanges_.size() == 16) throw std::length_error("interaction: pending route capacity exhausted");
     if (std::holds_alternative<MailRoute>(route)) {
+        if (denied) return false;
         const auto box = main_box(event);
         exchanges_.push_back({std::move(event),0,0,0,clock_()+std::chrono::seconds(120),box});
         return true;
@@ -59,16 +60,17 @@ bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route) {
     if (std::ranges::any_of(exchanges_,[&](const auto& other) {
         return other.origin.owner == event.owner && other.item == question.item && other.revision == question.revision;
     })) return false;
-    const auto box = question.via_main ? main_box(event) : events::MailboxId{};
+    const auto box = question.via_main && !denied ? main_box(event) : events::MailboxId{};
     exchanges_.push_back({std::move(event),question.item,question.revision,0,clock_()+std::chrono::milliseconds(question.wait_ms),box});
     auto& exchange = exchanges_.back();
     exchange.question.emplace(std::move(question));
-    exchange.unavailable = exchange.question->channel == "terminal" && !terminal_available_;
-    if (!exchange.question->via_main && !exchange.unavailable) {
+    if (denied) exchange.failure = "route_denied";
+    else if (exchange.question->channel == "terminal" && !terminal_available_) exchange.failure = "channel_unavailable";
+    if (!exchange.question->via_main && exchange.failure.empty()) {
         try { open_ask(exchange,exchange.question->channel); }
         catch (...) { exchanges_.pop_back(); throw; }
     }
-    return true;
+    return !denied;
 }
 
 // 对原事件的游戏声明和双向终端能力取当前快照。
@@ -81,7 +83,7 @@ std::vector<std::string_view> InteractionRoutes::available_channels(std::string_
 
 // 创建并记录原事项的唯一提问，重试复用同一票据。
 void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
-    if (exchange.unavailable || exchange.delivery) throw std::invalid_argument("interaction: ASK route has ended");
+    if (!exchange.failure.empty() || exchange.delivery) throw std::invalid_argument("interaction: ASK route has ended");
     const auto& question = exchange.question.value();
     const auto channels = available_channels(question.channel);
     if (std::ranges::find(channels,channel) == channels.end()) {
@@ -118,8 +120,9 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         exchange.delivery->advance(*mail_.network,mail_.identity,log_.get());
         return false;
     }
-    if (exchange.question && !exchange.ask && !terminal_available_ && exchange.question->channel == "terminal") exchange.unavailable = true;
-    if (!exchange.ask && !exchange.unavailable && clock_() < exchange.answer_deadline) {
+    if (exchange.question && !exchange.ask && exchange.failure.empty() && !terminal_available_ && exchange.question->channel == "terminal")
+        exchange.failure = "channel_unavailable";
+    if (!exchange.ask && exchange.failure.empty() && clock_() < exchange.answer_deadline) {
         if (!exchange.initial_queued) {
             auto message = Json::parse(exchange.origin.projection);
             message["eventDomain"] = exchange.origin.id.domain;
@@ -151,9 +154,9 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         {"channel",request ? request->spec.channel : std::string{}},{"requiresAsk",true}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
     else {
-        message["status"] = request ? ask_phase(request->phase) : exchange.unavailable ? "failed" : "expired";
+        message["status"] = request ? ask_phase(request->phase) : exchange.failure.empty() ? "expired" : "failed";
         message["answer"] = request ? request->answer : "";
-        if (exchange.unavailable) message["reason"] = "channel_unavailable";
+        if (!exchange.failure.empty()) message["reason"] = exchange.failure;
     }
     message["eventDomain"] = exchange.origin.id.domain;
     message["event"] = exchange.origin.id.sequence;
@@ -218,7 +221,7 @@ InteractionRoutes::Exchange* InteractionRoutes::find(events::EventId event) {
 InteractionRoutes::Exchange* InteractionRoutes::original(const MailboxDelivery& delivery) {
     const auto body = Json::parse(delivery.event.payload->find("text")->as_string());
     auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
-    if (!exchange || exchange->delivery || exchange->unavailable || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
+    if (!exchange || exchange->delivery || !exchange->failure.empty() || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
         return nullptr;
     return exchange;
 }
@@ -235,10 +238,11 @@ events::MailboxId InteractionRoutes::main_box(const plugins::RoutedEvent& origin
     try {
         main_boxes_.emplace(origin.owner,box);
         intake_.watch(box,wake,
-            [this](const MailboxDelivery& delivery) -> std::optional<std::string> {
+            [this](const MailboxDelivery& delivery) -> std::optional<MailboxProjection> {
                 const auto wire = delivery.event.payload->find("text")->as_string();
-                if (Json::parse(wire).at("requiresAsk") == true && !original(delivery)) return {};
-                return std::string(wire);
+                const bool bound = Json::parse(wire).at("requiresAsk") == true;
+                if (bound && !original(delivery)) return {};
+                return MailboxProjection{std::string(wire),bound};
             },origin.mailbox.flags & DFY_V2_MAIL_HIGH ? MailboxPriority::high : MailboxPriority::normal,
             [this](const MailboxDelivery& delivery, agent::RunOptions& options) { configure_main(delivery,options); },
             [this] { return auto_wake_; },[this](const MailboxDelivery& delivery, agent::RunId run) { main_accepted(delivery,run); });
@@ -279,6 +283,7 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
                 Json{{"ask",current->ask},{"status","awaiting_answer"}}.dump(),agent::ToolError::none});
         });
     options.tools = catalog->snapshot(std::span(&tool,1),true);
+    options.immutable_tool_arguments = "ask";
     options.system_instructions += " 本轮收到子 Agent 求助。你可以用 ask 选择渠道向真人询问。工具返回等待编号后可以结束本轮。";
     main_run_tools_ = std::move(catalog);
 }

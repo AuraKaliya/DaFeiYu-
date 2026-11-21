@@ -5,6 +5,7 @@
 #include <iostream>
 #include <atomic>
 #include <thread>
+#include <nlohmann/json.hpp>
 
 namespace {
 using namespace dfy::events;
@@ -252,7 +253,7 @@ void main_inbox(const fs::path& root) {
         throw std::runtime_error("mailbox input did not arrive");
     };
     auto& intake = app.mailbox_intake();
-    intake.watch({address.outbound},{},[&](const auto& delivery) -> std::optional<std::string> {
+    intake.watch({address.outbound},{},[&](const auto& delivery) -> std::optional<MailboxProjection> {
         check(delivery.sender == instance->generation() && delivery.event.id.sequence == 1,"passive review lost identity");
         return {};
     });
@@ -260,8 +261,8 @@ void main_inbox(const fs::path& root) {
     check(!app.conversation().busy() && !calls && intake.review({address.outbound}) == MailboxIntakeResult::handled,
         "passive route incorrectly woke the model");
     const MailboxCategory wake[] = {{"test.reply",1}};
-    intake.watch({address.outbound},wake,[](const auto& delivery) -> std::optional<std::string> {
-        return std::string(delivery.event.payload->find("text")->as_string());
+    intake.watch({address.outbound},wake,[](const auto& delivery) -> std::optional<MailboxProjection> {
+        return MailboxProjection{std::string(delivery.event.payload->find("text")->as_string())};
     });
     send(2);
     check(app.conversation().busy() && app.conversation().status()->source == dfy::agent::RunOrigin::mailbox,
@@ -274,6 +275,44 @@ void main_inbox(const fs::path& root) {
     }
     check(result && result->answer.find("test.reply") != std::string::npos && result->answer.find("received") != std::string::npos &&
         calls == 1,"main inbox lost its category or payload");
+}
+
+// 验证真实 DLL 能阻断新分派及修改模型副本，原箱身份和绑定内容受保护。
+// 步骤：发出两个原生事件 → 复核上下文和原信封 → 尝试拒绝受保护的阶段。
+void transition_hooks(const fs::path& root, const fs::path& dll) {
+    using namespace dfy::model;
+    using namespace dfy::app;
+    const auto packages = root/"transition-hooks";
+    converter(packages,dll,"test.transition",'t');
+    Application app({},packages,root/"transition-data",Backend{[](const auto&,const Request& input) {
+        return Response{{Role::assistant,input.messages.back().content}};
+    }});
+    check(!app.plugins().load("test.transition"),"system transition fixture failed to load");
+    const auto instance = app.plugins().instance("test.transition");
+    {
+        const auto api = instance->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+        check(api && instance->invoke(*api,[](const auto& api, auto* plugin) {
+            const auto denied = api.emit_notice(plugin,1,1);
+            return denied ? denied : api.emit_notice(plugin,2,0);
+        }) == DFY_V2_OK,"native events were not captured for transition Hooks");
+    }
+    app.advance_plugins();
+    check(!app.conversation().busy(),"vetoed native event still reached the main Agent");
+    app.advance_plugins();
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    std::optional<CompletedTurn> result;
+    while (app.conversation().busy() && std::chrono::steady_clock::now() < deadline) {
+        if (auto completed = app.conversation().advance()) result = std::move(completed);
+        std::this_thread::yield();
+    }
+    check(result && !result->error,"allowed event did not run the main Agent");
+    const auto prompt = nlohmann::json::parse(result->answer);
+    check(prompt.at("category") == "test.notice" && prompt.at("sender") == instance->generation() &&
+        prompt.at("content") == "adjusted","context Hook lost the original mailbox envelope");
+    const auto decision = app.plugins().transition_hook({DFY_V2_TRANSITION_MAIL_CONTEXT,0,0,0,
+        instance->generation(),1,1,0,0,0,{},{}});
+    check(decision.allowed && !decision.value && decision.observed == 1 && decision.errors == 1,
+        "read-only Hook could reject a bound context");
 }
 }
 
@@ -339,6 +378,7 @@ int wmain(int argc, wchar_t** argv) {
         main_inbox(root);
         text_hooks(root.parent_path(),argv[1]);
         run_text_hooks(root.parent_path(),argv[1],argv[3]);
+        transition_hooks(root.parent_path(),argv[1]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

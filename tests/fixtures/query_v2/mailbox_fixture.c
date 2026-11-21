@@ -4,11 +4,13 @@
 #include <stddef.h>
 #include <dafeiyu/hook_abi_v2.h>
 #include <dafeiyu/activity_abi_v2.h>
+#include <dafeiyu/routed_event_abi_v2.h>
 
 _Static_assert(sizeof(dfy_v2_mailbox_api) == 32 && offsetof(dfy_v2_mailbox_api,poll) == 24,"mailbox ABI");
 _Static_assert(sizeof(dfy_v2_mailbox_message) == 40 && offsetof(dfy_v2_mailbox_message,payload) == 16,"mailbox message ABI");
 _Static_assert(sizeof(dfy_v2_hook_api) == 24 && sizeof(dfy_v2_hook_input) == 72,"hook ABI");
 _Static_assert(sizeof(dfy_v2_text_hook_api) == 24 && sizeof(dfy_v2_text_hook_input) == 88,"text hook ABI");
+_Static_assert(sizeof(dfy_v2_transition_hook_api) == 24 && sizeof(dfy_v2_transition_hook_input) == 96,"transition hook ABI");
 _Static_assert(sizeof(dfy_v2_agent_api) == 48 && sizeof(dfy_v2_agent_input) == 64 && sizeof(dfy_v2_agent_status) == 32,"agent ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
@@ -16,9 +18,20 @@ struct dfy_v2_instance {
     const dfy_v2_mailbox_text_api* text;
     const dfy_v2_reference_api* refs;
     const dfy_v2_agent_api* agent;
+    const dfy_v2_routed_event_api* events;
     uint64_t session;
+    uint32_t observed[DFY_V2_TRANSITION_RUN_EXITED];
     char converter;
 };
+
+// 把两种测试事件交给普通信箱路由。
+static dfy_v2_status DFY_V2_CALL notice(void* context, dfy_v2_string_view payload, dfy_v2_event_projection* out) {
+    (void)context;
+    out->kind = DFY_V2_EVENT_MAIL;
+    out->length = (uint32_t)payload.length;
+    memcpy(out->json,payload.data,out->length);
+    return DFY_V2_OK;
+}
 
 // 为纯 C 插件分配独立实例并保存宿主查询入口。
 static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_view config,
@@ -47,6 +60,17 @@ static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* 
     instance->text = text;
     instance->refs = refs;
     status = instance->mail->attach(&addresses,error);
+    if (!status && instance->converter == 't') {
+        const void *events = NULL, *routes = NULL;
+        status = instance->host((dfy_v2_string_view){DFY_V2_ROUTED_EVENT_INTERFACE,sizeof(DFY_V2_ROUTED_EVENT_INTERFACE)-1},1,&events,error);
+        if (!status) status = instance->host((dfy_v2_string_view){DFY_V2_ROUTED_MAILBOX_INTERFACE,sizeof(DFY_V2_ROUTED_MAILBOX_INTERFACE)-1},1,&routes,error);
+        if (status) return status;
+        instance->events = events;
+        status = ((const dfy_v2_routed_mailbox_api*)routes)->register_mailbox((dfy_v2_string_view){"test.notice",11},1,DFY_V2_MAIL_WAKE,error);
+        if (!status) status = instance->events->register_event((dfy_v2_string_view){"test.notice",11},1,(dfy_v2_string_view){"{}",2},notice,NULL,error);
+        if (!status) status = instance->events->register_event((dfy_v2_string_view){"test.deny",9},1,(dfy_v2_string_view){"{}",2},notice,NULL,error);
+        if (status) return status;
+    }
     if (status) return status;
     status = instance->host((dfy_v2_string_view){DFY_V2_AGENT_INTERFACE,sizeof(DFY_V2_AGENT_INTERFACE)-1},1,&agent,error);
     if (status == DFY_V2_UNSUPPORTED) return DFY_V2_OK;
@@ -99,14 +123,24 @@ static dfy_v2_status DFY_V2_CALL stopped(dfy_v2_instance* instance, uint32_t* ou
 // 由分配该实例的 DLL 归还私有内存。
 static void DFY_V2_CALL destroy(dfy_v2_instance* instance) { free(instance); }
 static const dfy_v2_lifecycle_api lifecycle = {{sizeof(dfy_v2_lifecycle_api),1},create,start,stop,stopped,destroy};
-static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply,ask,agent_result};
+// 通过正常事件入口发出一个测试通知。
+static dfy_v2_status DFY_V2_CALL emit_notice(dfy_v2_instance* instance, uint64_t sequence, int block) {
+    const dfy_v2_string_view type = block ? (dfy_v2_string_view){"test.deny",9} : (dfy_v2_string_view){"test.notice",11};
+    dfy_v2_event_receipt receipt = {0};
+    return instance->events->emit(type,1,sequence,(dfy_v2_string_view){"{}",2},&receipt,NULL);
+}
+// 读取原实例实际观察到的系统阶段次数。
+static uint32_t DFY_V2_CALL transition_count(dfy_v2_instance* instance, uint32_t point) {
+    return instance->observed[point-1];
+}
+static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply,ask,agent_result,emit_notice,transition_count};
 
 // 依次注册主会话模型前检查及工具确认。
 static dfy_v2_status DFY_V2_CALL describe_hook(dfy_v2_instance* instance, uint32_t index,
     dfy_v2_hook_description* out, dfy_v2_error* error) {
-    (void)instance;
     if (error) error->length = 0;
     *out = (dfy_v2_hook_description){0};
+    if (instance->converter == 't') return DFY_V2_NOT_FOUND;
     if (index == 0) *out = (dfy_v2_hook_description){DFY_V2_HOOK_MODEL_REQUEST,DFY_V2_HOOK_MAIN_SESSION};
     if (index == 1) *out = (dfy_v2_hook_description){DFY_V2_HOOK_TOOL_START,DFY_V2_HOOK_MAIN_SESSION|DFY_V2_HOOK_OWN_SESSION};
     return out->point ? DFY_V2_OK : DFY_V2_NOT_FOUND;
@@ -176,6 +210,35 @@ static dfy_v2_status DFY_V2_CALL rewrite_text(dfy_v2_instance* instance, uint32_
 }
 static const dfy_v2_text_hook_api text_hooks = {{sizeof(dfy_v2_text_hook_api),1},describe_text,rewrite_text};
 
+// 在测试模式登记所有系统转换，供本体与原实例事件验证。
+static dfy_v2_status DFY_V2_CALL describe_transition(dfy_v2_instance* instance, uint32_t index,
+    dfy_v2_hook_description* out, dfy_v2_error* error) {
+    if (error) error->length = 0;
+    *out = (dfy_v2_hook_description){0};
+    if (instance->converter != 't' || index >= DFY_V2_TRANSITION_RUN_EXITED) return DFY_V2_NOT_FOUND;
+    *out = (dfy_v2_hook_description){index+1,DFY_V2_HOOK_MAIN_SESSION|DFY_V2_HOOK_OWN_SESSION|DFY_V2_HOOK_OTHER_SESSION};
+    return DFY_V2_OK;
+}
+
+// 验证系统阶段对三种提案的权限。
+// 步骤：记录阶段 → 尝试拒绝测试事件或只读通知 → 在普通邮件上改写模型副本。
+static dfy_v2_status DFY_V2_CALL apply_transition(dfy_v2_instance* instance, uint32_t index,
+    const dfy_v2_transition_hook_input* input, char* output, uint64_t capacity, uint32_t* verdict, uint64_t* written,
+    dfy_v2_error* error) {
+    if (error) error->length = 0;
+    ++instance->observed[index];
+    if (input->point == DFY_V2_TRANSITION_EVENT_BEFORE_DISPATCH && input->category.length == 9 &&
+        !memcmp(input->category.data,"test.deny",9)) *verdict = DFY_V2_HOOK_DENY;
+    if (!input->permissions) *verdict = DFY_V2_HOOK_DENY;
+    if (input->point == DFY_V2_TRANSITION_MAIL_CONTEXT && input->permissions) {
+        if (capacity < 8) return DFY_V2_INVALID_ARGUMENT;
+        memcpy(output,"adjusted",8);
+        *written = 8;
+    }
+    return DFY_V2_OK;
+}
+static const dfy_v2_transition_hook_api transitions = {{sizeof(dfy_v2_transition_hook_api),1},describe_transition,apply_transition};
+
 // 每步最多消费一封本体来信；信箱为空时等下一次推进。
 static dfy_v2_status DFY_V2_CALL step(dfy_v2_instance* instance, uint32_t* wait_ms, dfy_v2_error* error) {
     const dfy_v2_status status = reply(instance,error);
@@ -197,6 +260,8 @@ static dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version
         *out = &hooks;
     if (name.length == sizeof(DFY_V2_TEXT_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_TEXT_HOOK_INTERFACE,name.length))
         *out = &text_hooks;
+    if (name.length == sizeof(DFY_V2_TRANSITION_HOOK_INTERFACE)-1 && !memcmp(name.data,DFY_V2_TRANSITION_HOOK_INTERFACE,name.length))
+        *out = &transitions;
     if (name.length == sizeof(DFY_V2_ACTIVITY_INTERFACE)-1 && !memcmp(name.data,DFY_V2_ACTIVITY_INTERFACE,name.length))
         *out = &activity;
     return *out ? DFY_V2_OK : DFY_V2_UNSUPPORTED;

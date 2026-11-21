@@ -86,4 +86,51 @@ std::optional<std::string> PluginInstance::rewrite_hook(std::size_t index, const
         return std::string(view);
     });
 }
+
+// 读取原实例启动时的有界系统阶段登记。
+// 步骤：协商可选接口 → 按序枚举 → 校验全部阶段和作用域。
+std::vector<dfy_v2_hook_description> PluginInstance::load_transition_hooks() {
+    const auto capability = query<dfy_v2_transition_hook_api>(DFY_V2_TRANSITION_HOOK_INTERFACE,DFY_V2_TRANSITION_HOOK_VERSION);
+    if (!capability) return {};
+    return invoke(*capability,[](const auto& api, auto* instance) {
+        if (!api.describe || !api.apply) throw std::logic_error("transition hooks: incomplete capability");
+        std::vector<dfy_v2_hook_description> registrations;
+        for (uint32_t index = 0; index <= maximum_registrations; ++index) {
+            dfy_v2_hook_description registration{};
+            const auto status = api.describe(instance,index,&registration,nullptr);
+            if (status == DFY_V2_NOT_FOUND && !registration.point && !registration.sessions) return registrations;
+            if (status || registration.point < DFY_V2_TRANSITION_EVENT_CAPTURED || registration.point > DFY_V2_TRANSITION_RUN_EXITED ||
+                !registration.sessions || (registration.sessions & ~scopes)) throw std::invalid_argument("transition hooks: invalid registration");
+            if (index == maximum_registrations) throw std::length_error("transition hooks: registration capacity exceeded");
+            registrations.push_back(registration);
+        }
+        throw std::logic_error("transition hooks: registration enumeration did not end");
+    });
+}
+
+// 调用登记的处理器并核对该阶段允许的操作。
+// 步骤：定位原接口 → 同步获取裁定 → 验证拒绝权限或有界文本。
+std::pair<bool,std::optional<std::string>> PluginInstance::apply_transition(std::size_t index,
+    const dfy_v2_transition_hook_input& input, std::span<char> output) {
+    const auto registrations = transition_hooks();
+    if (index >= registrations.size() || registrations[index].point != input.point)
+        throw std::invalid_argument("transition hooks: registration and point mismatch");
+    const auto capability = query<dfy_v2_transition_hook_api>(DFY_V2_TRANSITION_HOOK_INTERFACE,DFY_V2_TRANSITION_HOOK_VERSION);
+    if (!capability) throw std::logic_error("transition hooks: registered interface is unavailable");
+    return invoke(*capability,[&](const auto& api, auto* instance) -> std::pair<bool,std::optional<std::string>> {
+        uint32_t verdict = DFY_V2_HOOK_ALLOW;
+        uint64_t written = DFY_V2_TEXT_HOOK_UNCHANGED;
+        if (!api.apply || api.apply(instance,static_cast<uint32_t>(index),&input,output.data(),output.size(),&verdict,&written,nullptr))
+            throw std::runtime_error("transition hooks: callback failed");
+        if (verdict == DFY_V2_HOOK_DENY && (input.permissions & DFY_V2_TRANSITION_CAN_DENY) && written == DFY_V2_TEXT_HOOK_UNCHANGED)
+            return {false,{}};
+        if (verdict != DFY_V2_HOOK_ALLOW) throw std::invalid_argument("transition hooks: invalid verdict");
+        if (written == DFY_V2_TEXT_HOOK_UNCHANGED) return {true,{}};
+        if (!(input.permissions & DFY_V2_TRANSITION_CAN_REWRITE) || written > output.size())
+            throw std::invalid_argument("transition hooks: invalid rewrite");
+        const std::string_view value(output.data(),static_cast<std::size_t>(written));
+        if (!runtime::valid_utf8(value)) throw std::invalid_argument("transition hooks: output must be valid UTF-8");
+        return {true,std::string(value)};
+    });
+}
 }

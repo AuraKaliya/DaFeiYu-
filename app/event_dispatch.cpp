@@ -60,7 +60,13 @@ void dispatch_event(plugins::PluginManager& plugins, InteractionRoutes& interact
     try {
         auto route = parse_route(*event);
         const auto kind = event->kind;
-        const bool accepted = interactions.dispatch(std::move(*event),std::move(route));
+        const bool optional = std::holds_alternative<MailRoute>(route) || std::holds_alternative<AskRoute>(route);
+        const auto gate = plugins.transition_hook({DFY_V2_TRANSITION_EVENT_BEFORE_DISPATCH,
+            optional ? DFY_V2_TRANSITION_CAN_DENY : 0,kind,0,event->owner,id.domain,id.sequence,0,0,0,
+            {event->type.data(),event->type.size()},{}});
+        if (log && gate.observed) log->append("hook.transition",{{"point","event.before_dispatch"},{"eventDomain",id.domain},
+            {"event",id.sequence},{"version",gate.version},{"allowed",gate.allowed},{"errors",gate.errors}});
+        const bool accepted = interactions.dispatch(std::move(*event),std::move(route),!gate.allowed);
         if (log) log->append("event.dispatched",{{"eventDomain",id.domain},{"event",id.sequence},{"route",kind},{"accepted",accepted}});
     } catch (const std::exception&) {
         if (log) log->append("event.rejected",{{"eventDomain",id.domain},{"event",id.sequence}});
