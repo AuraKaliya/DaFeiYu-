@@ -4,7 +4,7 @@ const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
-const { wall, readArena } = require('./playtest-arena.cjs');
+const { wall, waterCourse, readArena } = require('./playtest-arena.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
 function readRows(fixture, file) {
@@ -111,12 +111,15 @@ async function checkPlayer(fixture, mode) {
     const actor = fish.uuid;
     const doorProbe = mode === '--door-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner ? await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
+    const arena = partner && mode !== '--water-probe' ?
+      await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
     if (doorProbe) {
       await checkDoor(fixture, player, whispers);
+    } else if (mode === '--water-probe') {
+      await checkWater(fixture, player, whispers);
     } else if (mode === '--gap-materials-probe') {
       await checkMaterials(fixture, player, whispers);
     } else if (wallProbe) {
@@ -168,6 +171,44 @@ async function checkPlayer(fixture, mode) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 验证跟随通过同一 work 跨水和聊天，再验证固定目标反向抵达干岸。
+// 步骤：确认低水面夹具 → 跨水时发话 → 干岸叫停 → 反向移动及核对退出。
+async function checkWater(fixture, player, whispers) {
+  const rows = () => readRows(fixture, 'trace/events.jsonl').filter(row => row.kind === 'mail.received');
+  await until(() => player.blockAt(player.entity.position.clone().set(-31, -61, -24))?.name === 'water',
+    '读回水道夹具');
+  player.chat('跟我渡水');
+  const accepted = await until(() => rows().find(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted'),
+    '启动渡水跟随');
+  fixture.send(`tp DfyGuestCheck ${waterCourse.east.join(' ')}`);
+  await until(() => rows().some(row => row.body.progress?.terrain === 'swimming'), '跟随者真正入水', 18000);
+  player.chat('水里还跟着吗');
+  await until(() => whispers.includes('我还跟着你。'), '渡水时可发言');
+  await until(() => rows().some(row => row.body.progress?.terrain === 'dry' && row.body.status === 'in_range'),
+    '同一跟随渡水并站稳干岸', 18000);
+  player.chat('这里停下');
+  const followed = await until(() => rows().find(row => row.category === 'mc.partner.action' && row.body.skill === 'follow'),
+    '叫停后跟随实际退出');
+  assert.equal(followed.body.bridgeWork, accepted.body.action.bridgeWork);
+  assert.equal(followed.body.result.status, 'interrupted');
+  assert.equal(followed.body.result.navigation.crossings, 1);
+  assert.ok(followed.body.result.position.x > -28);
+  assert.ok(rows().filter(row => row.body.action?.skill === 'follow')
+    .every(row => row.body.action.bridgeWork === accepted.body.action.bridgeWork));
+  player.chat('回到西岸');
+  const moved = await until(() => rows().find(row => row.category === 'mc.partner.action' && row.body.skill === 'move'),
+    '固定目的地反向渡水', 30000);
+  assert.equal(moved.body.result.status, 'done');
+  assert.deepEqual(moved.body.result.navigation, { crossings: 1, phase: 'dry' });
+  assert.ok(moved.body.result.position.x < -34);
+  player.chat('去封住的地方');
+  const blocked = await until(() => rows().find(row => row.seq > moved.seq && row.category === 'mc.partner.action' &&
+    row.body.skill === 'move'), '封闭目标给出失败回执', 40000);
+  assert.equal(blocked.body.result.status, 'blocked');
+  assert.ok(blocked.body.result.reason);
+  assert.ok(!readRows(fixture, 'game-actions.jsonl').some(row => ['collect', 'place'].includes(row.skill)));
 }
 
 // 用独立世界读回检查墙格保护、未采满时的逐格证据和后续对话。

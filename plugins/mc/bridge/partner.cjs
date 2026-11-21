@@ -6,6 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, collectReadback } = require('./collection.cjs');
+const { dryStand, DryStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -212,13 +213,18 @@ function partnerService(bot, world, inbox, places, owner) {
         const target = anchored ? messageAnchor(r.generation, args.message).center.floored() : named ? point : args;
         const pos = targetPoint(bot, target);
         const nearby = new goals.GoalNear(pos.x, pos.y, pos.z, anchored ? 3 : 1);
-        const goal = anchored ? new goals.GoalCompositeAll([nearby, new goals.GoalY(pos.y)]) : nearby;
+        const dryTarget = anchored || dryStand(bot, pos);
+        const conditions = [nearby];
+        if (anchored) conditions.push(new goals.GoalY(pos.y));
+        if (dryTarget) conditions.push(new DryStandGoal(bot));
+        const goal = conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby;
         if (anchored) result.sourceMessage = args.message;
-        await walk(bot, goal);
+        const surface = monitorSurface(bot, result);
+        try { await walk(bot, goal); }
+        finally { surface.stop(); result.position = bot.entity.position.clone(); }
         check();
-        result.position = bot.entity.position.clone();
         const arrived = bot.entity.position.floored();
-        if (!goal.isEnd(arrived) || (anchored && bot.blockAt(arrived.offset(0, -1, 0))?.boundingBox !== 'block'))
+        if (!goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater))
           throw new Error('到达站位未核实');
       } else if (r.skill === 'follow') {
         prepareWalking(bot);

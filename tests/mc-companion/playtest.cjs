@@ -9,7 +9,7 @@ const { setTimeout: sleep } = require('node:timers/promises');
 const { withPaper } = require('./paper.cjs');
 const { until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
-const { course, prepareWall, prepareCourse } = require('./playtest-arena.cjs');
+const { course, prepareWall, prepareCourse, prepareWater } = require('./playtest-arena.cjs');
 
 // 按原版离线服的名字规则生成 UUID，只用于已经确认监听回环的体验服。
 function offlineId(name) {
@@ -76,6 +76,7 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
+    if (mode === '--water-probe') prepareWater(send);
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
     if (mode === '--gap-materials-probe') {
       send('fill -2 -61 -2 5 -61 3 minecraft:grass_block');
@@ -196,7 +197,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe'].includes(mode) ||
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe', '--water-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

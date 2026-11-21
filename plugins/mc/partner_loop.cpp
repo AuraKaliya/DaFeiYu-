@@ -487,9 +487,10 @@ void PartnerLoop::advance_motion(bool stopping) {
     if (!result) {
         auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
-        if (!phase.empty() && motion.last_phase != phase) {
+        const auto observed = phase+":"+progress.value("terrain",std::string{});
+        if (!phase.empty() && motion.last_phase != observed) {
             publish("mc.partner.motion",{{"action",fact},{"status",phase},{"progress",std::move(progress)}});
-            motion.last_phase = phase;
+            motion.last_phase = observed;
         }
         return;
     }

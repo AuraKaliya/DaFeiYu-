@@ -408,6 +408,36 @@ dfy::model::Response materials_sample(const dfy::model::Request& request) {
         return call("skills","skills",{{"categories",{"dig_break"}}});
     return {{Role::assistant,R"({"internal":"materials observation complete"})"}};
 }
+
+// 用固定响应调度两次渡水，聊天和停下只使用当前跟随工作的实际身份。
+dfy::model::Response water_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string name, Json args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with("_"+name); });
+        if (tool == request.tools.end()) throw std::runtime_error("water probe: missing "+name);
+        return {{Role::assistant,"",{{name,tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (!input.at("events").empty()) {
+            const auto text = input.at("events").back().value("text",std::string{});
+            if (text == "跟我渡水") return call("follow",{{"distance",2}});
+            if (text == "水里还跟着吗" && input.at("activeMotion").at("skill") == "follow")
+                return call("reply",{{"text","我还跟着你。"}});
+            if (text == "这里停下") return call("stop_motion",{{"work",input.at("activeMotion").at("work")}});
+            if (text == "回到西岸" || text == "去封住的地方") {
+                const auto target = text == "回到西岸" ? Json{{"x",-38},{"y",-60},{"z",-25}} :
+                    Json{{"x",-30},{"y",-59},{"z",-15}};
+                return call("queue_actions",{{"operation","append"},{"steps",Json::array({
+                    {{"skill","move"},{"arguments",target}}
+                })}});
+            }
+        }
+    }
+    return {{Role::assistant,R"({"internal":"water observation complete"})"}};
+}
 }
 
 // 保持真人体验的正式宿主运行，向本地日志发布进展和计划板并完整收尾。
@@ -424,14 +454,16 @@ int wmain(int argc, wchar_t** argv) {
         const bool follow = mode == L"--follow-probe";
         const bool door = mode == L"--door-probe";
         const bool materials = mode == L"--gap-materials-probe";
-        const bool partner = wall || follow || door || materials || mode == L"--partner-probe";
+        const bool water = mode == L"--water-probe";
+        const bool partner = wall || follow || door || materials || water || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,materials,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,water,ask,gap,root](const auto&, const auto& request) {
+                if (water) return water_sample(request);
                 if (materials) return materials_sample(request);
                 if (door) return door_sample(request);
                 if (wall) return wall_sample(request,root,ask,gap);

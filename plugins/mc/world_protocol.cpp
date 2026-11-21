@@ -129,7 +129,9 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         const auto& step = result.at("progress");
         const auto name = step.at("phase").get<std::string>();
         const bool waiting = name == "waiting_player";
-        if (step.size() != (waiting ? 1u : 2u) ||
+        const auto terrain = step.value("terrain",std::string("land"));
+        if (step.size() != (waiting ? 1u : 2u) + step.count("terrain") ||
+            (terrain != "land" && terrain != "swimming" && terrain != "leaving_water" && terrain != "dry") ||
             (!waiting && (name != "in_range" && name != "following" && name != "replanning")) ||
             (!waiting && (!step.at("distance").is_number() || !std::isfinite(step.at("distance").get<double>()) ||
                 step.at("distance") < 0))) throw std::invalid_argument("MC: invalid follow progress");

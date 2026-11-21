@@ -6,6 +6,7 @@ const wall = {
 const course = [
   [-10.5, -60, -5.5], [-10.5, -60, -11.5], [-3.5, -60, -11.5], [-3.5, -60, -5.5],
 ];
+const waterCourse = { west: [-37.5, -60, -24.5], east: [-23.5, -60, -24.5] };
 
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
 function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
@@ -32,6 +33,16 @@ function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
 function prepareCourse(send) {
   send('fill -13 -61 -14 -2 -61 -4 minecraft:stone');
   send('fill -13 -60 -14 -2 -58 -4 minecraft:air');
+}
+
+// 布置两岸同高及低一格的水道，边界墙约束近处路线从水中经过。
+function prepareWater(send) {
+  for (const command of ['fill -40 -62 -28 -20 -62 -21 minecraft:stone',
+    'fill -40 -61 -28 -20 -61 -21 minecraft:stone', 'fill -40 -60 -28 -20 -57 -21 minecraft:air',
+    'fill -40 -61 -28 -20 -57 -28 minecraft:stone', 'fill -40 -61 -21 -20 -57 -21 minecraft:stone',
+    'fill -33 -61 -27 -29 -61 -22 minecraft:water',
+    'fill -32 -61 -17 -28 -57 -13 minecraft:stone',
+    `tp DfyCompanion ${waterCourse.west.join(' ')}`, `tp DfyGuestCheck ${waterCourse.west.join(' ')}`]) send(command);
 }
 
 // 让独立协议玩家读回所选场地的原状和检验点，未加载或不符时等待下一次读取。
@@ -63,4 +74,4 @@ function readArena(player, wallProbe, withExistingDoor) {
   return { course, observed };
 }
 
-module.exports = { wall, course, prepareWall, prepareCourse, readArena };
+module.exports = { wall, course, waterCourse, prepareWall, prepareCourse, prepareWater, readArena };
