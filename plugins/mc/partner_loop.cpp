@@ -16,6 +16,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
     "task 保存共同目标和原话指向。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
     "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
+    "玩家纠正原目标时先用 task_update 的 begin_correction 登记当前原话，再观察或等待旧工作退出。"
+    "用 commit_correction 把新目标与方格一起提交，pendingCorrection 保留跨轮原话；目标位于原墙面时沿用原候选。"
     "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
     "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
     "观察仍无法区分且会改变做法时，用 ask_player 自然问一句；玩家给了确切指向后，在 dig_block 带上 pendingQuestion.item 作为 resolves。\n"
@@ -387,6 +389,20 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     if (skill == "skills") return discover(args);
     if (skill == "knowledge") return lookup_knowledge(args);
+    if (args.value("operation","") == "begin_correction") {
+        if (events_.empty() || events_.back().at("type") != "player.message" || args.at("message") != order_)
+            return {{"status","stale_correction"}};
+        auto result = task_.begin_correction(events_.back(),feed_.observation());
+        if (result.at("status") == "correction_recorded") {
+            cancel_plan("task_changed");
+            clear_queue("task_changed");
+            if (motion_ && motion_->skill != "follow") motion_->stopping = true;
+            if (confirmation_ && confirmation_->work) confirm_once("withdrawn","task");
+        }
+        return result;
+    }
+    if (args.value("operation","") == "commit_correction" && motion_ && motion_->stopping && motion_->skill != "follow")
+        return {{"status","waiting_for_old_work"},{"work",motion_->work}};
     const auto target = args.find("target");
     const auto anchor = target != args.end() && target->contains("message") ?
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
@@ -495,7 +511,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (wait_for_work_) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
-    return task_.trigger(feed_.observation(),feed_.scene_revision());
+    return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。

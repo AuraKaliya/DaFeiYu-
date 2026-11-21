@@ -121,7 +121,7 @@ bool PartnerLoop::awaiting_approval(std::string_view skill) const noexcept {
 
 // 检查原候选仍绑定当前游戏世界、玩家和游标。
 bool PartnerLoop::confirmation_context_current(std::uint64_t order) const {
-    return confirmation_ && order && feed_.ready() && !feed_.departed() && !feed_.gap() &&
+    return confirmation_ && order && !task_.correcting() && feed_.ready() && !feed_.departed() && !feed_.gap() &&
         feed_.world() == confirmation_->world && feed_.owner() == confirmation_->player && feed_.cursor() == order &&
         (!confirmation_->work || confirmation_->work->revision == task_.revision());
 }

@@ -75,6 +75,7 @@ Json PartnerTask::context() const {
     Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_},
         {"collection",collection_}};
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
+    if (correcting()) value["pendingCorrection"] = correction_;
     if (!changes_.empty()) value["worldChanges"] = changes_;
     if (has_target()) {
         value["target"] = target_;
@@ -86,6 +87,18 @@ Json PartnerTask::context() const {
     return value;
 }
 
+// 原话在其接纳回合登记，之后由任务持有到成功换绑或被更新的纠正取代。
+Json PartnerTask::begin_correction(const Json& event,const Json& scene) {
+    const auto& message = event.at("sequence");
+    if (correcting() && message == correction_.at("message"))
+        return {{"status","correction_pending"},{"correction",correction_}};
+    if (message.get<std::uint64_t>() <= last_correction_) return {{"status","stale_correction"}};
+    correction_ = {{"message",message},{"text",event.at("text")},{"baseRevision",revision_},{"dimension",scene.at("dimension")}};
+    last_correction_ = message.get<std::uint64_t>();
+    disarm();
+    return {{"status","correction_recorded"},{"correction",correction_}};
+}
+
 // 保存当前任务说明，只在执行条件变化时推进插件持有的任务修订。
 // 步骤：校验正文与原话目标 → 核对执行范围 → 保存约定和唤醒条件。
 Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor,
@@ -94,6 +107,16 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
     auto collection = input.value("collection",collection_);
+    const bool commit = input.value("operation","") == "commit_correction";
+    if (commit && (!correcting() || input.at("message") != correction_.at("message") ||
+        revision_ != correction_.at("baseRevision") || scene.at("dimension") != correction_.at("dimension")))
+        return {{"status","stale_correction"}};
+    if (correcting() && !commit && (goal != goal_ || collection != collection_ || input.contains("target")))
+        return {{"status","correction_pending"},{"correction",correction_}};
+    if (commit && (!input.contains("target") || input.at("target").empty()))
+        return {{"status","invalid_target"},{"reason","correction_requires_bound_target"}};
+    if (has_target() && goal != goal_ && !input.contains("target"))
+        return {{"status","invalid_target"},{"reason","target_disposition_required"}};
     if (goal.empty() || goal.size() > 1024 || detail.size() > 2048 ||
         (collection != "visible" && collection != "ground") ||
         (next != "continue" && next != "scene" && next != "player" && next != "done"))
@@ -108,10 +131,13 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             const auto message = target.at("message").get<std::uint64_t>();
             const bool approach = target.value("approach",false);
             const bool existing = target_.contains("message") && target_.at("message") == message;
+            if (commit && !existing && message != correction_.at("message"))
+                return {{"status","invalid_target"},{"reason","correction_source_mismatch"}};
+            if (commit && existing) anchor = &target_.at("anchor");
             if (!anchor || anchor->at("dimension") != scene.at("dimension") ||
                 (anchor->at("position").is_null() && !approach))
                 return {{"status","invalid_target"},{"reason","original player position unavailable"}};
-            if (has_target() && !existing && (!target.value("replace",false) || player_order != message))
+            if (!commit && has_target() && !existing && (!target.value("replace",false) || player_order != message))
                 return {{"status","invalid_target"},{"reason","new player instruction required to replace the target"}};
             if (approach && !(existing && target_.value("approach",false)) &&
                 (player_order != message || target.contains("cells") || target.contains("candidate")))
@@ -119,6 +145,11 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             const auto original = openings_.find(message);
             if (target.contains("candidate")) {
                 if (target.contains("cells") || approach) return {{"status","invalid_target"},{"reason","choose an original candidate or cells"}};
+                if (commit && existing && original != openings_.end()) {
+                    const auto choice = target_.value("candidate",original->second.at("playerFocus").at("choice"));
+                    if (choice.is_string() && target.at("candidate") != choice)
+                        return {{"status","invalid_target"},{"reason","correction_source_mismatch"}};
+                }
                 auto cells = original == openings_.end() ? Json{} : candidate_cells(original->second,target.at("candidate"));
                 if (cells.is_null()) return {{"status","invalid_target"},{"reason","candidate missing from original message observation"}};
                 target["cells"] = std::move(cells);
@@ -139,7 +170,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                     }
                 }
                 const auto previous = bound_cells_.find(message);
-                if (previous != bound_cells_.end() && !std::ranges::is_permutation(previous->second,cells))
+                if (!commit && previous != bound_cells_.end() && !std::ranges::is_permutation(previous->second,cells))
                     return {{"status","invalid_target"},{"reason","original target cells cannot be changed"}};
                 binding_message = message;
             } else if (existing && target_.contains("cells")) {
@@ -147,13 +178,20 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             }
             target.erase("replace");
             target["anchor"] = *anchor;
+            if (commit) {
+                if (!target.contains("cells") || !verified_cells(target,scene))
+                    return {{"status","invalid_target"},{"reason","current_observation_required"},
+                        {"cells",target.value("cells",Json::array())}};
+                target["instruction"] = correction_.at("message");
+            }
         }
     }
     const bool same_target = same_target_scope(target_,target);
-    const bool execution_changed = goal_ != goal || collection_ != collection || !same_target;
+    const bool execution_changed = commit || goal_ != goal || collection_ != collection || !same_target;
     if (execution_changed && revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
-    if (binding_message && !bound_cells_.contains(binding_message)) {
-        bound_cells_.emplace(binding_message,target.at("cells"));
+    if (binding_message) {
+        if (commit) bound_cells_.insert_or_assign(binding_message,target.at("cells"));
+        else bound_cells_.try_emplace(binding_message,target.at("cells"));
         if (bound_cells_.size() > observation_limit) bound_cells_.erase(bound_cells_.begin());
     }
     if (same_target && target.contains("cells")) target["cells"] = target_.at("cells");
@@ -164,8 +202,23 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     baseline_ = std::move(baseline);
     target_ = std::move(target);
     armed_ = true;
+    if (commit) correction_ = nullptr;
     if (execution_changed) ++revision_;
     return {{"status","updated"},{"executionChanged",execution_changed},{"task",context()}};
+}
+
+// 核对插件保存的本轮现场证据及确切坐标，允许原动作已完成的格。
+// 步骤：核对观察身份和时效 → 要求全部目标格在本机已加载范围内。
+bool PartnerTask::verified_cells(const Json& target,const Json& scene) const {
+    if (local_observation_.is_null() || !target.contains("observation") ||
+        local_observation_.at("id") != target.at("observation") || local_observation_.at("dimension") != scene.at("dimension") ||
+        std::chrono::steady_clock::now()-observation_time_ > std::chrono::seconds(30)) return false;
+    return std::ranges::all_of(target.at("cells"),[&](const auto& cell) {
+        return std::ranges::any_of(local_observation_.at("verified"),[&](const auto& sample) {
+            return sample.at("atSelf") == true && sample.at("block").is_string() &&
+                cell.at("x") == sample.at("x") && cell.at("y") == sample.at("y") && cell.at("z") == sample.at("z");
+        });
+    });
 }
 
 // 允许原接近请求在实际到达后使用现场明确读回的空格。

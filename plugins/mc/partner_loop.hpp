@@ -30,6 +30,8 @@ class PartnerLoop {
     bool permits(std::uint64_t session) const noexcept;
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
     bool waits_for_work() const noexcept { return wait_for_work_ || (follow_handoff_ && reply_requested_); }
+    // 判断本轮的任务相关写入是否等待已登记的玩家纠正。
+    bool waiting_for_target(std::uint64_t session) const noexcept { return session == session_ && task_.correcting(); }
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。

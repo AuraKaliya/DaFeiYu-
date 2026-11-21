@@ -16,10 +16,14 @@ class PartnerTask {
     // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
         const nlohmann::json* anchor, std::uint64_t player_order = 0);
+    // 将当前原话登记为待完成的任务纠正。
+    nlohmann::json begin_correction(const nlohmann::json& event, const nlohmann::json& scene);
+    // 判断旧目标是否正在等待玩家纠正落地。
+    bool correcting() const noexcept { return !correction_.is_null(); }
     // 判断当前任务是否带有需要遵循的原话目标。
     bool has_target() const noexcept { return !target_.is_null(); }
     // 只有目标已绑定确切方块时才自动授予放置目录。
-    bool target_ready() const noexcept { return target_.contains("cells"); }
+    bool target_ready() const noexcept { return !correcting() && target_.contains("cells"); }
     // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
     bool bind_placement(nlohmann::json& arguments) const;
     // 以固定顺序返回当前目标的全部方格。
@@ -43,11 +47,14 @@ class PartnerTask {
     void record_focus(std::uint64_t message, const nlohmann::json& sampled_at, const nlohmann::json& focus);
     // 核对接近原请求后的现场证据仍属于同一任务和维度。
     bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
+    // 验证近期自身视图已覆盖全部拟切换的方格。
+    bool verified_cells(const nlohmann::json& target, const nlohmann::json& scene) const;
     std::uint64_t revision_ = 0;
+    std::uint64_t last_correction_ = 0;
     std::string goal_, detail_, next_ = "player", collection_ = "visible";
     unsigned remaining_ = 0;
     bool armed_ = false;
-    nlohmann::json baseline_, receipt_, target_, changes_ = nlohmann::json::array();
+    nlohmann::json baseline_, receipt_, target_, correction_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;

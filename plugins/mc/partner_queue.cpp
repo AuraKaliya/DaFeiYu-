@@ -30,6 +30,7 @@ bool valid_step(std::string_view skill, const Json& args) {
 // 步骤：核对操作与旧工作 → 校验本轮工具范围及步骤参数 → 更新待执行队列。
 nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& args) {
     const auto operation = args.at("operation").get<std::string>();
+    if (task_.correcting() && operation != "clear") return {{"status","blocked"},{"reason","correction_pending"}};
     if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
         cancel_plan("cleared");

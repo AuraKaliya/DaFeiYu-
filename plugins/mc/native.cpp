@@ -256,14 +256,16 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.arguments = input.dump();
         }
         if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);
-        const bool target_blocked = (game_skill == "place" || game_skill == "fill_target") &&
-            !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target");
+        const bool correction_blocked = controls_body && (game_skill == "collect" || game_skill == "place" || game_skill == "fill_target") &&
+            raw->partner.waiting_for_target(call->session);
+        const bool target_blocked = correction_blocked || ((game_skill == "place" || game_skill == "fill_target") &&
+            !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target"));
         if (!target_blocked && partner && skill->supports_approval) {
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
         }
         pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
-        if (partner_turn && !confirmed && skill->supports_approval &&
+        if (!target_blocked && partner_turn && !confirmed && skill->supports_approval &&
             raw->partner.requires_approval(game_skill,nlohmann::json::parse(job.arguments).at("arguments")))
             return report(DFY_V2_BUSY,error);
         const bool busy = controls_body && !target_blocked && !pending_approval &&
@@ -277,7 +279,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.effect = DFY_V2_TOOL_APPLIED;
             raw->partner.resolve_block_question(resolves,job.arguments);
         } else if (target_blocked) {
-            job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
+            job.output = correction_blocked ? R"({"status":"blocked","reason":"correction_pending"})" :
+                R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
             job.ready = job.success = true;
         } else if (confirmed) {
             if (pending_approval) job.output = nlohmann::json{{"status","waiting"},{"item",call->invocation}}.dump();

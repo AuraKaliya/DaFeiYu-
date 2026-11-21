@@ -128,7 +128,12 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool notes = variant == L"partner-revision-notes";
     const bool approval = variant == L"partner-revision-approval";
     const bool goal = variant == L"partner-revision-goal";
-    const auto revision = notes || approval ? 1 : 2;
+    const bool correction = variant == L"partner-revision-correction";
+    const auto revision = notes || approval || correction ? 1 : 2;
+    const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
+        {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
+    auto floor = wall;
+    for (int i : {2,3}) { floor.at(i)["y"] = -60; floor.at(i)["z"] = -4; }
     const auto reason = approval ? "approval_changed" : "task_changed";
     std::atomic_bool checked = false;
     app::ApplicationRunConfig run;
@@ -142,6 +147,25 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         };
         const auto& last = request.messages.back();
         if (last.role == Role::tool) {
+            if (last.tool_call_id == "register-correction") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (result.at("status") != "correction_recorded" || result.at("correction").at("message") != 3)
+                    throw std::runtime_error("the correction was not recorded from its original message");
+            }
+            if (last.tool_call_id == "observe-correction") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                return call("_task_update","commit-correction",{{"operation","commit_correction"},{"message",3},
+                    {"goal","竖着补墙"},{"next","player"},{"target",{{"message",2},{"candidate","2,-60,-5:x"},
+                        {"observation",result.at("observation").at("id")}}}});
+            }
+            if (last.tool_call_id == "commit-correction") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto& task = result.at("task");
+                if (task.at("revision") != 2 || task.contains("pendingCorrection") || task.at("target").at("message") != 2 ||
+                    task.at("target").at("instruction") != 3 || task.at("target").at("cells") != wall ||
+                    task.at("goal") != "竖着补墙") throw std::runtime_error("the corrected goal and cells did not switch together");
+                return {{Role::assistant,R"({"internal":"wall rebound"})"}};
+            }
             if (last.tool_call_id == "start-task") return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
             if (last.tool_call_id == "allow-dig") {
                 const Json first{{"id","first"},{"skill","dig_block"},
@@ -176,13 +200,34 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 second.at("status") != (notes ? "done" : "skipped") ||
                 (!notes && (plan.at("cancelReason") != reason || second.at("reason") != reason)))
                 throw std::runtime_error("plan did not retain its original executor exit and dependent outcome");
+            if (correction) {
+                const auto& task = input.at("task");
+                if (!input.at("events").empty() || task.at("pendingCorrection").at("message") != 3 ||
+                    task.at("target").at("cells") != floor) throw std::runtime_error("correction was lost at the old work boundary");
+                return call("_observe","observe-correction",{{"sources",{"message","self"}},{"message",2},{"focus","openings"},{"verify",wall}});
+            }
+            checked = true;
+            return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+        } else if (correction && input.at("trigger") == "skills.expanded" && input.at("task").at("revision") == 2) {
+            return call("_fill_target","fill-wall",{{"block","dirt"}});
+        } else if (correction && input.at("trigger") == "motion.finished") {
+            const auto& batch = input.at("workSettlement");
+            const auto& result = batch.at("receipts").at(batch.at("primary").get<std::size_t>()).at("result");
+            if (result.at("status") != "done" || result.at("cells").size() != 4 || result.at("changes").size() != 2 ||
+                result.at("cells").at(0).at("status") != "present" || result.at("cells").at(2).at("status") != "placed")
+                throw std::runtime_error("corrected wall did not settle cell by cell");
             checked = true;
             return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
         } else if (!input.at("events").empty()) {
             const auto& event = input.at("events").back();
-            if (event.at("sequence") == 2) return call("_task_update","start-task",{{"goal","清理门边"},{"next","player"}});
+            if (event.at("sequence") == 2) {
+                Json task{{"goal","清理门边"},{"next","player"}};
+                if (correction) task["target"] = {{"message",2},{"cells",floor}};
+                return call("_task_update","start-task",task);
+            }
             if (event.at("sequence") == 3) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
+                if (correction) return call("_task_update","register-correction",{{"operation","begin_correction"},{"message",3}});
                 if (approval) return call("_dig_block","require-approval",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2},{"approval","game"}});
                 Json update{{"goal",goal ? "改清理另一处" : "清理门边"},{"next",notes ? "continue" : "player"}};
                 if (notes) update["detail"] = "补记角落";

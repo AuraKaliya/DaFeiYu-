@@ -20,6 +20,8 @@ async function main() {
   const departure = variant === 'partner-departure';
   const revision = variant?.startsWith('partner-revision-');
   const notes = variant === 'partner-revision-notes';
+  const correction = variant === 'partner-revision-correction';
+  const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
@@ -38,6 +40,7 @@ async function main() {
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let following, collecting, resumed, collectExited = false;
   let planReading = false, nextBlock = false;
+  let wallFilled = false;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -67,7 +70,12 @@ async function main() {
         if (departure) messages[2] = left;
         if (revision) {
           messages[1].text = '清理门边两格草方块';
-          messages[2].text = notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
+          if (correction) {
+            messages[1].text = '把我面前墙上的四格补上';
+            messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
+          }
+          messages[2].text = correction ? '我说的是墙，你应该竖着补' :
+            notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             variant === 'partner-revision-scope' ? '只从地面取材' : '这次采掘先问我确认';
         }
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
@@ -96,6 +104,34 @@ async function main() {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (revision) {
+        if (correction && skill === 'observe') {
+          assert.ok(collectExited);
+          assert.equal(args.message, 2);
+          assert.deepEqual(args.verify, wall);
+          return { ...context, skill, exited: true, result: { status: 'done', observation: {
+            id, dimension: 'overworld', generation: context.generation, requested: 1, samples: [{
+              sampledAtMs: 42, verified: wall.map((cell, i) => ({ ...cell, atSelf: true, block: i < 2 ? 'dirt' : 'air' })),
+              views: [{ source: 'message', message: 2, status: 'sampled', playerFocus: { choice: '2,-60,-5:x',
+                candidates: [{ id: '2,-60,-5:x', x: 2, y: -60, z: -5, width: 2, height: 2, axis: 'x' }] } },
+              { source: 'self', status: 'sampled', actor: { position: { x: 3, y: -60, z: -6 } } }],
+            }],
+          } } };
+        }
+        if (correction && skill === 'fill_target') {
+          if (method === 'partner.begin') {
+            assert.ok(collectExited && !wallFilled);
+            wallFilled = true;
+            assert.deepEqual(args.cells, wall);
+            assert.equal(args.sourceMessage, 2);
+            assert.equal(args.taskRevision, 2);
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          return { ...context, skill, exited: true, result: { status: 'done', sourceMessage: 2, taskRevision: 2,
+            placementAttempted: true, cells: wall.map((cell, i) => ({ ...cell, before: i < 2 ? 'dirt' : 'air',
+              block: 'dirt', status: i < 2 ? 'present' : 'placed' })),
+            changes: wall.slice(2).map(cell => ({ ...cell, before: 'air', after: 'dirt' })) } };
+        }
         if (skill === 'reply' && variant === 'partner-revision-approval') {
           assert.match(args.text, /确认 \d+/);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
@@ -216,6 +252,7 @@ async function main() {
       assert.equal(stopped, notes ? 0 : 2);
       assert.ok(collectExited);
       assert.equal(nextBlock, notes);
+      assert.equal(wallFilled, correction);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
