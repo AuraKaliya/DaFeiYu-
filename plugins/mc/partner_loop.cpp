@@ -28,7 +28,9 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。任务修订由插件分配。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
-    "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。");
+    "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。"
+    "工具返回 waiting 只表示登记，pendingApproval 中的事项可以继续交谈和观察；approvalResult 记录原候选为何未执行。"
+    "已批准的工作仍以 finishedWork 的游戏读回判断效果。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
 constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体，保留原编号。核对现场后回答委托。"
@@ -119,6 +121,7 @@ void PartnerLoop::reset() noexcept {
     mail_text_ = nullptr;
     refs_ = nullptr;
     confirmation_.reset();
+    approval_result_ = nullptr;
     presentation_.reset();
     awaiting_delegation_.reset();
     active_delegation_.reset();
@@ -213,6 +216,7 @@ void PartnerLoop::retire() {
     dialogue_.clear();
     previous_.clear();
     question_.reset(); question_result_.clear(); question_wake_ = false;
+    approval_result_ = nullptr;
 }
 
 // 将按序收到的原始事实及绑定游戏数据送入同一子会话。
@@ -226,7 +230,7 @@ void PartnerLoop::submit(std::string_view wake) {
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
     const bool answer = wake == "question.result";
-    const bool autonomous = facts.empty() && !delegated && !answer;
+    const bool autonomous = facts.empty() && !delegated && !answer && wake != "approval.result";
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
@@ -235,13 +239,19 @@ void PartnerLoop::submit(std::string_view wake) {
     if (motion_) {
         auto& active = input["activeMotion"];
         active = {{"work",motion_->work},{"skill",motion_->skill},{"order",motion_->order},
-            {"status",motion_->stopping ? "stopping" : "running"}};
+            {"status",motion_->stopping ? "stopping" : motion_->accepted ? "running" : "starting"}};
         if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
     }
     if (autonomous) input["recentEvents"] = recent_events_;
     if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path}};
+    if (confirmation_ && confirmation_->work && !delegated) {
+        const auto& candidate = *confirmation_;
+        input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
+            {"arguments",candidate.arguments},{"question",candidate.question},{"status",candidate.approved_order ? "approved" : "waiting"}};
+    }
+    if (!delegated && !approval_result_.is_null()) input["approvalResult"] = approval_result_;
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
@@ -269,6 +279,7 @@ void PartnerLoop::submit(std::string_view wake) {
         question_wake_ = false;
         expansion_pending_ = false;
         finished_work_ = nullptr;
+        approval_result_ = nullptr;
     }
     order_ = order;
     reply_requested_ = false;
@@ -431,14 +442,16 @@ void PartnerLoop::advance_motion(bool stopping) {
     auto& motion = *motion_;
     Json fact{{"generation",motion.world},{"order",motion.order},{"session",motion.session},
         {"request",motion.request},{"invocation",motion.invocation},{"skill",motion.skill},{"bridgeWork",motion.work}};
-    if (!motion.announced) {
+    motion.stopping = motion.stopping || stopping;
+    std::optional<GameResult> result;
+    try { result = motion.action->poll(motion.stopping,!motion.accepted); }
+    catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
+
+    if (result && result->accepted) { motion.accepted = true; result.reset(); }
+    if (motion.accepted && !motion.announced) {
         publish("mc.partner.motion",{{"action",fact},{"status","accepted"}});
         motion.announced = true;
     }
-    motion.stopping = motion.stopping || stopping;
-    std::optional<GameResult> result;
-    try { result = motion.action->poll(motion.stopping); }
-    catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
     if (!result) {
         auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
@@ -551,7 +564,7 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
 
 // 驱动插件自己的事件与行动循环，游戏解绑优先结束原请求。
 // 步骤：推进原生读取 → 核对在途回合 → 释放旧上下文或接纳最新事件。
-void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work) {
+void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work, bool body_busy) {
     if (phase_ == DFY_V2_PARTNER_CLOSED) return;
     report_actions();
     flush();
@@ -579,6 +592,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     }
     const bool replaced = session_ && feed_.world() != session_world_;
     advance_motion(closing || replaced || feed_.departed());
+    advance_confirmed_work(config,closing || replaced || feed_.departed(),body_busy);
     review(work,closing || replaced);
     if (!settle(config,instance,closing || replaced)) return;
     if (closing) {
@@ -596,10 +610,12 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         expansion_pending_ = false;
         dialogue_.clear();
         question_.reset(); question_result_.clear(); question_wake_ = false;
+        approval_result_ = nullptr;
     }
     if (presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
     else if (question_wake_) submit("question.result");
+    else if (!approval_result_.is_null()) submit("approval.result");
     else if (awaiting_delegation_) submit("main.delegation");
     else if (const auto wake = autonomous_wake(); !wake.empty()) submit(wake);
 }

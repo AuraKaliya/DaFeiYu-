@@ -31,7 +31,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
-  let baselineRead = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
+  let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -47,12 +47,12 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : first && approvedId || motion && replies ? 4 :
-          (interrupt || motion) && moveId || approvedId ? 3 : 2;
+        const latest = initial ? 1 : first && approvedId || motion && replies || confirm && pendingChat ? 4 :
+          (interrupt || motion) && moveId || approvedId || delayed && fs.existsSync(path.join(root, 'new-instruction')) ? 3 : 2;
         const messages = [presence, { sequence: 2, text: 'play with me',
           sceneAtMessage: { dimension: 'overworld', sampledAtMs: 42, position: { x: -0.5, y: -57, z: 9.25 } } },
-          { sequence: 3, text: motion ? 'where are you' : approvedId ? 'approve ' + approvedId : 'stop for now' },
-          { sequence: 4, text: motion ? 'stop for now' : 'deny ' + approvedId }];
+          { sequence: 3, text: motion || confirm ? 'where are you' : approvedId ? 'approve ' + approvedId : 'stop for now' },
+          { sequence: 4, text: motion ? 'stop for now' : (confirm ? 'approve ' : 'deny ') + approvedId }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
@@ -80,6 +80,12 @@ async function main() {
     call(method, id, context, skill, args) {
       if (showGame && skill === 'reply') {
         assert.equal(method, 'partner.begin');
+        if (confirm && args.text === 'I can hear you while waiting.') {
+          assert.ok(approvedId && !pendingChat && replies === 0);
+          assert.deepEqual(context, { generation: state.generation, order: 3 });
+          pendingChat = true;
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
         assert.deepEqual(context, { generation: state.generation, order: 2 });
         const match = /确认 (\d+) 或 拒绝 \1$/.exec(args.text);
         assert.ok(match && !approvedId);
@@ -90,7 +96,7 @@ async function main() {
         assert.ok(!first && !delayed, 'a delivered approval must not restart a stale candidate');
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
-        assert.deepEqual(context, { generation: state.generation, order: showGame ? 3 : 2 });
+        assert.deepEqual(context, { generation: state.generation, order: confirm ? 4 : showGame ? 3 : 2 });
         assert.deepEqual(args, { count: 2, block: 'dirt' });
         ++replies;
         return { ...context, skill, exited: true, result: { status: 'done', collected: 2 } };
@@ -123,7 +129,8 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: first || motion ? 4 : interrupt || showGame ? 3 : 2, phase: ++releases === 1 ? 'requested' : 'released' };
+    return { generation, order: first || motion || confirm ? 4 : interrupt || showGame || delayed ? 3 : 2,
+      phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
   try {

@@ -206,6 +206,9 @@ async function checkWall(fixture, player, whispers, mode) {
   assert.equal(block(7, -60, -3).getProperties().half, 'lower');
   assert.equal(block(7, -59, -3).getProperties().half, 'upper');
   await until(() => fixture.settled === (askPath ? 6 : 5), '同一确认及游戏回合结算');
+  await until(() => readTrace().some(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+    row.body.skill === 'place' && row.body.result?.status === 'done' &&
+    row.body.result.blocks?.[0]?.block === 'oak_door'), '原门洞动作已退出并回到插件');
   const work = readFileSync(join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const placements = work.filter(row => row.skill === 'place');
   const order = askPath ? 5 : 4;

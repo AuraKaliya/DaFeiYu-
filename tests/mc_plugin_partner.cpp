@@ -37,11 +37,19 @@ int wmain(int argc, wchar_t** argv) {
                     if (scene) std::ofstream(root/"scene-changed").put('1');
                     return {{Role::assistant,R"({"internal":"turn finished"})"}};
                 }
-                if (!motion || last.tool_call_id == "reply")
-                    actual_reply = last.content.find(confirm ? "\"collected\":2" : "\"sent\":true") != std::string::npos;
+                if (confirm && last.content.find("\"status\":\"waiting\"") == std::string::npos)
+                    throw std::runtime_error("confirmation did not return a waiting item");
+                if (!confirm && (!motion || last.tool_call_id == "reply"))
+                    actual_reply = last.content.find("\"sent\":true") != std::string::npos;
                 return {{Role::assistant,R"({"internal":"tool receipt read"})"}};
             }
             const auto input = nlohmann::json::parse(last.content);
+            if (confirm && input.contains("finishedWork")) {
+                if (input.at("finishedWork").at("result").at("collected") != 2)
+                    throw std::runtime_error("confirmation lost the actual exit from the model context");
+                actual_reply = true;
+                return {{Role::assistant,R"({"internal":"game exit observed"})"}};
+            }
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : motion ? "_start_move" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
@@ -87,7 +95,12 @@ int wmain(int argc, wchar_t** argv) {
                     captured.at("position").at("x") != -0.5 || input.at("lastObservation").at("position").at("x") != -1.5)
                     throw std::runtime_error("original player scene was lost or replaced by the live actor position");
             }
-            if (confirm && input.at("events").back().at("sequence") == 3)
+            if (confirm && input.at("events").back().at("sequence") == 3) {
+                if (input.at("pendingApproval").at("skill") != "collect" || input.contains("activeMotion"))
+                    throw std::runtime_error("waiting approval was missing or already started");
+                return {{Role::assistant,"I can hear you while waiting."}};
+            }
+            if (confirm && input.at("events").back().at("sequence") == 4)
                 return {{Role::assistant,R"({"internal":"approval observed"})"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
                 const auto& active = input.at("activeMotion");
@@ -145,6 +158,11 @@ int wmain(int argc, wchar_t** argv) {
                 else if (task && type == "mc.partner.turn" && fact.at("order") == 2 && fact.at("request") == 3)
                     continuation_closed = fact.at("failed") == false;
                 else if (type == "mc.partner.action") {
+                    if (confirm && fact.at("skill") == "reply") {
+                        if (fact.at("order") != 3 || fact.at("result").at("sent") != true || game_receipts)
+                            throw std::runtime_error("chat did not exit before the original action");
+                        continue;
+                    }
                     if (motion) {
                         const bool reply = fact.at("skill") == "reply";
                         if (accepted_motion.empty() || fact.at("order") != (reply ? 3 : 2) ||
@@ -177,8 +195,9 @@ int wmain(int argc, wchar_t** argv) {
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
                     if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED :
-                        state.ready && state.session && state.settled == (motion ? 4u : interrupt || confirm ? 3u : 2u) &&
-                        (!task || continuation_closed) && (!motion || game_receipts == 2) && (!interrupt || interruption_seen)) return;
+                        state.ready && state.session && state.settled == (motion || confirm ? 4u : interrupt ? 3u : 2u) &&
+                        (!task || continuation_closed) && (!motion || game_receipts == 2) && (!interrupt || interruption_seen) &&
+                        (!confirm || (game_receipts == 1 && actual_reply))) return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
                 throw std::runtime_error("plugin did not reach expected boundary");

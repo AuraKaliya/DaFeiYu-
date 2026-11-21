@@ -26,7 +26,8 @@ std::string confirmation_question(std::string_view skill, const Json& args) {
 
 // 为任一支持确认的候选固定原参数、玩家和渠道。
 // 步骤：核对回合身份 → 分离执行参数和确认渠道 → 登记原候选及期限并投递请求。
-bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope) {
+bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope,
+    std::string work) {
     if (!request || session != session_ || !request_ || confirmation_ || !permits(session) || !feed_.ready()) return false;
     const auto original = Json::parse(envelope);
     const auto& context = original.at("context");
@@ -43,6 +44,7 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     const auto now = std::chrono::steady_clock::now();
     Confirmation item{request,order_,0,session_world_,feed_.owner(),std::string(skill),std::move(question),std::move(args),{},
         now+std::chrono::seconds(25),route == "game"};
+    if (!work.empty()) item.work = ApprovalWork{session,request_,task_.revision(),std::move(work)};
     if (!item.ask_game) {
         question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",item.deadline};
         question_->approval = true;
@@ -54,7 +56,8 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
 // 检查原候选仍绑定当前游戏世界、玩家和游标。
 bool PartnerLoop::confirmation_context_current(std::uint64_t order) const {
     return confirmation_ && order && feed_.ready() && !feed_.departed() && !feed_.gap() &&
-        feed_.world() == confirmation_->world && feed_.owner() == confirmation_->player && feed_.cursor() == order;
+        feed_.world() == confirmation_->world && feed_.owner() == confirmation_->player && feed_.cursor() == order &&
+        (!confirmation_->work || confirmation_->work->revision == task_.revision());
 }
 
 // 返回唯一已批准候选的不可变参数，动作接纳仍经游戏侧核对当前世界和游标。
@@ -62,7 +65,7 @@ std::optional<std::string> PartnerLoop::confirm_result(std::uint64_t request) co
     if (!confirmation_ || confirmation_->request != request) return std::string{};
     const auto& item = *confirmation_;
     if (item.decision.is_null() || (presentation_ && presentation_->request == request)) return {};
-    if (!confirmation_context_current(item.approved_order)) return std::string{};
+    if ((item.ask_game && !item.presented) || !confirmation_context_current(item.approved_order)) return std::string{};
     return Json{{"context",{{"generation",item.world},{"order",item.approved_order}}},{"arguments",item.arguments}}.dump();
 }
 
@@ -90,9 +93,12 @@ void PartnerLoop::confirm_exited(std::uint64_t request) noexcept {
 void PartnerLoop::advance_confirmation() {
     if (!confirmation_ || !confirmation_->decision.is_null()) return;
     const auto& item = *confirmation_;
-    if (feed_.world() != item.world || feed_.owner() != item.player || feed_.gap()) { confirm_once("withdrawn","host"); return; }
+    if (feed_.world() != item.world || feed_.owner() != item.player || feed_.gap() || feed_.departed()) {
+        confirm_once("withdrawn","host"); return;
+    }
+    if (item.work && item.work->revision != task_.revision()) { confirm_once("withdrawn","task"); return; }
     if (std::chrono::steady_clock::now() >= item.deadline) { confirm_once("expired","host"); return; }
-    if (!item.ask_game || !feed_.ready()) return;
+    if (!item.ask_game || !item.presentation_attempted || !feed_.ready()) return;
     const auto token = std::to_string(item.request);
     for (const auto& event : feed_.pending()) {
         const auto sequence = event.at("sequence").get<std::uint64_t>();
@@ -101,6 +107,30 @@ void PartnerLoop::advance_confirmation() {
         if (text == "确认 "+token || text == "approve "+token) { confirm_once("approved","game",sequence); return; }
         if (text == "拒绝 "+token || text == "deny "+token) { confirm_once("denied","game"); return; }
     }
+}
+
+// 将局内已批准的原候选交给游戏，失效或拒绝的候选只结算待办。
+// 步骤：处理关闭 → 核对原裁定与现场 → 接入原工作或报告未执行。
+void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closing, bool body_busy) {
+    if (!confirmation_ || !confirmation_->work) return;
+    auto& item = *confirmation_;
+    if (closing) { confirm_exited(item.request); return; }
+    const auto envelope = confirm_result(item.request);
+    if (!envelope) return;
+    if (!envelope->empty() && std::chrono::steady_clock::now() < item.deadline) {
+        if (body_busy || motion_) return;
+        const std::string_view skill = item.skill == "collect" ? "collect" : "place";
+        const auto& work = *item.work;
+        auto action = std::make_unique<GameWork>(GameAction::partner,config,work.id,*envelope,item.skill);
+        motion_.emplace(Motion{item.order,work.session,work.turn,item.request,item.world,work.id,skill,std::move(action)});
+        motion_->accepted = false;
+    } else {
+        auto fact = item.decision;
+        fact["execution"] = item.approved_order ? "stale" : "skipped";
+        publish("mc.confirmation.execution",fact);
+        approval_result_ = std::move(fact);
+    }
+    confirm_exited(item.request);
 }
 
 // 经实际游戏发言票据呈现原问题，显示渠道和最终批准各自留有回执。
@@ -114,6 +144,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
         if (!result) return;
         const auto receipt = Json::parse(result->payload,nullptr,false);
         const bool sent = receipt.is_object() && receipt.value("sent",false);
+        if (confirmation_ && confirmation_->request == pending.request) confirmation_->presented = sent;
         publish("mc.confirmation.presentation",{{"id",pending.request},{"revision",1},{"order",pending.order},
             {"generation",pending.world},{"player",pending.player},{"bridgeWork",pending.work_id},
             {"status",sent ? "sent" : "unconfirmed"}});
@@ -122,7 +153,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
     if (closing || !confirmation_ || !confirmation_->decision.is_null()) return;
     auto& item = *confirmation_;
     if (!item.ask_game || item.presentation_attempted) return;
-    if (!feed_.ready() || feed_.cursor() != item.order || feed_.world() != item.world || feed_.owner() != item.player) {
+    if (!feed_.ready() || (!item.work && feed_.cursor() != item.order) || feed_.world() != item.world || feed_.owner() != item.player) {
         publish("mc.confirmation.presentation",{{"id",item.request},{"revision",1},{"order",item.order},
             {"generation",item.world},{"player",item.player},{"status","unconfirmed"}});
         item.presentation_attempted = true;
@@ -130,7 +161,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
     }
     const auto number = std::to_string(item.request);
     const auto question = item.question+" 回复 确认 "+number+" 或 拒绝 "+number;
-    const auto envelope = Json{{"context",{{"generation",item.world},{"order",item.order}}},{"arguments",{{"text",question}}}}.dump();
+    const auto envelope = Json{{"context",{{"generation",item.world},{"order",feed_.cursor()}}},{"arguments",{{"text",question}}}}.dump();
     auto role = "confirm."+std::to_string(instance)+"."+number;
     auto work = std::make_unique<GameWork>(GameAction::partner,config,role,envelope,"reply");
     presentation_ = Presentation{item.request,item.order,item.world,item.player,std::move(role),std::move(work)};

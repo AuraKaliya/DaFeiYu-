@@ -207,9 +207,11 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (request.messages.size() != 2) throw std::runtime_error("wall probe: older raw context was sent again");
     if (input.at("trigger") == "motion.finished") {
         const auto& finished = input.at("finishedWork");
-        if (finished.at("skill") == "place" && finished.at("result").value("placed",false)) return plan_door();
+        if (finished.at("skill") == "place" && finished.at("result").value("placed",false) &&
+            input.at("task").at("goal") == "continue existing two-layer dirt wall and door") return plan_door();
         return internal("fixed action ended");
     }
+    if (input.at("trigger") == "approval.result") return internal("approval settled without an action");
     if (input.at("trigger") == "skills.expanded") {
         const auto& task = input.at("task");
         if (!task.at("target").contains("cells")) {

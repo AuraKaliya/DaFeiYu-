@@ -34,6 +34,21 @@ bool received(const std::filesystem::path& file, bool stale) {
         throw std::runtime_error("capture, decode and dispatch were not independently verified");
     return true;
 }
+
+// 等待原确认进入未执行终态，或实际游戏采集回执落盘。
+bool action_ended(const std::filesystem::path& file, bool stale) {
+    using Json = nlohmann::json;
+    std::ifstream trace(file);
+    for (std::string line; std::getline(trace,line);) {
+        const auto row = Json::parse(line);
+        if (row.at("kind") != "mail.received") continue;
+        if (stale && row.at("category") == "mc.confirmation.execution")
+            return row.at("body").at("execution") == "skipped";
+        if (!stale && row.at("category") == "mc.partner.action" && row.at("body").at("skill") == "collect")
+            return row.at("body").at("result").at("collected") == 2;
+    }
+    return false;
+}
 }
 
 // 从正式应用验证主 Agent 选择渠道及游戏内本地确认，执行仍由原插件裁定。
@@ -106,6 +121,8 @@ int wmain(int argc, wchar_t** argv) {
             if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"collection finished"})"}};
             const auto body = Json::parse(last.content);
             const auto expanded = body.at("trigger") == "skills.expanded";
+            if (body.contains("finishedWork") || body.contains("approvalResult") || (!expanded && body.at("events").empty()))
+                return {{Role::assistant,R"({"internal":"candidate settled"})"}};
             const auto& event = body.at(expanded ? "recentEvents" : "events").back();
             if (event.at("sequence") != 2) return {{Role::assistant,R"({"internal":"no game action"})"}};
             if (!expanded) {
@@ -150,14 +167,19 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (manual && reviews == 1 && main_calls == 2 && !host.conversation().busy()) {
                 // 跨过原答复截止及旧回收窗口，仍应取回同一份已接纳答复。
-                if (delayed_review && !delayed) { host_seconds = 30; delayed = true; }
-                else if (host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
+                if (delayed_review && !delayed) {
+                    host_seconds = 30;
+                    std::ofstream(root/"new-instruction").put('1');
+                    delayed = true;
+                } else if ((!delayed_review || state->settled_event == 3) &&
+                    host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
             }
             if (retry_reply && main_calls == 3 && !host.conversation().busy() && ++manual_wait == 30 &&
                 host.review_mail() != app::MailboxIntakeResult::submitted)
                 throw std::runtime_error("the original result was unavailable for explicit review");
-            if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
-                (local || (main_calls == expected_calls && !host.conversation().busy() && received(host.trace_file(),first || delayed_review)))) {
+            if (!requested_stop && state->settled_event == (first ? 4u : panel && !delayed_review ? 2u : 3u) &&
+                (local || (main_calls == expected_calls && !host.conversation().busy() && received(host.trace_file(),first || delayed_review))) &&
+                action_ended(host.trace_file(),first || delayed_review)) {
                 host.stop_companion(id);
                 requested_stop = true;
             }

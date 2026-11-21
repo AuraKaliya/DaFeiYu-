@@ -206,7 +206,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     }
     const bool start = !q.started && (local || q.ask) && feed_.ready();
     if (start) {
-        if (q.approval && feed_.cursor() != q.order) {
+        if (q.approval && confirmation_ && !confirmation_->work && feed_.cursor() != q.order) {
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},
                 {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}});
             q.started = true;

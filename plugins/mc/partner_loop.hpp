@@ -16,7 +16,7 @@ struct PartnerWork { std::uint64_t invocation = 0; std::string_view skill; };
 // Minecraft 插件拥有事件处理、角色规则与游戏技能，模型工具循环借用宿主子会话。
 class PartnerLoop {
   public:
-    // 载入时登记疑问升级和游戏渠道反馈的解析器。
+    // 载入时登记求助和游戏渠道反馈的解析器。
     uint32_t register_questions(dfy_v2_query_interface_fn host);
     // 协商宿主子会话能力并启用原玩家入口。
     uint32_t listen(dfy_v2_query_interface_fn host, const BridgeConfig& config);
@@ -25,7 +25,7 @@ class PartnerLoop {
     // 在插件槽被回收时归还其私有的只读连接和事件。
     void reset() noexcept;
     // 非等待推进配对读取与原子会话，一个步骤最多接纳一个回合。
-    void advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work);
+    void advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work, bool body_busy);
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
@@ -42,7 +42,8 @@ class PartnerLoop {
     // 判断来自本体委托的当前可变更技能是否需要强制确认。
     bool delegated(std::uint64_t session) const noexcept { return session == session_ && active_delegation_.has_value(); }
     // 为游戏动作固定原参数和确认渠道，只允许当前插件角色提出。
-    bool confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope);
+    bool confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope,
+        std::string work = {});
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
     std::optional<std::string> confirm_result(std::uint64_t request) const;
     // 归还原确认并保存其终态，迟到回信可重读原决定。
@@ -80,6 +81,8 @@ class PartnerLoop {
     bool release_game(const BridgeConfig& config, std::uint64_t instance);
     // 按原配对身份处理本地游戏回复或原动作时限。
     void advance_confirmation();
+    // 推进插件持有的候选，允许执行时接入原游戏工作。
+    void advance_confirmed_work(const BridgeConfig& config, bool closing, bool body_busy);
     // 在宿主绑定的入站信箱读取至多一条请求并按分类处理。
     void intake(PartnerWork work);
     // 核对原收件的世界、任务和玩家，处理本体委托或只读询问。
@@ -124,6 +127,7 @@ class PartnerLoop {
         std::unique_ptr<GameWork> action;
         bool stopping = false, announced = false;
         std::string last_phase;
+        bool accepted = true;
     };
     std::optional<Motion> motion_;
     nlohmann::json finished_work_;
@@ -152,14 +156,17 @@ class PartnerLoop {
     };
     std::optional<Release> release_;
     std::uint64_t release_sequence_ = 0;
+    struct ApprovalWork { std::uint64_t session, turn, revision; std::string id; };
     struct Confirmation {
         std::uint64_t request, order, approved_order = 0;
         std::string world, player, skill, question;
         nlohmann::json arguments, decision;
         std::chrono::steady_clock::time_point deadline;
-        bool ask_game = false, presentation_attempted = false;
+        bool ask_game = false, presentation_attempted = false, presented = false;
+        std::optional<ApprovalWork> work;
     };
     std::optional<Confirmation> confirmation_;
+    nlohmann::json approval_result_;
     struct Presentation {
         std::uint64_t request, order;
         std::string world, player, work_id;

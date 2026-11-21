@@ -73,6 +73,12 @@ NativeJob* find_job(dfy_v2_instance* instance, dfy_v2_tool_ticket ticket) noexce
 bool active_jobs(const dfy_v2_instance& instance) noexcept {
     return std::any_of(instance.jobs.begin(), instance.jobs.end(), [](const auto& job) { return job.sequence != 0; });
 }
+// 判断原生工具是否仍持有角色的独占控制。
+bool body_job(const dfy_v2_instance& instance) noexcept {
+    return std::any_of(instance.jobs.begin(), instance.jobs.end(), [](const auto& job) {
+        return job.sequence && job.controls_body && !job.exited;
+    });
+}
 // 只接收无参数对象，允许四种 JSON 空白。
 bool empty_args(std::string_view args) noexcept {
     constexpr std::string_view spaces = " \r\n\t";
@@ -218,15 +224,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool partner_turn = partner && raw->partner.status().session == call->session;
     if (motion_skill && (!partner_turn || !raw->partner.permits(call->session)))
         return report(DFY_V2_INVALID_CONTEXT,error);
-    if (controls_body && (raw->partner.has_motion() || std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) {
-        return job.sequence && job.controls_body && !job.exited;
-    })))
-        return report(DFY_V2_BUSY, error);
     const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
     auto& job = *found;
     if (raw->sequence == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
-    bool confirmed = legacy;
+    bool confirmed = legacy, pending_approval = false;
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
@@ -235,12 +237,18 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
         }
+        pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
+        if (controls_body && !target_blocked && !pending_approval && (raw->partner.has_motion() || body_job(*raw)))
+            return report(DFY_V2_BUSY, error);
         if (target_blocked) {
             job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
             job.ready = job.success = true;
         } else if (confirmed) {
-            if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments))
+            if (pending_approval) job.output = nlohmann::json{{"status","waiting"},{"item",call->invocation}}.dump();
+            if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments,
+                pending_approval ? job.id : std::string{}))
                 return report(DFY_V2_INVALID_CONTEXT,error);
+            if (pending_approval) job.ready = job.success = true;
         } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
             job.id, job.arguments, skill->name == "start_move" ? "move" : std::string(text(name)));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
@@ -252,7 +260,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         else if (!local) job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
     } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
     catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
-    if (local) job.method = NativeJob::Method::local;
+    if (local || pending_approval) job.method = NativeJob::Method::local;
     else if (control) job.method = NativeJob::Method::control;
     else if (survey) job.method = NativeJob::Method::survey;
     else if (admit) job.method = NativeJob::Method::admit;
@@ -263,10 +271,10 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.partner_session = call->session;
         job.invocation = call->invocation;
         job.skill = legacy ? "collect" : skill->name == "start_move" ? "move" : skill->name;
-        job.confirmation = job.waiting = confirmed;
+        job.confirmation = job.waiting = confirmed && !pending_approval;
     }
-    job.controls_body = controls_body;
-    job.defer_motion = partner_turn && controls_body && !confirmed && !raw->partner.delegated(call->session);
+    job.controls_body = controls_body && !pending_approval;
+    job.defer_motion = partner_turn && job.controls_body && !confirmed && !raw->partner.delegated(call->session);
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);
@@ -478,7 +486,7 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
         const auto session = raw->partner.status().session;
         for (const auto& job : raw->jobs) if (session && job.partner_session == session && job.sequence && job.action && !job.ready && !job.defer_motion &&
             (job.skill == "move" || job.skill == "collect" || job.skill == "place")) work = {job.invocation,job.skill};
-        raw->partner.advance(raw->config,raw->owner,work);
+        raw->partner.advance(raw->config,raw->owner,work,body_job(*raw));
         *wait = raw->partner.status().phase == DFY_V2_PARTNER_CLOSED ? 100 : 5;
         return report(DFY_V2_OK,error);
     } catch (...) { return report(DFY_V2_FAILED,error); }
