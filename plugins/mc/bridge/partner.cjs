@@ -4,7 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observeWindow } = require('./partner-observe.cjs');
-const { placeBlock } = require('./placement.cjs');
+const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
 const { dryStand, DryStandGoal, monitorSurface } = require('./navigation.cjs');
@@ -207,6 +207,8 @@ function partnerService(bot, world, inbox, places, owner) {
   async function run(job, args) {
     const r = job.receipt, result = r.result;
     if (r.skill === 'place') result.placementAttempted = result.placed = false;
+    if (r.skill === 'fill_target') Object.assign(result, { cells: [], changes: [], placementAttempted: false,
+      sourceMessage: args.sourceMessage, taskRevision: args.taskRevision });
     const check = () => { if (job.cancelled || closed || world.read()?.generation !== r.generation) throw new Error('原工作已中断或游戏绑定已失效'); };
     try {
       check();
@@ -286,7 +288,7 @@ function partnerService(bot, world, inbox, places, owner) {
         prepareWalking(bot);
         await followPlayer(bot, owner, args.distance ?? 3, check, result);
       } else if (r.skill === 'collect') await collect(bot, args, check, result);
-      else if (r.skill === 'place') {
+      else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
           if (args.sourceMode === 'approach') {
             const source = inbox.get(r.generation, args.sourceMessage)?.sceneAtMessage;
@@ -295,7 +297,11 @@ function partnerService(bot, world, inbox, places, owner) {
           result.sourceMessage = args.sourceMessage;
           result.taskRevision = args.taskRevision;
         }
-        await placeBlock(bot, targetPoint(bot, args), blockType(bot, args.block), check, walk, result);
+        if (r.skill === 'fill_target') {
+          if (!Array.isArray(args.cells) || !args.cells.length || args.cells.length > 16) throw new Error('原目标方格不可用');
+          const points = args.cells.map(cell => targetPoint(bot, cell));
+          await placeTarget(bot, points, blockType(bot, args.block), check, walk, result);
+        } else await placeBlock(bot, targetPoint(bot, args), blockType(bot, args.block), check, walk, result);
       }
       else throw new Error('未知游戏能力');
       check();
@@ -305,7 +311,8 @@ function partnerService(bot, world, inbox, places, owner) {
       result.reason = String(error.message).slice(0, 240);
     } finally {
       r.exited = true;
-      if (['move', 'follow', 'collect', 'place'].includes(r.skill)) previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
+      if (['move', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
+        previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
   }

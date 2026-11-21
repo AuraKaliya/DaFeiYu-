@@ -41,7 +41,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         if (action_ == GameAction::partner) {
             auto value = partner_reply(*wire, id_, skill_, arguments_);
             progress_ = std::move(value.progress);
-            if (value.exited && skill_ == "place") return GameResult{true, value.placement_verified || value.changed ? GameEffect::observed :
+            if (value.exited && (skill_ == "place" || skill_ == "fill_target")) return GameResult{true, value.placement_verified || value.changed ? GameEffect::observed :
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :
                 value.arrived || value.changed ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};

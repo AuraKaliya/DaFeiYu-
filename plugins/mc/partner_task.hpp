@@ -22,6 +22,8 @@ class PartnerTask {
     bool target_ready() const noexcept { return target_.contains("cells"); }
     // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
     bool bind_placement(nlohmann::json& arguments) const;
+    // 以固定顺序返回当前目标的全部方格。
+    const nlohmann::json& target_cells() const { return target_.at("cells"); }
     // 将当前任务的取材范围固定到实际采掘参数中。
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。

@@ -224,7 +224,8 @@ void PartnerTask::record(const Json& receipt) {
         for (auto& sample : samples) sample.erase("palette");
         while (observations_.size() > observation_limit) observations_.erase(observations_.begin());
     }
-    if ((receipt.at("skill") == "collect" || receipt.at("skill") == "place") && result.contains("changes")) {
+    if ((receipt.at("skill") == "collect" || receipt.at("skill") == "place" || receipt.at("skill") == "fill_target") &&
+        result.contains("changes")) {
         for (auto cell : result.at("changes")) {
             cell["work"] = receipt.at("bridgeWork");
             cell["order"] = receipt.at("order");

@@ -425,12 +425,6 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
     };
     const Json cells = Json::array({{{"x",3},{"y",-60},{"z",-3}},{{"x",4},{"y",-60},{"z",-3}},
         {{"x",3},{"y",-59},{"z",-3}},{{"x",4},{"y",-59},{"z",-3}}});
-    // 依照原目标顺序生成一个精确放置步骤。
-    const auto placement = [&](std::size_t index) {
-        auto cell = cells.at(index);
-        cell["block"] = "dirt";
-        return Json{{"skill","place"},{"arguments",std::move(cell)}};
-    };
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
@@ -443,9 +437,9 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
                 if (result.at("stock") != Json{{"item","dirt"},{"before",3},{"required",4},{"after",4}} ||
                     result.at("inventoryDelta").at("dirt") != 1)
                     throw std::runtime_error("fill-four probe: ground gathering did not fill the actual deficit");
-                return call("queue_actions",{{"operation","append"},{"steps",Json::array({placement(0),placement(1),placement(2),placement(3)})}});
+                return call("fill_target",{{"block","dirt"}});
             }
-            if (changes.size() == 5 && input.at("finishedWork").at("result").at("placed") == true)
+            if (changes.size() == 5 && result.at("status") == "done" && result.at("cells").size() == 4)
                 return call("reply",{{"text","四格都补上了，另一处缺口留着。"}});
         }
         if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)

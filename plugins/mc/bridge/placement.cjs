@@ -102,4 +102,29 @@ async function placeBlock(bot, point, type, check, walk, result) {
   if (!result.placed) throw new Error('方块或消耗的建材尚未核实');
 }
 
-module.exports = { placeBlock };
+// 对原目标按顺序逐格验收，受阻时保留此前已读回的结果。
+// 步骤：核对材料 → 跳过已经正确的格 → 执行单格放置并保存独立回执。
+async function placeTarget(bot, points, type, check, walk, result) {
+  if (type.name.endsWith('_door') || type.boundingBox !== 'block' || !bot.registry.itemsByName[type.name])
+    throw new Error('补目标需要库存中的单格实心建材');
+  for (const point of points) {
+    check();
+    const { x, y, z } = point;
+    const before = bot.blockAt(point)?.name ?? null;
+    const cell = { x, y, z, before, block: before, status: 'present' };
+    result.cells.push(cell);
+    if (before === type.name) continue;
+    const receipt = {};
+    cell.status = 'blocked';
+    try {
+      await placeBlock(bot, point, type, check, walk, receipt);
+      cell.status = 'placed';
+    } finally {
+      cell.block = receipt.blocks?.[0]?.block ?? bot.blockAt(point)?.name ?? null;
+      result.placementAttempted ||= Boolean(receipt.placementAttempted);
+      result.changes.push(...(receipt.changes ?? []));
+    }
+  }
+}
+
+module.exports = { placeBlock, placeTarget };

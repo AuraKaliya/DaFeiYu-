@@ -44,7 +44,7 @@ class PartnerLoop {
     // 执行当前原子会话的局内任务或工具目录操作。
     nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
     // 在动作接纳前把当前原话目标绑定到放置参数。
-    bool bind_placement(std::uint64_t session, std::string& envelope) const;
+    bool bind_placement(std::uint64_t session, std::string& envelope, bool whole_target = false) const;
     // 给当前子回合的采掘命令附上任务持有的取材范围。
     void bind_collection(std::uint64_t session, std::string& envelope) const;
     // 判断来自本体委托的当前可变更技能是否需要强制确认。
@@ -73,6 +73,8 @@ class PartnerLoop {
     nlohmann::json discover(const nlohmann::json& arguments);
     // 合并查询选中的类别与已知任务目标所需的类别。
     std::bitset<categories.size()> scope() const noexcept;
+    // 展开当前的原话目标，并为每格沿用放置确认约束。
+    bool bind_fill(nlohmann::json& arguments) const;
     // 仅保留有限的真人发言及已经实际投递的回复。
     void remember_dialogue(std::string_view speaker, std::uint64_t order, const nlohmann::json& text);
     // 给已绑定且无新输入的游戏返回准备好的自主唤醒。

@@ -89,6 +89,36 @@ bool verified_changes(const Json& changes) {
     }
     return !changes.empty();
 }
+
+// 核对批量放置的原目标和逐格实际结果，部分成功只能返回原目标的前缀。
+// 步骤：核对原话及修订 → 对照每个实际读回 → 检查完成是否覆盖全部目标。
+void verify_fill(const Json& result, const Json& args, bool done) {
+    const auto& cells = result.at("cells");
+    const auto& target = args.at("cells");
+    auto block = args.at("block").get<std::string>();
+    if (block.starts_with("minecraft:")) block.erase(0,10);
+    if (!cells.is_array() || cells.size() > target.size() || (done && cells.size() != target.size()) ||
+        result.at("sourceMessage") != args.at("sourceMessage") || result.at("taskRevision") != args.at("taskRevision"))
+        throw std::invalid_argument("MC: invalid fill evidence");
+    const auto& changes = result.at("changes");
+    const auto coordinates = [](const Json& a, const Json& b) {
+        return a.at("x") == b.at("x") && a.at("y") == b.at("y") && a.at("z") == b.at("z");
+    };
+    if (changes.size() > cells.size() || std::ranges::any_of(changes,[&](const auto& change) {
+        return std::ranges::none_of(cells,[&](const auto& cell) { return coordinates(change,cell); });
+    })) throw std::invalid_argument("MC: fill changed a cell outside the receipt");
+    for (std::size_t index = 0; index < cells.size(); ++index) {
+        const auto& cell = cells.at(index);
+        if (!coordinates(cell,target.at(index))) throw std::invalid_argument("MC: fill evidence differs from target");
+        const auto& status = cell.at("status");
+        if (!done && index+1 == cells.size() && status == "blocked") continue;
+        if ((status != "placed" && status != "present") || cell.at("block") != block)
+            throw std::invalid_argument("MC: unverified fill cell");
+        if (status == "placed" && std::ranges::none_of(changes,[&](const auto& change) {
+            return coordinates(change,cell) && change.at("after") == block;
+        })) throw std::invalid_argument("MC: missing fill readback");
+    }
+}
 }
 
 // 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
@@ -132,6 +162,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if ((verified && !attempted) || (!verified && result.at("status") == "done"))
             throw std::invalid_argument("MC: inconsistent placement status");
         if (verified) verify_placement(result,envelope.at("arguments"));
+    }
+    if (exited && skill == "fill_target") {
+        attempted = result.at("placementAttempted").get<bool>();
+        verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
     if (skill == "follow" && result.contains("progress")) {

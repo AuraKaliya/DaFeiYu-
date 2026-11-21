@@ -37,7 +37,7 @@ function readReply(input, world, inbox, key, actions) {
     return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };
   if (actions?.partner) {
     if (!['partner.begin', 'partner.read', 'partner.stop'].includes(request.method) ||
-      !['observe', 'move', 'follow', 'collect', 'place', 'reply'].includes(request.skill)) throw new Error('不是伙伴会话的能力');
+      !['observe', 'move', 'follow', 'collect', 'place', 'fill_target', 'reply'].includes(request.skill)) throw new Error('不是伙伴会话的能力');
     const receipt = actions.partner.call(request.method, request.id, request.context, request.skill, request.arguments);
     return { version: 1, id: request.id, action: receipt };
   }

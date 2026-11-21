@@ -142,7 +142,8 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (follow_ && follow_->suspended && !step.interrupt) { resume_follow(config,body_busy); return; }
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
-    if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args))) {
+    if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args)) ||
+        (step.skill == "fill_target" && !bind_fill(args))) {
         clear_queue("blocked",step.invocation);
         return;
     }

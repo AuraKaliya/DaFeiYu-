@@ -248,9 +248,9 @@ async function checkFillFour(fixture, player, whispers) {
   player.chat('从地上补最后一块泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
   await until(() => whispers.includes('四格都补上了，另一处缺口留着。'), '实际补完四格后发言', 45000);
   const actions = readRows(fixture, 'game-actions.jsonl');
-  const mutations = actions.filter(row => ['collect', 'place'].includes(row.skill));
-  assert.deepEqual(mutations.map(row => row.skill), ['collect', 'place', 'place', 'place', 'place']);
-  const collect = mutations[0];
+  const mutations = actions.filter(row => ['collect', 'place', 'fill_target'].includes(row.skill));
+  assert.deepEqual(mutations.map(row => row.skill), ['collect', 'fill_target']);
+  const [collect, fill] = mutations;
   assert.equal(collect.arguments.source, 'ground');
   assert.deepEqual(collect.result.stock, { item: 'dirt', before: 3, required: 4, after: 4 });
   assert.deepEqual(collect.result.inventoryDelta, { dirt: 1 });
@@ -260,11 +260,11 @@ async function checkFillFour(fixture, player, whispers) {
   assert.equal(ground.before, 'grass_block');
   assert.equal(ground.after, 'air');
   assert.equal(read([ground.x, ground.y, ground.z]), 'air');
-  for (const [index, [x, y, z]] of fourCells.entries()) {
-    const result = mutations[index + 1].result;
-    assert.equal(result.sourceMessage, 2);
-    assert.equal(result.placed, true);
-    assert.deepEqual(result.changes, [{ x, y, z, before: 'air', after: 'dirt' }]);
+  assert.equal(fill.result.sourceMessage, 2);
+  assert.equal(fill.result.status, 'done');
+  assert.deepEqual(fill.result.cells, fourCells.map(([x, y, z]) => ({ x, y, z, before: 'air', block: 'dirt', status: 'placed' })));
+  assert.deepEqual(fill.result.changes, fourCells.map(([x, y, z]) => ({ x, y, z, before: 'air', after: 'dirt' })));
+  for (const [x, y, z] of fourCells) {
     assert.equal(read([x, y, z]), 'dirt');
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
@@ -275,7 +275,6 @@ async function checkFillFour(fixture, player, whispers) {
     mutations.some(action => action.work === row.body.bridgeWork));
   assert.ok(knowledge && receipts[0].seq > knowledge.seq);
   assert.deepEqual(receipts.map(row => row.body.bridgeWork), mutations.map(action => action.work));
-  assert.equal(new Set(receipts.slice(1).map(row => row.body.invocation)).size, 1);
   assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 5);
 }
 

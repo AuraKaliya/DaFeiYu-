@@ -286,7 +286,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
-        if (skill.kind == SkillKind::confirmed) continue;
+        if (skill.kind == SkillKind::confirmed || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
@@ -379,13 +379,35 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
-bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope) const {
-    if (session != session_) return true;
+bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope, bool whole_target) const {
+    if (session != session_) return !whole_target;
     if (!task_.target_ready()) return false;
     auto input = Json::parse(envelope);
-    if (!permits(session) || input.at("context").at("generation") != session_world_ ||
-        input.at("context").at("order") != order_ || !task_.bind_placement(input.at("arguments"))) return false;
+    auto& arguments = input.at("arguments");
+    if (!permits(session) || (whole_target && delegated(session)) || input.at("context").at("generation") != session_world_ ||
+        input.at("context").at("order") != order_ ||
+        !(whole_target ? bind_fill(arguments) : task_.bind_placement(arguments))) return false;
     envelope = input.dump();
+    return true;
+}
+
+// 拷贝固定目标的格子，逐格沿用单格放置的来源与确认规则。
+// 步骤：限定单格材料 → 核对全部格的约束 → 固定顺序和原话来源。
+bool PartnerLoop::bind_fill(Json& arguments) const {
+    const auto& material = arguments.at("block").get_ref<const std::string&>();
+    if (!task_.target_ready() || material.ends_with("_door")) return false;
+    auto cells = task_.target_cells();
+    std::ranges::stable_sort(cells.get_ref<Json::array_t&>(),[](const auto& a, const auto& b) { return a.at("y") < b.at("y"); });
+    Json placement;
+    for (const auto& cell : cells) {
+        placement = cell;
+        placement["block"] = material;
+        if (requires_approval("place",placement) || !task_.bind_placement(placement)) return false;
+    }
+    arguments["cells"] = std::move(cells);
+    arguments["sourceMessage"] = placement.at("sourceMessage");
+    arguments["taskRevision"] = placement.at("taskRevision");
+    if (placement.contains("sourceMode")) arguments["sourceMode"] = placement.at("sourceMode");
     return true;
 }
 
