@@ -21,15 +21,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool task = scene || (argc == 4 && std::wstring_view(argv[3]) == L"partner-task");
         if (argc != 3 && !interrupt && !motion && !confirm && !task) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
-        std::atomic_bool actual_reply = false, assessed = false, interruption_seen = false;
+        std::atomic_bool actual_reply = false, interruption_seen = false;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
             const auto& last = request.messages.back();
-            if (interrupt && request.tools.empty()) {
-                const auto assessment = nlohmann::json::parse(last.content);
-                assessed = assessment.at("newEvents").back().at("text") == "stop for now" &&
-                    assessment.at("work").at("skill") == "move" && assessment.at("currentEvents").back().at("sequence") == 2;
-                return {{Role::assistant,assessed ? "stop" : "continue"}};
-            }
             if (last.role == Role::tool) {
                 if (last.tool_call_id == "expand") {
                     const auto result = nlohmann::json::parse(last.content.substr(last.content.find('{')));
@@ -57,9 +51,11 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :
                     R"({"place":"player"})"}}},FinishReason::tool_calls};
             }
-            if (motion && input.at("trigger") == "motion.finished") {
-                if (input.at("task").at("lastAction").at("result").at("status") != "interrupted")
+            if ((motion || interrupt) && input.at("trigger") == "motion.finished") {
+                const auto& work = input.at("finishedWork");
+                if (work.at("result").at("status") != "interrupted")
                     throw std::runtime_error("terminal motion receipt missing from subsequent context");
+                if (interrupt) interruption_seen = work.at("order") == 2;
                 return {{Role::assistant,"movement stopped"}};
             }
             if (task && input.at("trigger") == (scene ? "scene.changed" : "task.continue")) {
@@ -94,8 +90,11 @@ int wmain(int argc, wchar_t** argv) {
             if (confirm && input.at("events").back().at("sequence") == 3)
                 return {{Role::assistant,R"({"internal":"approval observed"})"}};
             if (interrupt && input.at("events").back().at("sequence") == 3) {
-                interruption_seen = input.at("previousActivity").at("stopRequested") == true;
-                return {{Role::assistant,R"({"internal":"original work settled"})"}};
+                const auto& active = input.at("activeMotion");
+                const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_stop_motion"); });
+                if (tool == request.tools.end() || active.at("order") != 2 || input.at("events").back().at("text") != "stop for now")
+                    throw std::runtime_error("new message did not see the running move");
+                return {{Role::assistant,"",{{"stop",tool->name,nlohmann::json{{"work",active.at("work")}}.dump()}}},FinishReason::tool_calls};
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
@@ -107,7 +106,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (task) {
                 const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
-                const auto args = nlohmann::json{{"revision",0},{"goal","resume the wall"},{"detail","check the corner"},
+                const auto args = nlohmann::json{{"goal","resume the wall"},{"detail","check the corner"},
                     {"next",scene ? "scene" : "continue"}}.dump();
                 return {{Role::assistant,"",{{"task",task_tool->name,args}}},FinishReason::tool_calls};
             }
@@ -179,13 +178,13 @@ int wmain(int argc, wchar_t** argv) {
                         throw std::runtime_error("partner state unavailable");
                     if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED :
                         state.ready && state.session && state.settled == (motion ? 4u : interrupt || confirm ? 3u : 2u) &&
-                        (!task || continuation_closed) && (!motion || game_receipts == 2)) return;
+                        (!task || continuation_closed) && (!motion || game_receipts == 2) && (!interrupt || interruption_seen)) return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
                 throw std::runtime_error("plugin did not reach expected boundary");
             };
             wait(false);
-            if ((interrupt ? !assessed || !interruption_seen : confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
+            if ((interrupt ? !interruption_seen : confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
                 app.conversation().status())
                 throw std::runtime_error("reply or interruption missing, or shared context");
             if (instance->invoke(*api,[](const auto& fn, auto* native) { return fn.stop(native,nullptr); }))

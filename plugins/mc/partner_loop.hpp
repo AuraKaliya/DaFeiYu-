@@ -122,7 +122,7 @@ class PartnerLoop {
         std::string last_phase;
     };
     std::optional<Motion> motion_;
-    bool motion_wake_ = false;
+    nlohmann::json finished_work_;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;
     const dfy_v2_agent_api* agent_ = nullptr;

@@ -21,10 +21,10 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
     "其他唤醒的最终文本用于内部结算；需要主动发言时调用 reply。"
     "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
-    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。"
+    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。动作返回 accepted 时使用原工作号，结束结果见 finishedWork。"
     "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
     "已接纳和正在移动都不等于已到达，要按真实回执回答。"
-    "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
+    "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。任务修订由插件分配。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
     "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。");
@@ -109,7 +109,7 @@ void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
     motion_.reset();
-    motion_wake_ = false;
+    finished_work_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -204,7 +204,7 @@ void PartnerLoop::retire() {
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
-    motion_wake_ = false;
+    finished_work_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
@@ -223,7 +223,7 @@ void PartnerLoop::submit(std::string_view wake) {
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
     const bool answer = wake == "question.result";
-    const bool autonomous = facts.empty() && !delegated && !answer && !motion_wake_;
+    const bool autonomous = facts.empty() && !delegated && !answer;
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
@@ -234,7 +234,8 @@ void PartnerLoop::submit(std::string_view wake) {
             {"status",motion_->stopping ? "stopping" : "running"}};
         if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
     }
-    if (autonomous || (motion_wake_ && facts.empty())) input["recentEvents"] = recent_events_;
+    if (autonomous) input["recentEvents"] = recent_events_;
+    if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"escalated",question_->escalated}};
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
@@ -262,7 +263,7 @@ void PartnerLoop::submit(std::string_view wake) {
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
         expansion_pending_ = false;
-        motion_wake_ = false;
+        finished_work_ = nullptr;
     }
     order_ = order;
     reply_requested_ = false;
@@ -349,6 +350,7 @@ Json PartnerLoop::discover(const Json& arguments) {
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
+    if (!finished_work_.is_null() && task_.can_continue()) return "motion.finished";
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.trigger(feed_.observation(),feed_.scene_revision());
@@ -424,7 +426,7 @@ void PartnerLoop::advance_motion(bool stopping) {
     publish("mc.partner.action",fact);
     if (!stopping) {
         task_.record(fact);
-        motion_wake_ = true;
+        finished_work_ = std::move(fact);
     }
     motion_.reset();
 }
@@ -561,7 +563,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     }
     if (feed_.departed()) {
         task_ = {};
-        motion_wake_ = false;
+        finished_work_ = nullptr;
         expanded_.reset();
         expansion_pending_ = false;
         question_.reset(); question_result_.clear(); question_wake_ = false;
@@ -570,7 +572,6 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     if (!feed_.pending().empty()) submit("game.event");
     else if (question_wake_) submit("question.result");
     else if (awaiting_delegation_) submit("main.delegation");
-    else if (motion_wake_) submit("motion.finished");
     else if (const auto wake = autonomous_wake(); !wake.empty()) submit(wake);
 }
 

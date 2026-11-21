@@ -205,7 +205,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
-    const bool defer_motion = partner && skill->kind == SkillKind::motion;
+    const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
@@ -214,8 +214,9 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
     const bool controls_body = inspect || mine || home || (partner &&
-        (defer_motion || legacy || skill->name == "move" || skill->name == "collect" || skill->name == "place"));
-    if (defer_motion && (raw->partner.status().session != call->session || !raw->partner.permits(call->session)))
+        (motion_skill || legacy || skill->name == "move" || skill->name == "collect" || skill->name == "place"));
+    const bool partner_turn = partner && raw->partner.status().session == call->session;
+    if (motion_skill && (!partner_turn || !raw->partner.permits(call->session)))
         return report(DFY_V2_INVALID_CONTEXT,error);
     if (controls_body && (raw->partner.has_motion() || std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) {
         return job.sequence && job.controls_body && !job.exited;
@@ -265,7 +266,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.confirmation = job.waiting = confirmed;
     }
     job.controls_body = controls_body;
-    job.defer_motion = defer_motion;
+    job.defer_motion = partner_turn && controls_body && !confirmed && !raw->partner.delegated(call->session);
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);

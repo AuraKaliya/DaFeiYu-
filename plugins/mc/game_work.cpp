@@ -47,7 +47,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
                 value.arrived ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};
             if (defer && phase_ == Phase::begin && !stopping_) {
                 phase_ = Phase::read;
-                return GameResult{true, GameEffect::observed, {}, true};
+                return GameResult{true, GameEffect::unknown, {}, true};
             }
         } else if (action_ == GameAction::inspect) {
             auto value = inspect_reply(*wire, id_, arguments_);

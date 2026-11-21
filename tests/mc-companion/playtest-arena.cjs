@@ -47,4 +47,4 @@ function readArena(player, wallProbe) {
   return { course, observed };
 }
 
-module.exports = { wall, prepareWall, prepareCourse, readArena };
+module.exports = { wall, course, prepareWall, prepareCourse, readArena };

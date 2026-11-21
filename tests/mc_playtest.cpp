@@ -39,29 +39,29 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
     const auto call = [&](const std::string& skill, const Json& arguments) -> Response {
         const auto tool = std::ranges::find_if(request.tools, [&](const auto& def) { return def.name.ends_with("_" + skill); });
         if (tool == request.tools.end()) throw std::runtime_error("missing registered skill: " + skill);
-        if (skill != "skills") record_input(root, {{"call",skill},{"arguments",arguments}});
+        if (skill != "skills" && skill != "stop_motion") record_input(root, {{"call",skill},{"arguments",arguments}});
         return {{Role::assistant, "", {{skill, tool->name, arguments.dump()}}}, FinishReason::tool_calls};
     };
     const auto has = [&](const std::string& skill) {
         return std::ranges::any_of(request.tools,[&](const auto& tool) { return tool.name.ends_with("_" + skill); });
     };
-    if (request.tools.empty()) {
-        const auto input = Json::parse(last.content);
-        const bool stop = input.at("currentEvents").back().at("sequence") == 6;
-        record_input(root, {{"check", input.at("newEvents")}, {"work",input.at("work")}, {"stop",stop}});
-        return speak(stop ? "stop" : "continue");
-    }
     if (!has("skills") || !has("observe") || !has("reply") || request.messages.front().role != Role::system)
         throw std::runtime_error("invalid partner scope");
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
         record_input(root, input);
+        if (input.at("trigger") == "motion.finished") return internal("已读实际退出");
         const bool expanded = input.at("trigger") == "skills.expanded";
         const auto& event = input.at(expanded ? "recentEvents" : "events").back();
         if (event.at("type") != "player.message") return internal("暂时安静");
         const auto seq = event.at("sequence").get<unsigned>();
         if (seq == 2) return call("observe", {{"around","player"}});
-        if (seq == 7) return call("reply", {{"text",reply}});
+        if (seq == 5 || seq == 7) {
+            const auto& work = input.at("activeMotion");
+            const bool stop = work.at("order") == 6;
+            record_input(root, {{"check",input.at("events")},{"work",work},{"stop",stop}});
+            return stop ? call("stop_motion",{{"work",work.at("work")}}) : internal("继续原动作");
+        }
         if (seq == 3) {
             if (!expanded) return call("observe", {{"block","dirt"}});
             if (!input.at("task").at("lastAction").at("result").at("visible").empty())
@@ -76,8 +76,9 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
     }
     if (last.tool_call_id == "skills") return internal("已选择下一轮工具");
     if (last.tool_call_id == "reply") return speak(reply);
+    if (last.tool_call_id == "stop_motion") return call("reply",{{"text",reply}});
     const auto result = Json::parse(last.content.substr(last.content.find('{')));
-    if (result.at("status") != "done") return internal("已读受阻结果");
+    if (result.at("status") != "done") return internal("已读工具结果");
     if (last.tool_call_id == "observe" && result.contains("survey")) return speak(reply);
     if (last.tool_call_id == "observe" && !result.at("visible").empty()) {
         if (has("collect")) return call("collect", {{"block","dirt"},{"count",2}});
@@ -92,6 +93,48 @@ std::string survey_block(const nlohmann::json& survey, int x, int y, int z) {
     const auto row = survey.at("layers").at(y-origin.at("y").get<int>()).at(z-origin.at("z").get<int>()).get<std::string>();
     const std::string glyph(1,row.at(x-origin.at("x").get<int>()));
     return survey.at("palette").value(glyph,glyph);
+}
+
+// 固定边走边聊的模型输出，用原工作和插件分配的修订校验跨轮上下文。
+// 步骤：保存跟随意图并启动 → 在两个玩家回合分别发言 → 明确停止并在实际退出后结束任务。
+dfy::model::Response follow_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](const std::string& skill, const Json& args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with("_"+skill); });
+        if (tool == request.tools.end()) throw std::runtime_error("follow probe: missing "+skill);
+        if (skill == "task_update" && Json::parse(tool->parameters).at("properties").contains("revision"))
+            throw std::runtime_error("follow probe: model should not supply task revision");
+        return {{Role::assistant,"",{{skill,tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::tool && last.tool_call_id == "task_update") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& task = result.at("task");
+        if (task.at("revision") == 1) return call("follow",Json::object());
+        if (task.at("revision") != 2 || task.at("next") != "done") throw std::runtime_error("follow probe: revision did not advance");
+    }
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "motion.finished") {
+            const auto& work = input.at("finishedWork");
+            if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
+                throw std::runtime_error("follow probe: actual exit missing from the task");
+            return call("task_update",{{"goal","跟着玩家走"},{"next","done"}});
+        }
+        const auto& message = input.at("events").back();
+        if (message.at("type") == "player.message") {
+            const auto text = message.at("text");
+            if (text == "你跟着我走") return call("task_update",{{"goal","跟着玩家走"},{"next","player"}});
+            const auto& motion = input.at("activeMotion");
+            if (motion.at("order") != 2 || motion.at("skill") != "follow" || input.at("task").at("revision") != 1)
+                throw std::runtime_error("follow probe: original work or task revision lost");
+            if (text == "到哪了") return call("reply",{{"text","我还在跟着你。"}});
+            if (text == "继续边走边聊") return {{Role::assistant,"我继续跟着你。"}};
+            if (text == "先别跟了") return call("stop_motion",{{"work",motion.at("work")}});
+        }
+    }
+    return {{Role::assistant,R"({"internal":"processed"})"}};
 }
 
 // 固定主回合只能从实际收信提供的工具中选择渠道或回信。
@@ -126,6 +169,11 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
         return {{Role::assistant,"",{{std::move(id),found->name,args.dump()}}},FinishReason::tool_calls};
     };
     if (request.tools.empty()) return {{Role::assistant,"continue"}};
+    // 收到放置读回后才开始门洞提议，立即退出和在途工作读回使用同一任务变更。
+    const auto plan_door = [&] {
+        return call("task_update","door-plan",{{"goal","put the agreed door in its opening"},
+            {"next","player"},{"target",Json::object()}});
+    };
     if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         if (last.tool_call_id == "save" || last.tool_call_id == "point" || last.tool_call_id == "directory" ||
@@ -146,20 +194,24 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
         if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
             return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
         if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
-            return call("task_update","door-plan",{{"revision",result.at("taskRevision")},{"goal","put the agreed door in its opening"},
-                {"next","player"},{"target",Json::object()}});
+            return plan_door();
         if (last.tool_call_id == "door-plan" && result.at("status") == "updated")
             return call("place","door",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3},{"approval","game"}});
         return internal("fixed action ended");
     }
     const auto input = Json::parse(last.content);
     record_input(root,input);
+    if (input.at("trigger") == "motion.finished") {
+        const auto& finished = input.at("finishedWork");
+        if (finished.at("skill") == "place" && finished.at("result").value("placed",false)) return plan_door();
+        return internal("fixed action ended");
+    }
     if (input.at("trigger") == "skills.expanded") {
         const auto& task = input.at("task");
         if (task.at("goal") != "continue existing two-layer dirt wall and door" || task.at("target").at("message") != 3 ||
             input.at("task").at("lastAction").at("skill") != "observe" || !input.at("events").empty())
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
-        return call("task_update","bind",{{"revision",task.at("revision")},{"goal",task.at("goal")},{"next","player"},
+        return call("task_update","bind",{{"goal",task.at("goal")},{"next","player"},
             {"target",{{"message",3},{"cells",Json::array({{{"x",3},{"y",-59},{"z",-3}}})}}}});
     }
     if (input.at("trigger") == "question.result") {
@@ -170,10 +222,10 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     }
     const auto& event = input.at("events").back();
     if (event.at("sequence") == 2)
-        return call("task_update","save",{{"revision",0},{"goal","continue existing two-layer dirt wall and door"},
+        return call("task_update","save",{{"goal","continue existing two-layer dirt wall and door"},
             {"detail","Find the player's original wall and leave the intended doorway"},{"next","player"}});
     if (event.at("sequence") == 3 && event.at("text") == "看我旁边的这块缺口")
-        return call("task_update","point",{{"revision",input.at("task").at("revision")},{"goal",input.at("task").at("goal")},
+        return call("task_update","point",{{"goal",input.at("task").at("goal")},
             {"next","player"},{"target",{{"message",3}}}});
     if (event.at("sequence") == 4 && event.at("text") == "先补刚才指的缺口，门洞留空")
         return call("observe","survey",{{"message",input.at("task").at("target").at("message")}});
@@ -191,15 +243,17 @@ int wmain(int argc, wchar_t** argv) {
         const std::string_view ask = mode == L"--ask-direct-probe" ? "direct" :
             manual || mode == L"--ask-main-probe" ? "main" : "";
         const bool wall = !ask.empty() || mode == L"--wall-probe";
-        const bool partner = wall || (argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe");
+        const bool follow = mode == L"--follow-probe";
+        const bool partner = wall || follow || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,ask,root](const auto&, const auto& request) {
+            [partner,wall,follow,ask,root](const auto&, const auto& request) {
                 if (wall) return wall_sample(request,root,ask);
+                if (follow) return follow_sample(request);
                 return partner ? partner_sample(request,root) : sample_turn(request);
             }},
             std::move(run));

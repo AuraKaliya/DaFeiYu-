@@ -6,6 +6,76 @@ const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
 const { wall, readArena } = require('./playtest-arena.cjs');
 
+// 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
+function readRows(fixture, file) {
+  return readFileSync(join(fixture.evidence, 'host', file), 'utf8').split('\n').slice(0, -1).map(JSON.parse);
+}
+
+// 通过真实客户端走过一段路，在移动中发出本段的玩家聊天。
+// 步骤：转向目标 → 步行并在途中发话 → 到达后松开前进控制。
+async function walkCourse(player, point, text) {
+  const target = player.entity.position.clone().set(...point);
+  const start = player.entity.position.clone();
+  await player.lookAt(target.offset(0, player.entity.eyeHeight ?? 1.62, 0), true);
+  player.setControlState('forward', true);
+  try {
+    if (text) {
+      await player.waitForTicks(6);
+      assert.ok(player.entity.position.distanceTo(start) > 0.25, '发话前玩家已实际走动');
+      player.chat(text);
+    }
+    await until(() => player.entity.position.distanceTo(target) < 0.75, '协议玩家走到路线点 ' + point.join(','));
+  } finally { player.setControlState('forward', false); }
+}
+
+// 以游戏发言与 Trace 验证同一个跟随工作经过两次聊天、停走及明确退出。
+// 步骤：启动跟随并边走边问 → 等待靠近后再起步并聊天 → 对照原工作和退出回执。
+async function checkFollow(fixture, player, whispers, course) {
+  const received = category => readRows(fixture, 'trace/events.jsonl')
+    .filter(row => row.kind === 'mail.received' && row.category === category);
+  const motions = () => received('mc.partner.motion');
+  const phase = (status, after = 0) => until(() => motions().find(row => row.seq > after && row.body.status === status),
+    '跟随进入 ' + status);
+  player.chat('你跟着我走');
+  const accepted = await phase('accepted');
+  await walkCourse(player, course[1], '到哪了');
+  await until(() => whispers[0] === '我还在跟着你。', '行走中的显式发言');
+  await walkCourse(player, course[2]);
+  const paused = await until(() => {
+    const latest = motions().at(-1);
+    const fish = player.players.DfyCompanion?.entity;
+    return latest?.body.status === 'in_range' && fish && fish.position.distanceTo(player.entity.position) <= 3.6 && latest;
+  }, '玩家停步后实际进入跟随距离');
+  await walkCourse(player, course[3], '继续边走边聊');
+  const resumed = await phase('following', paused.seq);
+  await until(() => whispers[1] === '我继续跟着你。', '重新追赶时的最终文本发言');
+
+  player.chat('先别跟了');
+  const exit = await until(() => received('mc.partner.action').find(row => row.body.skill === 'follow'), '跟随的实际退出');
+  await until(() => readRows(fixture, 'trace/events.jsonl').some(row => row.kind === 'tool.exited' &&
+    row.callId === 'task_update' && JSON.parse(row.output).task?.next === 'done'), '实际退出后结束局内任务');
+  const work = accepted.body.action.bridgeWork;
+  const phases = motions();
+  assert.equal(phases.filter(row => row.body.status === 'accepted').length, 1);
+  assert.ok(phases.every(row => row.body.action.bridgeWork === work));
+  assert.equal(resumed.body.action.bridgeWork, work);
+  assert.equal(exit.body.bridgeWork, work);
+  assert.equal(exit.body.result.status, 'interrupted');
+  assert.equal(exit.body.order, 2);
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  assert.deepEqual(actions.filter(row => row.skill === 'follow').map(row => [row.work, row.exited, row.result.status]),
+    [[work, true, 'interrupted']]);
+  const replies = received('mc.partner.action').filter(row => row.body.skill === 'reply');
+  assert.deepEqual(replies.map(row => [row.body.order, row.body.result.text]), [[3, whispers[0]], [4, whispers[1]]]);
+  assert.ok(replies.every(row => row.seq < exit.seq && actions.some(game => game.work === row.body.bridgeWork && game.result.sent)));
+  const trace = readRows(fixture, 'trace/events.jsonl');
+  const stop = trace.find(row => row.kind === 'tool.exited' && row.callId === 'stop_motion');
+  assert.equal(JSON.parse(stop.arguments).work, work);
+  assert.ok(replies[1].seq < stop.seq && stop.seq < exit.seq);
+  assert.deepEqual(trace.filter(row => row.kind === 'tool.exited' && row.callId === 'task_update')
+    .map(row => JSON.parse(row.output).task.revision), [1, 2]);
+}
+
 // 用独立协议玩家走同一真人入口，核对资源包、可见角色和完整聊天回合。
 // 步骤：从服务端收到资源包 → 等待收件就绪 → 交叉核对模型输入、游戏动作与真实发言。
 async function checkPlayer(fixture, mode) {
@@ -30,12 +100,14 @@ async function checkPlayer(fixture, mode) {
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
     const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-');
-    if (wallProbe || partner) {
-      const arena = await until(() => readArena(player, wallProbe), '独立客户端读回验收场地');
+    const arena = partner ? await until(() => readArena(player, wallProbe), '独立客户端读回验收场地') : null;
+    if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
     if (wallProbe) {
       await checkWall(fixture, player, whispers, mode);
+    } else if (mode === '--follow-probe') {
+      await checkFollow(fixture, player, whispers, arena.course);
     } else if (partner) {
       assert.deepEqual(whispers, []);
       const settled = seq => until(() => fixture.settled === seq, '处理到玩家事件 ' + seq, 50000);
@@ -46,15 +118,18 @@ async function checkPlayer(fixture, mode) {
       assert.deepEqual(whispers, [answer]);
       player.chat('大肥鱼，帮我采俩泥土');
       await settled(3);
+      await until(() => readRows(fixture, 'game-actions.jsonl').some(row => row.skill === 'collect'), '实际采集退出');
       player.chat('这回带我往前走走');
       await until(() => fish.entity.position.x > 8, '原移动实际开始');
       player.chat('停，我来');
       await settled(5);
+      await until(() => readRows(fixture, 'game-actions.jsonl').some(row => row.skill === 'move' && row.order === 4), '继续原移动直到退出');
       assert.ok(fish.entity.position.x >= 31);
       player.chat('再走回这边');
       await until(() => fish.entity.position.x < 24, '第二次移动实际开始');
       player.chat('停，我来');
       await settled(7);
+      await until(() => readRows(fixture, 'game-actions.jsonl').some(row => row.skill === 'move' && row.order === 6), '实际停止第二次移动');
       const stopped = fish.entity.position.clone();
       await player.waitForTicks(12);
       assert.ok(stopped.x > 3 && stopped.distanceTo(fish.entity.position) < 0.5);
@@ -63,8 +138,8 @@ async function checkPlayer(fixture, mode) {
       const receipts = readFileSync(join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const inputs = readFileSync(join(fixture.evidence, 'host/model-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const chosen = inputs.filter(record => record.call);
-      assert.deepEqual(receipts.filter(r => !r.work.startsWith('reply.')).map(r => [r.skill, r.arguments]),
-        chosen.map(r => [r.call, r.arguments]));
+      assert.deepEqual(receipts.filter(r => !r.work.startsWith('reply.')).map(r => JSON.stringify([r.skill, r.arguments])).sort(),
+        chosen.map(r => JSON.stringify([r.call, r.arguments])).sort());
       assert.ok(receipts.some(r => r.order === 4 && r.skill === 'move' && r.result.status === 'done'));
       assert.ok(receipts.some(r => r.order === 6 && r.skill === 'move' && r.result.status === 'interrupted'));
       const sent = receipts.filter(r => r.skill === 'reply' && r.result.sent && !r.result.reused);
@@ -85,8 +160,7 @@ async function checkPlayer(fixture, mode) {
 async function checkWall(fixture, player, whispers, mode) {
   const askPath = mode === '--ask-direct-probe' ? 'direct' : mode.startsWith('--ask-main') ? 'main' : '';
   const manual = mode === '--ask-main-manual-probe';
-  const readTrace = () => readFileSync(join(fixture.evidence, 'host/trace/events.jsonl'), 'utf8')
-    .trim().split('\n').filter(Boolean).map(JSON.parse);
+  const readTrace = () => readRows(fixture, 'trace/events.jsonl');
   const block = (x, y, z) => player.blockAt(player.entity.position.clone().set(x, y, z));
   await until(() => block(2, -59, -3)?.name === 'dirt', '玩家看到原墙');
   assert.equal(block(3, -59, -3).name, 'air');

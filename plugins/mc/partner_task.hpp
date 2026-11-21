@@ -9,7 +9,7 @@ class PartnerTask {
   public:
     // 返回任务及最近的独立现场回执，供下一回合使用。
     nlohmann::json context() const;
-    // 按模型看到的原版本更新分工，接纳后返回当前版本和约定。
+    // 更新来自当前回合的分工，由插件分配并返回新修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
         const nlohmann::json* anchor);
     // 判断当前任务是否带有需要遵循的原话目标。

@@ -9,7 +9,7 @@ const { setTimeout: sleep } = require('node:timers/promises');
 const { withPaper } = require('./paper.cjs');
 const { until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
-const { prepareWall, prepareCourse } = require('./playtest-arena.cjs');
+const { course, prepareWall, prepareCourse } = require('./playtest-arena.cjs');
 
 // 按原版离线服的名字规则生成 UUID，只用于已经确认监听回环的体验服。
 function offlineId(name) {
@@ -75,7 +75,11 @@ async function play(fixture, exe, pkg, mode, config) {
     else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
-      if (mode === '--partner-probe') prepareCourse(send);
+      if (mode === '--partner-probe' || mode === '--follow-probe') prepareCourse(send);
+      if (mode === '--follow-probe') {
+        send('tp DfyCompanion -10.5 -60 -1.5');
+        send(`tp DfyGuestCheck ${course[0].join(' ')}`);
+      }
     }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
@@ -156,7 +160,7 @@ async function rehearse(fixture, exe, pkg, mode) {
       const game = actions.find(row => row.work === body.bridgeWork);
       const accepted = trace.find(row => row.kind === 'subagent.accepted' && row.session === body.session && row.request === body.request);
       const outputs = trace.filter(row => row.kind === 'model.exited' && row.session === accepted?.session && row.run === accepted?.run);
-      assert.ok(game && outputs.length === 2);
+      assert.ok(game && outputs.length >= 2);
       assert.equal(outputs.at(-1).output.message.content, game.result.text);
       assert.deepEqual(outputs.at(-1).output.message.toolCalls, []);
       assert.equal(body.result.text, game.result.text);
@@ -180,7 +184,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
-  if (!['--live', '--probe', '--partner-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+  if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

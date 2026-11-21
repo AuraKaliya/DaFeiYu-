@@ -36,11 +36,10 @@ Json PartnerTask::context() const {
     return value;
 }
 
-// 每次任务修改使用原版本，不以模型描述替代现场回执。
-// 步骤：核对任务修订和正文 → 校验原话与目标格 → 保存约定和观察基线并登记一次唤醒。
+// 用插件持有的修订提交来自当前回合的任务意图。
+// 步骤：校验正文与原话目标 → 保存约定和观察基线 → 分配新修订及唤醒条件。
 Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor) {
-    if (input.at("revision") != revision_ || revision_ == UINT64_MAX)
-        return {{"status","stale"},{"task",context()}};
+    if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
     auto goal = input.at("goal").get<std::string>();
     auto detail = input.value("detail",std::string{});
     auto next = input.at("next").get<std::string>();
