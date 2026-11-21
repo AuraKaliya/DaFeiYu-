@@ -169,7 +169,7 @@ async function checkWall(fixture, player, whispers, mode) {
   player.chat('看我旁边的这块缺口');
   await until(() => fixture.settled === 3, '保存玩家原指向');
   fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
-  await until(() => player.entity.position.x > 7, '玩家已走到门洞旁');
+  await until(() => player.entity.position.x > 7 && fixture.ownerPosition()?.x > 7, '两端均看到玩家已到门洞旁');
   player.chat('先补刚才指的缺口，门洞留空');
   if (askPath) {
     if (manual) {

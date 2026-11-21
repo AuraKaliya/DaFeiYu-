@@ -96,8 +96,8 @@ int wmain(int argc, wchar_t** argv) {
                     throw std::runtime_error("new message did not see the running move");
                 return {{Role::assistant,"",{{"stop",tool->name,nlohmann::json{{"work",active.at("work")}}.dump()}}},FinishReason::tool_calls};
             }
-            if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
-                throw std::runtime_error("partner lost independent history or raw text");
+            if (request.messages.size() != 2 || input.at("events").back().at("text") != "play with me")
+                throw std::runtime_error("partner lost current raw text or carried previous model history");
             if (request.tools.size() != 6) throw std::runtime_error("initial scope leaked detailed actions");
             if (follow) {
                 const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_follow"); });

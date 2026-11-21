@@ -41,7 +41,7 @@ Json PartnerTask::context() const {
 Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor) {
     if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
     auto goal = input.at("goal").get<std::string>();
-    auto detail = input.value("detail",std::string{});
+    auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
     if (goal.empty() || goal.size() > 1024 || detail.size() > 2048 ||
         (next != "continue" && next != "scene" && next != "player" && next != "done"))
@@ -93,8 +93,11 @@ bool PartnerTask::bind_placement(Json& arguments) const {
 
 // 记录最近一次有现场内容的工作，发言与任务更新无法冒充现场证据。
 void PartnerTask::record(const Json& receipt) {
-    if (receipt.at("skill") != "reply" && receipt.contains("result") && receipt.dump().size() <= 4096)
-        receipt_ = receipt;
+    if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
+    auto summary = receipt;
+    auto& result = summary.at("result");
+    if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
+    if (summary.dump().size() <= 4096) receipt_ = std::move(summary);
 }
 
 // 只在任务明确要求继续或收到所等观察变化时唤醒，单次额度耗尽后等待新玩家事件。

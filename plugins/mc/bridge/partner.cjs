@@ -154,6 +154,7 @@ function partnerService(bot, world, inbox, places, owner) {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       if (r.skill === 'observe') {
+        result.sampledAtMs = Math.floor(performance.now());
         result.position = bot.entity.position.clone();
         result.dimension = bot.game.dimension;
         result.player = player?.entity?.position?.clone() ?? null;

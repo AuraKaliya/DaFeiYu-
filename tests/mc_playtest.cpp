@@ -187,10 +187,9 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 throw std::runtime_error("wall probe: survey lost the original gap or the separate live player position");
             if (!ask_path.empty() && last.tool_call_id == "survey")
                 return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
-            return call("skills","directory",{{"categories",{"place"}}});
+            return call("task_update","bind",{{"goal","continue existing two-layer dirt wall and door"},{"next","player"},
+                {"target",{{"message",3},{"cells",Json::array({{{"x",3},{"y",-59},{"z",-3}}})}}}});
         }
-        if (last.tool_call_id == "bind" && result.at("status") == "updated")
-            return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
         if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
             return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
         if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
@@ -201,6 +200,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     }
     const auto input = Json::parse(last.content);
     record_input(root,input);
+    if (request.messages.size() != 2) throw std::runtime_error("wall probe: older raw context was sent again");
     if (input.at("trigger") == "motion.finished") {
         const auto& finished = input.at("finishedWork");
         if (finished.at("skill") == "place" && finished.at("result").value("placed",false)) return plan_door();
@@ -208,11 +208,18 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     }
     if (input.at("trigger") == "skills.expanded") {
         const auto& task = input.at("task");
+        if (!task.at("target").contains("cells")) {
+            if (std::ranges::any_of(request.tools,[](const auto& tool) { return tool.name.ends_with("_place"); }))
+                throw std::runtime_error("wall probe: place granted before selecting a target");
+            return internal("原位置已知，等玩家指定目标");
+        }
+        const auto& observation = task.at("lastAction").at("result");
         if (task.at("goal") != "continue existing two-layer dirt wall and door" || task.at("target").at("message") != 3 ||
-            input.at("task").at("lastAction").at("skill") != "observe" || !input.at("events").empty())
+            task.at("detail") != "Find the player's original wall and leave the intended doorway" ||
+            !observation.value("surveyAvailable",false) || observation.contains("survey") || !observation.contains("sampledAtMs") ||
+            !input.at("events").empty() || input.at("recentDialogue").front().at("order") != 2)
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
-        return call("task_update","bind",{{"goal",task.at("goal")},{"next","player"},
-            {"target",{{"message",3},{"cells",Json::array({{{"x",3},{"y",-59},{"z",-3}}})}}}});
+        return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
     }
     if (input.at("trigger") == "question.result") {
         if (input.at("questionResult").at("answer") != "靠河那段，留木门" ||

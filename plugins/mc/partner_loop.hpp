@@ -58,6 +58,10 @@ class PartnerLoop {
     void submit(std::string_view wake);
     // 分组查看已实现能力，并安排在下一轮更换可见的详细契约。
     nlohmann::json discover(const nlohmann::json& arguments);
+    // 合并查询选中的类别与已知任务目标所需的类别。
+    std::bitset<categories.size()> scope() const noexcept;
+    // 仅保留有限的真人发言及已经实际投递的回复。
+    void remember_dialogue(std::string_view speaker, std::uint64_t order, const nlohmann::json& text);
     // 给已绑定且无新输入的游戏返回准备好的自主唤醒。
     std::string_view autonomous_wake() const;
     // 结束旧游戏绑定对应的 Agent 上下文。
@@ -170,6 +174,7 @@ class PartnerLoop {
         std::uint64_t session = 0, request = 0, origin = 0, work = 0, cursor = 0;
     } review_;
     nlohmann::json events_, recent_events_, previous_;
+    std::deque<nlohmann::json> dialogue_;
     std::uint64_t reviewed_ = 0;
     bool stopped_work_ = false;
     uint32_t phase_ = DFY_V2_PARTNER_CLOSED;

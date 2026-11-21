@@ -17,6 +17,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "用 task_update.target 保存原消息号 message。有多个候选时先问清楚，再保存确切 cells。"
     "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
+    "recentDialogue 记录已处理的原话和实际发出的答复。task.lastAction 保留上次工具事实；需重新查看方块地图时调用 observe。"
     "reply 会立即向玩家发言。处理玩家原话时，未调用 reply 或 ask_player 的普通最终文本也会发给玩家。"
     "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
     "其他唤醒的最终文本用于内部结算；需要主动发言时调用 reply。"
@@ -132,6 +133,7 @@ void PartnerLoop::reset() noexcept {
     review_ = {};
     events_.clear();
     recent_events_.clear();
+    dialogue_.clear();
     previous_.clear();
     reviewed_ = 0;
     stopped_work_ = false;
@@ -208,6 +210,7 @@ void PartnerLoop::retire() {
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
+    dialogue_.clear();
     previous_.clear();
     question_.reset(); question_result_.clear(); question_wake_ = false;
 }
@@ -227,6 +230,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
+    if (!dialogue_.empty() && !delegated) input["recentDialogue"] = dialogue_;
     if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
     if (motion_) {
         auto& active = input["activeMotion"];
@@ -246,18 +250,19 @@ void PartnerLoop::submit(std::string_view wake) {
     std::array<std::string,partner_skills.size()> ids;
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
     std::size_t count = 0;
+    const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
         if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_) continue;
         const auto category = skill.category;
-        if (skill.name != "follow" && !base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
+        if (skill.name != "follow" && !base_category(category) && !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);
         ++count;
     }
     const dfy_v2_agent_input run{view(prompt),delegated ? delegation_instructions : instructions,view(binding),
         delegated ? delegated_skills.data() : visible.data(),
-        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES};
+        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     if (!delegated) {
         task_.submitted(!facts.empty() || answer,autonomous);
@@ -272,7 +277,10 @@ void PartnerLoop::submit(std::string_view wake) {
     events_ = std::move(facts);
     if (!events_.empty()) recent_events_ = events_;
     if (delegated) { active_delegation_ = std::move(awaiting_delegation_); awaiting_delegation_.reset(); }
-    for (const auto& fact : events_) publish("mc.partner.event",{{"generation",session_world_},{"event",fact}});
+    for (const auto& fact : events_) {
+        if (fact.at("type") == "player.message") remember_dialogue("player",fact.at("sequence"),fact.at("text"));
+        publish("mc.partner.event",{{"generation",session_world_},{"event",fact}});
+    }
     previous_.clear();
     feed_.consumed();
 }
@@ -306,7 +314,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto target = args.find("target");
     const auto anchor = target != args.end() && target->contains("message") ?
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
-    return task_.update(args,feed_.observation(),feed_.scene_revision(),anchor);
+    const auto prior_scope = scope();
+    auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor);
+    expansion_pending_ |= (scope() & ~prior_scope).any();
+    return result;
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
@@ -338,13 +349,27 @@ Json PartnerLoop::discover(const Json& arguments) {
         if (names.empty() || base_category(static_cast<SkillCategory>(index))) next.reset(index);
         directory.push_back({{"category",categories[index]},{"available",!names.empty()},{"tools",std::move(names)}});
     }
-    const bool changed = next.any() && next != expanded_;
+    const bool changed = (next & ~scope()).any();
+    expanded_ |= next;
     if (changed) {
-        expanded_ = next;
         expansion_pending_ = true;
     }
     return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},
         {"wake",expansion_pending_ && task_.can_continue()}};
+}
+
+// 局内任务在锚点和确切目标就绪时获得对应的工具目录。
+std::bitset<categories.size()> PartnerLoop::scope() const noexcept {
+    auto enabled = expanded_;
+    if (task_.has_target()) enabled.set(static_cast<std::size_t>(SkillCategory::movement));
+    if (task_.target_ready()) enabled.set(static_cast<std::size_t>(SkillCategory::place));
+    return enabled;
+}
+
+// 将已收原话或实际发言放入有界的对话窗口。
+void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t order, const Json& text) {
+    dialogue_.push_back({{"speaker",speaker},{"order",order},{"text",text}});
+    if (dialogue_.size() > 8) dialogue_.pop_front();
 }
 
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
@@ -382,6 +407,9 @@ void PartnerLoop::report_actions() {
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
+        if (action.skill == "reply" && fact.contains("result") && fact["result"].value("sent",false) &&
+            !fact["result"].value("reused",false) && fact["result"].contains("text"))
+            remember_dialogue("companion",order_,fact["result"]["text"]);
         if (!active_delegation_) task_.record(fact);
         publish("mc.partner.action",fact);
         action = {};
@@ -566,6 +594,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         finished_work_ = nullptr;
         expanded_.reset();
         expansion_pending_ = false;
+        dialogue_.clear();
         question_.reset(); question_result_.clear(); question_wake_ = false;
     }
     if (presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;

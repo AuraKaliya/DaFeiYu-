@@ -126,6 +126,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         slot.registration = std::make_unique<plugins::PluginTools>(instance,catalog);
         options.tools = catalog->snapshot(input.tools,input.allow_changes).bind_context(input.binding);
     }
+    if (input.replace_history) slot.session.clear();
     slot.active = slot.session.begin(input.prompt,std::move(options));
     if (log_) {
         try {

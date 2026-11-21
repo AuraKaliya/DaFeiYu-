@@ -11,6 +11,7 @@ struct SubagentInput {
     std::string prompt, instructions, binding;
     std::vector<std::string> tools;
     bool allow_changes = false;
+    bool replace_history = false;
 };
 enum class SubagentPhase { idle, queued, running, succeeded, failed, cancelled };
 struct SubagentStatus {

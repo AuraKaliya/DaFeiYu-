@@ -56,11 +56,11 @@ dfy_v2_status DFY_V2_CALL submit(uint64_t session, const dfy_v2_agent_input* inp
     if (request) *request = 0;
     return boundary(error,[&](auto& host) {
         if (!session || !request || !input || input->tool_count > 16 || (!input->tools && input->tool_count) ||
-            (input->flags & ~DFY_V2_AGENT_ALLOW_CHANGES)) return DFY_V2_INVALID_ARGUMENT;
+            (input->flags & ~(DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY))) return DFY_V2_INVALID_ARGUMENT;
         const auto service = host.agents.lock();
         if (!service) return DFY_V2_UNSUPPORTED;
         SubagentInput copied{text(input->prompt,64*1024),text(input->instructions,8*1024),text(input->binding,8*1024),{},
-            (input->flags & DFY_V2_AGENT_ALLOW_CHANGES) != 0};
+            (input->flags & DFY_V2_AGENT_ALLOW_CHANGES) != 0, (input->flags & DFY_V2_AGENT_REPLACE_HISTORY) != 0};
         copied.tools.reserve(input->tool_count);
         for (uint32_t index = 0; index < input->tool_count; ++index) copied.tools.push_back(text(input->tools[index],128));
         try { *request = service->submit(host.agent_owner,session,std::move(copied)); }

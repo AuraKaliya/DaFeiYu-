@@ -14,6 +14,8 @@ class PartnerTask {
         const nlohmann::json* anchor);
     // 判断当前任务是否带有需要遵循的原话目标。
     bool has_target() const noexcept { return !target_.is_null(); }
+    // 只有目标已绑定确切方块时才自动授予放置目录。
+    bool target_ready() const noexcept { return target_.contains("cells"); }
     // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
     bool bind_placement(nlohmann::json& arguments) const;
     // 归档原动作证据，以独立字段保留来源。
