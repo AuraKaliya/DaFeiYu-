@@ -4,6 +4,7 @@
 #include "tool_verification.hpp"
 #include "subagents.hpp"
 #include "mailbox_intake.hpp"
+#include "interaction_routes.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <array>
@@ -185,6 +186,7 @@ class Application {
     agent::Session session_;
     Conversation conversation_;
     MailboxIntake mailbox_intake_;
+    InteractionRoutes interactions_;
     std::shared_ptr<Subagents> subagents_;
     std::unique_ptr<CompanionSession> companion_;
     std::shared_ptr<agent::ToolCatalog> confirmation_channels_;

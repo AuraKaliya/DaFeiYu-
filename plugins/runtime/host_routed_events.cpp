@@ -142,7 +142,7 @@ std::optional<RoutedEvent> HostServices::take_routed_event() {
     try {
         result.status = schema.decoder(schema.context,{item.payload.data(),item.payload.size()},&output);
         if (!result.status) {
-            if ((output.kind != DFY_V2_EVENT_ASK && output.kind != DFY_V2_EVENT_MAIL) || !output.length ||
+            if (output.kind < DFY_V2_EVENT_ASK || output.kind > DFY_V2_EVENT_ASK_FEEDBACK || !output.length ||
                 output.length > sizeof(output.json)) throw std::invalid_argument("route: invalid projection");
             const std::string_view projection(output.json,output.length);
             (void)detail::object_from(projection);
