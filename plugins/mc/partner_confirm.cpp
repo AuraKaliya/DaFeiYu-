@@ -7,15 +7,17 @@ using Json = nlohmann::json;
 
 namespace {
 // 将两种原版注册名写法归一，比较动作是否仍可能涉及受保护的目标。
-// 步骤：核对材料 → 对照可选固定方格 → 识别同一扇门的两半。
+// 步骤：核对目标库存或方块 → 对照可选固定方格 → 识别同一扇门的两半。
 bool same_action(std::string_view skill, const Json& a, const Json& b) {
-    const auto material = [](const Json& args) {
-        auto name = args.value("block",std::string{});
+    const auto material = [](const Json& args, const char* field) {
+        auto name = args.value(field,std::string{});
         if (name.starts_with("minecraft:")) name.erase(0,10);
         return name;
     };
-    const auto block = material(a);
-    if (block != material(b)) return false;
+    if (skill == "collect" && a.contains("item") && b.contains("item"))
+        return material(a,"item") == material(b,"item");
+    const auto block = material(a,"block");
+    if (block != material(b,"block")) return false;
     if (!a.contains("x") || !a.contains("y") || !a.contains("z") ||
         !b.contains("x") || !b.contains("y") || !b.contains("z")) return skill == "collect";
     if (a.at("x") != b.at("x") || a.at("z") != b.at("z")) return false;
@@ -25,10 +27,23 @@ bool same_action(std::string_view skill, const Json& a, const Json& b) {
 }
 
 // 为受支持的原生动作生成问题，业务参数保留完整坐标和材料。
+// 步骤：校验库存型采集 → 核对其余动作的材料和参数 → 按实际改动形成问题。
 std::string confirmation_question(std::string_view skill, const Json& args) {
-    const auto& block = args.at("block").get_ref<const std::string&>();
-    if (block.empty() || block.size() > 64 || block.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_:") != block.npos)
-        throw std::invalid_argument("MC confirmation: invalid block identity");
+    const auto checked_name = [&](const char* field) -> const std::string& {
+        const auto& name = args.at(field).get_ref<const std::string&>();
+        if (name.empty() || name.size() > 90 || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_:") != name.npos)
+            throw std::invalid_argument("MC confirmation: invalid registry identity");
+        return name;
+    };
+    if (skill == "collect" && args.contains("item")) {
+        const auto& count = args.at("count");
+        if (!count.is_number_unsigned() || count == 0 || count > 32 || args.at("requiredStock") != count ||
+            args.at("source") != "ground") throw std::invalid_argument("MC confirmation: invalid ground stock");
+        const auto& item = checked_name("item");
+        const auto source = args.contains("block") ? "（只取 "+checked_name("block")+"）" : std::string{};
+        return "要从地面取材，把背包里的 "+item+" 补到 "+count.dump()+" 个吗？"+source;
+    }
+    const auto& block = checked_name("block");
     if (skill == "collect") {
         const auto& count = args.at("count");
         if (!count.is_number_unsigned() || count == 0 || count > 32)
@@ -148,7 +163,7 @@ void PartnerLoop::advance_confirmation() {
     }
     if (item.work && item.work->revision != task_.revision()) { confirm_once("withdrawn","task"); return; }
     if (std::chrono::steady_clock::now() >= item.deadline) { confirm_once("expired","host"); return; }
-    if (!item.ask_game || !item.presentation_attempted || !feed_.ready()) return;
+    if (!item.ask_game || !item.presented || !feed_.ready()) return;
     const auto token = std::to_string(item.request);
     for (const auto& event : feed_.pending()) {
         const auto sequence = event.at("sequence").get<std::uint64_t>();
@@ -200,6 +215,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
             {"generation",pending.world},{"player",pending.player},{"bridgeWork",pending.work_id},
             {"status",sent ? "sent" : "unconfirmed"}});
         presentation_.reset();
+        if (sent && !closing) advance_confirmation();
     }
     if (closing || !confirmation_ || !confirmation_->decision.is_null()) return;
     auto& item = *confirmation_;

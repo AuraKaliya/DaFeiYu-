@@ -125,6 +125,12 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,R"({"internal":"candidate settled"})"}};
             const auto& event = body.at(expanded ? "recentEvents" : "events").back();
             if (event.at("sequence") != 2) return {{Role::assistant,R"({"internal":"no game action"})"}};
+            if (local) {
+                const auto tool = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_gather_ground"); });
+                if (tool == input.tools.end()) throw std::runtime_error("ground stock tool unavailable");
+                return {{Role::assistant,"",{{"gather",tool->name,R"({"item":"dirt","requiredStock":2,"approval":"game"})"}}},
+                    FinishReason::tool_calls};
+            }
             if (!expanded) {
                 const auto directory = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_skills"); });
                 if (directory == input.tools.end()) throw std::runtime_error("skill directory unavailable");
@@ -132,7 +138,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             const auto tool = std::ranges::find_if(input.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); });
             if (tool == input.tools.end()) throw std::runtime_error("confirmed collection unavailable");
-            const auto args = Json{{"block","dirt"},{"count",2},{"approval",local ? "game" : "main"}}.dump();
+            const auto args = Json{{"block","dirt"},{"count",2},{"approval","main"}}.dump();
             return {{Role::assistant,"",{{"collect",tool->name,args}}},FinishReason::tool_calls};
         }},run);
         host.plugins().install(argv[1]);

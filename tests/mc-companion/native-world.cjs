@@ -135,7 +135,8 @@ async function main() {
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
         assert.deepEqual(context, { generation: state.generation, order: confirm ? 4 : showGame ? 3 : 2 });
-        assert.deepEqual(args, { count: 2, block: 'dirt' });
+        assert.deepEqual(args, variant === 'partner-route-local' ?
+          { count: 2, item: 'dirt', requiredStock: 2, source: 'ground' } : { count: 2, block: 'dirt' });
         ++replies;
         return { ...context, skill, exited: true, result: { status: 'done', collected: 2 } };
       }
