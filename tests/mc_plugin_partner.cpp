@@ -99,6 +99,10 @@ int wmain(int argc, wchar_t** argv) {
         std::atomic_bool left_observed = false, late_model = false;
         std::string follow_work, resumed_work;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
+            if (request.messages.front().role != Role::system ||
+                !request.messages.front().content.starts_with("你叫大肥鱼。") ||
+                request.messages.front().content.find("\nMinecraft 同场规则\n") == std::string::npos)
+                throw std::runtime_error("partner lost the host persona or its scene rules");
             const auto& last = request.messages.back();
             if (suspend && last.role == Role::tool && last.tool_call_id == "dig-scope") {
                 const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_dig_block"); });
@@ -172,9 +176,9 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,R"({"internal":"game exit observed"})"}};
             }
             if (input.at("trigger") == "skills.expanded") {
-                const auto wanted = confirm ? "_collect" : motion ? "_start_move" : "_move";
+                const auto wanted = confirm ? "_collect" : "_start_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != 10u ||
+                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 10u : 9u) ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :

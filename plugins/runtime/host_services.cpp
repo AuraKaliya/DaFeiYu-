@@ -203,6 +203,12 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     if (!output || !name.data || !name.length || !version) return DFY_V2_INVALID_ARGUMENT;
     return detail::boundary(error, [&](auto& host) {
         const std::string_view requested(name.data, name.length);
+        if (requested == DFY_V2_AGENT_INTERFACE) {
+            if (host.agents.expired() || (version != DFY_V2_AGENT_VERSION && version != DFY_V2_AGENT_PERSONA_VERSION))
+                return DFY_V2_UNSUPPORTED;
+            *output = &detail::agent_api(version);
+            return DFY_V2_OK;
+        }
         if (version == 2) {
             if (requested == DFY_V2_TYPE_INTERFACE) *output = &detail::type_api_v2();
             else if (requested == DFY_V2_VALUE_INTERFACE) *output = &detail::value_api_v2();
@@ -230,7 +236,6 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_SUBSCRIPTION_INTERFACE && host.channel) *output = &detail::subscription_api();
         else if (requested == DFY_V2_MAILBOX_INTERFACE && host.mailboxes) *output = &detail::mailbox_api();
         else if (requested == DFY_V2_MAILBOX_TEXT_INTERFACE && host.mailboxes) *output = &detail::mailbox_text_api();
-        else if (requested == DFY_V2_AGENT_INTERFACE && !host.agents.expired()) *output = &detail::agent_api();
         else if (requested == DFY_V2_ROUTED_EVENT_INTERFACE) *output = &detail::routed_event_api();
         else if (requested == DFY_V2_ROUTED_MAILBOX_INTERFACE) *output = &detail::routed_mailbox_api();
         else if (requested == DFY_V2_GROUP_INTERFACE && host.group) *output = &detail::group_api();

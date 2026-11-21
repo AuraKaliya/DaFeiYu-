@@ -69,8 +69,8 @@ dfy::model::Response partner_sample(const dfy::model::Request& request, const st
                 return call("collect", {{"block","dirt"},{"count",2}});
         }
         if (seq == 4 || seq == 6) {
-            if (!has("move")) return call("skills",{{"categories",{"movement"}}});
-            return call("move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
+            if (!has("start_move")) return call("skills",{{"categories",{"movement"}}});
+            return call("start_move", {{"x",seq == 4 ? 32 : 1},{"y",-60},{"z",-4}});
         }
         if (seq == 8) throw std::runtime_error("fixture provider unavailable");
         return internal("等待");

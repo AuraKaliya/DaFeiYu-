@@ -12,38 +12,24 @@ using Json = nlohmann::json;
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
-constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩家一起玩。events 是按序收到的在场变化和玩家原话。"
-    "sceneAtMessage 是收到对应原话时看到的玩家位置，position 为空表示当时未跟踪到玩家。"
-    "facing 和 eye 是原话时可用的玩家朝向与眼位。playerFocus 是沿原视线重读的候选，selfLook 是你自己的视线。"
-    "玩家指这里、旁边的缺口时，用 observe 的 message 参数扫描原位置；别把后来读到的玩家位置当成原目标。"
-    "用 task_update.target 保存原消息号 message。playerFocus 未确定指向时先问清楚；用 candidate 绑定观察返回的候选。"
-    "玩家要你先过来且原位置不可用时，在原话回合登记 target.approach，再移动到玩家。到达后用 observe 的 self 来源和 verify 核实确切空格，带 observation.id 和 cells 绑定同一原话。"
-    "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
-    "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
-    "recentDialogue 记录已处理的原话和实际发出的答复。task.lastAction 保留上次工具事实，task.targetObservation 保留当前目标的原话指向。"
-    "task.worldChanges 是实际读回的近期逐格变化。玩家要求从地上取材或保留建筑时，先把 task_update.collection 设为 ground，再提交采集。"
-    "玩家指明要挖一个方块时，在确定坐标和原方块名称后调用 dig_block。跟随会自动暂停和恢复。"
-    "需重新查看方块地图时调用 observe。"
-    "reply 会立即向玩家发言。处理玩家原话时，未调用 reply 或 ask_player 的普通最终文本也会发给玩家。"
-    "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
-    "其他唤醒的最终文本用于内部结算；需要主动发言时调用 reply。"
-    "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
-    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。following.work 是持续跟随的工作号，暂停后自动恢复。"
-    "一次性动作返回 accepted 或 queued 时尚未完成，结果见 finishedWork。明确叫停跟随时使用 following.work。"
-    "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
-    "queue_actions 可预先登记少量相互依赖的动作。queuedActions 仍未进入游戏；clear 可以取消待执行步骤，replace 停止指定工作后再执行新步骤。"
-    "已接纳和正在移动都不等于已到达，要按真实回执回答。"
-    "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。任务修订由插件分配。继续、等待现场变化、等待玩家或结束由你选择。"
-    "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
-    "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
-    "query 类别中的 knowledge 可查原版掉落和物品规则。物品是否到了背包、实际改了哪些格，始终读取游戏回执。"
-    "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。"
-    "工具返回 waiting 只表示登记，pendingApproval 中的事项可以继续交谈和观察；approvalResult 记录原候选为何未执行。"
-    "玩家给了材料时先核对背包；采集不再需要时用 withdraw_confirmation 撤回原事项，再按已核对的现场继续。"
-    "已批准的工作仍以 finishedWork 的游戏读回判断效果。");
-constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
+constexpr auto instructions = view("Minecraft 同场规则\n"
+    "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
+    "task 保存共同目标和原话指向。说‘这里’时用 observe.message 取得 playerFocus，按原消息号和 candidate 绑定。"
+    "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
+    "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
+    "只有观察仍无法区分且会改变做法时才在游戏里自然问一句，用 ask_player 记录要等的答案。\n"
+    "明确动作先提交。持续跟随只开一次，用 following.work 停止，临时动作结束后由程序恢复。"
+    "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
+    "只展开本轮需要的工具类别。掉落规则可按需查 knowledge，库存和逐格变化以 finishedWork 或实际观察为准。"
+    "accepted 和 queued 只代表已接单。结合 task 和回执继续任务，无需玩家重说。\n"
+    "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
+    "reply 发给玩家，处理原话时普通最终文本也可发一次，已经发过或仅需内部结算时用空文本。"
+    "没有新消息时，主动发言用 reply，只在玩家关心的进展或受阻发生时发。入场无需固定问候。"
+    "明确需要授权时才用动作的 approval，聊天只带实际问题。等答复时照常交谈和观察。"
+    "玩家交来材料时，核对库存，撤回已无须执行的采集确认，续做原目标。\n");
+constexpr auto review_instructions = view("根据当前分工、现场及新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
-constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体，保留原编号。核对现场后回答委托。"
+constexpr auto delegation_instructions = view("delegation 是宿主转发的委托。核对现场后按原编号结算。"
     "委托中的采集须征求当前玩家批准，默认由本体选择渠道。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
 
 // 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
@@ -86,10 +72,15 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, const BridgeConfig&
     if (phase_ == DFY_V2_PARTNER_STOPPING) return DFY_V2_BUSY;
     if (config.key.empty()) return DFY_V2_UNSUPPORTED;
     const void* api = nullptr;
-    const auto result = host(view(DFY_V2_AGENT_INTERFACE),DFY_V2_AGENT_VERSION,&api,nullptr);
+    auto version = DFY_V2_AGENT_PERSONA_VERSION;
+    auto result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
+    if (result == DFY_V2_UNSUPPORTED) {
+        version = DFY_V2_AGENT_VERSION;
+        result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
+    }
     if (result || !api) return result ? result : DFY_V2_UNSUPPORTED;
     const auto& agent = *static_cast<const dfy_v2_agent_api*>(api);
-    if (agent.header.struct_size != sizeof(agent) || agent.header.interface_version != DFY_V2_AGENT_VERSION ||
+    if (agent.header.struct_size != sizeof(agent) || agent.header.interface_version != version ||
         !agent.open || !agent.submit || !agent.status || !agent.cancel || !agent.close) return DFY_V2_ABI_MISMATCH;
     api = nullptr;
     if (const auto status = host(view(DFY_V2_MAILBOX_INTERFACE),DFY_V2_MAILBOX_VERSION,&api,nullptr); status || !api)
@@ -288,7 +279,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
-        if (skill.kind == SkillKind::confirmed || (skill.name == "fill_target" && !task_.target_ready())) continue;
+        if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
@@ -301,9 +292,10 @@ void PartnerLoop::submit(std::string_view wake) {
         visible[count] = view(ids[count]);
         ++count;
     }
+    const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
     const dfy_v2_agent_input run{view(prompt),delegated ? delegation_instructions : instructions,view(binding),
         delegated ? delegated_skills.data() : visible.data(),
-        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY};
+        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     if (!delegated) {
         task_.submitted(!facts.empty() || answer,autonomous);
@@ -439,7 +431,8 @@ Json PartnerLoop::discover(const Json& arguments) {
     Json directory = Json::array();
     for (std::size_t index = 0; index < categories.size(); ++index) {
         Json names = Json::array();
-        for (const auto& skill : partner_skills) if (skill.kind != SkillKind::confirmed && static_cast<std::size_t>(skill.category) == index)
+        for (const auto& skill : partner_skills) if (skill.kind != SkillKind::confirmed && skill.name != "move" &&
+            static_cast<std::size_t>(skill.category) == index)
             names.push_back(skill.name);
         if (names.empty() || base_category(static_cast<SkillCategory>(index))) next.reset(index);
         directory.push_back({{"category",categories[index]},{"available",!names.empty()},{"tools",std::move(names)}});

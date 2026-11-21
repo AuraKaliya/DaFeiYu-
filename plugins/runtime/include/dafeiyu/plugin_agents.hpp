@@ -12,6 +12,7 @@ struct SubagentInput {
     std::vector<std::string> tools;
     bool allow_changes = false;
     bool replace_history = false;
+    bool player_facing = false;
 };
 enum class SubagentPhase { idle, queued, running, succeeded, failed, cancelled };
 struct SubagentStatus {

@@ -1,5 +1,7 @@
 #include "subagents.hpp"
 #include "run_log.hpp"
+#include "persona.hpp"
+#include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
 #include <algorithm>
@@ -24,9 +26,9 @@ struct Subagents::Slot {
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
 Subagents::Subagents(plugins::PluginManager& plugins, model::Config config, std::shared_ptr<events::BroadcastChannel> events,
-    model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock, std::shared_ptr<RunLog> log)
+    model::Backend backend, agent::RunVersionLabels labels, agent::ToolClock clock, const PersonaProfile& persona, std::shared_ptr<RunLog> log)
     : plugins_(plugins), config_(std::move(config)), events_(std::move(events)), backend_(std::move(backend)),
-      labels_(std::move(labels)), clock_(std::move(clock)), log_(std::move(log)) {}
+      labels_(std::move(labels)), clock_(std::move(clock)), persona_(persona), log_(std::move(log)) {}
 
 // 释放槽位，原会话仍负责协作取消和等待正在使用的资源。
 Subagents::~Subagents() = default;
@@ -54,7 +56,8 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
     auto& slot = find(owner,id);
     if (stopping_ || slot.closing || slot.queued || slot.phase == SubagentPhase::running)
         throw std::logic_error("subagent: session busy or closing");
-    if (input.prompt.empty() || input.prompt.size() > 64*1024 || input.instructions.size() > 8*1024 ||
+    const auto persona_size = input.player_facing ? persona_.instructions.size()+(!input.instructions.empty() ? 1 : 0) : 0;
+    if (input.prompt.empty() || input.prompt.size() > 64*1024 || input.instructions.size()+persona_size > 8*1024 ||
         input.binding.size() > 8*1024 || input.tools.size() > 16 || slot.request == UINT64_MAX ||
         std::ranges::any_of(input.tools,[](const auto& id) { return id.empty() || id.size() > 128; }))
         throw std::invalid_argument("subagent: input outside limits");
@@ -118,6 +121,9 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     const auto snapshot = plugins_.capture_hooks(slot.owner);
     options.version_labels.control_extension = snapshot.version;
     options.system_instructions = std::move(input.instructions);
+    if (!options.system_instructions.empty())
+        options.version_labels.prompt_template = "sha256:"+platform::sha256(options.system_instructions);
+    if (input.player_facing) persona_.apply(options);
     options.extension = plugins::plugin_controls(snapshot,slot.owner);
     options.text_hook = plugins::plugin_text_hooks(snapshot,slot.owner);
     options.exit_observer = plugins::plugin_exit_hook(snapshot);
