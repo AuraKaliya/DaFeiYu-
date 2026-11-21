@@ -24,7 +24,18 @@ function fromGround(bot, block) {
   });
 }
 
-// 在实际破坏列上找能取到掉落物的站位，沿用目标格下方的已加载支撑。
+// 查找这次破坏后出现且仍在附近的实际掉落物。
+function nearbyDrop(bot, point, known) {
+  let closest, distance = 3;
+  for (const [id, entity] of Object.entries(bot.entities)) {
+    if (known.has(id) || !entity.position || !['item', 'Item', 'item_stack'].includes(entity.name)) continue;
+    const current = entity.position.distanceTo(point);
+    if (current < distance) { distance = current; closest = entity; }
+  }
+  return closest;
+}
+
+// 沿实际掉落物所在列寻找已加载且有支撑的拾取站位。
 function pickupStand(bot, point) {
   for (let y = 0; y >= -4; --y) {
     const feet = point.offset(0, y, 0);
@@ -62,4 +73,4 @@ function collectReadback(bot, block) {
   };
 }
 
-module.exports = { fromGround, collectReadback, pickupStand };
+module.exports = { fromGround, collectReadback, pickupStand, nearbyDrop };

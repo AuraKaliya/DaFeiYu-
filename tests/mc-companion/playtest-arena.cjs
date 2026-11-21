@@ -7,6 +7,7 @@ const course = [
   [-10.5, -60, -5.5], [-10.5, -60, -11.5], [-3.5, -60, -11.5], [-3.5, -60, -5.5],
 ];
 const waterCourse = { west: [-37.5, -60, -24.5], east: [-23.5, -60, -24.5] };
+const fourCells = [[3, -60, -3], [4, -60, -3], [3, -59, -3], [4, -59, -3]];
 
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
 function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
@@ -34,6 +35,14 @@ function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
 function prepareCourse(send) {
   send('fill -13 -61 -14 -2 -61 -4 minecraft:stone');
   send('fill -13 -60 -14 -2 -58 -4 minecraft:air');
+}
+
+// 固定四格开口、独立门洞和最后一块建材对应的草方块。
+function prepareFourCells(send) {
+  for (const command of ['kill @e[type=minecraft:item,x=-2,y=-64,z=-4,dx=12,dy=6,dz=8]',
+    'fill -2 -61 -4 9 -61 3 minecraft:grass_block', 'fill -2 -60 -2 9 -58 3 minecraft:air',
+    'setblock 2 -62 0 minecraft:stone', 'fill 3 -60 -3 4 -59 -3 minecraft:air',
+    'tp DfyGuestCheck 6.5 -60 -1.5', 'give DfyCompanion minecraft:dirt 3']) send(command);
 }
 
 // 布置两岸同高及低一格的水道，边界墙约束近处路线从水中经过。
@@ -75,4 +84,4 @@ function readArena(player, wallProbe, withExistingDoor) {
   return { course, observed };
 }
 
-module.exports = { wall, course, waterCourse, prepareWall, prepareCourse, prepareWater, readArena };
+module.exports = { wall, course, waterCourse, fourCells, prepareWall, prepareCourse, prepareFourCells, prepareWater, readArena };

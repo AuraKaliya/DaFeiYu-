@@ -9,7 +9,7 @@ const { setTimeout: sleep } = require('node:timers/promises');
 const { withPaper } = require('./paper.cjs');
 const { until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
-const { course, prepareWall, prepareCourse, prepareWater } = require('./playtest-arena.cjs');
+const { course, prepareWall, prepareCourse, prepareFourCells, prepareWater } = require('./playtest-arena.cjs');
 
 // 按原版离线服的名字规则生成 UUID，只用于已经确认监听回环的体验服。
 function offlineId(name) {
@@ -37,8 +37,9 @@ function prepareScene(send) {
 async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
-  const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-  const withDirt = mode !== '--gap-ambiguous-probe';
+  const fillFour = mode === '--fill-four-probe';
+  const wallProbe = doorProbe || fillFour || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
+  const withDirt = !fillFour && mode !== '--gap-ambiguous-probe';
   const root = path.join(evidence, 'host');
   const stop = path.join(root, 'stop');
   const settings = path.join(root, 'user/plugins/mc.companion');
@@ -78,10 +79,12 @@ async function play(fixture, exe, pkg, mode, config) {
     prepareScene(send);
     if (mode === '--water-probe') prepareWater(send);
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
+    if (fillFour) prepareFourCells(send);
     if (mode === '--gap-materials-probe') {
       send('fill -2 -61 -2 5 -61 3 minecraft:grass_block');
       send('fill -2 -60 -2 5 -58 3 minecraft:air');
       send('setblock 2 -61 0 minecraft:dirt');
+      send('tp DfyGuestCheck -1.5 -60 -1.5');
     }
     else if (!wallProbe && mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
@@ -100,8 +103,8 @@ async function play(fixture, exe, pkg, mode, config) {
     if (wallProbe) {
       const block = (x, y) => game.bot.blockAt(game.bot.entity.position.clone().set(x,y,-3))?.name;
       await until(() => fixture.materialCount('oak_door') === (doorProbe ? 0 : 1) &&
-        fixture.materialCount('dirt') === (withDirt ? 8 : 0) &&
-        block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === 'dirt' && block(3,-59) === 'air',
+        fixture.materialCount('dirt') === (fillFour ? 3 : withDirt ? 8 : 0) &&
+        block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === (fillFour ? 'air' : 'dirt') && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
     }
     const args = mode === '--live' ? ['--mc-partner', config, pkg, root] : mode === '--probe' ? [pkg, root] : [pkg, root, mode];
@@ -197,7 +200,8 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe', '--water-probe'].includes(mode) ||
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
+    '--fill-four-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

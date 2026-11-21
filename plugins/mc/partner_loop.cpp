@@ -1,5 +1,6 @@
 #include "partner_loop.hpp"
 #include "partner_effect.hpp"
+#include "partner_knowledge.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <array>
@@ -34,6 +35,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。任务修订由插件分配。继续、等待现场变化、等待玩家或结束由你选择。"
     "某回合因 task.continue 或 scene.changed 唤醒时可能没有新聊天，结合任务和回执继续判断。首次入场无需固定问候。"
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
+    "query 类别中的 knowledge 可查原版掉落和物品规则。物品是否到了背包、实际改了哪些格，始终读取游戏回执。"
     "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。"
     "工具返回 waiting 只表示登记，pendingApproval 中的事项可以继续交谈和观察；approvalResult 记录原候选为何未执行。"
     "玩家给了材料时先核对背包；采集不再需要时用 withdraw_confirmation 撤回原事项，再按已核对的现场继续。"
@@ -45,7 +47,7 @@ constexpr auto delegation_instructions = view("delegation 来自大肥鱼本体�
 
 // 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
 bool base_category(SkillCategory category) noexcept {
-    return category == SkillCategory::control || category == SkillCategory::query || category == SkillCategory::observation ||
+    return category == SkillCategory::control || category == SkillCategory::observation ||
         category == SkillCategory::communication;
 }
 
@@ -288,7 +290,8 @@ void PartnerLoop::submit(std::string_view wake) {
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
-        if (skill.name != "follow" && !base_category(category) && !enabled.test(static_cast<std::size_t>(category))) continue;
+        if (skill.kind != SkillKind::catalog && skill.name != "follow" && !base_category(category) &&
+            !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);
         ++count;
@@ -361,6 +364,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         return {{"status","withdrawn"},{"item",confirmation_->request}};
     }
     if (skill == "skills") return discover(args);
+    if (skill == "knowledge") return lookup_knowledge(args);
     const auto target = args.find("target");
     const auto anchor = target != args.end() && target->contains("message") ?
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
@@ -435,7 +439,11 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
-    if (!finished_work_.is_null() && task_.can_continue()) return "motion.finished";
+    if (!finished_work_.is_null() && task_.can_continue()) {
+        const auto group = finished_work_.at("invocation").get<std::uint64_t>();
+        if ((!motion_ || motion_->invocation != group) && std::ranges::find(queued_,group,&QueuedAction::invocation) == queued_.end())
+            return "motion.finished";
+    }
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.trigger(feed_.observation(),feed_.scene_revision());

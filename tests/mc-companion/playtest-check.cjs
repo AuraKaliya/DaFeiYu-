@@ -4,7 +4,7 @@ const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
-const { wall, waterCourse, readArena } = require('./playtest-arena.cjs');
+const { wall, waterCourse, fourCells, readArena } = require('./playtest-arena.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
 function readRows(fixture, file) {
@@ -116,12 +116,14 @@ async function checkPlayer(fixture, mode) {
     const actor = fish.uuid;
     const doorProbe = mode === '--door-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && mode !== '--water-probe' ?
+    const arena = partner && !['--water-probe', '--fill-four-probe', '--gap-materials-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
-    if (doorProbe) {
+    if (mode === '--fill-four-probe') {
+      await checkFillFour(fixture, player, whispers);
+    } else if (doorProbe) {
       await checkDoor(fixture, player, whispers);
     } else if (mode === '--water-probe') {
       await checkWater(fixture, player, whispers);
@@ -234,6 +236,42 @@ async function checkMaterials(fixture, player, whispers) {
   assert.equal(block(2, -59, -3), 'dirt');
   player.chat('刚才挖了哪里？');
   await until(() => whispers.includes('我只挖了地上的一格泥土。'), '重读后知道已改动的方块');
+}
+
+// 由独立玩家校验草方块掉落、四次精确放置和分组里的逐格游戏回执。
+// 步骤：确认原境 → 发出明确指令 → 核对材料与世界状态 → 对照实际发言及 Trace。
+async function checkFillFour(fixture, player, whispers) {
+  const read = pos => player.blockAt(player.entity.position.clone().set(...pos))?.name;
+  const material = [2, -61, 0];
+  await until(() => fixture.ownerEntity()?.position.x > 6 && read(material) === 'grass_block' &&
+    fourCells.every(cell => read(cell) === 'air'), '四格、取材格原状和独立观察站位');
+  player.chat('从地上补最后一块泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
+  await until(() => whispers.includes('四格都补上了，另一处缺口留着。'), '实际补完四格后发言', 45000);
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  const mutations = actions.filter(row => ['collect', 'place'].includes(row.skill));
+  assert.deepEqual(mutations.map(row => row.skill), ['collect', 'place', 'place', 'place', 'place']);
+  const collect = mutations[0];
+  assert.equal(collect.arguments.source, 'ground');
+  assert.deepEqual(collect.result.inventoryDelta, { dirt: 1 });
+  assert.deepEqual(collect.result.changes, [{ x: 2, y: -61, z: 0, before: 'grass_block', after: 'air' }]);
+  assert.equal(read(material), 'air');
+  for (const [index, [x, y, z]] of fourCells.entries()) {
+    const result = mutations[index + 1].result;
+    assert.equal(result.sourceMessage, 2);
+    assert.equal(result.placed, true);
+    assert.deepEqual(result.changes, [{ x, y, z, before: 'air', after: 'dirt' }]);
+    assert.equal(read([x, y, z]), 'dirt');
+  }
+  assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
+  assert.deepEqual(whispers, ['四格都补上了，另一处缺口留着。']);
+  const trace = readRows(fixture, 'trace/events.jsonl');
+  const knowledge = trace.find(row => row.kind === 'tool.exited' && row.callId === 'knowledge');
+  const receipts = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+    mutations.some(action => action.work === row.body.bridgeWork));
+  assert.ok(knowledge && receipts[0].seq > knowledge.seq);
+  assert.deepEqual(receipts.map(row => row.body.bridgeWork), mutations.map(action => action.work));
+  assert.equal(new Set(receipts.slice(0, 4).map(row => row.body.invocation)).size, 1);
+  assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 5);
 }
 
 // 只发一条指令，独立客户端分别复核原门、安装洞口和唯一完工发言。

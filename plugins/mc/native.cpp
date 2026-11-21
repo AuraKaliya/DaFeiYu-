@@ -212,7 +212,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
-    const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog ||
+    const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
         skill->kind == SkillKind::action_queue);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);

@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "../plugins/mc/partner_effect.hpp"
+#include "../plugins/mc/partner_knowledge.hpp"
 #include "../plugins/mc/partner_task.hpp"
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
@@ -22,6 +23,16 @@ void verify_collection_effect() {
         throw std::runtime_error("block removal and material pickup were conflated");
     result["status"] = "blocked";
     if (verified_action(result,"collect","")) throw std::runtime_error("partial collect may not advance a dependency");
+}
+
+// 保留知识的版本和条件，未知变种由执行器现场读取。
+void verify_knowledge() {
+    using dfy::mc::lookup_knowledge;
+    const auto result = lookup_knowledge({{"query","Minecraft:GRASS_BLOCK 掉什么"}});
+    const auto& facts = result.at("entries").at(0).at("facts");
+    if (result.at("version") != "1.21.4" || facts.at("defaultDrop") != "dirt" || facts.at("silkTouchDrop") != "grass_block" ||
+        lookup_knowledge({{"query","coarse_dirt"}}).at("status") != "unknown")
+        throw std::runtime_error("knowledge lost its conditions or invented a rule");
 }
 
 // 核对已绑定目标和接近后绑定使用不同证据，拒绝用后来的玩家位置改写原决定。
@@ -73,7 +84,7 @@ int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     using namespace model;
     try {
-        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); }
+        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); verify_knowledge(); }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
         const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");

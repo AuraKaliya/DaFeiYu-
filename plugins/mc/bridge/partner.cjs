@@ -6,7 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, collectReadback, pickupStand } = require('./collection.cjs');
+const { fromGround, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
 const { dryStand, DryStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
@@ -65,6 +65,31 @@ function walk(bot, goal) {
   return bot.pathfinder.goto(goal);
 }
 
+// 到实际掉落物脚下收取，回退到挖掘位置并限制占用前台的时间。
+// 步骤：等待物品出现 → 核对支撑并导航 → 等待拾取更新或报告受阻。
+async function pickup(bot, point, known, check, result) {
+  let expired = false, tracked;
+  const timer = setTimeout(() => { expired = true; bot.pathfinder.setGoal(null); bot.clearControlStates(); }, 6000);
+  try {
+    await delay(400);
+    for (let attempt = 0; attempt < 3; ++attempt) {
+      check();
+      if (expired) throw new Error('拾取超时');
+      if (tracked && bot.entities[tracked.id] !== tracked) return;
+      tracked ??= nearbyDrop(bot, point, known);
+      const stand = pickupStand(bot, tracked?.position.floored() ?? point);
+      if (!stand) throw new Error('掉落物附近没有已知站位');
+      if (!stand.equals(bot.entity.position.floored())) await walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z));
+      await delay(450);
+      if (!tracked && !nearbyDrop(bot, point, known)) return;
+    }
+    if (tracked && bot.entities[tracked.id] === tracked) result.pickupIssue = '未读到附近掉落物的拾取';
+  } catch (error) {
+    check();
+    result.pickupIssue = expired ? '未能在期限内抵达拾取站位' : String(error.message).slice(0, 120);
+  } finally { clearTimeout(timer); }
+}
+
 // 逐块执行本次采集，指定坐标时保持目标，实际破坏与背包增减分别取证。
 // 步骤：核对材料和目标 → 走近并选择可采工具 → 读回方块 → 走近掉落并记录背包变化。
 async function collect(bot, args, check, result) {
@@ -97,24 +122,14 @@ async function collect(bot, args, check, result) {
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('走近后目标位于脚下');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
       const readback = collectReadback(bot, here);
+      const known = new Set(Object.keys(bot.entities));
       try { await bot.dig(here, true); }
       finally { await readback(result.changes); }
       const after = bot.blockAt(pos);
       if (!after || after.type === type.id) throw new Error('方块变化未核实');
       ++result.broken;
       check();
-      const stand = pickupStand(bot, pos);
-      let pickupTimer, pickupExpired = false;
-      try {
-        if (!stand) throw new Error('掉落物附近没有已知站位');
-        pickupTimer = setTimeout(() => { pickupExpired = true; bot.pathfinder.setGoal(null); bot.clearControlStates(); }, 6000);
-        await walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z));
-      } catch (error) {
-        check();
-        result.pickupIssue = pickupExpired ? '未能在期限内抵达拾取站位' : String(error.message).slice(0, 120);
-      } finally { clearTimeout(pickupTimer); }
-      // 掉落物有拾取延迟，给实际库存更新留出时间；不以挖掘次数推算入包。
-      await delay(650);
+      await pickup(bot, pos, known, check, result);
     }
   } finally {
     const after = inventory(bot);

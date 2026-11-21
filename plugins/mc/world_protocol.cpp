@@ -12,11 +12,11 @@ namespace {
 using Json = nlohmann::json;
 // 在解释消息前限制字节、嵌套层数和同层重复键。
 // 步骤：检查输入大小 → 按嵌套对象核对键 → 生成完整 JSON 值。
-Json parse(std::string_view text) {
+Json parse(std::string_view text, int depth_limit = 6) {
     if (text.empty() || text.size() > 16384) throw std::invalid_argument("MC protocol: size");
     std::vector<std::set<std::string>> objects;
     return Json::parse(text, [&](int depth, Json::parse_event_t event, Json& value) {
-        if (depth > 6) throw std::invalid_argument("MC protocol: depth");
+        if (depth > depth_limit) throw std::invalid_argument("MC protocol: depth");
         if (event == Json::parse_event_t::object_start) objects.emplace_back();
         else if (event == Json::parse_event_t::key && !objects.back().insert(value.get<std::string>()).second)
             throw std::invalid_argument("MC protocol: duplicate field");
@@ -105,7 +105,7 @@ std::string partner_request(std::string_view method, std::string_view id, std::s
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire), envelope = parse(arguments);
+    const auto frame = parse(wire,skill == "observe" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& action = frame.at("action");
     if (frame.at("version") != 1 || frame.at("id").get_ref<const std::string&>() != id ||
@@ -114,6 +114,15 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "observe" && result.contains("observation")) {
+        const auto& observation = result.at("observation");
+        const auto& samples = observation.at("samples");
+        const auto requested = observation.at("requested").get<unsigned>();
+        if (observation.at("id").get_ref<const std::string&>() != id || observation.at("generation") != context.at("generation") ||
+            !dimension(observation.at("dimension")) || requested < 1 || requested > 3 ||
+            !samples.is_array() || samples.size() > requested)
+            throw std::invalid_argument("MC: invalid observation series");
+    }
     if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
         throw std::invalid_argument("MC: invalid partner outcome");
     bool attempted = false, verified = false;
