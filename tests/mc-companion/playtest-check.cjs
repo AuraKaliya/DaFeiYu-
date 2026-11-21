@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
@@ -117,6 +117,8 @@ async function checkPlayer(fixture, mode) {
     }
     if (doorProbe) {
       await checkDoor(fixture, player, whispers);
+    } else if (mode === '--gap-materials-probe') {
+      await checkMaterials(fixture, player, whispers);
     } else if (wallProbe) {
       await checkWall(fixture, player, whispers, mode);
     } else if (mode === '--follow-probe') {
@@ -168,6 +170,26 @@ async function checkPlayer(fixture, mode) {
   } finally { player.quit(); }
 }
 
+// 用独立世界读回检查墙格保护、未采满时的逐格证据和后续对话。
+// 步骤：发出取材边界 → 等待动作与重采样 → 对照回执及实际块名。
+async function checkMaterials(fixture, player, whispers) {
+  player.chat('附近可以挖，从地上挖两块泥土，别拆墙。');
+  await until(() => existsSync(join(fixture.evidence, 'host/game-actions.jsonl')) &&
+    readRows(fixture, 'game-actions.jsonl').some(row => row.skill === 'observe' && row.order === 2),
+    '部分采集后重新观察', 30000);
+  const work = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'collect');
+  assert.equal(work.length, 2);
+  assert.ok(work.every(row => row.arguments.source === 'ground' && row.result.status === 'blocked'));
+  assert.deepEqual(work[0].result.changes, []);
+  assert.deepEqual(work[1].result.changes, [{ x: 2, y: -61, z: 0, before: 'dirt', after: 'air' }]);
+  assert.deepEqual(work[1].result.inventoryDelta, { dirt: 1 });
+  const block = (x, y, z) => player.blockAt(player.entity.position.clone().set(x, y, z))?.name;
+  assert.equal(block(2, -61, 0), 'air');
+  assert.equal(block(2, -59, -3), 'dirt');
+  player.chat('刚才挖了哪里？');
+  await until(() => whispers.includes('我只挖了地上的一格泥土。'), '重读后知道已改动的方块');
+}
+
 // 只发一条指令，独立客户端分别复核原门、安装洞口和唯一完工发言。
 // 步骤：确认玩家视角 → 等待实际完工 → 比对原门、库存和安装回执。
 async function checkDoor(fixture, player, whispers) {
@@ -178,6 +200,8 @@ async function checkDoor(fixture, player, whispers) {
   const mutations = readRows(fixture, 'game-actions.jsonl').filter(row => ['collect', 'place'].includes(row.skill));
   assert.deepEqual(mutations.map(row => row.skill), ['collect', 'place']);
   assert.deepEqual(mutations[0].result.inventoryDelta, { oak_door: 1 });
+  assert.deepEqual(mutations[0].result.changes.map(({ x, y, z, before, after }) =>
+    [[x, y, z], before, after]), wall.existingDoor.map(pos => [pos, 'oak_door', 'air']));
   assert.equal(mutations[1].result.sourceMessage, 2);
   assert.equal(mutations[1].result.blocks.length, 2);
   const block = pos => player.blockAt(player.entity.position.clone().set(...pos))?.name;

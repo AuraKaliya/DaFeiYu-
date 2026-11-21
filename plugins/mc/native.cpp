@@ -233,6 +233,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
+        if (partner_turn && (skill->name == "collect" || legacy)) raw->partner.bind_collection(call->session,job.arguments);
         const bool target_blocked = partner && skill->name == "place" && !raw->partner.bind_placement(call->session,job.arguments);
         if (!target_blocked && partner && skill->supports_approval) {
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");

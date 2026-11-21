@@ -21,6 +21,8 @@ class PartnerTask {
     bool target_ready() const noexcept { return target_.contains("cells"); }
     // 仅允许目标内的确切方块，并把来源和任务修订固定进原动作。
     bool bind_placement(nlohmann::json& arguments) const;
+    // 将当前任务的取材范围固定到实际采掘参数中。
+    void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
     void record(const nlohmann::json& receipt);
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
@@ -33,10 +35,10 @@ class PartnerTask {
     void disarm() noexcept { armed_ = false; }
   private:
     std::uint64_t revision_ = 0;
-    std::string goal_, detail_, next_ = "player";
+    std::string goal_, detail_, next_ = "player", collection_ = "visible";
     unsigned remaining_ = 0;
     bool armed_ = false;
-    nlohmann::json baseline_, receipt_, target_;
+    nlohmann::json baseline_, receipt_, target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
 };
 }

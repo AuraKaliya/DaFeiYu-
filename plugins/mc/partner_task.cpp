@@ -45,8 +45,10 @@ Json candidate_cells(const Json& observation, const Json& candidate) {
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
 Json PartnerTask::context() const {
-    Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_}};
+    Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_},
+        {"collection",collection_}};
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
+    if (!changes_.empty()) value["worldChanges"] = changes_;
     if (has_target()) {
         value["target"] = target_;
         const auto original = observations_.find(target_.at("message").get<std::uint64_t>());
@@ -62,7 +64,9 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     auto goal = input.at("goal").get<std::string>();
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
+    auto collection = input.value("collection",collection_);
     if (goal.empty() || goal.size() > 1024 || detail.size() > 2048 ||
+        (collection != "visible" && collection != "ground") ||
         (next != "continue" && next != "scene" && next != "player" && next != "done"))
         throw std::invalid_argument("MC partner: invalid task update");
     auto baseline = next == "scene" ? scene_key(scene,scene_revision) : Json{};
@@ -92,6 +96,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     goal_ = std::move(goal);
     detail_ = std::move(detail);
     next_ = std::move(next);
+    collection_ = std::move(collection);
     baseline_ = std::move(baseline);
     target_ = std::move(target);
     armed_ = true;
@@ -117,8 +122,13 @@ bool PartnerTask::bind_placement(Json& arguments) const {
     return true;
 }
 
-// 将原话指向证据与最近一次动作分开保存。
-// 步骤：归档有来源的观察并限制窗口 → 缩减网格 → 更新最近动作。
+// 用任务范围约束所有采掘入口，包括精确坐标。
+void PartnerTask::bind_collection(Json& arguments) const {
+    arguments["source"] = collection_;
+}
+
+// 分别保存原话指向、实际方块变化和最近一次动作。
+// 步骤：归档有来源的观察 → 增补逐格变化 → 缩减网格并更新最近动作。
 void PartnerTask::record(const Json& receipt) {
     if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
     auto summary = receipt;
@@ -127,6 +137,15 @@ void PartnerTask::record(const Json& receipt) {
         const auto message = result.at("anchor").at("message").get<std::uint64_t>();
         observations_[message] = {{"message",message},{"sampledAtMs",result.at("sampledAtMs")},{"playerFocus",result.at("playerFocus")}};
         if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+    }
+    if ((receipt.at("skill") == "collect" || receipt.at("skill") == "place") && result.contains("changes")) {
+        for (auto cell : result.at("changes")) {
+            cell["work"] = receipt.at("bridgeWork");
+            cell["order"] = receipt.at("order");
+            changes_.push_back(std::move(cell));
+        }
+        if (changes_.size() > observation_limit)
+            changes_.erase(changes_.begin(),changes_.end()-observation_limit);
     }
     if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
     if (summary.dump().size() <= 4096) receipt_ = std::move(summary);

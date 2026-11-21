@@ -372,6 +372,42 @@ dfy::model::Response door_sample(const dfy::model::Request& request) {
         return call("skills",{{"categories",{"dig_break"}}});
     return {{Role::assistant,R"({"internal":"waiting for verified door work"})"}};
 }
+
+// 在场景检验中限定从地面取材，依次验证越界候选、部分成功以及观察后的历史。
+// 步骤：固定范围 → 尝试墙格并验证被拦截 → 读取部分采掘 → 重采现场后从任务读回。
+dfy::model::Response materials_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string_view skill, std::string id, Json args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with("_"+std::string(skill)); });
+        if (tool == request.tools.end()) throw std::runtime_error("materials probe: tool missing");
+        return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "skills.expanded")
+            return call("collect","wall",{{"block","dirt"},{"count",1},{"x",2},{"y",-59},{"z",-3}});
+        if (input.at("trigger") == "motion.finished" && input.at("finishedWork").at("skill") == "collect") {
+            const auto& result = input.at("finishedWork").at("result");
+            if (result.at("status") != "blocked") throw std::runtime_error("materials probe: scope or partial receipt lost");
+            if (result.at("changes").empty()) return call("collect","ground_collect",{{"block","dirt"},{"count",2}});
+            if (result.at("changes").size() == 1) return call("observe","observe",Json::object());
+            throw std::runtime_error("materials probe: changed unexpected cells");
+        }
+        if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
+            return call("task_update","ground",{{"goal","只从地面取泥土"},{"collection","ground"},{"next","player"}});
+        if (!input.at("events").empty() && input.at("events").back().at("sequence") == 3) {
+            const auto& task = input.at("task");
+            if (task.at("lastAction").at("skill") != "observe" || task.at("worldChanges").size() != 1 ||
+                task.at("worldChanges").front().at("before") != "dirt")
+                throw std::runtime_error("materials probe: original changes lost after observation");
+            return call("reply","reply",{{"text","我只挖了地上的一格泥土。"}});
+        }
+    } else if (last.role == Role::tool && last.tool_call_id == "ground")
+        return call("skills","skills",{{"categories",{"dig_break"}}});
+    return {{Role::assistant,R"({"internal":"materials observation complete"})"}};
+}
 }
 
 // 保持真人体验的正式宿主运行，向本地日志发布进展和计划板并完整收尾。
@@ -387,14 +423,16 @@ int wmain(int argc, wchar_t** argv) {
         const bool wall = !ask.empty() || mode == L"--wall-probe" || gap;
         const bool follow = mode == L"--follow-probe";
         const bool door = mode == L"--door-probe";
-        const bool partner = wall || follow || door || mode == L"--partner-probe";
+        const bool materials = mode == L"--gap-materials-probe";
+        const bool partner = wall || follow || door || materials || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,ask,gap,root](const auto&, const auto& request) {
+                if (materials) return materials_sample(request);
                 if (door) return door_sample(request);
                 if (wall) return wall_sample(request,root,ask,gap);
                 if (follow) return follow_sample(request);

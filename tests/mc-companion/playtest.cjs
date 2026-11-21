@@ -77,7 +77,12 @@ async function play(fixture, exe, pkg, mode, config) {
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
-    else if (mode !== '--probe') {
+    if (mode === '--gap-materials-probe') {
+      send('fill -2 -61 -2 5 -61 3 minecraft:grass_block');
+      send('fill -2 -60 -2 5 -58 3 minecraft:air');
+      send('setblock 2 -61 0 minecraft:dirt');
+    }
+    else if (!wallProbe && mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
       if (mode === '--partner-probe' || mode === '--follow-probe') prepareCourse(send);
@@ -191,7 +196,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--door-probe'].includes(mode) ||
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

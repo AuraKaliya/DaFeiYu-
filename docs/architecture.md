@@ -206,6 +206,7 @@ flowchart TB
 - **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察只带概要和采样信息，地图用 `observe` 重新读取。工具目录保留已选择的类别，有原话锚点时提供移动，选定目标格后下一轮提供放置。宿主在本轮内固定工具契约，游戏侧校验实际动作。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
 - **玩家指向。** 游戏执行器保存原消息的眼位、朝向和采样时间。在原位置重读已加载场景，区分原玩家视线、实时玩家位置和陪玩角色视线。只有唯一穿过的缺口才提供默认候选。插件从同一原消息的观察解析候选编号，固定实际方格，再由执行器在落地时重读。 [收件采样](../plugins/mc/bridge/chat.cjs) · [墙体候选](../plugins/mc/bridge/player-focus.cjs) · [目标绑定](../plugins/mc/partner_task.cpp)
 - **放置读回。** 观察返回已加载的方块体积和坐标原点。放置检查精确目标格、支撑面、占用及材料，再依据回执里的实际方块与库存判断效果。门上下两格分别核对。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[现场取样](../plugins/mc/bridge/block-survey.cjs) · [游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
+- **取材范围和逐格变化。** 选择 `task_update.collection=ground` 后，普通采集、确认采集和预输入都在相同范围执行。执行器在选格及动手前重验地层、附近结构和角色脚下。库存增减与逐格读回分别记录，部分完成仍携带实际改动。`task.worldChanges` 保留最近 32 条变化、工作号和原消息号，后续重新观察也可读取。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
 
 ## 当前边界
 

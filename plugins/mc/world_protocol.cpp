@@ -75,6 +75,20 @@ void verify_placement(const Json& result, const Json& args) {
             throw std::invalid_argument("MC: placement evidence differs from target");
     }
 }
+
+// 校验已读回的实际方格变化，可与未完成的工作一同返回。
+bool verified_changes(const Json& changes) {
+    if (!changes.is_array() || changes.size() > 64) throw std::invalid_argument("MC: invalid cell changes");
+    for (const auto& cell : changes) {
+        if (cell.size() != 5 || !dimension(cell.at("before")) || !dimension(cell.at("after")) ||
+            cell.at("before") == cell.at("after"))
+            throw std::invalid_argument("MC: invalid changed block");
+        for (const auto axis : {"x","y","z"})
+            if (!cell.at(axis).is_number_integer() || std::abs(cell.at(axis).get<double>()) > 30000000)
+                throw std::invalid_argument("MC: invalid changed position");
+    }
+    return !changes.empty();
+}
 }
 
 // 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
@@ -121,7 +135,8 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
                 step.at("distance") < 0))) throw std::invalid_argument("MC: invalid follow progress");
         progress = step.dump();
     }
-    return {exited, exited && result.at("status") == "done", attempted, verified, exited ? result.dump() : std::string{},
+    const bool changed = exited && result.contains("changes") && verified_changes(result.at("changes"));
+    return {exited, exited && result.at("status") == "done", attempted, verified, changed, exited ? result.dump() : std::string{},
         std::move(progress)};
 }
 // 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。

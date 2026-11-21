@@ -18,6 +18,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "recentDialogue 记录已处理的原话和实际发出的答复。task.lastAction 保留上次工具事实，task.targetObservation 保留当前目标的原话指向。"
+    "task.worldChanges 是实际读回的近期逐格变化。玩家要求从地上取材或保留建筑时，先把 task_update.collection 设为 ground，再提交采集。"
     "需重新查看方块地图时调用 observe。"
     "reply 会立即向玩家发言。处理玩家原话时，未调用 reply 或 ask_player 的普通最终文本也会发给玩家。"
     "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
@@ -362,6 +363,14 @@ bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope) c
         input.at("context").at("order") != order_ || !task_.bind_placement(input.at("arguments"))) return false;
     envelope = input.dump();
     return true;
+}
+
+// 给采掘原命令附上当前任务的取材约束。
+void PartnerLoop::bind_collection(std::uint64_t session, std::string& envelope) const {
+    if (session != session_ || !permits(session)) return;
+    auto input = Json::parse(envelope);
+    task_.bind_collection(input.at("arguments"));
+    envelope = input.dump();
 }
 
 // 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。

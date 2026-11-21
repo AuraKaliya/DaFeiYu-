@@ -5,6 +5,7 @@ const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
+const { fromGround, collectReadback } = require('./collection.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -60,11 +61,14 @@ async function collect(bot, args, check, result) {
     throw new Error('数量应为 1～32，指定的单格只能采一次');
   const before = inventory(bot);
   result.broken = 0;
+  result.changes = [];
+  const allowed = block => args.source !== 'ground' || fromGround(bot, block);
   try {
     for (let n = 0; n < args.count; ++n) {
       check();
-      const block = fixed ? bot.blockAt(fixed) : visible(bot, type)[0];
-      if (!block || block.type !== type.id || !block.diggable) throw new Error('指定目标已变化或附近没有可见的目标方块');
+      const block = fixed ? bot.blockAt(fixed) : visible(bot, type).find(allowed);
+      if (!block || block.type !== type.id || !block.diggable || !allowed(block))
+        throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
       const pos = block.position;
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('目标支撑着角色，请先移动');
       if (!bot.canDigBlock(block) || !bot.canSeeBlock(block)) await walk(bot, new goals.GoalLookAtBlock(pos, bot.world));
@@ -78,12 +82,16 @@ async function collect(bot, args, check, result) {
       if (!here || here.type !== type.id || !here.canHarvest(bot.heldItem?.type) || !bot.canDigBlock(here) || !bot.canSeeBlock(here))
         throw new Error('目标、距离或工具已不满足采掘条件');
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('走近后目标位于脚下');
-      await bot.dig(here, true);
+      if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
+      const readback = collectReadback(bot, here);
+      try { await bot.dig(here, true); }
+      finally { await readback(result.changes); }
       const after = bot.blockAt(pos);
       if (!after || after.type === type.id) throw new Error('方块变化未核实');
       ++result.broken;
       check();
-      await walk(bot, new goals.GoalNear(pos.x, Math.floor(bot.entity.position.y), pos.z, 0));
+      const pickupY = args.source === 'ground' ? pos.y : Math.floor(bot.entity.position.y);
+      await walk(bot, new goals.GoalNear(pos.x, pickupY, pos.z, 0));
       // 掉落物有拾取延迟，给实际库存更新留出时间；不以挖掘次数推算入包。
       await delay(650);
     }

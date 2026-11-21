@@ -53,6 +53,7 @@ async function placeBlock(bot, point, type, check, walk, result) {
     throw new Error('需要背包中可放置的实心方块或门');
   const cells = door ? [point, point.offset(0, 1, 0)] : [point];
   checkCells(bot, cells);
+  result.changes = [];
   if (!stock(bot, type.name)) throw new Error('背包没有指定建材');
 
   const eye = () => bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
@@ -67,6 +68,7 @@ async function placeBlock(bot, point, type, check, walk, result) {
   if (bot.heldItem?.type !== item.type) await bot.equip(item, 'hand');
   check();
   checkCells(bot, cells);
+  const before = cells.map(cell => bot.blockAt(cell).name);
   const support = supportGoal(bot, point, door).getFaceAndRef(eye());
   if (!support || bot.heldItem?.name !== type.name) throw new Error('支撑、视线或手持材料已经变化');
   const reference = bot.blockAt(support.ref);
@@ -86,6 +88,8 @@ async function placeBlock(bot, point, type, check, walk, result) {
         const properties = block?.getProperties() ?? {};
         return { x, y, z, block: block?.name ?? null, ...(door && { half: properties.half, facing: properties.facing }) };
       });
+      result.changes = result.blocks.flatMap(({ x, y, z, block }, index) =>
+        block && block !== before[index] ? [{ x, y, z, before: before[index], after: block }] : []);
       result.materialAfter = stock(bot, type.name);
       const observed = result.blocks.every((block, index) => block.block === type.name &&
         (!door || block.half === (index ? 'upper' : 'lower')));

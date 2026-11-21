@@ -90,6 +90,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
         clear_queue("blocked");
         return;
     }
+    if (step.skill == "collect") task_.bind_collection(args);
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
         {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));
