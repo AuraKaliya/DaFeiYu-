@@ -33,6 +33,16 @@
 node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
 ```
 
+同一墙体夹具支持三种 ASK 验证，替换命令末尾的模式即可。每次单独启动一个本地 Paper 实例。协议玩家听到两次实际询问，向升级后的编号答复“靠河那段，留木门”，再确认原门洞候选。
+
+| 模式 | 核对的路径 |
+| --- | --- |
+| `--ask-direct-probe` | 本体发 ASK 并把结果投到插件入箱，整局无主 Agent 模型回合。 |
+| `--ask-main-probe` | 到件唤醒主 Agent，固定后端先调用 `ask` 选择游戏，再调用 `mail_reply` 转发原答案。 |
+| `--ask-main-manual-probe` | 两封信都等待 `/mail review`，随后使用同一主 Agent 路径。 |
+
+三种模式均核对后续实际送模上下文保留共同目标和原答复。协议玩家独立读回原墙未覆盖、缺格已补，以及批准后的上下门格。Trace 可按事件身份、ASK 编号、模型运行和游戏工作号逐项核对。
+
 ### 用浏览器进服
 
 运行 `./tests/mc-companion/browser-player/start.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。脚本验证并展开 WebMC 2.4.0 的官方发布包，启动体验服及本机连接服务，用 D 盘独立浏览器资料打开入口。加 `-PrepareOnly` 可以只准备服务。已在运行时可直接打开 [浏览器玩家入口](http://127.0.0.1:25582/)，点击“进入河边体验”。[上游项目与协议兼容范围](https://github.com/zardoy/minecraft-web-client) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
