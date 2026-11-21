@@ -22,6 +22,8 @@ void PartnerLoop::intake(PartnerWork work) {
     dfy_v2_mailbox_text text{};
     if (mail_text_->inspect(message.payload,&text,nullptr) || text.version != 1) return;
     const auto category = borrowed(text.category);
+    if (category == "interaction.ask.present" || category == "interaction.ask.result" || category == "interaction.mail.reply")
+        intake_question(category,Json::parse(borrowed(text.text),nullptr,false));
     if (category == "mc.confirmation.present" || category == "mc.confirmation.response")
         intake_confirmation(category == "mc.confirmation.present",Json::parse(borrowed(text.text),nullptr,false));
     if (category == "mc.partner.delegate" || category == "mc.partner.query")

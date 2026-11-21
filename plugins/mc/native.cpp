@@ -105,6 +105,12 @@ dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_v
 // 开启当前实例的工具接纳。
 dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* raw, dfy_v2_error* error) noexcept {
     if (!owned(raw)) return report(DFY_V2_INVALID_HANDLE, error);
+    try {
+        if (!raw->config.key.empty()) {
+            const auto registered = raw->partner.register_questions(raw->host);
+            if (registered && registered != DFY_V2_UNSUPPORTED) return report(registered,error);
+        }
+    } catch (...) { return report(DFY_V2_FAILED,error); }
     raw->running = true;
     return report(DFY_V2_OK, error);
 }
@@ -197,7 +203,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto skill = std::ranges::find(partner_skills,text(name),&PartnerSkill::name);
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
-    const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog);
+    const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::question);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
@@ -264,9 +270,9 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         job->exited = true;
     } else if (job->method == NativeJob::Method::local) {
         try {
-            const auto result = raw->partner.local_skill(job->partner_session,job->skill,job->arguments);
+            const auto result = raw->partner.local_skill(job->partner_session,job->invocation,job->skill,job->arguments);
             job->success = result.at("status") != "stale";
-            job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" ?
+            job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" || result.at("status") == "recorded" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
             job->output = result.dump();
         } catch (...) {}

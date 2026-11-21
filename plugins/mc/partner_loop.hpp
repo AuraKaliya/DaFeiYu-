@@ -6,6 +6,7 @@
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <dafeiyu/mailbox_abi_v2.h>
+#include <dafeiyu/routed_event_abi_v2.h>
 #include <array>
 #include <bitset>
 #include <deque>
@@ -15,6 +16,8 @@ struct PartnerWork { std::uint64_t invocation = 0; std::string_view skill; };
 // Minecraft 插件拥有事件处理、角色规则与游戏技能，模型工具循环借用宿主子会话。
 class PartnerLoop {
   public:
+    // 载入时登记疑问升级和游戏渠道反馈的解析器。
+    uint32_t register_questions(dfy_v2_query_interface_fn host);
     // 协商宿主子会话能力并启用原玩家入口。
     uint32_t listen(dfy_v2_query_interface_fn host, const BridgeConfig& config);
     // 停止读取并请求取消原在途回合。
@@ -29,7 +32,7 @@ class PartnerLoop {
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
     // 执行当前原子会话的局内任务或工具目录操作。
-    nlohmann::json local_skill(std::uint64_t session, std::string_view skill, std::string_view envelope);
+    nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
     // 判断来自本体委托的当前可变更技能是否需要强制确认。
     bool delegated(std::uint64_t session) const noexcept { return session == session_ && active_delegation_.has_value(); }
     // 为游戏动作固定原参数和确认渠道，只允许当前插件角色提出。
@@ -71,6 +74,30 @@ class PartnerLoop {
     void intake_confirmation(bool present, const nlohmann::json& body);
     // 依据主侧选择或本地策略向同一玩家呈现原问题，并保留实际发言回执。
     void advance_confirmation_presentation(const BridgeConfig& config, std::uint64_t instance, bool closing);
+    // 建立原子会话的待答事项，原答案只在匹配当前世界时生效。
+    nlohmann::json open_question(std::uint64_t id, const nlohmann::json& arguments);
+    // 按事项原身份接收通用 ASK 渠道请求或结果。
+    void intake_question(std::string_view category, const nlohmann::json& body);
+    // 推进本地等待、必要升级、实际呈现与玩家答复。
+    void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
+    // 接纳原问题的结果，并准备下一轮上下文。
+    void complete_question(std::string_view status, std::string answer);
+    // 保留并按序提交原生渠道事件。
+    void flush_question_events();
+
+    struct Question {
+        std::uint64_t item, order, ask = 0;
+        std::string world, player, text, path;
+        std::chrono::steady_clock::time_point local, deadline;
+        bool initial_started = false, ask_started = false, presented = false, escalated = false, forwarded = false;
+    };
+    const dfy_v2_routed_event_api* question_events_ = nullptr;
+    std::uint64_t question_sequence_ = 0;
+    std::deque<std::pair<std::string_view,std::string>> question_outbound_;
+    std::optional<Question> question_;
+    std::unique_ptr<GameWork> question_work_;
+    nlohmann::json question_result_;
+    bool question_wake_ = false;
 
     PartnerFeed feed_;
     PartnerTask task_;

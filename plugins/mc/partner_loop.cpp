@@ -92,6 +92,7 @@ void PartnerLoop::reset() noexcept {
     previous_.clear();
     reviewed_ = 0;
     stopped_work_ = false;
+    question_.reset(); question_work_.reset(); question_result_.clear(); question_wake_ = false; question_outbound_.clear();
 }
 
 // 子回合业务结算及真正退出均由原会话报告。
@@ -133,6 +134,7 @@ void PartnerLoop::retire() {
     expansion_pending_ = false;
     recent_events_.clear();
     previous_.clear();
+    question_.reset(); question_result_.clear(); question_wake_ = false;
 }
 
 // 将按序收到的原始事实及绑定游戏数据送入同一子会话。
@@ -145,12 +147,15 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
-    const bool autonomous = facts.empty() && !delegated;
+    const bool answer = wake == "question.result";
+    const bool autonomous = facts.empty() && !delegated && !answer;
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
     if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
     if (autonomous) input["recentEvents"] = recent_events_;
+    if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
+    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"escalated",question_->escalated}};
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
@@ -160,7 +165,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
     std::size_t count = 0;
     if (!delegated) for (const auto& skill : partner_skills) {
-        if (skill.kind == SkillKind::confirmed) continue;
+        if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
         const auto category = skill.category;
         if (!base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
@@ -172,7 +177,8 @@ void PartnerLoop::submit(std::string_view wake) {
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     if (!delegated) {
-        task_.submitted(!facts.empty(),autonomous);
+        task_.submitted(!facts.empty() || answer,autonomous);
+        question_wake_ = false;
         expansion_pending_ = false;
     }
     order_ = order;
@@ -193,7 +199,7 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
 }
 
 // 只有处理当前世界的原子会话能修改局内状态，旧事件不能更新任务或展开范围。
-Json PartnerLoop::local_skill(std::uint64_t session, std::string_view skill, std::string_view envelope) {
+Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope) {
     if (session != session_ || !request_ || active_delegation_ || !permits(session) || feed_.departed() || !feed_.ready())
         throw std::invalid_argument("MC partner: task owner unavailable");
     const auto input = Json::parse(envelope);
@@ -201,6 +207,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::string_view skill, std
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
+    if (skill == "ask_player") return open_question(invocation,args);
     return skill == "skills" ? discover(args) : task_.update(args,feed_.observation(),feed_.scene_revision());
 }
 
@@ -379,6 +386,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         feed_.clear();
     }
     advance_confirmation_presentation(config,instance,closing);
+    advance_question(config,instance,closing);
     if (awaiting_delegation_ && (closing || awaiting_delegation_->world != feed_.world() || feed_.departed())) {
         publish("mc.partner.report",{{"generation",awaiting_delegation_->world},{"id",awaiting_delegation_->id},{"ok",false},
             {"text","原游戏世界或配对玩家已离开"}});
@@ -388,7 +396,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     review(work,closing || replaced);
     if (!settle(closing || replaced)) return;
     if (closing) {
-        if (review_.request || presentation_ || !release_game(config,instance) || !outbound_.empty()) return;
+        if (review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
     if (replaced) retire();
@@ -396,9 +404,11 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         task_ = {};
         expanded_.reset();
         expansion_pending_ = false;
+        question_.reset(); question_result_.clear(); question_wake_ = false;
     }
-    if (presentation_ || !feed_.ready() || outbound_.size() > 54) return;
+    if (presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
+    else if (question_wake_) submit("question.result");
     else if (awaiting_delegation_) submit("main.delegation");
     else if (const auto wake = autonomous_wake(); !wake.empty()) submit(wake);
 }

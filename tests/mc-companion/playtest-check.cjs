@@ -28,8 +28,8 @@ async function checkPlayer(fixture, mode) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
-    if (mode === '--wall-probe') {
-      await checkWall(fixture, player, whispers);
+    if (mode === '--wall-probe' || mode === '--ask-direct-probe') {
+      await checkWall(fixture, player, whispers, mode === '--ask-direct-probe');
     } else if (partner) {
       assert.deepEqual(whispers, []);
       const settled = seq => until(() => fixture.settled === seq, '处理到玩家事件 ' + seq, 50000);
@@ -72,13 +72,19 @@ async function checkPlayer(fixture, mode) {
 
 // 独立玩家在本地 Paper 上核对原墙、放置后的两格门和批准前的世界状态。
 // 步骤：发起分工并补报位置 → 等候实际放置与询问 → 确认后读回两格门及原痕迹。
-async function checkWall(fixture, player, whispers) {
+async function checkWall(fixture, player, whispers, direct) {
   const block = (x, y, z) => player.blockAt(player.entity.position.clone().set(x, y, z));
   await until(() => block(2, -59, -3)?.name === 'dirt', '玩家看到原墙');
   assert.equal(block(3, -59, -3).name, 'air');
   player.chat('我们接着搭我围的墙，两层泥土，给我留扇木门。');
   await until(() => fixture.settled === 2, '保存原分工');
   player.chat('我在墙边上');
+  if (direct) {
+    const opened = await until(() => whispers.map(text => /回复 答复 (\d+) <回答>$/.exec(text)).filter(Boolean)[1]?.[1],
+      '直接 ASK 实际发出第二个问题', 45000);
+    assert.equal(block(3, -59, -3).name, 'air');
+    player.chat('答复 ' + opened + ' 靠河那段，留木门');
+  }
   const token = await until(() => whispers.map(text => /确认 (\d+) 或 拒绝 \1$/.exec(text)).find(Boolean)?.[1],
     '原候选发出实际确认问题', 45000);
   assert.equal(block(2, -59, -3).name, 'dirt');
@@ -90,10 +96,11 @@ async function checkWall(fixture, player, whispers) {
     '玩家读回放置后的两格门', 30000);
   assert.equal(block(4, -60, -3).getProperties().half, 'lower');
   assert.equal(block(4, -59, -3).getProperties().half, 'upper');
-  await until(() => fixture.settled === 4, '同一确认及游戏回合结算');
+  await until(() => fixture.settled === (direct ? 5 : 4), '同一确认及游戏回合结算');
   const work = readFileSync(join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const placements = work.filter(row => row.skill === 'place');
-  assert.deepEqual(placements.map(row => [row.order, row.result.placementAttempted, row.result.placed]), [[3,false,false],[3,true,true],[4,true,true]]);
+  const order = direct ? 4 : 3;
+  assert.deepEqual(placements.map(row => [row.order, row.result.placementAttempted, row.result.placed]), [[order,false,false],[order,true,true],[order+1,true,true]]);
   assert.deepEqual(placements.at(-1).arguments, { block: 'oak_door', x: 4, y: -60, z: -3 });
   const trace = readFileSync(join(fixture.evidence, 'host/trace/events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   const presentation = trace.find(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.presentation');
@@ -101,5 +108,14 @@ async function checkWall(fixture, player, whispers) {
   assert.ok(trace.some(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.decision' &&
     row.body.id === presentation.body.id && row.body.status === 'approved'));
   assert.ok(trace.every(row => row.kind !== 'model.prepared' || row.input.tools.length > 0));
+  if (direct) {
+    const ask = trace.filter(row => row.kind === 'ask.opened');
+    assert.equal(ask.length, 1);
+    assert.equal(ask[0].path, 'direct');
+    assert.ok(trace.some(row => row.kind === 'ask.answer' && row.ask === ask[0].ask && row.accepted));
+    assert.ok(trace.some(row => row.kind === 'model.prepared' && row.source === 'plugin' &&
+      row.input.messages.at(-1).content.includes('靠河那段，留木门')));
+    assert.ok(!trace.some(row => row.kind === 'model.prepared' && row.source === 'main'));
+  }
 }
 module.exports = { checkPlayer };

@@ -91,7 +91,7 @@ std::string survey_block(const nlohmann::json& survey, int x, int y, int z) {
 
 // 用固定模型验证墙体目标跨回合、观察、范围展开和原候选确认。
 // 步骤：保存原分工 → 核实玩家附近结构 → 先拒绝覆盖再补一格 → 等待游戏玩家确认门。
-dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root) {
+dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root, std::string_view ask_path) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto& last = request.messages.back();
@@ -105,12 +105,14 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (request.tools.empty()) return say("continue");
     if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
-        if (last.tool_call_id == "save" || last.tool_call_id == "directory") return say("fixed round done");
-        if (last.tool_call_id == "survey") {
+        if (last.tool_call_id == "save" || last.tool_call_id == "directory" || last.tool_call_id == "question") return say("fixed round done");
+        if (last.tool_call_id == "survey" || last.tool_call_id == "resurvey") {
             const auto& survey = result.at("survey");
             if (survey_block(survey,2,-59,-3) != "dirt" || survey_block(survey,3,-59,-3) != "." ||
                 survey_block(survey,3,-60,-3) != "dirt")
                 throw std::runtime_error("wall probe: survey did not locate the wall and gap");
+            if (!ask_path.empty() && last.tool_call_id == "survey")
+                return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
             return call("skills","directory",{{"categories",{"place"}}});
         }
         if (last.tool_call_id == "occupied" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
@@ -126,6 +128,12 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             input.at("task").at("lastAction").at("skill") != "observe" || !input.at("events").empty())
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
         return call("place","occupied",{{"block","dirt"},{"x",2},{"y",-60},{"z",-3}});
+    }
+    if (input.at("trigger") == "question.result") {
+        if (input.at("questionResult").at("answer") != "靠河那段，留木门" ||
+            input.at("task").at("goal") != "continue existing two-layer dirt wall and door")
+            throw std::runtime_error("wall probe: clarification lost the original task");
+        return call("observe","resurvey",{{"around","player"}});
     }
     const auto& event = input.at("events").back();
     if (event.at("sequence") == 2)
@@ -143,15 +151,16 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
 int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     try {
-        const bool wall = argc == 4 && std::wstring_view(argv[3]) == L"--wall-probe";
+        const bool direct = argc == 4 && std::wstring_view(argv[3]) == L"--ask-direct-probe";
+        const bool wall = direct || (argc == 4 && std::wstring_view(argv[3]) == L"--wall-probe");
         const bool partner = wall || (argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe");
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,root](const auto&, const auto& request) {
-                if (wall) return wall_sample(request,root);
+            [partner,wall,direct,root](const auto&, const auto& request) {
+                if (wall) return wall_sample(request,root,direct ? "direct" : "");
                 return partner ? partner_sample(request,root) : sample_turn(request);
             }},
             std::move(run));
