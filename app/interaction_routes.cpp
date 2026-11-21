@@ -37,6 +37,16 @@ void InteractionRoutes::accept(plugins::RoutedEvent event) {
         {"instance",event.owner},{"type",event.type},{"status",event.status},{"route",event.kind},{"body",event.payload}});
     if (event.status || !destination(event).value) return;
     const auto body = Json::parse(event.projection);
+    if (event.kind == DFY_V2_EVENT_ASK_RECEIPT) {
+        auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
+        const auto disposition = body.at("disposition");
+        if (!exchange || exchange->origin.owner != event.owner || !exchange->plugin_queued || exchange->acknowledged ||
+            body.at("ask") != exchange->ask || identity(body.at("item")) != exchange->item ||
+            identity(body.at("revision")) != exchange->revision || (disposition != "matched" && disposition != "stale")) return;
+        exchange->acknowledged = true;
+        if (log_) log_->append("interaction.acknowledged",body);
+        return;
+    }
     if (event.kind == DFY_V2_EVENT_ASK_FEEDBACK) {
         const auto ask = identity(body.at("ask"));
         const auto channel = body.at("channel").get<std::string>();
@@ -80,27 +90,27 @@ void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
     if (channel != "game" && channel != "terminal") throw std::invalid_argument("interaction: unknown channel");
     const auto body = Json::parse(exchange.origin.projection);
     exchange.ask = asks_.open(exchange.origin.owner,{body.at("question"),body.at("recipient"),std::move(channel),
-        body.value("choices",std::vector<std::string>{}),exchange.deadline});
+        body.value("choices",std::vector<std::string>{}),exchange.answer_deadline});
     if (log_) log_->append("ask.opened",{{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},
         {"event",exchange.origin.id.sequence},{"item",exchange.item},{"revision",exchange.revision},
-        {"path",exchange.main_box.value ? "main" : "direct"},{"question",body.at("question")},{"channel",asks_.status(exchange.ask)->spec.channel}});
+        {"path",exchange.main_box.value ? "main" : "direct"},{"question",body.at("question")},{"channel",asks_.status(exchange.ask)->spec.channel},
+        {"answerWaitMs",std::chrono::duration_cast<std::chrono::milliseconds>(exchange.answer_deadline-clock_()).count()}});
 }
 
-// 投递有效呈现或原终态，容量不足时保留同一票据重试。
-// 步骤：校验原实例 → 构造通用信件 → 成功接纳后推进状态。
+// 推进原问题和终态投递，票据由原插件的收件回执结算。
+// 步骤：校验收件回执及原实例 → 推进首次投递或呈现 → 排队终态并等待确认。
 bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     const auto inbox = destination(exchange.origin);
-    if (!inbox.value) {
+    if (exchange.acknowledged || !inbox.value) {
         asks_.cancel(exchange.ask,exchange.origin.owner);
         asks_.release(exchange.ask);
+        if (!inbox.value && !exchange.acknowledged && exchange.item && log_) log_->append("interaction.abandoned",
+            {{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
+             {"item",exchange.item},{"reason","original_instance_unavailable"}});
         return true;
     }
-    if (!exchange.ask) {
-        if (clock_() >= exchange.deadline) {
-            if (log_) log_->append("interaction.expired",{{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
-                {"item",exchange.item},{"stage",exchange.initial_queued ? "awaiting_ask" : "awaiting_mailbox"}});
-            return true;
-        }
+    if (exchange.plugin_queued) return false;
+    if (!exchange.ask && clock_() < exchange.answer_deadline) {
         if (!exchange.initial_queued) {
             auto message = Json::parse(exchange.origin.projection);
             message["eventDomain"] = exchange.origin.id.domain;
@@ -117,22 +127,20 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         }
         return !exchange.item && exchange.initial_queued;
     }
+    if (!exchange.item) return true;
     const auto* request = asks_.status(exchange.ask);
-    const bool pending = request->phase == AskPhase::presenting || request->phase == AskPhase::waiting;
+    const bool pending = request && (request->phase == AskPhase::presenting || request->phase == AskPhase::waiting);
     if (pending && (exchange.sent || request->spec.channel == "terminal")) return false;
-    if (!pending && exchange.main_box.value && clock_() >= exchange.deadline+std::chrono::seconds(5)) {
-        asks_.release(exchange.ask);
-        return true;
-    }
-    const bool to_main = !pending && exchange.main_box.value && !exchange.reply_requested;
+    const bool to_main = request && !pending && exchange.main_box.value && !exchange.reply_requested;
     if (to_main && exchange.result_queued) return false;
     const char* completion = exchange.origin.mailbox.flags & DFY_V2_MAIL_WAKE ? "interaction.ask.completed" : "interaction.ask.completed.passive";
     const char* category = pending ? "interaction.ask.present" : to_main ? completion :
         exchange.main_box.value ? "interaction.mail.reply" : "interaction.ask.result";
-    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",request->spec.recipient},
-        {"channel",request->spec.channel},{"requiresAsk",true}};
+    const auto origin = Json::parse(exchange.origin.projection);
+    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",origin.at("recipient")},
+        {"channel",request ? request->spec.channel : std::string{}},{"requiresAsk",true}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
-    else { message["status"] = ask_phase(request->phase); message["answer"] = request->answer; }
+    else { message["status"] = request ? ask_phase(request->phase) : "expired"; message["answer"] = request ? request->answer : ""; }
     message["eventDomain"] = exchange.origin.id.domain;
     message["event"] = exchange.origin.id.sequence;
     try {
@@ -142,10 +150,10 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
             {"event",exchange.origin.id.sequence},{"item",exchange.item},{"category",category},{"mailbox",box.value},
             {"message",receipt.event.sequence},{"body",message}});
     } catch (const std::length_error&) { return false; }
-    if (to_main) { exchange.result_queued = true; return false; }
-    if (pending) exchange.sent = true;
-    if (!pending) asks_.release(exchange.ask);
-    return !pending;
+    if (to_main) exchange.result_queued = true;
+    else if (pending) exchange.sent = true;
+    else exchange.plugin_queued = true;
+    return false;
 }
 
 // 查询应由终端下一次输出的原问题。
@@ -188,7 +196,9 @@ InteractionRoutes::Exchange* InteractionRoutes::find(events::EventId event) {
 InteractionRoutes::Exchange* InteractionRoutes::original(const MailboxDelivery& delivery) {
     const auto body = Json::parse(delivery.event.payload->find("text")->as_string());
     auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
-    return exchange && exchange->origin.owner == delivery.sender && exchange->main_box == delivery.mailbox ? exchange : nullptr;
+    if (!exchange || exchange->plugin_queued || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
+        return nullptr;
+    return exchange;
 }
 
 // 为原插件登记独立的主 Agent 上下文地址。

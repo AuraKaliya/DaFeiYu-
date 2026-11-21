@@ -80,20 +80,22 @@ class PartnerLoop {
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
     void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
+    // 检查原候选在执行时使用的世界、玩家及游标。
+    bool confirmation_context_current(std::uint64_t order) const;
     // 保留并按序提交原生渠道事件。
     void flush_question_events();
 
     struct Question {
         std::uint64_t item, order, ask = 0;
         std::string world, player, text, path;
-        std::chrono::steady_clock::time_point local, deadline;
+        std::chrono::steady_clock::time_point local, local_answer_deadline;
         bool initial_started = false, ask_started = false, presented = false, escalated = false, forwarded = false;
         bool approval = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;
-    std::deque<std::pair<std::string_view,std::string>> question_outbound_;
+    std::deque<std::pair<std::string_view,nlohmann::json>> question_outbound_;
     std::optional<Question> question_;
     std::unique_ptr<GameWork> question_work_;
     nlohmann::json question_result_;

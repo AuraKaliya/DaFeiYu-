@@ -17,8 +17,9 @@ async function main() {
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
+  const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
-  const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual');
+  const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
   const partnerLoop = variant === 'partner-loop' || interrupt || confirm || task || route || exchange;
   fs.mkdirSync(temp, { recursive: true });
   const root = fs.mkdtempSync(path.join(temp, 'world-'));
@@ -81,7 +82,7 @@ async function main() {
         return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
       }
       if (confirm || route) {
-        assert.ok(!first, 'an approval with a newer game fact must not run the stale candidate');
+        assert.ok(!first && !delayed, 'a delivered approval must not restart a stale candidate');
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
         assert.deepEqual(context, { generation: state.generation, order: showGame ? 3 : 2 });
@@ -118,7 +119,7 @@ async function main() {
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
     if (interrupt) assert.equal(stopped, 1);
-    else if (partnerLoop) assert.equal(replies, first ? 0 : 1);
+    else if (partnerLoop) assert.equal(replies, first || delayed ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {
     await bridge.close();

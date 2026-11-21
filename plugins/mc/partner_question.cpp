@@ -5,6 +5,7 @@ namespace dfy::mc {
 namespace {
 using Json = nlohmann::json;
 constexpr std::string_view help_type = "mc.partner.help", feedback_type = "mc.ask.feedback";
+constexpr std::string_view receipt_type = "mc.ask.receipt";
 
 // 向 C ABI 借出宿主当前调用期间有效的文本。
 dfy_v2_string_view view(std::string_view value) { return {value.data(),value.size()}; }
@@ -39,10 +40,16 @@ uint32_t DFY_V2_CALL decode_feedback(void*, dfy_v2_string_view raw, dfy_v2_event
     try { return project(Json::parse(std::string_view(raw.data,raw.length)),DFY_V2_EVENT_ASK_FEEDBACK,out); }
     catch (...) { return DFY_V2_FAILED; }
 }
+
+// 将插件消费原终态信件的回执投影给交互路由。
+uint32_t DFY_V2_CALL decode_receipt(void*, dfy_v2_string_view raw, dfy_v2_event_projection* out) {
+    try { return project(Json::parse(std::string_view(raw.data,raw.length)),DFY_V2_EVENT_ASK_RECEIPT,out); }
+    catch (...) { return DFY_V2_FAILED; }
+}
 }
 
 // 在插件加载时登记求助和反馈的精确版本及结构。
-// 步骤：查询可选能力 → 登记两类事件 → 保存提交接口。
+// 步骤：查询可选能力 → 登记求助与两类回执 → 保存提交接口。
 uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     const void* table = nullptr;
     if (const auto status = host(view(DFY_V2_ROUTED_EVENT_INTERFACE),1,&table,nullptr); status) return status;
@@ -55,6 +62,9 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     if (const auto status = events->register_event(view(feedback_type),1,
         view(R"({"ask":"uint","channel":"string","action":"string","delivered":"bool","recipient":"string","answer":"string","bridgeWork":"string"})"),
         decode_feedback,nullptr,nullptr); status) return status;
+    if (const auto status = events->register_event(view(receipt_type),1,
+        view(R"({"ask":"uint","item":"uint","revision":"uint","eventDomain":"uint","event":"uint","disposition":"string"})"),
+        decode_receipt,nullptr,nullptr); status) return status;
     if (const auto status = host(view(DFY_V2_ROUTED_MAILBOX_INTERFACE),1,&table,nullptr); status) return status;
     const auto* mail = static_cast<const dfy_v2_routed_mailbox_api*>(table);
     if (!mail || mail->header.struct_size != sizeof(*mail) || !mail->register_mailbox) return DFY_V2_ABI_MISMATCH;
@@ -75,22 +85,31 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     return {{"status","recorded"},{"item",id}};
 }
 
-// 消费属于同一事项、修订和玩家的来信。
+// 确认收到终态，只有仍匹配的事项可以消费答复。
+// 步骤：读取事项与原事件身份 → 分流呈现或终态 → 结算业务并确认收件。
 void PartnerLoop::intake_question(std::string_view category, const Json& body) {
-    if (!question_ || !body.is_object() || body.value("item",std::uint64_t{}) != question_->item ||
-        body.value("revision",0) != 1 || body.value("recipient",std::string{}) != question_->player ||
-        body.value("eventDomain",std::uint64_t{}) != question_->event_domain ||
-        body.value("event",std::uint64_t{}) != question_->event_sequence || !question_->event_sequence ||
-        question_->world != feed_.world() || question_->player != feed_.owner() || feed_.departed()) return;
+    if (!question_events_ || !body.is_object()) return;
+    const auto item = body.value("item",std::uint64_t{});
+    const auto domain = body.value("eventDomain",std::uint64_t{}), event = body.value("event",std::uint64_t{});
+    if (!item || !domain || !event || body.value("revision",0) != 1) return;
     const auto id = body.value("ask",std::uint64_t{});
+    const bool matched = question_ && item == question_->item && domain == question_->event_domain && event == question_->event_sequence &&
+        (!question_->ask || question_->ask == id) && body.value("recipient",std::string{}) == question_->player &&
+        question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed();
     if (category == "interaction.ask.present") {
-        if (id && !question_->ask && !question_work_ && question_->escalated && body.value("question",std::string{}) == question_->text) {
+        if (matched && id && !question_->ask && !question_work_ && body.value("question",std::string{}) == question_->text) {
             question_->ask = id;
             question_->presented = false;
         }
-    } else if (id && (!question_->ask || question_->ask == id)) {
-        complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
+        return;
     }
+    const bool current = matched && (!question_->approval || (confirmation_ && confirmation_->request == item &&
+        confirmation_->decision.is_null() && std::chrono::steady_clock::now() < confirmation_->deadline &&
+        confirmation_context_current(body.at("channel") == "game" ? question_->answer_order : question_->order)));
+    if (matched)
+        complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
+    question_outbound_.emplace_back(receipt_type,Json{{"ask",id},{"item",item},{"revision",1},{"eventDomain",domain},
+        {"event",event},{"disposition",current ? "matched" : "stale"}});
 }
 
 // 把已核对的答复作为插件局内事实提交给后续上下文。
@@ -99,7 +118,8 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
         if (confirmation_ && confirmation_->request == question_->item) {
             const auto order = channel == "game" ? question_->answer_order : question_->order;
             const auto source = channel == "game" ? "game" : "main";
-            if (status == "answered" && answer == "approve" && order) confirm_once("approved",source,order);
+            if (std::chrono::steady_clock::now() >= confirmation_->deadline) confirm_once("expired","host");
+            else if (status == "answered" && answer == "approve" && confirmation_context_current(order)) confirm_once("approved",source,order);
             else if (status == "answered" && answer == "deny") confirm_once("denied",source);
             else if (status == "expired") confirm_once("expired","host");
             else confirm_once("withdrawn","host");
@@ -112,15 +132,19 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     question_wake_ = true;
 }
 
-// 在宿主容量暂满时保留原事件和发送序号。
+// 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。
+// 步骤：核对队首求助 → 提交并保留暂满项 → 记录接纳身份并出队。
 void PartnerLoop::flush_question_events() {
+    while (!question_outbound_.empty() && question_outbound_.front().first == help_type &&
+        (!question_ || question_outbound_.front().second.at("item") != question_->item)) question_outbound_.pop_front();
     if (question_outbound_.empty()) return;
     const auto& [type,body] = question_outbound_.front();
+    const auto wire = body.dump();
     dfy_v2_event_receipt receipt{};
-    const auto status = question_events_->emit(view(type),1,question_sequence_+1,view(body),&receipt,nullptr);
+    const auto status = question_events_->emit(view(type),1,question_sequence_+1,view(wire),&receipt,nullptr);
     if (status == DFY_V2_RESOURCE_EXHAUSTED) return;
     if (status || receipt.sequence != question_sequence_+1) throw std::runtime_error("MC question: event rejected");
-    if (type == help_type && question_) {
+    if (type == help_type) {
         question_->event_domain = receipt.domain;
         question_->event_sequence = receipt.sequence;
     }
@@ -144,13 +168,13 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
-                {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}}.dump());
+                {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}});
         }
     }
-    if (!live) { question_.reset(); question_outbound_.clear(); return; }
+    if (!live) { question_.reset(); flush_question_events(); return; }
     auto& q = *question_;
     const auto now = std::chrono::steady_clock::now();
-    if (now >= q.deadline) { complete_question("expired",{}); return; }
+    if (!q.escalated && now >= q.local_answer_deadline) { complete_question("expired",{}); return; }
     if (q.presented && !q.forwarded) {
         const auto prefix = "答复 "+std::to_string(q.ask ? q.ask : q.item)+" ";
         const auto token = std::to_string(q.ask);
@@ -165,7 +189,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             if (!q.escalated) { complete_question("answered",answer); return; }
             if (!q.ask) continue;
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
-                {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}}.dump());
+                {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}});
             q.answer_order = event.at("sequence");
             q.forwarded = true;
             break;
@@ -177,14 +201,14 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             {"arguments",confirmation_->arguments}};
         question_outbound_.emplace_back(help_type,Json{{"item",q.item},{"revision",1},{"question",q.text},
             {"reason",q.approval ? "action_approval" : "local_timeout"},{"context",context.dump()},
-            {"path",q.path},{"recipient",q.player},{"channel","game"},{"waitMs",24000}}.dump());
+            {"path",q.path},{"recipient",q.player},{"channel","game"},{"waitMs",24000}});
         q.escalated = true;
     }
     const bool start = (!q.initial_started || (q.ask && !q.ask_started)) && feed_.ready();
     if (start) {
         if (q.approval && feed_.cursor() != q.order) {
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},
-                {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}}.dump());
+                {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}});
             q.ask_started = true;
             flush_question_events();
             return;

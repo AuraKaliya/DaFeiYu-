@@ -1,9 +1,30 @@
 #include "application.hpp"
 #include <algorithm>
 #include <atomic>
+#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <thread>
+
+namespace {
+// 核对原答复入队和插件收件是先后发生的两个阶段。
+// 步骤：读取已落盘的路由记录 → 等待原收件回执 → 核对票据、顺序和原候选状态。
+bool received(const std::filesystem::path& file, bool stale) {
+    using Json = nlohmann::json;
+    std::ifstream trace(file);
+    Json delivery, acknowledgement;
+    for (std::string line; std::getline(trace,line);) {
+        const auto row = Json::parse(line);
+        if (row.at("kind") == "interaction.delivered" && row.at("category") == "interaction.mail.reply") delivery = row;
+        if (row.at("kind") == "interaction.acknowledged") acknowledgement = row;
+    }
+    if (acknowledgement.is_null()) return false;
+    if (delivery.is_null() || delivery.at("body").at("answer") != "approve" || delivery.at("ask") != acknowledgement.at("ask") ||
+        delivery.at("seq") >= acknowledgement.at("seq") || acknowledgement.at("disposition") != (stale ? "stale" : "matched"))
+        throw std::runtime_error("original answer delivery and plugin receipt were not independently verified");
+    return true;
+}
+}
 
 // 从正式应用验证主 Agent 选择渠道及游戏内本地确认，执行仍由原插件裁定。
 // 步骤：注入固定角色策略 → 推进真实收发及主回合 → 从原渠道答复 → 核对真实候选结算并释放。
@@ -14,11 +35,17 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc != 4) throw std::runtime_error("package, test directory and route are required");
         const std::filesystem::path root = argv[2];
-        const bool manual = std::wstring_view(argv[3]) == L"partner-route-manual";
+        const bool delayed_review = std::wstring_view(argv[3]) == L"partner-route-delayed";
+        const bool manual = delayed_review || std::wstring_view(argv[3]) == L"partner-route-manual";
         const bool first = std::wstring_view(argv[3]) == L"partner-route-first";
         const bool panel = manual || std::wstring_view(argv[3]) == L"partner-route-panel";
         const bool local = std::wstring_view(argv[3]) == L"partner-route-local";
         std::atomic_uint main_calls = 0;
+        const auto host_start = std::chrono::steady_clock::now();
+        std::atomic_int host_seconds = 0;
+        app::ApplicationRunConfig run;
+        run.tool_clock = [&] { return host_start+std::chrono::seconds(host_seconds.load()); };
+        run.trace_directory = root;
         // 分别提供子 Agent 的原候选和主 Agent 的固定渠道选择。
         app::Application host({},root/"packages",root/"user",Backend{[&](const auto&,const Request& input) -> Response {
             const auto& last = input.messages.back();
@@ -57,13 +84,13 @@ int wmain(int argc, wchar_t** argv) {
             if (tool == input.tools.end()) throw std::runtime_error("confirmed collection unavailable");
             const auto args = Json{{"block","dirt"},{"count",2},{"approval",local ? "game" : "main"}}.dump();
             return {{Role::assistant,"",{{"collect",tool->name,args}}},FinishReason::tool_calls};
-        }});
+        }},run);
         host.plugins().install(argv[1]);
         host.wake_for_plugin_mail(!manual);
         if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto id = host.open_companion("mc.companion");
         host.listen_companion(id);
-        bool requested_stop = false;
+        bool requested_stop = false, delayed = false;
         unsigned manual_wait = 0, reviews = 0;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(15);
         while (std::chrono::steady_clock::now() < deadline) {
@@ -82,9 +109,13 @@ int wmain(int argc, wchar_t** argv) {
                     host.answer_console_ask(question->first,"deny"))
                     throw std::runtime_error("terminal answer was accepted before display or overwritten");
             }
-            if (manual && reviews == 1 && main_calls == 2 && host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
+            if (manual && reviews == 1 && main_calls == 2 && !host.conversation().busy()) {
+                // 跨过原答复截止及旧回收窗口，仍应取回同一份已接纳答复。
+                if (delayed_review && !delayed) { host_seconds = 30; delayed = true; }
+                else if (host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
+            }
             if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
-                (local || (main_calls == 4 && !host.conversation().busy()))) {
+                (local || (main_calls == 4 && !host.conversation().busy() && received(host.trace_file(),first || delayed_review)))) {
                 host.stop_companion(id);
                 requested_stop = true;
             }

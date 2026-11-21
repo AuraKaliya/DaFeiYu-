@@ -24,9 +24,10 @@ class InteractionRoutes {
     struct Exchange {
         plugins::RoutedEvent origin;
         std::uint64_t item, revision, ask = 0;
-        agent::ToolTime deadline;
+        agent::ToolTime answer_deadline;
         events::MailboxId main_box{};
         bool initial_queued = false, sent = false, result_queued = false, reply_requested = false;
+        bool plugin_queued = false, acknowledged = false;
     };
     // 核对原插件及其当前接收地址。
     events::MailboxId destination(const plugins::RoutedEvent& event) const;

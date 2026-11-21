@@ -18,7 +18,7 @@ bool text_ok(std::string_view text, std::size_t bound) {
 // 步骤：核对问题与答案契约 → 回收旧回执或拒绝超额 → 发布原票据。
 std::uint64_t AskService::open(runtime::DomainId owner, AskSpec spec) {
     if (!owner || !text_ok(spec.question,2048) || !text_ok(spec.recipient,128) || !text_ok(spec.channel,64) ||
-        spec.deadline <= clock_() || spec.choices.size() > 8) throw std::invalid_argument("ask: invalid request");
+        spec.answer_deadline <= clock_() || spec.choices.size() > 8) throw std::invalid_argument("ask: invalid request");
     std::set<std::string_view> distinct;
     for (const auto& choice : spec.choices)
         if (!text_ok(choice,512) || !distinct.insert(choice).second) throw std::invalid_argument("ask: invalid choice");
@@ -79,10 +79,10 @@ void AskService::cancel(std::uint64_t id, runtime::DomainId owner) {
 void AskService::advance() {
     const auto now = clock_();
     for (auto& [id,request] : requests_)
-        if (active(request.phase) && now >= request.spec.deadline) request.phase = AskPhase::expired;
+        if (active(request.phase) && now >= request.spec.answer_deadline) request.phase = AskPhase::expired;
 }
 
-// 标出已返回给原消费者的终态回执。
+// 标出可以回收的终态票据。
 void AskService::release(std::uint64_t id) {
     const auto found = requests_.find(id);
     if (found != requests_.end() && !active(found->second.phase)) found->second.released = true;

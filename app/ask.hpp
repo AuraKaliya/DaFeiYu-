@@ -8,7 +8,7 @@ enum class AskPhase { presenting, waiting, answered, expired, cancelled, failed 
 struct AskSpec {
     std::string question, recipient, channel;
     std::vector<std::string> choices;
-    agent::ToolTime deadline;
+    agent::ToolTime answer_deadline;
 };
 struct AskRequest {
     runtime::DomainId owner;
@@ -35,7 +35,7 @@ class AskService {
     void cancel(std::uint64_t id, runtime::DomainId owner);
     // 结算到期票据，保留等待中的原身份。
     void advance();
-    // 回传后允许在容量内逐步回收已退出的旧票据。
+    // 在原插件确认收件或原实例退出后，允许回收该终态票据。
     void release(std::uint64_t id);
   private:
     // 仅借用由该渠道和实例持有的请求。

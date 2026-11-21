@@ -52,13 +52,18 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     return true;
 }
 
+// 检查原候选仍绑定当前游戏世界、玩家和游标。
+bool PartnerLoop::confirmation_context_current(std::uint64_t order) const {
+    return confirmation_ && order && feed_.ready() && !feed_.departed() && !feed_.gap() &&
+        feed_.world() == confirmation_->world && feed_.owner() == confirmation_->player && feed_.cursor() == order;
+}
+
 // 返回唯一已批准候选的不可变参数，动作接纳仍经游戏侧核对当前世界和游标。
 std::optional<std::string> PartnerLoop::confirm_result(std::uint64_t request) const {
     if (!confirmation_ || confirmation_->request != request) return std::string{};
     const auto& item = *confirmation_;
     if (item.decision.is_null() || (presentation_ && presentation_->request == request)) return {};
-    if (!item.approved_order || !feed_.ready() || feed_.world() != item.world || feed_.owner() != item.player ||
-        feed_.cursor() != item.approved_order || feed_.gap()) return std::string{};
+    if (!confirmation_context_current(item.approved_order)) return std::string{};
     return Json{{"context",{{"generation",item.world},{"order",item.approved_order}}},{"arguments",item.arguments}}.dump();
 }
 
