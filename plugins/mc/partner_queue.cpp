@@ -30,10 +30,13 @@ bool valid_step(std::string_view skill, const Json& args) {
 // 步骤：核对操作与旧工作 → 校验本轮工具范围及步骤参数 → 更新待执行队列。
 nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& args) {
     const auto operation = args.at("operation").get<std::string>();
+    if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
+        cancel_plan("cleared");
         clear_queue("cleared");
         return {{"status","cleared"}};
     }
+    if (plan_ && plan_->active) return {{"status","busy"}};
     const bool replace = operation == "replace";
     const bool interrupt = operation == "interrupt";
     if ((!replace && !interrupt && operation != "append") ||
@@ -85,7 +88,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
 // 步骤：检查在途行为和回合 → 验证收件身份 → 登记优先动作并暂停。
 bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
     std::string_view skill, std::string_view envelope, bool wait) {
-    if (!follow_ || session != session_ || !request_ || delegated(session) || !permits(session) ||
+    if ((plan_ && plan_->active) || !follow_ || session != session_ || !request_ || delegated(session) || !permits(session) ||
         !feed_.ready() || feed_.departed() || queued_.size() >= queue_limit ||
         (motion_ && motion_->skill == "follow" && motion_->stopping && !follow_->pausing)) return false;
     const auto input = Json::parse(envelope);
@@ -128,7 +131,8 @@ void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
     std::erase_if(queued_,[&](const auto& step) {
         if (group && step.invocation != group) return false;
         ids.push_back(step.work);
-        if (step.notify || std::ranges::find(settlements_,step.invocation,&WorkSettlement::invocation) != settlements_.end())
+        if (step.plan_node) finish_plan_node(*step.plan_node,false,{{"status","skipped"},{"reason",reason}});
+        else if (step.notify || std::ranges::find(settlements_,step.invocation,&WorkSettlement::invocation) != settlements_.end())
             settle_work(step.invocation,{{"invocation",step.invocation},{"skill",step.skill},{"bridgeWork",step.work},
                 {"result",{{"status","skipped"},{"reason",reason}}}});
         return true;
@@ -144,11 +148,15 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (closing || feed_.gap()) { clear_queue("stale"); return; }
     if (step.revision != task_.revision()) { clear_queue("stale",step.invocation); return; }
     if (follow_ && follow_->suspended && !step.interrupt) { resume_follow(config,body_busy); return; }
+    if (step.plan_node && request_ && order_ > step.order) return;
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
     if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args)) ||
         (step.skill == "fill_target" && !bind_fill(args))) {
-        clear_queue("blocked",step.invocation);
+        if (step.plan_node) {
+            finish_plan_node(*step.plan_node,false,{{"status","blocked"},{"reason","scope_or_approval"}});
+            queued_.pop_front();
+        } else clear_queue("blocked",step.invocation);
         return;
     }
     // 直接指定单格的挖掘已固定范围，普通队列采集继承任务的取材约束。
@@ -161,6 +169,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     motion_->accepted = false;
     motion_->queued = true;
     motion_->pickup = step.pickup;
+    motion_->plan_node = step.plan_node;
     queued_.pop_front();
 }
 }

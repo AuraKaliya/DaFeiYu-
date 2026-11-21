@@ -44,7 +44,7 @@ class PartnerLoop {
     // 判断角色的移动控制是否仍由原工作持有。
     bool has_motion() const noexcept { return motion_.has_value(); }
     // 有待执行步骤时，直接动作不得越过队列。
-    bool has_queued_action() const noexcept { return !queued_.empty(); }
+    bool has_queued_action() const noexcept { return !queued_.empty() || (plan_ && plan_->active); }
     // 执行当前原子会话的局内任务或工具目录操作。
     nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
     // 在动作接纳前把当前原话目标绑定到放置参数。
@@ -103,6 +103,16 @@ class PartnerLoop {
     void pause_follow() noexcept;
     // 批量结算未执行的步骤并释放队列。
     void clear_queue(std::string_view reason, std::uint64_t group = 0);
+    // 接纳当前目标下的短任务图，验证通过后才替换上次任务图。
+    nlohmann::json submit_plan(std::uint64_t invocation, const nlohmann::json& arguments);
+    // 读取同层各节点的真实回执，或将下层节点交给前后台执行器。
+    void advance_plan(const BridgeConfig& config, bool closing);
+    // 标注仍未执行的节点，并等待在途工作实际退出。
+    void cancel_plan(std::string_view reason);
+    // 用原节点和真实退出结果结算，不重复发布已终结节点。
+    void finish_plan_node(std::size_t index, bool ok, const nlohmann::json& result);
+    // 返回任务图及各节点状态，供普通聊天与任务续行共用。
+    nlohmann::json plan_context() const;
     // 在本地有界保留结构化事实，等本体接纳后归还。
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
@@ -160,6 +170,7 @@ class PartnerLoop {
         bool accepted = true;
         std::string pickup;
         bool queued = false;
+        std::optional<std::size_t> plan_node;
     };
     std::optional<Motion> motion_;
     struct Follow {
@@ -177,8 +188,27 @@ class PartnerLoop {
         std::string pickup;
         bool interrupt = false;
         bool notify = false;
+        std::optional<std::size_t> plan_node;
     };
     std::deque<QueuedAction> queued_;
+    struct PlanNode {
+        enum class State { pending, running, done, failed, skipped };
+        std::string id, work;
+        std::string_view skill;
+        nlohmann::json arguments, result;
+        std::vector<std::size_t> after;
+        std::size_t layer = 0;
+        State state = State::pending;
+        std::unique_ptr<GameWork> reading;
+    };
+    struct Plan {
+        std::uint64_t id, revision, order, request, supersedes;
+        std::vector<PlanNode> nodes;
+        std::size_t layer = 1;
+        bool active = true, cancelled = false;
+    };
+    std::optional<Plan> plan_;
+    nlohmann::json plan_receipts_ = nlohmann::json::array();
     bool replacing_motion_ = false;
     std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
     struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };

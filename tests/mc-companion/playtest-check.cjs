@@ -286,18 +286,29 @@ async function checkFillFour(fixture, player, whispers, combined) {
   if (combined) {
     await checkFollowDig(fixture, player, whispers);
     assert.equal(fixture.materialCount('dirt'), 1);
+    fixture.send('give DfyCompanion minecraft:oak_log 1');
     fixture.send('tp DfyGuestCheck 6.5 -60 -1.5 facing 3.5 -59 -3');
   }
   const source = combined ? 8 : 2;
+  const collectionOrder = combined ? source + 1 : source;
   await until(() => fixture.ownerEntity()?.position.x > 6 && read(material) === (combined ? 'air' : 'grass_block') &&
     fourCells.every(cell => read(cell) === 'air'), '四格、取材格原状和独立观察站位');
-  player.chat('从地上取够泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
   const obstruction = fourCells[2];
   const traceRows = () => readRows(fixture, 'trace/events.jsonl');
-  await until(() => traceRows().some(row => row.kind === 'mail.received' && row.category === 'mc.partner.motion' &&
-    row.body.action.order === source && row.body.action.skill === 'collect' && row.body.status === 'accepted'), '地面取材已接单');
   if (combined) {
+    await until(() => fixture.materialCount('oak_log') === 1, '原木已入包');
+    player.chat('把原木做成四个木板，然后填上我面前这堵墙的四个缺口');
+    await until(() => whispers.includes('我现在做不了木板，那四格我记着呢。'), '合成节点受阻后记住原开口');
+    assert.ok(fourCells.every(cell => read(cell) === 'air'));
     fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
+    await until(() => fixture.ownerEntity()?.position.x > 7, '玩家已经走到另一处门洞');
+    player.chat('那你在地上挖四个泥土，把墙补了');
+  } else {
+    player.chat('从地上取够泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
+  }
+  await until(() => traceRows().some(row => row.kind === 'mail.received' && row.category === 'mc.partner.motion' &&
+    row.body.action.order === collectionOrder && row.body.action.skill === 'collect' && row.body.status === 'accepted'), '地面取材已接单');
+  if (combined) {
     fixture.send('setblock '+obstruction.join(' ')+' minecraft:stone');
     await until(() => whispers.includes('下面两格补好了，上面有块石头挡着。'), '按真实部分回执发言');
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','stone','air']);
@@ -342,11 +353,12 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(read([x, y, z]), 'dirt');
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
-  assert.deepEqual(whispers, [...(combined ? ['好，我跟着你。','嗯，跟着呢。','你指哪一格？','听得见。','下面两格补好了，上面有块石头挡着。'] : []),
+  assert.deepEqual(whispers, [...(combined ? ['好，我跟着你。','嗯，跟着呢。','你指哪一格？','听得见。',
+    '我现在做不了木板，那四格我记着呢。','下面两格补好了，上面有块石头挡着。'] : []),
     '四格都补上了，另一处缺口留着。']);
   if (combined) {
     for (const [index, line] of ['你站到墙上，先换个目标。', '试一下普通采掘入口。'].entries()) {
-      const order = source + 2 + index;
+      const order = collectionOrder + 2 + index;
       player.chat(line);
       const attempted = await until(() => readRows(fixture, 'game-actions.jsonl').find(row =>
         row.order === order && row.skill === 'collect'), '切换任务后检查采掘入口');
@@ -356,6 +368,9 @@ async function checkFillFour(fixture, player, whispers, combined) {
       await until(() => fixture.settled >= order, '受阻原话已处理');
     }
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','dirt','dirt']);
+    player.chat('验收错误依赖。');
+    await until(() => traceRows().filter(row => row.kind === 'tool.exited' && ['cycle','missing'].includes(row.callId) &&
+      JSON.parse(row.output).status === 'invalid_plan').length === 2, '循环和缺失依赖在调度前拒绝');
   }
   const trace = traceRows();
   const receipts = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
@@ -374,6 +389,11 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0].questionResult.answer, '我面前的这个');
     assert.ok(!resolved[0].pendingQuestion && resolved[0].workSettlement);
+    const plans = trace.filter(row => row.category === 'mc.partner.plan' && row.body.status === 'settled');
+    assert.deepEqual(plans.map(row => row.body.layer), [1,2,1,2]);
+    assert.equal(plans[2].body.nodes.length, 2);
+    assert.notEqual(plans[0].body.plan, plans[2].body.plan);
+    assert.equal(inputs.filter((input,index) => input.trigger === 'plan.finished' && prepared[index].step === 1).length, 2);
   }
   if (!combined) assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 4);
 }

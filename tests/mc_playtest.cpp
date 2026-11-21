@@ -426,6 +426,10 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
     const auto call = [&](std::string name, Json args) -> Response {
         return {{Role::assistant,"",{use(name,name,args)}},FinishReason::tool_calls};
     };
+    const auto plan = [&](Json steps) { return call("queue_actions",{{"operation","plan"},{"steps",std::move(steps)}}); };
+    const auto step = [](std::string id, std::string skill, Json arguments, Json after = Json::array()) {
+        return Json{{"id",id},{"skill",skill},{"arguments",std::move(arguments)},{"after",std::move(after)}};
+    };
     const Json cells = Json::array({{{"x",3},{"y",-60},{"z",-3}},{{"x",4},{"y",-60},{"z",-3}},
         {{"x",3},{"y",-59},{"z",-3}},{{"x",4},{"y",-59},{"z",-3}}});
     const auto& last = request.messages.back();
@@ -433,6 +437,26 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "skills.expanded")
             return call("collect",{{"block","dirt"},{"count",1},{"x",3},{"y",-59},{"z",-3}});
+        if (input.at("trigger") == "plan.finished") {
+            const auto& graph = input.at("taskPlan");
+            const auto& layers = input.at("planSettlements");
+            if (layers.size() != 2 || graph.at("status") != "blocked") throw std::runtime_error("missing plan layers");
+            const auto& first = layers.front().at("nodes");
+            const auto& fill = layers.back().at("nodes").front().at("result");
+            if (graph.at("supersedes") == 0) {
+                if (first.size() != 1 || first.front().at("result").at("reasonCode") != "skill_unavailable" ||
+                    fill.at("status") != "skipped")
+                    throw std::runtime_error("unavailable craft did not block its dependent fill");
+                return call("reply",{{"text","我现在做不了木板，那四格我记着呢。"}});
+            }
+            const auto& collected = first.front().at("result");
+            if (first.size() != 2 || first.back().at("result").at("status") != "done" ||
+                collected.at("stock") != Json{{"item","dirt"},{"before",1},{"required",4},{"after",4}} ||
+                collected.at("inventoryDelta").at("dirt") != 3 || fill.at("status") != "blocked" ||
+                fill.at("changes").size() != 2 || fill.at("reasonCode") != "occupied")
+                throw std::runtime_error("plan did not sequence gathered stock and the original partial fill");
+            return call("reply",{{"text","下面两格补好了，上面有块石头挡着。"}});
+        }
         if (input.at("trigger") == "motion.finished") {
             const auto& work = input.at("finishedWork");
             const auto& settlement = input.at("workSettlement");
@@ -479,7 +503,18 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             return call("task_update",{{"goal","站到墙上"},{"next","player"},{"collection","visible"},{"target",Json::object()}});
         if (text == "试一下普通采掘入口。")
             return call("skills",{{"categories",{"dig_break"}}});
-        if (text.starts_with("从地上取够泥土"))
+        if (text == "验收错误依赖。") {
+            const auto cycle = Json::array({step("a","observe",Json::object(),{"b"}),step("b","observe",Json::object(),{"a"})});
+            const auto missing = Json::array({step("a","observe",Json::object(),{"b"})});
+            return {{Role::assistant,"",{use("cycle","queue_actions",{{"operation","plan"},{"steps",cycle}}),
+                use("missing","queue_actions",{{"operation","plan"},{"steps",missing}})}},FinishReason::tool_calls};
+        }
+        if (text == "那你在地上挖四个泥土，把墙补了") {
+            if (input.at("task").at("target").at("message") != 8 || input.at("taskPlan").at("status") != "blocked")
+                throw std::runtime_error("resumed plan lost its original opening");
+            return {{Role::assistant,"",{use("check-stock","observe",Json::object())}},FinishReason::tool_calls};
+        }
+        if (text.starts_with("从地上取够泥土") || text.starts_with("把原木做成四个木板"))
             return call("observe",{{"sources",{"message","self"}},{"message",events.back().at("sequence")},{"radius",5},{"verify",cells},
                 {"samples",{{"count",2},{"intervalMs",100}}}});
     } else if (last.role == Role::tool) {
@@ -490,6 +525,13 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 use("follow-reply","reply",{{"text","好，我跟着你。"}})}},FinishReason::tool_calls};
         }
         if (last.tool_call_id == "follow-reply") throw std::runtime_error("redundant decision after follow and reply");
+        if (last.tool_call_id == "queue_actions" && result.at("status") == "queued")
+            throw std::runtime_error("model ran without a layer completion or a new player event");
+        if (last.tool_call_id == "check-stock") {
+            if (result.at("inventory").at("dirt") != 1) throw std::runtime_error("ground work lost the previous pickup");
+            return plan(Json::array({step("stock","gather_ground",{{"item","dirt"},{"requiredStock",4}}),
+                step("look","observe",Json::object()),step("fill","fill_target",{{"block","dirt"}},{"stock","look"})}));
+        }
         if (last.tool_call_id == "find-hit") {
             if (!result.at("playerFocus").at("hit").is_null() || result.contains("survey"))
                 throw std::runtime_error("expected short, unresolved hit observation");
@@ -524,6 +566,8 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 return cell.at("block") == "air";
             })) throw std::runtime_error("fill-four probe: missing real empty cells");
             const auto& origin = sample.at("views").front();
+            if (combined && sample.at("views").back().at("actor").at("inventory").at("oak_log") != 1)
+                throw std::runtime_error("requested craft has no observed log");
             const auto& gaps = origin.at("playerFocus").at("candidates");
             const auto gap = std::ranges::find_if(gaps,[](const auto& candidate) {
                 return candidate.at("id") == "3,-60,-3:x" && candidate.at("width") == 2 && candidate.at("height") == 2;
@@ -539,6 +583,8 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             if (result.at("task").at("goal") == "站到墙上")
                 return call("dig_block",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
             if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
+            if (combined) return plan(Json::array({step("planks","craft",{{"item","oak_planks"},{"count",4}}),
+                step("fill","fill_target",{{"block","oak_planks"}},{"planks"})}));
             return call("gather_ground",{{"item","dirt"},{"requiredStock",4}});
         }
     }

@@ -22,6 +22,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
     "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
+    "有依赖的短任务用 queue_actions 的 plan 写明节点和 after，由程序等待回执并推进。新原话可沿用已绑定目标并提交替代计划。"
     "只展开本轮需要的工具类别。掉落规则可按需查 knowledge，库存和逐格变化以 finishedWork 或实际观察为准。"
     "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
@@ -120,6 +121,8 @@ void PartnerLoop::reset() noexcept {
     replacing_motion_ = false;
     guarded_actions_.clear();
     settlements_.clear();
+    plan_.reset();
+    plan_receipts_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -220,6 +223,8 @@ void PartnerLoop::retire() {
     task_ = {};
     guarded_actions_.clear();
     settlements_.clear();
+    plan_.reset();
+    plan_receipts_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
@@ -261,6 +266,8 @@ void PartnerLoop::submit(std::string_view wake) {
             input["queuedActions"].push_back({{"work",step.work},{"skill",step.skill},{"arguments",step.arguments}});
     }
     if (autonomous) input["recentEvents"] = recent_events_;
+    if (!delegated && plan_) input["taskPlan"] = plan_context();
+    if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
@@ -310,6 +317,7 @@ void PartnerLoop::submit(std::string_view wake) {
         question_result_.clear();
         expansion_pending_ = false;
         if (completed != settlements_.cend()) settlements_.erase(completed);
+        plan_receipts_.clear();
         approval_result_ = nullptr;
     }
     order_ = order;
@@ -359,6 +367,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         }
         if (!motion_ || (work != motion_->work && (!follow_ || motion_->skill != "follow" || work != follow_->id)))
             return {{"status","stale"}};
+        if (motion_->plan_node) cancel_plan("stopped");
         clear_queue("stopped");
         if (motion_->skill == "follow" && follow_) follow_->pausing = false;
         motion_->stopping = true;
@@ -474,6 +483,8 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
     if (ready_settlement() != settlements_.cend()) return "motion.finished";
+    if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
+    if (plan_ && plan_->active) return {};
     if (wait_for_work_) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
@@ -587,14 +598,19 @@ void PartnerLoop::advance_motion(bool stopping) {
         else follow_.reset();
     }
     publish("mc.partner.action",fact);
-    const bool failed = motion.queued && !verified_action(receipt,motion.skill,motion.pickup) &&
+    const bool verified = verified_action(receipt,motion.skill,motion.pickup);
+    const bool failed = motion.queued && !motion.plan_node && !verified &&
         !(replacing_motion_ && receipt.at("status") == "interrupted");
-    if (!stopping && !paused) {
+    if (motion.plan_node) {
+        if (!stopping) task_.record(fact);
+        finish_plan_node(*motion.plan_node,verified,receipt);
+    } else if (!stopping && !paused) {
         task_.record(fact);
         settle_work(motion.invocation,std::move(fact));
     }
     if (departed) {
         follow_.reset();
+        cancel_plan("exit_unconfirmed");
         clear_queue("exit_unconfirmed");
     } else if (failed) clear_queue("prerequisite_failed",motion.invocation);
     replacing_motion_ = false;
@@ -723,20 +739,25 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     const bool unavailable = closing || replaced || feed_.departed();
     advance_motion(unavailable);
     advance_confirmed_work(config,unavailable,body_busy);
+    advance_plan(config,unavailable);
     advance_queue(config,unavailable,body_busy);
     review(work,unavailable);
     if (!settle(config,instance,unavailable)) return;
     if (closing) {
-        if (motion_ || review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
+        if (motion_ || (plan_ && plan_->active) || review_.request || presentation_ || question_work_ ||
+            !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
     if (replaced) {
-        if (motion_) return;
+        if (motion_ || (plan_ && plan_->active)) return;
         retire();
     }
     if (feed_.departed()) {
+        if (plan_ && plan_->active) return;
         task_ = {};
         settlements_.clear();
+        plan_.reset();
+        plan_receipts_.clear();
         expanded_.reset();
         expansion_pending_ = false;
         dialogue_.clear();
