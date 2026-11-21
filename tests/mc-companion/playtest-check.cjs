@@ -4,6 +4,7 @@ const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
+const { wall, readArena } = require('./playtest-arena.cjs');
 
 // 用独立协议玩家走同一真人入口，核对资源包、可见角色和完整聊天回合。
 // 步骤：从服务端收到资源包 → 等待收件就绪 → 交叉核对模型输入、游戏动作与真实发言。
@@ -28,7 +29,12 @@ async function checkPlayer(fixture, mode) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
-    if (mode === '--wall-probe' || mode.startsWith('--ask-')) {
+    const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-');
+    if (wallProbe || partner) {
+      const arena = await until(() => readArena(player, wallProbe), '独立客户端读回验收场地');
+      writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
+    }
+    if (wallProbe) {
       await checkWall(fixture, player, whispers, mode);
     } else if (partner) {
       assert.deepEqual(whispers, []);
@@ -88,7 +94,7 @@ async function checkWall(fixture, player, whispers, mode) {
   await until(() => fixture.settled === 2, '保存原分工');
   player.chat('看我旁边的这块缺口');
   await until(() => fixture.settled === 3, '保存玩家原指向');
-  fixture.send('tp DfyGuestCheck 7.5 -60 -1.25');
+  fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
   await until(() => player.entity.position.x > 7, '玩家已走到门洞旁');
   player.chat('先补刚才指的缺口，门洞留空');
   if (askPath) {

@@ -9,6 +9,7 @@ const { setTimeout: sleep } = require('node:timers/promises');
 const { withPaper } = require('./paper.cjs');
 const { until } = require('./players.cjs');
 const { launch } = require('../../plugins/mc/bridge/start.cjs');
+const { prepareWall, prepareCourse } = require('./playtest-arena.cjs');
 
 // 按原版离线服的名字规则生成 UUID，只用于已经确认监听回环的体验服。
 function offlineId(name) {
@@ -70,16 +71,11 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
-    if (wallProbe) {
-      for (const command of ['gamerule randomTickSpeed 0', 'fill 2 -60 -3 2 -59 -3 minecraft:dirt', 'fill 6 -60 -3 6 -59 -3 minecraft:dirt',
-        'setblock 3 -60 -3 minecraft:dirt', 'setblock 3 -59 -3 minecraft:air',
-        'fill 7 -60 -3 7 -59 -3 minecraft:air', 'fill 4 -60 -3 4 -59 -3 minecraft:dirt',
-        'fill 8 -60 -3 8 -59 -3 minecraft:dirt', 'fill -3 -60 1 -3 -59 1 minecraft:oak_planks',
-        'tp DfyGuestCheck 3.5 -60 -0.5', 'give DfyCompanion minecraft:dirt 8', 'give DfyCompanion minecraft:oak_door 1'])
-        send(command);
-    } else if (mode !== '--probe') {
+    if (wallProbe) prepareWall(send);
+    else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
+      if (mode === '--partner-probe') prepareCourse(send);
     }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
