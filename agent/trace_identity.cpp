@@ -106,7 +106,8 @@ VersionDifference compare_public_versions(const TraceVersions& previous, const T
     };
     compare("application_commit",previous.application_commit,current.application_commit); compare("build",previous.build,current.build);
     compare("prompt_template",previous.prompt_template,current.prompt_template); compare("provider",previous.provider,current.provider);
-    compare("persona_profile",previous.persona_profile,current.persona_profile);
+    if (previous.persona_profile || current.persona_profile)
+        compare("persona_profile",previous.persona_profile,current.persona_profile);
     compare("model",previous.model,current.model); compare("model_profile",previous.model_profile,current.model_profile);
     compare("policy_revision",previous.policy,current.policy); compare("public_model_config",previous.public_model_config,current.public_model_config);
     compare("execution_policy",previous.execution_policy,current.execution_policy); compare("control_extension",previous.control_extension,current.control_extension);

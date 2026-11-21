@@ -35,6 +35,14 @@ int main() {
         config.timeout_ms = 1000; const auto changed = dfy::agent::public_run_versions(config,options,std::chrono::seconds(1));
         const auto diff = dfy::agent::compare_public_versions(versions,changed);
         check(diff.changed == std::vector<std::string>{"execution_policy"} && !diff.unknown.empty(),"version comparison invented equality or missed public change");
+        auto with_persona = versions;
+        with_persona.persona_profile = "dafeiyu/default/1";
+        const auto older = dfy::agent::compare_public_versions(versions,with_persona);
+        check(std::ranges::find(older.unknown,"persona_profile") != older.unknown.end(),"one missing persona version compared as equal");
+        auto next_persona = with_persona;
+        next_persona.persona_profile = "dafeiyu/default/2";
+        check(dfy::agent::compare_public_versions(with_persona,next_persona).changed == std::vector<std::string>{"persona_profile"},
+            "persona revision difference was lost");
         auto before = versions; before.tools.push_back({"fixture/read",1,10,"fixture-v1",first}); auto after = before; after.tools[0].instance = 20;
         check(dfy::agent::compare_public_versions(before,after).changed.empty(),"runtime generation became software version difference");
         after.tools[0].schema = "different-schema";
