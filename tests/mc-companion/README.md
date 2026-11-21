@@ -12,6 +12,16 @@
 
 正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
 
+### 动作调度和目标绑定基线
+
+在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
+
+```powershell
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence
+```
+
+脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
+
 ### 实机比较思考模式
 
 DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同一模型、同一场地和同一句「把你旁边那个木门拆下来，装到我指的这个缺口」，两次独立开局，只改变思考模式。分别记录玩家发话到首次观察、首次有效动作、完工和发言的耗时，检查原洞口是否保持、询问是否有必要。再用边走边聊确认模型处理期间跟随仍沿用原工作号。先比较思考模式，后续提示改动使用相同的对照条件单独比较。
