@@ -361,6 +361,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (skill == "ask_player") {
         auto question = open_question(invocation,args);
         reply_requested_ = true;
+        if (question.at("status") == "recorded") wait_for_work_ = true;
         return question;
     }
     if (skill == "stop_motion") {

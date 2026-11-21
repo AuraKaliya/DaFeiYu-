@@ -533,6 +533,8 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 use("follow-reply","reply",{{"text","好，我跟着你。"}})}},FinishReason::tool_calls};
         }
         if (last.tool_call_id == "follow-reply") throw std::runtime_error("redundant decision after follow and reply");
+        if (last.tool_call_id == "ask_player" && result.at("status") == "recorded")
+            throw std::runtime_error("model ran before a new fact resolved the recorded question");
         if (last.tool_call_id == "queue_actions" && result.at("status") == "queued")
             throw std::runtime_error("model ran without a layer completion or a new player event");
         if (last.tool_call_id == "check-stock") {
