@@ -27,6 +27,8 @@ MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响�
 
 工具记录区分候选、接纳和退出，保存原调用编号以及有效参数和实际结果。MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
 
+陪玩移动接纳后用 `mc.partner.motion` 记录开始及状态变化，用同一工作编号查对应的 `mc.partner.action` 终态。后续模型上下文的 `activeMotion` 记录正在运行的动作。查看墙体时，用 `sceneAtMessage` 核对发话现场，用 `task.target` 核对所选方格，再用放置回执的 `sourceMessage` 和 `taskRevision` 对照原任务。
+
 用同一组 `eventDomain` 和 `event` 核对 `event.captured`、`event.decoded`、`event.dispatched` 和 `ask.opened`。随后用 `ask` 关联 `ask.presented`、`ask.answer` 和 `ask.transition`。游戏渠道用呈现记录里的 `body.bridgeWork` 核对游戏发言。最后用 `mailbox` 和 `message` 核对 `interaction.delivered` 的入箱与 `interaction.acknowledged` 的收件确认。子 Agent 的后续 `model.prepared` 记录收到的 `questionResult` 和原目标。
 
 主 Agent 路径中的 `mail.dispatched` 记录真正收取信件的 `session` 和 `run`。该回合的 `model.prepared` 显示本轮工具及实参范围。`reply.intent` 将 `mail_reply` 的 `callId` 与原事项身份、信件序号和运行身份关联。回合退出时没有意图会记录 `reply.review_required`，可用 `/mail review` 主动取回待复审结果。

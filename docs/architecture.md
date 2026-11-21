@@ -61,9 +61,12 @@ flowchart TB
         Plugins --> Child
     end
     subgraph MC["MC 陪玩插件"]
-        Mc["PartnerLoop<br/>收件、目标、待答事项、持续调度"]
+        Mc["PartnerLoop<br/>原话现场、任务目标、待答事项、持续调度"]
         Skills["技能与原动作确认<br/>渐进展开、验证、执行读回"]
+        Motion["在途移动<br/>动作编号、进展、停止及退出"]
         Mc --> Skills
+        Skills -->|接纳后移交原票据| Motion
+        Mc <-->|独立推进与动作回执| Motion
     end
     Agent <-->|回合 Hook 快照| Hooks
     Capture --> Trace
@@ -80,7 +83,8 @@ flowchart TB
     GameHost --> App
     Gui -->|只读运行摘要| App
     Model -->|Platform WinHTTP| Service["模型服务"]
-    Skills <-->|Windows 命名管道| Bridge["独立 Node / Mineflayer 进程"]
+    Skills <-->|Windows 命名管道| Bridge["Node / Mineflayer<br/>发言、只读观察和独占角色动作"]
+    Motion <-->|原工作查询、停止| Bridge
     Bridge <-->|独立玩家连接| Minecraft["Minecraft 服务器"]
 ```
 
@@ -151,10 +155,12 @@ config:
     nodeSpacing: 24
 ---
 flowchart TB
-    Game["玩家：接着搭我围的墙<br/>下一次聊天：我在墙边上"] --> Loop
-    Loop["MC PartnerLoop<br/>收玩家和现场，保存目标、修订与动作回执"] -->|新事实或任务可继续| Turn
-    Turn["宿主子会话<br/>运行模型与已注册 Hook"] --> Look["MC 观察原墙，留下待答事项"]
-    Look --> Local["MC 先问玩家，局内等待"]
+    Game["玩家：接着搭我围的墙<br/>随后在 A 指向缺口，再走到门洞 B"] --> Anchor["MC 聊天收件<br/>原消息号和 A 处的现场快照"]
+    Anchor --> Loop
+    Loop["MC PartnerLoop<br/>保存目标、修订与动作回执"] -->|新事实或任务可继续| Turn
+    Turn["宿主子会话<br/>运行模型与已注册 Hook"] --> Look["MC 围绕原消息位置重读已加载方块"]
+    Look -->|有明确缺口| Bind
+    Look -->|缺口仍有歧义| Local["MC 登记待答事项<br/>先问玩家，局内等待"]
     Local -->|收到有效答复| Resurvey
     Local -->|等待期满| Event["插件发出待答事项超时事件"]
     Event --> Capture["宿主捕获，校验并分配原事件身份"]
@@ -172,10 +178,11 @@ flowchart TB
     Intent -->|回合退出时无意图| Review["保留结果，等待主动复审"]
     Review --> Back
     Delivery --> In["MC 原实例入箱<br/>插件发出带实际序号的收件确认"]
-    In -->|matched，现场仍需重读| Resurvey["MC 恢复共同目标，重新读现场"]
+    In -->|matched，现场仍需重读| Resurvey["MC 恢复共同目标，围绕原位置重新读现场"]
     In -->|stale| Receipt
-    Resurvey --> Expand["MC 选择放置分类<br/>宿主为下一轮固定工具范围"]
-    Expand --> Gate["MC 校验原格、支撑和材料<br/>门洞候选需要玩家批准"]
+    Resurvey --> Bind["MC 绑定原消息号、确切格与任务修订"]
+    Bind --> Expand["MC 选择放置分类<br/>宿主为下一轮固定工具范围"]
+    Expand --> Gate["MC 校验已选格、支撑和材料<br/>需要确认时固定原候选"]
     Gate -->|允许且现场仍有效| Work["Mineflayer 补墙或放门<br/>读回精确方格与库存"]
     Gate -->|拒绝、到期或失效| Receipt
     Work --> Receipt["回填动作结果与实际效果"]
@@ -185,8 +192,9 @@ flowchart TB
     Wait --> Loop
 ```
 
-- **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。插件保存当前共同目标、修订、已知与待核实事项、最近行动回执。一次模型回合结算后，插件按新玩家事实、任务继续、私有现场变化或目录展开选择何时开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。离场、换世界和关闭会回收局内任务。[插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
-- **工具快照。** 基础回合收到观察、交流、目录、任务更新和登记局内待答事项。目录列出 12 类及各类当前实现，查询后最多选三类进入后续回合。宿主每轮固定实际工具契约，游戏侧检查世界、来源、范围和动作前置条件。[技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp) · [游戏实现](../plugins/mc/bridge/partner.cjs)
+- **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。任务可以跨回合保留原消息号及已选方块。模型回合结算后，插件按新玩家事实、动作退出、任务继续、私有现场变化或目录展开选择是否开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
+- **移动和发言。** `start_move` 与 `follow` 接纳在途动作后交回本轮工具，插件持有原票据，后续回合可以观察和发言。角色操作共享独占游戏控制。游戏侧动态更新跟随目标，报告阶段变化和退出。显式停止、离场、换世界和关闭触发原动作回收。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [跟随](../plugins/mc/bridge/follow.cjs)
+- **工具快照。** 基础回合收到观察、交流、跟随、目录、任务更新和登记局内待答事项。活动动作存在时提供按原编号停止的工具。目录列出 12 类及各类当前实现，查询后最多选三类进入后续回合。宿主每轮固定实际工具契约，游戏侧检查世界、来源、范围和动作前置条件。 [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
 - **放置读回。** 观察返回已加载的方块体积和坐标原点。放置检查精确目标格、支撑面、占用及材料，再依据回执里的实际方块与库存判断效果。门上下两格分别核对。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[现场取样](../plugins/mc/bridge/block-survey.cjs) · [游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
 
 ## 当前边界

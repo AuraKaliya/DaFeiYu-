@@ -20,14 +20,13 @@
 
 ### 首轮实机：接续我已经搭的墙
 
-架构审查后由用户操作。先在场内搭一段有转角、缺口和高度差的墙，在附近留一段相似的结构作为参照。准备约定的材料。用自然聊天发起分工，再补一句“我在墙边上”。可先不说坐标，等她看过现场或请求澄清，确认双方说的是同一段墙。
+由用户操作。先准备一段有两处缺口的墙，一处用来补，另一处留作门洞。准备约定的材料。
 
-- 观察入场时是否有符合现场的回应，聊天结束后有无后续观察、行动或有明确原因的等待。
-- 核对下一轮是否接住原墙、材料和分工，能否说清还要核对哪些位置。若需要确认，观察她何时问、从哪条渠道问，以及确认后是否检查现场变化。
-- 核对放置坐标与实际方块。比较改动前后的墙、门洞和材料余量，并记录发言与实效是否一致。可按现场情况改变分工或请她停手。
-- 记下关键原话和大致时间。一局结束后按玩家消息号、子回合和工作号串查实际送模上下文、工具范围、响应、回执及实际发言。首轮评审记录事实、判断和待核实项。[日志审阅与离线回放](../../docs/run-guide.md)
+- 说「你跟着我走」，边走边问一句「到哪了」。观察她是否边走边答，以及转弯、停下再起步时是否继续跟随。
+- 在第一处缺口发话「过来帮我把墙的这个缺口填上」，随后走到门洞旁。核对她检查的是第一处缺口。现场有歧义时，观察她是否先确认，再按实际方格执行。
+- 核对补墙后的实际方块、门洞和材料余量，记录关键原话和大致时间。结束后用玩家消息号、子回合和工作号串查实际上下文、回执与发言。 [日志审阅与离线回放](../../docs/run-guide.md)
 
-工程回归可在准备好的**独立 Paper 夹具**中运行模式 `--wall-probe`。沿用探针的 Java、Paper、Node 与素材设置，把 `DFY_MC_TEST_ROOT` 指向隔离目录，加载固定模型的 `dfy_mc_playtest` 和当前插件包。协议玩家核对原墙、占用格零动作、补墙、批准前的空门洞以及门的上下两格。输出中的 `DFY_TRACE` 和同目录的 `game-actions.jsonl` 提供复盘材料。
+工程回归可在准备好的**独立 Paper 夹具**中运行模式 `--wall-probe`。沿用探针的 Java、Paper、Node 与素材设置，把 `DFY_MC_TEST_ROOT` 指向隔离目录，加载固定模型的 `dfy_mc_playtest` 和当前插件包。协议玩家离开原缺口后，核对错误候选被拦下、原缺口补齐、门洞在批准前保持两格为空、批准后读回门的上下两格。输出中的 `DFY_TRACE` 和同目录的 `game-actions.jsonl` 提供复盘材料。
 
 ```powershell
 node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
@@ -44,6 +43,8 @@ node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_
 三种模式均核对后续实际送模上下文保留共同目标和原答复。协议玩家独立读回原墙未覆盖、缺格已补，以及批准后的上下门格。Trace 可按事件身份、ASK 编号、模型运行和游戏工作号逐项核对。
 
 ### 用浏览器进服
+
+测试工作区刚构建的版本时，先运行上方带 `-BuildDirectory` 的体验服命令，再启动浏览器入口。
 
 运行 `./tests/mc-companion/browser-player/start.ps1 -FixtureRoot D:/DaFeiYu-MC-Test`。脚本验证并展开 WebMC 2.4.0 的官方发布包，启动体验服及本机连接服务，用 D 盘独立浏览器资料打开入口。加 `-PrepareOnly` 可以只准备服务。已在运行时可直接打开 [浏览器玩家入口](http://127.0.0.1:25582/)，点击“进入河边体验”。[上游项目与协议兼容范围](https://github.com/zardoy/minecraft-web-client) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
 
