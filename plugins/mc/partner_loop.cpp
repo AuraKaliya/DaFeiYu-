@@ -20,7 +20,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "用 commit_correction 把新目标与方格一起提交，pendingCorrection 保留跨轮原话；目标位于原墙面时沿用原候选。"
     "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
     "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
-    "观察仍无法区分且会改变做法时，用 ask_player 自然问一句；玩家给了确切指向后，在 dig_block 带上 pendingQuestion.item 作为 resolves。\n"
+    "同一句指向最多做两次针对性观察，仍无法确定就用 ask_player 自然问一句。"
+    "玩家给了确切指向后，dig_block 带上被观察的 message，若回答了问题同时带 pendingQuestion.item 作为 resolves。\n"
     "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
     "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
@@ -117,6 +118,7 @@ void PartnerLoop::stop() noexcept { if (phase_ == DFY_V2_PARTNER_LISTENING) phas
 void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
+    hit_queries_.clear();
     motion_.reset();
     follow_.reset();
     queued_.clear();
@@ -271,11 +273,15 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated && plan_) input["taskPlan"] = plan_context();
     if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
+    bool completed_dig = false;
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
         auto primary = receipts.size()-1;
         while (primary && !receipts.at(primary).contains("effect")) --primary;
         input["workSettlement"] = {{"invocation",completed->invocation},{"primary",primary},{"receipts",receipts}};
+        const auto& receipt = receipts.at(primary);
+        completed_dig = facts.empty() && !task_.correcting() && receipt.value("pointedDig",false) &&
+            verified_action(receipt.at("result"),"collect",{});
         auto& task = input.at("task");
         const auto latest = task.find("lastAction");
         if (latest != task.end() && std::ranges::any_of(receipts,[&](const auto& receipt) {
@@ -301,6 +307,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
+        if (completed_dig && skill.name != "reply") continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
@@ -330,6 +337,7 @@ void PartnerLoop::submit(std::string_view wake) {
     order_ = order;
     wait_for_work_ = false;
     repair_failures_.clear();
+    if (!facts.empty()) hit_queries_.clear();
     follow_handoff_ = false;
     reply_requested_ = false;
     reviewed_ = 0;
@@ -422,6 +430,17 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     expansion_pending_ |= (scope() & ~prior_scope).any();
     return result;
+}
+
+// 限制当前指向的后台观察次数，并在达到上限后阻止同类循环。
+// 步骤：找到指定原话 → 扣除观察额度或保留一次领到反馈的机会。
+bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args) {
+    if (session != session_ || active_delegation_ || args.value("focus","") != "hit" || !args.contains("message")) return true;
+    const auto message = args.at("message").get<std::uint64_t>();
+    auto& used = hit_queries_[message];
+    if (used++ < 2) return true;
+    limit_repair("observe_hit_budget");
+    return false;
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
@@ -569,13 +588,14 @@ void PartnerLoop::limit_repair(std::string code) {
 
 // 移交已接纳的原工作和不可随新回合改写的关联身份。
 void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
-    std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait) {
+    std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait, bool pointed) {
     if (motion_) throw std::logic_error("MC partner: motion already active");
     if (skill == "follow") {
         follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
         follow_handoff_ = true;
     }
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
+    motion_->pointed = pointed;
     wait_for_work_ = wait_for_work_ || wait;
 }
 
@@ -606,6 +626,7 @@ void PartnerLoop::advance_motion(bool stopping) {
         fact["work"] = follow_->id;
         fact["segment"] = follow_->segment;
     }
+    if (motion.pointed) fact["pointedDig"] = true;
     motion.stopping = motion.stopping || stopping;
     std::optional<GameResult> result;
     try { result = motion.action->poll(motion.stopping,!motion.accepted); }

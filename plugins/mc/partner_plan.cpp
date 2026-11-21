@@ -78,6 +78,8 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft")
             return invalid("unsupported_plan_skill");
         if (step.contains("pickup") || !prepare_action(skill,args)) return invalid("invalid_node_arguments");
+        if (skill == "dig_block" && !pointed_dig(session_,0,0,args).has_value())
+            return invalid("pointed_block_unverified");
         if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
         if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);

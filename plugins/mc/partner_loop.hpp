@@ -35,15 +35,20 @@ class PartnerLoop {
     bool waiting_for_target(std::uint64_t session) const noexcept { return session == session_ && task_.correcting(); }
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
+    // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
+    bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
+    // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
+    std::optional<bool> pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
+        const nlohmann::json& args) const;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
     // 接纳已经由游戏启动且尚未退出的原工作，接管轮询和停止。
     void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
-        std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait);
+        std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait, bool pointed);
     // 给跟随期间的直接一次性动作登记优先步骤。
     bool interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
-        std::string_view skill, std::string_view envelope, bool wait);
+        std::string_view skill, std::string_view envelope, bool wait, bool pointed);
     // 判断角色的移动控制是否仍由原工作持有。
     bool has_motion() const noexcept { return motion_.has_value(); }
     // 有待执行步骤时，直接动作不得越过队列。
@@ -178,6 +183,7 @@ class PartnerLoop {
         std::string pickup;
         bool queued = false;
         std::optional<std::size_t> plan_node;
+        bool pointed = false;
     };
     std::optional<Motion> motion_;
     struct Follow {
@@ -196,6 +202,7 @@ class PartnerLoop {
         bool interrupt = false;
         bool notify = false;
         std::optional<std::size_t> plan_node;
+        bool pointed = false;
     };
     std::deque<QueuedAction> queued_;
     struct PlanNode {
@@ -223,6 +230,7 @@ class PartnerLoop {
     std::deque<WorkSettlement> settlements_;
     bool wait_for_work_ = false, follow_handoff_ = false;
     std::map<std::string,unsigned> repair_failures_;
+    std::map<std::uint64_t,unsigned> hit_queries_;
     // 按调用组累积实际终态，独立于玩家事件的收取顺序。
     void settle_work(std::uint64_t invocation, nlohmann::json fact);
     // 只选出已无在途动作或待执行步骤的调用组。

@@ -151,6 +151,19 @@ void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view en
     complete_question("resolved",events_.back().at("text").get<std::string>());
 }
 
+// 校验模型所选的格确实来自本轮玩家指向，必要时同时核对待答事项。
+// 步骤：识别当前指向 → 核对原问题身份 → 匹配坐标和材质。
+std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
+    const Json& args) const {
+    if (session != session_ || active_delegation_) return !message && !item ? std::optional(false) : std::nullopt;
+    if (!message && !item && !hit_queries_.contains(order_)) return false;
+    if (!message) message = order_;
+    if (message != order_ || events_.empty() || events_.back().at("type") != "player.message" ||
+        (item && (!question_ || question_->item != item || question_->approval || question_->path != "local" ||
+            question_->order >= order_)) || !task_.matches_hit(message,args)) return std::nullopt;
+    return true;
+}
+
 // 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。
 // 步骤：核对队首求助 → 提交并保留暂满项 → 记录接纳身份并出队。
 void PartnerLoop::flush_question_events() {

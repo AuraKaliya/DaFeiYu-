@@ -89,7 +89,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
 // 保存直接动作并请求跟随释放角色，原任务与普通排队项继续保留。
 // 步骤：检查在途行为和回合 → 验证收件身份 → 登记优先动作并暂停。
 bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
-    std::string_view skill, std::string_view envelope, bool wait) {
+    std::string_view skill, std::string_view envelope, bool wait, bool pointed) {
     if ((plan_ && plan_->active) || !follow_ || session != session_ || !request_ || delegated(session) || !permits(session) ||
         !feed_.ready() || feed_.departed() || queued_.size() >= queue_limit ||
         (motion_ && motion_->skill == "follow" && motion_->stopping && !follow_->pausing)) return false;
@@ -97,7 +97,9 @@ bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocati
     const auto& context = input.at("context");
     if (context.at("generation") != session_world_ || context.at("order") != order_) return false;
     const auto position = std::ranges::find(queued_,false,&QueuedAction::interrupt);
-    queued_.insert(position,{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true,wait});
+    QueuedAction action{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true,wait};
+    action.pointed = pointed;
+    queued_.insert(position,std::move(action));
     pause_follow();
     wait_for_work_ = wait_for_work_ || wait;
     return true;
@@ -172,6 +174,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     motion_->queued = true;
     motion_->pickup = step.pickup;
     motion_->plan_node = step.plan_node;
+    motion_->pointed = step.pointed;
     queued_.pop_front();
 }
 }

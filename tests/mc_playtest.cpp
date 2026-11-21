@@ -473,6 +473,12 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 (input.contains("pendingQuestion") || input.at("questionResult").at("status") != "resolved"))
                 throw std::runtime_error("fill-four probe: observed player reference did not resolve the old question");
             const auto& result = work.at("result");
+            if (work.value("pointedDig",false)) {
+                if (result.at("changes").size() != 1 || result.at("inventoryDelta").at("dirt") != 1 ||
+                    request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply"))
+                    throw std::runtime_error("fill-four probe: exact dig completion reopened exploration");
+                return {{Role::assistant,R"({"internal":"exact dig settled"})"}};
+            }
             if (result.contains("stock")) {
                 if (result.at("stock") != Json{{"item","dirt"},{"before",combined ? 1 : 3},{"required",4},{"after",4}} ||
                     result.at("inventoryDelta").at("dirt") != (combined ? 3 : 1))
@@ -552,7 +558,11 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         if (last.tool_call_id == "extra-view") {
             if (!result.at("observation").at("samples").front().at("views").front().at("playerFocus").at("hit").is_null())
                 throw std::runtime_error("ambiguous request unexpectedly identified a block");
-            return call("ask_player",{{"question","你指哪一格？"}});
+            const auto message = result.at("observation").at("samples").front().at("views").front().at("message");
+            return {{Role::assistant,"",{
+                use("third-hit","observe",{{"message",message},{"focus","hit"}}),
+                use("guessed-dig","dig_block",{{"message",message},{"block","grass_block"},{"x",2},{"y",-61},{"z",0}}),
+                use("ask_player","ask_player",{{"question","你指哪一格？"}})}},FinishReason::tool_calls};
         }
         if ((last.tool_call_id == "dig_block" || last.tool_call_id == "gather_ground" || last.tool_call_id == "fill_target") &&
             (result.at("status") == "accepted" || result.at("status") == "queued"))
@@ -567,6 +577,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                     return msg.role == Role::user;
                 })->content);
                 args["resolves"] = input.at("pendingQuestion").at("item");
+                args["message"] = result.at("anchor").at("message");
                 return call("dig_block",args);
             }
             const auto& samples = result.at("observation").at("samples");

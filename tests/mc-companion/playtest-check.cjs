@@ -393,6 +393,13 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0].questionResult.answer, '我面前的这个');
     assert.ok(!resolved[0].pendingQuestion && resolved[0].workSettlement);
+    const digExit = prepared.find(row => row.step === 1 && JSON.parse(row.input.messages.at(-1).content).questionResult?.status === 'resolved');
+    assert.equal(prepared.filter(row => row.run === digExit.run && row.session === digExit.session).length, 1);
+    assert.deepEqual(digExit.input.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
+    for (const [id, reason] of [['third-hit','hit_observation_limit'],['guessed-dig','pointed_block_unverified']]) {
+      const rejected = trace.find(row => row.kind === 'tool.exited' && row.callId === id);
+      assert.equal(JSON.parse(rejected.output).reasonCode, reason);
+    }
     const plans = trace.filter(row => row.category === 'mc.partner.plan' && row.body.status === 'settled');
     assert.deepEqual(plans.map(row => row.body.layer), [1,2,1,2]);
     assert.equal(plans[2].body.nodes.length, 2);

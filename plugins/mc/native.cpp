@@ -26,6 +26,7 @@ struct NativeJob {
     bool controls_body = false;
     bool defer_motion = false, motion_transferred = false;
     bool wait_for_work = false;
+    bool pointed_dig = false;
     std::uint64_t resolves = 0;
     std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
@@ -241,13 +242,23 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
         std::uint64_t resolves = 0;
+        std::optional<bool> pointed = false;
+        bool observation_blocked = false;
+        if (game_skill == "observe") {
+            const auto input = nlohmann::json::parse(job.arguments);
+            observation_blocked = !raw->partner.admit_hit_observation(call->session,input.at("arguments"));
+        }
         if (game_skill == "collect") {
             auto input = nlohmann::json::parse(job.arguments);
             auto& args = input.at("arguments");
             if (args.value("editBuilt",false) && (!exact_dig || !args.contains("approval")))
                 return report(DFY_V2_INVALID_ARGUMENT,error);
             args.erase("approvedBuiltEdit");
-            if (exact_dig) resolves = args.value("resolves",std::uint64_t{});
+            if (exact_dig) {
+                resolves = args.value("resolves",std::uint64_t{});
+                pointed = raw->partner.pointed_dig(call->session,args.value("message",std::uint64_t{}),resolves,args);
+                args.erase("message");
+            }
             args.erase("resolves");
             if (exact_dig || gather_ground) {
                 args["count"] = exact_dig ? nlohmann::json(1) : args.at("requiredStock");
@@ -258,7 +269,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);
         const bool correction_blocked = controls_body && (game_skill == "collect" || game_skill == "place" || game_skill == "fill_target") &&
             raw->partner.waiting_for_target(call->session);
-        const bool target_blocked = correction_blocked || ((game_skill == "place" || game_skill == "fill_target") &&
+        const bool target_blocked = correction_blocked || !pointed.has_value() || observation_blocked ||
+            ((game_skill == "place" || game_skill == "fill_target") &&
             !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target"));
         if (!target_blocked && partner && skill->supports_approval) {
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");
@@ -272,15 +284,17 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw));
         if (busy) {
             if (!partner_turn || confirmed || skill->name == "follow" || body_job(*raw) ||
-                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,game_skill,job.arguments,wait_for_work))
+                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,game_skill,job.arguments,wait_for_work,*pointed))
                 return report(DFY_V2_BUSY,error);
             job.output = nlohmann::json{{"status","queued"},{"work",job.id}}.dump();
             job.ready = job.success = true;
             job.effect = DFY_V2_TOOL_APPLIED;
             raw->partner.resolve_block_question(resolves,job.arguments);
         } else if (target_blocked) {
-            job.output = correction_blocked ? R"({"status":"blocked","reason":"correction_pending"})" :
-                R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
+            if (correction_blocked) job.output = R"({"status":"blocked","reason":"correction_pending"})";
+            else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
+            else if (observation_blocked) job.output = R"({"status":"blocked","reasonCode":"hit_observation_limit","next":"ask_player"})";
+            else job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
             job.ready = job.success = true;
         } else if (confirmed) {
             if (pending_approval) job.output = nlohmann::json{{"status","waiting"},{"item",call->invocation}}.dump();
@@ -298,6 +312,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         else if (admit || receipt) job.wire = dfy::mc::delivery_request(admit, job.id, raw->config.key, job.arguments);
         else if (!local) job.wire = inbox ? dfy::mc::inbox_request(job.id, raw->config.key, job.arguments) : dfy::mc::world_request(job.id);
         job.resolves = resolves;
+        job.pointed_dig = pointed.value_or(false);
     } catch (const std::bad_alloc&) { return report(DFY_V2_RESOURCE_EXHAUSTED, error); }
     catch (...) { return report(DFY_V2_INVALID_ARGUMENT, error); }
     if (local || pending_approval) job.method = NativeJob::Method::local;
@@ -360,7 +375,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 job->output = std::move(value->payload);
                 if (value->accepted) {
                     job->output = nlohmann::json{{"status","accepted"},{"work",job->id}}.dump();
-                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->arguments,job->action,job->wait_for_work);
+                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->arguments,job->action,job->wait_for_work,job->pointed_dig);
                     job->motion_transferred = true;
                     raw->partner.resolve_block_question(job->resolves,job->arguments);
                 }
