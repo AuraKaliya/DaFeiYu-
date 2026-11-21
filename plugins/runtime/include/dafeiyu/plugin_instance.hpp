@@ -54,6 +54,8 @@ class PluginInstance {
     void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app);
     // 在创建前将子会话服务绑定到本实例。
     void enable_agents(std::weak_ptr<PluginAgents> service, const std::shared_ptr<PluginInstance>& instance);
+    // 仅从活动实例读取已解析的原生事件。
+    std::optional<RoutedEvent> take_routed_event();
     // 取得当前实例已接入的定向地址，未接入或停止后返回零。
     dfy_v2_mailbox_pair mailbox_addresses() const;
     // 借用启动后固定的 Hook 元数据，只在实例活动期间提供。

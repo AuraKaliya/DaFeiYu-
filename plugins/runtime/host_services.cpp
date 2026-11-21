@@ -159,6 +159,7 @@ bool HostServices::begin_shutdown() {
     state_->resources.stop_accepting();
     detail::revoke_mailboxes(*state_);
     detail::revoke_agents(*state_);
+    state_->event_routes.reset();
     if (state_->notifications) state_->notifications->revoke_pending();
     if (state_->processing) state_->processing->close(events::CloseMode::cancel);
     if (!state_->processing_resource.empty()) {
@@ -230,6 +231,7 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         else if (requested == DFY_V2_MAILBOX_INTERFACE && host.mailboxes) *output = &detail::mailbox_api();
         else if (requested == DFY_V2_MAILBOX_TEXT_INTERFACE && host.mailboxes) *output = &detail::mailbox_text_api();
         else if (requested == DFY_V2_AGENT_INTERFACE && !host.agents.expired()) *output = &detail::agent_api();
+        else if (requested == DFY_V2_ROUTED_EVENT_INTERFACE) *output = &detail::routed_event_api();
         else if (requested == DFY_V2_GROUP_INTERFACE && host.group) *output = &detail::group_api();
         else if (requested == DFY_V2_PROCESSING_INTERFACE && host.processing) *output = &detail::processing_api();
         else return DFY_V2_UNSUPPORTED;

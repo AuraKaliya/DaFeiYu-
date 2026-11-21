@@ -218,6 +218,7 @@ struct PluginManager::State {
     std::weak_ptr<PluginAgents> agents;
     const std::size_t capacity;
     std::map<std::string,Entry> instances;
+    std::string event_cursor;
     std::shared_ptr<const HookPlan> hook_order;
     std::uint64_t registration = 0, hook_revision = 0;
     std::string directory_error;
@@ -338,6 +339,21 @@ ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode)
 }
 // 将宿主一次推进转交给管理状态，保留单步公平调度。
 runtime::RunResult PluginManager::advance() { return state_->advance(); }
+// 按实例轮转取出一件已解析事件，保持单实例接纳顺序。
+// 步骤：从上一来源之后起步 → 检查活动实例 → 移动游标并交付结果。
+std::optional<RoutedEvent> PluginManager::take_routed_event() {
+    const auto& entries = state_->instances;
+    auto item = entries.upper_bound(state_->event_cursor);
+    for (std::size_t index = 0; index < entries.size(); ++index,++item) {
+        if (item == entries.end()) item = entries.begin();
+        if (item->second.faulted || item->second.stopping) continue;
+        if (auto event = item->second.instance->take_routed_event()) {
+            state_->event_cursor = item->first;
+            return event;
+        }
+    }
+    return {};
+}
 // 在同一份注册快照上依次调用适用实例，拒绝立即停止，确认条件累计到本步。
 // 步骤：检查调用点 → 取得或刷新固定计划 → 按会话过滤及裁定。
 uint32_t PluginManager::control_hook(const dfy_v2_hook_input& input) {

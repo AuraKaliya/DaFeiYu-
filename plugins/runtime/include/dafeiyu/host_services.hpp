@@ -9,10 +9,12 @@
 #include <dafeiyu/mailboxes.hpp>
 #include <dafeiyu/mailbox_abi_v2.h>
 #include <dafeiyu/plugin_agents.hpp>
+#include <dafeiyu/routed_event.hpp>
 #include <dafeiyu/completion_notifications.hpp>
 #include <dafeiyu/code_module.hpp>
 #include <dafeiyu/plugin_abi_v2.h>
 #include <memory>
+#include <optional>
 
 namespace dfy::plugins {
 namespace detail { struct HostState; struct CallbackSupport; }
@@ -57,6 +59,10 @@ class HostServices {
     dfy_v2_handle expose(std::shared_ptr<events::GroupReader> reader);
     // 在数据或取消变化后推进所有本实例读取，并回收已无客户端的终结结果。
     void advance();
+    // 冻结启动时登记的事件解析器，回合推进只消费已接纳事件。
+    void seal_event_routes();
+    // 在原实例的代码保护内解出下一项事件结果。
+    std::optional<RoutedEvent> take_routed_event();
     // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。
     void enable_events(std::shared_ptr<events::BroadcastChannel> channel, std::size_t request_capacity);
     // 为原实例授予与本体双向建立信箱的能力，注册由该实例发起。

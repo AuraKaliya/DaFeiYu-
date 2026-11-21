@@ -42,6 +42,8 @@ class PluginManager {
     ShutdownResult unload(const std::string& id, DependencyStop mode = DependencyStop::refuse_dependents);
     // 推进全部实例的就绪通知及正常停止等待，每次只执行一个公平调度步骤。
     runtime::RunResult advance();
+    // 从活动实例取一个原生事件，轮转选择发送方。
+    std::optional<RoutedEvent> take_routed_event();
     // 按已发布计划执行当前范围的控制 Hook，拒绝优先于确认和允许。
     uint32_t control_hook(const dfy_v2_hook_input& input);
     // 收敛同一字段的修改，冲突或回调错误时拒绝；无修改时返回空可选值。

@@ -1,6 +1,8 @@
 #include <dafeiyu/host_services.hpp>
+#include <dafeiyu/routed_event_abi_v2.h>
 #include <dafeiyu/dynamic_library.hpp>
 #include "fixtures/query_v2/api.h"
+#include <algorithm>
 #include <iostream>
 #include <thread>
 #include <cstddef>
@@ -15,6 +17,46 @@ namespace {
 using namespace dfy::plugins;
 // 在服务绑定、引用或边界错误不符合契约时报告失败。
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
+// 回传测试解析结果，两类事件均由正式 ABI 解出。
+dfy_v2_status DFY_V2_CALL decode_route(void* context, dfy_v2_string_view raw, dfy_v2_event_projection* out) {
+    const std::string_view text(raw.data,raw.length);
+    out->kind = *static_cast<const uint32_t*>(context);
+    out->length = static_cast<uint32_t>(text.size());
+    std::copy(text.begin(),text.end(),out->json);
+    return DFY_V2_OK;
+}
+
+// 验证两个解析方向及停止时撤销排队事件。
+// 步骤：登记闭合契约 → 拒绝非法事件及冲突重投 → 解析两种结果 → 停止旧实例。
+void verify_routed_events() {
+    HostServices host(4);
+    const auto binding = host.bind();
+    const void* table = nullptr;
+    const dfy_v2_string_view capability{DFY_V2_ROUTED_EVENT_INTERFACE,sizeof(DFY_V2_ROUTED_EVENT_INTERFACE)-1};
+    check(HostServices::query(capability,1,&table,nullptr) == DFY_V2_OK,"missing routed event ABI");
+    const auto& api = *static_cast<const dfy_v2_routed_event_api*>(table);
+    uint32_t ask = DFY_V2_EVENT_ASK, mail = DFY_V2_EVENT_MAIL;
+    const dfy_v2_string_view type{"fixture.help",12}, second{"fixture.mail",12}, schema{R"({"id":"uint"})",13};
+    check(api.register_event(type,1,schema,decode_route,&ask,nullptr) == DFY_V2_OK &&
+        api.register_event(second,1,schema,decode_route,&mail,nullptr) == DFY_V2_OK,"registration failed");
+    host.seal_event_routes();
+    check(api.register_event(type,2,schema,decode_route,&ask,nullptr) == DFY_V2_INVALID_CONTEXT,"registration changed after start");
+    dfy_v2_event_receipt receipt{};
+    const dfy_v2_string_view first{R"({"id":4})",8}, next{R"({"id":5})",8}, invalid{R"({"id":"4"})",10};
+    check(api.emit(type,2,1,first,&receipt,nullptr) == DFY_V2_NOT_FOUND &&
+        api.emit(type,1,1,invalid,&receipt,nullptr) == DFY_V2_INVALID_ARGUMENT &&
+        api.emit(type,1,1,first,&receipt,nullptr) == DFY_V2_OK && receipt.domain && !receipt.repeated,
+        "version, payload or acceptance mismatch");
+    const auto domain = receipt.domain;
+    check(api.emit(type,1,1,first,&receipt,nullptr) == DFY_V2_OK && receipt.repeated && receipt.domain == domain &&
+        api.emit(type,1,1,next,&receipt,nullptr) == DFY_V2_INVALID_ARGUMENT &&
+        api.emit(second,1,2,next,&receipt,nullptr) == DFY_V2_OK,"duplicate event changed original");
+    const auto a = host.take_routed_event(), b = host.take_routed_event();
+    check(a && b && a->id.domain == domain && a->kind == ask && !a->status && a->projection == R"({"id":4})" &&
+        b->id.sequence == 2 && b->kind == mail && !b->status && !host.take_routed_event(),"decode or ordering mismatch");
+    check(api.emit(type,1,3,first,&receipt,nullptr) == DFY_V2_OK && host.begin_shutdown() && !host.take_routed_event() &&
+        api.emit(type,1,4,first,&receipt,nullptr) == DFY_V2_INVALID_CONTEXT && host.finish_shutdown(),"old route survived shutdown");
+}
 // 验证纯 C 对未预编译结构的枚举及宿主描述引用寿命。
 // 步骤：建立六种字段的描述 → 查询并消费反射服务 → 拒绝索引及种类错误 → 保留后重新借用并回收。
 void verify_types(const dfy_v2_plugin_api& bootstrap) {
@@ -194,6 +236,7 @@ int wmain(int argc, wchar_t** argv) {
         verify_types(*bootstrap);
         verify_values(*bootstrap);
         verify_nested_rejection();
+        verify_routed_events();
         library.close();
         {
             auto binding = host.bind();

@@ -2,6 +2,7 @@
 add_library(dfy_sdk INTERFACE include/dafeiyu/plugin_abi.h include/dafeiyu/plugin_abi_v2.h include/dafeiyu/data_abi_v2.h include/dafeiyu/event_abi_v2.h include/dafeiyu/lifecycle_abi_v2.h)
 target_include_directories(dfy_sdk INTERFACE include)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/mailbox_abi_v2.h)
+target_sources(dfy_sdk PRIVATE include/dafeiyu/routed_event_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/agent_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/activity_abi_v2.h)
 target_sources(dfy_sdk PRIVATE include/dafeiyu/hook_abi_v2.h)

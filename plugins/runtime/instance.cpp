@@ -151,12 +151,27 @@ uint32_t PluginInstance::start() noexcept {
             if (activity && !activity->enter().api().step) throw std::invalid_argument("instance: incomplete activity interface");
             state_->hook_registrations = load_hooks();
             state_->text_hook_registrations = load_text_hooks();
+            state_->host.seal_event_routes();
             state_->activity = std::move(activity);
         }
         catch (...) { state_->phase = InstancePhase::created; status = DFY_V2_FAILED; }
     }
     if (status) { state_->error = status; try { (void)state_->host.begin_shutdown(); } catch (...) {} }
     return status;
+}
+// 在实例和模块活动保护内解析一个事件，随后把值复制给应用。
+// 步骤：准备发送者身份 → 进入受保护调用 → 绑定事件原实例。
+std::optional<RoutedEvent> PluginInstance::take_routed_event() {
+    if (phase() != InstancePhase::active) return {};
+    auto sender = std::string(plugin_id());
+    auto code = retain_code();
+    auto active = code.enter();
+    auto event = state_->host.take_routed_event();
+    if (event) {
+        event->owner = generation();
+        event->plugin = std::move(sender);
+    }
+    return event;
 }
 // 只暴露活动实例的固定注册顺序。
 std::span<const dfy_v2_hook_description> PluginInstance::hooks() const noexcept {

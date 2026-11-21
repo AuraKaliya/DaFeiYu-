@@ -5,7 +5,7 @@ add_library(dfy_plugins STATIC manifest.cpp registry.cpp config.cpp module.cpp m
 
 # 配置公开 SDK 与平台接口，JSON 解析保留在实现层，不依赖 Agent。
 target_compile_features(dfy_plugins PUBLIC cxx_std_20)
-target_sources(dfy_plugins PRIVATE host_mailboxes.cpp)
+target_sources(dfy_plugins PRIVATE host_mailboxes.cpp host_routed_events.cpp include/dafeiyu/routed_event.hpp)
 target_sources(dfy_plugins PRIVATE host_agents.cpp include/dafeiyu/plugin_agents.hpp)
 target_sources(dfy_plugins PRIVATE plugin_order.cpp include/dafeiyu/plugin_order.hpp)
 target_sources(dfy_plugins PRIVATE instance_hooks.cpp)

@@ -6,6 +6,7 @@
 #include <dafeiyu/group_abi_v2.h>
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/processing_abi_v2.h>
+#include <dafeiyu/routed_event_abi_v2.h>
 #include <dafeiyu/resource_owner.hpp>
 #include <dafeiyu/enum_descriptor.hpp>
 #include <dafeiyu/union_descriptor.hpp>
@@ -15,6 +16,7 @@
 
 namespace dfy::plugins::detail {
 struct NotificationReference { runtime::Handle registration; };
+struct EventRoutes;
 using HostObject = std::variant<std::shared_ptr<const runtime::Value>, std::shared_ptr<const runtime::StructDescriptor>,
     std::shared_ptr<const runtime::StructValue>, std::shared_ptr<ReaderReference>, std::shared_ptr<events::ReadRequest>,
     std::shared_ptr<NotificationReference>, std::shared_ptr<const runtime::EnumDescriptor>, std::shared_ptr<const runtime::FieldDescriptor>,
@@ -37,6 +39,8 @@ struct HostState : std::enable_shared_from_this<HostState> {
     const std::thread::id owner;
     std::vector<ReaderSlot> readers;
     std::shared_ptr<events::BroadcastChannel> channel;
+    std::shared_ptr<EventRoutes> event_routes;
+    bool event_routes_sealed = false;
     std::shared_ptr<events::Mailboxes> mailboxes;
     runtime::DomainId mailbox_app = 0, mailbox_plugin = 0;
     dfy_v2_mailbox_pair mailbox_pair{};
@@ -59,6 +63,8 @@ inline thread_local HostState* current_host = nullptr;
 const dfy_v2_mailbox_text_api& mailbox_text_api();
 // 返回宿主子会话能力版本 1。
 const dfy_v2_agent_api& agent_api();
+// 返回当前实例的原生事件路由登记及提交接口。
+const dfy_v2_routed_event_api& routed_event_api();
 // 撤销原实例的子会话接纳并请求收尾。
 void revoke_agents(HostState& host) noexcept;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。
