@@ -23,6 +23,7 @@ struct NativeJob {
     std::uint32_t effect = DFY_V2_TOOL_NOT_APPLIED;
     std::uint64_t partner_session = 0, invocation = 0;
     bool confirmation = false, waiting = false;
+    bool controls_body = false;
     std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
@@ -209,8 +210,10 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
         text(call->call_id).empty() || call->call_id.length > 128 || (text(name) == "world" && !empty_args(text(call->arguments))))
         return report(DFY_V2_INVALID_ARGUMENT, error);
-    if ((partner || inspect || mine || home) && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) {
-        return job.sequence && (job.action || job.confirmation);
+    const bool controls_body = inspect || mine || home || (partner &&
+        (legacy || skill->name == "move" || skill->name == "collect" || skill->name == "place"));
+    if (controls_body && std::any_of(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) {
+        return job.sequence && job.controls_body && !job.exited;
     }))
         return report(DFY_V2_BUSY, error);
     const auto found = std::find_if(raw->jobs.begin(), raw->jobs.end(), [](const auto& job) { return job.sequence == 0; });
@@ -252,6 +255,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         job.skill = legacy ? "collect" : skill->name;
         job.confirmation = job.waiting = confirmed;
     }
+    job.controls_body = controls_body;
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);

@@ -91,10 +91,9 @@ async function collect(bot, args, check, result) {
 }
 
 // 为当前玩家提供独立读写技能，重读同一动作只返回已有回执。
-// 步骤：验证消息与世界 → 串行接纳技能 → 执行或协作取消 → 原票据读回实际结果。
+// 步骤：验证消息与世界 → 按角色资源接纳技能 → 执行或协作取消 → 原票据读回实际结果。
 function partnerService(bot, world, inbox, places, owner) {
   let active, previous, closed = false, done = Promise.resolve();
-  let source = null;
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
@@ -154,12 +153,12 @@ function partnerService(bot, world, inbox, places, owner) {
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
         if (args.block) result.visible = visible(bot, blockType(bot, args.block)).slice(0, 10).map(b => b.position.clone());
         if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
-        if (previous) result.lastAction = previous;
+        if (previous?.generation === r.generation) result.lastAction = previous;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
           throw new Error('回复需要一行 1～220 字的文字');
         const repeated = [...records.values()].some(e => e.receipt !== r && e.receipt.skill === 'reply' &&
-          e.receipt.result.sent && e.args.text === args.text);
+          e.receipt.generation === r.generation && e.receipt.order === r.order && e.receipt.result.sent && e.args.text === args.text);
         result.sent = repeated || tellOwner(bot, owner, args.text);
         result.reused = repeated;
         if (result.sent) result.text = args.text;
@@ -195,31 +194,39 @@ function partnerService(bot, world, inbox, places, owner) {
     scene,
     // 只对同一业务编号启动一次工作，原票据负责轮询、取消以及失联收尾。
     call(method, id, context, skill, args) {
-      const key = context.generation + '/' + context.order;
       if (!Number.isSafeInteger(context.order) || context.order <= 0 || typeof context.generation !== 'string')
         throw new Error('无效游戏消息身份');
-      if (method === 'partner.begin' && current(context) && source !== key && (!active || active.receipt.exited)) {
-        if (active?.receipt.generation !== context.generation) previous = null;
-        source = key;
-        records.clear();
-      }
       const known = records.get(id);
       if (known) {
-        if (source !== key || skill !== known.receipt.skill || (method === 'partner.begin' && JSON.stringify(args) !== JSON.stringify(known.args)))
+        const receipt = known.receipt;
+        if (receipt.generation !== context.generation || receipt.order !== context.order || skill !== receipt.skill ||
+          (method === 'partner.begin' && JSON.stringify(args) !== JSON.stringify(known.args)))
           throw new Error('工作身份冲突');
         if (known === active) {
           known.polled = performance.now();
           if (method === 'partner.stop') cancel();
         }
-        return known.receipt;
+        return receipt;
       }
-      if (method !== 'partner.begin' || !current(context) || (active && !active.receipt.exited) || records.size >= 64)
+      const controlsBody = skill !== 'reply' && skill !== 'observe';
+      if (method !== 'partner.begin' || !current(context) || (controlsBody && active && !active.receipt.exited))
         throw new Error('游戏工作已失效或正忙');
+      // 只回收已经退出且原消息不可能再次接纳的票据。
+      if (records.size >= 64) {
+        const reclaimable = [...records].find(([, entry]) => entry.receipt.exited &&
+          (entry.receipt.generation !== context.generation || entry.receipt.order !== context.order));
+        if (!reclaimable) throw new Error('游戏工作回执已满');
+        records.delete(reclaimable[0]);
+      }
       const job = { id, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(id, job);
-      active = job;
-      const timer = setInterval(() => { if (world.read()?.generation !== context.generation || performance.now() - job.polled > 4000) cancel(); }, 150);
-      done = run(job, args).finally(() => clearInterval(timer));
+      if (controlsBody) {
+        active = job;
+        const timer = setInterval(() => {
+          if (active === job && (world.read()?.generation !== context.generation || performance.now() - job.polled > 4000)) cancel();
+        }, 150);
+        done = run(job, args).finally(() => clearInterval(timer));
+      } else void run(job, args);
       return job.receipt;
     },
     // 立即关闭接纳，等原工作归还后才允许报告释放。

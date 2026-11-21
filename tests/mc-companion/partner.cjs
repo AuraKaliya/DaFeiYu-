@@ -54,7 +54,16 @@ async function exercise(fixture, player, fish) {
     const current = { ...context, order: 2 }, move = randomUUID();
     actions.partner.call('partner.begin', move, current, 'move', { x: 28, y: -60, z: -4 });
     await until(() => fish.entity.position.x > 14, '接管前确实正在移动');
-    assert.equal(actions.releaseControl(current.generation, 2).phase, 'requested');
+    player.chat('到哪了？');
+    await until(() => inbox.get(context.generation, 3), '移动期间收到玩家消息');
+    const later = { ...context, order: 3 };
+    const talk = randomUUID();
+    const reply = actions.partner.call('partner.begin', talk, later, 'reply', { text: '还在路上。' });
+    assert.ok(reply.exited && reply.result.sent);
+    assert.equal(actions.partner.call('partner.read', move, current, 'move').exited, false);
+    assert.equal(actions.partner.call('partner.begin', randomUUID(), later, 'observe', {}).result.status, 'done');
+    assert.throws(() => actions.partner.call('partner.begin', randomUUID(), later, 'move', { place: 'player' }), /正忙/);
+    assert.equal(actions.releaseControl(current.generation, 3).phase, 'requested');
     await until(() => actions.controlReceipt(current.generation)?.phase === 'released', '游戏确认已释放');
     assert.equal(actions.partner.call('partner.read', move, current, 'move').result.status, 'interrupted');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), current, 'move', { place: 'player' }));
