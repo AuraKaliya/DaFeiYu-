@@ -49,6 +49,11 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
     for (const auto& step : steps) {
         const auto name = step.at("skill").get<std::string>();
         const auto& parameters = step.at("arguments");
+        auto pickup = step.value("pickup",std::string{});
+        if (pickup.starts_with("minecraft:")) pickup.erase(0,10);
+        if (step.contains("pickup") && (name != "collect" || pickup.empty() || pickup.size() > 80 ||
+            pickup.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos))
+            throw std::invalid_argument("MC queue: invalid required pickup");
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
         if (skill == partner_skills.end() || !valid_step(name,parameters) ||
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
@@ -56,7 +61,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
-        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters});
+        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::move(pickup)});
     }
 
     if (replace) {
@@ -69,13 +74,15 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
     return {{"status","queued"},{"works",std::move(ids)}};
 }
 
-// 释放只在插件内登记、还未发送给游戏的步骤。
-void PartnerLoop::clear_queue(std::string_view reason) {
-    if (queued_.empty()) return;
+// 结算指定调用组或全部尚未发送给游戏的步骤。
+void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
     Json ids = Json::array();
-    for (const auto& step : queued_) ids.push_back(step.work);
-    publish("mc.partner.queue",{{"status",reason},{"works",std::move(ids)}});
-    queued_.clear();
+    std::erase_if(queued_,[&](const auto& step) {
+        if (group && step.invocation != group) return false;
+        ids.push_back(step.work);
+        return true;
+    });
+    if (!ids.empty()) publish("mc.partner.queue",{{"status",reason},{"works",std::move(ids)}});
 }
 
 // 将队首变为唯一占用角色的游戏工作，原输入和实际接纳游标分别保留。
@@ -87,7 +94,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
     if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args))) {
-        clear_queue("blocked");
+        clear_queue("blocked",step.invocation);
         return;
     }
     if (step.skill == "collect") task_.bind_collection(args);
@@ -96,10 +103,8 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));
     motion_.emplace(Motion{step.order,session_,step.request,step.invocation,session_world_,step.work,step.skill,std::move(action)});
     motion_->accepted = false;
-    if (step.skill == "collect") {
-        motion_->pickup = step.arguments.at("block").get<std::string>();
-        if (motion_->pickup.starts_with("minecraft:")) motion_->pickup.erase(0,10);
-    }
+    motion_->queued = true;
+    motion_->pickup = step.pickup;
     queued_.pop_front();
 }
 }

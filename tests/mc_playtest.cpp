@@ -365,7 +365,7 @@ dfy::model::Response door_sample(const dfy::model::Request& request) {
         collect["block"] = "oak_door";
         collect["count"] = 1;
         return call("queue_actions",{{"operation","append"},{"steps",Json::array({
-            {{"skill","collect"},{"arguments",std::move(collect)}},
+            {{"skill","collect"},{"pickup","oak_door"},{"arguments",std::move(collect)}},
             {{"skill","place"},{"arguments",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3}}}}
         })}});
     } else if (last.role == Role::tool && last.tool_call_id == "task_update")

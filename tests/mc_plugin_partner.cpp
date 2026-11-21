@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "../plugins/mc/partner_effect.hpp"
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
 #include <atomic>
@@ -7,12 +8,29 @@
 #include <nlohmann/json.hpp>
 #include <thread>
 
+namespace {
+// 核对草方块拆除、实际泥土入包以及部分成功的三个边界。
+// 步骤：验证真实掉落物 → 验证仅破坏的独立结果 → 验证未完成不推进后续步骤。
+void verify_collection_effect() {
+    using dfy::mc::verified_action;
+    auto result = nlohmann::json::parse(R"({"status":"done","broken":1,"changes":[{"before":"grass_block","after":"air"}],"inventoryDelta":{"dirt":1}})");
+    if (!verified_action(result,"collect","") || !verified_action(result,"collect","dirt") ||
+        verified_action(result,"collect","grass_block")) throw std::runtime_error("grass drop was not dirt");
+    result["inventoryDelta"].clear();
+    if (!verified_action(result,"collect","") || verified_action(result,"collect","dirt"))
+        throw std::runtime_error("block removal and material pickup were conflated");
+    result["status"] = "blocked";
+    if (verified_action(result,"collect","")) throw std::runtime_error("partial collect may not advance a dependency");
+}
+}
+
 // 通过真实 DLL、命名管道与可控后端验证插件拥有一条完整的回复链路。
 // 步骤：安装并启动原角色 → 等待在场和原话回合 → 核对真实技能回执 → 停止并卸载。
 int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     using namespace model;
     try {
+        if (argc == 3) verify_collection_effect();
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool follow = argc == 4 && std::wstring_view(argv[3]) == L"partner-follow";
         const bool motion = follow || (argc == 4 && std::wstring_view(argv[3]) == L"partner-motion");

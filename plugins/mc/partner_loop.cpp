@@ -1,4 +1,5 @@
 #include "partner_loop.hpp"
+#include "partner_effect.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <array>
@@ -499,11 +500,9 @@ void PartnerLoop::advance_motion(bool stopping) {
     fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
     publish("mc.partner.action",fact);
     const auto& receipt = fact.at("result");
-    const bool verified = receipt.at("status") == "done" && (motion.pickup.empty() ||
-        receipt.value("inventoryDelta",Json::object()).value(motion.pickup,0) > 0);
-    if (!queued_.empty() && !verified &&
+    if (motion.queued && !verified_action(receipt,motion.skill,motion.pickup) &&
         !(replacing_motion_ && receipt.at("status") == "interrupted"))
-        clear_queue("prerequisite_failed");
+        clear_queue("prerequisite_failed",motion.invocation);
     replacing_motion_ = false;
     if (!stopping) {
         task_.record(fact);

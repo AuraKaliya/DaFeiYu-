@@ -88,7 +88,7 @@ class PartnerLoop {
     // 在角色空闲且原前置工作已核实后提交一个步骤。
     void advance_queue(const BridgeConfig& config, bool closing, bool body_busy);
     // 批量结算未执行的步骤并释放队列。
-    void clear_queue(std::string_view reason);
+    void clear_queue(std::string_view reason, std::uint64_t group = 0);
     // 在本地有界保留结构化事实，等本体接纳后归还。
     void publish(std::string_view category, const nlohmann::json& payload);
     // 推进原世界接管并发布其真实释放结果。
@@ -145,6 +145,7 @@ class PartnerLoop {
         std::string last_phase;
         bool accepted = true;
         std::string pickup;
+        bool queued = false;
     };
     std::optional<Motion> motion_;
     struct QueuedAction {
@@ -152,6 +153,7 @@ class PartnerLoop {
         std::string work;
         std::string_view skill;
         nlohmann::json arguments;
+        std::string pickup;
     };
     std::deque<QueuedAction> queued_;
     bool replacing_motion_ = false;
