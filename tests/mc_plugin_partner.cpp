@@ -162,7 +162,7 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : motion ? "_start_move" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 9u : 10u) ||
+                if (chosen == request.tools.end() || request.tools.size() != 10u ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :

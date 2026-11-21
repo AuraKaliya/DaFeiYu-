@@ -438,8 +438,13 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "motion.finished") {
             const auto& task = input.at("task");
             const auto& changes = task.at("worldChanges");
-            if (changes.size() == 4 && input.at("finishedWork").at("result").at("placed") == true)
-                return call("queue_actions",{{"operation","append"},{"steps",Json::array({placement(3)})}});
+            const auto& result = input.at("finishedWork").at("result");
+            if (result.contains("stock")) {
+                if (result.at("stock") != Json{{"item","dirt"},{"before",3},{"required",4},{"after",4}} ||
+                    result.at("inventoryDelta").at("dirt") != 1)
+                    throw std::runtime_error("fill-four probe: ground gathering did not fill the actual deficit");
+                return call("queue_actions",{{"operation","append"},{"steps",Json::array({placement(0),placement(1),placement(2),placement(3)})}});
+            }
             if (changes.size() == 5 && input.at("finishedWork").at("result").at("placed") == true)
                 return call("reply",{{"text","四格都补上了，另一处缺口留着。"}});
         }
@@ -473,9 +478,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
         if (last.tool_call_id == "knowledge") {
             if (result.at("version") != "1.21.4" || result.at("entries").front().at("facts").at("defaultDrop") != "dirt")
                 throw std::runtime_error("fill-four probe: unsupported grass drop rule");
-            const Json collect{{"skill","collect"},{"pickup","dirt"},
-                {"arguments",{{"block","grass_block"},{"x",2},{"y",-61},{"z",0},{"count",1}}}};
-            return call("queue_actions",{{"operation","append"},{"steps",Json::array({collect,placement(0),placement(1),placement(2)})}});
+            return call("gather_ground",{{"block","grass_block"},{"item","dirt"},{"requiredStock",4}});
         }
     }
     return {{Role::assistant,R"({"internal":"game work continues"})"}};

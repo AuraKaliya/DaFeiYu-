@@ -252,9 +252,14 @@ async function checkFillFour(fixture, player, whispers) {
   assert.deepEqual(mutations.map(row => row.skill), ['collect', 'place', 'place', 'place', 'place']);
   const collect = mutations[0];
   assert.equal(collect.arguments.source, 'ground');
+  assert.deepEqual(collect.result.stock, { item: 'dirt', before: 3, required: 4, after: 4 });
   assert.deepEqual(collect.result.inventoryDelta, { dirt: 1 });
-  assert.deepEqual(collect.result.changes, [{ x: 2, y: -61, z: 0, before: 'grass_block', after: 'air' }]);
-  assert.equal(read(material), 'air');
+  assert.equal(collect.result.changes.length, 1);
+  const ground = collect.result.changes[0];
+  assert.equal(ground.y, -61);
+  assert.equal(ground.before, 'grass_block');
+  assert.equal(ground.after, 'air');
+  assert.equal(read([ground.x, ground.y, ground.z]), 'air');
   for (const [index, [x, y, z]] of fourCells.entries()) {
     const result = mutations[index + 1].result;
     assert.equal(result.sourceMessage, 2);
@@ -270,7 +275,7 @@ async function checkFillFour(fixture, player, whispers) {
     mutations.some(action => action.work === row.body.bridgeWork));
   assert.ok(knowledge && receipts[0].seq > knowledge.seq);
   assert.deepEqual(receipts.map(row => row.body.bridgeWork), mutations.map(action => action.work));
-  assert.equal(new Set(receipts.slice(0, 4).map(row => row.body.invocation)).size, 1);
+  assert.equal(new Set(receipts.slice(1).map(row => row.body.invocation)).size, 1);
   assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 5);
 }
 

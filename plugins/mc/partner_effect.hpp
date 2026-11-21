@@ -9,6 +9,8 @@ namespace dfy::mc {
 inline bool verified_action(const nlohmann::json& result, std::string_view skill, const std::string& pickup) {
     if (result.value("status","") != "done") return false;
     if (skill != "collect") return true;
+    if (const auto stock = result.find("stock"); stock != result.end())
+        return stock->at("after").get<int>() >= stock->at("required").get<int>();
     const auto changes = result.find("changes");
     if (result.value("broken",0) != 1 || changes == result.end() || !changes->is_array() ||
         changes->empty() || changes->front().value("after","") != "air") return false;

@@ -212,7 +212,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool partner = !raw->config.key.empty() && skill != partner_skills.end();
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
     const bool exact_dig = partner && skill->name == "dig_block";
-    const auto game_skill = legacy || exact_dig ? std::string_view("collect") :
+    const bool gather_ground = partner && skill->name == "gather_ground";
+    const auto game_skill = legacy || exact_dig || gather_ground ? std::string_view("collect") :
         partner && skill->name == "start_move" ? std::string_view("move") : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
@@ -236,11 +237,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (exact_dig) {
+        if (exact_dig || gather_ground) {
             auto input = nlohmann::json::parse(job.arguments);
             auto& args = input.at("arguments");
-            args["count"] = 1;
-            args["source"] = "visible";
+            args["count"] = exact_dig ? nlohmann::json(1) : args.at("requiredStock");
+            args["source"] = exact_dig ? "visible" : "ground";
             job.arguments = input.dump();
         }
         if (partner_turn && (skill->name == "collect" || legacy)) raw->partner.bind_collection(call->session,job.arguments);
@@ -267,7 +268,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.ready = job.success = true;
         } else if (confirmed) {
             if (pending_approval) job.output = nlohmann::json{{"status","waiting"},{"item",call->invocation}}.dump();
-            if (!raw->partner.confirm_action(call->session,call->invocation,exact_dig ? game_skill : skill->name,job.arguments,
+            if (!raw->partner.confirm_action(call->session,call->invocation,legacy ? skill->name : game_skill,job.arguments,
                 pending_approval ? job.id : std::string{}))
                 return report(DFY_V2_INVALID_CONTEXT,error);
             if (pending_approval) job.ready = job.success = true;

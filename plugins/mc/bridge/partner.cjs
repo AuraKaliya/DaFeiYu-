@@ -98,12 +98,20 @@ async function collect(bot, args, check, result) {
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
     throw new Error('数量应为 1～32，指定的单格只能采一次');
   const before = inventory(bot);
+  const expected = args.item?.replace(/^minecraft:/, '');
+  if (Object.hasOwn(args, 'item') && (!Object.hasOwn(bot.registry.itemsByName, expected) ||
+      args.requiredStock !== args.count || args.source !== 'ground'))
+    throw new Error('地面取材需要已知物品和目标库存');
+  const missing = expected ? Math.max(0, args.requiredStock - (before[expected] ?? 0)) : args.count;
+  if (expected) result.stock = { item: expected, before: before[expected] ?? 0, required: args.requiredStock };
   result.broken = 0;
   result.changes = [];
   const allowed = block => args.source !== 'ground' || fromGround(bot, block);
   try {
-    for (let n = 0; n < args.count; ++n) {
+    for (let n = 0; n < missing; ++n) {
       check();
+      const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
+      if (expected && stock >= args.requiredStock) break;
       const block = fixed ? bot.blockAt(fixed) : visible(bot, type).find(allowed);
       if (!block || block.type !== type.id || !block.diggable || !allowed(block))
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
@@ -130,9 +138,13 @@ async function collect(bot, args, check, result) {
       ++result.broken;
       check();
       await pickup(bot, pos, known, check, result);
+      if (expected && (inventory(bot)[expected] ?? 0) <= stock)
+        throw new Error('没有读到所需物品入包，已停止取材');
     }
+    if (expected && (inventory(bot)[expected] ?? 0) < args.requiredStock) throw new Error('实际背包仍缺少所需物品');
   } finally {
     const after = inventory(bot);
+    if (expected) result.stock.after = after[expected] ?? 0;
     result.inventoryDelta = {};
     for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
       const diff = (after[name] ?? 0) - (before[name] ?? 0);

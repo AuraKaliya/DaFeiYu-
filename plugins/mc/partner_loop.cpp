@@ -291,7 +291,9 @@ void PartnerLoop::submit(std::string_view wake) {
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
-        if (skill.kind != SkillKind::catalog && skill.name != "follow" && skill.name != "dig_block" && !base_category(category) &&
+        const bool direct = skill.name == "follow" || skill.name == "dig_block" ||
+            (skill.name == "gather_ground" && task_.target_ready());
+        if (skill.kind != SkillKind::catalog && !direct && !base_category(category) &&
             !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);
