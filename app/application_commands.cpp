@@ -253,6 +253,18 @@ void companion_command(Application& app, std::string_view command, std::ostream&
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
     if (name == "/companion") companion_command(application, command, output);
+    else if (name == "/mail") {
+        const auto words = command_words(command);
+        if (words.size() != 2 || words[1] != "review") throw std::invalid_argument("Usage: /mail review");
+        const auto result = application.review_mail();
+        if (result == MailboxIntakeResult::rejected) throw std::runtime_error("Mailbox review failed.");
+        output << (result == MailboxIntakeResult::idle ? "No mailbox item ready for review.\n" : "Mailbox item reviewed.\n");
+    } else if (name == "/ask") {
+        const auto words = command_words(command);
+        if (words.size() != 4 || words[1] != "answer") throw std::invalid_argument("Usage: /ask answer ID \"ANSWER\"");
+        if (!application.answer_console_ask(positive_id(words[2]),words[3])) throw std::invalid_argument("ASK reply not admitted.");
+        output << "ASK reply recorded.\n";
+    }
     else if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
     else if (name == "/task") {
         const auto words = command_words(command);
@@ -289,5 +301,16 @@ bool application_command(Application& application, std::string_view command, std
                << " recorded for " << receipt.request << " at revision " << receipt.revision << ".\n";
     } else return plugin_command(application.plugins(),command,output,errors);
     return true;
+}
+
+// 在终端实际输出原问题，以成功刷新作为呈现回执。
+void present_console_ask(Application& application, std::ostream& output) {
+    const auto pending = application.console_ask();
+    if (!pending) return;
+    const auto& [id,spec] = *pending;
+    output << spec.question << '\n';
+    for (const auto& choice : spec.choices) output << "  " << choice << '\n';
+    output << "/ask answer " << id << " \"ANSWER\"\n" << std::flush;
+    if (output) application.answer_console_ask(id,{});
 }
 }

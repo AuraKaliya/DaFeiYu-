@@ -21,9 +21,15 @@ struct EventRoutes {
     bool decoding = false;
     std::vector<Schema> schemas;
     std::deque<std::shared_ptr<const Item>> pending, recent;
+    RoutedMailbox mailbox;
 };
 
 namespace {
+// 核对限定为命名空间格式的事件或分类标识。
+bool namespaced(std::string_view name) {
+    return name.find('.') != name.npos && name.front() != '.' && name.back() != '.' &&
+        name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789._") == name.npos;
+}
 // 读取受限字节视图，避免复制无效输入和超过声明上限的正文。
 std::string_view bytes(dfy_v2_string_view value, std::size_t maximum) {
     if (!value.data || !value.length || value.length > maximum) throw std::invalid_argument("route: invalid bytes");
@@ -64,8 +70,7 @@ dfy_v2_status DFY_V2_CALL register_event(dfy_v2_string_view type, uint32_t versi
     return boundary(error,[&](HostState& host) {
         if (host.event_routes_sealed || host.resources.state() != runtime::OwnerState::open) return DFY_V2_INVALID_CONTEXT;
         const auto name = bytes(type,96);
-        if (!version || !decoder || name.find('.') == name.npos || name.front() == '.' || name.back() == '.' ||
-            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789._") != name.npos) return DFY_V2_INVALID_ARGUMENT;
+        if (!version || !decoder || !namespaced(name)) return DFY_V2_INVALID_ARGUMENT;
         auto fields = object_from(bytes(schema,4096));
         if (fields.size() > 24) return DFY_V2_RESOURCE_EXHAUSTED;
         for (const auto& [key,kind] : fields.items())
@@ -76,6 +81,19 @@ dfy_v2_status DFY_V2_CALL register_event(dfy_v2_string_view type, uint32_t versi
             return DFY_V2_BUSY;
         if (routes.schemas.size() == 16) return DFY_V2_RESOURCE_EXHAUSTED;
         routes.schemas.push_back({std::string(name),version,std::move(fields),decoder,context});
+        return DFY_V2_OK;
+    });
+}
+
+// 核对并固定原实例提交的主信箱策略建议。
+dfy_v2_status DFY_V2_CALL register_mailbox(dfy_v2_string_view type, uint32_t version, uint32_t flags, dfy_v2_error* error) {
+    return boundary(error,[&](HostState& host) {
+        if (host.event_routes_sealed || host.resources.state() != runtime::OwnerState::open) return DFY_V2_INVALID_CONTEXT;
+        const auto name = bytes(type,96);
+        if (!namespaced(name) || !version || flags & ~(DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE)) return DFY_V2_INVALID_ARGUMENT;
+        if (!host.event_routes) host.event_routes = std::make_shared<EventRoutes>();
+        if (host.event_routes->mailbox.version) return DFY_V2_BUSY;
+        host.event_routes->mailbox = {std::string(name),version,flags};
         return DFY_V2_OK;
     });
 }
@@ -121,6 +139,12 @@ const dfy_v2_routed_event_api& routed_event_api() {
     static const dfy_v2_routed_event_api api{{sizeof(dfy_v2_routed_event_api),DFY_V2_ROUTED_EVENT_VERSION},register_event,emit};
     return api;
 }
+
+// 提供独立版本的可选信箱策略登记表。
+const dfy_v2_routed_mailbox_api& routed_mailbox_api() {
+    static const dfy_v2_routed_mailbox_api api{{sizeof(dfy_v2_routed_mailbox_api),1},register_mailbox};
+    return api;
+}
 }
 
 namespace dfy::plugins {
@@ -148,6 +172,7 @@ std::optional<RoutedEvent> HostServices::take_routed_event() {
             (void)detail::object_from(projection);
             result.projection = projection;
             result.kind = output.kind;
+            if (output.kind == DFY_V2_EVENT_MAIL) result.mailbox = routes->mailbox;
         }
     } catch (...) { result.status = DFY_V2_FAILED; }
     routes->decoding = false;

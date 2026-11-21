@@ -89,11 +89,29 @@ std::string survey_block(const nlohmann::json& survey, int x, int y, int z) {
     return survey.at("palette").value(glyph,glyph);
 }
 
+// 固定主回合只能从实际收信提供的工具中选择渠道或回信。
+dfy::model::Response main_ask_sample(const dfy::model::Request& request, bool reply) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto& last = request.messages.back();
+    if (last.role == Role::tool) return {{Role::assistant, "主回合已处理原信。"}};
+    const auto envelope = Json::parse(last.content);
+    const auto body = Json::parse(envelope.at("content").get<std::string>());
+    if (envelope.at("category") != (reply ? "interaction.ask.completed" : "mc.partner.question") ||
+        !body.contains("item") || !body.contains("eventDomain") || !body.contains("event") ||
+        (reply && body.at("answer") != "靠河那段，留木门"))
+        throw std::runtime_error("wall probe: main call lost original envelope");
+    return {{Role::assistant,"",{{"route",reply ? "mail_reply" : "ask",reply ? "{}" : R"({"channel":"game"})"}}},
+        FinishReason::tool_calls};
+}
+
 // 用固定模型验证墙体目标跨回合、观察、范围展开和原候选确认。
 // 步骤：保存原分工 → 核实玩家附近结构 → 先拒绝覆盖再补一格 → 等待游戏玩家确认门。
 dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root, std::string_view ask_path) {
     using namespace dfy::model;
     using Json = nlohmann::json;
+    const auto main = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name == "ask" || tool.name == "mail_reply"; });
+    if (main != request.tools.end()) return main_ask_sample(request,main->name == "mail_reply");
     const auto& last = request.messages.back();
     const auto say = [](std::string text) { return Response{{Role::assistant,std::move(text)}}; };
     const auto call = [&](std::string skill, std::string id, const Json& args) -> Response {
@@ -151,16 +169,20 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
 int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     try {
-        const bool direct = argc == 4 && std::wstring_view(argv[3]) == L"--ask-direct-probe";
-        const bool wall = direct || (argc == 4 && std::wstring_view(argv[3]) == L"--wall-probe");
+        const auto mode = argc == 4 ? std::wstring_view(argv[3]) : std::wstring_view{};
+        const bool manual = mode == L"--ask-main-manual-probe";
+        const std::string_view ask = mode == L"--ask-direct-probe" ? "direct" :
+            manual || mode == L"--ask-main-probe" ? "main" : "";
+        const bool wall = !ask.empty() || mode == L"--wall-probe";
         const bool partner = wall || (argc == 4 && std::wstring_view(argv[3]) == L"--partner-probe");
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
         if (partner) run.trace_directory = root;
+        run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,direct,root](const auto&, const auto& request) {
-                if (wall) return wall_sample(request,root,direct ? "direct" : "");
+            [partner,wall,ask,root](const auto&, const auto& request) {
+                if (wall) return wall_sample(request,root,ask);
                 return partner ? partner_sample(request,root) : sample_turn(request);
             }},
             std::move(run));

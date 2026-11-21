@@ -35,7 +35,7 @@ function prepareScene(send) {
 // 步骤：等待玩家入场 → 绑定角色和观察端 → 运行宿主至接管或离场 → 收尾本次连接。
 async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
-  const wallProbe = mode === '--wall-probe' || mode === '--ask-direct-probe';
+  const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-');
   const root = path.join(evidence, 'host');
   const stop = path.join(root, 'stop');
   const settings = path.join(root, 'user/plugins/mc.companion');
@@ -87,7 +87,9 @@ async function play(fixture, exe, pkg, mode, config) {
     if (wallProbe) await until(() => game.bot.inventory.items().some(item => item.name === 'oak_door') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(2, -59, -3))?.name === 'dirt', '原墙和建材就绪');
     const args = mode === '--live' ? ['--mc-partner', config, pkg, root] : mode === '--probe' ? [pkg, root] : [pkg, root, mode];
-    child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
+    const review = mode === '--ask-main-manual-probe';
+    child = spawn(exe, args, { windowsHide: true, stdio: [review ? 'pipe' : 'ignore', 'pipe', 'inherit'] });
+    if (review) fixture.reviewMail = () => child.stdin.write('/mail review\n');
     exit = once(child, 'close');
     exit.catch(() => {});
     const lines = createInterface({ input: child.stdout });
@@ -164,7 +166,8 @@ async function rehearse(fixture, exe, pkg, mode) {
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
-  if (!['--live', '--probe', '--partner-probe', '--wall-probe', '--ask-direct-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
+  if (!['--live', '--probe', '--partner-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+    '--ask-main-manual-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
     throw new Error('需要已构建的体验宿主和 MC 包');

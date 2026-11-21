@@ -29,6 +29,7 @@ struct ApplicationRunConfig {
     std::optional<std::string> model_profile;
     bool wake_for_room_address = true;
     bool wake_for_companion_confirmation = true;
+    bool wake_for_plugin_mail = true;
     std::filesystem::path trace_directory;
 };
 enum class RoomEvent { presence_changed, addressed };
@@ -112,6 +113,12 @@ class Application {
     void decide_companion_confirmation(std::uint64_t id, std::uint64_t revision, bool approve);
     // 主动审查最近的原确认事项；已呈现或较旧的事项不再次启动模型。
     bool review_companion_confirmation();
+    // 宿主主动处理已登记的信箱，等待当前主回合退出。
+    MailboxIntakeResult review_mail() { return mailbox_intake_.advance(false); }
+    // 取得通用 ASK 的终端问题。
+    auto console_ask() const { return interactions_.console_question(); }
+    // 提交终端呈现回执或原真人答复。
+    bool answer_console_ask(std::uint64_t id, std::optional<std::string> answer) { return interactions_.console_answer(id,std::move(answer)); }
     // 设置随后到件是否自动进入确认分流，手动取件入口仍可使用。
     void wake_for_companion_confirmation(bool enabled) noexcept { wake_for_companion_confirmation_ = enabled; }
     // 显式授予一个已加载实例的只读工具并提交用户目标。

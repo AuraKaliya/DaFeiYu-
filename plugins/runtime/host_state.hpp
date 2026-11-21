@@ -65,6 +65,8 @@ const dfy_v2_mailbox_text_api& mailbox_text_api();
 const dfy_v2_agent_api& agent_api();
 // 返回当前实例的原生事件路由登记及提交接口。
 const dfy_v2_routed_event_api& routed_event_api();
+// 返回插件主信箱策略声明能力。
+const dfy_v2_routed_mailbox_api& routed_mailbox_api();
 // 撤销原实例的子会话接纳并请求收尾。
 void revoke_agents(HostState& host) noexcept;
 // 显式转换边界句柄，不跨 DLL 传递宿主类或按布局强制重解释。

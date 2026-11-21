@@ -30,6 +30,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
     while (!host.companion_status()->closed) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("game host step failed");
         host.conversation().advance();
+        present_console_ask(host,std::cout);
         if (const auto question = host.companion_confirmation(); question && question->channel == "panel" &&
             question->decision.empty() && presented != question->id) {
             presented = question->id;
@@ -37,7 +38,8 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         }
         if (input) {
             const auto line = input->poll();
-            if (line.state == platform::InputState::line && line.line.starts_with("/companion confirm ")) {
+            if (line.state == platform::InputState::line && (line.line.starts_with("/companion confirm ") ||
+                line.line.starts_with("/ask ") || line.line.starts_with("/mail "))) {
                 try { application_command(host,line.line,std::cout,std::cerr); }
                 catch (const std::exception& error) { std::cerr << error.what() << '\n'; }
             }

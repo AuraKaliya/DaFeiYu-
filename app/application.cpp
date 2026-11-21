@@ -44,7 +44,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
     model::Backend backend, ApplicationRunConfig run)
     : tool_clock_(std::move(run.tool_clock)),
       channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
-      mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{36,16,128,16*1024}),runtime::next_domain()},
+      mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{52,16,128,16*1024}),runtime::next_domain()},
       dialogue_sender_(runtime::next_domain()),
       dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_limit)),
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
@@ -54,7 +54,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
       conversation_(session_,labels_,&plugins_),
       mailbox_intake_(mailbox_host_,conversation_,run_log_),
-      interactions_(plugins_,mailbox_host_,tool_clock_,run_log_),
+      interactions_(plugins_,mailbox_host_,mailbox_intake_,tool_clock_,run_log_,run.wake_for_plugin_mail),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)),
       wake_for_companion_confirmation_(run.wake_for_companion_confirmation) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");

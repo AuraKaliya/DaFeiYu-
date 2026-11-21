@@ -6,6 +6,9 @@
 #define DFY_V2_EVENT_MAIL UINT32_C(2)
 #define DFY_V2_EVENT_ASK_FEEDBACK UINT32_C(3)
 #define DFY_V2_EVENT_ROUTE_CAPACITY 8192
+#define DFY_V2_ROUTED_MAILBOX_INTERFACE "dfy.mailbox.rules"
+#define DFY_V2_MAIL_HIGH UINT32_C(1)
+#define DFY_V2_MAIL_WAKE UINT32_C(2)
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +37,11 @@ typedef struct dfy_v2_routed_event_api {
     dfy_v2_status (DFY_V2_CALL *emit)(dfy_v2_string_view type, uint32_t version, uint64_t sequence,
         dfy_v2_string_view payload, dfy_v2_event_receipt* output, dfy_v2_error* error);
 } dfy_v2_routed_event_api;
+typedef struct dfy_v2_routed_mailbox_api {
+    dfy_v2_api_header header;
+    // 启动时声明给主 Agent 的原信件分类和建议处理策略。
+    dfy_v2_status (DFY_V2_CALL *register_mailbox)(dfy_v2_string_view category, uint32_t version, uint32_t flags, dfy_v2_error* error);
+} dfy_v2_routed_mailbox_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

@@ -52,6 +52,10 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     if (const auto status = events->register_event(view(feedback_type),1,
         view(R"({"ask":"uint","channel":"string","action":"string","delivered":"bool","recipient":"string","answer":"string"})"),
         decode_feedback,nullptr,nullptr); status) return status;
+    if (const auto status = host(view(DFY_V2_ROUTED_MAILBOX_INTERFACE),1,&table,nullptr); status) return status;
+    const auto* mail = static_cast<const dfy_v2_routed_mailbox_api*>(table);
+    if (!mail || mail->header.struct_size != sizeof(*mail) || !mail->register_mailbox) return DFY_V2_ABI_MISMATCH;
+    if (const auto status = mail->register_mailbox(view("mc.partner.question"),1,DFY_V2_MAIL_HIGH | DFY_V2_MAIL_WAKE,nullptr); status) return status;
     question_events_ = events;
     return DFY_V2_OK;
 }

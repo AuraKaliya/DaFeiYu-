@@ -12,6 +12,7 @@ struct MailboxDelivery {
 };
 // 回调可在宿主内处理原件；返回正文时交给主 Agent，空值表示处理完毕。
 using MailboxReview = std::function<std::optional<std::string>(const MailboxDelivery&)>;
+using MailboxOptions = std::function<void(const MailboxDelivery&,agent::RunOptions&)>;
 enum class MailboxIntakeResult { idle, handled, submitted, rejected };
 enum class MailboxPriority { normal, high };
 
@@ -23,17 +24,20 @@ class MailboxIntake {
         : host_(std::move(host)), conversation_(conversation), log_(std::move(log)) {}
     // 登记已存在信箱及审查回调，空触发列表表示只主动收件。
     void watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review,
-        MailboxPriority priority = MailboxPriority::normal);
+        MailboxPriority priority = MailboxPriority::normal, MailboxOptions options = {});
     // 在主会话可接纳时主动处理一封，队首按本收件地址的规则审查。
     MailboxIntakeResult review(events::MailboxId mailbox);
     // 在有待处理到件信号时推进一个信箱，保持箱内 FIFO。
-    MailboxIntakeResult advance();
+    MailboxIntakeResult advance(bool only_wake = true);
+    // 判断主回合的工具快照是否仍被在途工作使用。
+    bool busy() const noexcept { return conversation_.busy(); }
   private:
     struct Route {
         events::MailboxId mailbox;
         runtime::DomainId sender;
         MailboxReview review;
         MailboxPriority priority;
+        MailboxOptions options;
     };
     // 交付一封已绑定地址的原件，并在审查通过时提交带来源信息的主回合。
     MailboxIntakeResult dispatch(const Route& route);
