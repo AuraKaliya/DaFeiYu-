@@ -58,7 +58,7 @@ async function play(fixture, exe, pkg, mode, config) {
     observer: { directory: path.join(server, 'plugins/DfyStoneObserver'), dimension: 'overworld',
       world: formatId(fs.readFileSync(path.join(server, 'playtest-world/uid.dat'))) } }));
   const game = await launch(file);
-  fixture.ownerPosition = () => game.bot.players[owner]?.entity?.position;
+  fixture.ownerEntity = () => game.bot.players[owner]?.entity;
   // 将游戏侧真实退出与原消息编号关联；日志写入失败不会改变玩家已产生的效果。
   game.bot.on('partnerSkillExit', receipt => {
     try { fs.appendFileSync(path.join(root, 'game-actions.jsonl'), JSON.stringify(receipt) + '\n'); }

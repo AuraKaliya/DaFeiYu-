@@ -44,7 +44,7 @@ test('伙伴原话保留采样时的玩家位置', () => {
   bot._client = new EventEmitter();
   const uuid = '34fbcf7f-a9c8-3945-98b4-00e02e34ab18';
   const position = { x: -0.5, y: -57, z: 9.25 };
-  const entity = { position, headYaw: 1.5, pitch: -0.25 };
+  const entity = { position, headYaw: 1.5, pitch: -0.25, eyeHeight: 1.62 };
   bot.players = { owner: { uuid, entity } };
   const inbox = ownerInbox(bot, { read: () => ({ generation: 'world', dimension: 'overworld' }) },
     uuid, true, 8, undefined, true);
@@ -55,6 +55,7 @@ test('伙伴原话保留采样时的玩家位置', () => {
   assert.deepEqual(message.sceneAtMessage.position, { x: -0.5, y: -57, z: 9.25 });
   assert.equal(message.sceneAtMessage.dimension, 'overworld');
   assert.deepEqual(message.sceneAtMessage.facing, { yaw: 1.5, pitch: -0.25 });
+  assert.deepEqual(message.sceneAtMessage.eye, { x: -0.5, y: -57 + 1.62, z: 9.25 });
   assert.ok(Number.isSafeInteger(message.sceneAtMessage.sampledAtMs));
   assert.deepEqual(inbox.get('world', message.sequence), message);
   inbox.close();

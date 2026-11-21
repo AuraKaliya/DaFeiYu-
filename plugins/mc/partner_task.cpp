@@ -26,6 +26,24 @@ bool cell_near_anchor(const Json& cell, const Json& position) {
     }
     return true;
 }
+
+// 从最近一次同原话的观察解析候选，仅使用游戏生成的方格列。
+// 步骤：核对读回来源 → 查找候选 → 展开其一格或两格坐标。
+Json candidate_cells(const Json& receipt, const Json& target) {
+    if (receipt.is_null() || receipt.at("skill") != "observe") return nullptr;
+    const auto& result = receipt.at("result");
+    if (!result.contains("anchor") || result.at("anchor").at("message") != target.at("message") ||
+        !result.contains("playerFocus")) return nullptr;
+    const auto& gaps = result.at("playerFocus").at("candidates");
+    const auto choice = std::ranges::find_if(gaps,[&](const auto& gap) { return gap.at("id") == target.at("candidate"); });
+    if (choice == gaps.end()) return nullptr;
+    const auto height = choice->at("height").get<int>();
+    if (height < 1 || height > 2) return nullptr;
+    Json cells = Json::array();
+    for (int offset = 0; offset < height; ++offset)
+        cells.push_back({{"x",choice->at("x")},{"y",choice->at("y").get<int>()+offset},{"z",choice->at("z")}});
+    return cells;
+}
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
@@ -54,6 +72,12 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
         else {
             if (!anchor || anchor->at("position").is_null() || anchor->at("dimension") != scene.at("dimension"))
                 return {{"status","invalid_target"},{"reason","original player position unavailable"}};
+            if (target.contains("candidate")) {
+                if (target.contains("cells")) return {{"status","invalid_target"},{"reason","choose a candidate or cells"}};
+                auto cells = candidate_cells(receipt_,target);
+                if (cells.is_null()) return {{"status","invalid_target"},{"reason","candidate missing from original message observation"}};
+                target["cells"] = std::move(cells);
+            }
             if (target.contains("cells")) {
                 const auto& cells = target.at("cells");
                 if (!cells.is_array() || cells.empty() || cells.size() > 16 ||

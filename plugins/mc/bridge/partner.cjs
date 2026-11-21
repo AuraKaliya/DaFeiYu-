@@ -2,6 +2,7 @@ const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
 const { blockSurvey } = require('./block-survey.cjs');
+const { playerFocus } = require('./player-focus.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 
@@ -162,7 +163,7 @@ function partnerService(bot, world, inbox, places, owner) {
         result.inventory = inventory(bot);
         result.ground = bot.blockAt(bot.entity.position.floored().offset(0, -1, 0))?.name;
         const sight = bot.blockAtCursor(16);
-        if (sight) result.lookingAt = { block: sight.name, position: sight.position.clone() };
+        if (sight) result.selfLook = { block: sight.name, position: sight.position.clone() };
         result.nearby = Object.values(bot.entities).filter(e => e !== bot.entity && e.position.distanceTo(bot.entity.position) <= 16)
           .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
@@ -172,6 +173,7 @@ function partnerService(bot, world, inbox, places, owner) {
           const { anchor, center } = messageAnchor(r.generation, args.message);
           result.anchor = { message: args.message, ...anchor };
           result.survey = blockSurvey(bot, center, 4);
+          result.playerFocus = playerFocus(bot, anchor, center);
         } else if (args.around) result.survey = blockSurvey(bot, args.around === 'player' ? player?.entity?.position : bot.entity.position);
         if (previous?.generation === r.generation) result.lastAction = previous;
       } else if (r.skill === 'reply') {
@@ -193,12 +195,15 @@ function partnerService(bot, world, inbox, places, owner) {
         if (named && (!point || (point.dimension && point.dimension !== bot.game.dimension))) throw new Error('地标未知或玩家不在视野');
         const target = anchored ? messageAnchor(r.generation, args.message).center.floored() : named ? point : args;
         const pos = targetPoint(bot, target);
-        const goal = new goals.GoalNear(pos.x, pos.y, pos.z, anchored ? 3 : 1);
+        const nearby = new goals.GoalNear(pos.x, pos.y, pos.z, anchored ? 3 : 1);
+        const goal = anchored ? new goals.GoalCompositeAll([nearby, new goals.GoalY(pos.y)]) : nearby;
         if (anchored) result.sourceMessage = args.message;
         await walk(bot, goal);
         check();
         result.position = bot.entity.position.clone();
-        if (!goal.isEnd(bot.entity.position.floored())) throw new Error('到达未核实');
+        const arrived = bot.entity.position.floored();
+        if (!goal.isEnd(arrived) || (anchored && bot.blockAt(arrived.offset(0, -1, 0))?.boundingBox !== 'block'))
+          throw new Error('到达站位未核实');
       } else if (r.skill === 'follow') {
         prepareWalking(bot);
         await followPlayer(bot, owner, args.distance ?? 3, check, result);

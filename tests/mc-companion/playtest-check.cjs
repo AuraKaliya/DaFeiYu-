@@ -166,10 +166,16 @@ async function checkWall(fixture, player, whispers, mode) {
   assert.equal(block(3, -59, -3).name, 'air');
   player.chat('我们接着搭我围的墙，两层泥土，给我留扇木门。');
   await until(() => fixture.settled === 2, '保存原分工');
+  fixture.send(`tp DfyGuestCheck ${wall.repairStand.join(' ')} 180 4`);
+  await until(() => {
+    const entity = fixture.ownerEntity();
+    return entity && Math.abs(entity.position.x - 3.5) < 0.1 && Math.cos(entity.yaw) > 0.99 && Math.abs(entity.pitch) < 0.25;
+  }, '陪玩客户端收到玩家看向第一处缺口的朝向');
   player.chat('看我旁边的这块缺口');
-  await until(() => fixture.settled === 3, '保存玩家原指向');
+  await until(() => readTrace().some(row => row.category === 'mc.partner.event' && row.body.event.sequence === 3), '收下原话和视线');
   fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
-  await until(() => player.entity.position.x > 7 && fixture.ownerPosition()?.x > 7, '两端均看到玩家已到门洞旁');
+  await until(() => fixture.settled === 3 && player.entity.position.x > 7 && fixture.ownerEntity()?.position.x > 7,
+    '保存玩家原指向且两端均看到玩家已到门洞旁');
   player.chat('先补刚才指的缺口，门洞留空');
   if (askPath) {
     if (manual) {

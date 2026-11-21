@@ -171,10 +171,10 @@ static bool presence_fact(const Json& value) {
 
 // 校验原话现场的采样时间、维度和可选玩家坐标。
 static bool message_scene(const Json& value) {
-    if (!value.is_object() || value.size() != 3u + value.count("facing") || !dimension(value.at("dimension")) ||
+    if (!value.is_object() || value.size() != 3u + value.count("facing") + value.count("eye") || !dimension(value.at("dimension")) ||
         !value.at("sampledAtMs").is_number_unsigned() || value.at("sampledAtMs") > 9007199254740991ULL) return false;
     const auto& position = value.at("position");
-    if (position.is_null()) return !value.contains("facing");
+    if (position.is_null()) return !value.contains("facing") && !value.contains("eye");
     if (!position.is_object() || position.size() != 3) return false;
     for (const auto* axis : {"x","y","z"})
         if (!position.at(axis).is_number() || !std::isfinite(position.at(axis).get<double>())) return false;
@@ -183,6 +183,13 @@ static bool message_scene(const Json& value) {
         if (!facing.is_object() || facing.size() != 2) return false;
         for (const auto* angle : {"yaw","pitch"})
             if (!facing.at(angle).is_number() || !std::isfinite(facing.at(angle).get<double>())) return false;
+    }
+    if (value.contains("eye")) {
+        const auto& eye = value.at("eye");
+        if (!value.contains("facing") || !eye.is_object() || eye.size() != 3 || eye.at("x") != position.at("x") ||
+            eye.at("z") != position.at("z") || !eye.at("y").is_number()) return false;
+        const auto height = eye.at("y").get<double>()-position.at("y").get<double>();
+        if (!(height > 0 && height <= 2)) return false;
     }
     return true;
 }

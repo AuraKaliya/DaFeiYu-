@@ -187,8 +187,12 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 throw std::runtime_error("wall probe: survey lost the original gap or the separate live player position");
             if (!ask_path.empty() && last.tool_call_id == "survey")
                 return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
+            const auto& focus = result.at("playerFocus");
+            if (focus.at("choice") != "3,-59,-3:x" || !std::ranges::any_of(focus.at("candidates"),[](const auto& gap) {
+                return gap.at("id") == "7,-60,-3:x" && gap.at("height") == 2;
+            })) throw std::runtime_error("wall probe: original player view did not identify gap A with a separate gap B");
             return call("task_update","bind",{{"goal","continue existing two-layer dirt wall and door"},{"next","player"},
-                {"target",{{"message",3},{"cells",Json::array({{{"x",3},{"y",-59},{"z",-3}}})}}}});
+                {"target",{{"message",3},{"candidate",focus.at("choice")}}}});
         }
         if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
             return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});

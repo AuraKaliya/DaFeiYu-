@@ -3,10 +3,13 @@ function sceneAtMessage(bot, owner, dimension) {
   const entity = Object.values(bot.players).find(player => player.uuid === owner)?.entity;
   const position = entity?.position;
   const known = position && [position.x, position.y, position.z].every(Number.isFinite);
-  const facing = known && [entity.headYaw, entity.pitch].every(Number.isFinite);
+  const yaw = Number.isFinite(entity?.yaw) ? entity.yaw : entity?.headYaw;
+  const facing = known && [yaw, entity.pitch].every(Number.isFinite);
+  const height = entity?.eyeHeight;
   return { dimension, sampledAtMs: Math.floor(performance.now()),
     position: known ? { x: position.x, y: position.y, z: position.z } : null,
-    ...(facing && { facing: { yaw: entity.headYaw, pitch: entity.pitch } }) };
+    ...(facing && { facing: { yaw, pitch: entity.pitch } }),
+    ...(facing && height > 0 && height <= 2 && { eye: { x: position.x, y: position.y + height, z: position.z } }) };
 }
 
 // 只从协议玩家消息取得绑定玩家的原话，显示名或系统广播不能成为授权来源。
