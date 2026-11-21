@@ -129,6 +129,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool approval = variant == L"partner-revision-approval";
     const bool goal = variant == L"partner-revision-goal";
     const bool correction = variant == L"partner-revision-correction";
+    const bool repair_observe = variant == L"partner-revision-repair-observe";
+    const bool repair_plan = variant == L"partner-revision-repair-plan";
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
@@ -146,6 +148,23 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (repair_observe || repair_plan) {
+            const auto skill = repair_observe ? "_observe" : "_queue_actions";
+            const Json args = repair_observe ? Json{{"mode","scene"},{"block","dirt"}} :
+                Json{{"operation","plan"},{"steps",Json::array({{{"id","bad"},{"skill","collect"},{"arguments",Json::object()}}})}};
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id != "initial-invalid" || (repair_observe ?
+                    result.at("reasonCode") != "observe_mixed_modes" :
+                    result.at("reason") != "unsupported_plan_skill" || result.at("node") != "bad"))
+                    throw std::runtime_error("failed parameter repair was retried or diagnostic was lost");
+                checked = true;
+                return call(skill,"repair",args);
+            }
+            if (Json::parse(last.content).at("events").back().at("sequence") == 2)
+                return call(skill,"initial-invalid",args);
+            return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
         if (last.role == Role::tool) {
             if (last.tool_call_id == "register-correction") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -246,7 +265,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         std::ifstream trace(host.trace_file());
         for (std::string line; std::getline(trace,line);)
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
-                line.find("plan exit checked") != line.npos) return true;
+                ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
+                    line.find("plan exit checked") != line.npos)) return true;
         return false;
     };
     bool stopping = false;
@@ -254,7 +274,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
-        if (!stopping && checked && host.companion_status()->settled_event == 3 && receipt_turn_finished()) {
+        if (!stopping && checked && host.companion_status()->settled_event == (repair_observe || repair_plan ? 2u : 3u) && receipt_turn_finished()) {
             host.stop_companion(id);
             stopping = true;
         }

@@ -10,6 +10,7 @@
 #include <array>
 #include <bitset>
 #include <deque>
+#include <map>
 
 namespace dfy::mc {
 struct PartnerWork { std::uint64_t invocation = 0; std::string_view skill; };
@@ -93,6 +94,8 @@ class PartnerLoop {
     void flush();
     // 把本轮已经退出的游戏动作转换为独立信箱事实。
     void report_actions();
+    // 同一种确定性参数失败达到两次后，让出本轮以等待新事实。
+    void limit_repair(std::string code);
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
     void advance_motion(bool stopping);
     // 接纳、清空或替换当前任务修订下尚未执行的步骤。
@@ -219,6 +222,7 @@ class PartnerLoop {
     struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };
     std::deque<WorkSettlement> settlements_;
     bool wait_for_work_ = false, follow_handoff_ = false;
+    std::map<std::string,unsigned> repair_failures_;
     // 按调用组累积实际终态，独立于玩家事件的收取顺序。
     void settle_work(std::uint64_t invocation, nlohmann::json fact);
     // 只选出已无在途动作或待执行步骤的调用组。

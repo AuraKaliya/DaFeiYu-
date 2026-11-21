@@ -329,6 +329,7 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     order_ = order;
     wait_for_work_ = false;
+    repair_failures_.clear();
     follow_handoff_ = false;
     reply_requested_ = false;
     reviewed_ = 0;
@@ -359,7 +360,12 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
-    if (skill == "queue_actions") return queue_actions(invocation,args);
+    if (skill == "queue_actions") {
+        auto result = queue_actions(invocation,args);
+        if (result.at("status") == "invalid_plan")
+            limit_repair("plan:"+result.value("reason",std::string{}));
+        return result;
+    }
     if (skill == "ask_player") {
         auto question = open_question(invocation,args);
         reply_requested_ = true;
@@ -540,6 +546,10 @@ void PartnerLoop::report_actions() {
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
+        if (!active_delegation_ && action.skill == "observe" && fact.contains("result")) {
+            auto code = fact.at("result").value("reasonCode",std::string{});
+            if (code.starts_with("observe_")) limit_repair(std::move(code));
+        }
         if (action.skill == "reply" && fact.contains("result") && fact["result"].value("sent",false) &&
             !fact["result"].value("reused",false) && fact["result"].contains("text"))
             remember_dialogue("companion",order_,fact["result"]["text"]);
@@ -548,6 +558,13 @@ void PartnerLoop::report_actions() {
         action = {};
     }
     action_count_ = 0;
+}
+
+// 同类参数错误可以修正一次，重复失败时保持现场任务等待。
+void PartnerLoop::limit_repair(std::string code) {
+    if (++repair_failures_[std::move(code)] < 2) return;
+    task_.disarm();
+    wait_for_work_ = true;
 }
 
 // 移交已接纳的原工作和不可随新回合改写的关联身份。

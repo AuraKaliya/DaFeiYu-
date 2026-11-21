@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
+const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -74,4 +74,16 @@ test('bounded series can be cancelled before the next sample', async () => {
   abort.abort();
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(result.observation.samples.length, 1);
+});
+
+// 原话与自查参数可合并，材料搜索和多来源采样的混用返回可修复原因。
+test('observation modes preserve the original source and explain invalid fields', async () => {
+  const { bot, context, reads } = fixture();
+  assert.deepEqual(observationInput({ message: 12, radius: 1, verify: [{}] }).options.sources, ['message', 'self']);
+  assert.deepEqual(observationInput({ around: 'player', detail: 'summary' }).options.sources, ['player']);
+  assert.equal(observationInput({ mode: 'search', around: 'player', block: 'dirt' }).mode, 'search');
+  assert.throws(() => observationInput({ block: 'dirt', radius: 3 }), { code: 'observe_mixed_modes' });
+  assert.throws(() => observationInput({ mode: 'pointed' }), { code: 'observe_message_required' });
+  await assert.rejects(observeWindow(bot, { sources: ['message'] }, {}, context), { code: 'observe_invalid_sources' });
+  assert.equal(reads.size, 0);
 });

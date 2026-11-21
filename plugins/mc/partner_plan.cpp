@@ -61,21 +61,25 @@ bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Js
 Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (!invocation || (plan_ && plan_->active) || !queued_.empty() || (motion_ && motion_->skill != "follow"))
         return {{"status","busy"}};
-    const auto& steps = arguments.at("steps");
+    const auto steps = arguments.value("steps",Json::array());
     if (arguments.contains("work") || !steps.is_array() || steps.empty() || steps.size() > 4)
-        return {{"status","invalid_plan"}};
+        return {{"status","invalid_plan"},{"reason","expected_one_to_four_steps"}};
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
     for (const auto& step : steps) {
-        auto id = step.at("id").get<std::string>();
+        auto id = step.value("id",std::string{});
         const auto skill = step.at("skill").get<std::string>();
         auto args = step.at("arguments");
         const auto tool = std::ranges::find(partner_skills,skill,&PartnerSkill::name);
+        const auto invalid = [&](std::string_view reason) {
+            return Json{{"status","invalid_plan"},{"reason",reason},{"node",id},{"skill",skill}};
+        };
         if (id.empty() || id.size() > 32 || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != id.npos ||
-            std::ranges::find(plan.nodes,id,&PlanNode::id) != plan.nodes.end() ||
-            (skill != "craft" && tool == partner_skills.end()) || step.contains("pickup") ||
-            !prepare_action(skill,args) || (skill == "fill_target" && !task_.target_ready()))
-            return {{"status","invalid_plan"}};
-        if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"}};
+            std::ranges::find(plan.nodes,id,&PlanNode::id) != plan.nodes.end()) return invalid("invalid_node_id");
+        if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft")
+            return invalid("unsupported_plan_skill");
+        if (step.contains("pickup") || !prepare_action(skill,args)) return invalid("invalid_node_arguments");
+        if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
+        if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : tool->name,std::move(args)});
     }
@@ -86,7 +90,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             const auto node = std::ranges::find(plan.nodes,id,&PlanNode::id);
             const auto position = static_cast<std::size_t>(node-plan.nodes.begin());
             if (node == plan.nodes.end() || std::ranges::find(dependencies,position) != dependencies.end())
-                return {{"status","invalid_plan"}};
+                return {{"status","invalid_plan"},{"reason","invalid_dependency"},{"node",plan.nodes[index].id},{"dependency",id}};
             dependencies.push_back(position);
         }
     }

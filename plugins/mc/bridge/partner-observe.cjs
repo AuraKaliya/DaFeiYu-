@@ -4,6 +4,36 @@ const { playerFocus } = require('./player-focus.cjs');
 const symbols = '0123456789abcdefghijklmnopqrstuvwxyz';
 const air = new Set(['air', 'cave_air', 'void_air']);
 
+// 报告具体观察参数错误，供子 Agent 按原场景调整一次。
+function invalidObservation(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+// 选择观察用途，并兼容旧调用通过参数表达的用途。
+// 步骤：识别窗口字段和原话来源 → 排除搜索与窗口冲突 → 统一窗口来源。
+function observationInput(args) {
+  const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
+  const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
+    args.around || args.block ? 'search' : 'summary');
+  if (mode === 'scene') {
+    if (args.block !== undefined)
+      throw invalidObservation('observe_mixed_modes', '多来源观察使用 mode=scene，查找指定材料使用 mode=search 和 block');
+    const sources = args.sources ?? (args.message !== undefined ? (args.verify?.length ? ['message', 'self'] : ['message']) :
+      [args.around ?? 'self']);
+    if (args.around && (args.message !== undefined || (Array.isArray(args.sources) && !args.sources.includes(args.around))))
+      throw invalidObservation('observe_mixed_modes', '多来源观察使用 sources，原话使用 message 来源；请去掉 around');
+    const { around, ...options } = args;
+    return { mode, options: { ...options, sources } };
+  }
+  if (window || (mode === 'pointed' && args.around) ||
+    (mode === 'search' && (args.message !== undefined || args.focus)) ||
+    (mode === 'pointed' && args.mode && args.block))
+    throw invalidObservation('observe_mixed_modes', '原话指向用 mode=pointed 和 message；场景窗口用 mode=scene；查材料用 mode=search');
+  if (mode === 'pointed' && (!Number.isSafeInteger(args.message) || args.message <= 0))
+    throw invalidObservation('observe_message_required', '原话指向需要原玩家消息号 message');
+  return { mode, options: args };
+}
+
 // 对每一帧合并相交区域，网格中的等号引用同帧更早中心的同一坐标。
 // 步骤：校验中心和覆盖区 → 按坐标去重读取 → 输出来源及可选网格。
 function surveyView(bot, view, position, radius, cells, palette, detail) {
@@ -108,11 +138,12 @@ async function observeWindow(bot, args, result, context) {
   if (!Array.isArray(sources) || !sources.length || sources.length > 3 || new Set(sources).size !== sources.length ||
     sources.some(source => !['self', 'player', 'message'].includes(source)) ||
     sources.includes('message') !== (Number.isSafeInteger(message) && message > 0) ||
-    (focus !== undefined && (!sources.includes('message') || !['hit', 'openings'].includes(focus))) ||
-    !Number.isInteger(radius) || radius < 1 || radius > 5 || !['summary', 'cells'].includes(detail) ||
+    (focus !== undefined && (!sources.includes('message') || !['hit', 'openings'].includes(focus))))
+    throw invalidObservation('observe_invalid_sources', 'sources 只能包含 self、player、message；使用 message 来源时须传原话编号');
+  if (!Number.isInteger(radius) || radius < 1 || radius > 5 || !['summary', 'cells'].includes(detail) ||
     !Number.isInteger(count) || count < 1 || count > 3 || !Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 1000 ||
-    !Array.isArray(verify) || verify.length > 16 || verify.some(cell => !cell || ![cell.x, cell.y, cell.z].every(Number.isSafeInteger)) ||
-    args.around !== undefined || args.block !== undefined) throw new Error('无效多来源观察范围或采样预算');
+    !Array.isArray(verify) || verify.length > 16 || verify.some(cell => !cell || ![cell.x, cell.y, cell.z].every(Number.isSafeInteger)))
+    throw invalidObservation('observe_invalid_window', '无效采样预算：半径 1～5 格，1～3 帧，间隔 100～1000 ms，最多验 16 格');
   const { check, player, messageAnchor, inventory, signal, id, generation } = context;
   const dimension = bot.game.dimension;
   result.observation = { id, generation, dimension, requested: count, samples: [] };
@@ -125,7 +156,7 @@ async function observeWindow(bot, args, result, context) {
     result.observation.samples.push(frame.sample);
     if (Buffer.byteLength(JSON.stringify(result)) > 7500) {
       result.observation.samples.pop();
-      if (i === 0) throw new Error('观察超出回执范围，请缩小半径或选择摘要');
+      if (i === 0) throw invalidObservation('observe_window_too_large', '观察超出回执范围，请缩小半径或选择摘要');
       result.observation.truncated = true;
       return;
     }
@@ -133,4 +164,4 @@ async function observeWindow(bot, args, result, context) {
   }
 }
 
-module.exports = { observeWindow };
+module.exports = { observationInput, observeWindow };

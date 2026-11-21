@@ -21,6 +21,8 @@ async function main() {
   const revision = variant?.startsWith('partner-revision-');
   const notes = variant === 'partner-revision-notes';
   const correction = variant === 'partner-revision-correction';
+  const repairObserve = variant === 'partner-revision-repair-observe';
+  const repairPlan = variant === 'partner-revision-repair-plan';
   const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
@@ -41,6 +43,7 @@ async function main() {
   let following, collecting, resumed, collectExited = false;
   let planReading = false, nextBlock = false;
   let wallFilled = false;
+  let badObservations = 0;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -104,6 +107,14 @@ async function main() {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (revision) {
+        if (repairObserve) {
+          assert.equal(skill, 'observe');
+          assert.equal(method, 'partner.begin');
+          assert.deepEqual(args, { mode: 'scene', block: 'dirt' });
+          assert.ok(++badObservations <= 2);
+          return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
+        }
+        assert.ok(!repairPlan);
         if (correction && skill === 'observe') {
           assert.ok(collectExited);
           assert.equal(args.message, 2);
@@ -237,7 +248,8 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: first || motion || confirm ? 4 : interrupt || showGame || delayed || departure || revision ? 3 : 2,
+    return { generation, order: first || motion || confirm ? 4 :
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -248,7 +260,10 @@ async function main() {
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
-    if (revision) {
+    if (repairObserve || repairPlan) {
+      assert.equal(badObservations, repairObserve ? 2 : 0);
+      console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (revision) {
       assert.equal(stopped, notes ? 0 : 2);
       assert.ok(collectExited);
       assert.equal(nextBlock, notes);

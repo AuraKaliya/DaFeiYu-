@@ -3,7 +3,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
-const { observeWindow } = require('./partner-observe.cjs');
+const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
@@ -229,8 +229,9 @@ function partnerService(bot, world, inbox, places, owner) {
     try {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
-      if (r.skill === 'observe' && ['sources','radius','detail','samples','verify'].some(key => Object.hasOwn(args, key))) {
-        await observeWindow(bot, args, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
+      const observation = r.skill === 'observe' ? observationInput(args) : null;
+      if (observation?.mode === 'scene') {
+        await observeWindow(bot, observation.options, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
           player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
           messageAnchor: order => messageAnchor(r.generation, order), inventory: () => inventory(bot) });
       } else if (r.skill === 'observe') {
@@ -332,7 +333,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['place', 'fill_target'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['place', 'fill_target', 'observe'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (world.read()?.generation === r.generation) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
