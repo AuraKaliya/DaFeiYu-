@@ -90,11 +90,13 @@ int wmain(int argc, wchar_t** argv) {
         const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");
         const bool motion = follow || (argc == 4 && std::wstring_view(argv[3]) == L"partner-motion");
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
+        const bool departure = argc == 4 && std::wstring_view(argv[3]) == L"partner-departure";
         const bool scene = argc == 4 && std::wstring_view(argv[3]) == L"partner-scene";
         const bool task = scene || (argc == 4 && std::wstring_view(argv[3]) == L"partner-task");
-        if (argc != 3 && !interrupt && !motion && !confirm && !task) throw std::runtime_error("package and test directory required");
+        if (argc != 3 && !interrupt && !motion && !confirm && !task && !departure) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
         std::atomic_bool actual_reply = false, interruption_seen = false;
+        std::atomic_bool left_observed = false, late_model = false;
         std::string follow_work, resumed_work;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
             const auto& last = request.messages.back();
@@ -125,6 +127,16 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,R"({"internal":"tool receipt read"})"}};
             }
             const auto input = nlohmann::json::parse(last.content);
+            if (departure) {
+                const auto& fact = input.at("events").back();
+                if (fact.at("type") == "player.entered") return {{Role::assistant,""}};
+                if (fact.at("type") == "player.left") { late_model = true; return {{Role::assistant,""}}; }
+                std::ofstream(root/"turn-started").put('1');
+                const auto limit = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+                while (!left_observed && std::chrono::steady_clock::now() < limit)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                return {{Role::assistant,"玩家离开后迟到的发言"}};
+            }
             if (suspend) {
                 using Json = nlohmann::json;
                 // 为固定场景选择本轮确实开放的原生工具。
@@ -247,7 +259,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto instance = app.plugins().instance("mc.companion");
         unsigned game_receipts = 0;
         unsigned decisions = 0;
-        bool control_released = false, continuation_closed = false;
+        bool control_released = false, continuation_closed = false, left_recorded = false, turn_cancelled = false;
         std::string accepted_motion;
         const auto& mails = app.mailbox_host();
         // 记录原动作及业务裁定，确认接纳和动作执行来自不同消息。
@@ -260,6 +272,8 @@ int wmain(int argc, wchar_t** argv) {
                 const auto payload = mail.event.get().payload;
                 const auto type = payload->descriptor()->name();
                 const auto fact = nlohmann::json::parse(payload->find("text")->as_string());
+                if (departure && type == "mc.partner.event" && fact.at("event").at("type") == "player.left") left_recorded = true;
+                if (departure && type == "mc.partner.turn" && fact.at("order") == 2) turn_cancelled = fact.at("outcome") == "player_left";
                 if (type == "mc.confirmation.decision") {
                     if (fact.at("status") != "approved" || fact.at("source") != "game" || fact.at("skill") != "collect")
                         throw std::runtime_error("original candidate did not receive the local approval");
@@ -324,7 +338,9 @@ int wmain(int argc, wchar_t** argv) {
                     dfy_v2_partner_status state{};
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
-                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED : suspend ? state.settled == 5 && game_receipts == 4 :
+                    if (departure && state.departed) left_observed = true;
+                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED : departure ? state.settled == 3 && left_recorded && turn_cancelled :
+                        suspend ? state.settled == 5 && game_receipts == 4 :
                         state.ready && state.session && state.settled == (motion || confirm ? 4u : interrupt ? 3u : 2u) &&
                         (!task || continuation_closed) && (!motion || game_receipts == 2) && (!interrupt || interruption_seen) &&
                         (!confirm || (game_receipts == 1 && actual_reply))) return;
@@ -333,14 +349,15 @@ int wmain(int argc, wchar_t** argv) {
                 throw std::runtime_error("plugin did not reach expected boundary");
             };
             wait(false);
-            if ((suspend ? resumed_work.empty() : interrupt ? !interruption_seen : confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
+            if ((departure ? late_model.load() : suspend ? resumed_work.empty() : interrupt ? !interruption_seen :
+                confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
                 app.conversation().status())
                 throw std::runtime_error("reply or interruption missing, or shared context");
             if (instance->invoke(*api,[](const auto& fn, auto* native) { return fn.stop(native,nullptr); }))
                 throw std::runtime_error("could not stop plugin-owned partner");
             wait(true);
         }
-        if (game_receipts != (suspend ? 4u : motion ? 2u : 1u) || !control_released || (confirm && decisions != 1))
+        if (game_receipts != (departure ? 0u : suspend ? 4u : motion ? 2u : 1u) || !control_released || (confirm && decisions != 1))
             throw std::runtime_error("expected original effect, confirmation or confirmed control release");
         if (app.plugins().unload("mc.companion") != plugins::ShutdownResult::closed) throw std::runtime_error("MC unload failed");
         return 0;

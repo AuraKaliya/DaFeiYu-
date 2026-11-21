@@ -184,7 +184,9 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         publish("mc.partner.report",{{"generation",active_delegation_->world},{"id",active_delegation_->id},{"ok",answered},{"text",text}});
         active_delegation_.reset();
     } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
-        {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel}});
+        {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel},
+        {"outcome",cancel ? (feed_.departed() ? "player_left" : "cancelled") :
+            state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}});
     request_ = 0;
     return true;
 }
@@ -373,7 +375,11 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
     const auto prior_scope = scope();
     const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
+    const auto prior_revision = task_.revision();
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
+    if (motion_ && motion_->skill == "fill_target" && task_.revision() != prior_revision &&
+        args.contains("target") && (args.at("target").empty() || args.at("target").value("replace",false)))
+        motion_->stopping = true;
     expansion_pending_ |= (scope() & ~prior_scope).any();
     return result;
 }
@@ -696,11 +702,12 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         awaiting_delegation_.reset();
     }
     const bool replaced = session_ && feed_.world() != session_world_;
-    advance_motion(closing || replaced || feed_.departed());
-    advance_confirmed_work(config,closing || replaced || feed_.departed(),body_busy);
-    advance_queue(config,closing || replaced || feed_.departed(),body_busy);
-    review(work,closing || replaced);
-    if (!settle(config,instance,closing || replaced)) return;
+    const bool unavailable = closing || replaced || feed_.departed();
+    advance_motion(unavailable);
+    advance_confirmed_work(config,unavailable,body_busy);
+    advance_queue(config,unavailable,body_busy);
+    review(work,unavailable);
+    if (!settle(config,instance,unavailable)) return;
     if (closing) {
         if (motion_ || review_.request || presentation_ || question_work_ || !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
@@ -717,6 +724,12 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         dialogue_.clear();
         question_.reset(); question_result_.clear(); question_wake_ = false;
         approval_result_ = nullptr;
+        if (feed_.ready() && !feed_.pending().empty()) {
+            for (const auto& fact : feed_.pending()) publish("mc.partner.event",{{"generation",feed_.world()},{"event",fact}});
+            settled_ = feed_.cursor();
+            feed_.consumed();
+        }
+        return;
     }
     if (presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
