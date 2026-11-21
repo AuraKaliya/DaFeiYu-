@@ -124,7 +124,7 @@ bool PartnerTask::bind_placement(Json& arguments) const {
 
 // 用任务范围约束所有采掘入口，包括精确坐标。
 void PartnerTask::bind_collection(Json& arguments) const {
-    arguments["source"] = collection_;
+    if (collection_ == "ground") arguments["source"] = collection_;
 }
 
 // 分别保存原话指向、实际方块变化和最近一次动作。
