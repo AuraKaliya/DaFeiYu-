@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/event_store.hpp>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,4 +18,6 @@ struct RoutedEvent {
     RoutedMailbox mailbox;
     std::vector<RoutedMailbox> mailbox_categories;
 };
+// 只观察已接纳的原事件，回调期间借用记录。
+using EventCapture = std::function<void(const RoutedEvent&)>;
 }

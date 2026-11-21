@@ -30,6 +30,8 @@ dfy_v2_status DFY_V2_CALL decode_route(void* context, dfy_v2_string_view raw, df
 // 步骤：登记闭合契约 → 拒绝非法事件及冲突重投 → 解析两种结果 → 停止旧实例。
 void verify_routed_events() {
     HostServices host(4);
+    std::vector<dfy::events::EventId> captured;
+    host.capture_events([&](const auto& event) { captured.push_back(event.id); });
     const auto binding = host.bind();
     const void* table = nullptr;
     const dfy_v2_string_view capability{DFY_V2_ROUTED_EVENT_INTERFACE,sizeof(DFY_V2_ROUTED_EVENT_INTERFACE)-1};
@@ -61,6 +63,7 @@ void verify_routed_events() {
     check(api.emit(type,1,1,first,&receipt,nullptr) == DFY_V2_OK && receipt.repeated && receipt.domain == domain &&
         api.emit(type,1,1,next,&receipt,nullptr) == DFY_V2_INVALID_ARGUMENT &&
         api.emit(second,1,2,{note.data(),note.size()},&receipt,nullptr) == DFY_V2_OK,"duplicate event changed original");
+    check(captured == std::vector<dfy::events::EventId>{{domain,1},{domain,2}},"capture did not isolate genuine admissions");
     const auto a = host.take_routed_event(), b = host.take_routed_event();
     check(a && b && a->id.domain == domain && a->kind == ask && !a->status && a->projection == R"({"id":4})" &&
         b->id.sequence == 2 && b->kind == mail && !b->status && b->projection == R"({"id":5})" &&
@@ -72,6 +75,7 @@ void verify_routed_events() {
         host.take_routed_event()->status == DFY_V2_FAILED,"unregistered mail category was routed");
     check(api.emit(type,1,4,first,&receipt,nullptr) == DFY_V2_OK && host.begin_shutdown() && !host.take_routed_event() &&
         api.emit(type,1,5,first,&receipt,nullptr) == DFY_V2_INVALID_CONTEXT && host.finish_shutdown(),"old route survived shutdown");
+    check(captured.size() == 4 && captured.back() == dfy::events::EventId{domain,4},"capture incorrectly depended on decode or shutdown");
 }
 // 验证纯 C 对未预编译结构的枚举及宿主描述引用寿命。
 // 步骤：建立六种字段的描述 → 查询并消费反射服务 → 拒绝索引及种类错误 → 保留后重新借用并回收。

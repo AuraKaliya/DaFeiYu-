@@ -40,6 +40,7 @@ struct HostState : std::enable_shared_from_this<HostState> {
     std::vector<ReaderSlot> readers;
     std::shared_ptr<events::BroadcastChannel> channel;
     std::shared_ptr<EventRoutes> event_routes;
+    EventCapture event_capture;
     bool event_routes_sealed = false;
     std::shared_ptr<events::Mailboxes> mailboxes;
     runtime::DomainId mailbox_app = 0, mailbox_plugin = 0;

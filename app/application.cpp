@@ -58,6 +58,10 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
+    if (run_log_) plugins_.capture_events([log = std::weak_ptr(run_log_)](const auto& event) {
+        if (const auto trace = log.lock()) trace->append("event.captured",{{"eventDomain",event.id.domain},{"event",event.id.sequence},
+            {"plugin",event.plugin},{"instance",event.owner},{"type",event.type},{"version",event.version},{"body",event.payload}});
+    });
     const events::MailboxCategory enabled[] = {{"room.addressed",1}};
     mailbox_intake_.watch(room_mailbox_,run.wake_for_room_address ? std::span<const events::MailboxCategory>(enabled) :
         std::span<const events::MailboxCategory>{},[](const auto& item) -> std::optional<std::string> {
@@ -409,6 +413,7 @@ runtime::RunResult Application::advance_plugins() {
         companion_->advance();
     }
     const auto plugins = plugins_.advance();
+    dispatch_event(plugins_,interactions_,run_log_.get());
     interactions_.advance();
     const auto mail = mailbox_intake_.advance();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;

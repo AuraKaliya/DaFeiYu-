@@ -1,5 +1,6 @@
 #pragma once
 #include "ask.hpp"
+#include "event_dispatch.hpp"
 #include "mailbox_intake.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 
@@ -12,7 +13,9 @@ class InteractionRoutes {
     // 使用应用现有的插件、信箱网络和 Trace。
     InteractionRoutes(plugins::PluginManager& plugins, plugins::PluginMailboxHost mail, MailboxIntake& intake,
         agent::ToolClock clock, std::shared_ptr<RunLog> log, bool auto_wake);
-    // 消费一个路由事件，并推进在途呈现与结果投递。
+    // 分派已校验的定向信件、提问或渠道回执。
+    bool dispatch(plugins::RoutedEvent event, EventRoute route);
+    // 推进在途呈现与结果投递。
     void advance();
     // 对原终端提问取一份展示副本。
     std::optional<std::pair<std::uint64_t,AskSpec>> console_question() const;
@@ -31,11 +34,10 @@ class InteractionRoutes {
         bool initial_queued = false, sent = false, result_queued = false, reply_requested = false;
         bool plugin_queued = false, acknowledged = false;
         bool unavailable = false;
+        std::optional<AskRoute> question;
     };
     // 核对原插件及其当前接收地址。
     events::MailboxId destination(const plugins::RoutedEvent& event) const;
-    // 接收原实例解出的提问或渠道反馈。
-    void accept(plugins::RoutedEvent event);
     // 尝试投递一份呈现请求或最终结果。
     bool advance_exchange(Exchange& exchange);
     // 按事件来源及原身份定位仍在等待的事项。

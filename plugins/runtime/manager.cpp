@@ -222,6 +222,7 @@ struct PluginManager::State {
     std::shared_ptr<const HookPlan> hook_order;
     std::uint64_t registration = 0, hook_revision = 0;
     std::string directory_error;
+    EventCapture event_capture;
     bool accepting = true, hooks_dirty = false;
     ShutdownResult close_result = ShutdownResult::closed;
     State* next = nullptr;
@@ -248,6 +249,12 @@ void PluginManager::enable_agents(const std::shared_ptr<PluginAgents>& service) 
     if (!service || !state_->accepting || state_->registration || !state_->instances.empty() || !state_->agents.expired())
         throw std::logic_error("plugins: cannot attach agent service");
     state_->agents = service;
+}
+// 固定应用提供的统一事件接纳记录器。
+void PluginManager::capture_events(EventCapture capture) {
+    if (!capture || !state_->accepting || !state_->instances.empty() || state_->event_capture)
+        throw std::logic_error("plugins: cannot attach event capture");
+    state_->event_capture = std::move(capture);
 }
 // 返回当前描述目录的独立共享快照。
 std::shared_ptr<const Catalog> PluginManager::catalog() const { return state_->registry.snapshot(); }
@@ -278,6 +285,7 @@ std::uint32_t PluginManager::load(const std::string& id) {
     try {
         item->second.owner = state_->scheduler.add_owner(1,8,2);
         item->second.instance = std::make_shared<PluginInstance>(found->second,state_->user_data,state_->channel);
+        if (state_->event_capture) item->second.instance->capture_events(state_->event_capture);
         if (state_->mailboxes.network)
             item->second.instance->enable_mailboxes(state_->mailboxes.network,state_->mailboxes.identity);
         if (!state_->agents.expired()) item->second.instance->enable_agents(state_->agents,item->second.instance);

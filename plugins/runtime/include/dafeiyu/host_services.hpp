@@ -61,6 +61,8 @@ class HostServices {
     void advance();
     // 冻结启动时登记的事件解析器，回合推进只消费已接纳事件。
     void seal_event_routes();
+    // 在启动前登记本实例的事件接纳记录器。
+    void capture_events(EventCapture capture);
     // 在原实例的代码保护内解出下一项事件结果。
     std::optional<RoutedEvent> take_routed_event();
     // 为本实例启用订阅服务，明确每个读取控制器的请求容量，禁止替换活动通道。

@@ -26,6 +26,8 @@ class PluginManager {
     void refresh();
     // 在首次加载前把应用子会话服务交给运行时借用。
     void enable_agents(const std::shared_ptr<PluginAgents>& service);
+    // 在加载任何实例前登记统一的事件接纳记录器。
+    void capture_events(EventCapture capture);
     // 返回独立不可变包目录快照。
     std::shared_ptr<const Catalog> catalog() const;
     // 返回最近一次根目录扫描错误，错误不阻止本体在空插件模式下运行。

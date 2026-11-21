@@ -135,6 +135,9 @@ dfy_v2_status DFY_V2_CALL emit(dfy_v2_string_view type, uint32_t version, uint64
         if (routes.recent.size() > 32) routes.recent.pop_front();
         routes.last = sequence;
         *output = {routes.domain,sequence,0,0};
+        if (host.event_capture) try {
+            host.event_capture(RoutedEvent{{routes.domain,sequence},0,{},std::string(name),std::string(body),{},version});
+        } catch (...) {}
         return DFY_V2_OK;
     });
 }
@@ -157,7 +160,14 @@ namespace dfy::plugins {
 // 开始接纳事件并固定启动阶段的注册表。
 void HostServices::seal_event_routes() { state_->require_owner(); state_->event_routes_sealed = true; }
 
-// 在宿主保护下解析已接纳事件，失败也产生可追踪结果。
+// 在启动前绑定只观察已接纳事件的宿主记录器。
+void HostServices::capture_events(EventCapture capture) {
+    state_->require_owner();
+    if (state_->event_routes_sealed) throw std::logic_error("events: capture already sealed");
+    state_->event_capture = std::move(capture);
+}
+
+// 在原线程上调用已接纳事件的解析器，并校验投影及地址规则。
 // 步骤：借用队首及注册 → 受保护调用并校验结果 → 消费原事件。
 std::optional<RoutedEvent> HostServices::take_routed_event() {
     state_->require_owner();

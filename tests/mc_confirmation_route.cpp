@@ -12,16 +12,24 @@ namespace {
 bool received(const std::filesystem::path& file, bool stale) {
     using Json = nlohmann::json;
     std::ifstream trace(file);
-    Json delivery, acknowledgement;
+    Json delivery, acknowledgement, captured, decoded, dispatched;
     for (std::string line; std::getline(trace,line);) {
         const auto row = Json::parse(line);
         if (row.at("kind") == "interaction.delivered" && row.at("category") == "interaction.mail.reply") delivery = row;
         if (row.at("kind") == "interaction.acknowledged") acknowledgement = row;
+        if (row.at("kind") == "event.captured" && row.at("type") == "mc.partner.help") captured = row;
+        if (row.at("kind") == "event.decoded" && row.at("type") == "mc.partner.help") decoded = row;
+        if (row.at("kind") == "event.dispatched" && !decoded.is_null() && row.at("eventDomain") == decoded.at("eventDomain") &&
+            row.at("event") == decoded.at("event")) dispatched = row;
     }
     if (acknowledgement.is_null()) return false;
     if (delivery.is_null() || delivery.at("body").at("answer") != "approve" || delivery.at("ask") != acknowledgement.at("ask") ||
         delivery.at("seq") >= acknowledgement.at("seq") || acknowledgement.at("disposition") != (stale ? "stale" : "matched"))
         throw std::runtime_error("original answer delivery and plugin receipt were not independently verified");
+    if (captured.is_null() || decoded.is_null() || dispatched.is_null() || captured.at("eventDomain") != decoded.at("eventDomain") ||
+        captured.at("event") != decoded.at("event") || captured.at("seq") >= decoded.at("seq") ||
+        decoded.at("seq") >= dispatched.at("seq") || dispatched.at("accepted") != true)
+        throw std::runtime_error("capture, decode and dispatch were not independently verified");
     return true;
 }
 }

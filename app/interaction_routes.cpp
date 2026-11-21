@@ -30,57 +30,50 @@ events::MailboxId InteractionRoutes::destination(const plugins::RoutedEvent& eve
     return {};
 }
 
-// 按解析结果固定原请求或推进原渠道回执。
-// 步骤：记录来源及解析 → 核对当前地址 → 分派反馈或接纳提问。
-void InteractionRoutes::accept(plugins::RoutedEvent event) {
-    if (log_) log_->append("event.decoded",{{"eventDomain",event.id.domain},{"event",event.id.sequence},{"plugin",event.plugin},
-        {"instance",event.owner},{"type",event.type},{"status",event.status},{"route",event.kind},{"body",event.payload}});
-    if (event.status || !destination(event).value) return;
-    const auto body = Json::parse(event.projection);
-    if (event.kind == DFY_V2_EVENT_ASK_RECEIPT) {
-        auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
-        const auto disposition = body.at("disposition");
+// 将类型化路由应用到原事项或渠道。
+// 步骤：核对原地址 → 处理渠道协议 → 接纳有界的新事项。
+bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route) {
+    if (!destination(event).value) return false;
+    if (const auto* receipt = std::get_if<AskReceipt>(&route)) {
+        auto* exchange = find(receipt->origin);
         if (!exchange || exchange->origin.owner != event.owner || !exchange->plugin_queued || exchange->acknowledged ||
-            body.at("ask") != exchange->ask || identity(body.at("item")) != exchange->item ||
-            identity(body.at("revision")) != exchange->revision || (disposition != "matched" && disposition != "stale")) return;
+            receipt->ask != exchange->ask || receipt->item != exchange->item || receipt->revision != exchange->revision) return false;
         exchange->acknowledged = true;
-        if (log_) log_->append("interaction.acknowledged",body);
-        return;
+        if (log_) log_->append("interaction.acknowledged",{{"eventDomain",receipt->origin.domain},{"event",receipt->origin.sequence},
+            {"ask",receipt->ask},{"item",receipt->item},{"revision",receipt->revision},{"disposition",receipt->disposition}});
+        return true;
     }
-    if (event.kind == DFY_V2_EVENT_ASK_FEEDBACK) {
-        const auto ask = identity(body.at("ask"));
-        const auto channel = body.at("channel").get<std::string>();
-        const auto action = body.at("action").get<std::string>();
+    if (const auto* feedback = std::get_if<AskFeedback>(&route)) {
+        const bool presented = feedback->action == AskFeedback::Action::presented;
         bool accepted = false;
-        if (channel == "game" && action == "presented") accepted = asks_.presented(ask,event.owner,channel,body.at("delivered").get<bool>());
-        else if (channel == "game" && action == "answer") accepted = asks_.answer(ask,event.owner,channel,body.at("recipient"),body.at("answer"));
-        if (log_) log_->append("ask."+action,{{"ask",ask},{"instance",event.owner},{"accepted",accepted},{"body",body}});
-        return;
+        if (feedback->channel == "game") {
+            if (presented) accepted = asks_.presented(feedback->ask,event.owner,feedback->channel,feedback->delivered);
+            else accepted = asks_.answer(feedback->ask,event.owner,feedback->channel,feedback->recipient,feedback->answer);
+        }
+        if (log_) log_->append(presented ? "ask.presented" : "ask.answer",{{"ask",feedback->ask},{"instance",event.owner},
+            {"accepted",accepted},{"body",Json::parse(event.projection)}});
+        return accepted;
     }
-    if (event.kind == DFY_V2_EVENT_MAIL) {
-        if (exchanges_.size() == 16) throw std::length_error("interaction: pending route capacity exhausted");
+    if (exchanges_.size() == 16) throw std::length_error("interaction: pending route capacity exhausted");
+    if (std::holds_alternative<MailRoute>(route)) {
         const auto box = main_box(event);
         exchanges_.push_back({std::move(event),0,0,0,clock_()+std::chrono::seconds(120),box});
-        return;
+        return true;
     }
-    const bool main = event.kind == DFY_V2_EVENT_ASK_VIA_MAIL;
-    if (event.kind != DFY_V2_EVENT_ASK && !main) return;
-    const auto item = identity(body.at("item")), revision = identity(body.at("revision"));
-    const auto milliseconds = identity(body.at("waitMs"));
-    const auto& channel = body.at("channel").get_ref<const std::string&>();
-    if (milliseconds > 120000 || (channel != "game" && channel != "terminal") || exchanges_.size() == 16)
-        throw std::invalid_argument("interaction: invalid ASK route");
+    auto& question = std::get<AskRoute>(route);
     if (std::ranges::any_of(exchanges_,[&](const auto& other) {
-        return other.origin.owner == event.owner && other.item == item && other.revision == revision;
-    })) return;
-    const auto box = main ? main_box(event) : events::MailboxId{};
-    exchanges_.push_back({std::move(event),item,revision,0,clock_()+std::chrono::milliseconds(milliseconds),box});
+        return other.origin.owner == event.owner && other.item == question.item && other.revision == question.revision;
+    })) return false;
+    const auto box = question.via_main ? main_box(event) : events::MailboxId{};
+    exchanges_.push_back({std::move(event),question.item,question.revision,0,clock_()+std::chrono::milliseconds(question.wait_ms),box});
     auto& exchange = exchanges_.back();
-    exchange.unavailable = channel == "terminal" && !terminal_available_;
-    if (!main && !exchange.unavailable) {
-        try { open_ask(exchange,channel); }
+    exchange.question.emplace(std::move(question));
+    exchange.unavailable = exchange.question->channel == "terminal" && !terminal_available_;
+    if (!exchange.question->via_main && !exchange.unavailable) {
+        try { open_ask(exchange,exchange.question->channel); }
         catch (...) { exchanges_.pop_back(); throw; }
     }
+    return true;
 }
 
 // 对原事件的游戏声明和双向终端能力取当前快照。
@@ -94,8 +87,8 @@ std::vector<std::string_view> InteractionRoutes::available_channels(std::string_
 // 创建并记录原事项的唯一提问，重试复用同一票据。
 void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
     if (exchange.unavailable || exchange.plugin_queued) throw std::invalid_argument("interaction: ASK route has ended");
-    const auto body = Json::parse(exchange.origin.projection);
-    const auto channels = available_channels(body.at("channel").get_ref<const std::string&>());
+    const auto& question = exchange.question.value();
+    const auto channels = available_channels(question.channel);
     if (std::ranges::find(channels,channel) == channels.end()) {
         if (log_) log_->append("ask.channel_unavailable",{{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
             {"item",exchange.item},{"channel",channel},{"availableChannels",channels}});
@@ -105,11 +98,11 @@ void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
         if (asks_.status(exchange.ask)->spec.channel != channel) throw std::invalid_argument("interaction: existing ASK uses a different channel");
         return;
     }
-    exchange.ask = asks_.open(exchange.origin.owner,{body.at("question"),body.at("recipient"),std::move(channel),
-        body.value("choices",std::vector<std::string>{}),exchange.answer_deadline});
+    exchange.ask = asks_.open(exchange.origin.owner,{question.question,question.recipient,std::move(channel),
+        question.choices,exchange.answer_deadline});
     if (log_) log_->append("ask.opened",{{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},
         {"event",exchange.origin.id.sequence},{"item",exchange.item},{"revision",exchange.revision},
-        {"path",exchange.main_box.value ? "main" : "direct"},{"question",body.at("question")},{"channel",asks_.status(exchange.ask)->spec.channel},
+        {"path",exchange.main_box.value ? "main" : "direct"},{"question",question.question},{"channel",asks_.status(exchange.ask)->spec.channel},
         {"answerWaitMs",std::chrono::duration_cast<std::chrono::milliseconds>(exchange.answer_deadline-clock_()).count()}});
 }
 
@@ -126,10 +119,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         return true;
     }
     if (exchange.plugin_queued) return false;
-    if (exchange.item && !exchange.ask && !exchange.unavailable && !terminal_available_) {
-        const auto origin = Json::parse(exchange.origin.projection);
-        exchange.unavailable = origin.at("channel") == "terminal";
-    }
+    if (exchange.question && !exchange.ask && !terminal_available_ && exchange.question->channel == "terminal") exchange.unavailable = true;
     if (!exchange.ask && !exchange.unavailable && clock_() < exchange.answer_deadline) {
         if (!exchange.initial_queued) {
             auto message = Json::parse(exchange.origin.projection);
@@ -157,8 +147,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     const char* completion = exchange.origin.mailbox.flags & DFY_V2_MAIL_WAKE ? "interaction.ask.completed" : "interaction.ask.completed.passive";
     const char* category = pending ? "interaction.ask.present" : to_main ? completion :
         exchange.main_box.value ? "interaction.mail.reply" : "interaction.ask.result";
-    const auto origin = Json::parse(exchange.origin.projection);
-    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",origin.at("recipient")},
+    Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",exchange.question->recipient},
         {"channel",request ? request->spec.channel : std::string{}},{"requiresAsk",true}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
     else {
@@ -268,8 +257,7 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
     model::ToolDefinition definition{"mail_reply","Return the original ASK result to the plugin that asked the question.",
         R"({"type":"object","properties":{},"additionalProperties":false})"};
     if (!reply) {
-        const auto body = Json::parse(exchange->origin.projection);
-        const auto channels = available_channels(body.at("channel").get_ref<const std::string&>());
+        const auto channels = available_channels(exchange->question->channel);
         if (channels.empty()) return;
         auto schema = Json::parse(R"({"type":"object","properties":{"channel":{"type":"string"}},"required":["channel"],"additionalProperties":false})");
         schema["properties"]["channel"]["enum"] = channels;
@@ -294,17 +282,10 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
     main_run_tools_ = std::move(catalog);
 }
 
-// 单步接收事件并推进所有已接纳的原提问。
+// 推进已接纳的原提问并清理已撤销的信箱。
 void InteractionRoutes::advance() {
     if (!intake_.busy()) main_run_tools_.reset();
     asks_.advance();
-    if (auto event = plugins_.take_routed_event()) {
-        const auto id = event->id;
-        try { accept(std::move(*event)); }
-        catch (const std::exception&) {
-            if (log_) log_->append("event.rejected",{{"eventDomain",id.domain},{"event",id.sequence}});
-        }
-    }
     std::erase_if(exchanges_,[&](auto& exchange) { return advance_exchange(exchange); });
     std::erase_if(main_boxes_,[&](const auto& entry) {
         try { (void)mail_.network->sender(mail_.identity,entry.second); }

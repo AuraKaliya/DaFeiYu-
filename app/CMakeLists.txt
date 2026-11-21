@@ -6,6 +6,7 @@ target_sources(dfy_application PRIVATE companion.cpp companion.hpp companion_sta
 target_sources(dfy_application PRIVATE subagents.cpp subagents.hpp)
 target_sources(dfy_application PRIVATE run_log.cpp run_log.hpp)
 target_sources(dfy_application PRIVATE ask.cpp ask.hpp interaction_routes.cpp interaction_routes.hpp)
+target_sources(dfy_application PRIVATE event_dispatch.cpp event_dispatch.hpp)
 target_sources(dfy_application PRIVATE trace_read.cpp trace_read.hpp trace_replay.cpp trace_commands.hpp trace_model.hpp)
 target_sources(dfy_application PRIVATE mailbox_intake.cpp mailbox_intake.hpp room_mailbox.cpp)
 target_sources(dfy_application PRIVATE companion_exchange.cpp)

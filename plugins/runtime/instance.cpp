@@ -159,6 +159,16 @@ uint32_t PluginInstance::start() noexcept {
     if (status) { state_->error = status; try { (void)state_->host.begin_shutdown(); } catch (...) {} }
     return status;
 }
+// 为接纳记录补齐原实例身份，不延长实例寿命。
+void PluginInstance::capture_events(EventCapture capture) {
+    state_->host.capture_events([capture = std::move(capture), owner = generation(), id = std::string(plugin_id())](const auto& event) {
+        auto record = event;
+        record.owner = owner;
+        record.plugin = id;
+        capture(record);
+    });
+}
+
 // 在实例和模块活动保护内解析一个事件，随后把值复制给应用。
 // 步骤：准备发送者身份 → 进入受保护调用 → 绑定事件原实例。
 std::optional<RoutedEvent> PluginInstance::take_routed_event() {

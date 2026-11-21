@@ -54,6 +54,8 @@ class PluginInstance {
     void enable_mailboxes(std::shared_ptr<events::Mailboxes> network, runtime::DomainId app);
     // 在创建前将子会话服务绑定到本实例。
     void enable_agents(std::weak_ptr<PluginAgents> service, const std::shared_ptr<PluginInstance>& instance);
+    // 固定接纳记录器并以本实例身份报告事件。
+    void capture_events(EventCapture capture);
     // 仅从活动实例读取已解析的原生事件。
     std::optional<RoutedEvent> take_routed_event();
     // 取得当前实例已接入的定向地址，未接入或停止后返回零。
