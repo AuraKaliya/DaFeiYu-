@@ -69,8 +69,8 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 // 只读取本次记录位置，不打开原始会话或推进工作。
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
-// 在独立地址上交付受信终端原话，普通问答沿用单回合接纳。
-// 步骤：核对主会话空闲 → 投递原正文并取得接纳序号 → 从本体信箱读回并接纳问答。
+// 在独立地址上交付终端原话，并为同一主回合加入已审查的待收信件。
+// 步骤：核对主会话空闲 → 投递并读回原正文 → 接纳带收件的主动对话。
 agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
     if (dialogue_sequence_ == UINT64_MAX) throw std::overflow_error("dialogue: mailbox sequence exhausted");
@@ -84,7 +84,7 @@ agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
     const auto& event = received.event.get();
     const auto original = event.payload->find("text")->as_string();
     if (run_log_) run_log_->mail("mail.received",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original);
-    const auto result = conversation_.submit(std::string(original));
+    const auto result = mailbox_intake_.submit_dialogue(std::string(original));
     if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original,
         agent::RunId{result.session,result.turn});
     return result;

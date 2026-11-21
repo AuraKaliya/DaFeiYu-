@@ -139,7 +139,7 @@ void priority_mailboxes(const fs::path& run) {
     using namespace dfy::app;
     using namespace dfy::events;
     Application application({},run/"priority-plugins",run/"priority-user",dfy::model::Backend{
-        [](const auto&,const auto&) { throw std::logic_error("priority fixture should not submit a model"); return dfy::model::Response{}; }});
+        [](const auto&,const auto&) -> dfy::model::Response { throw std::logic_error("priority fixture should not submit a model"); }});
     const auto network = std::make_shared<Mailboxes>(MailboxLimits{4,8,24,512});
     const auto owner = next_domain(), source = next_domain();
     const auto regular = network->open(owner,source), high = network->open(owner,source);
@@ -220,6 +220,24 @@ void room_mailbox(const fs::path& run, bool automatic) {
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
         observed.str().find("room.addressed") != std::string::npos && observed.str().find("joined") == std::string::npos,
         "filtered room presence was incorrectly linked to a model run");
+    if (!automatic) {
+        application.post_room_event(RoomEvent::presence_changed,"room-1","filtered second");
+        application.post_room_event(RoomEvent::addressed,"room-1","passive context");
+        application.advance_plugins();
+        check(!application.conversation().busy(),"passive mail started a turn before dialogue");
+        const auto dialogue = application.submit_dialogue("direct text");
+        check(dialogue.source == dfy::agent::RunOrigin::user_request,"combined turn lost its user origin");
+        result.reset();
+        const auto until = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (application.conversation().busy() && std::chrono::steady_clock::now() < until) {
+            if (auto completion = application.conversation().advance()) result = std::move(completion);
+            std::this_thread::yield();
+        }
+        check(result && result->answer.find("passive context") != std::string::npos &&
+            result->answer.find("direct text") != std::string::npos &&
+            result->answer.find("filtered second") == std::string::npos,"dialogue did not collect the reviewed mailbox context");
+        check(application.review_room() == MailboxIntakeResult::idle,"combined turn left a consumed message in the room inbox");
+    }
 }
 }
 // 在一个真实宿主进程中完成空插件问答、安装、加载、事件消费、卸载、再次问答和移除。
