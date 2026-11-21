@@ -25,7 +25,8 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "只需内部结算或安静等待时，最终输出空文本或只含 internal 字段的 JSON，例如 {\"internal\":\"等待玩家\"}。"
     "其他唤醒的最终文本用于内部结算；需要主动发言时调用 reply。"
     "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
-    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。动作返回 accepted 时使用原工作号，结束结果见 finishedWork。"
+    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。following.work 是持续跟随的工作号，暂停后自动恢复。"
+    "一次性动作返回 accepted 或 queued 时尚未完成，结果见 finishedWork。明确叫停跟随时使用 following.work。"
     "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
     "queue_actions 可预先登记少量相互依赖的动作。queuedActions 仍未进入游戏；clear 可以取消待执行步骤，replace 停止指定工作后再执行新步骤。"
     "已接纳和正在移动都不等于已到达，要按真实回执回答。"
@@ -117,6 +118,7 @@ void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
     motion_.reset();
+    follow_.reset();
     queued_.clear();
     replacing_motion_ = false;
     guarded_actions_.clear();
@@ -251,6 +253,9 @@ void PartnerLoop::submit(std::string_view wake) {
             {"status",motion_->stopping ? "stopping" : motion_->accepted ? "running" : "starting"}};
         if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
     }
+    input["foreground"] = motion_ ? "active" : "standby";
+    if (follow_) input["following"] = {{"work",follow_->id},{"segment",follow_->segment},
+        {"status",follow_->pausing ? "pausing" : follow_->suspended ? "paused" : "following"}};
     if (!queued_.empty() && !delegated) {
         input["queuedActions"] = Json::array();
         for (const auto& step : queued_)
@@ -278,7 +283,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto enabled = scope();
     if (!delegated) for (const auto& skill : partner_skills) {
         if (skill.kind == SkillKind::confirmed) continue;
-        if (skill.kind == SkillKind::motion_stop && !motion_) continue;
+        if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
@@ -335,10 +340,18 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         return question;
     }
     if (skill == "stop_motion") {
-        if (!motion_ || args.at("work") != motion_->work) return {{"status","stale"}};
+        const auto work = args.at("work").get<std::string>();
+        if (follow_ && work == follow_->id && (!motion_ || motion_->skill != "follow")) {
+            follow_.reset();
+            publish("mc.partner.motion",{{"status","cancelled"},{"work",work},{"phase","paused"}});
+            return {{"status","stopped"},{"work",work}};
+        }
+        if (!motion_ || (work != motion_->work && (!follow_ || motion_->skill != "follow" || work != follow_->id)))
+            return {{"status","stale"}};
         clear_queue("stopped");
+        if (motion_->skill == "follow" && follow_) follow_->pausing = false;
         motion_->stopping = true;
-        return {{"status","stopping"},{"work",motion_->work}};
+        return {{"status","stopping"},{"work",work}};
     }
     if (skill == "withdraw_confirmation") {
         if (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null() || args.at("item") != confirmation_->request)
@@ -463,18 +476,24 @@ void PartnerLoop::report_actions() {
 
 // 移交已接纳的原工作和不可随新回合改写的关联身份。
 void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
-    std::unique_ptr<GameWork>& action) {
+    std::string_view envelope, std::unique_ptr<GameWork>& action) {
     if (motion_) throw std::logic_error("MC partner: motion already active");
+    if (skill == "follow") follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
 }
 
 // 独立于模型回合轮询已接纳的动作，并记录原动作的真实终态。
 // 步骤：发布接纳 → 处理停止条件并重读 → 归档归属和结果并唤醒。
 void PartnerLoop::advance_motion(bool stopping) {
+    if (stopping && (!motion_ || motion_->skill != "follow")) follow_.reset();
     if (!motion_) return;
     auto& motion = *motion_;
     Json fact{{"generation",motion.world},{"order",motion.order},{"session",motion.session},
         {"request",motion.request},{"invocation",motion.invocation},{"skill",motion.skill},{"bridgeWork",motion.work}};
+    if (motion.skill == "follow" && follow_) {
+        fact["work"] = follow_->id;
+        fact["segment"] = follow_->segment;
+    }
     motion.stopping = motion.stopping || stopping;
     std::optional<GameResult> result;
     try { result = motion.action->poll(motion.stopping,!motion.accepted); }
@@ -498,13 +517,24 @@ void PartnerLoop::advance_motion(bool stopping) {
     fact["effect"] = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
         result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
     fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
-    publish("mc.partner.action",fact);
     const auto& receipt = fact.at("result");
+    const bool departed = receipt.at("status") == "unconfirmed";
+    const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !departed;
+    if (motion.skill == "follow" && follow_) {
+        fact["transition"] = paused ? "paused" : "exited";
+        if (paused) { follow_->pausing = false; follow_->suspended = true; }
+        else follow_.reset();
+    }
+    publish("mc.partner.action",fact);
+    if (departed) {
+        follow_.reset();
+        clear_queue("exit_unconfirmed");
+    }
     if (motion.queued && !verified_action(receipt,motion.skill,motion.pickup) &&
         !(replacing_motion_ && receipt.at("status") == "interrupted"))
         clear_queue("prerequisite_failed",motion.invocation);
     replacing_motion_ = false;
-    if (!stopping) {
+    if (!stopping && !paused) {
         task_.record(fact);
         finished_work_ = std::move(fact);
     }

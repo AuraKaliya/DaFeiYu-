@@ -156,7 +156,8 @@ void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closin
     const auto envelope = confirm_result(item.request);
     if (!envelope) return;
     if (!envelope->empty() && std::chrono::steady_clock::now() < item.deadline) {
-        if (body_busy || motion_) return;
+        if (motion_) { pause_follow(); return; }
+        if (body_busy) return;
         const std::string_view skill = item.skill == "collect" ? "collect" : "place";
         const auto& work = *item.work;
         auto action = std::make_unique<GameWork>(GameAction::partner,config,work.id,*envelope,item.skill);

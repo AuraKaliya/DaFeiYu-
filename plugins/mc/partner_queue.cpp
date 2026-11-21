@@ -35,8 +35,11 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         return {{"status","cleared"}};
     }
     const bool replace = operation == "replace";
-    if ((!replace && operation != "append") ||
-        (replace && (!motion_ || !args.contains("work") || args.at("work") != motion_->work)))
+    const bool interrupt = operation == "interrupt";
+    if ((!replace && !interrupt && operation != "append") ||
+        (interrupt && (!follow_ || (motion_ && motion_->skill == "follow" && motion_->stopping && !follow_->pausing))) ||
+        (replace && (!motion_ || !args.contains("work") || (args.at("work") != motion_->work &&
+            (!follow_ || motion_->skill != "follow" || args.at("work") != follow_->id)))))
         return {{"status","stale"}};
 
     const auto& steps = args.at("steps");
@@ -55,23 +58,67 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
             pickup.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos))
             throw std::invalid_argument("MC queue: invalid required pickup");
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
-        if (skill == partner_skills.end() || !valid_step(name,parameters) ||
+        if (skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
             (name == "place" && !task_.target_ready()) || requires_approval(name,parameters))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
-        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::move(pickup)});
+        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::move(pickup),interrupt});
     }
 
     if (replace) {
         clear_queue("replaced");
+        if (follow_) follow_->pausing = false;
+        if (motion_->skill != "follow") follow_.reset();
         motion_->stopping = true;
         replacing_motion_ = true;
     }
-    queued_.insert(queued_.end(),std::make_move_iterator(pending.begin()),std::make_move_iterator(pending.end()));
+    const auto position = interrupt ? std::ranges::find(queued_,false,&QueuedAction::interrupt) : queued_.end();
+    queued_.insert(position,std::make_move_iterator(pending.begin()),std::make_move_iterator(pending.end()));
+    if (interrupt) pause_follow();
     publish("mc.partner.queue",{{"status","queued"},{"works",ids},{"revision",task_.revision()},{"order",order_}});
     return {{"status","queued"},{"works",std::move(ids)}};
+}
+
+// 保存直接动作并请求跟随释放角色，原任务与普通排队项继续保留。
+// 步骤：检查在途行为和回合 → 验证收件身份 → 登记优先动作并暂停。
+bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
+    std::string_view skill, std::string_view envelope) {
+    if (!follow_ || session != session_ || !request_ || delegated(session) || !permits(session) ||
+        !feed_.ready() || feed_.departed() || queued_.size() >= queue_limit ||
+        (motion_ && motion_->skill == "follow" && motion_->stopping && !follow_->pausing)) return false;
+    const auto input = Json::parse(envelope);
+    const auto& context = input.at("context");
+    if (context.at("generation") != session_world_ || context.at("order") != order_) return false;
+    const auto position = std::ranges::find(queued_,false,&QueuedAction::interrupt);
+    queued_.insert(position,{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true});
+    pause_follow();
+    return true;
+}
+
+// 请求结束跟随当前执行段，后续按实际退出决定能否交接。
+void PartnerLoop::pause_follow() noexcept {
+    if (follow_ && motion_ && motion_->skill == "follow" && !motion_->stopping) {
+        follow_->pausing = true;
+        motion_->stopping = true;
+    }
+}
+
+// 恢复同一持续意图，使用最新游标和新桥接工作号。
+// 步骤：核对当前绑定和前台占用 → 构造本段工作 → 发布原跟随身份。
+void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
+    if (!follow_ || !follow_->suspended || motion_ || body_busy || !feed_.ready() || feed_.gap() ||
+        !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt)) return;
+    auto& follow = *follow_;
+    const auto work = follow.id+".resume."+std::to_string(follow.segment+1);
+    const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
+        {"arguments",follow.arguments}}.dump();
+    auto action = std::make_unique<GameWork>(GameAction::partner,config,work,envelope,"follow");
+    motion_.emplace(Motion{follow.order,session_,follow.request,follow.invocation,session_world_,work,"follow",std::move(action)});
+    motion_->accepted = false;
+    ++follow.segment;
+    follow.suspended = false;
 }
 
 // 结算指定调用组或全部尚未发送给游戏的步骤。
@@ -88,9 +135,11 @@ void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
 // 将队首变为唯一占用角色的游戏工作，原输入和实际接纳游标分别保留。
 // 步骤：处理配对和修订失效 → 等待角色控制权 → 重验动作并交给桥接。
 void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool body_busy) {
-    if (queued_.empty()) return;
+    if (queued_.empty()) { if (!closing) resume_follow(config,body_busy); return; }
     const auto& step = queued_.front();
-    if (closing || feed_.gap() || step.revision != task_.revision()) { clear_queue("stale"); return; }
+    if (closing || feed_.gap()) { clear_queue("stale"); return; }
+    if (step.revision != task_.revision()) { clear_queue("stale",step.invocation); return; }
+    if (follow_ && follow_->suspended && !step.interrupt) { resume_follow(config,body_busy); return; }
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
     if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args))) {
@@ -101,6 +150,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
         {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));
+    if (step.skill == "follow") follow_ = Follow{step.order,step.request,step.invocation,1,step.work,step.arguments};
     motion_.emplace(Motion{step.order,session_,step.request,step.invocation,session_world_,step.work,step.skill,std::move(action)});
     motion_->accepted = false;
     motion_->queued = true;

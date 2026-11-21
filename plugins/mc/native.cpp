@@ -243,10 +243,16 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         if (partner_turn && !confirmed && skill->supports_approval &&
             raw->partner.requires_approval(skill->name,nlohmann::json::parse(job.arguments).at("arguments")))
             return report(DFY_V2_BUSY,error);
-        if (controls_body && !target_blocked && !pending_approval &&
-            (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw)))
-            return report(DFY_V2_BUSY, error);
-        if (target_blocked) {
+        const bool busy = controls_body && !target_blocked && !pending_approval &&
+            (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw));
+        if (busy) {
+            if (!partner_turn || confirmed || skill->name == "follow" || body_job(*raw) ||
+                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,
+                    skill->name == "start_move" ? "move" : skill->name,job.arguments)) return report(DFY_V2_BUSY,error);
+            job.output = nlohmann::json{{"status","queued"},{"work",job.id}}.dump();
+            job.ready = job.success = true;
+            job.effect = DFY_V2_TOOL_APPLIED;
+        } else if (target_blocked) {
             job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
             job.ready = job.success = true;
         } else if (confirmed) {
@@ -303,7 +309,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
             job->success = result.at("status") != "stale" && result.at("status") != "invalid_target";
             job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" ||
                 result.at("status") == "recorded" || result.at("status") == "stopping" || result.at("status") == "withdrawn" ||
-                result.at("status") == "queued" || result.at("status") == "cleared" ?
+                result.at("status") == "queued" || result.at("status") == "cleared" || result.at("status") == "stopped" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
             job->output = result.dump();
         } catch (...) {}
@@ -325,7 +331,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 job->output = std::move(value->payload);
                 if (value->accepted) {
                     job->output = nlohmann::json{{"status","accepted"},{"work",job->id}}.dump();
-                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->action);
+                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->arguments,job->action);
                     job->motion_transferred = true;
                 }
                 switch (value->effect) {

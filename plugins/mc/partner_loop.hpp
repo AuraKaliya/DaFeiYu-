@@ -32,7 +32,11 @@ class PartnerLoop {
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
     // 接纳已经由游戏启动且尚未退出的原工作，接管轮询和停止。
-    void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work, std::unique_ptr<GameWork>& action);
+    void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
+        std::string_view envelope, std::unique_ptr<GameWork>& action);
+    // 给跟随期间的直接一次性动作登记优先步骤。
+    bool interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
+        std::string_view skill, std::string_view envelope);
     // 判断角色的移动控制是否仍由原工作持有。
     bool has_motion() const noexcept { return motion_.has_value(); }
     // 有待执行步骤时，直接动作不得越过队列。
@@ -87,6 +91,10 @@ class PartnerLoop {
     nlohmann::json queue_actions(std::uint64_t invocation, const nlohmann::json& arguments);
     // 在角色空闲且原前置工作已核实后提交一个步骤。
     void advance_queue(const BridgeConfig& config, bool closing, bool body_busy);
+    // 按最新游标恢复原跟随的下一段执行。
+    void resume_follow(const BridgeConfig& config, bool body_busy);
+    // 仅在跟随实际占用角色时请求其退出当前执行段。
+    void pause_follow() noexcept;
     // 批量结算未执行的步骤并释放队列。
     void clear_queue(std::string_view reason, std::uint64_t group = 0);
     // 在本地有界保留结构化事实，等本体接纳后归还。
@@ -148,12 +156,20 @@ class PartnerLoop {
         bool queued = false;
     };
     std::optional<Motion> motion_;
+    struct Follow {
+        std::uint64_t order, request, invocation, segment = 1;
+        std::string id;
+        nlohmann::json arguments;
+        bool pausing = false, suspended = false;
+    };
+    std::optional<Follow> follow_;
     struct QueuedAction {
         std::uint64_t order, request, invocation, revision;
         std::string work;
         std::string_view skill;
         nlohmann::json arguments;
         std::string pickup;
+        bool interrupt = false;
     };
     std::deque<QueuedAction> queued_;
     bool replacing_motion_ = false;

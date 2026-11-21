@@ -32,7 +32,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 3) verify_collection_effect();
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
-        const bool follow = argc == 4 && std::wstring_view(argv[3]) == L"partner-follow";
+        const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
+        const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");
         const bool motion = follow || (argc == 4 && std::wstring_view(argv[3]) == L"partner-motion");
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
         const bool scene = argc == 4 && std::wstring_view(argv[3]) == L"partner-scene";
@@ -40,9 +41,11 @@ int wmain(int argc, wchar_t** argv) {
         if (argc != 3 && !interrupt && !motion && !confirm && !task) throw std::runtime_error("package and test directory required");
         const std::filesystem::path root = argv[2];
         std::atomic_bool actual_reply = false, interruption_seen = false;
+        std::string follow_work, resumed_work;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
             const auto& last = request.messages.back();
             if (last.role == Role::tool) {
+                if (suspend) return {{Role::assistant,R"({"internal":"receipt stored"})"}};
                 if (last.tool_call_id == "expand") {
                     const auto result = nlohmann::json::parse(last.content.substr(last.content.find('{')));
                     if (result.at("status") != "scheduled" || result.at("categories").size() != 12 || result.at("wake") != true)
@@ -62,6 +65,31 @@ int wmain(int argc, wchar_t** argv) {
                 return {{Role::assistant,R"({"internal":"tool receipt read"})"}};
             }
             const auto input = nlohmann::json::parse(last.content);
+            if (suspend) {
+                using Json = nlohmann::json;
+                // 为固定场景选择本轮确实开放的原生工具。
+                const auto call = [&](std::string_view name, Json args) -> Response {
+                    const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(name); });
+                    if (tool == request.tools.end()) throw std::runtime_error("missing follow handoff tool");
+                    return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
+                };
+                const auto& events = input.at("events");
+                if (input.at("trigger") == "skills.expanded")
+                    return call("_collect",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2},{"count",1}});
+                if (!events.empty() && events.back().at("type") == "player.message") {
+                    switch (events.back().at("sequence").get<int>()) {
+                    case 2: return call("_follow",{{"distance",4}});
+                    case 3: return call("_skills",{{"categories",{"dig_break"}}});
+                    case 4:
+                        if (input.at("following").at("status") != "paused") throw std::runtime_error("follow is not paused");
+                        return call("_reply",{{"text","I can hear you"}});
+                    case 5:
+                        if (input.at("following").at("segment") != 2) throw std::runtime_error("old segment was reused");
+                        return call("_stop_motion",{{"work",input.at("following").at("work")}});
+                    }
+                }
+                return {{Role::assistant,R"({"internal":"observed"})"}};
+            }
             if (confirm && input.contains("finishedWork")) {
                 if (input.at("finishedWork").at("result").at("collected") != 2)
                     throw std::runtime_error("confirmation lost the actual exit from the model context");
@@ -174,10 +202,29 @@ int wmain(int argc, wchar_t** argv) {
                         throw std::runtime_error("original candidate did not receive the local approval");
                     ++decisions;
                 } else if (type == "mc.partner.control") control_released = fact.at("phase") == "released";
-                else if (motion && type == "mc.partner.motion") accepted_motion = fact.at("action").at("bridgeWork");
+                else if (suspend && type == "mc.partner.motion" && fact.at("status") == "accepted" &&
+                    fact.at("action").at("skill") == "follow") {
+                    const auto& action = fact.at("action");
+                    if (follow_work.empty()) follow_work = action.at("work");
+                    else if (action.at("work") != follow_work || action.at("bridgeWork") == follow_work ||
+                        action.at("segment") != 2) throw std::runtime_error("follow identity changed after pause");
+                    else resumed_work = action.at("bridgeWork");
+                }
+                else if (!suspend && motion && type == "mc.partner.motion") accepted_motion = fact.at("action").at("bridgeWork");
                 else if (task && type == "mc.partner.turn" && fact.at("order") == 2 && fact.at("request") == 3)
                     continuation_closed = fact.at("failed") == false;
                 else if (type == "mc.partner.action") {
+                    if (suspend) {
+                        const auto& result = fact.at("result");
+                        if (fact.at("skill") == "follow") {
+                            if (fact.at("work") != follow_work || result.at("status") != "interrupted" ||
+                                fact.at("transition") != (resumed_work.empty() ? "paused" : "exited"))
+                                throw std::runtime_error("follow did not exit its real execution segment");
+                            ++game_receipts;
+                        } else if (fact.at("skill") == "collect" && result.at("status") != "queued") ++game_receipts;
+                        else if (fact.at("skill") == "reply" && result.at("sent") == true) ++game_receipts;
+                        continue;
+                    }
                     if (confirm && fact.at("skill") == "reply") {
                         if (fact.at("order") != 3 || fact.at("result").at("sent") != true || game_receipts)
                             throw std::runtime_error("chat did not exit before the original action");
@@ -214,7 +261,7 @@ int wmain(int argc, wchar_t** argv) {
                     dfy_v2_partner_status state{};
                     if (instance->invoke(*api,[&](const auto& fn, auto* native) { return fn.status(native,&state,nullptr); }))
                         throw std::runtime_error("partner state unavailable");
-                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED :
+                    if (stopped ? state.phase == DFY_V2_PARTNER_CLOSED : suspend ? state.settled == 5 && game_receipts == 4 :
                         state.ready && state.session && state.settled == (motion || confirm ? 4u : interrupt ? 3u : 2u) &&
                         (!task || continuation_closed) && (!motion || game_receipts == 2) && (!interrupt || interruption_seen) &&
                         (!confirm || (game_receipts == 1 && actual_reply))) return;
@@ -223,14 +270,14 @@ int wmain(int argc, wchar_t** argv) {
                 throw std::runtime_error("plugin did not reach expected boundary");
             };
             wait(false);
-            if ((interrupt ? !interruption_seen : confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
+            if ((suspend ? resumed_work.empty() : interrupt ? !interruption_seen : confirm ? game_receipts != 1 : motion ? accepted_motion.empty() : !actual_reply) ||
                 app.conversation().status())
                 throw std::runtime_error("reply or interruption missing, or shared context");
             if (instance->invoke(*api,[](const auto& fn, auto* native) { return fn.stop(native,nullptr); }))
                 throw std::runtime_error("could not stop plugin-owned partner");
             wait(true);
         }
-        if (game_receipts != (motion ? 2u : 1u) || !control_released || (confirm && decisions != 1))
+        if (game_receipts != (suspend ? 4u : motion ? 2u : 1u) || !control_released || (confirm && decisions != 1))
             throw std::runtime_error("expected original effect, confirmation or confirmed control release");
         if (app.plugins().unload("mc.companion") != plugins::ShutdownResult::closed) throw std::runtime_error("MC unload failed");
         return 0;

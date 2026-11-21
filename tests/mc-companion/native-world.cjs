@@ -12,7 +12,8 @@ async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
-  const follow = variant === 'partner-follow';
+  const suspend = variant?.startsWith('partner-follow-collect');
+  const follow = suspend || variant === 'partner-follow';
   const motion = follow || variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
@@ -32,6 +33,7 @@ async function main() {
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
+  let following, collecting, resumed, collectExited = false;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -47,12 +49,14 @@ async function main() {
         const presence = { sequence: 1, type: 'player.entered' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : first && approvedId || motion && replies || confirm && pendingChat ? 4 :
+        const latest = initial ? 1 : suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
+          first && approvedId || motion && replies || confirm && pendingChat ? 4 :
           (interrupt || motion) && moveId || approvedId || delayed && fs.existsSync(path.join(root, 'new-instruction')) ? 3 : 2;
         const messages = [presence, { sequence: 2, text: 'play with me',
           sceneAtMessage: { dimension: 'overworld', sampledAtMs: 42, position: { x: -0.5, y: -57, z: 9.25 } } },
           { sequence: 3, text: motion || confirm ? 'where are you' : approvedId ? 'approve ' + approvedId : 'stop for now' },
-          { sequence: 4, text: motion ? 'stop for now' : (confirm ? 'approve ' : 'deny ') + approvedId }];
+          { sequence: 4, text: suspend ? 'can you hear me' : motion ? 'stop for now' : (confirm ? 'approve ' : 'deny ') + approvedId },
+          { sequence: 5, text: 'stop following' }];
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence, messages: messages.slice(after, latest) };
       }
@@ -78,6 +82,33 @@ async function main() {
     },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      if (suspend) {
+        const receipt = (exited, result) => ({ ...context, skill, exited, result });
+        if (skill === 'follow') {
+          assert.deepEqual(args ?? { distance: 4 }, { distance: 4 });
+          if (method === 'partner.begin') {
+            if (!following) following = id;
+            else { assert.ok(collectExited); assert.equal(stopped, 1); resumed = id; }
+          }
+          assert.equal(id, resumed || following);
+          if (method === 'partner.stop') ++stopped;
+          return receipt(method === 'partner.stop', method === 'partner.stop' ? { status: 'interrupted' } : {});
+        }
+        if (skill === 'reply') {
+          assert.ok(collecting && !collectExited && !resumed);
+          assert.equal(args.text, 'I can hear you');
+          ++replies;
+          return receipt(true, { status: 'done', sent: true, text: args.text });
+        }
+        assert.equal(skill, 'collect');
+        assert.equal(stopped, 1);
+        if (method === 'partner.begin') { collecting = id; assert.equal(args.block, 'grass_block'); }
+        assert.equal(id, collecting);
+        if (!replies) return receipt(false, {});
+        collectExited = true;
+        return receipt(true, variant.endsWith('-blocked') ? { status: 'blocked' } : { status: 'done', broken: 1,
+          changes: [{ x: 1, y: -61, z: 2, before: 'grass_block', after: 'air' }], inventoryDelta: { dirt: 1 } });
+      }
       if (showGame && skill === 'reply') {
         assert.equal(method, 'partner.begin');
         if (confirm && args.text === 'I can hear you while waiting.') {
@@ -139,7 +170,7 @@ async function main() {
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
-    if (motion) { assert.equal(replies, 1); assert.equal(stopped, 1); }
+    if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, first || delayed ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
