@@ -12,7 +12,8 @@ async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
-  const motion = variant === 'partner-motion';
+  const follow = variant === 'partner-follow';
+  const motion = follow || variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
   const task = scene || variant === 'partner-task';
@@ -103,12 +104,13 @@ async function main() {
         return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
       }
       if (interrupt || motion) {
-        assert.equal(skill, 'move');
+        assert.equal(skill, follow ? 'follow' : 'move');
         assert.deepEqual(context, { generation: state.generation, order: 2 });
-        if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, { place: 'player' }); }
+        if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, follow ? {} : { place: 'player' }); }
         else assert.equal(id, moveId);
         if (method === 'partner.stop') ++stopped;
-        return { ...context, skill, exited: stopped > 0, result: stopped ? { status: 'interrupted' } : {} };
+        return { ...context, skill, exited: stopped > 0, result: stopped ? { status: 'interrupted' } :
+          follow ? { progress: { phase: 'following', distance: 4.5 } } : {} };
       }
       assert.equal(method, 'partner.begin');
       assert.deepEqual(context, { generation: state.generation, order: 2 });

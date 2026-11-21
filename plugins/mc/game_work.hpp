@@ -16,13 +16,15 @@ class GameWork {
     std::optional<GameResult> poll(bool cancelled, bool defer = false);
     // 查询是否可能已有动作接纳，用于错误时保守标记效果。
     bool attempted() const noexcept { return attempted_; }
+    // 读取最近一次已核验的在途进展。
+    const std::string& progress() const noexcept { return progress_; }
   private:
     const BridgeConfig& config_;
     GameAction action_;
-    std::string id_, arguments_, skill_;
+    std::string id_, arguments_, skill_, progress_;
     std::unique_ptr<PipeExchange> pipe_;
     enum class Phase { begin, read, stop } phase_ = Phase::begin;
     bool attempted_ = false, stopping_ = false;
-    std::chrono::steady_clock::time_point next_{}, deadline_;
+    std::chrono::steady_clock::time_point next_{}, deadline_, stop_deadline_{};
 };
 }

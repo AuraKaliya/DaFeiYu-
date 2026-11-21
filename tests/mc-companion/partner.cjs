@@ -63,9 +63,24 @@ async function exercise(fixture, player, fish) {
     assert.equal(actions.partner.call('partner.read', move, current, 'move').exited, false);
     assert.equal(actions.partner.call('partner.begin', randomUUID(), later, 'observe', {}).result.status, 'done');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), later, 'move', { place: 'player' }), /正忙/);
+    actions.partner.call('partner.stop', move, current, 'move');
+    await until(() => actions.partner.call('partner.read', move, current, 'move').exited, '原移动退出');
+    const follow = randomUUID();
+    const args = { distance: 3 };
+    fixture.send('tp DfyOwner 21.5 -60 0.5');
+    await until(() => fish.players.DfyOwner.entity?.position.x > 21, '跟随起点已读到');
+    const followAt = (method = 'partner.read') => actions.partner.call(method, follow, later, 'follow', args);
+    assert.equal(followAt('partner.begin').exited, false);
+    await until(() => followAt().result.progress?.phase === 'in_range', '第一次跟上', 12000);
+    const farSide = fish.entity.position.x;
+    fixture.send('tp DfyOwner 9.5 -60 0.5');
+    await until(() => followAt().result.progress?.phase === 'in_range' && fish.entity.position.x < 13 &&
+      fish.entity.position.x < farSide - 4, '原跟随任务跨越反向目标', 12000);
+    assert.equal(followAt().exited, false);
     assert.equal(actions.releaseControl(current.generation, 3).phase, 'requested');
     await until(() => actions.controlReceipt(current.generation)?.phase === 'released', '游戏确认已释放');
     assert.equal(actions.partner.call('partner.read', move, current, 'move').result.status, 'interrupted');
+    assert.equal(followAt().result.status, 'interrupted');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), current, 'move', { place: 'player' }));
   } finally { await actions.close(); inbox.close(); world.close(); }
 }

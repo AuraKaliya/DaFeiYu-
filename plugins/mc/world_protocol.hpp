@@ -25,7 +25,7 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
 struct InspectReply { bool exited, arrived, moved; std::string payload; };
 struct PartnerReply {
     bool exited, arrived, placement_attempted, placement_verified;
-    std::string payload;
+    std::string payload, progress;
 };
 // 把已绑定的玩家上下文与模型提供的技能参数发送给配对的游戏角色。
 std::string partner_request(std::string_view method, std::string_view id, std::string_view key,

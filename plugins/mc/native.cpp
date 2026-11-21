@@ -237,7 +237,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             if (!raw->partner.confirm_action(call->session,call->invocation,skill->name,job.arguments))
                 return report(DFY_V2_INVALID_CONTEXT,error);
         } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
-            job.id, job.arguments, defer_motion ? "move" : std::string(text(name)));
+            job.id, job.arguments, skill->name == "start_move" ? "move" : std::string(text(name)));
         else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
@@ -257,7 +257,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (partner) {
         job.partner_session = call->session;
         job.invocation = call->invocation;
-        job.skill = legacy ? "collect" : defer_motion ? "move" : skill->name;
+        job.skill = legacy ? "collect" : skill->name == "start_move" ? "move" : skill->name;
         job.confirmation = job.waiting = confirmed;
     }
     job.controls_body = controls_body;

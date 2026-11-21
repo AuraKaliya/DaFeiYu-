@@ -115,6 +115,7 @@ class PartnerLoop {
         std::string_view skill;
         std::unique_ptr<GameWork> action;
         bool stopping = false, announced = false;
+        std::string last_phase;
     };
     std::optional<Motion> motion_;
     bool motion_wake_ = false;

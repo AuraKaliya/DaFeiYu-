@@ -4,7 +4,9 @@
 namespace dfy::mc {
 // 构造时仅校验输入，实际接纳由第一次原生轮询执行。
 GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments, std::string skill)
-    : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), skill_(std::move(skill)), deadline_(std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
+    : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), skill_(std::move(skill)),
+      deadline_(skill_ == "follow" ? std::chrono::steady_clock::time_point::max() :
+          std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
     if (action_ == GameAction::partner) static_cast<void>(partner_request("partner.begin", id_, config_.key, skill_, arguments_));
     else if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
     else if (action_ == GameAction::mine) static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));
@@ -16,8 +18,11 @@ GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id
 std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
     const auto now = std::chrono::steady_clock::now();
     stopping_ = stopping_ || cancelled || now >= deadline_;
-    if (stopping_ && !attempted_) return GameResult{false, GameEffect::none, {}};
-    if (now >= deadline_ + std::chrono::seconds(4)) throw std::runtime_error("MC: game exit unconfirmed");
+    if (stopping_) {
+        if (!attempted_) return GameResult{false, GameEffect::none, {}};
+        if (stop_deadline_ == decltype(stop_deadline_){}) stop_deadline_ = now + std::chrono::seconds(4);
+        if (now >= stop_deadline_) throw std::runtime_error("MC: game exit unconfirmed");
+    }
     if (!pipe_ && !stopping_ && now < next_) return {};
     try {
         if (!pipe_) {
@@ -35,6 +40,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         pipe_.reset();
         if (action_ == GameAction::partner) {
             auto value = partner_reply(*wire, id_, skill_, arguments_);
+            progress_ = std::move(value.progress);
             if (value.exited && skill_ == "place") return GameResult{true, value.placement_verified ? GameEffect::observed :
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :

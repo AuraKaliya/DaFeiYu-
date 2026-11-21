@@ -19,13 +19,15 @@ struct PartnerSkill {
     SkillKind kind = SkillKind::game;
     bool supports_approval = false;
 };
-inline constexpr std::array<PartnerSkill,11> partner_skills{{
+inline constexpr std::array<PartnerSkill,12> partner_skills{{
     {"observe", "partner.observe", "Read current positions, landmarks and inventory. Optional block registry name lists visible matches. For structures use around=player or self. survey contains client-loaded blocks from origin, with x increasing across each row, z across rows, y across layers. Palette decodes block symbols; dot is air, question mark is unloaded, asterisk is an unlisted block.",
         R"({"type":"object","properties":{"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a named landmark, player (place=player), or one nearby integer x,y,z position.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
     {"start_move", "partner.start_move", "Start moving to a landmark, the player's current position (place=player), or xyz. Returns a work ID at acceptance, not an arrival. The movement continues while you listen and reply.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
+    {"follow", "partner.follow", "Keep following the bound player as they move until stopped, lost or blocked. Returns at acceptance. Optional distance is 2-5 blocks, default 3.",
+        R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Request cancellation of the matching work ID from activeMotion. Wait for its exit before starting another physical action.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32). For a specific block supply x,y,z and count=1. When consent is needed, set approval to game or main. Reports broken blocks and actual inventory changes.",

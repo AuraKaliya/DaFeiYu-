@@ -13,7 +13,8 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "sceneAtMessage 是收到对应原话时看到的玩家位置，position 为空表示当时未跟踪到玩家。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "要对玩家说话时使用回复工具；回合结束的文本是内部结算，不会发到游戏。"
-    "要边走边继续陪伴时用 start_move。activeMotion 是正在运行的游戏动作，可在此期间观察和回复。"
+    "玩家说跟着我走或一直跟着时用 follow，已在跟随就继续原动作。前往固定地点优先用 start_move。"
+    "activeMotion 是正在运行的游戏动作，可在此期间观察和回复。"
     "普通聊天和进度询问不需要停止动作；明确要求停止或换任务时，用 stop_motion 请求停止，等待原动作退出。"
     "已接纳和正在移动都不等于已到达，要按真实回执回答。"
     "有持续分工时用 task_update 保存共同目标、已知事实和待核实条件。继续、等待现场变化、等待玩家或结束由你选择。"
@@ -161,8 +162,12 @@ void PartnerLoop::submit(std::string_view wake) {
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
     if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
-    if (motion_) input["activeMotion"] = {{"work",motion_->work},{"skill",motion_->skill},{"order",motion_->order},
-        {"status",motion_->stopping ? "stopping" : "running"}};
+    if (motion_) {
+        auto& active = input["activeMotion"];
+        active = {{"work",motion_->work},{"skill",motion_->skill},{"order",motion_->order},
+            {"status",motion_->stopping ? "stopping" : "running"}};
+        if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
+    }
     if (autonomous || (motion_wake_ && facts.empty())) input["recentEvents"] = recent_events_;
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"escalated",question_->escalated}};
@@ -178,7 +183,7 @@ void PartnerLoop::submit(std::string_view wake) {
         if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_) continue;
         const auto category = skill.category;
-        if (!base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
+        if (skill.name != "follow" && !base_category(category) && !expanded_.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);
         ++count;
@@ -316,7 +321,15 @@ void PartnerLoop::advance_motion(bool stopping) {
     std::optional<GameResult> result;
     try { result = motion.action->poll(motion.stopping); }
     catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
-    if (!result) return;
+    if (!result) {
+        auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
+        const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
+        if (!phase.empty() && motion.last_phase != phase) {
+            publish("mc.partner.motion",{{"action",fact},{"status",phase},{"progress",std::move(progress)}});
+            motion.last_phase = phase;
+        }
+        return;
+    }
     fact["effect"] = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
         result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
     fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);

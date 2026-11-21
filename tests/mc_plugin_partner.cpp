@@ -14,7 +14,8 @@ int wmain(int argc, wchar_t** argv) {
     using namespace model;
     try {
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
-        const bool motion = argc == 4 && std::wstring_view(argv[3]) == L"partner-motion";
+        const bool follow = argc == 4 && std::wstring_view(argv[3]) == L"partner-follow";
+        const bool motion = follow || (argc == 4 && std::wstring_view(argv[3]) == L"partner-motion");
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
         const bool scene = argc == 4 && std::wstring_view(argv[3]) == L"partner-scene";
         const bool task = scene || (argc == 4 && std::wstring_view(argv[3]) == L"partner-task");
@@ -50,7 +51,7 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : motion ? "_start_move" : "_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 6u : 7u) ||
+                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 7u : 8u) ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :
@@ -73,6 +74,8 @@ int wmain(int argc, wchar_t** argv) {
             if (motion && input.at("events").back().at("sequence").get<unsigned>() >= 3) {
                 const auto& active = input.at("activeMotion");
                 if (active.at("order") != 2) throw std::runtime_error("active motion lost the original order");
+                if (follow && (active.at("skill") != "follow" || active.at("progress").at("distance") != 4.5))
+                    throw std::runtime_error("tracked progress missing from the active follow");
                 const auto reply = input.at("events").back().at("sequence") == 3;
                 const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) {
                     return item.name.ends_with(reply ? "_reply" : "_stop_motion");
@@ -94,7 +97,12 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 4 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost independent history or raw text");
-            if (request.tools.size() != 5) throw std::runtime_error("initial scope leaked detailed actions");
+            if (request.tools.size() != 6) throw std::runtime_error("initial scope leaked detailed actions");
+            if (follow) {
+                const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_follow"); });
+                if (tool == request.tools.end()) throw std::runtime_error("follow missing from initial scope");
+                return {{Role::assistant,"",{{"follow",tool->name,"{}"}}},FinishReason::tool_calls};
+            }
             if (task) {
                 const auto task_tool = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name.ends_with("_task_update"); });
                 const auto args = nlohmann::json{{"revision",0},{"goal","resume the wall"},{"detail","check the corner"},

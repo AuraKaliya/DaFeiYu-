@@ -3,6 +3,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
 const { blockSurvey } = require('./block-survey.cjs');
 const { placeBlock } = require('./placement.cjs');
+const { followPlayer } = require('./follow.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -35,12 +36,17 @@ function visible(bot, type) {
       !(block.position.x === feet.x && block.position.z === feet.z && block.position.y < feet.y));
 }
 
-// 游戏动作使用同一份只走路的寻路策略，抵达后再核对目标。
-function walk(bot, goal) {
+// 一次移动和持续跟随都使用只走路的寻路策略。
+function prepareWalking(bot) {
   const moves = new Movements(bot);
   moves.canDig = moves.canOpenDoors = moves.allow1by1towers = moves.allowParkour = false;
   moves.scafoldingBlocks = [];
   bot.pathfinder.setMovements(moves);
+}
+
+// 走到固定目标并等待寻路器真实退出。
+function walk(bot, goal) {
+  prepareWalking(bot);
   return bot.pathfinder.goto(goal);
 }
 
@@ -174,6 +180,9 @@ function partnerService(bot, world, inbox, places, owner) {
         check();
         result.position = bot.entity.position.clone();
         if (bot.entity.position.floored().distanceTo(pos) > 1) throw new Error('到达未核实');
+      } else if (r.skill === 'follow') {
+        prepareWalking(bot);
+        await followPlayer(bot, owner, args.distance ?? 3, check, result);
       } else if (r.skill === 'collect') await collect(bot, args, check, result);
       else if (r.skill === 'place') {
         await placeBlock(bot, targetPoint(bot, args), blockType(bot, args.block), check, walk, result);
@@ -186,7 +195,7 @@ function partnerService(bot, world, inbox, places, owner) {
       result.reason = String(error.message).slice(0, 240);
     } finally {
       r.exited = true;
-      if (['move', 'collect', 'place'].includes(r.skill)) previous = { order: r.order, skill: r.skill, ...result };
+      if (['move', 'follow', 'collect', 'place'].includes(r.skill)) previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
   }

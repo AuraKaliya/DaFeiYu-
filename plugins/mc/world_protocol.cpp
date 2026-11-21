@@ -107,7 +107,19 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
             throw std::invalid_argument("MC: inconsistent placement status");
         if (verified) verify_placement(result,envelope.at("arguments"));
     }
-    return {exited, exited && result.at("status") == "done", attempted, verified, exited ? result.dump() : std::string{}};
+    std::string progress;
+    if (skill == "follow" && result.contains("progress")) {
+        const auto& step = result.at("progress");
+        const auto name = step.at("phase").get<std::string>();
+        const bool waiting = name == "waiting_player";
+        if (step.size() != (waiting ? 1u : 2u) ||
+            (!waiting && (name != "in_range" && name != "following" && name != "replanning")) ||
+            (!waiting && (!step.at("distance").is_number() || !std::isfinite(step.at("distance").get<double>()) ||
+                step.at("distance") < 0))) throw std::invalid_argument("MC: invalid follow progress");
+        progress = step.dump();
+    }
+    return {exited, exited && result.at("status") == "done", attempted, verified, exited ? result.dump() : std::string{},
+        std::move(progress)};
 }
 // 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments) {
