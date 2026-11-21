@@ -6,7 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
+const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { dryStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
@@ -34,9 +34,9 @@ function targetPoint(bot, args) {
 }
 
 // 在指定中心附近搜索，仅返回角色可见且不在自己脚下的候选方块。
-function visible(bot, type, center = bot.entity.position) {
+function visible(bot, matching, center = bot.entity.position) {
   const feet = bot.entity.position.floored();
-  return bot.findBlocks({ matching: type.id, point: center, maxDistance: 16, count: 96 })
+  return bot.findBlocks({ matching, point: center, maxDistance: 16, count: 96 })
     .map(pos => bot.blockAt(pos)).filter(block => block && bot.canSeeBlock(block) &&
       !(block.position.x === feet.x && block.position.z === feet.z && block.position.y < feet.y));
 }
@@ -94,7 +94,6 @@ async function pickup(bot, point, known, check, result) {
 // 逐块执行本次采集，指定坐标时保持目标，实际破坏与背包增减分别取证。
 // 步骤：核对材料和目标 → 走近并选择可采工具 → 读回方块 → 走近掉落并记录背包变化。
 async function collect(bot, args, check, result, built) {
-  const type = blockType(bot, args.block);
   const fixed = ['x', 'y', 'z'].some(k => Object.hasOwn(args, k)) ? targetPoint(bot, args) : null;
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
     throw new Error('数量应为 1～32，指定的单格只能采一次');
@@ -103,6 +102,9 @@ async function collect(bot, args, check, result, built) {
   if (Object.hasOwn(args, 'item') && (!Object.hasOwn(bot.registry.itemsByName, expected) ||
       args.requiredStock !== args.count || args.source !== 'ground'))
     throw new Error('地面取材需要已知物品和目标库存');
+  const type = args.block === undefined && expected ? null : blockType(bot, args.block);
+  const types = expected ? groundTypes(bot.registry, expected).filter(block => !type || block.id === type.id) : [type];
+  const matching = types.map(block => block.id);
   const missing = expected ? Math.max(0, args.requiredStock - (before[expected] ?? 0)) : args.count;
   if (expected) result.stock = { item: expected, before: before[expected] ?? 0, required: args.requiredStock };
   result.broken = 0;
@@ -115,10 +117,11 @@ async function collect(bot, args, check, result, built) {
       check();
       const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
-      const block = fixed ? bot.blockAt(fixed) : visible(bot, type).find(allowed);
-      if (block?.type === type.id && !built.permits(affectedByDig(bot, block), approved))
+      if (!matching.length) throw new Error('当前地面取材规则未找到这种物品的自然来源');
+      const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
+      if (block && matching.includes(block.type) && !built.permits(affectedByDig(bot, block), approved))
         throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
-      if (!block || block.type !== type.id || !block.diggable || !allowed(block))
+      if (!block || !matching.includes(block.type) || !block.diggable || !allowed(block))
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
       const pos = block.position;
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('目标支撑着角色，请先移动');
@@ -127,13 +130,15 @@ async function collect(bot, args, check, result, built) {
         finally { result.approachPosition = bot.entity.position.clone(); }
       }
       check();
-      const items = bot.inventory.items().filter(item => block.canHarvest(item.type));
+      const suitable = item => !expected || !item?.enchants?.some(enchant => enchant.name?.endsWith('silk_touch'));
+      const items = bot.inventory.items().filter(item => block.canHarvest(item.type) && suitable(item));
       const best = items.reduce((item, next) => !item || block.digTime(next.type) < block.digTime(item.type) ? next : item, null);
-      if (best && (!block.canHarvest(bot.heldItem?.type) || block.digTime(best.type) < block.digTime(bot.heldItem?.type)))
+      if (best && (!suitable(bot.heldItem) || !block.canHarvest(bot.heldItem?.type) || block.digTime(best.type) < block.digTime(bot.heldItem?.type)))
         await bot.equip(best, 'hand');
+      else if (!suitable(bot.heldItem)) await bot.unequip('hand');
       check();
       const here = bot.blockAt(pos);
-      if (!here || here.type !== type.id || !here.diggable) throw new Error('到达后目标方块已经变化');
+      if (!here || here.type !== block.type || !here.diggable) throw new Error('到达后目标方块已经变化');
       if (!here.canHarvest(bot.heldItem?.type)) throw new Error('没有可采掘这个方块的工具');
       if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position)) throw new Error('实际站位没有安全的采掘视线');
       const affected = affectedByDig(bot, here);
@@ -144,7 +149,7 @@ async function collect(bot, args, check, result, built) {
       try { await bot.dig(here, true); }
       finally { await readback(result.changes); }
       const after = bot.blockAt(pos);
-      if (!after || after.type === type.id) throw new Error('方块变化未核实');
+      if (!after || after.type === block.type) throw new Error('方块变化未核实');
       ++result.broken;
       check();
       await pickup(bot, pos, known, check, result);
@@ -243,16 +248,19 @@ function partnerService(bot, world, inbox, places, owner) {
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
         let center = args.around === 'player' ? player?.entity?.position : bot.entity.position;
         if (args.message !== undefined) {
-          if (args.around) throw new Error('请选择原消息或当前观察中心');
+          if (args.around || (args.focus !== undefined && !['hit', 'openings'].includes(args.focus)))
+            throw new Error('请选择原消息和有效的指向查询');
           const { anchor, center: original } = messageAnchor(r.generation, args.message);
           center = original;
           result.anchor = { message: args.message, ...anchor };
-          result.survey = blockSurvey(bot, center, 4);
-          result.playerFocus = playerFocus(bot, anchor, center);
+          if (args.focus !== 'hit') result.survey = blockSurvey(bot, center, 4);
+          result.playerFocus = playerFocus(bot, anchor, center, args.focus);
+        } else if (args.focus !== undefined) {
+          throw new Error('指向查询需要原玩家消息');
         } else if (args.around) result.survey = blockSurvey(bot, center);
         if (args.block) {
           const type = blockType(bot, args.block);
-          const blocks = visible(bot, type, center).slice(0, 10);
+          const blocks = visible(bot, type.id, center).slice(0, 10);
           result.blockSearch = { block: type.name, center: center.floored(), radius: 16, coverage: 'loaded_visible_only' };
           result.visible = blocks.map(block => block.position.clone());
           if (type.name.endsWith('_door')) {

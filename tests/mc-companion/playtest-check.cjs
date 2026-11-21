@@ -255,7 +255,7 @@ async function checkFollowDig(fixture, player, whispers) {
   player.chat('你跟着我走');
   const first = (await accepted(1)).body.action;
   await walkCourse(player, [0.5, -60, -0.5], '你还跟着吗');
-  await until(() => whispers[0] === '嗯，跟着呢。', '走动中的实际发言');
+  await until(() => whispers.includes('嗯，跟着呢。'), '走动中的实际发言');
   player.chat('把这个草方块挖掉');
   await until(() => whispers.includes('你指哪一格？'), '自然追问已发出');
   player.chat('你听得见吗');
@@ -335,7 +335,7 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(read([x, y, z]), 'dirt');
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
-  assert.deepEqual(whispers, [...(combined ? ['嗯，跟着呢。','你指哪一格？','听得见。','下面两格补好了，上面有块石头挡着。'] : []),
+  assert.deepEqual(whispers, [...(combined ? ['好，我跟着你。','嗯，跟着呢。','你指哪一格？','听得见。','下面两格补好了，上面有块石头挡着。'] : []),
     '四格都补上了，另一处缺口留着。']);
   if (combined) {
     for (const [index, line] of ['你站到墙上，先换个目标。', '试一下普通采掘入口。'].entries()) {
@@ -351,10 +351,9 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','dirt','dirt']);
   }
   const trace = traceRows();
-  const knowledge = trace.find(row => row.kind === 'tool.exited' && row.callId === 'knowledge');
   const receipts = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
     mutations.some(action => action.work === row.body.bridgeWork && action.result.status === row.body.result?.status));
-  assert.ok(knowledge && receipts.find(row => row.body.bridgeWork === collect.work)?.seq > knowledge.seq);
+  assert.equal(trace.filter(row => row.kind === 'tool.candidate' && row.callId === 'skills').length, combined ? 1 : 0);
   assert.deepEqual(receipts.map(row => row.body.bridgeWork), mutations.map(action => action.work));
   const prepared = trace.filter(row => row.kind === 'model.prepared');
   assert.ok(prepared.length && prepared.every(row => row.personaProfile === 'dafeiyu/default/1' &&
@@ -369,7 +368,7 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(resolved[0].questionResult.answer, '我面前的这个');
     assert.ok(!resolved[0].pendingQuestion && resolved[0].workSettlement);
   }
-  if (!combined) assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 5);
+  if (!combined) assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 4);
 }
 
 // 只发一条指令，独立客户端分别复核原门、安装洞口和唯一完工发言。

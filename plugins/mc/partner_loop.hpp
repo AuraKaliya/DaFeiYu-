@@ -29,7 +29,7 @@ class PartnerLoop {
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
-    bool waits_for_work() const noexcept { return wait_for_work_; }
+    bool waits_for_work() const noexcept { return wait_for_work_ || (follow_handoff_ && reply_requested_); }
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
@@ -176,13 +176,14 @@ class PartnerLoop {
         nlohmann::json arguments;
         std::string pickup;
         bool interrupt = false;
+        bool notify = false;
     };
     std::deque<QueuedAction> queued_;
     bool replacing_motion_ = false;
     std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
     struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };
     std::deque<WorkSettlement> settlements_;
-    bool wait_for_work_ = false;
+    bool wait_for_work_ = false, follow_handoff_ = false;
     // 按调用组累积实际终态，独立于玩家事件的收取顺序。
     void settle_work(std::uint64_t invocation, nlohmann::json fact);
     // 只选出已无在途动作或待执行步骤的调用组。

@@ -73,8 +73,9 @@ function rayCrossesGap(crossed, gap) {
 
 // 将原话视线和当前已加载候选对照，只有唯一穿过的格子组才形成指向。
 // 步骤：采样视线与候选 → 按命中与原位置排序 → 交付指向或澄清状态。
-function playerFocus(bot, anchor, center) {
+function playerFocus(bot, anchor, center, focus = 'openings') {
   const { crossed, hit, unavailable } = sightLine(bot, anchor);
+  if (focus === 'hit') return { status: unavailable ? 'unavailable' : hit ? 'hit' : 'none', hit: hit ?? null };
   const candidates = wallGaps(bot, center);
   for (const gap of candidates) gap.pointed = rayCrossesGap(crossed, gap);
   const distance = gap => Math.hypot(gap.x + (gap.axis === 'x' ? gap.width : 1) / 2 - center.x,

@@ -79,7 +79,7 @@ function takeSample(bot, options, player, messageAnchor, inventory, prior) {
       if (source === 'self') Object.assign(view.actor, { health: bot.health, food: bot.food, inventory: inventory() });
     }
     surveyView(world, view, center, options.radius, cells, palette, options.detail);
-    if (source === 'message' && view.status === 'sampled') view.playerFocus = playerFocus(world, view.anchor, center);
+    if (source === 'message' && view.status === 'sampled') view.playerFocus = playerFocus(world, view.anchor, center, options.focus);
   }
   const counts = new Map();
   let unknown = 0;
@@ -103,11 +103,12 @@ function takeSample(bot, options, player, messageAnchor, inventory, prior) {
 // 以有限次数观察同一世界，等待期间不占用角色输入。
 // 步骤：校验来源及预算 → 分次采样并记录时间 → 按传输预算提交前缀。
 async function observeWindow(bot, args, result, context) {
-  const { sources = ['self'], radius = 3, detail = 'summary', message, verify = [] } = args;
+  const { sources = ['self'], radius = 3, detail = 'summary', message, verify = [], focus } = args;
   const { count = 1, intervalMs = 250 } = args.samples ?? {};
   if (!Array.isArray(sources) || !sources.length || sources.length > 3 || new Set(sources).size !== sources.length ||
     sources.some(source => !['self', 'player', 'message'].includes(source)) ||
     sources.includes('message') !== (Number.isSafeInteger(message) && message > 0) ||
+    (focus !== undefined && (!sources.includes('message') || !['hit', 'openings'].includes(focus))) ||
     !Number.isInteger(radius) || radius < 1 || radius > 5 || !['summary', 'cells'].includes(detail) ||
     !Number.isInteger(count) || count < 1 || count > 3 || !Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 1000 ||
     !Array.isArray(verify) || verify.length > 16 || verify.some(cell => !cell || ![cell.x, cell.y, cell.z].every(Number.isSafeInteger)) ||
@@ -120,7 +121,7 @@ async function observeWindow(bot, args, result, context) {
     if (i) await delay(intervalMs, undefined, { signal });
     check();
     if (bot.game.dimension !== dimension) throw new Error('观察期间世界维度变更');
-    const frame = takeSample(bot, { sources, radius, detail, message, verify }, player(), messageAnchor, inventory, cells);
+    const frame = takeSample(bot, { sources, radius, detail, message, verify, focus }, player(), messageAnchor, inventory, cells);
     result.observation.samples.push(frame.sample);
     if (Buffer.byteLength(JSON.stringify(result)) > 7500) {
       result.observation.samples.pop();

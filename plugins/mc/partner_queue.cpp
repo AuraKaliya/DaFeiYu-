@@ -92,7 +92,7 @@ bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocati
     const auto& context = input.at("context");
     if (context.at("generation") != session_world_ || context.at("order") != order_) return false;
     const auto position = std::ranges::find(queued_,false,&QueuedAction::interrupt);
-    queued_.insert(position,{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true});
+    queued_.insert(position,{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true,wait});
     pause_follow();
     wait_for_work_ = wait_for_work_ || wait;
     return true;
@@ -128,8 +128,9 @@ void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
     std::erase_if(queued_,[&](const auto& step) {
         if (group && step.invocation != group) return false;
         ids.push_back(step.work);
-        settle_work(step.invocation,{{"invocation",step.invocation},{"skill",step.skill},{"bridgeWork",step.work},
-            {"result",{{"status","skipped"},{"reason",reason}}}});
+        if (step.notify || std::ranges::find(settlements_,step.invocation,&WorkSettlement::invocation) != settlements_.end())
+            settle_work(step.invocation,{{"invocation",step.invocation},{"skill",step.skill},{"bridgeWork",step.work},
+                {"result",{{"status","skipped"},{"reason",reason}}}});
         return true;
     });
     if (!ids.empty()) publish("mc.partner.queue",{{"status",reason},{"works",std::move(ids)}});

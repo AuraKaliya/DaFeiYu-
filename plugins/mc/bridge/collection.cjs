@@ -3,6 +3,12 @@ const terrain = new Set(['grass_block', 'dirt', 'coarse_dirt', 'rooted_dirt', 'p
 const vacant = new Set(['air', 'cave_air', 'void_air']);
 const neighbours = [[-1,0],[1,0],[0,-1],[0,1]];
 
+// 从当前版本的默认掉落中选取允许的表层地形，动作仍须核对实际入包。
+function groundTypes(registry, item) {
+  const candidates = [...terrain].map(name => registry.blocksByName[name]);
+  return candidates.filter(block => block?.drops.includes(registry.itemsByName[item]?.id));
+}
+
 // 只接纳有承重地层、开阔表面且远离突起结构的自然取材格。
 // 步骤：排除目标墙格及其支撑 → 核对地形和邻接结构 → 保留角色脚下支撑。
 function fromGround(bot, block, protectedCells = []) {
@@ -79,4 +85,4 @@ function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
   };
 }
 
-module.exports = { fromGround, affectedByDig, collectReadback, pickupStand, nearbyDrop };
+module.exports = { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop };

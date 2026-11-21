@@ -14,14 +14,16 @@ constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {byt
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
 constexpr auto instructions = view("Minecraft 同场规则\n"
     "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
-    "task 保存共同目标和原话指向。说‘这里’时用 observe.message 取得 playerFocus，按原消息号和 candidate 绑定。"
+    "task 保存共同目标和原话指向。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
+    "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
     "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
     "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
     "观察仍无法区分且会改变做法时，用 ask_player 自然问一句；玩家给了确切指向后，在 dig_block 带上 pendingQuestion.item 作为 resolves。\n"
-    "明确动作先提交。持续跟随只开一次，用 following.work 停止，临时动作结束后由程序恢复。"
+    "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
+    "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
     "只展开本轮需要的工具类别。掉落规则可按需查 knowledge，库存和逐格变化以 finishedWork 或实际观察为准。"
-    "accepted 和 queued 只代表已接单。结合 task 和回执继续任务，无需玩家重说。\n"
+    "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
     "reply 发给玩家，处理原话时普通最终文本也可发一次，已经发过或仅需内部结算时用空文本。"
     "没有新消息时，主动发言用 reply，只在玩家关心的进展或受阻发生时发。入场无需固定问候。"
@@ -290,8 +292,7 @@ void PartnerLoop::submit(std::string_view wake) {
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
-        const bool direct = skill.name == "follow" || skill.name == "dig_block" ||
-            (skill.name == "gather_ground" && task_.target_ready());
+        const bool direct = skill.name == "follow" || skill.name == "dig_block" || skill.name == "gather_ground";
         if (skill.kind != SkillKind::catalog && !direct && !base_category(category) &&
             !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
@@ -313,6 +314,7 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     order_ = order;
     wait_for_work_ = false;
+    follow_handoff_ = false;
     reply_requested_ = false;
     reviewed_ = 0;
     stopped_work_ = false;
@@ -472,6 +474,7 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
     if (ready_settlement() != settlements_.cend()) return "motion.finished";
+    if (wait_for_work_) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.trigger(feed_.observation(),feed_.scene_revision());
@@ -517,7 +520,10 @@ void PartnerLoop::report_actions() {
 void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
     std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait) {
     if (motion_) throw std::logic_error("MC partner: motion already active");
-    if (skill == "follow") follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
+    if (skill == "follow") {
+        follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
+        follow_handoff_ = true;
+    }
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
     wait_for_work_ = wait_for_work_ || wait;
 }

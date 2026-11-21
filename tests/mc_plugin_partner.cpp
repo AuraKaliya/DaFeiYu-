@@ -181,7 +181,7 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("trigger") == "skills.expanded") {
                 const auto wanted = confirm ? "_collect" : "_start_move";
                 const auto chosen = std::ranges::find_if(request.tools,[&](const auto& tool) { return tool.name.ends_with(wanted); });
-                if (chosen == request.tools.end() || request.tools.size() != (confirm ? 10u : 9u) ||
+                if (chosen == request.tools.end() || request.tools.size() != 10 ||
                     !input.at("events").empty() || input.at("recentEvents").back().at("sequence") != 2)
                     throw std::runtime_error("expanded scope lost the original event or contains unintended skills");
                 return {{Role::assistant,"",{{"chosen",chosen->name,confirm ? R"({"block":"dirt","count":2,"approval":"game"})" :
@@ -239,7 +239,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (request.messages.size() != 2 || input.at("events").back().at("text") != "play with me")
                 throw std::runtime_error("partner lost current raw text or carried previous model history");
-            if (request.tools.size() != 8 || std::ranges::none_of(request.tools,[](const auto& tool) {
+            if (request.tools.size() != 9 || std::ranges::none_of(request.tools,[](const auto& tool) {
                 return tool.name.ends_with("_queue_actions");
             })) throw std::runtime_error("initial scope lost queue control or leaked detailed actions");
             if (follow) {

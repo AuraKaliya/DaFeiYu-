@@ -129,13 +129,6 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "motion.finished") {
             const auto& work = input.at("finishedWork");
-            const auto& settlement = input.at("workSettlement");
-            if (settlement.at("invocation") != work.at("invocation") ||
-                std::ranges::find(settlement.at("receipts"),work) == settlement.at("receipts").end())
-                throw std::runtime_error("fill-four probe: final work identity lost");
-            if (work.at("skill") == "collect" && input.contains("questionResult") &&
-                (input.contains("pendingQuestion") || input.at("questionResult").at("status") != "resolved"))
-                throw std::runtime_error("fill-four probe: observed player reference did not resolve the old question");
             if (work.at("skill") == "move") return {{Role::assistant,R"({"internal":"replacement finished"})"}};
             if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
                 throw std::runtime_error("follow probe: actual exit missing from the task");
@@ -425,19 +418,30 @@ dfy::model::Response materials_sample(const dfy::model::Request& request) {
 dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool combined) {
     using namespace dfy::model;
     using Json = nlohmann::json;
-    const auto call = [&](std::string name, Json args) -> Response {
+    const auto use = [&](std::string id, std::string name, Json args) -> ToolCall {
         const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with("_"+name); });
         if (tool == request.tools.end()) throw std::runtime_error("fill-four probe: missing "+name);
-        return {{Role::assistant,"",{{name,tool->name,args.dump()}}},FinishReason::tool_calls};
+        return {id,tool->name,args.dump()};
+    };
+    const auto call = [&](std::string name, Json args) -> Response {
+        return {{Role::assistant,"",{use(name,name,args)}},FinishReason::tool_calls};
     };
     const Json cells = Json::array({{{"x",3},{"y",-60},{"z",-3}},{{"x",4},{"y",-60},{"z",-3}},
         {{"x",3},{"y",-59},{"z",-3}},{{"x",4},{"y",-59},{"z",-3}}});
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
-        if (input.at("trigger") == "skills.expanded") return call("knowledge",{{"query","grass_block drops"}});
+        if (input.at("trigger") == "skills.expanded")
+            return call("collect",{{"block","dirt"},{"count",1},{"x",3},{"y",-59},{"z",-3}});
         if (input.at("trigger") == "motion.finished") {
             const auto& work = input.at("finishedWork");
+            const auto& settlement = input.at("workSettlement");
+            if (settlement.at("invocation") != work.at("invocation") ||
+                std::ranges::find(settlement.at("receipts"),work) == settlement.at("receipts").end())
+                throw std::runtime_error("fill-four probe: final work identity lost");
+            if (work.at("skill") == "collect" && input.contains("questionResult") &&
+                (input.contains("pendingQuestion") || input.at("questionResult").at("status") != "resolved"))
+                throw std::runtime_error("fill-four probe: observed player reference did not resolve the old question");
             const auto& result = work.at("result");
             if (result.contains("stock")) {
                 if (result.at("stock") != Json{{"item","dirt"},{"before",combined ? 1 : 3},{"required",4},{"after",4}} ||
@@ -456,28 +460,48 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         }
         const auto& events = input.at("events");
         const auto text = events.empty() ? std::string{} : events.back().value("text",std::string{});
-        if (text == "你跟着我走") return call("follow",{{"distance",2}});
+        if (text == "你跟着我走")
+            return {{Role::assistant,"",{use("follow-view","observe",Json::object())}},FinishReason::tool_calls};
         if (text == "你还跟着吗" && input.contains("following")) return {{Role::assistant,"嗯，跟着呢。"}};
         if (text == "把这个草方块挖掉" && input.contains("following"))
-            return call("ask_player",{{"question","你指哪一格？"}});
+            return {{Role::assistant,"",{use("find-hit","observe",{{"message",events.back().at("sequence")},{"focus","hit"}})}},
+                FinishReason::tool_calls};
         if (text == "你听得见吗") {
             if (!input.contains("pendingQuestion")) throw std::runtime_error("fill-four probe: unrelated chat cleared question");
             return call("reply",{{"text","听得见。"}});
         }
         if (text == "我面前的这个" && input.contains("following"))
-            return call("observe",{{"message",events.back().at("sequence")}});
+            return call("observe",{{"message",events.back().at("sequence")},{"focus","hit"}});
         if (text == "先别跟了") return call("stop_motion",{{"work",input.at("following").at("work")}});
         if (text.starts_with("石头挪开了") && input.at("task").at("target").at("message") == 8)
             return call("fill_target",{{"block","dirt"}});
         if (text == "你站到墙上，先换个目标。")
             return call("task_update",{{"goal","站到墙上"},{"next","player"},{"collection","visible"},{"target",Json::object()}});
         if (text == "试一下普通采掘入口。")
-            return call("collect",{{"block","dirt"},{"count",1},{"x",3},{"y",-59},{"z",-3}});
+            return call("skills",{{"categories",{"dig_break"}}});
         if (text.starts_with("从地上取够泥土"))
             return call("observe",{{"sources",{"message","self"}},{"message",events.back().at("sequence")},{"radius",5},{"verify",cells},
                 {"samples",{{"count",2},{"intervalMs",100}}}});
     } else if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        if (last.tool_call_id == "follow-view") {
+            if (!result.contains("player") || !result.contains("inventory")) throw std::runtime_error("missing follow facts");
+            return {{Role::assistant,"",{use("follow","follow",{{"distance",2}}),
+                use("follow-reply","reply",{{"text","好，我跟着你。"}})}},FinishReason::tool_calls};
+        }
+        if (last.tool_call_id == "follow-reply") throw std::runtime_error("redundant decision after follow and reply");
+        if (last.tool_call_id == "find-hit") {
+            if (!result.at("playerFocus").at("hit").is_null() || result.contains("survey"))
+                throw std::runtime_error("expected short, unresolved hit observation");
+            const auto message = result.at("anchor").at("message");
+            return {{Role::assistant,"",{use("extra-view","observe",{{"sources",{"message","self","player"}},{"message",message},
+                {"radius",2},{"focus","hit"}})}},FinishReason::tool_calls};
+        }
+        if (last.tool_call_id == "extra-view") {
+            if (!result.at("observation").at("samples").front().at("views").front().at("playerFocus").at("hit").is_null())
+                throw std::runtime_error("ambiguous request unexpectedly identified a block");
+            return call("ask_player",{{"question","你指哪一格？"}});
+        }
         if ((last.tool_call_id == "dig_block" || last.tool_call_id == "gather_ground" || last.tool_call_id == "fill_target") &&
             (result.at("status") == "accepted" || result.at("status") == "queued"))
             throw std::runtime_error("fill-four probe: model called without a new game receipt");
@@ -515,12 +539,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             if (result.at("task").at("goal") == "站到墙上")
                 return call("dig_block",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
             if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
-            return call("skills",{{"categories",{"dig_break","query"}}});
-        }
-        if (last.tool_call_id == "knowledge") {
-            if (result.at("version") != "1.21.4" || result.at("entries").front().at("facts").at("defaultDrop") != "dirt")
-                throw std::runtime_error("fill-four probe: unsupported grass drop rule");
-            return call("gather_ground",{{"block","grass_block"},{"item","dirt"},{"requiredStock",4}});
+            return call("gather_ground",{{"item","dirt"},{"requiredStock",4}});
         }
     }
     return {{Role::assistant,R"({"internal":"game work continues"})"}};
