@@ -244,7 +244,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             args["source"] = exact_dig ? "visible" : "ground";
             job.arguments = input.dump();
         }
-        if (partner_turn && (skill->name == "collect" || legacy)) raw->partner.bind_collection(call->session,job.arguments);
+        if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);
         const bool target_blocked = (game_skill == "place" || game_skill == "fill_target") &&
             !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target");
         if (!target_blocked && partner && skill->supports_approval) {

@@ -28,11 +28,13 @@ flowchart TB
         ReplyTool["mail_reply 工具<br/>核对模型意图与原信绑定"]
         Delivery["ReplyDelivery<br/>入箱重试、保留原件、核对回执"]
         Main["主 Agent Session"]
+        Persona["本体人格档案<br/>身份、说话方式和版本"]
         Agent["通用 Session / RunLoop<br/>上下文、工具、审批、效果与退出"]
         Model["Model 异步客户端<br/>DeepSeek / Qwen"]
         Trace["局内 Trace<br/>模型、工具、事件、信箱及 ASK"]
         App --> Intake
         Intake --> Main
+        Persona --> Main
         App --> Partner
         Partner <-->|原插件收发地址| Intake
         App --> Dispatch --> Routes
@@ -74,6 +76,7 @@ flowchart TB
     Dispatch <-->|系统转换 Hook| Hooks
     Intake <-->|信件上下文 Hook| Hooks
     Mc -->|启动独立会话、提交本轮上下文| Child
+    Persona -->|面向玩家的子回合| Child
     Child --> Agent
     Mc <-->|SDK C ABI v2| Plugins
     Mc -->|私有业务事件和收件凭据| Capture
@@ -92,6 +95,7 @@ flowchart TB
 | --- | --- |
 | **App** | 组装模型、插件和主会话，接纳终端工具授权、审批与状态读回。普通聊天、`--mc-partner` 和桌面探针共享应用服务代码。另有 `--complete` 直接调用模型的单次文本入口。[命令行](../app/main.cpp) · [Application](../app/application.cpp) · [Conversation](../app/conversation.cpp) |
 | **Agent** | `Session` 持有当前运行和有界历史。每个 `RunLoop` 按工具快照、策略和预算推进模型、工具、计划与诊断。主 Agent 和插件子会话共享执行器并独立保存上下文。[Session](../agent/session.cpp) · [RunLoop](../agent/run_loop.cpp) · [子会话宿主](../app/subagents.cpp) |
+| **人格与场景** | 本体读取一个版本化人格档案，直接对话、房间点名和声明面向玩家的子回合共用。插件提供领域规则、原话和游戏事实。宿主按人格、场景规则、当前回合消息的顺序装配，固定本轮工具定义。内部停手判断和委托结算使用独立契约。真实送模记录保存人格和场景版本。[人格档案](../app/persona.cpp) · [子回合装配](../app/subagents.cpp) · [SDK 声明](../sdk/include/dafeiyu/agent_abi_v2.h) |
 | **Model / Platform** | Model 编解码请求并通过异步客户端接收完整响应。HTTP、控制台输入、DLL 装载和摘要算法属于 Windows Platform。默认 Provider 内置，空插件目录可直接问答。[模型客户端](../model/client.cpp) · [协议](../model/protocol.cpp) · [WinHTTP](../platform/winhttp.cpp) · [代码装载](../platform/code_module.cpp) |
 | **Plugins / SDK** | 插件包使用同进程 v2 C ABI，安装后显式加载。宿主按依赖发布 Hook 顺序，独立接纳插件事件并调用对应解析器，公平推进插件活动步骤。卸载等原工作退出，再撤销地址与注册。[管理器](../plugins/runtime/manager.cpp) · [事件宿主](../plugins/runtime/host_routed_events.cpp) · [接口](../sdk/include/dafeiyu/routed_event_abi_v2.h) |
 | **Runtime / Events** | Runtime 提供有界操作、预算和调度，Events 提供广播通知与定向信箱。信箱地址绑定发送方、接收方与独立 FIFO，类别和版本决定处理方式。接纳、业务结果和实际退出分别结算。[广播通道](../events/broadcast_channel.cpp) · [信箱](../events/mailboxes.cpp) · [本体收件](../app/mailbox_intake.cpp) |
@@ -199,18 +203,18 @@ flowchart TB
 ```
 
 - **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。插件核对当前回合的任务变更并分配修订，跨回合保留原消息号及已选方块。模型回合结算后，插件按新玩家事实、动作退出、任务继续、私有现场变化或目录展开选择是否开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
-- **门和洞口的观察。** 方块搜索的 `visible` 返回角色视线能命中的匹配。`doors` 来自有覆盖限制的已加载局部格，核对上下两格并归成一个对象。另一半尚不可验证时标记为未确认。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
+- **门和洞口的观察。** `doors` 在已加载局部格核对门的上下两格，归成一个对象。洞口候选按两侧边界和底部支撑识别，最多四列两层。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [洞口候选](../plugins/mc/bridge/player-focus.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
 - **多来源与连续观察。** `observe` 可合并自己、配对玩家和原话三个中心。每帧只读取一次重叠坐标，保留各中心的来源和覆盖范围。连续观察最多三帧，只比较相邻帧都已知的方块。窗口移动与区块未加载单独表达。等待可取消，完整采样进入工具回执，任务保存可用于指向和后续回合的摘要。 [多来源采样](../plugins/mc/bridge/partner-observe.cjs) · [任务记录](../plugins/mc/partner_task.cpp)
 - **放置目标身份。** 插件按原话锁定目标格，同一原话不会因新视角换到别的缺口。换目标需当前玩家的新指令和显式 `replace`。玩家原话要求过来且旧位置不可用时，可先登记 `approach`，等实际到达回执后，用本角色附近的已知空格绑定同一原话。直接放置和预输入都核对这组格，游戏执行器在动手前再次核对维度、空格、材料和支撑。 [目标校验](../plugins/mc/partner_task.cpp) · [游戏放置](../plugins/mc/bridge/placement.cjs)
 - **动作预输入。** `queue_actions` 在 MC 插件按任务修订登记最多四个待执行步骤。等待队列和已接纳的角色工作有不同状态。清队列只撤待执行项，替换工作须核对原工作号并读回退出。采集步骤按方块变更验收，有用料依赖时还核对指定掉落物的入包增量。失败只撤销同一组依赖步骤。 [动作队列](../plugins/mc/partner_queue.cpp)
 - **前台交接。** 待机是无前台工作时的状态。插件保留跟随意图及稳定工作号，桥接执行段各有工作号。一次性前台动作可以取得优先权，分组时用 `queue_actions.interrupt` 声明。插件先要求执行器清除跟随路径和控制输入并确认退出，再下发临时动作。临时动作成功或普通受阻后，从当前玩家位置恢复原跟随。明确叫停、配对失效和未确认退出使原跟随结束。观察和发言使用独立的后台票据。 [跟随调度](../plugins/mc/partner_queue.cpp) · [执行器释放](../plugins/mc/bridge/follow.cjs)
 - **领域知识与完工依据。** `skills` 展开 `query` 后可按需查询 Java 1.21.4 的小型词条库。词条说明草方块通常掉落泥土，以及精准采集的例外。队列只按实际方块和入包回执推进。依赖组在执行中逐格记录回执，组结束后再唤醒规划，新的玩家原话仍可立即参与下一轮。 [知识查询](../plugins/mc/partner_knowledge.hpp) · [队列验收](../plugins/mc/partner_effect.hpp)
-- **在途工作和发言。** 局内移动、跟随、采集和放置由游戏接纳后交还工具，插件持原票据推进。需确认的局内动作先将待办交给插件循环，等待和执行期间可继续观察和发言。角色操作共享独占游戏控制。`activeMotion` 提供原工作进度，`finishedWork` 把实际退出交给下一次局内决策。显式停止、离场、换世界和关闭触发原动作回收。本体主动委托经原工具等待结果后回报。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [跟随](../plugins/mc/bridge/follow.cjs)
+- **在途工作和发言。** 局内移动、跟随、采集和放置由游戏接纳后交还工具，插件持原票据推进。需确认的局内动作先将待办交给插件循环，等待和执行期间可继续观察和发言。`activeMotion` 提供原工作进度，`finishedWork` 把实际退出交给下一次局内决策。显式停止、离场、换世界和关闭触发原动作回收。玩家离场由插件消费原事件并结算，通过 Trace 保留原收件，不另起模型回合。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [插件循环](../plugins/mc/partner_loop.cpp)
 - **玩家回复与结算。** `reply` 立即提交私聊。处理玩家原话时，若本轮尚未请求发言或提问，插件会把普通最终文本送入同一个游戏回复通道。空文本和 `{"internal":"…"}` 用于内部结算。无新聊天的唤醒可用 `reply` 主动发言，主 Agent 委托的最终文本仍作为委托报告。纯文本私聊回执在 `mc.partner.action` 标记 `source=final_text`，按原会话、子请求和 `bridgeWork` 关联。 [回合结算](../plugins/mc/partner_loop.cpp) · [实际发言](../plugins/mc/bridge/partner.cjs)
-- **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察只带概要和采样信息，地图用 `observe` 重新读取。工具目录保留已选择的类别，有原话锚点时提供移动，选定目标格后下一轮提供放置。宿主在本轮内固定工具契约，游戏侧校验实际动作。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
+- **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史并附上本体人格，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察保留概要和采样信息。初始目录提供观察、交流、任务操作、跟随和指定单格挖掘。按需展开其余类别，有原话锚点时提供移动，锁定确切格后提供地面取材和整处补墙。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
 - **玩家指向。** 游戏执行器保存原消息的眼位、朝向和采样时间。在原位置重读已加载场景，区分原玩家视线、实时玩家位置和陪玩角色视线。只有唯一穿过的缺口才提供默认候选。插件从同一原消息的观察解析候选编号，固定实际方格，再由执行器在落地时重读。 [收件采样](../plugins/mc/bridge/chat.cjs) · [墙体候选](../plugins/mc/bridge/player-focus.cjs) · [目标绑定](../plugins/mc/partner_task.cpp)
-- **放置读回。** 观察返回已加载的方块体积和坐标原点。放置检查精确目标格、支撑面、占用及材料，再依据回执里的实际方块与库存判断效果。门上下两格分别核对。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[现场取样](../plugins/mc/bridge/block-survey.cjs) · [游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
-- **取材范围和逐格变化。** 选择 `task_update.collection=ground` 后，普通采集、确认采集和预输入都在相同范围执行。执行器在选格及动手前重验地层、附近结构和角色脚下。拾取优先使用新出现的掉落物位置和实测站位，有限等待实际入包。库存增减与逐格读回分别记录，部分完成仍携带实际改动。`task.worldChanges` 保留最近 32 条变化、工作号和原消息号，后续重新观察也可读取。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
+- **放置读回。** 单格放置及门的两格分别核对支撑、占用、材料和最终世界状态。`fill_target` 由插件展开原话绑定格，执行器从下往上放置，逐格报告 `placed`、`present` 或 `blocked`。遇到受阻格会保留先前回执，继续原任务时重读每格，跳过已经正确的方块。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
+- **取材范围和逐格变化。** `dig_block` 固定所指单格和实际方块名。寻路和到达后用同一命中条件核对采掘站位。`gather_ground` 用物品名和目标库存计算实际缺口，保护当前补墙目标和其下的支撑格。在选格及动手前重验地层、附近结构和角色脚下，未读到所需物品入包就停止。`task_update.collection=ground` 约束普通、确认及预输入采集。库存增减与逐格读回分别记录，`task.worldChanges` 保留最近 32 条变化及原工作关联。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
 - **渡水。** 游戏执行器根据真实物理帧读回游动、离开水域及站稳干岸。跟随目标在干岸时，达到距离且自身也在干地才算靠近。固定站位有干地条件时，同样经过到达复核。两种移动共用禁止采掘搭路的寻路策略，回执带实际位置和渡水次数。[渡水读回](../plugins/mc/bridge/navigation.cjs) · [持续跟随](../plugins/mc/bridge/follow.cjs)
 
 ## 当前边界

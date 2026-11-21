@@ -413,9 +413,9 @@ dfy::model::Response materials_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"materials observation complete"})"}};
 }
 
-// 用固定响应从草方块取得最后一块泥土，并凭四格实际读回报告完成。
-// 步骤：核对现场空格 → 绑定并展开工具 → 查询掉落并提交依赖组 → 核对逐格变化。
-dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
+// 用固定响应验收跟随交接、实际取材及四格放置，部分回执可继续原目标。
+// 步骤：按场景处理原话 → 绑定观察候选 → 依次核对库存、实际变更和完工。
+dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool combined) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto call = [&](std::string name, Json args) -> Response {
@@ -430,20 +430,34 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "skills.expanded") return call("knowledge",{{"query","grass_block drops"}});
         if (input.at("trigger") == "motion.finished") {
-            const auto& task = input.at("task");
-            const auto& changes = task.at("worldChanges");
-            const auto& result = input.at("finishedWork").at("result");
+            const auto& work = input.at("finishedWork");
+            const auto& result = work.at("result");
             if (result.contains("stock")) {
-                if (result.at("stock") != Json{{"item","dirt"},{"before",3},{"required",4},{"after",4}} ||
-                    result.at("inventoryDelta").at("dirt") != 1)
+                if (result.at("stock") != Json{{"item","dirt"},{"before",combined ? 1 : 3},{"required",4},{"after",4}} ||
+                    result.at("inventoryDelta").at("dirt") != (combined ? 3 : 1))
                     throw std::runtime_error("fill-four probe: ground gathering did not fill the actual deficit");
                 return call("fill_target",{{"block","dirt"}});
             }
-            if (changes.size() == 5 && result.at("status") == "done" && result.at("cells").size() == 4)
-                return call("reply",{{"text","四格都补上了，另一处缺口留着。"}});
+            if (work.at("skill") == "fill_target") {
+                if (result.at("status") == "done" && result.at("cells").size() == 4)
+                    return call("reply",{{"text","四格都补上了，另一处缺口留着。"}});
+                if (combined && result.at("status") == "blocked" && result.at("changes").size() == 2 &&
+                    result.at("cells").back().at("block") == "stone")
+                    return call("reply",{{"text","下面两格补好了，上面有块石头挡着。"}});
+                throw std::runtime_error("fill-four probe: unexpected partial receipt");
+            }
         }
-        if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
-            return call("observe",{{"sources",{"message","self"}},{"message",2},{"radius",5},{"verify",cells},
+        const auto& events = input.at("events");
+        const auto text = events.empty() ? std::string{} : events.back().value("text",std::string{});
+        if (text == "你跟着我走") return call("follow",{{"distance",2}});
+        if (text == "你还跟着吗" && input.contains("following")) return {{Role::assistant,"嗯，跟着呢。"}};
+        if (text.starts_with("挖掉") && input.contains("following"))
+            return call("dig_block",{{"block","grass_block"},{"x",2},{"y",-61},{"z",0}});
+        if (text == "先别跟了") return call("stop_motion",{{"work",input.at("following").at("work")}});
+        if (text.starts_with("石头挪开了") && input.at("task").at("target").at("message") == 6)
+            return call("fill_target",{{"block","dirt"}});
+        if (text.starts_with("从地上取够泥土"))
+            return call("observe",{{"sources",{"message","self"}},{"message",events.back().at("sequence")},{"radius",5},{"verify",cells},
                 {"samples",{{"count",2},{"intervalMs",100}}}});
     } else if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -454,7 +468,8 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
                 sample.at("verified").size() != 4 || !std::ranges::all_of(sample.at("verified"),[](const auto& cell) {
                 return cell.at("block") == "air";
             })) throw std::runtime_error("fill-four probe: missing real empty cells");
-            const auto& gaps = sample.at("views").front().at("playerFocus").at("candidates");
+            const auto& origin = sample.at("views").front();
+            const auto& gaps = origin.at("playerFocus").at("candidates");
             const auto gap = std::ranges::find_if(gaps,[](const auto& candidate) {
                 return candidate.at("id") == "3,-60,-3:x" && candidate.at("width") == 2 && candidate.at("height") == 2;
             });
@@ -463,7 +478,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request) {
             });
             if (gap == gaps.end() || door == gaps.end()) throw std::runtime_error("fill-four probe: two openings were not distinct");
             return call("task_update",{{"goal","补上指定的四个墙格"},{"next","player"},{"collection","ground"},
-                {"target",{{"message",2},{"candidate",gap->at("id")}}}});
+                {"target",{{"message",origin.at("message")},{"candidate",gap->at("id")}}}});
         }
         if (last.tool_call_id == "task_update") {
             if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
@@ -523,7 +538,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool follow = mode == L"--follow-probe";
         const bool door = mode == L"--door-probe";
         const bool materials = mode == L"--gap-materials-probe";
-        const bool fill_four = mode == L"--fill-four-probe";
+        const bool combined = mode == L"--follow-dig-fill-probe";
+        const bool fill_four = combined || mode == L"--fill-four-probe";
         const bool water = mode == L"--water-probe";
         const bool partner = wall || follow || door || materials || fill_four || water || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
@@ -538,9 +554,9 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,materials,fill_four,water,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,fill_four,combined,water,ask,gap,root](const auto&, const auto& request) {
                 if (water) return water_sample(request);
-                if (fill_four) return fill_four_sample(request);
+                if (fill_four) return fill_four_sample(request,combined);
                 if (materials) return materials_sample(request);
                 if (door) return door_sample(request);
                 if (wall) return wall_sample(request,root,ask,gap);

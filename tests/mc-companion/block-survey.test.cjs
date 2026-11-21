@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
+const { fromGround } = require('../../plugins/mc/bridge/collection.cjs');
 
 // 用最少的坐标运算模拟真实客户端给出的观测中心和样本格。
 class Position {
@@ -111,4 +112,21 @@ test('a wide wall gap has one identity distinct from the narrow doorway', () => 
   ]);
   supportLoaded = false;
   assert.ok(!playerFocus(bot, { eye, facing }, center).candidates.some(gap => gap.width === 2));
+});
+
+// 宽开口底部的地面即使看起来开阔，也不能作为这次修补的取材格。
+test('ground gathering preserves support beneath the bound opening', () => {
+  const bot = {
+    entity: { position: new Position(8.5, -60, -3.5) }, players: {},
+    // 返回已加载的开阔草地、地层和上方净空。
+    blockAt(position) {
+      const name = position.y === -61 ? 'grass_block' : position.y < -61 ? 'stone' : 'air';
+      return { name, position, boundingBox: name === 'air' ? 'empty' : 'block' };
+    },
+  };
+  const cells = [2, 3, 4, 5].map(x => new Position(x, -60, -5));
+  const support = bot.blockAt(new Position(3, -61, -5));
+  assert.equal(fromGround(bot, support), true);
+  assert.equal(fromGround(bot, support, cells), false);
+  assert.equal(fromGround(bot, bot.blockAt(new Position(3, -61, -4)), cells), true);
 });

@@ -7,7 +7,7 @@ const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
-const { dryStand, DryStandGoal, monitorSurface } = require('./navigation.cjs');
+const { dryStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -106,7 +106,7 @@ async function collect(bot, args, check, result) {
   if (expected) result.stock = { item: expected, before: before[expected] ?? 0, required: args.requiredStock };
   result.broken = 0;
   result.changes = [];
-  const allowed = block => args.source !== 'ground' || fromGround(bot, block);
+  const allowed = block => args.source !== 'ground' || fromGround(bot, block, args.protectedCells);
   try {
     for (let n = 0; n < missing; ++n) {
       check();
@@ -117,7 +117,10 @@ async function collect(bot, args, check, result) {
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
       const pos = block.position;
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('目标支撑着角色，请先移动');
-      if (!bot.canDigBlock(block) || !bot.canSeeBlock(block)) await walk(bot, new goals.GoalLookAtBlock(pos, bot.world));
+      if (!digReachable(bot, pos, bot.entity.position)) {
+        try { await walk(bot, new DigStandGoal(bot, pos)); }
+        finally { result.approachPosition = bot.entity.position.clone(); }
+      }
       check();
       const items = bot.inventory.items().filter(item => block.canHarvest(item.type));
       const best = items.reduce((item, next) => !item || block.digTime(next.type) < block.digTime(item.type) ? next : item, null);
@@ -125,9 +128,9 @@ async function collect(bot, args, check, result) {
         await bot.equip(best, 'hand');
       check();
       const here = bot.blockAt(pos);
-      if (!here || here.type !== type.id || !here.canHarvest(bot.heldItem?.type) || !bot.canDigBlock(here) || !bot.canSeeBlock(here))
-        throw new Error('目标、距离或工具已不满足采掘条件');
-      if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('走近后目标位于脚下');
+      if (!here || here.type !== type.id || !here.diggable) throw new Error('到达后目标方块已经变化');
+      if (!here.canHarvest(bot.heldItem?.type)) throw new Error('没有可采掘这个方块的工具');
+      if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position)) throw new Error('实际站位没有安全的采掘视线');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
       const readback = collectReadback(bot, here);
       const known = new Set(Object.keys(bot.entities));

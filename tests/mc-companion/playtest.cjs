@@ -37,7 +37,8 @@ function prepareScene(send) {
 async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
-  const fillFour = mode === '--fill-four-probe';
+  const combined = mode === '--follow-dig-fill-probe';
+  const fillFour = combined || mode === '--fill-four-probe';
   const wallProbe = doorProbe || fillFour || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
   const withDirt = !fillFour && mode !== '--gap-ambiguous-probe';
   const root = path.join(evidence, 'host');
@@ -79,7 +80,7 @@ async function play(fixture, exe, pkg, mode, config) {
     prepareScene(send);
     if (mode === '--water-probe') prepareWater(send);
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
-    if (fillFour) prepareFourCells(send);
+    if (fillFour) prepareFourCells(send, combined);
     if (mode === '--gap-materials-probe') {
       send('fill -2 -61 -2 5 -61 3 minecraft:grass_block');
       send('fill -2 -60 -2 5 -58 3 minecraft:air');
@@ -103,7 +104,7 @@ async function play(fixture, exe, pkg, mode, config) {
     if (wallProbe) {
       const block = (x, y) => game.bot.blockAt(game.bot.entity.position.clone().set(x,y,-3))?.name;
       await until(() => fixture.materialCount('oak_door') === (doorProbe ? 0 : 1) &&
-        fixture.materialCount('dirt') === (fillFour ? 3 : withDirt ? 8 : 0) &&
+        fixture.materialCount('dirt') === (combined ? 0 : fillFour ? 3 : withDirt ? 8 : 0) &&
         block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === (fillFour ? 'air' : 'dirt') && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
     }
@@ -159,14 +160,15 @@ async function rehearse(fixture, exe, pkg, mode) {
     const turns = seen.filter(record => record.events);
     assert.ok(turns.every(turn => turn.player === offlineId('DfyGuestCheck') && turn.generation === turns[0].generation));
     const facts = seen.flatMap(record => record.events ?? []);
-    assert.deepEqual(facts.map(f => f.sequence), [1,2,3,4,5,6,7,8,9]);
+    assert.deepEqual(facts.map(f => f.sequence), [1,2,3,4,5,6,7,8]);
     assert.deepEqual(facts[0], { sequence: 1, type: 'player.entered' });
-    assert.deepEqual(facts.at(-1), { sequence: 9, type: 'player.left' });
-    assert.ok(facts.slice(1,-1).every(f => f.type === 'player.message'));
-    assert.deepEqual(facts.slice(1,-1).map(f => f.text),
+    assert.ok(facts.slice(1).every(f => f.type === 'player.message'));
+    assert.deepEqual(facts.slice(1).map(f => f.text),
       ['大肥鱼，你在吗', '大肥鱼，帮我采俩泥土', '这回带我往前走走', '停，我来', '再走回这边', '停，我来', '模拟一次服务故障']);
     assert.deepEqual(seen.filter(r => r.check).map(r => [r.check.at(-1).text, r.stop]), [['停，我来',false], ['停，我来',true]]);
     const trace = fs.readFileSync(path.join(fixture.evidence, 'host/trace/events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(trace.some(row => row.kind === 'mail.received' && row.category === 'mc.partner.event' &&
+      row.body.event.type === 'player.left' && row.body.event.sequence === 9));
     const actions = fs.readFileSync(path.join(fixture.evidence, 'host/game-actions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const replies = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
       row.body.skill === 'reply' && row.body.result?.sent);
@@ -201,7 +203,7 @@ async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
-    '--fill-four-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

@@ -53,6 +53,9 @@ void verify_target_evidence() {
         throw std::runtime_error("a later view overwrote the original target");
     if (update(fixed,anchor,{{"message",3},{"cells",Json::array({other})},{"replace",true}},3) != "updated")
         throw std::runtime_error("the current explicit replacement was not accepted");
+    Json ground{{"source","ground"}};
+    fixed.bind_collection(ground);
+    if (ground.at("protectedCells") != Json::array({other})) throw std::runtime_error("gathering lost the bound target protection");
     const Json target{{"message",7},{"approach",true},{"observation","local"},{"cells",Json::array({position})}};
     if (update(approach,unknown,{{"message",7},{"approach",true}},7) != "updated" ||
         update(approach,unknown,target) != "invalid_target") throw std::runtime_error("unobserved approach was accepted");

@@ -179,9 +179,11 @@ bool PartnerTask::bind_placement(Json& arguments) const {
     return true;
 }
 
-// 用任务范围约束所有采掘入口，包括精确坐标。
+// 固定地面取材范围，提前将当前墙体目标列为保留方格。
 void PartnerTask::bind_collection(Json& arguments) const {
-    if (collection_ == "ground") arguments["source"] = collection_;
+    if (collection_ != "ground" && arguments.value("source","") != "ground") return;
+    arguments["source"] = "ground";
+    if (target_ready()) arguments["protectedCells"] = target_cells();
 }
 
 // 分别保存原话指向、实际方块变化和最近一次动作。

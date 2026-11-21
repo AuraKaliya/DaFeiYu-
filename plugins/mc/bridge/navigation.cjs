@@ -20,6 +20,30 @@ class DryStandGoal extends goals.Goal {
   isEnd(node) { return dryStand(this.bot, node); }
 }
 
+// 核对脚位是否能从实际眼高命中目标中心，且目标没有承担该脚位的重量。
+function digReachable(bot, target, feet) {
+  if (target.equals(feet.floored().offset(0, -1, 0))) return false;
+  const eye = feet.offset(0, bot.entity.eyeHeight, 0);
+  const direction = target.offset(0.5, 0.5, 0.5).minus(eye);
+  const distance = direction.norm();
+  if (distance > 4.5) return false;
+  const hit = bot.world.raycast(eye, direction.normalize(), distance,
+    (block, ray) => block.position.equals(target) || Boolean(ray.intersect(block.shapes, block.position)));
+  return hit?.position.equals(target) ?? false;
+}
+
+// 用同一可达条件核对候选脚位和实际到达，保留寻路器到目标方块的估价。
+class DigStandGoal extends goals.GoalLookAtBlock {
+  // 固定原目标，不在寻路过程中替换采掘格。
+  constructor(bot, target) {
+    super(target, bot.world);
+    this.bot = bot;
+  }
+
+  // 路径节点使用格心作为到达后的计划脚位。
+  isEnd(node) { return digReachable(this.bot, this.pos, this.pos.clone().set(node.x + 0.5, node.y, node.z + 0.5)); }
+}
+
 // 用同一个动态目标跨水，干岸玩家的到达条件也要求跟随者能落在干岸。
 class SurfaceFollowGoal extends goals.GoalFollow {
   // 记录实际实体和寻路使用的客户端世界。
@@ -58,4 +82,4 @@ function monitorSurface(bot, result) {
   return { sample, stop() { sample(); bot.removeListener('physicsTick', sample); } };
 }
 
-module.exports = { dryStand, DryStandGoal, SurfaceFollowGoal, monitorSurface };
+module.exports = { dryStand, DryStandGoal, digReachable, DigStandGoal, SurfaceFollowGoal, monitorSurface };

@@ -4,10 +4,12 @@ const vacant = new Set(['air', 'cave_air', 'void_air']);
 const neighbours = [[-1,0],[1,0],[0,-1],[0,1]];
 
 // 只接纳有承重地层、开阔表面且远离突起结构的自然取材格。
-// 步骤：核对目标和附近地面 → 排除建筑邻接格 → 保留所有玩家和自己的脚下支撑。
-function fromGround(bot, block) {
+// 步骤：排除目标墙格及其支撑 → 核对地形和邻接结构 → 保留角色脚下支撑。
+function fromGround(bot, block, protectedCells = []) {
   if (!block || !terrain.has(block.name)) return false;
   const pos = block.position;
+  if (protectedCells.some(({ x, y, z }) => pos.x === x && pos.z === z && (pos.y === y || pos.y === y - 1)))
+    return false;
   if (!vacant.has(bot.blockAt(pos.offset(0, 1, 0))?.name) ||
       bot.blockAt(pos.offset(0, -1, 0))?.boundingBox !== 'block') return false;
   let level = 0;

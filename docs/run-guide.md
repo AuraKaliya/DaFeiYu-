@@ -21,9 +21,21 @@
 
 ## 会话操作
 
+本体默认采用内置的「大肥鱼」人格。可在本体用户数据目录放置 UTF-8 的 `persona.json`，重启后直接对话、房间点名和 MC 陪玩使用同一档案。终端默认目录是 `%LOCALAPPDATA%/DaFeiYu`，也可用 `--data` 指定。MC 体验入口的该目录为 `RUN_DIR/user`。档案有三个字段。`id` 使用不超过 32 字节的小写字母、数字、点、连字符或下划线，`revision` 是正整数，`instructions` 是不超过 2048 字节的人格正文。修改正文时可递增修订号，Trace 同时记录正文摘要。工具权限和游戏目标由各自入口和插件决定。
+
+```json
+{
+  "id": "dafeiyu.home",
+  "revision": 1,
+  "instructions": "你叫大肥鱼。平常简短自然地说话，和对方一起做事。"
+}
+```
+
 使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
 
 MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响应、改写结果和运行退出摘要。重复使用运行目录时，后续日志保存在新的 `trace-N` 子目录。启动输出中的 `DFY_TRACE` 给出实际文件位置。普通终端会话可用 `--chat CONFIG --trace DIR` 开启同一格式。文件包含本局对话与工具正文。模型记录用 `thinking` 标记模式，DeepSeek 返回的 `reasoningContent` 随本地记录保存，用于还原同一工具链的实际上下文。玩家可见输出仍取正文和实际发言回执。
+
+在 `model.prepared` 中，`personaProfile` 标识本体人格，`promptTemplate` 标识额外场景规则的版本或摘要。`input.messages` 与 `input.tools` 保留本轮实际送模的正文和工具定义，可与 `model.exited`、`tool.exited` 及游戏回执交叉核对。比较体验时分别计算收件到首次实际发言、收件到动作接纳、接纳到游戏退出，并单列动作接纳后无实效或仅部分完成的情况。
 
 工具记录区分候选、接纳和退出，保存原调用编号以及有效参数和实际结果。MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
 

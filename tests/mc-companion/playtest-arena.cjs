@@ -37,12 +37,13 @@ function prepareCourse(send) {
   send('fill -13 -60 -14 -2 -58 -4 minecraft:air');
 }
 
-// 固定四格开口、独立门洞和最后一块建材对应的草方块。
-function prepareFourCells(send) {
-  for (const command of ['kill @e[type=minecraft:item,x=-2,y=-64,z=-4,dx=12,dy=6,dz=8]',
-    'fill -2 -61 -4 9 -61 3 minecraft:grass_block', 'fill -2 -60 -2 9 -58 3 minecraft:air',
+// 固定四格开口、独立门洞及可用于跟随和取材的地面。
+function prepareFourCells(send, combined) {
+  for (const command of ['kill @e[type=minecraft:item,x=-9,y=-64,z=-4,dx=18,dy=6,dz=8]',
+    'fill -9 -61 -4 9 -61 3 minecraft:grass_block', 'fill -9 -60 -2 9 -58 3 minecraft:air',
     'setblock 2 -62 0 minecraft:stone', 'fill 3 -60 -3 4 -59 -3 minecraft:air',
-    'tp DfyGuestCheck 6.5 -60 -1.5', 'give DfyCompanion minecraft:dirt 3']) send(command);
+    ...(combined ? ['tp DfyCompanion -7.5 -60 -0.5', 'tp DfyGuestCheck -3.5 -60 -0.5'] :
+      ['tp DfyGuestCheck 6.5 -60 -1.5', 'give DfyCompanion minecraft:dirt 3'])]) send(command);
 }
 
 // 布置两岸同高及低一格的水道，边界墙约束近处路线从水中经过。
