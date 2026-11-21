@@ -52,8 +52,8 @@ void InteractionRoutes::accept(plugins::RoutedEvent event) {
         const auto channel = body.at("channel").get<std::string>();
         const auto action = body.at("action").get<std::string>();
         bool accepted = false;
-        if (action == "presented") accepted = asks_.presented(ask,event.owner,channel,body.at("delivered").get<bool>());
-        else if (action == "answer") accepted = asks_.answer(ask,event.owner,channel,body.at("recipient"),body.at("answer"));
+        if (channel == "game" && action == "presented") accepted = asks_.presented(ask,event.owner,channel,body.at("delivered").get<bool>());
+        else if (channel == "game" && action == "answer") accepted = asks_.answer(ask,event.owner,channel,body.at("recipient"),body.at("answer"));
         if (log_) log_->append("ask."+action,{{"ask",ask},{"instance",event.owner},{"accepted",accepted},{"body",body}});
         return;
     }
@@ -67,7 +67,8 @@ void InteractionRoutes::accept(plugins::RoutedEvent event) {
     if (event.kind != DFY_V2_EVENT_ASK && !main) return;
     const auto item = identity(body.at("item")), revision = identity(body.at("revision"));
     const auto milliseconds = identity(body.at("waitMs"));
-    if (milliseconds > 120000 || (body.at("channel") != "game" && body.at("channel") != "terminal") || exchanges_.size() == 16)
+    const auto& channel = body.at("channel").get_ref<const std::string&>();
+    if (milliseconds > 120000 || (channel != "game" && channel != "terminal") || exchanges_.size() == 16)
         throw std::invalid_argument("interaction: invalid ASK route");
     if (std::ranges::any_of(exchanges_,[&](const auto& other) {
         return other.origin.owner == event.owner && other.item == item && other.revision == revision;
@@ -75,20 +76,35 @@ void InteractionRoutes::accept(plugins::RoutedEvent event) {
     const auto box = main ? main_box(event) : events::MailboxId{};
     exchanges_.push_back({std::move(event),item,revision,0,clock_()+std::chrono::milliseconds(milliseconds),box});
     auto& exchange = exchanges_.back();
-    if (!main) {
-        try { open_ask(exchange,body.at("channel")); }
+    exchange.unavailable = channel == "terminal" && !terminal_available_;
+    if (!main && !exchange.unavailable) {
+        try { open_ask(exchange,channel); }
         catch (...) { exchanges_.pop_back(); throw; }
     }
 }
 
+// 对原事件的游戏声明和双向终端能力取当前快照。
+std::vector<std::string_view> InteractionRoutes::available_channels(std::string_view origin_channel) const {
+    std::vector<std::string_view> channels;
+    if (origin_channel == "game") channels.push_back("game");
+    if (terminal_available_) channels.push_back("terminal");
+    return channels;
+}
+
 // 创建并记录原事项的唯一提问，重试复用同一票据。
 void InteractionRoutes::open_ask(Exchange& exchange, std::string channel) {
+    if (exchange.unavailable || exchange.plugin_queued) throw std::invalid_argument("interaction: ASK route has ended");
+    const auto body = Json::parse(exchange.origin.projection);
+    const auto channels = available_channels(body.at("channel").get_ref<const std::string&>());
+    if (std::ranges::find(channels,channel) == channels.end()) {
+        if (log_) log_->append("ask.channel_unavailable",{{"eventDomain",exchange.origin.id.domain},{"event",exchange.origin.id.sequence},
+            {"item",exchange.item},{"channel",channel},{"availableChannels",channels}});
+        throw std::invalid_argument("interaction: ASK channel unavailable");
+    }
     if (exchange.ask) {
         if (asks_.status(exchange.ask)->spec.channel != channel) throw std::invalid_argument("interaction: existing ASK uses a different channel");
         return;
     }
-    if (channel != "game" && channel != "terminal") throw std::invalid_argument("interaction: unknown channel");
-    const auto body = Json::parse(exchange.origin.projection);
     exchange.ask = asks_.open(exchange.origin.owner,{body.at("question"),body.at("recipient"),std::move(channel),
         body.value("choices",std::vector<std::string>{}),exchange.answer_deadline});
     if (log_) log_->append("ask.opened",{{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},
@@ -110,7 +126,11 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         return true;
     }
     if (exchange.plugin_queued) return false;
-    if (!exchange.ask && clock_() < exchange.answer_deadline) {
+    if (exchange.item && !exchange.ask && !exchange.unavailable && !terminal_available_) {
+        const auto origin = Json::parse(exchange.origin.projection);
+        exchange.unavailable = origin.at("channel") == "terminal";
+    }
+    if (!exchange.ask && !exchange.unavailable && clock_() < exchange.answer_deadline) {
         if (!exchange.initial_queued) {
             auto message = Json::parse(exchange.origin.projection);
             message["eventDomain"] = exchange.origin.id.domain;
@@ -129,6 +149,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     }
     if (!exchange.item) return true;
     const auto* request = asks_.status(exchange.ask);
+    if (request && request->spec.channel == "terminal" && !terminal_available_) asks_.cancel(exchange.ask,exchange.origin.owner);
     const bool pending = request && (request->phase == AskPhase::presenting || request->phase == AskPhase::waiting);
     if (pending && (exchange.sent || request->spec.channel == "terminal")) return false;
     const bool to_main = request && !pending && exchange.main_box.value && !exchange.reply_requested;
@@ -140,7 +161,11 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",origin.at("recipient")},
         {"channel",request ? request->spec.channel : std::string{}},{"requiresAsk",true}};
     if (pending) { message["question"] = request->spec.question; message["choices"] = request->spec.choices; }
-    else { message["status"] = request ? ask_phase(request->phase) : "expired"; message["answer"] = request ? request->answer : ""; }
+    else {
+        message["status"] = request ? ask_phase(request->phase) : exchange.unavailable ? "failed" : "expired";
+        message["answer"] = request ? request->answer : "";
+        if (exchange.unavailable) message["reason"] = "channel_unavailable";
+    }
     message["eventDomain"] = exchange.origin.id.domain;
     message["event"] = exchange.origin.id.sequence;
     try {
@@ -158,6 +183,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
 
 // 查询应由终端下一次输出的原问题。
 std::optional<std::pair<std::uint64_t,AskSpec>> InteractionRoutes::console_question() const {
+    if (!terminal_available_) return {};
     for (const auto& exchange : exchanges_) {
         const auto* request = asks_.status(exchange.ask);
         if (request && request->phase == AskPhase::presenting && request->spec.channel == "terminal")
@@ -168,6 +194,7 @@ std::optional<std::pair<std::uint64_t,AskSpec>> InteractionRoutes::console_quest
 
 // 从本体终端按原身份确认呈现或接纳一条答复。
 bool InteractionRoutes::console_answer(std::uint64_t id, std::optional<std::string> answer) {
+    if (!terminal_available_) return false;
     const auto* request = asks_.status(id);
     if (!request || request->spec.channel != "terminal") return false;
     const auto owner = request->owner;
@@ -196,7 +223,7 @@ InteractionRoutes::Exchange* InteractionRoutes::find(events::EventId event) {
 InteractionRoutes::Exchange* InteractionRoutes::original(const MailboxDelivery& delivery) {
     const auto body = Json::parse(delivery.event.payload->find("text")->as_string());
     auto* exchange = find({identity(body.at("eventDomain")),identity(body.at("event"))});
-    if (!exchange || exchange->plugin_queued || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
+    if (!exchange || exchange->plugin_queued || exchange->unavailable || exchange->origin.owner != delivery.sender || exchange->main_box != delivery.mailbox)
         return nullptr;
     return exchange;
 }
@@ -238,12 +265,18 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
     const auto id = exchange->origin.id;
     constexpr std::string_view ask_tool = "interaction/ask", reply_tool = "interaction/reply";
     const std::string tool(reply ? reply_tool : ask_tool);
+    model::ToolDefinition definition{"mail_reply","Return the original ASK result to the plugin that asked the question.",
+        R"({"type":"object","properties":{},"additionalProperties":false})"};
+    if (!reply) {
+        const auto body = Json::parse(exchange->origin.projection);
+        const auto channels = available_channels(body.at("channel").get_ref<const std::string&>());
+        if (channels.empty()) return;
+        auto schema = Json::parse(R"({"type":"object","properties":{"channel":{"type":"string"}},"required":["channel"],"additionalProperties":false})");
+        schema["properties"]["channel"]["enum"] = channels;
+        definition = {"ask","Ask the original question using an available channel.",schema.dump()};
+    }
     auto catalog = std::make_shared<agent::ToolCatalog>(1);
-    catalog->add({tool,mail_.identity,1,reply ?
-        model::ToolDefinition{"mail_reply","Return the original ASK result to the plugin that asked the question.",
-            R"({"type":"object","properties":{},"additionalProperties":false})"} :
-        model::ToolDefinition{"ask","Ask the original question. Choose the allowed game or terminal channel.",
-            R"({"type":"object","properties":{"channel":{"type":"string","enum":["game","terminal"]}},"required":["channel"],"additionalProperties":false})"},true},
+    catalog->add({tool,mail_.identity,1,std::move(definition),true},
         // 只推进原收件事项，模型无法自填答复或改写回信地址。
         [this,id,reply](const agent::ToolInvocation& invocation) {
             auto* current = find(id);

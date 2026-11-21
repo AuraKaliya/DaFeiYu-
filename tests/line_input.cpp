@@ -28,6 +28,7 @@ InputRead next(LineInput& input) {
 // 验证跨块中文、CRLF、队列背压和 EOF 前末行，超限错误独立返回一次。
 void lines() {
     Pipe pipe; LineInput input(pipe.read,1,8);
+    check(!input.interactive_console(),"redirected input advertised a two-way terminal");
     pipe.send("中文\r"); pipe.send("\n12345678\r\nlast"); pipe.finish();
     check(next(input).line == "中文" && next(input).line == "12345678" && next(input).line == "last","input split or reordered UTF-8 lines");
     check(next(input).state == InputState::end && input.exited(),"input EOF preceded queued data or actual exit");

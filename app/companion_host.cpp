@@ -28,6 +28,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
     std::string previous;
     auto next = std::chrono::steady_clock::now();
     while (!host.companion_status()->closed) {
+        host.set_console_ask_available(input && input->interactive_console() && std::cout);
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("game host step failed");
         host.conversation().advance();
         present_console_ask(host,std::cout);
@@ -63,6 +64,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    host.set_console_ask_available(false);
     host.conversation().close();
     while (!host.conversation().closed()) {
         host.advance_plugins();

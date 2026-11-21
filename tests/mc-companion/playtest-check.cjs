@@ -128,18 +128,22 @@ async function checkWall(fixture, player, whispers, mode) {
     assert.equal(ask.length, 1);
     assert.equal(ask[0].path, askPath);
     assert.ok(trace.some(row => row.kind === 'ask.answer' && row.ask === ask[0].ask && row.accepted));
+    const delivery = trace.find(row => row.kind === 'interaction.delivered' && row.ask === ask[0].ask &&
+      row.category === (askPath === 'direct' ? 'interaction.ask.result' : 'interaction.mail.reply'));
+    assert.ok(delivery && delivery.body.answer === '靠河那段，留木门');
+    assert.ok(trace.some(row => row.kind === 'interaction.acknowledged' && row.ask === ask[0].ask &&
+      row.seq > delivery.seq && row.disposition === 'matched'));
     assert.ok(trace.some(row => row.kind === 'model.prepared' && row.source === 'plugin' &&
       row.input.messages.at(-1).content.includes('靠河那段，留木门')));
     const main = trace.filter(row => row.kind === 'model.prepared' && row.source === 'main');
     if (askPath === 'direct') assert.deepEqual(main, []);
     else {
-      assert.ok(main.some(row => row.input.tools.some(tool => tool.name === 'ask')));
+      const tool = main.flatMap(row => row.input.tools).find(tool => tool.name === 'ask');
+      assert.deepEqual(JSON.parse(tool.parameters).properties.channel.enum, ['game']);
       assert.ok(main.some(row => row.input.tools.some(tool => tool.name === 'mail_reply')));
       const exits = trace.filter(row => row.kind === 'run.exited' && row.source === 'main');
       assert.equal(exits.length, 2);
       assert.ok(exits.every(row => row.diagnostic?.data.timeline.source === 'mailbox'));
-      assert.ok(trace.some(row => row.kind === 'interaction.delivered' && row.ask === ask[0].ask &&
-        row.category === 'interaction.mail.reply' && row.body.answer === '靠河那段，留木门'));
     }
   }
 }

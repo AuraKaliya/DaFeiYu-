@@ -106,6 +106,13 @@ LineInput::LineInput(void* input, std::size_t capacity, std::size_t max_line_byt
 // 反复推进取消以覆盖读调用之间的竞争，实际退出前不销毁读取缓冲。
 // 步骤：请求停止 → 反复推进取消与退出 → 保持状态到线程已回收。
 LineInput::~LineInput() { close(); while (!exited()) { advance(); if (!exited()) Sleep(1); } }
+
+// 同时检查原生终端双向句柄和读取线程的活动状态。
+bool LineInput::interactive_console() const noexcept {
+    DWORD mode = 0;
+    return !state_->stopping.load() && !state_->done.load(std::memory_order_acquire) &&
+        GetConsoleMode(state_->input,&mode) && GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),&mode);
+}
 // 停止标志和满队列唤醒独立于 I/O 取消，排队输入在请求停止时丢弃。
 // 步骤：固定停止标志 → 清空待交付输入 → 唤醒队列等待 → 请求取消同步读取。
 void LineInput::close() noexcept {

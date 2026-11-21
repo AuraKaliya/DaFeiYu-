@@ -18,6 +18,8 @@ class InteractionRoutes {
     std::optional<std::pair<std::uint64_t,AskSpec>> console_question() const;
     // 记录原终端渠道已显示或提交原真人答复。
     bool console_answer(std::uint64_t id, std::optional<std::string> answer);
+    // 由拥有双向终端的宿主入口报告当前渠道能力。
+    void set_terminal_available(bool enabled) noexcept { terminal_available_ = enabled; }
     // 暂停或恢复已登记插件地址上的自动唤醒。
     void set_auto_wake(bool enabled) noexcept { auto_wake_ = enabled; }
   private:
@@ -28,6 +30,7 @@ class InteractionRoutes {
         events::MailboxId main_box{};
         bool initial_queued = false, sent = false, result_queued = false, reply_requested = false;
         bool plugin_queued = false, acknowledged = false;
+        bool unavailable = false;
     };
     // 核对原插件及其当前接收地址。
     events::MailboxId destination(const plugins::RoutedEvent& event) const;
@@ -46,6 +49,8 @@ class InteractionRoutes {
     void configure_main(const MailboxDelivery& delivery, agent::RunOptions& options);
     // 开始同一事项的一次 ASK，可供原生和主 Agent 共用。
     void open_ask(Exchange& exchange, std::string channel);
+    // 汇总原事件声明和当前宿主入口共同提供的渠道。
+    std::vector<std::string_view> available_channels(std::string_view origin_channel) const;
     // 读取来自信件的可信事项标记。
     Exchange* original(const MailboxDelivery& delivery);
 
@@ -59,5 +64,6 @@ class InteractionRoutes {
     std::map<runtime::DomainId,events::MailboxId> main_boxes_;
     std::shared_ptr<agent::ToolCatalog> main_run_tools_;
     bool auto_wake_;
+    bool terminal_available_ = false;
 };
 }

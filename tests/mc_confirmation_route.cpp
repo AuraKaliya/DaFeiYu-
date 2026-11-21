@@ -40,7 +40,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool first = std::wstring_view(argv[3]) == L"partner-route-first";
         const bool panel = manual || std::wstring_view(argv[3]) == L"partner-route-panel";
         const bool local = std::wstring_view(argv[3]) == L"partner-route-local";
+        const bool lose_terminal = std::wstring_view(argv[3]) == L"partner-route-lost-terminal";
         std::atomic_uint main_calls = 0;
+        std::atomic_bool terminal_disconnected = false;
         const auto host_start = std::chrono::steady_clock::now();
         std::atomic_int host_seconds = 0;
         app::ApplicationRunConfig run;
@@ -54,7 +56,11 @@ int wmain(int argc, wchar_t** argv) {
             });
             if (routed != input.tools.end()) {
                 ++main_calls;
-                if (last.role == Role::tool) return {{Role::assistant,"routing finished"}};
+                if (last.role == Role::tool) {
+                    if (last.tool_call_id == "lost")
+                        return {{Role::assistant,"",{{"present","ask",R"({"channel":"game"})"}}},FinishReason::tool_calls};
+                    return {{Role::assistant,"routing finished"}};
+                }
                 const auto envelope = Json::parse(last.content);
                 const auto mail = Json::parse(envelope.at("content").get<std::string>());
                 if (routed->name == "mail_reply") {
@@ -66,6 +72,15 @@ int wmain(int argc, wchar_t** argv) {
                 if (context.at("skill") != "collect" || context.at("arguments").at("count") != 2 ||
                     context.at("arguments").contains("approval") || envelope.at("category") != "mc.partner.question")
                     throw std::runtime_error("main did not receive original candidate");
+                const auto expected = panel || lose_terminal ? Json::array({"game","terminal"}) : Json::array({"game"});
+                if (Json::parse(routed->parameters).at("properties").at("channel").at("enum") != expected)
+                    throw std::runtime_error("ASK exposed channels that did not match the entry point");
+                if (lose_terminal) {
+                    const auto limit = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+                    while (!terminal_disconnected && std::chrono::steady_clock::now() < limit) std::this_thread::yield();
+                    if (!terminal_disconnected) throw std::runtime_error("test did not withdraw the terminal capability");
+                    return {{Role::assistant,"",{{"lost","ask",R"({"channel":"terminal"})"}}},FinishReason::tool_calls};
+                }
                 return {{Role::assistant,"",{{"present","ask",panel ? R"({"channel":"terminal"})" : R"({"channel":"game"})"}}},
                     FinishReason::tool_calls};
             }
@@ -87,13 +102,19 @@ int wmain(int argc, wchar_t** argv) {
         }},run);
         host.plugins().install(argv[1]);
         host.wake_for_plugin_mail(!manual);
+        host.set_console_ask_available(panel || lose_terminal);
         if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load MC package");
         const auto id = host.open_companion("mc.companion");
         host.listen_companion(id);
         bool requested_stop = false, delayed = false;
         unsigned manual_wait = 0, reviews = 0;
+        const auto expected_calls = local ? 0u : lose_terminal ? 5u : 4u;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(15);
         while (std::chrono::steady_clock::now() < deadline) {
+            if (lose_terminal && main_calls && !terminal_disconnected) {
+                host.set_console_ask_available(false);
+                terminal_disconnected = true;
+            }
             if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("confirmation work failed");
             host.conversation().advance();
             const auto state = host.companion_status();
@@ -115,12 +136,12 @@ int wmain(int argc, wchar_t** argv) {
                 else if (host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
             }
             if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
-                (local || (main_calls == 4 && !host.conversation().busy() && received(host.trace_file(),first || delayed_review)))) {
+                (local || (main_calls == expected_calls && !host.conversation().busy() && received(host.trace_file(),first || delayed_review)))) {
                 host.stop_companion(id);
                 requested_stop = true;
             }
             if (requested_stop && state->closed) {
-                if (main_calls != (local ? 0u : 4u) || (manual && reviews != 2) ||
+                if (main_calls != expected_calls || (manual && reviews != 2) ||
                     !state->control || state->control->phase != app::ControlPhase::released)
                     throw std::runtime_error("channel, model routing or original game exit not verified");
                 host.conversation().close();

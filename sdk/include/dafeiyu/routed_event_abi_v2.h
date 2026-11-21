@@ -30,6 +30,8 @@ typedef struct dfy_v2_event_projection {
 
 // 只解析原事件；载荷和输出均在本次同步调用内有效，宿主随后提交实际路由。
 // 信箱投影可用 mailCategory 和 mailVersion 选择已登记类别；只有一个类别时可省略。
+// ASK 投影的 channel 为直接路径所用的渠道，game 同时声明原插件能呈现游戏问题。
+// 主 Agent 路径由宿主按运行入口提供终端渠道。
 typedef dfy_v2_status (DFY_V2_CALL *dfy_v2_event_decoder)(void* context, dfy_v2_string_view payload,
     dfy_v2_event_projection* output);
 typedef struct dfy_v2_routed_event_api {

@@ -110,6 +110,8 @@ class Application {
     MailboxIntakeResult review_mail() { return mailbox_intake_.advance(false); }
     // 取得通用 ASK 的终端问题。
     auto console_ask() const { return interactions_.console_question(); }
+    // 由具备呈现与回话能力的入口报告终端当前可用性。
+    void set_console_ask_available(bool enabled) noexcept { interactions_.set_terminal_available(enabled); }
     // 提交终端呈现回执或原真人答复。
     bool answer_console_ask(std::uint64_t id, std::optional<std::string> answer) { return interactions_.console_answer(id,std::move(answer)); }
     // 设置插件信箱的自动唤醒模式，主动收件继续可用。

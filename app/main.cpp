@@ -103,10 +103,12 @@ int run(const std::vector<std::filesystem::path>& args) {
             dfy::platform::LineInput input;
             if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
             const auto result = dfy::app::async_chat(application.conversation(),input,std::cout,std::cerr,[&] {
+                application.set_console_ask_available(input.interactive_console() && std::cout);
                 if (application.advance_plugins() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
                 dfy::app::present_console_ask(application,std::cout);
             },[&](std::string_view command) { return dfy::app::application_command(application,command,std::cout,std::cerr); },
                 [&](const std::string& text) { return application.submit_dialogue(text); });
+            application.set_console_ask_available(false);
             const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
             auto shutdown = application.close_plugins();
             while (shutdown != dfy::plugins::ShutdownResult::closed) {

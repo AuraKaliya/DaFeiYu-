@@ -22,6 +22,8 @@ class LineInput {
     LineInput& operator=(const LineInput&) = delete;
     // 取得一行、暂空、结束或一次独立错误，EOF 前已排队数据仍按序交付。
     InputRead poll();
+    // 检查输入仍在读取且标准输出可向同一个交互终端呈现问题。
+    bool interactive_console() const noexcept;
     // 请求取消读取及排队输入，不把取消调用返回当作线程已经退出。
     void close() noexcept;
     // 推进取消竞争及实际线程回收，不等待用户继续输入。
