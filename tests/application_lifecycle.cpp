@@ -1,6 +1,7 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include "application.hpp"
 #include "run_log.hpp"
+#include "ask.hpp"
 #include "trace_commands.hpp"
 #include "../plugins/examples/observer/observer_api.h"
 #include <dafeiyu/run_loop.hpp>
@@ -164,6 +165,25 @@ void priority_mailboxes(const fs::path& run) {
         intake.advance() == MailboxIntakeResult::handled && !network->front(owner,high),"failed admission lost mail");
 }
 
+// 验证 ASK 的呈现、答案、时效和终态互相独立。
+// 步骤：签发受限选项 → 拒绝抢答与跨身份答复 → 固定首答 → 推进超时和失败。
+void ask_lifecycle() {
+    using namespace dfy::app;
+    auto now = dfy::agent::ToolTime{};
+    AskService ask([&] { return now; });
+    AskSpec spec{"Which wall?","player","game",{"river","house"},now+std::chrono::seconds(1)};
+    const auto id = ask.open(4,spec);
+    check(!ask.answer(id,4,"game","player","river") && ask.presented(id,4,"game",true) &&
+        !ask.answer(id,5,"game","player","river") && !ask.answer(id,4,"game","other","river") &&
+        !ask.answer(id,4,"game","player","roof") && ask.answer(id,4,"game","player","river"),"ask admitted invalid answer");
+    check(ask.answer(id,4,"game","player","river") && !ask.answer(id,4,"game","player","house"),"ask overwrote answer");
+    const auto pending = ask.open(4,spec), failure = ask.open(4,spec);
+    check(ask.presented(failure,4,"game",false) && ask.status(failure)->phase == AskPhase::failed,"ask lost presentation failure");
+    now += std::chrono::seconds(1);
+    check(!ask.presented(pending,4,"game",true) && ask.status(pending)->phase == AskPhase::expired &&
+        ask.status(id)->phase == AskPhase::answered,"ask deadline changed original terminal result");
+}
+
 // 验证房间信箱与直接对话独立，自动和主动审查共用分类边界。
 // 步骤：投递环境变化及被点名事件 → 验证唤醒模式 → 核对受信来源及模型请求。
 void room_mailbox(const fs::path& run, bool automatic) {
@@ -210,6 +230,7 @@ int wmain(int argc, wchar_t** argv) {
         shared_application(run);
         trace_rewrites(run);
         priority_mailboxes(run);
+        ask_lifecycle();
         room_mailbox(run,true);
         room_mailbox(run,false);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);
