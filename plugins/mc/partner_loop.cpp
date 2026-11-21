@@ -16,6 +16,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "facing 和 eye 是原话时可用的玩家朝向与眼位。playerFocus 是沿原视线重读的候选，selfLook 是你自己的视线。"
     "玩家指这里、旁边的缺口时，用 observe 的 message 参数扫描原位置；别把后来读到的玩家位置当成原目标。"
     "用 task_update.target 保存原消息号 message。playerFocus 未确定指向时先问清楚；用 candidate 绑定观察返回的候选。"
+    "玩家要你先过来且原位置不可用时，在原话回合登记 target.approach，再移动到玩家。到达后用 observe 的 self 来源和 verify 核实确切空格，带 observation.id 和 cells 绑定同一原话。"
     "有原话目标时只按这些格执行；新任务换目标或清空旧目标。超出观察范围时用 start_move 的 message 参数靠近原位置再查看。"
     "结合当前约定、自己的打算和已确认的现场，自行选择行动、协商、拒绝或安静等待。"
     "recentDialogue 记录已处理的原话和实际发出的答复。task.lastAction 保留上次工具事实，task.targetObservation 保留当前目标的原话指向。"
@@ -364,14 +365,16 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto anchor = target != args.end() && target->contains("message") ?
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
     const auto prior_scope = scope();
-    auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor);
+    const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
+    auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
     expansion_pending_ |= (scope() & ~prior_scope).any();
     return result;
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
 bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope) const {
-    if (session != session_ || !task_.has_target()) return true;
+    if (session != session_) return true;
+    if (!task_.target_ready()) return false;
     auto input = Json::parse(envelope);
     if (!permits(session) || input.at("context").at("generation") != session_world_ ||
         input.at("context").at("order") != order_ || !task_.bind_placement(input.at("arguments"))) return false;

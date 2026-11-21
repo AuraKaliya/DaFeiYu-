@@ -11,8 +11,9 @@ const waterCourse = { west: [-37.5, -60, -24.5], east: [-23.5, -60, -24.5] };
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
 function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
   if (moveDoor) {
-    send('fill 2 -61 -4 10 -61 3 minecraft:grass_block');
-    send('fill 2 -60 -4 10 -58 3 minecraft:air');
+    send('kill @e[type=minecraft:item,x=-1,y=-62,z=-4,dx=12,dy=5,dz=8]');
+    send('fill -1 -61 -4 10 -61 3 minecraft:grass_block');
+    send('fill -1 -60 -4 10 -58 3 minecraft:air');
   }
   for (const command of ['gamerule randomTickSpeed 0',
     'fill 2 -60 -3 8 -59 -3 minecraft:dirt', 'setblock 3 -59 -3 minecraft:air',

@@ -24,6 +24,18 @@ function fromGround(bot, block) {
   });
 }
 
+// 在实际破坏列上找能取到掉落物的站位，沿用目标格下方的已加载支撑。
+function pickupStand(bot, point) {
+  for (let y = 0; y >= -4; --y) {
+    const feet = point.offset(0, y, 0);
+    const space = bot.blockAt(feet);
+    if (!space || space.boundingBox === 'block') break;
+    if (vacant.has(space.name) && vacant.has(bot.blockAt(feet.offset(0, 1, 0))?.name) &&
+        bot.blockAt(feet.offset(0, -1, 0))?.boundingBox === 'block') return feet;
+  }
+  return null;
+}
+
 // 记录实际变化格，门的一次采掘可能同时更改两个服务端方格。
 // 步骤：展开可核对的门伴随格 → 捕获破坏前名称 → 在写入完成后逐格比较。
 function collectReadback(bot, block) {
@@ -50,4 +62,4 @@ function collectReadback(bot, block) {
   };
 }
 
-module.exports = { fromGround, collectReadback };
+module.exports = { fromGround, collectReadback, pickupStand };

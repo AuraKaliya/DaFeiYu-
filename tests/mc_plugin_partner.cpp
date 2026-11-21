@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "../plugins/mc/partner_effect.hpp"
+#include "../plugins/mc/partner_task.hpp"
 #include <dafeiyu/companion_abi_v2.h>
 #include <algorithm>
 #include <atomic>
@@ -22,6 +23,48 @@ void verify_collection_effect() {
     result["status"] = "blocked";
     if (verified_action(result,"collect","")) throw std::runtime_error("partial collect may not advance a dependency");
 }
+
+// 核对已绑定目标和接近后绑定使用不同证据，拒绝用后来的玩家位置改写原决定。
+// 步骤：锁定并尝试替换原格 → 登记接近请求 → 核对有效到达和实际空格。
+void verify_target_evidence() {
+    using Json = nlohmann::json;
+    const Json position{{"x",1},{"y",-60},{"z",1}}, other{{"x",3},{"y",-60},{"z",1}};
+    const Json anchor{{"dimension","overworld"},{"position",position}};
+    const Json unknown{{"dimension","overworld"},{"position",nullptr}};
+    const auto update = [&](dfy::mc::PartnerTask& task, const Json& source, Json target, std::uint64_t order = 0) {
+        return task.update({{"goal","fill the original gap"},{"next","player"},{"target",std::move(target)}},anchor,0,&source,order)
+            .at("status");
+    };
+    dfy::mc::PartnerTask fixed, approach;
+    if (update(fixed,anchor,{{"message",2},{"cells",Json::array({position})}}) != "updated" ||
+        update(fixed,anchor,{{"message",2},{"cells",Json::array({other})}}) != "invalid_target" ||
+        update(fixed,anchor,{{"message",3},{"cells",Json::array({other})}},3) != "invalid_target")
+        throw std::runtime_error("a later view overwrote the original target");
+    if (update(fixed,anchor,{{"message",3},{"cells",Json::array({other})},{"replace",true}},3) != "updated")
+        throw std::runtime_error("the current explicit replacement was not accepted");
+    const Json target{{"message",7},{"approach",true},{"observation","local"},{"cells",Json::array({position})}};
+    if (update(approach,unknown,{{"message",7},{"approach",true}},7) != "updated" ||
+        update(approach,unknown,target) != "invalid_target") throw std::runtime_error("unobserved approach was accepted");
+    approach.record({{"skill","move"},{"order",7},{"result",{{"status","done"},{"target","player"},{"position",position}}}});
+    const Json self{{"source","self"},{"status","sampled"},{"actor",{{"position",position}}}};
+    auto readback = position;
+    readback["block"] = "air";
+    readback["atSelf"] = false;
+    // 构造执行器按来源和坐标生成的已完成回执。
+    const auto observe = [&] {
+        const Json sample{{"verified",Json::array({readback})},{"views",Json::array({self})}};
+        const Json observation{{"id","local"},{"dimension","overworld"},{"samples",Json::array({sample})}};
+        approach.record({{"skill","observe"},{"result",{{"status","done"},{"observation",observation}}}});
+    };
+    observe();
+    if (update(approach,unknown,target) != "invalid_target") throw std::runtime_error("live player was treated as self evidence");
+    readback["atSelf"] = true;
+    observe();
+    auto args = position;
+    args["block"] = "dirt";
+    if (update(approach,unknown,target) != "updated" || !approach.bind_placement(args) || args.at("sourceMode") != "approach" ||
+        args.at("sourceMessage") != 7) throw std::runtime_error("verified approach lost its original placement provenance");
+}
 }
 
 // 通过真实 DLL、命名管道与可控后端验证插件拥有一条完整的回复链路。
@@ -30,7 +73,7 @@ int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     using namespace model;
     try {
-        if (argc == 3) verify_collection_effect();
+        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
         const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");

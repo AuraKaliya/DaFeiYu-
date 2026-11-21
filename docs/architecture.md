@@ -199,8 +199,9 @@ flowchart TB
 ```
 
 - **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。插件核对当前回合的任务变更并分配修订，跨回合保留原消息号及已选方块。模型回合结算后，插件按新玩家事实、动作退出、任务继续、私有现场变化或目录展开选择是否开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
-- **门和洞口的观察。** 方块搜索返回实际中心和半径，只列当前角色能看见的匹配。木门以核对过的上下两格归为一个对象，另一半尚不可验证时标记为未确认。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
+- **门和洞口的观察。** 方块搜索的 `visible` 返回角色视线能命中的匹配。`doors` 来自有覆盖限制的已加载局部格，核对上下两格并归成一个对象。另一半尚不可验证时标记为未确认。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
 - **多来源与连续观察。** `observe` 可合并自己、配对玩家和原话三个中心。每帧只读取一次重叠坐标，保留各中心的来源和覆盖范围。连续观察最多三帧，只比较相邻帧都已知的方块。窗口移动与区块未加载单独表达。等待可取消，完整采样进入工具回执，任务保存可用于指向和后续回合的摘要。 [多来源采样](../plugins/mc/bridge/partner-observe.cjs) · [任务记录](../plugins/mc/partner_task.cpp)
+- **放置目标身份。** 插件按原话锁定目标格，同一原话不会因新视角换到别的缺口。换目标需当前玩家的新指令和显式 `replace`。玩家原话要求过来且旧位置不可用时，可先登记 `approach`，等实际到达回执后，用本角色附近的已知空格绑定同一原话。直接放置和预输入都核对这组格，游戏执行器在动手前再次核对维度、空格、材料和支撑。 [目标校验](../plugins/mc/partner_task.cpp) · [游戏放置](../plugins/mc/bridge/placement.cjs)
 - **动作预输入。** `queue_actions` 在 MC 插件按任务修订登记最多四个待执行步骤。等待队列和已接纳的角色工作有不同状态。清队列只撤待执行项，替换工作须核对原工作号并读回退出。采集步骤按方块变更验收，有用料依赖时还核对指定掉落物的入包增量。失败只撤销同一组依赖步骤。 [动作队列](../plugins/mc/partner_queue.cpp)
 - **前台交接。** 待机是无前台工作时的状态。插件保留跟随意图及稳定工作号，桥接执行段各有工作号。一次性前台动作可以取得优先权，分组时用 `queue_actions.interrupt` 声明。插件先要求执行器清除跟随路径和控制输入并确认退出，再下发临时动作。临时动作成功或普通受阻后，从当前玩家位置恢复原跟随。明确叫停、配对失效和未确认退出使原跟随结束。观察和发言使用独立的后台票据。 [跟随调度](../plugins/mc/partner_queue.cpp) · [执行器释放](../plugins/mc/bridge/follow.cjs)
 - **在途工作和发言。** 局内移动、跟随、采集和放置由游戏接纳后交还工具，插件持原票据推进。需确认的局内动作先将待办交给插件循环，等待和执行期间可继续观察和发言。角色操作共享独占游戏控制。`activeMotion` 提供原工作进度，`finishedWork` 把实际退出交给下一次局内决策。显式停止、离场、换世界和关闭触发原动作回收。本体主动委托经原工具等待结果后回报。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [跟随](../plugins/mc/bridge/follow.cjs)
@@ -208,7 +209,7 @@ flowchart TB
 - **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察只带概要和采样信息，地图用 `observe` 重新读取。工具目录保留已选择的类别，有原话锚点时提供移动，选定目标格后下一轮提供放置。宿主在本轮内固定工具契约，游戏侧校验实际动作。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
 - **玩家指向。** 游戏执行器保存原消息的眼位、朝向和采样时间。在原位置重读已加载场景，区分原玩家视线、实时玩家位置和陪玩角色视线。只有唯一穿过的缺口才提供默认候选。插件从同一原消息的观察解析候选编号，固定实际方格，再由执行器在落地时重读。 [收件采样](../plugins/mc/bridge/chat.cjs) · [墙体候选](../plugins/mc/bridge/player-focus.cjs) · [目标绑定](../plugins/mc/partner_task.cpp)
 - **放置读回。** 观察返回已加载的方块体积和坐标原点。放置检查精确目标格、支撑面、占用及材料，再依据回执里的实际方块与库存判断效果。门上下两格分别核对。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[现场取样](../plugins/mc/bridge/block-survey.cjs) · [游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
-- **取材范围和逐格变化。** 选择 `task_update.collection=ground` 后，普通采集、确认采集和预输入都在相同范围执行。执行器在选格及动手前重验地层、附近结构和角色脚下。库存增减与逐格读回分别记录，部分完成仍携带实际改动。`task.worldChanges` 保留最近 32 条变化、工作号和原消息号，后续重新观察也可读取。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
+- **取材范围和逐格变化。** 选择 `task_update.collection=ground` 后，普通采集、确认采集和预输入都在相同范围执行。执行器在选格及动手前重验地层、附近结构和角色脚下。用破坏列的实测支撑定位拾取站位，有限等待实际入包。库存增减与逐格读回分别记录，部分完成仍携带实际改动。`task.worldChanges` 保留最近 32 条变化、工作号和原消息号，后续重新观察也可读取。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
 - **渡水。** 游戏执行器根据真实物理帧读回游动、离开水域及站稳干岸。跟随目标在干岸时，达到距离且自身也在干地才算靠近。固定站位有干地条件时，同样经过到达复核。两种移动共用禁止采掘搭路的寻路策略，回执带实际位置和渡水次数。[渡水读回](../plugins/mc/bridge/navigation.cjs) · [持续跟随](../plugins/mc/bridge/follow.cjs)
 
 ## 当前边界

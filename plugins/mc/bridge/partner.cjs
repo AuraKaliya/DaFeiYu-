@@ -6,7 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, collectReadback } = require('./collection.cjs');
+const { fromGround, collectReadback, pickupStand } = require('./collection.cjs');
 const { dryStand, DryStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
@@ -38,6 +38,17 @@ function visible(bot, type, center = bot.entity.position) {
   return bot.findBlocks({ matching: type.id, point: center, maxDistance: 16, count: 96 })
     .map(pos => bot.blockAt(pos)).filter(block => block && bot.canSeeBlock(block) &&
       !(block.position.x === feet.x && block.position.z === feet.z && block.position.y < feet.y));
+}
+
+// 从已加载的局部观察范围识别门，包括细碰撞盒导致视线检测漏掉的半格。
+function localDoors(bot, type, center) {
+  if (!center || center.distanceTo(bot.entity.position) > 24) return [];
+  const origin = center.floored();
+  const hits = bot.findBlocks({ matching: type.id, point: center, maxDistance: 9, count: 32 })
+    .filter(pos => Math.abs(pos.x - origin.x) <= 5 && Math.abs(pos.z - origin.z) <= 5 &&
+      pos.y >= origin.y - 4 && pos.y <= origin.y + 2)
+    .map(pos => bot.blockAt(pos)).filter(block => block?.name === type.name);
+  return observedDoors(bot, hits);
 }
 
 // 一次移动和持续跟随都使用只走路的寻路策略。
@@ -92,8 +103,16 @@ async function collect(bot, args, check, result) {
       if (!after || after.type === type.id) throw new Error('方块变化未核实');
       ++result.broken;
       check();
-      const pickupY = args.source === 'ground' ? pos.y : Math.floor(bot.entity.position.y);
-      await walk(bot, new goals.GoalNear(pos.x, pickupY, pos.z, 0));
+      const stand = pickupStand(bot, pos);
+      let pickupTimer, pickupExpired = false;
+      try {
+        if (!stand) throw new Error('掉落物附近没有已知站位');
+        pickupTimer = setTimeout(() => { pickupExpired = true; bot.pathfinder.setGoal(null); bot.clearControlStates(); }, 6000);
+        await walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z));
+      } catch (error) {
+        check();
+        result.pickupIssue = pickupExpired ? '未能在期限内抵达拾取站位' : String(error.message).slice(0, 120);
+      } finally { clearTimeout(pickupTimer); }
       // 掉落物有拾取延迟，给实际库存更新留出时间；不以挖掘次数推算入包。
       await delay(650);
     }
@@ -165,7 +184,7 @@ function partnerService(bot, world, inbox, places, owner) {
     try {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
-      if (r.skill === 'observe' && ['sources','radius','detail','samples'].some(key => Object.hasOwn(args, key))) {
+      if (r.skill === 'observe' && ['sources','radius','detail','samples','verify'].some(key => Object.hasOwn(args, key))) {
         await observeWindow(bot, args, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
           player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
           messageAnchor: order => messageAnchor(r.generation, order), inventory: () => inventory(bot) });
@@ -196,7 +215,10 @@ function partnerService(bot, world, inbox, places, owner) {
           const blocks = visible(bot, type, center).slice(0, 10);
           result.blockSearch = { block: type.name, center: center.floored(), radius: 16, coverage: 'loaded_visible_only' };
           result.visible = blocks.map(block => block.position.clone());
-          if (type.name.endsWith('_door')) result.doors = observedDoors(bot, blocks);
+          if (type.name.endsWith('_door')) {
+            result.doors = localDoors(bot, type, center);
+            result.doorCoverage = 'loaded_local';
+          }
         }
         if (previous?.generation === r.generation) result.lastAction = previous;
       } else if (r.skill === 'reply') {
@@ -232,13 +254,17 @@ function partnerService(bot, world, inbox, places, owner) {
         const arrived = bot.entity.position.floored();
         if (!goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater))
           throw new Error('到达站位未核实');
+        if (args.place === 'player') result.target = 'player';
       } else if (r.skill === 'follow') {
         prepareWalking(bot);
         await followPlayer(bot, owner, args.distance ?? 3, check, result);
       } else if (r.skill === 'collect') await collect(bot, args, check, result);
       else if (r.skill === 'place') {
         if (args.sourceMessage !== undefined) {
-          messageAnchor(r.generation, args.sourceMessage);
+          if (args.sourceMode === 'approach') {
+            const source = inbox.get(r.generation, args.sourceMessage)?.sceneAtMessage;
+            if (source?.dimension !== bot.game.dimension) throw new Error('原接近请求不在当前世界');
+          } else messageAnchor(r.generation, args.sourceMessage);
           result.sourceMessage = args.sourceMessage;
           result.taskRevision = args.taskRevision;
         }

@@ -41,6 +41,18 @@ Json candidate_cells(const Json& observation, const Json& candidate) {
         cells.push_back({{"x",choice->at("x")},{"y",choice->at("y").get<int>()+offset},{"z",choice->at("z")}});
     return cells;
 }
+
+// 检查目标显式坐标的形状、范围和唯一性。
+bool valid_cells(const Json& cells) {
+    if (!cells.is_array() || cells.empty() || cells.size() > 16) return false;
+    for (auto it = cells.begin(); it != cells.end(); ++it) {
+        if (!it->is_object() || it->size() != 3 || std::find(cells.begin(),it,*it) != it) return false;
+        for (const auto axis : {"x","y","z"})
+            if (!it->contains(axis) || !it->at(axis).is_number_integer() || std::abs(it->at(axis).get<double>()) > 30000000)
+                return false;
+    }
+    return true;
+}
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
@@ -59,7 +71,8 @@ Json PartnerTask::context() const {
 
 // 用插件持有的修订提交来自当前回合的任务意图。
 // 步骤：校验正文与原话目标 → 保存约定和观察基线 → 分配新修订及唤醒条件。
-Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor) {
+Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t scene_revision, const Json* anchor,
+    std::uint64_t player_order) {
     if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
     auto goal = input.at("goal").get<std::string>();
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
@@ -75,21 +88,39 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
         target = input.at("target");
         if (target.empty()) target = nullptr;
         else {
-            if (!anchor || anchor->at("position").is_null() || anchor->at("dimension") != scene.at("dimension"))
+            const auto message = target.at("message").get<std::uint64_t>();
+            const bool approach = target.value("approach",false);
+            const bool existing = target_.contains("message") && target_.at("message") == message;
+            if (!anchor || anchor->at("dimension") != scene.at("dimension") ||
+                (anchor->at("position").is_null() && !approach))
                 return {{"status","invalid_target"},{"reason","original player position unavailable"}};
+            if (has_target() && !existing && (!target.value("replace",false) || player_order != message))
+                return {{"status","invalid_target"},{"reason","new player instruction required to replace the target"}};
+            if (approach && !(existing && target_.value("approach",false)) &&
+                (player_order != message || target.contains("cells") || target.contains("candidate")))
+                return {{"status","invalid_target"},{"reason","record the original approach before choosing cells"}};
             if (target.contains("candidate")) {
-                if (target.contains("cells")) return {{"status","invalid_target"},{"reason","choose a candidate or cells"}};
-                const auto original = observations_.find(target.at("message").get<std::uint64_t>());
+                if (target.contains("cells") || approach) return {{"status","invalid_target"},{"reason","choose an original candidate or cells"}};
+                const auto original = observations_.find(message);
                 auto cells = original == observations_.end() ? Json{} : candidate_cells(original->second,target.at("candidate"));
                 if (cells.is_null()) return {{"status","invalid_target"},{"reason","candidate missing from original message observation"}};
                 target["cells"] = std::move(cells);
             }
             if (target.contains("cells")) {
                 const auto& cells = target.at("cells");
-                if (!cells.is_array() || cells.empty() || cells.size() > 16 ||
-                    !std::ranges::all_of(cells,[&](const auto& cell) { return cell_near_anchor(cell,anchor->at("position")); }))
-                    return {{"status","invalid_target"},{"reason","target cells outside the original survey"}};
+                if (!valid_cells(cells) || (approach && !verified_after_approach(target,scene)) ||
+                    (!anchor->at("position").is_null() && !std::ranges::all_of(cells,[&](const auto& cell) {
+                        return cell_near_anchor(cell,anchor->at("position")); })))
+                    return {{"status","invalid_target"},{"reason","target cells lack current and original coverage"}};
+                const auto previous = bound_cells_.find(message);
+                if (previous != bound_cells_.end() && !std::ranges::is_permutation(previous->second,cells))
+                    return {{"status","invalid_target"},{"reason","original target cells cannot be changed"}};
+                bound_cells_[message] = cells;
+                if (bound_cells_.size() > observation_limit) bound_cells_.erase(bound_cells_.begin());
+            } else if (existing && target_.contains("cells")) {
+                return {{"status","invalid_target"},{"reason","original target is already bound"}};
             }
+            target.erase("replace");
             target["anchor"] = *anchor;
         }
     }
@@ -102,6 +133,26 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     armed_ = true;
     ++revision_;
     return {{"status","updated"},{"task",context()}};
+}
+
+// 允许原接近请求在实际到达后使用现场明确读回的空格。
+// 步骤：核对工作来源和采样时间 → 验证角色在原到达点附近 → 核对每个空格。
+bool PartnerTask::verified_after_approach(const Json& target, const Json& scene) const {
+    if (arrival_.is_null() || local_observation_.is_null() || !target.contains("observation") ||
+        arrival_.at("order") != target.at("message") || local_observation_.at("id") != target.at("observation") ||
+        local_observation_.at("dimension") != scene.at("dimension") ||
+        std::chrono::steady_clock::now()-observation_time_ > std::chrono::seconds(30)) return false;
+    const auto& position = arrival_.at("position");
+    const auto& observed = local_observation_.at("position");
+    for (const auto axis : {"x","y","z"})
+        if (std::abs(position.at(axis).get<double>()-observed.at(axis).get<double>()) > 3) return false;
+    const auto& verified = local_observation_.at("verified");
+    return std::ranges::all_of(target.at("cells"),[&](const auto& cell) {
+        return std::ranges::any_of(verified,[&](const auto& sample) {
+            return sample.at("atSelf") == true && sample.at("block") == "air" &&
+                cell.at("x") == sample.at("x") && cell.at("y") == sample.at("y") && cell.at("z") == sample.at("z");
+        });
+    });
 }
 
 // 将实际写入的每个方块与当前任务选择核对，再固定原话和任务修订。
@@ -119,6 +170,7 @@ bool PartnerTask::bind_placement(Json& arguments) const {
     }
     arguments["sourceMessage"] = target_.at("message");
     arguments["taskRevision"] = revision_;
+    if (target_.value("approach",false)) arguments["sourceMode"] = "approach";
     return true;
 }
 
@@ -133,13 +185,30 @@ void PartnerTask::record(const Json& receipt) {
     if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
     auto summary = receipt;
     auto& result = summary.at("result");
+    if (receipt.at("skill") == "move" && result.at("status") == "done" && result.value("target",std::string{}) == "player") {
+        arrival_ = {{"order",receipt.at("order")},{"position",result.at("position")}};
+        local_observation_ = nullptr;
+    }
     if (receipt.at("skill") == "observe" && result.contains("anchor") && result.contains("playerFocus")) {
         const auto message = result.at("anchor").at("message").get<std::uint64_t>();
         observations_[message] = {{"message",message},{"sampledAtMs",result.at("sampledAtMs")},{"playerFocus",result.at("playerFocus")}};
         if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
     }
     if (receipt.at("skill") == "observe" && result.contains("observation")) {
-        auto& samples = result["observation"]["samples"];
+        auto& observation = result["observation"];
+        auto& samples = observation["samples"];
+        if (!samples.empty() && result.at("status") == "done" && samples.back().contains("verified")) {
+            const auto& sample = samples.back();
+            const auto& views = sample.at("views");
+            const auto own = std::ranges::find_if(views,[](const auto& view) {
+                return view.at("source") == "self" && view.at("status") == "sampled";
+            });
+            if (own != views.end()) {
+                local_observation_ = {{"id",observation.at("id")},{"dimension",observation.at("dimension")},
+                    {"position",own->at("actor").at("position")},{"verified",sample.at("verified")}};
+                observation_time_ = std::chrono::steady_clock::now();
+            }
+        }
         for (auto& sample : samples) for (auto& view : sample["views"]) {
             if (view.erase("grid")) view["gridAvailable"] = true;
             if (!view.contains("playerFocus")) continue;

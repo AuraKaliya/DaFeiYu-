@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <chrono>
 #include <map>
 #include <string_view>
 #include <nlohmann/json.hpp>
@@ -14,7 +15,7 @@ class PartnerTask {
     std::uint64_t revision() const noexcept { return revision_; }
     // 更新来自当前回合的分工，由插件分配并返回新修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
-        const nlohmann::json* anchor);
+        const nlohmann::json* anchor, std::uint64_t player_order = 0);
     // 判断当前任务是否带有需要遵循的原话目标。
     bool has_target() const noexcept { return !target_.is_null(); }
     // 只有目标已绑定确切方块时才自动授予放置目录。
@@ -34,11 +35,16 @@ class PartnerTask {
     // 撤销在途唤醒，仍保留当前玩家已知任务，供后续原话处理。
     void disarm() noexcept { armed_ = false; }
   private:
+    // 核对接近原请求后的现场证据仍属于同一任务和维度。
+    bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
     std::uint64_t revision_ = 0;
     std::string goal_, detail_, next_ = "player", collection_ = "visible";
     unsigned remaining_ = 0;
     bool armed_ = false;
     nlohmann::json baseline_, receipt_, target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
+    std::map<std::uint64_t,nlohmann::json> bound_cells_;
+    nlohmann::json arrival_, local_observation_;
+    std::chrono::steady_clock::time_point observation_time_{};
 };
 }

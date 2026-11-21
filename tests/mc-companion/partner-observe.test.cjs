@@ -39,7 +39,8 @@ function fixture() {
 // 两个实时中心重叠时同格只读取一次，来源与玩家状态仍可各自追查。
 test('combined survey reads shared coordinates once', async () => {
   const { bot, context, reads } = fixture(), result = {};
-  await observeWindow(bot, { sources: ['self', 'player'], radius: 1, detail: 'cells' }, result, context);
+  await observeWindow(bot, { sources: ['self', 'player'], radius: 1, detail: 'cells',
+    verify: [{ x: 0, y: -60, z: 0 }, { x: 2, y: -60, z: 0 }, { x: 3, y: -60, z: 0 }] }, result, context);
   const [sample] = result.observation.samples;
   assert.equal(sample.coverage.unique, 4 * 3 * 7);
   assert.equal(sample.coverage.unknown, 3 * 7);
@@ -48,6 +49,7 @@ test('combined survey reads shared coordinates once', async () => {
   assert.deepEqual(sample.views[0].actor.inventory, { dirt: 4 });
   assert.equal(sample.views[1].actor.position.x, 1);
   assert.equal(sample.views[1].grid.match(/=/g).length, 2 * 3 * 7);
+  assert.deepEqual(sample.verified.map(cell => [cell.block, cell.atSelf]), [['dirt', true], ['air', false], [null, false]]);
 });
 
 // 玩家移动后，原话中心保持不动，变化只比较前后都可读的格子。

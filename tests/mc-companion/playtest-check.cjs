@@ -325,7 +325,7 @@ async function checkWall(fixture, player, whispers, mode) {
   assert.deepEqual(placements.map(row => [row.order, row.result.placementAttempted, row.result.placed]), [[order,true,true],[order+1,true,true]]);
   assert.equal(placements[0].result.sourceMessage, 3);
   assert.equal(placements[0].result.taskRevision, 3);
-  assert.deepEqual(placements.at(-1).arguments, { block: 'oak_door', x: 7, y: -60, z: -3 });
+  assert.deepEqual(placements.at(-1).arguments, { block: 'oak_door', x: 7, y: -60, z: -3, sourceMessage: 4, taskRevision: 5 });
   const trace = readTrace();
   assert.ok(trace.some(row => row.kind === 'tool.exited' && row.callId === 'wrong-gap' &&
     JSON.parse(row.output).placementAttempted === false));

@@ -266,6 +266,10 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
         if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
             return plan_door();
         if (last.tool_call_id == "door-plan" && result.at("status") == "updated")
+            return call("task_update","bind-door",{{"goal","put the agreed door in its opening"},{"next","player"},
+                {"target",{{"message",4},{"cells",Json::array({{{"x",7},{"y",-60},{"z",-3}},
+                    {{"x",7},{"y",-59},{"z",-3}}})}}}});
+        if (last.tool_call_id == "bind-door" && result.at("status") == "updated")
             return call("place","door",{{"block","oak_door"},{"x",7},{"y",-60},{"z",-3},{"approval","game"}});
         return internal("fixed action ended");
     }
