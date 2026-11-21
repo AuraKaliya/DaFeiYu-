@@ -267,9 +267,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.arguments = input.dump();
         }
         if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);
-        const bool correction_blocked = controls_body && (game_skill == "collect" || game_skill == "place" || game_skill == "fill_target") &&
-            raw->partner.waiting_for_target(call->session);
-        const bool target_blocked = correction_blocked || !pointed.has_value() || observation_blocked ||
+        const bool alters_world = controls_body && (game_skill == "collect" || game_skill == "place" || game_skill == "fill_target");
+        const bool correction_blocked = alters_world && raw->partner.waiting_for_target(call->session);
+        const bool player_blocked = alters_world && raw->partner.waits_for_player(call->session,pointed.value_or(false) ? resolves : 0);
+        const bool duplicate_reply = game_skill == "reply" && !raw->partner.reserve_reply(call->session);
+        const bool target_blocked = correction_blocked || player_blocked || duplicate_reply || !pointed.has_value() || observation_blocked ||
             ((game_skill == "place" || game_skill == "fill_target") &&
             !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target"));
         if (!target_blocked && partner && skill->supports_approval) {
@@ -292,6 +294,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             raw->partner.resolve_block_question(resolves,job.arguments);
         } else if (target_blocked) {
             if (correction_blocked) job.output = R"({"status":"blocked","reason":"correction_pending"})";
+            else if (player_blocked) job.output = R"({"status":"blocked","reason":"waiting_for_player"})";
+            else if (duplicate_reply) job.output = R"({"status":"already_requested","sent":false})";
             else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
             else if (observation_blocked) job.output = R"({"status":"blocked","reasonCode":"hit_observation_limit","next":"ask_player"})";
             else job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";

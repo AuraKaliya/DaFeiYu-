@@ -31,6 +31,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
     "reply 发给玩家，处理原话时普通最终文本也可发一次，已经发过或仅需内部结算时用空文本。"
     "没有新消息时，主动发言用 reply，只在玩家关心的进展或受阻发生时发。入场无需固定问候。"
+    "玩家纠正时先接他的原话，简短说你会改哪里。游戏聊天省略坐标、工具名和内部状态。"
+    "pendingQuestion 标为 expired 时继续等待玩家；只有实际的新回答可解除等待。不要重复追问或用沉默判断同意。"
     "明确需要授权时才用动作的 approval，聊天只带实际问题。等答复时照常交谈和观察。"
     "玩家交来材料时，核对库存，撤回已无须执行的采集确认，续做原目标。\n");
 constexpr auto review_instructions = view("根据当前分工、现场及新事件决定是否提前停下列出的原动作。"
@@ -290,7 +292,7 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
-        {"options",question_->options}};
+        {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
     if (confirmation_ && confirmation_->work && !delegated) {
         const auto& candidate = *confirmation_;
         input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
@@ -375,9 +377,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         return result;
     }
     if (skill == "ask_player") {
+        if (reply_requested_) return {{"status","already_requested"}};
         auto question = open_question(invocation,args);
         reply_requested_ = true;
-        if (question.at("status") == "recorded") wait_for_work_ = true;
+        if (question.at("status") == "recorded" || question.at("status") == "waiting") wait_for_work_ = true;
         return question;
     }
     if (skill == "stop_motion") {
@@ -408,6 +411,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
             return {{"status","stale_correction"}};
         auto result = task_.begin_correction(events_.back(),feed_.observation());
         if (result.at("status") == "correction_recorded") {
+            if (waits_for_player(session_) && question_->order < order_) complete_question("superseded",{});
             cancel_plan("task_changed");
             clear_queue("task_changed");
             if (motion_ && motion_->skill != "follow") motion_->stopping = true;
@@ -415,15 +419,27 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         }
         return result;
     }
-    if (args.value("operation","") == "commit_correction" && motion_ && motion_->stopping && motion_->skill != "follow")
+    const bool committing = args.value("operation","") == "commit_correction";
+    if (committing && motion_ && motion_->stopping && motion_->skill != "follow")
         return {{"status","waiting_for_old_work"},{"work",motion_->work}};
     const auto target = args.find("target");
     const auto anchor = target != args.end() && target->contains("message") ?
         feed_.message_scene(target->at("message").get<std::uint64_t>()) : nullptr;
     const auto prior_scope = scope();
     const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
+    const auto resolves = args.value("resolves",std::uint64_t{});
+    const bool waiting = waits_for_player(session_);
+    const bool answers_question = waiting && committing && resolves == question_->item && player_order > question_->order;
+    if (waiting && (committing || target != args.end() || args.contains("collection") ||
+        args.at("goal").get_ref<const std::string&>() != task_.goal()) &&
+        (player_order <= question_->order || (committing && !answers_question)))
+        return {{"status","waiting_for_player"},{"item",question_->item}};
     const auto prior_revision = task_.revision();
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
+    if (answers_question && result.at("status") == "updated") {
+        question_->answer_order = player_order;
+        complete_question("resolved",events_.back().at("text").get<std::string>());
+    }
     if (task_.revision() != prior_revision) {
         cancel_plan("task_changed");
         if (motion_ && motion_->skill == "fill_target") motion_->stopping = true;
@@ -441,6 +457,14 @@ bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args)
     if (used++ < 2) return true;
     limit_repair("observe_hit_budget");
     return false;
+}
+
+// 只接受与当前玩家事件或动作回执关联的首个发言意图。
+bool PartnerLoop::reserve_reply(std::uint64_t session) noexcept {
+    if (session != session_ || active_delegation_) return true;
+    if (reply_requested_) return false;
+    reply_requested_ = true;
+    return true;
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
@@ -534,6 +558,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
     if (plan_ && plan_->active) return {};
     if (wait_for_work_) return {};
+    if (waits_for_player(session_)) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());

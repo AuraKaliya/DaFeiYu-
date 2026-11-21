@@ -31,6 +31,7 @@ bool valid_step(std::string_view skill, const Json& args) {
 nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& args) {
     const auto operation = args.at("operation").get<std::string>();
     if (task_.correcting() && operation != "clear") return {{"status","blocked"},{"reason","correction_pending"}};
+    if (waits_for_player(session_) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
     if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
         cancel_plan("cleared");

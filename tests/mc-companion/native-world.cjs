@@ -23,6 +23,7 @@ async function main() {
   const correction = variant === 'partner-revision-correction';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
+  const questionExpiry = variant === 'partner-revision-question-expiry';
   const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
@@ -44,6 +45,7 @@ async function main() {
   let planReading = false, nextBlock = false;
   let wallFilled = false;
   let badObservations = 0;
+  let questionPresented = false, expiredAt;
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -60,7 +62,12 @@ async function main() {
         const left = { sequence: 3, type: 'player.left' };
         const initial = !baselineRead;
         baselineRead = true;
-        const latest = initial ? 1 : revision ? (planReading ? 3 : 2) :
+        if (questionExpiry && questionPresented && expiredAt === undefined) {
+          const trace = path.join(root, 'trace', 'events.jsonl');
+          if (fs.existsSync(trace) && fs.readFileSync(trace, 'utf8').split('\n').some(line =>
+            line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
+        }
+        const latest = initial ? 1 : revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
           first && approvedId || motion && replies || confirm && pendingChat ? 4 :
@@ -80,6 +87,10 @@ async function main() {
           messages[2].text = correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             variant === 'partner-revision-scope' ? '只从地面取材' : '这次采掘先问我确认';
+          if (questionExpiry) {
+            messages[1].text = '把我面前的挖掉';
+            messages[2].text = '你还在吗';
+          }
         }
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
           gap: false, more: false, presence: departure && latest === 3 ? left : entered, messages: messages.slice(after, latest) };
@@ -107,6 +118,21 @@ async function main() {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (revision) {
+        if (questionExpiry) {
+          assert.equal(method, 'partner.begin');
+          assert.equal(skill, 'reply');
+          if (!questionPresented) {
+            assert.equal(args.text, '你指左边还是右边？');
+            assert.equal(context.order, 2);
+            questionPresented = true;
+          } else {
+            assert.ok(expiredAt !== undefined);
+            assert.equal(context.order, 3);
+            assert.equal(args.text, '我在呢。');
+            assert.equal(++replies, 1);
+          }
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
         if (repairObserve) {
           assert.equal(skill, 'observe');
           assert.equal(method, 'partner.begin');
@@ -260,7 +286,11 @@ async function main() {
     assert.equal(code, 0);
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
-    if (repairObserve || repairPlan) {
+    if (questionExpiry) {
+      assert.ok(questionPresented && expiredAt !== undefined);
+      assert.equal(replies, 1);
+      console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (repairObserve || repairPlan) {
       assert.equal(badObservations, repairObserve ? 2 : 0);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {

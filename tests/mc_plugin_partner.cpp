@@ -131,6 +131,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool correction = variant == L"partner-revision-correction";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
+    const bool question_expiry = variant == L"partner-revision-question-expiry";
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
@@ -148,6 +149,35 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (question_expiry) {
+            if (last.role == Role::tool) {
+                // 按固定调用编号读取同批返回的业务回执。
+                const auto output = [&](std::string_view id) {
+                    const auto tool = std::ranges::find(request.messages,id,&Message::tool_call_id);
+                    if (tool == request.messages.end()) throw std::runtime_error("missing expiry tool result");
+                    return Json::parse(tool->content.substr(tool->content.find('{')));
+                };
+                if (last.tool_call_id != "duplicate" || output("unanswered").at("reason") != "waiting_for_player" ||
+                    output("actual-reply").at("sent") != true || output("duplicate").at("status") != "already_requested")
+                    throw std::runtime_error("expiry authorized a change, woke the model early or repeated speech");
+                checked = true;
+                return {{Role::assistant,"这段内部结算不能发给玩家。"}};
+            }
+            const auto input = Json::parse(last.content);
+            const auto& events = input.at("events");
+            if (events.empty()) throw std::runtime_error("a silent player caused an autonomous model request");
+            if (events.back().at("sequence") == 2)
+                return call("_ask_player","local-question",{{"question","你指左边还是右边？"},{"options",{"左边","右边"}}});
+            if (events.back().at("sequence") == 3) {
+                if (input.at("pendingQuestion").at("status") != "expired" || input.contains("questionResult"))
+                    throw std::runtime_error("expiry was consumed as an answer");
+                auto batch = call("_dig_block","unanswered",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2}});
+                batch.message.tool_calls.push_back(call("_reply","actual-reply",{{"text","我在呢。"}}).message.tool_calls.front());
+                batch.message.tool_calls.push_back(call("_reply","duplicate",{{"text","我还在这里等着呢。"}}).message.tool_calls.front());
+                return batch;
+            }
+            return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
         if (repair_observe || repair_plan) {
             const auto skill = repair_observe ? "_observe" : "_queue_actions";
             const Json args = repair_observe ? Json{{"mode","scene"},{"block","dirt"}} :
@@ -266,11 +296,11 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         for (std::string line; std::getline(trace,line);)
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
                 ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
-                    line.find("plan exit checked") != line.npos)) return true;
+                    line.find(question_expiry ? "这段内部结算" : "plan exit checked") != line.npos)) return true;
         return false;
     };
     bool stopping = false;
-    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(8);
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(question_expiry ? 52 : 8);
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;

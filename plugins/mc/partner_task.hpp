@@ -13,6 +13,8 @@ class PartnerTask {
     nlohmann::json context() const;
     // 返回执行修订，供计划、待执行动作和确认核对原目标与范围。
     std::uint64_t revision() const noexcept { return revision_; }
+    // 返回当前共同目标说明。
+    std::string_view goal() const noexcept { return goal_; }
     // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
         const nlohmann::json* anchor, std::uint64_t player_order = 0);

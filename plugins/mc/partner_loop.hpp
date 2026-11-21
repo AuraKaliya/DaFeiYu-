@@ -37,6 +37,10 @@ class PartnerLoop {
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
     bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
+    // 给当前对话或回执分配唯一的玩家发言机会。
+    bool reserve_reply(std::uint64_t session) noexcept;
+    // 判断同一任务仍缺少同一位玩家对局内追问的答复。
+    bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
     // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
     std::optional<bool> pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
         const nlohmann::json& args) const;
@@ -158,6 +162,7 @@ class PartnerLoop {
         std::chrono::steady_clock::time_point local_answer_deadline;
         bool started = false, presented = false, dispatched = false, forwarded = false;
         bool approval = false;
+        bool expired = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
         nlohmann::json options;

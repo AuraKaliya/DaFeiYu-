@@ -137,7 +137,13 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
     question_.reset();
-    question_wake_ = status != "resolved";
+    question_wake_ = status != "resolved" && status != "superseded";
+}
+
+// 将局内追问限制在原任务，已核实的显式答复可解除对应动作的等待。
+bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves) const noexcept {
+    return session == session_ && !active_delegation_ && question_ && question_->path == "local" &&
+        !question_->approval && question_->task_revision == task_.revision() && resolves != question_->item;
 }
 
 // 只有当前玩家提供了新指向且同轮观察支持原动作时才注销追问。
@@ -200,7 +206,12 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             const auto receipt = Json::parse(result->payload,nullptr,false);
             question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
             if (question.path == "local" && !question.presented) { complete_question("unavailable",{}); return; }
-            if (question.path == "local") remember_dialogue("companion",question.order,question.text);
+            if (question.path == "local") {
+                remember_dialogue("companion",question.order,question.text);
+                publish("mc.partner.question",{{"status","presented"},{"generation",question.world},
+                    {"order",question.order},{"item",question.item},{"text",question.text},
+                    {"bridgeWork","ask."+std::to_string(instance)+".l."+std::to_string(question.item)}});
+            }
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
                 {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}});
@@ -209,7 +220,11 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     if (!live) { question_.reset(); flush_question_events(); return; }
     auto& q = *question_;
     const bool local = q.path == "local";
-    if (local && std::chrono::steady_clock::now() >= q.local_answer_deadline) { complete_question("expired",{}); return; }
+    if (local && !q.expired && std::chrono::steady_clock::now() >= q.local_answer_deadline) {
+        q.expired = true;
+        task_.disarm();
+        publish("mc.partner.question",{{"status","expired"},{"generation",q.world},{"order",q.order},{"item",q.item}});
+    }
     if (q.presented && !q.forwarded) {
         const auto prefix = "答复 "+std::to_string(q.ask ? q.ask : q.item)+" ";
         const auto token = std::to_string(q.ask);
@@ -217,7 +232,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             const auto text = event.value("text",std::string{});
             if (event.at("sequence") <= q.order) continue;
             std::string answer;
-            if (local && std::ranges::find(q.options,Json(text)) != q.options.end()) answer = text;
+            if (local && !q.expired && std::ranges::find(q.options,Json(text)) != q.options.end()) answer = text;
             else if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
             else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
             else if (!local && text.starts_with(prefix)) answer = text.substr(prefix.size());
