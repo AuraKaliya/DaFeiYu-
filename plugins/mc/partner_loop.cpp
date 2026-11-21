@@ -117,7 +117,7 @@ void PartnerLoop::reset() noexcept {
     queued_.clear();
     replacing_motion_ = false;
     guarded_actions_.clear();
-    finished_work_ = nullptr;
+    settlements_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -217,7 +217,7 @@ void PartnerLoop::retire() {
     session_ = order_ = settled_ = 0;
     task_ = {};
     guarded_actions_.clear();
-    finished_work_ = nullptr;
+    settlements_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
@@ -259,7 +259,13 @@ void PartnerLoop::submit(std::string_view wake) {
             input["queuedActions"].push_back({{"work",step.work},{"skill",step.skill},{"arguments",step.arguments}});
     }
     if (autonomous) input["recentEvents"] = recent_events_;
-    if (!delegated && !finished_work_.is_null()) input["finishedWork"] = finished_work_;
+    const auto completed = delegated ? settlements_.cend() : ready_settlement();
+    if (completed != settlements_.cend()) {
+        const auto& receipts = completed->receipts;
+        const auto actual = std::find_if(receipts.rbegin(),receipts.rend(),[](const auto& fact) { return fact.contains("effect"); });
+        input["finishedWork"] = actual == receipts.rend() ? receipts.back() : *actual;
+        input["workSettlement"] = {{"invocation",completed->invocation},{"receipts",completed->receipts}};
+    }
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
         {"options",question_->options}};
@@ -301,10 +307,11 @@ void PartnerLoop::submit(std::string_view wake) {
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
         expansion_pending_ = false;
-        finished_work_ = nullptr;
+        if (completed != settlements_.cend()) settlements_.erase(completed);
         approval_result_ = nullptr;
     }
     order_ = order;
+    wait_for_work_ = false;
     reply_requested_ = false;
     reviewed_ = 0;
     stopped_work_ = false;
@@ -463,11 +470,7 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
-    if (!finished_work_.is_null() && task_.can_continue()) {
-        const auto group = finished_work_.at("invocation").get<std::uint64_t>();
-        if ((!motion_ || motion_->invocation != group) && std::ranges::find(queued_,group,&QueuedAction::invocation) == queued_.end())
-            return "motion.finished";
-    }
+    if (ready_settlement() != settlements_.cend()) return "motion.finished";
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.trigger(feed_.observation(),feed_.scene_revision());
@@ -511,10 +514,26 @@ void PartnerLoop::report_actions() {
 
 // 移交已接纳的原工作和不可随新回合改写的关联身份。
 void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
-    std::string_view envelope, std::unique_ptr<GameWork>& action) {
+    std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait) {
     if (motion_) throw std::logic_error("MC partner: motion already active");
     if (skill == "follow") follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
+    wait_for_work_ = wait_for_work_ || wait;
+}
+
+// 归档调用组的终态，保留多个游戏工作各自的回执。
+void PartnerLoop::settle_work(std::uint64_t invocation, Json fact) {
+    const auto group = std::ranges::find(settlements_,invocation,&WorkSettlement::invocation);
+    if (group == settlements_.end()) settlements_.push_back({invocation,Json::array({std::move(fact)})});
+    else group->receipts.push_back(std::move(fact));
+}
+
+// 跳过仍在执行的调用组，避免把中间状态呈现为结算。
+std::deque<PartnerLoop::WorkSettlement>::const_iterator PartnerLoop::ready_settlement() const {
+    return std::ranges::find_if(settlements_,[&](const auto& group) {
+        return (!motion_ || motion_->invocation != group.invocation) &&
+            std::ranges::find(queued_,group.invocation,&QueuedAction::invocation) == queued_.end();
+    });
 }
 
 // 独立于模型回合轮询已接纳的动作，并记录原动作的真实终态。
@@ -561,18 +580,17 @@ void PartnerLoop::advance_motion(bool stopping) {
         else follow_.reset();
     }
     publish("mc.partner.action",fact);
+    const bool failed = motion.queued && !verified_action(receipt,motion.skill,motion.pickup) &&
+        !(replacing_motion_ && receipt.at("status") == "interrupted");
+    if (!stopping && !paused) {
+        task_.record(fact);
+        settle_work(motion.invocation,std::move(fact));
+    }
     if (departed) {
         follow_.reset();
         clear_queue("exit_unconfirmed");
-    }
-    if (motion.queued && !verified_action(receipt,motion.skill,motion.pickup) &&
-        !(replacing_motion_ && receipt.at("status") == "interrupted"))
-        clear_queue("prerequisite_failed",motion.invocation);
+    } else if (failed) clear_queue("prerequisite_failed",motion.invocation);
     replacing_motion_ = false;
-    if (!stopping && !paused) {
-        task_.record(fact);
-        finished_work_ = std::move(fact);
-    }
     motion_.reset();
 }
 
@@ -711,7 +729,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     }
     if (feed_.departed()) {
         task_ = {};
-        finished_work_ = nullptr;
+        settlements_.clear();
         expanded_.reset();
         expansion_pending_ = false;
         dialogue_.clear();

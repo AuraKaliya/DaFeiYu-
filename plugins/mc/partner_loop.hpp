@@ -28,15 +28,17 @@ class PartnerLoop {
     void advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work, bool body_busy);
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
+    // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
+    bool waits_for_work() const noexcept { return wait_for_work_; }
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
     // 接纳已经由游戏启动且尚未退出的原工作，接管轮询和停止。
     void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
-        std::string_view envelope, std::unique_ptr<GameWork>& action);
+        std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait);
     // 给跟随期间的直接一次性动作登记优先步骤。
     bool interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
-        std::string_view skill, std::string_view envelope);
+        std::string_view skill, std::string_view envelope, bool wait);
     // 判断角色的移动控制是否仍由原工作持有。
     bool has_motion() const noexcept { return motion_.has_value(); }
     // 有待执行步骤时，直接动作不得越过队列。
@@ -176,7 +178,13 @@ class PartnerLoop {
     std::deque<QueuedAction> queued_;
     bool replacing_motion_ = false;
     std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
-    nlohmann::json finished_work_;
+    struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };
+    std::deque<WorkSettlement> settlements_;
+    bool wait_for_work_ = false;
+    // 按调用组累积实际终态，独立于玩家事件的收取顺序。
+    void settle_work(std::uint64_t invocation, nlohmann::json fact);
+    // 只选出已无在途动作或待执行步骤的调用组。
+    std::deque<WorkSettlement>::const_iterator ready_settlement() const;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;
     const dfy_v2_agent_api* agent_ = nullptr;

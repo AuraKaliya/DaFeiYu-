@@ -39,7 +39,9 @@ uint32_t PluginInstance::decide_hook(std::size_t index, const dfy_v2_hook_input&
         uint32_t verdict = 0;
         if (!api.decide || api.decide(instance,static_cast<uint32_t>(index),&input,&verdict,nullptr) ||
             (verdict != DFY_V2_HOOK_ALLOW && verdict != DFY_V2_HOOK_DENY &&
-                (verdict != DFY_V2_HOOK_CONFIRM || input.point != DFY_V2_HOOK_TOOL_START)))
+                (verdict != DFY_V2_HOOK_CONFIRM || input.point != DFY_V2_HOOK_TOOL_START) &&
+                (verdict != DFY_V2_HOOK_YIELD || input.point != DFY_V2_HOOK_MODEL_REQUEST || input.step < 2 ||
+                    input.owner != generation())))
             throw std::runtime_error("hooks: invalid control decision");
         return verdict;
     });

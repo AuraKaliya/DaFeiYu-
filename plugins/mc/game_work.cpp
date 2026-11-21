@@ -23,7 +23,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         if (stop_deadline_ == decltype(stop_deadline_){}) stop_deadline_ = now + std::chrono::seconds(4);
         if (now >= stop_deadline_) throw std::runtime_error("MC: game exit unconfirmed");
     }
-    if (!pipe_ && !stopping_ && now < next_) return {};
+    if (!pipe_ && now < next_) return {};
     try {
         if (!pipe_) {
             if (stopping_) phase_ = Phase::stop;
@@ -38,6 +38,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         auto wire = pipe_->poll();
         if (!wire) return {};
         pipe_.reset();
+        transport_failures_ = 0;
         if (action_ == GameAction::partner) {
             auto value = partner_reply(*wire, id_, skill_, arguments_);
             progress_ = std::move(value.progress);
@@ -45,7 +46,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :
                 value.arrived || value.changed ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};
-            if (defer && phase_ == Phase::begin && !stopping_) {
+            if (defer && !stopping_) {
                 phase_ = Phase::read;
                 return GameResult{true, GameEffect::unknown, {}, true};
             }
@@ -61,6 +62,16 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         }
         phase_ = Phase::read;
         next_ = now + std::chrono::milliseconds(80);
+    } catch (const PipeTransportError&) {
+        pipe_.reset();
+        next_ = now + std::chrono::milliseconds(150);
+        if (stopping_) return {};
+        // 提交已可能送达时，直接查询同一编号，避免重新发出游戏变更。
+        if (attempted_) phase_ = Phase::read;
+        if (++transport_failures_ >= 3) {
+            if (!attempted_) throw;
+            stopping_ = true;
+        }
     } catch (...) {
         pipe_.reset();
         if (!attempted_ || phase_ == Phase::stop) throw;

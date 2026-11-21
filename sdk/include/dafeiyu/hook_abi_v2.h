@@ -11,6 +11,8 @@
 #define DFY_V2_HOOK_ALLOW UINT32_C(1)
 #define DFY_V2_HOOK_DENY UINT32_C(2)
 #define DFY_V2_HOOK_CONFIRM UINT32_C(3)
+// 原所有者可在一次工具批次完成后结束当前回合，后续由其自身再次提交。
+#define DFY_V2_HOOK_YIELD UINT32_C(4)
 #define DFY_V2_TEXT_HOOK_INTERFACE "dfy.hook.text"
 #define DFY_V2_TEXT_HOOK_VERSION UINT32_C(1)
 #define DFY_V2_TEXT_HOOK_INPUT UINT32_C(1)
@@ -62,7 +64,7 @@ typedef struct dfy_v2_hook_api {
     dfy_v2_api_header header;
     // 在启动后按注册顺序枚举；超出尾部返回 NOT_FOUND。
     dfy_v2_status (DFY_V2_CALL *describe)(dfy_v2_instance*, uint32_t index, dfy_v2_hook_description*, dfy_v2_error*);
-    // 在原实例宿主线程同步裁定，输入及字符串仅在调用内借用；CONFIRM 仅适用于 TOOL_START。
+    // 在原实例宿主线程同步裁定；CONFIRM 用于工具接纳，YIELD 用于原子会话后续模型请求。
     dfy_v2_status (DFY_V2_CALL *decide)(dfy_v2_instance*, uint32_t index, const dfy_v2_hook_input*, uint32_t* verdict, dfy_v2_error*);
 } dfy_v2_hook_api;
 

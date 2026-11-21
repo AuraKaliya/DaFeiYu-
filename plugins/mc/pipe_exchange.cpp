@@ -22,12 +22,12 @@ PipeExchange::PipeExchange(std::string_view channel, std::string request, std::c
     const std::wstring name = std::wstring(LR"(\\.\pipe\DaFeiYu.MC.)") + std::wstring(channel.begin(), channel.end());
     handle_ = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
         SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
-    if (handle_ == INVALID_HANDLE_VALUE) throw std::runtime_error("MC bridge: unavailable");
+    if (handle_ == INVALID_HANDLE_VALUE) throw PipeTransportError("MC bridge: unavailable");
 
     DWORD mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
     if (!SetNamedPipeHandleState(handle_, &mode, nullptr, nullptr)) {
         CloseHandle(handle_);
-        throw std::runtime_error("MC bridge: nonblocking mode unavailable");
+        throw PipeTransportError("MC bridge: nonblocking mode unavailable");
     }
 }
 
@@ -38,11 +38,11 @@ PipeExchange::~PipeExchange() { if (handle_ != INVALID_HANDLE_VALUE) CloseHandle
 // 步骤：核对期限 → 推进尚未发送的字节 → 累积读数并交付唯一完整行。
 std::optional<std::string> PipeExchange::poll() {
     if (handle_ == INVALID_HANDLE_VALUE) throw std::logic_error("MC bridge: response already consumed");
-    if (std::chrono::steady_clock::now() >= deadline_) throw std::runtime_error("MC bridge: timed out");
+    if (std::chrono::steady_clock::now() >= deadline_) throw PipeTransportError("MC bridge: timed out");
     if (sent_ < request_.size()) {
         DWORD written = 0;
         if (!WriteFile(handle_, request_.data() + sent_, static_cast<DWORD>(request_.size() - sent_), &written, nullptr))
-            throw std::runtime_error("MC bridge: write failed");
+            throw PipeTransportError("MC bridge: write failed");
         sent_ += written;
         if (sent_ < request_.size()) return {};
     }
@@ -51,7 +51,7 @@ std::optional<std::string> PipeExchange::poll() {
     DWORD size = 0;
     if (!ReadFile(handle_, buffer.data(), static_cast<DWORD>(buffer.size()), &size, nullptr)) {
         if (GetLastError() == ERROR_NO_DATA) return {};
-        throw std::runtime_error("MC bridge: disconnected");
+        throw PipeTransportError("MC bridge: disconnected");
     }
     if (response_.size() + size > 16384) throw std::runtime_error("MC bridge: oversized response");
     response_.append(buffer.data(), size);

@@ -393,7 +393,7 @@ uint32_t PluginManager::State::HookPlan::control(const dfy_v2_hook_input& input)
         if (*hook.faulted) throw std::runtime_error("hooks: registered controller is faulted");
         const auto verdict = hook.instance->decide_hook(hook.index,input);
         if (verdict == DFY_V2_HOOK_DENY) return verdict;
-        if (verdict == DFY_V2_HOOK_CONFIRM) result = verdict;
+        if (verdict == DFY_V2_HOOK_CONFIRM || verdict == DFY_V2_HOOK_YIELD) result = verdict;
     }
     return result;
 }

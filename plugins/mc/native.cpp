@@ -25,6 +25,7 @@ struct NativeJob {
     bool confirmation = false, waiting = false;
     bool controls_body = false;
     bool defer_motion = false, motion_transferred = false;
+    bool wait_for_work = false;
     std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
@@ -216,6 +217,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto game_skill = legacy || exact_dig || gather_ground ? std::string_view("collect") :
         partner && skill->name == "start_move" ? std::string_view("move") : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
+    const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target";
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
         skill->kind == SkillKind::action_queue);
@@ -264,7 +266,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw));
         if (busy) {
             if (!partner_turn || confirmed || skill->name == "follow" || body_job(*raw) ||
-                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,game_skill,job.arguments))
+                !raw->partner.interrupt_follow(call->session,call->invocation,job.id,game_skill,job.arguments,wait_for_work))
                 return report(DFY_V2_BUSY,error);
             job.output = nlohmann::json{{"status","queued"},{"work",job.id}}.dump();
             job.ready = job.success = true;
@@ -304,6 +306,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     }
     job.controls_body = controls_body && !pending_approval;
     job.defer_motion = partner_turn && job.controls_body && !confirmed && !raw->partner.delegated(call->session);
+    job.wait_for_work = wait_for_work;
     job.sequence = ++raw->sequence;
     *ticket = {raw->owner, job.sequence};
     return report(DFY_V2_OK, error);
@@ -348,7 +351,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 job->output = std::move(value->payload);
                 if (value->accepted) {
                     job->output = nlohmann::json{{"status","accepted"},{"work",job->id}}.dump();
-                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->arguments,job->action);
+                    raw->partner.adopt_motion(job->invocation,job->skill,job->id,job->arguments,job->action,job->wait_for_work);
                     job->motion_transferred = true;
                 }
                 switch (value->effect) {
@@ -360,7 +363,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 job->ready = true;
             }
         } catch (...) {
-            job->effect = job->action->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
+            job->effect = !job->action || job->action->attempted() ? DFY_V2_TOOL_UNKNOWN : DFY_V2_TOOL_NOT_APPLIED;
             job->ready = true;
         }
     } else if (std::chrono::steady_clock::now() >= job->next) {
@@ -544,6 +547,8 @@ dfy_v2_status DFY_V2_CALL decide_partner_hook(dfy_v2_instance* raw, uint32_t ind
     *verdict = 0;
     if (!owned(raw) || !raw->running || !input || index > 1) return report(DFY_V2_INVALID_CONTEXT,error);
     *verdict = raw->partner.permits(input->session) ? DFY_V2_HOOK_ALLOW : DFY_V2_HOOK_DENY;
+    if (*verdict == DFY_V2_HOOK_ALLOW && input->point == DFY_V2_HOOK_MODEL_REQUEST && input->step >= 2 &&
+        raw->partner.waits_for_work()) *verdict = DFY_V2_HOOK_YIELD;
     return report(DFY_V2_OK,error);
 }
 const dfy_v2_hook_api hooks{{sizeof(dfy_v2_hook_api),DFY_V2_HOOK_VERSION},describe_partner_hook,decide_partner_hook};

@@ -1,10 +1,13 @@
 #pragma once
 #include <chrono>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace dfy::mc {
+// 标识可对同一工作再次查询的管道传输故障。
+struct PipeTransportError : std::runtime_error { using std::runtime_error::runtime_error; };
 // 判断配置是否仅含本地管道短名允许的 ASCII 字符。
 bool valid_channel(std::string_view channel) noexcept;
 

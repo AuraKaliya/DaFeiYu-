@@ -25,6 +25,7 @@ class GameWork {
     std::unique_ptr<PipeExchange> pipe_;
     enum class Phase { begin, read, stop } phase_ = Phase::begin;
     bool attempted_ = false, stopping_ = false;
+    unsigned transport_failures_ = 0;
     std::chrono::steady_clock::time_point next_{}, deadline_, stop_deadline_{};
 };
 }

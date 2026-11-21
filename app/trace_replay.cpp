@@ -55,7 +55,7 @@ struct RecordedRun {
     std::vector<RecordedModel> models;
     std::vector<RecordedTool> tools;
     Json terminal;
-    std::optional<agent::PolicyReason> next_model_denied;
+    std::optional<agent::PolicyDecision> next_model_control;
 };
 constexpr std::array turn_failures{"none","model","history_commit","model_response","control","tool_execution","model_request"};
 constexpr std::array policy_reasons{"none","invalid_context","stale_goal","stale_policy","cancelled","deadline","model_limit","tool_limit",
@@ -80,12 +80,12 @@ void record_rewrite(RecordedModel& entry, const Json& row) {
 }
 
 // 只有原诊断明确记录的终止门才能作为离线输入，避免从终态倒推出不存在的控制事件。
-bool denied_model_after(const Json& timeline, std::size_t expected_step) {
+bool model_control_after(const Json& timeline, std::size_t expected_step, std::string_view verdict) {
     const auto& delta = timeline.at("delta");
     if (delta.at("gap") == true || delta.at("more") == true || delta.at("projection_failed") == true) return false;
     return std::any_of(delta.at("facts").begin(),delta.at("facts").end(),[&](const Json& event) {
         return event.at("kind") == "policy_decision" && event.at("control_point") == "model_request" &&
-            event.at("subject").at("step") == expected_step && event.at("decision").at("verdict") == "deny" &&
+            event.at("subject").at("step") == expected_step && event.at("decision").at("verdict").get<std::string>() == verdict &&
             event.at("decision").at("reason") == timeline.at("stop_reason");
     });
 }
@@ -133,12 +133,17 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
     const auto reason = tagged<agent::PolicyReason>(timeline.at("stop_reason"),policy_reasons);
     if ((result.terminal.at("result") != "succeeded" && result.terminal.at("result") != "failed") ||
         !diagnostic.at("plans").empty() || !timeline.at("observations").empty() ||
-        (reason != agent::PolicyReason::none && reason != agent::PolicyReason::source_denied) || timeline.at("source") == "observation_rule")
+        (reason != agent::PolicyReason::none && reason != agent::PolicyReason::source_denied &&
+            reason != agent::PolicyReason::work_pending) || timeline.at("source") == "observation_rule")
         throw std::invalid_argument("replay: run requires control inputs outside a direct replay");
     if (reason == agent::PolicyReason::source_denied) {
-        if (timeline.at("failure") != "control" || !denied_model_after(timeline,result.models.size()+1))
+        if (timeline.at("failure") != "control" || !model_control_after(timeline,result.models.size()+1,"deny"))
             throw std::invalid_argument("replay: original model boundary decision unavailable");
-        result.next_model_denied = reason;
+        result.next_model_control = agent::PolicyDecision{agent::PolicyVerdict::deny,reason};
+    } else if (reason == agent::PolicyReason::work_pending) {
+        if (result.terminal.at("result") != "succeeded" || !model_control_after(timeline,result.models.size()+1,"wait"))
+            throw std::invalid_argument("replay: original yield boundary unavailable");
+        result.next_model_control = agent::PolicyDecision{agent::PolicyVerdict::wait,reason};
     }
     return result;
 }
@@ -205,13 +210,13 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     options.origin = tagged<agent::RunOrigin>(original.terminal.at("diagnostic").at("data").at("timeline").at("source"),origins);
     if (std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) { return entry.rewritten.has_value(); }))
         bind_rewrites(original,options,rewrite_difference);
-    bool denied_seen = false;
-    if (original.next_model_denied) {
+    bool model_control_seen = false;
+    if (original.next_model_control) {
         // 重用记录中的宿主控制输入，重跑时仍由正式协调器产生终止和退出。
         options.extension = [&](agent::ControlPoint point, const agent::PolicyContext& context) {
             if (point == agent::ControlPoint::model_request && context.attempt.step.sequence == original.models.size()+1) {
-                denied_seen = true;
-                return agent::PolicyDecision{agent::PolicyVerdict::deny,*original.next_model_denied};
+                model_control_seen = true;
+                return *original.next_model_control;
             }
             return agent::PolicyDecision{agent::PolicyVerdict::allow,agent::PolicyReason::none};
         };
@@ -278,7 +283,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     if (!rewrite_difference.empty()) throw std::runtime_error("replay: "+rewrite_difference);
     if (!tool_difference.empty()) throw std::runtime_error("replay: "+tool_difference);
     if (model_index != original.models.size() ||
-        denied_seen != original.next_model_denied.has_value() ||
+        model_control_seen != original.next_model_control.has_value() ||
         std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) {
             return entry.rewritten.has_value() != entry.rewrite_observed;
         }) ||

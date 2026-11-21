@@ -84,7 +84,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
 // 保存直接动作并请求跟随释放角色，原任务与普通排队项继续保留。
 // 步骤：检查在途行为和回合 → 验证收件身份 → 登记优先动作并暂停。
 bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocation, const std::string& work,
-    std::string_view skill, std::string_view envelope) {
+    std::string_view skill, std::string_view envelope, bool wait) {
     if (!follow_ || session != session_ || !request_ || delegated(session) || !permits(session) ||
         !feed_.ready() || feed_.departed() || queued_.size() >= queue_limit ||
         (motion_ && motion_->skill == "follow" && motion_->stopping && !follow_->pausing)) return false;
@@ -94,6 +94,7 @@ bool PartnerLoop::interrupt_follow(std::uint64_t session, std::uint64_t invocati
     const auto position = std::ranges::find(queued_,false,&QueuedAction::interrupt);
     queued_.insert(position,{order_,request_,invocation,task_.revision(),work,skill,input.at("arguments"),{},true});
     pause_follow();
+    wait_for_work_ = wait_for_work_ || wait;
     return true;
 }
 
@@ -127,6 +128,8 @@ void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
     std::erase_if(queued_,[&](const auto& step) {
         if (group && step.invocation != group) return false;
         ids.push_back(step.work);
+        settle_work(step.invocation,{{"invocation",step.invocation},{"skill",step.skill},{"bridgeWork",step.work},
+            {"result",{{"status","skipped"},{"reason",reason}}}});
         return true;
     });
     if (!ids.empty()) publish("mc.partner.queue",{{"status",reason},{"works",std::move(ids)}});

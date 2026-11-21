@@ -251,7 +251,7 @@ std::string_view PartnerTask::trigger(const Json& scene, std::uint64_t scene_rev
 // 真实接纳后消费原唤醒，新玩家事件提供新的有限自主窗口。
 void PartnerTask::submitted(bool new_game_event, bool autonomous) {
     if (new_game_event) remaining_ = continuation_budget;
-    if (autonomous) --remaining_;
+    if (autonomous && remaining_) --remaining_;
     disarm();
 }
 }

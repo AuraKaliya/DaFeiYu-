@@ -415,6 +415,13 @@ struct RunLoopState {
                 record->stop_reason_ = PolicyReason::invalid_context; throw std::invalid_argument("run: observation invalidated before admission");
             }
         }
+        if (!plan_step && record->model_requests_ && decision == PolicyDecision{PolicyVerdict::wait,PolicyReason::work_pending}) {
+            record->stop_reason_ = decision.reason;
+            record->result_.settle(runtime::OperationState::succeeded);
+            record->settled_ = std::chrono::steady_clock::now();
+            record->record_fact(RunFactKind::settled);
+            return;
+        }
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
         const auto& scope = record->plan_ ? step_tools : options.tools;

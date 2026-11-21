@@ -20,6 +20,7 @@ agent::PolicyExtension plugin_controls(const PluginHookSnapshot& snapshot, runti
         switch (control(input)) {
         case DFY_V2_HOOK_ALLOW: return PolicyDecision{PolicyVerdict::allow,PolicyReason::none};
         case DFY_V2_HOOK_CONFIRM: return PolicyDecision{PolicyVerdict::wait,PolicyReason::confirmation_required};
+        case DFY_V2_HOOK_YIELD: return PolicyDecision{PolicyVerdict::wait,PolicyReason::work_pending};
         case DFY_V2_HOOK_DENY: return PolicyDecision{PolicyVerdict::deny,PolicyReason::source_denied};
         }
         return PolicyDecision{PolicyVerdict::deny,PolicyReason::policy_failed};

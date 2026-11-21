@@ -129,6 +129,10 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "motion.finished") {
             const auto& work = input.at("finishedWork");
+            const auto& settlement = input.at("workSettlement");
+            if (settlement.at("invocation") != work.at("invocation") ||
+                std::ranges::find(settlement.at("receipts"),work) == settlement.at("receipts").end())
+                throw std::runtime_error("fill-four probe: final work identity lost");
             if (work.at("skill") == "move") return {{Role::assistant,R"({"internal":"replacement finished"})"}};
             if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
                 throw std::runtime_error("follow probe: actual exit missing from the task");
@@ -465,6 +469,9 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 {"samples",{{"count",2},{"intervalMs",100}}}});
     } else if (last.role == Role::tool) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        if ((last.tool_call_id == "dig_block" || last.tool_call_id == "gather_ground" || last.tool_call_id == "fill_target") &&
+            (result.at("status") == "accepted" || result.at("status") == "queued"))
+            throw std::runtime_error("fill-four probe: model called without a new game receipt");
         if (last.tool_call_id == "observe") {
             const auto& samples = result.at("observation").at("samples");
             const auto& sample = samples.back();
