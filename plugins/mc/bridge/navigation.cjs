@@ -20,16 +20,19 @@ class DryStandGoal extends goals.Goal {
   isEnd(node) { return dryStand(this.bot, node); }
 }
 
-// 核对脚位是否能从实际眼高命中目标中心，且目标没有承担该脚位的重量。
+// 从实际眼高检查目标中心及近顶面，允许站到格心稍外时仍命中同一个目标。
+// 步骤：排除脚下支撑 → 分别检查距离和遮挡 → 确认视线命中的原格。
 function digReachable(bot, target, feet) {
   if (target.equals(feet.floored().offset(0, -1, 0))) return false;
   const eye = feet.offset(0, bot.entity.eyeHeight, 0);
-  const direction = target.offset(0.5, 0.5, 0.5).minus(eye);
-  const distance = direction.norm();
-  if (distance > 4.5) return false;
-  const hit = bot.world.raycast(eye, direction.normalize(), distance,
-    (block, ray) => block.position.equals(target) || Boolean(ray.intersect(block.shapes, block.position)));
-  return hit?.position.equals(target) ?? false;
+  return [0.5, 0.875].some(height => {
+    const direction = target.offset(0.5, height, 0.5).minus(eye);
+    const distance = direction.norm();
+    if (distance > 4.5) return false;
+    const hit = bot.world.raycast(eye, direction.normalize(), distance,
+      (block, ray) => block.position.equals(target) || Boolean(ray.intersect(block.shapes, block.position)));
+    return hit?.position.equals(target) ?? false;
+  });
 }
 
 // 用同一可达条件核对候选脚位和实际到达，保留寻路器到目标方块的估价。

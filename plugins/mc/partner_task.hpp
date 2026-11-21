@@ -28,6 +28,8 @@ class PartnerTask {
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
     void record(const nlohmann::json& receipt);
+    // 核对确切方块来自指定玩家原话的命中。
+    bool matches_hit(std::uint64_t message, const nlohmann::json& arguments) const;
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
     std::string_view trigger(const nlohmann::json& scene, std::uint64_t scene_revision) const;
     // 返回本次玩家窗口内是否还有自主回合额度。

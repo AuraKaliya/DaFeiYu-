@@ -133,6 +133,9 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
             if (settlement.at("invocation") != work.at("invocation") ||
                 std::ranges::find(settlement.at("receipts"),work) == settlement.at("receipts").end())
                 throw std::runtime_error("fill-four probe: final work identity lost");
+            if (work.at("skill") == "collect" && input.contains("questionResult") &&
+                (input.contains("pendingQuestion") || input.at("questionResult").at("status") != "resolved"))
+                throw std::runtime_error("fill-four probe: observed player reference did not resolve the old question");
             if (work.at("skill") == "move") return {{Role::assistant,R"({"internal":"replacement finished"})"}};
             if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
                 throw std::runtime_error("follow probe: actual exit missing from the task");
@@ -455,10 +458,16 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         const auto text = events.empty() ? std::string{} : events.back().value("text",std::string{});
         if (text == "你跟着我走") return call("follow",{{"distance",2}});
         if (text == "你还跟着吗" && input.contains("following")) return {{Role::assistant,"嗯，跟着呢。"}};
-        if (text.starts_with("挖掉") && input.contains("following"))
-            return call("dig_block",{{"block","grass_block"},{"x",2},{"y",-61},{"z",0}});
+        if (text == "把这个草方块挖掉" && input.contains("following"))
+            return call("ask_player",{{"question","你指哪一格？"}});
+        if (text == "你听得见吗") {
+            if (!input.contains("pendingQuestion")) throw std::runtime_error("fill-four probe: unrelated chat cleared question");
+            return call("reply",{{"text","听得见。"}});
+        }
+        if (text == "我面前的这个" && input.contains("following"))
+            return call("observe",{{"message",events.back().at("sequence")}});
         if (text == "先别跟了") return call("stop_motion",{{"work",input.at("following").at("work")}});
-        if (text.starts_with("石头挪开了") && input.at("task").at("target").at("message") == 6)
+        if (text.starts_with("石头挪开了") && input.at("task").at("target").at("message") == 8)
             return call("fill_target",{{"block","dirt"}});
         if (text == "你站到墙上，先换个目标。")
             return call("task_update",{{"goal","站到墙上"},{"next","player"},{"collection","visible"},{"target",Json::object()}});
@@ -473,6 +482,17 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             (result.at("status") == "accepted" || result.at("status") == "queued"))
             throw std::runtime_error("fill-four probe: model called without a new game receipt");
         if (last.tool_call_id == "observe") {
+            if (result.contains("playerFocus")) {
+                const auto& hit = result.at("playerFocus").at("hit");
+                if (hit != Json{{"x",2},{"y",-61},{"z",0},{"block","grass_block"}})
+                    throw std::runtime_error("fill-four probe: player line of sight did not hit the exact block");
+                auto args = hit;
+                const auto input = Json::parse(std::ranges::find_if(request.messages,[](const auto& msg) {
+                    return msg.role == Role::user;
+                })->content);
+                args["resolves"] = input.at("pendingQuestion").at("item");
+                return call("dig_block",args);
+            }
             const auto& samples = result.at("observation").at("samples");
             const auto& sample = samples.back();
             if (samples.size() != 2 || sample.at("sampledAtMs") <= samples.front().at("sampledAtMs") ||

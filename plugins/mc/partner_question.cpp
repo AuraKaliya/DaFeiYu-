@@ -137,7 +137,18 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
     question_.reset();
-    question_wake_ = true;
+    question_wake_ = status != "resolved";
+}
+
+// 只有当前玩家提供了新指向且同轮观察支持原动作时才注销追问。
+// 步骤：核对事项和玩家原话 → 用可信观察匹配动作 → 记录无需唤醒的结算。
+void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view envelope) {
+    if (!item || !question_ || question_->item != item || question_->path != "local" || question_->approval ||
+        order_ <= question_->order || events_.empty() || events_.back().at("type") != "player.message") return;
+    const auto args = Json::parse(envelope).at("arguments");
+    if (!task_.matches_hit(order_,args)) return;
+    question_->answer_order = order_;
+    complete_question("resolved",events_.back().at("text").get<std::string>());
 }
 
 // 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。

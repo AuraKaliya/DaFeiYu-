@@ -1,5 +1,6 @@
 #include "partner_task.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -238,6 +239,17 @@ void PartnerTask::record(const Json& receipt) {
     }
     if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
     if (summary.dump().size() <= 4096) receipt_ = std::move(summary);
+}
+
+// 只接受同一原话视线命中的实际坐标及材质。
+bool PartnerTask::matches_hit(std::uint64_t message, const Json& arguments) const {
+    const auto original = observations_.find(message);
+    if (original == observations_.end()) return false;
+    const auto& focus = original->second.at("playerFocus");
+    const auto hit = focus.find("hit");
+    return hit != focus.end() && hit->is_object() && std::ranges::all_of(std::array{"x","y","z","block"},[&](auto field) {
+        return hit->contains(field) && hit->at(field) == arguments.at(field);
+    });
 }
 
 // 只在任务明确要求继续或收到所等观察变化时唤醒，单次额度耗尽后等待新玩家事件。

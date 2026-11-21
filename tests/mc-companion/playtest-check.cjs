@@ -256,7 +256,13 @@ async function checkFollowDig(fixture, player, whispers) {
   const first = (await accepted(1)).body.action;
   await walkCourse(player, [0.5, -60, -0.5], '你还跟着吗');
   await until(() => whispers[0] === '嗯，跟着呢。', '走动中的实际发言');
-  player.chat('挖掉 x=2、y=-61、z=0 那一格草方块，接着跟。');
+  player.chat('把这个草方块挖掉');
+  await until(() => whispers.includes('你指哪一格？'), '自然追问已发出');
+  player.chat('你听得见吗');
+  await until(() => whispers.includes('听得见。'), '旧问题等待时仍可接话');
+  await player.lookAt(player.entity.position.clone().set(2.5, -60.5, 0.5), true);
+  await until(() => Math.sin(fixture.ownerEntity()?.pitch) < -0.4, '陪玩端已收到指向草方块的俯角');
+  player.chat('我面前的这个');
   const resumed = (await accepted(2)).body.action;
   const effects = mail('action');
   const paused = effects.find(row => row.body.work === first.work && row.body.transition === 'paused');
@@ -269,7 +275,7 @@ async function checkFollowDig(fixture, player, whispers) {
     '明确叫停后的原工作退出');
   assert.equal(exit.body.bridgeWork, resumed.bridgeWork);
   assert.equal(exit.body.result.status, 'interrupted');
-  await until(() => fixture.settled >= 5, '跟随停止原话已处理');
+  await until(() => fixture.settled >= 7, '跟随停止原话已处理');
 }
 
 // 以独立客户端验证取材、四格放置和旁边门洞保持原样。
@@ -282,7 +288,7 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(fixture.materialCount('dirt'), 1);
     fixture.send('tp DfyGuestCheck 6.5 -60 -1.5 facing 3.5 -59 -3');
   }
-  const source = combined ? 6 : 2;
+  const source = combined ? 8 : 2;
   await until(() => fixture.ownerEntity()?.position.x > 6 && read(material) === (combined ? 'air' : 'grass_block') &&
     fourCells.every(cell => read(cell) === 'air'), '四格、取材格原状和独立观察站位');
   player.chat('从地上取够泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
@@ -329,7 +335,8 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(read([x, y, z]), 'dirt');
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
-  assert.deepEqual(whispers, [...(combined ? ['嗯，跟着呢。','下面两格补好了，上面有块石头挡着。'] : []), '四格都补上了，另一处缺口留着。']);
+  assert.deepEqual(whispers, [...(combined ? ['嗯，跟着呢。','你指哪一格？','听得见。','下面两格补好了，上面有块石头挡着。'] : []),
+    '四格都补上了，另一处缺口留着。']);
   if (combined) {
     for (const [index, line] of ['你站到墙上，先换个目标。', '试一下普通采掘入口。'].entries()) {
       const order = source + 2 + index;
@@ -352,7 +359,16 @@ async function checkFillFour(fixture, player, whispers, combined) {
   const prepared = trace.filter(row => row.kind === 'model.prepared');
   assert.ok(prepared.length && prepared.every(row => row.personaProfile === 'dafeiyu/default/1' &&
     row.promptTemplate.startsWith('sha256:') && row.input.messages[0].content.includes('Minecraft 同场规则')));
-  assert.ok(!trace.some(row => row.kind === 'tool.candidate' && (row.callId === 'ask_player' || row.callId === 'ask')));
+  assert.equal(trace.filter(row => row.kind === 'tool.candidate' && row.callId === 'ask_player').length, combined ? 1 : 0);
+  assert.ok(!trace.some(row => row.kind === 'tool.candidate' && row.callId === 'ask'));
+  if (combined) {
+    const inputs = prepared.map(row => JSON.parse(row.input.messages.find(message => message.role === 'user').content));
+    const resolved = inputs.filter((input, index) => input.questionResult?.status === 'resolved' &&
+      prepared[index].step === 1);
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0].questionResult.answer, '我面前的这个');
+    assert.ok(!resolved[0].pendingQuestion && resolved[0].workSettlement);
+  }
   if (!combined) assert.equal(trace.filter(row => row.kind === 'subagent.accepted').length, 5);
 }
 

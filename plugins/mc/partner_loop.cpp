@@ -17,7 +17,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "task 保存共同目标和原话指向。说‘这里’时用 observe.message 取得 playerFocus，按原消息号和 candidate 绑定。"
     "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
     "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
-    "只有观察仍无法区分且会改变做法时才在游戏里自然问一句，用 ask_player 记录要等的答案。\n"
+    "观察仍无法区分且会改变做法时，用 ask_player 自然问一句；玩家给了确切指向后，在 dig_block 带上 pendingQuestion.item 作为 resolves。\n"
     "明确动作先提交。持续跟随只开一次，用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
     "只展开本轮需要的工具类别。掉落规则可按需查 knowledge，库存和逐格变化以 finishedWork 或实际观察为准。"
@@ -306,6 +306,7 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated) {
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
+        question_result_.clear();
         expansion_pending_ = false;
         if (completed != settlements_.cend()) settlements_.erase(completed);
         approval_result_ = nullptr;
