@@ -27,7 +27,9 @@ MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响�
 
 工具记录区分候选、接纳和退出，保存原调用编号以及有效参数和实际结果。MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
 
-查 ASK 时先在 `event.decoded` 找到原事件的 `eventDomain` 和 `event`，再找同身份的 `ask.opened`。`ask.presented`、`ask.answer`、`interaction.delivered` 和 `interaction.acknowledged` 用 `ask` 关联。后两项分别是信箱入队和插件确认收件。主 Agent 路径另有 `interaction.queued` 和 `mail.dispatched`，后者包含实际送模的 `session` 和 `run`。在 `model.prepared` 的 `ask` 参数中可查看本轮开放的渠道。子 Agent 后续的 `model.prepared` 会记录收到的 `questionResult` 和原目标。游戏渠道的呈现记录在 `body.bridgeWork` 提供游戏发言工作号。
+用同一组 `eventDomain` 和 `event` 核对 `event.captured`、`event.decoded`、`event.dispatched` 和 `ask.opened`。随后用 `ask` 关联 `ask.presented`、`ask.answer` 和 `ask.transition`。游戏渠道用呈现记录里的 `body.bridgeWork` 核对游戏发言。最后用 `mailbox` 和 `message` 核对 `interaction.delivered` 的入箱与 `interaction.acknowledged` 的收件确认。子 Agent 的后续 `model.prepared` 记录收到的 `questionResult` 和原目标。
+
+主 Agent 路径中的 `mail.dispatched` 记录真正收取信件的 `session` 和 `run`。该回合的 `model.prepared` 显示本轮工具及实参范围。`reply.intent` 将 `mail_reply` 的 `callId` 与原事项身份、信件序号和运行身份关联。回合退出时没有意图会记录 `reply.review_required`，可用 `/mail review` 主动取回待复审结果。
 
 使用 `dafeiyu --review-trace FILE` 列出运行及关联的玩家消息，附加 `SESSION RUN` 查看原始记录和同一子请求的游戏回执。读取时校验文件版本和连续序号。未正常关停时仍可读取已落完整的行，并提示记录缺尾。
 

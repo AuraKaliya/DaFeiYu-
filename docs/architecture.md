@@ -22,8 +22,11 @@ flowchart TB
         App["Application<br/>本体入口与业务命令"]
         Intake["Mailboxes / MailboxIntake<br/>直接对话、房间、插件各有地址"]
         Partner["CompanionSession<br/>计划板投影、委托与固定场景"]
-        Routes["InteractionRoutes<br/>解析结果分发与原事项关联"]
+        Dispatch["事件分派器<br/>验证类型化解析结果"]
+        Routes["InteractionRoutes<br/>原事项关联"]
         Ask["通用 ASK<br/>渠道、呈现、答复与时限"]
+        ReplyTool["mail_reply 工具<br/>核对模型意图与原信绑定"]
+        Delivery["ReplyDelivery<br/>入箱重试、保留原件、核对回执"]
         Main["主 Agent Session"]
         Agent["通用 Session / RunLoop<br/>上下文、工具、审批、效果与退出"]
         Model["Model 异步客户端<br/>DeepSeek / Qwen"]
@@ -32,21 +35,29 @@ flowchart TB
         Intake --> Main
         App --> Partner
         Partner <-->|原插件收发地址| Intake
-        App --> Routes
+        App --> Dispatch --> Routes
         Routes <-->|票据及渠道回执| Ask
         Routes <-->|原消息与答复| Intake
-        Main -->|回合工具 ask / mail_reply| Routes
+        Main -->|结构化 ask 调用| Routes
+        Main -->|结构化 mail_reply 调用| ReplyTool
+        ReplyTool -->|原回合的转发意图| Routes
+        Routes -->|原通用 ASK 的终态| Delivery --> Intake
         Main --> Agent
         Agent --> Model
         Routes --> Trace
+        Dispatch --> Trace
+        Delivery --> Trace
         Intake --> Trace
         Agent --> Trace
     end
     subgraph PluginHost["插件宿主"]
         Plugins["PluginManager<br/>依赖图、生命周期、活动调度"]
-        Hooks["HostServices<br/>Hook 表、事件登记和解析器"]
+        Capture["HostServices<br/>接纳事件并签发来源和序号"]
+        Decoder["宿主调用插件登记的解析器<br/>按类型和版本"]
+        Hooks["Hook 登记与顺序表<br/>系统转换与 Agent 回合"]
         Child["Subagents<br/>插件子会话与授权范围"]
         Plugins --> Hooks
+        Plugins --> Capture --> Decoder
         Plugins --> Child
     end
     subgraph MC["MC 陪玩插件"]
@@ -54,11 +65,15 @@ flowchart TB
         Skills["技能与原动作确认<br/>渐进展开、验证、执行读回"]
         Mc --> Skills
     end
-    Agent <-->|Hook 控制、改写与原生工具执行| Hooks
-    Hooks -->|带实例身份的已解析事件| Routes
+    Agent <-->|回合 Hook 快照| Hooks
+    Capture --> Trace
+    Decoder -->|带原事件身份的投影| Dispatch
+    Dispatch <-->|系统转换 Hook| Hooks
+    Intake <-->|信件上下文 Hook| Hooks
     Mc -->|启动独立会话、提交本轮上下文| Child
     Child --> Agent
     Mc <-->|SDK C ABI v2| Plugins
+    Mc -->|私有业务事件和收件凭据| Capture
     Mc <-->|插件入箱、原发箱| Intake
 
     Terminal --> App
@@ -77,6 +92,7 @@ flowchart TB
 | **Plugins / SDK** | 插件包使用同进程 v2 C ABI，安装后显式加载。宿主按依赖发布 Hook 顺序，独立接纳插件事件并调用对应解析器，公平推进插件活动步骤。卸载等原工作退出，再撤销地址与注册。[管理器](../plugins/runtime/manager.cpp) · [事件宿主](../plugins/runtime/host_routed_events.cpp) · [接口](../sdk/include/dafeiyu/routed_event_abi_v2.h) |
 | **Runtime / Events** | Runtime 提供有界操作、预算和调度，Events 提供广播通知与定向信箱。信箱地址绑定发送方、接收方与独立 FIFO，类别和版本决定处理方式。接纳、业务结果和实际退出分别结算。[广播通道](../events/broadcast_channel.cpp) · [信箱](../events/mailboxes.cpp) · [本体收件](../app/mailbox_intake.cpp) |
 | **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../app/ask.cpp) · [交互路由](../app/interaction_routes.cpp) |
+| **回信与回执** | `mail_reply` 将模型工具调用解析为绑定原信和本轮的转发意图。`ReplyDelivery` 处理两条路径的最终入箱与确认。入箱回执和插件消费回执各有身份。[回信工具](../app/mail_reply_tool.cpp) · [结果投递](../app/reply_delivery.cpp) |
 | **Trace** | 主会话和插件子会话记录实际提交的统一模型请求、独立退出的模型响应、各工具及信件结果。事件、信箱、ASK 和游戏回执通过原身份关联。支持按回合查看，并用录制响应和工具回执离线重跑单轮。[模型与工具记录](../agent/include/dafeiyu/run_capture.hpp) · [本体落盘](../app/run_log.cpp) · [审阅与回放](run-guide.md) |
 | **Desktop** | WebView2 主文档通过 `state.read` 获取当前或最近运行摘要，可按会话号和回合号筛选。桌面原生业务线程发布值副本，房间预览取固定样本。[业务线程](../app/gui/run_status_host.cpp) · [主文档桥接](../ui/host/probe_host.cpp) · [运行说明](ui-probe-run-guide.md) |
 
@@ -141,21 +157,29 @@ flowchart TB
     Look --> Local["MC 先问玩家，局内等待"]
     Local -->|收到有效答复| Resurvey
     Local -->|等待期满| Event["插件发出待答事项超时事件"]
-    Event --> Decode["宿主按类型和版本调用插件解析器"]
-    Decode -->|直接 ASK| Ask["本体 ASK<br/>呈现原问题，等首份有效答复"]
-    Decode -->|交给主 Agent| Box["插件登记的主信箱<br/>优先收件或手动审查"]
+    Event --> Capture["宿主捕获，校验并分配原事件身份"]
+    Capture --> Decode["宿主按类型和版本调用插件解析器"]
+    Decode --> Dispatch["本体分派器校验投影<br/>事件分派 Hook 可阻断新路线"]
+    Dispatch -->|直接 ASK| Ask["本体 ASK<br/>呈现原问题，等首份有效答复"]
+    Dispatch -->|交给主 Agent| Box["插件登记的主信箱<br/>优先收件或手动审查"]
+    Dispatch -->|阻断新 ASK| Delivery
     Box --> Main["主 Agent 读取原信<br/>通过 ask 选择渠道"]
     Main --> Ask
-    Ask -->|直接路径| In["MC 原实例入箱"]
-    Ask -->|主 Agent 路径| Back["原主信箱再收答复<br/>主 Agent 调用 mail_reply"]
-    Back --> In
-    In --> Resurvey["MC 恢复共同目标，重新读现场"]
+    Ask -->|直接路径| Delivery["统一结果投递<br/>原答复保留到收件确认"]
+    Ask -->|主 Agent 路径| Back["原主信箱再收答复<br/>绑定回信工具"]
+    Back --> Intent{"模型提交合法 mail_reply？"}
+    Intent -->|是，宿主接纳原回信意图| Delivery
+    Intent -->|回合退出时无意图| Review["保留结果，等待主动复审"]
+    Review --> Back
+    Delivery --> In["MC 原实例入箱<br/>插件发出带实际序号的收件确认"]
+    In -->|matched，现场仍需重读| Resurvey["MC 恢复共同目标，重新读现场"]
+    In -->|stale| Receipt
     Resurvey --> Expand["MC 选择放置分类<br/>宿主为下一轮固定工具范围"]
     Expand --> Gate["MC 校验原格、支撑和材料<br/>门洞候选需要玩家批准"]
     Gate -->|允许且现场仍有效| Work["Mineflayer 补墙或放门<br/>读回精确方格与库存"]
     Gate -->|拒绝、到期或失效| Receipt
     Work --> Receipt["回填动作结果与实际效果"]
-    Turn -. 本轮退出 .-> Loop
+    Turn -. 实际退出，控制还给插件 .-> Loop
     Receipt --> Loop
     Loop -->|暂无新事实且任务在等待| Wait["继续运行，等待玩家、现场或原答复"]
     Wait --> Loop
@@ -191,9 +215,22 @@ ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠�
 
 ## Hook 注册与执行
 
-插件载入时声明 Hook 点和适用范围，范围可含整个主会话。宿主校验完整依赖图并检测环，再按稳定拓扑顺序发布各 Hook 表。依赖已满足的插件按注册顺序取用，同一插件内按处理器注册顺序取用。每个主回合和子回合在接纳时固定同一份控制表、文本表和登记版本。新增插件进入后续回合，当前回合在实际退出前持有适用模块。
+插件载入时声明 Hook 点和适用范围，范围可覆盖本体、本插件或其他插件。宿主校验依赖图并检测环，再按稳定拓扑顺序发布各 Hook 表。依赖已满足的插件按注册顺序取用，同一插件内按处理器注册顺序取用。每个主回合和子回合在接纳时固定控制、文本和实际退出的登记表及版本。当前回合持有适用模块直至实际退出。事件、通用 ASK 与信箱等独立于回合的系统转换使用各转换开始时的已发布表。
 
-`dfy.hooks@1` 对模型请求、工具启动和工具结果提供控制，工具启动支持等待人工批准。`dfy.hook.text@1` 支持消息入轮、模型请求发出前、模型响应收到后、工具参数和最终回复投递的字段改写。独立提案基于原字段，不同结果产生冲突。声明接续且依赖先前改写者的处理器可读到前一结果。工具使用最终参数进行授权、校验和审批，实际效果保留原回执。回复投递改写与会话历史各自保存。[C ABI](../sdk/include/dafeiyu/hook_abi_v2.h) · [正式循环](../agent/run_loop.cpp)
+| 阶段转换 | 插件能力和宿主保留的字段 |
+| --- | --- |
+| 事件接纳 → 取件解析 | 只读观察事件身份和类型。接纳通知在宿主推进时从有界队列送出。 |
+| 解析完成 → 投影分派 | 解析结果可只读观察。分派前可阻断普通事件或新 ASK，阻断 ASK 产生 `route_denied` 终态投递。渠道反馈和收件确认只读。分派完成可观察接受或拒绝。 |
+| 信箱审查 → 主回合上下文 | 普通信件可按序改写模型侧正文或过滤。Trace 保存原信身份及正文。绑定 ASK 和回信的信件只暴露元数据。结构化信封由宿主包装。 |
+| ASK 已呈现 / 答复接纳 / 到期、取消或失败 | 只读观察实际状态迁移、票据和渠道，重复回执复用同一次迁移。 |
+| 回信入箱 → 插件确认收件 | 只读观察首次入箱和首次收件，含原事项及实际信箱与消息序号。 |
+| 文本入轮 → 请求发出 | 可改写普通输入和模型请求的系统指令字段，可阻断模型请求。 |
+| 模型返回 → 工具候选 | 可改写模型文本和普通工具参数。绑定 `ask`、`mail_reply` 的回合保留原工具参数。 |
+| 工具候选 → 实际启动 | 按最终参数授权、校验和审批。控制 Hook 可拒绝或要求确认。 |
+| 工具读回 → 下一步 | 控制 Hook 可阻断后续运行。宿主记录已经发生的效果及原回执。 |
+| 最终文本 → 可见回复 → 回合实际退出 | 可改写可见回复，原会话历史独立保存。实际退出只读观察。 |
+
+系统阶段用 `dfy.hook.transition@1`，回合控制和字段改写沿用 `dfy.hooks@1` 与 `dfy.hook.text@1`。回合字段的独立提案基于原值，不同结果产生冲突。声明接续且依赖先前改写者的处理器可读到前一结果。只读观察异常与业务状态独立，Trace 可记录系统观察的版本和异常数。[C ABI](../sdk/include/dafeiyu/hook_abi_v2.h) · [宿主顺序表](../plugins/runtime/manager.cpp) · [正式循环](../agent/run_loop.cpp)
 
 ## 实施和验收
 

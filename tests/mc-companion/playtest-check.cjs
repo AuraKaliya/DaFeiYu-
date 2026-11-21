@@ -127,20 +127,39 @@ async function checkWall(fixture, player, whispers, mode) {
     const ask = trace.filter(row => row.kind === 'ask.opened');
     assert.equal(ask.length, 1);
     assert.equal(ask[0].path, askPath);
+    const sameEvent = row => row.eventDomain === ask[0].eventDomain && row.event === ask[0].event;
+    const phaseOrder = trace.filter(row => sameEvent(row) &&
+      ['event.captured', 'event.decoded', 'event.dispatched'].includes(row.kind));
+    assert.deepEqual(phaseOrder.map(row => row.kind), ['event.captured', 'event.decoded', 'event.dispatched']);
+    assert.equal(phaseOrder[0].type, 'mc.partner.help');
+    assert.equal(phaseOrder[1].route, askPath === 'direct' ? 1 : 4);
+    assert.equal(phaseOrder[2].accepted, true);
     assert.ok(trace.some(row => row.kind === 'ask.answer' && row.ask === ask[0].ask && row.accepted));
+    assert.deepEqual(trace.filter(row => row.kind === 'ask.transition' && sameEvent(row)).map(row => row.phase),
+      ['waiting', 'answered']);
     const delivery = trace.find(row => row.kind === 'interaction.delivered' && row.ask === ask[0].ask &&
       row.category === (askPath === 'direct' ? 'interaction.ask.result' : 'interaction.mail.reply'));
     assert.ok(delivery && delivery.body.answer === '靠河那段，留木门');
-    assert.ok(trace.some(row => row.kind === 'interaction.acknowledged' && row.ask === ask[0].ask &&
-      row.seq > delivery.seq && row.disposition === 'matched'));
+    const ack = trace.find(row => row.kind === 'interaction.acknowledged' && sameEvent(row) && row.ask === ask[0].ask);
+    assert.ok(ack && ack.seq > delivery.seq && ack.disposition === 'matched' && !ack.legacyReceipt);
+    assert.deepEqual([ack.mailbox, ack.message], [delivery.mailbox, delivery.message]);
     assert.ok(trace.some(row => row.kind === 'model.prepared' && row.source === 'plugin' &&
       row.input.messages.at(-1).content.includes('靠河那段，留木门')));
     const main = trace.filter(row => row.kind === 'model.prepared' && row.source === 'main');
-    if (askPath === 'direct') assert.deepEqual(main, []);
+    const intents = trace.filter(row => row.kind === 'reply.intent' && sameEvent(row));
+    if (askPath === 'direct') {
+      assert.deepEqual(main, []);
+      assert.deepEqual(intents, []);
+    }
     else {
       const tool = main.flatMap(row => row.input.tools).find(tool => tool.name === 'ask');
       assert.deepEqual(JSON.parse(tool.parameters).properties.channel.enum, ['game']);
       assert.ok(main.some(row => row.input.tools.some(tool => tool.name === 'mail_reply')));
+      assert.equal(intents.length, 1);
+      const intent = intents[0];
+      const received = trace.find(row => row.kind === 'mail.dispatched' && row.category === 'interaction.ask.completed' &&
+        row.session === intent.session && row.run === intent.run && row.message === intent.message);
+      assert.ok(received && received.seq < intent.seq && intent.seq < delivery.seq && intent.callId);
       const exits = trace.filter(row => row.kind === 'run.exited' && row.source === 'main');
       assert.equal(exits.length, 2);
       assert.ok(exits.every(row => row.diagnostic?.data.timeline.source === 'mailbox'));
