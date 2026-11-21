@@ -36,7 +36,8 @@ function prepareScene(send) {
 // 步骤：等待玩家入场 → 绑定角色和观察端 → 运行宿主至接管或离场 → 收尾本次连接。
 async function play(fixture, exe, pkg, mode, config) {
   const { send, port, server, evidence, present, running } = fixture;
-  const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-');
+  const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
+  const withDirt = mode !== '--gap-ambiguous-probe';
   const root = path.join(evidence, 'host');
   const stop = path.join(root, 'stop');
   const settings = path.join(root, 'user/plugins/mc.companion');
@@ -59,6 +60,8 @@ async function play(fixture, exe, pkg, mode, config) {
       world: formatId(fs.readFileSync(path.join(server, 'playtest-world/uid.dat'))) } }));
   const game = await launch(file);
   fixture.ownerEntity = () => game.bot.players[owner]?.entity;
+  fixture.materialCount = material => game.bot.inventory.items().filter(item => item.name === material)
+    .reduce((count, item) => count + item.count, 0);
   // 将游戏侧真实退出与原消息编号关联；日志写入失败不会改变玩家已产生的效果。
   game.bot.on('partnerSkillExit', receipt => {
     try { fs.appendFileSync(path.join(root, 'game-actions.jsonl'), JSON.stringify(receipt) + '\n'); }
@@ -72,7 +75,7 @@ async function play(fixture, exe, pkg, mode, config) {
     await until(() => !gameEnded && game.bot.entity && game.bot.players[owner]?.uuid === offlineId(owner),
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
-    if (wallProbe) prepareWall(send);
+    if (wallProbe) prepareWall(send, withDirt);
     else if (mode !== '--probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
@@ -90,6 +93,7 @@ async function play(fixture, exe, pkg, mode, config) {
     if (wallProbe) {
       const block = (x, y) => game.bot.blockAt(game.bot.entity.position.clone().set(x,y,-3))?.name;
       await until(() => game.bot.inventory.items().some(item => item.name === 'oak_door') &&
+        fixture.materialCount('dirt') === (withDirt ? 8 : 0) &&
         block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === 'dirt' && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
     }
@@ -186,7 +190,8 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe'].includes(mode) || (mode === '--live' && (!config || !fs.existsSync(config))))
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe'].includes(mode) ||
+    (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
     throw new Error('需要已构建的体验宿主和 MC 包');

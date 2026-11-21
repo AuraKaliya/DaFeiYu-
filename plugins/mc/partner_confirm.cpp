@@ -53,6 +53,12 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     return true;
 }
 
+// 判断当前技能是否仍持有等待或已批准但尚未执行的候选。
+bool PartnerLoop::awaiting_approval(std::string_view skill) const noexcept {
+    return confirmation_ && confirmation_->work && confirmation_->skill == skill &&
+        (confirmation_->decision.is_null() || confirmation_->approved_order);
+}
+
 // 检查原候选仍绑定当前游戏世界、玩家和游标。
 bool PartnerLoop::confirmation_context_current(std::uint64_t order) const {
     return confirmation_ && order && feed_.ready() && !feed_.departed() && !feed_.gap() &&

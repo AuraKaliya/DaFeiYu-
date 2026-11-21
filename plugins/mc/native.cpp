@@ -213,7 +213,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog ||
-        skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop);
+        skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
     if (!call || call->struct_size != sizeof(*call) || call->tool_version != 1) return report(DFY_V2_ABI_MISMATCH, error);
     if (!call->session || !call->run || !call->step || !call->attempt || !call->invocation ||
@@ -238,6 +238,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
         }
         pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
+        if (partner_turn && !confirmed && raw->partner.awaiting_approval(skill->name))
+            return report(DFY_V2_BUSY,error);
         if (controls_body && !target_blocked && !pending_approval && (raw->partner.has_motion() || body_job(*raw)))
             return report(DFY_V2_BUSY, error);
         if (target_blocked) {
@@ -296,7 +298,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
             const auto result = raw->partner.local_skill(job->partner_session,job->invocation,job->skill,job->arguments);
             job->success = result.at("status") != "stale" && result.at("status") != "invalid_target";
             job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" ||
-                result.at("status") == "recorded" || result.at("status") == "stopping" ?
+                result.at("status") == "recorded" || result.at("status") == "stopping" || result.at("status") == "withdrawn" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
             job->output = result.dump();
         } catch (...) {}

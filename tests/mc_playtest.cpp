@@ -1,6 +1,7 @@
 #include "companion_host.hpp"
 #include "application.hpp"
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <mutex>
@@ -154,8 +155,9 @@ dfy::model::Response main_ask_sample(const dfy::model::Request& request, bool re
 }
 
 // 用固定模型验证墙体目标跨回合、观察、范围展开和原候选确认。
-// 步骤：保存原分工及指向 → 对照旧位置和后来位置 → 拒绝错误门洞并补一格 → 等待游戏玩家确认门。
-dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root, std::string_view ask_path) {
+// 步骤：保存原分工及指向 → 读取旧位置并按需澄清 → 处理材料变更 → 补原缺格或继续门洞探针。
+dfy::model::Response wall_sample(const dfy::model::Request& request, const std::filesystem::path& root, std::string_view ask_path,
+    bool gap_only) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto main = std::ranges::find_if(request.tools,[](const auto& tool) { return tool.name == "ask" || tool.name == "mail_reply"; });
@@ -169,8 +171,18 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
         return {{Role::assistant,"",{{std::move(id),found->name,args.dump()}}},FinishReason::tool_calls};
     };
     if (request.tools.empty()) return {{Role::assistant,"continue"}};
+    const bool ambiguous = ask_path == "local";
+    const auto survey_original = [&] { return call("observe","survey",{{"message",3}}); };
+    // 输入中的原话位置只用于走近，实际站位必须与当时的方块高度对应。
+    const auto check_arrival = [&](const Json& result) {
+        if (result.at("status") != "done" || result.at("sourceMessage") != 3 ||
+            std::floor(result.at("position").at("y").get<double>()) != -60)
+            throw std::runtime_error("gap probe: movement did not return a stand at the original message height");
+        return survey_original();
+    };
     // 收到放置读回后才开始门洞提议，立即退出和在途工作读回使用同一任务变更。
     const auto plan_door = [&] {
+        if (gap_only) return call("task_update","complete",{{"goal","continue existing two-layer dirt wall and door"},{"next","done"}});
         return call("task_update","door-plan",{{"goal","put the agreed door in its opening"},
             {"next","player"},{"target",Json::object()}});
     };
@@ -178,6 +190,10 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         if (last.tool_call_id == "save" || last.tool_call_id == "point" || last.tool_call_id == "directory" ||
             last.tool_call_id == "question") return internal("fixed round done");
+        if (last.tool_call_id == "approach") {
+            if (result.at("status") == "accepted") return internal("walking to the original gap");
+            return check_arrival(result);
+        }
         if (last.tool_call_id == "survey" || last.tool_call_id == "resurvey") {
             const auto& survey = result.at("survey");
             if (survey_block(survey,2,-59,-3) != "dirt" || survey_block(survey,3,-59,-3) != "." ||
@@ -185,15 +201,27 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 result.at("anchor").at("message") != 3 || result.at("anchor").at("position").at("x") >= 4 ||
                 result.at("player").at("x") < 7)
                 throw std::runtime_error("wall probe: survey lost the original gap or the separate live player position");
-            if (!ask_path.empty() && last.tool_call_id == "survey")
-                return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
             const auto& focus = result.at("playerFocus");
-            if (focus.at("choice") != "3,-59,-3:x" || !std::ranges::any_of(focus.at("candidates"),[](const auto& gap) {
+            if ((ambiguous ? focus.at("status") != "ambiguous" || !focus.at("choice").is_null() :
+                focus.at("choice") != "3,-59,-3:x") || !std::ranges::any_of(focus.at("candidates"),[](const auto& gap) {
                 return gap.at("id") == "7,-60,-3:x" && gap.at("height") == 2;
             })) throw std::runtime_error("wall probe: original player view did not identify gap A with a separate gap B");
+            if (!ask_path.empty() && last.tool_call_id == "survey")
+                return call("ask_player","question",{{"question","你指靠河的那段，还是靠木屋的那段？"},{"path",ask_path}});
             return call("task_update","bind",{{"goal","continue existing two-layer dirt wall and door"},{"next","player"},
-                {"target",{{"message",3},{"candidate",focus.at("choice")}}}});
+                {"target",{{"message",3},{"candidate","3,-59,-3:x"}}}});
         }
+        if (last.tool_call_id == "gather" && (result.at("status") != "waiting" || !result.contains("item")))
+            throw std::runtime_error("gap probe: collection did not enter the waiting state");
+        if (last.tool_call_id == "stock") {
+            if (result.at("inventory").value("dirt",0) != 4) throw std::runtime_error("gap probe: new dirt was not read back");
+            const auto original = Json::parse(request.messages.at(1).content);
+            return call("withdraw_confirmation","withdraw",{{"item",original.at("pendingApproval").at("item")}});
+        }
+        if (last.tool_call_id == "withdraw" && result.at("status") == "withdrawn")
+            return call("reply","received-material",{{"text","收到泥土，我补刚才那处。"}});
+        if (last.tool_call_id == "received-material" && result.at("sent") == true)
+            return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
         if (last.tool_call_id == "wrong-gap" && result.at("status") == "blocked" && result.at("placementAttempted") == false)
             return call("place","wall",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
         if (last.tool_call_id == "wall" && result.at("status") == "done" && result.at("placed") == true)
@@ -207,6 +235,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (request.messages.size() != 2) throw std::runtime_error("wall probe: older raw context was sent again");
     if (input.at("trigger") == "motion.finished") {
         const auto& finished = input.at("finishedWork");
+        if (gap_only && finished.at("skill") == "move") return check_arrival(finished.at("result"));
         if (finished.at("skill") == "place" && finished.at("result").value("placed",false) &&
             input.at("task").at("goal") == "continue existing two-layer dirt wall and door") return plan_door();
         return internal("fixed action ended");
@@ -225,9 +254,15 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
             !observation.value("surveyAvailable",false) || observation.contains("survey") || !observation.contains("sampledAtMs") ||
             !input.at("events").empty() || input.at("recentDialogue").front().at("order") != 2)
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
+        if (ambiguous) {
+            if (std::ranges::any_of(request.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); }))
+                return call("collect","gather",{{"block","dirt"},{"count",1},{"approval","game"}});
+            return call("skills","directory",{{"categories",{"dig_break"}}});
+        }
         return call("place","wrong-gap",{{"block","dirt"},{"x",7},{"y",-60},{"z",-3}});
     }
-    if (input.at("trigger") == "question.result") {
+    if (input.contains("questionResult") && !input.at("task").at("target").contains("cells") &&
+        input.at("task").at("goal") == "continue existing two-layer dirt wall and door") {
         if (input.at("questionResult").at("answer") != "靠河那段，留木门" ||
             input.at("task").at("goal") != "continue existing two-layer dirt wall and door")
             throw std::runtime_error("wall probe: clarification lost the original task");
@@ -240,8 +275,14 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     if (event.at("sequence") == 3 && event.at("text") == "看我旁边的这块缺口")
         return call("task_update","point",{{"goal",input.at("task").at("goal")},
             {"next","player"},{"target",{{"message",3}}}});
-    if (event.at("sequence") == 4 && event.at("text") == "先补刚才指的缺口，门洞留空")
-        return call("observe","survey",{{"message",input.at("task").at("target").at("message")}});
+    if (event.at("sequence") == 4 && event.at("text") == "先补刚才指的缺口，门洞留空") {
+        if (gap_only && !ambiguous) return call("start_move","approach",{{"message",3}});
+        return survey_original();
+    }
+    if (ambiguous && event.at("sequence") == 6 && event.at("text") == "我给你土了") {
+        if (input.at("pendingApproval").at("skill") != "collect") throw std::runtime_error("gap probe: original collection was lost");
+        return call("observe","stock",Json::object());
+    }
     return internal("fixed event read");
 }
 }
@@ -254,8 +295,9 @@ int wmain(int argc, wchar_t** argv) {
         const auto mode = argc == 4 ? std::wstring_view(argv[3]) : std::wstring_view{};
         const bool manual = mode == L"--ask-main-manual-probe";
         const std::string_view ask = mode == L"--ask-direct-probe" ? "direct" :
-            manual || mode == L"--ask-main-probe" ? "main" : "";
-        const bool wall = !ask.empty() || mode == L"--wall-probe";
+            manual || mode == L"--ask-main-probe" ? "main" : mode == L"--gap-ambiguous-probe" ? "local" : "";
+        const bool gap = mode == L"--gap-probe" || mode == L"--gap-ambiguous-probe";
+        const bool wall = !ask.empty() || mode == L"--wall-probe" || gap;
         const bool follow = mode == L"--follow-probe";
         const bool partner = wall || follow || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
@@ -264,8 +306,8 @@ int wmain(int argc, wchar_t** argv) {
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         app::Application host({}, root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,ask,root](const auto&, const auto& request) {
-                if (wall) return wall_sample(request,root,ask);
+            [partner,wall,follow,ask,gap,root](const auto&, const auto& request) {
+                if (wall) return wall_sample(request,root,ask,gap);
                 if (follow) return follow_sample(request);
                 return partner ? partner_sample(request,root) : sample_turn(request);
             }},

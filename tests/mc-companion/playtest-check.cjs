@@ -99,7 +99,7 @@ async function checkPlayer(fixture, mode) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
-    const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-');
+    const wallProbe = mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
     const arena = partner ? await until(() => readArena(player, wallProbe), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -155,10 +155,11 @@ async function checkPlayer(fixture, mode) {
   } finally { player.quit(); }
 }
 
-// 独立玩家在本地 Paper 上核对原墙、放置后的两格门和批准前的世界状态。
-// 步骤：在缺口发话后移到门洞 → 核对实际补墙与空门洞 → 确认后读回两格门和原痕迹。
+// 独立玩家核对补墙、门洞及不同澄清路径上的世界实际状态。
+// 步骤：保存发话指向并移到门洞 → 按需澄清 → 核对空门洞或批准后读回两格门。
 async function checkWall(fixture, player, whispers, mode) {
-  const askPath = mode === '--ask-direct-probe' ? 'direct' : mode.startsWith('--ask-main') ? 'main' : '';
+  const ambiguous = mode === '--gap-ambiguous-probe';
+  const askPath = mode === '--ask-direct-probe' ? 'direct' : mode.startsWith('--ask-main') ? 'main' : ambiguous ? 'local' : '';
   const manual = mode === '--ask-main-manual-probe';
   const readTrace = () => readRows(fixture, 'trace/events.jsonl');
   const block = (x, y, z) => player.blockAt(player.entity.position.clone().set(x, y, z));
@@ -166,11 +167,12 @@ async function checkWall(fixture, player, whispers, mode) {
   assert.equal(block(3, -59, -3).name, 'air');
   player.chat('我们接着搭我围的墙，两层泥土，给我留扇木门。');
   await until(() => fixture.settled === 2, '保存原分工');
-  fixture.send(`tp DfyGuestCheck ${wall.repairStand.join(' ')} 180 4`);
+  fixture.send(`tp DfyGuestCheck ${wall.repairStand.join(' ')} ${ambiguous ? 0 : 180} 4`);
   await until(() => {
     const entity = fixture.ownerEntity();
-    return entity && Math.abs(entity.position.x - 3.5) < 0.1 && Math.cos(entity.yaw) > 0.99 && Math.abs(entity.pitch) < 0.25;
-  }, '陪玩客户端收到玩家看向第一处缺口的朝向');
+    return entity && Math.abs(entity.position.x - 3.5) < 0.1 &&
+      Math.cos(entity.yaw) * (ambiguous ? -1 : 1) > 0.99 && Math.abs(entity.pitch) < 0.25;
+  }, '陪玩客户端收到原话位置的指定朝向');
   player.chat('看我旁边的这块缺口');
   await until(() => readTrace().some(row => row.category === 'mc.partner.event' && row.body.event.sequence === 3), '收下原话和视线');
   fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
@@ -194,6 +196,7 @@ async function checkWall(fixture, player, whispers, mode) {
       fixture.reviewMail();
     }
   }
+  if (mode.startsWith('--gap-')) return checkGap(fixture, player, whispers, block, ambiguous);
   const token = await until(() => whispers.map(text => /确认 (\d+) 或 拒绝 \1$/.exec(text)).find(Boolean)?.[1],
     '原候选发出实际确认问题', 45000);
   assert.equal(block(2, -59, -3).name, 'dirt');
@@ -267,5 +270,46 @@ async function checkWall(fixture, player, whispers, mode) {
       assert.ok(exits.every(row => row.diagnostic?.data.timeline.source === 'mailbox'));
     }
   }
+}
+
+// 检查原缺口已补、门洞保持空着，材料变化可以撤回正在等待的采集。
+// 步骤：可选等待采集确认并提供泥土 → 核对发言和实际补墙 → 重发旧号码确认并检查没有采集。
+async function checkGap(fixture, player, whispers, block, ambiguous) {
+  const trace = () => readRows(fixture, 'trace/events.jsonl');
+  let token;
+  if (ambiguous) {
+    token = await until(() => whispers.map(text => /确认 (\d+) 或 拒绝 \1$/.exec(text)).find(Boolean)?.[1],
+      '库存为空时原采集候选等待确认');
+    assert.equal(block(...wall.repair).name, 'air');
+    fixture.send('give DfyCompanion minecraft:dirt 4');
+    await until(() => fixture.materialCount('dirt') === 4, '陪玩客户端实际收到新泥土');
+    player.chat('我给你土了');
+    await until(() => whispers.includes('收到泥土，我补刚才那处。'), '仍在原确认期限内实际向玩家回复');
+  }
+  await until(() => trace().some(row => row.kind === 'tool.exited' && row.callId === 'complete' &&
+    JSON.parse(row.output).task?.next === 'done'), '补墙实际退出后结束原任务');
+  if (ambiguous) {
+    const withdrawal = trace().find(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.execution');
+    assert.equal(withdrawal.body.status, 'withdrawn');
+    assert.equal(withdrawal.body.execution, 'skipped');
+    assert.equal(String(withdrawal.body.id), token);
+    assert.equal(whispers.filter(text => /回复 答复 \d+ <回答>$/.test(text)).length, 1);
+    assert.ok(!trace().some(row => row.kind === 'ask.opened'));
+    assert.equal(whispers.filter(text => /确认 (\d+) 或 拒绝 \1$/.test(text)).length, 1);
+    player.chat('确认 ' + token);
+    await until(() => fixture.settled === 7, '原采集编号的迟到答复已进入新回合');
+  }
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  const placements = actions.filter(row => row.skill === 'place');
+  assert.equal(placements.length, 1);
+  assert.deepEqual(placements[0].result.blocks, [{ x: 3, y: -59, z: -3, block: 'dirt' }]);
+  assert.equal(placements[0].result.sourceMessage, 3);
+  assert.equal(placements[0].result.status, 'done');
+  assert.equal(block(...wall.repair).name, 'dirt');
+  assert.equal(block(...wall.doorLower).name, 'air');
+  assert.equal(block(...wall.doorUpper).name, 'air');
+  assert.ok(!actions.some(row => row.skill === 'collect'));
+  assert.ok(trace().some(row => row.kind === 'tool.exited' && row.callId === 'wrong-gap' &&
+    JSON.parse(row.output).placementAttempted === false));
 }
 module.exports = { checkPlayer };

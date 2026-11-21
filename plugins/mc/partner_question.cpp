@@ -77,6 +77,7 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!question_events_ || !id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
+    if (question_work_) return {{"status","busy"}};
     const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("direct"));
     if (text.empty() || text.size() > 400 || (path != "local" && path != "direct" && path != "main"))
         throw std::invalid_argument("MC question: invalid request");

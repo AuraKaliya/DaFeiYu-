@@ -44,6 +44,8 @@ class PartnerLoop {
     // 为游戏动作固定原参数和确认渠道，只允许当前插件角色提出。
     bool confirm_action(std::uint64_t session, std::uint64_t request, std::string_view skill, std::string_view envelope,
         std::string work = {});
+    // 防止同技能重提绕过已登记的局内候选。
+    bool awaiting_approval(std::string_view skill) const noexcept;
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。
     std::optional<std::string> confirm_result(std::uint64_t request) const;
     // 归还原确认并保存其终态，迟到回信可重读原决定。

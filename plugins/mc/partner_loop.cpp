@@ -30,6 +30,7 @@ constexpr auto instructions = view("你是大肥鱼，用自己的角色和玩�
     "工具未展开时用 skills 查看分类；输入 categories 选择需要的分类，具体工具及参数会在下一回合提供。"
     "对需要明确批准的动作，在该动作的 approval 参数选择 game 或 main，分别在游戏询问或交给本体选择渠道。"
     "工具返回 waiting 只表示登记，pendingApproval 中的事项可以继续交谈和观察；approvalResult 记录原候选为何未执行。"
+    "玩家给了材料时先核对背包；采集不再需要时用 withdraw_confirmation 撤回原事项，再按已核对的现场继续。"
     "已批准的工作仍以 finishedWork 的游戏读回判断效果。");
 constexpr auto review_instructions = view("你是正在游戏里行动的大肥鱼。根据分工、现场和新事件决定是否提前停下列出的原动作。"
     "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
@@ -264,6 +265,8 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated) for (const auto& skill : partner_skills) {
         if (skill.kind == SkillKind::confirmed || (skill.kind == SkillKind::question && !question_events_)) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_) continue;
+        if (skill.kind == SkillKind::approval_withdraw &&
+            (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
         const auto category = skill.category;
         if (skill.name != "follow" && !base_category(category) && !enabled.test(static_cast<std::size_t>(category))) continue;
         ids[count] = "mc.companion/"+std::string(skill.name);
@@ -320,6 +323,12 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         if (!motion_ || args.at("work") != motion_->work) return {{"status","stale"}};
         motion_->stopping = true;
         return {{"status","stopping"},{"work",motion_->work}};
+    }
+    if (skill == "withdraw_confirmation") {
+        if (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null() || args.at("item") != confirmation_->request)
+            return {{"status","stale"}};
+        confirm_once("withdrawn","task");
+        return {{"status","withdrawn"},{"item",confirmation_->request}};
     }
     if (skill == "skills") return discover(args);
     const auto target = args.find("target");
