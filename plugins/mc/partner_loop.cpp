@@ -23,7 +23,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
     "有依赖的短任务用 queue_actions 的 plan 写明节点和 after，由程序等待回执并推进。新原话可沿用已绑定目标并提交替代计划。"
-    "只展开本轮需要的工具类别。掉落规则可按需查 knowledge，库存和逐格变化以 finishedWork 或实际观察为准。"
+    "只展开需要的类别。掉落规则可查 knowledge，库存和逐格变化以 workSettlement、planSettlements 或实际观察为准。"
     "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
     "reply 发给玩家，处理原话时普通最终文本也可发一次，已经发过或仅需内部结算时用空文本。"
@@ -271,9 +271,14 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
-        const auto actual = std::find_if(receipts.rbegin(),receipts.rend(),[](const auto& fact) { return fact.contains("effect"); });
-        input["finishedWork"] = actual == receipts.rend() ? receipts.back() : *actual;
-        input["workSettlement"] = {{"invocation",completed->invocation},{"receipts",completed->receipts}};
+        auto primary = receipts.size()-1;
+        while (primary && !receipts.at(primary).contains("effect")) --primary;
+        input["workSettlement"] = {{"invocation",completed->invocation},{"primary",primary},{"receipts",receipts}};
+        auto& task = input.at("task");
+        const auto latest = task.find("lastAction");
+        if (latest != task.end() && std::ranges::any_of(receipts,[&](const auto& receipt) {
+            return receipt.at("bridgeWork") == latest->at("bridgeWork");
+        })) task.erase(latest);
     }
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},

@@ -53,6 +53,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
     Json ids = Json::array();
     const auto enabled = scope();
     for (const auto& step : steps) {
+        if (step.contains("id") || step.contains("after")) return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
         const auto name = step.at("skill").get<std::string>();
         const auto& parameters = step.at("arguments");
         auto pickup = step.value("pickup",std::string{});

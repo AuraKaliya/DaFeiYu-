@@ -11,6 +11,12 @@
 #include <thread>
 
 namespace {
+// 取出本次结算的实际主回执。
+const nlohmann::json& primary_receipt(const nlohmann::json& context) {
+    const auto& work = context.at("workSettlement");
+    return work.at("receipts").at(work.at("primary").get<std::size_t>());
+}
+
 // 核对草方块拆除、实际泥土入包以及部分成功的三个边界。
 // 步骤：验证真实掉落物 → 验证仅破坏的独立结果 → 验证未完成不推进后续步骤。
 void verify_collection_effect() {
@@ -172,8 +178,8 @@ int wmain(int argc, wchar_t** argv) {
                 }
                 return {{Role::assistant,R"({"internal":"observed"})"}};
             }
-            if (confirm && input.contains("finishedWork")) {
-                if (input.at("finishedWork").at("result").at("collected") != 2)
+            if (confirm && input.contains("workSettlement")) {
+                if (primary_receipt(input).at("result").at("collected") != 2)
                     throw std::runtime_error("confirmation lost the actual exit from the model context");
                 actual_reply = true;
                 return {{Role::assistant,R"({"internal":"game exit observed"})"}};
@@ -188,7 +194,7 @@ int wmain(int argc, wchar_t** argv) {
                     R"({"place":"player"})"}}},FinishReason::tool_calls};
             }
             if ((motion || interrupt) && input.at("trigger") == "motion.finished") {
-                const auto& work = input.at("finishedWork");
+                const auto& work = primary_receipt(input);
                 if (work.at("result").at("status") != "interrupted")
                     throw std::runtime_error("terminal motion receipt missing from subsequent context");
                 if (interrupt) interruption_seen = work.at("order") == 2;

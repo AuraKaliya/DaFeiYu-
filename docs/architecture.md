@@ -202,24 +202,24 @@ flowchart TB
     Wait --> Loop
 ```
 
-- **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。插件核对当前回合的任务变更并分配修订，跨回合保留原消息号及已选方块。模型回合结算后，插件按新玩家事实、动作退出、任务继续、私有现场变化或目录展开选择是否开下一轮。玩家事件优先，每批新玩家事实最多补充四轮自主决策额度。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
+- **局内状态。** `PartnerLoop` 由宿主活动调度持续推进。玩家原话携带收件时客户端已知的玩家位置及可用朝向。插件按任务修订保留原消息号及已选方块。玩家事件优先，可和已到达的动作回执一起入轮。每批新玩家事实最多补充四轮自主探索额度，已接纳的动作和计划仍可提交自己的实际结果。 [插件循环](../plugins/mc/partner_loop.cpp) · [任务状态](../plugins/mc/partner_task.cpp) · [配对读口](../plugins/mc/partner_feed.cpp)
 - **门和洞口的观察。** `doors` 在已加载局部格核对门的上下两格，归成一个对象。洞口候选按两侧边界和底部支撑识别，最多四列两层。任务按原消息号保存指向候选，供 `targetObservation` 和绑定使用。读取玩家现位置不会覆盖原话证据。 [方块搜索](../plugins/mc/bridge/partner.cjs) · [门对象](../plugins/mc/bridge/block-survey.cjs) · [洞口候选](../plugins/mc/bridge/player-focus.cjs) · [候选绑定](../plugins/mc/partner_task.cpp)
 - **多来源与连续观察。** `observe` 可合并自己、配对玩家和原话三个中心。每帧只读取一次重叠坐标，保留各中心的来源和覆盖范围。连续观察最多三帧，只比较相邻帧都已知的方块。窗口移动与区块未加载单独表达。等待可取消，完整采样进入工具回执，任务保存可用于指向和后续回合的摘要。 [多来源采样](../plugins/mc/bridge/partner-observe.cjs) · [任务记录](../plugins/mc/partner_task.cpp)
 - **放置目标身份。** 插件按原话锁定目标格，同一原话不会因新视角换到别的缺口。换目标需当前玩家的新指令和显式 `replace`。玩家原话要求过来且旧位置不可用时，可先登记 `approach`，等实际到达回执后，用本角色附近的已知空格绑定同一原话。直接放置和预输入都核对这组格，游戏执行器在动手前再次核对维度、空格、材料和支撑。 [目标校验](../plugins/mc/partner_task.cpp) · [游戏放置](../plugins/mc/bridge/placement.cjs)
-- **动作预输入。** `queue_actions` 在 MC 插件按任务修订登记最多四个待执行步骤。等待队列和已接纳的角色工作有不同状态。清队列只撤待执行项，替换工作须核对原工作号并读回退出。采集步骤按方块变更验收，有用料依赖时还核对指定掉落物的入包增量。失败只撤销同一组依赖步骤。 [动作队列](../plugins/mc/partner_queue.cpp)
+- **动作预输入与短任务。** `queue_actions` 将模型提交的意图按原任务修订登记，前台待办由插件转换为具体游戏工作。顺序队列支持追加、打断跟随和按原工作号替换。计划模式接纳最多四个带 ID 的有向无环节点，按层调度。后台观察可和同层前台动作共存，多个前台动作由一个角色依次执行。每层发布一次 `mc.partner.plan` 终态，已满足的后继由程序推进，失败节点阻断其依赖。计划终态或新玩家消息携带 `planSettlements`。取消会清除尚未接纳的节点，并等已接纳的工作退出。合成当前作为能力不可用的节点结算。 [动作队列](../plugins/mc/partner_queue.cpp) · [短任务编排](../plugins/mc/partner_plan.cpp)
 - **前台交接。** 待机是无前台工作时的状态。插件保留跟随意图及稳定工作号，桥接执行段各有工作号。一次性前台动作可以取得优先权，分组时用 `queue_actions.interrupt` 声明。插件先要求执行器清除跟随路径和控制输入并确认退出，再下发临时动作。临时动作成功或普通受阻后，从当前玩家位置恢复原跟随。明确叫停、配对失效和未确认退出使原跟随结束。观察和发言使用独立的后台票据。 [跟随调度](../plugins/mc/partner_queue.cpp) · [执行器释放](../plugins/mc/bridge/follow.cjs)
 - **领域知识与完工依据。** `skills` 展开 `query` 后可按需查询 Java 1.21.4 的小型词条库。词条说明草方块通常掉落泥土，以及精准采集的例外。队列只按实际方块和入包回执推进。依赖组在执行中逐格记录回执，组结束后再唤醒规划，新的玩家原话仍可立即参与下一轮。 [知识查询](../plugins/mc/partner_knowledge.hpp) · [队列验收](../plugins/mc/partner_effect.hpp)
-- **在途工作和发言。** 局内移动、跟随、采集和放置由游戏接纳后交还工具，插件持原票据推进。需确认的局内动作先将待办交给插件循环，等待和执行期间可继续观察和发言。`activeMotion` 提供原工作进度，`finishedWork` 把实际退出交给下一次局内决策。显式停止、离场、换世界和关闭触发原动作回收。玩家离场由插件消费原事件并结算，通过 Trace 保留原收件，不另起模型回合。 [动作票据](../plugins/mc/game_work.cpp) · [游戏桥接](../plugins/mc/bridge/partner.cjs) · [插件循环](../plugins/mc/partner_loop.cpp)
+- **在途工作和发言。** 游戏接纳一次性动作或插件接纳计划后，原子会话可通过模型请求边界主动结束，当前批次的发言和观察仍完整收尾。插件持原票据轮询。管道短暂失联后重读同一编号，超过时限则请求停止并等实际退出。`activeMotion` 提供进度，`workSettlement` 按原调用组提供实际退出和未执行节点。同一调用的回执入轮一次。显式停止、离场、换世界和关闭触发回收，玩家离场仅由插件消费原事件。 [动作票据](../plugins/mc/game_work.cpp) · [插件循环](../plugins/mc/partner_loop.cpp) · [通用回合](../agent/run_loop.cpp)
 - **玩家回复与结算。** `reply` 立即提交私聊。处理玩家原话时，若本轮尚未请求发言或提问，插件会把普通最终文本送入同一个游戏回复通道。空文本和 `{"internal":"…"}` 用于内部结算。无新聊天的唤醒可用 `reply` 主动发言，主 Agent 委托的最终文本仍作为委托报告。纯文本私聊回执在 `mc.partner.action` 标记 `source=final_text`，按原会话、子请求和 `bridgeWork` 关联。 [回合结算](../plugins/mc/partner_loop.cpp) · [实际发言](../plugins/mc/bridge/partner.cjs)
-- **上下文与工具快照。** MC 以本轮原话、最多八条已处理对话、任务、待答事项和实际回执组装输入。宿主按插件标志替换跨轮消息历史并附上本体人格，保留同一会话身份、当前轮工具回传与原始 Trace。上轮观察保留概要和采样信息。初始目录提供观察、交流、任务操作、跟随和指定单格挖掘。按需展开其余类别，有原话锚点时提供移动，锁定确切格后提供地面取材和整处补墙。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
-- **玩家指向。** 游戏执行器保存原消息的眼位、朝向和采样时间。在原位置重读已加载场景，区分原玩家视线、实时玩家位置和陪玩角色视线。只有唯一穿过的缺口才提供默认候选。插件从同一原消息的观察解析候选编号，固定实际方格，再由执行器在落地时重读。 [收件采样](../plugins/mc/bridge/chat.cjs) · [墙体候选](../plugins/mc/bridge/player-focus.cjs) · [目标绑定](../plugins/mc/partner_task.cpp)
-- **放置读回。** 单格放置及门的两格分别核对支撑、占用、材料和最终世界状态。`fill_target` 由插件展开原话绑定格，执行器从下往上放置，逐格报告 `placed`、`present` 或 `blocked`。遇到受阻格会保留先前回执，继续原任务时重读每格，跳过已经正确的方块。旧圆石路径由独立 `scenario` 入口承接显式委托、拾取和返程。[游戏放置](../plugins/mc/bridge/placement.cjs) · [宿主回执校验](../plugins/mc/world_protocol.cpp)
-- **取材范围和逐格变化。** `dig_block` 固定所指单格和实际方块名。寻路和到达后用同一命中条件核对采掘站位。`gather_ground` 用物品名和目标库存计算实际缺口，保护当前补墙目标和其下的支撑格。在选格及动手前重验地层、附近结构和角色脚下，未读到所需物品入包就停止。`task_update.collection=ground` 约束普通、确认及预输入采集。库存增减与逐格读回分别记录，`task.worldChanges` 保留最近 32 条变化及原工作关联。[取材判定](../plugins/mc/bridge/collection.cjs) · [任务上下文](../plugins/mc/partner_task.cpp)
+- **上下文与工具快照。** MC 装配本轮原话、最多八条已处理对话、任务、待答事项和实际回执。宿主按插件标志替换跨轮消息历史并附上本体人格。初始目录包含观察、发言、任务操作、跟随、挖指定单格和按库存取材，其余类别按需展开，绑定确切格后提供整处补墙。同一组退出正文直接用 `workSettlement`，需要时可按 `primary` 索引读主回执。 [插件循环](../plugins/mc/partner_loop.cpp) · [技能注册表](../plugins/mc/partner_skills.hpp) · [宿主授予](../app/subagents.cpp)
+- **玩家指向与自然追问。** 原话保留眼位、朝向和采样时间。`observe` 可用 `hit` 只查确切命中，也可用 `openings` 搜索洞口候选。玩家仅聊天时保留待答问题。玩家给出新指向后，指定挖掘可携带原问题 ID，插件用原话观察核对同一方块再结算。该结算随动作回执进入下一轮。 [收件采样](../plugins/mc/bridge/chat.cjs) · [视线观察](../plugins/mc/bridge/player-focus.cjs) · [待答事项](../plugins/mc/partner_question.cpp)
+- **放置读回。** 单格、门的两格和整处补墙都核对支撑、占用、材料和最终世界状态。批量优先从下往上处理，缺支撑或视线的格可在同一目标内等其他格放好后重试，遇到占位或未核实的放置停止。已完成的回执保留，续补跳过已有正确材料的格。 [游戏放置](../plugins/mc/bridge/placement.cjs) · [回执校验](../plugins/mc/world_protocol.cpp)
+- **取材范围和对象保护。** `dig_block` 固定所指格和实际方块名。寻路格心为真实站位预留距离余量，动手前再读目标和视线。`gather_ground` 用目标物品和库存计算实际缺口，按当前版本掉落表寻找允许采掘的裸露地层，并分别核对逐格变化与入包。执行器还登记本次配对世界内已验收的格、门和支撑。切换任务后，普通采掘入口仍使用这份登记。 [取材判定](../plugins/mc/bridge/collection.cjs) · [对象保护](../plugins/mc/bridge/built-objects.cjs)
 - **渡水。** 游戏执行器根据真实物理帧读回游动、离开水域及站稳干岸。跟随目标在干岸时，达到距离且自身也在干地才算靠近。固定站位有干地条件时，同样经过到达复核。两种移动共用禁止采掘搭路的寻路策略，回执带实际位置和渡水次数。[渡水读回](../plugins/mc/bridge/navigation.cjs) · [持续跟随](../plugins/mc/bridge/follow.cjs)
 
 ## 当前边界
 
-信箱去重窗口、局内任务和业务确认驻留进程内。局内 Trace 写本地证据并按运行关联。桌面通过值副本读取状态，房间生产者和伙伴面板按桌面方案接入。原生 Hook 在宿主线程同步返回，活动任务通过 `dfy.activity` 推进。Agent 宿主审批和 MC 业务确认有各自的状态和生命周期。[运行诊断](../agent/diagnostic_snapshot.cpp) · [MC 交互方案](mc-companion-development-plan.md) · [桌面主面板方案](main-agent-room-development-plan.md)
+信箱去重窗口、局内任务、建造对象登记和业务确认驻留进程内。对象登记按配对世界及维度重置。局内 Trace 写本地证据并按运行关联。通用 Agent、信箱和动作让出 Hook 由本体提供。应用层伙伴面板和委托入口目前仍适配 `mc.partner.*` 消息。原生 Hook 在宿主线程同步返回，活动任务通过 `dfy.activity` 推进。Agent 宿主审批和 MC 业务确认各有状态和生命周期。[运行诊断](../agent/diagnostic_snapshot.cpp) · [应用层伙伴适配](../app/companion_partner.cpp) · [MC 交互方案](mc-companion-development-plan.md)
 
 ## 事件注册与解析
 
@@ -237,7 +237,7 @@ MC 子 Agent 的普通追问默认由插件作为局内对话投递。玩家可�
 
 ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠道，宿主按运行入口报告能呈现和接收答复的终端渠道。主 Agent 的 `ask` 工具只枚举可用渠道，实际调用时复核。网页陪玩宿主由后台管道启动，MC 问题只有游戏渠道。渠道实际呈现后，在答复截止前接纳配对的第一份有效答复。直接路径把结果送回原插件入箱。主 Agent 路径把结果放入原主信箱，由 `mail_reply` 转发。已接纳的答复在本次宿主运行内跨越答复截止继续保留，直至同一插件实例按原身份确认收件。Trace 分别记录答复接纳、信箱入队和 `interaction.acknowledged`。普通信件可作为上下文入轮，提问工具仅在对应的提问信件回合中开放。[ASK](../app/ask.cpp) · [分流和回信](../app/interaction_routes.cpp)
 
-采集与放置共享 MC 的原候选确认。局内确认可由插件自行处理，交给主 Agent 的确认复用上述 ASK。原候选的确认窗口为 25 秒。局内回合的工具先返回待办编号，后续新消息随 `pendingApproval` 装入上下文。子 Agent 可在重读库存后用 `withdraw_confirmation` 撤回已无必要的采集。同一候选在取消或超时后仍需要重新确认，普通动作与预输入均执行该检查。MC 插件收件时按候选时限、玩家、世界、游戏游标和任务修订裁定，候选失效也确认收件，Trace 将其标为 `stale`。动作在角色可用时交给游戏执行器复查现场与参数。未执行的终态经 `approvalResult` 返回，执行后的实际读回经 `finishedWork` 返回。Agent 运行时的工具权限审批处理自己的候选、修订和调用权限。[MC 动作确认](../plugins/mc/partner_confirm.cpp) · [宿主审批](../agent/confirmation.cpp)
+采集与放置共享 MC 的原候选确认。局内确认由插件持有，游戏发言真实送达后识别玩家答复。交给主 Agent 的确认复用上述 ASK。局内回合先返回待办编号，后续新消息随 `pendingApproval` 装入上下文。子 Agent 可在重读库存后用 `withdraw_confirmation` 撤回已无必要的采集。MC 插件按候选时限、玩家、世界、游戏游标和任务修订裁定，候选失效也确认收件，Trace 将其标为 `stale`。动作在角色可用时交给执行器复查现场与参数。未执行的终态经 `approvalResult` 返回，执行后的实际读回经 `workSettlement` 返回。[MC 动作确认](../plugins/mc/partner_confirm.cpp) · [宿主审批](../agent/confirmation.cpp)
 
 主侧结果信件按原消息序号和实际接纳它的回合绑定 `mail_reply({})`。模型的结构化工具调用经过通用执行器后接纳转发意图，Trace 记作 `reply.intent`。主回合已退出而尚未提交意图时，原答复进入待复审，用户调用 `/mail review` 可再次取件。复审信件使用被动类别。[回信工具](../app/mail_reply_tool.cpp) · [复审与意图处理](../app/interaction_routes.cpp)
 
@@ -257,7 +257,7 @@ ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠�
 | 文本入轮 → 请求发出 | 可改写普通输入和模型请求的系统指令字段，可阻断模型请求。 |
 | 模型返回 → 工具候选 | 可改写模型文本和普通工具参数。绑定 `ask`、`mail_reply` 的回合保留原工具参数。 |
 | 工具候选 → 实际启动 | 按最终参数授权、校验和审批。控制 Hook 可拒绝或要求确认。 |
-| 工具读回 → 下一步 | 控制 Hook 可阻断后续运行。宿主记录已经发生的效果及原回执。 |
+| 工具读回 → 下一步 | 控制 Hook 可阻断后续运行。原子会话所有者还可在下一次模型请求处让出回合，由原插件决定何时提交新一轮。宿主记录效果和原回执，离线回放复现该让出边界。 |
 | 最终文本 → 可见回复 → 回合实际退出 | 可改写可见回复，原会话历史独立保存。实际退出只读观察。 |
 
 系统阶段用 `dfy.hook.transition@1`，回合控制和字段改写沿用 `dfy.hooks@1` 与 `dfy.hook.text@1`。回合字段的独立提案基于原值，不同结果产生冲突。声明接续且依赖先前改写者的处理器可读到前一结果。只读观察异常与业务状态独立，Trace 可记录系统观察的版本和异常数。[C ABI](../sdk/include/dafeiyu/hook_abi_v2.h) · [宿主顺序表](../plugins/runtime/manager.cpp) · [正式循环](../agent/run_loop.cpp)

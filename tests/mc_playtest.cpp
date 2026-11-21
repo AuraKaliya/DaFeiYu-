@@ -8,6 +8,12 @@
 #include <nlohmann/json.hpp>
 
 namespace {
+// 从唯一结算对象读取主工作回执，兼容组内还有未执行的后继。
+const nlohmann::json& primary_receipt(const nlohmann::json& input) {
+    const auto& settlement = input.at("workSettlement");
+    return settlement.at("receipts").at(settlement.at("primary").get<std::size_t>());
+}
+
 // 体验服用已授权的单一查看参数调用正式工具，游戏事实只取自插件回执。
 dfy::model::Response sample_turn(const dfy::model::Request& request) {
     using namespace dfy::model;
@@ -128,7 +134,7 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "motion.finished") {
-            const auto& work = input.at("finishedWork");
+            const auto& work = primary_receipt(input);
             if (work.at("skill") == "move") return {{Role::assistant,R"({"internal":"replacement finished"})"}};
             if (work.at("skill") != "follow" || work.at("order") != 2 || work.at("result").at("status") != "interrupted")
                 throw std::runtime_error("follow probe: actual exit missing from the task");
@@ -277,7 +283,7 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
     record_input(root,input);
     if (request.messages.size() != 2) throw std::runtime_error("wall probe: older raw context was sent again");
     if (input.at("trigger") == "motion.finished") {
-        const auto& finished = input.at("finishedWork");
+        const auto& finished = primary_receipt(input);
         if (gap_only && finished.at("skill") == "move") return check_arrival(finished.at("result"));
         if (finished.at("skill") == "place" && finished.at("result").value("placed",false) &&
             input.at("task").at("goal") == "continue existing two-layer dirt wall and door") return plan_door();
@@ -349,8 +355,8 @@ dfy::model::Response door_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "skills.expanded" && !input.contains("activeMotion") &&
             std::ranges::any_of(request.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); }))
             return call("observe",{{"around","self"},{"block","oak_door"}});
-        if (input.at("trigger") == "motion.finished" && input.at("finishedWork").at("skill") == "place" &&
-            input.at("finishedWork").at("result").at("placed") == true)
+        if (input.at("trigger") == "motion.finished" && primary_receipt(input).at("skill") == "place" &&
+            primary_receipt(input).at("result").at("placed") == true)
             return call("reply",{{"text","门已经装到你指的缺口了。"}});
         if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
             return call("observe",{{"message",2}});
@@ -392,8 +398,8 @@ dfy::model::Response materials_sample(const dfy::model::Request& request) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "skills.expanded")
             return call("collect","wall",{{"block","dirt"},{"count",1},{"x",2},{"y",-59},{"z",-3}});
-        if (input.at("trigger") == "motion.finished" && input.at("finishedWork").at("skill") == "collect") {
-            const auto& result = input.at("finishedWork").at("result");
+        if (input.at("trigger") == "motion.finished" && primary_receipt(input).at("skill") == "collect") {
+            const auto& result = primary_receipt(input).at("result");
             if (result.at("status") != "blocked") throw std::runtime_error("materials probe: scope or partial receipt lost");
             if (result.at("changes").empty()) return call("collect","ground_collect",{{"block","dirt"},{"count",2}});
             if (result.at("changes").size() == 1) return call("observe","observe",Json::object());
@@ -458,7 +464,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             return call("reply",{{"text","下面两格补好了，上面有块石头挡着。"}});
         }
         if (input.at("trigger") == "motion.finished") {
-            const auto& work = input.at("finishedWork");
+            const auto& work = primary_receipt(input);
             const auto& settlement = input.at("workSettlement");
             if (settlement.at("invocation") != work.at("invocation") ||
                 std::ranges::find(settlement.at("receipts"),work) == settlement.at("receipts").end())
@@ -506,8 +512,10 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         if (text == "验收错误依赖。") {
             const auto cycle = Json::array({step("a","observe",Json::object(),{"b"}),step("b","observe",Json::object(),{"a"})});
             const auto missing = Json::array({step("a","observe",Json::object(),{"b"})});
+            const auto incompatible = Json::array({step("move","move",{{"place","player"}},{"collect"})});
             return {{Role::assistant,"",{use("cycle","queue_actions",{{"operation","plan"},{"steps",cycle}}),
-                use("missing","queue_actions",{{"operation","plan"},{"steps",missing}})}},FinishReason::tool_calls};
+                use("missing","queue_actions",{{"operation","plan"},{"steps",missing}}),
+                use("incompatible","queue_actions",{{"operation","append"},{"steps",incompatible}})}},FinishReason::tool_calls};
         }
         if (text == "那你在地上挖四个泥土，把墙补了") {
             if (input.at("task").at("target").at("message") != 8 || input.at("taskPlan").at("status") != "blocked")

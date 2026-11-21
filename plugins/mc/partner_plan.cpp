@@ -52,7 +52,8 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (!invocation || (plan_ && plan_->active) || !queued_.empty() || (motion_ && motion_->skill != "follow"))
         return {{"status","busy"}};
     const auto& steps = arguments.at("steps");
-    if (!steps.is_array() || steps.empty() || steps.size() > 4) return {{"status","invalid_plan"}};
+    if (arguments.contains("work") || !steps.is_array() || steps.empty() || steps.size() > 4)
+        return {{"status","invalid_plan"}};
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
     for (const auto& step : steps) {
         auto id = step.at("id").get<std::string>();

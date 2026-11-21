@@ -121,7 +121,7 @@ int wmain(int argc, wchar_t** argv) {
             if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"collection finished"})"}};
             const auto body = Json::parse(last.content);
             const auto expanded = body.at("trigger") == "skills.expanded";
-            if (body.contains("finishedWork") || body.contains("approvalResult") || (!expanded && body.at("events").empty()))
+            if (body.contains("workSettlement") || body.contains("approvalResult") || (!expanded && body.at("events").empty()))
                 return {{Role::assistant,R"({"internal":"candidate settled"})"}};
             const auto& event = body.at(expanded ? "recentEvents" : "events").back();
             if (event.at("sequence") != 2) return {{Role::assistant,R"({"internal":"no game action"})"}};

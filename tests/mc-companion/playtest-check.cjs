@@ -147,8 +147,11 @@ async function checkPlayer(fixture, mode) {
       await until(() => readRows(fixture, 'game-actions.jsonl').some(row => row.skill === 'collect'), '实际采集退出');
       await until(() => {
         const trace = readRows(fixture, 'trace/events.jsonl');
-        const followup = trace.find(row => row.kind === 'model.prepared' && row.input.messages.at(-1).role === 'user' &&
-          JSON.parse(row.input.messages.at(-1).content).finishedWork?.skill === 'collect');
+        const followup = trace.find(row => {
+          if (row.kind !== 'model.prepared' || row.input.messages.at(-1).role !== 'user') return false;
+          const work = JSON.parse(row.input.messages.at(-1).content).workSettlement;
+          return work?.receipts[work.primary]?.skill === 'collect';
+        });
         return followup && trace.some(row => row.kind === 'run.exited' && row.session === followup.session && row.run === followup.run);
       }, '原采集回执已交给后续回合');
       player.chat('这回带我往前走走');
@@ -369,8 +372,9 @@ async function checkFillFour(fixture, player, whispers, combined) {
     }
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','dirt','dirt']);
     player.chat('验收错误依赖。');
-    await until(() => traceRows().filter(row => row.kind === 'tool.exited' && ['cycle','missing'].includes(row.callId) &&
-      JSON.parse(row.output).status === 'invalid_plan').length === 2, '循环和缺失依赖在调度前拒绝');
+    await until(() => traceRows().filter(row => row.kind === 'tool.exited' &&
+      ['cycle','missing','incompatible'].includes(row.callId) && JSON.parse(row.output).status === 'invalid_plan').length === 3,
+    '循环、缺失依赖和旧队列误用在调度前拒绝');
   }
   const trace = traceRows();
   const receipts = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
