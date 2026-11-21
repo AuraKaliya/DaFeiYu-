@@ -132,6 +132,38 @@ void trace_rewrites(const fs::path& run) {
         "replay lost response rewrite or effective tool arguments");
 }
 
+// 验证优先取件有界且接纳失败保留原消息。
+// 步骤：填入两档队列 → 核对跨档配额 → 模拟接纳异常并重取。
+void priority_mailboxes(const fs::path& run) {
+    using namespace dfy::app;
+    using namespace dfy::events;
+    Application application({},run/"priority-plugins",run/"priority-user",dfy::model::Backend{
+        [](const auto&,const auto&) { throw std::logic_error("priority fixture should not submit a model"); return dfy::model::Response{}; }});
+    const auto network = std::make_shared<Mailboxes>(MailboxLimits{4,8,24,512});
+    const auto owner = next_domain(), source = next_domain();
+    const auto regular = network->open(owner,source), high = network->open(owner,source);
+    MailboxIntake intake({network,owner},application.conversation());
+    std::vector<MailboxId> seen;
+    bool reject_once = false;
+    const MailboxCategory categories[]{{"fixture.note",1}};
+    const auto review = [&](const MailboxDelivery& item) -> std::optional<std::string> {
+        if (reject_once) { reject_once = false; throw std::runtime_error("fixture admission failed"); }
+        seen.push_back(item.mailbox);
+        return {};
+    };
+    intake.watch(regular,categories,review);
+    intake.watch(high,categories,review,MailboxPriority::high);
+    const auto note = mailbox_text("fixture.note",1,"note",512);
+    network->deliver_next(source,regular,note);
+    for (unsigned i = 0; i < 4; ++i) network->deliver_next(source,high,note);
+    for (unsigned i = 0; i < 5; ++i) check(intake.advance() == MailboxIntakeResult::handled,"mail was not handled");
+    check(seen == std::vector{high,high,high,regular,high},"priority or fairness order differs");
+    network->deliver_next(source,high,note);
+    reject_once = true;
+    check(intake.advance() == MailboxIntakeResult::rejected && network->front(owner,high) &&
+        intake.advance() == MailboxIntakeResult::handled && !network->front(owner,high),"failed admission lost mail");
+}
+
 // 验证房间信箱与直接对话独立，自动和主动审查共用分类边界。
 // 步骤：投递环境变化及被点名事件 → 验证唤醒模式 → 核对受信来源及模型请求。
 void room_mailbox(const fs::path& run, bool automatic) {
@@ -177,6 +209,7 @@ int wmain(int argc, wchar_t** argv) {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
         shared_application(run);
         trace_rewrites(run);
+        priority_mailboxes(run);
         room_mailbox(run,true);
         room_mailbox(run,false);
         auto store = std::make_shared<dfy::events::EventStore>(64,64);
