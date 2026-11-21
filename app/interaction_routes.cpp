@@ -142,9 +142,10 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     if (request && request->spec.channel == "terminal" && !terminal_available_) asks_.cancel(exchange.ask,exchange.origin.owner);
     const bool pending = request && (request->phase == AskPhase::presenting || request->phase == AskPhase::waiting);
     if (pending && (exchange.sent || request->spec.channel == "terminal")) return false;
-    const bool to_main = request && !pending && exchange.main_box.value && !exchange.reply_requested;
-    if (to_main && exchange.result_queued) return false;
-    const char* completion = exchange.origin.mailbox.flags & DFY_V2_MAIL_WAKE ? "interaction.ask.completed" : "interaction.ask.completed.passive";
+    const bool to_main = request && !pending && exchange.main_box.value && exchange.reply != ReplyState::requested;
+    if (to_main && exchange.reply != ReplyState::pending && exchange.reply != ReplyState::retry) return false;
+    const bool wake = exchange.reply != ReplyState::retry && (exchange.origin.mailbox.flags & DFY_V2_MAIL_WAKE);
+    const char* completion = wake ? "interaction.ask.completed" : "interaction.ask.completed.passive";
     const char* category = pending ? "interaction.ask.present" : to_main ? completion :
         exchange.main_box.value ? "interaction.mail.reply" : "interaction.ask.result";
     Json message{{"ask",exchange.ask},{"item",exchange.item},{"revision",exchange.revision},{"recipient",exchange.question->recipient},
@@ -160,11 +161,12 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     try {
         const auto box = to_main ? exchange.main_box : inbox;
         const auto receipt = post(to_main ? exchange.origin.owner : mail_.identity,box,category,1,message.dump());
+        if (to_main) exchange.main_result = receipt.event;
         if (log_) log_->append("interaction.delivered",{{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},
             {"event",exchange.origin.id.sequence},{"item",exchange.item},{"category",category},{"mailbox",box.value},
             {"message",receipt.event.sequence},{"body",message}});
     } catch (const std::length_error&) { return false; }
-    if (to_main) exchange.result_queued = true;
+    if (to_main) exchange.reply = ReplyState::queued;
     else if (pending) exchange.sent = true;
     else exchange.plugin_queued = true;
     return false;
@@ -235,7 +237,7 @@ events::MailboxId InteractionRoutes::main_box(const plugins::RoutedEvent& origin
                 return std::string(wire);
             },origin.mailbox.flags & DFY_V2_MAIL_HIGH ? MailboxPriority::high : MailboxPriority::normal,
             [this](const MailboxDelivery& delivery, agent::RunOptions& options) { configure_main(delivery,options); },
-            [this] { return auto_wake_; });
+            [this] { return auto_wake_; },[this](const MailboxDelivery& delivery, agent::RunId run) { main_accepted(delivery,run); });
     } catch (...) {
         main_boxes_.erase(origin.owner);
         mail_.network->close(mail_.identity,box);
@@ -250,41 +252,83 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
     auto* exchange = original(delivery);
     if (!exchange) return;
     const auto category = delivery.event.payload->descriptor()->name();
-    const bool reply = category == "interaction.ask.completed" || category == "interaction.ask.completed.passive";
     const auto id = exchange->origin.id;
-    constexpr std::string_view ask_tool = "interaction/ask", reply_tool = "interaction/reply";
-    const std::string tool(reply ? reply_tool : ask_tool);
-    model::ToolDefinition definition{"mail_reply","Return the original ASK result to the plugin that asked the question.",
-        R"({"type":"object","properties":{},"additionalProperties":false})"};
-    if (!reply) {
-        const auto channels = available_channels(exchange->question->channel);
-        if (channels.empty()) return;
-        auto schema = Json::parse(R"({"type":"object","properties":{"channel":{"type":"string"}},"required":["channel"],"additionalProperties":false})");
-        schema["properties"]["channel"]["enum"] = channels;
-        definition = {"ask","Ask the original question using an available channel.",schema.dump()};
+    if (category == "interaction.ask.completed" || category == "interaction.ask.completed.passive") {
+        if (exchange->reply != ReplyState::queued || exchange->main_result != delivery.event.id) return;
+        main_run_tools_ = bind_mail_reply(mail_.identity,{id,delivery.event.id,exchange->origin.owner,exchange->ask,exchange->item,exchange->revision},
+            [this](const auto& binding, const auto& invocation) { request_reply(binding,invocation); },options);
+        return;
     }
+    const std::string tool = "interaction/ask";
+    const auto channels = available_channels(exchange->question->channel);
+    if (channels.empty()) return;
+    auto schema = Json::parse(R"({"type":"object","properties":{"channel":{"type":"string"}},"required":["channel"],"additionalProperties":false})");
+    schema["properties"]["channel"]["enum"] = channels;
     auto catalog = std::make_shared<agent::ToolCatalog>(1);
-    catalog->add({tool,mail_.identity,1,std::move(definition),true},
-        // 只推进原收件事项，模型无法自填答复或改写回信地址。
-        [this,id,reply](const agent::ToolInvocation& invocation) {
+    catalog->add({tool,mail_.identity,1,{"ask","Ask the original question using an available channel.",schema.dump()},true},
+        // 在原事件身份下核对并开启提问。
+        [this,id](const agent::ToolInvocation& invocation) {
             auto* current = find(id);
             if (!current || !destination(current->origin).value) throw std::invalid_argument("interaction: original request unavailable");
-            if (reply) {
-                if (!current->result_queued) throw std::invalid_argument("interaction: answer has not arrived");
-                current->reply_requested = true;
-            } else open_ask(*current,Json::parse(invocation.call.arguments).at("channel"));
+            open_ask(*current,Json::parse(invocation.call.arguments).at("channel"));
             return agent::completed_tool({true,agent::ToolEffect::applied,
-                Json{{"ask",current->ask},{"status",reply ? "reply_accepted" : "awaiting_answer"}}.dump(),agent::ToolError::none});
+                Json{{"ask",current->ask},{"status","awaiting_answer"}}.dump(),agent::ToolError::none});
         });
     options.tools = catalog->snapshot(std::span(&tool,1),true);
-    options.system_instructions += reply ? " 本轮收到原问题的答复，调用 mail_reply 把原结果送回提问者。" :
-        " 本轮收到子 Agent 求助。你可以用 ask 选择渠道向真人询问。工具返回等待编号后可以结束本轮。";
+    options.system_instructions += " 本轮收到子 Agent 求助。你可以用 ask 选择渠道向真人询问。工具返回等待编号后可以结束本轮。";
     main_run_tools_ = std::move(catalog);
+}
+
+// 固定实际接纳原结果的主回合及其信箱序号。
+void InteractionRoutes::main_accepted(const MailboxDelivery& delivery, agent::RunId run) {
+    for (auto& exchange : exchanges_) if (exchange.reply == ReplyState::queued && exchange.main_result == delivery.event.id &&
+        exchange.main_box == delivery.mailbox && exchange.origin.owner == delivery.sender) {
+        exchange.review_run = run;
+        exchange.reply = ReplyState::reviewing;
+        return;
+    }
+}
+
+// 接纳回合绑定的原回信意图，同一绑定的重复调用复用其结果。
+// 步骤：核对原消息及运行 → 识别重投 → 固定待投递意图并记录调用。
+void InteractionRoutes::request_reply(const ReplyBinding& binding, const agent::ToolInvocation& invocation) {
+    auto* exchange = find(binding.origin);
+    const auto run = invocation.attempt.step.run;
+    if (!exchange || !destination(exchange->origin).value || exchange->origin.owner != binding.owner ||
+        exchange->main_result != binding.source_message || exchange->ask != binding.ask || exchange->item != binding.item ||
+        exchange->revision != binding.revision || exchange->review_run != run ||
+        (exchange->reply != ReplyState::reviewing && exchange->reply != ReplyState::requested))
+        throw std::invalid_argument("interaction: reply binding unavailable");
+    if (exchange->reply == ReplyState::requested) return;
+    exchange->reply = ReplyState::requested;
+    if (log_) log_->append("reply.intent",{{"ask",binding.ask},{"item",binding.item},{"revision",binding.revision},
+        {"eventDomain",binding.origin.domain},{"event",binding.origin.sequence},{"session",run.session},{"run",run.sequence},
+        {"message",binding.source_message.sequence},{"callId",invocation.call.id}});
+}
+
+// 主回合实际退出后，缺少转发意图的原答复转为待复审。
+void InteractionRoutes::settle_review() {
+    if (intake_.busy()) return;
+    main_run_tools_.reset();
+    for (auto& exchange : exchanges_) if (exchange.reply == ReplyState::reviewing) {
+        exchange.reply = ReplyState::deferred;
+        if (log_) log_->append("reply.review_required",{{"ask",exchange.ask},{"eventDomain",exchange.origin.id.domain},
+            {"event",exchange.origin.id.sequence},{"session",exchange.review_run.session},{"run",exchange.review_run.sequence}});
+    }
+}
+
+// 仅在显式审查时将保留的答复放回原信箱。
+// 步骤：结算已退出的回合 → 恢复待复审结果 → 通过原邮箱规则参与本次取件。
+void InteractionRoutes::prepare_review() {
+    if (intake_.busy()) return;
+    settle_review();
+    for (auto& exchange : exchanges_) if (exchange.reply == ReplyState::deferred) exchange.reply = ReplyState::retry;
+    advance();
 }
 
 // 推进已接纳的原提问并清理已撤销的信箱。
 void InteractionRoutes::advance() {
-    if (!intake_.busy()) main_run_tools_.reset();
+    settle_review();
     asks_.advance();
     std::erase_if(exchanges_,[&](auto& exchange) { return advance_exchange(exchange); });
     std::erase_if(main_boxes_,[&](const auto& entry) {

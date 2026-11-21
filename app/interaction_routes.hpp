@@ -2,6 +2,7 @@
 #include "ask.hpp"
 #include "event_dispatch.hpp"
 #include "mailbox_intake.hpp"
+#include "mail_reply_tool.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 
 namespace dfy::app {
@@ -17,6 +18,8 @@ class InteractionRoutes {
     bool dispatch(plugins::RoutedEvent event, EventRoute route);
     // 推进在途呈现与结果投递。
     void advance();
+    // 为一次显式收件恢复等待复审的原答复。
+    void prepare_review();
     // 对原终端提问取一份展示副本。
     std::optional<std::pair<std::uint64_t,AskSpec>> console_question() const;
     // 记录原终端渠道已显示或提交原真人答复。
@@ -26,15 +29,19 @@ class InteractionRoutes {
     // 暂停或恢复已登记插件地址上的自动唤醒。
     void set_auto_wake(bool enabled) noexcept { auto_wake_ = enabled; }
   private:
+    enum class ReplyState { pending, queued, reviewing, deferred, retry, requested };
     struct Exchange {
         plugins::RoutedEvent origin;
         std::uint64_t item, revision, ask = 0;
         agent::ToolTime answer_deadline;
         events::MailboxId main_box{};
-        bool initial_queued = false, sent = false, result_queued = false, reply_requested = false;
+        bool initial_queued = false, sent = false;
         bool plugin_queued = false, acknowledged = false;
         bool unavailable = false;
         std::optional<AskRoute> question;
+        ReplyState reply = ReplyState::pending;
+        events::EventId main_result{};
+        agent::RunId review_run{};
     };
     // 核对原插件及其当前接收地址。
     events::MailboxId destination(const plugins::RoutedEvent& event) const;
@@ -49,6 +56,12 @@ class InteractionRoutes {
     events::MailboxId main_box(const plugins::RoutedEvent& origin);
     // 给当前主回合装配仅绑定原信的提问或回信工具。
     void configure_main(const MailboxDelivery& delivery, agent::RunOptions& options);
+    // 关联真正接纳了原结果的主回合。
+    void main_accepted(const MailboxDelivery& delivery, agent::RunId run);
+    // 接纳同一受信回合提交的原答复转发意图。
+    void request_reply(const ReplyBinding& binding, const agent::ToolInvocation& invocation);
+    // 已退出而缺少意图的回信留待主动复审。
+    void settle_review();
     // 开始同一事项的一次 ASK，可供原生和主 Agent 共用。
     void open_ask(Exchange& exchange, std::string channel);
     // 汇总原事件声明和当前宿主入口共同提供的渠道。

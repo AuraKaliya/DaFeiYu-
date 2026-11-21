@@ -49,7 +49,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool panel = manual || std::wstring_view(argv[3]) == L"partner-route-panel";
         const bool local = std::wstring_view(argv[3]) == L"partner-route-local";
         const bool lose_terminal = std::wstring_view(argv[3]) == L"partner-route-lost-terminal";
+        const bool retry_reply = std::wstring_view(argv[3]) == L"partner-route-retry-reply";
         std::atomic_uint main_calls = 0;
+        std::atomic_uint reply_rounds = 0;
         std::atomic_bool terminal_disconnected = false;
         const auto host_start = std::chrono::steady_clock::now();
         std::atomic_int host_seconds = 0;
@@ -67,13 +69,19 @@ int wmain(int argc, wchar_t** argv) {
                 if (last.role == Role::tool) {
                     if (last.tool_call_id == "lost")
                         return {{Role::assistant,"",{{"present","ask",R"({"channel":"game"})"}}},FinishReason::tool_calls};
+                    if (last.tool_call_id == "forged")
+                        return {{Role::assistant,"",{{"reply","mail_reply","{}"}}},FinishReason::tool_calls};
                     return {{Role::assistant,"routing finished"}};
                 }
                 const auto envelope = Json::parse(last.content);
                 const auto mail = Json::parse(envelope.at("content").get<std::string>());
                 if (routed->name == "mail_reply") {
-                    if (envelope.at("category") != "interaction.ask.completed" || mail.at("answer") != "approve")
+                    const auto round = ++reply_rounds;
+                    const auto category = retry_reply && round > 1 ? "interaction.ask.completed.passive" : "interaction.ask.completed";
+                    if (envelope.at("category") != category || mail.at("answer") != "approve")
                         throw std::runtime_error("main did not receive original answer");
+                    if (retry_reply && round == 1) return {{Role::assistant,"I forwarded the answer."}};
+                    if (retry_reply) return {{Role::assistant,"",{{"forged","mail_reply",R"({"answer":"deny"})"}}},FinishReason::tool_calls};
                     return {{Role::assistant,"",{{"reply","mail_reply","{}"}}},FinishReason::tool_calls};
                 }
                 const auto& context = mail.at("context");
@@ -116,7 +124,7 @@ int wmain(int argc, wchar_t** argv) {
         host.listen_companion(id);
         bool requested_stop = false, delayed = false;
         unsigned manual_wait = 0, reviews = 0;
-        const auto expected_calls = local ? 0u : lose_terminal ? 5u : 4u;
+        const auto expected_calls = local ? 0u : retry_reply ? 6u : lose_terminal ? 5u : 4u;
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(15);
         while (std::chrono::steady_clock::now() < deadline) {
             if (lose_terminal && main_calls && !terminal_disconnected) {
@@ -143,6 +151,9 @@ int wmain(int argc, wchar_t** argv) {
                 if (delayed_review && !delayed) { host_seconds = 30; delayed = true; }
                 else if (host.review_mail() == app::MailboxIntakeResult::submitted) ++reviews;
             }
+            if (retry_reply && main_calls == 3 && !host.conversation().busy() && ++manual_wait == 30 &&
+                host.review_mail() != app::MailboxIntakeResult::submitted)
+                throw std::runtime_error("the original result was unavailable for explicit review");
             if (!requested_stop && state->settled_event == (panel ? 2u : first ? 4u : 3u) &&
                 (local || (main_calls == expected_calls && !host.conversation().busy() && received(host.trace_file(),first || delayed_review)))) {
                 host.stop_companion(id);
@@ -152,6 +163,17 @@ int wmain(int argc, wchar_t** argv) {
                 if (main_calls != expected_calls || (manual && reviews != 2) ||
                     !state->control || state->control->phase != app::ControlPhase::released)
                     throw std::runtime_error("channel, model routing or original game exit not verified");
+                if (retry_reply) {
+                    std::ifstream trace(host.trace_file());
+                    unsigned intents = 0, deferred = 0;
+                    for (std::string line; std::getline(trace,line);) {
+                        const auto row = Json::parse(line);
+                        if (row.at("kind") == "reply.intent" && row.at("callId") == "reply") ++intents;
+                        if (row.at("kind") == "reply.review_required") ++deferred;
+                    }
+                    if (reply_rounds != 2 || intents != 1 || deferred != 1 || manual_wait != 30)
+                        throw std::runtime_error("free text, invalid arguments or automatic retry changed the original intent");
+                }
                 host.conversation().close();
                 if (host.close_plugins() != plugins::ShutdownResult::closed) throw std::runtime_error("game plugin failed to close");
                 return 0;

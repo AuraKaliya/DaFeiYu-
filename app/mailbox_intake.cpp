@@ -7,14 +7,14 @@ namespace dfy::app {
 // 安装收件身份与审查回调，接收方独占唤醒规则。
 // 步骤：核对当前入口 → 查询原绑定 → 固定槽位并发布分类策略。
 void MailboxIntake::watch(events::MailboxId mailbox, std::span<const events::MailboxCategory> wake, MailboxReview review,
-    MailboxPriority priority, MailboxOptions options, std::function<bool()> wake_enabled) {
+    MailboxPriority priority, MailboxOptions options, std::function<bool()> wake_enabled, MailboxAccepted accepted) {
     if (working_ || !review) throw std::invalid_argument("mailbox intake: invalid registration");
     const auto sender = host_.network->sender(host_.identity,mailbox);
     auto slot = std::ranges::find_if(routes_,[&](const auto& route) { return route && route->mailbox == mailbox; });
     if (slot == routes_.end()) slot = std::ranges::find_if(routes_,[](const auto& route) { return !route; });
     if (slot == routes_.end()) throw std::length_error("mailbox intake: capacity exhausted");
     host_.network->wake_on(host_.identity,mailbox,wake);
-    *slot = Route{mailbox,sender,std::move(review),priority,std::move(options),std::move(wake_enabled)};
+    *slot = Route{mailbox,sender,std::move(review),priority,std::move(options),std::move(wake_enabled),std::move(accepted)};
 }
 
 // 按可信信箱处理一件原始事实，记录来源后才交给主 Agent。
@@ -49,6 +49,7 @@ MailboxIntakeResult MailboxIntake::dispatch(const Route& route, const std::strin
         if (route.options) route.options({route.mailbox,route.sender,*event},options);
         const auto result = conversation_.submit(prompt.dump(),std::move(options));
         if (accepted) *accepted = result;
+        if (route.accepted) route.accepted({route.mailbox,route.sender,*event},{result.session,result.turn});
         const auto delivered = host_.network->read(host_.identity,route.mailbox);
         if (log_) {
             log_->mail("mail.received",route.mailbox.value,route.sender,event->id,type->name(),original);

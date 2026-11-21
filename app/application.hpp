@@ -107,7 +107,7 @@ class Application {
     // 读取仍保留的指定子回合结算值。
     std::optional<CompletedTurn> companion_result(agent::RunId run) const;
     // 宿主主动处理已登记的信箱，等待当前主回合退出。
-    MailboxIntakeResult review_mail() { return mailbox_intake_.advance(false); }
+    MailboxIntakeResult review_mail() { interactions_.prepare_review(); return mailbox_intake_.advance(false); }
     // 取得通用 ASK 的终端问题。
     auto console_ask() const { return interactions_.console_question(); }
     // 由具备呈现与回话能力的入口报告终端当前可用性。
