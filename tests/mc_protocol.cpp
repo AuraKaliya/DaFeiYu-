@@ -107,6 +107,25 @@ int main() {
         if (!placed.exited || placed.arrived || !placed.placement_verified || !placed.placement_attempted) return 1;
         receipt["action"]["result"]["blocks"][1]["z"] = 4;
         rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","place",placement); });
+        const Json first{{"x",1},{"y",-60},{"z",3}}, second{{"x",2},{"y",-60},{"z",3}};
+        const auto fill = Json{{"context",source},{"arguments",{{"block","dirt"},{"cells",Json::array({first,second})},
+            {"sourceMessage",1},{"taskRevision",2}}}}.dump();
+        auto blocked = first;
+        blocked.update(Json{{"before","air"},{"block","air"},{"status","blocked"},{"reasonCode","no_support"}});
+        auto complete = second;
+        complete.update(Json{{"before","air"},{"block","dirt"},{"status","placed"}});
+        auto change = second;
+        change.update(Json{{"before","air"},{"after","dirt"}});
+        action = source;
+        action.update(Json{{"skill","fill_target"},{"exited",true},{"result",{{"status","blocked"},{"placementAttempted",true},
+            {"sourceMessage",1},{"taskRevision",2},{"cells",Json::array({blocked,complete})},{"changes",Json::array({change})}}}});
+        receipt["action"] = action;
+        if (!dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill).changed) return 1;
+        receipt["action"]["result"]["cells"][0]["x"] = 2;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill); });
+        receipt["action"] = action;
+        receipt["action"]["result"]["changes"][0]["x"] = 3;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill); });
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

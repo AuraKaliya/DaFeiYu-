@@ -332,6 +332,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
+      if (['place', 'fill_target'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (world.read()?.generation === r.generation) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);

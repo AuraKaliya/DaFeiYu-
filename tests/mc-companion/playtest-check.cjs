@@ -294,17 +294,22 @@ async function checkFillFour(fixture, player, whispers, combined) {
   player.chat('从地上取够泥土，填上 x=3 到 4、y=-60 到 -59、z=-3 的四格，另一处缺口留着。');
   const obstruction = fourCells[2];
   const traceRows = () => readRows(fixture, 'trace/events.jsonl');
+  await until(() => traceRows().some(row => row.kind === 'mail.received' && row.category === 'mc.partner.motion' &&
+    row.body.action.order === source && row.body.action.skill === 'collect' && row.body.status === 'accepted'), '地面取材已接单');
   if (combined) {
-    await until(() => traceRows().some(row => row.kind === 'mail.received' && row.category === 'mc.partner.motion' &&
-      row.body.action.order === source && row.body.action.skill === 'collect' && row.body.status === 'accepted'), '地面取材已接单');
     fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
     fixture.send('setblock '+obstruction.join(' ')+' minecraft:stone');
     await until(() => whispers.includes('下面两格补好了，上面有块石头挡着。'), '按真实部分回执发言');
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','stone','air']);
     assert.equal(fixture.materialCount('dirt'), 2);
+    assert.equal(readRows(fixture, 'game-actions.jsonl').find(row => row.skill === 'fill_target').result.reasonCode, 'occupied');
     fixture.send('setblock '+obstruction.join(' ')+' minecraft:air');
     await until(() => read(obstruction) === 'air', '独立客户端读到遮挡已移除');
     player.chat('石头挪开了，把刚才剩下的补上。');
+  } else {
+    fixture.send('setblock 3 -61 -3 minecraft:air');
+    fixture.send('setblock 2 -60 -3 minecraft:air');
+    await until(() => read([3,-61,-3]) === 'air' && read([2,-60,-3]) === 'air', '首格原有支撑移除');
   }
   await until(() => whispers.includes('四格都补上了，另一处缺口留着。'), '实际补完四格后发言', 45000);
   const actions = readRows(fixture, 'game-actions.jsonl');
@@ -330,6 +335,8 @@ async function checkFillFour(fixture, player, whispers, combined) {
     return { x, y, z, before: present ? 'dirt' : 'air', block: 'dirt', status: present ? 'present' : 'placed' };
   }));
   const applied = mutations.filter(row => row.skill === 'fill_target').flatMap(row => row.result.changes);
+  if (!combined) assert.equal(applied[0].x, 4, '右下格先施工后给左下格提供支撑');
+  applied.sort((a,b) => a.y - b.y || a.x - b.x);
   assert.deepEqual(applied, fourCells.map(([x, y, z]) => ({ x, y, z, before: 'air', after: 'dirt' })));
   for (const [x, y, z] of fourCells) {
     assert.equal(read([x, y, z]), 'dirt');

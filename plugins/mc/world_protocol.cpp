@@ -104,19 +104,24 @@ void verify_fill(const Json& result, const Json& args, bool done) {
     const auto coordinates = [](const Json& a, const Json& b) {
         return a.at("x") == b.at("x") && a.at("y") == b.at("y") && a.at("z") == b.at("z");
     };
-    if (changes.size() > cells.size() || std::ranges::any_of(changes,[&](const auto& change) {
-        return std::ranges::none_of(cells,[&](const auto& cell) { return coordinates(change,cell); });
-    })) throw std::invalid_argument("MC: fill changed a cell outside the receipt");
-    for (std::size_t index = 0; index < cells.size(); ++index) {
-        const auto& cell = cells.at(index);
-        if (!coordinates(cell,target.at(index))) throw std::invalid_argument("MC: fill evidence differs from target");
+    if (!changes.is_array() || changes.size() > cells.size()) throw std::invalid_argument("MC: invalid fill changes");
+    for (const auto& cell : cells) {
+        const auto at_cell = [&](const auto& other) { return coordinates(cell,other); };
+        if (std::ranges::none_of(target,at_cell) || std::ranges::count_if(cells,at_cell) != 1)
+            throw std::invalid_argument("MC: fill evidence differs from target");
         const auto& status = cell.at("status");
-        if (!done && index+1 == cells.size() && status == "blocked") continue;
+        if (!done && status == "blocked") continue;
         if ((status != "placed" && status != "present") || cell.at("block") != block)
             throw std::invalid_argument("MC: unverified fill cell");
-        if (status == "placed" && std::ranges::none_of(changes,[&](const auto& change) {
-            return coordinates(change,cell) && change.at("after") == block;
-        })) throw std::invalid_argument("MC: missing fill readback");
+        if ((status == "placed" && std::ranges::count_if(changes,at_cell) != 1) ||
+            (status == "present" && (cell.at("before") != block || std::ranges::any_of(changes,at_cell))))
+            throw std::invalid_argument("MC: inconsistent fill readback");
+    }
+    for (const auto& change : changes) {
+        const auto cell = std::ranges::find_if(cells,[&](const auto& value) { return coordinates(change,value); });
+        if (cell == cells.end() || cell->at("before") != change.at("before") || cell->at("block") != change.at("after") ||
+            std::ranges::count_if(changes,[&](const auto& value) { return coordinates(change,value); }) != 1)
+            throw std::invalid_argument("MC: fill changed a cell outside the receipt");
     }
 }
 }
