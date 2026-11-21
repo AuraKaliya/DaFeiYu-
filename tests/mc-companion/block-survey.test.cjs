@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { fromGround } = require('../../plugins/mc/bridge/collection.cjs');
+const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 
 // 用最少的坐标运算模拟真实客户端给出的观测中心和样本格。
 class Position {
@@ -129,4 +130,26 @@ test('ground gathering preserves support beneath the bound opening', () => {
   assert.equal(fromGround(bot, support), true);
   assert.equal(fromGround(bot, support, cells), false);
   assert.equal(fromGround(bot, bot.blockAt(new Position(3, -61, -4)), cells), true);
+});
+
+// 普通采集与明确拆改共用多格对象，支撑只能等相依对象移除后释放。
+test('completed objects survive unrelated work and retain multi-cell boundaries', () => {
+  const built = new BuiltObjects();
+  built.bind('world-a', 'overworld');
+  const floor = { x: 3, y: -61, z: -5 };
+  const lower = { ...floor, y: -60 }, upper = { ...floor, y: -59 };
+  const door = [lower, upper].map(position => ({ position }));
+  built.placed([lower, upper]);
+  built.bind('world-a', 'overworld');
+  assert.equal(built.permits(door, false), false);
+  assert.equal(built.permits([{ position: floor }], true), false);
+  assert.equal(built.permits([...door, { position: floor }], true), false);
+  assert.equal(built.permits(door, true), true);
+  built.removed([{ ...lower, before: 'oak_door', after: 'air' }]);
+  assert.equal(built.permits([{ position: floor }], false), false);
+  built.removed([{ ...upper, before: 'oak_door', after: 'air' }]);
+  assert.equal(built.permits([{ position: floor }], false), true);
+  built.placed([floor]);
+  built.bind('world-b', 'overworld');
+  assert.equal(built.permits([{ position: floor }], false), true);
 });

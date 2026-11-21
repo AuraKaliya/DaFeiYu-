@@ -456,6 +456,10 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
         if (text == "先别跟了") return call("stop_motion",{{"work",input.at("following").at("work")}});
         if (text.starts_with("石头挪开了") && input.at("task").at("target").at("message") == 6)
             return call("fill_target",{{"block","dirt"}});
+        if (text == "你站到墙上，先换个目标。")
+            return call("task_update",{{"goal","站到墙上"},{"next","player"},{"collection","visible"},{"target",Json::object()}});
+        if (text == "试一下普通采掘入口。")
+            return call("collect",{{"block","dirt"},{"count",1},{"x",3},{"y",-59},{"z",-3}});
         if (text.starts_with("从地上取够泥土"))
             return call("observe",{{"sources",{"message","self"}},{"message",events.back().at("sequence")},{"radius",5},{"verify",cells},
                 {"samples",{{"count",2},{"intervalMs",100}}}});
@@ -481,6 +485,8 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 {"target",{{"message",origin.at("message")},{"candidate",gap->at("id")}}}});
         }
         if (last.tool_call_id == "task_update") {
+            if (result.at("task").at("goal") == "站到墙上")
+                return call("dig_block",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
             if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
             return call("skills",{{"categories",{"dig_break","query"}}});
         }

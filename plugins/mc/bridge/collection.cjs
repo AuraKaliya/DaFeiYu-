@@ -49,15 +49,19 @@ function pickupStand(bot, point) {
   return null;
 }
 
-// 记录实际变化格，门的一次采掘可能同时更改两个服务端方格。
-// 步骤：展开可核对的门伴随格 → 捕获破坏前名称 → 在写入完成后逐格比较。
-function collectReadback(bot, block) {
+// 展开这次破坏会直接影响的格，门的上下两格共用一个动作。
+function affectedByDig(bot, block) {
   const cells = [block];
   if (block.name.endsWith('_door')) {
     const half = block.getProperties().half;
     const other = bot.blockAt(block.position.offset(0, half === 'upper' ? -1 : 1, 0));
     if (other?.name === block.name && other.getProperties().half !== half) cells.push(other);
   }
+  return cells;
+}
+
+// 记录实际变化格，并对同一批已核验的目标逐格读回。
+function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
   return async changes => {
     const pending = new Set(cells);
     for (let attempt = 0; attempt < 5; ++attempt) {
@@ -75,4 +79,4 @@ function collectReadback(bot, block) {
   };
 }
 
-module.exports = { fromGround, collectReadback, pickupStand, nearbyDrop };
+module.exports = { fromGround, affectedByDig, collectReadback, pickupStand, nearbyDrop };

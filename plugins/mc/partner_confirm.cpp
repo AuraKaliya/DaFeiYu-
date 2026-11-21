@@ -33,6 +33,15 @@ std::string confirmation_question(std::string_view skill, const Json& args) {
         const auto& count = args.at("count");
         if (!count.is_number_unsigned() || count == 0 || count > 32)
             throw std::invalid_argument("MC confirmation: invalid collection count");
+        if (args.value("editBuilt",false)) {
+            if (count != 1 || args.value("source","") == "ground")
+                throw std::invalid_argument("MC confirmation: built edit requires one specific block");
+            for (const auto axis : {"x","y","z"}) if (!args.at(axis).is_number_integer() ||
+                std::abs(args.at(axis).get<double>()) > 30000000)
+                throw std::invalid_argument("MC confirmation: invalid built edit coordinate");
+            return "是否拆改 ("+args.at("x").dump()+", "+args.at("y").dump()+", "+args.at("z").dump()+") 的 "+block+
+                (block.ends_with("_door") ? "（整扇门）？" : "？");
+        }
         return "是否采集 "+count.dump()+" 块 "+block+"？";
     }
     if (skill == "place") {
@@ -104,7 +113,10 @@ std::optional<std::string> PartnerLoop::confirm_result(std::uint64_t request) co
     const auto& item = *confirmation_;
     if (item.decision.is_null() || (presentation_ && presentation_->request == request)) return {};
     if ((item.ask_game && !item.presented) || !confirmation_context_current(item.approved_order)) return std::string{};
-    return Json{{"context",{{"generation",item.world},{"order",item.approved_order}}},{"arguments",item.arguments}}.dump();
+    auto args = item.arguments;
+    if (args.value("editBuilt",false)) args["approvedBuiltEdit"] = true;
+    args.erase("editBuilt");
+    return Json{{"context",{{"generation",item.world},{"order",item.approved_order}}},{"arguments",std::move(args)}}.dump();
 }
 
 // 记录第一份通过身份、状态与时效核验的裁定。

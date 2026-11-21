@@ -237,11 +237,16 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
         job.arguments = text(call->arguments);
-        if (exact_dig || gather_ground) {
+        if (game_skill == "collect") {
             auto input = nlohmann::json::parse(job.arguments);
             auto& args = input.at("arguments");
-            args["count"] = exact_dig ? nlohmann::json(1) : args.at("requiredStock");
-            args["source"] = exact_dig ? "visible" : "ground";
+            if (args.value("editBuilt",false) && (!exact_dig || !args.contains("approval")))
+                return report(DFY_V2_INVALID_ARGUMENT,error);
+            args.erase("approvedBuiltEdit");
+            if (exact_dig || gather_ground) {
+                args["count"] = exact_dig ? nlohmann::json(1) : args.at("requiredStock");
+                args["source"] = exact_dig ? "visible" : "ground";
+            }
             job.arguments = input.dump();
         }
         if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);

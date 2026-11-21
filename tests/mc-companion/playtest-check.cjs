@@ -330,6 +330,19 @@ async function checkFillFour(fixture, player, whispers, combined) {
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
   assert.deepEqual(whispers, [...(combined ? ['嗯，跟着呢。','下面两格补好了，上面有块石头挡着。'] : []), '四格都补上了，另一处缺口留着。']);
+  if (combined) {
+    for (const [index, line] of ['你站到墙上，先换个目标。', '试一下普通采掘入口。'].entries()) {
+      const order = source + 2 + index;
+      player.chat(line);
+      const attempted = await until(() => readRows(fixture, 'game-actions.jsonl').find(row =>
+        row.order === order && row.skill === 'collect'), '切换任务后检查采掘入口');
+      assert.equal(attempted.result.status, 'blocked');
+      assert.match(attempted.result.reason, /已验收的对象/);
+      assert.deepEqual(attempted.result.changes, []);
+      await until(() => fixture.settled >= order, '受阻原话已处理');
+    }
+    assert.deepEqual(fourCells.map(read), ['dirt','dirt','dirt','dirt']);
+  }
   const trace = traceRows();
   const knowledge = trace.find(row => row.kind === 'tool.exited' && row.callId === 'knowledge');
   const receipts = trace.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&

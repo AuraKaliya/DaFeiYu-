@@ -6,7 +6,8 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observeWindow } = require('./partner-observe.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
+const { fromGround, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
+const { BuiltObjects } = require('./built-objects.cjs');
 const { dryStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
@@ -92,7 +93,7 @@ async function pickup(bot, point, known, check, result) {
 
 // 逐块执行本次采集，指定坐标时保持目标，实际破坏与背包增减分别取证。
 // 步骤：核对材料和目标 → 走近并选择可采工具 → 读回方块 → 走近掉落并记录背包变化。
-async function collect(bot, args, check, result) {
+async function collect(bot, args, check, result, built) {
   const type = blockType(bot, args.block);
   const fixed = ['x', 'y', 'z'].some(k => Object.hasOwn(args, k)) ? targetPoint(bot, args) : null;
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
@@ -106,13 +107,17 @@ async function collect(bot, args, check, result) {
   if (expected) result.stock = { item: expected, before: before[expected] ?? 0, required: args.requiredStock };
   result.broken = 0;
   result.changes = [];
-  const allowed = block => args.source !== 'ground' || fromGround(bot, block, args.protectedCells);
+  const approved = Boolean(fixed && args.source !== 'ground' && args.approvedBuiltEdit === true);
+  const allowed = block => built.permits(affectedByDig(bot, block), approved) &&
+    (args.source !== 'ground' || fromGround(bot, block, args.protectedCells));
   try {
     for (let n = 0; n < missing; ++n) {
       check();
       const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
       const block = fixed ? bot.blockAt(fixed) : visible(bot, type).find(allowed);
+      if (block?.type === type.id && !built.permits(affectedByDig(bot, block), approved))
+        throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!block || block.type !== type.id || !block.diggable || !allowed(block))
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
       const pos = block.position;
@@ -131,8 +136,10 @@ async function collect(bot, args, check, result) {
       if (!here || here.type !== type.id || !here.diggable) throw new Error('到达后目标方块已经变化');
       if (!here.canHarvest(bot.heldItem?.type)) throw new Error('没有可采掘这个方块的工具');
       if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position)) throw new Error('实际站位没有安全的采掘视线');
+      const affected = affectedByDig(bot, here);
+      if (!built.permits(affected, approved)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
-      const readback = collectReadback(bot, here);
+      const readback = collectReadback(bot, here, affected);
       const known = new Set(Object.keys(bot.entities));
       try { await bot.dig(here, true); }
       finally { await readback(result.changes); }
@@ -163,6 +170,7 @@ function partnerService(bot, world, inbox, places, owner) {
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
   const observations = new Set();
+  const built = new BuiltObjects();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
     return !closed && world.read()?.generation === context.generation && inbox.get(context.generation, context.order) &&
@@ -290,8 +298,12 @@ function partnerService(bot, world, inbox, places, owner) {
       } else if (r.skill === 'follow') {
         prepareWalking(bot);
         await followPlayer(bot, owner, args.distance ?? 3, check, result);
-      } else if (r.skill === 'collect') await collect(bot, args, check, result);
+      } else if (r.skill === 'collect') {
+        built.bind(r.generation, bot.game.dimension);
+        await collect(bot, args, check, result, built);
+      }
       else if (r.skill === 'place' || r.skill === 'fill_target') {
+        built.bind(r.generation, bot.game.dimension);
         if (args.sourceMessage !== undefined) {
           if (args.sourceMode === 'approach') {
             const source = inbox.get(r.generation, args.sourceMessage)?.sceneAtMessage;
@@ -313,6 +325,14 @@ function partnerService(bot, world, inbox, places, owner) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
     } finally {
+      if (world.read()?.generation === r.generation) {
+        if (r.skill === 'collect') built.removed(result.changes ?? []);
+        if (r.skill === 'place' && result.placed) built.placed(result.blocks);
+        if (r.skill === 'fill_target') {
+          for (const cell of result.cells.filter(cell => cell.status === 'placed' || cell.status === 'present'))
+            built.placed([cell]);
+        }
+      }
       r.exited = true;
       if (['move', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
         previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
