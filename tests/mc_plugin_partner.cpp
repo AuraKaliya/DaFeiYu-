@@ -88,6 +88,37 @@ void verify_target_evidence() {
         args.at("sourceMessage") != 7) throw std::runtime_error("verified approach lost its original placement provenance");
 }
 
+// 重放实机的候选、水平误写和后来的简要观察，核对实际墙面方格。
+// 步骤：登记第 8 条原话的竖墙 → 拒绝两种水平提交 → 用候选绑定竖墙。
+void verify_opening_geometry() {
+    using Json = nlohmann::json;
+    using dfy::mc::PartnerTask;
+    const Json anchor{{"dimension","overworld"},{"position",{{"x",3.67},{"y",-60},{"z",-6.97}}}};
+    const Json gap{{"id","2,-60,-5:x"},{"x",2},{"y",-60},{"z",-5},{"axis","x"},{"width",2},{"height",2}};
+    const Json floor = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
+        {{"x",2},{"y",-60},{"z",-4}},{{"x",3},{"y",-60},{"z",-4}}});
+    auto wall = floor;
+    for (auto index : {2,3}) { wall[index]["z"] = -5; wall[index]["y"] = -59; }
+    PartnerTask task;
+    const auto observe = [&](Json focus) {
+        task.record({{"skill","observe"},{"result",{{"status","done"},{"anchor",{{"message",8}}},
+            {"sampledAtMs",20},{"playerFocus",std::move(focus)}}}});
+    };
+    observe({{"choice",gap.at("id")},{"candidates",Json::array({gap})}});
+    observe({{"hit",nullptr}});
+    Json update{{"goal","补墙"},{"next","continue"},{"target",{{"message",8},{"candidate",gap.at("id")},{"cells",floor}}}};
+    if (task.update(update,anchor,0,&anchor).at("status") != "invalid_target")
+        throw std::runtime_error("mixed candidate and handwritten coordinates were accepted");
+    update["target"].erase("candidate");
+    const auto conflict = task.update(update,anchor,0,&anchor);
+    if (conflict.at("reason") != "cells_conflict_with_pointed_opening" || conflict.at("cells") != wall || task.revision())
+        throw std::runtime_error("handwritten flat cells overrode the recorded wall");
+    update["target"].erase("cells");
+    update["target"]["candidate"] = gap.at("id");
+    if (task.update(update,anchor,0,&anchor).at("status") != "updated" || task.target_cells() != wall)
+        throw std::runtime_error("wall geometry was lost after hit observation");
+}
+
 // 验证任务修订与授权变化对同一在途计划的影响，保留可离线查看的宿主 Trace。
 // 步骤：提交带依赖的计划 → 在首个动作接纳后更新任务或授权 → 核对原工作结果和后继状态。
 int verify_plan_revision(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
@@ -196,7 +227,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
             return verify_plan_revision(argv[1],argv[2],argv[3]);
-        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); verify_knowledge(); }
+        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); verify_opening_geometry(); verify_knowledge(); }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
         const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");

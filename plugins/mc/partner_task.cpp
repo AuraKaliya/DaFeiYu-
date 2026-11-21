@@ -78,8 +78,10 @@ Json PartnerTask::context() const {
     if (!changes_.empty()) value["worldChanges"] = changes_;
     if (has_target()) {
         value["target"] = target_;
-        const auto original = observations_.find(target_.at("message").get<std::uint64_t>());
-        if (original != observations_.end()) value["targetObservation"] = original->second;
+        const auto message = target_.at("message").get<std::uint64_t>();
+        const auto& source = target_.contains("candidate") ? openings_ : observations_;
+        const auto original = source.find(message);
+        if (original != source.end()) value["targetObservation"] = original->second;
     }
     return value;
 }
@@ -114,10 +116,10 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             if (approach && !(existing && target_.value("approach",false)) &&
                 (player_order != message || target.contains("cells") || target.contains("candidate")))
                 return {{"status","invalid_target"},{"reason","record the original approach before choosing cells"}};
+            const auto original = openings_.find(message);
             if (target.contains("candidate")) {
                 if (target.contains("cells") || approach) return {{"status","invalid_target"},{"reason","choose an original candidate or cells"}};
-                const auto original = observations_.find(message);
-                auto cells = original == observations_.end() ? Json{} : candidate_cells(original->second,target.at("candidate"));
+                auto cells = original == openings_.end() ? Json{} : candidate_cells(original->second,target.at("candidate"));
                 if (cells.is_null()) return {{"status","invalid_target"},{"reason","candidate missing from original message observation"}};
                 target["cells"] = std::move(cells);
             }
@@ -127,6 +129,15 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                     (!anchor->at("position").is_null() && !std::ranges::all_of(cells,[&](const auto& cell) {
                         return cell_near_anchor(cell,anchor->at("position")); })))
                     return {{"status","invalid_target"},{"reason","target cells lack current and original coverage"}};
+                if (!approach && !target.contains("candidate") && original != openings_.end()) {
+                    const auto& choice = original->second.at("playerFocus").at("choice");
+                    if (choice.is_string()) {
+                        const auto expected = candidate_cells(original->second,choice);
+                        if (!expected.is_null() && !std::ranges::is_permutation(expected,cells))
+                            return {{"status","invalid_target"},{"reason","cells_conflict_with_pointed_opening"},
+                                {"candidate",choice},{"cells",expected}};
+                    }
+                }
                 const auto previous = bound_cells_.find(message);
                 if (previous != bound_cells_.end() && !std::ranges::is_permutation(previous->second,cells))
                     return {{"status","invalid_target"},{"reason","original target cells cannot be changed"}};
@@ -203,6 +214,19 @@ void PartnerTask::bind_collection(Json& arguments) const {
     if (target_ready()) arguments["protectedCells"] = target_cells();
 }
 
+// 分别归档最后一次视线和原话首次确定的墙面，简要观察不会覆盖墙面证据。
+// 步骤：更新原话命中 → 固定确切候选 → 回收超出窗口的旧记录。
+void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, const Json& focus) {
+    const Json evidence{{"message",message},{"sampledAtMs",sampled_at},{"playerFocus",focus}};
+    observations_[message] = evidence;
+    if (focus.contains("candidates")) {
+        auto [opening,inserted] = openings_.try_emplace(message,evidence);
+        if (!inserted && !opening->second.at("playerFocus").at("choice").is_string()) opening->second = evidence;
+    }
+    if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+    if (openings_.size() > observation_limit) openings_.erase(openings_.begin());
+}
+
 // 分别保存原话指向、实际方块变化和最近一次动作。
 // 步骤：归档有来源的观察 → 增补逐格变化 → 缩减网格并更新最近动作。
 void PartnerTask::record(const Json& receipt) {
@@ -215,8 +239,7 @@ void PartnerTask::record(const Json& receipt) {
     }
     if (receipt.at("skill") == "observe" && result.contains("anchor") && result.contains("playerFocus")) {
         const auto message = result.at("anchor").at("message").get<std::uint64_t>();
-        observations_[message] = {{"message",message},{"sampledAtMs",result.at("sampledAtMs")},{"playerFocus",result.at("playerFocus")}};
-        if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+        record_focus(message,result.at("sampledAtMs"),result.at("playerFocus"));
     }
     if (receipt.at("skill") == "observe" && result.contains("observation")) {
         auto& observation = result["observation"];
@@ -237,11 +260,9 @@ void PartnerTask::record(const Json& receipt) {
             if (view.erase("grid")) view["gridAvailable"] = true;
             if (!view.contains("playerFocus")) continue;
             const auto message = view.at("message").get<std::uint64_t>();
-            observations_[message] = {{"message",message},{"sampledAtMs",sample.at("sampledAtMs")},
-                {"playerFocus",view.at("playerFocus")}};
+            record_focus(message,sample.at("sampledAtMs"),view.at("playerFocus"));
         }
         for (auto& sample : samples) sample.erase("palette");
-        while (observations_.size() > observation_limit) observations_.erase(observations_.begin());
     }
     if ((receipt.at("skill") == "collect" || receipt.at("skill") == "place" || receipt.at("skill") == "fill_target") &&
         result.contains("changes")) {

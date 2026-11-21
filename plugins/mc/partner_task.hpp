@@ -39,6 +39,8 @@ class PartnerTask {
     // 撤销在途唤醒，仍保留当前玩家已知任务，供后续原话处理。
     void disarm() noexcept { armed_ = false; }
   private:
+    // 保存最新命中并保留原话首次确切的墙面指向。
+    void record_focus(std::uint64_t message, const nlohmann::json& sampled_at, const nlohmann::json& focus);
     // 核对接近原请求后的现场证据仍属于同一任务和维度。
     bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
     std::uint64_t revision_ = 0;
@@ -47,6 +49,7 @@ class PartnerTask {
     bool armed_ = false;
     nlohmann::json baseline_, receipt_, target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
+    std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;
     nlohmann::json arrival_, local_observation_;
     std::chrono::steady_clock::time_point observation_time_{};
