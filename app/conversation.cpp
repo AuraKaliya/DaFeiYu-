@@ -18,6 +18,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
         auto version = snapshot.version;
         auto host = plugins::plugin_controls(snapshot);
         options.text_hook = plugins::plugin_text_hooks(snapshot);
+        options.exit_observer = plugins::plugin_exit_hook(snapshot);
         if (options.extension) {
             if (options.version_labels.control_extension && version != "none")
                 options.version_labels.control_extension = "sha256:"+platform::sha256(version+"/"+*options.version_labels.control_extension);

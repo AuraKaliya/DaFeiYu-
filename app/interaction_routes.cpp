@@ -1,5 +1,6 @@
 #include "interaction_routes.hpp"
 #include "run_log.hpp"
+#include "transition_notice.hpp"
 #include <dafeiyu/routed_event_abi_v2.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -17,7 +18,8 @@ std::uint64_t identity(const Json& value) {
 // 固定事件调度、地址来源和 ASK 时钟。
 InteractionRoutes::InteractionRoutes(plugins::PluginManager& plugins, plugins::PluginMailboxHost mail, MailboxIntake& intake,
     agent::ToolClock clock, std::shared_ptr<RunLog> log, bool auto_wake)
-    : plugins_(plugins), mail_(std::move(mail)), intake_(intake), clock_(std::move(clock)), log_(std::move(log)), asks_(clock_),
+    : plugins_(plugins), mail_(std::move(mail)), intake_(intake), clock_(std::move(clock)), log_(std::move(log)),
+      asks_(clock_,[this](auto ask, const auto& request) { observe_ask(ask,request); }),
       auto_wake_(auto_wake) {}
 
 // 取得原始代次仍活动且地址仍绑定的插件信箱。
@@ -36,7 +38,12 @@ bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route, b
     if (!destination(event).value) return false;
     if (const auto* receipt = std::get_if<AskReceipt>(&route)) {
         auto* exchange = find(receipt->origin);
-        return exchange && exchange->delivery && exchange->delivery->acknowledge(event.owner,*receipt,log_.get());
+        if (!exchange || !exchange->delivery) return false;
+        const bool first = !exchange->delivery->acknowledged();
+        if (!exchange->delivery->acknowledge(event.owner,*receipt,log_.get())) return false;
+        if (first) notify_transition(plugins_,log_.get(),{DFY_V2_TRANSITION_REPLY_ACKNOWLEDGED,event.owner,
+            receipt->origin,receipt->disposition,0,receipt->ask,exchange->delivery->message()});
+        return true;
     }
     if (const auto* feedback = std::get_if<AskFeedback>(&route)) {
         const bool presented = feedback->action == AskFeedback::Action::presented;
@@ -71,6 +78,27 @@ bool InteractionRoutes::dispatch(plugins::RoutedEvent event, EventRoute route, b
         catch (...) { exchanges_.pop_back(); throw; }
     }
     return !denied;
+}
+
+// 关联票据状态和原事件，观察接口只暴露阶段与渠道。
+// 步骤：找到原事项 → 选择阶段通知 → 记录无票据正文的状态迁移。
+void InteractionRoutes::observe_ask(std::uint64_t ask, const AskRequest& request) {
+    const auto found = std::ranges::find(exchanges_,ask,&Exchange::ask);
+    if (found == exchanges_.end()) return;
+    const auto point = request.phase == AskPhase::waiting ? DFY_V2_TRANSITION_ASK_PRESENTED :
+        request.phase == AskPhase::answered ? DFY_V2_TRANSITION_ASK_ANSWERED : DFY_V2_TRANSITION_ASK_ENDED;
+    if (log_) log_->append("ask.transition",{{"ask",ask},{"eventDomain",found->origin.id.domain},{"event",found->origin.id.sequence},
+        {"phase",ask_phase(request.phase)},{"channel",request.spec.channel}});
+    notify_transition(plugins_,log_.get(),{point,request.owner,found->origin.id,request.spec.channel,
+        static_cast<std::uint32_t>(request.phase),ask});
+}
+
+// 只在首次信箱接纳时广播终态入箱。
+void InteractionRoutes::advance_delivery(Exchange& exchange) {
+    auto& delivery = *exchange.delivery;
+    if (delivery.advance(*mail_.network,mail_.identity,log_.get()))
+        notify_transition(plugins_,log_.get(),{DFY_V2_TRANSITION_REPLY_ENQUEUED,exchange.origin.owner,exchange.origin.id,
+            delivery.category(),0,exchange.ask,delivery.message()});
 }
 
 // 对原事件的游戏声明和双向终端能力取当前快照。
@@ -117,7 +145,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
         return !inbox.value || !exchange.review_run.session || !intake_.busy();
     }
     if (exchange.delivery) {
-        exchange.delivery->advance(*mail_.network,mail_.identity,log_.get());
+        advance_delivery(exchange);
         return false;
     }
     if (exchange.question && !exchange.ask && exchange.failure.empty() && !terminal_available_ && exchange.question->channel == "terminal")
@@ -163,7 +191,7 @@ bool InteractionRoutes::advance_exchange(Exchange& exchange) {
     if (!pending && !to_main) {
         exchange.delivery.emplace(exchange.origin.owner,AskReceipt{exchange.origin.id,exchange.ask,exchange.item,exchange.revision,{}},
             inbox,category,message.dump());
-        exchange.delivery->advance(*mail_.network,mail_.identity,log_.get());
+        advance_delivery(exchange);
         return false;
     }
     try {

@@ -44,13 +44,18 @@ AskRequest* AskService::bound(std::uint64_t id, runtime::DomainId owner, std::st
     if (found == requests_.end() || found->second.owner != owner || found->second.spec.channel != channel) return nullptr;
     return &found->second;
 }
+// 先提交实际状态，再通知只读观察者。
+void AskService::transition(std::uint64_t id, AskRequest& request, AskPhase phase) noexcept {
+    request.phase = phase;
+    if (observe_) try { observe_(id,request); } catch (...) {}
+}
 
 // 结算原呈现工作，交付后才开放答复入口。
 bool AskService::presented(std::uint64_t id, runtime::DomainId owner, std::string_view channel, bool delivered) {
     advance();
     auto* request = bound(id,owner,channel);
     if (!request) return false;
-    if (request->phase == AskPhase::presenting) request->phase = delivered ? AskPhase::waiting : AskPhase::failed;
+    if (request->phase == AskPhase::presenting) transition(id,*request,delivered ? AskPhase::waiting : AskPhase::failed);
     return delivered ? request->phase == AskPhase::waiting || request->phase == AskPhase::answered : request->phase == AskPhase::failed;
 }
 
@@ -64,7 +69,7 @@ bool AskService::answer(std::uint64_t id, runtime::DomainId owner, std::string_v
     if (request->phase != AskPhase::waiting || !text_ok(text,2048) ||
         (!request->spec.choices.empty() && std::ranges::find(request->spec.choices,text) == request->spec.choices.end())) return false;
     request->answer = std::move(text);
-    request->phase = AskPhase::answered;
+    transition(id,*request,AskPhase::answered);
     return true;
 }
 
@@ -72,14 +77,14 @@ bool AskService::answer(std::uint64_t id, runtime::DomainId owner, std::string_v
 void AskService::cancel(std::uint64_t id, runtime::DomainId owner) {
     const auto found = requests_.find(id);
     if (found != requests_.end() && found->second.owner == owner && active(found->second.phase))
-        found->second.phase = AskPhase::cancelled;
+        transition(id,found->second,AskPhase::cancelled);
 }
 
 // 划定统一时间边界，呈现和答复共享原请求截止时间。
 void AskService::advance() {
     const auto now = clock_();
     for (auto& [id,request] : requests_)
-        if (active(request.phase) && now >= request.spec.answer_deadline) request.phase = AskPhase::expired;
+        if (active(request.phase) && now >= request.spec.answer_deadline) transition(id,request,AskPhase::expired);
 }
 
 // 标出可以回收的终态票据。

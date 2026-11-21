@@ -14,6 +14,7 @@ struct PluginHookSnapshot {
     std::string version = "none";
     std::function<uint32_t(const dfy_v2_hook_input&)> control;
     std::function<std::optional<std::string>(const dfy_v2_text_hook_input&,std::size_t)> rewrite;
+    std::function<void(std::uint64_t,std::uint64_t,std::uint32_t)> exited;
 };
 struct TransitionDecision {
     bool allowed = true;

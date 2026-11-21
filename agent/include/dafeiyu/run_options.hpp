@@ -48,6 +48,7 @@ struct RunOptions {
     std::string immutable_tool_arguments;
     ModelCaptureSink model_capture;
     TurnExitSink exit_capture;
+    TurnExitSink exit_observer;
     ToolCaptureSink tool_capture;
     std::optional<ConfirmationCaller> confirmation_caller;
     std::size_t confirmation_limit = 16;

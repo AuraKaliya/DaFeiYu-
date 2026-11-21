@@ -1,4 +1,5 @@
 #include <dafeiyu/plugin_hooks.hpp>
+#include <dafeiyu/session.hpp>
 
 namespace dfy::plugins {
 // 将内部执行点及借用上下文投影为 ABI 值，复用 Agent 的拒绝与审批语义。
@@ -43,6 +44,13 @@ agent::TextHook plugin_text_hooks(const PluginHookSnapshot& snapshot, runtime::D
         const auto attempt = context.attempt;
         return rewrite({hook_point,0,attempt.step.run.session,attempt.step.run.sequence,
             attempt.step.sequence,attempt.sequence,owner,context.goal_revision,{field.data(),field.size()},{value.data(),value.size()}},limit);
+    };
+}
+// 通知本轮接纳时已经登记的退出观察者。
+agent::TurnExitSink plugin_exit_hook(const PluginHookSnapshot& snapshot) {
+    return [exited = snapshot.exited](const agent::TurnRequest& request) {
+        const auto id = request.run_id();
+        exited(id.session,id.sequence,static_cast<std::uint32_t>(request.operation()->state()));
     };
 }
 }

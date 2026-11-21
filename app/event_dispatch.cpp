@@ -1,6 +1,7 @@
 #include "event_dispatch.hpp"
 #include "interaction_routes.hpp"
 #include "run_log.hpp"
+#include "transition_notice.hpp"
 #include <dafeiyu/routed_event_abi_v2.h>
 #include <nlohmann/json.hpp>
 
@@ -56,7 +57,9 @@ void dispatch_event(plugins::PluginManager& plugins, InteractionRoutes& interact
     const auto id = event->id;
     if (log) log->append("event.decoded",{{"eventDomain",id.domain},{"event",id.sequence},{"plugin",event->plugin},
         {"instance",event->owner},{"type",event->type},{"status",event->status},{"route",event->kind},{"body",event->payload}});
+    notify_transition(plugins,log,{DFY_V2_TRANSITION_EVENT_DECODED,event->owner,id,event->type,event->status});
     if (event->status) return;
+    TransitionNotice dispatched{DFY_V2_TRANSITION_EVENT_DISPATCHED,event->owner,id,event->type,DFY_V2_FAILED};
     try {
         auto route = parse_route(*event);
         const auto kind = event->kind;
@@ -67,9 +70,11 @@ void dispatch_event(plugins::PluginManager& plugins, InteractionRoutes& interact
         if (log && gate.observed) log->append("hook.transition",{{"point","event.before_dispatch"},{"eventDomain",id.domain},
             {"event",id.sequence},{"version",gate.version},{"allowed",gate.allowed},{"errors",gate.errors}});
         const bool accepted = interactions.dispatch(std::move(*event),std::move(route),!gate.allowed);
+        dispatched.status = accepted ? DFY_V2_OK : DFY_V2_FAILED;
         if (log) log->append("event.dispatched",{{"eventDomain",id.domain},{"event",id.sequence},{"route",kind},{"accepted",accepted}});
     } catch (const std::exception&) {
         if (log) log->append("event.rejected",{{"eventDomain",id.domain},{"event",id.sequence}});
     }
+    notify_transition(plugins,log,dispatched);
 }
 }

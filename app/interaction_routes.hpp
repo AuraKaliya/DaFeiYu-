@@ -48,6 +48,10 @@ class InteractionRoutes {
     events::MailboxId destination(const plugins::RoutedEvent& event) const;
     // 尝试投递一份呈现请求或最终结果。
     bool advance_exchange(Exchange& exchange);
+    // 推进终态投递，只在首次成功入箱时通知。
+    void advance_delivery(Exchange& exchange);
+    // 观察票据已提交的状态并关联原事件。
+    void observe_ask(std::uint64_t ask, const AskRequest& request);
     // 按事件来源及原身份定位仍在等待的事项。
     Exchange* find(events::EventId event);
     // 向指定受信信箱投递原事项上下文。

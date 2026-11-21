@@ -106,6 +106,8 @@ class PluginInstance {
     }
     // 为显式宿主代码依赖取得凭证，持有期间默认拒绝卸载。
     platform::CodeLease retain_code();
+    // 多个回合共同持有同一个原生 Hook 租约，最后一个退出后归还。
+    std::shared_ptr<platform::CodeLease> pin_hook_code();
     // 推进读取并安排一项通知，由调用方单独推进共享 FIFO。
     runtime::ScheduleResult advance(runtime::FifoExecutor& executor);
     // 推进读取并向明确所有者的公平调度通路提交一项通知，执行由外层独立推进。

@@ -85,6 +85,7 @@ struct PluginInstance::State {
     std::vector<dfy_v2_hook_description> hook_registrations;
     std::vector<dfy_v2_text_hook_description> text_hook_registrations;
     std::vector<dfy_v2_hook_description> transition_registrations;
+    std::weak_ptr<platform::CodeLease> hook_code;
     std::string id;
     std::string version;
     dfy_v2_instance* instance = nullptr;
@@ -241,6 +242,13 @@ HostServices::Binding PluginInstance::bind_active() const {
 dfy_v2_instance* PluginInstance::native_instance() const noexcept { return state_->instance; }
 // 为明确的外部代码依赖签发凭证。
 platform::CodeLease PluginInstance::retain_code() { return state_->module.retain_code(); }
+// 返回在途回合共享的 Hook 模块租约，空闲时按需重新获取。
+std::shared_ptr<platform::CodeLease> PluginInstance::pin_hook_code() {
+    if (auto pin = state_->hook_code.lock()) return pin;
+    auto pin = std::make_shared<platform::CodeLease>(retain_code());
+    state_->hook_code = pin;
+    return pin;
+}
 // 由宿主显式推进读取和通知，执行器运行由外层控制。
 runtime::ScheduleResult PluginInstance::advance(runtime::FifoExecutor& executor) {
     state_->host.advance();

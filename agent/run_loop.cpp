@@ -506,6 +506,10 @@ struct RunLoopState {
             try { options.exit_capture(*record); }
             catch (...) {}
         }
+        if (options.exit_observer) {
+            try { options.exit_observer(*record); }
+            catch (...) {}
+        }
     }
     // 推进一个阶段，模型与工具之间让出宿主，所有失败仍继续收尾。
     // 步骤：裁定停止并接收模型 → 推进工具或处理模型响应 → 提交上下文 → 按限额继续或确认退出。

@@ -313,6 +313,29 @@ void transition_hooks(const fs::path& root, const fs::path& dll) {
         instance->generation(),1,1,0,0,0,{},{}});
     check(decision.allowed && !decision.value && decision.observed == 1 && decision.errors == 1,
         "read-only Hook could reject a bound context");
+    {
+        const auto api = instance->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+        check(api && instance->invoke(*api,[](const auto& api, auto* plugin) {
+            return api.transition_count(plugin,DFY_V2_TRANSITION_EVENT_CAPTURED) == 2 &&
+                api.transition_count(plugin,DFY_V2_TRANSITION_EVENT_DECODED) == 2 &&
+                api.transition_count(plugin,DFY_V2_TRANSITION_EVENT_DISPATCHED) == 2 &&
+                api.transition_count(plugin,DFY_V2_TRANSITION_RUN_EXITED) == 1;
+        }),"observers did not see the actual application boundaries without Trace");
+        app.set_console_ask_available(true);
+        check(instance->invoke(*api,[](const auto& api, auto* plugin) { return api.emit_notice(plugin,3,2); }) == DFY_V2_OK,
+            "ASK event failed to reach the host");
+        app.advance_plugins();
+        const auto ask = app.console_ask();
+        check(ask && app.answer_console_ask(ask->first,{}) &&
+            app.answer_console_ask(ask->first,"yes") && app.answer_console_ask(ask->first,"yes"),
+            "read-only observation interrupted a presented question or its answer");
+        app.advance_plugins();
+        check(instance->invoke(*api,[](const auto& api, auto* plugin) {
+            return api.transition_count(plugin,DFY_V2_TRANSITION_ASK_PRESENTED) == 1 &&
+                api.transition_count(plugin,DFY_V2_TRANSITION_ASK_ANSWERED) == 1 &&
+                api.transition_count(plugin,DFY_V2_TRANSITION_REPLY_ENQUEUED) == 1;
+        }),"a duplicate answer caused additional notices or interrupted delivery");
+    }
 }
 }
 

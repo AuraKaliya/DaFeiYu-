@@ -7,4 +7,6 @@ namespace dfy::plugins {
 agent::PolicyExtension plugin_controls(const PluginHookSnapshot& snapshot, runtime::DomainId owner = 0);
 // 为指定会话连接同一快照的字段转换表。
 agent::TextHook plugin_text_hooks(const PluginHookSnapshot& snapshot, runtime::DomainId owner = 0);
+// 把实际退出事实交给本轮固定的观察表。
+agent::TurnExitSink plugin_exit_hook(const PluginHookSnapshot& snapshot);
 }

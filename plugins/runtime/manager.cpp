@@ -79,6 +79,8 @@ struct PluginManager::State {
         uint32_t control(const dfy_v2_hook_input& input) const;
         // 在当前登记表中合并指定会话的字段改写。
         std::optional<std::string> rewrite(const dfy_v2_text_hook_input& input, std::size_t limit) const;
+        // 执行本快照已校验的系统阶段调用。
+        TransitionDecision transition(const dfy_v2_transition_hook_input& input, std::size_t limit) const;
     };
     // 固定目录基准和全部运行时容量，扫描不执行插件入口。
     State(const std::filesystem::path& package_root, const std::filesystem::path& data,
@@ -432,16 +434,18 @@ std::optional<std::string> PluginManager::rewrite_hook(const dfy_v2_text_hook_in
 // 步骤：取得登记表 → 按会话选取模块并去重 → 构造持有同一快照的回调。
 PluginHookSnapshot PluginManager::capture_hooks(runtime::DomainId owner) {
     const auto plan = state_->hook_plan();
-    auto leases = std::make_shared<std::vector<platform::CodeLease>>();
+    auto leases = std::make_shared<std::vector<std::shared_ptr<platform::CodeLease>>>();
     std::vector<PluginInstance*> seen;
     // 每个实例只持有一份租约，其他会话的处理器不占用当前回合生命周期。
     const auto retain = [&](const State::Hook& hook) {
         if (!(hook_scope(owner,*hook.instance) & hook.sessions) || std::ranges::find(seen,hook.instance.get()) != seen.end()) return;
-        leases->push_back(hook.instance->retain_code());
+        leases->push_back(hook.instance->pin_hook_code());
         seen.push_back(hook.instance.get());
     };
     for (const auto& point : plan->controls) for (const auto& hook : point) retain(hook);
     for (const auto& point : plan->rewrites) for (const auto& item : point) retain(item.hook);
+    const auto& exit = plan->transitions.at(DFY_V2_TRANSITION_RUN_EXITED-1);
+    for (const auto& hook : exit) retain(hook);
     return {plan->version,
         [plan,leases,owner](const dfy_v2_hook_input& input) {
             if (input.owner != owner) throw std::invalid_argument("hooks: snapshot owner mismatch");
@@ -450,6 +454,11 @@ PluginHookSnapshot PluginManager::capture_hooks(runtime::DomainId owner) {
         [plan,leases,owner](const dfy_v2_text_hook_input& input, std::size_t limit) {
             if (input.owner != owner) throw std::invalid_argument("text hooks: snapshot owner mismatch");
             return plan->rewrite(input,limit);
+        },
+        [plan,leases,owner](std::uint64_t session, std::uint64_t run, std::uint32_t status) {
+            const std::string_view category = owner ? "plugin" : "main";
+            (void)plan->transition({DFY_V2_TRANSITION_RUN_EXITED,0,status,0,owner,session,run,0,0,0,
+                {category.data(),category.size()},{}},0);
         }};
 }
 // 把当前可复现的登记版本用于运行接纳和离线比较。
@@ -457,8 +466,7 @@ std::string PluginManager::hook_version() {
     const auto snapshot = state_->hook_plan();
     return snapshot ? snapshot->version : "none";
 }
-// 每次系统转换使用同一发布表，后续处理器看到前序提交的上下文副本。
-// 步骤：校验阶段和权限 → 按登记顺序调用 → 累计观察错误并结算可选分流。
+// 校验宿主调用并转发给当前已发布的系统阶段表。
 TransitionDecision PluginManager::transition_hook(const dfy_v2_transition_hook_input& input, std::size_t limit) {
     const auto point = input.point;
     const auto permissions = input.permissions;
@@ -468,10 +476,14 @@ TransitionDecision PluginManager::transition_hook(const dfy_v2_transition_hook_i
         !input.domain || !input.sequence || (permissions & ~allowed) ||
         bool(permissions & DFY_V2_TRANSITION_CAN_REWRITE) != bool(limit) || limit > 16*1024)
         throw std::invalid_argument("transition hooks: invalid context");
-    const auto plan = state_->hook_plan();
+    return state_->hook_plan()->transition(input,limit);
+}
+// 按固定顺序处理同一系统转换，后续改写接续当前副本。
+// 步骤：选择适用登记 → 保留可归因的观察错误 → 返回改写副本和裁定。
+TransitionDecision PluginManager::State::HookPlan::transition(const dfy_v2_transition_hook_input& input, std::size_t limit) const {
     TransitionDecision result;
     std::vector<char> output;
-    for (const auto& hook : plan->transitions.at(point-1)) {
+    for (const auto& hook : transitions.at(input.point-1)) {
         if (hook.instance->phase() != InstancePhase::active || !(hook_scope(input.owner,*hook.instance) & hook.sessions)) continue;
         ++result.observed;
         try {
@@ -484,11 +496,11 @@ TransitionDecision PluginManager::transition_hook(const dfy_v2_transition_hook_i
             result.allowed = allow;
         } catch (...) {
             ++result.errors;
-            if (permissions) result.allowed = false;
+            if (input.permissions) result.allowed = false;
         }
         if (!result.allowed) break;
     }
-    if (result.observed) result.version = plan->version;
+    if (result.observed) result.version = version;
     return result;
 }
 // 显式停止全部管理责任，调用方可在 Pending 后继续推进再重试。

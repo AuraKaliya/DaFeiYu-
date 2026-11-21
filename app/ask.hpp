@@ -17,12 +17,13 @@ struct AskRequest {
     std::string answer;
     bool released = false;
 };
+using AskObserver = std::function<void(std::uint64_t,const AskRequest&)>;
 
 // 管理本体内的异步提问票据，由已注册渠道推进呈现和真人答复。
 class AskService {
   public:
     // 固定等待与截止时间的时钟来源。
-    explicit AskService(agent::ToolClock clock) : clock_(std::move(clock)) {}
+    explicit AskService(agent::ToolClock clock, AskObserver observe = {}) : clock_(std::move(clock)), observe_(std::move(observe)) {}
     // 创建待呈现请求，返回宿主作用域内的唯一编号。
     std::uint64_t open(runtime::DomainId owner, AskSpec spec);
     // 借用状态直到下一次服务修改。
@@ -40,7 +41,10 @@ class AskService {
   private:
     // 仅借用由该渠道和实例持有的请求。
     AskRequest* bound(std::uint64_t id, runtime::DomainId owner, std::string_view channel);
+    // 发布已经生效的票据状态迁移。
+    void transition(std::uint64_t id, AskRequest& request, AskPhase phase) noexcept;
     agent::ToolClock clock_;
+    AskObserver observe_;
     std::uint64_t next_ = 0;
     std::map<std::uint64_t,AskRequest> requests_;
 };

@@ -4,6 +4,7 @@
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <nlohmann/json.hpp>
 
 namespace dfy::app {
@@ -58,9 +59,15 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
-    if (run_log_) plugins_.capture_events([log = std::weak_ptr(run_log_)](const auto& event) {
+    // 接纳发生在原 DLL 调用内，原生观察者在宿主下一次推进时调用。
+    plugins_.capture_events([log = std::weak_ptr(run_log_), queue = std::weak_ptr(captured_)](const auto& event) {
         if (const auto trace = log.lock()) trace->append("event.captured",{{"eventDomain",event.id.domain},{"event",event.id.sequence},
             {"plugin",event.plugin},{"instance",event.owner},{"type",event.type},{"version",event.version},{"body",event.payload}});
+        if (const auto captured = queue.lock()) {
+            constexpr std::size_t capacity = plugins::PluginInstance::maximum_instances*16;
+            if (captured->pending.size() == capacity) { ++captured->dropped; return; }
+            captured->pending.push_back({DFY_V2_TRANSITION_EVENT_CAPTURED,event.owner,event.id,event.type});
+        }
     });
     const events::MailboxCategory enabled[] = {{"room.addressed",1}};
     mailbox_intake_.watch(room_mailbox_,run.wake_for_room_address ? std::span<const events::MailboxCategory>(enabled) :
@@ -413,6 +420,13 @@ runtime::RunResult Application::advance_plugins() {
         companion_->advance();
     }
     const auto plugins = plugins_.advance();
+    for (std::size_t left = captured_->pending.size(); left; --left) {
+        auto notice = std::move(captured_->pending.front());
+        captured_->pending.pop_front();
+        notify_transition(plugins_,run_log_.get(),notice);
+    }
+    if (const auto dropped = std::exchange(captured_->dropped,0); dropped && run_log_)
+        run_log_->append("hook.observations_dropped",{{"point",DFY_V2_TRANSITION_EVENT_CAPTURED},{"count",dropped}});
     dispatch_event(plugins_,interactions_,run_log_.get());
     interactions_.advance();
     const auto mail = mailbox_intake_.advance();

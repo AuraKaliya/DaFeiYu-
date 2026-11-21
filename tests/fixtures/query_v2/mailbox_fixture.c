@@ -32,6 +32,16 @@ static dfy_v2_status DFY_V2_CALL notice(void* context, dfy_v2_string_view payloa
     memcpy(out->json,payload.data,out->length);
     return DFY_V2_OK;
 }
+// 产生固定终端提问，供宿主直接路径测试。
+static dfy_v2_status DFY_V2_CALL console_question(void* context, dfy_v2_string_view payload, dfy_v2_event_projection* out) {
+    const char* body = "{\"item\":1,\"revision\":1,\"waitMs\":1000,\"question\":\"proceed?\",\"recipient\":\"owner\",\"channel\":\"terminal\"}";
+    (void)context;
+    (void)payload;
+    out->kind = DFY_V2_EVENT_ASK;
+    out->length = (uint32_t)strlen(body);
+    memcpy(out->json,body,out->length);
+    return DFY_V2_OK;
+}
 
 // 为纯 C 插件分配独立实例并保存宿主查询入口。
 static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_string_view config,
@@ -69,6 +79,7 @@ static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* 
         status = ((const dfy_v2_routed_mailbox_api*)routes)->register_mailbox((dfy_v2_string_view){"test.notice",11},1,DFY_V2_MAIL_WAKE,error);
         if (!status) status = instance->events->register_event((dfy_v2_string_view){"test.notice",11},1,(dfy_v2_string_view){"{}",2},notice,NULL,error);
         if (!status) status = instance->events->register_event((dfy_v2_string_view){"test.deny",9},1,(dfy_v2_string_view){"{}",2},notice,NULL,error);
+        if (!status) status = instance->events->register_event((dfy_v2_string_view){"test.ask",8},1,(dfy_v2_string_view){"{}",2},console_question,NULL,error);
         if (status) return status;
     }
     if (status) return status;
@@ -125,7 +136,8 @@ static void DFY_V2_CALL destroy(dfy_v2_instance* instance) { free(instance); }
 static const dfy_v2_lifecycle_api lifecycle = {{sizeof(dfy_v2_lifecycle_api),1},create,start,stop,stopped,destroy};
 // 通过正常事件入口发出一个测试通知。
 static dfy_v2_status DFY_V2_CALL emit_notice(dfy_v2_instance* instance, uint64_t sequence, int block) {
-    const dfy_v2_string_view type = block ? (dfy_v2_string_view){"test.deny",9} : (dfy_v2_string_view){"test.notice",11};
+    const dfy_v2_string_view type = block == 2 ? (dfy_v2_string_view){"test.ask",8} :
+        block ? (dfy_v2_string_view){"test.deny",9} : (dfy_v2_string_view){"test.notice",11};
     dfy_v2_event_receipt receipt = {0};
     return instance->events->emit(type,1,sequence,(dfy_v2_string_view){"{}",2},&receipt,NULL);
 }
@@ -241,8 +253,9 @@ static const dfy_v2_transition_hook_api transitions = {{sizeof(dfy_v2_transition
 
 // 每步最多消费一封本体来信；信箱为空时等下一次推进。
 static dfy_v2_status DFY_V2_CALL step(dfy_v2_instance* instance, uint32_t* wait_ms, dfy_v2_error* error) {
-    const dfy_v2_status status = reply(instance,error);
     *wait_ms = 1;
+    if (instance->converter == 't') return DFY_V2_OK;
+    const dfy_v2_status status = reply(instance,error);
     return status == DFY_V2_NOT_FOUND ? DFY_V2_OK : status;
 }
 static const dfy_v2_activity_api activity = {{sizeof(dfy_v2_activity_api),1},step};

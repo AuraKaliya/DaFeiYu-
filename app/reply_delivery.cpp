@@ -5,18 +5,19 @@
 namespace dfy::app {
 // 交付一次原结果，暂满和已接纳各自保持独立状态。
 // 步骤：识别既有接纳 → 尝试入箱 → 记录稳定的消息身份。
-void ReplyDelivery::advance(events::Mailboxes& network, runtime::DomainId sender, RunLog* log) {
-    if (message_.sequence) return;
+bool ReplyDelivery::advance(events::Mailboxes& network, runtime::DomainId sender, RunLog* log) {
+    if (message_.sequence) return false;
     try {
         const auto receipt = network.deliver_next(sender,target_,events::mailbox_text(category_,1,body_,network.payload_limit()));
         message_ = receipt.event;
-    } catch (const std::length_error&) { return; }
+    } catch (const std::length_error&) { return false; }
     if (log) {
         log->mail("mail.accepted",target_.value,sender,message_,category_,body_);
         log->append("interaction.delivered",{{"ask",original_.ask},{"item",original_.item},{"revision",original_.revision},
             {"eventDomain",original_.origin.domain},{"event",original_.origin.sequence},{"category",category_},
             {"mailbox",target_.value},{"message",message_.sequence},{"body",nlohmann::json::parse(body_)}});
     }
+    return true;
 }
 
 // 只接纳对应原插件、原事务及实际信箱消息的回执。

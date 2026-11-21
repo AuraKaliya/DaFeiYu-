@@ -5,9 +5,11 @@
 #include "subagents.hpp"
 #include "mailbox_intake.hpp"
 #include "interaction_routes.hpp"
+#include "transition_notice.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <array>
+#include <deque>
 
 namespace dfy::app {
 class RunLog;
@@ -185,6 +187,11 @@ class Application {
     const agent::RunVersionLabels labels_;
     std::optional<ToolRegistration> tool_registration_;
     std::shared_ptr<RunLog> run_log_;
+    struct CapturedTransitions {
+        std::deque<TransitionNotice> pending;
+        std::size_t dropped = 0;
+    };
+    std::shared_ptr<CapturedTransitions> captured_ = std::make_shared<CapturedTransitions>();
     agent::Session session_;
     Conversation conversation_;
     MailboxIntake mailbox_intake_;
