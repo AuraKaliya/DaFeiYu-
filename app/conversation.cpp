@@ -1,4 +1,5 @@
 #include "conversation.hpp"
+#include "persona.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
 #include <random>
@@ -8,11 +9,14 @@ using runtime::OperationState;
 
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
 // 步骤：核对当前回合 → 注入构建标签并合并宿主控制 → 通过原会话接纳并返回开始状态。
-agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options) {
+agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options, bool player_facing) {
     if (current_) throw std::logic_error("session: wait for the current request to finish");
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
+    if (!options.version_labels.prompt_template && !options.system_instructions.empty())
+        options.version_labels.prompt_template = "sha256:"+platform::sha256(options.system_instructions);
+    if (player_facing && persona_) persona_->apply(options);
     if (plugins_) {
         const auto snapshot = plugins_->capture_hooks();
         auto version = snapshot.version;

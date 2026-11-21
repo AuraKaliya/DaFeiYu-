@@ -51,9 +51,10 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))),
+      persona_(load_persona(user_data)),
       run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),
       session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
-      conversation_(session_,labels_,&plugins_),
+      conversation_(session_,labels_,&plugins_,&persona_),
       mailbox_intake_(mailbox_host_,conversation_,run_log_,&plugins_),
       interactions_(plugins_,mailbox_host_,mailbox_intake_,tool_clock_,run_log_,run.wake_for_plugin_mail),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,run_log_)) {

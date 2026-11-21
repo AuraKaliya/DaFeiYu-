@@ -34,6 +34,9 @@ DiagnosticSnapshot fixture(bool trimmed = true) {
 void decoding(const std::string& text) {
     using Json = nlohmann::json; const auto original = Json::parse(text);
     const auto decoded = decode_diagnostic(text); check(encode_diagnostic(decoded) == text && decoded.timeline.origin == TurnDiagnostics::TimePoint{},"diagnostic round-trip changed values");
+    auto legacy = original;
+    legacy["data"]["timeline"]["versions"].erase("persona_profile");
+    check(!decode_diagnostic(legacy.dump()).timeline.versions.persona_profile,"older diagnostic invented a persona profile");
     auto bad = original; bad["schema_version"] = 2; rejects([&] { decode_diagnostic(bad.dump()); });
     bad = original; bad["timeline_schema_version"] = 3; rejects([&] { decode_diagnostic(bad.dump()); });
     bad = original; bad["data"]["timeline"]["execute"] = "plugin"; rejects([&] { decode_diagnostic(bad.dump()); });

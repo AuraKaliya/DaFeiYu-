@@ -105,6 +105,8 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value) {
     Json item{{"source",source},{"session",attempt.step.run.session},{"run",attempt.step.run.sequence},
         {"step",attempt.step.sequence},{"attempt",attempt.sequence},{"provider",value.provider},{"model",value.model_name}};
     item["thinking"] = value.thinking;
+    if (!value.persona_profile.empty()) item["personaProfile"] = value.persona_profile;
+    if (!value.prompt_template.empty()) item["promptTemplate"] = value.prompt_template;
     if (value.input) item["input"] = encode_request(*value.input);
     if (value.output) item["output"] = encode_response(*value.output);
     if (value.call) {

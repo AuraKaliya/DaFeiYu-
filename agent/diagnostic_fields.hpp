@@ -58,7 +58,7 @@ DFY_FIELDS(model::Usage, f("input_tokens",v.input_tokens); f("output_tokens",v.o
 // 映射公开工具版本，未知值保留为空。
 DFY_FIELDS(ToolTraceVersion, f("id",v.id); f("contract",v.contract); f("instance",v.instance); f("plugin",v.plugin); f("schema",v.schema);)
 // 映射允许公开的版本标签，不读取整个配置。
-DFY_FIELDS(TraceVersions, f("application_commit",v.application_commit); f("build",v.build); f("prompt_template",v.prompt_template); f("provider",v.provider); f("model",v.model); f("model_profile",v.model_profile); f("policy",v.policy); f("tools",v.tools); f("public_model_config",v.public_model_config); f("execution_policy",v.execution_policy); f("control_extension",v.control_extension);)
+DFY_FIELDS(TraceVersions, f("application_commit",v.application_commit); f("build",v.build); f("prompt_template",v.prompt_template); f("provider",v.provider); f("model",v.model); f("model_profile",v.model_profile); f("policy",v.policy); f("tools",v.tools); f("public_model_config",v.public_model_config); f("execution_policy",v.execution_policy); f("control_extension",v.control_extension); f("persona_profile",v.persona_profile);)
 // 映射文件命名空间及原运行。
 DFY_FIELDS(TraceKey, f("namespace",v.name_space); f("run",v.run);)
 // 映射节点路径，不包含操作句柄。

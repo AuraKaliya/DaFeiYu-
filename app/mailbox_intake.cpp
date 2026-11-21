@@ -62,7 +62,8 @@ MailboxIntakeResult MailboxIntake::dispatch(const Route& route, const std::strin
             options.system_instructions += " dialogue 字段是本轮真人对话。";
         } else options.origin = agent::RunOrigin::mailbox;
         if (route.options) route.options({route.mailbox,route.sender,*event},options);
-        const auto result = conversation_.submit(prompt.dump(),std::move(options));
+        const bool player_facing = dialogue || (route.host_source && type->name() == "room.addressed");
+        const auto result = conversation_.submit(prompt.dump(),std::move(options),player_facing);
         if (accepted) *accepted = result;
         if (route.accepted) route.accepted({route.mailbox,route.sender,*event},{result.session,result.turn});
         const auto delivered = host_.network->read(host_.identity,route.mailbox);
@@ -129,6 +130,6 @@ agent::TurnDiagnostics MailboxIntake::submit_dialogue(const std::string& text) {
         if (status == MailboxIntakeResult::submitted) return accepted;
         if (status != MailboxIntakeResult::handled) break;
     }
-    return conversation_.submit(text);
+    return conversation_.submit(text,{},true);
 }
 }

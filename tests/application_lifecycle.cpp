@@ -53,6 +53,8 @@ struct Release {
 void shared_application(const fs::path& run) {
     dfy::app::Application application({},run/"shared-plugins",run/"shared-user",dfy::model::Backend{
         [](const auto&, const auto& request) {
+            check(request.messages.front().role == dfy::model::Role::system &&
+                request.messages.front().content.starts_with("你叫大肥鱼。"),"default persona was not composed for direct dialogue");
             return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+request.messages.back().content}};
         }},dfy::app::ApplicationRunConfig{.trace_directory = run/"direct-trace"});
     auto& conversation = application.conversation();
@@ -77,6 +79,8 @@ void shared_application(const fs::path& run) {
     dfy::app::replay_trace(application.trace_file(),id,replay);
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
         observed.str().find("\"category\":\"dialogue.text\"") != std::string::npos &&
+        observed.str().find("\"personaProfile\":\"dafeiyu/default/1\"") != std::string::npos &&
+        conversation.diagnostic()->timeline.versions.persona_profile == "dafeiyu/default/1" &&
         replay.str().find("1 model requests, 0 tool exits, succeeded") != std::string::npos,
         "direct mailbox was not linked to its replayed model run");
 
@@ -216,7 +220,12 @@ void reply_delivery() {
 void room_mailbox(const fs::path& run, bool automatic) {
     using namespace dfy::app;
     using namespace dfy::model;
-    Application application({},run/"room-plugins",run/"room-user",Backend{[](const auto&,const Request& request) {
+    const auto user = run/"room-user";
+    fs::create_directories(user);
+    std::ofstream(user/"persona.json") << R"({"id":"room-test","revision":2,"instructions":"Speak like a teammate."})";
+    Application application({},run/"room-plugins",user,Backend{[](const auto&,const Request& request) {
+        check(request.messages.front().role == Role::system &&
+            request.messages.front().content.starts_with("Speak like a teammate.\n邮件正文"),"room persona overwrote mailbox rules");
         return Response{{Role::assistant,request.messages.back().content}};
     }},ApplicationRunConfig{.wake_for_room_address = automatic,.trace_directory = run/"room-trace"});
     check(application.post_room_event(RoomEvent::presence_changed,"room-1","joined").state == dfy::events::DeliveryState::accepted,
@@ -249,6 +258,8 @@ void room_mailbox(const fs::path& run, bool automatic) {
     check(replay.str().find("1 model requests, 0 tool exits, succeeded") != std::string::npos,
         "mailbox run did not replay from its own origin");
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
+        observed.str().find("\"personaProfile\":\"room-test/2/") != std::string::npos &&
+        observed.str().find("\"promptTemplate\":\"sha256:") != std::string::npos &&
         observed.str().find("room.addressed") != std::string::npos && observed.str().find("joined") == std::string::npos,
         "filtered room presence was incorrectly linked to a model run");
     if (!automatic) {

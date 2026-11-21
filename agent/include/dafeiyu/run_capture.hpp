@@ -16,6 +16,7 @@ struct ModelCapture {
     const model::CallDiagnostics* call = nullptr;
     runtime::OperationState result = runtime::OperationState::pending;
     bool thinking = false;
+    std::string_view persona_profile, prompt_template;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;

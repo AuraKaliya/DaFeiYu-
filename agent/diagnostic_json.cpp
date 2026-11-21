@@ -79,7 +79,12 @@ template<class T> T decode(const Json& value) {
     } else {
         if (!value.is_object()) throw std::invalid_argument("diagnostic: object required");
         T result{}; std::size_t count = 0;
-        fields(result,[&](const char* name,auto& field) { ++count; field = decode<std::remove_cvref_t<decltype(field)>>(value.at(name)); });
+        fields(result,[&](const char* name,auto& field) {
+            if constexpr (std::is_same_v<T,TraceVersions>)
+                if (std::string_view(name) == "persona_profile" && !value.contains(name)) return;
+            ++count;
+            field = decode<std::remove_cvref_t<decltype(field)>>(value.at(name));
+        });
         if (count != value.size()) throw std::invalid_argument("diagnostic: unknown field"); return result;
     }
 }

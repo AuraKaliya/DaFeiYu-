@@ -27,11 +27,13 @@ struct TraceVersions {
     std::optional<std::uint64_t> policy;
     std::vector<ToolTraceVersion> tools;
     std::optional<std::string> public_model_config, execution_policy, control_extension;
+    std::optional<std::string> persona_profile;
 };
 // 宿主显式提供的公开版本标签；供应商、模型、策略和工具版本由实际运行另行采集。
 struct RunVersionLabels {
     std::optional<std::string> application_commit, build, prompt_template, model_profile;
     std::optional<std::string> control_extension;
+    std::optional<std::string> persona_profile;
 };
 struct VersionDifference {
     std::vector<std::string> changed, unknown;

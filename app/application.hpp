@@ -6,6 +6,7 @@
 #include "mailbox_intake.hpp"
 #include "interaction_routes.hpp"
 #include "transition_notice.hpp"
+#include "persona.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <array>
@@ -185,6 +186,7 @@ class Application {
     const model::Config model_config_;
     const model::Backend model_backend_;
     const agent::RunVersionLabels labels_;
+    const PersonaProfile persona_;
     std::optional<ToolRegistration> tool_registration_;
     std::shared_ptr<RunLog> run_log_;
     struct CapturedTransitions {

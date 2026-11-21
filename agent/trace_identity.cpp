@@ -58,6 +58,7 @@ void validate_trace_versions(const TraceVersions& versions) {
     optional_text(versions.application_commit); optional_text(versions.build); optional_text(versions.prompt_template);
     optional_text(versions.provider); optional_text(versions.model); optional_text(versions.model_profile);
     optional_text(versions.public_model_config); optional_text(versions.execution_policy); optional_text(versions.control_extension);
+    optional_text(versions.persona_profile);
     if ((versions.policy && !*versions.policy) || versions.tools.size() > 64) throw std::invalid_argument("trace: invalid version limits");
     std::set<std::string> tools;
     for (const auto& tool : versions.tools) {
@@ -80,6 +81,7 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     auto result = public_model_versions(config); const auto& labels = options.version_labels;
     result.application_commit = labels.application_commit; result.build = labels.build; result.prompt_template = labels.prompt_template;
     result.model_profile = labels.model_profile; result.policy = options.policy.revision; result.control_extension = labels.control_extension;
+    result.persona_profile = labels.persona_profile;
     if (!options.extension && !options.text_hook && !result.control_extension) result.control_extension = "none";
     if (result.provider && result.model && config.timeout_ms > 0) result.public_model_config = "sha256:"+platform::sha256(Json{
         {"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}}.dump());
@@ -104,6 +106,7 @@ VersionDifference compare_public_versions(const TraceVersions& previous, const T
     };
     compare("application_commit",previous.application_commit,current.application_commit); compare("build",previous.build,current.build);
     compare("prompt_template",previous.prompt_template,current.prompt_template); compare("provider",previous.provider,current.provider);
+    compare("persona_profile",previous.persona_profile,current.persona_profile);
     compare("model",previous.model,current.model); compare("model_profile",previous.model_profile,current.model_profile);
     compare("policy_revision",previous.policy,current.policy); compare("public_model_config",previous.public_model_config,current.public_model_config);
     compare("execution_policy",previous.execution_policy,current.execution_policy); compare("control_extension",previous.control_extension,current.control_extension);

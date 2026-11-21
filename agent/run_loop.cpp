@@ -155,7 +155,10 @@ struct RunLoopState {
         const model::Response* output = nullptr, const model::CallDiagnostics* call = nullptr,
         runtime::OperationState result = runtime::OperationState::pending) noexcept {
         if (!options.model_capture) return;
-        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking}); }
+        const auto& versions = record->versions_;
+        const auto view = [](const std::optional<std::string>& label) { return label ? std::string_view(*label) : std::string_view{}; };
+        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking,
+            view(versions.persona_profile),view(versions.prompt_template)}); }
         catch (...) {}
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
