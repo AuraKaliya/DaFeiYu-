@@ -1,6 +1,6 @@
 # MC 伙伴功能清单与参考项目复核
 
-本页保留参考项目比较和待评审的能力细则。河边试玩的取证基线为 `4b6c880`。当前伙伴已将进场、离场与原话交给模型，游戏发言由回复工具投递。后续的发言身份、持续目标和动作调度按通用交互方案评审。[当前流程](architecture.md#mc-伙伴的事件与动作流程) · [通用交互流程](mc-companion-development-plan.md)
+本页保留参考项目比较和待评审的能力细则。河边试玩的取证基线为 `4b6c880`，功能细则中的状态以该次取证为准。当前运行边界、已核验的修订和后续顺序见架构与开发计划。[当前流程](architecture.md#mc-陪玩插件) · [开发计划](mc-companion-development-plan.md)
 
 ## 河边这局暴露出的四个缺口
 
@@ -109,7 +109,7 @@
 | `sts2_takeover`、`sts2_host`、`sts2_start_run`、`sts2_continue_run`、`sts2_pause`、`sts2_resume`、`sts2_save`、`sts2_quit_to_menu`、`sts2_abandon`、`sts2_autoplay`、`sts2_handoff` | 分清入局、接管邀请、暂离、保存、主动执行、归还和放弃任务；需要恢复时重新校验当前世界和玩家。 |
 | `sts2_play_card`、`sts2_play_cards`、`sts2_claim_rewards`、`sts2_use_potion`、`sts2_discard_potion`、`sts2_end_turn`、`sts2_choose`、`sts2_select_cards`、`sts2_proceed` | 单一动作、批次、不可逆消费、等待他人和多选约束各有不同回执。对应 MC 的放置、材料清单、补给、分工确认和计划推进。 |
 
-## 建议的讨论和交付顺序
+## 河边试玩后的能力扩展示例
 
 1. **先把一次交谈做对。** 定消息号、任务号和动作号的关系，确定发言由谁投递、迟到如何结算。复现“三组同义双发”，再向进行中的同一次采集发送不同原话，评议她理解、回应和实际行动之间的关系。
 2. **让一个目标在没有新聊天时仍然成立。** 商定闲时自主范围，接通目标、进展、完成条件和事件唤醒。以“备两块泥土交给我”为第一条玩家可见的闭环，贯通采、捡、会合、丢出和结果确认。
