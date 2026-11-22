@@ -1,9 +1,11 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const { EventEmitter } = require('node:events');
 const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { fromGround } = require('../../plugins/mc/bridge/collection.cjs');
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
+const { observeWorld } = require('../../plugins/mc/bridge/world.cjs');
 
 // 用最少的坐标运算模拟真实客户端给出的观测中心和样本格。
 class Position {
@@ -135,21 +137,70 @@ test('ground gathering preserves support beneath the bound opening', () => {
 // 普通采集与明确拆改共用多格对象，支撑只能等相依对象移除后释放。
 test('completed objects survive unrelated work and retain multi-cell boundaries', () => {
   const built = new BuiltObjects();
-  built.bind('world-a', 'overworld');
+  built.bind('world-a');
   const floor = { x: 3, y: -61, z: -5 };
-  const lower = { ...floor, y: -60 }, upper = { ...floor, y: -59 };
+  const lower = { ...floor, y: -60, block: 'oak_door', half: 'lower' };
+  const upper = { ...floor, y: -59, block: 'oak_door', half: 'upper' };
   const door = [lower, upper].map(position => ({ position }));
+  // 返回同一扇门的材料和上下半格事实。
+  const read = ({ half }) => ({ name: 'oak_door', getProperties: () => ({ half }) });
   built.placed([lower, upper]);
-  built.bind('world-a', 'overworld');
-  assert.equal(built.permits(door, false), false);
-  assert.equal(built.permits([{ position: floor }], true), false);
-  assert.equal(built.permits([...door, { position: floor }], true), false);
-  assert.equal(built.permits(door, true), true);
+  built.bind('world-a');
+  assert.equal(built.permits(door, false, read), false);
+  assert.equal(built.permits([{ position: floor }], true, read), false);
+  assert.equal(built.permits([...door, { position: floor }], true, read), false);
+  assert.equal(built.permits(door, true, read), true);
   built.removed([{ ...lower, before: 'oak_door', after: 'air' }]);
-  assert.equal(built.permits([{ position: floor }], false), false);
+  assert.equal(built.permits([{ position: floor }], false, read), false);
   built.removed([{ ...upper, before: 'oak_door', after: 'air' }]);
-  assert.equal(built.permits([{ position: floor }], false), true);
-  built.placed([floor]);
-  built.bind('world-b', 'overworld');
-  assert.equal(built.permits([{ position: floor }], false), true);
+  assert.equal(built.permits([{ position: floor }], false, read), true);
+});
+
+// 区分角色重生、实际地图切换和外部方块修改，未加载时保留支撑保护。
+test('same-map respawn preserves verified object and support until their blocks actually change', () => {
+  const bot = new EventEmitter();
+  bot._client = new EventEmitter();
+  bot.game = { dimension: 'overworld' };
+  bot.player = { uuid: 'actor' };
+  bot.entity = { position: new Position(0, 0, 0) };
+  bot.inventory = { items: () => [] };
+  const world = observeWorld(bot);
+  const built = new BuiltObjects();
+  const floor = { x: 3, y: -61, z: -5 };
+  const wall = { ...floor, y: -60, block: 'dirt' };
+  const packet = { worldState: { name: 'minecraft:overworld' } };
+  let material = 'dirt';
+  const read = () => material ? { name: material } : null;
+  bot._client.emit('login', packet);
+  bot.emit('spawn');
+  const scope = world.space(), firstActor = world.read().generation;
+  built.bind(scope);
+  built.placed([wall]);
+  bot.emit('respawn');
+  assert.equal(world.space(), null);
+  bot._client.emit('respawn', packet);
+  bot.emit('spawn');
+  assert.notEqual(world.read().generation, firstActor);
+  assert.equal(world.space(), scope);
+  built.bind(world.space());
+  assert.equal(built.permits([{ position: wall }], false, read), false);
+  assert.equal(built.permits([{ position: floor }], false, read), false);
+  material = null;
+  assert.equal(built.permits([{ position: floor }], false, read), false);
+  material = 'air';
+  assert.equal(built.permits([{ position: floor }], false, read), true);
+
+  material = 'dirt';
+  built.placed([wall]);
+  bot.emit('respawn');
+  bot._client.emit('respawn', { worldState: { name: 'custom:another_level' } });
+  bot.emit('spawn');
+  assert.notEqual(world.space(), scope);
+  built.bind(world.space());
+  assert.equal(built.permits([{ position: floor }], false, read), true);
+  bot.emit('end');
+  bot._client.emit('login', packet);
+  bot.emit('spawn');
+  assert.notEqual(world.space(), scope);
+  world.close();
 });

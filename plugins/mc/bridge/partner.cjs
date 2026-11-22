@@ -163,7 +163,9 @@ async function collect(bot, args, check, result, built) {
   result.broken = 0;
   result.changes = [];
   const approved = Boolean(fixed && args.source !== 'ground' && args.approvedBuiltEdit === true);
-  const allowed = block => built.permits(affectedByDig(bot, block), approved) &&
+  const readProtected = ({ x, y, z }) => bot.blockAt(bot.entity.position.clone().set(x, y, z));
+  const permitsDig = cells => built.permits(cells, approved, readProtected);
+  const allowed = block => permitsDig(affectedByDig(bot, block)) &&
     (args.source !== 'ground' || fromGround(bot, block, args.protectedCells));
   try {
     for (let n = 0; n < missing; ++n) {
@@ -172,7 +174,7 @@ async function collect(bot, args, check, result, built) {
       if (expected && stock >= args.requiredStock) break;
       if (!matching.length) throw new Error('当前地面取材规则未找到这种物品的自然来源');
       const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
-      if (block && matching.includes(block.type) && !built.permits(affectedByDig(bot, block), approved))
+      if (block && matching.includes(block.type) && !permitsDig(affectedByDig(bot, block)))
         throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!block || !matching.includes(block.type) || !block.diggable || !allowed(block))
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
@@ -195,7 +197,7 @@ async function collect(bot, args, check, result, built) {
       if (!here.canHarvest(bot.heldItem?.type)) throw new Error('没有可采掘这个方块的工具');
       if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position)) throw new Error('实际站位没有安全的采掘视线');
       const affected = affectedByDig(bot, here);
-      if (!built.permits(affected, approved)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
+      if (!permitsDig(affected)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
       if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
       const readback = collectReadback(bot, here, affected);
@@ -286,6 +288,7 @@ function partnerService(bot, world, inbox, places, owner) {
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
+    let builtSpace;
     if (r.skill === 'place') result.placementAttempted = result.placed = false;
     if (r.skill === 'fill_target') Object.assign(result, { cells: [], changes: [], placementAttempted: false,
       sourceMessage: args.sourceMessage, taskRevision: args.taskRevision });
@@ -294,6 +297,11 @@ function partnerService(bot, world, inbox, places, owner) {
     };
     try {
       check();
+      if (['collect', 'place', 'fill_target'].includes(r.skill)) {
+        builtSpace = world.space();
+        if (!builtSpace) throw new Error('游戏地图空间不可用');
+        built.bind(builtSpace);
+      }
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
       if (observation?.mode === 'wall') {
@@ -411,12 +419,8 @@ function partnerService(bot, world, inbox, places, owner) {
         bot.pathfinder.setMovements(walkingMovements(bot));
         await followPlayer(bot, owner, args.distance ?? 3, check, result,
           (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
-      } else if (r.skill === 'collect') {
-        built.bind(r.generation, bot.game.dimension);
-        await collect(bot, args, check, result, built);
-      }
+      } else if (r.skill === 'collect') await collect(bot, args, check, result, built);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
-        built.bind(r.generation, bot.game.dimension);
         if (args.sourceMessage !== undefined) {
           if (args.sourceMode === 'approach') {
             const source = inbox.get(r.generation, args.sourceMessage)?.sceneAtMessage;
@@ -439,7 +443,7 @@ function partnerService(bot, world, inbox, places, owner) {
       result.reason = String(error.message).slice(0, 240);
       if (['collect', 'place', 'fill_target', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
-      if (world.read()?.generation === r.generation) {
+      if (builtSpace && world.space() === builtSpace) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
         if (r.skill === 'place' && result.placed) built.placed(result.blocks);
         if (r.skill === 'fill_target') {

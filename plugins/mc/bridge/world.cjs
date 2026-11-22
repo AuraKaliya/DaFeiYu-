@@ -4,19 +4,32 @@ const { randomUUID } = require('node:crypto');
 // 步骤：绑定游戏事件 → 按代次复制角色状态 → 撤销后丢弃旧世界。
 function observeWorld(bot) {
   let generation = null;
+  let connection = randomUUID(), level = null;
   let lastSignal = 0;
   let closed = false;
   const signal = () => { lastSignal = performance.now(); };
   const enter = () => { generation = randomUUID(); signal(); };
   const leave = () => { generation = null; };
+  // 从服务端出生信息读取实际地图名，区分同维度类型的不同地图。
+  const readLevel = packet => { level = packet.worldState?.name || null; };
+  // 新登录隔离上一条连接，即使两个服务器选用了相同的地图名。
+  const login = packet => { connection = randomUUID(); readLevel(packet); };
+  const disconnect = () => { leave(); level = null; };
+  bot._client?.on('login', login);
+  bot._client?.on('respawn', readLevel);
   bot.on('spawn', enter);
   bot.on('respawn', leave);
-  bot.on('end', leave);
+  bot.on('end', disconnect);
   bot.on('time', signal);
   bot.on('forcedMove', signal);
   if (bot.entity && bot.player?.uuid) enter();
 
   return {
+    // 供游戏侧对象绑定使用；缺少地图名时只在本次角色代次中有效。
+    space() {
+      if (closed || !generation || !bot.game?.dimension) return null;
+      return JSON.stringify(level ? [connection, level, bot.game.dimension] : [generation, bot.game.dimension]);
+    },
     // 只复制客户端能取得的身份、位置和库存，轮询本身不刷新服务端信号时间。
     read() {
       if (closed || !generation || !bot.entity || !bot.player?.uuid) return null;
@@ -30,10 +43,12 @@ function observeWorld(bot) {
     // 停止服务端事件投影，已有快照仅保留其原世界身份。
     close() {
       closed = true;
-      leave();
+      disconnect();
+      bot._client?.removeListener('login', login);
+      bot._client?.removeListener('respawn', readLevel);
       bot.removeListener('spawn', enter);
       bot.removeListener('respawn', leave);
-      bot.removeListener('end', leave);
+      bot.removeListener('end', disconnect);
       bot.removeListener('time', signal);
       bot.removeListener('forcedMove', signal);
     },
