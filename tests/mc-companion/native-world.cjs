@@ -5,6 +5,19 @@ const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
+const { requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
+
+// 在固定高度返回一片能掉落泥土的完整地面，供实际审批算法选用。
+function refusedGround() {
+  // 复用被检查方格的原方向和高度偏移。
+  const position = (x, y, z) => ({ x, y, z, offset: (dx, dy, dz) => position(x + dx, y + dy, z + dz) });
+  const dirt = { id: 3, name: 'dirt', drops: [3], boundingBox: 'block' };
+  return {
+    registry: { blocksByName: { dirt }, itemsByName: { dirt: { id: 3 } } },
+    block: { ...dirt, type: 3, position: position(2, -61, 0) },
+    blockAt: point => point.y <= -61 ? dirt : { name: 'air' },
+  };
+}
 
 // 用独立目录的插件配置把真实 DLL 接到受控世界来源。
 // 步骤：签发管道短名并保存用户设置 → 运行原生安装与执行探针 → 核对调用数并关闭。
@@ -18,6 +31,7 @@ async function main() {
   const follow = suspend || recovery || variant === 'partner-follow';
   const motion = follow || variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
+  const refusedCollection = variant === 'partner-refused-collection';
   const scene = variant === 'partner-scene';
   const departure = variant === 'partner-departure';
   const execution = variant?.startsWith('partner-execution-');
@@ -50,7 +64,7 @@ async function main() {
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision || execution || delivery;
+  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || refusedCollection || task || route || exchange || departure || revision || execution || delivery;
   fs.mkdirSync(temp, { recursive: true });
   let root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -99,6 +113,7 @@ async function main() {
             line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
         }
         const latest = initial ? 1 :
+          refusedCollection ? (approvedId ? (after >= 3 ? 4 : 3) : 2) :
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
@@ -115,6 +130,11 @@ async function main() {
           { sequence: 4, text: suspend ? 'can you hear me' : motion ? 'stop for now' : (confirm ? 'approve ' : 'deny ') + approvedId },
           { sequence: 5, text: 'stop following' }];
         if (departure) messages[2] = left;
+        if (refusedCollection) {
+          messages[1].text = '先问我，再从地面把泥土补到一个';
+          messages[2].text = '拒绝 ' + approvedId;
+          messages[3].text = '再检查一下原来的取材';
+        }
         if (revision) {
           messages[1].text = '清理门边两格草方块';
           if (attention) {
@@ -183,6 +203,26 @@ async function main() {
       assert.ok(!execution, '不可执行时不应调用游戏技能');
       const { controller } = context;
       assert.match(controller, /^[a-f0-9]{32}$/);
+      if (refusedCollection) {
+        assert.equal(method, 'partner.begin');
+        if (skill === 'reply') {
+          assert.equal(context.order, 2);
+          const match = /确认 (\d+) 或 拒绝 \1$/.exec(args.text);
+          assert.ok(match && !approvedId);
+          approvedId = match[1];
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        assert.equal(skill, 'collect');
+        assert.equal(context.order, 4);
+        assert.equal(args.block, 'dirt');
+        assert.equal(++replies, 1);
+        const ground = refusedGround();
+        if (requiresCollectionApproval(ground, args.collectionGuards, [ground.block]))
+          return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'approval_required',
+            broken: 0, changes: [], inventoryDelta: {} } };
+        return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
+          changes: [{ x: 2, y: -61, z: 0, before: 'dirt', after: 'air' }], inventoryDelta: { dirt: 1 } } };
+      }
       if (controllerRestart) {
         if (method === 'partner.begin') hostWork.push({ id, context, args });
         else assert.deepEqual({ id, context, args }, hostWork.at(-1));
@@ -610,7 +650,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute || rejoin ? 5 : first || motion || confirm || pointedCraft || attention ? 4 :
+    return { generation, order: restartRoute || rejoin ? 5 : first || motion || confirm || refusedCollection || pointedCraft || attention ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -637,7 +677,8 @@ async function main() {
       assert.notEqual(first.context.controller, second.context.controller);
       assert.deepEqual({ ...second, context: { ...second.context, controller: first.context.controller } }, first);
     } else {
-      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision || execution || delivery ? [variant] : [])],
+      if (refusedCollection) console.log(path.join(root, 'trace', 'events.jsonl'));
+      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || refusedCollection || task || route || exchange || departure || revision || execution || delivery ? [variant] : [])],
         { stdio: 'inherit', windowsHide: true });
       assert.equal((await once(child, 'exit'))[0], 0);
     }

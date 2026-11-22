@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
 const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
-const { fromGround } = require('../../plugins/mc/bridge/collection.cjs');
+const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 const { observeWorld } = require('../../plugins/mc/bridge/world.cjs');
 
@@ -22,6 +22,25 @@ class Position {
   // 测量扫描中心和角色之间的距离。
   distanceTo(other) { return Math.hypot(this.x - other.x, this.y - other.y, this.z - other.z); }
 }
+
+// 用实际掉落关系和取材范围识别重叠，保留可证明互不相交的操作。
+test('collection approval checks drops, geometry and every affected cell', () => {
+  const grass = { id: 2, type: 2, name: 'grass_block', drops: [3], boundingBox: 'block', position: new Position(2, 0, 0) };
+  let known = true;
+  const bot = { registry: { blocksByName: { grass_block: grass }, itemsByName: { dirt: { id: 3 } } },
+    blockAt: point => known ? point.y <= 0 ? grass : { name: 'air' } : null };
+  const stock = [{ item: 'minecraft:dirt', source: 'ground' }];
+  assert.equal(requiresCollectionApproval(bot, stock, [grass]), true);
+  assert.equal(requiresCollectionApproval(bot, stock, [{ ...grass, name: 'oak_log', type: 7 }]), false);
+  assert.equal(requiresCollectionApproval(bot, [{ ...stock[0], block: 'dirt' }], [grass]), false);
+  assert.equal(requiresCollectionApproval(bot, [{ ...stock[0], protectedCells: [{ x: 2, y: 1, z: 0 }] }], [grass]), false);
+  known = false;
+  assert.equal(requiresCollectionApproval(bot, stock, [grass]), true);
+
+  const door = [0, 1].map(y => ({ name: 'oak_door', position: new Position(3, y, 0) }));
+  assert.equal(requiresCollectionApproval(bot, [{ block: 'oak_door', x: 3, y: 0, z: 0 }], door.toReversed()), true);
+  assert.equal(requiresCollectionApproval(bot, [{ block: 'oak_door', x: 4, y: 0, z: 0 }], door), false);
+});
 
 // 三个坐标方向各有一个独立的样本，并保留墙上的空缺和未知格。
 test('the survey projects the existing wall and its gap against an exact origin', () => {

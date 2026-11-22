@@ -811,6 +811,66 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
 }
 }
 
+namespace {
+// 用固定模型响应验证拒绝补库存后改用普通采掘的实际结算。
+// 步骤：提出补库存确认 → 接收拒绝后扩展采掘工具 → 改用普通采掘并核对退出回执。
+int verify_refused_collection(const std::filesystem::path& package, const std::filesystem::path& root) {
+    using namespace dfy;
+    using namespace model;
+    using Json = nlohmann::json;
+    std::atomic_bool receipt_seen = false;
+    app::ApplicationRunConfig run;
+    run.trace_directory = root;
+    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+        const Response silent{{Role::assistant,R"({"internal":"fixed fixture settled"})"}};
+        const auto call = [&](std::string_view name, Json args) -> Response {
+            const auto tool = std::ranges::find_if(request.tools,[&](const auto& entry) { return entry.name.ends_with(name); });
+            if (tool == request.tools.end()) throw std::runtime_error("required collection test tool was not visible");
+            return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
+        };
+        const auto& message = request.messages.back();
+        // 即时拒绝走工具回执，已经接纳的动作走原工作结算。
+        const auto verify = [&](const Json& result) {
+            receipt_seen = result.value("reasonCode","") == "approval_required" && result.value("broken",-1) == 0;
+            if (!receipt_seen) throw std::runtime_error("ordinary collection modified a refused candidate");
+        };
+        if (message.role == Role::tool) {
+            if (message.tool_call_id == "_collect") {
+                const auto result = Json::parse(message.content.substr(message.content.find('{')));
+                if (result.value("status","") != "accepted") verify(result);
+            }
+            return silent;
+        }
+        const auto input = Json::parse(message.content);
+        if (input.contains("workSettlement")) { verify(primary_receipt(input).at("result")); return silent; }
+        if (input.at("trigger") == "skills.expanded") return call("_collect",{{"block","dirt"},{"count",1}});
+        if (input.at("events").empty()) return silent;
+        const auto& event = input.at("events").back();
+        if (event.at("sequence") == 2)
+            return call("_gather_ground",{{"item","dirt"},{"requiredStock",1},{"approval","game"}});
+        if (event.at("sequence") == 4) return call("_skills",{{"categories",{"dig_break"}}});
+        return silent;
+    }},std::move(run));
+    host.plugins().install(package);
+    if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load collection package");
+    const auto id = host.open_companion("mc.companion");
+    host.listen_companion(id);
+
+    bool stopping = false;
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(6);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("collection loop failed");
+        if (stopping && host.companion_status()->closed) return 0;
+        if (!stopping && receipt_seen && host.companion_status()->settled_event == 4) {
+            host.stop_companion(id);
+            stopping = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    throw std::runtime_error("refused collection did not settle without a change");
+}
+}
+
 // 通过真实 DLL、命名管道与可控后端验证插件拥有一条完整的回复链路。
 // 步骤：安装并启动原角色 → 等待在场和原话回合 → 核对真实技能回执 → 停止并卸载。
 int wmain(int argc, wchar_t** argv) {
@@ -823,6 +883,8 @@ int wmain(int argc, wchar_t** argv) {
             return verify_unavailable_partner(argv[1],argv[2],std::wstring_view(argv[3]).ends_with(L"-scenario"));
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-reply-"))
             return verify_reply_delivery(argv[1],argv[2],argv[3]);
+        if (argc == 4 && std::wstring_view(argv[3]) == L"partner-refused-collection")
+            return verify_refused_collection(argv[1],argv[2]);
         if (argc == 3) {
             verify_follow_windows();
             verify_collection_effect();

@@ -7,7 +7,8 @@ const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference } = require('./collection.cjs');
+const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop,
+  matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
@@ -167,6 +168,11 @@ async function collect(bot, args, check, result, built) {
   const permitsDig = cells => built.permits(cells, approved, readProtected);
   const allowed = block => permitsDig(affectedByDig(bot, block)) &&
     (args.source !== 'ground' || fromGround(bot, block, args.protectedCells));
+  // 拟动格与原确认范围重叠时，同一执行器拒绝任何未获批的采掘入口。
+  const checkApproval = cells => {
+    if (requiresCollectionApproval(bot, args.collectionGuards, cells))
+      throw Object.assign(new Error('目标仍在需要重新确认的取材范围内'), { code: 'approval_required' });
+  };
   try {
     for (let n = 0; n < missing; ++n) {
       check();
@@ -178,6 +184,7 @@ async function collect(bot, args, check, result, built) {
         throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!block || !matching.includes(block.type) || !block.diggable || !allowed(block))
         throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
+      checkApproval(affectedByDig(bot, block));
       const pos = block.position;
       if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('目标支撑着角色，请先移动');
       if (!digReachable(bot, pos, bot.entity.position)) {
@@ -200,6 +207,7 @@ async function collect(bot, args, check, result, built) {
       if (!permitsDig(affected)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
       if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
+      checkApproval(affected);
       const readback = collectReadback(bot, here, affected);
       const known = new Set(Object.keys(bot.entities));
       try { await bot.dig(here, true); }

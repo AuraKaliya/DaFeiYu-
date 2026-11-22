@@ -311,6 +311,11 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
                 return report(DFY_V2_INVALID_CONTEXT,error);
             if (pending_approval) job.ready = job.success = true;
         } else if (partner && !local) {
+            if (partner_turn && game_skill == "collect") {
+                auto input = nlohmann::json::parse(job.arguments);
+                raw->partner.bind_collection_guards(input.at("arguments"));
+                job.arguments = input.dump();
+            }
             auto work = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job.id,job.arguments,std::string(game_skill));
             if (game_skill == "reply" && !raw->partner.reserve_reply(call->session,job.id)) {
                 job.output = R"({"status":"already_requested","sent":false})";

@@ -9,27 +9,50 @@ function groundTypes(registry, item) {
   return candidates.filter(block => block?.drops.includes(registry.itemsByName[item]?.id));
 }
 
-// 只接纳有承重地层、开阔表面且远离突起结构的自然取材格。
-// 步骤：排除目标墙格及其支撑 → 核对地形和邻接结构 → 保留角色脚下支撑。
-function fromGround(bot, block, protectedCells = []) {
+// 判断方格是否属于地面取材范围，未加载的地形返回未知。
+// 步骤：排除保护格 → 核对上下与邻接地形 → 区分已确认范围和缺失证据。
+function groundScope(bot, block, protectedCells = []) {
   if (!block || !terrain.has(block.name)) return false;
   const pos = block.position;
   if (protectedCells.some(({ x, y, z }) => pos.x === x && pos.z === z && (pos.y === y || pos.y === y - 1)))
     return false;
-  if (!vacant.has(bot.blockAt(pos.offset(0, 1, 0))?.name) ||
-      bot.blockAt(pos.offset(0, -1, 0))?.boundingBox !== 'block') return false;
+  const above = bot.blockAt(pos.offset(0, 1, 0));
+  const below = bot.blockAt(pos.offset(0, -1, 0));
+  if ((above && !vacant.has(above.name)) || (below && below.boundingBox !== 'block')) return false;
+  let known = Boolean(above && below);
   let level = 0;
   for (const [x, z] of neighbours) {
     const side = bot.blockAt(pos.offset(x, 0, z));
-    if (!side || !vacant.has(bot.blockAt(pos.offset(x, 1, z))?.name) ||
-        (!terrain.has(side.name) && !vacant.has(side.name))) return false;
-    if (terrain.has(side.name)) ++level;
+    const top = bot.blockAt(pos.offset(x, 1, z));
+    if ((side && !terrain.has(side.name) && !vacant.has(side.name)) || (top && !vacant.has(top.name))) return false;
+    if (!side || !top) known = false;
+    if (terrain.has(side?.name)) ++level;
   }
-  if (level < 3) return false;
+  return known ? level >= 3 : null;
+}
+
+// 只在已确认的地面取材，并保留所有角色脚下的支撑。
+function fromGround(bot, block, protectedCells = []) {
+  if (groundScope(bot, block, protectedCells) !== true) return false;
+  const pos = block.position;
   return ![bot.entity, ...Object.values(bot.players).map(player => player.entity)].some(entity => {
     const feet = entity?.position?.floored();
     return feet && feet.x === pos.x && feet.z === pos.z && feet.y >= pos.y && feet.y <= pos.y + 2;
   });
+}
+
+// 核对本次破坏与原确认候选的实际影响范围是否重叠。
+// 步骤：按游戏注册表展开物品来源 → 对照每个受影响方格 → 核对原取材约束。
+function requiresCollectionApproval(bot, guards, affected) {
+  return guards?.some(guard => {
+    const material = guard.block?.replace(/^minecraft:/, '');
+    const item = guard.item?.replace(/^minecraft:/, '');
+    const types = item && groundTypes(bot.registry, item);
+    return affected.some(block => (!material || block.name === material) &&
+      (!types || types.some(type => type.id === block.type)) &&
+      (!Object.hasOwn(guard, 'x') || ['x', 'y', 'z'].every(axis => guard[axis] === block.position[axis])) &&
+      (guard.source !== 'ground' || groundScope(bot, block, guard.protectedCells) !== false));
+  }) ?? false;
 }
 
 // 查找这次破坏后出现且仍在附近的实际掉落物。
@@ -93,4 +116,4 @@ function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
   };
 }
 
-module.exports = { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference };
+module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference };

@@ -6,24 +6,11 @@ namespace dfy::mc {
 using Json = nlohmann::json;
 
 namespace {
-// 将两种原版注册名写法归一，比较动作是否仍可能涉及受保护的目标。
-// 步骤：核对目标库存或方块 → 对照可选固定方格 → 识别同一扇门的两半。
-bool same_action(std::string_view skill, const Json& a, const Json& b) {
-    const auto material = [](const Json& args, const char* field) {
-        auto name = args.value(field,std::string{});
-        if (name.starts_with("minecraft:")) name.erase(0,10);
-        return name;
-    };
-    if (skill == "collect" && a.contains("item") && b.contains("item"))
-        return material(a,"item") == material(b,"item");
-    const auto block = material(a,"block");
-    if (block != material(b,"block")) return false;
-    if (!a.contains("x") || !a.contains("y") || !a.contains("z") ||
-        !b.contains("x") || !b.contains("y") || !b.contains("z")) return skill == "collect";
-    if (a.at("x") != b.at("x") || a.at("z") != b.at("z")) return false;
-    if (a.at("y") == b.at("y")) return true;
-    return skill == "collect" && block.ends_with("_door") &&
-        std::abs(a.at("y").get<double>()-b.at("y").get<double>()) == 1;
+// 比较两个已绑定的放置候选是否使用同一种方块和同一格。
+bool same_placement(const Json& a, const Json& b) {
+    const auto material = [](std::string_view name) { return name.starts_with("minecraft:") ? name.substr(10) : name; };
+    return material(a.at("block").get_ref<const std::string&>()) == material(b.at("block").get_ref<const std::string&>()) &&
+        a.at("x") == b.at("x") && a.at("y") == b.at("y") && a.at("z") == b.at("z");
 }
 
 // 为受支持的原生动作生成问题，业务参数保留完整坐标和材料。
@@ -108,11 +95,25 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     return true;
 }
 
-// 已到期、撤回或拒绝的候选仍须以新确认才可再次执行。
+// 阻止与待确认工作争用的动作，并按已绑定格检查放置候选。
 bool PartnerLoop::requires_approval(std::string_view skill, const Json& args) const {
-    return awaiting_approval(skill) || std::ranges::any_of(guarded_actions_,[&](const auto& action) {
-        return action.first == skill && same_action(skill,action.second,args);
-    });
+    return awaiting_approval(skill) || (skill == "place" && std::ranges::any_of(guarded_actions_,[&](const auto& action) {
+        return action.first == skill && same_placement(action.second,args);
+    }));
+}
+
+// 将原采掘候选的材料和取材约束交给游戏侧逐格核验。
+// 步骤：提取仍受确认保护的采掘范围 → 携带最终执行器需要的字段。
+void PartnerLoop::bind_collection_guards(Json& args) const {
+    Json guards = Json::array();
+    for (const auto& [skill,candidate] : guarded_actions_) {
+        if (skill != "collect") continue;
+        Json scope = Json::object();
+        for (const auto key : {"item","block","source","x","y","z","protectedCells"})
+            if (candidate.contains(key)) scope[key] = candidate.at(key);
+        if (std::ranges::find(guards,scope) == guards.end()) guards.push_back(std::move(scope));
+    }
+    if (!guards.empty()) args["collectionGuards"] = std::move(guards);
 }
 
 // 判断当前技能是否仍持有等待或已批准但尚未执行的候选。

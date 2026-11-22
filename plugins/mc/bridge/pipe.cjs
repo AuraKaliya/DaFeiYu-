@@ -38,9 +38,12 @@ function readReply(input, world, inbox, key, actions) {
   if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')
     return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };
   if (actions?.partner) {
+    const guarded = request.skill === 'guarded_collect' && Array.isArray(request.arguments?.collectionGuards) &&
+      request.arguments.collectionGuards.length > 0 && request.arguments.collectionGuards.length <= 128;
+    const skill = guarded ? 'collect' : request.skill;
     if (!['partner.begin', 'partner.read', 'partner.stop'].includes(request.method) ||
-      !['observe', 'move', 'route', 'follow', 'collect', 'place', 'fill_target', 'reply'].includes(request.skill)) throw new Error('不是伙伴会话的能力');
-    const receipt = actions.partner.call(request.method, request.id, request.context, request.skill, request.arguments);
+      !['observe', 'move', 'route', 'follow', 'collect', 'place', 'fill_target', 'reply'].includes(skill)) throw new Error('不是伙伴会话的能力');
+    const receipt = actions.partner.call(request.method, request.id, request.context, skill, request.arguments);
     return { version: 1, id: request.id, action: receipt };
   }
   if (actions?.deliveries && request.method === 'collection.admit' && Object.keys(request).length === 5 && request.grant &&
@@ -87,7 +90,7 @@ async function openBridge(channel, world, inbox = null, key = null, actions = nu
     let replied = false;
     // 按字节累积一行并拒绝同连接上的额外请求。
     socket.on('data', chunk => {
-      if (replied || message.length + chunk.length > 2048) return socket.destroy();
+      if (replied || message.length + chunk.length > 128 * 1024) return socket.destroy();
       message = Buffer.concat([message, chunk]);
       const newline = message.indexOf(10);
       if (newline === -1) return;

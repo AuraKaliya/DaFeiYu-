@@ -174,8 +174,10 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         !uuid(context.at("generation")) || !context.at("order").is_number_unsigned() || context.at("order") == 0 ||
         context.at("order") > 9007199254740991ULL) throw std::invalid_argument("MC: invalid partner context");
     context["controller"] = config.controller;
+    // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
+    const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
     return Json{{"version",1},{"id",id},{"key",config.key},{"method",method},{"context",std::move(context)},
-        {"skill",skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
+        {"skill",wire_skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,

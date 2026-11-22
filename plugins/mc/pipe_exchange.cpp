@@ -16,7 +16,8 @@ bool valid_channel(std::string_view channel) noexcept {
 // 步骤：校验名称与帧长 → 打开本机服务端 → 开启非等待收发。
 PipeExchange::PipeExchange(std::string_view channel, std::string request, std::chrono::steady_clock::duration timeout)
     : handle_(INVALID_HANDLE_VALUE), request_(std::move(request)), deadline_(std::chrono::steady_clock::now() + timeout) {
-    if (!valid_channel(channel) || request_.empty() || request_.size() >= 2048 ||
+    // 采掘可携带有界的原候选集合，每项至多包含十六个保护格。
+    if (!valid_channel(channel) || request_.empty() || request_.size() >= 128*1024 ||
         request_.find_first_of("\r\n") != std::string::npos) throw std::invalid_argument("MC bridge: invalid channel or request");
     request_ += '\n';
     const std::wstring name = std::wstring(LR"(\\.\pipe\DaFeiYu.MC.)") + std::wstring(channel.begin(), channel.end());

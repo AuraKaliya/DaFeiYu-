@@ -165,6 +165,8 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (step.plan_node && request_ && order_ > step.order) return;
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
+    // 指定单格沿用原范围，普通采集继承当前任务的取材约束。
+    if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
     if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args)) ||
         (step.skill == "fill_target" && !bind_fill(args))) {
         if (step.plan_node) {
@@ -173,8 +175,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
         } else clear_queue("blocked",step.invocation);
         return;
     }
-    // 直接指定单格的挖掘已固定范围，普通队列采集继承任务的取材约束。
-    if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
+    if (step.skill == "collect") bind_collection_guards(args);
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
         {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));
