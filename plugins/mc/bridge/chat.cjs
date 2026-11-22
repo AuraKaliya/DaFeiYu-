@@ -22,7 +22,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   let sequence = 0;
   let closed = false;
   const entries = [];
-  let presence = null, trackingPresence = false;
+  let presence = null, trackingPresence = false, lastDeparture = 0;
 
   // 同一游戏代次内所有事实共享一个有界游标。
   function append(fact) {
@@ -35,6 +35,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   // 记录绑定玩家的实际在场变化，重复名单通知复用原事实。
   function recordPresence(type) {
     if (presence?.type !== type) presence = append({ type }) ?? presence;
+    if (presence?.type === 'player.left') lastDeparture = presence.sequence;
   }
 
   // 以游戏读回维护会话边界，换世界后原游标和旧消息停止流转。
@@ -46,6 +47,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       entries.length = 0;
       presence = null;
       trackingPresence = false;
+      lastDeparture = 0;
     }
     return generation;
   }
@@ -55,7 +57,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       (!localFixture && packet.verified !== true) || typeof packet.plainMessage !== 'string' ||
       !packet.plainMessage.trim() || Buffer.byteLength(packet.plainMessage) > 1024) return;
     const snapshot = closed ? null : world.read();
-    if (!sync(snapshot)) return;
+    if (!sync(snapshot) || (trackingPresence && presence?.type !== 'player.entered')) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
     const offer = classify(packet.plainMessage, generation, sequence + 1);
     append({ text: packet.plainMessage, ...(withPresence && {
@@ -86,7 +88,12 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
         bytes += size;
       }
       return { generation, owner, oldest, latest: sequence, gap: after < oldest - 1,
-        more: (messages.at(-1)?.sequence ?? after) < sequence, messages, ...(presence && { presence: { ...presence } }) };
+        more: (messages.at(-1)?.sequence ?? after) < sequence, messages,
+        ...(withPresence && { lastDeparture }), ...(presence && { presence: { ...presence } }) };
+    },
+    // 工作只能在原玩家在场周期内继续执行。
+    inPresence(expected, order) {
+      return sync() === expected && (!withPresence || (presence?.type === 'player.entered' && order >= presence.sequence));
     },
     // 仅在同一游戏来源中取得仍保留的原指令。
     get(expected, number) {

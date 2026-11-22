@@ -114,7 +114,7 @@ void PartnerLoop::intake_question(std::string_view category, const Json& body, c
     const auto id = body.value("ask",std::uint64_t{});
     const bool matched = question_ && item == question_->item && domain == question_->event_domain && event == question_->event_sequence &&
         (!question_->ask || question_->ask == id) && body.value("recipient",std::string{}) == question_->player &&
-        question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed();
+        question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed() && !feed_.departure();
     if (category == "interaction.ask.present") {
         if (matched && id && !question_->ask && !question_work_ && body.value("question",std::string{}) == question_->text) {
             question_->ask = id;

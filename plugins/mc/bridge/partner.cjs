@@ -234,7 +234,7 @@ function partnerService(bot, world, inbox, places, owner) {
   const built = new BuiltObjects();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
-    return !closed && world.read()?.generation === context.generation && inbox.get(context.generation, context.order) &&
+    return !closed && inbox.inPresence(context.generation, context.order) && inbox.get(context.generation, context.order) &&
       inbox.read(context.generation, context.order)?.latest === context.order;
   }
   // 从原始收件记录取出当时的现场，玩家后来移动不会改写中心。
@@ -253,6 +253,14 @@ function partnerService(bot, world, inbox, places, owner) {
     if (bot.targetDigBlock) bot.stopDigging();
     bot.clearControlStates();
   }
+  // 撤销原角色控制和后台观察，已落地的效果由原工作读回。
+  function stopActivities() {
+    cancel();
+    for (const job of observations) { job.cancelled = true; job.abort.abort(); }
+  }
+  // 玩家名单的真实离场立即撤销执行，避免重入期间先执行旧动作。
+  const onLeft = player => { if (player.uuid === owner) stopActivities(); };
+  bot.on('playerLeft', onLeft);
   // 从私有配对读口定期取样，只有实际视域网格或背包变化才递增修订。
   function scene(generation) {
     if (closed || world.read()?.generation !== generation) return null;
@@ -281,7 +289,9 @@ function partnerService(bot, world, inbox, places, owner) {
     if (r.skill === 'place') result.placementAttempted = result.placed = false;
     if (r.skill === 'fill_target') Object.assign(result, { cells: [], changes: [], placementAttempted: false,
       sourceMessage: args.sourceMessage, taskRevision: args.taskRevision });
-    const check = () => { if (job.cancelled || closed || world.read()?.generation !== r.generation) throw new Error('原工作已中断或游戏绑定已失效'); };
+    const check = () => {
+      if (job.cancelled || closed || !inbox.inPresence(r.generation, r.order)) throw new Error('原工作已中断或游戏绑定已失效');
+    };
     try {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
@@ -485,7 +495,7 @@ function partnerService(bot, world, inbox, places, owner) {
       if (controlsBody) {
         active = job;
         const timer = setInterval(() => {
-          if (active === job && (world.read()?.generation !== context.generation || performance.now() - job.polled > 4000)) cancel();
+          if (active === job && (!inbox.inPresence(context.generation, context.order) || performance.now() - job.polled > 4000)) cancel();
         }, 150);
         done = run(job, args).finally(() => clearInterval(timer));
       } else if (skill === 'observe') {
@@ -498,8 +508,8 @@ function partnerService(bot, world, inbox, places, owner) {
     // 立即关闭接纳，等原工作归还后才允许报告释放。
     async close() {
       closed = true;
-      cancel();
-      for (const job of observations) { job.cancelled = true; job.abort.abort(); }
+      bot.removeListener('playerLeft', onLeft);
+      stopActivities();
       await Promise.all([done, ...[...observations].map(job => job.done)]);
     },
   };

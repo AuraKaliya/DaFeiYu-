@@ -24,6 +24,10 @@ class PartnerFeed {
     std::uint64_t cursor() const noexcept { return cursor_; }
     // 返回本世界最近实际离场的序号，重新在场后归零。
     std::uint64_t departed() const noexcept { return departed_; }
+    // 返回仍需撤销旧工作的离场水位，进场事件不能提前清除它。
+    std::uint64_t departure() const noexcept { return departure_; }
+    // 归还旧在场周期的已结算事件，保留重新进场后的事实。
+    void settle_departure();
     // 借用本次原生读取的世界和位置事实。
     const nlohmann::json& observation() const noexcept { return observation_; }
     // 当前世界收到的最新私有现场修订，零表示来源暂未提供。
@@ -52,7 +56,7 @@ class PartnerFeed {
     std::deque<nlohmann::json> anchored_messages_;
     std::unique_ptr<PipeExchange> pipe_;
     std::chrono::steady_clock::time_point next_{}, world_due_{};
-    std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, scene_revision_ = 0;
+    std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, departure_ = 0, scene_revision_ = 0;
     bool reading_world_ = false, ready_ = false, more_ = false, gap_ = false;
 };
 }

@@ -1,4 +1,5 @@
 #include "partner_feed.hpp"
+#include <algorithm>
 
 namespace dfy::mc {
 using Json = nlohmann::json;
@@ -6,7 +7,7 @@ using Json = nlohmann::json;
 // 归还旧玩家事件，保留原请求编号不会重用的约束。
 void PartnerFeed::reset_binding() noexcept {
     owner_.clear();
-    cursor_ = departed_ = 0;
+    cursor_ = departed_ = departure_ = 0;
     scene_revision_ = 0;
     ready_ = more_ = gap_ = false;
     pending_.clear();
@@ -25,6 +26,17 @@ void PartnerFeed::clear() noexcept {
 
 // 仅在子会话接纳后丢弃待交付窗口。
 void PartnerFeed::consumed() { pending_.clear(); gap_ = false; }
+
+// 在旧工作结算后裁剪旧在场周期，后续事实仍按水位进入上下文。
+// 步骤：从待交付事件和原话锚点裁剪 → 归还已处理的离场水位。
+void PartnerFeed::settle_departure() {
+    pending_.erase(pending_.begin(),std::ranges::find_if(pending_,[&](const auto& event) {
+        return event.at("sequence") > departure_;
+    }));
+    while (!anchored_messages_.empty() && anchored_messages_.front().at("sequence") <= departure_)
+        anchored_messages_.pop_front();
+    departure_ = 0;
+}
 
 // 只从当前世界已收的原消息中查找对应现场。
 const Json* PartnerFeed::message_scene(std::uint64_t sequence) const noexcept {
@@ -55,6 +67,11 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         anchored_messages_.pop_front();
     const auto& facts = batch.at("messages");
     const auto presence = batch.find("presence");
+    if (presence != batch.end()) departed_ = presence->at("type") == "player.left" ? presence->at("sequence").get<std::uint64_t>() : 0;
+    auto latest_departure = batch.value("lastDeparture",departed_);
+    for (const auto& fact : facts) if (fact.value("type","") == "player.left")
+        latest_departure = std::max(latest_departure,fact.at("sequence").get<std::uint64_t>());
+    if ((ready_ || departed_) && latest_departure > cursor_) departure_ = std::max(departure_,latest_departure);
     if (!ready_ || batch.at("gap") == true || pending_.size()+facts.size() > 32) {
         gap_ |= ready_;
         pending_.clear();
@@ -75,7 +92,6 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         }
         more_ = batch.at("more").get<bool>();
     }
-    if (presence != batch.end()) departed_ = presence->at("type") == "player.left" ? presence->at("sequence").get<std::uint64_t>() : 0;
     if (batch.contains("control")) control_ = batch.at("control");
     if (batch.contains("sceneRevision")) {
         const auto revision = batch.at("sceneRevision").get<std::uint64_t>();

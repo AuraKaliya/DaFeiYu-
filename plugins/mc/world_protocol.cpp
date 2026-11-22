@@ -404,7 +404,7 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong private reply");
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
-    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") ||
+    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") + inbox.count("lastDeparture") ||
         inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
@@ -412,6 +412,17 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     const auto after = query.at("after").get<std::uint64_t>();
     if (inbox.contains("presence") && (!presence_fact(inbox.at("presence")) || inbox.at("presence").at("sequence") > latest))
         throw std::invalid_argument("MC protocol: invalid player presence");
+    if (inbox.contains("lastDeparture")) {
+        const auto& departure = inbox.at("lastDeparture");
+        if (!departure.is_number_unsigned() || departure > latest || (departure != 0 && !inbox.contains("presence")))
+            throw std::invalid_argument("MC protocol: invalid player departure");
+        if (inbox.contains("presence")) {
+            const auto& presence = inbox.at("presence");
+            if ((presence.at("type") == "player.left" && departure != presence.at("sequence")) ||
+                (presence.at("type") == "player.entered" && departure >= presence.at("sequence")))
+                throw std::invalid_argument("MC protocol: inconsistent player departure");
+        }
+    }
     if (inbox.contains("control") && (!control_receipt(inbox.at("control"), query.at("generation")) ||
         inbox.at("control").at("order") > latest)) throw std::invalid_argument("MC: stop cursor");
     if (inbox.contains("sceneRevision") && (!inbox.at("sceneRevision").is_number_unsigned() ||
@@ -426,6 +437,12 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     for (const auto& message : messages) {
         if (!message.at("sequence").is_number_unsigned() || message.at("sequence") != ++cursor)
             throw std::invalid_argument("MC protocol: event sequence");
+        if (inbox.contains("lastDeparture")) {
+            const bool left = message.value("type","") == "player.left";
+            const auto& departure = inbox.at("lastDeparture");
+            if ((left && cursor > departure) || (!left && cursor == departure))
+                throw std::invalid_argument("MC protocol: departure cursor does not match the event");
+        }
         if (presence_fact(message)) {
             if (!inbox.contains("presence") || cursor > inbox.at("presence").at("sequence") ||
                 (cursor == inbox.at("presence").at("sequence") && message != inbox.at("presence")))

@@ -201,6 +201,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     using Json = nlohmann::json;
     const bool direct = variant.starts_with(L"partner-revision-direct-");
     const bool direct_place = variant.ends_with(L"-direct-place");
+    const bool rejoin = variant.ends_with(L"-direct-rejoin");
     const bool notes = variant.ends_with(L"-notes");
     const bool approval = variant.ends_with(L"-approval");
     const bool goal = variant == L"partner-revision-goal" || direct_place;
@@ -663,6 +664,15 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (correction || navigation || direct_place) task["target"] = {{"message",2},{"cells",floor}};
                 return call("_task_update","start-task",task);
             }
+            if (rejoin && event.at("sequence") == 5) {
+                if (request.messages.size() != 2 || input.at("events").size() != 2 ||
+                    input.at("events").front().at("type") != "player.entered" || input.at("task").at("revision") != 0 ||
+                    event.at("text") != "我回来了，先聊一会" || input.contains("recentDialogue") ||
+                    input.contains("activeMotion") || input.contains("pendingQuestion"))
+                    throw std::runtime_error("new presence reused the retired task or child context");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
             if (event.at("sequence") == 3) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
                 if (direct) old_work = input.at("activeMotion").at("work");
@@ -708,7 +718,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route ? 5u : pointed_craft || attention ? 4u : 3u) &&
+            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin ? 5u : pointed_craft || attention ? 4u : 3u) &&
             receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);

@@ -23,6 +23,7 @@ async function main() {
   const revision = variant?.startsWith('partner-revision-');
   const directRevision = variant?.startsWith('partner-revision-direct-');
   const directPlace = variant === 'partner-revision-direct-place';
+  const rejoin = variant === 'partner-revision-direct-rejoin';
   const notes = revision && variant.endsWith('-notes');
   const correction = variant?.startsWith('partner-revision-correction');
   const correctionLost = variant === 'partner-revision-correction-lost';
@@ -94,6 +95,7 @@ async function main() {
             line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
         }
         const latest = initial ? 1 :
+          rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
@@ -143,8 +145,14 @@ async function main() {
             messages[4].text = '中途重新绕';
           }
         }
+        if (rejoin) {
+          messages[2] = left;
+          messages[3] = { sequence: 4, type: 'player.entered' };
+          messages[4].text = '我回来了，先聊一会';
+        }
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
-          gap: false, more: false, presence: departure && latest === 3 ? left : entered, messages: messages.slice(after, latest) };
+          gap: false, more: false, presence: rejoin && latest === 5 ? messages[3] : departure && latest === 3 ? left : entered,
+          ...(rejoin && { lastDeparture: latest === 5 ? 3 : 0 }), messages: messages.slice(after, latest) };
       }
       if (boardWindow) {
         const latest = baselineRead ? 40 : 0;
@@ -565,7 +573,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute ? 5 : first || motion || confirm || pointedCraft || attention ? 4 :
+    return { generation, order: restartRoute || rejoin ? 5 : first || motion || confirm || pointedCraft || attention ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -635,6 +643,14 @@ async function main() {
       if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
       else if (navigation) assert.equal(routeReads, 9);
       if (pointedCraft) assert.equal(replies, 3);
+      if (rejoin) {
+        const trace = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        const action = trace.findIndex(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting &&
+          row.body.result.status === 'interrupted' && row.body.result.changes.length === 1);
+        const left = trace.findIndex(row => row.category === 'mc.partner.event' && row.body.event.type === 'player.left');
+        const entered = trace.findIndex(row => row.category === 'mc.partner.event' && row.body.event.sequence === 4);
+        assert.ok(action >= 0 && action < left && left < entered);
+      }
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);

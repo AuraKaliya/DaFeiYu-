@@ -123,7 +123,7 @@ bool PartnerLoop::awaiting_approval(std::string_view skill) const noexcept {
 
 // 检查原候选仍绑定当前游戏世界、玩家和游标。
 bool PartnerLoop::confirmation_context_current(std::uint64_t order) const {
-    return confirmation_ && order && !task_.correcting() && feed_.ready() && !feed_.departed() && !feed_.gap() &&
+    return confirmation_ && order && !task_.correcting() && feed_.ready() && !feed_.departed() && !feed_.departure() && !feed_.gap() &&
         feed_.world() == confirmation_->world && feed_.owner() == confirmation_->player && feed_.cursor() == order &&
         (!confirmation_->work || confirmation_->work->revision == task_.revision());
 }
@@ -164,7 +164,7 @@ void PartnerLoop::confirm_exited(std::uint64_t request) noexcept {
 void PartnerLoop::advance_confirmation() {
     if (!confirmation_ || !confirmation_->decision.is_null()) return;
     const auto& item = *confirmation_;
-    if (feed_.world() != item.world || feed_.owner() != item.player || feed_.gap() || feed_.departed()) {
+    if (feed_.world() != item.world || feed_.owner() != item.player || feed_.gap() || feed_.departed() || feed_.departure()) {
         confirm_once("withdrawn","host"); return;
     }
     if (item.work && item.work->revision != task_.revision()) { confirm_once("withdrawn","task"); return; }

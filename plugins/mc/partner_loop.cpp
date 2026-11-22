@@ -199,7 +199,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         active_delegation_.reset();
     } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
         {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel},
-        {"outcome",cancel ? (feed_.departed() ? "player_left" : "cancelled") :
+        {"outcome",cancel ? (feed_.departed() || feed_.departure() ? "player_left" : "cancelled") :
             state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}});
     request_ = 0;
     attention_turn_.reset();
@@ -235,12 +235,13 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
     return true;
 }
 
-// 原会话空闲后释放旧游戏上下文，下一世界重新签发身份。
+// 原会话空闲后释放旧游戏上下文，等待新的世界或玩家在场周期。
 void PartnerLoop::retire() {
     if (session_) agent_->close(session_,nullptr);
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
+    follow_.reset();
     handoff_.reset();
     awaiting_restarted_plan_ = false;
     attention_turn_.reset();
@@ -251,6 +252,7 @@ void PartnerLoop::retire() {
     plan_rejection_.clear();
     expanded_.reset();
     expansion_pending_ = false;
+    events_.clear();
     recent_events_.clear();
     dialogue_.clear();
     previous_.clear();
@@ -411,7 +413,8 @@ void PartnerLoop::submit(std::string_view wake) {
 // 检查已观察到的新事实是否使旧回合失去继续接纳权限。
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
     if (session != session_) return true;
-    return phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ && feed_.pending().empty() && !feed_.gap() &&
+    return phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ && !feed_.departed() && !feed_.departure() &&
+        feed_.pending().empty() && !feed_.gap() &&
         (!attention_turn_ || (follow_ && follow_->id == attention_turn_->work &&
             follow_->attention.episode() == attention_turn_->episode && follow_->attention.active()));
 }
@@ -990,15 +993,16 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         release_->deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
         feed_.clear();
     }
-    advance_confirmation_presentation(config,instance,closing);
-    advance_question(config,instance,closing);
-    if (awaiting_delegation_ && (closing || awaiting_delegation_->world != feed_.world() || feed_.departed())) {
+    const bool departed = feed_.departure() || feed_.departed();
+    const bool replaced = session_ && feed_.world() != session_world_;
+    const bool unavailable = closing || replaced || departed;
+    advance_confirmation_presentation(config,instance,unavailable);
+    advance_question(config,instance,unavailable);
+    if (awaiting_delegation_ && (closing || awaiting_delegation_->world != feed_.world() || departed)) {
         publish("mc.partner.report",{{"generation",awaiting_delegation_->world},{"id",awaiting_delegation_->id},{"ok",false},
             {"text","原游戏世界或配对玩家已离开"}});
         awaiting_delegation_.reset();
     }
-    const bool replaced = session_ && feed_.world() != session_world_;
-    const bool unavailable = closing || replaced || feed_.departed();
     advance_motion(unavailable);
     advance_confirmed_work(config,unavailable,body_busy);
     advance_plan(config,unavailable);
@@ -1010,30 +1014,19 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
             !release_game(config,instance) || !outbound_.empty()) return;
         retire(); reset(); return;
     }
-    if (replaced) {
-        if (motion_ || (plan_ && plan_->active)) return;
+    if (replaced || feed_.departure()) {
+        if (motion_ || (plan_ && plan_->active) || review_.request || presentation_ || question_work_) return;
+        const auto departure = feed_.departure();
+        if (departure > feed_.cursor()) return;
         retire();
-    }
-    if (feed_.departed()) {
-        if (plan_ && plan_->active) return;
-        task_ = {};
-        handoff_.reset();
-        settlements_.clear();
-        plan_.reset();
-        plan_receipts_.clear();
-        expanded_.reset();
-        expansion_pending_ = false;
-        dialogue_.clear();
-        question_.reset(); question_result_.clear(); question_wake_ = false;
-        approval_result_ = nullptr;
-        if (feed_.ready() && !feed_.pending().empty()) {
-            for (const auto& fact : feed_.pending()) publish("mc.partner.event",{{"generation",feed_.world()},{"event",fact}});
-            settled_ = feed_.cursor();
-            feed_.consumed();
+        if (departure) {
+            publish("mc.partner.event",{{"generation",feed_.world()},{"event",{{"sequence",departure},{"type","player.left"}}}});
+            feed_.settle_departure();
+            settled_ = departure;
         }
         return;
     }
-    if (presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
+    if (feed_.departed() || presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
     else if (question_wake_) submit("question.result");
     else if (!approval_result_.is_null()) submit("approval.result");
