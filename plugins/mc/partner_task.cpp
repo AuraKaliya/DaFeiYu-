@@ -80,6 +80,7 @@ Json PartnerTask::context() const {
         value["instruction"] = instruction_;
     }
     if (!previous_target_.is_null()) value["previousTarget"] = previous_target_;
+    if (!navigation_wall_.is_null()) value["navigationWall"] = navigation_wall_;
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
     if (correcting()) {
         value["pendingCorrection"] = correction_;
@@ -115,7 +116,7 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
     if (!restart) {
         id_ = order;
         if (has_target()) previous_target_ = target_;
-        target_ = nullptr;
+        target_ = navigation_wall_ = nullptr;
     }
     instruction_ = order;
     kind_ = kind;
@@ -132,11 +133,18 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
 
 // 复制已可信观察的检查点，并固定任务修订和原话来源。
 bool PartnerTask::bind_route(Json& arguments) const {
-    if (!navigation() || route_.is_null() || route_.at("id") != arguments.at("route")) return false;
+    if (!navigation() || route_.is_null() || route_.at("id") != arguments.at("route") ||
+        (!navigation_wall_.is_null() && arguments.at("laps") != navigation_wall_.at("laps"))) return false;
     arguments["taskId"] = id_;
     arguments["taskRevision"] = revision_;
     arguments["waypoints"] = route_.at("waypoints");
     return true;
+}
+
+// 保存原墙的身份，重开可以换路线但仍需围同一面墙走原圈数。
+void PartnerTask::accept_route(const Json& arguments) {
+    navigation_wall_ = {{"id",route_.at("wall")},{"observation",route_.at("observation")},
+        {"message",route_.at("sourceMessage")},{"laps",arguments.at("laps")}};
 }
 
 // 禁止已结算的路线仅凭现场变化再次启动。
@@ -357,7 +365,9 @@ void PartnerTask::record(const Json& receipt, bool current) {
     if (current && navigation() && receipt.at("skill") == "observe" && result.contains("route")) {
         const auto& route = result.at("route");
         if (route.at("status") == "validated" && route.at("generation") == receipt.at("generation") &&
-            (route.at("sourceMessage") == id_ || route.at("sourceMessage") == instruction_)) route_ = route;
+            (navigation_wall_.is_null() ? route.at("sourceMessage") == id_ || route.at("sourceMessage") == instruction_ :
+                route.at("sourceMessage") == navigation_wall_.at("message") && route.at("wall") == navigation_wall_.at("id")))
+            route_ = route;
     }
     if (current && receipt.at("skill") == "move" && result.at("status") == "done" && result.value("target",std::string{}) == "player") {
         arrival_ = {{"order",receipt.at("order")},{"position",result.at("position")}};

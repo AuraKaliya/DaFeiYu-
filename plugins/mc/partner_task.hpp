@@ -20,6 +20,8 @@ class PartnerTask {
     bool navigation() const noexcept { return kind_ == "navigation"; }
     // 只把当前任务已核验的路线及检查点送到游戏侧。
     bool bind_route(nlohmann::json& arguments) const;
+    // 保存已接纳路线的墙体、原观察和圈数，供同一任务重开。
+    void accept_route(const nlohmann::json& arguments);
     // 收尾有限路线，随后只由新原话继续任务。
     void finish_route(bool completed);
     // 登记新任务或重开原任务，保留可供验证的旧对象线索。
@@ -76,7 +78,7 @@ class PartnerTask {
     std::map<std::uint64_t,nlohmann::json> observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;
-    nlohmann::json arrival_, local_observation_, route_;
+    nlohmann::json arrival_, local_observation_, route_, navigation_wall_;
     std::chrono::steady_clock::time_point observation_time_{};
 };
 }

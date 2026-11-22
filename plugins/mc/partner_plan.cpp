@@ -109,6 +109,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (std::ranges::any_of(plan.nodes,[](const auto& node) { return !node.layer; }))
         return {{"status","invalid_plan"},{"reason","cyclic_dependencies"}};
 
+    if (task_.navigation()) task_.accept_route(plan.nodes.front().arguments);
     plan_ = std::move(plan);
     wait_for_work_ = true;
     publish("mc.partner.plan",{{"status","queued"},{"plan",plan_context()}});

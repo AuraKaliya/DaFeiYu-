@@ -201,6 +201,7 @@ class PartnerLoop {
         bool rechecked = false;
     };
     std::optional<Handoff> handoff_;
+    bool awaiting_restarted_route_ = false;
     struct Follow {
         std::uint64_t order, request, invocation, segment = 1;
         std::string id;

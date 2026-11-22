@@ -17,6 +17,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "task 保存共同目标和原话指向。新导航目标用 task_update 的 start_task，重开同一任务用 restart_task。"
     "绕行先用 observe(mode=wall,message=原话) 读范围，再用 observe(mode=route,observation=wallSurvey.id) 核验路线。"
     "queue_actions 的 plan 只提交一个 route 节点，参数为 route.id 和 laps。执行器负责逐段走和计圈，移动回执到达后才报告完成。"
+    "中途重开同一绕行任务用 restart_task。交接结束后用 task.navigationWall.observation 和 navigationWall.id 重新核验原墙路线，圈数沿用 navigationWall.laps。"
     "taskHandoff 表示旧动作真实退出的交接，等待期间可以观察和回话。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
     "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
     "玩家纠正原目标时先用 task_update 的 begin_correction 登记当前原话，再观察或等待旧工作退出。"
@@ -182,6 +183,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         task_.disarm();
         expansion_pending_ = false;
     }
+    if (!handoff_) awaiting_restarted_route_ = false;
     if (cancel || autonomous_wake().empty()) settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     if (active_delegation_) {
@@ -232,6 +234,7 @@ void PartnerLoop::retire() {
     session_ = order_ = settled_ = 0;
     task_ = {};
     handoff_.reset();
+    awaiting_restarted_route_ = false;
     guarded_actions_.clear();
     settlements_.clear();
     plan_.reset();
@@ -489,9 +492,13 @@ Json PartnerLoop::switch_task(const Json& args) {
     settlements_.clear();
     plan_receipts_.clear();
     if (motion_ && motion_->skill != "follow") {
+        awaiting_restarted_route_ = args.at("operation") == "restart_task" && motion_->skill == "route" && task_.navigation();
         if (!handoff_ || handoff_->work != motion_->work) handoff_ = Handoff{motion_->work};
         motion_->stopping = true;
-    } else handoff_.reset();
+    } else {
+        awaiting_restarted_route_ = false;
+        handoff_.reset();
+    }
     return result;
 }
 

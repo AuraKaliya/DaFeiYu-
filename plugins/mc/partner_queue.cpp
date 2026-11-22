@@ -121,7 +121,9 @@ void PartnerLoop::pause_follow() noexcept {
 // 步骤：核对当前绑定和前台占用 → 构造本段工作 → 发布原跟随身份。
 void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
     if (!follow_ || !follow_->suspended || motion_ || body_busy || !feed_.ready() || feed_.gap() ||
-        !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt)) return;
+        !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt) || awaiting_restarted_route_ ||
+        (handoff_ && (handoff_->receipt.is_null() || handoff_->receipt.at("status") != "exited")) ||
+        (task_.navigation() && plan_ && plan_->active && plan_->revision == task_.revision())) return;
     auto& follow = *follow_;
     const auto work = follow.id+".resume."+std::to_string(follow.segment+1);
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},

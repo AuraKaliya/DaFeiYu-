@@ -279,13 +279,14 @@ function partnerService(bot, world, inbox, places, owner) {
         const { anchor, center } = messageAnchor(r.generation, message);
         result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message, radius,
           generation: r.generation, dimension: bot.game.dimension };
-        remember(wallSurveys, job.id, result.wallSurvey);
+        remember(wallSurveys, job.id, { ...result.wallSurvey, anchor, center });
       } else if (observation?.mode === 'route') {
         const { observation: id, wall, waypoints } = observation.options;
         const scan = wallSurveys.get(id);
-        result.route = scan?.generation === r.generation && scan.dimension === bot.game.dimension ?
-          validateRoute(scan, wall, waypoints, (a, b, allowed) => readPath(bot, a, b, allowed)) :
-          { status: 'blocked', reasonCode: 'wall_observation_stale' };
+        if (scan?.generation === r.generation && scan.dimension === bot.game.dimension && (!scan.choice || !wall || wall === scan.choice)) {
+          const live = observeWall(bot, scan.anchor, scan.center, scan.radius);
+          result.route = validateRoute(live, wall ?? scan.choice, waypoints, (a, b, allowed) => readPath(bot, a, b, allowed));
+        } else result.route = { status: 'blocked', reasonCode: 'wall_observation_stale' };
         if (result.route.status === 'validated') {
           Object.assign(result.route, { id: job.id, observation: id, sourceMessage: scan.message,
             generation: r.generation, dimension: scan.dimension });
@@ -347,8 +348,7 @@ function partnerService(bot, world, inbox, places, owner) {
           !Array.isArray(args.waypoints) || args.waypoints.length !== 4 || route.waypoints.some((point, i) =>
             ['x', 'y', 'z'].some(axis => point[axis] !== args.waypoints[i]?.[axis])) || !Number.isSafeInteger(args.laps) ||
           args.laps < 1 || args.laps > 8) throw Object.assign(new Error('已核验路线已失效'), { code: 'route_stale' });
-        const { anchor, center } = messageAnchor(r.generation, route.sourceMessage);
-        const live = observeWall(bot, anchor, center, scan.radius);
+        const live = observeWall(bot, scan.anchor, scan.center, scan.radius);
         const checked = validateRoute(live, route.wall, route.waypoints, (a, b, allowed) => readPath(bot, a, b, allowed));
         if (checked.status !== 'validated') throw Object.assign(new Error('现场变化，原路线不可通行'), { code: checked.reasonCode });
         try {

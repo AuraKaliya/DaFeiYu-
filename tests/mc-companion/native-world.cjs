@@ -22,7 +22,8 @@ async function main() {
   const notes = variant === 'partner-revision-notes';
   const correction = variant?.startsWith('partner-revision-correction');
   const correctionLost = variant === 'partner-revision-correction-lost';
-  const navigation = variant === 'partner-revision-navigation';
+  const navigation = variant?.startsWith('partner-revision-navigation');
+  const restartRoute = variant === 'partner-revision-navigation-restart';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const questionExpiry = variant === 'partner-revision-question-expiry';
@@ -48,7 +49,8 @@ async function main() {
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
-  let surveyId, checkedRoute, routeWork, routeReads = 0;
+  let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
+  let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -71,7 +73,9 @@ async function main() {
           if (fs.existsSync(trace) && fs.readFileSync(trace, 'utf8').split('\n').some(line =>
             line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
         }
-        const latest = initial ? 1 : revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
+        const latest = initial ? 1 :
+          restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
+          revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
           first && approvedId || motion && replies || confirm && pendingChat ? 4 :
@@ -94,6 +98,11 @@ async function main() {
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
+          }
+          if (restartRoute) {
+            messages[1].text = '大肥鱼，跟着我走';
+            messages[3].text = '要不要计时';
+            messages[4].text = '中途重新绕';
           }
         }
         return { generation, owner: 'fff01234-1234-1234-1234-123456789abc', oldest: 1, latest,
@@ -145,33 +154,61 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
         }
         assert.ok(!repairPlan);
+        if (restartRoute && skill === 'follow') {
+          if (method === 'partner.begin') {
+            if (!following) following = id;
+            else {
+              assert.equal(restartReads, 9);
+              assert.equal(id, following + '.resume.2');
+              resumed = id;
+              fs.writeFileSync(path.join(root, 'original-follow-resumed'), '');
+            }
+          }
+          assert.equal(id, resumed || following);
+          if (method === 'partner.read') followIsRunning = true;
+          return { ...context, skill, exited: method === 'partner.stop',
+            result: method === 'partner.stop' ? { status: 'interrupted' } : {} };
+        }
+        if (restartRoute && skill === 'reply') {
+          assert.ok(routeWork && !restartWork && !questionPresented);
+          assert.equal(context.order, 4);
+          assert.equal(args.text, '要从这圈开始计时吗？');
+          questionPresented = true;
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true } };
+        }
         if (navigation && skill === 'observe') {
           assert.equal(method, 'partner.begin');
-          assert.ok(collectExited);
+          assert.ok(restartRoute || collectExited);
           if (args.mode === 'wall') {
             assert.deepEqual(args, { mode: 'wall', message: 3 });
             surveyId = id;
             return { ...context, skill, exited: true, result: { status: 'done',
               wallSurvey: { id, status: 'selected', choice: 'wall' } } };
           }
-          assert.deepEqual(args, { mode: 'route', observation: surveyId });
+          assert.deepEqual(args, { mode: 'route', observation: surveyId, ...(context.order === 5 ? { wall: 'wall' } : {}) });
           checkedRoute = id;
           return { ...context, skill, exited: true, result: { status: 'done', route: { id, status: 'validated',
             generation: context.generation, dimension: 'overworld', sourceMessage: 3, observation: surveyId, wall: 'wall', waypoints } } };
         }
         if (navigation && skill === 'route') {
           if (method === 'partner.begin') {
-            assert.ok(!routeWork);
-            routeWork = id;
-            assert.deepEqual(args, { route: checkedRoute, taskId: 3, taskRevision: 2, waypoints, laps: 2 });
-          } else assert.equal(method, 'partner.read');
-          assert.equal(id, routeWork);
-          const checkpoint = Math.min(routeReads++, 8);
+            assert.ok(!resumed);
+            if (routeWork) {
+              assert.ok(restartRoute && routeStops === 1 && !restartWork);
+              restartWork = id;
+            } else routeWork = id;
+            assert.deepEqual(args, { route: checkedRoute, taskId: 3, taskRevision: restartRoute && !restartWork ? 1 : 2, waypoints, laps: 2 });
+          }
+          assert.equal(id, restartWork || routeWork);
+          if (method === 'partner.stop') ++routeStops;
+          const checkpoint = restartWork ? restartReads++ : Math.min(routeReads++, restartRoute ? questionPresented ? 5 : 2 : 8);
+          if (!restartWork) oldCheckpoint = checkpoint;
           const checkpoints = Array.from({ length: checkpoint + 1 }, (_, index) =>
             ({ index, position: { ...waypoints[index % 4], x: waypoints[index % 4].x + 0.5 } }));
           const laps = Math.floor(checkpoint / 4);
-          return { ...context, skill, exited: laps === 2, result: {
-            ...(laps === 2 ? { status: 'done' } : {}),
+          const status = method === 'partner.stop' ? 'interrupted' : laps === 2 ? 'done' : null;
+          return { ...context, skill, exited: Boolean(status), result: {
+            ...(status && { status }),
             progress: { phase: 'route', checkpoint, laps, requested: 2 },
             route: { id: checkedRoute, requested: 2, laps, checkpoints },
           } };
@@ -309,7 +346,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: first || motion || confirm ? 4 :
+    return { generation, order: restartRoute ? 5 : first || motion || confirm ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -330,11 +367,12 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);
-      else assert.equal(stopped, notes ? 0 : 2);
-      assert.equal(collectExited, !correctionLost);
+      else assert.equal(stopped, notes || restartRoute ? 0 : 2);
+      assert.equal(collectExited, !correctionLost && !restartRoute);
       assert.equal(nextBlock, notes);
       assert.equal(wallFilled, !!correction && !correctionLost);
-      if (navigation) assert.equal(routeReads, 9);
+      if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
+      else if (navigation) assert.equal(routeReads, 9);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);

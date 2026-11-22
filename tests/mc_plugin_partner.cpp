@@ -130,7 +130,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool goal = variant == L"partner-revision-goal";
     const bool correction = variant.starts_with(L"partner-revision-correction");
     const bool correction_lost = variant == L"partner-revision-correction-lost";
-    const bool navigation = variant == L"partner-revision-navigation";
+    const bool navigation = variant.starts_with(L"partner-revision-navigation");
+    const bool restart_route = variant == L"partner-revision-navigation-restart";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
@@ -211,10 +212,19 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (last.tool_call_id == "switch-to-route") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 const auto& task = result.at("task");
-                if (task.at("id") != 3 || task.at("revision") != 2 || task.at("kind") != "navigation" ||
-                    task.contains("target") || task.contains("lastAction") || task.at("previousTarget").at("cells") != floor)
+                if (task.at("id") != 3 || task.at("revision") != (restart_route ? 1 : 2) || task.at("kind") != "navigation" ||
+                    task.contains("target") || task.contains("lastAction") ||
+                    (!restart_route && task.at("previousTarget").at("cells") != floor))
                     throw std::runtime_error("new task inherited the old construction goal");
+                if (restart_route) return call("_observe","wall-survey",{{"mode","wall"},{"message",3}});
                 return call("_dig_block","stale-execution",{{"block","dirt"},{"x",1},{"y",-61},{"z",2}});
+            }
+            if (restart_route && last.tool_call_id == "restart-route") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto& task = result.at("task");
+                if (task.at("id") != 3 || task.at("revision") != 2 || task.at("instruction") != 5 ||
+                    task.at("navigationWall").at("message") != 3 || task.at("navigationWall").at("laps") != 2 ||
+                    task.contains("lastAction")) throw std::runtime_error("restart lost the original wall or included its old action");
             }
             if (last.tool_call_id == "stale-execution") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -274,8 +284,18 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& action = exit.at("action");
             if (checked || input.contains("taskPlan") || input.contains("workSettlement") || input.contains("planSettlements") ||
                 exit.at("work") != action.at("bridgeWork") || action.at("result").at("status") != "interrupted" ||
-                action.at("taskRevision") != 1 || action.at("result").at("inventoryDelta").at("dirt") != 1)
+                action.at("taskRevision") != 1)
                 throw std::runtime_error("old work did not settle separately by original ID");
+            if (restart_route) {
+                const auto& target = input.at("task").at("navigationWall");
+                if (action.at("skill") != "route" || action.at("result").at("route").at("laps") != 1 ||
+                    input.at("following").at("status") != "paused" || input.contains("pendingQuestion") ||
+                    input.at("questionResult").at("status") != "superseded")
+                    throw std::runtime_error("old route or local question did not exit while follow remained paused");
+                return call("_observe","read-route",{{"mode","route"},{"observation",target.at("observation")},{"wall",target.at("id")}});
+            }
+            if (action.at("result").at("inventoryDelta").at("dirt") != 1)
+                throw std::runtime_error("old collect lost its pickup readback");
             return call("_observe","wall-survey",{{"mode","wall"},{"message",3}});
         }
         if (input.at("trigger") == "plan.finished") {
@@ -329,6 +349,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         } else if (!input.at("events").empty()) {
             const auto& event = input.at("events").back();
             if (event.at("sequence") == 2) {
+                if (restart_route) return call("_follow","follow",{{"distance",4}});
                 Json task{{"goal","清理门边"},{"next","player"}};
                 if (correction || navigation) task["target"] = {{"message",2},{"cells",floor}};
                 return call("_task_update","start-task",task);
@@ -343,6 +364,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (notes) update["detail"] = "补记角落";
                 if (!notes && !goal) update["collection"] = "ground";
                 return call("_task_update","update-task",update);
+            }
+            if (restart_route && event.at("sequence") == 4) {
+                if (input.at("activeMotion").at("progress").at("laps") != 0)
+                    throw std::runtime_error("first route did not expose background progress to player chat");
+                return call("_ask_player","timing",{{"question","要从这圈开始计时吗？"},{"options",{"计时","不用"}}});
+            }
+            if (restart_route && event.at("sequence") == 5) {
+                if (input.at("activeMotion").at("progress").at("laps") != 1 || !input.contains("pendingQuestion"))
+                    throw std::runtime_error("restart was not issued mid-route");
+                return call("_task_update","restart-route",{{"operation","restart_task"},{"message",5},{"task",3}});
             }
         }
         return {{Role::assistant,R"({"internal":"observed"})"}};
@@ -365,7 +396,9 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
-        if (!stopping && checked && host.companion_status()->settled_event == (repair_observe || repair_plan ? 2u : 3u) && receipt_turn_finished()) {
+        if (!stopping && checked && host.companion_status()->settled_event ==
+            (repair_observe || repair_plan ? 2u : restart_route ? 5u : 3u) && receipt_turn_finished() &&
+            (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
             stopping = true;
         }
