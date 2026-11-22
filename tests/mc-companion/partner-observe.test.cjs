@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
-const { observeWall } = require('../../plugins/mc/bridge/partner-route.cjs');
+const { observeWall, validateRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -113,4 +113,29 @@ test('wall survey distinguishes the pointed obstacle, both sides and unknown cov
   assert.equal(partial.status, 'coverage_required');
   assert.equal(partial.choice, result.choice);
   assert.equal(partial.coverage.unknown, 1);
+});
+
+// 固定路径响应只允许在一侧或一端完成每段，局部受阻时检查下一条外绕候选。
+test('route validation requires an ordered loop on supported, visible ground', () => {
+  const bounds = { minX: -2, maxX: 2, minZ: 0, maxZ: 0, y: -60 };
+  const scan = { choice: 'wall', candidates: [{ id: 'wall', complete: true, bounds }],
+    coverage: { origin: { x: -6, z: -6 }, rows: Array.from({ length: 13 }, () => '.'.repeat(13)), unknown: 0 } };
+  scan.coverage.rows[6] = '....#####....';
+  // 模拟现有寻路器返回整段节点，首个默认起点的一条边不可达。
+  const path = (a, b, allowed) => a.x === -3 ? null : [a, b].filter(allowed);
+  const found = validateRoute(scan, undefined, undefined, path);
+  assert.equal(found.status, 'validated');
+  assert.equal(found.waypoints[0].x, -4);
+  assert.deepEqual(found.lengths, [2, 2, 2, 2]);
+  assert.equal(validateRoute(scan, 'unrelated', found.waypoints, path).reasonCode, 'wall_conflicts_with_pointing');
+  assert.equal(validateRoute(scan, 'wall', [found.waypoints[0], found.waypoints[2], found.waypoints[1], found.waypoints[3]], path)
+    .reasonCode, 'checkpoints_do_not_surround_wall');
+  assert.equal(validateRoute(scan, 'wall', found.waypoints.map(p => ({ ...p, z: -3 })), path)
+    .reasonCode, 'checkpoints_do_not_surround_wall');
+  assert.equal(validateRoute(scan, 'wall', found.waypoints, (a, b) => [a, { x: 0, y: -60, z: 0 }, b])
+    .reasonCode, 'route_not_passable');
+  scan.coverage.rows[4] = '..?..........';
+  assert.equal(validateRoute(scan, 'wall', found.waypoints, path).reasonCode, 'route_coverage_required');
+  scan.coverage.rows[4] = '..x..........';
+  assert.equal(validateRoute(scan, 'wall', found.waypoints, path).reasonCode, 'waypoint_not_standable');
 });

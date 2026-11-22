@@ -22,6 +22,13 @@ function observationInput(args) {
       throw invalidObservation('observe_wall_parameters', '墙体观察需要原话 message，可选半径 5～13 格');
     return { mode, options: { message: args.message, radius } };
   }
+  if (mode === 'route') {
+    if (typeof args.observation !== 'string' || (args.wall !== undefined && typeof args.wall !== 'string') ||
+      (args.waypoints !== undefined && (!Array.isArray(args.waypoints) || args.waypoints.length !== 4)) ||
+      Object.keys(args).some(key => !['mode', 'observation', 'wall', 'waypoints'].includes(key)))
+      throw invalidObservation('observe_route_parameters', '路线验证需要墙体观察编号，可选墙体候选与四个绕行站位');
+    return { mode, options: args };
+  }
   if (mode === 'scene') {
     if (args.block !== undefined)
       throw invalidObservation('observe_mixed_modes', '多来源观察使用 mode=scene，查找指定材料使用 mode=search 和 block');

@@ -4,7 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
-const { observeWall } = require('./partner-route.cjs');
+const { observeWall, validateRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
@@ -53,18 +53,35 @@ function localDoors(bot, type, center) {
   return observedDoors(bot, hits);
 }
 
-// 一次移动和持续跟随都使用只走路的寻路策略。
-function prepareWalking(bot) {
+// 构造同一套只移动规则，读路线时保持正在运行的移动目标。
+function walkingMovements(bot, allowed) {
   const moves = new Movements(bot);
   moves.canDig = moves.canOpenDoors = moves.allow1by1towers = moves.allowParkour = false;
   moves.scafoldingBlocks = [];
-  bot.pathfinder.setMovements(moves);
+  if (allowed) moves.exclusionAreasStep.push(block => block.position && allowed(block.position) ? 0 : 101);
+  return moves;
 }
 
 // 走到固定目标并等待寻路器真实退出。
-function walk(bot, goal) {
-  prepareWalking(bot);
+function walk(bot, goal, allowed) {
+  bot.pathfinder.setMovements(walkingMovements(bot, allowed));
   return bot.pathfinder.goto(goal);
+}
+
+// 用独立的寻路上下文读取指定起终点之间的原始节点。
+function readPath(bot, from, to, allowed) {
+  const position = bot.entity.position.clone().set(from.x, from.y, from.z);
+  const goal = new goals.GoalBlock(to.x, to.y, to.z);
+  const results = bot.pathfinder.getPathFromTo(walkingMovements(bot, allowed), position, goal,
+    { optimizePath: false, timeout: 100, tickTimeout: 25, searchRadius: 32 });
+  for (const { result } of results) if (result.status === 'success') return result.path;
+  return null;
+}
+
+// 以原工作号保留最近的现场证明或已核验路线。
+function remember(records, id, value) {
+  records.set(id, value);
+  if (records.size > 16) records.delete(records.keys().next().value);
 }
 
 // 到实际掉落物脚下收取，回退到挖掘位置并限制占用前台的时间。
@@ -176,6 +193,7 @@ function partnerService(bot, world, inbox, places, owner) {
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
   const observations = new Set();
+  const wallSurveys = new Map();
   const built = new BuiltObjects();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
@@ -236,6 +254,15 @@ function partnerService(bot, world, inbox, places, owner) {
         const { anchor, center } = messageAnchor(r.generation, message);
         result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message,
           generation: r.generation, dimension: bot.game.dimension };
+        remember(wallSurveys, job.id, result.wallSurvey);
+      } else if (observation?.mode === 'route') {
+        const { observation: id, wall, waypoints } = observation.options;
+        const scan = wallSurveys.get(id);
+        result.route = scan?.generation === r.generation && scan.dimension === bot.game.dimension ?
+          validateRoute(scan, wall, waypoints, (a, b, allowed) => readPath(bot, a, b, allowed)) :
+          { status: 'blocked', reasonCode: 'wall_observation_stale' };
+        if (result.route.status === 'validated') Object.assign(result.route, { id: job.id, observation: id, sourceMessage: scan.message,
+          generation: r.generation, dimension: scan.dimension });
       } else if (observation?.mode === 'scene') {
         await observeWindow(bot, observation.options, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
           player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
@@ -311,7 +338,7 @@ function partnerService(bot, world, inbox, places, owner) {
           throw new Error('到达站位未核实');
         if (args.place === 'player') result.target = 'player';
       } else if (r.skill === 'follow') {
-        prepareWalking(bot);
+        bot.pathfinder.setMovements(walkingMovements(bot));
         await followPlayer(bot, owner, args.distance ?? 3, check, result);
       } else if (r.skill === 'collect') {
         built.bind(r.generation, bot.game.dimension);

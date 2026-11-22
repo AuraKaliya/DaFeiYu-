@@ -2,6 +2,7 @@ const { playerFocus } = require('./player-focus.cjs');
 
 const hazards = new Set(['water', 'lava', 'bubble_column', 'fire', 'soul_fire', 'cactus', 'magma_block', 'powder_snow', 'sweet_berry_bush']);
 const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
 
 // 以同一游戏高度区分实体障碍、可站立位置和未加载格。
 function surface(bot, point) {
@@ -82,4 +83,71 @@ function observeWall(bot, anchor, position, radius = 8) {
     coverage: { origin, rows, unknown: rows.join('').replace(/[^?]/g, '').length } };
 }
 
-module.exports = { observeWall, surface };
+// 读取观测层的一格，覆盖之外的坐标始终保持未知。
+function terrain(coverage, x, z) { return coverage.rows[z - coverage.origin.z]?.[x - coverage.origin.x] ?? '?'; }
+
+// 只接受墙体外侧的角区，直行到另一面须绕过对应墙端。
+function cornerOf({ minX, maxX, minZ, maxZ }, { x, z }) {
+  const sx = x < minX ? -1 : x > maxX ? 1 : 0;
+  const sz = z < minZ ? -1 : z > maxZ ? 1 : 0;
+  return corners.findIndex(([a, b]) => a === sx && b === sz);
+}
+
+// 将一段路径限制在共有的一侧或一端，允许寻路在该区域内避开障碍。
+function routeCorridor(bounds, from, to, point) {
+  if (from.x < bounds.minX && to.x < bounds.minX) return point.x < bounds.minX;
+  if (from.x > bounds.maxX && to.x > bounds.maxX) return point.x > bounds.maxX;
+  if (from.z < bounds.minZ && to.z < bounds.minZ) return point.z < bounds.minZ;
+  return from.z > bounds.maxZ && to.z > bounds.maxZ && point.z > bounds.maxZ;
+}
+
+// 从同一份覆盖中寻找四个不同角区的一组落脚点。
+function outerPoints(bounds, coverage, distance) {
+  return corners.map(([x, z]) => {
+    const point = { x: x < 0 ? bounds.minX - distance : bounds.maxX + distance, y: bounds.y,
+      z: z < 0 ? bounds.minZ - distance : bounds.maxZ + distance };
+    return terrain(coverage, point.x, point.z) === '.' ? point : null;
+  });
+}
+
+// 核对四个角区依序闭合，并用与实际走路同源的寻路器验收整圈。
+// 步骤：绑定观察中的墙 → 核对落脚和角区顺序 → 逐段核验路径及覆盖。
+function validateRoute(scan, wall, waypoints, findPath) {
+  const reject = reasonCode => ({ status: 'blocked', reasonCode });
+  if (scan.choice && wall && wall !== scan.choice) return reject('wall_conflicts_with_pointing');
+  const chosen = scan.candidates?.find(candidate => candidate.id === (wall ?? scan.choice));
+  if (!chosen) return reject(scan.status === 'ambiguous' ? 'wall_ambiguous' : 'wall_not_observed');
+  if (!chosen.complete) return reject('wall_coverage_required');
+  const { bounds } = chosen, { coverage } = scan;
+  let result = reject('waypoint_not_standable');
+  for (const points of waypoints ? [waypoints] : [1, 2, 3].map(distance => outerPoints(bounds, coverage, distance))) {
+    if (points.length !== 4 || points.some(point => !point || ![point.x, point.y, point.z].every(Number.isSafeInteger)))
+      continue;
+    if (points.some(point => terrain(coverage, point.x, point.z) === '?')) {
+      result = reject('route_coverage_required');
+      continue;
+    }
+    if (points.some(point => point.y !== bounds.y || terrain(coverage, point.x, point.z) !== '.')) continue;
+    const visit = points.map(point => cornerOf(bounds, point));
+    const clockwise = (visit[1] - visit[0] + 4) % 4;
+    if (visit.includes(-1) || new Set(visit).size !== 4 || ![1, 3].includes(clockwise) ||
+      visit.some((value, i) => (visit[(i + 1) % 4] - value + 4) % 4 !== clockwise))
+      return reject('checkpoints_do_not_surround_wall');
+
+    const lengths = [];
+    for (let i = 0; i < points.length; ++i) {
+      const from = points[i], to = points[(i + 1) % 4];
+      const allowed = point => routeCorridor(bounds, from, to, point) && terrain(coverage, point.x, point.z) === '.';
+      const nodes = findPath(from, to, allowed);
+      const end = nodes?.at(-1);
+      if (!end || end.x !== to.x || end.y !== to.y || end.z !== to.z ||
+        nodes.some(node => node.y !== bounds.y || !allowed(node))) break;
+      lengths.push(nodes.length);
+    }
+    if (lengths.length === 4) return { status: 'validated', wall: chosen.id, bounds, waypoints: points, lengths };
+    result = reject(coverage.unknown ? 'route_coverage_required' : 'route_not_passable');
+  }
+  return result;
+}
+
+module.exports = { observeWall, surface, validateRoute, routeCorridor, terrain };
