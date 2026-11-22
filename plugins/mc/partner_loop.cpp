@@ -282,8 +282,13 @@ void PartnerLoop::submit(std::string_view wake) {
         }
     }
     input["foreground"] = motion_ ? "active" : "standby";
-    if (follow_) input["following"] = {{"work",follow_->id},{"segment",follow_->segment},
-        {"status",follow_->pausing ? "pausing" : follow_->suspended ? "paused" : "following"}};
+    if (follow_) {
+        const auto progress = motion_ && motion_->skill == "follow" ? input.at("activeMotion").value("progress",Json::object()) : Json::object();
+        const auto phase = progress.value("phase","");
+        const auto status = follow_->pausing ? "pausing" : follow_->suspended && !follow_->needs_route_check ? "paused" :
+            phase == "waiting_player" ? "waiting_player" : phase == "blocked" || follow_->needs_route_check ? "blocked" : "following";
+        input["following"] = {{"work",follow_->id},{"segment",follow_->segment},{"status",status}};
+    }
     if (!queued_.empty() && !delegated) {
         input["queuedActions"] = Json::array();
         for (const auto& step : queued_)
@@ -765,6 +770,8 @@ void PartnerLoop::advance_motion(bool stopping) {
     }
     if (!result) {
         auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
+        if (motion.skill == "follow" && follow_ && !motion.stopping && progress.value("phase","") != "blocked" &&
+            progress.value("path","") == "reachable") follow_->needs_route_check = false;
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
         const auto observed = phase+":"+progress.value("terrain",std::string{});
         const auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
@@ -789,9 +796,19 @@ void PartnerLoop::advance_motion(bool stopping) {
     if (departed && result->effect == GameEffect::unknown && motion.stopping && motion.skill != "follow")
         task_.hold_correction(motion.work);
     const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !departed;
+    const bool held = motion.skill == "follow" && follow_ && motion.accepted && !motion.stopping && receipt.at("status") == "blocked";
     if (motion.skill == "follow" && follow_) {
-        fact["transition"] = paused ? "paused" : "exited";
-        if (paused) { follow_->pausing = false; follow_->suspended = true; }
+        fact["transition"] = paused ? "paused" : held ? "blocked" : "exited";
+        if (paused) {
+            follow_->pausing = false;
+            follow_->suspended = true;
+            const auto progress = receipt.value("progress",Json::object());
+            const auto phase = progress.value("phase","");
+            follow_->needs_route_check |= phase == "blocked" || phase == "waiting_player";
+        } else if (held) {
+            follow_->suspended = !follow_->needs_route_check;
+            follow_->needs_route_check = true;
+        }
         else follow_.reset();
     }
     publish("mc.partner.action",fact);
@@ -807,7 +824,7 @@ void PartnerLoop::advance_motion(bool stopping) {
     if (motion.plan_node) {
         if (!stopping && !handing_off) task_.record(fact);
         finish_plan_node(*motion.plan_node,verified,receipt);
-    } else if (!stopping && !paused && !handing_off) {
+    } else if (!stopping && !paused && !held && !handing_off) {
         task_.record(fact);
         settle_work(motion.invocation,std::move(fact));
     }

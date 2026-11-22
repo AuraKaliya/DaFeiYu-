@@ -72,7 +72,7 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
     {"start_move", "partner.start_move", "Start moving toward one target: original message position (message), a landmark or current player (place), or xyz. Returns at acceptance when in flight. Movement continues while you listen and reply.",
         R"({"type":"object","properties":{"place":{"type":"string"},"message":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
-    {"follow", "partner.follow", "Keep following the bound player as they move until stopped, lost or blocked. Returns at acceptance. Optional distance is 2-5 blocks, default 3.",
+    {"follow", "partner.follow", "Keep following the bound player under the same work ID. A blocked route or missing entity waits for new evidence. Returns at acceptance. Optional distance is 2-5 blocks, default 3.",
         R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Cancel following by the stable following.work ID, or cancel the matching activeMotion work. Actual exit is reported separately.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},

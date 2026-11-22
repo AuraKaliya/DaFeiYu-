@@ -68,14 +68,20 @@ function walk(bot, goal, allowed) {
   return bot.pathfinder.goto(goal);
 }
 
-// 用独立的寻路上下文读取指定起终点之间的原始节点。
-function readPath(bot, from, to, allowed) {
+// 用独立的寻路上下文检查目标，保留成功路径及求解器的终态。
+function probePath(bot, from, goal, allowed) {
   const position = bot.entity.position.clone().set(from.x, from.y, from.z);
-  const goal = new goals.GoalBlock(to.x, to.y, to.z);
+  let final;
   const results = bot.pathfinder.getPathFromTo(walkingMovements(bot, allowed), position, goal,
     { optimizePath: false, timeout: 100, tickTimeout: 25, searchRadius: 32 });
-  for (const { result } of results) if (result.status === 'success') return result.path;
-  return null;
+  for (const { result } of results) final = result;
+  return final;
+}
+
+// 读取用于固定路线验证的原始节点。
+function readPath(bot, from, to, allowed) {
+  const result = probePath(bot, from, new goals.GoalBlock(to.x, to.y, to.z), allowed);
+  return result?.status === 'success' ? result.path : null;
 }
 
 // 用当前可站立性和同一侧的约束走完一段，普通失败只重验一次。
@@ -390,7 +396,8 @@ function partnerService(bot, world, inbox, places, owner) {
         if (args.place === 'player') result.target = 'player';
       } else if (r.skill === 'follow') {
         bot.pathfinder.setMovements(walkingMovements(bot));
-        await followPlayer(bot, owner, args.distance ?? 3, check, result);
+        await followPlayer(bot, owner, args.distance ?? 3, check, result,
+          (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
       } else if (r.skill === 'collect') {
         built.bind(r.generation, bot.game.dimension);
         await collect(bot, args, check, result, built);

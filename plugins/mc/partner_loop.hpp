@@ -217,7 +217,7 @@ class PartnerLoop {
         std::uint64_t order, request, invocation, segment = 1;
         std::string id;
         nlohmann::json arguments;
-        bool pausing = false, suspended = false;
+        bool pausing = false, suspended = false, needs_route_check = false;
     };
     std::optional<Follow> follow_;
     struct QueuedAction {

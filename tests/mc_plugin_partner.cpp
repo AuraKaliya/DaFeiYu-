@@ -629,7 +629,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
-        const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");
+        const bool recovery = argc == 4 && std::wstring_view(argv[3]) == L"partner-follow-recovery";
+        const bool follow = suspend || recovery || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");
         const bool motion = follow || (argc == 4 && std::wstring_view(argv[3]) == L"partner-motion");
         const bool confirm = argc == 4 && std::wstring_view(argv[3]) == L"partner-confirm";
         const bool departure = argc == 4 && std::wstring_view(argv[3]) == L"partner-departure";
@@ -744,10 +745,18 @@ int wmain(int argc, wchar_t** argv) {
             if (input.at("events").back().at("type") == "player.entered") return {{Role::assistant,"silent baseline"}};
             if (motion && input.at("events").back().at("sequence").get<unsigned>() >= 3) {
                 const auto& active = input.at("activeMotion");
+                const bool reply = input.at("events").back().at("sequence") == 3;
                 if (active.at("order") != 2) throw std::runtime_error("active motion lost the original order");
-                if (follow && (active.at("skill") != "follow" || active.at("progress").at("distance") != 4.5))
+                if (recovery) {
+                    const auto& tracking = input.at("following");
+                    const auto& progress = active.at("progress");
+                    if (tracking.at("work") != active.at("work") || tracking.at("segment") != 1 ||
+                        tracking.at("status") != (reply ? "blocked" : "following") ||
+                        progress.at("path") != (reply ? "unreachable" : "reachable") ||
+                        progress.at("vertical") != (reply ? 5 : 0))
+                        throw std::runtime_error("follow loss or recovery did not use the same active work");
+                } else if (follow && (active.at("skill") != "follow" || active.at("progress").at("distance") != 4.5))
                     throw std::runtime_error("tracked progress missing from the active follow");
-                const auto reply = input.at("events").back().at("sequence") == 3;
                 if (reply && !follow) return {{Role::assistant,"still moving"}};
                 const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) {
                     return item.name.ends_with(reply ? "_reply" : "_stop_motion");

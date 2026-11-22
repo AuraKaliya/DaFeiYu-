@@ -128,8 +128,10 @@ void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
         (plan_ && plan_->active)) return;
     auto& follow = *follow_;
     const auto work = follow.id+".resume."+std::to_string(follow.segment+1);
+    auto args = follow.arguments;
+    if (follow.needs_route_check) args["probeFirst"] = true;
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
-        {"arguments",follow.arguments}}.dump();
+        {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,work,envelope,"follow");
     motion_.emplace(Motion{follow.order,session_,follow.request,follow.invocation,session_world_,work,"follow",std::move(action)});
     motion_->accepted = false;

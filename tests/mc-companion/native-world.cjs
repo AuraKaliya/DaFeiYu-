@@ -13,7 +13,8 @@ async function main() {
   const boardWindow = variant === 'board-window';
   const interrupt = variant === 'partner-interrupt';
   const suspend = variant?.startsWith('partner-follow-collect');
-  const follow = suspend || variant === 'partner-follow';
+  const recovery = variant === 'partner-follow-recovery';
+  const follow = suspend || recovery || variant === 'partner-follow';
   const motion = follow || variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
@@ -52,6 +53,7 @@ async function main() {
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let following, collecting, resumed, collectExited = false;
+  let blockedReads = 0, recoveredReads = 0;
   let planReading = false, nextBlock = false;
   const nodeExits = [];
   let nodeAtWork;
@@ -91,6 +93,7 @@ async function main() {
           revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
+          recovery ? recoveredReads > 1 ? 4 : blockedReads > 1 ? 3 : 2 :
           first && approvedId || motion && replies || confirm && pendingChat ? 4 :
           (interrupt || motion) && moveId || approvedId || delayed && fs.existsSync(path.join(root, 'new-instruction')) ? 3 : 2;
         const messages = [entered, { sequence: 2, text: 'play with me',
@@ -480,6 +483,13 @@ async function main() {
         if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, follow ? {} : { place: 'player' }); }
         else assert.equal(id, moveId);
         if (method === 'partner.stop') ++stopped;
+        if (recovery && !stopped && method === 'partner.read') {
+          if (replies) ++recoveredReads;
+          else ++blockedReads;
+          return { ...context, skill, exited: false, result: { progress: replies ?
+            { phase: 'in_range', terrain: 'land', distance: 1.5, vertical: 0, path: 'reachable' } :
+            { phase: 'blocked', terrain: 'land', distance: 8, vertical: 5, path: 'unreachable' } } };
+        }
         return { ...context, skill, exited: stopped > 0, result: stopped ? { status: 'interrupted' } :
           follow ? { progress: { phase: 'following', distance: 4.5 } } : {} };
       }

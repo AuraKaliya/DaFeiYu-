@@ -88,6 +88,9 @@ if(DFY_MC_NODE)
   set_tests_properties(plugins.mc_partner_motion PROPERTIES TIMEOUT 25)
   add_test(NAME plugins.mc_partner_follow COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-follow)
+  add_test(NAME plugins.mc_partner_follow_recovery COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+    "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-follow-recovery)
+  set_tests_properties(plugins.mc_partner_follow_recovery PROPERTIES TIMEOUT 25)
   foreach(outcome collect collect-blocked)
     add_test(NAME plugins.mc_partner_follow_${outcome} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
       "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-follow-${outcome})

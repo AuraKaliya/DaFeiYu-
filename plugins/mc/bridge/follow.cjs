@@ -1,13 +1,30 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const { dryStand, SurfaceFollowGoal, monitorSurface } = require('./navigation.cjs');
 
-// 追踪绑定玩家的实体，只有失去位置或持续没有进展才结束这段跟随。
-// 步骤：跟踪实体或等待重现 → 更新动态目标并检查位移 → 有限重算或归还角色控制。
-async function followPlayer(bot, owner, range, check, result) {
+// 在同一跟随工作内等待玩家重现或可行路线，保留同一动态目标。
+// 步骤：采样当前位置 → 跟随或按新证据探路 → 回传进展 → 按原工作退出。
+async function followPlayer(bot, owner, range, check, result, probe, probeFirst) {
   if (!Number.isInteger(range) || range < 2 || range > 5) throw new Error('跟随距离须为 2 至 5 格');
   const surface = monitorSurface(bot, result);
-  let goal, lastPosition, missingSince = null, progressSince = performance.now();
-  let retried = false;
+  let goal, playerPosition, lastPosition, progressSince, lastProbe, nextProbe = 0;
+  let retried = false, blocked = probeFirst, terrainRevision = 0, path = 'unknown';
+  const stop = () => {
+    if (!goal) return;
+    goal = undefined;
+    bot.pathfinder.setGoal(null);
+    bot.clearControlStates();
+  };
+  const recordPath = update => {
+    if (goal) path = pathStatus(update.status);
+  };
+  // 只使角色或玩家附近的世界变化成为新探路的依据。
+  const changed = (before, after) => {
+    const point = after?.position ?? before?.position;
+    if (point && (point.distanceTo(bot.entity.position) <= 16 || (playerPosition && point.distanceTo(playerPosition) <= 16)))
+      ++terrainRevision;
+  };
+  bot.on('path_update', recordPath);
+  bot.on('blockUpdate', changed);
   try {
     for (;;) {
       check();
@@ -15,59 +32,69 @@ async function followPlayer(bot, owner, range, check, result) {
       const entity = Object.values(bot.players).find(player => player.uuid === owner)?.entity;
       const position = bot.entity.position;
       const terrain = surface.sample();
-      if (!entity?.position) {
-        if (goal) {
-          bot.pathfinder.setGoal(null);
-          bot.clearControlStates();
-          goal = undefined;
-        }
-        missingSince ??= now;
+      playerPosition = entity?.position;
+      if (!playerPosition) {
+        stop();
+        blocked = true;
+        lastProbe = undefined;
         result.progress = { phase: 'waiting_player', terrain };
-        if (now - missingSince >= 5000) throw new Error('一段时间内未重新看到绑定玩家');
       } else {
-        if (goal?.entity !== entity) {
-          goal = new SurfaceFollowGoal(bot, entity, range);
-          bot.pathfinder.setGoal(goal, true);
-          lastPosition = position.clone();
-          progressSince = now;
-          retried = false;
-        }
-        missingSince = null;
-        const distance = position.distanceTo(entity.position);
-        const nearby = distance <= range + 0.5 && (!dryStand(bot, entity.position) ||
+        const distance = position.distanceTo(playerPosition);
+        const nearby = distance <= range + 0.5 && (!dryStand(bot, playerPosition) ||
           (!bot.entity.isInWater && dryStand(bot, position)));
-        // 路径仍认为自己在旧目标内时，按实际距离及时追上已经挪动的玩家。
-        if (distance > range + 1 && goal.isEnd(position.floored()) &&
-          (goal.x !== Math.floor(entity.position.x) || goal.y !== Math.floor(entity.position.y) ||
-            goal.z !== Math.floor(entity.position.z))) {
-          goal = new SurfaceFollowGoal(bot, entity, range);
-          bot.pathfinder.setGoal(goal, true);
+        const evidence = `${position.floored()}:${playerPosition.floored()}:${terrainRevision}`;
+        if (blocked && (nearby || (evidence !== lastProbe && now >= nextProbe))) {
+          lastProbe = evidence;
+          nextProbe = now + 500;
+          path = nearby ? 'reachable' : pathStatus(probe(position, new SurfaceFollowGoal(bot, entity, range)));
+          blocked = path !== 'reachable';
         }
-        if (nearby || position.distanceTo(lastPosition) >= 0.55) {
-          lastPosition = position.clone();
-          progressSince = now;
-          retried = false;
+        if (!blocked) {
+          const movedGoal = goal && distance > range + 1 && goal.isEnd(position.floored()) &&
+            (goal.x !== Math.floor(playerPosition.x) || goal.y !== Math.floor(playerPosition.y) || goal.z !== Math.floor(playerPosition.z));
+          if (goal?.entity !== entity || movedGoal) {
+            goal = new SurfaceFollowGoal(bot, entity, range);
+            bot.pathfinder.setGoal(goal, true);
+            lastPosition = position.clone();
+            progressSince = now;
+            retried = false;
+          }
+          if (nearby || position.distanceTo(lastPosition) >= 0.55) {
+            lastPosition = position.clone();
+            progressSince = now;
+            retried = false;
+          }
+          if (!nearby && now - progressSince >= 3500) {
+            if (retried) {
+              blocked = true;
+              lastProbe = evidence;
+              stop();
+            } else {
+              goal = new SurfaceFollowGoal(bot, entity, range);
+              bot.pathfinder.setGoal(goal, true);
+              progressSince = now;
+              retried = true;
+            }
+          }
         }
-        if (!nearby && now - progressSince >= 3500) {
-          if (retried) throw new Error('重算跟随路线后仍无法靠近玩家');
-          goal = new SurfaceFollowGoal(bot, entity, range);
-          bot.pathfinder.setGoal(goal, true);
-          progressSince = now;
-          retried = true;
-        }
-        result.progress = { phase: nearby ? 'in_range' : retried ? 'replanning' : 'following', terrain,
-          distance: Math.round(distance * 10) / 10 };
+        result.progress = { phase: blocked ? 'blocked' : nearby ? 'in_range' : retried ? 'replanning' : 'following',
+          terrain, distance: Math.round(distance * 10) / 10, vertical: Math.round((playerPosition.y - position.y) * 10) / 10,
+          path: nearby ? 'reachable' : path };
       }
       await delay(125);
     }
   } finally {
+    bot.removeListener('path_update', recordPath);
+    bot.removeListener('blockUpdate', changed);
     surface.stop();
-    if (goal) {
-      bot.pathfinder.setGoal(null);
-      bot.clearControlStates();
-    }
+    stop();
     result.position = bot.entity?.position?.clone() ?? null;
   }
+}
+
+// 保留寻路器已验证的成功、明确无路和未得出结论三种结果。
+function pathStatus(status) {
+  return status === 'success' ? 'reachable' : status === 'noPath' ? 'unreachable' : 'unknown';
 }
 
 module.exports = { followPlayer };
