@@ -4,7 +4,7 @@ const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
-const { wall, waterCourse, fourCells, readArena } = require('./playtest-arena.cjs');
+const { wall, waterCourse, fourCells, layeredStands, readArena } = require('./playtest-arena.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
 function readRows(fixture, file) {
@@ -117,13 +117,15 @@ async function checkPlayer(fixture, mode) {
     const doorProbe = mode === '--door-probe';
     const combined = mode === '--follow-dig-fill-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !['--water-probe', '--fill-four-probe', '--gap-materials-probe'].includes(mode) ?
+    const arena = partner && !combined && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--layered-follow-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
     if (combined || mode === '--fill-four-probe') {
       await checkFillFour(fixture, player, whispers, combined);
+    } else if (mode === '--layered-follow-probe') {
+      await checkLayeredFollow(fixture, player, whispers);
     } else if (doorProbe) {
       await checkDoor(fixture, player, whispers);
     } else if (mode === '--water-probe') {
@@ -188,6 +190,57 @@ async function checkPlayer(fixture, mode) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 在真实世界中验证高台掉队、继续对话、四段执行和原跟随的恢复。
+// 步骤：制造高差并等待一次异常 → 聊天后提交垫块 → 检查终态与原跟随实际退出。
+async function checkLayeredFollow(fixture, player, whispers) {
+  const trace = () => readRows(fixture, 'trace/events.jsonl');
+  const mail = type => trace().filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.' + type);
+  const { pads, upper } = layeredStands;
+  const block = point => player.blockAt(player.entity.position.clone().set(...point))?.name;
+  await until(() => fixture.materialCount('dirt') === 2 && pads.every(point => block(point) === 'air') &&
+    block([34, -57, -14]) === 'stone', '游戏读回两格空位与高台');
+  player.chat('大肥鱼，跟着我');
+  const original = await until(() => mail('motion').find(row => row.body.status === 'accepted'), '原跟随接纳');
+  await until(() => whispers.includes('跟着呢。'), '玩家收到初始接话');
+  fixture.send(`tp DfyGuestCheck ${upper.join(' ')} facing 32.5 -59 -12.5`);
+  const raised = await until(() => mail('attention').find(row => row.body.status === 'raised'), '高台产生一次跟随思考', 15000);
+  await until(() => whispers.includes('上面有点高，我先找找路。'), '玩家收到受阻说明');
+  player.chat('能听见吗');
+  await until(() => whispers.includes('听得见。'), '受阻时仍能聊天');
+  await until(() => mail('motion').some(row => row.body.status === 'blocked'), '原物理跟随进入受阻');
+  player.chat('你可以垫上来');
+  await until(() => whispers.includes('我踩到第二格了。'), '两次放置和精确移动均已结算', 40000);
+  assert.deepEqual(pads.map(block), ['dirt', 'dirt']);
+  assert.equal(fixture.materialCount('dirt'), 0);
+  const layers = mail('plan').filter(row => row.body.status === 'settled');
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  assert.deepEqual(layers.map(row => row.body.nodes[0].skill), ['place', 'move', 'place', 'move']);
+  const queue = trace().find(row => row.kind === 'tool.exited' && row.callId === 'steps');
+  const next = trace().find(row => row.kind === 'model.prepared' && row.seq > queue.seq);
+  const settlement = JSON.parse(next.input.messages.at(-1).content);
+  assert.equal(settlement.trigger, 'plan.finished');
+  assert.deepEqual(settlement.planSettlements, layers.map(row => row.body));
+  for (const [i, row] of layers.entries()) {
+    assert.equal(row.body.layer, i + 1);
+    const node = row.body.nodes[0];
+    const work = actions.find(action => action.work === node.work);
+    assert.ok(work?.exited && work.result.status === 'done');
+    if (i % 2 === 0) assert.equal(work.result.placed, true);
+    else assert.deepEqual(['x', 'y', 'z'].map(axis => Math.floor(work.result.position[axis])),
+      [pads[(i - 1) / 2][0], pads[(i - 1) / 2][1] + 1, -13]);
+  }
+  const recovered = await until(() => mail('attention').find(row => row.body.status === 'recovered'), '原跟随已稳定恢复');
+  const accepted = mail('motion').filter(row => row.body.status === 'accepted' && row.body.action.skill === 'follow');
+  const work = original.body.action.work;
+  assert.deepEqual(accepted.map(row => [row.body.action.work, row.body.action.bridgeWork]), [[work, work], [work, work + '.resume.2']]);
+  assert.deepEqual([raised.body.work, recovered.body.work], [work, work]);
+  assert.deepEqual(mail('attention').map(row => row.body.status), ['raised', 'recovered']);
+  player.chat('不用跟了');
+  await until(() => mail('action').some(row => row.body.skill === 'follow' && row.body.work === work &&
+    row.body.bridgeWork === work + '.resume.2' && row.body.result.status === 'interrupted'), '原跟随的真实退出回执');
+  assert.deepEqual(whispers, ['跟着呢。', '上面有点高，我先找找路。', '听得见。', '我垫两步上来。', '我踩到第二格了。']);
 }
 
 // 验证跟随通过同一 work 跨水和聊天，再验证固定目标反向抵达干岸。

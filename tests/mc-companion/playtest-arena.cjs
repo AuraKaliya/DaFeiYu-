@@ -8,6 +8,7 @@ const course = [
 ];
 const waterCourse = { west: [-37.5, -60, -24.5], east: [-23.5, -60, -24.5] };
 const fourCells = [[3, -60, -3], [4, -60, -3], [3, -59, -3], [4, -59, -3]];
+const layeredStands = { pads: [[32, -60, -13], [33, -59, -13]], upper: [34.5, -56, -13.5] };
 
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
 function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
@@ -56,6 +57,14 @@ function prepareWater(send) {
     `tp DfyCompanion ${waterCourse.west.join(' ')}`, `tp DfyGuestCheck ${waterCourse.west.join(' ')}`]) send(command);
 }
 
+// 布置初始无法抵达的高台及可用两个方块接续的站位。
+function prepareLayered(send) {
+  for (const command of ['fill 26 -61 -19 39 -61 -9 minecraft:stone',
+    'fill 26 -60 -19 39 -53 -9 minecraft:air', 'setblock 34 -57 -14 minecraft:stone',
+    'setblock 33 -59 -14 minecraft:stone', 'tp DfyCompanion 30.5 -60 -13.5',
+    'tp DfyGuestCheck 32.5 -60 -13.5', 'give DfyCompanion minecraft:dirt 2']) send(command);
+}
+
 // 让独立协议玩家读回所选场地的原状和检验点，未加载或不符时等待下一次读取。
 // 步骤：从客户端读取墙格或路面与净空 → 核对夹具预期 → 返回可保存的读回证据。
 function readArena(player, wallProbe, withExistingDoor) {
@@ -85,4 +94,5 @@ function readArena(player, wallProbe, withExistingDoor) {
   return { course, observed };
 }
 
-module.exports = { wall, course, waterCourse, fourCells, prepareWall, prepareCourse, prepareFourCells, prepareWater, readArena };
+module.exports = { wall, course, waterCourse, fourCells, layeredStands,
+  prepareWall, prepareCourse, prepareFourCells, prepareWater, prepareLayered, readArena };

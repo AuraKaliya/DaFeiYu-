@@ -162,6 +162,71 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"processed"})"}};
 }
 
+// 让两个放置与移动节点在真的游戏世界中按回执续行。
+// 步骤：开始跟随并说明受阻 → 观察及绑定两个支撑点 → 提交任务图 → 按实际站位答复。
+dfy::model::Response layered_follow_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const Json pads = Json::array({{{"x",32},{"y",-60},{"z",-13}},{{"x",33},{"y",-59},{"z",-13}}});
+    const auto call = [&](std::string_view skill, std::string id, const Json& args) {
+        const auto suffix = "_"+std::string(skill);
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(suffix); });
+        if (tool == request.tools.end()) throw std::runtime_error("layered follow probe: tool missing");
+        return ToolCall{std::move(id),tool->name,args.dump()};
+    };
+    const auto invoke = [&](std::string_view skill, std::string id, const Json& args) -> Response {
+        return {{Role::assistant,"",{call(skill,std::move(id),args)}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::tool) {
+        if (last.tool_call_id == "start-steps") return invoke("observe","step-survey",{{"sources",{"self"}},{"verify",pads}});
+        if (last.tool_call_id == "step-survey") {
+            const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            const auto& observation = result.at("observation");
+            const auto& cells = observation.at("samples").back().at("verified");
+            if (cells.size() != 2 || std::ranges::any_of(cells,[](const auto& cell) {
+                return cell.at("atSelf") != true || cell.at("block") != "air";
+            })) throw std::runtime_error("layered follow probe: pads were missing from the real observation");
+            return invoke("task_update","bind-steps",{{"goal","垫两步靠近高处玩家"},{"next","player"},
+                {"target",{{"message",4},{"observation",observation.at("id")},{"cells",pads}}}});
+        }
+        if (last.tool_call_id == "bind-steps") {
+            const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            if (result.at("status") != "updated") throw std::runtime_error("layered follow probe: target not bound");
+            auto first = pads.at(0), second = pads.at(1), above_first = first, above_second = second;
+            first["block"] = second["block"] = "dirt";
+            above_first["y"] = -59;
+            above_second["y"] = -58;
+            const Json steps = Json::array({{{"id","place-first"},{"skill","place"},{"arguments",first}},
+                {{"id","stand-first"},{"skill","move"},{"arguments",above_first},{"after",{"place-first"}}},
+                {{"id","place-second"},{"skill","place"},{"arguments",second},{"after",{"stand-first"}}},
+                {{"id","stand-second"},{"skill","move"},{"arguments",above_second},{"after",{"place-second"}}}});
+            return {{Role::assistant,"",{call("queue_actions","steps",{{"operation","plan"},{"steps",steps}}),
+                call("reply","starting",{{"text","我垫两步上来。"}})}},FinishReason::tool_calls};
+        }
+        return {{Role::assistant,R"({"internal":"probe settlement"})"}};
+    }
+    const auto input = Json::parse(last.content);
+    const auto& trigger = input.at("trigger");
+    if (trigger == "follow.attention") return {{Role::assistant,"上面有点高，我先找找路。"}};
+    if (trigger == "plan.finished") {
+        const auto& layers = input.at("planSettlements");
+        if (layers.size() != 4 || input.at("taskPlan").at("status") != "done")
+            throw std::runtime_error("layered follow probe: incomplete pad work");
+        return {{Role::assistant,"我踩到第二格了。"}};
+    }
+    const auto& events = input.at("events");
+    if (events.empty()) return {{Role::assistant,R"({"internal":"probe settlement"})"}};
+    const auto text = events.back().value("text","");
+    if (text == "大肥鱼，跟着我") return {{Role::assistant,"",{call("follow","follow",Json::object()),
+        call("reply","following",{{"text","跟着呢。"}})}},FinishReason::tool_calls};
+    if (text == "能听见吗") return {{Role::assistant,"听得见。"}};
+    if (text == "你可以垫上来")
+        return invoke("task_update","start-steps",{{"operation","start_task"},{"message",4},{"kind","work"},{"goal","垫两步靠近高处玩家"}});
+    if (text == "不用跟了") return invoke("stop_motion","stop-follow",{{"work",input.at("following").at("work")}});
+    return {{Role::assistant,R"({"internal":"probe settlement"})"}};
+}
+
 // 固定主回合只能从实际收信提供的工具中选择渠道或回信。
 dfy::model::Response main_ask_sample(const dfy::model::Request& request, bool reply) {
     using namespace dfy::model;
@@ -660,7 +725,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool combined = mode == L"--follow-dig-fill-probe";
         const bool fill_four = combined || mode == L"--fill-four-probe";
         const bool water = mode == L"--water-probe";
-        const bool partner = wall || follow || door || materials || fill_four || water || mode == L"--partner-probe";
+        const bool layered = mode == L"--layered-follow-probe";
+        const bool partner = wall || follow || door || materials || fill_four || water || layered || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -673,7 +739,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,materials,fill_four,combined,water,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,fill_four,combined,water,layered,ask,gap,root](const auto&, const auto& request) {
+                if (layered) return layered_follow_sample(request);
                 if (water) return water_sample(request);
                 if (fill_four) return fill_four_sample(request,combined);
                 if (materials) return materials_sample(request);
