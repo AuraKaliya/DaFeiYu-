@@ -43,7 +43,9 @@ class PartnerLoop {
     bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
     // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
     std::optional<bool> pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
-        const nlohmann::json& args) const;
+        nlohmann::json& args) const;
+    // 判断原玩家指令是否只允许明确绑定的单格破坏。
+    bool requires_pointed_dig(std::uint64_t session) const;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
@@ -169,6 +171,7 @@ class PartnerLoop {
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
         nlohmann::json options;
+        std::string origin;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;

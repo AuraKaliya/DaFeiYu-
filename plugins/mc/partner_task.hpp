@@ -6,6 +6,13 @@
 #include <nlohmann/json.hpp>
 
 namespace dfy::mc {
+struct DigIntent {
+    bool pointed = false;
+    std::string_view material, support;
+};
+// 从玩家原话识别可确定的指向、材料和上下关系。
+DigIntent read_dig_intent(std::string_view text);
+
 // 保存当前配对世界内的共同目标和下一次唤醒条件。
 class PartnerTask {
   public:
@@ -51,8 +58,8 @@ class PartnerTask {
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
     void record(const nlohmann::json& receipt, bool current = true);
-    // 核对确切方块来自指定玩家原话的命中。
-    bool matches_hit(std::uint64_t message, const nlohmann::json& arguments) const;
+    // 比对原话和可信观察，存在参照关系时把它传给执行器重验。
+    bool bind_dig(std::uint64_t message, const DigIntent& intent, nlohmann::json& arguments) const;
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
     std::string_view trigger(const nlohmann::json& scene, std::uint64_t scene_revision) const;
     // 返回本次玩家窗口内是否还有自主回合额度。
@@ -76,6 +83,7 @@ class PartnerTask {
     bool armed_ = false;
     nlohmann::json baseline_, receipt_, target_, correction_, previous_target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
+    std::map<std::uint64_t,nlohmann::json> object_observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;
     nlohmann::json arrival_, local_observation_, route_, navigation_wall_;

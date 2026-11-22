@@ -43,6 +43,14 @@ function nearbyDrop(bot, point, known) {
   return closest;
 }
 
+// 核对原话参照仍紧邻目标下方，未知格与材料变更都不能通过。
+function matchesDigReference(bot, point, reference) {
+  if (!reference) return true;
+  const below = point.offset(0, -1, 0);
+  return below.x === reference.x && below.y === reference.y && below.z === reference.z &&
+    bot.blockAt(below)?.name === reference.block;
+}
+
 // 沿实际掉落物所在列寻找已加载且有支撑的拾取站位。
 function pickupStand(bot, point) {
   for (let y = 0; y >= -4; --y) {
@@ -85,4 +93,4 @@ function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
   };
 }
 
-module.exports = { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop };
+module.exports = { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference };

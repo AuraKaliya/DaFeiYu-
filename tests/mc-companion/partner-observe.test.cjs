@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
+const { matchesDigReference } = require('../../plugins/mc/bridge/collection.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -184,11 +185,27 @@ test('object focus merges ray, cone and nearby sources without retargeting the o
   const log = a.objects.find(object => object.block === 'oak_log');
   assert.deepEqual(log.sources, ['cone', 'hit_neighbor', 'player_nearby', 'self_nearby']);
   assert.equal(log.visible, true);
-  assert.equal(a.objects.find(object => object.block === 'dirt').visible, true);
+  const dirt = a.objects.find(object => object.block === 'dirt');
+  assert.equal(dirt.visible, true);
+  assert.equal(dirt.below, 'stone');
   const occluded = a.objects.find(object => object.block === 'emerald_block');
   assert.deepEqual(occluded.sources, ['player_nearby', 'self_nearby']);
   assert.ok(!occluded.visible);
   assert.equal(new Set(a.objects.map(object => object.id)).size, a.objects.length);
   assert.deepEqual(a.hit, b.hit);
   assert.deepEqual(b.objects.find(object => object.id === log.id).sources, ['cone', 'hit_neighbor', 'self_nearby']);
+});
+
+// 参照在等待走近时变化，执行器不能把旧观察当成当前游戏状态。
+test('dig target requires the same loaded support immediately before breaking', () => {
+  const { bot } = fixture();
+  const point = new Position(0, -58, 1), reference = { x: 0, y: -59, z: 1, block: 'stone' };
+  let support = { name: 'stone' };
+  bot.blockAt = () => support;
+  assert.ok(matchesDigReference(bot, point, reference));
+  assert.ok(!matchesDigReference(bot, point.offset(1, 0, 0), reference));
+  support = { name: 'air' };
+  assert.ok(!matchesDigReference(bot, point, reference));
+  support = null;
+  assert.ok(!matchesDigReference(bot, point, reference));
 });

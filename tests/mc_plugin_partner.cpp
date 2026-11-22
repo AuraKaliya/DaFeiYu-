@@ -135,6 +135,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
+    const bool pointed_support = variant == L"partner-revision-pointed-support";
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
@@ -152,6 +153,38 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (pointed_support) {
+            const Json stone{{"x",1},{"y",-60},{"z",2},{"block","stone"}};
+            const Json dirt{{"x",1},{"y",-59},{"z",2},{"block","dirt"}};
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "bad-stone") {
+                    if (result.at("reasonCode") != "pointed_block_unverified")
+                        throw std::runtime_error("an unobserved direct request admitted the reference block");
+                    return call("_observe","support-focus",{{"mode","pointed"},{"message",2},{"focus","objects"}});
+                }
+                if (last.tool_call_id == "support-focus")
+                    return call("_queue_actions","bad-plan",{{"operation","plan"},{"steps",Json::array({
+                        {{"id","wrong"},{"skill","dig_block"},{"arguments",stone}}})}});
+                if (last.tool_call_id == "bad-plan") {
+                    if (result.at("reason") != "pointed_block_unverified")
+                        throw std::runtime_error("the ray hitting stone was mistaken for permission to dig it");
+                    return call("_dig_block","remove-dirt",dirt);
+                }
+                throw std::runtime_error("the accepted pointed dig caused another model call before the exit receipt");
+            }
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "motion.finished") {
+                const auto& receipt = input.at("workSettlement").at("receipts").at(0).at("result");
+                if (checked || receipt.at("changes").at(0).at("before") != "dirt" ||
+                    receipt.at("inventoryDelta").at("dirt") != 1)
+                    throw std::runtime_error("pointed dirt was not read back under its original work");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            if (input.at("events").back().at("sequence") == 2) return call("_dig_block","bad-stone",stone);
+            return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
         if (question_expiry) {
             if (last.role == Role::tool) {
                 // 按固定调用编号读取同批返回的业务回执。
@@ -397,7 +430,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan ? 2u : restart_route ? 5u : 3u) && receipt_turn_finished() &&
+            (repair_observe || repair_plan || pointed_support ? 2u : restart_route ? 5u : 3u) && receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
             stopping = true;

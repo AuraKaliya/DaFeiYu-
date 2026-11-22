@@ -27,6 +27,7 @@ async function main() {
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const questionExpiry = variant === 'partner-revision-question-expiry';
+  const pointedSupport = variant === 'partner-revision-pointed-support';
   const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
@@ -99,6 +100,7 @@ async function main() {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
           }
+          if (pointedSupport) messages[1].text = '把这石块上的泥土敲掉';
           if (restartRoute) {
             messages[1].text = '大肥鱼，跟着我走';
             messages[3].text = '要不要计时';
@@ -154,6 +156,30 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
         }
         assert.ok(!repairPlan);
+        if (pointedSupport) {
+          const stone = { x: 1, y: -60, z: 2, block: 'stone' };
+          const dirt = { x: 1, y: -59, z: 2, block: 'dirt' };
+          assert.equal(context.order, 2);
+          if (skill === 'observe') {
+            assert.equal(method, 'partner.begin');
+            assert.deepEqual(args, { mode: 'pointed', message: 2, focus: 'objects' });
+            return { ...context, skill, exited: true, result: { status: 'done', anchor: { message: 2 }, sampledAtMs: 42,
+              playerFocus: { status: 'observed', hit: stone, objects: [{ ...dirt, visible: true, below: 'stone' }] } } };
+          }
+          assert.equal(skill, 'collect');
+          if (method === 'partner.begin') {
+            assert.ok(!collecting);
+            assert.deepEqual(args, { ...dirt, count: 1, source: 'visible', digReference: stone });
+            collecting = id;
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, collecting);
+          collectExited = true;
+          const { block, ...position } = dirt;
+          return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
+            changes: [{ ...position, before: block, after: 'air' }], inventoryDelta: { dirt: 1 } } };
+        }
         if (restartRoute && skill === 'follow') {
           if (method === 'partner.begin') {
             if (!following) following = id;
@@ -347,7 +373,7 @@ async function main() {
   releaseControl(generation) {
     assert.equal(generation, state.generation);
     return { generation, order: restartRoute ? 5 : first || motion || confirm ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -367,7 +393,7 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);
-      else assert.equal(stopped, notes || restartRoute ? 0 : 2);
+      else assert.equal(stopped, notes || restartRoute || pointedSupport ? 0 : 2);
       assert.equal(collectExited, !correctionLost && !restartRoute);
       assert.equal(nextBlock, notes);
       assert.equal(wallFilled, !!correction && !correctionLost);

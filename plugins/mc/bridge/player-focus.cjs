@@ -73,6 +73,8 @@ function objectFocus(bot, anchor, nearby) {
     if (cone) item.sources.push('cone');
     if (neighbor) item.sources.push('hit_neighbor');
     item.visible = true;
+    const below = bot.blockAt(point.offset(0, -1, 0));
+    if (below && !air(below)) item.below = below.name;
     item.angle = Math.round(Math.acos(Math.min(1, cosine)) * 180 / Math.PI);
     item.distance = Math.round(distance * 10) / 10;
   }

@@ -88,6 +88,7 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
     question_->options = options;
     question_->task_revision = task_.revision();
+    if (!events_.empty()) question_->origin = events_.back().value("text",std::string{});
     question_result_.clear();
     return {{"status","recorded"},{"item",id}};
 }
@@ -151,8 +152,8 @@ bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves
 void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view envelope) {
     if (!item || !question_ || question_->item != item || question_->path != "local" || question_->approval ||
         order_ <= question_->order || events_.empty() || events_.back().at("type") != "player.message") return;
-    const auto args = Json::parse(envelope).at("arguments");
-    if (!task_.matches_hit(order_,args)) return;
+    auto args = Json::parse(envelope).at("arguments");
+    if (!pointed_dig(session_,order_,item,args).value_or(false)) return;
     question_->answer_order = order_;
     complete_question("resolved",events_.back().at("text").get<std::string>());
 }
@@ -160,14 +161,27 @@ void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view en
 // 校验模型所选的格确实来自本轮玩家指向，必要时同时核对待答事项。
 // 步骤：识别当前指向 → 核对原问题身份 → 匹配坐标和材质。
 std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
-    const Json& args) const {
+    Json& args) const {
     if (session != session_ || active_delegation_) return !message && !item ? std::optional(false) : std::nullopt;
-    if (!message && !item && !hit_queries_.contains(order_)) return false;
+    const bool player_event = !events_.empty() && events_.back().at("type") == "player.message";
+    auto intent = player_event ? read_dig_intent(events_.back().at("text").get_ref<const std::string&>()) : DigIntent{};
+    if (!message && !item && !intent.pointed && !hit_queries_.contains(order_)) return false;
     if (!message) message = order_;
-    if (message != order_ || events_.empty() || events_.back().at("type") != "player.message" ||
+    if (message != order_ || !player_event ||
         (item && (!question_ || question_->item != item || question_->approval || question_->path != "local" ||
-            question_->order >= order_)) || !task_.matches_hit(message,args)) return std::nullopt;
+            question_->order >= order_ || question_->task_revision != task_.revision()))) return std::nullopt;
+    if (item) {
+        const auto original = read_dig_intent(question_->origin);
+        if (!original.material.empty()) intent = original;
+    }
+    if (!task_.bind_dig(message,intent,args)) return std::nullopt;
     return true;
+}
+
+// 阻止用无指向的采料入口绕过明确的单格指令。
+bool PartnerLoop::requires_pointed_dig(std::uint64_t session) const {
+    return session == session_ && !active_delegation_ && !events_.empty() && events_.back().at("type") == "player.message" &&
+        read_dig_intent(events_.back().at("text").get_ref<const std::string&>()).pointed;
 }
 
 // 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。

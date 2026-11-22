@@ -9,6 +9,36 @@ namespace {
 using Json = nlohmann::json;
 constexpr unsigned continuation_budget = 4;
 constexpr std::size_t observation_limit = 32;
+using namespace std::string_view_literals;
+constexpr std::array materials{
+    std::pair{"草方块"sv,"grass_block"sv}, std::pair{"泥土"sv,"dirt"sv}, std::pair{"圆石"sv,"cobblestone"sv},
+    std::pair{"石块"sv,"stone"sv}, std::pair{"石头"sv,"stone"sv}, std::pair{"橡木原木"sv,"oak_log"sv},
+    std::pair{"原木"sv,"log"sv}, std::pair{"沙子"sv,"sand"sv}, std::pair{"沙砾"sv,"gravel"sv}
+};
+
+// 返回原话首先点名的可明确映射到游戏材料的名词。
+std::string_view named_material(std::string_view text) {
+    std::string_view result;
+    std::size_t best = text.npos;
+    for (const auto& [word,material] : materials) {
+        if (const auto at = text.find(word); at < best) { best = at; result = material; }
+    }
+    return result;
+}
+
+// 比较游戏材质名，原木类别可对应实际观察到的种类。
+bool same_material(std::string_view block, std::string_view material) {
+    if (block.starts_with("minecraft:")) block.remove_prefix(10);
+    if (material == "log") return block.ends_with("_log") || block.ends_with("_stem");
+    return material.empty() || block == material;
+}
+
+// 比较候选与实际动作所用的坐标和方块。
+bool same_block(const Json& candidate, const Json& args) {
+    return candidate.is_object() && same_material(args.at("block").get_ref<const std::string&>(),
+        candidate.at("block").get_ref<const std::string&>()) &&
+        std::ranges::all_of(std::array{"x","y","z"},[&](auto axis) { return candidate.at(axis) == args.at(axis); });
+}
 
 // 提取现场变化修订与实际地点，忽略采样时间和小幅位置抖动。
 Json scene_key(const Json& scene, std::uint64_t revision) {
@@ -68,6 +98,25 @@ bool same_target_scope(const Json& a, const Json& b) {
         a.value("approach",false) != b.value("approach",false) || a.contains("cells") != b.contains("cells")) return false;
     return !a.contains("cells") || std::ranges::is_permutation(a.at("cells"),b.at("cells"));
 }
+}
+
+// 从原话提取破坏目标的明确约束，参照材料按原词序与动作目标分开。
+// 步骤：识别破坏动词 → 查找上下关系 → 否则只提取指向物的材质。
+DigIntent read_dig_intent(std::string_view text) {
+    using namespace std::string_view_literals;
+    constexpr std::array verbs{"挖"sv,"敲"sv,"拆"sv,"铲"sv,"砸"sv,"打掉"sv,"移除"sv};
+    const auto has_word = [&](auto word) { return text.find(word) != text.npos; };
+    if (std::ranges::none_of(verbs,has_word)) return {};
+    for (const auto relation : {"上方的"sv,"上面的"sv,"上边的"sv,"上的"sv,"上面那块"sv}) {
+        const auto at = text.find(relation);
+        if (at == text.npos) continue;
+        const auto support = named_material(text.substr(at>18 ? at-18 : 0,std::min<std::size_t>(at,18)));
+        const auto target = named_material(text.substr(at+relation.size(),24));
+        if (!support.empty() && !target.empty()) return {true,target,support};
+    }
+    constexpr std::array pointing{"这块"sv,"这个"sv,"这格"sv,"这根"sv,"这里"sv,"我面前"sv,"眼前"sv,"掉它"sv};
+    const bool pointed = std::ranges::any_of(pointing,has_word);
+    return {pointed,pointed ? named_material(text) : std::string_view{},{}};
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
@@ -348,11 +397,13 @@ void PartnerTask::bind_collection(Json& arguments) const {
 void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, const Json& focus) {
     const Json evidence{{"message",message},{"sampledAtMs",sampled_at},{"playerFocus",focus}};
     observations_[message] = evidence;
+    if (focus.contains("objects")) object_observations_[message] = focus;
     if (focus.contains("candidates")) {
         auto [opening,inserted] = openings_.try_emplace(message,evidence);
         if (!inserted && !opening->second.at("playerFocus").at("choice").is_string()) opening->second = evidence;
     }
     if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
+    if (object_observations_.size() > observation_limit) object_observations_.erase(object_observations_.begin());
     if (openings_.size() > observation_limit) openings_.erase(openings_.begin());
 }
 
@@ -414,15 +465,34 @@ void PartnerTask::record(const Json& receipt, bool current) {
     if (current && summary.dump().size() <= 4096) receipt_ = std::move(summary);
 }
 
-// 只接受同一原话视线命中的实际坐标及材质。
-bool PartnerTask::matches_hit(std::uint64_t message, const Json& arguments) const {
+// 固定原话命中、唯一可见候选或物体与参照的上下关系。
+// 步骤：核对原话材质 → 以可信命中或可见集合确认目标 → 输出执行前需重验的参照格。
+bool PartnerTask::bind_dig(std::uint64_t message, const DigIntent& intent, Json& arguments) const {
     const auto original = observations_.find(message);
-    if (original == observations_.end()) return false;
-    const auto& focus = original->second.at("playerFocus");
-    const auto hit = focus.find("hit");
-    return hit != focus.end() && hit->is_object() && std::ranges::all_of(std::array{"x","y","z","block"},[&](auto field) {
-        return hit->contains(field) && hit->at(field) == arguments.at(field);
-    });
+    if (original == observations_.end() || !same_material(arguments.at("block").get_ref<const std::string&>(),intent.material))
+        return false;
+    const auto hit = original->second.at("playerFocus").value("hit",Json(nullptr));
+    if (intent.support.empty() && same_block(hit,arguments)) return true;
+    const auto observed = object_observations_.find(message);
+    if (observed == object_observations_.end() || intent.material.empty()) return false;
+
+    const auto& focus = observed->second;
+    const auto& ray = focus.at("hit");
+    const auto exact = [&](const Json& candidate) {
+        if (!candidate.value("visible",false) || !same_material(candidate.at("block").get_ref<const std::string&>(),intent.material))
+            return false;
+        if (intent.support.empty()) return true;
+        const auto below = candidate.value("below",std::string{});
+        return !below.empty() && same_material(below,intent.support) && (same_block(ray,candidate) ||
+            (ray.is_object() && ray.at("block") == below && ray.at("x") == candidate.at("x") && ray.at("z") == candidate.at("z") &&
+                ray.at("y").get<std::int64_t>()+1 == candidate.at("y")));
+    };
+    const auto& objects = focus.at("objects");
+    const auto selected = std::ranges::find_if(objects,exact);
+    if (selected == objects.end() || !same_block(*selected,arguments) || std::ranges::count_if(objects,exact) != 1) return false;
+    if (!intent.support.empty()) arguments["digReference"] = {{"x",selected->at("x")},{"z",selected->at("z")},
+        {"y",selected->at("y").get<std::int64_t>()-1},{"block",selected->at("below")}};
+    return true;
 }
 
 // 只在任务明确要求继续或收到所等观察变化时唤醒，单次额度耗尽后等待新玩家事件。

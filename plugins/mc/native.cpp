@@ -254,11 +254,12 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             if (args.value("editBuilt",false) && (!exact_dig || !args.contains("approval")))
                 return report(DFY_V2_INVALID_ARGUMENT,error);
             args.erase("approvedBuiltEdit");
+            args.erase("digReference");
             if (exact_dig) {
                 resolves = args.value("resolves",std::uint64_t{});
                 pointed = raw->partner.pointed_dig(call->session,args.value("message",std::uint64_t{}),resolves,args);
                 args.erase("message");
-            }
+            } else if (raw->partner.requires_pointed_dig(call->session)) pointed = std::nullopt;
             args.erase("resolves");
             if (exact_dig || gather_ground) {
                 args["count"] = exact_dig ? nlohmann::json(1) : args.at("requiredStock");

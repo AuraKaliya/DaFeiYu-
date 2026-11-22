@@ -61,6 +61,8 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         if (step.contains("id") || step.contains("after")) return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
         const auto name = step.at("skill").get<std::string>();
         const auto& parameters = step.at("arguments");
+        if (name == "collect" && requires_pointed_dig(session_))
+            return {{"status","blocked"},{"reason","pointed_block_unverified"}};
         auto pickup = step.value("pickup",std::string{});
         if (pickup.starts_with("minecraft:")) pickup.erase(0,10);
         if (step.contains("pickup") && (name != "collect" || pickup.empty() || pickup.size() > 80 ||

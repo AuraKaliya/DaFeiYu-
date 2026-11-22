@@ -7,7 +7,7 @@ const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
+const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { dryStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
@@ -139,6 +139,8 @@ async function collect(bot, args, check, result, built) {
   const fixed = ['x', 'y', 'z'].some(k => Object.hasOwn(args, k)) ? targetPoint(bot, args) : null;
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
     throw new Error('数量应为 1～32，指定的单格只能采一次');
+  const referenceChanged = () => Object.assign(new Error('目标下方的原参照已变化'), { code: 'dig_reference_changed' });
+  if (args.digReference && (!fixed || !matchesDigReference(bot, fixed, args.digReference))) throw referenceChanged();
   const before = inventory(bot);
   const expected = args.item?.replace(/^minecraft:/, '');
   if (Object.hasOwn(args, 'item') && (!Object.hasOwn(bot.registry.itemsByName, expected) ||
@@ -186,6 +188,7 @@ async function collect(bot, args, check, result, built) {
       const affected = affectedByDig(bot, here);
       if (!built.permits(affected, approved)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
+      if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
       const readback = collectReadback(bot, here, affected);
       const known = new Set(Object.keys(bot.entities));
       try { await bot.dig(here, true); }
@@ -409,7 +412,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['place', 'fill_target', 'observe', 'route'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'place', 'fill_target', 'observe', 'route'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (world.read()?.generation === r.generation) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
