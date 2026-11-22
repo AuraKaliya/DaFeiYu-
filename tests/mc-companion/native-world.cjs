@@ -25,7 +25,7 @@ async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
   const controllerRestart = variant === 'partner-controller-restart';
-  const interrupt = controllerRestart || variant === 'partner-interrupt';
+  const interrupt = variant === 'partner-interrupt';
   const suspend = variant?.startsWith('partner-follow-collect');
   const recovery = variant === 'partner-follow-recovery';
   const follow = suspend || recovery || variant === 'partner-follow';
@@ -37,8 +37,8 @@ async function main() {
   const execution = variant?.startsWith('partner-execution-');
   const scenario = variant === 'partner-execution-scenario';
   const delivery = variant?.startsWith('partner-reply-') ? variant.slice('partner-reply-'.length) : null;
-  const revision = variant?.startsWith('partner-revision-');
-  const directRevision = variant?.startsWith('partner-revision-direct-');
+  const revision = controllerRestart || variant?.startsWith('partner-revision-');
+  const directRevision = controllerRestart || variant?.startsWith('partner-revision-direct-');
   const directPlace = variant === 'partner-revision-direct-place';
   const rejoin = variant === 'partner-revision-direct-rejoin';
   const recoverInbox = variant === 'partner-revision-direct-recover-notes';
@@ -75,6 +75,7 @@ async function main() {
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
+  let controllerOwner;
   let following, collecting, resumed, collectExited = false;
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
@@ -162,7 +163,7 @@ async function main() {
           }
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' || directPlace ? '改成清理另一处' :
-            variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
+            controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
@@ -203,6 +204,19 @@ async function main() {
     // 受控收件源不保留外部连接。
     close() {},
   }, key, partnerLoop ? { partner: scenario ? null : {
+    // 在原生测试中模拟桥接授予同一个实例控制权。
+    claim(controller) {
+      if (controllerOwner && controllerOwner !== controller) return false;
+      controllerOwner = controller;
+      return true;
+    },
+    // 核对原宿主的局部释放，第二次查询返回实际退出。
+    detach(controller) {
+      assert.equal(controller, controllerOwner);
+      if (++releases === 1) return 'requested';
+      controllerOwner = undefined;
+      return 'released';
+    },
     // 受控游戏场景只有在原任务完成登记后才产生新修订。
     scene(generation) {
       assert.equal(generation, state.generation);
@@ -214,6 +228,7 @@ async function main() {
       assert.ok(!execution, '不可执行时不应调用游戏技能');
       const { controller } = context;
       assert.match(controller, /^[a-f0-9]{32}$/);
+      assert.equal(controller, controllerOwner);
       if (refusedCollection) {
         assert.equal(method, 'partner.begin');
         if (skill === 'reply') {
@@ -681,13 +696,22 @@ async function main() {
           fs.mkdirSync(nextConfig, { recursive: true });
           fs.copyFileSync(path.join(config, 'settings.json'), path.join(nextConfig, 'settings.json'));
           baselineRead = false;
-          moveId = undefined;
+          collecting = undefined;
+          planReading = collectExited = false;
           releases = stopped = 0;
         }
-        const child = spawn(exe, [packagePath, root, 'partner-interrupt'], { stdio: 'inherit', windowsHide: true });
+        const child = spawn(exe, [packagePath, root, 'partner-revision-direct-scope'], { stdio: 'inherit', windowsHide: true });
         assert.equal((await once(child, 'exit'))[0], 0);
-        assert.equal(stopped, 1);
+        assert.equal(stopped, 2);
         assert.equal(releases, 2);
+        const trace = path.join(root, 'trace', 'events.jsonl');
+        const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+        const controller = hostWork.at(-1).context.controller;
+        const motionExit = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting &&
+          row.body.result.status === 'interrupted');
+        const detach = rows.find(row => row.category === 'mc.partner.control' && row.body.controller === controller && row.body.phase === 'released');
+        assert.ok(motionExit && detach && motionExit.seq < detach.seq);
+        console.log(trace);
       }
       assert.equal(hostWork.length, 2);
       const [first, second] = hostWork;

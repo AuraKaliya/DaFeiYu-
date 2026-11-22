@@ -52,9 +52,15 @@ bool inquiry_id(const Json& value) {
     const auto& id = value.get_ref<const std::string&>();
     return !id.empty() && id.size() <= 20 && id.front() != '0' && id.find_first_not_of("0123456789") == id.npos;
 }
-// 核对接管回执来自指定游戏代次，序号零表示管理入口先提出停止。
-bool control_receipt(const Json& value, const Json& generation) {
-    return value.is_object() && value.size() == 3 && value.at("generation") == generation &&
+// 核对控制实例的本地协议身份。
+bool controller_id(std::string_view value) {
+    return value.size() == 32 && value.find_first_not_of("0123456789abcdef") == value.npos;
+}
+
+// 核对释放回执的原世界和控制范围。
+bool control_receipt(const Json& value, const Json& generation, const Json& controller = nullptr) {
+    return value.is_object() && value.size() == (controller.is_null() ? 3u : 4u) && value.at("generation") == generation &&
+        (controller.is_null() || value.at("controller") == controller) &&
         value.at("order").is_number_unsigned() && value.at("order") <= 9007199254740991ULL &&
         (value.at("phase") == "requested" || value.at("phase") == "released" || value.at("phase") == "unconfirmed");
 }
@@ -271,18 +277,24 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},
         std::move(progress)};
 }
-// 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。
+// 将普通退出和显式接管分别绑定到控制实例或原游戏世界。
+// 步骤：核对目标范围 → 选择释放或接管方法 → 生成原请求帧。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments) {
     auto frame = parse(arguments);
-    if (key.size() != 64 || frame.size() != 1 || !uuid(frame.at("generation"))) throw std::invalid_argument("MC: stop identity");
-    frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", "control.stop"}});
+    const auto scoped = frame.contains("controller");
+    const auto& generation = frame.at("generation");
+    if (key.size() != 64 || frame.size() != (scoped ? 2u : 1u) || (!uuid(generation) && !(scoped && generation == "")) ||
+        (scoped && !controller_id(frame.at("controller").get_ref<const std::string&>()))) throw std::invalid_argument("MC: stop identity");
+    frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", scoped ? "control.detach" : "control.stop"}});
+    if (!scoped) frame["scope"] = "role";
     return frame.dump();
 }
 // 只让原请求关联到对应代次的实际释放，待退出的回执留给原票据继续轮询。
 std::string control_reply(std::string_view wire, std::string_view id, std::string_view arguments) {
-    const auto reply = parse(wire);
+    const auto reply = parse(wire), query = parse(arguments);
     if (reply.size() != 3 || reply.at("id").get_ref<const std::string&>() != id || reply.at("version") != 1 ||
-        !control_receipt(reply.at("control"), parse(arguments).at("generation"))) throw std::invalid_argument("MC: stop reply");
+        !control_receipt(reply.at("control"), query.at("generation"), query.value("controller",Json{})))
+        throw std::invalid_argument("MC: stop reply");
     const auto& value = reply.at("control");
     return value.at("phase") == "requested" ? std::string{} : value.dump();
 }
@@ -299,8 +311,12 @@ BridgeConfig configured_bridge(std::string_view config) {
         if (key.size() != 64 || key.find_first_not_of("0123456789abcdef") != key.npos)
             throw std::invalid_argument("MC protocol: invalid private configuration");
     }
+    return {channel,std::move(key),new_controller()};
+}
+// 生成独立于工作序号的控制周期身份。
+std::string new_controller() {
     std::random_device random;
-    return {channel,std::move(key),std::format("{:08x}{:08x}{:08x}{:08x}",random(),random(),random(),random())};
+    return std::format("{:08x}{:08x}{:08x}{:08x}",random(),random(),random(),random());
 }
 // 仅取公开通道名。
 std::string configured_channel(std::string_view config) { return configured_bridge(config).channel; }
@@ -400,13 +416,16 @@ std::string survey_request(std::string_view id, std::string_view key, std::strin
     return frame.dump();
 }
 
-// 从受控参数建立私有玩家消息查询。
-std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments) {
+// 从受控参数建立私有收件或伙伴监听请求。
+// 步骤：核对原世界及游标 → 按有无控制实例选择真实读口。
+std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments, std::string_view controller) {
     auto request = parse(arguments);
     if (key.size() != 64 || request.size() != 2 || !uuid(request.at("generation")) ||
-        !request.at("after").is_number_unsigned() || request.at("after") > 9007199254740991ULL)
+        !request.at("after").is_number_unsigned() || request.at("after") > 9007199254740991ULL ||
+        (!controller.empty() && !controller_id(controller)))
         throw std::invalid_argument("MC protocol: invalid inbox query");
-    request.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", "chat.read"}});
+    request.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", controller.empty() ? "chat.read" : "partner.listen"}});
+    if (!controller.empty()) request["controller"] = controller;
     return request.dump();
 }
 
@@ -445,7 +464,8 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         const auto& mode = execution.at("mode");
         const auto& state = execution.at("state");
         if (execution.size() != 2 || (mode != "partner" && mode != "scenario" && mode != "none") ||
-            (state != "ready" && state != "requested" && state != "released" && state != "unconfirmed" && state != "unavailable") ||
+            (state != "ready" && state != "busy" && state != "requested" && state != "released" && state != "unconfirmed" && state != "unavailable") ||
+            (state == "busy" && mode != "partner") ||
             (mode == "none" && state != "unavailable") || (inbox.contains("control") && state != inbox.at("control").at("phase")))
             throw std::invalid_argument("MC protocol: invalid execution status");
     }

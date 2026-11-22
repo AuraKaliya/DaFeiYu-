@@ -19,7 +19,7 @@ std::string read(std::string_view channel, std::string request) {
 // 步骤：等待配对玩家 → 核对旧话不重放 → 消费后验证最新原话。
 void verify_feed(std::string_view channel) {
     dfy::mc::PartnerFeed feed;
-    const dfy::mc::BridgeConfig config{std::string(channel),std::string(64,'1')};
+    const dfy::mc::BridgeConfig config{std::string(channel),std::string(64,'1'),std::string(32,'a')};
     // 推进到指定来源序号已处于可交付状态。
     const auto wait = [&](std::uint64_t cursor) {
         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(4);

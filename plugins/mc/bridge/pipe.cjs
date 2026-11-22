@@ -25,18 +25,29 @@ function readReply(input, world, inbox, key, actions) {
     const answer = state && explain && actions?.explain?.(state.generation, request.order, request.inquiry);
     return { version: 1, id: request.id, state: state ? { ...state, ...(survey && { survey }), ...(answer && { answer }) } : null };
   }
-  if (request.method === 'chat.read' && inbox && Object.keys(request).length === 6 &&
+  const controller = typeof request.controller === 'string' && /^[a-f0-9]{32}$/.test(request.controller);
+  const listening = request.method === 'partner.listen' && Object.keys(request).length === 7 && controller;
+  if ((listening || (request.method === 'chat.read' && Object.keys(request).length === 6)) && inbox &&
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0) {
     const batch = inbox.read(request.generation, request.after);
     const control = actions?.controlReceipt?.(request.generation);
-    const execution = actions?.execution?.() ?? { mode: actions?.partner ? 'partner' : actions ? 'scenario' : 'none',
-      state: actions ? 'ready' : 'unavailable' };
     const sceneRevision = batch && actions?.partner?.scene?.(request.generation);
+    let execution = actions?.execution?.() ?? { mode: actions?.partner ? 'partner' : actions ? 'scenario' : 'none',
+      state: actions ? 'ready' : 'unavailable' };
+    if (listening && batch && execution.mode === 'partner' && execution.state === 'ready' &&
+        !actions?.partner?.claim(request.controller)) execution = { mode: 'partner', state: 'busy' };
     return { version: 1, id: request.id, inbox: batch && { ...batch, execution, ...(control && { control }),
       ...(sceneRevision != null && { sceneRevision }) } };
   }
-  if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')
+  // 伙伴的全局接管必须表明范围，旧宿主的无范围停止不能释放角色。
+  const takeover = Object.keys(request).length === 6 && request.scope === 'role';
+  const scenarioStop = !actions?.partner && Object.keys(request).length === 5;
+  if (request.method === 'control.stop' && actions && (takeover || scenarioStop) && typeof request.generation === 'string')
     return { version: 1, id: request.id, control: actions.releaseControl(request.generation) };
+  if (request.method === 'control.detach' && actions?.partner && Object.keys(request).length === 6 && controller &&
+      typeof request.generation === 'string')
+    return { version: 1, id: request.id, control: { generation: request.generation, controller: request.controller,
+      order: 0, phase: actions.partner.detach(request.controller) } };
   if (actions?.partner) {
     const guarded = request.skill === 'guarded_collect' && Array.isArray(request.arguments?.collectionGuards) &&
       request.arguments.collectionGuards.length > 0 && request.arguments.collectionGuards.length <= 128;

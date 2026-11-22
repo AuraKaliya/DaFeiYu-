@@ -18,6 +18,21 @@ void private_protocol() {
     const auto args = Json{{"generation", generation}, {"after", 1}}.dump();
     const auto request = Json::parse(dfy::mc::inbox_request("r", key, args));
     if (request.at("method") != "chat.read" || request.at("key") != key) throw std::runtime_error("missing pairing");
+    const std::string controller(32, 'b');
+    const auto listen = Json::parse(dfy::mc::inbox_request("r",key,args,controller));
+    if (listen.at("method") != "partner.listen" || listen.at("controller") != controller)
+        throw std::runtime_error("partner listen lost its control identity");
+    const auto detach = Json{{"generation",generation},{"controller",controller}}.dump();
+    const auto takeover = Json::parse(dfy::mc::control_request("r",key,Json{{"generation",generation}}.dump()));
+    if (Json::parse(dfy::mc::control_request("r",key,detach)).at("method") != "control.detach" ||
+        takeover.at("method") != "control.stop" || takeover.at("scope") != "role")
+        throw std::runtime_error("detach and takeover share the wrong protocol method");
+    Json detached{{"generation",generation},{"controller",controller},{"order",0},{"phase","released"}};
+    Json stop_reply{{"version",1},{"id","r"},{"control",detached}};
+    if (Json::parse(dfy::mc::control_reply(stop_reply.dump(),"r",detach)) != detached)
+        throw std::runtime_error("detach did not retain the original controller");
+    stop_reply["control"]["controller"] = std::string(32,'c');
+    rejects([&] { dfy::mc::control_reply(stop_reply.dump(),"r",detach); });
     Json reply{{"version", 1}, {"id", "r"}, {"inbox", {{"generation", generation}, {"owner", generation},
         {"oldest", 2}, {"latest", 2}, {"gap", false}, {"more", false}, {"messages", {{{"sequence", 2}, {"text", "查看"}}}}}}};
     if (Json::parse(dfy::mc::inbox_reply(reply.dump(), "r", args)) != reply.at("inbox")) throw std::runtime_error("inbox lost");
@@ -27,6 +42,9 @@ void private_protocol() {
         throw std::runtime_error("lost non-executable bridge status");
     released["inbox"]["execution"]["mode"] = "none";
     rejects([&] { dfy::mc::inbox_reply(released.dump(), "r", args); });
+    released["inbox"]["execution"] = {{"mode","partner"},{"state","busy"}};
+    if (Json::parse(dfy::mc::inbox_reply(released.dump(),"r",args)) != released.at("inbox"))
+        throw std::runtime_error("busy bridge was not reported as readable");
     auto presence = reply;
     const Json entered{{"sequence",2},{"type","player.entered"}};
     presence["inbox"]["presence"] = entered;

@@ -10,6 +10,7 @@ const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop,
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
+const { controllerLease } = require('./controller.cjs');
 const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
@@ -242,6 +243,7 @@ function partnerService(bot, world, inbox, places, owner) {
   const wallSurveys = new Map();
   const checkedRoutes = new Map();
   const built = new BuiltObjects();
+  const lease = controllerLease(drainActivities);
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
     return !closed && inbox.inPresence(context.generation, context.order) && inbox.get(context.generation, context.order) &&
@@ -267,6 +269,11 @@ function partnerService(bot, world, inbox, places, owner) {
   function stopActivities() {
     cancel();
     for (const job of observations) { job.cancelled = true; job.abort.abort(); }
+  }
+  // 等待当前角色的前台动作和后台观察全部归还旧工作号。
+  async function drainActivities() {
+    stopActivities();
+    await Promise.all([done, ...[...observations].map(job => job.done)]);
   }
   // 玩家名单的真实离场立即撤销执行，避免重入期间先执行旧动作。
   const onLeft = player => { if (player.uuid === owner) stopActivities(); };
@@ -371,7 +378,7 @@ function partnerService(bot, world, inbox, places, owner) {
             result.doorCoverage = 'loaded_local';
           }
         }
-        if (previous?.generation === r.generation) result.lastAction = previous;
+        if (previous?.controller === r.controller && previous.action.generation === r.generation) result.lastAction = previous.action;
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
           throw new Error('回复需要一行 1～220 字的文字');
@@ -464,12 +471,15 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       r.exited = true;
       if (['move', 'route', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
-        previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
+        previous = { controller: r.controller, action: { ...result, generation: r.generation, order: r.order, skill: r.skill } };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
   }
   return {
     scene,
+    // 仅当执行器仍开放时处理收件监听对角色控制权的登记或续期。
+    claim(controller) { return !closed && lease.claim(controller); },
+    detach: lease.detach,
     // 同一控制实例内的原工作负责轮询、取消及失联收尾。
     call(method, id, context, skill, args) {
       if (!Number.isSafeInteger(context?.order) || context.order <= 0 || typeof context.generation !== 'string' ||
@@ -494,7 +504,8 @@ function partnerService(bot, world, inbox, places, owner) {
         return receipt;
       }
       const controlsBody = skill !== 'reply' && skill !== 'observe';
-      if (method !== 'partner.begin' || !current(context) || (controlsBody && active && !active.receipt.exited))
+      if (method !== 'partner.begin' || !current(context) || !lease.owns(context.controller) ||
+          (controlsBody && active && !active.receipt.exited))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
       // 只回收已经退出且原消息不可能再次接纳的票据。
@@ -510,7 +521,8 @@ function partnerService(bot, world, inbox, places, owner) {
       if (controlsBody) {
         active = job;
         const timer = setInterval(() => {
-          if (active === job && (!inbox.inPresence(context.generation, context.order) || performance.now() - job.polled > 4000)) cancel();
+          if (active === job && (!lease.owns(context.controller) || !inbox.inPresence(context.generation, context.order) ||
+              performance.now() - job.polled > 4000)) cancel();
         }, 150);
         done = run(job, args).finally(() => clearInterval(timer));
       } else if (skill === 'observe') {
@@ -524,8 +536,7 @@ function partnerService(bot, world, inbox, places, owner) {
     async close() {
       closed = true;
       bot.removeListener('playerLeft', onLeft);
-      stopActivities();
-      await Promise.all([done, ...[...observations].map(job => job.done)]);
+      await drainActivities();
     },
   };
 }

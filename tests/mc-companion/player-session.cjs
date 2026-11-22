@@ -110,7 +110,7 @@ async function verify(fixture) {
     game.bot.dig = (...args) => {
       ++digCalls;
       if (variant === 'stop-game' && digCalls === 2)
-        externalStop = query(channel, { version: 1, method: 'control.stop', generation: state.state.generation, id: 'fixture-stop', key })
+        externalStop = query(channel, { version: 1, method: 'control.stop', scope: 'role', generation: state.state.generation, id: 'fixture-stop', key })
           .catch(() => null);
       if (variant === 'stop-disconnect' && digCalls === 2) setImmediate(game.stop);
       return dig(...args);

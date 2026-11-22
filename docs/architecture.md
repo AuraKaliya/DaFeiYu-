@@ -186,13 +186,16 @@ flowchart TB
     subgraph Game["Node.js 桥接与 Minecraft"]
         Pipe["本机管道 · pipe.cjs"]
         Inbox["ownerInbox<br/>绑定玩家、原话和在场事实"]
-        Control["inspectionService<br/>执行模式与接管回执"]
+        Control["inspectionService<br/>执行模式与显式接管回执"]
+        Lease["角色控制权<br/>一个有效持权实例"]
         Executor["partnerService<br/>单一角色动作槽、独立观察和发言"]
         World["Mineflayer 角色与已加载地图<br/>出生代次、地图空间"]
         Pipe <--> Inbox
         Pipe <--> Control
+        Pipe <--> Lease
         Pipe <--> Executor
-        Control -->|释放执行入口| Executor
+        Lease -->|动作接纳与本实例退出| Executor
+        Control -->|显式接管关闭执行入口| Executor
         World --> Inbox
         Executor <--> World
     end
@@ -201,14 +204,14 @@ flowchart TB
     Loop -->|提交子回合| Agent
     Agent <-->|工具调用和回执| Entry
     Loop <-->|业务信件、求助事件和收件回执| Mail
-    Feed <-->|状态和聊天读取| Pipe
+    Feed <-->|状态、伙伴监听与游标续读| Pipe
     Work <-->|partner.begin / read / stop| Pipe
 ```
 
 | 边界 | 代码中的职责 |
 | --- | --- |
 | 收信与上下文 | `PartnerFeed` 按角色代次、玩家和消息序号保存原话现场。即使两条在场变化同批收到，或离场事件被有界窗口淘汰，独立水位仍会触发离场结算。插件结算旧工作后，把重新在场后的事实交给新子会话。`PartnerLoop::submit` 装入新事实、至多八条已处理对话、任务、观察和待答事项，再绑定本轮工具。宿主为玩家回合拼接本体人格，按插件请求替换会话历史。[游戏收件](../plugins/mc/bridge/chat.cjs) · [插件读口](../plugins/mc/partner_feed.cpp) · [回合装配](../plugins/mc/partner_loop.cpp) · [子会话宿主](../app/subagents.cpp) |
-| 执行就绪 | 桥接的配对读口同时报告执行模式和控制状态。伙伴只有取得 `partner/ready` 才可提交子回合和动作。宿主通过独立 C ABI 能力查询可读性及执行状态。场景模式或已释放的桥接仍可读，角色重生不撤回释放决定。[桥接状态](../plugins/mc/bridge/inspection.cjs) · [C ABI](../sdk/include/dafeiyu/companion_abi_v2.h) · [宿主投影](../app/companion_partner.cpp) |
+| 执行就绪与交接 | 私有 `chat.read` 只读取，`partner.listen` 为当前控制实例申请或续期角色持权。只有 `partner/ready` 的持权者能提交子回合和新工作。并发监听者仍可读取，执行状态为 `busy`。普通退出用 `control.detach`，原工作实际退出后角色才交给后来者。显式 `control.stop` 指定 `scope=role` 后关闭桥接的执行入口并保留读口。 [控制权](../plugins/mc/bridge/controller.cjs) · [协议分派](../plugins/mc/bridge/pipe.cjs) · [宿主状态](../app/companion_partner.cpp) |
 | 工具与计划 | `partner_skills.hpp` 声明工具、类别和实际执行映射。`skills` 可展开类别供后续回合使用。计划入口检查节点、依赖、任务范围和授权，分类错误返回有效键。重复无效的计划保留原提交编号和原因，达到额度后给当前回合一次结算请求。[技能目录](../plugins/mc/partner_skills.hpp) · [计划校验与结算](../plugins/mc/partner_plan.cpp) |
 | 前台执行 | 每个计划最多四个节点。调度器以实际结果推进依赖，后台观察可以与前台动作重叠，角色变更在同一个前台槽内依次执行。桥接用控制实例和工作号查找原票据，提交、读回和停止均核对世界代次、原消息、技能及原参数。DLL 和桥接需使用同一工作身份契约。[动作调度](../plugins/mc/partner_queue.cpp) · [工作票据](../plugins/mc/game_work.cpp) · [游戏执行](../plugins/mc/bridge/partner.cjs) |
 | 跟随与注意力 | 桥接约每 125 ms 采样距离、高差、可见性和寻路结果。受阻时清除移动控制，跟随等到现场或站位变化并读到可达证据后可原段恢复。前台任务接管时，通常结束当前执行段并在任务结算后以同一逻辑工作号恢复，新的桥接段使用 `.resume.N`。[跟随执行](../plugins/mc/bridge/follow.cjs) · [原号交接](../plugins/mc/partner_queue.cpp) |
@@ -336,7 +339,9 @@ flowchart TB
 
 ## 当前边界
 
-信箱去重窗口、局内任务、建造对象登记和业务确认驻留进程内。对象登记按配对世界及维度重置。局内 Trace 写本地证据并按运行关联。通用 Agent、信箱和动作让出 Hook 由本体提供。应用层伙伴面板和委托入口目前仍适配 `mc.partner.*` 消息。原生 Hook 在宿主线程同步返回，活动任务通过 `dfy.activity` 推进。Agent 宿主审批和 MC 业务确认各有状态和生命周期。[运行诊断](../agent/diagnostic_snapshot.cpp) · [应用层伙伴适配](../app/companion_partner.cpp) · [MC 交互方案](mc-companion-development-plan.md)
+信箱去重窗口、局内任务、建造对象登记和业务确认驻留进程内。同一连接内各张地图保留各自的已建物及支撑，返回原维度时按现场读数核验。采掘审批由执行器用实际掉落与拟破坏的方格核对，未经确认的重叠动作在破坏前返回 `approval_required`。短断线暂停接纳新动作，信箱从已核验的原游标续读，原工作沿用原编号查询退出。局内 Trace 保存这些边界的本地证据。 [地图隔离](../plugins/mc/bridge/built-objects.cjs) · [采掘审批](../plugins/mc/bridge/collection.cjs) · [断线续读](../plugins/mc/partner_feed.cpp)
+
+通用 Agent、信箱和动作让出 Hook 由本体提供。应用层伙伴面板和委托入口目前仍适配 `mc.partner.*` 消息。原生 Hook 在宿主线程同步返回，活动任务通过 `dfy.activity` 推进。Agent 宿主审批和 MC 业务确认各有状态和生命周期。 [运行诊断](../agent/diagnostic_snapshot.cpp) · [应用层伙伴适配](../app/companion_partner.cpp) · [MC 交互方案](mc-companion-development-plan.md)
 
 ## 事件注册与解析
 

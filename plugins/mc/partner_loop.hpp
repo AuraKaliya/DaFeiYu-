@@ -21,7 +21,7 @@ class PartnerLoop {
     // 载入时登记求助和游戏渠道反馈的解析器。
     uint32_t register_questions(dfy_v2_query_interface_fn host);
     // 协商宿主子会话能力并启用原玩家入口。
-    uint32_t listen(dfy_v2_query_interface_fn host, const BridgeConfig& config);
+    uint32_t listen(dfy_v2_query_interface_fn host, BridgeConfig& config);
     // 停止读取并请求取消原在途回合。
     void stop() noexcept;
     // 在插件槽被回收时归还其私有的只读连接和事件。
@@ -308,7 +308,7 @@ class PartnerLoop {
         std::string world, id, arguments;
         std::unique_ptr<PipeExchange> pipe;
         std::chrono::steady_clock::time_point deadline, next;
-        bool done = false;
+        bool done = false, global = false;
     };
     std::optional<Release> release_;
     std::uint64_t release_sequence_ = 0;

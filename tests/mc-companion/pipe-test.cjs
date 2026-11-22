@@ -25,8 +25,9 @@ async function main() {
           if (request.method === 'state.read') {
             socket.end(JSON.stringify({ version: 1, id: request.id, state: { generation, actor, dimension: 'overworld',
               position: { x: -1, y: -60, z: 0 }, cobblestone: 3, signalAgeMs: 10 } }) + '\n');
-          } else if (request.method === 'chat.read') {
-            if (request.generation !== generation || request.key !== '1'.repeat(64)) return socket.destroy();
+          } else if (request.method === 'partner.listen') {
+            if (request.generation !== generation || request.key !== '1'.repeat(64) ||
+                !/^[a-f0-9]{32}$/.test(request.controller)) return socket.destroy();
             const presence = { sequence: 2, type: 'player.entered' };
             const initial = ++inboxReads === 1;
             const messages = initial ? [{ sequence: 1, text: 'old speech' }, presence] :

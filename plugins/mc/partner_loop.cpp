@@ -82,11 +82,12 @@ std::string player_reply(std::string_view answer) {
 }
 
 // 由玩家入口显式启用，插件加载本身不读取游戏或提交模型。
-// 步骤：协商子会话及通信接口 → 建立定向地址 → 开启配对玩家事件循环。
-uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, const BridgeConfig& config) {
+// 步骤：签发本次控制身份 → 协商子会话及通信接口 → 开启配对玩家事件循环。
+uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, BridgeConfig& config) {
     if (phase_ == DFY_V2_PARTNER_LISTENING) return DFY_V2_OK;
     if (phase_ == DFY_V2_PARTNER_STOPPING) return DFY_V2_BUSY;
     if (config.key.empty()) return DFY_V2_UNSUPPORTED;
+    auto controller = new_controller();
     const void* api = nullptr;
     auto version = DFY_V2_AGENT_PERSONA_VERSION;
     auto result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
@@ -117,6 +118,7 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, const BridgeConfig&
         !mail_text_->inspect || !refs_->release) return DFY_V2_ABI_MISMATCH;
     agent_ = &agent;
     mail_ = &mail;
+    config.controller = std::move(controller);
     phase_ = DFY_V2_PARTNER_LISTENING;
     return DFY_V2_OK;
 }
@@ -909,14 +911,14 @@ void PartnerLoop::flush() {
     outbound_.pop_front();
 }
 
-// 原回合已退出后完成接管收尾，失联或超时仅能报告未获确认。
-// 步骤：使用固定编号重读或提交 → 校验实际回执 → 发布释放或未核实结论。
+// 原回合退出后释放本实例持权，显式接管则等游戏完成全局释放。
+// 步骤：固定原释放范围 → 重投同一请求 → 发布实际结果或未获确认。
 bool PartnerLoop::release_game(const BridgeConfig& config, std::uint64_t instance) {
     using namespace std::chrono;
     auto& release = *release_;
     if (release.done) return true;
     const auto now = steady_clock::now();
-    if (now >= release.deadline || release.world.empty()) {
+    if (now >= release.deadline || (release.global && release.world.empty())) {
         release.pipe.reset();
         publish("mc.partner.control",{{"generation",release.world},{"order",0},{"phase","unconfirmed"}});
         return release.done = true;
@@ -926,7 +928,9 @@ bool PartnerLoop::release_game(const BridgeConfig& config, std::uint64_t instanc
         if (release.id.empty()) {
             if (release_sequence_ == UINT64_MAX) throw std::overflow_error("MC partner: release sequence exhausted");
             release.id = "release."+std::to_string(instance)+"."+std::to_string(++release_sequence_);
-            release.arguments = Json{{"generation",release.world}}.dump();
+            Json target{{"generation",release.world}};
+            if (!release.global) target["controller"] = config.controller;
+            release.arguments = target.dump();
         }
         if (!release.pipe)
             release.pipe = std::make_unique<PipeExchange>(config.channel,control_request(release.id,config.key,release.arguments));
@@ -1008,7 +1012,8 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         release_.emplace();
         release_->world = feed_.world().empty() ? session_world_ : feed_.world();
         release_->deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
-        release_->done = feed_.readable() && !feed_.execution_ready() && feed_.control().is_null();
+        release_->global = !feed_.control().is_null();
+        release_->done = !release_->global && feed_.readable() && (feed_.mode() != "partner" || feed_.execution() == "released");
         feed_.clear();
     }
     const bool departed = feed_.departure() || feed_.departed();

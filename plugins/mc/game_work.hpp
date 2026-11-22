@@ -21,7 +21,7 @@ class GameWork {
     // 读取最近一次已核验的在途进展。
     const std::string& progress() const noexcept { return progress_; }
   private:
-    const BridgeConfig& config_;
+    const BridgeConfig config_;
     GameAction action_;
     std::string id_, arguments_, skill_, progress_;
     std::unique_ptr<PipeExchange> pipe_;

@@ -75,13 +75,15 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     auto mode = execution == batch.end() ? std::string{} : execution->at("mode").get<std::string>();
     auto state = execution == batch.end() ? std::string("unreported") : execution->at("state").get<std::string>();
     auto control = batch.value("control",control_);
+    const bool permitted = mode == "partner" && state == "ready";
+    const bool acquired = ready_ && permitted && !execution_bound();
 
     const auto departed = presence == batch.end() ? departed_ : presence->at("type") == "player.left" ?
         presence->at("sequence").get<std::uint64_t>() : 0;
     auto latest_departure = batch.value("lastDeparture",departed);
     for (const auto& fact : facts) if (fact.value("type","") == "player.left")
         latest_departure = std::max(latest_departure,fact.at("sequence").get<std::uint64_t>());
-    const auto reset_window = !ready_ || batch.at("gap") == true || pending_.size()+facts.size() > 32;
+    const auto reset_window = !ready_ || acquired || batch.at("gap") == true || pending_.size()+facts.size() > 32;
     auto pending = reset_window ? Json::array() : pending_;
     auto anchored = anchored_messages_;
     auto cursor = cursor_;
@@ -104,7 +106,10 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     }
 
     if ((ready_ || departed) && latest_departure > cursor_) departure_ = std::max(departure_,latest_departure);
-    gap_ |= ready_ && reset_window;
+    // 新持权者从接管水位接收，等候期间收集的旧原话不进入它的子 Agent。
+    if (acquired) { gap_ = false; departure_ = 0; anchored.clear(); }
+    else gap_ |= ready_ && reset_window;
+    if (execution_bound() && !permitted) ++binding_revision_;
     more_ = !reset_window && batch.at("more").get<bool>();
     cursor_ = cursor;
     departed_ = departed;
@@ -132,7 +137,7 @@ void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
             id_ = "feed."+std::to_string(owner)+"."+std::to_string(++sequence_);
             reading_world_ = generation_.empty() || now >= world_due_;
             if (!reading_world_) arguments_ = Json{{"generation",generation_},{"after",cursor_}}.dump();
-            auto request = reading_world_ ? world_request(id_) : inbox_request(id_,config.key,arguments_);
+            auto request = reading_world_ ? world_request(id_) : inbox_request(id_,config.key,arguments_,config.controller);
             pipe_ = std::make_unique<PipeExchange>(config.channel,std::move(request));
         }
         const auto reply = pipe_->poll();

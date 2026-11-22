@@ -12,11 +12,14 @@ async function exercise(fixture, player, fish) {
   const world = observeWorld(fish);
   const inbox = ownerInbox(fish, world, player.player.uuid, true);
   const actions = inspectionService(fish, world, inbox, landmarks(), null, true, player.player.uuid);
-  const context = { generation: world.read().generation, order: 1, controller: randomUUID().replaceAll('-', '') };
+  let context = { generation: world.read().generation, order: 1, controller: randomUUID().replaceAll('-', '') };
   // 驱动一个授权技能到实际退出，并验证重投不会新开工作。
   async function invoke(skill, args) {
     const id = randomUUID();
-    const query = method => actions.partner.call(method, id, context, skill, args);
+    const query = method => {
+      assert.equal(actions.partner.claim(context.controller), true);
+      return actions.partner.call(method, id, context, skill, args);
+    };
     query('partner.begin');
     const receipt = await until(() => {
       const r = query('partner.read');
@@ -36,13 +39,21 @@ async function exercise(fixture, player, fish) {
     await until(() => inbox.get(context.generation, 1), '收到原话');
     const work = randomUUID();
     const nextController = { ...context, controller: randomUUID().replaceAll('-', '') };
+    assert.equal(actions.partner.claim(context.controller), true);
     const oldReceipt = actions.partner.call('partner.begin', work, context, 'observe', {});
+    assert.equal(actions.partner.claim(nextController.controller), false);
+    assert.throws(() => actions.partner.call('partner.begin', work, nextController, 'observe', {}));
     assert.throws(() => actions.partner.call('partner.read', work, nextController, 'observe', {}));
     assert.throws(() => actions.partner.call('partner.read', work, context, 'observe', { block: 'dirt' }), /工作身份冲突/);
+    assert.equal(actions.partner.detach(context.controller), 'requested');
+    await until(() => actions.partner.claim(nextController.controller), '后来者取得已释放的角色');
     const nextReceipt = actions.partner.call('partner.begin', work, nextController, 'observe', {});
     assert.equal(nextReceipt.controller, nextController.controller);
     assert.notStrictEqual(nextReceipt, oldReceipt);
     assert.strictEqual(actions.partner.call('partner.read', work, context, 'observe', {}), oldReceipt);
+    assert.equal(actions.partner.detach(context.controller), 'released');
+    assert.equal(actions.partner.claim(nextController.controller), true);
+    context = nextController;
     assert.ok((await invoke('observe', { block: 'dirt' })).visible.length);
     assert.equal((await invoke('move', { x: 1, y: -60, z: 0 })).status, 'done');
     for (const [block, count] of [['dirt', 2], ['oak_log', 1]]) {
@@ -82,7 +93,10 @@ async function exercise(fixture, player, fish) {
     const args = { distance: 3 };
     fixture.send('tp DfyOwner 21.5 -60 0.5');
     await until(() => fish.players.DfyOwner.entity?.position.x > 21, '跟随起点已读到');
-    const followAt = (method = 'partner.read') => actions.partner.call(method, follow, later, 'follow', args);
+    const followAt = (method = 'partner.read') => {
+      actions.partner.claim(later.controller);
+      return actions.partner.call(method, follow, later, 'follow', args);
+    };
     assert.equal(followAt('partner.begin').exited, false);
     await until(() => followAt().result.progress?.phase === 'in_range', '第一次跟上', 12000);
     const farSide = fish.entity.position.x;

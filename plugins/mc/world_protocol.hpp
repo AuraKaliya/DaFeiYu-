@@ -4,12 +4,14 @@
 
 namespace dfy::mc {
 struct BridgeConfig { std::string channel, key, controller; };
-// 为配对的角色生成原世界的幂等接管请求。
+// 为配对的角色生成幂等接管请求，或按控制实例释放原监听。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 校验接管来源，尚未释放时返回空串供继续轮询。
 std::string control_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 // 校验插件私有配置，配对键仅用于本机受信请求。
 BridgeConfig configured_bridge(std::string_view config);
+// 为新的角色控制周期生成独立身份。
+std::string new_controller();
 // 从独立插件配置中读取本机管道短名。
 std::string configured_channel(std::string_view config);
 // 创建带原请求身份的只读查询。
@@ -18,8 +20,8 @@ std::string world_request(std::string_view id);
 std::string world_reply(std::string_view wire, std::string_view expected_id, bool with_survey = false);
 // 为可信宿主生成包含探索依据的配对读请求。
 std::string survey_request(std::string_view id, std::string_view key, std::string_view arguments);
-// 用原游戏代次与游标生成带私有配对凭据的收件查询。
-std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments);
+// 查询私有收件，有控制身份的伙伴监听同时登记或续期。
+std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments, std::string_view controller = {});
 // 只把与原查询相符且序号连续的玩家消息交给受信调用者。
 std::string inbox_reply(std::string_view wire, std::string_view id, std::string_view arguments);
 struct InspectReply { bool exited, arrived, moved; std::string payload; };
