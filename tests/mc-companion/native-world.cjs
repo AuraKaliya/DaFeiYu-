@@ -24,6 +24,7 @@ async function main() {
   const correctionLost = variant === 'partner-revision-correction-lost';
   const navigation = variant?.startsWith('partner-revision-navigation');
   const restartRoute = variant === 'partner-revision-navigation-restart';
+  const mixedRoute = variant === 'partner-revision-navigation-mixed';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const layered = variant?.startsWith('partner-revision-layered');
@@ -60,6 +61,7 @@ async function main() {
   let heardAt;
   let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
   let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
+  let routeApproach;
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -318,6 +320,7 @@ async function main() {
         if (navigation && skill === 'route') {
           if (method === 'partner.begin') {
             assert.ok(!resumed);
+            if (mixedRoute) assert.ok(routeApproach);
             if (routeWork) {
               assert.ok(restartRoute && routeStops === 1 && !restartWork);
               restartWork = id;
@@ -337,6 +340,14 @@ async function main() {
             progress: { phase: 'route', checkpoint, laps, requested: 2 },
             route: { id: checkedRoute, requested: 2, laps, checkpoints },
           } };
+        }
+        if (mixedRoute && skill === 'move') {
+          assert.equal(method, 'partner.begin');
+          assert.ok(collectExited && checkedRoute && !routeApproach && !routeWork);
+          assert.deepEqual(args, { ...waypoints[0], exact: true });
+          routeApproach = id;
+          return { ...context, skill, exited: true, result: { status: 'done', arrived: true,
+            position: { ...waypoints[0], x: waypoints[0].x + 0.5 } } };
         }
         if (correction && skill === 'observe') {
           assert.ok(collectExited);

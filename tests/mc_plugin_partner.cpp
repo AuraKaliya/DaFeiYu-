@@ -165,6 +165,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool correction_lost = variant == L"partner-revision-correction-lost";
     const bool navigation = variant.starts_with(L"partner-revision-navigation");
     const bool restart_route = variant == L"partner-revision-navigation-restart";
+    const bool mixed_route = variant == L"partner-revision-navigation-mixed";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool layered = variant.starts_with(L"partner-revision-layered");
@@ -396,9 +397,12 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (navigation && last.tool_call_id == "read-route") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
-                return call("_queue_actions","route-plan",{{"operation","plan"},{"steps",Json::array({
-                    {{"id","circle"},{"skill","route"},{"arguments",{{"route",result.at("route").at("id")},{"laps",2}}}}
-                })}});
+                const auto& route = result.at("route");
+                Json steps = Json::array();
+                if (mixed_route) steps.push_back({{"id","approach"},{"skill","move"},{"arguments",route.at("waypoints").at(0)}});
+                steps.push_back({{"id","circle"},{"skill","route"},{"arguments",{{"route",route.at("id")},{"laps",2}}}});
+                if (mixed_route) steps.back()["after"] = {"approach"};
+                return call("_queue_actions","route-plan",{{"operation","plan"},{"steps",std::move(steps)}});
             }
             if (last.tool_call_id == "switch-to-route") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -420,7 +424,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (last.tool_call_id == "stale-execution") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 const auto barrier = result.at("reason");
-                if (barrier != "waiting_for_old_work" && barrier != "navigation_requires_route")
+                if (barrier != "waiting_for_old_work")
                     throw std::runtime_error("old front action bypassed the task handoff");
             }
             if (last.tool_call_id == "lost-correction") {
@@ -494,11 +498,14 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& layers = input.at("planSettlements");
             const auto& first = layers.at(0).at("nodes").at(0);
             if (navigation) {
-                const auto& route = first.at("result").at("route");
-                if (checked || plan.at("status") != "done" || layers.size() != 1 || plan.at("nodes").size() != 1 ||
-                    first.at("work") != plan.at("nodes").at(0).at("work") || route.at("laps") != 2 ||
+                const auto route_index = mixed_route ? 1u : 0u;
+                const auto& node = layers.at(route_index).at("nodes").at(0);
+                const auto& route = node.at("result").at("route");
+                if (checked || plan.at("status") != "done" || layers.size() != route_index+1 || plan.at("nodes").size() != route_index+1 ||
+                    node.at("work") != plan.at("nodes").at(route_index).at("work") || route.at("laps") != 2 ||
                     route.at("checkpoints").size() != 9 || input.at("task").at("next") != "done" ||
-                    request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply"))
+                    (mixed_route ? first.at("result").at("arrived") != true :
+                        request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply")))
                     throw std::runtime_error("route checkpoints woke the model separately or did not settle by plan ID");
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};

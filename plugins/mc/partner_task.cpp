@@ -246,7 +246,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
     auto collection = input.value("collection",collection_);
-    if (navigation() && (goal != goal_ || input.contains("target") || input.contains("collection")))
+    if (navigation() && goal != goal_)
         return {{"status","invalid_target"},{"reason","task_switch_required"}};
     const bool commit = input.value("operation","") == "commit_correction";
     if (commit && (!correcting() || input.at("message") != correction_.at("message") ||

@@ -31,7 +31,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
     const auto resolves = args.value("resolves",std::uint64_t{});
     if (resolves && operation != "plan") return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
     if (operation != "clear") {
-        if (const auto reason = front_barrier(session_,operation == "plan" ? "route" : ""); !reason.empty())
+        if (const auto reason = front_barrier(session_); !reason.empty())
             return {{"status","blocked"},{"reason",reason}};
     }
     if (waits_for_player(session_,resolves) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
@@ -123,7 +123,7 @@ void PartnerLoop::pause_follow() noexcept {
 // 步骤：核对当前绑定和前台占用 → 构造本段工作 → 发布原跟随身份。
 void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
     if (!follow_ || !follow_->suspended || motion_ || body_busy || !feed_.ready() || feed_.gap() ||
-        !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt) || awaiting_restarted_route_ ||
+        !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt) || awaiting_restarted_plan_ ||
         (handoff_ && (handoff_->receipt.is_null() || handoff_->receipt.at("status") != "exited")) ||
         (plan_ && plan_->active)) return;
     auto& follow = *follow_;

@@ -135,13 +135,13 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         };
         if (id.empty() || id.size() > 32 || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != id.npos ||
             std::ranges::find(plan.nodes,id,&PlanNode::id) != plan.nodes.end()) return invalid("invalid_node_id");
-        if (task_.navigation() && (skill != "route" || steps.size() != 1)) return invalid("navigation_requires_route");
         if (!action || !action->plan) return invalid("unsupported_plan_skill");
         const auto pickup = step.value("pickup",std::string{});
         const auto required = item_name(pickup);
         if ((step.contains("pickup") && (skill != "dig_block" || required.empty())) || !prepare_action(skill,args))
             return invalid("invalid_node_arguments");
-        if (skill == "route" && !task_.bind_route(args)) return invalid("route_not_verified");
+        if (skill == "route" && (!task_.bind_route(args) ||
+            std::ranges::find(plan.nodes,skill,&PlanNode::skill) != plan.nodes.end())) return invalid("route_not_verified");
         if (skill == "dig_block") {
             const auto pointed = pointed_dig(session_,args.value("message",std::uint64_t{}),resolves,args);
             if (!pointed.has_value() || (resolves && !*pointed)) return invalid("pointed_block_unverified");
@@ -180,7 +180,6 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (std::ranges::any_of(plan.nodes,[](const auto& node) { return !node.layer; }))
         return {{"status","invalid_plan"},{"reason","cyclic_dependencies"}};
 
-    if (task_.navigation()) task_.accept_route(plan.nodes.front().arguments);
     plan_ = std::move(plan);
     if (resolves) complete_pointed_question();
     wait_for_work_ = true;
@@ -264,6 +263,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
             } else {
                 auto args = node.arguments;
                 if (node.skill == "gather_ground") task_.bind_collection(args);
+                if (node.skill == "route") task_.accept_route(args);
                 queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,skill,std::move(args),node.pickup,true,false,index});
                 pause_follow();
             }
@@ -293,7 +293,10 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
     if (!task_.id() || plan.revision == task_.revision()) plan_receipts_.push_back(std::move(layer));
     ++plan.layer;
     plan.active = std::ranges::any_of(plan.nodes,[&](const auto& node) { return node.layer == plan.layer; });
-    if (!plan.active && plan.revision == task_.revision() && task_.navigation() && plan.nodes.front().skill == "route")
-        task_.finish_route(plan.nodes.front().state == State::done);
+    if (!plan.active && plan.revision == task_.revision()) {
+        const auto route = std::ranges::find(plan.nodes,"route",&PlanNode::skill);
+        if (route != plan.nodes.end() && route->state != State::skipped)
+            task_.finish_route(std::ranges::all_of(plan.nodes,[](const auto& node) { return node.state == State::done; }));
+    }
 }
 }

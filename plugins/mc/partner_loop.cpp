@@ -187,7 +187,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         task_.disarm();
         expansion_pending_ = false;
     }
-    if (!handoff_) awaiting_restarted_route_ = false;
+    if (!handoff_) awaiting_restarted_plan_ = false;
     if (cancel || autonomous_wake().empty()) settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     if (active_delegation_) {
@@ -238,7 +238,7 @@ void PartnerLoop::retire() {
     session_ = order_ = settled_ = 0;
     task_ = {};
     handoff_.reset();
-    awaiting_restarted_route_ = false;
+    awaiting_restarted_plan_ = false;
     guarded_actions_.clear();
     settlements_.clear();
     plan_.reset();
@@ -334,13 +334,12 @@ void PartnerLoop::submit(std::string_view wake) {
     std::size_t count = 0;
     const auto enabled = scope();
     const bool completed_route = wake == "plan.finished" && task_.navigation() && plan_ && !plan_->active &&
-        plan_->revision == task_.revision() && plan_->nodes.front().skill == "route";
+        plan_->revision == task_.revision() && plan_->nodes.size() == 1 && plan_->nodes.front().skill == "route" &&
+        plan_->nodes.front().state == PlanNode::State::done;
     const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active &&
         std::ranges::any_of(plan_->nodes,[](const auto& node) { return !node.pickup.empty(); });
     if (!delegated) for (const auto& skill : partner_skills) {
         if ((completed_dig || completed_route || completed_pickup_plan) && skill.name != "reply") continue;
-        if (task_.navigation() && (skill.category == SkillCategory::movement || skill.category == SkillCategory::place ||
-            skill.category == SkillCategory::dig_break)) continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
@@ -519,11 +518,11 @@ Json PartnerLoop::switch_task(const Json& args) {
     settlements_.clear();
     plan_receipts_.clear();
     if (motion_ && motion_->skill != "follow") {
-        awaiting_restarted_route_ = args.at("operation") == "restart_task" && motion_->skill == "route" && task_.navigation();
+        awaiting_restarted_plan_ = args.at("operation") == "restart_task" && motion_->plan_node.has_value();
         if (!handoff_ || handoff_->work != motion_->work) handoff_ = Handoff{motion_->work};
         motion_->stopping = true;
     } else {
-        awaiting_restarted_route_ = false;
+        awaiting_restarted_plan_ = false;
         handoff_.reset();
     }
     return result;
@@ -648,16 +647,15 @@ std::string_view PartnerLoop::autonomous_wake() const {
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());
 }
 
-// 将目标纠正、任务交接和导航权限用于所有前台入口。
-std::string_view PartnerLoop::front_barrier(std::uint64_t session, std::string_view skill) const noexcept {
+// 在新回合看见原工作的终态之前，阻止所有前台入口。
+std::string_view PartnerLoop::front_barrier(std::uint64_t session) const noexcept {
     if (session != session_ || !session_) return {};
     if (plan_repair_exhausted_) return "plan_repair_exhausted";
     if (handoff_) {
-        if (handoff_->receipt.is_null()) return "waiting_for_old_work";
-        if (handoff_->receipt.at("status") == "old_work_exit_unconfirmed") return "old_work_exit_unconfirmed";
+        return handoff_->receipt.is_object() && handoff_->receipt.at("status") == "old_work_exit_unconfirmed" ?
+            "old_work_exit_unconfirmed" : "waiting_for_old_work";
     }
     if (task_.correcting()) return "correction_pending";
-    if (task_.navigation() && skill != "route") return "navigation_requires_route";
     return {};
 }
 

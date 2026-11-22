@@ -34,7 +34,7 @@ class PartnerLoop {
     // 同类计划两次失败后，只再给原回合一次模型结算机会。
     bool permits_model_step(std::uint64_t session, std::uint64_t step) noexcept;
     // 返回当前配对的前台动作门槛，空值表示可以继续验证动作。
-    std::string_view front_barrier(std::uint64_t session, std::string_view skill) const noexcept;
+    std::string_view front_barrier(std::uint64_t session) const noexcept;
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
@@ -212,7 +212,7 @@ class PartnerLoop {
         bool rechecked = false;
     };
     std::optional<Handoff> handoff_;
-    bool awaiting_restarted_route_ = false;
+    bool awaiting_restarted_plan_ = false;
     struct Follow {
         std::uint64_t order, request, invocation, segment = 1;
         std::string id;
