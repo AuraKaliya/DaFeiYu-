@@ -155,14 +155,14 @@ void PartnerLoop::clear_queue(std::string_view reason, std::uint64_t group) {
 }
 
 // 将队首变为唯一占用角色的游戏工作，原输入和实际接纳游标分别保留。
-// 步骤：处理配对和修订失效 → 等待角色控制权 → 重验动作并交给桥接。
+// 步骤：处理配对和修订失效 → 等待较新回合结算及角色空闲 → 重验动作并交给桥接。
 void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool body_busy) {
     if (queued_.empty()) { if (!closing) resume_follow(config,body_busy); return; }
     const auto& step = queued_.front();
     if (closing || feed_.gap()) { clear_queue("stale"); return; }
     if (step.revision != task_.revision()) { clear_queue("stale",step.invocation); return; }
     if (follow_ && follow_->suspended && !step.interrupt) { resume_follow(config,body_busy); return; }
-    if (step.plan_node && request_ && order_ > step.order) return;
+    if (request_ && order_ > step.order) return;
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
     // 指定单格沿用原范围，普通采集继承当前任务的取材约束。
