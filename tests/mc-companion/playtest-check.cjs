@@ -263,7 +263,8 @@ async function checkFollowDig(fixture, player, whispers) {
   await until(() => whispers.includes('你指哪一格？'), '自然追问已发出');
   player.chat('你听得见吗');
   await until(() => whispers.includes('听得见。'), '旧问题等待时仍可接话');
-  await player.lookAt(player.entity.position.clone().set(2.5, -60.5, 0.5), true);
+  // 指向方块顶面中心，给协议量化的朝向和移动结束时的站位留出余量。
+  await player.lookAt(player.entity.position.clone().set(2.5, -60.02, 0.5), true);
   await until(() => Math.sin(fixture.ownerEntity()?.pitch) < -0.4, '陪玩端已收到指向草方块的俯角');
   player.chat('我面前的这个');
   const resumed = (await accepted(2)).body.action;

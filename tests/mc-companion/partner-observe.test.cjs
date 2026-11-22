@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
 const { matchesDigReference } = require('../../plugins/mc/bridge/collection.cjs');
+const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -208,4 +209,14 @@ test('dig target requires the same loaded support immediately before breaking', 
   assert.ok(!matchesDigReference(bot, point, reference));
   support = null;
   assert.ok(!matchesDigReference(bot, point, reference));
+});
+
+// 回放协议量化后的准星擦过邻格边缘，直接命中应保留最先经过的实际方块。
+test('direct focus keeps the first block even for a short crossing at an edge', () => {
+  const { bot } = fixture();
+  const center = new Position(0.165771484375, -60, -0.5);
+  bot.blockAt = ({ y }) => ({ name: y < -60 ? 'grass_block' : 'air' });
+  const focus = playerFocus(bot, { eye: center.offset(0, 1.62, 0),
+    facing: { yaw: 4.319689898685965, pitch: -0.6872233929727671 } }, center, 'hit');
+  assert.deepEqual(focus.hit, { x: 1, y: -61, z: 0, block: 'grass_block' });
 });
