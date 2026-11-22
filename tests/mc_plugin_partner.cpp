@@ -136,6 +136,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool pointed_support = variant == L"partner-revision-pointed-support";
+    const bool pointed_craft = variant.starts_with(L"partner-revision-pointed-craft");
+    const bool no_pickup = variant == L"partner-revision-pointed-craft-no-pickup";
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
@@ -153,6 +155,64 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (pointed_craft) {
+            const Json continuation{{"item","planks"},{"count",4}};
+            const std::string question = "你指哪块原木？";
+            const std::string final = no_pickup ? "木头敲下来了，我还没捡到。" : "木头捡到了，我现在做不了木板。";
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "first-focus") return call("_ask_player","which-log",{{"question",question},{"afterPickup",continuation}});
+                if (last.tool_call_id == "answer-focus" || last.tool_call_id == "keep-successor") {
+                    const auto original = std::ranges::find(request.messages,Role::user,&Message::role);
+                    const auto item = Json::parse(original->content).at("pendingQuestion").at("item");
+                    Json args{{"x",1},{"y",-59},{"z",2},{"block","oak_log"},{"message",4}};
+                    if (last.tool_call_id == "answer-focus") {
+                        args["resolves"] = item;
+                        return call("_dig_block","keep-successor",args);
+                    }
+                    if (result.at("reasonCode") != "pointed_plan_required")
+                        throw std::runtime_error("direct dig consumed a clarification with unfinished successors");
+                    return call("_queue_actions","resume-original-plan",{{"operation","plan"},{"resolves",item},{"steps",Json::array({
+                        {{"id","gather_log"},{"skill","dig_block"},{"arguments",std::move(args)}}})}});
+                }
+                if (last.tool_call_id == "final-line" || last.tool_call_id == "heard-player") {
+                    if (result.at("sent") != true) throw std::runtime_error("player did not receive the one game reply");
+                    checked = last.tool_call_id == "final-line";
+                    return {{Role::assistant,checked ? R"({"internal":"plan exit checked"})" : R"({"internal":"heard"})"}};
+                }
+                throw std::runtime_error("unexpected model call while waiting for clarification or plan exit");
+            }
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                const auto& layers = input.at("planSettlements");
+                const auto& nodes = input.at("taskPlan").at("nodes");
+                const auto& first = layers.at(0).at("nodes").at(0);
+                const auto& dig = first.at("result");
+                const auto& craft = layers.at(1).at("nodes").at(0).at("result");
+                if (checked || input.contains("pendingQuestion") || request.tools.size() != 1 ||
+                    !request.tools.front().name.ends_with("_reply") || layers.size() != 2 ||
+                    nodes.at(1).at("after") != Json::array({"gather_log"}) || nodes.at(0).at("requiresPickup") != "oak_log" ||
+                    first.at("work") != nodes.at(0).at("work") || dig.at("changes").at(0).at("before") != "oak_log")
+                    throw std::runtime_error("compound goal or original pickup work was lost at settlement");
+                if (no_pickup ? dig.at("reasonCode") != "pickup_unverified" || craft.at("reason") != "prerequisite_failed" :
+                    dig.at("inventoryDelta").at("oak_log") != 1 || craft.at("reasonCode") != "skill_unavailable" ||
+                    craft.at("item") != "oak_planks" || craft.at("count") != 4)
+                    throw std::runtime_error("crafting advanced without pickup or lost its requested product");
+                return call("_reply","final-line",{{"text",final}});
+            }
+            const auto& event = input.at("events").back();
+            const auto sequence = event.at("sequence").get<std::uint64_t>();
+            if (sequence == 1) return {{Role::assistant,R"({"internal":"ready"})"}};
+            if (sequence == 3 || sequence == 4) {
+                const auto& pending = input.at("pendingQuestion");
+                if (pending.at("question") != question || pending.at("afterPickup") != continuation ||
+                    pending.at("originalText") != "这里有个原木，敲掉它，然后做成4个木板")
+                    throw std::runtime_error("compound goal did not persist through ordinary chat");
+                if (sequence == 3) return call("_reply","heard-player",{{"text","听得到。"}});
+            }
+            return call("_observe",sequence == 2 ? "first-focus" : "answer-focus",
+                {{"mode","pointed"},{"message",sequence},{"focus","objects"}});
+        }
         if (pointed_support) {
             const Json stone{{"x",1},{"y",-60},{"z",2},{"block","stone"}};
             const Json dirt{{"x",1},{"y",-59},{"z",2},{"block","dirt"}};
@@ -430,7 +490,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support ? 2u : restart_route ? 5u : 3u) && receipt_turn_finished() &&
+            (repair_observe || repair_plan || pointed_support ? 2u : restart_route ? 5u : pointed_craft ? 4u : 3u) &&
+            receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
             stopping = true;

@@ -1,4 +1,5 @@
 #include "partner_loop.hpp"
+#include "partner_effect.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <stdexcept>
@@ -30,7 +31,8 @@ bool prepare_action(std::string_view skill, Json& args) {
         args["source"] = "ground";
         return true;
     }
-    if (skill != "dig_block" || args.size() != 4 || !name("block")) return false;
+    if (skill != "dig_block" || args.size() != 4+args.count("message") || !name("block") ||
+        (args.contains("message") && (!args.at("message").is_number_unsigned() || args.at("message") == 0))) return false;
     for (const auto key : {"x","y","z"}) if (!args.contains(key) || !args.at(key).is_number_integer() ||
         args.at(key) < -30000000 || args.at(key) > 30000000) return false;
     args["source"] = "visible";
@@ -41,9 +43,21 @@ bool prepare_action(std::string_view skill, Json& args) {
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
-    for (const auto name : {"status","reason","reasonCode","stock","inventoryDelta","changes","cells","sampledAtMs","route"})
+    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","changes","cells","sampledAtMs","route","item","count"})
         if (result.contains(name)) evidence[name] = result.at(name);
     return evidence;
+}
+
+// 使用澄清后确认的实际木种，为玩家只说木板时固定具体产物。
+std::string craft_item(std::string_view item, std::string_view block) {
+    item = item_name(item);
+    if (item != "planks") return std::string(item);
+    block = item_name(block);
+    if (block.starts_with("stripped_")) block.remove_prefix(9);
+    if (block.ends_with("_log")) block.remove_suffix(4);
+    else if (block.ends_with("_stem")) block.remove_suffix(5);
+    else return {};
+    return std::string(block)+"_planks";
 }
 }
 
@@ -62,9 +76,26 @@ bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Js
 Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (!invocation || (plan_ && plan_->active) || !queued_.empty() || (motion_ && motion_->skill != "follow"))
         return {{"status","busy"}};
-    const auto steps = arguments.value("steps",Json::array());
+    auto steps = arguments.value("steps",Json::array());
     if (arguments.contains("work") || !steps.is_array() || steps.empty() || steps.size() > 4)
         return {{"status","invalid_plan"},{"reason","expected_one_to_four_steps"}};
+    const auto resolves = arguments.value("resolves",std::uint64_t{});
+    if (resolves) {
+        if (steps.size() != 1 || steps.front().at("skill") != "dig_block")
+            return {{"status","invalid_plan"},{"reason","expected_one_pointed_dig"}};
+        if (has_pickup_continuation(resolves)) {
+            const auto& next = question_->after_pickup;
+            const auto block = steps.front().at("arguments").value("block",std::string{});
+            const auto item = craft_item(next.at("item").get_ref<const std::string&>(),block);
+            const auto pickup = next.value("pickup",block);
+            if (item.empty() || item_name(pickup).empty())
+                return {{"status","invalid_plan"},{"reason","pickup_recipe_unverified"}};
+            steps.front()["pickup"] = pickup;
+            const auto parent = steps.front().at("id");
+            steps.push_back({{"id","after_pickup"},{"skill","craft"},{"after",Json::array({parent})},
+                {"arguments",{{"item",item},{"count",next.at("count")}}}});
+        }
+    }
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
     for (const auto& step : steps) {
         auto id = step.value("id",std::string{});
@@ -79,16 +110,22 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (task_.navigation() && (skill != "route" || steps.size() != 1)) return invalid("navigation_requires_route");
         if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft" && skill != "route")
             return invalid("unsupported_plan_skill");
-        if (step.contains("pickup") || !prepare_action(skill,args)) return invalid("invalid_node_arguments");
+        const auto pickup = step.value("pickup",std::string{});
+        const auto required = item_name(pickup);
+        if ((step.contains("pickup") && (skill != "dig_block" || required.empty())) || !prepare_action(skill,args))
+            return invalid("invalid_node_arguments");
         if (skill == "route" && !task_.bind_route(args)) return invalid("route_not_verified");
-        if (skill == "dig_block" && !pointed_dig(session_,0,0,args).has_value())
-            return invalid("pointed_block_unverified");
+        if (skill == "dig_block") {
+            const auto pointed = pointed_dig(session_,args.value("message",std::uint64_t{}),resolves,args);
+            if (!pointed.has_value() || (resolves && !*pointed)) return invalid("pointed_block_unverified");
+            args.erase("message");
+        }
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");
         if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
         if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : skill == "route" ? "route" : tool->name,
-            std::move(args)});
+            std::move(args),{},std::string(required)});
     }
     for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
         const auto after = steps.at(index).value("after",std::vector<std::string>{});
@@ -98,6 +135,8 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             const auto position = static_cast<std::size_t>(node-plan.nodes.begin());
             if (node == plan.nodes.end() || std::ranges::find(dependencies,position) != dependencies.end())
                 return {{"status","invalid_plan"},{"reason","invalid_dependency"},{"node",plan.nodes[index].id},{"dependency",id}};
+            if (plan.nodes[index].skill == "craft" && node->skill == "dig_block" && node->pickup.empty())
+                return {{"status","invalid_plan"},{"reason","pickup_required"},{"node",node->id}};
             dependencies.push_back(position);
         }
     }
@@ -112,6 +151,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
 
     if (task_.navigation()) task_.accept_route(plan.nodes.front().arguments);
     plan_ = std::move(plan);
+    if (resolves) complete_pointed_question();
     wait_for_work_ = true;
     publish("mc.partner.plan",{{"status","queued"},{"plan",plan_context()}});
     return {{"status","queued"},{"plan",plan_->id}};
@@ -122,9 +162,15 @@ Json PartnerLoop::plan_context() const {
     const auto& plan = *plan_;
     constexpr std::array statuses{"pending","running","done","failed","skipped"};
     Json nodes = Json::array();
-    for (const auto& node : plan.nodes)
+    for (const auto& node : plan.nodes) {
         nodes.push_back({{"id",node.id},{"skill",node.skill},{"layer",node.layer},{"work",node.work},
             {"status",statuses.at(static_cast<std::size_t>(node.state))}});
+        if (!node.pickup.empty()) nodes.back()["requiresPickup"] = node.pickup;
+        if (!node.after.empty()) {
+            nodes.back()["after"] = Json::array();
+            for (const auto parent : node.after) nodes.back()["after"].push_back(plan.nodes[parent].id);
+        }
+    }
     const auto complete = std::ranges::all_of(plan.nodes,[](const auto& node) { return node.state == PlanNode::State::done; });
     Json context{{"id",plan.id},{"revision",plan.revision},{"supersedes",plan.supersedes},{"order",plan.order},
         {"status",plan.active ? "running" : !plan.cancellation.empty() ? "cancelled" : complete ? "done" : "blocked"},
@@ -139,6 +185,11 @@ void PartnerLoop::finish_plan_node(std::size_t index, bool ok, const Json& resul
     if (node.state != PlanNode::State::running) return;
     node.state = ok ? PlanNode::State::done : result.at("status") == "skipped" ? PlanNode::State::skipped : PlanNode::State::failed;
     node.result = plan_evidence(result);
+    if (!ok && !node.pickup.empty() && result.at("status") == "done") {
+        node.result["status"] = "blocked";
+        node.result["reasonCode"] = "pickup_unverified";
+        node.result["gameStatus"] = result.at("status");
+    }
 }
 
 // 停止未接纳节点并让已接纳的前后台动作进行真实取消。
@@ -172,7 +223,8 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
             const bool ready = std::ranges::all_of(node.after,[&](auto parent) { return plan.nodes[parent].state == State::done; });
             node.state = State::running;
             if (!ready) finish_plan_node(index,false,{{"status","skipped"},{"reason","prerequisite_failed"}});
-            else if (node.skill == "craft") finish_plan_node(index,false,{{"status","blocked"},{"reasonCode","skill_unavailable"}});
+            else if (node.skill == "craft") finish_plan_node(index,false,{{"status","blocked"},{"reasonCode","skill_unavailable"},
+                {"item",node.arguments.at("item")},{"count",node.arguments.at("count")}});
             else if (node.skill == "observe") {
                 const auto request = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
                     {"arguments",node.arguments}}.dump();
@@ -181,7 +233,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
                 auto args = node.arguments;
                 if (node.skill == "gather_ground") task_.bind_collection(args);
                 const auto game_skill = node.skill == "route" ? "route" : node.skill == "fill_target" ? "fill_target" : "collect";
-                queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,game_skill,std::move(args),{},true,false,index});
+                queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,game_skill,std::move(args),node.pickup,true,false,index});
                 pause_follow();
             }
         }

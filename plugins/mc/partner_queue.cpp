@@ -1,4 +1,5 @@
 #include "partner_loop.hpp"
+#include "partner_effect.hpp"
 #include <algorithm>
 #include <iterator>
 
@@ -30,11 +31,13 @@ bool valid_step(std::string_view skill, const Json& args) {
 // 步骤：核对操作与旧工作 → 校验本轮工具范围及步骤参数 → 更新待执行队列。
 nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& args) {
     const auto operation = args.at("operation").get<std::string>();
+    const auto resolves = args.value("resolves",std::uint64_t{});
+    if (resolves && operation != "plan") return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
     if (operation != "clear") {
         if (const auto reason = front_barrier(session_,operation == "plan" ? "route" : ""); !reason.empty())
             return {{"status","blocked"},{"reason",reason}};
     }
-    if (waits_for_player(session_) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
+    if (waits_for_player(session_,resolves) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
     if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
         cancel_plan("cleared");
@@ -63,10 +66,9 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         const auto& parameters = step.at("arguments");
         if (name == "collect" && requires_pointed_dig(session_))
             return {{"status","blocked"},{"reason","pointed_block_unverified"}};
-        auto pickup = step.value("pickup",std::string{});
-        if (pickup.starts_with("minecraft:")) pickup.erase(0,10);
-        if (step.contains("pickup") && (name != "collect" || pickup.empty() || pickup.size() > 80 ||
-            pickup.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos))
+        const auto pickup = step.value("pickup",std::string{});
+        const auto required = item_name(pickup);
+        if (step.contains("pickup") && (name != "collect" || required.empty()))
             throw std::invalid_argument("MC queue: invalid required pickup");
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
         if (skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
@@ -75,7 +77,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
-        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::move(pickup),interrupt});
+        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::string(required),interrupt});
     }
 
     if (replace) {

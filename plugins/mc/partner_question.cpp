@@ -1,4 +1,5 @@
 #include "partner_loop.hpp"
+#include "partner_effect.hpp"
 #include <algorithm>
 
 namespace dfy::mc {
@@ -73,7 +74,8 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
     return DFY_V2_OK;
 }
 
-// 保留原世界、玩家和问题，等待插件循环开始呈现。
+// 保存现地追问及目标确定后要继续的操作。
+// 步骤：验证渠道及问题 → 核对可选后继能力 → 按玩家原话和任务修订登记。
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
@@ -85,8 +87,17 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         throw std::invalid_argument("MC question: invalid request");
     for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
         option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
+    const auto after_pickup = args.value("afterPickup",Json(nullptr));
+    if (args.contains("afterPickup") && (path != "local" || events_.empty() || events_.back().at("type") != "player.message" ||
+        !after_pickup.is_object() ||
+        after_pickup.size() != 2+after_pickup.count("pickup") ||
+        item_name(after_pickup.at("item").get_ref<const std::string&>()).empty() ||
+        !after_pickup.at("count").is_number_integer() || after_pickup.at("count") < 1 || after_pickup.at("count") > 32 ||
+        (after_pickup.contains("pickup") && item_name(after_pickup.at("pickup").get_ref<const std::string&>()).empty())))
+        throw std::invalid_argument("MC question: invalid pickup continuation");
     question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
     question_->options = options;
+    question_->after_pickup = after_pickup;
     question_->task_revision = task_.revision();
     if (!events_.empty()) question_->origin = events_.back().value("text",std::string{});
     question_result_.clear();
@@ -154,6 +165,11 @@ void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view en
         order_ <= question_->order || events_.empty() || events_.back().at("type") != "player.message") return;
     auto args = Json::parse(envelope).at("arguments");
     if (!pointed_dig(session_,order_,item,args).value_or(false)) return;
+    complete_pointed_question();
+}
+
+// 把解开的自然追问与提供新指向的原话绑定。
+void PartnerLoop::complete_pointed_question() {
     question_->answer_order = order_;
     complete_question("resolved",events_.back().at("text").get<std::string>());
 }
@@ -171,6 +187,10 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
         (item && (!question_ || question_->item != item || question_->approval || question_->path != "local" ||
             question_->order >= order_ || question_->task_revision != task_.revision()))) return std::nullopt;
     if (item) {
+        const auto& text = events_.back().at("text").get_ref<const std::string&>();
+        if (has_pickup_continuation(item) && std::ranges::none_of(
+            std::array{"这个","这块","这根","那个","那块","那根","原木","左边","右边","this","that","left","right","log"},
+            [&](std::string_view word) { return text.find(word) != text.npos; })) return std::nullopt;
         const auto original = read_dig_intent(question_->origin);
         if (!original.material.empty()) intent = original;
     }
@@ -182,6 +202,11 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
 bool PartnerLoop::requires_pointed_dig(std::uint64_t session) const {
     return session == session_ && !active_delegation_ && !events_.empty() && events_.back().at("type") == "player.message" &&
         read_dig_intent(events_.back().at("text").get_ref<const std::string&>()).pointed;
+}
+
+// 只为原局内事项保留已经登记的拾取后继。
+bool PartnerLoop::has_pickup_continuation(std::uint64_t item) const noexcept {
+    return item && question_ && item == question_->item && !question_->after_pickup.is_null();
 }
 
 // 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。
@@ -246,7 +271,8 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             const auto text = event.value("text",std::string{});
             if (event.at("sequence") <= q.order) continue;
             std::string answer;
-            if (local && !q.expired && std::ranges::find(q.options,Json(text)) != q.options.end()) answer = text;
+            if (local && q.after_pickup.is_null() && !q.expired && std::ranges::find(q.options,Json(text)) != q.options.end())
+                answer = text;
             else if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
             else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
             else if (!local && text.starts_with(prefix)) answer = text.substr(prefix.size());

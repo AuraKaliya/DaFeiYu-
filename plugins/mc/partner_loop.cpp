@@ -26,7 +26,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
     "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
     "同一句指向最多做两次针对性观察，仍无法确定就用 ask_player 自然问一句。"
-    "玩家给了确切指向后，dig_block 带上被观察的 message，若回答了问题同时带 pendingQuestion.item 作为 resolves。\n"
+    "如果原要求是挖掘后合成，追问时把合成产物和数量放入 afterPickup。玩家指明后用 queue_actions 的 plan，"
+    "resolves 填 pendingQuestion.item，只提交带本轮 message 的挖掘节点，后继由插件续接。单纯挖掘可用 dig_block 加 resolves。\n"
     "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
     "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
@@ -308,6 +309,10 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
         {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
+    if (question_ && !question_->after_pickup.is_null()) {
+        input["pendingQuestion"]["afterPickup"] = question_->after_pickup;
+        input["pendingQuestion"]["originalText"] = question_->origin;
+    }
     if (confirmation_ && confirmation_->work && !delegated) {
         const auto& candidate = *confirmation_;
         input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
@@ -325,8 +330,10 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto enabled = scope();
     const bool completed_route = wake == "plan.finished" && task_.navigation() && plan_ && !plan_->active &&
         plan_->revision == task_.revision() && plan_->nodes.front().skill == "route";
+    const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active &&
+        std::ranges::any_of(plan_->nodes,[](const auto& node) { return !node.pickup.empty(); });
     if (!delegated) for (const auto& skill : partner_skills) {
-        if ((completed_dig || completed_route) && skill.name != "reply") continue;
+        if ((completed_dig || completed_route || completed_pickup_plan) && skill.name != "reply") continue;
         if (task_.navigation() && (skill.category == SkillCategory::movement || skill.category == SkillCategory::place ||
             skill.category == SkillCategory::dig_break)) continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;

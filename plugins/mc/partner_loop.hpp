@@ -46,6 +46,8 @@ class PartnerLoop {
         nlohmann::json& args) const;
     // 判断原玩家指令是否只允许明确绑定的单格破坏。
     bool requires_pointed_dig(std::uint64_t session) const;
+    // 有后继动作的追问只能由保留原依赖的计划消费。
+    bool has_pickup_continuation(std::uint64_t item) const noexcept;
     // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
         std::string work, std::string output) noexcept;
@@ -156,6 +158,8 @@ class PartnerLoop {
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
     void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
+    // 关闭已由当前原话和动作证据共同确认的局内追问。
+    void complete_pointed_question();
     // 检查原候选在执行时使用的世界、玩家及游标。
     bool confirmation_context_current(std::uint64_t order) const;
     // 保留并按序提交原生渠道事件。
@@ -170,7 +174,7 @@ class PartnerLoop {
         bool expired = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
-        nlohmann::json options;
+        nlohmann::json options, after_pickup;
         std::string origin;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
@@ -229,6 +233,7 @@ class PartnerLoop {
         std::string id, work;
         std::string_view skill;
         nlohmann::json arguments, result;
+        std::string pickup;
         std::vector<std::size_t> after;
         std::size_t layer = 0;
         State state = State::pending;

@@ -28,6 +28,8 @@ async function main() {
   const repairPlan = variant === 'partner-revision-repair-plan';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const pointedSupport = variant === 'partner-revision-pointed-support';
+  const pointedCraft = variant?.startsWith('partner-revision-pointed-craft');
+  const noPickup = variant === 'partner-revision-pointed-craft-no-pickup';
   const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
@@ -50,6 +52,7 @@ async function main() {
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
+  let heardAt;
   let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
   let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
@@ -76,6 +79,7 @@ async function main() {
         }
         const latest = initial ? 1 :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
+          pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
@@ -101,6 +105,11 @@ async function main() {
             messages[2].text = '你还在吗';
           }
           if (pointedSupport) messages[1].text = '把这石块上的泥土敲掉';
+          if (pointedCraft) {
+            messages[1].text = '这里有个原木，敲掉它，然后做成4个木板';
+            messages[2].text = '你听得到吗';
+            messages[3].text = '就是这个';
+          }
           if (restartRoute) {
             messages[1].text = '大肥鱼，跟着我走';
             messages[3].text = '要不要计时';
@@ -156,6 +165,45 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
         }
         assert.ok(!repairPlan);
+        if (pointedCraft) {
+          const log = { x: 1, y: -59, z: 2, block: 'oak_log' };
+          if (skill === 'observe') {
+            assert.equal(method, 'partner.begin');
+            assert.ok([2, 4].includes(context.order));
+            assert.deepEqual(args, { mode: 'pointed', message: context.order, focus: 'objects' });
+            const objects = [{ ...log, visible: true }];
+            if (context.order === 2) objects.push({ ...log, x: 2, visible: true });
+            return { ...context, skill, exited: true, result: { status: 'done', anchor: { message: context.order },
+              sampledAtMs: 42, playerFocus: { status: 'observed', hit: null, objects } } };
+          }
+          if (skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            switch (++replies) {
+              case 1: assert.equal(args.text, '你指哪块原木？'); questionPresented = true; break;
+              case 2: assert.equal(args.text, '听得到。'); heardAt = performance.now(); break;
+              case 3:
+                assert.ok(collectExited);
+                assert.equal(args.text, noPickup ? '木头敲下来了，我还没捡到。' : '木头捡到了，我现在做不了木板。');
+                break;
+              default: assert.fail('unexpected repeated game reply');
+            }
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          assert.equal(skill, 'collect');
+          assert.equal(context.order, 4);
+          if (method === 'partner.begin') {
+            assert.ok(!collecting);
+            assert.deepEqual(args, { ...log, count: 1, source: 'visible' });
+            collecting = id;
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, collecting);
+          collectExited = true;
+          const { block, ...position } = log;
+          return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
+            changes: [{ ...position, before: block, after: 'air' }], inventoryDelta: noPickup ? {} : { oak_log: 1 } } };
+        }
         if (pointedSupport) {
           const stone = { x: 1, y: -60, z: 2, block: 'stone' };
           const dirt = { x: 1, y: -59, z: 2, block: 'dirt' };
@@ -372,7 +420,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute ? 5 : first || motion || confirm ? 4 :
+    return { generation, order: restartRoute ? 5 : first || motion || confirm || pointedCraft ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -393,12 +441,13 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);
-      else assert.equal(stopped, notes || restartRoute || pointedSupport ? 0 : 2);
+      else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft ? 0 : 2);
       assert.equal(collectExited, !correctionLost && !restartRoute);
       assert.equal(nextBlock, notes);
       assert.equal(wallFilled, !!correction && !correctionLost);
       if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
       else if (navigation) assert.equal(routeReads, 9);
+      if (pointedCraft) assert.equal(replies, 3);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
