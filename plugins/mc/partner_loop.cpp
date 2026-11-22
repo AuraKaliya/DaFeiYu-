@@ -505,7 +505,8 @@ Json PartnerLoop::switch_task(const Json& args) {
 // 限制当前指向的后台观察次数，并在达到上限后阻止同类循环。
 // 步骤：找到指定原话 → 扣除观察额度或保留一次领到反馈的机会。
 bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args) {
-    if (session != session_ || active_delegation_ || args.value("focus","") != "hit" || !args.contains("message")) return true;
+    const auto focus = args.value("focus","");
+    if (session != session_ || active_delegation_ || (focus != "hit" && focus != "objects") || !args.contains("message")) return true;
     const auto message = args.at("message").get<std::uint64_t>();
     auto& used = hit_queries_[message];
     if (used++ < 2) return true;

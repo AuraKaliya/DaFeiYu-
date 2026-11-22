@@ -164,3 +164,31 @@ test('route records each actual checkpoint without counting a partial lap', asyn
   assert.equal(partial.route.laps, 0);
   assert.deepEqual(partial.route.checkpoints.map(({ index }) => index), [0, 1]);
 });
+
+// 原话视锥可见偏离准星的原木，遮挡后的方块最多出现在附近来源中。
+test('object focus merges ray, cone and nearby sources without retargeting the old view', async () => {
+  const { bot, player, context } = fixture(), result = {};
+  const original = new Position(0.5, -60, -2.5);
+  bot.entity.position = new Position(1.5, -60, 1.5);
+  player.position = new Position(1.5, -60, 1.5);
+  context.messageAnchor = () => ({ center: original, anchor: { position: original, eye: new Position(0.5, -58.5, -2.5),
+    facing: { yaw: Math.PI, pitch: 0 } } });
+  const map = new Map([['0,-59,1', 'stone'], ['1,-59,1', 'oak_log'], ['0,-58,1', 'dirt'], ['0,-59,2', 'emerald_block']]);
+  bot.blockAt = ({ x, y, z }) => ({ name: map.get(`${x},${y},${z}`) ?? 'air' });
+  let frame = 0;
+  context.check = () => { if (++frame === 2) player.position = new Position(-5.5, -60, 0.5); };
+  await observeWindow(bot, { sources: ['message', 'player', 'self'], message: 12, focus: 'objects', radius: 1,
+    samples: { count: 2, intervalMs: 100 } }, result, context);
+  const [a, b] = result.observation.samples.map(sample => sample.views[0].playerFocus);
+  assert.deepEqual(a.hit, { x: 0, y: -59, z: 1, block: 'stone' });
+  const log = a.objects.find(object => object.block === 'oak_log');
+  assert.deepEqual(log.sources, ['cone', 'hit_neighbor', 'player_nearby', 'self_nearby']);
+  assert.equal(log.visible, true);
+  assert.equal(a.objects.find(object => object.block === 'dirt').visible, true);
+  const occluded = a.objects.find(object => object.block === 'emerald_block');
+  assert.deepEqual(occluded.sources, ['player_nearby', 'self_nearby']);
+  assert.ok(!occluded.visible);
+  assert.equal(new Set(a.objects.map(object => object.id)).size, a.objects.length);
+  assert.deepEqual(a.hit, b.hit);
+  assert.deepEqual(b.objects.find(object => object.id === log.id).sources, ['cone', 'hit_neighbor', 'self_nearby']);
+});

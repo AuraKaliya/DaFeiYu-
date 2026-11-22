@@ -311,13 +311,14 @@ function partnerService(bot, world, inbox, places, owner) {
           .slice(0, 12).map(e => ({ name: e.username ?? e.name, position: e.position.clone() }));
         let center = args.around === 'player' ? player?.entity?.position : bot.entity.position;
         if (args.message !== undefined) {
-          if (args.around || (args.focus !== undefined && !['hit', 'openings'].includes(args.focus)))
+          if (args.around || (args.focus !== undefined && !['hit', 'openings', 'objects'].includes(args.focus)))
             throw new Error('请选择原消息和有效的指向查询');
           const { anchor, center: original } = messageAnchor(r.generation, args.message);
           center = original;
           result.anchor = { message: args.message, ...anchor };
-          if (args.focus !== 'hit') result.survey = blockSurvey(bot, center, 4);
-          result.playerFocus = playerFocus(bot, anchor, center, args.focus);
+          if (args.focus !== 'hit' && args.focus !== 'objects') result.survey = blockSurvey(bot, center, 4);
+          result.playerFocus = playerFocus(bot, anchor, center, args.focus,
+            { player_nearby: player?.entity?.position, self_nearby: bot.entity.position });
         } else if (args.focus !== undefined) {
           throw new Error('指向查询需要原玩家消息');
         } else if (args.around) result.survey = blockSurvey(bot, center);

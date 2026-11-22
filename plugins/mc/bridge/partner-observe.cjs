@@ -123,7 +123,9 @@ function takeSample(bot, options, player, messageAnchor, inventory, prior) {
       if (source === 'self') Object.assign(view.actor, { health: bot.health, food: bot.food, inventory: inventory() });
     }
     surveyView(world, view, center, options.radius, cells, palette, options.detail);
-    if (source === 'message' && view.status === 'sampled') view.playerFocus = playerFocus(world, view.anchor, center, options.focus);
+    if (source === 'message' && view.status === 'sampled') view.playerFocus = playerFocus(world, view.anchor, center, options.focus,
+      { player_nearby: options.sources.includes('player') ? player?.position : undefined,
+        self_nearby: options.sources.includes('self') ? bot.entity.position : undefined });
   }
   const counts = new Map();
   let unknown = 0;
@@ -152,7 +154,7 @@ async function observeWindow(bot, args, result, context) {
   if (!Array.isArray(sources) || !sources.length || sources.length > 3 || new Set(sources).size !== sources.length ||
     sources.some(source => !['self', 'player', 'message'].includes(source)) ||
     sources.includes('message') !== (Number.isSafeInteger(message) && message > 0) ||
-    (focus !== undefined && (!sources.includes('message') || !['hit', 'openings'].includes(focus))))
+    (focus !== undefined && (!sources.includes('message') || !['hit', 'openings', 'objects'].includes(focus))))
     throw invalidObservation('observe_invalid_sources', 'sources 只能包含 self、player、message；使用 message 来源时须传原话编号');
   if (!Number.isInteger(radius) || radius < 1 || radius > 5 || !['summary', 'cells'].includes(detail) ||
     !Number.isInteger(count) || count < 1 || count > 3 || !Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 1000 ||
