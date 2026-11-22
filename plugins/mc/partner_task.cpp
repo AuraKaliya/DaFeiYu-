@@ -101,22 +101,37 @@ bool same_target_scope(const Json& a, const Json& b) {
 }
 
 // 从原话提取破坏目标的明确约束，参照材料按原词序与动作目标分开。
-// 步骤：识别破坏动词 → 查找上下关系 → 否则只提取指向物的材质。
+// 步骤：按分句识别破坏动词 → 查找上下关系 → 核对当前分句或代词指向的材质。
 DigIntent read_dig_intent(std::string_view text) {
     using namespace std::string_view_literals;
     constexpr std::array verbs{"挖"sv,"敲"sv,"拆"sv,"铲"sv,"砸"sv,"打掉"sv,"移除"sv};
-    const auto has_word = [&](auto word) { return text.find(word) != text.npos; };
-    if (std::ranges::none_of(verbs,has_word)) return {};
-    for (const auto relation : {"上方的"sv,"上面的"sv,"上边的"sv,"上的"sv,"上面那块"sv}) {
-        const auto at = text.find(relation);
-        if (at == text.npos) continue;
-        const auto support = named_material(text.substr(at>18 ? at-18 : 0,std::min<std::size_t>(at,18)));
-        const auto target = named_material(text.substr(at+relation.size(),24));
-        if (!support.empty() && !target.empty()) return {true,target,support};
-    }
     constexpr std::array pointing{"这块"sv,"这个"sv,"这格"sv,"这根"sv,"这里"sv,"我面前"sv,"眼前"sv,"掉它"sv};
-    const bool pointed = std::ranges::any_of(pointing,has_word);
-    return {pointed,pointed ? named_material(text) : std::string_view{},{}};
+    std::string_view previous;
+    while (!text.empty()) {
+        std::size_t end = text.size(), separator = 0;
+        for (const auto delimiter : {"，"sv,"。"sv,"；"sv,"！"sv,"？"sv,","sv,";"sv,"!"sv,"?"sv}) {
+            if (const auto at = text.find(delimiter); at < end) { end = at; separator = delimiter.size(); }
+        }
+        const auto clause = text.substr(0,end);
+        const auto has_word = [&](auto word) { return clause.find(word) != clause.npos; };
+        if (std::ranges::any_of(verbs,has_word)) {
+            for (const auto relation : {"上方的"sv,"上面的"sv,"上边的"sv,"上的"sv,"上面那块"sv}) {
+                const auto at = clause.find(relation);
+                if (at == clause.npos) continue;
+                const auto support = named_material(clause.substr(at > 18 ? at-18 : 0,std::min<std::size_t>(at,18)));
+                const auto target = named_material(clause.substr(at+relation.size(),24));
+                if (!support.empty() && !target.empty()) return {true,target,support};
+            }
+            if (std::ranges::any_of(pointing,has_word)) {
+                auto target = named_material(clause);
+                if (target.empty() && has_word("掉它")) target = named_material(previous);
+                return {true,target,{}};
+            }
+        }
+        text.remove_prefix(end+separator);
+        previous = clause;
+    }
+    return {};
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
@@ -157,7 +172,8 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
         return {{"status","unchanged"},{"task",context()}};
     if (order < instruction_ || (restart && (!id_ || args.value("task",std::uint64_t{}) != id_)))
         return {{"status","stale"}};
-    if ((kind != "navigation" && kind != "work") || goal.empty() || goal.size() > 1024 || (!restart && !args.contains("goal")))
+    if ((kind != "navigation" && kind != "work") || goal.empty() || goal.size() > 1024 ||
+        (restart ? goal != goal_ : !args.contains("goal")))
         return {{"status","invalid_target"},{"reason","invalid_task_intent"}};
     if (!unconfirmed_work_.empty()) return {{"status","old_work_exit_unconfirmed"},{"work",unconfirmed_work_}};
     if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
@@ -166,6 +182,7 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
         id_ = order;
         if (has_target()) previous_target_ = target_;
         target_ = navigation_wall_ = nullptr;
+        collection_ = "visible";
     }
     instruction_ = order;
     kind_ = kind;
@@ -173,16 +190,16 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
     ++revision_;
     detail_.clear();
     next_ = "player";
-    collection_ = "visible";
     baseline_ = receipt_ = arrival_ = local_observation_ = correction_ = nullptr;
     route_ = nullptr;
+    route_committed_ = false;
     disarm();
     return {{"status","updated"},{"executionChanged",true},{"task",context()}};
 }
 
 // 复制已可信观察的检查点，并固定任务修订和原话来源。
 bool PartnerTask::bind_route(Json& arguments) const {
-    if (!navigation() || route_.is_null() || route_.at("id") != arguments.at("route") ||
+    if (!navigation() || route_committed_ || route_.is_null() || route_.at("id") != arguments.at("route") ||
         (!navigation_wall_.is_null() && arguments.at("laps") != navigation_wall_.at("laps"))) return false;
     arguments["taskId"] = id_;
     arguments["taskRevision"] = revision_;
@@ -194,6 +211,7 @@ bool PartnerTask::bind_route(Json& arguments) const {
 void PartnerTask::accept_route(const Json& arguments) {
     navigation_wall_ = {{"id",route_.at("wall")},{"observation",route_.at("observation")},
         {"message",route_.at("sourceMessage")},{"laps",arguments.at("laps")}};
+    route_committed_ = true;
 }
 
 // 禁止已结算的路线仅凭现场变化再次启动。

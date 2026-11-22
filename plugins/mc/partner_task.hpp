@@ -80,7 +80,7 @@ class PartnerTask {
     std::string kind_, goal_, detail_, next_ = "player", collection_ = "visible";
     std::string unconfirmed_work_;
     unsigned remaining_ = 0;
-    bool armed_ = false;
+    bool armed_ = false, route_committed_ = false;
     nlohmann::json baseline_, receipt_, target_, correction_, previous_target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
     std::map<std::uint64_t,nlohmann::json> object_observations_;

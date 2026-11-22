@@ -119,6 +119,39 @@ void verify_opening_geometry() {
         throw std::runtime_error("wall geometry was lost after hit observation");
 }
 
+// 检查原话的独立子句和导航修订边界。
+// 步骤：区分取材和指向 → 接纳一次路线 → 核对新修订仍须沿用原墙。
+void verify_route_and_dig_intent() {
+    using Json = nlohmann::json;
+    using dfy::mc::read_dig_intent;
+    if (read_dig_intent("补上我面前这堵墙，从地上挖四块泥土").pointed ||
+        read_dig_intent("这里有个原木，敲掉它，然后做成4个木板").material != "log" ||
+        read_dig_intent("把这石块上的泥土敲掉").support != "stone")
+        throw std::runtime_error("distinct clauses changed the original dig intent");
+
+    dfy::mc::PartnerTask task;
+    task.switch_task({{"operation","start_task"},{"kind","navigation"},{"goal","绕墙两圈"}},{{"sequence",2}});
+    const auto survey = [&](std::string_view wall, int message) {
+        task.record({{"skill","observe"},{"generation","world"},{"result",{{"route",{{"status","validated"},{"id","checked"},
+            {"wall",wall},{"waypoints",Json::array()},{"observation","survey"},{"sourceMessage",message},{"generation","world"}}}}}});
+    };
+    survey("original",2);
+    Json route{{"route","checked"},{"laps",2}};
+    if (!task.bind_route(route)) throw std::runtime_error("original route was not bound");
+    task.accept_route(route);
+    task.finish_route(true);
+    survey("original",2);
+    if (task.bind_route(route)) throw std::runtime_error("a fresh survey restarted a settled revision");
+    if (task.switch_task({{"operation","restart_task"},{"task",2},{"goal","另一面墙"}},{{"sequence",3}}).at("status") != "invalid_target" ||
+        task.switch_task({{"operation","restart_task"},{"task",2}},{{"sequence",3}}).at("status") != "updated")
+        throw std::runtime_error("restart did not distinguish the original goal");
+    survey("other",3);
+    if (task.bind_route(route)) throw std::runtime_error("restart inherited a different wall from the new view");
+    survey("original",2);
+    if (!task.bind_route(route) || route.at("taskRevision") != 2)
+        throw std::runtime_error("restart did not retain the original wall under a new revision");
+}
+
 // 验证任务修订与授权变化对同一在途计划的影响，保留可离线查看的宿主 Trace。
 // 步骤：提交带依赖的计划 → 在首个动作接纳后更新任务或授权 → 核对原工作结果和后继状态。
 int verify_plan_revision(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
@@ -510,7 +543,13 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
             return verify_plan_revision(argv[1],argv[2],argv[3]);
-        if (argc == 3) { verify_collection_effect(); verify_target_evidence(); verify_opening_geometry(); verify_knowledge(); }
+        if (argc == 3) {
+            verify_collection_effect();
+            verify_target_evidence();
+            verify_opening_geometry();
+            verify_route_and_dig_intent();
+            verify_knowledge();
+        }
         const bool interrupt = argc == 4 && std::wstring_view(argv[3]) == L"partner-interrupt";
         const bool suspend = argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-follow-collect");
         const bool follow = suspend || (argc == 4 && std::wstring_view(argv[3]) == L"partner-follow");
