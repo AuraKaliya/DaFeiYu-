@@ -84,6 +84,21 @@ node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\windows-tests\bin
 
 复测时在同一份证据中记录玩家消息、入轮、实际发言、动作接纳与读回时刻。这样可以分别定位通信等待、模型耗时和游戏动作耗时。
 
+### 多段移动与指向操作回归
+
+构建 `dfy_mc_plugin_partner_tests` 后，可用以下定向命令运行固定响应验收。路线回执来自受控游戏读口，插件 DLL、回合、队列与 Trace 使用正式代码。每个场景的 Trace 保存于构建目录的 `tests/mc-partner/world-*/trace/events.jsonl`，用 CTest 的 `-V` 可看到本次文件位置。
+
+```powershell
+ctest --test-dir build/windows-tests -C Debug --output-on-failure -R '^(mc\.partner_observe|plugins\.mc_partner_revision_(navigation.*|pointed.*))$'
+```
+
+| 场景 | 核对项 |
+| --- | --- |
+| 绕墙两圈 | 旧工作按原号读回，原墙和 4 个站位核验后以一个游戏工作实际读回 9 个检查点，终态才唤醒子 Agent。 |
+| 中途重新绕 | 第一项路线带一圈退出，旧问题撤下，新修订沿用原墙从零开始，结束后恢复原跟随意图。 |
+| 敲掉石块上的泥土 | 视线命中石块时拒绝直接挖石和挖石计划，只允许通过核验的泥土目标。 |
+| 原木追问后续接合成 | 其他聊天仍可回应，玩家指明后用原要求续接。入包后回报当前合成受阻，未入包时后继跳过。 |
+
 `run-JKvHIw` 的历史故障可用原始 Trace 离线回放会话 52 的回合 11 和 36。旧门上下格见 Trace 第 244 行，发言称未找到见第 254 行。原话候选在第 1973 行读到，随后观察覆盖原读回，第 2026 行绑定失败。新回归用同一组门坐标检验合并，再用 `--gap-probe` 验证实际游戏观察和固定模型绑定。
 
 用下方命令将模式换成 `--follow-probe` 可运行边走边聊的固定响应。两次发言分别通过显式工具和最终文本投递。
