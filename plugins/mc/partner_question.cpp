@@ -236,7 +236,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
         !feed_.departed() && (question_->path != "local" || question_->task_revision == task_.revision());
     if (question_work_) {
         std::optional<GameResult> result;
-        try { result = question_work_->poll(!live); }
+        try { result = question_work_->poll(!live,false,!feed_.recovering()); }
         catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
         question_work_.reset();
@@ -257,6 +257,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
         }
     }
     if (!live) { question_.reset(); flush_question_events(); return; }
+    if (feed_.recovering()) { flush_question_events(); return; }
     auto& q = *question_;
     const bool local = q.path == "local";
     if (local && !q.expired && std::chrono::steady_clock::now() >= q.local_answer_deadline) {

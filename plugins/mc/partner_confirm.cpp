@@ -164,7 +164,7 @@ void PartnerLoop::confirm_exited(std::uint64_t request) noexcept {
 // 只处理原配对玩家本轮的显式答案，其他聊天仍保留在事件流。
 // 步骤：核对原绑定和期限 → 匹配原确认编号 → 先有效者唯一裁定。
 void PartnerLoop::advance_confirmation() {
-    if (!confirmation_ || !confirmation_->decision.is_null()) return;
+    if (!confirmation_ || !confirmation_->decision.is_null() || feed_.recovering()) return;
     const auto& item = *confirmation_;
     if (!feed_.execution_ready() || feed_.world() != item.world || feed_.owner() != item.player ||
         feed_.gap() || feed_.departed() || feed_.departure()) {
@@ -189,6 +189,7 @@ void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closin
     if (!confirmation_ || !confirmation_->work) return;
     auto& item = *confirmation_;
     if (closing) { confirm_exited(item.request); return; }
+    if (feed_.recovering()) return;
     const auto envelope = confirm_result(item.request);
     if (!envelope) return;
     if (!envelope->empty() && std::chrono::steady_clock::now() < item.deadline) {
@@ -216,7 +217,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
     if (presentation_) {
         auto& pending = *presentation_;
         std::optional<GameResult> result;
-        try { result = pending.work->poll(closing || feed_.world() != pending.world); }
+        try { result = pending.work->poll(closing || feed_.world() != pending.world,false,!feed_.recovering()); }
         catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
         const auto receipt = Json::parse(result->payload,nullptr,false);
@@ -228,7 +229,7 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
         presentation_.reset();
         if (sent && !closing) advance_confirmation();
     }
-    if (closing || !confirmation_ || !confirmation_->decision.is_null()) return;
+    if (closing || feed_.recovering() || !confirmation_ || !confirmation_->decision.is_null()) return;
     auto& item = *confirmation_;
     if (!item.ask_game || item.presentation_attempted) return;
     if (!feed_.ready() || (!item.work && feed_.cursor() != item.order) || feed_.world() != item.world || feed_.owner() != item.player) {

@@ -22,8 +22,8 @@ void GameWork::recheck_exit() noexcept {
 }
 
 // 每轮最多处理一次非等待本机收发，桥接异常后尝试停止同一动作。
-// 步骤：处理取消和期限 → 提交或查询原命令 → 校验退出或安排下一次读回。
-std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
+// 步骤：处理取消、期限和接纳条件 → 提交或查询原命令 → 校验退出或安排下一次读回。
+std::optional<GameResult> GameWork::poll(bool cancelled, bool defer, bool allow_begin) {
     const auto now = std::chrono::steady_clock::now();
     stopping_ = stopping_ || cancelled || now >= deadline_;
     if (stopping_) {
@@ -31,6 +31,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         if (stop_deadline_ == decltype(stop_deadline_){}) stop_deadline_ = now + std::chrono::seconds(4);
         if (now >= stop_deadline_) throw std::runtime_error("MC: game exit unconfirmed");
     }
+    if (!allow_begin && !attempted_) return {};
     if (!pipe_ && now < next_) return {};
     try {
         if (!pipe_) {
@@ -78,7 +79,8 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         if (stopping_) return {};
         // 提交已可能送达时，直接查询同一编号，避免重新发出游戏变更。
         if (attempted_) phase_ = Phase::read;
-        if (++transport_failures_ >= 3) {
+        // 收件正在核验同一绑定时，继续查原工作，避免短时共用传输故障提前触发停止。
+        if (++transport_failures_ >= 3 && allow_begin) {
             if (!attempted_) throw;
             stopping_ = true;
         }

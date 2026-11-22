@@ -15,11 +15,17 @@ class PartnerFeed {
     // 停止读取并撤销待处理事实。
     void clear() noexcept;
     // 返回本轮可消费的原世界、玩家及事件；有续页时等到读完当前窗口。
-    bool ready() const noexcept { return ready_ && !more_; }
+    bool ready() const noexcept { return readable() && !more_; }
     // 私有读口可用时仍能观察已释放或场景模式的游戏。
-    bool readable() const noexcept { return ready_; }
+    bool readable() const noexcept { return ready_ && !recovering(); }
+    // 短时读口故障期间保留已验证的配对和收件位置。
+    bool recovering() const noexcept { return recover_until_ != std::chrono::steady_clock::time_point{}; }
+    // 已核验的执行绑定仍用于归属和原工作结算。
+    bool execution_bound() const noexcept { return mode_ == "partner" && execution_ == "ready"; }
     // 只在桥接明确拥有当前伙伴执行入口时允许接纳新动作。
-    bool execution_ready() const noexcept { return mode_ == "partner" && execution_ == "ready"; }
+    bool execution_ready() const noexcept { return readable() && execution_bound(); }
+    // 返回旧绑定是否已被撤销的水位，同一游戏代次重新绑定也会推进。
+    std::uint64_t binding_revision() const noexcept { return binding_revision_; }
     // 返回当前桥接执行模式，未报告时为空。
     const std::string& mode() const noexcept { return mode_; }
     // 返回当前执行入口状态，未报告的桥接无法驱动伙伴。
@@ -63,8 +69,9 @@ class PartnerFeed {
     nlohmann::json pending_ = nlohmann::json::array();
     std::deque<nlohmann::json> anchored_messages_;
     std::unique_ptr<PipeExchange> pipe_;
-    std::chrono::steady_clock::time_point next_{}, world_due_{};
+    std::chrono::steady_clock::time_point next_{}, world_due_{}, recover_until_{};
     std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, departure_ = 0, scene_revision_ = 0;
+    std::uint64_t binding_revision_ = 0;
     bool reading_world_ = false, ready_ = false, more_ = false, gap_ = false;
 };
 }

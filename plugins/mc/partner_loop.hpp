@@ -30,6 +30,8 @@ class PartnerLoop {
     void advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work, bool body_busy);
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
+    // 新游戏动作等待原收件恢复，在途工作仍按原号读回。
+    bool waiting_for_feed(std::uint64_t session) const noexcept { return session == session_ && feed_.recovering(); }
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
     bool waits_for_work() const noexcept { return wait_for_work_; }
     // 同类计划两次失败后，只再给原回合一次模型结算机会。
@@ -331,6 +333,7 @@ class PartnerLoop {
     void confirm_once(std::string_view status, std::string_view source, std::uint64_t approved_order = 0);
     std::string session_world_;
     std::uint64_t session_ = 0, request_ = 0, order_ = 0, settled_ = 0;
+    std::uint64_t session_binding_ = 0;
     struct Review {
         std::uint64_t session = 0, request = 0, origin = 0, work = 0, cursor = 0;
     } review_;

@@ -6,11 +6,13 @@ using Json = nlohmann::json;
 
 // 归还旧玩家事件，保留原请求编号不会重用的约束。
 void PartnerFeed::reset_binding() noexcept {
+    if (ready_) ++binding_revision_;
     owner_.clear();
     mode_.clear();
     execution_.clear();
     cursor_ = departed_ = departure_ = 0;
     scene_revision_ = 0;
+    recover_until_ = {};
     ready_ = more_ = gap_ = false;
     pending_.clear();
     anchored_messages_.clear();
@@ -57,65 +59,72 @@ void PartnerFeed::accept_world(std::string_view wire) {
 }
 
 // 只交付经过协议校验的在场事实与原话，持续推进原玩家水位。
-// 步骤：核对游戏和玩家 → 按基线或缺口重建窗口 → 追加连续事实及更新离场状态。
+// 步骤：校验来源和现场修订 → 组装完整收件窗口 → 一并提交水位、消息和执行状态。
 void PartnerFeed::accept_inbox(std::string_view wire) {
     const auto batch = Json::parse(inbox_reply(wire,id_,arguments_));
     if (batch.is_null()) { clear(); return; }
     auto owner = batch.at("owner").get<std::string>();
     if (!owner_.empty() && owner != owner_) { clear(); return; }
+    const auto scene_revision = batch.value("sceneRevision",scene_revision_);
+    if (scene_revision < scene_revision_) throw std::invalid_argument("MC feed: scene revision regressed");
     const auto latest = batch.at("latest").get<std::uint64_t>();
     const auto oldest = batch.at("oldest").get<std::uint64_t>();
-    while (!anchored_messages_.empty() && anchored_messages_.front().at("sequence").get<std::uint64_t>() < oldest)
-        anchored_messages_.pop_front();
     const auto& facts = batch.at("messages");
     const auto presence = batch.find("presence");
-    if (presence != batch.end()) departed_ = presence->at("type") == "player.left" ? presence->at("sequence").get<std::uint64_t>() : 0;
-    auto latest_departure = batch.value("lastDeparture",departed_);
+    const auto execution = batch.find("execution");
+    auto mode = execution == batch.end() ? std::string{} : execution->at("mode").get<std::string>();
+    auto state = execution == batch.end() ? std::string("unreported") : execution->at("state").get<std::string>();
+    auto control = batch.value("control",control_);
+
+    const auto departed = presence == batch.end() ? departed_ : presence->at("type") == "player.left" ?
+        presence->at("sequence").get<std::uint64_t>() : 0;
+    auto latest_departure = batch.value("lastDeparture",departed);
     for (const auto& fact : facts) if (fact.value("type","") == "player.left")
         latest_departure = std::max(latest_departure,fact.at("sequence").get<std::uint64_t>());
-    if ((ready_ || departed_) && latest_departure > cursor_) departure_ = std::max(departure_,latest_departure);
-    if (!ready_ || batch.at("gap") == true || pending_.size()+facts.size() > 32) {
-        gap_ |= ready_;
-        pending_.clear();
-        if (presence != batch.end() && presence->at("sequence") > cursor_) pending_.push_back(*presence);
-        cursor_ = latest;
-        more_ = false;
+    const auto reset_window = !ready_ || batch.at("gap") == true || pending_.size()+facts.size() > 32;
+    auto pending = reset_window ? Json::array() : pending_;
+    auto anchored = anchored_messages_;
+    auto cursor = cursor_;
+    while (!anchored.empty() && anchored.front().at("sequence").get<std::uint64_t>() < oldest) anchored.pop_front();
+    if (reset_window) {
+        if (presence != batch.end() && presence->at("sequence") > cursor) pending.push_back(*presence);
+        cursor = latest;
     } else {
         for (const auto& fact : facts) {
             Json event{{"sequence",fact.at("sequence")},{"type",fact.value("type","player.message")}};
             if (fact.contains("text")) event["text"] = fact.at("text");
             if (fact.contains("sceneAtMessage")) {
                 event["sceneAtMessage"] = fact.at("sceneAtMessage");
-                if (anchored_messages_.size() >= 32) anchored_messages_.pop_front();
-                anchored_messages_.push_back(event);
+                if (anchored.size() >= 32) anchored.pop_front();
+                anchored.push_back(event);
             }
-            pending_.push_back(std::move(event));
-            cursor_ = fact.at("sequence").get<std::uint64_t>();
+            pending.push_back(std::move(event));
+            cursor = fact.at("sequence").get<std::uint64_t>();
         }
-        more_ = batch.at("more").get<bool>();
     }
-    if (batch.contains("control")) control_ = batch.at("control");
-    if (const auto execution = batch.find("execution"); execution != batch.end()) {
-        mode_ = execution->at("mode").get<std::string>();
-        execution_ = execution->at("state").get<std::string>();
-    } else {
-        mode_.clear();
-        execution_ = "unreported";
-    }
-    if (batch.contains("sceneRevision")) {
-        const auto revision = batch.at("sceneRevision").get<std::uint64_t>();
-        if (revision < scene_revision_) throw std::invalid_argument("MC feed: scene revision regressed");
-        scene_revision_ = revision;
-    }
+
+    if ((ready_ || departed) && latest_departure > cursor_) departure_ = std::max(departure_,latest_departure);
+    gap_ |= ready_ && reset_window;
+    more_ = !reset_window && batch.at("more").get<bool>();
+    cursor_ = cursor;
+    departed_ = departed;
+    scene_revision_ = scene_revision;
+    pending_ = std::move(pending);
+    anchored_messages_ = std::move(anchored);
+    control_ = std::move(control);
+    mode_ = std::move(mode);
+    execution_ = std::move(state);
     owner_ = std::move(owner);
     ready_ = true;
+    recover_until_ = {};
 }
 
 // 按原绑定周期获取世界观察和玩家事实，所有 I/O 步骤均让出宿主。
-// 步骤：选择只读查询 → 非等待推进管道 → 回收本次连接并交付验证结果 → 失联时撤销绑定。
+// 步骤：检查恢复期限 → 推进只读查询 → 核验原绑定或续读 → 仅在确认失联时放弃绑定。
 void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
     using namespace std::chrono;
     const auto now = steady_clock::now();
+    if (recovering() && now >= recover_until_) { clear(); return; }
     if (now < next_) return;
     try {
         if (!pipe_) {
@@ -138,7 +147,11 @@ void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
             next_ = more_ ? now : now+milliseconds(100);
         }
     } catch (const std::exception&) {
-        clear();
+        if (ready_) {
+            pipe_.reset();
+            if (!recovering()) recover_until_ = now+seconds(3);
+            world_due_ = {};
+        } else clear();
         next_ = now+milliseconds(250);
     }
 }

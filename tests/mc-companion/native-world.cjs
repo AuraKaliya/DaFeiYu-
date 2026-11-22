@@ -41,6 +41,7 @@ async function main() {
   const directRevision = variant?.startsWith('partner-revision-direct-');
   const directPlace = variant === 'partner-revision-direct-place';
   const rejoin = variant === 'partner-revision-direct-rejoin';
+  const recoverInbox = variant === 'partner-revision-direct-recover-notes';
   const notes = revision && variant.endsWith('-notes');
   const correction = variant?.startsWith('partner-revision-correction');
   const correctionLost = variant === 'partner-revision-correction-lost';
@@ -78,6 +79,8 @@ async function main() {
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
   let planReading = false, nextBlock = false;
+  let failedReads = 0, workReadFailures = 0, lastWorldRead = 0;
+  let regressScene = false;
   const nodeExits = [];
   let nodeAtWork;
   let wallFilled = false;
@@ -107,6 +110,13 @@ async function main() {
         const left = { sequence: 3, type: 'player.left' };
         const initial = !baselineRead;
         baselineRead = true;
+        if (recoverInbox && planReading && failedReads < 3) {
+          assert.equal(after, 2, 'same world must resume from its original cursor');
+          assert.ok(!failedReads || reads > lastWorldRead, 'resume must revalidate the world before reading the inbox');
+          lastWorldRead = reads;
+          if (++failedReads === 1) throw new Error('simulate one disconnected chat.read');
+          regressScene = failedReads === 2;
+        }
         if (questionExpiry && questionPresented && expiredAt === undefined) {
           const trace = path.join(root, 'trace', 'events.jsonl');
           if (fs.existsSync(trace) && fs.readFileSync(trace, 'utf8').split('\n').some(line =>
@@ -196,6 +206,7 @@ async function main() {
     // 受控游戏场景只有在原任务完成登记后才产生新修订。
     scene(generation) {
       assert.equal(generation, state.generation);
+      if (recoverInbox) return regressScene ? 1 : 2;
       return scene ? (fs.existsSync(path.join(root, 'scene-changed')) ? 2 : 1) : null;
     },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
@@ -530,7 +541,13 @@ async function main() {
             collecting = id;
           }
           assert.equal(id, collecting);
-          if (method === 'partner.read') planReading = true;
+          if (method === 'partner.read') {
+            planReading = true;
+            if (recoverInbox && failedReads > 0 && failedReads < 3) {
+              ++workReadFailures;
+              throw new Error('simulate the same outage while reading the original work');
+            }
+          }
           if (method === 'partner.stop') assert.ok(!notes && ++stopped <= 2);
           collectExited = notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped === 2;
           const status = notes ? 'done' : 'interrupted';
@@ -732,6 +749,20 @@ async function main() {
       if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
       else if (navigation) assert.equal(routeReads, 9);
       if (pointedCraft) assert.equal(replies, 3);
+      if (recoverInbox) {
+        assert.equal(failedReads, 3);
+        assert.ok(workReadFailures > 0);
+        const trace = path.join(root, 'trace', 'events.jsonl');
+        const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+        const boundaries = rows.filter(row => row.category === 'mc.partner.feed').map(row => row.body);
+        assert.deepEqual(boundaries.map(row => [row.status, row.cursor, row.gap, row.generation]),
+          [['recovering', 2, false, state.generation], ['resumed', 3, false, state.generation]]);
+        const original = rows.filter(row => row.category === 'mc.partner.event' && row.body.event.sequence === 3);
+        assert.equal(original.length, 1);
+        assert.equal(original[0].body.event.text, '补记一下角落，接着做');
+        assert.ok(rows.some(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting &&
+          row.body.result.status === 'done' && row.body.result.broken === 2));
+      }
       if (rejoin) {
         const trace = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
         const action = trace.findIndex(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting &&

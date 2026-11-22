@@ -213,17 +213,18 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
     const auto work = "reply."+std::to_string(instance)+"."+std::to_string(session_)+"."+std::to_string(request_);
     if (!final_reply_) {
         const auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
-        if (cancel || (!reserved.work.empty() && !reserved.unsent) || question_requested_ || !final_text_for_player_ || active_delegation_ ||
-            !permits(session_) || !feed_.ready() || feed_.departed()) return true;
+        if (cancel || (!reserved.work.empty() && !reserved.unsent) || question_requested_ || !final_text_for_player_ || active_delegation_) return true;
         auto text = player_reply(answer);
         if (text.empty()) return true;
+        if (feed_.recovering()) return false;
+        if (!permits(session_) || !feed_.ready() || feed_.departed()) return true;
         const auto envelope = Json{{"context",{{"generation",session_world_},{"order",order_}}},
             {"arguments",{{"text",std::move(text)}}}}.dump();
         final_reply_ = std::make_unique<GameWork>(GameAction::partner,config,work,envelope,"reply");
     }
 
     std::optional<GameResult> result;
-    try { result = final_reply_->poll(cancel || feed_.departed()); }
+    try { result = final_reply_->poll(cancel || feed_.departed(),false,!feed_.recovering()); }
     catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
     if (!result) return false;
 
@@ -267,6 +268,7 @@ void PartnerLoop::submit(std::string_view wake) {
         auto world = feed_.world();
         if (agent_->open(&session_,nullptr)) throw std::runtime_error("MC partner: cannot open child session");
         session_world_ = std::move(world);
+        session_binding_ = feed_.binding_revision();
     }
     auto facts = feed_.pending();
     const bool delegated = wake == "main.delegation";
@@ -415,6 +417,7 @@ void PartnerLoop::submit(std::string_view wake) {
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
     if (session != session_) return true;
     return phase_ == DFY_V2_PARTNER_LISTENING && feed_.execution_ready() && feed_.world() == session_world_ &&
+        feed_.binding_revision() == session_binding_ &&
         !feed_.departed() && !feed_.departure() &&
         feed_.pending().empty() && !feed_.gap() &&
         (!attention_turn_ || (follow_ && follow_->id == attention_turn_->work &&
@@ -811,7 +814,7 @@ void PartnerLoop::advance_motion(bool stopping) {
     if (motion.pointed) fact["pointedDig"] = true;
     motion.stopping = motion.stopping || stopping;
     std::optional<GameResult> result;
-    try { result = motion.action->poll(motion.stopping,!motion.accepted); }
+    try { result = motion.action->poll(motion.stopping,!motion.accepted,!feed_.recovering()); }
     catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
 
     if (result && result->accepted) { motion.accepted = true; result.reset(); }
@@ -959,7 +962,7 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
         agent_->close(review_.session,nullptr);
         review_ = {};
     }
-    if (closing || !request_ || !work.invocation || stopped_work_ || feed_.pending().empty() || feed_.cursor() <= reviewed_) return;
+    if (closing || feed_.recovering() || !request_ || !work.invocation || stopped_work_ || feed_.pending().empty() || feed_.cursor() <= reviewed_) return;
     // 与当前在途动作完全对应的唯一批准仍留在收件记录，已由确认状态机处理。
     if (confirmation_ && confirmation_->request == work.invocation && confirmation_->approved_order == feed_.cursor() &&
         feed_.pending().size() == 1 && confirmation_->approved_order > confirmation_->order) return;
@@ -988,9 +991,14 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     report_actions();
     flush();
     if (phase_ == DFY_V2_PARTNER_LISTENING) {
+        const auto recovering = feed_.recovering();
         feed_.advance(config,instance);
+        if (recovering != feed_.recovering())
+            publish("mc.partner.feed",{{"generation",feed_.world().empty() ? session_world_ : feed_.world()},
+                {"cursor",feed_.cursor()},{"gap",feed_.gap()},
+                {"status",feed_.recovering() ? "recovering" : feed_.readable() ? "resumed" : "binding_lost"}});
         if (!feed_.control().is_null()) stop();
-        if (phase_ == DFY_V2_PARTNER_LISTENING) {
+        if (phase_ == DFY_V2_PARTNER_LISTENING && !feed_.recovering()) {
             advance_confirmation();
             intake(work);
         }
@@ -1004,8 +1012,8 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         feed_.clear();
     }
     const bool departed = feed_.departure() || feed_.departed();
-    const bool replaced = session_ && feed_.world() != session_world_;
-    const bool unavailable = closing || replaced || departed || !feed_.execution_ready();
+    const bool replaced = session_ && (feed_.world() != session_world_ || feed_.binding_revision() != session_binding_);
+    const bool unavailable = closing || replaced || departed || !feed_.execution_bound();
     advance_confirmation_presentation(config,instance,unavailable);
     advance_question(config,instance,unavailable);
     if (awaiting_delegation_ && (unavailable || awaiting_delegation_->world != feed_.world())) {

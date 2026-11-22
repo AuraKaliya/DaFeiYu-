@@ -388,7 +388,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         } catch (...) { job->ready = true; }
     } else if (job->action) {
         try {
-            if (auto value = job->action->poll(job->cancelled,job->defer_motion)) {
+            if (auto value = job->action->poll(job->cancelled,job->defer_motion,!raw->partner.waiting_for_feed(job->partner_session))) {
                 job->output = std::move(value->payload);
                 if (value->accepted) {
                     job->output = nlohmann::json{{"status","accepted"},{"work",job->id}}.dump();
