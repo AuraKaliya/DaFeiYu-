@@ -11,7 +11,8 @@ const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 async function main() {
   const [exe, packagePath, temp, variant] = process.argv.slice(2);
   const boardWindow = variant === 'board-window';
-  const interrupt = variant === 'partner-interrupt';
+  const controllerRestart = variant === 'partner-controller-restart';
+  const interrupt = controllerRestart || variant === 'partner-interrupt';
   const suspend = variant?.startsWith('partner-follow-collect');
   const recovery = variant === 'partner-follow-recovery';
   const follow = suspend || recovery || variant === 'partner-follow';
@@ -47,7 +48,7 @@ async function main() {
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
   const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision;
   fs.mkdirSync(temp, { recursive: true });
-  const root = fs.mkdtempSync(path.join(temp, 'world-'));
+  let root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
   fs.mkdirSync(config, { recursive: true });
   const channel = randomUUID();
@@ -69,6 +70,7 @@ async function main() {
   let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
   let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
   let routeApproach;
+  const hostWork = [];
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -166,6 +168,12 @@ async function main() {
     },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      const { controller } = context;
+      assert.match(controller, /^[a-f0-9]{32}$/);
+      if (controllerRestart) {
+        if (method === 'partner.begin') hostWork.push({ id, context, args });
+        else assert.deepEqual({ id, context, args }, hostWork.at(-1));
+      }
       if (revision) {
         if (attention) {
           if (skill === 'reply') {
@@ -502,11 +510,11 @@ async function main() {
         assert.equal(method, 'partner.begin');
         if (confirm && args.text === 'I can hear you while waiting.') {
           assert.ok(approvedId && !pendingChat && replies === 0);
-          assert.deepEqual(context, { generation: state.generation, order: 3 });
+          assert.deepEqual(context, { generation: state.generation, order: 3, controller });
           pendingChat = true;
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
-        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        assert.deepEqual(context, { generation: state.generation, order: 2, controller });
         const match = /确认 (\d+) 或 拒绝 \1$/.exec(args.text);
         assert.ok(match && !approvedId);
         approvedId = match[1];
@@ -516,7 +524,7 @@ async function main() {
         assert.ok(!first && !delayed, 'a delivered approval must not restart a stale candidate');
         assert.equal(method, 'partner.begin');
         assert.equal(skill, 'collect');
-        assert.deepEqual(context, { generation: state.generation, order: confirm ? 4 : showGame ? 3 : 2 });
+        assert.deepEqual(context, { generation: state.generation, order: confirm ? 4 : showGame ? 3 : 2, controller });
         assert.deepEqual(args, variant === 'partner-route-local' ?
           { count: 2, item: 'dirt', requiredStock: 2, source: 'ground' } : { count: 2, block: 'dirt' });
         ++replies;
@@ -532,7 +540,7 @@ async function main() {
       }
       if (interrupt || motion) {
         assert.equal(skill, follow ? 'follow' : 'move');
-        assert.deepEqual(context, { generation: state.generation, order: 2 });
+        assert.deepEqual(context, { generation: state.generation, order: 2, controller });
         if (method === 'partner.begin') { moveId = id; assert.deepEqual(args, follow ? {} : { place: 'player' }); }
         else assert.equal(id, moveId);
         if (method === 'partner.stop') ++stopped;
@@ -547,7 +555,7 @@ async function main() {
           follow ? { progress: { phase: 'following', distance: 4.5 } } : {} };
       }
       assert.equal(method, 'partner.begin');
-      assert.deepEqual(context, { generation: state.generation, order: 2 });
+      assert.deepEqual(context, { generation: state.generation, order: 2, controller });
       assert.equal(skill, 'reply');
       assert.deepEqual(args, { text: exchange ? 'delegated hello' : 'ready to play' });
       ++replies;
@@ -563,10 +571,31 @@ async function main() {
   },
   close() {} } : null);
   try {
-    const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision ? [variant] : [])],
-      { stdio: 'inherit', windowsHide: true });
-    const [code] = await once(child, 'exit');
-    assert.equal(code, 0);
+    if (controllerRestart) {
+      for (let run = 0; run < 2; ++run) {
+        if (run) {
+          root = fs.mkdtempSync(path.join(temp, 'world-'));
+          const nextConfig = path.join(root, 'user', 'plugins', 'mc.companion');
+          fs.mkdirSync(nextConfig, { recursive: true });
+          fs.copyFileSync(path.join(config, 'settings.json'), path.join(nextConfig, 'settings.json'));
+          baselineRead = false;
+          moveId = undefined;
+          releases = stopped = 0;
+        }
+        const child = spawn(exe, [packagePath, root, 'partner-interrupt'], { stdio: 'inherit', windowsHide: true });
+        assert.equal((await once(child, 'exit'))[0], 0);
+        assert.equal(stopped, 1);
+        assert.equal(releases, 2);
+      }
+      assert.equal(hostWork.length, 2);
+      const [first, second] = hostWork;
+      assert.notEqual(first.context.controller, second.context.controller);
+      assert.deepEqual({ ...second, context: { ...second.context, controller: first.context.controller } }, first);
+    } else {
+      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision ? [variant] : [])],
+        { stdio: 'inherit', windowsHide: true });
+      assert.equal((await once(child, 'exit'))[0], 0);
+    }
     if (partnerLoop) assert.equal(releases, 2);
     if (showGame) assert.ok(approvedId);
     if (questionExpiry) {

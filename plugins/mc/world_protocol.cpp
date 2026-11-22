@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
+#include <format>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -162,25 +164,28 @@ void verify_route(const Json& result, const Json& args, bool exited) {
 }
 }
 
-// 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
-std::string partner_request(std::string_view method, std::string_view id, std::string_view key,
+// 解析宿主信封，为提交、重读和停止附上同一控制实例与原参数。
+std::string partner_request(std::string_view method, std::string_view id, const BridgeConfig& config,
     std::string_view skill, std::string_view arguments) {
-    const auto envelope = parse(arguments);
-    const auto& context = envelope.at("context");
-    if (key.size() != 64 || envelope.size() != 2 || !envelope.at("arguments").is_object() || context.size() != 2 ||
+    auto envelope = parse(arguments);
+    auto& context = envelope.at("context");
+    if (config.key.size() != 64 || config.controller.size() != 32 || envelope.size() != 2 ||
+        !envelope.at("arguments").is_object() || context.size() != 2 ||
         !uuid(context.at("generation")) || !context.at("order").is_number_unsigned() || context.at("order") == 0 ||
         context.at("order") > 9007199254740991ULL) throw std::invalid_argument("MC: invalid partner context");
-    Json frame{{"version",1},{"id",id},{"key",key},{"method",method},{"context",context},{"skill",skill}};
-    if (method == "partner.begin") frame["arguments"] = envelope.at("arguments");
-    return frame.dump();
+    context["controller"] = config.controller;
+    return Json{{"version",1},{"id",id},{"key",config.key},{"method",method},{"context",std::move(context)},
+        {"skill",skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
-PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
+PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,
+    std::string_view skill, std::string_view arguments) {
     const auto frame = parse(wire,skill == "observe" || skill == "route" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
     if (frame.at("version") != 1 || frame.at("id").get_ref<const std::string&>() != id ||
+        action.at("controller").get_ref<const std::string&>() != controller ||
         action.at("skill").get_ref<const std::string&>() != skill || action.at("generation") != context.at("generation") ||
         action.at("order") != context.at("order") || !action.at("exited").is_boolean() || !action.at("result").is_object())
         throw std::invalid_argument("MC: invalid partner receipt");
@@ -280,7 +285,8 @@ BridgeConfig configured_bridge(std::string_view config) {
         if (key.size() != 64 || key.find_first_not_of("0123456789abcdef") != key.npos)
             throw std::invalid_argument("MC protocol: invalid private configuration");
     }
-    return {channel, key};
+    std::random_device random;
+    return {channel,std::move(key),std::format("{:08x}{:08x}{:08x}{:08x}",random(),random(),random(),random())};
 }
 // 仅取公开通道名。
 std::string configured_channel(std::string_view config) { return configured_bridge(config).channel; }

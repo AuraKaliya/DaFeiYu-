@@ -18,6 +18,9 @@ function inventory(bot) {
   return stock;
 }
 
+// 将宿主局部编号限定在原控制实例内。
+function workKey(controller, id) { return controller + '/' + id; }
+
 // 只在当前游戏注册表中解析原版方块名。
 function blockType(bot, name) {
   if (typeof name !== 'string' || !/^(?:minecraft:)?[a-z0-9_]{1,80}$/.test(name)) throw new Error('需要游戏方块名');
@@ -288,10 +291,10 @@ function partnerService(bot, world, inbox, places, owner) {
         const { anchor, center } = messageAnchor(r.generation, message);
         result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message, radius,
           generation: r.generation, dimension: bot.game.dimension };
-        remember(wallSurveys, job.id, { ...result.wallSurvey, anchor, center });
+        remember(wallSurveys, job.key, { ...result.wallSurvey, anchor, center });
       } else if (observation?.mode === 'route') {
         const { observation: id, wall, waypoints } = observation.options;
-        const scan = wallSurveys.get(id);
+        const scan = wallSurveys.get(workKey(r.controller, id));
         if (scan?.generation === r.generation && scan.dimension === bot.game.dimension && (!scan.choice || !wall || wall === scan.choice)) {
           const live = observeWall(bot, scan.anchor, scan.center, scan.radius);
           result.route = validateRoute(live, wall ?? scan.choice, waypoints, (a, b, allowed) => readPath(bot, a, b, allowed));
@@ -299,7 +302,7 @@ function partnerService(bot, world, inbox, places, owner) {
         if (result.route.status === 'validated') {
           Object.assign(result.route, { id: job.id, observation: id, sourceMessage: scan.message,
             generation: r.generation, dimension: scan.dimension });
-          remember(checkedRoutes, job.id, result.route);
+          remember(checkedRoutes, job.key, result.route);
         }
       } else if (observation?.mode === 'scene') {
         await observeWindow(bot, observation.options, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
@@ -352,8 +355,8 @@ function partnerService(bot, world, inbox, places, owner) {
         if (result.sent) result.text = args.text;
         if (!result.sent) throw new Error('原玩家不在场，回复未发出');
       } else if (r.skill === 'route') {
-        const route = checkedRoutes.get(args.route);
-        const scan = route && wallSurveys.get(route.observation);
+        const route = checkedRoutes.get(workKey(r.controller, args.route));
+        const scan = route && wallSurveys.get(workKey(r.controller, route.observation));
         if (!scan || route.generation !== r.generation || route.dimension !== bot.game.dimension ||
           !Array.isArray(args.waypoints) || args.waypoints.length !== 4 || route.waypoints.some((point, i) =>
             ['x', 'y', 'z'].some(axis => point[axis] !== args.waypoints[i]?.[axis])) || !Number.isSafeInteger(args.laps) ||
@@ -442,15 +445,18 @@ function partnerService(bot, world, inbox, places, owner) {
   }
   return {
     scene,
-    // 只对同一业务编号启动一次工作，原票据负责轮询、取消以及失联收尾。
+    // 同一控制实例内的原工作负责轮询、取消及失联收尾。
     call(method, id, context, skill, args) {
-      if (!Number.isSafeInteger(context.order) || context.order <= 0 || typeof context.generation !== 'string')
+      if (!Number.isSafeInteger(context?.order) || context.order <= 0 || typeof context.generation !== 'string' ||
+          typeof context.controller !== 'string' || !/^[a-f0-9]{32}$/.test(context.controller) ||
+          !args || typeof args !== 'object' || Array.isArray(args))
         throw new Error('无效游戏消息身份');
-      const known = records.get(id);
+      const key = workKey(context.controller, id);
+      const known = records.get(key);
       if (known) {
         const receipt = known.receipt;
         if (receipt.generation !== context.generation || receipt.order !== context.order || skill !== receipt.skill ||
-          (method === 'partner.begin' && JSON.stringify(args) !== JSON.stringify(known.args)))
+          JSON.stringify(args) !== JSON.stringify(known.args))
           throw new Error('工作身份冲突');
         if (known === active) {
           known.polled = performance.now();
@@ -469,12 +475,13 @@ function partnerService(bot, world, inbox, places, owner) {
       // 只回收已经退出且原消息不可能再次接纳的票据。
       if (records.size >= 64) {
         const reclaimable = [...records].find(([, entry]) => entry !== active && entry.receipt.exited &&
-          (entry.receipt.generation !== context.generation || entry.receipt.order !== context.order));
+          (entry.receipt.generation !== context.generation || entry.receipt.order !== context.order ||
+            entry.receipt.controller !== context.controller));
         if (!reclaimable) throw new Error('游戏工作回执已满');
         records.delete(reclaimable[0]);
       }
-      const job = { id, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
-      records.set(id, job);
+      const job = { id, key, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
+      records.set(key, job);
       if (controlsBody) {
         active = job;
         const timer = setInterval(() => {

@@ -7,7 +7,7 @@ GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id
     : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), skill_(std::move(skill)),
       deadline_(skill_ == "follow" ? std::chrono::steady_clock::time_point::max() :
           std::chrono::steady_clock::now() + std::chrono::seconds(skill_ == "route" ? 180 : 35)) {
-    if (action_ == GameAction::partner) static_cast<void>(partner_request("partner.begin", id_, config_.key, skill_, arguments_));
+    if (action_ == GameAction::partner) static_cast<void>(partner_request("partner.begin", id_, config_, skill_, arguments_));
     else if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
     else if (action_ == GameAction::mine) static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));
     else static_cast<void>(return_request("return.begin", id_, config_.key, arguments_));
@@ -36,7 +36,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         if (!pipe_) {
             if (stopping_) phase_ = Phase::stop;
             const char* verb = phase_ == Phase::begin ? ".begin" : phase_ == Phase::stop ? ".stop" : ".read";
-            const auto frame = action_ == GameAction::partner ? partner_request(std::string("partner") + verb, id_, config_.key, skill_, arguments_)
+            const auto frame = action_ == GameAction::partner ? partner_request(std::string("partner") + verb, id_, config_, skill_, arguments_)
                 : action_ == GameAction::inspect ? inspect_request(std::string("inspect") + verb, id_, config_.key, arguments_)
                 : action_ == GameAction::mine ? mine_request(std::string("mine") + verb, id_, config_.key, arguments_)
                 : return_request(std::string("return") + verb, id_, config_.key, arguments_);
@@ -48,7 +48,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
         pipe_.reset();
         transport_failures_ = 0;
         if (action_ == GameAction::partner) {
-            auto value = partner_reply(*wire, id_, skill_, arguments_);
+            auto value = partner_reply(*wire, id_, config_.controller, skill_, arguments_);
             progress_ = std::move(value.progress);
             if (value.exited && (skill_ == "place" || skill_ == "fill_target")) return GameResult{true, value.placement_verified || value.changed ? GameEffect::observed :
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};

@@ -87,26 +87,32 @@ int main() {
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
         private_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
+        const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         const auto envelope = Json{{"context",source},{"arguments",{{"block","dirt"},{"count",2}}}}.dump();
-        const auto frame = Json::parse(dfy::mc::partner_request("partner.begin", "work", std::string(64,'a'), "collect", envelope));
-        if (frame.at("context") != source || frame.at("arguments").at("block") != "dirt") return 1;
         auto action = source;
+        action["controller"] = config.controller;
+        for (const auto method : {"partner.begin","partner.read","partner.stop"}) {
+            const auto frame = Json::parse(dfy::mc::partner_request(method,"work",config,"collect",envelope));
+            if (frame.at("context") != action || frame.at("arguments") != Json::parse(envelope).at("arguments")) return 1;
+        }
         action.update(Json{{"skill","collect"},{"exited",true},{"result",{{"status","blocked"},{"broken",1}}}});
         Json receipt{{"version",1},{"id","work"},{"action",action}};
-        const auto partial = dfy::mc::partner_reply(receipt.dump(), "work", "collect", envelope);
+        const auto partial = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope);
         if (!partial.exited || partial.arrived || Json::parse(partial.payload).at("broken") != 1) return 1;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",std::string(32,'b'),"collect",envelope); });
         receipt["action"]["order"] = 1;
-        rejects([&] { dfy::mc::partner_reply(receipt.dump(), "work", "collect", envelope); });
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope); });
         const auto placement = Json{{"context",source},{"arguments",{{"block","minecraft:oak_door"},{"x",1},{"y",-60},{"z",3}}}}.dump();
         action = source;
+        action["controller"] = config.controller;
         action.update(Json{{"skill","place"},{"exited",true},{"result",{{"status","interrupted"},{"placementAttempted",true},
             {"placed",true},{"blocks",Json::array({{{"block","oak_door"},{"x",1},{"y",-60},{"z",3},{"half","lower"}},
                 {{"block","oak_door"},{"x",1},{"y",-59},{"z",3},{"half","upper"}}})}}}});
         receipt["action"] = action;
-        const auto placed = dfy::mc::partner_reply(receipt.dump(),"work","place",placement);
+        const auto placed = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"place",placement);
         if (!placed.exited || placed.arrived || !placed.placement_verified || !placed.placement_attempted) return 1;
         receipt["action"]["result"]["blocks"][1]["z"] = 4;
-        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","place",placement); });
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"place",placement); });
         const Json first{{"x",1},{"y",-60},{"z",3}}, second{{"x",2},{"y",-60},{"z",3}};
         const auto fill = Json{{"context",source},{"arguments",{{"block","dirt"},{"cells",Json::array({first,second})},
             {"sourceMessage",1},{"taskRevision",2}}}}.dump();
@@ -117,15 +123,16 @@ int main() {
         auto change = second;
         change.update(Json{{"before","air"},{"after","dirt"}});
         action = source;
+        action["controller"] = config.controller;
         action.update(Json{{"skill","fill_target"},{"exited",true},{"result",{{"status","blocked"},{"placementAttempted",true},
             {"sourceMessage",1},{"taskRevision",2},{"cells",Json::array({blocked,complete})},{"changes",Json::array({change})}}}});
         receipt["action"] = action;
-        if (!dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill).changed) return 1;
+        if (!dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"fill_target",fill).changed) return 1;
         receipt["action"]["result"]["cells"][0]["x"] = 2;
-        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill); });
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"fill_target",fill); });
         receipt["action"] = action;
         receipt["action"]["result"]["changes"][0]["x"] = 3;
-        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work","fill_target",fill); });
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"fill_target",fill); });
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

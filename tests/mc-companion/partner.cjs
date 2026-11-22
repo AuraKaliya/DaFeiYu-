@@ -12,7 +12,7 @@ async function exercise(fixture, player, fish) {
   const world = observeWorld(fish);
   const inbox = ownerInbox(fish, world, player.player.uuid, true);
   const actions = inspectionService(fish, world, inbox, landmarks(), null, true, player.player.uuid);
-  const context = { generation: world.read().generation, order: 1 };
+  const context = { generation: world.read().generation, order: 1, controller: randomUUID().replaceAll('-', '') };
   // 驱动一个授权技能到实际退出，并验证重投不会新开工作。
   async function invoke(skill, args) {
     const id = randomUUID();
@@ -34,6 +34,15 @@ async function exercise(fixture, player, fish) {
     await until(() => fish.blockAt(fish.entity.position.clone().set(4, -60, 0))?.name === 'dirt', '泥土实际就绪');
     player.chat('给小屋备点材料吧');
     await until(() => inbox.get(context.generation, 1), '收到原话');
+    const work = randomUUID();
+    const nextController = { ...context, controller: randomUUID().replaceAll('-', '') };
+    const oldReceipt = actions.partner.call('partner.begin', work, context, 'observe', {});
+    assert.throws(() => actions.partner.call('partner.read', work, nextController, 'observe', {}));
+    assert.throws(() => actions.partner.call('partner.read', work, context, 'observe', { block: 'dirt' }), /工作身份冲突/);
+    const nextReceipt = actions.partner.call('partner.begin', work, nextController, 'observe', {});
+    assert.equal(nextReceipt.controller, nextController.controller);
+    assert.notStrictEqual(nextReceipt, oldReceipt);
+    assert.strictEqual(actions.partner.call('partner.read', work, context, 'observe', {}), oldReceipt);
     assert.ok((await invoke('observe', { block: 'dirt' })).visible.length);
     assert.equal((await invoke('move', { x: 1, y: -60, z: 0 })).status, 'done');
     for (const [block, count] of [['dirt', 2], ['oak_log', 1]]) {
@@ -55,7 +64,8 @@ async function exercise(fixture, player, fish) {
     await until(() => inbox.get(context.generation, 2), '新消息到达');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), context, 'collect', { block: 'dirt', count: 2 }));
     const current = { ...context, order: 2 }, move = randomUUID();
-    actions.partner.call('partner.begin', move, current, 'move', { x: 28, y: -60, z: -4 });
+    const moveArgs = { x: 28, y: -60, z: -4 };
+    actions.partner.call('partner.begin', move, current, 'move', moveArgs);
     await until(() => fish.entity.position.x > 14, '接管前确实正在移动');
     player.chat('到哪了？');
     await until(() => inbox.get(context.generation, 3), '移动期间收到玩家消息');
@@ -63,11 +73,11 @@ async function exercise(fixture, player, fish) {
     const talk = randomUUID();
     const reply = actions.partner.call('partner.begin', talk, later, 'reply', { text: '还在路上。' });
     assert.ok(reply.exited && reply.result.sent);
-    assert.equal(actions.partner.call('partner.read', move, current, 'move').exited, false);
+    assert.equal(actions.partner.call('partner.read', move, current, 'move', moveArgs).exited, false);
     assert.equal(actions.partner.call('partner.begin', randomUUID(), later, 'observe', {}).result.status, 'done');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), later, 'move', { place: 'player' }), /正忙/);
-    actions.partner.call('partner.stop', move, current, 'move');
-    await until(() => actions.partner.call('partner.read', move, current, 'move').exited, '原移动退出');
+    actions.partner.call('partner.stop', move, current, 'move', moveArgs);
+    await until(() => actions.partner.call('partner.read', move, current, 'move', moveArgs).exited, '原移动退出');
     const follow = randomUUID();
     const args = { distance: 3 };
     fixture.send('tp DfyOwner 21.5 -60 0.5');
@@ -82,7 +92,7 @@ async function exercise(fixture, player, fish) {
     assert.equal(followAt().exited, false);
     assert.equal(actions.releaseControl(current.generation, 3).phase, 'requested');
     await until(() => actions.controlReceipt(current.generation)?.phase === 'released', '游戏确认已释放');
-    assert.equal(actions.partner.call('partner.read', move, current, 'move').result.status, 'interrupted');
+    assert.equal(actions.partner.call('partner.read', move, current, 'move', moveArgs).result.status, 'interrupted');
     assert.equal(followAt().result.status, 'interrupted');
     assert.throws(() => actions.partner.call('partner.begin', randomUUID(), current, 'move', { place: 'player' }));
   } finally { await actions.close(); inbox.close(); world.close(); }
