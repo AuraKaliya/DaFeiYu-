@@ -473,8 +473,8 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (skill == "skills") return discover(args);
     if (skill == "knowledge") return lookup_knowledge(args);
     const auto operation = args.value("operation","");
+    if (body_busy) return {{"status","busy"},{"reason","foreground_admitting"}};
     if (operation == "start_task" || operation == "restart_task") {
-        if (body_busy) return {{"status","busy"},{"reason","foreground_admitting"}};
         return switch_task(args);
     }
     if (operation == "begin_correction") {
@@ -486,7 +486,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
             if (waits_for_player(session_) && question_->order < order_) complete_question("superseded",{});
             cancel_plan("task_changed");
             clear_queue("task_changed");
-            if (motion_ && motion_->skill != "follow") motion_->stopping = true;
+            if (motion_ && !motion_->plan_node) hold_task_motion();
             if (confirmation_ && confirmation_->work) confirm_once("withdrawn","task");
         }
         return result;
@@ -514,10 +514,20 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     if (task_.revision() != prior_revision) {
         cancel_plan("task_changed");
-        if (motion_ && motion_->skill == "fill_target") motion_->stopping = true;
+        clear_queue("task_changed");
+        settlements_.clear();
+        if (confirmation_ && confirmation_->work) confirm_once("withdrawn","task");
+        hold_task_motion();
     }
     expansion_pending_ |= (scope() & ~prior_scope).any();
     return result;
+}
+
+// 标记旧前台工作并保留原有交接，实际退出由其工作票据确认。
+void PartnerLoop::hold_task_motion() {
+    if (!motion_ || motion_->skill == "follow") return;
+    if (!handoff_ || handoff_->work != motion_->work) handoff_ = Handoff{motion_->work};
+    motion_->stopping = true;
 }
 
 // 登记新原话并撤下旧计划，已发送动作仍由原工作负责收尾。
@@ -538,8 +548,7 @@ Json PartnerLoop::switch_task(const Json& args) {
     plan_receipts_.clear();
     if (motion_ && motion_->skill != "follow") {
         awaiting_restarted_plan_ = args.at("operation") == "restart_task" && motion_->plan_node.has_value();
-        if (!handoff_ || handoff_->work != motion_->work) handoff_ = Handoff{motion_->work};
-        motion_->stopping = true;
+        hold_task_motion();
     } else {
         awaiting_restarted_plan_ = false;
         handoff_.reset();
@@ -656,10 +665,10 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
-    if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited" && !(plan_ && plan_->active)) return "task.ready";
     if (ready_settlement() != settlements_.cend()) return "motion.finished";
     if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
     if (plan_ && plan_->active) return {};
+    if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
     if (waits_for_player(session_)) return {};
@@ -854,10 +863,11 @@ void PartnerLoop::advance_motion(bool stopping) {
         publish("mc.partner.motion",handoff_->receipt);
     }
     if (motion.plan_node) {
-        if (!stopping && !handing_off) task_.record(fact);
+        if (!stopping && !handing_off)
+            task_.record(fact,motion.revision == task_.revision() && plan_->cancellation.empty());
         finish_plan_node(*motion.plan_node,verified,receipt);
     } else if (!stopping && !paused && !held && !handing_off) {
-        task_.record(fact);
+        task_.record(fact,motion.skill == "follow" || motion.revision == task_.revision());
         settle_work(motion.invocation,std::move(fact));
     }
     if (departed) {

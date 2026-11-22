@@ -199,9 +199,11 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     using namespace dfy;
     using namespace model;
     using Json = nlohmann::json;
-    const bool notes = variant == L"partner-revision-notes";
-    const bool approval = variant == L"partner-revision-approval";
-    const bool goal = variant == L"partner-revision-goal";
+    const bool direct = variant.starts_with(L"partner-revision-direct-");
+    const bool direct_place = variant.ends_with(L"-direct-place");
+    const bool notes = variant.ends_with(L"-notes");
+    const bool approval = variant.ends_with(L"-approval");
+    const bool goal = variant == L"partner-revision-goal" || direct_place;
     const bool correction = variant.starts_with(L"partner-revision-correction");
     const bool correction_lost = variant == L"partner-revision-correction-lost";
     const bool navigation = variant.starts_with(L"partner-revision-navigation");
@@ -225,7 +227,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const auto reason = approval ? "approval_changed" : "task_changed";
     std::atomic_bool checked = false;
     unsigned attention_turns = 0;
-    std::string follow_id;
+    std::string follow_id, old_work;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
@@ -534,8 +536,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     task.at("goal") != "竖着补墙") throw std::runtime_error("the corrected goal and cells did not switch together");
                 return {{Role::assistant,R"({"internal":"wall rebound"})"}};
             }
-            if (last.tool_call_id == "start-task") return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
-            if (last.tool_call_id == "allow-dig") {
+            if (last.tool_call_id == "start-task" && !direct_place) return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
+            if (last.tool_call_id == "allow-dig" && !direct) {
                 const Json first{{"id","first"},{"skill","dig_block"},
                     {"arguments",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2}}}};
                 auto second = first;
@@ -551,10 +553,38 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     (notes && (task.at("detail") != "补记角落" || task.at("next") != "continue")))
                     throw std::runtime_error("task update did not classify the execution change");
                 std::ofstream(root/"revision-updated").put('1');
+                if (direct && !notes)
+                    return call("_gather_ground","early-work",{{"item","dirt"},{"requiredStock",2}});
+            }
+            if (last.tool_call_id == "early-work") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (result.value("reason","") != "waiting_for_old_work")
+                    throw std::runtime_error("new foreground work entered before the old exit reached the turn");
             }
             return {{Role::assistant,R"({"internal":"receipt stored"})"}};
         }
         const auto input = Json::parse(last.content);
+        if (direct && input.at("trigger") == "skills.expanded") {
+            if (direct_place) {
+                auto cell = wall.front();
+                cell["block"] = "dirt";
+                return call("_place","direct-work",cell);
+            }
+            return call("_collect","direct-work",{{"block","grass_block"},{"count",2}});
+        }
+        if (direct && (input.at("trigger") == "task.ready" || input.at("trigger") == "motion.finished")) {
+            const auto& task = input.at("task");
+            const auto& action = notes ? input.at("workSettlement").at("receipts").front() : input.at("taskHandoff").at("action");
+            if (checked || old_work.empty() || action.at("bridgeWork") != old_work || action.at("taskRevision") != 1 ||
+                task.at("revision") != revision ||
+                (task.contains("lastAction") && task.at("lastAction").at("bridgeWork") == old_work) ||
+                action.at("result").at("status") != (notes ? "done" : "interrupted") ||
+                action.at("result").at("changes").size() != (notes ? 2u : 1u) ||
+                (!notes && input.at("taskHandoff").at("status") != "exited"))
+                throw std::runtime_error("direct work did not retain its original actual exit");
+            checked = true;
+            return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+        }
         if (navigation && input.at("trigger") == "task.ready") {
             const auto& exit = input.at("taskHandoff");
             const auto& action = exit.at("action");
@@ -630,11 +660,12 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (event.at("sequence") == 2) {
                 if (restart_route) return call("_follow","follow",{{"distance",4}});
                 Json task{{"goal","清理门边"},{"next","player"}};
-                if (correction || navigation) task["target"] = {{"message",2},{"cells",floor}};
+                if (correction || navigation || direct_place) task["target"] = {{"message",2},{"cells",floor}};
                 return call("_task_update","start-task",task);
             }
             if (event.at("sequence") == 3) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
+                if (direct) old_work = input.at("activeMotion").at("work");
                 if (navigation) return call("_task_update","switch-to-route",{{"operation","start_task"},{"message",3},
                     {"kind","navigation"},{"goal","绕着这面墙跑两圈"}});
                 if (correction) return call("_task_update","register-correction",{{"operation","begin_correction"},{"message",3}});
@@ -642,6 +673,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 Json update{{"goal",goal ? "改清理另一处" : "清理门边"},{"next",notes ? "continue" : "player"}};
                 if (notes) update["detail"] = "补记角落";
                 if (!notes && !goal) update["collection"] = "ground";
+                if (direct_place) update["target"] = Json::object();
                 return call("_task_update","update-task",update);
             }
             if (restart_route && event.at("sequence") == 4) {

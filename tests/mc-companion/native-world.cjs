@@ -20,7 +20,9 @@ async function main() {
   const scene = variant === 'partner-scene';
   const departure = variant === 'partner-departure';
   const revision = variant?.startsWith('partner-revision-');
-  const notes = variant === 'partner-revision-notes';
+  const directRevision = variant?.startsWith('partner-revision-direct-');
+  const directPlace = variant === 'partner-revision-direct-place';
+  const notes = revision && variant.endsWith('-notes');
   const correction = variant?.startsWith('partner-revision-correction');
   const correctionLost = variant === 'partner-revision-correction-lost';
   const navigation = variant?.startsWith('partner-revision-navigation');
@@ -116,13 +118,13 @@ async function main() {
             messages[1].text = '你可以垫上来';
             messages[1].sceneAtMessage.position = { x: 3.5, y: -60, z: 25.5 };
           }
-          if (correction || navigation) {
+          if (correction || navigation || directPlace) {
             messages[1].text = '把我面前墙上的四格补上';
             messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
           }
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
-            notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
-            variant === 'partner-revision-scope' ? '只从地面取材' : '这次采掘先问我确认';
+            notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' || directPlace ? '改成清理另一处' :
+            variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
@@ -423,9 +425,29 @@ async function main() {
               block: 'dirt', status: i < 2 ? 'present' : 'placed' })),
             changes: wall.slice(2).map(cell => ({ ...cell, before: 'air', after: 'dirt' })) } };
         }
-        if (skill === 'reply' && variant === 'partner-revision-approval') {
+        if (skill === 'reply' && variant.endsWith('-approval')) {
           assert.match(args.text, /确认 \d+/);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        if (directRevision) {
+          assert.equal(skill, directPlace ? 'place' : 'collect');
+          assert.equal(context.order, 2);
+          if (method === 'partner.begin') {
+            assert.equal(collecting, undefined);
+            assert.deepEqual(args, directPlace ? { ...wall[0], block: 'dirt', sourceMessage: 2, taskRevision: 1 } :
+              { block: 'grass_block', count: 2 });
+            collecting = id;
+          }
+          assert.equal(id, collecting);
+          if (method === 'partner.read') planReading = true;
+          if (method === 'partner.stop') assert.ok(!notes && ++stopped <= 2);
+          collectExited = notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped === 2;
+          const status = notes ? 'done' : 'interrupted';
+          const changes = (notes ? [1, 2] : [1]).map(x => ({ x, y: -61, z: 2, before: 'grass_block', after: 'air' }));
+          const result = directPlace ? { status, placementAttempted: true, placed: true, sourceMessage: 2, taskRevision: 1,
+            blocks: [{ ...wall[0], block: 'dirt' }], changes: [{ ...wall[0], before: 'air', after: 'dirt' }] } :
+            { status, broken: changes.length, changes, inventoryDelta: { dirt: changes.length } };
+          return { ...context, skill, exited: collectExited, result: collectExited ? result : {} };
         }
         assert.equal(skill, 'collect');
         const x = id === collecting || !collecting ? 1 : 2;
@@ -579,7 +601,7 @@ async function main() {
       if (correctionLost) assert.ok(stopped >= 2);
       else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft ? 0 : 2);
       assert.equal(collectExited, !correctionLost && !restartRoute);
-      assert.equal(nextBlock, notes);
+      assert.equal(nextBlock, notes && !directRevision);
       assert.equal(wallFilled, !!correction && !correctionLost);
       if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
       else if (navigation) assert.equal(routeReads, 9);

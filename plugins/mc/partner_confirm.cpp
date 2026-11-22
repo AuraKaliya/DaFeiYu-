@@ -103,6 +103,8 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
         return (node.state == PlanNode::State::pending || node.state == PlanNode::State::running) &&
             plan_action_requires_approval(node.skill,node.arguments);
     })) cancel_plan("approval_changed");
+    if (confirmation_->work && motion_ && !motion_->plan_node &&
+        (motion_->skill == skill || (skill == "place" && motion_->skill == "fill_target"))) hold_task_motion();
     return true;
 }
 
@@ -188,7 +190,7 @@ void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closin
     if (!envelope) return;
     if (!envelope->empty() && std::chrono::steady_clock::now() < item.deadline) {
         if (motion_) { pause_follow(); return; }
-        if (body_busy) return;
+        if (body_busy || handoff_) return;
         const std::string_view skill = item.skill == "collect" ? "collect" : "place";
         const auto& work = *item.work;
         auto action = std::make_unique<GameWork>(GameAction::partner,config,work.id,*envelope,item.skill);

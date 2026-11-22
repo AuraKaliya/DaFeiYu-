@@ -346,7 +346,10 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     target_ = std::move(target);
     armed_ = true;
     if (commit) correction_ = nullptr;
-    if (execution_changed) ++revision_;
+    if (execution_changed) {
+        ++revision_;
+        receipt_ = nullptr;
+    }
     return {{"status","updated"},{"executionChanged",execution_changed},{"task",context()}};
 }
 

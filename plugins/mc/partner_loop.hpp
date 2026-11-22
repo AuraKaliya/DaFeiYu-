@@ -139,6 +139,8 @@ class PartnerLoop {
     void advance_plan(const BridgeConfig& config, bool closing);
     // 标注仍未执行的节点，并等待在途工作实际退出。
     void cancel_plan(std::string_view reason);
+    // 停止旧任务的前台工作，保留原号与实际退出交接。
+    void hold_task_motion();
     // 检查计划节点是否受当前候选确认约束。
     bool plan_action_requires_approval(std::string_view skill, const nlohmann::json& arguments) const;
     // 用原节点和真实退出结果结算，不重复发布已终结节点。
