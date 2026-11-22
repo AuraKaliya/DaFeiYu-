@@ -14,7 +14,8 @@ constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {byt
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
 constexpr auto instructions = view("Minecraft 同场规则\n"
     "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
-    "task 保存共同目标和原话指向。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
+    "task 保存共同目标和原话指向。新导航目标用 task_update 的 start_task，重开同一任务用 restart_task。"
+    "taskHandoff 表示旧动作真实退出的交接，等待期间可以观察和回话。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
     "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
     "玩家纠正原目标时先用 task_update 的 begin_correction 登记当前原话，再观察或等待旧工作退出。"
     "用 commit_correction 把新目标与方格一起提交，pendingCorrection 保留跨轮原话；目标位于原墙面时沿用原候选。"
@@ -120,6 +121,7 @@ void PartnerLoop::stop() noexcept { if (phase_ == DFY_V2_PARTNER_LISTENING) phas
 void PartnerLoop::reset() noexcept {
     feed_.clear();
     task_ = {};
+    handoff_.reset();
     hit_queries_.clear();
     motion_.reset();
     follow_.reset();
@@ -227,6 +229,7 @@ void PartnerLoop::retire() {
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
+    handoff_.reset();
     guarded_actions_.clear();
     settlements_.clear();
     plan_.reset();
@@ -272,7 +275,9 @@ void PartnerLoop::submit(std::string_view wake) {
             input["queuedActions"].push_back({{"work",step.work},{"skill",step.skill},{"arguments",step.arguments}});
     }
     if (autonomous) input["recentEvents"] = recent_events_;
-    if (!delegated && plan_) input["taskPlan"] = plan_context();
+    if (!delegated && plan_ && (!task_.id() || plan_->revision == task_.revision())) input["taskPlan"] = plan_context();
+    if (!delegated && handoff_) input["taskHandoff"] = handoff_->receipt.is_null() ?
+        Json{{"work",handoff_->work},{"status","waiting_for_old_work"}} : handoff_->receipt;
     if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
@@ -328,6 +333,8 @@ void PartnerLoop::submit(std::string_view wake) {
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     if (!delegated) {
+        if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") != "old_work_exit_unconfirmed")
+            handoff_.reset();
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
         question_result_.clear();
@@ -362,7 +369,8 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
 }
 
 // 只有处理当前世界的原子会话能修改局内状态，旧事件不能更新任务或展开范围。
-Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope) {
+Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope,
+    bool body_busy) {
     if (session != session_ || !request_ || active_delegation_ || !permits(session) || feed_.departed() || !feed_.ready())
         throw std::invalid_argument("MC partner: task owner unavailable");
     const auto input = Json::parse(envelope);
@@ -406,7 +414,13 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     if (skill == "skills") return discover(args);
     if (skill == "knowledge") return lookup_knowledge(args);
-    if (args.value("operation","") == "begin_correction") {
+    const auto operation = args.value("operation","");
+    if (operation == "start_task" || operation == "restart_task") {
+        if (body_busy) return {{"status","busy"},{"reason","foreground_admitting"}};
+        return switch_task(args);
+    }
+    if (operation == "begin_correction") {
+        if (task_.navigation()) return {{"status","invalid_target"},{"reason","task_switch_required"}};
         if (events_.empty() || events_.back().at("type") != "player.message" || args.at("message") != order_)
             return {{"status","stale_correction"}};
         auto result = task_.begin_correction(events_.back(),feed_.observation());
@@ -445,6 +459,29 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         if (motion_ && motion_->skill == "fill_target") motion_->stopping = true;
     }
     expansion_pending_ |= (scope() & ~prior_scope).any();
+    return result;
+}
+
+// 登记新原话并撤下旧计划，已发送动作仍由原工作负责收尾。
+// 步骤：校验新的玩家指令 → 撤销旧节点和追问 → 等待原前台工作的真实退出。
+Json PartnerLoop::switch_task(const Json& args) {
+    if (events_.empty() || events_.back().at("type") != "player.message" || args.value("message",std::uint64_t{}) != order_)
+        return {{"status","stale"}};
+    if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "old_work_exit_unconfirmed")
+        return handoff_->receipt;
+    const auto result = task_.switch_task(args,events_.back());
+    if (result.at("status") != "updated") return result;
+
+    if (question_ && !question_->approval) complete_question("superseded",{});
+    if (confirmation_ && confirmation_->work) confirm_once("withdrawn","task");
+    cancel_plan("task_changed");
+    clear_queue("task_changed");
+    settlements_.clear();
+    plan_receipts_.clear();
+    if (motion_ && motion_->skill != "follow") {
+        if (!handoff_ || handoff_->work != motion_->work) handoff_ = Handoff{motion_->work};
+        motion_->stopping = true;
+    } else handoff_.reset();
     return result;
 }
 
@@ -554,6 +591,7 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
 std::string_view PartnerLoop::autonomous_wake() const {
     if (!feed_.ready() || !feed_.pending().empty() || feed_.gap() || feed_.departed()) return {};
+    if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited" && !(plan_ && plan_->active)) return "task.ready";
     if (ready_settlement() != settlements_.cend()) return "motion.finished";
     if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
     if (plan_ && plan_->active) return {};
@@ -562,6 +600,18 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());
+}
+
+// 将目标纠正、任务交接和导航权限用于所有前台入口。
+std::string_view PartnerLoop::front_barrier(std::uint64_t session, std::string_view skill) const noexcept {
+    if (session != session_ || !session_) return {};
+    if (handoff_) {
+        if (handoff_->receipt.is_null()) return "waiting_for_old_work";
+        if (handoff_->receipt.at("status") == "old_work_exit_unconfirmed") return "old_work_exit_unconfirmed";
+    }
+    if (task_.correcting()) return "correction_pending";
+    if (task_.navigation() && skill != "route") return "navigation_requires_route";
+    return {};
 }
 
 // 把原退出票据的效果与正文移动到本轮预留槽位。
@@ -621,6 +671,8 @@ void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill,
     }
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
     motion_->pointed = pointed;
+    motion_->task = task_.id();
+    motion_->revision = task_.revision();
     wait_for_work_ = wait_for_work_ || wait;
 }
 
@@ -647,6 +699,8 @@ void PartnerLoop::advance_motion(bool stopping) {
     auto& motion = *motion_;
     Json fact{{"generation",motion.world},{"order",motion.order},{"session",motion.session},
         {"request",motion.request},{"invocation",motion.invocation},{"skill",motion.skill},{"bridgeWork",motion.work}};
+    if (motion.task) fact["taskId"] = motion.task;
+    if (motion.skill != "follow") fact["taskRevision"] = motion.revision;
     if (motion.skill == "follow" && follow_) {
         fact["work"] = follow_->id;
         fact["segment"] = follow_->segment;
@@ -674,9 +728,16 @@ void PartnerLoop::advance_motion(bool stopping) {
     }
     fact["effect"] = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
         result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
-    fact["result"] = result->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(result->payload);
+    const bool handing_off = handoff_ && handoff_->work == motion.work;
+    fact["result"] = result->payload.empty() ? Json{{"status",handing_off && !motion.action->attempted() ? "skipped" : "unconfirmed"}} :
+        Json::parse(result->payload);
     const auto& receipt = fact.at("result");
     const bool departed = receipt.at("status") == "unconfirmed";
+    if (handing_off && departed && !stopping && !handoff_->rechecked) {
+        handoff_->rechecked = true;
+        motion.action->recheck_exit();
+        return;
+    }
     if (departed && result->effect == GameEffect::unknown && motion.stopping && motion.skill != "follow")
         task_.hold_correction(motion.work);
     const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !departed;
@@ -689,10 +750,16 @@ void PartnerLoop::advance_motion(bool stopping) {
     const bool verified = verified_action(receipt,motion.skill,motion.pickup);
     const bool failed = motion.queued && !motion.plan_node && !verified &&
         !(replacing_motion_ && receipt.at("status") == "interrupted");
+    if (handing_off) {
+        if (!stopping) task_.record(fact,false);
+        handoff_->receipt = {{"status",departed ? "old_work_exit_unconfirmed" : "exited"},
+            {"work",motion.work},{"action",fact}};
+        publish("mc.partner.motion",handoff_->receipt);
+    }
     if (motion.plan_node) {
-        if (!stopping) task_.record(fact);
+        if (!stopping && !handing_off) task_.record(fact);
         finish_plan_node(*motion.plan_node,verified,receipt);
-    } else if (!stopping && !paused) {
+    } else if (!stopping && !paused && !handing_off) {
         task_.record(fact);
         settle_work(motion.invocation,std::move(fact));
     }
@@ -843,6 +910,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     if (feed_.departed()) {
         if (plan_ && plan_->active) return;
         task_ = {};
+        handoff_.reset();
         settlements_.clear();
         plan_.reset();
         plan_receipts_.clear();

@@ -130,6 +130,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool goal = variant == L"partner-revision-goal";
     const bool correction = variant.starts_with(L"partner-revision-correction");
     const bool correction_lost = variant == L"partner-revision-correction-lost";
+    const bool navigation = variant == L"partner-revision-navigation";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
@@ -197,6 +198,20 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (last.role == Role::tool) {
+            if (last.tool_call_id == "switch-to-route") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto& task = result.at("task");
+                if (task.at("id") != 3 || task.at("revision") != 2 || task.at("kind") != "navigation" ||
+                    task.contains("target") || task.contains("lastAction") || task.at("previousTarget").at("cells") != floor)
+                    throw std::runtime_error("new task inherited the old construction goal");
+                return call("_dig_block","stale-execution",{{"block","dirt"},{"x",1},{"y",-61},{"z",2}});
+            }
+            if (last.tool_call_id == "stale-execution") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto barrier = result.at("reason");
+                if (barrier != "waiting_for_old_work" && barrier != "navigation_requires_route")
+                    throw std::runtime_error("old front action bypassed the task handoff");
+            }
             if (last.tool_call_id == "lost-correction") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (result.at("status") != "old_work_exit_unconfirmed" || !result.at("work").get_ref<const std::string&>().starts_with("plan."))
@@ -244,6 +259,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,R"({"internal":"receipt stored"})"}};
         }
         const auto input = Json::parse(last.content);
+        if (navigation && input.at("trigger") == "task.ready") {
+            const auto& exit = input.at("taskHandoff");
+            const auto& action = exit.at("action");
+            if (checked || input.contains("taskPlan") || input.contains("workSettlement") || input.contains("planSettlements") ||
+                exit.at("work") != action.at("bridgeWork") || action.at("result").at("status") != "interrupted" ||
+                action.at("taskRevision") != 1 || action.at("result").at("inventoryDelta").at("dirt") != 1)
+                throw std::runtime_error("old work did not settle separately by original ID");
+            checked = true;
+            return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+        }
         if (input.at("trigger") == "plan.finished") {
             const auto& plan = input.at("taskPlan");
             const auto& layers = input.at("planSettlements");
@@ -286,11 +311,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& event = input.at("events").back();
             if (event.at("sequence") == 2) {
                 Json task{{"goal","清理门边"},{"next","player"}};
-                if (correction) task["target"] = {{"message",2},{"cells",floor}};
+                if (correction || navigation) task["target"] = {{"message",2},{"cells",floor}};
                 return call("_task_update","start-task",task);
             }
             if (event.at("sequence") == 3) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
+                if (navigation) return call("_task_update","switch-to-route",{{"operation","start_task"},{"message",3},
+                    {"kind","navigation"},{"goal","绕着这面墙跑两圈"}});
                 if (correction) return call("_task_update","register-correction",{{"operation","begin_correction"},{"message",3}});
                 if (approval) return call("_dig_block","require-approval",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2},{"approval","game"}});
                 Json update{{"goal",goal ? "改清理另一处" : "清理门边"},{"next",notes ? "continue" : "player"}};

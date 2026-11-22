@@ -14,6 +14,8 @@ class GameWork {
     GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments, std::string skill = {});
     // 推进原工作，可在桥接接纳后交出仍需轮询的动作。
     std::optional<GameResult> poll(bool cancelled, bool defer = false);
+    // 有界地重查同一工作退出，沿用原编号和幂等停止操作。
+    void recheck_exit() noexcept;
     // 查询是否可能已有动作接纳，用于错误时保守标记效果。
     bool attempted() const noexcept { return attempted_; }
     // 读取最近一次已核验的在途进展。

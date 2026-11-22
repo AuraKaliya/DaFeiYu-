@@ -30,7 +30,9 @@ bool valid_step(std::string_view skill, const Json& args) {
 // 步骤：核对操作与旧工作 → 校验本轮工具范围及步骤参数 → 更新待执行队列。
 nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& args) {
     const auto operation = args.at("operation").get<std::string>();
-    if (task_.correcting() && operation != "clear") return {{"status","blocked"},{"reason","correction_pending"}};
+    if (operation != "clear") {
+        if (const auto reason = front_barrier(session_,{}); !reason.empty()) return {{"status","blocked"},{"reason",reason}};
+    }
     if (waits_for_player(session_) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
     if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
@@ -173,6 +175,8 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     motion_.emplace(Motion{step.order,session_,step.request,step.invocation,session_world_,step.work,step.skill,std::move(action)});
     motion_->accepted = false;
     motion_->queued = true;
+    motion_->task = task_.id();
+    motion_->revision = step.revision;
     motion_->pickup = step.pickup;
     motion_->plan_node = step.plan_node;
     motion_->pointed = step.pointed;

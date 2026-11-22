@@ -268,10 +268,10 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         }
         if (partner_turn && (skill->name == "collect" || legacy || gather_ground)) raw->partner.bind_collection(call->session,job.arguments);
         const bool alters_world = controls_body && (game_skill == "collect" || game_skill == "place" || game_skill == "fill_target");
-        const bool correction_blocked = alters_world && raw->partner.waiting_for_target(call->session);
+        const auto front_block = partner_turn && controls_body ? raw->partner.front_barrier(call->session,game_skill) : std::string_view{};
         const bool player_blocked = alters_world && raw->partner.waits_for_player(call->session,pointed.value_or(false) ? resolves : 0);
         const bool duplicate_reply = game_skill == "reply" && !raw->partner.reserve_reply(call->session);
-        const bool target_blocked = correction_blocked || player_blocked || duplicate_reply || !pointed.has_value() || observation_blocked ||
+        const bool target_blocked = !front_block.empty() || player_blocked || duplicate_reply || !pointed.has_value() || observation_blocked ||
             ((game_skill == "place" || game_skill == "fill_target") &&
             !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target"));
         if (!target_blocked && partner && skill->supports_approval) {
@@ -293,7 +293,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             job.effect = DFY_V2_TOOL_APPLIED;
             raw->partner.resolve_block_question(resolves,job.arguments);
         } else if (target_blocked) {
-            if (correction_blocked) job.output = R"({"status":"blocked","reason":"correction_pending"})";
+            if (!front_block.empty()) job.output = nlohmann::json{{"status","blocked"},{"reason",front_block}}.dump();
             else if (player_blocked) job.output = R"({"status":"blocked","reason":"waiting_for_player"})";
             else if (duplicate_reply) job.output = R"({"status":"already_requested","sent":false})";
             else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
@@ -353,7 +353,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         job->exited = true;
     } else if (job->method == NativeJob::Method::local) {
         try {
-            const auto result = raw->partner.local_skill(job->partner_session,job->invocation,job->skill,job->arguments);
+            const auto result = raw->partner.local_skill(job->partner_session,job->invocation,job->skill,job->arguments,body_job(*raw));
             job->success = result.at("status") != "stale" && result.at("status") != "invalid_target";
             job->effect = result.at("status") == "updated" || result.at("status") == "scheduled" ||
                 result.at("status") == "recorded" || result.at("status") == "stopping" || result.at("status") == "withdrawn" ||

@@ -13,6 +13,14 @@ GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id
     else static_cast<void>(return_request("return.begin", id_, config_.key, arguments_));
 }
 
+// 放弃本地旧读口，延长一次查询原动作退出的时间。
+void GameWork::recheck_exit() noexcept {
+    pipe_.reset();
+    stop_deadline_ = {};
+    next_ = {};
+    phase_ = Phase::stop;
+}
+
 // 每轮最多处理一次非等待本机收发，桥接异常后尝试停止同一动作。
 // 步骤：处理取消和期限 → 提交或查询原命令 → 校验退出或安排下一次读回。
 std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {

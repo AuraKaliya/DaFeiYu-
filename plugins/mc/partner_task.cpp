@@ -74,6 +74,12 @@ bool same_target_scope(const Json& a, const Json& b) {
 Json PartnerTask::context() const {
     Json value{{"revision",revision_},{"goal",goal_},{"detail",detail_},{"next",next_},{"continuationsLeft",remaining_},
         {"collection",collection_}};
+    if (id_) {
+        value["id"] = id_;
+        value["kind"] = kind_;
+        value["instruction"] = instruction_;
+    }
+    if (!previous_target_.is_null()) value["previousTarget"] = previous_target_;
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
     if (correcting()) {
         value["pendingCorrection"] = correction_;
@@ -88,6 +94,39 @@ Json PartnerTask::context() const {
         if (original != source.end()) value["targetObservation"] = original->second;
     }
     return value;
+}
+
+// 交接任务身份和执行修订，已完成对象继续作为观察线索。
+// 步骤：核对玩家消息及旧任务身份 → 更新执行修订 → 清理前一目标的运行状态。
+Json PartnerTask::switch_task(const Json& args, const Json& event) {
+    const auto order = event.at("sequence").get<std::uint64_t>();
+    const bool restart = args.at("operation") == "restart_task";
+    const auto kind = restart ? kind_ : args.value("kind",std::string{});
+    const auto goal = args.value("goal",goal_);
+    if (order == instruction_ && id_ && (!restart || args.value("task",std::uint64_t{}) == id_))
+        return {{"status","unchanged"},{"task",context()}};
+    if (order < instruction_ || (restart && (!id_ || args.value("task",std::uint64_t{}) != id_)))
+        return {{"status","stale"}};
+    if ((kind != "navigation" && kind != "work") || goal.empty() || goal.size() > 1024 || (!restart && !args.contains("goal")))
+        return {{"status","invalid_target"},{"reason","invalid_task_intent"}};
+    if (!unconfirmed_work_.empty()) return {{"status","old_work_exit_unconfirmed"},{"work",unconfirmed_work_}};
+    if (revision_ == UINT64_MAX) throw std::overflow_error("MC partner: task revision exhausted");
+
+    if (!restart) {
+        id_ = order;
+        if (has_target()) previous_target_ = target_;
+        target_ = nullptr;
+    }
+    instruction_ = order;
+    kind_ = kind;
+    goal_ = goal;
+    ++revision_;
+    detail_.clear();
+    next_ = "player";
+    collection_ = "visible";
+    baseline_ = receipt_ = arrival_ = local_observation_ = correction_ = nullptr;
+    disarm();
+    return {{"status","updated"},{"executionChanged",true},{"task",context()}};
 }
 
 // 原话在其接纳回合登记，之后由任务持有到成功换绑或被更新的纠正取代。
@@ -115,6 +154,8 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     auto detail = input.value("detail",goal == goal_ ? detail_ : std::string{});
     auto next = input.at("next").get<std::string>();
     auto collection = input.value("collection",collection_);
+    if (navigation() && (goal != goal_ || input.contains("target") || input.contains("collection")))
+        return {{"status","invalid_target"},{"reason","task_switch_required"}};
     const bool commit = input.value("operation","") == "commit_correction";
     if (commit && (!correcting() || input.at("message") != correction_.at("message") ||
         revision_ != correction_.at("baseRevision") || scene.at("dimension") != correction_.at("dimension")))
@@ -292,11 +333,11 @@ void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, co
 
 // 分别保存原话指向、实际方块变化和最近一次动作。
 // 步骤：归档有来源的观察 → 增补逐格变化 → 缩减网格并更新最近动作。
-void PartnerTask::record(const Json& receipt) {
+void PartnerTask::record(const Json& receipt, bool current) {
     if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
     auto summary = receipt;
     auto& result = summary.at("result");
-    if (receipt.at("skill") == "move" && result.at("status") == "done" && result.value("target",std::string{}) == "player") {
+    if (current && receipt.at("skill") == "move" && result.at("status") == "done" && result.value("target",std::string{}) == "player") {
         arrival_ = {{"order",receipt.at("order")},{"position",result.at("position")}};
         local_observation_ = nullptr;
     }
@@ -338,7 +379,7 @@ void PartnerTask::record(const Json& receipt) {
             changes_.erase(changes_.begin(),changes_.end()-observation_limit);
     }
     if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
-    if (summary.dump().size() <= 4096) receipt_ = std::move(summary);
+    if (current && summary.dump().size() <= 4096) receipt_ = std::move(summary);
 }
 
 // 只接受同一原话视线命中的实际坐标及材质。

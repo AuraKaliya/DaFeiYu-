@@ -13,6 +13,15 @@ class PartnerTask {
     nlohmann::json context() const;
     // 返回执行修订，供计划、待执行动作和确认核对原目标与范围。
     std::uint64_t revision() const noexcept { return revision_; }
+    // 返回新任务的原始玩家消息号及当前执行指令。
+    std::uint64_t id() const noexcept { return id_; }
+    std::uint64_t instruction() const noexcept { return instruction_; }
+    // 判断当前任务是否使用导航目标。
+    bool navigation() const noexcept { return kind_ == "navigation"; }
+    // 登记新任务或重开原任务，保留可供验证的旧对象线索。
+    nlohmann::json switch_task(const nlohmann::json& arguments, const nlohmann::json& event);
+    // 返回原纠正仍未核实退出的工作号。
+    std::string_view unconfirmed() const noexcept { return unconfirmed_work_; }
     // 返回当前共同目标说明。
     std::string_view goal() const noexcept { return goal_; }
     // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
@@ -35,7 +44,7 @@ class PartnerTask {
     // 将当前任务的取材范围固定到实际采掘参数中。
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
-    void record(const nlohmann::json& receipt);
+    void record(const nlohmann::json& receipt, bool current = true);
     // 核对确切方块来自指定玩家原话的命中。
     bool matches_hit(std::uint64_t message, const nlohmann::json& arguments) const;
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
@@ -53,13 +62,13 @@ class PartnerTask {
     bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
     // 验证近期自身视图已覆盖全部拟切换的方格。
     bool verified_cells(const nlohmann::json& target, const nlohmann::json& scene) const;
-    std::uint64_t revision_ = 0;
+    std::uint64_t revision_ = 0, id_ = 0, instruction_ = 0;
     std::uint64_t last_correction_ = 0;
-    std::string goal_, detail_, next_ = "player", collection_ = "visible";
+    std::string kind_, goal_, detail_, next_ = "player", collection_ = "visible";
     std::string unconfirmed_work_;
     unsigned remaining_ = 0;
     bool armed_ = false;
-    nlohmann::json baseline_, receipt_, target_, correction_, changes_ = nlohmann::json::array();
+    nlohmann::json baseline_, receipt_, target_, correction_, previous_target_, changes_ = nlohmann::json::array();
     std::map<std::uint64_t,nlohmann::json> observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;

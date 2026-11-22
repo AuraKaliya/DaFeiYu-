@@ -193,6 +193,8 @@ void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closin
         const auto& work = *item.work;
         auto action = std::make_unique<GameWork>(GameAction::partner,config,work.id,*envelope,item.skill);
         motion_.emplace(Motion{item.order,work.session,work.turn,item.request,item.world,work.id,skill,std::move(action)});
+        motion_->task = task_.id();
+        motion_->revision = work.revision;
         motion_->accepted = false;
     } else {
         auto fact = item.decision;

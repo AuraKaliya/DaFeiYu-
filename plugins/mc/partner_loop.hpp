@@ -31,8 +31,8 @@ class PartnerLoop {
     bool permits(std::uint64_t session) const noexcept;
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
     bool waits_for_work() const noexcept { return wait_for_work_ || (follow_handoff_ && reply_requested_); }
-    // 判断本轮的任务相关写入是否等待已登记的玩家纠正。
-    bool waiting_for_target(std::uint64_t session) const noexcept { return session == session_ && task_.correcting(); }
+    // 返回当前配对的前台动作门槛，空值表示可以继续验证动作。
+    std::string_view front_barrier(std::uint64_t session, std::string_view skill) const noexcept;
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
@@ -58,7 +58,8 @@ class PartnerLoop {
     // 有待执行步骤时，直接动作不得越过队列。
     bool has_queued_action() const noexcept { return !queued_.empty() || (plan_ && plan_->active); }
     // 执行当前原子会话的局内任务或工具目录操作。
-    nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope);
+    nlohmann::json local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope,
+        bool body_busy);
     // 在动作接纳前把当前原话目标绑定到放置参数。
     bool bind_placement(std::uint64_t session, std::string& envelope, bool whole_target = false) const;
     // 给当前子回合的采掘命令附上任务持有的取材范围。
@@ -107,6 +108,8 @@ class PartnerLoop {
     void limit_repair(std::string code);
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
     void advance_motion(bool stopping);
+    // 根据当前原话切换任务并移交旧动作的实际退出责任。
+    nlohmann::json switch_task(const nlohmann::json& arguments);
     // 接纳、清空或替换当前任务修订下尚未执行的步骤。
     nlohmann::json queue_actions(std::uint64_t invocation, const nlohmann::json& arguments);
     // 在角色空闲且原前置工作已核实后提交一个步骤。
@@ -189,8 +192,15 @@ class PartnerLoop {
         bool queued = false;
         std::optional<std::size_t> plan_node;
         bool pointed = false;
+        std::uint64_t task = 0, revision = 0;
     };
     std::optional<Motion> motion_;
+    struct Handoff {
+        std::string work;
+        nlohmann::json receipt;
+        bool rechecked = false;
+    };
+    std::optional<Handoff> handoff_;
     struct Follow {
         std::uint64_t order, request, invocation, segment = 1;
         std::string id;

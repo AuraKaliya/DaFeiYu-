@@ -187,7 +187,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
                 const auto result = read->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(read->payload);
                 const Json fact{{"generation",session_world_},{"order",plan.order},{"session",session_},{"request",plan.request},
                     {"invocation",plan.id},{"bridgeWork",node.work},{"skill","observe"},{"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",result}};
-                if (!closing) task_.record(fact);
+                if (!closing) task_.record(fact,!task_.id() || plan.revision == task_.revision());
                 publish("mc.partner.action",fact);
                 finish_plan_node(index,read->success && result.at("status") == "done",result);
                 node.reading.reset();
@@ -201,7 +201,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
     Json layer{{"status","settled"},{"plan",plan.id},{"layer",plan.layer},{"nodes",std::move(results)}};
     if (!plan.cancellation.empty()) layer["cancelReason"] = plan.cancellation;
     publish("mc.partner.plan",layer);
-    plan_receipts_.push_back(std::move(layer));
+    if (!task_.id() || plan.revision == task_.revision()) plan_receipts_.push_back(std::move(layer));
     ++plan.layer;
     plan.active = std::ranges::any_of(plan.nodes,[&](const auto& node) { return node.layer == plan.layer; });
 }

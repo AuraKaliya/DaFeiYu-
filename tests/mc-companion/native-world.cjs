@@ -22,6 +22,7 @@ async function main() {
   const notes = variant === 'partner-revision-notes';
   const correction = variant?.startsWith('partner-revision-correction');
   const correctionLost = variant === 'partner-revision-correction-lost';
+  const navigation = variant === 'partner-revision-navigation';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const questionExpiry = variant === 'partner-revision-question-expiry';
@@ -81,11 +82,11 @@ async function main() {
         if (departure) messages[2] = left;
         if (revision) {
           messages[1].text = '清理门边两格草方块';
-          if (correction) {
+          if (correction || navigation) {
             messages[1].text = '把我面前墙上的四格补上';
             messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
           }
-          messages[2].text = correction ? '我说的是墙，你应该竖着补' :
+          messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             variant === 'partner-revision-scope' ? '只从地面取材' : '这次采掘先问我确认';
           if (questionExpiry) {
