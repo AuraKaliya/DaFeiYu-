@@ -136,6 +136,7 @@ std::optional<std::string> PartnerLoop::confirm_result(std::uint64_t request) co
     const auto& item = *confirmation_;
     if (item.decision.is_null() || (presentation_ && presentation_->request == request)) return {};
     if ((item.ask_game && !item.presented) || !confirmation_context_current(item.approved_order)) return std::string{};
+    if (!action_question(session_,item.skill,item.arguments).is_null()) return std::string{};
     auto args = item.arguments;
     if (args.value("editBuilt",false)) args["approvedBuiltEdit"] = true;
     args.erase("editBuilt");

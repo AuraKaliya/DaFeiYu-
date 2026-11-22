@@ -41,6 +41,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "接话后发现需要澄清时仍可用 ask_player。没有新消息时，只在玩家关心的进展或受阻发生时主动发言。入场无需固定问候。"
     "玩家纠正时先接他的原话，简短说你会改哪里。游戏聊天省略坐标、工具名和内部状态。"
     "pendingQuestion 标为 expired 时继续等待玩家；只有实际的新回答可解除等待。不要重复追问或用沉默判断同意。"
+    "选择已绑定的放置格时，在 ask_player 的 placementOptions 里登记答复和各自的格。"
+    "按 questionResult.placementCells 重新核对并提交放置；placementExcluded 中的格已被排除。"
     "明确需要授权时才用动作的 approval，聊天只带实际问题。等答复时照常交谈和观察。"
     "玩家交来材料时，核对库存，撤回已无须执行的采集确认，续做原目标。\n");
 constexpr auto review_instructions = view("根据当前分工、现场及新事件决定是否提前停下列出的原动作。"
@@ -171,6 +173,7 @@ void PartnerLoop::reset() noexcept {
     reviewed_ = 0;
     stopped_work_ = false;
     question_.reset(); question_work_.reset(); question_result_.clear(); question_wake_ = false; question_outbound_.clear();
+    placement_choice_ = {};
 }
 
 // 等待原子回合退出并结算该回合关联的实际发言。
@@ -260,6 +263,7 @@ void PartnerLoop::retire() {
     dialogue_.clear();
     previous_.clear();
     question_.reset(); question_result_.clear(); question_wake_ = false;
+    placement_choice_ = {};
     approval_result_ = nullptr;
 }
 
@@ -339,6 +343,10 @@ void PartnerLoop::submit(std::string_view wake) {
         input["pendingQuestion"]["afterPickup"] = question_->after_pickup;
         input["pendingQuestion"]["originalText"] = question_->origin;
     }
+    if (question_ && placement_choice_pending() && question_->item == placement_choice_.item)
+        input["pendingQuestion"]["placementOptions"] = placement_choice_.options;
+    if (placement_choice_.revision == task_.revision() && !placement_choice_.rejected.empty())
+        input["placementExcluded"] = placement_choice_.rejected;
     if (confirmation_ && confirmation_->work && !delegated) {
         const auto& candidate = *confirmation_;
         input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
@@ -512,6 +520,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto resolves = args.value("resolves",std::uint64_t{});
     const bool waiting = waits_for_player(session_);
     const bool answers_question = waiting && committing && resolves == question_->item && player_order > question_->order;
+    if (placement_choice_pending() && !task_.correcting() &&
+        (committing || target != args.end() || args.value("collection",std::string(task_.collection())) != task_.collection() ||
+            args.at("goal").get_ref<const std::string&>() != task_.goal()))
+        return {{"status","waiting_for_player"},{"item",placement_choice_.item}};
     if (waiting && (committing || target != args.end() || args.contains("collection") ||
         args.at("goal").get_ref<const std::string&>() != task_.goal()) &&
         (player_order <= question_->order || (committing && !answers_question)))
@@ -681,7 +693,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
-    if (waits_for_player(session_)) return {};
+    if (waits_for_player(session_) && (!placement_choice_pending() || question_->item != placement_choice_.item)) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());
@@ -800,7 +812,7 @@ void PartnerLoop::track_follow(const Json& evidence, bool terminal) {
 }
 
 // 独立于模型回合轮询已接纳的动作，并记录原动作的真实终态。
-// 步骤：发布接纳 → 处理停止条件并重读 → 归档归属和结果并唤醒。
+// 步骤：复核尚未下发的变更 → 推进或停止原工作 → 归档归属和结果并唤醒。
 void PartnerLoop::advance_motion(bool stopping) {
     if (stopping && (!motion_ || motion_->skill != "follow")) follow_.reset();
     if (!motion_) return;
@@ -816,7 +828,14 @@ void PartnerLoop::advance_motion(bool stopping) {
     if (motion.pointed) fact["pointedDig"] = true;
     motion.stopping = motion.stopping || stopping;
     std::optional<GameResult> result;
-    try { result = motion.action->poll(motion.stopping,!motion.accepted,!feed_.recovering()); }
+    try {
+        if (!motion.stopping && !motion.action->attempted() &&
+            (motion.skill == "collect" || motion.skill == "place" || motion.skill == "fill_target")) {
+            const auto question = action_question(motion.session,motion.skill,Json::parse(motion.action->arguments()).at("arguments"));
+            if (!question.is_null()) result = GameResult{false,GameEffect::none,question.dump()};
+        }
+        if (!result) result = motion.action->poll(motion.stopping,!motion.accepted,!feed_.recovering());
+    }
     catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
 
     if (result && result->accepted) { motion.accepted = true; result.reset(); }

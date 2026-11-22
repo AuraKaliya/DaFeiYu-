@@ -37,6 +37,8 @@ class PartnerTask {
     std::string_view unconfirmed() const noexcept { return unconfirmed_work_; }
     // 返回当前共同目标说明。
     std::string_view goal() const noexcept { return goal_; }
+    // 返回当前取材约束，供局内任务更新识别范围变化。
+    std::string_view collection() const noexcept { return collection_; }
     // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
     nlohmann::json update(const nlohmann::json& arguments, const nlohmann::json& scene, std::uint64_t scene_revision,
         const nlohmann::json* anchor, std::uint64_t player_order = 0);

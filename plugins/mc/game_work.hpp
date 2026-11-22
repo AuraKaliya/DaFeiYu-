@@ -18,6 +18,8 @@ class GameWork {
     void recheck_exit() noexcept;
     // 查询是否可能已有动作接纳，用于错误时保守标记效果。
     bool attempted() const noexcept { return attempted_; }
+    // 借出首次下发之前要复核的原动作参数。
+    const std::string& arguments() const noexcept { return arguments_; }
     // 读取最近一次已核验的在途进展。
     const std::string& progress() const noexcept { return progress_; }
   private:

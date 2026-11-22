@@ -34,7 +34,6 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         if (const auto reason = front_barrier(session_); !reason.empty())
             return {{"status","blocked"},{"reason",reason}};
     }
-    if (waits_for_player(session_,resolves) && operation != "clear") return {{"status","blocked"},{"reason","waiting_for_player"}};
     if (operation == "plan") return submit_plan(invocation,args);
     if (operation == "clear") {
         cancel_plan("cleared");
@@ -73,6 +72,10 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
             (name == "place" && !task_.target_ready()) || requires_approval(name,parameters))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
+        if (pending.empty()) {
+            const auto question = action_question(session_,action->executor,parameters);
+            if (!question.is_null()) return question;
+        }
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
         pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),action->executor,parameters,std::string(required),interrupt});
@@ -167,6 +170,17 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     auto args = step.arguments;
     // 指定单格沿用原范围，普通采集继承当前任务的取材约束。
     if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
+    if (auto question = action_question(session_,step.skill,args); !question.is_null()) {
+        if (step.plan_node) {
+            finish_plan_node(*step.plan_node,false,question);
+            queued_.pop_front();
+        } else {
+            question["work"] = step.work;
+            publish("mc.partner.queue",question);
+            clear_queue(question.at("reason").get_ref<const std::string&>(),step.invocation);
+        }
+        return;
+    }
     if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args)) ||
         (step.skill == "fill_target" && !bind_fill(args))) {
         if (step.plan_node) {

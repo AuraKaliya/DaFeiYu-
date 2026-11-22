@@ -79,20 +79,28 @@ bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Js
 }
 
 // 记下计划提交的确定性拒绝，并保留一次有界修订后的自然结算。
-// 步骤：归还成功提交 → 记录重复失败额度 → 发布未接纳事实和原任务身份。
+// 步骤：归还成功提交 → 单独结算待答步骤 → 为其他拒绝记录修订额度和原任务身份。
 Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
     if (result.at("status") == "queued") {
         plan_rejection_.clear();
         return result;
     }
+    const auto reason = result.value("reason","");
+    if (reason == "answer_target_mismatch" || (reason == "waiting_for_player" && placement_choice_pending() &&
+        result.at("item") == placement_choice_.item)) {
+        result["attempt"] = invocation;
+        result["retryAllowed"] = false;
+        publish("mc.partner.plan",{{"status","step_blocked"},{"revision",task_.revision()},{"order",order_},{"result",result}});
+        return result;
+    }
     if (result.at("status") == "invalid_plan" &&
-        (++plan_failures_ >= 3 || ++repair_failures_["plan:"+result.value("reason",std::string{})] >= 2)) {
+        (++plan_failures_ >= 3 || ++repair_failures_["plan:"+reason] >= 2)) {
         plan_repair_exhausted_ = true;
         task_.disarm();
     }
     result["attempt"] = invocation;
     result["retryAllowed"] = !plan_repair_exhausted_ && result.at("status") == "invalid_plan";
-    if (result.value("reason",std::string{}) == "unsupported_plan_skill") result["planNodes"] = plan_skills();
+    if (reason == "unsupported_plan_skill") result["planNodes"] = plan_skills();
     plan_rejection_ = {{"status","rejected"},{"revision",task_.revision()},{"order",order_},{"result",result}};
     if (task_.id()) plan_rejection_["task"] = task_.id();
     publish("mc.partner.plan",plan_rejection_);
@@ -180,6 +188,19 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (std::ranges::any_of(plan.nodes,[](const auto& node) { return !node.layer; }))
         return {{"status","invalid_plan"},{"reason","cyclic_dependencies"}};
 
+    Json waiting;
+    bool ready = false;
+    for (const auto& node : plan.nodes) if (node.after.empty()) {
+        const auto executor = partner_action(node.skill)->executor;
+        auto question = action_question(session_,executor,node.arguments,resolves);
+        if (question.is_null()) ready = true;
+        else if (waiting.is_null()) {
+            waiting = std::move(question);
+            waiting["node"] = node.id;
+        }
+    }
+    if (!ready) return waiting;
+
     plan_ = std::move(plan);
     if (resolves) complete_pointed_question();
     wait_for_work_ = true;
@@ -254,6 +275,8 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
             const auto skill = partner_action(node.skill)->executor;
             node.state = State::running;
             if (!ready) finish_plan_node(index,false,{{"status","skipped"},{"reason","prerequisite_failed"}});
+            else if (const auto question = action_question(session_,skill,node.arguments); !question.is_null())
+                finish_plan_node(index,false,question);
             else if (skill.empty()) finish_plan_node(index,false,{{"status","blocked"},{"reasonCode","skill_unavailable"},
                 {"item",node.arguments.at("item")},{"count",node.arguments.at("count")}});
             else if (skill == "observe") {

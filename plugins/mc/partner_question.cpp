@@ -75,13 +75,13 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
 }
 
 // 保存现地追问及目标确定后要继续的操作。
-// 步骤：验证渠道及问题 → 核对可选后继能力 → 按玩家原话和任务修订登记。
+// 步骤：验证渠道及问题 → 核对后继能力或放置选项 → 按玩家原话和任务修订登记。
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
     if (question_work_) return {{"status","busy"}};
     const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("local"));
-    const auto options = args.value("options",Json::array());
+    auto options = args.value("options",Json::array());
     if (text.empty() || text.size() > 400 || !options.is_array() || options.size() > 4 ||
         (path != "local" && (!question_events_ || (path != "direct" && path != "main"))))
         throw std::invalid_argument("MC question: invalid request");
@@ -95,6 +95,36 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         !after_pickup.at("count").is_number_integer() || after_pickup.at("count") < 1 || after_pickup.at("count") > 32 ||
         (after_pickup.contains("pickup") && item_name(after_pickup.at("pickup").get_ref<const std::string&>()).empty())))
         throw std::invalid_argument("MC question: invalid pickup continuation");
+    if (const auto choices = args.find("placementOptions"); choices != args.end()) {
+        const bool current = placement_choice_.revision == task_.revision();
+        if (path != "local" || !after_pickup.is_null() || args.contains("options") || !task_.target_ready() ||
+            !choices->is_array() || choices->size() < 2 || choices->size() > 4 ||
+            (placement_choice_pending() && *choices != placement_choice_.options))
+            throw std::invalid_argument("MC question: invalid placement choices");
+        Json used = Json::array();
+        for (const auto& option : *choices) {
+            const auto& answer = option.at("answer");
+            const auto& cells = option.at("cells");
+            if (option.size() != 2 || !answer.is_string() || answer.get_ref<const std::string&>().empty() ||
+                answer.get_ref<const std::string&>().size() > 160 || std::ranges::find(options,answer) != options.end() ||
+                !cells.is_array() || cells.empty() || cells.size() > task_.target_cells().size())
+                throw std::invalid_argument("MC question: invalid placement option");
+            for (const auto& cell : cells) {
+                if (std::ranges::find(task_.target_cells(),cell) == task_.target_cells().end() ||
+                    std::ranges::find(used,cell) != used.end() ||
+                    (current && std::ranges::any_of(placement_choice_.rejected,[&](const auto& rejected) {
+                        return rejected.at("cell") == cell;
+                    }))) throw std::invalid_argument("MC question: placement option outside the available task cells");
+                used.push_back(cell);
+            }
+            options.push_back(answer);
+        }
+        if (!current) placement_choice_ = {};
+        placement_choice_.revision = task_.revision();
+        placement_choice_.item = id;
+        placement_choice_.options = *choices;
+    }
+
     question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
     question_->options = options;
     question_->after_pickup = after_pickup;
@@ -131,7 +161,8 @@ void PartnerLoop::intake_question(std::string_view category, const Json& body, c
         {"event",event},{"disposition",current ? "matched" : "stale"},{"mailbox",message.mailbox},{"message",message.sequence}});
 }
 
-// 把已核对的答复作为插件局内事实提交给后续上下文。
+// 结算原问题并将答复及获选方格交给后续回合。
+// 步骤：分流原审批 → 记录匹配答复及被排除的方格 → 释放问题并安排续行。
 void PartnerLoop::complete_question(std::string_view status, std::string answer, std::string_view channel) {
     if (question_->approval) {
         if (confirmation_ && confirmation_->request == question_->item) {
@@ -148,6 +179,14 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     }
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
+    if (status == "answered" && placement_choice_pending() && placement_choice_.item == question_->item) {
+        for (const auto& option : placement_choice_.options) {
+            if (option.at("answer") == question_result_.at("answer")) question_result_["placementCells"] = option.at("cells");
+            else for (const auto& cell : option.at("cells"))
+                placement_choice_.rejected.push_back({{"cell",cell},{"item",question_->item}});
+        }
+        placement_choice_.options.clear();
+    }
     question_.reset();
     question_wake_ = status != "resolved" && status != "superseded";
 }
@@ -156,6 +195,45 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
 bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves) const noexcept {
     return session == session_ && !active_delegation_ && question_ && question_->path == "local" &&
         !question_->approval && question_->task_revision == task_.revision() && resolves != question_->item;
+}
+
+// 放置选择在实际答复后解除等待，未获选的格仍受原任务修订约束。
+bool PartnerLoop::placement_choice_pending() const noexcept {
+    return placement_choice_.revision == task_.revision() && !placement_choice_.options.empty();
+}
+
+// 按实际写入范围核对步骤是否需要玩家答复。
+// 步骤：处理原无范围追问 → 核对未获选的放置格 → 比对待答方格及其支撑。
+Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill, const Json& args, std::uint64_t resolves) const {
+    const bool placing = skill == "place" || skill == "fill_target";
+    if ((!placing && skill != "collect") || session != session_ || !session || delegated(session)) return {};
+    const auto blocked = [](std::uint64_t item, std::string_view reason) {
+        return Json{{"status","blocked"},{"reason",reason},{"item",item}};
+    };
+    const bool pending = placement_choice_pending();
+    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item))
+        return blocked(question_->item,"waiting_for_player");
+    if (placement_choice_.revision != task_.revision()) return {};
+    const bool fixed_cell = valid_action_cell(args);
+    // 无固定格的地面取材由已绑定的保护格及实际地形筛选。
+    if (skill == "collect" && !fixed_cell && args.value("source","") == "ground") return {};
+
+    const auto touches = [&](const Json& cell) {
+        if (skill == "fill_target") return task_.target_ready() &&
+            std::ranges::find(task_.target_cells(),cell) != task_.target_cells().end();
+        if (!fixed_cell) return true;
+        if (cell.at("x") != args.at("x") || cell.at("z") != args.at("z")) return false;
+        const auto dy = cell.at("y").get<int>() - args.at("y").get<int>();
+        const bool door = args.value("block","").ends_with("_door");
+        if (placing) return dy == 0 || (door && dy == 1);
+        return dy == 0 || dy == 1 || (door && (dy == -1 || dy == 2));
+    };
+    if (placing) for (const auto& rejected : placement_choice_.rejected)
+        if (touches(rejected.at("cell"))) return blocked(rejected.at("item").get<std::uint64_t>(),"answer_target_mismatch");
+    if (pending && std::ranges::any_of(placement_choice_.options,[&](const auto& option) {
+        return std::ranges::any_of(option.at("cells"),touches);
+    })) return blocked(placement_choice_.item,"waiting_for_player");
+    return {};
 }
 
 // 只有当前玩家提供了新指向且同轮观察支持原动作时才注销追问。
@@ -184,7 +262,8 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     if (!message && !item && !intent.pointed && !hit_queries_.contains(order_)) return false;
     if (!message) message = order_;
     if (message != order_ || !player_event ||
-        (item && (!question_ || question_->item != item || question_->approval || question_->path != "local" ||
+        (item && (!question_ || question_->item != item || (placement_choice_pending() && placement_choice_.item == item) ||
+            question_->approval || question_->path != "local" ||
             question_->order >= order_ || question_->task_revision != task_.revision()))) return std::nullopt;
     if (item) {
         const auto& text = events_.back().at("text").get_ref<const std::string&>();
@@ -262,7 +341,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     const bool local = q.path == "local";
     if (local && !q.expired && std::chrono::steady_clock::now() >= q.local_answer_deadline) {
         q.expired = true;
-        task_.disarm();
+        if (!placement_choice_pending() || placement_choice_.item != q.item) task_.disarm();
         publish("mc.partner.question",{{"status","expired"},{"generation",q.world},{"order",q.order},{"item",q.item}});
     }
     if (q.presented && !q.forwarded) {

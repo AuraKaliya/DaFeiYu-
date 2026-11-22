@@ -44,8 +44,9 @@ class PartnerLoop {
     bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
     // 给当前对话或回执分配唯一的玩家发言机会。
     bool reserve_reply(std::uint64_t session, std::string_view work);
-    // 判断同一任务仍缺少同一位玩家对局内追问的答复。
-    bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
+    // 核对步骤的实际影响是否需要待答证据，或与已选目标冲突。
+    nlohmann::json action_question(std::uint64_t session, std::string_view skill, const nlohmann::json& args,
+        std::uint64_t resolves = 0) const;
     // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
     std::optional<bool> pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
         nlohmann::json& args) const;
@@ -175,6 +176,10 @@ class PartnerLoop {
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
     void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
+    // 判断当前任务修订是否仍在等待已绑定格的选择。
+    bool placement_choice_pending() const noexcept;
+    // 核对是否有同一任务的普通局内追问。
+    bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
     // 关闭已由当前原话和动作证据共同确认的局内追问。
     void complete_pointed_question();
     // 检查原候选在执行时使用的世界、玩家及游标。
@@ -198,6 +203,11 @@ class PartnerLoop {
     std::uint64_t question_sequence_ = 0;
     std::deque<std::pair<std::string_view,nlohmann::json>> question_outbound_;
     std::optional<Question> question_;
+    struct PlacementChoice {
+        std::uint64_t revision = 0, item = 0;
+        nlohmann::json options, rejected;
+    };
+    PlacementChoice placement_choice_;
     std::unique_ptr<GameWork> question_work_;
     nlohmann::json question_result_;
     bool question_wake_ = false;
