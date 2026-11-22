@@ -25,7 +25,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         try { input = std::make_unique<platform::LineInput>(); }
         catch (const std::exception&) { }
     }
-    std::string previous;
+    std::string previous, execution;
     auto next = std::chrono::steady_clock::now();
     while (!host.companion_status()->closed) {
         host.set_console_ask_available(input && input->interactive_console() && std::cout);
@@ -41,7 +41,15 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
             }
             input->advance();
         }
-        if (!listening && host.companion_inbox(id)->ready) {
+        const auto inbox = host.companion_inbox(id);
+        if (inbox->readable && !inbox->execution_state.empty()) {
+            auto current = inbox->execution_mode + ' ' + inbox->execution_state;
+            if (current != execution) {
+                execution = std::move(current);
+                std::cout << "DFY_EXECUTION " << execution << std::endl;
+            }
+        } else execution.clear();
+        if (!listening && inbox->ready) {
             listening = true;
             std::cout << "DFY_LISTENING" << std::endl;
         }
@@ -49,7 +57,7 @@ void run_companion_host(Application& host, const std::filesystem::path& package,
         if (reported_event != settled) {
             reported_event = settled;
             if (settled) std::cout << "DFY_EVENT_SETTLED " << settled <<
-                (host.companion_inbox(id)->departed == settled ? " left" : "") << std::endl;
+                (inbox->departed == settled ? " left" : "") << std::endl;
         }
         if (std::chrono::steady_clock::now() >= next || host.companion_status()->closed) {
             if (std::filesystem::exists(root / "stop")) host.stop_companion(id);

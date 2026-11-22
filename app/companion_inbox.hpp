@@ -21,6 +21,8 @@ struct PlayerInboxStatus {
     std::string owner;
     std::optional<ControlReceipt> control;
     std::uint64_t departed = 0;
+    bool readable = false;
+    std::string execution_mode, execution_state;
 };
 
 // 只接受由当前插件真实回执提供的玩家原话，初次绑定时从当前水位开始。

@@ -21,6 +21,12 @@ void private_protocol() {
     Json reply{{"version", 1}, {"id", "r"}, {"inbox", {{"generation", generation}, {"owner", generation},
         {"oldest", 2}, {"latest", 2}, {"gap", false}, {"more", false}, {"messages", {{{"sequence", 2}, {"text", "查看"}}}}}}};
     if (Json::parse(dfy::mc::inbox_reply(reply.dump(), "r", args)) != reply.at("inbox")) throw std::runtime_error("inbox lost");
+    auto released = reply;
+    released["inbox"]["execution"] = {{"mode","partner"},{"state","released"}};
+    if (Json::parse(dfy::mc::inbox_reply(released.dump(), "r", args)) != released.at("inbox"))
+        throw std::runtime_error("lost non-executable bridge status");
+    released["inbox"]["execution"]["mode"] = "none";
+    rejects([&] { dfy::mc::inbox_reply(released.dump(), "r", args); });
     auto presence = reply;
     const Json entered{{"sequence",2},{"type","player.entered"}};
     presence["inbox"]["presence"] = entered;

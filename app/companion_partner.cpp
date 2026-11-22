@@ -59,6 +59,9 @@ void CompanionSession::advance_partner() {
     if (!bound()) {
         projection.closed = true;
         projection.input.ready = false;
+        projection.input.readable = false;
+        projection.input.execution_mode.clear();
+        projection.input.execution_state.clear();
         queued_.reset();
         address_.reset();
         messages_.bind(std::nullopt);
@@ -78,6 +81,16 @@ void CompanionSession::advance_partner() {
         projection.input.owner = identity(value.player);
         if (value.settled || value.phase == DFY_V2_PARTNER_LISTENING) projection.settled = value.settled;
         return std::pair{value.phase,identity(value.world)};
+    });
+    projection.input.readable = projection.input.ready;
+    if (const auto execution = instance->query<dfy_v2_companion_partner_execution_api>(DFY_V2_COMPANION_PARTNER_EXECUTION_INTERFACE,
+        DFY_V2_COMPANION_PARTNER_EXECUTION_VERSION)) instance->invoke(*execution,[&](const auto& api, auto* plugin) {
+        dfy_v2_partner_execution value{};
+        if (!api.status || api.status(plugin,&value,nullptr) || value.readable > 1 || value.reserved ||
+            (projection.input.ready && !value.readable)) throw std::runtime_error("companion: invalid execution status");
+        projection.input.readable = value.readable != 0;
+        projection.input.execution_mode = identity(value.mode);
+        projection.input.execution_state = identity(value.state);
     });
     if (!world.empty() && (!address_ || address_->world != world)) {
         CompanionAddress current{id(),offer_.generation,world,runtime::next_domain()};

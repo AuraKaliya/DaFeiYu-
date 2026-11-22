@@ -154,6 +154,8 @@ function inspectionService(bot, world, inbox, places, witness = null, modelLed =
     releaseControl,
     // 私有收件同时返回原接管回执，普通状态和其他世界不暴露这项玩家决定。
     controlReceipt(generation) { return release?.generation === generation ? { ...release } : null; },
+    // 报告本连接的执行入口，角色重生不会撤回已经关闭的控制。
+    execution() { return { mode: partner ? 'partner' : 'scenario', state: release?.phase ?? (closed ? 'unavailable' : 'ready') }; },
     // 只返回同一游戏来源和原查看消息的观察。
     progress(generation) {
       return current && generation === current.generation && current.phase === 'moving' ? survey?.read(performance.now()) ?? null : null;

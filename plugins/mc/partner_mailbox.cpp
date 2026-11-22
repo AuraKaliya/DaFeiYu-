@@ -39,7 +39,7 @@ void PartnerLoop::intake_task(std::string_view category, const Json& body, Partn
     const auto world = body.at("generation").get<std::string>();
     const auto prompt = body.at("text").get<std::string>();
     if (!id || !task || prompt.empty() || prompt.size() > 4096) return;
-    const bool bound = feed_.ready() && feed_.cursor() && !feed_.departed() && !feed_.departure() &&
+    const bool bound = feed_.ready() && feed_.execution_ready() && feed_.cursor() && !feed_.departed() && !feed_.departure() &&
         world == feed_.world() && body["player"] == feed_.owner();
     if (category == "mc.partner.delegate") {
         if (id != task || id <= last_task_) return;

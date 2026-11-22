@@ -86,6 +86,8 @@ class PartnerLoop {
     void confirm_exited(std::uint64_t request) noexcept;
     // 查询已绑定玩家和实际回合水位。
     dfy_v2_partner_status status() const noexcept;
+    // 区分私有收件可读与角色动作就绪。
+    dfy_v2_partner_execution execution_status() const noexcept;
   private:
     // 当前回合实际退出后可发布原结算，或请求取消并继续等待。
     bool settle(const BridgeConfig& config, std::uint64_t instance, bool cancel);

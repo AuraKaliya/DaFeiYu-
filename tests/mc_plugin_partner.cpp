@@ -728,6 +728,43 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     }
     throw std::runtime_error("plan revision did not reach the expected boundary");
 }
+
+// 验证不可执行时仍可推进私有读口，且不唤醒模型或接管角色。
+// 步骤：装入伙伴入口 → 等待原话水位 → 核对实际状态 → 关闭本地会话。
+int verify_unavailable_partner(const std::filesystem::path& package, const std::filesystem::path& root, bool scenario) {
+    using namespace dfy;
+    std::atomic_uint requests = 0;
+    app::Application host({},root/"packages",root/"user",model::Backend{[&](const auto&,const model::Request&) -> model::Response {
+        ++requests;
+        return {{model::Role::assistant,""}};
+    }});
+    host.plugins().install(package);
+    if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load partner package");
+    const auto id = host.open_companion("mc.companion");
+    host.listen_companion(id);
+    bool stopping = false;
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("unavailable partner loop failed");
+        if (stopping && host.companion_status()->closed) {
+            if (requests || host.companion_status()->control) throw std::runtime_error("read-only partner attempted execution");
+            return 0;
+        }
+        if (!stopping) {
+            const auto input = host.companion_inbox(id);
+            if (input->ready || host.companion_status()->closed) throw std::runtime_error("readable bridge was treated as ready or stopped");
+            if (input->cursor == 2) {
+                if (!input->readable || input->execution_mode != (scenario ? "scenario" : "partner") ||
+                    input->execution_state != (scenario ? "ready" : "released"))
+                    throw std::runtime_error("execution status lost its mode or reason");
+                host.stop_companion(id);
+                stopping = true;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    throw std::runtime_error("readable bridge status did not advance");
+}
 }
 
 // 通过真实 DLL、命名管道与可控后端验证插件拥有一条完整的回复链路。
@@ -738,6 +775,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
             return verify_plan_revision(argv[1],argv[2],argv[3]);
+        if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-execution-"))
+            return verify_unavailable_partner(argv[1],argv[2],std::wstring_view(argv[3]).ends_with(L"-scenario"));
         if (argc == 3) {
             verify_follow_windows();
             verify_collection_effect();

@@ -8,6 +8,8 @@
 #define DFY_V2_COMPANION_SKILLS_VERSION UINT32_C(1)
 #define DFY_V2_COMPANION_PARTNER_INTERFACE "dfy.companion.partner"
 #define DFY_V2_COMPANION_PARTNER_VERSION UINT32_C(1)
+#define DFY_V2_COMPANION_PARTNER_EXECUTION_INTERFACE "dfy.companion.partner.execution"
+#define DFY_V2_COMPANION_PARTNER_EXECUTION_VERSION UINT32_C(1)
 #define DFY_V2_PARTNER_CLOSED UINT32_C(1)
 #define DFY_V2_PARTNER_LISTENING UINT32_C(2)
 #define DFY_V2_PARTNER_STOPPING UINT32_C(3)
@@ -52,6 +54,16 @@ typedef struct dfy_v2_companion_partner_api {
     // 查询实际推进状态；文本借用限本次能力调用。
     dfy_v2_status (DFY_V2_CALL *status)(dfy_v2_instance* instance, dfy_v2_partner_status* output, dfy_v2_error* error);
 } dfy_v2_companion_partner_api;
+// 分别报告信箱可读性与当前游戏执行入口，保留伙伴 v1 状态布局。
+typedef struct dfy_v2_partner_execution {
+    uint32_t readable, reserved;
+    dfy_v2_string_view mode, state;
+} dfy_v2_partner_execution;
+typedef struct dfy_v2_companion_partner_execution_api {
+    dfy_v2_api_header header;
+    // 限原实例宿主线程；借用至本次调用结束，空模式表示尚无已核实的模式。
+    dfy_v2_status (DFY_V2_CALL *status)(dfy_v2_instance* instance, dfy_v2_partner_execution* output, dfy_v2_error* error);
+} dfy_v2_companion_partner_execution_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

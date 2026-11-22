@@ -7,6 +7,8 @@ using Json = nlohmann::json;
 // 归还旧玩家事件，保留原请求编号不会重用的约束。
 void PartnerFeed::reset_binding() noexcept {
     owner_.clear();
+    mode_.clear();
+    execution_.clear();
     cursor_ = departed_ = departure_ = 0;
     scene_revision_ = 0;
     ready_ = more_ = gap_ = false;
@@ -93,6 +95,13 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
         more_ = batch.at("more").get<bool>();
     }
     if (batch.contains("control")) control_ = batch.at("control");
+    if (const auto execution = batch.find("execution"); execution != batch.end()) {
+        mode_ = execution->at("mode").get<std::string>();
+        execution_ = execution->at("state").get<std::string>();
+    } else {
+        mode_.clear();
+        execution_ = "unreported";
+    }
     if (batch.contains("sceneRevision")) {
         const auto revision = batch.at("sceneRevision").get<std::uint64_t>();
         if (revision < scene_revision_) throw std::invalid_argument("MC feed: scene revision regressed");

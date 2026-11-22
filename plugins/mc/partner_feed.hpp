@@ -16,6 +16,14 @@ class PartnerFeed {
     void clear() noexcept;
     // 返回本轮可消费的原世界、玩家及事件；有续页时等到读完当前窗口。
     bool ready() const noexcept { return ready_ && !more_; }
+    // 私有读口可用时仍能观察已释放或场景模式的游戏。
+    bool readable() const noexcept { return ready_; }
+    // 只在桥接明确拥有当前伙伴执行入口时允许接纳新动作。
+    bool execution_ready() const noexcept { return mode_ == "partner" && execution_ == "ready"; }
+    // 返回当前桥接执行模式，未报告时为空。
+    const std::string& mode() const noexcept { return mode_; }
+    // 返回当前执行入口状态，未报告的桥接无法驱动伙伴。
+    const std::string& execution() const noexcept { return execution_; }
     // 当前配对的游戏世界，失去绑定时为空。
     const std::string& world() const noexcept { return generation_; }
     // 当前世界经过私有读口验证的绑定玩家。
@@ -50,7 +58,7 @@ class PartnerFeed {
     // 清空玩家绑定与游标，不重用旧世界事实。
     void reset_binding() noexcept;
 
-    std::string generation_, owner_, id_, arguments_;
+    std::string generation_, owner_, id_, arguments_, mode_, execution_;
     nlohmann::json observation_, control_;
     nlohmann::json pending_ = nlohmann::json::array();
     std::deque<nlohmann::json> anchored_messages_;

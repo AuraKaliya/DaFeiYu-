@@ -29,8 +29,10 @@ function readReply(input, world, inbox, key, actions) {
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0) {
     const batch = inbox.read(request.generation, request.after);
     const control = actions?.controlReceipt?.(request.generation);
+    const execution = actions?.execution?.() ?? { mode: actions?.partner ? 'partner' : actions ? 'scenario' : 'none',
+      state: actions ? 'ready' : 'unavailable' };
     const sceneRevision = batch && actions?.partner?.scene?.(request.generation);
-    return { version: 1, id: request.id, inbox: batch && { ...batch, ...(control && { control }),
+    return { version: 1, id: request.id, inbox: batch && { ...batch, execution, ...(control && { control }),
       ...(sceneRevision != null && { sceneRevision }) } };
   }
   if (request.method === 'control.stop' && actions && Object.keys(request).length === 5 && typeof request.generation === 'string')

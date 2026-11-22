@@ -413,7 +413,8 @@ void PartnerLoop::submit(std::string_view wake) {
 // 检查已观察到的新事实是否使旧回合失去继续接纳权限。
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
     if (session != session_) return true;
-    return phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ && !feed_.departed() && !feed_.departure() &&
+    return phase_ == DFY_V2_PARTNER_LISTENING && feed_.execution_ready() && feed_.world() == session_world_ &&
+        !feed_.departed() && !feed_.departure() &&
         feed_.pending().empty() && !feed_.gap() &&
         (!attention_turn_ || (follow_ && follow_->id == attention_turn_->work &&
             follow_->attention.episode() == attention_turn_->episode && follow_->attention.active()));
@@ -991,14 +992,15 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         release_.emplace();
         release_->world = feed_.world().empty() ? session_world_ : feed_.world();
         release_->deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        release_->done = feed_.readable() && !feed_.execution_ready() && feed_.control().is_null();
         feed_.clear();
     }
     const bool departed = feed_.departure() || feed_.departed();
     const bool replaced = session_ && feed_.world() != session_world_;
-    const bool unavailable = closing || replaced || departed;
+    const bool unavailable = closing || replaced || departed || !feed_.execution_ready();
     advance_confirmation_presentation(config,instance,unavailable);
     advance_question(config,instance,unavailable);
-    if (awaiting_delegation_ && (closing || awaiting_delegation_->world != feed_.world() || departed)) {
+    if (awaiting_delegation_ && (unavailable || awaiting_delegation_->world != feed_.world())) {
         publish("mc.partner.report",{{"generation",awaiting_delegation_->world},{"id",awaiting_delegation_->id},{"ok",false},
             {"text","原游戏世界或配对玩家已离开"}});
         awaiting_delegation_.reset();
@@ -1026,7 +1028,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
         }
         return;
     }
-    if (feed_.departed() || presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
+    if (unavailable || presentation_ || question_work_ || !feed_.ready() || outbound_.size() > 54) return;
     if (!feed_.pending().empty()) submit("game.event");
     else if (question_wake_) submit("question.result");
     else if (!approval_result_.is_null()) submit("approval.result");
@@ -1036,6 +1038,12 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
 
 // 借出最新角色状态，世界字符串只在本次 ABI 调用内有效。
 dfy_v2_partner_status PartnerLoop::status() const noexcept {
-    return {phase_,feed_.ready(),session_,feed_.cursor(),feed_.departed(),settled_,view(feed_.world()),view(feed_.owner())};
+    return {phase_,feed_.ready() && feed_.execution_ready() && !feed_.departure(),session_,feed_.cursor(),feed_.departed(),settled_,
+        view(feed_.world()),view(feed_.owner())};
+}
+
+// 返回只读信箱和角色执行入口各自的游戏侧状态。
+dfy_v2_partner_execution PartnerLoop::execution_status() const noexcept {
+    return {feed_.readable(),0,view(feed_.mode()),view(feed_.execution())};
 }
 }

@@ -20,6 +20,8 @@ async function main() {
   const confirm = variant === 'partner-confirm';
   const scene = variant === 'partner-scene';
   const departure = variant === 'partner-departure';
+  const execution = variant?.startsWith('partner-execution-');
+  const scenario = variant === 'partner-execution-scenario';
   const revision = variant?.startsWith('partner-revision-');
   const directRevision = variant?.startsWith('partner-revision-direct-');
   const directPlace = variant === 'partner-revision-direct-place';
@@ -47,7 +49,7 @@ async function main() {
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision;
+  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision || execution;
   fs.mkdirSync(temp, { recursive: true });
   let root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -168,7 +170,7 @@ async function main() {
     },
     // 受控收件源不保留外部连接。
     close() {},
-  }, key, partnerLoop ? { partner: {
+  }, key, partnerLoop ? { partner: scenario ? null : {
     // 受控游戏场景只有在原任务完成登记后才产生新修订。
     scene(generation) {
       assert.equal(generation, state.generation);
@@ -176,6 +178,7 @@ async function main() {
     },
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
+      assert.ok(!execution, '不可执行时不应调用游戏技能');
       const { controller } = context;
       assert.match(controller, /^[a-f0-9]{32}$/);
       if (controllerRestart) {
@@ -570,6 +573,8 @@ async function main() {
       return { ...context, skill, exited: true, result: { status: 'done', sent: true, reused: false, text: args.text } };
     },
   },
+  // 模拟已释放控制的角色重生，原代次的接管票据不出现在本次收件。
+  execution() { return execution && !scenario ? { mode: 'partner', state: 'released' } : null; },
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
@@ -600,11 +605,11 @@ async function main() {
       assert.notEqual(first.context.controller, second.context.controller);
       assert.deepEqual({ ...second, context: { ...second.context, controller: first.context.controller } }, first);
     } else {
-      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision ? [variant] : [])],
+      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision || execution ? [variant] : [])],
         { stdio: 'inherit', windowsHide: true });
       assert.equal((await once(child, 'exit'))[0], 0);
     }
-    if (partnerLoop) assert.equal(releases, 2);
+    if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (showGame) assert.ok(approvedId);
     if (questionExpiry) {
       assert.ok(questionPresented && expiredAt !== undefined);
@@ -654,7 +659,7 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
-    else if (partnerLoop) assert.equal(replies, first || delayed || departure ? 0 : 1);
+    else if (partnerLoop) assert.equal(replies, first || delayed || departure || execution ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);
   } finally {
     await bridge.close();

@@ -404,7 +404,8 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong private reply");
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
-    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") + inbox.count("lastDeparture") ||
+    if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") +
+        inbox.count("lastDeparture") + inbox.count("execution") ||
         inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
@@ -425,6 +426,15 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     }
     if (inbox.contains("control") && (!control_receipt(inbox.at("control"), query.at("generation")) ||
         inbox.at("control").at("order") > latest)) throw std::invalid_argument("MC: stop cursor");
+    if (inbox.contains("execution")) {
+        const auto& execution = inbox.at("execution");
+        const auto& mode = execution.at("mode");
+        const auto& state = execution.at("state");
+        if (execution.size() != 2 || (mode != "partner" && mode != "scenario" && mode != "none") ||
+            (state != "ready" && state != "requested" && state != "released" && state != "unconfirmed" && state != "unavailable") ||
+            (mode == "none" && state != "unavailable") || (inbox.contains("control") && state != inbox.at("control").at("phase")))
+            throw std::invalid_argument("MC protocol: invalid execution status");
+    }
     if (inbox.contains("sceneRevision") && (!inbox.at("sceneRevision").is_number_unsigned() ||
         inbox.at("sceneRevision") == 0 || inbox.at("sceneRevision") > 9007199254740991ULL))
         throw std::invalid_argument("MC: invalid scene revision");

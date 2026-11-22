@@ -544,6 +544,15 @@ dfy_v2_status DFY_V2_CALL partner_status(dfy_v2_instance* raw, dfy_v2_partner_st
     return report(DFY_V2_OK,error);
 }
 
+// 复制伙伴桥接的读取和执行状态，不改变控制权。
+dfy_v2_status DFY_V2_CALL partner_execution(dfy_v2_instance* raw, dfy_v2_partner_execution* out, dfy_v2_error* error) noexcept {
+    if (!out) return report(DFY_V2_INVALID_ARGUMENT,error);
+    *out = {};
+    if (!owned(raw) || !raw->running) return report(DFY_V2_INVALID_CONTEXT,error);
+    *out = raw->partner.execution_status();
+    return report(DFY_V2_OK,error);
+}
+
 // 在公平调度下推进一小步，空闲时降低宿主轮询频率。
 dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, dfy_v2_error* error) noexcept {
     if (!wait) return report(DFY_V2_INVALID_ARGUMENT,error);
@@ -562,6 +571,8 @@ dfy_v2_status DFY_V2_CALL advance_partner(dfy_v2_instance* raw, uint32_t* wait, 
 
 const dfy_v2_companion_partner_api partner{{sizeof(dfy_v2_companion_partner_api),DFY_V2_COMPANION_PARTNER_VERSION},
     listen_partner,stop_partner,partner_status};
+const dfy_v2_companion_partner_execution_api execution{
+    {sizeof(dfy_v2_companion_partner_execution_api),DFY_V2_COMPANION_PARTNER_EXECUTION_VERSION},partner_execution};
 const dfy_v2_activity_api activity{{sizeof(dfy_v2_activity_api),DFY_V2_ACTIVITY_VERSION},advance_partner};
 
 // 伙伴只控制自己的旧模型与待开始技能，已发生效果由工具照常记录。
@@ -599,6 +610,7 @@ dfy_v2_status DFY_V2_CALL query(dfy_v2_string_view name, uint32_t version, const
     if (version == DFY_V2_COMPANION_ROUTES_VERSION && text(name) == DFY_V2_COMPANION_ROUTES_INTERFACE) *out = &routes;
     if (version == DFY_V2_COMPANION_SKILLS_VERSION && text(name) == DFY_V2_COMPANION_SKILLS_INTERFACE) *out = &skills;
     if (version == DFY_V2_COMPANION_PARTNER_VERSION && text(name) == DFY_V2_COMPANION_PARTNER_INTERFACE) *out = &partner;
+    if (version == DFY_V2_COMPANION_PARTNER_EXECUTION_VERSION && text(name) == DFY_V2_COMPANION_PARTNER_EXECUTION_INTERFACE) *out = &execution;
     if (version == DFY_V2_ACTIVITY_VERSION && text(name) == DFY_V2_ACTIVITY_INTERFACE) *out = &activity;
     if (version == DFY_V2_HOOK_VERSION && text(name) == DFY_V2_HOOK_INTERFACE) *out = &hooks;
     return report(*out ? DFY_V2_OK : DFY_V2_UNSUPPORTED, error);

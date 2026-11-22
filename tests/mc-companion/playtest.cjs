@@ -118,7 +118,7 @@ async function play(fixture, exe, pkg, mode, config) {
     const lines = createInterface({ input: child.stdout });
     let departureSettled = false;
     lines.on('line', line => {
-      if (line.startsWith('DFY_TRACE ')) console.log(line);
+      if (line.startsWith('DFY_TRACE ') || line.startsWith('DFY_EXECUTION ')) console.log(line);
       if (line === 'DFY_LISTENING') fixture.listening = true;
       const settled = /^DFY_EVENT_SETTLED (\d+)( left)?$/.exec(line);
       if (settled) {

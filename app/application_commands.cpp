@@ -187,8 +187,11 @@ void companion_command(Application& app, std::string_view command, std::ostream&
         const auto status = app.companion_status();
         if (!status) { output << "No companion session.\n"; return; }
         const auto input = app.companion_inbox(status->session);
-        output << "Companion " << status->session << " (" << status->package << ") "
-               << (status->closed ? "closed" : status->stopping ? "stopping" : input && input->ready ? "listening" : "waiting for game") << ".\n";
+        const auto phase = status->closed ? "closed" : status->stopping ? "stopping" : input && input->ready ? "listening" :
+            input && input->readable ? "bridge readable" : "waiting for game";
+        output << "Companion " << status->session << " (" << status->package << ") " << phase << ".\n";
+        if (input && input->readable && !input->execution_state.empty())
+            output << "游戏信箱可读 · 执行入口 " << input->execution_mode << ' ' << input->execution_state << '\n';
         if (status->control) {
             const auto& control = *status->control;
             if (control.order) output << "游戏玩家消息 #" << control.order;
