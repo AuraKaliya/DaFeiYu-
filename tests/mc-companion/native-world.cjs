@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 const { requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
+const { readPartnerContext } = require('./partner-context.cjs');
 
 // 在固定高度返回一片能掉落泥土的完整地面，供实际审批算法选用。
 function refusedGround() {
@@ -798,6 +799,28 @@ async function main() {
       assert.equal(replies, layeredBlocked ? 1 : 0);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
+      if (restartRoute || pointedCraft) {
+        const trace = path.join(root, 'trace', 'events.jsonl');
+        const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+        const turns = rows.filter(row => row.kind === 'model.prepared' && row.step === 1).map(readPartnerContext);
+        assert.deepEqual(Object.keys(turns[0].guidance.flowGuidance), ['scene']);
+        assert.equal(turns[0].guidance.domainExperience, undefined);
+        const context = turns.find(turn => restartRoute ? turn.input.trigger === 'task.ready' :
+          turn.input.events.some(event => event.sequence === 4));
+        const queue = context.tools.find(tool => tool.name.endsWith('_queue_actions'));
+        const fields = JSON.parse(queue.parameters).properties;
+        assert.match(fields.steps.items.properties.skill.description, /route: Validated route\.id/);
+        assert.match(fields.steps.items.properties.skill.description, /craft \(unavailable\)/);
+        if (pointedCraft) {
+          assert.equal(context.input.pendingQuestion.afterPickup.count, 4);
+          assert.match(fields.resolves.description, /saved successor is retained/);
+          assert.match(fields.steps.items.properties.pickup.description, /actually enter inventory/);
+        }
+        const settled = turns.find(turn => turn.input.trigger === 'plan.finished' &&
+          turn.input.taskPlan?.status !== 'cancelled');
+        assert.equal(typeof settled.guidance.outputConstraints.workOutcome, 'string');
+        assert.deepEqual(settled.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
+      }
       if (correctionLost) assert.ok(stopped >= 2);
       else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft ? 0 : 2);
       assert.equal(collectExited, !correctionLost && !restartRoute);

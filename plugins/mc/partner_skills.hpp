@@ -18,22 +18,23 @@ enum class SkillKind { game, confirmed, task, catalog, knowledge, question, moti
 struct PartnerAction {
     std::string_view name, executor;
     bool plan = false, sequence = false;
+    std::string_view plan_arguments = {};
 };
 
 // 计划、顺序队列与直接工具统一查找实际执行技能，空执行器可结算已知但未实现的能力。
 inline constexpr std::array partner_actions{
-    PartnerAction{"observe","observe",true},
-    PartnerAction{"move","move",true,true},
+    PartnerAction{"observe","observe",true,false,"{} for a snapshot, or message with optional focus=hit or openings."},
+    PartnerAction{"move","move",true,true,"Exact standing x,y,z. Exit verifies arrival."},
     PartnerAction{"start_move","move"},
     PartnerAction{"follow","follow",false,true},
     PartnerAction{"collect","collect",false,true},
     PartnerAction{"collect_confirmed","collect"},
-    PartnerAction{"dig_block","collect",true},
-    PartnerAction{"gather_ground","collect",true},
-    PartnerAction{"place","place",true,true},
-    PartnerAction{"fill_target","fill_target",true},
-    PartnerAction{"route","route",true},
-    PartnerAction{"craft","",true},
+    PartnerAction{"dig_block","collect",true,false,"x,y,z,block, plus the observed message for a pointed target."},
+    PartnerAction{"gather_ground","collect",true,false,"item, requiredStock, optional source block."},
+    PartnerAction{"place","place",true,true,"x,y,z,block within the bound target. Exit reports changed cells."},
+    PartnerAction{"fill_target","fill_target",true,false,"block for the bound cells. Exit reports each cell's result."},
+    PartnerAction{"route","route",true,false,"Validated route.id and laps (1-8). A restarted task retains its wall and lap count. Exit reports verified laps."},
+    PartnerAction{"craft","",true,false,"item and count. A ready node settles with skill_unavailable."},
 };
 
 // 返回同一技能在各入口所用的实际执行能力。
@@ -66,7 +67,12 @@ struct PartnerSkill {
     bool supports_approval = false;
 };
 inline constexpr std::array<PartnerSkill,18> partner_skills{{
-    {"observe", "partner.observe", "Use {} for positions and inventory. Pointed mode uses a message and focus=hit for the crosshair, objects for a cone plus labeled nearby blocks, or openings for wall gaps. Wall mode uses the original message and optional radius 5-13. Route mode uses observation=wallSurvey.id and optional wall or four ordered waypoints. Scene mode combines sources=self/player/message, message and focus for the original view, radius 1-5 and optional verify, detail or samples. Use self to verify cells for placement. Scene samples count 1-3 and intervalMs 100-1000. Search mode uses block and optional around=self/player. Repair a parameter error once using reasonCode.",
+    {"observe", "partner.observe", "Use {} for positions and inventory. Pointed mode uses message and focus=hit for the crosshair, objects for a cone plus labeled nearby blocks, or openings for wall gaps. "
+        "Direct companion hit and objects calls share two attempts per message, reset on new game events. An exhausted budget returns hit_observation_limit. "
+        "Wall mode returns wallSurvey from the original message and optional radius 5-13. Route mode takes observation=wallSurvey.id, optional wall and four ordered waypoints if supplied. "
+        "For a bound wall, task.navigationWall.observation and id reference the survey and wall. A validated route returns route.id. "
+        "Scene mode combines sources=self/player/message, message and focus for the original view, radius 1-5 and optional verify, detail or samples. "
+        "Use self for cell verification. Samples count 1-3, intervalMs 100-1000. Search mode takes block and optional around=self/player.",
         R"({"type":"object","properties":{"mode":{"type":"string","enum":["pointed","scene","search","wall","route"]},"observation":{"type":"string"},"wall":{"type":"string"},"waypoints":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}},"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings","objects"]},"sources":{"type":"array","items":{"type":"string","enum":["self","player","message"]}},"radius":{"type":"integer"},"detail":{"type":"string","enum":["summary","cells"]},"verify":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}},"samples":{"type":"object","properties":{"count":{"type":"integer"},"intervalMs":{"type":"integer"}},"additionalProperties":false}},"additionalProperties":false})", SkillCategory::observation, false},
     {"move", "partner.move", "Walk without digging to a landmark, player (place=player), or integer x,y,z. An accepted result is a running work ID. Read actual arrival in the next activity context.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
@@ -76,25 +82,38 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Cancel following by the stable following.work ID, or cancel the matching activeMotion work. Actual exit is reported separately.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
-    {"queue_actions", "partner.queue_actions", "Use plan for up to four nodes with unique id and optional after IDs. Use the node capabilities listed in the skill parameter. dig_block takes x,y,z,block and the observed player message. Add pickup when a successor depends on the drop. To resolve pendingQuestion.afterPickup, use resolves and submit the confirmed dig_block with the answer message. The plugin retains the original craft successor. gather_ground takes item,requiredStock,optional block. Place takes x,y,z,block within the bound target. Move takes exact standing x,y,z and verifies arrival. For dependent steps, use after to wait for actual placement or arrival. fill_target takes block. observe takes {} or message and optional focus. route takes a validated route ID and laps 1-8. Craft currently returns skill_unavailable. Clear stops the plan and waiting actions. Append, interrupt and replace accept sequence steps without id or after. Repair a rejection once using reason and node.",
+    {"queue_actions", "partner.queue_actions", "Submit a plan with up to four nodes, unique id and optional after IDs. Successors wait for their predecessors' verified results. "
+        "See skill for node contracts and availability. A queued plan reports actual results by layer. Rejections report a reason and may include the node and retryAllowed. "
+        "Append, interrupt and replace take sequence steps. Clear stops the plan and waiting actions.",
         R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
-    {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. Set approval to game or main when consent is needed. On exit, read actual cell changes separately from inventory changes.",
+    {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. "
+        "Set approval to game or main when consent is needed. Delegated collection requires player consent and defaults to main. Exit reports cell and inventory changes separately.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},
-    {"dig_block", "partner.dig_block", "Dig the exact observed block at x,y,z with its expected block name. If the player pointed to it, give the observed message ID. To answer a local question without a successor, also give pendingQuestion.item in resolves. Use queue_actions when pendingQuestion has afterPickup. Set editBuilt with approval when the player requests changing a completed structure. The executor reports the actual changed cell and pickup.",
+    {"dig_block", "partner.dig_block", "Dig the exact observed block at x,y,z with its expected block name. For a pointed target supply the observed message ID. "
+        "Direct resolves accepts the pending question item when there is no saved successor. A saved successor requires plan admission (pointed_plan_required). "
+        "Set editBuilt with approval to change a completed structure. Exit reports the changed cell and inventory pickup separately.",
         R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"editBuilt":{"type":"boolean"},"message":{"type":"integer"},"resolves":{"type":"integer"}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
     {"gather_ground", "partner.gather_ground", "Bring inventory of item up to requiredStock (1-32) from exposed ground. Use the total you need. Set block only to restrict the search to one permitted source. Stops on enough stock or unverified pickup.",
         R"({"type":"object","properties":{"block":{"type":"string"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]}},"required":["item","requiredStock"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
-    {"reply", "partner.reply", "Send one natural line to the bound player. A clarification uses ask_player and has its own receipt. After speaking, leave final text empty unless a new outcome must be conveyed.",
+    {"reply", "partner.reply", "Send one line to the bound player and return its delivery receipt.",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})", SkillCategory::communication, true},
-    {"place", "partner.place", "Place one inventory block at the exact empty x,y,z cell, or a door with its lower half there. Survey first. Set approval to game or main when needed. For accepted work, read actual changed cells on exit.",
+    {"place", "partner.place", "Place an inventory block at an exact empty x,y,z cell within the bound task target. For a door choose the lower cell. "
+        "Set approval to game or main when needed. Exit reports the actual changed cells and material use.",
         R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::place, true, SkillKind::game, true},
     {"fill_target", "partner.fill_target", "Fill the bound opening with one full-block inventory material. Read each cell's actual result. Already correct cells are skipped, cells missing a usable face may be retried after others, and occupied cells stop the work with earlier results intact.",
         R"({"type":"object","properties":{"block":{"type":"string"}},"required":["block"],"additionalProperties":false})", SkillCategory::place, true, SkillKind::motion},
     {"collect_confirmed", "partner.collect_confirmed", "Request player consent for a fixed collection. Route 'game' asks in the game; route 'main' lets the main Agent select a channel. The original collection runs only after consent.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"route":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::confirmed},
-    {"task_update", "partner.task_update", "Start a new task with start_task, current message, kind (navigation or work) and goal. Restart the same task with restart_task, current message and task ID. Both stop earlier work and leave its real exit to taskHandoff. For notes keep goal and update detail or next. To correct a bound building target use begin_correction with the current message, then observe the original candidate and verify its cells from self. Use commit_correction with that correction message, goal, next, and target with the evidence message, candidate or cells, and observation ID. If answering a pending question set resolves to its item. Register target.approach before moving, and bind cells after arrival with a self observation. A new instruction may replace a target with target.replace=true. Omit target for notes or use {} to release it. Collection=ground restricts gathering to exposed terrain.",
+    {"task_update", "partner.task_update", "Record task identity, goal, scope and revision. start_task takes the current message, kind (navigation or work) and goal. "
+        "restart_task takes the current message and existing task ID. taskHandoff reports the earlier work's actual exit. "
+        "begin_correction records the current player message. commit_correction takes that message, goal, next and a target with its source message, either candidate or cells, and a current self observation ID. "
+        "resolves links a correction to its pending question item. target.approach records a request to come to the player, where cell binding requires the matching arrival and a self reading of empty cells. "
+        "target.replace requires a new player instruction. For a goal/next update omit operation. Omit target for notes or use {} to release it. Collection=ground limits gathering to exposed terrain.",
         R"({"type":"object","properties":{"operation":{"type":"string","enum":["begin_correction","commit_correction","start_task","restart_task"]},"message":{"type":"integer"},"task":{"type":"integer"},"kind":{"type":"string","enum":["navigation","work"]},"resolves":{"type":"integer"},"goal":{"type":"string"},"detail":{"type":"string"},"next":{"type":"string","enum":["continue","scene","player","done"]},"collection":{"type":"string","enum":["ground","visible"]},"target":{"type":"object","properties":{"message":{"type":"integer"},"candidate":{"type":"string"},"approach":{"type":"boolean"},"replace":{"type":"boolean"},"observation":{"type":"string"},"cells":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}}},"additionalProperties":false}},"additionalProperties":false})", SkillCategory::control, true, SkillKind::task},
-    {"ask_player", "partner.ask_player", "Ask one natural in-game clarification if observation cannot resolve it. To choose among already bound placement cells, use local placementOptions with 2–4 distinct answer labels and their cells instead of options or afterPickup. Independent actions can proceed. Read the matching answer and placementCells in questionResult before submitting placement. For a local question about material to dig and then craft, preserve the requested output and count in afterPickup, with item=planks if the wood type is unknown. Ordinary options match natural answers automatically. Set direct or main only for explicit escalation.",
+    {"ask_player", "partner.ask_player", "Register a clarification and return its item ID. Local placementOptions take 2-4 distinct reply labels with their already bound cells and exclude options and afterPickup. "
+        "Matching local labels are accepted within the answer window. Verify questionResult.placementCells against the current scene before placing. placementExcluded lists unselected cells. "
+        "Local afterPickup records a known output item and count (1-32), with optional required pickup. Use item=planks when the wood type is still unknown. "
+        "Use direct or main for explicit escalation.",
         R"({"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"placementOptions":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"cells":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}}},"required":["answer","cells"],"additionalProperties":false}},"path":{"type":"string","enum":["local","direct","main"]},"afterPickup":{"type":"object","properties":{"item":{"type":"string"},"count":{"type":"integer"},"pickup":{"type":"string"}},"required":["item","count"],"additionalProperties":false}},"required":["question"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::question},
     {"withdraw_confirmation", "partner.withdraw_confirmation", "Withdraw the waiting item from pendingApproval when the candidate is obsolete. Verify any new inventory or world state before deciding what to do next.",
         R"({"type":"object","properties":{"item":{"type":"integer"}},"required":["item"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::approval_withdraw},
@@ -109,16 +128,21 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
 inline std::string_view partner_schema(const PartnerSkill& skill) {
     if (skill.kind != SkillKind::action_queue) return skill.schema;
     static const auto schema = [&skill] {
-        std::string description = "For plan:";
+        std::string description = "Plan node parameters:";
         for (const auto& action : partner_actions) if (action.plan) {
-            description += " "+std::string(action.name);
+            description += "\n"+std::string(action.name);
             if (action.executor.empty()) description += " (unavailable)";
+            description += ": "+std::string(action.plan_arguments);
         }
-        description += ". For append, interrupt or replace:";
+        description += "\nFor append, interrupt or replace:";
         for (const auto& action : partner_actions) if (action.sequence) description += " "+std::string(action.name);
         description += ". Interrupt cannot start a new follow.";
         auto value = nlohmann::json::parse(skill.schema);
-        value["properties"]["steps"]["items"]["properties"]["skill"]["description"] = std::move(description);
+        auto& fields = value["properties"];
+        fields["resolves"]["description"] = "Pending question item for a newer verified dig. Supply one dig_block node with the answer message; any saved successor is retained.";
+        auto& node = fields["steps"]["items"]["properties"];
+        node["skill"]["description"] = std::move(description);
+        node["pickup"]["description"] = "For dig_block, the item that must actually enter inventory before a dependent node can advance.";
         return value.dump();
     }();
     return schema;

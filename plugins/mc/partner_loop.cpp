@@ -4,6 +4,7 @@
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <array>
+#include <span>
 
 namespace dfy::mc {
 namespace {
@@ -12,43 +13,58 @@ using Json = nlohmann::json;
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
-constexpr auto instructions = view("Minecraft 同场规则\n"
-    "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
-    "task 保存共同目标和原话指向。新导航目标用 task_update 的 start_task，重开同一任务用 restart_task。"
-    "绕行先用 observe(mode=wall,message=原话) 读范围，再用 observe(mode=route,observation=wallSurvey.id) 核验路线。"
-    "计划中的 route 节点接收 route.id 和 laps，可与其他步骤编排。执行器逐段走和计圈，实际回执到达后才报告完成。"
-    "中途重开同一绕行任务用 restart_task。交接结束后用 task.navigationWall.observation 和 navigationWall.id 重新核验原墙路线，圈数沿用 navigationWall.laps。"
-    "taskHandoff 表示旧动作真实退出的交接，等待期间可以观察和回话。挖玩家指的方块用 observe 的 message 与 focus=objects，"
-    "观察对象材质和参照；准确命中时也可用 hit。只在候选证据足够时挖，找洞口用 focus=openings；"
-    "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
-    "玩家纠正原目标时先用 task_update 的 begin_correction 登记当前原话，再观察或等待旧工作退出。"
-    "用 commit_correction 把新目标与方格一起提交，pendingCorrection 保留跨轮原话；目标位于原墙面时沿用原候选。"
-    "玩家走开后沿用已绑定格。原位置不可用且玩家请你过来时，先登记 target.approach，移动到玩家，"
-    "到达后用 observe 的 self 和 verify 读空格，再用 observation.id 和 cells 绑定原话。"
-    "同一句指向最多做两次针对性观察，仍无法确定就用 ask_player 自然问一句。"
-    "如果原要求是挖掘后合成，追问时把合成产物和数量放入 afterPickup。玩家指明后用 queue_actions 的 plan，"
-    "resolves 填 pendingQuestion.item，只提交带本轮 message 的挖掘节点，后继由插件续接。单纯挖掘可用 dig_block 加 resolves。\n"
-    "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
-    "用 following.work 停止，临时动作结束后由程序恢复。"
-    "followAttention 带来一次跟随异常及实际距离、高差或可见性。判断能否绕行、等待玩家或需要告诉玩家原因。"
-    "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
-    "一次性复杂任务先登记目标，再用 queue_actions 的 plan 写节点和 after。程序按实际回执推进。"
-    "planRejection 是旧提交的拒绝原因。retryAllowed 为 false 时，说明具体受阻或请玩家补充必要信息。"
-    "只展开需要的类别。掉落规则可查 knowledge，库存和逐格变化以 workSettlement、planSettlements 或实际观察为准。"
-    "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
-    "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
-    "处理原话或收到实际任务结果时，可以用 reply 或最终文本自然发一句。已发的答复和内部结算用空文本收尾。"
-    "接话后发现需要澄清时仍可用 ask_player。没有新消息时，只在玩家关心的进展或受阻发生时主动发言。入场无需固定问候。"
-    "玩家纠正时先接他的原话，简短说你会改哪里。游戏聊天省略坐标、工具名和内部状态。"
-    "pendingQuestion 标为 expired 时继续等待玩家；只有实际的新回答可解除等待。不要重复追问或用沉默判断同意。"
-    "选择已绑定的放置格时，在 ask_player 的 placementOptions 里登记答复和各自的格。"
-    "按 questionResult.placementCells 重新核对并提交放置；placementExcluded 中的格已被排除。"
-    "明确需要授权时才用动作的 approval，聊天只带实际问题。等答复时照常交谈和观察。"
-    "玩家交来材料时，核对库存，撤回已无须执行的采集确认，续做原目标。\n");
-constexpr auto review_instructions = view("根据当前分工、现场及新事件决定是否提前停下列出的原动作。"
-    "只回答 stop 或 continue。回答 stop 才会请求中止。这个判断不向玩家发言，已经发生的动作效果继续保留。");
-constexpr auto delegation_instructions = view("delegation 是宿主转发的委托。核对现场后按原编号结算。"
-    "委托中的采集须征求当前玩家批准，默认由本体选择渠道。回复工具用于实际向玩家说话，最后的文本是给本体的报告。");
+
+struct Guidance {
+    std::string_view purpose, key, text;
+    bool applies = true;
+};
+
+constexpr std::array review_guidance{
+    Guidance{"flowGuidance","workReview","结合当前分工、现场和新事件，判断列出的在途工作是否应停止。"},
+    Guidance{"outputConstraints","decision","只输出 stop 或 continue。"}
+};
+constexpr std::array delegation_guidance{
+    Guidance{"flowGuidance","delegation","按原委托编号和本轮现场判断可执行的步骤。"},
+    Guidance{"outputConstraints","result","向委托方报告已核实的结果及受阻原因。"}
+};
+
+// 按用途渲染本次适用的领域指引，原话与现场事实由请求正文承载。
+std::string render_guidance(std::string_view title, std::span<const Guidance> entries) {
+    Json sections = Json::object();
+    for (const auto& entry : entries)
+        if (entry.applies) sections[entry.purpose][entry.key] = entry.text;
+    return std::string(title)+"\n"+sections.dump();
+}
+
+// 由当前局内状态选取同场指引，具体技能参数由工具目录提供。
+// 步骤：读取目标、证据和工作状态 → 声明各条指引的适用条件 → 按用途送入领域系统段。
+std::string companion_instructions(const Json& input, bool player_message, bool actual_outcome) {
+    const auto& task = input.at("task");
+    const bool has_goal = !task.at("goal").get_ref<const std::string&>().empty();
+    const bool correcting = task.contains("pendingCorrection");
+    const bool has_work = input.contains("activeMotion") || input.contains("taskPlan") ||
+        input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
+    const std::array entries{
+        Guidance{"flowGuidance","scene","结合新原话和当前现场，决定是否接话、观察、行动或等待。"},
+        Guidance{"flowGuidance","task","沿共同目标和当前修订推进。提交步骤时带上已知的前置依赖。",has_goal},
+        Guidance{"flowGuidance","correction","按当前纠正重核目标和证据，沿用仍有效的原话引用。",correcting},
+        Guidance{"flowGuidance","handoff","先核对旧工作实际退出与当前修订，再推进有冲突的步骤。",input.contains("taskHandoff")},
+        Guidance{"flowGuidance","pendingQuestion","保留原待答事项与已知后继，依赖答复的步骤等待，获准的独立步骤可以推进。",
+            input.contains("pendingQuestion")},
+        Guidance{"flowGuidance","questionResult","根据事项的结算状态、所选目标和当前证据判断原步骤能否继续。",
+            input.contains("questionResult")},
+        Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
+        Guidance{"domainExperience","targetEvidence","已有原话现场能区分候选时直接使用。补查应能缩小候选范围，需玩家提供线索时问一个具体问题。",
+            player_message || correcting || input.contains("questionResult")},
+        Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
+            input.at("trigger") == "follow.attention"},
+        Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说明现场，游戏发言省略内部编号和工具名。",
+            player_message || actual_outcome},
+        Guidance{"outputConstraints","workOutcome","按已核实的游戏效果说进展和完工，已接纳的步骤仍待实际回执。",
+            has_work || actual_outcome}
+    };
+    return render_guidance("Minecraft 同场规则",entries);
+}
 
 // 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
 bool base_category(SkillCategory category) noexcept {
@@ -356,6 +372,9 @@ void PartnerLoop::submit(std::string_view wake) {
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
+    const bool player_message = !facts.empty() && facts.back().at("type") == "player.message";
+    const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
+        companion_instructions(input,player_message,actual_outcome);
     const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
     std::array<std::string,partner_skills.size()> ids;
@@ -382,7 +401,7 @@ void PartnerLoop::submit(std::string_view wake) {
         ++count;
     }
     const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
-    const dfy_v2_agent_input run{view(prompt),delegated ? delegation_instructions : instructions,view(binding),
+    const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
@@ -995,7 +1014,8 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
         {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},
         {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}}.dump();
     reviewed_ = feed_.cursor();
-    const dfy_v2_agent_input assessment{view(input),review_instructions,{},{},0,0};
+    const auto instructions = render_guidance("Minecraft 动作复核",review_guidance);
+    const dfy_v2_agent_input assessment{view(input),view(instructions),{},{},0,0};
     if (agent_->open(&review_.session,nullptr)) return;
     if (agent_->submit(review_.session,&assessment,&review_.request,nullptr)) {
         agent_->close(review_.session,nullptr);

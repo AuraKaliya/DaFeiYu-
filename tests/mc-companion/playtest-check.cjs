@@ -5,6 +5,7 @@ const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
 const { wall, waterCourse, fourCells, layeredStands, readArena } = require('./playtest-arena.cjs');
+const { readPartnerContext } = require('./partner-context.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
 function readRows(fixture, file) {
@@ -436,12 +437,11 @@ async function checkFillFour(fixture, player, whispers, combined) {
   assert.equal(trace.filter(row => row.kind === 'tool.candidate' && row.callId === 'skills').length, combined ? 1 : 0);
   assert.deepEqual(receipts.map(row => row.body.bridgeWork), mutations.map(action => action.work));
   const prepared = trace.filter(row => row.kind === 'model.prepared');
-  assert.ok(prepared.length && prepared.every(row => row.personaProfile === 'dafeiyu/default/1' &&
-    row.promptTemplate.startsWith('sha256:') && row.input.messages[0].content.includes('Minecraft 同场规则')));
+  assert.ok(prepared.length);
+  const inputs = prepared.map(row => readPartnerContext(row).input);
   assert.equal(trace.filter(row => row.kind === 'tool.candidate' && row.callId === 'ask_player').length, combined ? 1 : 0);
   assert.ok(!trace.some(row => row.kind === 'tool.candidate' && row.callId === 'ask'));
   if (combined) {
-    const inputs = prepared.map(row => JSON.parse(row.input.messages.find(message => message.role === 'user').content));
     const resolved = inputs.filter((input, index) => input.questionResult?.status === 'resolved' &&
       prepared[index].step === 1);
     assert.equal(resolved.length, 1);
