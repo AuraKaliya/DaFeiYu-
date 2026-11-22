@@ -125,8 +125,25 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
     next_ = "player";
     collection_ = "visible";
     baseline_ = receipt_ = arrival_ = local_observation_ = correction_ = nullptr;
+    route_ = nullptr;
     disarm();
     return {{"status","updated"},{"executionChanged",true},{"task",context()}};
+}
+
+// 复制已可信观察的检查点，并固定任务修订和原话来源。
+bool PartnerTask::bind_route(Json& arguments) const {
+    if (!navigation() || route_.is_null() || route_.at("id") != arguments.at("route")) return false;
+    arguments["taskId"] = id_;
+    arguments["taskRevision"] = revision_;
+    arguments["waypoints"] = route_.at("waypoints");
+    return true;
+}
+
+// 禁止已结算的路线仅凭现场变化再次启动。
+void PartnerTask::finish_route(bool completed) {
+    route_ = nullptr;
+    next_ = completed ? "done" : "player";
+    disarm();
 }
 
 // 原话在其接纳回合登记，之后由任务持有到成功换绑或被更新的纠正取代。
@@ -337,6 +354,11 @@ void PartnerTask::record(const Json& receipt, bool current) {
     if (receipt.at("skill") == "reply" || !receipt.contains("result")) return;
     auto summary = receipt;
     auto& result = summary.at("result");
+    if (current && navigation() && receipt.at("skill") == "observe" && result.contains("route")) {
+        const auto& route = result.at("route");
+        if (route.at("status") == "validated" && route.at("generation") == receipt.at("generation") &&
+            (route.at("sourceMessage") == id_ || route.at("sourceMessage") == instruction_)) route_ = route;
+    }
     if (current && receipt.at("skill") == "move" && result.at("status") == "done" && result.value("target",std::string{}) == "player") {
         arrival_ = {{"order",receipt.at("order")},{"position",result.at("position")}};
         local_observation_ = nullptr;

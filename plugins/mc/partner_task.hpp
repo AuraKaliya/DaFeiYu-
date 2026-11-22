@@ -18,6 +18,10 @@ class PartnerTask {
     std::uint64_t instruction() const noexcept { return instruction_; }
     // 判断当前任务是否使用导航目标。
     bool navigation() const noexcept { return kind_ == "navigation"; }
+    // 只把当前任务已核验的路线及检查点送到游戏侧。
+    bool bind_route(nlohmann::json& arguments) const;
+    // 收尾有限路线，随后只由新原话继续任务。
+    void finish_route(bool completed);
     // 登记新任务或重开原任务，保留可供验证的旧对象线索。
     nlohmann::json switch_task(const nlohmann::json& arguments, const nlohmann::json& event);
     // 返回原纠正仍未核实退出的工作号。
@@ -72,7 +76,7 @@ class PartnerTask {
     std::map<std::uint64_t,nlohmann::json> observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;
-    nlohmann::json arrival_, local_observation_;
+    nlohmann::json arrival_, local_observation_, route_;
     std::chrono::steady_clock::time_point observation_time_{};
 };
 }

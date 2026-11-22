@@ -198,6 +198,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (last.role == Role::tool) {
+            if (navigation && last.tool_call_id == "wall-survey") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                return call("_observe","read-route",{{"mode","route"},{"observation",result.at("wallSurvey").at("id")}});
+            }
+            if (navigation && last.tool_call_id == "read-route") {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                return call("_queue_actions","route-plan",{{"operation","plan"},{"steps",Json::array({
+                    {{"id","circle"},{"skill","route"},{"arguments",{{"route",result.at("route").at("id")},{"laps",2}}}}
+                })}});
+            }
             if (last.tool_call_id == "switch-to-route") {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 const auto& task = result.at("task");
@@ -266,13 +276,22 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 exit.at("work") != action.at("bridgeWork") || action.at("result").at("status") != "interrupted" ||
                 action.at("taskRevision") != 1 || action.at("result").at("inventoryDelta").at("dirt") != 1)
                 throw std::runtime_error("old work did not settle separately by original ID");
-            checked = true;
-            return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            return call("_observe","wall-survey",{{"mode","wall"},{"message",3}});
         }
         if (input.at("trigger") == "plan.finished") {
             const auto& plan = input.at("taskPlan");
             const auto& layers = input.at("planSettlements");
             const auto& first = layers.at(0).at("nodes").at(0);
+            if (navigation) {
+                const auto& route = first.at("result").at("route");
+                if (checked || plan.at("status") != "done" || layers.size() != 1 || plan.at("nodes").size() != 1 ||
+                    first.at("work") != plan.at("nodes").at(0).at("work") || route.at("laps") != 2 ||
+                    route.at("checkpoints").size() != 9 || input.at("task").at("next") != "done" ||
+                    request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply"))
+                    throw std::runtime_error("route checkpoints woke the model separately or did not settle by plan ID");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
             const auto& second = layers.at(1).at("nodes").at(0).at("result");
             const auto& result = first.at("result");
             if (correction_lost) {

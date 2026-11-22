@@ -6,7 +6,7 @@ namespace dfy::mc {
 GameWork::GameWork(GameAction action, const BridgeConfig& config, std::string id, std::string arguments, std::string skill)
     : config_(config), action_(action), id_(std::move(id)), arguments_(std::move(arguments)), skill_(std::move(skill)),
       deadline_(skill_ == "follow" ? std::chrono::steady_clock::time_point::max() :
-          std::chrono::steady_clock::now() + std::chrono::seconds(35)) {
+          std::chrono::steady_clock::now() + std::chrono::seconds(skill_ == "route" ? 180 : 35)) {
     if (action_ == GameAction::partner) static_cast<void>(partner_request("partner.begin", id_, config_.key, skill_, arguments_));
     else if (action_ == GameAction::inspect) static_cast<void>(inspect_request("inspect.begin", id_, config_.key, arguments_));
     else if (action_ == GameAction::mine) static_cast<void>(mine_request("mine.begin", id_, config_.key, arguments_));

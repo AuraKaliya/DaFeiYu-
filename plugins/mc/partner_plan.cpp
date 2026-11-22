@@ -19,6 +19,7 @@ bool prepare_action(std::string_view skill, Json& args) {
     };
     if (skill == "fill_target") return args.size() == 1 && name("block");
     if (skill == "craft") return args.size() == 2 && name("item") && quantity("count");
+    if (skill == "route") return args.size() == 2 && name("route") && quantity("laps") && args.at("laps") <= 8;
     if (skill == "observe") return args.empty() || (args.contains("message") &&
         args.at("message").is_number_unsigned() && args.at("message") > 0 &&
         (args.size() == 1 || (args.size() == 2 && (args.value("focus","") == "hit" || args.value("focus","") == "openings"))));
@@ -40,7 +41,7 @@ bool prepare_action(std::string_view skill, Json& args) {
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
-    for (const auto name : {"status","reason","reasonCode","stock","inventoryDelta","changes","cells","sampledAtMs"})
+    for (const auto name : {"status","reason","reasonCode","stock","inventoryDelta","changes","cells","sampledAtMs","route"})
         if (result.contains(name)) evidence[name] = result.at(name);
     return evidence;
 }
@@ -75,15 +76,18 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         };
         if (id.empty() || id.size() > 32 || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != id.npos ||
             std::ranges::find(plan.nodes,id,&PlanNode::id) != plan.nodes.end()) return invalid("invalid_node_id");
-        if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft")
+        if (task_.navigation() && (skill != "route" || steps.size() != 1)) return invalid("navigation_requires_route");
+        if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft" && skill != "route")
             return invalid("unsupported_plan_skill");
         if (step.contains("pickup") || !prepare_action(skill,args)) return invalid("invalid_node_arguments");
+        if (skill == "route" && !task_.bind_route(args)) return invalid("route_not_verified");
         if (skill == "dig_block" && !pointed_dig(session_,0,0,args).has_value())
             return invalid("pointed_block_unverified");
         if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
         if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
-        plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : tool->name,std::move(args)});
+        plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : skill == "route" ? "route" : tool->name,
+            std::move(args)});
     }
     for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
         const auto after = steps.at(index).value("after",std::vector<std::string>{});
@@ -174,7 +178,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
             } else {
                 auto args = node.arguments;
                 if (node.skill == "gather_ground") task_.bind_collection(args);
-                const auto game_skill = node.skill == "fill_target" ? "fill_target" : "collect";
+                const auto game_skill = node.skill == "route" ? "route" : node.skill == "fill_target" ? "fill_target" : "collect";
                 queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,game_skill,std::move(args),{},true,false,index});
                 pause_follow();
             }
@@ -204,5 +208,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
     if (!task_.id() || plan.revision == task_.revision()) plan_receipts_.push_back(std::move(layer));
     ++plan.layer;
     plan.active = std::ranges::any_of(plan.nodes,[&](const auto& node) { return node.layer == plan.layer; });
+    if (!plan.active && plan.revision == task_.revision() && task_.navigation() && plan.nodes.front().skill == "route")
+        task_.finish_route(plan.nodes.front().state == State::done);
 }
 }

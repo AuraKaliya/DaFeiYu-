@@ -15,6 +15,8 @@ constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.comp
 constexpr auto instructions = view("Minecraft 同场规则\n"
     "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
     "task 保存共同目标和原话指向。新导航目标用 task_update 的 start_task，重开同一任务用 restart_task。"
+    "绕行先用 observe(mode=wall,message=原话) 读范围，再用 observe(mode=route,observation=wallSurvey.id) 核验路线。"
+    "queue_actions 的 plan 只提交一个 route 节点，参数为 route.id 和 laps。执行器负责逐段走和计圈，移动回执到达后才报告完成。"
     "taskHandoff 表示旧动作真实退出的交接，等待期间可以观察和回话。挖‘这格’用 observe 的 message 与 focus=hit，找洞口用 focus=openings；"
     "按原消息号和 candidate 绑定。缺信息时优先补一次针对性观察。"
     "玩家纠正原目标时先用 task_update 的 begin_correction 登记当前原话，再观察或等待旧工作退出。"
@@ -265,6 +267,10 @@ void PartnerLoop::submit(std::string_view wake) {
         active = {{"work",motion_->work},{"skill",motion_->skill},{"order",motion_->order},
             {"status",motion_->stopping ? "stopping" : motion_->accepted ? "running" : "starting"}};
         if (!motion_->action->progress().empty()) active["progress"] = Json::parse(motion_->action->progress());
+        if (motion_->task) {
+            active["taskId"] = motion_->task;
+            active["taskRevision"] = motion_->revision;
+        }
     }
     input["foreground"] = motion_ ? "active" : "standby";
     if (follow_) input["following"] = {{"work",follow_->id},{"segment",follow_->segment},
@@ -313,8 +319,12 @@ void PartnerLoop::submit(std::string_view wake) {
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
     std::size_t count = 0;
     const auto enabled = scope();
+    const bool completed_route = wake == "plan.finished" && task_.navigation() && plan_ && !plan_->active &&
+        plan_->revision == task_.revision() && plan_->nodes.front().skill == "route";
     if (!delegated) for (const auto& skill : partner_skills) {
-        if (completed_dig && skill.name != "reply") continue;
+        if ((completed_dig || completed_route) && skill.name != "reply") continue;
+        if (task_.navigation() && (skill.category == SkillCategory::movement || skill.category == SkillCategory::place ||
+            skill.category == SkillCategory::dig_break)) continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
@@ -720,9 +730,10 @@ void PartnerLoop::advance_motion(bool stopping) {
         auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
         const auto observed = phase+":"+progress.value("terrain",std::string{});
-        if (!phase.empty() && motion.last_phase != observed) {
+        const auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
+        if (!phase.empty() && motion.last_phase != marker) {
             publish("mc.partner.motion",{{"action",fact},{"status",phase},{"progress",std::move(progress)}});
-            motion.last_phase = observed;
+            motion.last_phase = marker;
         }
         return;
     }

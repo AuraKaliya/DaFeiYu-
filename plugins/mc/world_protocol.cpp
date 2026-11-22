@@ -124,6 +124,42 @@ void verify_fill(const Json& result, const Json& args, bool done) {
             throw std::invalid_argument("MC: fill changed a cell outside the receipt");
     }
 }
+
+// 按原路线核对有序的实际脚位和圈数，允许失败或取消时返回已完成的前缀。
+// 步骤：核对工作参数 → 验证前缀实际站位 → 核对进度和终态。
+void verify_route(const Json& result, const Json& args, bool exited) {
+    const auto requested = args.at("laps").get<unsigned>();
+    const auto& points = args.at("waypoints");
+    if (points.size() != 4 || requested < 1 || requested > 8)
+        throw std::invalid_argument("MC: invalid checked route parameters");
+    if (!result.contains("route")) {
+        if (result.contains("progress") || (exited && result.at("status") == "done"))
+            throw std::invalid_argument("MC: missing route checkpoints");
+        return;
+    }
+    const auto& route = result.at("route");
+    const auto& checkpoints = route.at("checkpoints");
+    if (route.at("id") != args.at("route") || route.at("requested") != requested ||
+        !checkpoints.is_array() || checkpoints.size() > requested*4+1 ||
+        (exited && result.at("status") == "done" && checkpoints.size() != requested*4+1))
+        throw std::invalid_argument("MC: invalid route settlement");
+    for (std::size_t index = 0; index < checkpoints.size(); ++index) {
+        const auto& checkpoint = checkpoints.at(index);
+        if (checkpoint.at("index") != index) throw std::invalid_argument("MC: unordered route checkpoints");
+        for (const auto axis : {"x","y","z"}) {
+            const auto& position = checkpoint.at("position").at(axis);
+            if (!position.is_number() || std::floor(position.get<double>()) != points.at(index%4).at(axis).get<double>())
+                throw std::invalid_argument("MC: unchecked route position");
+        }
+    }
+    const auto index = checkpoints.empty() ? 0 : checkpoints.size()-1;
+    if (route.at("laps") != index/4) throw std::invalid_argument("MC: inconsistent route count");
+    if (checkpoints.empty()) {
+        if (result.contains("progress")) throw std::invalid_argument("MC: route progress without checkpoint");
+    } else if (const auto& step = result.at("progress"); step.at("phase") != "route" ||
+        step.at("requested") != requested || step.at("checkpoint") != index || step.at("laps") != index/4)
+        throw std::invalid_argument("MC: inconsistent route progress");
+}
 }
 
 // 解析宿主信封；模型参数与来源分别校验，轮询沿用初次工作的编号。
@@ -140,8 +176,9 @@ std::string partner_request(std::string_view method, std::string_view id, std::s
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire,skill == "observe" ? 12 : 6), envelope = parse(arguments);
+    const auto frame = parse(wire,skill == "observe" || skill == "route" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
+    const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
     if (frame.at("version") != 1 || frame.at("id").get_ref<const std::string&>() != id ||
         action.at("skill").get_ref<const std::string&>() != skill || action.at("generation") != context.at("generation") ||
@@ -157,6 +194,14 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
             !dimension(observation.at("dimension")) || requested < 1 || requested > 3 ||
             !samples.is_array() || samples.size() > requested)
             throw std::invalid_argument("MC: invalid observation series");
+    }
+    if (skill == "observe" && result.contains("route")) {
+        const auto& route = result.at("route");
+        if (args.value("mode","") != "route" || (route.at("status") == "validated" &&
+            (route.at("id").get_ref<const std::string&>() != id || route.at("generation") != context.at("generation") ||
+             route.at("observation") != args.at("observation") || !dimension(route.at("dimension")) ||
+             !route.at("sourceMessage").is_number_unsigned() || !route.at("waypoints").is_array() ||
+             route.at("waypoints").size() != 4))) throw std::invalid_argument("MC: invalid route observation");
     }
     if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
         throw std::invalid_argument("MC: invalid partner outcome");
@@ -184,6 +229,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
             (!waiting && (!step.at("distance").is_number() || !std::isfinite(step.at("distance").get<double>()) ||
                 step.at("distance") < 0))) throw std::invalid_argument("MC: invalid follow progress");
         progress = step.dump();
+    }
+    if (skill == "route") {
+        verify_route(result,args,exited);
+        if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool changed = exited && result.contains("changes") && verified_changes(result.at("changes"));
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, exited ? result.dump() : std::string{},

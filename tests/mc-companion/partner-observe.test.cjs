@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
-const { observeWall, validateRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
+const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -138,4 +138,29 @@ test('route validation requires an ordered loop on supported, visible ground', (
   assert.equal(validateRoute(scan, 'wall', found.waypoints, path).reasonCode, 'route_coverage_required');
   scan.coverage.rows[4] = '..x..........';
   assert.equal(validateRoute(scan, 'wall', found.waypoints, path).reasonCode, 'waypoint_not_standable');
+});
+
+// 引导和半圈不能计为完成；每圈实际回到起点后才累加。
+test('route records each actual checkpoint without counting a partial lap', async () => {
+  const bounds = { minX: 0, maxX: 3, minZ: 0, maxZ: 0, y: -60 };
+  const waypoints = [[-1, -1], [4, -1], [4, 1], [-1, 1]].map(([x, z]) => ({ x, y: -60, z }));
+  const route = { id: 'checked', bounds, waypoints }, result = {};
+  let calls = 0;
+  const movement = { check() {}, async move(point, allowed) {
+    assert.equal(Boolean(allowed), calls > 0);
+    if (allowed) assert.ok(allowed(point));
+    assert.equal(point, waypoints[calls++ % 4]);
+    return { ...point, x: point.x + 0.5, z: point.z + 0.5 };
+  } };
+  await runRoute(route, 2, result, movement);
+  assert.equal(calls, 9);
+  assert.deepEqual(result.route.checkpoints.map(({ index }) => index), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(result.progress, { phase: 'route', checkpoint: 8, laps: 2, requested: 2 });
+
+  const partial = {};
+  await assert.rejects(runRoute(route, 2, partial, { ...movement, async move(point) {
+    return point === waypoints[2] ? { ...point, x: point.x + 1 } : point;
+  } }), { code: 'route_checkpoint_unverified' });
+  assert.equal(partial.route.laps, 0);
+  assert.deepEqual(partial.route.checkpoints.map(({ index }) => index), [0, 1]);
 });

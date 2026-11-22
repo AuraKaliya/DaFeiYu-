@@ -48,6 +48,8 @@ async function main() {
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
+  let surveyId, checkedRoute, routeWork, routeReads = 0;
+  const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
   const bridge = await openBridge(channel, {
@@ -143,6 +145,37 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
         }
         assert.ok(!repairPlan);
+        if (navigation && skill === 'observe') {
+          assert.equal(method, 'partner.begin');
+          assert.ok(collectExited);
+          if (args.mode === 'wall') {
+            assert.deepEqual(args, { mode: 'wall', message: 3 });
+            surveyId = id;
+            return { ...context, skill, exited: true, result: { status: 'done',
+              wallSurvey: { id, status: 'selected', choice: 'wall' } } };
+          }
+          assert.deepEqual(args, { mode: 'route', observation: surveyId });
+          checkedRoute = id;
+          return { ...context, skill, exited: true, result: { status: 'done', route: { id, status: 'validated',
+            generation: context.generation, dimension: 'overworld', sourceMessage: 3, observation: surveyId, wall: 'wall', waypoints } } };
+        }
+        if (navigation && skill === 'route') {
+          if (method === 'partner.begin') {
+            assert.ok(!routeWork);
+            routeWork = id;
+            assert.deepEqual(args, { route: checkedRoute, taskId: 3, taskRevision: 2, waypoints, laps: 2 });
+          } else assert.equal(method, 'partner.read');
+          assert.equal(id, routeWork);
+          const checkpoint = Math.min(routeReads++, 8);
+          const checkpoints = Array.from({ length: checkpoint + 1 }, (_, index) =>
+            ({ index, position: { ...waypoints[index % 4], x: waypoints[index % 4].x + 0.5 } }));
+          const laps = Math.floor(checkpoint / 4);
+          return { ...context, skill, exited: laps === 2, result: {
+            ...(laps === 2 ? { status: 'done' } : {}),
+            progress: { phase: 'route', checkpoint, laps, requested: 2 },
+            route: { id: checkedRoute, requested: 2, laps, checkpoints },
+          } };
+        }
         if (correction && skill === 'observe') {
           assert.ok(collectExited);
           assert.equal(args.message, 2);
@@ -301,6 +334,7 @@ async function main() {
       assert.equal(collectExited, !correctionLost);
       assert.equal(nextBlock, notes);
       assert.equal(wallFilled, !!correction && !correctionLost);
+      if (navigation) assert.equal(routeReads, 9);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);

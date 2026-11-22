@@ -150,4 +150,25 @@ function validateRoute(scan, wall, waypoints, findPath) {
   return result;
 }
 
-module.exports = { observeWall, surface, validateRoute, routeCorridor, terrain };
+// 按实际命中顺序记录检查点，只有走完四段并回到起点才能累加整圈。
+// 步骤：引导到起点 → 沿四侧核验真实站位 → 发布段进度与总圈数。
+async function runRoute(route, requested, result, movement) {
+  const progress = result.route = { id: route.id, requested, laps: 0, checkpoints: [] };
+  const { waypoints, bounds } = route;
+  const count = requested * waypoints.length;
+  for (let index = 0; index <= count; ++index) {
+    const target = waypoints[index % waypoints.length];
+    const previous = index ? waypoints[(index - 1) % waypoints.length] : null;
+    const allowed = previous ? point => routeCorridor(bounds, previous, target, point) : undefined;
+    movement.check();
+    const position = await movement.move(target, allowed);
+    movement.check();
+    if (!position || Math.floor(position.x) !== target.x || Math.floor(position.y) !== target.y || Math.floor(position.z) !== target.z)
+      throw Object.assign(new Error('未进入本段核验站位'), { code: 'route_checkpoint_unverified' });
+    progress.checkpoints.push({ index, position });
+    progress.laps = Math.floor(index / waypoints.length);
+    result.progress = { phase: 'route', checkpoint: index, laps: progress.laps, requested };
+  }
+}
+
+module.exports = { observeWall, surface, validateRoute, runRoute };

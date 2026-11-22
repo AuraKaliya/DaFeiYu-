@@ -4,7 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
-const { observeWall, validateRoute } = require('./partner-route.cjs');
+const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
@@ -76,6 +76,30 @@ function readPath(bot, from, to, allowed) {
     { optimizePath: false, timeout: 100, tickTimeout: 25, searchRadius: 32 });
   for (const { result } of results) if (result.status === 'success') return result.path;
   return null;
+}
+
+// 用当前可站立性和同一侧的约束走完一段，普通失败只重验一次。
+// 步骤：核对目标 → 探测重规划条件 → 按原工作等待实际脚位。
+async function walkRouteSegment(bot, target, allowed, check) {
+  const point = bot.entity.position.clone().set(target.x, target.y, target.z);
+  const traversable = allowed && (p => allowed(p) && surface(bot, p.clone().set(p.x, point.y, p.z)) === '.');
+  const goal = new goals.GoalBlock(point.x, point.y, point.z);
+  for (let attempt = 0; attempt < 2; ++attempt) {
+    check();
+    if (surface(bot, point) !== '.') break;
+    if (goal.isEnd(bot.entity.position.floored())) return bot.entity.position.clone();
+    if (attempt && !readPath(bot, bot.entity.position.floored(), target, traversable)?.length) break;
+    const timer = setTimeout(() => { bot.pathfinder.setGoal(null); bot.clearControlStates(); }, 12000);
+    try {
+      await walk(bot, goal, traversable);
+      check();
+      return bot.entity.position.clone();
+    } catch (error) {
+      check();
+      if (attempt) throw Object.assign(error, { code: 'route_segment_blocked' });
+    } finally { clearTimeout(timer); }
+  }
+  throw Object.assign(new Error('当前站位或剩余路线已受阻'), { code: 'route_segment_blocked' });
 }
 
 // 以原工作号保留最近的现场证明或已核验路线。
@@ -194,6 +218,7 @@ function partnerService(bot, world, inbox, places, owner) {
   const records = new Map();
   const observations = new Set();
   const wallSurveys = new Map();
+  const checkedRoutes = new Map();
   const built = new BuiltObjects();
   // 核对新工作的来源；一旦接纳，后续聊天不会自行撤销已在执行的工作。
   function current(context) {
@@ -252,7 +277,7 @@ function partnerService(bot, world, inbox, places, owner) {
       if (observation?.mode === 'wall') {
         const { message, radius } = observation.options;
         const { anchor, center } = messageAnchor(r.generation, message);
-        result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message,
+        result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message, radius,
           generation: r.generation, dimension: bot.game.dimension };
         remember(wallSurveys, job.id, result.wallSurvey);
       } else if (observation?.mode === 'route') {
@@ -261,8 +286,11 @@ function partnerService(bot, world, inbox, places, owner) {
         result.route = scan?.generation === r.generation && scan.dimension === bot.game.dimension ?
           validateRoute(scan, wall, waypoints, (a, b, allowed) => readPath(bot, a, b, allowed)) :
           { status: 'blocked', reasonCode: 'wall_observation_stale' };
-        if (result.route.status === 'validated') Object.assign(result.route, { id: job.id, observation: id, sourceMessage: scan.message,
-          generation: r.generation, dimension: scan.dimension });
+        if (result.route.status === 'validated') {
+          Object.assign(result.route, { id: job.id, observation: id, sourceMessage: scan.message,
+            generation: r.generation, dimension: scan.dimension });
+          remember(checkedRoutes, job.id, result.route);
+        }
       } else if (observation?.mode === 'scene') {
         await observeWindow(bot, observation.options, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
           player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
@@ -312,6 +340,20 @@ function partnerService(bot, world, inbox, places, owner) {
         result.reused = repeated;
         if (result.sent) result.text = args.text;
         if (!result.sent) throw new Error('原玩家不在场，回复未发出');
+      } else if (r.skill === 'route') {
+        const route = checkedRoutes.get(args.route);
+        const scan = route && wallSurveys.get(route.observation);
+        if (!scan || route.generation !== r.generation || route.dimension !== bot.game.dimension ||
+          !Array.isArray(args.waypoints) || args.waypoints.length !== 4 || route.waypoints.some((point, i) =>
+            ['x', 'y', 'z'].some(axis => point[axis] !== args.waypoints[i]?.[axis])) || !Number.isSafeInteger(args.laps) ||
+          args.laps < 1 || args.laps > 8) throw Object.assign(new Error('已核验路线已失效'), { code: 'route_stale' });
+        const { anchor, center } = messageAnchor(r.generation, route.sourceMessage);
+        const live = observeWall(bot, anchor, center, scan.radius);
+        const checked = validateRoute(live, route.wall, route.waypoints, (a, b, allowed) => readPath(bot, a, b, allowed));
+        if (checked.status !== 'validated') throw Object.assign(new Error('现场变化，原路线不可通行'), { code: checked.reasonCode });
+        try {
+          await runRoute(route, args.laps, result, { check, move: (point, allowed) => walkRouteSegment(bot, point, allowed, check) });
+        } finally { result.position = bot.entity.position.clone(); }
       } else if (r.skill === 'move') {
         const named = Object.hasOwn(args, 'place');
         const anchored = Object.hasOwn(args, 'message');
@@ -366,7 +408,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['place', 'fill_target', 'observe'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['place', 'fill_target', 'observe', 'route'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (world.read()?.generation === r.generation) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
@@ -377,7 +419,7 @@ function partnerService(bot, world, inbox, places, owner) {
         }
       }
       r.exited = true;
-      if (['move', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
+      if (['move', 'route', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
         previous = { ...result, generation: r.generation, order: r.order, skill: r.skill };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
