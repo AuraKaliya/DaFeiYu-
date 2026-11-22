@@ -313,6 +313,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 Json{{"operation","plan"},{"steps",Json::array({{{"id","bad"},{"skill","collect"},{"arguments",Json::object()}}})}};
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "bad-category") {
+                    if (result.at("status") != "invalid_category" || result.at("category") != "navigation" ||
+                        std::ranges::find(result.at("validCategories"),"movement") == result.at("validCategories").end() ||
+                        std::ranges::any_of(result.at("planNodes"),[](const auto& node) { return node.at("skill") == "collect"; }))
+                        throw std::runtime_error("category error did not expose the real action directory");
+                    return call(skill,"initial-invalid",args);
+                }
                 if (last.tool_call_id != "initial-invalid" || (repair_observe ?
                     result.at("reasonCode") != "observe_mixed_modes" :
                     result.at("reason") != "unsupported_plan_skill" || result.at("node") != "bad"))
@@ -320,8 +327,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 checked = true;
                 return call(skill,"repair",args);
             }
-            if (Json::parse(last.content).at("events").back().at("sequence") == 2)
+            if (Json::parse(last.content).at("events").back().at("sequence") == 2) {
+                if (repair_plan) return call("_skills","bad-category",{{"categories",{"navigation"}}});
                 return call(skill,"initial-invalid",args);
+            }
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (last.role == Role::tool) {

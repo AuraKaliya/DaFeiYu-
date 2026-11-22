@@ -71,13 +71,14 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         if (step.contains("pickup") && (name != "collect" || required.empty()))
             throw std::invalid_argument("MC queue: invalid required pickup");
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
-        if (skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
+        const auto* action = partner_action(name);
+        if (!action || !action->sequence || skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
             (name == "place" && !task_.target_ready()) || requires_approval(name,parameters))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
-        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),skill->name,parameters,std::string(required),interrupt});
+        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),action->executor,parameters,std::string(required),interrupt});
     }
 
     if (replace) {

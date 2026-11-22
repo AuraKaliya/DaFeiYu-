@@ -1,6 +1,9 @@
 #pragma once
+#include <nlohmann/json.hpp>
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace dfy::mc {
@@ -12,6 +15,41 @@ enum class SkillCategory : std::uint8_t {
     communication,observation,query,control
 };
 enum class SkillKind { game, confirmed, task, catalog, knowledge, question, motion, motion_stop, approval_withdraw, action_queue };
+struct PartnerAction {
+    std::string_view name, executor;
+    bool plan = false, sequence = false;
+};
+
+// 计划、顺序队列与直接工具统一查找实际执行技能，空执行器可结算已知但未实现的能力。
+inline constexpr std::array partner_actions{
+    PartnerAction{"observe","observe",true},
+    PartnerAction{"move","move",false,true},
+    PartnerAction{"start_move","move"},
+    PartnerAction{"follow","follow",false,true},
+    PartnerAction{"collect","collect",false,true},
+    PartnerAction{"collect_confirmed","collect"},
+    PartnerAction{"dig_block","collect",true},
+    PartnerAction{"gather_ground","collect",true},
+    PartnerAction{"place","place",false,true},
+    PartnerAction{"fill_target","fill_target",true},
+    PartnerAction{"route","route",true},
+    PartnerAction{"craft","",true},
+};
+
+// 返回同一技能在各入口所用的实际执行能力。
+inline const PartnerAction* partner_action(std::string_view name) noexcept {
+    const auto action = std::ranges::find(partner_actions,name,&PartnerAction::name);
+    return action == partner_actions.end() ? nullptr : &*action;
+}
+
+// 把当前可编排的节点目录提供给首次选工具以及显式分类查询。
+inline nlohmann::json plan_skills() {
+    auto nodes = nlohmann::json::array();
+    for (const auto& action : partner_actions)
+        if (action.plan) nodes.push_back({{"skill",action.name},{"available",!action.executor.empty()}});
+    return nodes;
+}
+
 struct PartnerSkill {
     std::string_view name, purpose, description, schema;
     SkillCategory category;
@@ -30,8 +68,8 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Cancel following by the stable following.work ID, or cancel the matching activeMotion work. Actual exit is reported separately.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
-    {"queue_actions", "partner.queue_actions", "Use plan for up to four nodes with unique id and optional after IDs. A dig_block node accepts x,y,z,block and the observed player message. Add pickup on that node when craft(item,count) depends on collecting its drop. To resolve pendingQuestion.afterPickup, set resolves to pendingQuestion.item and submit only the confirmed dig_block node with the answer message. The plugin adds the original craft successor. Other nodes are gather_ground(item,requiredStock,optional block), fill_target(block), or observe({} or message and optional focus). For navigation submit one route node with the validated route ID and laps 1-8. Craft currently returns skill_unavailable. Clear stops the plan and waiting actions. Append, interrupt and replace use legacy move, follow, collect or place without id and after. Repair a rejection once using reason and node.",
-        R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string","enum":["move","follow","collect","place","dig_block","gather_ground","fill_target","observe","craft","route"]},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
+    {"queue_actions", "partner.queue_actions", "Use plan for up to four nodes with unique id and optional after IDs. Use the node capabilities listed in the skill parameter. dig_block takes x,y,z,block and the observed player message. Add pickup when a successor depends on the drop. To resolve pendingQuestion.afterPickup, use resolves and submit the confirmed dig_block with the answer message. The plugin retains the original craft successor. gather_ground takes item,requiredStock,optional block. fill_target takes block. observe takes {} or message and optional focus. route takes a validated route ID and laps 1-8. Craft currently returns skill_unavailable. Clear stops the plan and waiting actions. Append, interrupt and replace accept sequence steps without id or after. Repair a rejection once using reason and node.",
+        R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. Set approval to game or main when consent is needed. On exit, read actual cell changes separately from inventory changes.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},
     {"dig_block", "partner.dig_block", "Dig the exact observed block at x,y,z with its expected block name. If the player pointed to it, give the observed message ID. To answer a local question without a successor, also give pendingQuestion.item in resolves. Use queue_actions when pendingQuestion has afterPickup. Set editBuilt with approval when the player requests changing a completed structure. The executor reports the actual changed cell and pickup.",
@@ -57,4 +95,24 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
     {"knowledge", "partner.knowledge", "Look up versioned vanilla rules by block or item name, such as grass_block drops. Confirm quantities and changed cells using current game receipts.",
         R"({"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false})", SkillCategory::query, false, SkillKind::knowledge}
 }};
+
+// 为共享队列入口生成和实际校验一致的分操作技能目录。
+// 步骤：提取计划能力和顺序能力 → 标记尚不可执行的节点 → 固定 ABI 所需的字符串寿命。
+inline std::string_view partner_schema(const PartnerSkill& skill) {
+    if (skill.kind != SkillKind::action_queue) return skill.schema;
+    static const auto schema = [&skill] {
+        std::string description = "For plan:";
+        for (const auto& action : partner_actions) if (action.plan) {
+            description += " "+std::string(action.name);
+            if (action.executor.empty()) description += " (unavailable)";
+        }
+        description += ". For append, interrupt or replace:";
+        for (const auto& action : partner_actions) if (action.sequence) description += " "+std::string(action.name);
+        description += ". Interrupt cannot start a new follow.";
+        auto value = nlohmann::json::parse(skill.schema);
+        value["properties"]["steps"]["items"]["properties"]["skill"]["description"] = std::move(description);
+        return value.dump();
+    }();
+    return schema;
+}
 }

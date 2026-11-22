@@ -190,8 +190,10 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
             view(R"({"type":"object","properties":{"generation":{"type":"string"}},"required":["generation"],"additionalProperties":false})")};
     } else if (index >= 10 && index - 10 < partner_skills.size() && !raw->config.key.empty()) {
         const auto& skill = partner_skills[index - 10];
-        *out = {sizeof(*out), 1, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
-            view(skill.name), view(skill.description), view(skill.schema)};
+        try {
+            *out = {sizeof(*out), 1, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
+                view(skill.name), view(skill.description), view(dfy::mc::partner_schema(skill))};
+        } catch (...) { return report(DFY_V2_FAILED,error); }
     } else return report(DFY_V2_NOT_FOUND, error);
     return report(DFY_V2_OK, error);
 }
@@ -216,8 +218,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const bool legacy = partner && skill->kind == SkillKind::confirmed;
     const bool exact_dig = partner && skill->name == "dig_block";
     const bool gather_ground = partner && skill->name == "gather_ground";
-    const auto game_skill = legacy || exact_dig || gather_ground ? std::string_view("collect") :
-        partner && skill->name == "start_move" ? std::string_view("move") : partner ? skill->name : std::string_view{};
+    const auto* action = partner ? dfy::mc::partner_action(skill->name) : nullptr;
+    const auto game_skill = action ? action->executor : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target";
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||

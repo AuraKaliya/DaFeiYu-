@@ -579,7 +579,8 @@ Json PartnerLoop::discover(const Json& arguments) {
     std::bitset<categories.size()> next;
     for (const auto& name : wanted) {
         const auto found = std::find(categories.begin(),categories.end(),name);
-        if (found == categories.end()) throw std::invalid_argument("MC skills: unknown category");
+        if (found == categories.end())
+            return {{"status","invalid_category"},{"category",name},{"validCategories",categories},{"planNodes",plan_skills()}};
         next.set(found-categories.begin());
     }
     Json directory = Json::array();
@@ -596,7 +597,7 @@ Json PartnerLoop::discover(const Json& arguments) {
     if (changed) {
         expansion_pending_ = true;
     }
-    return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},
+    return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},{"planNodes",plan_skills()},
         {"wake",expansion_pending_ && task_.can_continue()}};
 }
 

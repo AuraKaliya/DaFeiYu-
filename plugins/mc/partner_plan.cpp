@@ -101,15 +101,14 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         auto id = step.value("id",std::string{});
         const auto skill = step.at("skill").get<std::string>();
         auto args = step.at("arguments");
-        const auto tool = std::ranges::find(partner_skills,skill,&PartnerSkill::name);
+        const auto* action = partner_action(skill);
         const auto invalid = [&](std::string_view reason) {
             return Json{{"status","invalid_plan"},{"reason",reason},{"node",id},{"skill",skill}};
         };
         if (id.empty() || id.size() > 32 || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") != id.npos ||
             std::ranges::find(plan.nodes,id,&PlanNode::id) != plan.nodes.end()) return invalid("invalid_node_id");
         if (task_.navigation() && (skill != "route" || steps.size() != 1)) return invalid("navigation_requires_route");
-        if (skill != "dig_block" && skill != "gather_ground" && skill != "fill_target" && skill != "observe" && skill != "craft" && skill != "route")
-            return invalid("unsupported_plan_skill");
+        if (!action || !action->plan) return invalid("unsupported_plan_skill");
         const auto pickup = step.value("pickup",std::string{});
         const auto required = item_name(pickup);
         if ((step.contains("pickup") && (skill != "dig_block" || required.empty())) || !prepare_action(skill,args))
@@ -124,7 +123,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
         if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
-        plan.nodes.push_back({std::move(id),std::move(work),skill == "craft" ? "craft" : skill == "route" ? "route" : tool->name,
+        plan.nodes.push_back({std::move(id),std::move(work),action->name,
             std::move(args),{},std::string(required)});
     }
     for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
@@ -221,19 +220,19 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
         if (node.layer != plan.layer) continue;
         if (node.state == State::pending && can_start) {
             const bool ready = std::ranges::all_of(node.after,[&](auto parent) { return plan.nodes[parent].state == State::done; });
+            const auto skill = partner_action(node.skill)->executor;
             node.state = State::running;
             if (!ready) finish_plan_node(index,false,{{"status","skipped"},{"reason","prerequisite_failed"}});
-            else if (node.skill == "craft") finish_plan_node(index,false,{{"status","blocked"},{"reasonCode","skill_unavailable"},
+            else if (skill.empty()) finish_plan_node(index,false,{{"status","blocked"},{"reasonCode","skill_unavailable"},
                 {"item",node.arguments.at("item")},{"count",node.arguments.at("count")}});
-            else if (node.skill == "observe") {
+            else if (skill == "observe") {
                 const auto request = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
                     {"arguments",node.arguments}}.dump();
-                node.reading = std::make_unique<GameWork>(GameAction::partner,config,node.work,request,"observe");
+                node.reading = std::make_unique<GameWork>(GameAction::partner,config,node.work,request,std::string(skill));
             } else {
                 auto args = node.arguments;
                 if (node.skill == "gather_ground") task_.bind_collection(args);
-                const auto game_skill = node.skill == "route" ? "route" : node.skill == "fill_target" ? "fill_target" : "collect";
-                queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,game_skill,std::move(args),node.pickup,true,false,index});
+                queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,skill,std::move(args),node.pickup,true,false,index});
                 pause_follow();
             }
         }
