@@ -164,7 +164,14 @@ async function main() {
           assert.ok(++badObservations <= 2);
           return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'observe_mixed_modes' } };
         }
-        assert.ok(!repairPlan);
+        if (repairPlan) {
+          assert.equal(method, 'partner.begin');
+          assert.equal(skill, 'reply');
+          assert.equal(context.order, 2);
+          assert.equal(args.text, '这次没动起来，我得换个办法。');
+          assert.equal(++replies, 1);
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
         if (pointedCraft) {
           const log = { x: 1, y: -59, z: 2, block: 'oak_log' };
           if (skill === 'observe') {
@@ -438,6 +445,14 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (repairObserve || repairPlan) {
       assert.equal(badObservations, repairObserve ? 2 : 0);
+      if (repairPlan) {
+        assert.equal(replies, 1);
+        const events = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').split('\n');
+        assert.equal(events.filter(line => line.includes('"category":"mc.partner.plan"') &&
+          line.includes('"status":"rejected"')).length, 2);
+        assert.ok(events.some(line => line.includes('"kind":"run.exited"') && line.includes('"run":2,') &&
+          !line.includes('work_pending') && line.includes('这次没动起来')));
+      }
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);

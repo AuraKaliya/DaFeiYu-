@@ -581,8 +581,10 @@ dfy_v2_status DFY_V2_CALL decide_partner_hook(dfy_v2_instance* raw, uint32_t ind
     *verdict = 0;
     if (!owned(raw) || !raw->running || !input || index > 1) return report(DFY_V2_INVALID_CONTEXT,error);
     *verdict = raw->partner.permits(input->session) ? DFY_V2_HOOK_ALLOW : DFY_V2_HOOK_DENY;
-    if (*verdict == DFY_V2_HOOK_ALLOW && input->point == DFY_V2_HOOK_MODEL_REQUEST && input->step >= 2 &&
-        raw->partner.waits_for_work()) *verdict = DFY_V2_HOOK_YIELD;
+    if (*verdict == DFY_V2_HOOK_ALLOW && input->point == DFY_V2_HOOK_MODEL_REQUEST && input->step >= 2) {
+        if (raw->partner.waits_for_work()) *verdict = DFY_V2_HOOK_YIELD;
+        else if (!raw->partner.permits_model_step(input->session,input->step)) *verdict = DFY_V2_HOOK_DENY;
+    }
     return report(DFY_V2_OK,error);
 }
 const dfy_v2_hook_api hooks{{sizeof(dfy_v2_hook_api),DFY_V2_HOOK_VERSION},describe_partner_hook,decide_partner_hook};

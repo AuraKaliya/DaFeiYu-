@@ -31,7 +31,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
     "用 following.work 停止，临时动作结束后由程序恢复。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
-    "有依赖的短任务用 queue_actions 的 plan 写明节点和 after，由程序等待回执并推进。新原话可沿用已绑定目标并提交替代计划。"
+    "一次性复杂任务先登记目标，再用 queue_actions 的 plan 写节点和 after。程序按实际回执推进。"
+    "planRejection 是旧提交的拒绝原因。retryAllowed 为 false 时，说明具体受阻或请玩家补充必要信息。"
     "只展开需要的类别。掉落规则可查 knowledge，库存和逐格变化以 workSettlement、planSettlements 或实际观察为准。"
     "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
@@ -136,6 +137,7 @@ void PartnerLoop::reset() noexcept {
     settlements_.clear();
     plan_.reset();
     plan_receipts_.clear();
+    plan_rejection_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -241,6 +243,7 @@ void PartnerLoop::retire() {
     settlements_.clear();
     plan_.reset();
     plan_receipts_.clear();
+    plan_rejection_.clear();
     expanded_.reset();
     expansion_pending_ = false;
     recent_events_.clear();
@@ -290,6 +293,8 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated && handoff_) input["taskHandoff"] = handoff_->receipt.is_null() ?
         Json{{"work",handoff_->work},{"status","waiting_for_old_work"}} : handoff_->receipt;
     if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
+    if (!delegated && plan_rejection_.is_object() && plan_rejection_.at("revision") == task_.revision())
+        input["planRejection"] = plan_rejection_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
     if (completed != settlements_.cend()) {
@@ -366,6 +371,9 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     order_ = order;
     wait_for_work_ = false;
+    plan_failures_ = 0;
+    plan_repair_exhausted_ = false;
+    plan_reply_step_ = 0;
     repair_failures_.clear();
     if (!facts.empty()) hit_queries_.clear();
     follow_handoff_ = false;
@@ -389,6 +397,13 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
         feed_.pending().empty() && !feed_.gap());
 }
 
+// 最后一次模型请求可读取原拒绝，继续循环必须等新的玩家或现场输入。
+bool PartnerLoop::permits_model_step(std::uint64_t session, std::uint64_t step) noexcept {
+    if (session != session_ || !plan_repair_exhausted_) return true;
+    if (!plan_reply_step_) plan_reply_step_ = step;
+    return step == plan_reply_step_;
+}
+
 // 只有处理当前世界的原子会话能修改局内状态，旧事件不能更新任务或展开范围。
 Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, std::string_view skill, std::string_view envelope,
     bool body_busy) {
@@ -400,6 +415,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
     if (skill == "queue_actions") {
+        if (args.at("operation") == "plan") {
+            if (plan_repair_exhausted_) return plan_rejection_.at("result");
+            return report_plan_attempt(invocation,queue_actions(invocation,args));
+        }
         auto result = queue_actions(invocation,args);
         if (result.at("status") == "invalid_plan")
             limit_repair("plan:"+result.value("reason",std::string{}));
@@ -632,6 +651,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
 // 将目标纠正、任务交接和导航权限用于所有前台入口。
 std::string_view PartnerLoop::front_barrier(std::uint64_t session, std::string_view skill) const noexcept {
     if (session != session_ || !session_) return {};
+    if (plan_repair_exhausted_) return "plan_repair_exhausted";
     if (handoff_) {
         if (handoff_->receipt.is_null()) return "waiting_for_old_work";
         if (handoff_->receipt.at("status") == "old_work_exit_unconfirmed") return "old_work_exit_unconfirmed";

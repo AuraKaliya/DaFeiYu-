@@ -31,6 +31,8 @@ class PartnerLoop {
     bool permits(std::uint64_t session) const noexcept;
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
     bool waits_for_work() const noexcept { return wait_for_work_ || (follow_handoff_ && reply_requested_); }
+    // 同类计划两次失败后，只再给原回合一次模型结算机会。
+    bool permits_model_step(std::uint64_t session, std::uint64_t step) noexcept;
     // 返回当前配对的前台动作门槛，空值表示可以继续验证动作。
     std::string_view front_barrier(std::uint64_t session, std::string_view skill) const noexcept;
     // 原工作已接纳后，关闭被新原话和观察共同证实的局内方块追问。
@@ -126,6 +128,8 @@ class PartnerLoop {
     void clear_queue(std::string_view reason, std::uint64_t group = 0);
     // 接纳当前目标下的短任务图，验证通过后才替换上次任务图。
     nlohmann::json submit_plan(std::uint64_t invocation, const nlohmann::json& arguments);
+    // 记录未接纳的原计划和可修订状态，不创建执行等待。
+    nlohmann::json report_plan_attempt(std::uint64_t invocation, nlohmann::json result);
     // 读取同层各节点的真实回执，或将下层节点交给前后台执行器。
     void advance_plan(const BridgeConfig& config, bool closing);
     // 标注仍未执行的节点，并等待在途工作实际退出。
@@ -248,6 +252,10 @@ class PartnerLoop {
     };
     std::optional<Plan> plan_;
     nlohmann::json plan_receipts_ = nlohmann::json::array();
+    nlohmann::json plan_rejection_;
+    unsigned plan_failures_ = 0;
+    bool plan_repair_exhausted_ = false;
+    std::uint64_t plan_reply_step_ = 0;
     bool replacing_motion_ = false;
     std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
     struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };

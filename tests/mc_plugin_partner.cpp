@@ -313,6 +313,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 Json{{"operation","plan"},{"steps",Json::array({{{"id","bad"},{"skill","collect"},{"arguments",Json::object()}}})}};
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (repair_plan && last.tool_call_id == "repair") {
+                    if (result.at("retryAllowed") != false || result.at("reason") != "unsupported_plan_skill" ||
+                        !result.at("attempt").is_number_unsigned() || !result.at("planNodes").is_array())
+                        throw std::runtime_error("plan rejection did not settle a bounded attempt");
+                    checked = true;
+                    return {{Role::assistant,"这次没动起来，我得换个办法。"}};
+                }
                 if (last.tool_call_id == "bad-category") {
                     if (result.at("status") != "invalid_category" || result.at("category") != "navigation" ||
                         std::ranges::find(result.at("validCategories"),"movement") == result.at("validCategories").end() ||
@@ -324,7 +331,9 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     result.at("reasonCode") != "observe_mixed_modes" :
                     result.at("reason") != "unsupported_plan_skill" || result.at("node") != "bad"))
                     throw std::runtime_error("failed parameter repair was retried or diagnostic was lost");
-                checked = true;
+                if (repair_plan && result.at("retryAllowed") != true)
+                    throw std::runtime_error("first invalid plan was not eligible for repair");
+                checked = repair_observe;
                 return call(skill,"repair",args);
             }
             if (Json::parse(last.content).at("events").back().at("sequence") == 2) {

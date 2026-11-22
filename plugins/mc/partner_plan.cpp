@@ -71,6 +71,27 @@ bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Js
     });
 }
 
+// 记下计划提交的确定性拒绝，并保留一次有界修订后的自然结算。
+// 步骤：归还成功提交 → 记录重复失败额度 → 发布未接纳事实和原任务身份。
+Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
+    if (result.at("status") == "queued") {
+        plan_rejection_.clear();
+        return result;
+    }
+    if (result.at("status") == "invalid_plan" &&
+        (++plan_failures_ >= 3 || ++repair_failures_["plan:"+result.value("reason",std::string{})] >= 2)) {
+        plan_repair_exhausted_ = true;
+        task_.disarm();
+    }
+    result["attempt"] = invocation;
+    result["retryAllowed"] = !plan_repair_exhausted_ && result.at("status") == "invalid_plan";
+    if (result.value("reason",std::string{}) == "unsupported_plan_skill") result["planNodes"] = plan_skills();
+    plan_rejection_ = {{"status","rejected"},{"revision",task_.revision()},{"order",order_},{"result",result}};
+    if (task_.id()) plan_rejection_["task"] = task_.id();
+    publish("mc.partner.plan",plan_rejection_);
+    return result;
+}
+
 // 在当前世界验证一到四个节点及全部依赖，再原子替换上次任务图。
 // 步骤：校验槽位和节点参数 → 固定前置编号 → 拓扑分层并登记。
 Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
