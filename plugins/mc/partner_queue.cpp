@@ -16,10 +16,7 @@ bool valid_step(std::string_view skill, const Json& args) {
         args.at("distance").is_number_integer() && args.at("distance") >= 2 && args.at("distance") <= 5);
     if (skill == "move" && args.size() == 1) return (args.contains("place") && args.at("place").is_string()) ||
         (args.contains("message") && args.at("message").is_number_unsigned() && args.at("message") > 0);
-    for (const auto axis : {"x","y","z"}) {
-        if (!args.contains(axis) || !args.at(axis).is_number_integer() ||
-            args.at(axis) < -30000000 || args.at(axis) > 30000000) return false;
-    }
+    if (!valid_action_cell(args)) return false;
     if (skill == "move") return args.size() == 3;
     if (!args.contains("block") || !args.at("block").is_string()) return false;
     if (skill == "place") return args.size() == 4;
@@ -128,7 +125,7 @@ void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
     if (!follow_ || !follow_->suspended || motion_ || body_busy || !feed_.ready() || feed_.gap() ||
         !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt) || awaiting_restarted_route_ ||
         (handoff_ && (handoff_->receipt.is_null() || handoff_->receipt.at("status") != "exited")) ||
-        (task_.navigation() && plan_ && plan_->active && plan_->revision == task_.revision())) return;
+        (plan_ && plan_->active)) return;
     auto& follow = *follow_;
     const auto work = follow.id+".resume."+std::to_string(follow.segment+1);
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},

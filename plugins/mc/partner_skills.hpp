@@ -23,14 +23,14 @@ struct PartnerAction {
 // 计划、顺序队列与直接工具统一查找实际执行技能，空执行器可结算已知但未实现的能力。
 inline constexpr std::array partner_actions{
     PartnerAction{"observe","observe",true},
-    PartnerAction{"move","move",false,true},
+    PartnerAction{"move","move",true,true},
     PartnerAction{"start_move","move"},
     PartnerAction{"follow","follow",false,true},
     PartnerAction{"collect","collect",false,true},
     PartnerAction{"collect_confirmed","collect"},
     PartnerAction{"dig_block","collect",true},
     PartnerAction{"gather_ground","collect",true},
-    PartnerAction{"place","place",false,true},
+    PartnerAction{"place","place",true,true},
     PartnerAction{"fill_target","fill_target",true},
     PartnerAction{"route","route",true},
     PartnerAction{"craft","",true},
@@ -40,6 +40,14 @@ inline constexpr std::array partner_actions{
 inline const PartnerAction* partner_action(std::string_view name) noexcept {
     const auto action = std::ranges::find(partner_actions,name,&PartnerAction::name);
     return action == partner_actions.end() ? nullptr : &*action;
+}
+
+// 校验改动格和精确站位共用的整数坐标范围。
+inline bool valid_action_cell(const nlohmann::json& args) {
+    return std::ranges::all_of(std::array{"x","y","z"},[&](auto axis) {
+        return args.contains(axis) && args.at(axis).is_number_integer() &&
+            args.at(axis) >= -30000000 && args.at(axis) <= 30000000;
+    });
 }
 
 // 把当前可编排的节点目录提供给首次选工具以及显式分类查询。
@@ -68,7 +76,7 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"distance":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
     {"stop_motion", "partner.stop_motion", "Cancel following by the stable following.work ID, or cancel the matching activeMotion work. Actual exit is reported separately.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
-    {"queue_actions", "partner.queue_actions", "Use plan for up to four nodes with unique id and optional after IDs. Use the node capabilities listed in the skill parameter. dig_block takes x,y,z,block and the observed player message. Add pickup when a successor depends on the drop. To resolve pendingQuestion.afterPickup, use resolves and submit the confirmed dig_block with the answer message. The plugin retains the original craft successor. gather_ground takes item,requiredStock,optional block. fill_target takes block. observe takes {} or message and optional focus. route takes a validated route ID and laps 1-8. Craft currently returns skill_unavailable. Clear stops the plan and waiting actions. Append, interrupt and replace accept sequence steps without id or after. Repair a rejection once using reason and node.",
+    {"queue_actions", "partner.queue_actions", "Use plan for up to four nodes with unique id and optional after IDs. Use the node capabilities listed in the skill parameter. dig_block takes x,y,z,block and the observed player message. Add pickup when a successor depends on the drop. To resolve pendingQuestion.afterPickup, use resolves and submit the confirmed dig_block with the answer message. The plugin retains the original craft successor. gather_ground takes item,requiredStock,optional block. Place takes x,y,z,block within the bound target. Move takes exact standing x,y,z and verifies arrival. For dependent steps, use after to wait for actual placement or arrival. fill_target takes block. observe takes {} or message and optional focus. route takes a validated route ID and laps 1-8. Craft currently returns skill_unavailable. Clear stops the plan and waiting actions. Append, interrupt and replace accept sequence steps without id or after. Repair a rejection once using reason and node.",
         R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. Set approval to game or main when consent is needed. On exit, read actual cell changes separately from inventory changes.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},

@@ -167,6 +167,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool restart_route = variant == L"partner-revision-navigation-restart";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
+    const bool layered = variant.starts_with(L"partner-revision-layered");
+    const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool pointed_support = variant == L"partner-revision-pointed-support";
     const bool pointed_craft = variant.starts_with(L"partner-revision-pointed-craft");
@@ -174,6 +176,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
+    const Json pads = Json::array({{{"x",3},{"y",-62},{"z",24}},{{"x",3},{"y",-61},{"z",25}}});
     auto floor = wall;
     for (int i : {2,3}) { floor.at(i)["y"] = -60; floor.at(i)["z"] = -4; }
     const auto reason = approval ? "approval_changed" : "task_changed";
@@ -188,6 +191,50 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (layered) {
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "register") return call("_observe","survey",{{"sources",{"self"}},{"verify",pads}});
+                if (last.tool_call_id == "survey")
+                    return call("_task_update","bind",{{"goal","垫两级站位"},{"next","player"},{"target",{{"message",2},{"cells",pads},
+                        {"observation",result.at("observation").at("id")}}}});
+                if (last.tool_call_id != "bind" || result.at("status") != "updated")
+                    throw std::runtime_error("layered plan made an intervening model request");
+
+                Json nodes = Json::array();
+                for (std::size_t i = 0; i < pads.size(); ++i) {
+                    auto place = pads.at(i), stand = place;
+                    place["block"] = "dirt";
+                    stand["y"] = stand.at("y").get<int>()+1;
+                    const auto previous = "stand-"+std::to_string(i);
+                    const auto build = "place-"+std::to_string(i+1);
+                    nodes.push_back({{"id",build},{"skill","place"},{"arguments",place}});
+                    if (i) nodes.back()["after"] = {previous};
+                    nodes.push_back({{"id","stand-"+std::to_string(i+1)},{"skill","move"},{"arguments",stand},{"after",{build}}});
+                }
+                return call("_queue_actions","layered-plan",{{"operation","plan"},{"steps",std::move(nodes)}});
+            }
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                const auto& plan = input.at("taskPlan");
+                const auto& layers = input.at("planSettlements");
+                if (checked || plan.at("status") != (layered_blocked ? "blocked" : "done") || layers.size() != 4)
+                    throw std::runtime_error("layered plan did not settle all dependencies");
+                for (std::size_t i = 0; i < layers.size(); ++i) {
+                    const auto& node = layers.at(i).at("nodes").at(0);
+                    const auto& result = node.at("result");
+                    if (node.at("work") != plan.at("nodes").at(i).at("work") ||
+                        result.at("status") != (!layered_blocked || i == 0 ? "done" : i == 1 ? "blocked" : "skipped") ||
+                        ((!layered_blocked || i == 0) && (i%2 == 0 ? result.at("placed") != true : result.at("arrived") != true)))
+                        throw std::runtime_error("layer lacked execution or skip proof under its original work ID");
+                }
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
+                return call("_task_update","register",{{"operation","start_task"},{"kind","work"},{"message",2},{"goal","垫两级站位"}});
+            return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
         if (pointed_craft) {
             const Json continuation{{"item","planks"},{"count",4}};
             const std::string question = "你指哪块原木？";
@@ -541,7 +588,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support ? 2u : restart_route ? 5u : pointed_craft ? 4u : 3u) &&
+            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route ? 5u : pointed_craft ? 4u : 3u) &&
             receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);

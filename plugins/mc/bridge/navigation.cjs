@@ -8,6 +8,13 @@ function dryStand(bot, point) {
     !cell.getProperties().waterlogged && below?.boundingBox === 'block';
 }
 
+// 检查精确站位的脚格、承重面及头部空间均已加载且可用。
+function clearStand(bot, point) {
+  const head = bot.blockAt(point.floored().offset(0, 1, 0));
+  return dryStand(bot, point) && head?.boundingBox === 'empty' &&
+    !['water', 'lava', 'bubble_column'].includes(head.name) && !head.getProperties().waterlogged;
+}
+
 // 把固定目的地的可接受站位限制到干地。
 class DryStandGoal extends goals.Goal {
   // 保存寻路期间读取的客户端世界。
@@ -85,4 +92,4 @@ function monitorSurface(bot, result) {
   return { sample, stop() { sample(); bot.removeListener('physicsTick', sample); } };
 }
 
-module.exports = { dryStand, DryStandGoal, digReachable, DigStandGoal, SurfaceFollowGoal, monitorSurface };
+module.exports = { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, SurfaceFollowGoal, monitorSurface };

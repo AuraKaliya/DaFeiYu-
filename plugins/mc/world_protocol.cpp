@@ -205,6 +205,13 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     }
     if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
         throw std::invalid_argument("MC: invalid partner outcome");
+    if (exited && skill == "move" && args.value("exact",false) && result.at("status") == "done") {
+        if (result.at("arrived") != true) throw std::invalid_argument("MC: exact arrival not verified");
+        const auto& position = result.at("position");
+        for (const auto axis : {"x","y","z"})
+            if (!position.at(axis).is_number() || std::floor(position.at(axis).get<double>()) != args.at(axis).get<double>())
+                throw std::invalid_argument("MC: arrived at a different cell");
+    }
     bool attempted = false, verified = false;
     if (exited && skill == "place") {
         attempted = result.at("placementAttempted").get<bool>();

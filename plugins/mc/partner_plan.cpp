@@ -19,6 +19,12 @@ bool prepare_action(std::string_view skill, Json& args) {
         return args.contains(key) && args.at(key).is_number_integer() && args.at(key) >= 1 && args.at(key) <= 32;
     };
     if (skill == "fill_target") return args.size() == 1 && name("block");
+    if (skill == "place") return args.size() == 4 && name("block") && valid_action_cell(args);
+    if (skill == "move") {
+        if (args.size() != 3 || !valid_action_cell(args)) return false;
+        args["exact"] = true;
+        return true;
+    }
     if (skill == "craft") return args.size() == 2 && name("item") && quantity("count");
     if (skill == "route") return args.size() == 2 && name("route") && quantity("laps") && args.at("laps") <= 8;
     if (skill == "observe") return args.empty() || (args.contains("message") &&
@@ -33,8 +39,7 @@ bool prepare_action(std::string_view skill, Json& args) {
     }
     if (skill != "dig_block" || args.size() != 4+args.count("message") || !name("block") ||
         (args.contains("message") && (!args.at("message").is_number_unsigned() || args.at("message") == 0))) return false;
-    for (const auto key : {"x","y","z"}) if (!args.contains(key) || !args.at(key).is_number_integer() ||
-        args.at(key) < -30000000 || args.at(key) > 30000000) return false;
+    if (!valid_action_cell(args)) return false;
     args["source"] = "visible";
     args["count"] = 1;
     return true;
@@ -43,7 +48,8 @@ bool prepare_action(std::string_view skill, Json& args) {
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
-    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","changes","cells","sampledAtMs","route","item","count"})
+    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","changes","cells",
+        "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter"})
         if (result.contains(name)) evidence[name] = result.at(name);
     return evidence;
 }
@@ -64,6 +70,7 @@ std::string craft_item(std::string_view item, std::string_view block) {
 // 按执行器使用的采掘或逐格放置参数检查计划的当前授权条件。
 bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Json& args) const {
     if (skill == "gather_ground" || skill == "dig_block") return requires_approval("collect",args);
+    if (skill == "place") return requires_approval("place",args);
     if (skill != "fill_target" || !task_.target_ready()) return false;
     return std::ranges::any_of(task_.target_cells(),[&](auto cell) {
         cell["block"] = args.at("block");
@@ -142,6 +149,10 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         }
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");
         if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
+        if (skill == "place") {
+            auto bound = args;
+            if (!task_.bind_placement(bound)) return invalid("placement_outside_target");
+        }
         if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),action->name,

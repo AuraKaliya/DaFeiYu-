@@ -26,11 +26,14 @@ async function main() {
   const restartRoute = variant === 'partner-revision-navigation-restart';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
+  const layered = variant?.startsWith('partner-revision-layered');
+  const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const pointedSupport = variant === 'partner-revision-pointed-support';
   const pointedCraft = variant?.startsWith('partner-revision-pointed-craft');
   const noPickup = variant === 'partner-revision-pointed-craft-no-pickup';
   const wall = [-60, -59].flatMap(y => [2, 3].map(x => ({ x, y, z: -5 })));
+  const pads = [{ x: 3, y: -62, z: 24 }, { x: 3, y: -61, z: 25 }];
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
@@ -49,6 +52,8 @@ async function main() {
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let following, collecting, resumed, collectExited = false;
   let planReading = false, nextBlock = false;
+  const nodeExits = [];
+  let nodeAtWork;
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
@@ -93,6 +98,10 @@ async function main() {
         if (departure) messages[2] = left;
         if (revision) {
           messages[1].text = '清理门边两格草方块';
+          if (layered) {
+            messages[1].text = '你可以垫上来';
+            messages[1].sceneAtMessage.position = { x: 3.5, y: -60, z: 25.5 };
+          }
           if (correction || navigation) {
             messages[1].text = '把我面前墙上的四格补上';
             messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
@@ -142,6 +151,41 @@ async function main() {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (revision) {
+        if (layered) {
+          assert.equal(context.order, 2);
+          if (skill === 'observe') {
+            assert.equal(method, 'partner.begin');
+            assert.deepEqual(args, { sources: ['self'], verify: pads });
+            return { ...context, skill, exited: true, result: { status: 'done', observation: {
+              id, generation: context.generation, dimension: 'overworld', requested: 1, samples: [{
+                sampledAtMs: 42, verified: pads.map(cell => ({ ...cell, atSelf: true, block: 'air' })),
+                views: [{ source: 'self', status: 'sampled', actor: { position: { x: 3.5, y: -62, z: 23.5 } } }],
+              }],
+            } } };
+          }
+          const index = nodeExits.length;
+          const pad = pads[Math.floor(index / 2)];
+          const place = index % 2 === 0;
+          assert.ok(index < (layeredBlocked ? 2 : 4));
+          assert.equal(skill, place ? 'place' : 'move');
+          if (method === 'partner.begin') {
+            assert.ok(!nodeAtWork && !nodeExits.includes(id));
+            assert.deepEqual(args, place ? { ...pad, block: 'dirt', sourceMessage: 2, taskRevision: 2 } :
+              { ...pad, y: pad.y + 1, exact: true });
+            nodeAtWork = id;
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, nodeAtWork);
+          nodeExits.push(id);
+          nodeAtWork = undefined;
+          const result = place ? { status: 'done', placementAttempted: true, placed: true,
+            sourceMessage: 2, taskRevision: 2, blocks: [{ ...pad, block: 'dirt' }],
+            changes: [{ ...pad, before: 'air', after: 'dirt' }], materialBefore: 2 - index / 2, materialAfter: 1 - index / 2 } :
+            layeredBlocked ? { status: 'blocked', reasonCode: 'unsafe_stand' } :
+              { status: 'done', arrived: true, position: { x: pad.x + 0.5, y: pad.y + 1, z: pad.z + 0.5 } };
+          return { ...context, skill, exited: true, result };
+        }
         if (questionExpiry) {
           assert.equal(method, 'partner.begin');
           assert.equal(skill, 'reply');
@@ -428,7 +472,7 @@ async function main() {
   releaseControl(generation) {
     assert.equal(generation, state.generation);
     return { generation, order: restartRoute ? 5 : first || motion || confirm || pointedCraft ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -453,6 +497,9 @@ async function main() {
         assert.ok(events.some(line => line.includes('"kind":"run.exited"') && line.includes('"run":2,') &&
           !line.includes('work_pending') && line.includes('这次没动起来')));
       }
+      console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (layered) {
+      assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);

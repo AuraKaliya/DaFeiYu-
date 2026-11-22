@@ -9,7 +9,7 @@ const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
-const { dryStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
+const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -361,6 +361,7 @@ function partnerService(bot, world, inbox, places, owner) {
       } else if (r.skill === 'move') {
         const named = Object.hasOwn(args, 'place');
         const anchored = Object.hasOwn(args, 'message');
+        const exact = args.exact === true;
         if (named && ['x','y','z'].some(k => Object.hasOwn(args,k))) throw new Error('请选择地标或坐标之一');
         if (anchored && (named || ['x','y','z'].some(k => Object.hasOwn(args,k)))) throw new Error('请选择一个移动目标');
         const point = args.place === 'player' ? player?.entity?.position?.floored() :
@@ -368,20 +369,24 @@ function partnerService(bot, world, inbox, places, owner) {
         if (named && (!point || (point.dimension && point.dimension !== bot.game.dimension))) throw new Error('地标未知或玩家不在视野');
         const target = anchored ? messageAnchor(r.generation, args.message).center.floored() : named ? point : args;
         const pos = targetPoint(bot, target);
+        // 依赖这个落脚点的后续节点需要实际站在目标格。
+        if (exact && !clearStand(bot, pos)) throw Object.assign(new Error('目标脚位的支撑或净空不成立'), { code: 'unsafe_stand' });
         const nearby = new goals.GoalNear(pos.x, pos.y, pos.z, anchored ? 3 : 1);
         const dryTarget = anchored || dryStand(bot, pos);
         const conditions = [nearby];
         if (anchored) conditions.push(new goals.GoalY(pos.y));
         if (dryTarget) conditions.push(new DryStandGoal(bot));
-        const goal = conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby;
+        const goal = exact ? new goals.GoalBlock(pos.x, pos.y, pos.z) :
+          conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby;
         if (anchored) result.sourceMessage = args.message;
         const surface = monitorSurface(bot, result);
         try { await walk(bot, goal); }
         finally { surface.stop(); result.position = bot.entity.position.clone(); }
         check();
         const arrived = bot.entity.position.floored();
-        if (!goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater))
-          throw new Error('到达站位未核实');
+        if (!goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater) || (exact && !clearStand(bot, pos)))
+          throw Object.assign(new Error('到达站位未核实'), { code: 'arrival_unverified' });
+        if (exact) result.arrived = true;
         if (args.place === 'player') result.target = 'player';
       } else if (r.skill === 'follow') {
         bot.pathfinder.setMovements(walkingMovements(bot));
@@ -412,7 +417,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['collect', 'place', 'fill_target', 'observe', 'route'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'place', 'fill_target', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (world.read()?.generation === r.generation) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
