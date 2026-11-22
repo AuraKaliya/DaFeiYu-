@@ -16,7 +16,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "events 是新事实和玩家原话，recentDialogue 是已处理原话与已发送的发言。"
     "task 保存共同目标和原话指向。新导航目标用 task_update 的 start_task，重开同一任务用 restart_task。"
     "绕行先用 observe(mode=wall,message=原话) 读范围，再用 observe(mode=route,observation=wallSurvey.id) 核验路线。"
-    "queue_actions 的 plan 只提交一个 route 节点，参数为 route.id 和 laps。执行器负责逐段走和计圈，移动回执到达后才报告完成。"
+    "计划中的 route 节点接收 route.id 和 laps，可与其他步骤编排。执行器逐段走和计圈，实际回执到达后才报告完成。"
     "中途重开同一绕行任务用 restart_task。交接结束后用 task.navigationWall.observation 和 navigationWall.id 重新核验原墙路线，圈数沿用 navigationWall.laps。"
     "taskHandoff 表示旧动作真实退出的交接，等待期间可以观察和回话。挖玩家指的方块用 observe 的 message 与 focus=objects，"
     "观察对象材质和参照；准确命中时也可用 hit。只在候选证据足够时挖，找洞口用 focus=openings；"
@@ -36,8 +36,8 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "只展开需要的类别。掉落规则可查 knowledge，库存和逐格变化以 workSettlement、planSettlements 或实际观察为准。"
     "accepted 和 queued 表示已接单。需要当场接话时同批提交 reply。程序等到实际回执后继续任务。\n"
     "行动、观察和说话可以独立继续。有人搭话就接他的原话；行动没结束时只谈已知进展。"
-    "reply 发给玩家，处理原话时普通最终文本也可发一次，已经发过或仅需内部结算时用空文本。"
-    "没有新消息时，主动发言用 reply，只在玩家关心的进展或受阻发生时发。入场无需固定问候。"
+    "处理原话或收到实际任务结果时，可以用 reply 或最终文本自然发一句。已发的答复和内部结算用空文本收尾。"
+    "接话后发现需要澄清时仍可用 ask_player。没有新消息时，只在玩家关心的进展或受阻发生时主动发言。入场无需固定问候。"
     "玩家纠正时先接他的原话，简短说你会改哪里。游戏聊天省略坐标、工具名和内部状态。"
     "pendingQuestion 标为 expired 时继续等待玩家；只有实际的新回答可解除等待。不要重复追问或用沉默判断同意。"
     "明确需要授权时才用动作的 approval，聊天只带实际问题。等答复时照常交谈和观察。"
@@ -155,7 +155,7 @@ void PartnerLoop::reset() noexcept {
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
     final_reply_.reset();
-    reply_requested_ = false;
+    reply_requested_ = question_requested_ = rejection_reply_requested_ = final_text_for_player_ = false;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
     review_ = {};
@@ -203,13 +203,14 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     return true;
 }
 
-// 把玩家原话回合的纯文本接回原游戏回复通道，一个回合至多启动一次。
+// 把玩家原话和实际任务结算的纯文本交给同一游戏回复通道。
 // 步骤：核对发言归属与绑定 → 推进原回复票据 → 发布已验证的实际结果。
 bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel) {
     const auto work = "reply."+std::to_string(instance)+"."+std::to_string(session_)+"."+std::to_string(request_);
     if (!final_reply_) {
-        if (cancel || reply_requested_ || active_delegation_ || !permits(session_) || !feed_.ready() ||
-            feed_.departed() || events_.empty() || events_.back().at("type") != "player.message") return true;
+        const bool announced = plan_repair_exhausted_ ? rejection_reply_requested_ : reply_requested_;
+        if (cancel || announced || question_requested_ || !final_text_for_player_ || active_delegation_ ||
+            !permits(session_) || !feed_.ready() || feed_.departed()) return true;
         auto text = player_reply(answer);
         if (text.empty()) return true;
         const auto envelope = Json{{"context",{{"generation",session_world_},{"order",order_}}},
@@ -297,12 +298,15 @@ void PartnerLoop::submit(std::string_view wake) {
         input["planRejection"] = plan_rejection_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
+    bool actual_outcome = wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty();
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
         auto primary = receipts.size()-1;
         while (primary && !receipts.at(primary).contains("effect")) --primary;
         input["workSettlement"] = {{"invocation",completed->invocation},{"primary",primary},{"receipts",receipts}};
         const auto& receipt = receipts.at(primary);
+        const auto& status = receipt.at("result").at("status");
+        actual_outcome |= wake == "motion.finished" && (status == "done" || status == "blocked") && receipt.at("skill") != "follow";
         completed_dig = facts.empty() && !task_.correcting() && receipt.value("pointedDig",false) &&
             verified_action(receipt.at("result"),"collect",{});
         auto& task = input.at("task");
@@ -375,8 +379,8 @@ void PartnerLoop::submit(std::string_view wake) {
     plan_reply_step_ = 0;
     repair_failures_.clear();
     if (!facts.empty()) hit_queries_.clear();
-    follow_handoff_ = false;
-    reply_requested_ = false;
+    reply_requested_ = question_requested_ = rejection_reply_requested_ = false;
+    final_text_for_player_ = !delegated && (actual_outcome || (!facts.empty() && facts.back().at("type") == "player.message"));
     reviewed_ = 0;
     stopped_work_ = false;
     events_ = std::move(facts);
@@ -424,10 +428,9 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         return result;
     }
     if (skill == "ask_player") {
-        if (reply_requested_) return {{"status","already_requested"}};
         auto question = open_question(invocation,args);
-        reply_requested_ = true;
-        if (question.at("status") == "recorded" || question.at("status") == "waiting") wait_for_work_ = true;
+        if (question.at("status") == "recorded" || question.at("status") == "waiting")
+            question_requested_ = wait_for_work_ = true;
         return question;
     }
     if (skill == "stop_motion") {
@@ -540,11 +543,12 @@ bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args)
     return false;
 }
 
-// 只接受与当前玩家事件或动作回执关联的首个发言意图。
+// 为普通答复或新产生的计划失败结论分配一次明确发言。
 bool PartnerLoop::reserve_reply(std::uint64_t session) noexcept {
     if (session != session_ || active_delegation_) return true;
-    if (reply_requested_) return false;
-    reply_requested_ = true;
+    auto& reserved = plan_repair_exhausted_ ? rejection_reply_requested_ : reply_requested_;
+    if (reserved) return false;
+    reserved = true;
     return true;
 }
 
@@ -663,7 +667,6 @@ std::string_view PartnerLoop::front_barrier(std::uint64_t session) const noexcep
 void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
     std::string work, std::string output) noexcept {
     if (!session_ || session != session_ || !request_) return;
-    if (invocation && skill == "reply") reply_requested_ = true;
     if (action_count_ >= actions_.size()) return;
     actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
 }
@@ -712,7 +715,6 @@ void PartnerLoop::adopt_motion(std::uint64_t invocation, std::string_view skill,
     if (motion_) throw std::logic_error("MC partner: motion already active");
     if (skill == "follow") {
         follow_ = Follow{order_,request_,invocation,1,work,Json::parse(envelope).at("arguments")};
-        follow_handoff_ = true;
     }
     motion_.emplace(Motion{order_,session_,request_,invocation,session_world_,work,skill,std::move(action)});
     motion_->pointed = pointed;

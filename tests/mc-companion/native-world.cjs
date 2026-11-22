@@ -58,6 +58,7 @@ async function main() {
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
+  let clarificationAck = false;
   let heardAt;
   let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
   let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
@@ -155,6 +156,13 @@ async function main() {
       if (revision) {
         if (layered) {
           assert.equal(context.order, 2);
+          if (layeredBlocked && skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            assert.equal(args.text, '第一块垫好了，但我站不上去。');
+            assert.equal(nodeExits.length, 2);
+            assert.equal(++replies, 1);
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
           if (skill === 'observe') {
             assert.equal(method, 'partner.begin');
             assert.deepEqual(args, { sources: ['self'], verify: pads });
@@ -191,7 +199,11 @@ async function main() {
         if (questionExpiry) {
           assert.equal(method, 'partner.begin');
           assert.equal(skill, 'reply');
-          if (!questionPresented) {
+          if (!clarificationAck) {
+            assert.equal(context.order, 2);
+            assert.equal(args.text, '我来看看。');
+            clarificationAck = true;
+          } else if (!questionPresented) {
             assert.equal(args.text, '你指左边还是右边？');
             assert.equal(context.order, 2);
             questionPresented = true;
@@ -511,6 +523,7 @@ async function main() {
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (layered) {
       assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
+      assert.equal(replies, layeredBlocked ? 1 : 0);
       console.log(path.join(root, 'trace', 'events.jsonl'));
     } else if (revision) {
       if (correctionLost) assert.ok(stopped >= 2);

@@ -30,7 +30,7 @@ class PartnerLoop {
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
     // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
-    bool waits_for_work() const noexcept { return wait_for_work_ || (follow_handoff_ && reply_requested_); }
+    bool waits_for_work() const noexcept { return wait_for_work_; }
     // 同类计划两次失败后，只再给原回合一次模型结算机会。
     bool permits_model_step(std::uint64_t session, std::uint64_t step) noexcept;
     // 返回当前配对的前台动作门槛，空值表示可以继续验证动作。
@@ -260,7 +260,7 @@ class PartnerLoop {
     std::deque<std::pair<std::string,nlohmann::json>> guarded_actions_;
     struct WorkSettlement { std::uint64_t invocation; nlohmann::json receipts; };
     std::deque<WorkSettlement> settlements_;
-    bool wait_for_work_ = false, follow_handoff_ = false;
+    bool wait_for_work_ = false;
     std::map<std::string,unsigned> repair_failures_;
     std::map<std::uint64_t,unsigned> hit_queries_;
     // 按调用组累积实际终态，独立于玩家事件的收取顺序。
@@ -283,7 +283,8 @@ class PartnerLoop {
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     std::unique_ptr<GameWork> final_reply_;
-    bool reply_requested_ = false;
+    bool reply_requested_ = false, question_requested_ = false, rejection_reply_requested_ = false;
+    bool final_text_for_player_ = false;
     struct Release {
         std::string world, id, arguments;
         std::unique_ptr<PipeExchange> pipe;

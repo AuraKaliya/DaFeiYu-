@@ -230,7 +230,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                         throw std::runtime_error("layer lacked execution or skip proof under its original work ID");
                 }
                 checked = true;
-                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+                return {{Role::assistant,layered_blocked ? "第一块垫好了，但我站不上去。" : R"({"internal":"plan exit checked"})"}};
             }
             if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
                 return call("_task_update","register",{{"operation","start_task"},{"kind","work"},{"message",2},{"goal","垫两级站位"}});
@@ -328,6 +328,11 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         }
         if (question_expiry) {
             if (last.role == Role::tool) {
+                if (last.tool_call_id == "ack-before-question") {
+                    if (last.content.find("\"sent\":true") == last.content.npos)
+                        throw std::runtime_error("initial chat was not delivered before clarification");
+                    return call("_ask_player","local-question",{{"question","你指左边还是右边？"},{"options",{"左边","右边"}}});
+                }
                 // 按固定调用编号读取同批返回的业务回执。
                 const auto output = [&](std::string_view id) {
                     const auto tool = std::ranges::find(request.messages,id,&Message::tool_call_id);
@@ -344,7 +349,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& events = input.at("events");
             if (events.empty()) throw std::runtime_error("a silent player caused an autonomous model request");
             if (events.back().at("sequence") == 2)
-                return call("_ask_player","local-question",{{"question","你指左边还是右边？"},{"options",{"左边","右边"}}});
+                return call("_reply","ack-before-question",{{"text","我来看看。"}});
             if (events.back().at("sequence") == 3) {
                 if (input.at("pendingQuestion").at("status") != "expired" || input.contains("questionResult"))
                     throw std::runtime_error("expiry was consumed as an answer");
@@ -586,7 +591,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         for (std::string line; std::getline(trace,line);)
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
                 ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
-                    line.find(question_expiry ? "这段内部结算" : "plan exit checked") != line.npos)) return true;
+                    line.find(question_expiry ? "这段内部结算" : layered_blocked ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
         return false;
     };
     bool stopping = false;
