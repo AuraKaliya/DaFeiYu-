@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "../plugins/mc/follow_attention.hpp"
 #include "../plugins/mc/partner_effect.hpp"
 #include "../plugins/mc/partner_knowledge.hpp"
 #include "../plugins/mc/partner_task.hpp"
@@ -15,6 +16,46 @@ namespace {
 const nlohmann::json& primary_receipt(const nlohmann::json& context) {
     const auto& work = context.at("workSettlement");
     return work.at("receipts").at(work.at("primary").get<std::size_t>());
+}
+
+// 覆盖持续掉队、高差、丢失玩家与恢复的时间边界，以及相同异常的防重。
+// 步骤：检查接近与重复采样 → 触发一次距离异常并恢复 → 检查高差、可见性及显式受阻。
+void verify_follow_windows() {
+    using dfy::mc::FollowAttention;
+    using dfy::mc::FollowSignal;
+    using Json = nlohmann::json;
+    FollowAttention attention;
+    const auto sample = [&](std::uint64_t at, double distance, double vertical, std::string_view phase, std::string_view path) {
+        return attention.observe(Json{{"sampledAtMs",at},{"distance",distance},{"vertical",vertical},{"phase",phase},{"path",path}},3);
+    };
+    for (std::uint64_t at = 0; at <= 3500; at += 500)
+        if (sample(at,14-static_cast<double>(at)/500,0,"following","reachable") != FollowSignal::none)
+            throw std::runtime_error("normal closing movement raised attention");
+    for (std::uint64_t at = 4000; at < 7000; at += 500)
+        if (sample(at,at == 4000 ? 6 : 7,0,"following","reachable") != FollowSignal::none)
+            throw std::runtime_error("brief distance fluctuation raised attention");
+    if (sample(7000,7,0,"following","reachable") != FollowSignal::raised ||
+        sample(7000,9,4,"blocked","unreachable") != FollowSignal::none ||
+        attention.blocked(Json::object()) != FollowSignal::none || attention.reason() != "distance_stalled")
+        throw std::runtime_error("distance episode did not deduplicate stronger or repeated samples");
+    for (std::uint64_t at = 7500; at <= 8500; at += 500)
+        if (sample(at,2.8,0,"in_range","reachable") != (at == 8500 ? FollowSignal::recovered : FollowSignal::none))
+            throw std::runtime_error("follow recovery did not require stable near-range evidence");
+    for (std::uint64_t at = 9000; at <= 11000; at += 500)
+        if (sample(at,4,3,"following","unreachable") != (at == 11000 ? FollowSignal::raised : FollowSignal::none))
+            throw std::runtime_error("vertical obstacle ignored the no-path evidence");
+    if (attention.reason() != "unreachable_height" || attention.episode() != 2)
+        throw std::runtime_error("separate vertical obstacle lost its own episode");
+
+    attention = {};
+    for (std::uint64_t at = 0; at <= 5000; at += 500)
+        if (sample(at,0,0,"waiting_player","unknown") != (at == 5000 ? FollowSignal::raised : FollowSignal::none))
+            throw std::runtime_error("missing entity was not verified over the expected interval");
+    attention = {};
+    if (sample(0,9,0,"following","unknown") != FollowSignal::none ||
+        sample(3500,9,0,"following","unknown") != FollowSignal::none ||
+        attention.blocked(Json::object()) != FollowSignal::raised)
+        throw std::runtime_error("sample gap or explicit blocked exit used the wrong attention boundary");
 }
 
 // 核对草方块拆除、实际泥土入包以及部分成功的三个边界。
@@ -170,6 +211,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool layered = variant.starts_with(L"partner-revision-layered");
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
+    const bool attention = variant == L"partner-revision-attention";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool pointed_support = variant == L"partner-revision-pointed-support";
     const bool pointed_craft = variant.starts_with(L"partner-revision-pointed-craft");
@@ -182,6 +224,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     for (int i : {2,3}) { floor.at(i)["y"] = -60; floor.at(i)["z"] = -4; }
     const auto reason = approval ? "approval_changed" : "task_changed";
     std::atomic_bool checked = false;
+    unsigned attention_turns = 0;
+    std::string follow_id;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
@@ -192,6 +236,38 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
         };
         const auto& last = request.messages.back();
+        if (attention) {
+            if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"ready"})"}};
+            const auto input = Json::parse(last.content);
+            const auto& trigger = input.at("trigger");
+            if (trigger == "follow.attention") {
+                const auto& alert = input.at("followAttention");
+                follow_id = input.at("following").at("work").get<std::string>();
+                if (++attention_turns != 1 || alert.at("work") != follow_id || alert.at("episode") != 1 ||
+                    alert.at("reason") != "unreachable_height" || alert.at("progress").at("vertical") != 5)
+                    throw std::runtime_error("follow samples caused duplicate wake or lost their game evidence");
+                return {{Role::assistant,"我被高台挡住了，你等我找一下路。"}};
+            }
+            if (trigger == "motion.finished") {
+                const auto& receipt = primary_receipt(input);
+                if (follow_id.empty() || receipt.at("bridgeWork") != follow_id || receipt.at("work") != follow_id ||
+                    receipt.at("result").at("status") != "interrupted")
+                    throw std::runtime_error("stop did not read back the original follow work");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            const auto& event = input.at("events").back();
+            switch (event.at("sequence").get<int>()) {
+            case 2: return call("_follow","start-follow",Json::object());
+            case 3:
+                if (input.at("following").at("work") != follow_id || input.at("followAttention").at("status") != "recovered" ||
+                    input.at("activeMotion").at("progress").at("path") != "reachable")
+                    throw std::runtime_error("new player chat could not see recovery of the same work");
+                return {{Role::assistant,"听得见，我跟上了。"}};
+            case 4: return call("_stop_motion","stop-follow",{{"work",follow_id}});
+            }
+            return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
         if (layered) {
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -600,7 +676,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route ? 5u : pointed_craft ? 4u : 3u) &&
+            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route ? 5u : pointed_craft || attention ? 4u : 3u) &&
             receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
@@ -621,6 +697,7 @@ int wmain(int argc, wchar_t** argv) {
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
             return verify_plan_revision(argv[1],argv[2],argv[3]);
         if (argc == 3) {
+            verify_follow_windows();
             verify_collection_effect();
             verify_target_evidence();
             verify_opening_geometry();

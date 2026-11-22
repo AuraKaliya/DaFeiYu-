@@ -1,4 +1,5 @@
 #pragma once
+#include "follow_attention.hpp"
 #include "partner_feed.hpp"
 #include "game_work.hpp"
 #include "partner_task.hpp"
@@ -114,6 +115,10 @@ class PartnerLoop {
     void limit_repair(std::string code);
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
     void advance_motion(bool stopping);
+    // 从同一跟随工作的读回捕获一次异常或恢复。
+    void track_follow(const nlohmann::json& evidence, bool terminal = false);
+    // 组装供信箱事实和模型上下文使用的当前异常。
+    nlohmann::json follow_attention_context() const;
     // 根据当前原话切换任务并移交旧动作的实际退出责任。
     nlohmann::json switch_task(const nlohmann::json& arguments);
     // 接纳、清空或替换当前任务修订下尚未执行的步骤。
@@ -218,8 +223,12 @@ class PartnerLoop {
         std::string id;
         nlohmann::json arguments;
         bool pausing = false, suspended = false, needs_route_check = false;
+        FollowAttention attention;
+        bool attention_pending = false;
     };
     std::optional<Follow> follow_;
+    struct AttentionTurn { std::string work; std::uint64_t episode; };
+    std::optional<AttentionTurn> attention_turn_;
     struct QueuedAction {
         std::uint64_t order, request, invocation, revision;
         std::string work;

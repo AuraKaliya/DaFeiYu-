@@ -231,11 +231,14 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         const bool waiting = name == "waiting_player";
         const auto terrain = step.value("terrain",std::string("land"));
         const auto path = step.value("path",std::string("unknown"));
-        if (step.size() != (waiting ? 1u : 2u) + step.count("terrain") + step.count("vertical") + step.count("path") ||
+        if (step.size() != (waiting ? 1u : 2u) + step.count("terrain") + step.count("vertical") + step.count("path") +
+            step.count("sampledAtMs") ||
             (terrain != "land" && terrain != "swimming" && terrain != "leaving_water" && terrain != "dry") ||
             (path != "unknown" && path != "reachable" && path != "unreachable") ||
             (step.contains("vertical") && (!step.at("vertical").is_number() ||
                 std::abs(step.at("vertical").get<double>()) > 60000000)) ||
+            (step.contains("sampledAtMs") && (!step.at("sampledAtMs").is_number_unsigned() ||
+                step.at("sampledAtMs") > 9007199254740991ULL)) ||
             (!waiting && (name != "in_range" && name != "following" && name != "replanning" && name != "blocked")) ||
             (!waiting && (!step.at("distance").is_number() || !std::isfinite(step.at("distance").get<double>()) ||
                 step.at("distance") < 0))) throw std::invalid_argument("MC: invalid follow progress");

@@ -30,6 +30,7 @@ async function main() {
   const repairPlan = variant === 'partner-revision-repair-plan';
   const layered = variant?.startsWith('partner-revision-layered');
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
+  const attention = variant === 'partner-revision-attention';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const pointedSupport = variant === 'partner-revision-pointed-support';
   const pointedCraft = variant?.startsWith('partner-revision-pointed-craft');
@@ -54,6 +55,7 @@ async function main() {
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let following, collecting, resumed, collectExited = false;
   let blockedReads = 0, recoveredReads = 0;
+  let attentionSamples = 0;
   let planReading = false, nextBlock = false;
   const nodeExits = [];
   let nodeAtWork;
@@ -90,6 +92,7 @@ async function main() {
         const latest = initial ? 1 :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
+          attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
           revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
@@ -104,6 +107,11 @@ async function main() {
         if (departure) messages[2] = left;
         if (revision) {
           messages[1].text = '清理门边两格草方块';
+          if (attention) {
+            messages[1].text = '大肥鱼，跟着我';
+            messages[2].text = '你听得到吗';
+            messages[3].text = '不用跟了';
+          }
           if (layered) {
             messages[1].text = '你可以垫上来';
             messages[1].sceneAtMessage.position = { x: 3.5, y: -60, z: 25.5 };
@@ -157,6 +165,29 @@ async function main() {
     // 验证来自原回合的真实工具参数，并返回游戏实际发送的替身回执。
     call(method, id, context, skill, args) {
       if (revision) {
+        if (attention) {
+          if (skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            assert.equal(context.order, replies === 0 ? 2 : 3);
+            assert.equal(args.text, replies === 0 ? '我被高台挡住了，你等我找一下路。' : '听得见，我跟上了。');
+            assert.ok(++replies <= 2);
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          assert.equal(context.order, 2);
+          assert.equal(skill, 'follow');
+          if (method === 'partner.begin') { assert.ok(!following); following = id; }
+          assert.equal(id, following);
+          if (method === 'partner.stop') {
+            ++stopped;
+            return { ...context, skill, exited: true, result: { status: 'interrupted' } };
+          }
+          const sampledAtMs = ++attentionSamples * 500;
+          if (replies) ++recoveredReads;
+          const progress = recoveredReads > 4 ? { phase: 'in_range', terrain: 'dry', distance: 1.5, vertical: 0, path: 'reachable' } :
+            attentionSamples <= 3 ? { phase: 'following', terrain: 'swimming', distance: 4, vertical: 0.5, path: 'reachable' } :
+              { phase: replies ? 'blocked' : 'following', terrain: 'dry', distance: 8, vertical: 5, path: 'unreachable' };
+          return { ...context, skill, exited: false, result: { progress: { ...progress, sampledAtMs } } };
+        }
         if (layered) {
           assert.equal(context.order, 2);
           if (layeredBlocked && skill === 'reply') {
@@ -504,7 +535,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute ? 5 : first || motion || confirm || pointedCraft ? 4 :
+    return { generation, order: restartRoute ? 5 : first || motion || confirm || pointedCraft || attention ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -531,6 +562,15 @@ async function main() {
           !line.includes('work_pending') && line.includes('这次没动起来')));
       }
       console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (attention) {
+      assert.equal(replies, 2);
+      assert.equal(stopped, 1);
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const alerts = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.attention');
+      assert.deepEqual(alerts.map(row => [row.body.status, row.body.work, row.body.episode]),
+        [['raised', following, 1], ['recovered', following, 1]]);
+      console.log(trace);
     } else if (layered) {
       assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
       assert.equal(replies, layeredBlocked ? 1 : 0);

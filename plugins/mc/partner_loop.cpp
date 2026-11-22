@@ -30,6 +30,7 @@ constexpr auto instructions = view("Minecraft 同场规则\n"
     "resolves 填 pendingQuestion.item，只提交带本轮 message 的挖掘节点，后继由插件续接。单纯挖掘可用 dig_block 加 resolves。\n"
     "先用一次简要观察读现场，再提交明确动作。跟随和 reply 可同批给出，跟随只开一次，"
     "用 following.work 停止，临时动作结束后由程序恢复。"
+    "followAttention 带来一次跟随异常及实际距离、高差或可见性。判断能否绕行、等待玩家或需要告诉玩家原因。"
     "挖指定单格用 dig_block，按背包缺口从地上取材用 gather_ground，补已绑定的洞口用 fill_target。"
     "一次性复杂任务先登记目标，再用 queue_actions 的 plan 写节点和 after。程序按实际回执推进。"
     "planRejection 是旧提交的拒绝原因。retryAllowed 为 false 时，说明具体受阻或请玩家补充必要信息。"
@@ -155,6 +156,7 @@ void PartnerLoop::reset() noexcept {
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
     final_reply_.reset();
+    attention_turn_.reset();
     reply_requested_ = question_requested_ = rejection_reply_requested_ = final_text_for_player_ = false;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
@@ -200,6 +202,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         {"outcome",cancel ? (feed_.departed() ? "player_left" : "cancelled") :
             state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}});
     request_ = 0;
+    attention_turn_.reset();
     return true;
 }
 
@@ -240,6 +243,7 @@ void PartnerLoop::retire() {
     task_ = {};
     handoff_.reset();
     awaiting_restarted_plan_ = false;
+    attention_turn_.reset();
     guarded_actions_.clear();
     settlements_.clear();
     plan_.reset();
@@ -288,6 +292,7 @@ void PartnerLoop::submit(std::string_view wake) {
         const auto status = follow_->pausing ? "pausing" : follow_->suspended && !follow_->needs_route_check ? "paused" :
             phase == "waiting_player" ? "waiting_player" : phase == "blocked" || follow_->needs_route_check ? "blocked" : "following";
         input["following"] = {{"work",follow_->id},{"segment",follow_->segment},{"status",status}};
+        if (!delegated && follow_->attention.episode()) input["followAttention"] = follow_attention_context();
     }
     if (!queued_.empty() && !delegated) {
         input["queuedActions"] = Json::array();
@@ -303,7 +308,8 @@ void PartnerLoop::submit(std::string_view wake) {
         input["planRejection"] = plan_rejection_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
-    bool actual_outcome = wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty();
+    bool actual_outcome = wake == "follow.attention" ||
+        (wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty());
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
         auto primary = receipts.size()-1;
@@ -366,7 +372,10 @@ void PartnerLoop::submit(std::string_view wake) {
         delegated ? delegated_skills.data() : visible.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
+    attention_turn_.reset();
+    if (wake == "follow.attention") attention_turn_ = AttentionTurn{follow_->id,follow_->attention.episode()};
     if (!delegated) {
+        if (follow_) follow_->attention_pending = false;
         if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") != "old_work_exit_unconfirmed")
             handoff_.reset();
         task_.submitted(!facts.empty() || answer,autonomous);
@@ -401,8 +410,10 @@ void PartnerLoop::submit(std::string_view wake) {
 
 // 检查已观察到的新事实是否使旧回合失去继续接纳权限。
 bool PartnerLoop::permits(std::uint64_t session) const noexcept {
-    return session != session_ || (phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ &&
-        feed_.pending().empty() && !feed_.gap());
+    if (session != session_) return true;
+    return phase_ == DFY_V2_PARTNER_LISTENING && feed_.world() == session_world_ && feed_.pending().empty() && !feed_.gap() &&
+        (!attention_turn_ || (follow_ && follow_->id == attention_turn_->work &&
+            follow_->attention.episode() == attention_turn_->episode && follow_->attention.active()));
 }
 
 // 最后一次模型请求可读取原拒绝，继续循环必须等新的玩家或现场输入。
@@ -649,6 +660,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (ready_settlement() != settlements_.cend()) return "motion.finished";
     if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
     if (plan_ && plan_->active) return {};
+    if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
     if (waits_for_player(session_)) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
@@ -743,6 +755,24 @@ std::deque<PartnerLoop::WorkSettlement>::const_iterator PartnerLoop::ready_settl
     });
 }
 
+// 将最新样本与逻辑跟随和当前桥接执行段关联。
+Json PartnerLoop::follow_attention_context() const {
+    const auto& follow = *follow_;
+    return {{"generation",session_world_},{"work",follow.id},{"segment",follow.segment},
+        {"episode",follow.attention.episode()},{"status",follow.attention.active() ? "raised" : "recovered"},
+        {"reason",follow.attention.reason()},{"progress",follow.attention.evidence()}};
+}
+
+// 同一异常只请求一次模型判断，恢复更新可见状态与 Trace。
+void PartnerLoop::track_follow(const Json& evidence, bool terminal) {
+    if (!follow_) return;
+    const auto signal = terminal ? follow_->attention.blocked(evidence) :
+        follow_->attention.observe(evidence,follow_->arguments.value("distance",3));
+    if (signal == FollowSignal::none) return;
+    follow_->attention_pending = signal == FollowSignal::raised;
+    publish("mc.partner.attention",follow_attention_context());
+}
+
 // 独立于模型回合轮询已接纳的动作，并记录原动作的真实终态。
 // 步骤：发布接纳 → 处理停止条件并重读 → 归档归属和结果并唤醒。
 void PartnerLoop::advance_motion(bool stopping) {
@@ -772,6 +802,7 @@ void PartnerLoop::advance_motion(bool stopping) {
         auto progress = motion.action->progress().empty() ? Json::object() : Json::parse(motion.action->progress());
         if (motion.skill == "follow" && follow_ && !motion.stopping && progress.value("phase","") != "blocked" &&
             progress.value("path","") == "reachable") follow_->needs_route_check = false;
+        if (motion.skill == "follow" && !motion.stopping) track_follow(progress);
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
         const auto observed = phase+":"+progress.value("terrain",std::string{});
         const auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
@@ -812,6 +843,7 @@ void PartnerLoop::advance_motion(bool stopping) {
         else follow_.reset();
     }
     publish("mc.partner.action",fact);
+    if (held) track_follow(receipt,true);
     const bool verified = verified_action(receipt,motion.skill,motion.pickup);
     const bool failed = motion.queued && !motion.plan_node && !verified &&
         !(replacing_motion_ && receipt.at("status") == "interrupted");

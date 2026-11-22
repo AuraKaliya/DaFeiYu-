@@ -37,7 +37,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
         stop();
         blocked = true;
         lastProbe = undefined;
-        result.progress = { phase: 'waiting_player', terrain };
+        result.progress = { phase: 'waiting_player', terrain, sampledAtMs: Math.floor(now) };
       } else {
         const distance = position.distanceTo(playerPosition);
         const nearby = distance <= range + 0.5 && (!dryStand(bot, playerPosition) ||
@@ -79,7 +79,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
         }
         result.progress = { phase: blocked ? 'blocked' : nearby ? 'in_range' : retried ? 'replanning' : 'following',
           terrain, distance: Math.round(distance * 10) / 10, vertical: Math.round((playerPosition.y - position.y) * 10) / 10,
-          path: nearby ? 'reachable' : path };
+          path: nearby ? 'reachable' : path, sampledAtMs: Math.floor(now) };
       }
       await delay(125);
     }
