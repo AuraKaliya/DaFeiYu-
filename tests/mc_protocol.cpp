@@ -104,6 +104,14 @@ int main() {
         action.update(Json{{"skill","collect"},{"exited",true},{"result",{{"status","blocked"},{"broken",1}}}});
         Json receipt{{"version",1},{"id","work"},{"action",action}};
         const auto partial = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope);
+        const auto speech = Json{{"context",source},{"arguments",{{"text","我在这儿。"}}}}.dump();
+        auto delivered = receipt;
+        delivered["action"]["skill"] = "reply";
+        delivered["action"]["result"] = {{"status","blocked"},{"sent",false},{"delivery","not_sent"}};
+        if (dfy::mc::partner_reply(delivered.dump(),"work",config.controller,"reply",speech).delivery != dfy::mc::ReplyDelivery::not_sent)
+            return 1;
+        delivered["action"]["result"]["sent"] = true;
+        rejects([&] { dfy::mc::partner_reply(delivered.dump(),"work",config.controller,"reply",speech); });
         if (!partial.exited || partial.arrived || Json::parse(partial.payload).at("broken") != 1) return 1;
         rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",std::string(32,'b'),"collect",envelope); });
         receipt["action"]["order"] = 1;

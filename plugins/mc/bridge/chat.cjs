@@ -111,11 +111,11 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
     },
   };
 }
-// 只向仍在原游戏中的绑定玩家私聊，聊天失败不改变已经发生的游戏事实。
+// 向绑定玩家提交私聊，区分发送前拒绝与调用后结果未知。
 function tellOwner(bot, owner, text) {
   const player = Object.values(bot.players).find(entry => entry.uuid === owner);
-  if (!player || !/^[A-Za-z0-9_]{1,16}$/.test(player.username)) return false;
-  try { bot.whisper(player.username, text); return true; }
-  catch { return false; }
+  if (!player || !/^[A-Za-z0-9_]{1,16}$/.test(player.username)) return 'not_sent';
+  try { bot.whisper(player.username, text); return 'sent'; }
+  catch { return 'unknown'; }
 }
 module.exports = { ownerInbox, tellOwner };

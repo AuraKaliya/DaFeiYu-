@@ -157,7 +157,8 @@ void PartnerLoop::reset() noexcept {
     while (action_count_) actions_[--action_count_] = {};
     final_reply_.reset();
     attention_turn_.reset();
-    reply_requested_ = question_requested_ = rejection_reply_requested_ = final_text_for_player_ = false;
+    reply_ = rejection_reply_ = {};
+    question_requested_ = final_text_for_player_ = false;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
     review_ = {};
@@ -211,8 +212,8 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
 bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel) {
     const auto work = "reply."+std::to_string(instance)+"."+std::to_string(session_)+"."+std::to_string(request_);
     if (!final_reply_) {
-        const bool announced = plan_repair_exhausted_ ? rejection_reply_requested_ : reply_requested_;
-        if (cancel || announced || question_requested_ || !final_text_for_player_ || active_delegation_ ||
+        const auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
+        if (cancel || (!reserved.work.empty() && !reserved.unsent) || question_requested_ || !final_text_for_player_ || active_delegation_ ||
             !permits(session_) || !feed_.ready() || feed_.departed()) return true;
         auto text = player_reply(answer);
         if (text.empty()) return true;
@@ -228,7 +229,6 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
 
     const auto effect = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
         result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
-    if (result->payload.empty()) result->payload = R"({"status":"unconfirmed","sent":false})";
     record(session_,0,"reply",effect,work,std::move(result->payload));
     report_actions();
     final_reply_.reset();
@@ -395,7 +395,8 @@ void PartnerLoop::submit(std::string_view wake) {
     plan_reply_step_ = 0;
     repair_failures_.clear();
     if (!facts.empty()) hit_queries_.clear();
-    reply_requested_ = question_requested_ = rejection_reply_requested_ = false;
+    reply_ = rejection_reply_ = {};
+    question_requested_ = false;
     final_text_for_player_ = !delegated && (actual_outcome || (!facts.empty() && facts.back().at("type") == "player.message"));
     reviewed_ = 0;
     stopped_work_ = false;
@@ -572,12 +573,12 @@ bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args)
     return false;
 }
 
-// 为普通答复或新产生的计划失败结论分配一次明确发言。
-bool PartnerLoop::reserve_reply(std::uint64_t session) noexcept {
+// 给普通答复或计划失败结论登记原工作，退出前保留本轮的发言机会。
+bool PartnerLoop::reserve_reply(std::uint64_t session, std::string_view work) {
     if (session != session_ || active_delegation_) return true;
-    auto& reserved = plan_repair_exhausted_ ? rejection_reply_requested_ : reply_requested_;
-    if (reserved) return false;
-    reserved = true;
+    auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
+    if (!reserved.work.empty()) return false;
+    reserved.work = work;
     return true;
 }
 
@@ -722,9 +723,16 @@ void PartnerLoop::report_actions() {
             auto code = fact.at("result").value("reasonCode",std::string{});
             if (code.starts_with("observe_")) limit_repair(std::move(code));
         }
-        if (action.skill == "reply" && fact.contains("result") && fact["result"].value("sent",false) &&
-            !fact["result"].value("reused",false) && fact["result"].contains("text"))
-            remember_dialogue("companion",order_,fact["result"]["text"]);
+        if (action.skill == "reply") {
+            const bool unsent = action.effect == DFY_V2_TOOL_NOT_APPLIED;
+            if (action.work == reply_.work) reply_.unsent = unsent;
+            if (action.work == rejection_reply_.work) rejection_reply_.unsent = unsent;
+            if (action.body.empty()) fact["result"] = {{"status",unsent ? "blocked" : "unconfirmed"},
+                {"sent",false},{"delivery",unsent ? "not_sent" : "unknown"}};
+            if (fact.contains("result") && fact["result"].value("sent",false) &&
+                !fact["result"].value("reused",false) && fact["result"].contains("text"))
+                remember_dialogue("companion",order_,fact["result"]["text"]);
+        }
         if (!active_delegation_) task_.record(fact);
         publish("mc.partner.action",fact);
         action = {};

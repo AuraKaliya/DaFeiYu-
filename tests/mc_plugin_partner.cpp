@@ -765,6 +765,50 @@ int verify_unavailable_partner(const std::filesystem::path& package, const std::
     }
     throw std::runtime_error("readable bridge status did not advance");
 }
+
+// 用固定响应核对显式发言与最终文本在不同投递终态下的结算。
+// 步骤：只交付一条玩家原话 → 返回显式发言及最终文本 → 等原回复结算并关闭。
+int verify_reply_delivery(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
+    using namespace dfy;
+    using namespace model;
+    using Json = nlohmann::json;
+    const auto outcome = variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
+    const bool internal = variant.ends_with(L"-internal");
+    const std::string reply = "我在这儿。";
+    std::atomic_bool received = false;
+    app::ApplicationRunConfig run;
+    run.trace_directory = root;
+    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+        const auto& message = request.messages.back();
+        if (message.role == Role::tool) {
+            const auto result = Json::parse(message.content.substr(message.content.find('{')));
+            if (result.at("delivery") != outcome || received.exchange(true)) throw std::runtime_error("lost actual reply delivery state");
+            return {{Role::assistant,internal ? R"({"internal":"keep quiet"})" : reply}};
+        }
+        const auto input = Json::parse(message.content);
+        if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
+        const auto tool = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_reply"); });
+        if (received || tool == request.tools.end()) throw std::runtime_error("reply was unavailable or the turn repeated");
+        const Json args{{"text",std::string_view(outcome) == "not_sent" ? "第一行。\n第二行。" : reply}};
+        return {{Role::assistant,"",{{"explicit-reply",tool->name,args.dump()}}},FinishReason::tool_calls};
+    }},std::move(run));
+    host.plugins().install(package);
+    if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load reply package");
+    const auto id = host.open_companion("mc.companion");
+    host.listen_companion(id);
+    bool stopping = false;
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(6);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("reply loop failed");
+        if (stopping && host.companion_status()->closed) return 0;
+        if (!stopping && received && host.companion_status()->settled_event == 2) {
+            host.stop_companion(id);
+            stopping = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    throw std::runtime_error("reply did not reach actual settlement");
+}
 }
 
 // 通过真实 DLL、命名管道与可控后端验证插件拥有一条完整的回复链路。
@@ -777,6 +821,8 @@ int wmain(int argc, wchar_t** argv) {
             return verify_plan_revision(argv[1],argv[2],argv[3]);
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-execution-"))
             return verify_unavailable_partner(argv[1],argv[2],std::wstring_view(argv[3]).ends_with(L"-scenario"));
+        if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-reply-"))
+            return verify_reply_delivery(argv[1],argv[2],argv[3]);
         if (argc == 3) {
             verify_follow_windows();
             verify_collection_effect();

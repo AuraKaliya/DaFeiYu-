@@ -22,6 +22,7 @@ async function main() {
   const departure = variant === 'partner-departure';
   const execution = variant?.startsWith('partner-execution-');
   const scenario = variant === 'partner-execution-scenario';
+  const delivery = variant?.startsWith('partner-reply-') ? variant.slice('partner-reply-'.length) : null;
   const revision = variant?.startsWith('partner-revision-');
   const directRevision = variant?.startsWith('partner-revision-direct-');
   const directPlace = variant === 'partner-revision-direct-place';
@@ -49,7 +50,7 @@ async function main() {
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision || execution;
+  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || task || route || exchange || departure || revision || execution || delivery;
   fs.mkdirSync(temp, { recursive: true });
   let root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -74,6 +75,7 @@ async function main() {
   let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
   let routeApproach;
   const hostWork = [];
+  let explicitReply, replyReads = 0;
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -184,6 +186,36 @@ async function main() {
       if (controllerRestart) {
         if (method === 'partner.begin') hostWork.push({ id, context, args });
         else assert.deepEqual({ id, context, args }, hostWork.at(-1));
+      }
+      if (delivery) {
+        assert.equal(skill, 'reply');
+        assert.equal(context.order, 2);
+        const text = '我在这儿。';
+        if (id.startsWith('reply.')) {
+          assert.ok(explicitReply && delivery === 'fallback');
+          assert.equal(method, 'partner.begin');
+          assert.equal(args.text, text);
+          assert.equal(++replies, 1);
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, delivery: 'sent', text } };
+        }
+        if (method === 'partner.begin') {
+          assert.equal(explicitReply, undefined);
+          explicitReply = { id, context, args };
+          if (delivery === 'unknown') throw new Error('模拟接纳回复后丢失传输响应');
+        } else {
+          assert.equal(delivery, 'unknown');
+          assert.equal(method, 'partner.read');
+          assert.deepEqual({ id, context, args }, explicitReply);
+          assert.equal(++replyReads, 1);
+        }
+        if (delivery === 'fallback' || delivery === 'internal') {
+          assert.equal(args.text, '第一行。\n第二行。');
+          return { ...context, skill, exited: true, result: { status: 'blocked', sent: false, delivery: 'not_sent', reason: '回复需要一行' } };
+        }
+        assert.equal(args.text, text);
+        if (delivery === 'unknown') return { ...context, skill, exited: true, result: { status: 'blocked', sent: false, delivery } };
+        assert.equal(++replies, 1);
+        return { ...context, skill, exited: true, result: { status: 'done', sent: true, delivery, text } };
       }
       if (revision) {
         if (attention) {
@@ -368,7 +400,7 @@ async function main() {
           assert.equal(context.order, 4);
           assert.equal(args.text, '要从这圈开始计时吗？');
           questionPresented = true;
-          return { ...context, skill, exited: true, result: { status: 'done', sent: true } };
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
         if (navigation && skill === 'observe') {
           assert.equal(method, 'partner.begin');
@@ -605,13 +637,24 @@ async function main() {
       assert.notEqual(first.context.controller, second.context.controller);
       assert.deepEqual({ ...second, context: { ...second.context, controller: first.context.controller } }, first);
     } else {
-      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision || execution ? [variant] : [])],
+      const child = spawn(exe, [packagePath, root, ...(interrupt || motion || confirm || task || route || exchange || departure || revision || execution || delivery ? [variant] : [])],
         { stdio: 'inherit', windowsHide: true });
       assert.equal((await once(child, 'exit'))[0], 0);
     }
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (showGame) assert.ok(approvedId);
-    if (questionExpiry) {
+    if (delivery) {
+      assert.equal(replies, delivery === 'fallback' || delivery === 'sent' ? 1 : 0);
+      assert.equal(replyReads, delivery === 'unknown' ? 1 : 0);
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+      const speech = rows.filter(row => row.category === 'mc.partner.action' && row.body.skill === 'reply').map(row => row.body);
+      assert.equal(speech.length, delivery === 'fallback' ? 2 : 1);
+      assert.equal(speech[0].bridgeWork, explicitReply.id);
+      assert.equal(speech[0].result.delivery, delivery === 'sent' || delivery === 'unknown' ? delivery : 'not_sent');
+      if (delivery === 'fallback') assert.equal(speech[1].source, 'final_text');
+      console.log(trace);
+    } else if (questionExpiry) {
       assert.ok(questionPresented && expiredAt !== undefined);
       assert.equal(replies, 1);
       console.log(path.join(root, 'trace', 'events.jsonl'));

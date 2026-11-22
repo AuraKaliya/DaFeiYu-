@@ -210,6 +210,18 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     }
     if (exited && result.at("status") != "done" && result.at("status") != "blocked" && result.at("status") != "interrupted")
         throw std::invalid_argument("MC: invalid partner outcome");
+    auto delivery = ReplyDelivery::unknown;
+    if (exited && skill == "reply") {
+        const bool sent = result.value("sent",false);
+        const auto state = result.value("delivery",sent ? "sent" : "unknown");
+        const bool reused = result.value("reused",false);
+        if ((state != "sent" && state != "not_sent" && state != "unknown") || sent != (state == "sent") ||
+            (sent && result.at("text") != args.at("text")) ||
+            (state == "not_sent" && (result.at("status") == "done" || reused)))
+            throw std::invalid_argument("MC: inconsistent reply delivery");
+        if (sent) delivery = ReplyDelivery::sent;
+        else if (state == "not_sent") delivery = ReplyDelivery::not_sent;
+    }
     if (exited && skill == "move" && args.value("exact",false) && result.at("status") == "done") {
         if (result.at("arrived") != true) throw std::invalid_argument("MC: exact arrival not verified");
         const auto& position = result.at("position");
@@ -254,7 +266,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool changed = exited && result.contains("changes") && verified_changes(result.at("changes"));
-    return {exited, exited && result.at("status") == "done", attempted, verified, changed, exited ? result.dump() : std::string{},
+    return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},
         std::move(progress)};
 }
 // 为一次停止固定原角色的出生代次，旧会话不能改变新连接的控制。

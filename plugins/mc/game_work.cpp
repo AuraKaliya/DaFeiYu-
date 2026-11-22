@@ -52,6 +52,8 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer) {
             progress_ = std::move(value.progress);
             if (value.exited && (skill_ == "place" || skill_ == "fill_target")) return GameResult{true, value.placement_verified || value.changed ? GameEffect::observed :
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
+            if (value.exited && skill_ == "reply") return GameResult{true, value.delivery == ReplyDelivery::sent ? GameEffect::observed :
+                value.delivery == ReplyDelivery::not_sent ? GameEffect::none : GameEffect::unknown,std::move(value.payload)};
             if (value.exited) return GameResult{true, skill_ == "observe" ? GameEffect::none :
                 value.arrived || value.changed ? GameEffect::observed : GameEffect::unknown, std::move(value.payload)};
             if (defer && !stopping_) {

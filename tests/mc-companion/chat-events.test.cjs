@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { ownerInbox } = require('../../plugins/mc/bridge/chat.cjs');
+const { ownerInbox, tellOwner } = require('../../plugins/mc/bridge/chat.cjs');
 
 // 用真实收件器核对名单快照、身份过滤、重复通知、重入世界及监听释放。
 test('伙伴名单变化和绑定玩家原话按代次只记录一次', () => {
@@ -50,6 +50,19 @@ test('伙伴名单变化和绑定玩家原话按代次只记录一次', () => {
   assert.equal(inbox.get('first', 1), null);
   inbox.close();
   for (const event of ['playerJoined', 'playerLeft']) assert.equal(bot.listenerCount(event), 0);
+});
+
+// 私聊开始前拒绝可安全补发，调用抛出时保留发生过发送的可能。
+test('game chat distinguishes a known refusal and an unknown send outcome', () => {
+  let called = 0, failed = false;
+  const bot = { players: { owner: { uuid: 'owner', username: 'DfyOwner' } },
+    whisper() { ++called; if (failed) throw new Error('模拟调用结果丢失'); } };
+  assert.equal(tellOwner(bot, 'absent', '还在吗'), 'not_sent');
+  assert.equal(called, 0);
+  assert.equal(tellOwner(bot, 'owner', '我在这儿'), 'sent');
+  failed = true;
+  assert.equal(tellOwner(bot, 'owner', '我在这儿'), 'unknown');
+  assert.equal(called, 2);
 });
 
 // 在两处缺口之间移动后，旧聊天仍携带发送时的坐标。

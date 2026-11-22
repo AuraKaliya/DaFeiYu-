@@ -274,8 +274,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         const auto front_block = partner_turn && controls_body ? raw->partner.front_barrier(call->session) : std::string_view{};
         const bool player_blocked = alters_world && raw->partner.waits_for_player(call->session,pointed.value_or(false) ? resolves : 0);
         const bool needs_plan = exact_dig && pointed.value_or(false) && raw->partner.has_pickup_continuation(resolves);
-        const bool duplicate_reply = game_skill == "reply" && !raw->partner.reserve_reply(call->session);
-        const bool target_blocked = !front_block.empty() || player_blocked || needs_plan || duplicate_reply || !pointed.has_value() || observation_blocked ||
+        const bool target_blocked = !front_block.empty() || player_blocked || needs_plan || !pointed.has_value() || observation_blocked ||
             ((game_skill == "place" || game_skill == "fill_target") &&
             !raw->partner.bind_placement(call->session,job.arguments,game_skill == "fill_target"));
         if (!target_blocked && partner && skill->supports_approval) {
@@ -301,7 +300,6 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             if (!front_block.empty()) job.output = nlohmann::json{{"status","blocked"},{"reason",front_block}}.dump();
             else if (player_blocked) job.output = R"({"status":"blocked","reason":"waiting_for_player"})";
             else if (needs_plan) job.output = R"({"status":"blocked","reasonCode":"pointed_plan_required"})";
-            else if (duplicate_reply) job.output = R"({"status":"already_requested","sent":false})";
             else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
             else if (observation_blocked) job.output = R"({"status":"blocked","reasonCode":"hit_observation_limit","next":"ask_player"})";
             else job.output = R"({"status":"blocked","reason":"placement differs from the bound task target","placementAttempted":false,"placed":false})";
@@ -312,9 +310,13 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
                 pending_approval ? job.id : std::string{}))
                 return report(DFY_V2_INVALID_CONTEXT,error);
             if (pending_approval) job.ready = job.success = true;
-        } else if (partner && !local) job.action = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner, raw->config,
-            job.id, job.arguments, std::string(game_skill));
-        else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
+        } else if (partner && !local) {
+            auto work = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job.id,job.arguments,std::string(game_skill));
+            if (game_skill == "reply" && !raw->partner.reserve_reply(call->session,job.id)) {
+                job.output = R"({"status":"already_requested","sent":false})";
+                job.ready = job.success = true;
+            } else job.action = std::move(work);
+        } else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
         else if (survey) job.wire = dfy::mc::survey_request(job.id, raw->config.key, job.arguments);

@@ -41,7 +41,7 @@ class PartnerLoop {
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
     bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
     // 给当前对话或回执分配唯一的玩家发言机会。
-    bool reserve_reply(std::uint64_t session) noexcept;
+    bool reserve_reply(std::uint64_t session, std::string_view work);
     // 判断同一任务仍缺少同一位玩家对局内追问的答复。
     bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
     // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
@@ -296,7 +296,9 @@ class PartnerLoop {
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     std::unique_ptr<GameWork> final_reply_;
-    bool reply_requested_ = false, question_requested_ = false, rejection_reply_requested_ = false;
+    struct ReplyReservation { std::string work; bool unsent = false; };
+    ReplyReservation reply_, rejection_reply_;
+    bool question_requested_ = false;
     bool final_text_for_player_ = false;
     struct Release {
         std::string world, id, arguments;

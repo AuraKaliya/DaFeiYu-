@@ -289,6 +289,7 @@ function partnerService(bot, world, inbox, places, owner) {
   async function run(job, args) {
     const r = job.receipt, result = r.result;
     let builtSpace;
+    if (r.skill === 'reply') Object.assign(result, { sent: false, delivery: 'not_sent' });
     if (r.skill === 'place') result.placementAttempted = result.placed = false;
     if (r.skill === 'fill_target') Object.assign(result, { cells: [], changes: [], placementAttempted: false,
       sourceMessage: args.sourceMessage, taskRevision: args.taskRevision });
@@ -366,12 +367,14 @@ function partnerService(bot, world, inbox, places, owner) {
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
           throw new Error('回复需要一行 1～220 字的文字');
-        const repeated = [...records.values()].some(e => e.receipt !== r && e.receipt.skill === 'reply' &&
-          e.receipt.generation === r.generation && e.receipt.order === r.order && e.receipt.result.sent && e.args.text === args.text);
-        result.sent = repeated || tellOwner(bot, owner, args.text);
-        result.reused = repeated;
+        const original = [...records.values()].find(e => e.receipt !== r && e.receipt.skill === 'reply' &&
+          e.receipt.generation === r.generation && e.receipt.order === r.order && e.args.text === args.text &&
+          ['sent', 'unknown'].includes(e.receipt.result.delivery));
+        result.delivery = original?.receipt.result.delivery ?? tellOwner(bot, owner, args.text);
+        result.sent = result.delivery === 'sent';
+        result.reused = Boolean(original);
         if (result.sent) result.text = args.text;
-        if (!result.sent) throw new Error('原玩家不在场，回复未发出');
+        if (!result.sent) throw new Error(result.delivery === 'not_sent' ? '原玩家不在场，回复未发出' : '回复的投递结果未知');
       } else if (r.skill === 'route') {
         const route = checkedRoutes.get(workKey(r.controller, args.route));
         const scan = route && wallSurveys.get(workKey(r.controller, route.observation));
