@@ -149,6 +149,113 @@ flowchart TB
 - **终端委托**中，`/run` 授予一个只读工具，`/run-confirmed` 允许具体变更候选进入审批。`/task` 固定同一个插件实例上的首读、变更、末读，宿主核对步骤顺序、实际回执和期望值。原候选的批准与实际调用分开记录。[应用入口](../app/application.cpp) · [工具批次](../agent/tool_batch.cpp) · [读回验证](../app/tool_verification.cpp)
 - **原生观察与计划控制**通过显式宿主入口接纳。观察触发默认只读，变更分支要求声明条件、可信当前采样和确认。计划步骤支持有界重规划、目标修订和等待验证时换入新观察。诊断和离线比较沿用运行身份和版本信息。[观察控制](../agent/observation_controller.cpp) · [计划与观察入口](../agent/session.cpp) · [离线场景](../tests/offline_scenario.cpp)
 
+## MC 陪玩插件
+
+### 运行边界
+
+`Application::advance_plugins` 驱动宿主子会话、DLL 活动、事件分派和信箱。插件启用陪玩入口后，`PartnerLoop` 开始轮询游戏并决定何时提交下一轮。Node 进程在游戏里持有独立的 Mineflayer 角色，通过本机命名管道提供读口、动作和回执。[宿主调度](../app/application.cpp) · [插件入口](../plugins/mc/native.cpp) · [桥接启动](../plugins/mc/bridge/start.cjs)
+
+```mermaid
+flowchart TB
+    subgraph Host["大肥鱼本体与插件宿主"]
+        App["Application::advance_plugins"]
+        Agent["Subagents / RunLoop<br/>本体人格、模型、固定工具快照"]
+        Mail["事件捕获与信箱<br/>分派、通用 ASK、回信"]
+        Trace["实际上下文、工具和收件 Trace"]
+        App --> Agent
+        App --> Mail
+        Agent --> Trace
+        Mail --> Trace
+    end
+    subgraph Native["MC 陪玩 DLL · C ABI v2"]
+        Entry["native.cpp<br/>活动入口、工具票据和本会话 Hook"]
+        Feed["PartnerFeed<br/>配对、收信游标、原话现场"]
+        Loop["PartnerLoop<br/>上下文装配与唤醒"]
+        State["PartnerTask<br/>目标、修订、观察与原话证据"]
+        Plan["任务图与前台等待队列<br/>跟随意图、注意力和动作结算"]
+        Speech["独立后台票据<br/>观察、发言、追问与动作确认"]
+        Work["GameWork / WorldProtocol<br/>提交、原号读回、停止"]
+        Entry --> Loop
+        Feed --> Loop
+        Loop <--> State
+        Loop <--> Plan
+        Loop <--> Speech
+        Plan --> Work
+        Speech --> Work
+    end
+    subgraph Game["Node.js 桥接与 Minecraft"]
+        Pipe["本机管道 · pipe.cjs"]
+        Inbox["ownerInbox<br/>绑定玩家、原话和在场事实"]
+        Executor["partnerService<br/>单一角色动作槽、独立观察和发言"]
+        World["Mineflayer 角色与已加载世界"]
+        Pipe <--> Inbox
+        Pipe <--> Executor
+        World --> Inbox
+        Executor <--> World
+    end
+    App -->|活动步| Entry
+    Loop -->|提交子回合| Agent
+    Agent <-->|工具调用和回执| Entry
+    Loop <-->|业务信件、求助事件和收件回执| Mail
+    Feed <-->|状态和聊天读取| Pipe
+    Work <-->|partner.begin / read / stop| Pipe
+```
+
+| 边界 | 代码中的职责 |
+| --- | --- |
+| 收信与上下文 | `PartnerFeed` 从游戏读口获取连续事实，并按游戏代次、玩家和消息序号保存原话时的现场。`PartnerLoop::submit` 装入新事实、至多八条已处理对话、任务、观察和待答事项，再绑定本轮可调用的工具。宿主给面向玩家的回合拼接本体人格，按插件请求替换会话历史。[游戏收件](../plugins/mc/bridge/chat.cjs) · [插件读口](../plugins/mc/partner_feed.cpp) · [回合装配](../plugins/mc/partner_loop.cpp) · [子会话宿主](../app/subagents.cpp) |
+| 工具与计划 | `partner_skills.hpp` 声明工具、类别和实际执行映射。`skills` 可展开类别供后续回合使用。计划入口检查节点、依赖、任务范围和授权，分类错误返回有效键。重复无效的计划保留原提交编号和原因，达到额度后给当前回合一次结算请求。[技能目录](../plugins/mc/partner_skills.hpp) · [计划校验与结算](../plugins/mc/partner_plan.cpp) |
+| 前台执行 | 每个计划最多四个节点。调度器以实际结果推进依赖，后台观察可以与前台动作重叠，角色变更在同一个前台槽内依次执行。旧任务停止时，原工作继续承担退出读回。桥接对同一编号复用已有接纳和退出结果。[动作调度](../plugins/mc/partner_queue.cpp) · [工作票据](../plugins/mc/game_work.cpp) · [游戏执行](../plugins/mc/bridge/partner.cjs) |
+| 跟随与注意力 | 桥接约每 125 ms 采样距离、高差、可见性和寻路结果。受阻时清除移动控制，跟随等到现场或站位变化并读到可达证据后可原段恢复。前台任务接管时，通常结束当前执行段并在任务结算后以同一逻辑工作号恢复，新的桥接段使用 `.resume.N`。[跟随执行](../plugins/mc/bridge/follow.cjs) · [原号交接](../plugins/mc/partner_queue.cpp) |
+| 本插件的 Hook | MC 登记本插件会话的 `MODEL_REQUEST` 和 `TOOL_START`。有更新的玩家输入、世界变化或过期的异常回合时，Hook 可拒绝旧过渡。已接纳一次性工作等需要等待的场景，在下一次模型请求前让出当前回合，插件照常推进原工作。[MC Hook 登记与裁定](../plugins/mc/native.cpp) · [宿主应用快照](../app/subagents.cpp) |
+| 提问与交付 | 自然追问持有自己的事项和投递回执，玩家可以先听到接话，再收到问题。普通回复和可发言的实际结果使用同一个游戏投递入口。显式 `direct` 或 `main` 求助由插件发出路由事件，宿主捕获并调用登记的解析器。主 Agent 处理路径由 `mail_reply({})` 提交回信意图，原插件收到结果后确认收件并裁定动作。[局内追问](../plugins/mc/partner_question.cpp) · [应用分派](../app/event_dispatch.cpp) · [回信工具](../app/mail_reply_tool.cpp) |
+
+### 垫上来与跟随掉队
+
+```mermaid
+sequenceDiagram
+    participant P as 玩家
+    participant G as 游戏执行器
+    participant L as MC PartnerLoop
+    participant A as 宿主子 Agent
+    P->>G: 跟着我
+    G->>L: 原话和现场，按游标收取
+    L->>A: 原话、在场事实和当前工具
+    A->>L: follow 和 reply
+    L->>G: 接纳跟随 F 并投递接话
+    G-->>L: 持续采样距离、高差和路线
+    L->>A: 同一次异常唤醒一轮
+    A->>L: 按证据处理或说明受阻
+    P->>G: 你可以垫上来
+    G->>L: 新原话与锚定位置
+    L->>A: 新原话、F 和异常证据
+    A->>L: 观察、绑定目标、提交四个依赖节点
+    L->>G: 暂停 F 当前段，读回实际退出
+    loop 放置 → 精确移动 → 放置 → 精确移动
+        L->>G: 按原节点工作号执行
+        G-->>L: 验证方块、材料或实际站位并退出
+    end
+    par 按实际结果接话
+        L->>A: plan.finished 携带四层结算
+        A->>L: 按实际结果发言
+    and 原跟随继续
+        L->>G: 按同一 F 恢复，接纳新桥接段
+        G-->>L: 稳定回到跟随范围
+    end
+    P->>G: 不用跟了
+    G-->>L: 新原话
+    L->>A: 玩家指令和 F
+    A->>L: stop_motion F
+    L->>G: 按 F 找到当前段并请求停止
+    G-->>L: 原桥接段实际退出
+```
+
+放置节点使用已绑定的目标格，执行时重查支撑、占用和库存。精确移动核对脚位及头部净空，成功回执包含实际位置。通过验证的前序节点解锁后继。如果一个节点在实际执行中受阻，之前的回执仍可用于结算，依赖它的节点记为 `skipped`。绕墙的 `route` 仍由执行器按实际检查点计圈，可以与精确移动在同一个计划内编排。[计划](../plugins/mc/partner_plan.cpp) · [放置](../plugins/mc/bridge/placement.cjs) · [动作读回](../plugins/mc/world_protocol.cpp)
+
+当前跟随注意力以连续样本判定。距离持续 3 秒大于期望距离加 2 格，且其间没有把距离缩短至少 1 格，记为掉队。高差至少 2 格且寻路器持续 2 秒明确报无路，记为高差异常。失去实体 5 秒或执行明确受阻也可触发异常。同一异常只提交一次判断，新玩家消息优先，并能携带该证据。回到期望距离加 0.5 格内并持续 1 秒后，恢复写入 Trace 并进入后续上下文。[注意力判定](../plugins/mc/follow_attention.hpp) · [异常唤醒与收件顺序](../plugins/mc/partner_loop.cpp)
+
+核对计划时，可比对原游戏工作号、游戏退出、`plan.finished` 的实际模型上下文和信箱入队记录。插件本地结算可以先进入下一轮上下文，信箱外发则按队列逐件交付。固定模型响应的隔离 Paper 探针同时核对这四类证据。[插件外发队列](../plugins/mc/partner_loop.cpp) · [游戏验收](../tests/mc-companion/playtest-check.cjs)
+
 ## 接续我已经搭的墙
 
 ```mermaid
@@ -211,7 +318,7 @@ flowchart TB
 - **任务执行修订。** `detail` 和 `next` 更新说明及唤醒方式，继续沿用当前执行修订。目标、绑定格或取材范围变化会推进修订。新确认使计划中尚未终结的动作需要批准时，原计划也失效。两类取消都保留原计划与工作号，等待已接纳动作的实际退出，再带 `cancelReason` 与逐层回执回到子 Agent。原话的确切墙面候选独立于后续视线命中保存。插件按候选展开方格，同一原话的显式方格须与已明确指向的墙面吻合。 [任务修订与目标绑定](../plugins/mc/partner_task.cpp) · [动作确认](../plugins/mc/partner_confirm.cpp)
 - **导航任务切换与重开。** `start_task` 以当前原话登记新任务。`restart_task` 保留原任务、墙候选与圈数，推进执行修订。旧追问失效，旧计划的实际退出以原号保存在 Trace。插件通过 `taskHandoff` 交接原工作，核实退出后一次 `task.ready` 可续行。退出未获核实则保持前台门槛。每个修订接纳一条路线。 [任务身份](../plugins/mc/partner_task.cpp) · [原工作结算](../plugins/mc/partner_loop.cpp)
 - **墙体与多段移动。** `observe(mode=wall)` 用原话位置查已加载墙体和两侧落脚区。`observe(mode=route)` 使用只读寻路，核对一组有序站位能从四侧绕过同一对象。当前处理同高度、有支撑且可通行的路线。执行器在一项 `route` 游戏工作里逐段走，读回实际脚位，走完四段并回起点才累计一圈。检查点更新 `activeMotion` 和 Trace，计划完成、普通受阻或实际中断后返回结果。玩家仍可发消息，跟随在任务交接完成后依据原工作号恢复。 [墙体与路线](../plugins/mc/bridge/partner-route.cjs) · [游戏执行](../plugins/mc/bridge/partner.cjs) · [回执核对](../plugins/mc/world_protocol.cpp)
-- **前台交接。** 待机是无前台工作时的状态。插件保留跟随意图及稳定工作号，桥接执行段各有工作号。一次性前台动作可以取得优先权，分组时用 `queue_actions.interrupt` 声明。插件先要求执行器清除跟随路径和控制输入并确认退出，再下发临时动作。临时动作成功或普通受阻后，从当前玩家位置恢复原跟随。明确叫停、配对失效和未确认退出使原跟随结束。观察和发言使用独立的后台票据。 [跟随调度](../plugins/mc/partner_queue.cpp) · [执行器释放](../plugins/mc/bridge/follow.cjs)
+- **前台交接。** 待机是无前台工作时的状态。插件保留跟随意图及稳定工作号，桥接执行段各有工作号。一次性前台动作可以取得优先权，分组时用 `queue_actions.interrupt` 声明。插件先要求执行器清除跟随路径和控制输入并确认退出，再下发临时动作。临时动作结算后重新接管原跟随，原路已受阻时先重读可达条件。明确叫停、配对失效和未确认退出使原跟随结束。观察和发言使用独立的后台票据。 [跟随调度](../plugins/mc/partner_queue.cpp) · [执行器释放](../plugins/mc/bridge/follow.cjs)
 - **领域知识与完工依据。** `skills` 展开 `query` 后可按需查询 Java 1.21.4 的小型词条库。词条说明草方块通常掉落泥土，以及精准采集的例外。队列只按实际方块和入包回执推进。依赖组在执行中逐格记录回执，组结束后再唤醒规划，新的玩家原话仍可立即参与下一轮。 [知识查询](../plugins/mc/partner_knowledge.hpp) · [队列验收](../plugins/mc/partner_effect.hpp)
 - **在途工作和发言。** 游戏接纳一次性动作或插件接纳计划后，原子会话可通过模型请求边界主动结束，当前批次的发言和观察仍完整收尾。插件持原票据轮询。管道短暂失联后重读同一编号，超过时限则请求停止并等实际退出。`activeMotion` 提供进度，`workSettlement` 按原调用组提供实际退出和未执行节点。同一调用的回执入轮一次。显式停止、离场、换世界和关闭触发回收，玩家离场仅由插件消费原事件。 [动作票据](../plugins/mc/game_work.cpp) · [插件循环](../plugins/mc/partner_loop.cpp) · [通用回合](../agent/run_loop.cpp)
 - **玩家回复与结算。** `reply` 立即提交私聊。处理玩家原话时，若本轮尚未请求发言或提问，插件会把普通最终文本送入同一个游戏回复通道。空文本和 `{"internal":"…"}` 用于内部结算。无新聊天的唤醒可用 `reply` 主动发言，主 Agent 委托的最终文本仍作为委托报告。纯文本私聊回执在 `mc.partner.action` 标记 `source=final_text`，按原会话、子请求和 `bridgeWork` 关联。 [回合结算](../plugins/mc/partner_loop.cpp) · [实际发言](../plugins/mc/bridge/partner.cjs)
@@ -238,7 +345,7 @@ flowchart TB
 
 ## 通用 ASK
 
-MC 子 Agent 的普通追问默认由插件作为局内对话投递。登记问题后当前回合让出，其他聊天和已接纳的后台观察或跟随仍可继续。局内追问到期时保留 `pendingQuestion.status=expired`，写入 Trace 并继续等新消息。到期本身不送模、不发提醒，也不接纳原任务的新世界写入。玩家可用新原话提供现场证据，或明确更换任务。一个原话或动作结算回合只接纳一次玩家发言。显式使用 `direct` 或 `main` 时仍走本体 ASK，动作确认走专门的确认路径。
+MC 子 Agent 的普通追问默认由插件作为局内对话投递。登记问题后当前回合让出，其他聊天和已接纳的后台观察或跟随仍可继续。局内追问到期时保留 `pendingQuestion.status=expired`，写入 Trace 并继续等新消息。到期本身不送模、不发提醒，也不接纳原任务的新世界写入。玩家可用新原话提供现场证据，或明确更换任务。普通答复、局内追问和实际动作结果各有投递边界，按原回合和游戏工作回执防重。显式使用 `direct` 或 `main` 时仍走本体 ASK，动作确认走专门的确认路径。
 
 ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠道，宿主按运行入口报告能呈现和接收答复的终端渠道。主 Agent 的 `ask` 工具只枚举可用渠道，实际调用时复核。网页陪玩宿主由后台管道启动，MC 问题只有游戏渠道。渠道实际呈现后，在答复截止前接纳配对的第一份有效答复。直接路径把结果送回原插件入箱。主 Agent 路径把结果放入原主信箱，由 `mail_reply` 转发。已接纳的答复在本次宿主运行内跨越答复截止继续保留，直至同一插件实例按原身份确认收件。Trace 分别记录答复接纳、信箱入队和 `interaction.acknowledged`。普通信件可作为上下文入轮，提问工具仅在对应的提问信件回合中开放。[ASK](../app/ask.cpp) · [分流和回信](../app/interaction_routes.cpp)
 
