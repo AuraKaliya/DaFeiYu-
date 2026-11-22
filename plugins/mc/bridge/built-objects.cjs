@@ -1,15 +1,16 @@
 // 将同一游戏与维度内的实际放置保留为可独立于任务使用的对象。
 class BuiltObjects {
-  #binding;
+  #maps = new WeakMap();
   #cells = new Map();
   #supports = new Map();
 
-  // 只在本次读取到的地图空间变化时移除旧空间的约束。
+  // 切换到本次动作的地图保护表，地图身份由游戏连接持有。
+  // 步骤：查找原地图记录 → 首次建立索引 → 选定此次操作的方格与支撑。
   bind(binding) {
-    if (binding === this.#binding) return;
-    this.#binding = binding;
-    this.#cells.clear();
-    this.#supports.clear();
+    if (!this.#maps.has(binding)) this.#maps.set(binding, { cells: new Map(), supports: new Map() });
+    const { cells, supports } = this.#maps.get(binding);
+    this.#cells = cells;
+    this.#supports = supports;
   }
 
   // 保存一个经游戏读回的对象，各格共享同一组支撑关系。

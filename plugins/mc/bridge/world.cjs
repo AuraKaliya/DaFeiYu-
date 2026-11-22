@@ -4,17 +4,18 @@ const { randomUUID } = require('node:crypto');
 // 步骤：绑定游戏事件 → 按代次复制角色状态 → 撤销后丢弃旧世界。
 function observeWorld(bot) {
   let generation = null;
-  let connection = randomUUID(), level = null;
+  let level = null;
+  const maps = new Map(), spawnMaps = new Map();
   let lastSignal = 0;
   let closed = false;
   const signal = () => { lastSignal = performance.now(); };
-  const enter = () => { generation = randomUUID(); signal(); };
-  const leave = () => { generation = null; };
+  const enter = () => { generation = randomUUID(); spawnMaps.clear(); signal(); };
+  const leave = () => { generation = null; spawnMaps.clear(); };
   // 从服务端出生信息读取实际地图名，区分同维度类型的不同地图。
   const readLevel = packet => { level = packet.worldState?.name || null; };
   // 新登录隔离上一条连接，即使两个服务器选用了相同的地图名。
-  const login = packet => { connection = randomUUID(); readLevel(packet); };
-  const disconnect = () => { leave(); level = null; };
+  const login = packet => { maps.clear(); readLevel(packet); };
+  const disconnect = () => { leave(); maps.clear(); level = null; };
   bot._client?.on('login', login);
   bot._client?.on('respawn', readLevel);
   bot.on('spawn', enter);
@@ -25,10 +26,14 @@ function observeWorld(bot) {
   if (bot.entity && bot.player?.uuid) enter();
 
   return {
-    // 供游戏侧对象绑定使用；缺少地图名时只在本次角色代次中有效。
+    // 为同一连接到过的地图提供可复用的对象身份。
+    // 步骤：核对出生和维度 → 或按地图名、或按本次出生保留独立身份。
     space() {
       if (closed || !generation || !bot.game?.dimension) return null;
-      return JSON.stringify(level ? [connection, level, bot.game.dimension] : [generation, bot.game.dimension]);
+      const index = level ? maps : spawnMaps;
+      const name = JSON.stringify([level, bot.game.dimension]);
+      if (!index.has(name)) index.set(name, Object.freeze({ level, dimension: bot.game.dimension }));
+      return index.get(name);
     },
     // 只复制客户端能取得的身份、位置和库存，轮询本身不刷新服务端信号时间。
     read() {

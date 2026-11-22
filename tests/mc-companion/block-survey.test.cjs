@@ -156,7 +156,8 @@ test('ground gathering preserves support beneath the bound opening', () => {
 // 普通采集与明确拆改共用多格对象，支撑只能等相依对象移除后释放。
 test('completed objects survive unrelated work and retain multi-cell boundaries', () => {
   const built = new BuiltObjects();
-  built.bind('world-a');
+  const space = {};
+  built.bind(space);
   const floor = { x: 3, y: -61, z: -5 };
   const lower = { ...floor, y: -60, block: 'oak_door', half: 'lower' };
   const upper = { ...floor, y: -59, block: 'oak_door', half: 'upper' };
@@ -164,7 +165,7 @@ test('completed objects survive unrelated work and retain multi-cell boundaries'
   // 返回同一扇门的材料和上下半格事实。
   const read = ({ half }) => ({ name: 'oak_door', getProperties: () => ({ half }) });
   built.placed([lower, upper]);
-  built.bind('world-a');
+  built.bind(space);
   assert.equal(built.permits(door, false, read), false);
   assert.equal(built.permits([{ position: floor }], true, read), false);
   assert.equal(built.permits([...door, { position: floor }], true, read), false);
@@ -176,7 +177,7 @@ test('completed objects survive unrelated work and retain multi-cell boundaries'
 });
 
 // 区分角色重生、实际地图切换和外部方块修改，未加载时保留支撑保护。
-test('same-map respawn preserves verified object and support until their blocks actually change', () => {
+test('respawn and a round trip to another dimension retain each map’s verified objects', t => {
   const bot = new EventEmitter();
   bot._client = new EventEmitter();
   bot.game = { dimension: 'overworld' };
@@ -204,6 +205,26 @@ test('same-map respawn preserves verified object and support until their blocks 
   built.bind(world.space());
   assert.equal(built.permits([{ position: wall }], false, read), false);
   assert.equal(built.permits([{ position: floor }], false, read), false);
+
+  bot.emit('respawn');
+  bot.game.dimension = 'the_nether';
+  bot._client.emit('respawn', { worldState: { name: 'minecraft:the_nether' } });
+  bot.emit('spawn');
+  built.bind(world.space());
+  assert.equal(built.permits([{ position: wall }], false, read), true);
+  assert.equal(built.permits([{ position: floor }], false, read), true);
+  built.placed([{ ...wall, block: 'netherrack' }]);
+
+  bot.emit('respawn');
+  bot.game.dimension = 'overworld';
+  bot._client.emit('respawn', packet);
+  bot.emit('spawn');
+  assert.equal(world.space(), scope);
+  built.bind(world.space());
+  assert.equal(built.permits([{ position: wall }], false, read), false);
+  assert.equal(built.permits([{ position: floor }], false, read), false);
+  t.diagnostic('overworld → the_nether → overworld: other map admitted, original cell and support protected');
+
   material = null;
   assert.equal(built.permits([{ position: floor }], false, read), false);
   material = 'air';
@@ -221,5 +242,7 @@ test('same-map respawn preserves verified object and support until their blocks 
   bot._client.emit('login', packet);
   bot.emit('spawn');
   assert.notEqual(world.space(), scope);
+  built.bind(world.space());
+  assert.equal(built.permits([{ position: floor }], false, read), true);
   world.close();
 });
