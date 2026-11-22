@@ -142,7 +142,7 @@ void PartnerLoop::reset() noexcept {
     settlements_.clear();
     plan_.reset();
     plan_receipts_.clear();
-    plan_rejection_.clear();
+    plan_rejection_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
@@ -255,7 +255,7 @@ void PartnerLoop::retire() {
     settlements_.clear();
     plan_.reset();
     plan_receipts_.clear();
-    plan_rejection_.clear();
+    plan_rejection_ = nullptr;
     expanded_.reset();
     expansion_pending_ = false;
     events_.clear();

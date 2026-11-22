@@ -50,6 +50,7 @@ async function main() {
   const mixedRoute = variant === 'partner-revision-navigation-mixed';
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
+  const repairPlanObserve = variant === 'partner-revision-repair-plan-observe';
   const layered = variant?.startsWith('partner-revision-layered');
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const attention = variant === 'partner-revision-attention';
@@ -125,6 +126,8 @@ async function main() {
         }
         const latest = initial ? 1 :
           refusedCollection ? (approvedId ? (after >= 3 ? 4 : 3) : 2) :
+          repairPlanObserve ? (fs.existsSync(path.join(root, 'observe-plan-settled')) ? 4 :
+            fs.existsSync(path.join(root, 'observe-plan-rejected')) ? 3 : 2) :
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
@@ -167,6 +170,11 @@ async function main() {
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
+          }
+          if (repairPlanObserve) {
+            messages[1].text = '先列个观察计划。';
+            messages[2].text = '把观察计划修好，再看看周围。';
+            messages[3].text = '看完了吗？';
           }
           if (pointedSupport) messages[1].text = '把这石块上的泥土敲掉';
           if (pointedCraft) {
@@ -380,6 +388,21 @@ async function main() {
           assert.equal(skill, 'reply');
           assert.equal(context.order, 2);
           assert.equal(args.text, '这次没动起来，我得换个办法。');
+          assert.equal(++replies, 1);
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        if (repairPlanObserve) {
+          assert.equal(method, 'partner.begin');
+          if (skill === 'observe') {
+            assert.equal(context.order, 3);
+            assert.deepEqual(args, {});
+            assert.deepEqual(nodeExits, []);
+            nodeExits.push(id);
+            return { ...context, skill, exited: true, result: { status: 'done', sampledAtMs: 42, position: state.position } };
+          }
+          assert.equal(skill, 'reply');
+          assert.equal(context.order, 4);
+          assert.equal(args.text, '看过了，我还在。');
           assert.equal(++replies, 1);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
@@ -682,7 +705,8 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute || rejoin ? 5 : first || motion || confirm || refusedCollection || pointedCraft || attention ? 4 :
+    return { generation, order: restartRoute || rejoin ? 5 :
+      first || motion || confirm || refusedCollection || pointedCraft || attention || repairPlanObserve ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -740,6 +764,15 @@ async function main() {
       assert.ok(questionPresented && expiredAt !== undefined);
       assert.equal(replies, 1);
       console.log(path.join(root, 'trace', 'events.jsonl'));
+    } else if (repairPlanObserve) {
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+      const accepted = rows.find(row => row.kind === 'tool.exited' && row.callId === 'accept-observe-plan');
+      const { plan, status } = JSON.parse(accepted.output);
+      assert.equal(status, 'queued');
+      assert.deepEqual(nodeExits, [`plan.${plan}.1`]);
+      assert.equal(replies, 1);
+      console.log(trace);
     } else if (repairObserve || repairPlan) {
       assert.equal(badObservations, repairObserve ? 2 : 0);
       if (repairPlan) {

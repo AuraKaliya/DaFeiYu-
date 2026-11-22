@@ -212,6 +212,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool mixed_route = variant == L"partner-revision-navigation-mixed";
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
+    const bool repair_plan_observe = variant == L"partner-revision-repair-plan-observe";
     const bool layered = variant.starts_with(L"partner-revision-layered");
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
@@ -438,6 +439,49 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 return batch;
             }
             return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
+        if (repair_plan_observe) {
+            const Response quiet{{Role::assistant,R"({"internal":"计划回执已核对"})"}};
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "reject-observe-plan") {
+                    if (result.at("reason") != "invalid_dependency" || result.at("retryAllowed") != true)
+                        throw std::runtime_error("observation plan rejection was not recorded");
+                    std::ofstream(root/"observe-plan-rejected").put('1');
+                } else if (last.tool_call_id != "accept-observe-plan" || result.at("status") != "queued")
+                    throw std::runtime_error("corrected observation plan was not admitted");
+                return quiet;
+            }
+
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                const auto& plan = input.at("taskPlan");
+                const auto& settled = input.at("planSettlements").at(0);
+                const auto& node = settled.at("nodes").at(0);
+                if (input.contains("planRejection") || plan.at("status") != "done" ||
+                    settled.at("plan") != plan.at("id") || settled.at("status") != "settled" ||
+                    node.at("work") != plan.at("nodes").at(0).at("work") || node.at("result").at("status") != "done")
+                    throw std::runtime_error("observation plan did not settle on the original game work");
+                std::ofstream(root/"observe-plan-settled").put('1');
+                return quiet;
+            }
+
+            const auto& events = input.at("events");
+            if (events.empty()) return quiet;
+            const auto order = events.back().at("sequence").get<unsigned>();
+            if (order == 4) {
+                if (input.contains("planRejection") || !std::filesystem::exists(root/"observe-plan-settled"))
+                    throw std::runtime_error("next message lost the settled observation plan");
+                checked = true;
+                return {{Role::assistant,"看过了，我还在。"}};
+            }
+            if (order != 2 && order != 3) return quiet;
+            Json node{{"id","nearby"},{"skill","observe"},{"arguments",Json::object()}};
+            if (order == 2) node["after"] = {"missing"};
+            else if (input.at("planRejection").at("result").at("reason") != "invalid_dependency")
+                throw std::runtime_error("repair turn did not see the original rejection");
+            return call("_queue_actions",order == 2 ? "reject-observe-plan" : "accept-observe-plan",
+                {{"operation","plan"},{"steps",Json::array({node})}});
         }
         if (repair_observe || repair_plan) {
             const auto skill = repair_observe ? "_observe" : "_queue_actions";
@@ -709,7 +753,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         for (std::string line; std::getline(trace,line);)
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
                 ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
-                    line.find(question_expiry ? "这段内部结算" : layered_blocked ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
+                    line.find(repair_plan_observe ? "看过了，我还在。" : question_expiry ? "这段内部结算" :
+                        layered_blocked ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
         return false;
     };
     bool stopping = false;
@@ -718,7 +763,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin ? 5u : pointed_craft || attention ? 4u : 3u) &&
+            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin ? 5u :
+                pointed_craft || attention || repair_plan_observe ? 4u : 3u) &&
             receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);

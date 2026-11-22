@@ -82,7 +82,7 @@ bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Js
 // 步骤：归还成功提交 → 单独结算待答步骤 → 为其他拒绝记录修订额度和原任务身份。
 Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
     if (result.at("status") == "queued") {
-        plan_rejection_.clear();
+        plan_rejection_ = nullptr;
         return result;
     }
     const auto reason = result.value("reason","");
