@@ -15,6 +15,13 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'wall') {
+    const radius = args.radius ?? 8;
+    if (!Number.isSafeInteger(args.message) || args.message <= 0 || !Number.isSafeInteger(radius) || radius < 5 || radius > 13 ||
+      Object.keys(args).some(key => !['mode', 'message', 'radius'].includes(key)))
+      throw invalidObservation('observe_wall_parameters', '墙体观察需要原话 message，可选半径 5～13 格');
+    return { mode, options: { message: args.message, radius } };
+  }
   if (mode === 'scene') {
     if (args.block !== undefined)
       throw invalidObservation('observe_mixed_modes', '多来源观察使用 mode=scene，查找指定材料使用 mode=search 和 block');

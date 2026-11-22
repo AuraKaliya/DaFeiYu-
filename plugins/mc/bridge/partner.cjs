@@ -4,6 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
+const { observeWall } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, affectedByDig, collectReadback, pickupStand, nearbyDrop } = require('./collection.cjs');
@@ -230,7 +231,12 @@ function partnerService(bot, world, inbox, places, owner) {
       check();
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
-      if (observation?.mode === 'scene') {
+      if (observation?.mode === 'wall') {
+        const { message, radius } = observation.options;
+        const { anchor, center } = messageAnchor(r.generation, message);
+        result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message,
+          generation: r.generation, dimension: bot.game.dimension };
+      } else if (observation?.mode === 'scene') {
         await observeWindow(bot, observation.options, result, { check, id: job.id, generation: r.generation, signal: job.abort.signal,
           player: () => Object.values(bot.players).find(p => p.uuid === owner)?.entity,
           messageAnchor: order => messageAnchor(r.generation, order), inventory: () => inventory(bot) });

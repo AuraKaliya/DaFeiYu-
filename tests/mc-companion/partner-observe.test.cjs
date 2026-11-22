@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
+const { observeWall } = require('../../plugins/mc/bridge/partner-route.cjs');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -86,4 +87,30 @@ test('observation modes preserve the original source and explain invalid fields'
   assert.throws(() => observationInput({ mode: 'pointed' }), { code: 'observe_message_required' });
   await assert.rejects(observeWindow(bot, { sources: ['message'] }, {}, context), { code: 'observe_invalid_sources' });
   assert.equal(reads.size, 0);
+});
+
+// 两面墙同时可见时按原话命中选墙；邻格未加载时保留未知的墙端。
+test('wall survey distinguishes the pointed obstacle, both sides and unknown coverage', () => {
+  const position = new Position(0.5, -60, -3.5);
+  const anchor = { eye: position.offset(0, 1.62, 0), facing: { yaw: Math.PI, pitch: -0.08 } };
+  let unknown = false;
+  const bot = { entity: { position }, blockAt({ x, y, z }) {
+    if (unknown && x === 3 && z === 0) return null;
+    const wall = (z === 0 && x >= -2 && x <= 2) || (z === -2 && x >= 4 && x <= 6);
+    const stone = y < -60 || (wall && y < -58);
+    return { name: stone ? 'stone' : 'air', boundingBox: stone ? 'block' : 'empty' };
+  } };
+  assert.deepEqual(observationInput({ mode: 'wall', message: 4 }).options, { message: 4, radius: 8 });
+  const result = observeWall(bot, anchor, position);
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.status, 'selected');
+  assert.equal(result.choice, '-2,-60,0:2,0');
+  const { origin, rows } = result.coverage;
+  assert.equal(rows[-1 - origin.z][-origin.x], '.');
+  assert.equal(rows[1 - origin.z][-origin.x], '.');
+  unknown = true;
+  const partial = observeWall(bot, anchor, position);
+  assert.equal(partial.status, 'coverage_required');
+  assert.equal(partial.choice, result.choice);
+  assert.equal(partial.coverage.unknown, 1);
 });
