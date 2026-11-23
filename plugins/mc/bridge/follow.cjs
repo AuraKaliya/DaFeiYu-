@@ -7,6 +7,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
   if (!Number.isInteger(range) || range < 2 || range > 5) throw new Error('跟随距离须为 2 至 5 格');
   const surface = monitorSurface(bot, result);
   let goal, playerPosition, lastPosition, progressSince, lastProbe, nextProbe = 0;
+  let heightWindow;
   let retried = false, blocked = probeFirst, terrainRevision = 0, path = 'unknown';
   const stop = () => {
     if (!goal) return;
@@ -36,13 +37,15 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
       if (!playerPosition) {
         stop();
         blocked = true;
+        heightWindow = undefined;
         lastProbe = undefined;
         result.progress = { phase: 'waiting_player', terrain, sampledAtMs: Math.floor(now) };
       } else {
         const distance = position.distanceTo(playerPosition);
         const vertical = Math.round((playerPosition.y - position.y) * 10) / 10;
         const closeHeight = followHeightClose(vertical);
-        const nearby = distance <= range + 0.5 && closeHeight && (!dryStand(bot, playerPosition) ||
+        const playerOnDryStand = dryStand(bot, playerPosition);
+        const nearby = distance <= range + 0.5 && closeHeight && (!playerOnDryStand ||
           (!bot.entity.isInWater && dryStand(bot, position)));
         const evidence = `${position.floored()}:${playerPosition.floored()}:${terrainRevision}`;
         if (blocked && (nearby || (evidence !== lastProbe && now >= nextProbe))) {
@@ -55,6 +58,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
           const movedGoal = goal && (distance > range + 1 || !closeHeight) && goal.isEnd(position.floored()) &&
             (goal.x !== Math.floor(playerPosition.x) || goal.y !== Math.floor(playerPosition.y) || goal.z !== Math.floor(playerPosition.z));
           if (goal?.entity !== entity || movedGoal) {
+            if (goal && goal.entity !== entity) path = 'unknown';
             goal = new SurfaceFollowGoal(bot, entity, range);
             bot.pathfinder.setGoal(goal, true);
             lastPosition = position.clone();
@@ -66,10 +70,37 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
             progressSince = now;
             retried = false;
           }
-          if (!nearby && now - progressSince >= 3500) {
+
+          // 横向活动与高差改善分别计时，临近干地后用独立探路确认没有上去或下来的路线。
+          const gap = Math.abs(vertical);
+          const horizontal = Math.hypot(playerPosition.x - position.x, playerPosition.z - position.z);
+          const heightUnreachable = path === 'unreachable' && !closeHeight && horizontal <= range + 3 &&
+            playerOnDryStand && (terrain === 'land' || terrain === 'dry');
+          if (!heightUnreachable) heightWindow = undefined;
+          else {
+            if (heightWindow?.entity !== entity || gap + 0.5 <= heightWindow.gap) heightWindow = { entity, gap, since: now };
+            if (now - heightWindow.since >= 3000) {
+              const candidate = new SurfaceFollowGoal(bot, entity, range);
+              path = pathStatus(probe(position, candidate));
+              heightWindow = undefined;
+              if (path === 'unreachable') {
+                blocked = true;
+                lastProbe = evidence;
+                nextProbe = now + 500;
+                stop();
+              } else if (path === 'reachable') {
+                goal = candidate;
+                bot.pathfinder.setGoal(goal, true);
+                progressSince = now;
+                retried = false;
+              }
+            }
+          }
+          if (!blocked && !nearby && now - progressSince >= 3500) {
             if (retried) {
               blocked = true;
               lastProbe = evidence;
+              heightWindow = undefined;
               stop();
             } else {
               goal = new SurfaceFollowGoal(bot, entity, range);
