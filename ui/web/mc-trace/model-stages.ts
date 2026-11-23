@@ -111,6 +111,7 @@ export interface PromptDifference {
   readonly removed: string[];
   readonly changed: string[];
   readonly facts: string[];
+  readonly messages: readonly { position: number; role: string; change: 'added' | 'removed' | 'changed' }[];
 }
 
 // 对照两次实际送模的工具定义与业务事实字段。
@@ -127,7 +128,21 @@ export function comparePrompts(before: Data, after: Data): PromptDifference {
     removed: [...beforeTools.keys()].filter(tool => !afterTools.has(tool)),
     changed: [...afterTools].filter(([tool, value]) => beforeTools.has(tool) && beforeTools.get(tool) !== value).map(([tool]) => tool),
     facts,
+    messages: changedMessages(objects(before.messages), objects(after.messages)),
   };
+}
+
+// 比较实际送模中的消息位置，以便回到两次原文核对。
+function changedMessages(before: readonly Data[], after: readonly Data[]): PromptDifference['messages'] {
+  const entries: PromptDifference['messages'][number][] = [];
+  for (let index = 0; index < Math.max(before.length, after.length); index += 1) {
+    const left = before[index];
+    const right = after[index];
+    if (JSON.stringify(left) === JSON.stringify(right)) continue;
+    entries.push({ position: index + 1, role: text((right ?? left)?.role) ?? '未知角色',
+      change: !left ? 'added' : !right ? 'removed' : 'changed' });
+  }
+  return entries;
 }
 
 // 以模型实际看到的名称索引同一送模快照的工具定义。

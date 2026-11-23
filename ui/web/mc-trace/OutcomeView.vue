@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import DataBlock from './DataBlock.vue';
 import SourceButton from './SourceButton.vue';
 import ToolView from './ToolView.vue';
-import { duration } from './display.ts';
+import { decisionSummary, duration } from './display.ts';
 import { policyFacts, stageTiming } from './model-stages.ts';
 import { object, objects } from './trace-file.ts';
 import { useRecord } from './use-record.ts';
@@ -53,6 +53,7 @@ const policy = computed(() => policyFacts(exit.value?.data, props.stage));
         </dl>
         <DataBlock v-if="message?.content" label="模型返回文本" :value="message.content" open />
         <p v-else-if="model.data?.result === 'succeeded' && !calls.length" class="muted">响应未包含文本或工具调用。</p>
+        <DataBlock v-if="message?.reasoningContent !== undefined" label="模型返回的推理字段" :value="message.reasoningContent" />
         <DataBlock v-for="(call, index) in calls" :key="index" :label="`模型提出 · ${call.name ?? '未命名工具'}`" :value="call" />
       </template>
       <p v-if="rewriteError" class="notice">{{ rewriteError }}</p>
@@ -80,7 +81,7 @@ const policy = computed(() => policyFacts(exit.value?.data, props.stage));
         <div><dt>停止原因</dt><dd>{{ round.exit.reason ?? '—' }}</dd></div>
       </dl>
       <DataBlock v-for="(decision, index) in policy" :key="index"
-        :label="`${decision.control_point ?? '控制点'} · ${decision.decision ?? '裁定'}`" :value="decision" />
+        :label="decisionSummary(decision)" :value="decision" />
       <DataBlock v-if="exit?.data?.answer" label="回合出口文本" :value="exit.data.answer" />
     </section>
   </section>

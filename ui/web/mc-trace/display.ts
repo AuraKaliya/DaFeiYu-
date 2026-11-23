@@ -1,6 +1,7 @@
 import type { Round } from './rounds.ts';
 import type { LineRef } from './trace-file.ts';
-import { object } from './trace-file.ts';
+import { id, object, text } from './trace-file.ts';
+import type { Data } from './trace-file.ts';
 
 const phases: Readonly<Record<string, string>> = {
   'trace.open': 'Trace 开始', 'trace.closed': 'Trace 关闭', 'subagent.accepted': '宿主接纳',
@@ -63,4 +64,21 @@ export function coordinates(value: unknown) {
   if (typeof point?.x === 'number' && typeof point.y === 'number' && typeof point.z === 'number')
     return [point.x, point.y, point.z].join(', ');
   return '—';
+}
+
+const verdicts: Readonly<Record<string, string>> = { allow: '允许', deny: '拒绝', wait: '等待' };
+
+// 组合宿主裁定的控制点、明确决定和生效对象。
+export function decisionSummary(fact: Data) {
+  const decision = object(fact.decision);
+  const verdict = text(decision?.verdict) ?? text(fact.decision);
+  const reason = text(decision?.reason);
+  const subject = object(fact.subject);
+  const candidate = subject?.kind === 'tool' ? id(subject.local) : undefined;
+  return [
+    text(fact.control_point) ?? '控制点待确认',
+    verdict && Object.hasOwn(verdicts, verdict) ? verdicts[verdict] : verdict,
+    reason !== 'none' ? reason : undefined,
+    candidate ? '候选 ' + candidate : undefined,
+  ].filter(Boolean).join(' · ');
 }

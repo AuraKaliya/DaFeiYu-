@@ -16,6 +16,7 @@ const { value: args, error: argsError } = useRecord(() => props.source,
 const { value: outcome, error: resultError } = useRecord(() => props.source,
   () => expanded.value ? props.tool.exited?.ref : undefined);
 const observed = props.tool.exited?.business ?? props.tool.exited?.result;
+const admission = props.tool.admitted ? '已接纳' : props.tool.exited?.accepted === false ? '未接纳' : '未见接纳记录';
 
 // 读回展开的候选参数和工具结果，保持已显示的裁定摘要。
 function toggle(event: Event) {
@@ -28,14 +29,18 @@ function toggle(event: Event) {
     <summary>
       <code>{{ tool.name }}</code>
       <span class="pill" :data-tone="tone(observed)">
-        {{ observed ? statusLabel(observed) : tool.admitted ? '已接纳' : '候选' }}
+        {{ tool.exited?.accepted === false && !tool.admitted ? '未接纳' : observed ? statusLabel(observed) : admission }}
       </span>
     </summary>
     <div v-if="expanded" class="tool-body">
       <dl class="data-grid">
         <div><dt>候选号</dt><dd>{{ tool.key }}</dd></div>
         <div><dt>模型调用号</dt><dd>{{ tool.callId ?? '—' }}</dd></div>
-        <div><dt>宿主调用号</dt><dd>{{ tool.admitted?.invocation ?? tool.exited?.invocation ?? '—' }}</dd></div>
+        <div><dt>宿主接纳</dt><dd>{{ admission }}</dd></div>
+        <div v-if="tool.admitted?.invocation"><dt>宿主调用号</dt><dd>{{ tool.admitted.invocation }}</dd></div>
+        <div v-if="tool.exited?.confirmation || tool.admitted?.confirmation">
+          <dt>宿主审批号</dt><dd>{{ tool.exited?.confirmation ?? tool.admitted?.confirmation }}</dd>
+        </div>
         <div><dt>宿主退出</dt><dd>{{ tool.exited?.result ?? '未见退出' }}</dd></div>
         <div v-if="tool.exited?.business"><dt>领域状态</dt><dd>{{ tool.exited.business }}</dd></div>
         <div v-if="tool.exited?.reason"><dt>依据</dt><dd>{{ tool.exited.reason }}</dd></div>

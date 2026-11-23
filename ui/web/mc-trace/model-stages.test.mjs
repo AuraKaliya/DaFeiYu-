@@ -45,5 +45,6 @@ test('已知系统段可拆解，工具范围与 MC 事实按原快照对照', (
   ] };
   assert.deepEqual(comparePrompts(before, after), {
     added: ['place'], removed: ['observe'], changed: ['reply'], facts: ['generation', 'trigger', 'events'],
+    messages: [{ position: 1, role: 'user', change: 'added' }],
   });
 });

@@ -32,10 +32,12 @@ const factNames: Readonly<Record<string, string>> = {
   events: '本轮游戏输入', currentEvents: '原游戏事件', newEvents: '新增游戏事件', lastObservation: '最近观测',
   sceneRevision: '现场修订', task: '任务状态', taskPlan: '当前计划', taskHandoff: '任务交接',
   planSettlements: '计划结算', workSettlement: '动作回执', work: '复核中的工作', following: '跟随状态',
+  activeMotion: '在途动作', queuedActions: '已排队动作', planRejection: '本次计划拒绝', previousPlanRejection: '前次计划拒绝',
   followAttention: '跟随现场', recentDialogue: '最近对话', pendingQuestion: '待答事项', questionResult: '追问结果',
-  pendingApproval: '待审批事项', approvalResult: '审批结果', delegation: '主 Agent 委托',
+  pendingApproval: '待审批事项', approvalResult: '审批结果', delegation: '主 Agent 委托', eventGap: '事件缺口',
 };
 const groups = computed(() => Object.entries(facts.value ?? {}).filter(([key]) => Object.hasOwn(factNames, key)));
+const messageChanges = { added: '新增', removed: '移除', changed: '内容变化' };
 </script>
 
 <template>
@@ -53,6 +55,7 @@ const groups = computed(() => Object.entries(facts.value ?? {}).filter(([key]) =
         <div><dt>提供方</dt><dd>{{ value?.data?.provider ?? '—' }}</dd></div>
         <div><dt>人格版本</dt><dd>{{ value?.data?.personaProfile ?? '—' }}</dd></div>
         <div><dt>输出预算</dt><dd>{{ request.maxOutputTokens ?? '—' }}</dd></div>
+        <div v-if="typeof value?.data?.thinking === 'boolean'"><dt>思考模式</dt><dd>{{ value.data.thinking ? '开启' : '关闭' }}</dd></div>
       </dl>
       <p v-if="value?.data?.promptTemplate" class="fine-print mono">模板 {{ value.data.promptTemplate }}</p>
 
@@ -66,6 +69,12 @@ const groups = computed(() => Object.entries(facts.value ?? {}).filter(([key]) =
             <div><dt>工具契约变化</dt><dd>{{ difference.changed.join('、') || '无' }}</dd></div>
             <div><dt>MC 事实字段变化</dt><dd>{{ difference.facts.join('、') || '无' }}</dd></div>
           </dl>
+          <p v-if="!difference.messages.length" class="muted">消息顺序和正文一致。</p>
+          <ul v-else class="link-group" aria-label="消息位置变化">
+            <li v-for="message in difference.messages" :key="message.position" class="pill">
+              {{ message.position }}. {{ message.role }} · {{ messageChanges[message.change] }}
+            </li>
+          </ul>
           <SourceButton v-if="previous" :address="previous.ref" @inspect="emit('inspect', $event)" />
         </div>
         <p v-else-if="compare" class="empty">正在读取前一次装配…</p>
@@ -95,6 +104,7 @@ const groups = computed(() => Object.entries(facts.value ?? {}).filter(([key]) =
           <DataBlock :label="`${idx + 1}. ${text(message.role) ?? '未知角色'}${message.toolCallId ? ' · ' + message.toolCallId : ''}`"
             :value="message.content ?? '—'" :open="idx === 0" />
           <DataBlock v-if="objects(message.toolCalls).length" label="消息附带的工具调用" :value="message.toolCalls" />
+          <DataBlock v-if="message.reasoningContent !== undefined" label="消息附带的模型续行内容" :value="message.reasoningContent" />
         </div>
       </section>
 

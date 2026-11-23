@@ -16,6 +16,7 @@ export interface ScanResult {
 
 const maximumFile = 512 * 1024 * 1024;
 const maximumLine = 16 * 1024 * 1024;
+const maximumDepth = 48;
 
 // 从日志边界收窄 JSON 对象，供不同版本的数据投影使用。
 export function object(value: unknown): Data | undefined {
@@ -38,8 +39,45 @@ export function id(value: unknown): string | undefined {
   if (typeof value === 'string' && /^\d+$/.test(value)) return value;
 }
 
+// 与宿主一致地拒绝重复键和过深对象，防止日志身份被悄悄覆盖。
+// 步骤：枚举结构字符 → 跳过字符串 → 在各自对象内核对键和深度。
+function verifyShape(source: string) {
+  const token = /[\[\]{}"]/g;
+  const quotes = /["\\]/g;
+  const containers: (Set<string> | undefined)[] = [];
+  let next: RegExpExecArray | null;
+  while ((next = token.exec(source)) !== null) {
+    if (next[0] === '{' || next[0] === '[') {
+      if (containers.length >= maximumDepth) throw new Error('记录嵌套超过限制');
+      containers.push(next[0] === '{' ? new Set() : undefined);
+    } else if (next[0] === '}' || next[0] === ']') {
+      containers.pop();
+    } else {
+      quotes.lastIndex = token.lastIndex;
+      let end = quotes.exec(source);
+      while (end?.[0] === '\\') {
+        quotes.lastIndex += 1;
+        end = quotes.exec(source);
+      }
+      if (!end) throw new Error('记录有未闭合的字符串');
+      token.lastIndex = quotes.lastIndex;
+      const keys = containers.at(-1);
+      if (!keys) continue;
+      let separator = quotes.lastIndex;
+      while (source[separator] === ' ' || source[separator] === '\t' || source[separator] === '\n' || source[separator] === '\r')
+        separator += 1;
+      if (source[separator] !== ':') continue;
+      const name = source.slice(next.index + 1, end.index);
+      const key = name.includes('\\') ? JSON.parse(source.slice(next.index, quotes.lastIndex)) as string : name;
+      if (keys.has(key)) throw new Error('记录有重复字段');
+      keys.add(key);
+    }
+  }
+}
+
 // 保留超出浏览器整数精度的原生票据和时间值。
 export function parseJson(source: string): unknown {
+  verifyShape(source);
   return JSON.parse(source, (_key: string, value: unknown, context?: { source?: string }) => {
     if (typeof value !== 'number' || !Number.isInteger(value) || Number.isSafeInteger(value)) return value;
     if (context?.source === undefined) throw new Error('浏览器无法读取完整的原生整数');

@@ -28,6 +28,7 @@ function modelStatus(stage: ModelStage) {
 
 // 为附带工具标注领域结果或宿主阶段。
 function toolStatus(entry?: RecordEntry) {
+  if (entry?.accepted === false) return '未接纳';
   const result = entry?.business ?? entry?.result;
   return result ? statusLabel(result) : '未见退出';
 }
@@ -69,7 +70,8 @@ function toolStatus(entry?: RecordEntry) {
             </button>
             <div class="phase-chips" aria-label="模型生命周期">
               <button v-for="phase in [stage.prepared, stage.submitted, stage.exited, stage.rewritten].filter(row => row !== undefined)"
-                :key="phase.ref.line" type="button" class="chip" :title="`查看原记录第 ${phase.ref.line} 行`"
+                :key="phase.ref.line" type="button" class="chip"
+                :title="`+${duration(milliseconds(start, phase.time))} · 原记录第 ${phase.ref.line} 行`"
                 @click="emit('record', phase.ref)">{{ phaseLabel(phase.kind) }}</button>
             </div>
             <button v-for="tool in stage.tools" :key="tool.key" class="tool-preview" type="button" @click="emit('stage', stage.key, tool.key)">

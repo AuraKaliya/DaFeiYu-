@@ -45,6 +45,8 @@ export interface RecordEntry {
   readonly request?: string;
   readonly candidate?: string;
   readonly invocation?: string;
+  readonly accepted?: boolean;
+  readonly confirmation?: string;
   readonly callId?: string;
   readonly name?: string;
   readonly result?: string;
@@ -97,27 +99,33 @@ export function describeTrigger(input?: Data): Trigger {
 // 摘录用于列表和跨回合关联的事实，长上下文留在原文件内。
 // 步骤：分类触发 → 保存玩家事实与原因 → 摘录后续关联所需的原票据。
 function compactInput(facts: Data): RoundInput {
+  const trigger = describeTrigger(facts);
   const attention = object(facts.followAttention);
   const plan = object(facts.taskPlan);
   const settlement = object(facts.workSettlement);
   const task = object(facts.task);
   const taskClarification = object(task?.clarification);
+  const approval = object(facts.approvalResult);
+  const pendingApproval = object(facts.pendingApproval);
+  const question = object(facts.questionResult);
   return {
-    trigger: describeTrigger(facts),
+    trigger,
     generation: text(facts.generation) ?? '',
     facts: objects(facts.events ?? facts.newEvents).map(entry => ({
       sequence: id(entry.sequence), type: text(entry.type), text: text(entry.text)?.slice(0, 250),
     })),
-    reason: text(attention?.reason) ?? text(object(facts.questionResult)?.status) ?? text(object(facts.approvalResult)?.status),
+    reason: trigger.code === 'follow.attention' ? text(attention?.reason) :
+      trigger.code === 'question.result' ? text(question?.status) :
+      trigger.code === 'approval.result' ? text(approval?.status) : undefined,
     related: {
       plan: plan?.id,
       origin: object(plan?.origin)?.sequence ?? object(taskClarification?.origin)?.sequence,
       plans: objects(facts.planSettlements).map(entry => entry.plan),
       works: [...objects(facts.planSettlements).flatMap(layer => objects(layer.nodes).map(node => node.work)),
         ...objects(settlement?.receipts).map(receipt => receipt.bridgeWork), object(facts.taskHandoff)?.work],
-      question: object(facts.questionResult)?.item ?? object(facts.pendingQuestion)?.item ??
+      question: question?.item ?? object(facts.pendingQuestion)?.item ??
         object(plan?.clarification)?.item ?? taskClarification?.item,
-      approval: object(facts.approvalResult)?.request ?? object(facts.pendingApproval)?.request,
+      approval: approval?.request ?? approval?.item ?? pendingApproval?.request ?? pendingApproval?.item,
       follow: object(facts.following)?.work,
       episode: attention?.episode,
       reviewed: object(facts.work)?.candidate,
@@ -137,7 +145,8 @@ function project(row: Data, ref: LineRef): RecordEntry {
   return {
     ref, kind, time: id(row.timeNs), key: session && run ? `${session}/${run}` : undefined,
     step: id(row.step), attempt: id(row.attempt), request: id(row.request), candidate: id(row.candidate),
-    invocation: id(row.invocation), callId: text(row.callId), name: text(row.toolId) ?? text(row.name),
+    invocation: id(row.invocation), accepted: typeof row.accepted === 'boolean' ? row.accepted : undefined,
+    confirmation: id(row.confirmation), callId: text(row.callId), name: text(row.toolId) ?? text(row.name),
     result: text(row.result), effect: text(row.effect), fault: text(row.fault), business: text(output?.status),
     reason: text(output?.reason) ?? text(output?.reasonCode) ??
       (timeline?.stop_reason === 'none' ? undefined : text(timeline?.stop_reason)) ??

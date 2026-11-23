@@ -43,3 +43,20 @@ test('保留未知触发和未接纳的待确认回合', async () => {
     { code: 'future.event', label: '触发待确认', category: '触发待确认' });
   assert.equal(describeTrigger({ trigger: 'skills.expanded' }).category, '续行与能力');
 });
+
+// 同一快照可以携带已结算追问和待审批，触发解释仍取原生唤醒码。
+test('历史事项继续可查且不冒充本轮触发', async () => {
+  const context = { events: [], questionResult: { item: 4, status: 'resolved' },
+    approvalResult: { item: 8, status: 'approved' } };
+  const host = await indexHost(traceBlob([
+    prepared(57, 1, { ...context, trigger: 'plan.finished' }),
+    prepared(57, 2, { ...context, trigger: 'approval.result' }),
+    prepared(57, 3, { ...context, trigger: 'question.result' }),
+  ]));
+  const [plan, approval, question] = host.rounds.map(round => round.input);
+  assert.equal(plan.reason, undefined);
+  assert.equal(plan.related.question, 4);
+  assert.equal(approval.reason, 'approved');
+  assert.equal(approval.related.approval, 8);
+  assert.equal(question.reason, 'resolved');
+});

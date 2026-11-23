@@ -47,10 +47,25 @@ test('计划、原问题和游戏回执跨回合按身份连接', async () => {
   assert.ok(answer.entries.some(row => row.kind === 'action' && row.changes === 1));
   assert.ok(answer.entries.some(row => row.ref.stream === 'game'));
   assert.ok(answer.references.some(row => row.status === 'resolved'));
-  assert.ok(answer.links.some(link => link.round === '57/1' && link.label === '原追问'));
+  assert.equal(answer.links.find(link => link.round === '57/1' && link.label === '原追问')?.ref,
+    answer.references.find(row => row.status === 'resolved')?.ref);
   assert.ok(finish.links.some(link => link.round === '57/1' && link.label === '原委托'));
   assert.ok(finish.links.some(link => link.round === '57/2' && link.label === '原游戏工作'));
   assert.ok(finish.references.some(row => row.kind === 'action'));
   assert.equal(doc.unlinked.length, 1);
   assert.equal(doc.unlinked[0].generation, 'other');
+});
+
+// 同一世界重新连接时，两个控制方可能产生相同的本地工作编号。
+test('宿主已记录控制方时排除同代际的其他控制方', async () => {
+  const trace = captured([
+    ...turn(1, 'game.event'),
+    receipt('action', { generation: 'world', session: 57, request: 11, bridgeWork: '1.2' }),
+    receipt('control', { generation: 'world', controller: 'original', phase: 'released' }),
+  ]);
+  const game = new Blob(['original', 'different'].map(controller =>
+    JSON.stringify({ generation: 'world', controller, work: '1.2', exited: true }) + '\n'));
+  const doc = await indexDocument(trace, game);
+  assert.deepEqual(doc.evidence.get('57/1').entries.filter(row => row.ref.stream === 'game').map(row => row.controller), ['original']);
+  assert.ok(doc.unlinked.some(row => row.ref.stream === 'game' && row.controller === 'different'));
 });

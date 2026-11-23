@@ -62,6 +62,7 @@ function attachEvidence(rounds: readonly Round[], records: readonly McRecord[]) 
   const cards = new Map<string, EvidenceDraft>();
   const byWork = new Map<string, McRecord[]>();
   const unlinked: McRecord[] = [];
+  const controllers = new Map<string, Set<string>>();
   for (const round of rounds) {
     cards.set(round.key, { entries: [], references: new Set(), links: new Map() });
     remember(request, scoped(round.session, round.accepted?.request), round);
@@ -85,6 +86,11 @@ function attachEvidence(rounds: readonly Round[], records: readonly McRecord[]) 
   };
 
   for (const row of records) {
+    if (row.kind === 'control' && row.generation && row.controller) {
+      const known = controllers.get(row.generation) ?? new Set<string>();
+      known.add(row.controller);
+      controllers.set(row.generation, known);
+    }
     if (row.code !== 'ask.opened' || !row.ask) continue;
     const owner = directOwner(row);
     if (owner) remember(asks, row.ask, owner);
@@ -99,10 +105,18 @@ function attachEvidence(rounds: readonly Round[], records: readonly McRecord[]) 
   // 增加可反查的原回合链接，原证据仍归自己被接纳的回合。
   const link = (from: Round, to: Round | undefined, label: string, ref?: LineRef) => {
     if (!to || from === to) return;
-    cards.get(from.key)?.links.set(`${to.key}/${label}`, { round: to.key, label, ref });
+    const links = cards.get(from.key)?.links;
+    const key = `${to.key}/${label}`;
+    const prior = links?.get(key);
+    if (!prior || (!prior.ref && ref)) links?.set(key, { round: to.key, label, ref });
     cards.get(to.key)?.links.set(`${from.key}/后继回合`, { round: from.key, label: '后继回合' });
   };
   for (const row of records) {
+    const known = row.generation ? controllers.get(row.generation) : undefined;
+    if (row.ref.stream === 'game' && known && row.controller && !known.has(row.controller)) {
+      unlinked.push(row);
+      continue;
+    }
     const anchored = directOwner(row);
     const scope = row.generation ?? anchored?.input?.generation;
     const owner = anchored ?? unique(work, scoped(scope, row.work ?? row.follow));

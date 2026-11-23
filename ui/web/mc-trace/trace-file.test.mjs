@@ -52,3 +52,19 @@ test('游戏回执支持独立行索引，只有对象才作为业务正文', as
   assert.equal(parseJson('9007199254740992'), '9007199254740992');
   assert.equal(parseJson('9007199254740993'), '9007199254740993');
 });
+
+// 原生主键和导入快照中的子对象都必须保留唯一字段。
+test('重复键和超深记录不会进入文件索引', async () => {
+  const open = traceRow(1, 'trace.open');
+  const duplicates = traceRow(2, 'model.prepared', ',"input":{"seq":1,"\\u0073eq":2}');
+  const deep = traceRow(2, 'model.prepared', ',"input":' + '['.repeat(52) + '0' + ']'.repeat(52));
+  for (const [row, issue] of [[duplicates, /重复字段/], [deep, /嵌套超过限制/]]) {
+    const observed = [];
+    const result = await scanFile(new Blob([open, row]), 'trace', value => observed.push(value.kind));
+    assert.deepEqual(observed, ['trace.open']);
+    assert.equal(result.state, 'invalid');
+    assert.match(result.issue, issue);
+  }
+  const escaped = { a: [']{}"\\aba', { key: '1' }, { key: '2' }] };
+  assert.deepEqual(parseJson(JSON.stringify(escaped)), escaped);
+});

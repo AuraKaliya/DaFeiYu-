@@ -18,6 +18,7 @@ export interface McRecord {
   readonly ref: LineRef;
   readonly time?: string;
   readonly generation?: string;
+  readonly controller?: string;
   readonly session?: string;
   readonly request?: string;
   readonly invocation?: string;
@@ -69,7 +70,8 @@ export function projectMc(row: Data, entry: RecordEntry): McRecord | undefined {
   const effect = typeof action.effect === 'number' ? effectNames[action.effect] : text(action.effect);
   return {
     kind: type, code, ref: entry.ref, time: entry.time,
-    generation: text(action.generation) ?? text(body.generation), session: id(action.session), request: id(action.request),
+    generation: text(action.generation) ?? text(body.generation), controller: text(body.controller),
+    session: id(action.session), request: id(action.request),
     invocation: id(action.invocation) ?? id(result?.attempt) ?? (type === 'approval' ? id(body.id) : undefined),
     order: id(action.order) ?? id(event?.sequence), sourceOrder: id(body.sourceMessage),
     answerOrder: id(body.answerMessage), plan: id(plan?.id ?? body.plan),
@@ -97,7 +99,8 @@ export async function indexGame(file: Blob, progress?: (bytes: number) => void):
   const source = await scanFile(file, 'game', (row, ref) => {
     const result = object(row.result);
     records.push({
-      kind: 'game', code: 'game-actions.jsonl', ref, generation: text(row.generation), work: text(row.work),
+      kind: 'game', code: 'game-actions.jsonl', ref, generation: text(row.generation), controller: text(row.controller),
+      work: text(row.work),
       order: id(row.order), workItems: [], skill: text(row.skill),
       status: text(result?.status) ?? (row.exited === true ? 'exited' : undefined),
       reason: text(result?.reason) ?? text(result?.reasonCode), delivery: deliveryStatus(result),

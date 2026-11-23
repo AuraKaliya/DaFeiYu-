@@ -33,20 +33,22 @@ function toggle(event: Event) {
 <template>
   <details class="receipt-card" :data-receipt="row.work ?? row.follow ?? row.plan" @toggle="toggle">
     <summary>
-      <div class="receipt-summary">
-        <strong>{{ row.skill ?? labels[row.kind] }}</strong>
-        <small v-if="row.work || row.follow || row.plan" class="mono">{{ row.work ?? row.follow ?? '计划 ' + row.plan }}</small>
-        <small>{{ row.ref.stream === 'game' ? '游戏桥接' : '宿主记录' }}</small>
-      </div>
+      <span class="receipt-summary">
+        <span class="receipt-headline">
+          <strong>{{ row.skill ?? labels[row.kind] }}</strong>
+          <small v-if="row.work || row.follow || row.plan" class="mono">{{ row.work ?? row.follow ?? '计划 ' + row.plan }}</small>
+          <small>{{ row.ref.stream === 'game' ? '游戏桥接' : '宿主记录' }}</small>
+        </span>
+        <span v-if="row.summary" class="receipt-excerpt">{{ row.summary }}</span>
+        <span v-else-if="row.changes !== undefined || row.reason" class="receipt-excerpt">
+          <span v-if="row.changes !== undefined">{{ row.changes }} 格变化</span>
+          <span v-if="row.reason">{{ row.reason }}</span>
+        </span>
+      </span>
       <span v-if="row.delivery || row.status" class="pill" :data-tone="tone(row.delivery ?? row.status)">
         {{ statusLabel(row.delivery ?? row.status ?? '') }}
       </span>
     </summary>
-    <p v-if="row.summary" class="receipt-excerpt">{{ row.summary }}</p>
-    <p v-else-if="row.changes !== undefined || row.reason" class="receipt-excerpt">
-      <span v-if="row.changes !== undefined">{{ row.changes }} 格变化</span>
-      <span v-if="row.reason">{{ row.reason }}</span>
-    </p>
     <div v-if="expanded" class="receipt-body">
       <SourceButton :address="row.ref" @inspect="emit('inspect', $event)" />
       <p v-if="error" class="notice" role="alert">{{ error }}</p>
