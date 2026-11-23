@@ -585,9 +585,10 @@ async function main() {
             questionPresented = true;
             return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
           }
-          if (skill === 'observe' && context.order === 2) {
+          if (skill === 'observe' && args.sources.includes('message')) {
             assert.equal(args.message, 2);
-            const candidates = [2, 4].map((x, i) => ({ id: i ? 'right' : 'left', x, y: -60, z: -5, width: 1, height: 2, axis: 'x' }));
+            const candidates = context.order === 2 ? [2, 4].map((x, i) => ({ id: i ? 'right' : 'left', x, y: -60, z: -5,
+              width: 1, height: 2, axis: 'x' })) : [{ id: 'other', x: 3, y: -60, z: -4, width: 1, height: 2, axis: 'x' }];
             return { ...context, skill, exited: true, result: { status: 'done', anchor: { message: 2 }, sampledAtMs: 42,
               playerFocus: { choice: null, status: 'ambiguous', candidates } } };
           }

@@ -143,7 +143,11 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     question_->after_pickup = after_pickup;
     question_->scope = std::move(scope);
     question_->task_revision = task_.revision();
-    if (!events_.empty()) question_->origin = events_.back().value("text",std::string{});
+    const auto& source = events_.empty() ? recent_events_ : events_;
+    if (!source.empty() && source.back().at("type") == "player.message" && source.back().at("sequence") == order_ &&
+        source.back().contains("text"))
+        question_->origin = source.back();
+    if (!question_->scope.is_null() && question_->scope.at("skill") == "place") task_.pin_opening_observation(order_);
     question_result_.clear();
     return {{"status","recorded"},{"item",id}};
 }
@@ -217,8 +221,7 @@ bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves
 
 // 判断候选是否依赖该问题，材料未固定时保留可能的重叠。
 // 步骤：匹配执行器 → 核对已知的材料限制。
-bool PartnerLoop::question_covers(std::string_view skill, const Json& args) const {
-    const auto& scope = question_->scope;
+bool PartnerLoop::question_covers(const Json& scope, std::string_view skill, const Json& args) {
     if (scope.is_null()) return true;
     if (scope.at("skill").get_ref<const std::string&>() != (skill == "fill_target" ? "place" : skill)) return false;
     for (const auto key : {"block","item"}) if (scope.contains(key) && args.contains(key) &&
@@ -240,7 +243,8 @@ Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill,
         return Json{{"status","blocked"},{"reason",reason},{"item",item}};
     };
     const bool pending = placement_choice_pending();
-    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item) && question_covers(skill,args))
+    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item) &&
+        question_covers(question_->scope,skill,args))
         return blocked(question_->item,"waiting_for_player");
     if (skill == "craft" || placement_choice_.revision != task_.revision()) return {};
     const bool fixed_cell = valid_action_cell(args);
@@ -293,14 +297,17 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     if (message != order_ || !player_event ||
         (item && (!question_ || question_->item != item || (placement_choice_pending() && placement_choice_.item == item) ||
             question_->approval || question_->path != "local" ||
-            question_->order >= order_ || question_->task_revision != task_.revision() || !question_covers("collect",args)))) return std::nullopt;
+            question_->order >= order_ || question_->task_revision != task_.revision() ||
+            !question_covers(question_->scope,"collect",args)))) return std::nullopt;
     if (item) {
         const auto& text = events_.back().at("text").get_ref<const std::string&>();
         if (has_pickup_continuation(item) && std::ranges::none_of(
             std::array{"这个","这块","这根","那个","那块","那根","原木","左边","右边","this","that","left","right","log"},
             [&](std::string_view word) { return text.find(word) != text.npos; })) return std::nullopt;
-        const auto original = read_dig_intent(question_->origin);
-        if (!original.material.empty()) intent = original;
+        if (!question_->origin.is_null()) {
+            const auto original = read_dig_intent(question_->origin.at("text").get_ref<const std::string&>());
+            if (!original.material.empty()) intent = original;
+        }
     }
     if (!task_.bind_dig(message,intent,args)) return std::nullopt;
     return true;

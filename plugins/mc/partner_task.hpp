@@ -38,6 +38,10 @@ class PartnerTask {
     std::string_view unconfirmed() const noexcept { return unconfirmed_work_; }
     // 返回当前共同目标说明。
     std::string_view goal() const noexcept { return goal_; }
+    // 返回本修订已关联的原委托和澄清回执。
+    const nlohmann::json& clarification() const noexcept { return clarification_; }
+    // 将原委托和已接受的答复固定到当前任务修订。
+    void record_clarification(nlohmann::json origin, const nlohmann::json& result);
     // 返回当前取材约束，供局内任务更新识别范围变化。
     std::string_view collection() const noexcept { return collection_; }
     // 更新当前分工，说明或唤醒方式变化沿用原执行修订。
@@ -59,6 +63,8 @@ class PartnerTask {
     const nlohmann::json& target_cells() const { return target_.at("cells"); }
     // 找回原玩家消息的紧凑开口证据，供绑定和待答上下文复用。
     const nlohmann::json* opening_observation(std::uint64_t message) const;
+    // 固定已用于发问的开口集合，留给同一事项和目标继续引用。
+    void pin_opening_observation(std::uint64_t message);
     // 将当前任务的取材范围固定到实际采掘参数中。
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
@@ -95,7 +101,7 @@ class PartnerTask {
     std::map<std::uint64_t,nlohmann::json> object_observations_;
     std::map<std::uint64_t,nlohmann::json> openings_;
     std::map<std::uint64_t,nlohmann::json> bound_cells_;
-    nlohmann::json arrival_, local_observation_, route_, navigation_wall_;
+    nlohmann::json arrival_, local_observation_, route_, navigation_wall_, clarification_;
     std::chrono::steady_clock::time_point observation_time_{};
 };
 }

@@ -91,7 +91,7 @@ Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
 }
 
 // 在当前世界验证一到四个节点及全部依赖，再原子替换上次任务图。
-// 步骤：校验槽位和节点参数 → 固定前置编号 → 拓扑分层并登记。
+// 步骤：校验槽位和节点参数 → 固定委托来源及前置编号 → 拓扑分层并登记。
 Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (!invocation || (plan_ && plan_->active) || !queued_.empty() || (motion_ && motion_->skill != "follow"))
         return {{"status","busy"}};
@@ -120,13 +120,13 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     }
     const bool replaces = plan_ && (plan_->revision == task_.revision() || plan_->id == settling_plan_);
     Plan plan{invocation,task_.revision(),order_,request_,replaces ? plan_->id : 0};
-    if (events_.empty() && plan.supersedes) plan.origin = plan_->origin;
-    else {
+    if (events_.empty() && plan.supersedes) {
+        plan.origin = plan_->origin;
+        plan.clarification = plan_->clarification;
+    } else {
         const auto& source = events_.empty() ? recent_events_ : events_;
         if (!source.empty() && source.back().at("type") == "player.message") plan.origin = source.back();
     }
-    if (!remaining.empty() && plan.origin.is_null())
-        return {{"status","invalid_plan"},{"reason","remaining_goal_requires_player_request"}};
     plan.remaining_goal = remaining;
     if (has_pickup_continuation(resolves)) plan.pickup_question = resolves;
     for (const auto& step : steps) {
@@ -160,6 +160,19 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         plan.nodes.push_back({std::move(id),std::move(work),action->name,
             std::move(args),{},std::string(required)});
     }
+    const auto& clarification = task_.clarification();
+    if (!clarification.is_null() && !task_.correcting() && !plan.origin.is_null() &&
+        (plan.origin.at("sequence") == clarification.at("answerMessage") || plan.origin.at("sequence") == clarification.at("sourceMessage")) &&
+        std::ranges::any_of(plan.nodes,[&](const auto& node) {
+            return question_covers(clarification.at("scope"),partner_action(node.skill)->executor,node.arguments);
+        })) {
+        plan.origin = clarification.at("origin");
+        plan.clarification = clarification;
+        plan.clarification.erase("origin");
+    }
+    if (!remaining.empty() && plan.origin.is_null())
+        return {{"status","invalid_plan"},{"reason","remaining_goal_requires_player_request"}};
+
     for (std::size_t index = 0; index < plan.nodes.size(); ++index) {
         const auto after = steps.at(index).value("after",std::vector<std::string>{});
         auto& dependencies = plan.nodes[index].after;
@@ -223,6 +236,7 @@ Json PartnerLoop::plan_context() const {
     if (!plan.cancellation.empty()) context["cancelReason"] = plan.cancellation;
     if (plan.pickup_question) context["resolves"] = plan.pickup_question;
     if (!plan.origin.is_null()) context["origin"] = plan.origin;
+    if (!plan.clarification.is_null()) context["clarification"] = plan.clarification;
     if (!plan.remaining_goal.empty()) context["remainingGoal"] = plan.remaining_goal;
     return context;
 }

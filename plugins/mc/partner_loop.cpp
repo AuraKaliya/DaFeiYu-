@@ -395,7 +395,7 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) {
         input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
-            {"sourceMessage",question_->order},{"originalText",question_->origin},
+            {"sourceMessage",question_->order},{"originalText",question_->origin.is_null() ? Json("") : question_->origin.at("text")},
             {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
         if (const auto* opening = task_.opening_observation(question_->order))
             input["pendingQuestion"]["openingObservation"] = *opening;
@@ -618,8 +618,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
     if (answers_question && result.at("status") == "updated") {
         question_->answer_order = player_order;
+        auto origin = std::move(question_->origin);
         complete_question("resolved",events_.back().at("text").get<std::string>());
         if (scoped_answer) {
+            task_.record_clarification(std::move(origin),question_result_);
             result["resolvedQuestion"] = question_result_;
             auto fact = question_result_;
             fact["generation"] = session_world_;

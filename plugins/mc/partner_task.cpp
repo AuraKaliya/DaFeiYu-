@@ -170,6 +170,7 @@ Json PartnerTask::context() const {
     if (!previous_target_.is_null()) value["previousTarget"] = previous_target_;
     if (!navigation_wall_.is_null()) value["navigationWall"] = navigation_wall_;
     if (!receipt_.is_null()) value["lastAction"] = receipt_;
+    if (!clarification_.is_null()) value["clarification"] = clarification_;
     if (correcting()) {
         value["pendingCorrection"] = correction_;
         if (!unconfirmed_work_.empty()) value["pendingCorrection"]["unconfirmedWork"] = unconfirmed_work_;
@@ -216,6 +217,7 @@ Json PartnerTask::switch_task(const Json& args, const Json& event) {
     next_ = "player";
     baseline_ = receipt_ = arrival_ = local_observation_ = correction_ = nullptr;
     route_ = nullptr;
+    clarification_ = nullptr;
     route_committed_ = false;
     disarm();
     return {{"status","updated"},{"executionChanged",true},{"task",context()}};
@@ -383,9 +385,16 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     if (commit) correction_ = nullptr;
     if (execution_changed) {
         ++revision_;
-        receipt_ = nullptr;
+        receipt_ = clarification_ = nullptr;
     }
     return {{"status","updated"},{"executionChanged",execution_changed},{"task",context()}};
+}
+
+// 将原消息和实际答复作为同一任务修订的来源。
+void PartnerTask::record_clarification(Json origin, const Json& result) {
+    if (origin.is_null()) return;
+    clarification_ = result;
+    clarification_["origin"] = std::move(origin);
 }
 
 // 核对最近一次自身读回的身份、维度和时效。
@@ -455,6 +464,11 @@ const Json* PartnerTask::opening_observation(std::uint64_t message) const {
     return original == openings_.end() ? nullptr : &original->second;
 }
 
+// 确保一次放置追问中的候选仍指向玩家听到问题时的开口集合。
+void PartnerTask::pin_opening_observation(std::uint64_t message) {
+    if (auto original = openings_.find(message); original != openings_.end()) original->second["pinned"] = true;
+}
+
 // 分别归档最后一次视线和原话首次确定的墙面，简要观察不会覆盖墙面证据。
 // 步骤：更新原话命中 → 固定确切候选 → 回收超出窗口的旧记录。
 void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, const Json& focus) {
@@ -463,7 +477,8 @@ void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, co
     if (focus.contains("objects")) object_observations_[message] = focus;
     if (focus.contains("candidates")) {
         auto [opening,inserted] = openings_.try_emplace(message,evidence);
-        if (!inserted && !opening->second.at("playerFocus").at("choice").is_string()) opening->second = evidence;
+        if (!inserted && !opening->second.value("pinned",false) && !opening->second.at("playerFocus").at("choice").is_string())
+            opening->second = evidence;
     }
     if (observations_.size() > observation_limit) observations_.erase(observations_.begin());
     if (object_observations_.size() > observation_limit) object_observations_.erase(object_observations_.begin());

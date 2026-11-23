@@ -741,6 +741,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (id == "ask-openings") placement_item = result.at("item").get<std::uint64_t>();
                 if (id == "wrong-question") {
                     if (result.at("reason") != "question_resolution_mismatch") throw std::runtime_error("wrong question item accepted");
+                    return call("_observe","second-view",{{"sources",{"message"}},{"message",2},{"focus","openings"}});
+                }
+                if (id == "second-view") {
+                    if (result.at("playerFocus").at("candidates").size() != 1) throw std::runtime_error("changed openings were not observed");
                     return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
                 }
                 if (id == "verify-openings") return call("_task_update","answer-openings",{{"goal","补齐原墙的两处开口"},
@@ -751,14 +755,23 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     if (answer.at("item") != placement_item || answer.at("sourceMessage") != 2 || answer.at("answerMessage") != 3 ||
                         answer.at("scope") != scope || answer.at("answer") != "两边都补上吧" || result.at("task").at("target").at("cells") != cells)
                         throw std::runtime_error("natural clarification lost the original source or the chosen scope");
-                    const Json fill{{"id","fill"},{"skill","fill_target"},{"arguments",{{"block","dirt"}}}};
-                    return call("_queue_actions","fill-openings",{{"operation","plan"},{"steps",Json::array({fill})}});
+                    return {{Role::assistant,R"({"internal":"clarification checked"})"}};
                 }
             } else {
                 const auto input = Json::parse(last.content);
+                if (input.at("trigger") == "skills.expanded") {
+                    const auto& clarification = input.at("task").at("clarification");
+                    if (clarification.at("origin").at("sequence") != 2 || clarification.at("answerMessage") != 3)
+                        throw std::runtime_error("clarification was lost before the capability expanded");
+                    const Json fill{{"id","fill"},{"skill","fill_target"},{"arguments",{{"block","dirt"}}}};
+                    return call("_queue_actions","fill-openings",{{"operation","plan"},{"steps",Json::array({fill})}});
+                }
                 if (input.at("trigger") == "plan.finished") {
+                    const auto& plan = input.at("taskPlan");
                     const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
-                    if (input.contains("pendingQuestion") || result.at("changes").size() != cells.size())
+                    if (input.contains("pendingQuestion") || result.at("changes").size() != cells.size() ||
+                        plan.at("origin").at("text") != "把墙上的口补一下" || plan.at("clarification").at("item") != placement_item ||
+                        plan.at("clarification").at("answer") != "两边都补上吧")
                         throw std::runtime_error("the scope did not settle both openings");
                     checked = true;
                     return {{Role::assistant,R"({"internal":"plan exit checked"})"}};

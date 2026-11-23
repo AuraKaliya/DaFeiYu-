@@ -119,8 +119,9 @@ async function checkPlayer(fixture, mode) {
     const combined = mode === '--follow-dig-fill-probe';
     const resupply = mode === '--layered-resupply-probe';
     const layered = resupply || mode === '--layered-follow-probe';
+    const gapGroup = mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -137,6 +138,8 @@ async function checkPlayer(fixture, mode) {
       await checkWater(fixture, player, whispers);
     } else if (mode === '--gap-materials-probe') {
       await checkMaterials(fixture, player, whispers);
+    } else if (gapGroup) {
+      await checkOpeningGroup(fixture, player, whispers);
     } else if (wallProbe) {
       await checkWall(fixture, player, whispers, mode);
     } else if (mode === '--follow-probe') {
@@ -195,6 +198,27 @@ async function checkPlayer(fixture, mode) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 由独立玩家核对追问回到原消息并实际补齐相隔的两处开口。
+// 步骤：观察原始缺格 → 收到追问后用自然语言回答 → 核对实际方块、库存和投递。
+async function checkOpeningGroup(fixture, player, whispers) {
+  const names = () => [3, 7].flatMap(x => [-60, -59].map(y => player.blockAt(player.entity.position.clone().set(x, y, -3))?.name));
+  await until(() => names().every(name => name === 'air') && fixture.materialCount('dirt') === 8,
+    '两处竖向开口及八块泥土已就位');
+  player.chat('帮我把墙上的缺口补好');
+  await until(() => whispers.includes('两处缺口都要补吗？'), '收到本地追问');
+  assert.deepEqual(names(), ['air', 'air', 'air', 'air']);
+  player.chat('都补');
+  await until(() => whispers.includes('两处缺口都补齐了。'), '收到实际补齐结果', 40000);
+  assert.deepEqual(names(), ['dirt', 'dirt', 'dirt', 'dirt']);
+  assert.equal(fixture.materialCount('dirt'), 4);
+  assert.deepEqual(whispers, ['两处缺口都要补吗？', '两处缺口都补齐了。']);
+  const rows = readRows(fixture, 'trace/events.jsonl');
+  const answer = rows.find(row => row.category === 'mc.partner.question' && row.body.status === 'resolved').body;
+  assert.deepEqual([answer.sourceMessage, answer.answerMessage, answer.answer], [2, 3, '都补']);
+  const placed = readRows(fixture, 'game-actions.jsonl').find(row => row.skill === 'fill_target');
+  assert.deepEqual([placed.exited, placed.result.sourceMessage, placed.result.changes.length], [true, 2, 4]);
 }
 
 // 在真实世界中验证高台掉队、取材后垫高和原跟随恢复。
