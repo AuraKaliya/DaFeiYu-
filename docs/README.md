@@ -6,6 +6,7 @@
 | --- | --- |
 | 看当前实现、架构图和流程图 | [项目架构](architecture.md) |
 | 核对主 Agent、插件子 Agent、信箱与 Hook 的运行边界 | [当前边界](architecture.md#当前边界) |
+| 比较 Agent 回合提示词与上下文设计，评审大肥鱼的首步应用 | [Agent 循环的提示词设计与大肥鱼的应用](agent-loop-prompt-design.md) |
 | 运行大肥鱼、选择模型、查询终端命令 | [运行说明](run-guide.md) |
 | 运行桌面只读探针和房间预览 | [UI 探针运行说明](ui-probe-run-guide.md) |
 | 和 MC 伙伴实际进服 | [MC 插件](../plugins/mc/README.md) · [本机或浏览器游玩](../tests/mc-companion/README.md#首次真人体验) |
