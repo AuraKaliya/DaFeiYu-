@@ -1,15 +1,25 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue';
+import RoundList from './RoundList.vue';
+import RunTimeline from './RunTimeline.vue';
+import { modelStages } from './model-stages.ts';
+import { sourceLabel } from './display.ts';
 import { useTraceFiles } from './viewer-state.ts';
-import type { Round } from './rounds.ts';
-import type { ScanResult } from './trace-file.ts';
+import type { LineRef, ScanResult } from './trace-file.ts';
 
 const { loaded, importing, error, open, cancel } = useTraceFiles();
 const traceInput = useTemplateRef<HTMLInputElement>('trace-input');
 const gameInput = useTemplateRef<HTMLInputElement>('game-input');
 const selectedKey = ref('');
+const stageId = ref('');
+const panel = ref<'prompt' | 'outcome' | 'mc' | 'raw'>('prompt');
+const rawRef = ref<LineRef>();
+const rawScope = ref<'round' | 'global'>('round');
 const rounds = computed(() => loaded.value?.index.rounds ?? []);
 const selected = computed(() => rounds.value.find(round => round.key === selectedKey.value));
+const stages = computed(() => selected.value ? modelStages(selected.value) : []);
+const stage = computed(() => stages.value.find(entry => entry.key === stageId.value));
+const evidence = computed(() => loaded.value?.index.evidence.get(selectedKey.value));
 
 // 导入同批文件时取宿主索引与可选游戏回执；单独附加回执时保留宿主快照。
 // 步骤：读取文件选择 → 确认输入来源 → 启动导入并清空选择框。
@@ -34,16 +44,33 @@ function fileStatus(state: ScanResult) {
   return state.state === 'open' ? '未见 Trace 结束标记' : '';
 }
 
-// 显示可复核的回合退出状态。
-function roundStatus(round: Round) {
-  if (!round.accepted) return '接纳待确认';
-  return round.exit?.result ?? (round.exit ? '已退出' : '未见退出');
+// 选择回合并清除来自上一次浏览的原始行定位。
+function select(key: string) {
+  selectedKey.value = key;
+  stageId.value = stages.value.find(entry => entry.prepared)?.key ?? stages.value[0]?.key ?? '';
+  panel.value = stageId.value ? 'prompt' : 'mc';
+  rawRef.value = undefined;
+  rawScope.value = 'round';
+}
+
+// 选择送模尝试并打开相应的输入或输出视图。
+function selectStage(key: string, outcome = false) {
+  stageId.value = key;
+  panel.value = outcome ? 'outcome' : 'prompt';
+}
+
+// 在右侧固定一条已归属或未归属的原始记录。
+function inspect(ref?: LineRef, global = false) {
+  rawRef.value = ref;
+  rawScope.value = global ? 'global' : 'round';
+  panel.value = 'raw';
 }
 
 // 新文件选择第一回合，附加游戏回执时保持浏览位置。
 watch(loaded, (next, prior) => {
   if (next?.trace === prior?.trace && selected.value) return;
-  selectedKey.value = next?.index.rounds[0]?.key ?? '';
+  select(next?.index.rounds[0]?.key ?? '');
+  if (!selected.value) inspect(undefined, true);
 });
 </script>
 
@@ -86,23 +113,18 @@ watch(loaded, (next, prior) => {
       </div>
     </main>
     <div v-else class="workspace">
-      <aside class="navigator" aria-label="MC 回合">
-        <div class="navigator-header"><h2>Agent 回合</h2><span class="count">{{ rounds.length }}</span></div>
-        <ol class="round-list">
-          <li v-for="round in rounds" :key="round.key">
-            <button type="button" class="round-item" :aria-current="round.key === selectedKey ? 'true' : undefined"
-              @click="selectedKey = round.key">
-              <span class="round-title">{{ round.input?.trigger.label ?? '触发待确认' }}</span>
-              <span class="round-meta"><code>{{ round.key }}</code> · {{ roundStatus(round) }}</span>
-            </button>
-          </li>
-        </ol>
-      </aside>
-      <main v-if="selected" class="round">
-        <h2>{{ selected.input?.trigger.label ?? '触发待确认' }}</h2>
-        <p>{{ selected.events.length }} 条记录 · {{ selected.modelCount }} 次模型调用</p>
-      </main>
+      <RoundList :key="loaded.trace.name + loaded.trace.lastModified" :rounds="rounds" :selected="selectedKey"
+        @select="select" @raw="inspect(undefined, true)" />
+      <RunTimeline v-if="selected" :round="selected" :stages="stages" :active="stageId"
+        :evidence-count="(evidence?.entries.length ?? 0) + (evidence?.references.length ?? 0)"
+        @stage="selectStage" @record="inspect" @mc="panel = 'mc'" />
       <main v-else class="round"><p class="empty">文件中没有可确认的 MC 伙伴回合。</p></main>
+      <aside class="inspector" aria-label="记录详情">
+        <h2 v-if="panel === 'prompt' || panel === 'outcome'">模型步骤 {{ stage?.step }}</h2>
+        <h2 v-else-if="panel === 'mc'">MC 实效</h2>
+        <h2 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h2>
+        <p v-if="rawRef" class="muted">{{ sourceLabel(rawRef) }}</p>
+      </aside>
     </div>
   </div>
 </template>
