@@ -173,6 +173,7 @@ async function main() {
   const attention = variant === 'partner-revision-attention';
   const questionScope = variant === 'partner-revision-question-scope';
   const openingAnswer = variant === 'partner-revision-opening-answer';
+  const continuationBudget = variant === 'partner-revision-continuation-budget';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
   const pointedSupport = variant === 'partner-revision-pointed-support';
@@ -565,6 +566,15 @@ async function main() {
             layeredBlocked ? { status: 'blocked', reasonCode: 'unsafe_stand' } :
               { status: 'done', arrived: true, position: { x: pad.x + 0.5, y: pad.y + 1, z: pad.z + 0.5 } };
           return { ...context, skill, exited: true, result };
+        }
+        if (continuationBudget) {
+          assert.equal(context.order, 2);
+          assert.equal(skill, 'observe');
+          assert.equal(method, 'partner.begin');
+          assert.deepEqual(args, {});
+          assert.ok(!sceneReads.includes(id));
+          sceneReads.push(id);
+          return { ...context, skill, exited: true, result: { status: 'done', position: state.position } };
         }
         if (openingAnswer) {
           assert.equal(method, 'partner.begin');
@@ -1068,7 +1078,7 @@ async function main() {
     assert.equal(generation, state.generation);
     return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope && !continuationBudget) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -1161,6 +1171,9 @@ async function main() {
         [['raised', following, 1], ['recovered', following, 1]]);
       assert.equal(alerts[1].body.progress.vertical, 0);
       console.log(trace);
+    } else if (continuationBudget) {
+      assert.equal(sceneReads.length, 5);
+      assert.equal(stopped, 0);
     } else if (openingAnswer) {
       assert.ok(questionPresented && wallFilled);
       assert.equal(stopped, 0);

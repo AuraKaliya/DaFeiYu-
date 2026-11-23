@@ -246,6 +246,9 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
         }
         if (layers.size() != 4 || input.at("taskPlan").at("status") != "done")
             throw std::runtime_error("layered follow probe: incomplete pad work");
+        if (resupply && (input.at("taskPlan").at("origin").at("sequence") != 4 ||
+            input.at("taskPlan").at("order") != 5 || input.at("taskPlan").at("supersedes") == 0))
+            throw std::runtime_error("resupply probe: the progress chat replaced the original request after binding the pads");
         return {{Role::assistant,"我踩到第二格了。"}};
     }
     const auto& events = input.at("events");
@@ -254,6 +257,8 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
     if (text == "大肥鱼，跟着我") return {{Role::assistant,"",{call("follow","follow",Json::object()),
         call("reply","following",{{"text","跟着呢。"}})}},FinishReason::tool_calls};
     if (text == "能听见吗") return {{Role::assistant,"听得见。"}};
+    if (text == "我在上面等你" && input.at("taskPlan").at("origin").at("sequence") == 4)
+        return {{Role::assistant,"收到，我在取材。"}};
     if (resupply && text == "你挖俩方块垫一下") {
         if (request.messages.front().content.find("nearbyMaterials") == std::string::npos)
             throw std::runtime_error("resupply probe: material guidance was missing before selecting a block");

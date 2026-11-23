@@ -289,6 +289,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool attention = variant == L"partner-revision-attention";
     const bool question_scope = variant == L"partner-revision-question-scope";
     const bool opening_answer = variant == L"partner-revision-opening-answer";
+    const bool continuation_budget = variant == L"partner-revision-continuation-budget";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
     const bool pointed_support = variant == L"partner-revision-pointed-support";
@@ -308,6 +309,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     std::atomic_bool checked = false;
     unsigned attention_turns = 0;
     std::uint64_t placement_item = 0;
+    unsigned budget_plans = 0;
     std::string follow_id, old_work, plan_tool;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
@@ -709,6 +711,24 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (input.at("events").back().at("sequence") == 2) return call("_dig_block","bad-stone",stone);
             return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
+        if (continuation_budget) {
+            const Response quiet{{Role::assistant,R"({"internal":"ready"})"}};
+            if (last.role == Role::tool) return quiet;
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+                if (result.at("status") != "done") throw std::runtime_error("continuation lost an actual settlement");
+                if (++budget_plans == 5) {
+                    if (input.at("continuationBudgetExhausted") != true || request.tools.size() != 1 ||
+                        !request.tools.front().name.ends_with("_reply")) throw std::runtime_error("settlements could keep creating new work");
+                    checked = true;
+                    return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+                }
+                if (input.contains("continuationBudgetExhausted")) throw std::runtime_error("continuation stopped before the last allowed step");
+            } else if (input.at("events").back().at("sequence") != 2) return quiet;
+            const Json observation{{"id","look"},{"skill","observe"},{"arguments",Json::object()}};
+            return call("_queue_actions","plan-observation",{{"operation","plan"},{"steps",Json::array({observation})}});
         }
         if (opening_answer) {
             const Json scope{{"skill","place"}};
@@ -1224,7 +1244,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+            (repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope || continuation_budget ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
                 pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {

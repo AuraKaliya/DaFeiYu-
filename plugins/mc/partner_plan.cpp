@@ -118,7 +118,8 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
                 {"arguments",{{"item",item},{"count",next.at("count")},{"ingredient",pickup}}}});
         }
     }
-    Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
+    const bool replaces = plan_ && (plan_->revision == task_.revision() || plan_->id == settling_plan_);
+    Plan plan{invocation,task_.revision(),order_,request_,replaces ? plan_->id : 0};
     if (events_.empty() && plan.supersedes) plan.origin = plan_->origin;
     else {
         const auto& source = events_.empty() ? recent_events_ : events_;

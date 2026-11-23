@@ -218,12 +218,20 @@ async function checkLayeredFollow(fixture, player, whispers, resupply) {
   await until(() => whispers.includes('听得见。'), '受阻时仍能聊天');
   await until(() => mail('motion').some(row => row.body.status === 'blocked'), '原物理跟随进入受阻');
   player.chat(resupply ? '你挖俩方块垫一下' : '你可以垫上来');
+  if (resupply) {
+    await until(() => mail('plan').some(row => row.body.status === 'queued' && row.body.plan.remainingGoal), '原委托已提交取材');
+    player.chat('我在上面等你');
+    await until(() => whispers.includes('收到，我在取材。'), '原计划执行期间仍答复新消息');
+  }
   await until(() => whispers.includes('我踩到第二格了。'), '两次放置和精确移动均已结算', 40000);
   assert.deepEqual(pads.map(block), ['dirt', 'dirt']);
   assert.equal(fixture.materialCount('dirt'), 0);
   const layers = mail('plan').filter(row => row.body.status === 'settled');
   const actions = readRows(fixture, 'game-actions.jsonl');
   if (resupply) {
+    const queued = mail('plan').filter(row => row.body.status === 'queued').map(row => row.body.plan);
+    assert.equal(queued[1].supersedes, queued[0].id);
+    assert.deepEqual(queued[1].origin, queued[0].origin);
     const gathered = layers.shift().body.nodes;
     assert.deepEqual(gathered.map(node => [node.skill, node.result.inventoryDelta?.dirt]), [['dig_block', 1], ['dig_block', 1]]);
     assert.deepEqual(sources.map(block), ['air', 'air']);
@@ -267,7 +275,8 @@ async function checkLayeredFollow(fixture, player, whispers, resupply) {
   const lastSegment = accepted.at(-1).body.action.bridgeWork;
   await until(() => mail('action').some(row => row.body.skill === 'follow' && row.body.work === work &&
     row.body.bridgeWork === lastSegment && row.body.result.status === 'interrupted'), '原跟随的真实退出回执');
-  assert.deepEqual(whispers, ['跟着呢。', '上面有点高，我先找找路。', '听得见。', '我垫两步上来。', '我踩到第二格了。']);
+  assert.deepEqual(whispers, ['跟着呢。', '上面有点高，我先找找路。', '听得见。',
+    ...(resupply ? ['收到，我在取材。'] : []), '我垫两步上来。', '我踩到第二格了。']);
 }
 
 // 验证跟随通过同一 work 跨水和聊天，再验证固定目标反向抵达干岸。

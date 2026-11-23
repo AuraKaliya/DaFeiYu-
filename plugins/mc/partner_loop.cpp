@@ -73,6 +73,8 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         Guidance{"flowGuidance","task","沿原话和当前任务修订推进，给步骤写出已知依赖。复合委托若只提交准备步骤，用计划的 remainingGoal 保留尚未完成的用户目标。",has_goal || player_message},
         Guidance{"flowGuidance","planOutcome","计划结束时对照原话、剩余目标和实效。条件已具备就提交下一步。需要新证据就定向补查。现场变化使后续操作已无必要时，按最新事实结算。只承诺继续之前先登记实际后继。",
             input.contains("planSettlements")},
+        Guidance{"flowGuidance","continuationBudget","本次自主推进额度已用完。按已核实的进展和剩余目标作结，等待玩家新消息。",
+            input.contains("continuationBudgetExhausted")},
         Guidance{"flowGuidance","correction","按当前纠正重核目标和证据，沿用仍有效的原话引用。",correcting},
         Guidance{"flowGuidance","handoff","先核对旧工作实际退出与当前修订，再推进有冲突的步骤。",input.contains("taskHandoff")},
         Guidance{"flowGuidance","pendingQuestion","保留原待答事项与已知后继，依赖答复的步骤等待，获准的独立步骤可以推进。",
@@ -332,6 +334,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const bool delegated = wake == "main.delegation";
     const bool answer = wake == "question.result";
     const bool autonomous = facts.empty() && !delegated && !answer && wake != "approval.result";
+    const bool settlement_only = autonomous && !task_.can_continue();
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
@@ -362,6 +365,7 @@ void PartnerLoop::submit(std::string_view wake) {
             input["queuedActions"].push_back({{"work",step.work},{"skill",step.skill},{"arguments",step.arguments}});
     }
     if (autonomous) input["recentEvents"] = recent_events_;
+    if (settlement_only) input["continuationBudgetExhausted"] = true;
     if (!delegated && plan_ && (!task_.id() || plan_->revision == task_.revision())) input["taskPlan"] = plan_context();
     if (!delegated && handoff_) input["taskHandoff"] = handoff_->receipt.is_null() ?
         Json{{"work",handoff_->work},{"status","waiting_for_old_work"}} : handoff_->receipt;
@@ -429,7 +433,7 @@ void PartnerLoop::submit(std::string_view wake) {
         plan_->nodes.front().state == PlanNode::State::done;
     const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active && plan_->pickup_question;
     if (!delegated) for (const auto& skill : partner_skills) {
-        if ((completed_dig || completed_route || completed_pickup_plan) && skill.name != "reply") continue;
+        if ((completed_dig || completed_route || completed_pickup_plan || settlement_only) && skill.name != "reply") continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
@@ -453,6 +457,7 @@ void PartnerLoop::submit(std::string_view wake) {
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     visible_skills_ = disclosed;
+    settling_plan_ = wake == "plan.finished" && actual_outcome ? plan_->id : 0;
     attention_turn_.reset();
     if (wake == "follow.attention") attention_turn_ = AttentionTurn{follow_->id,follow_->attention.episode()};
     if (!delegated) {

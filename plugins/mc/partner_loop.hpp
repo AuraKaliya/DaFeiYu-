@@ -286,6 +286,7 @@ class PartnerLoop {
     };
     std::optional<Plan> plan_;
     nlohmann::json plan_receipts_ = nlohmann::json::array();
+    std::uint64_t settling_plan_ = 0;
     // 拒绝记录包含原修订，无记录时使用 JSON null。
     nlohmann::json plan_rejection_;
     unsigned plan_failures_ = 0;
