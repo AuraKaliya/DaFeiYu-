@@ -121,6 +121,7 @@ function compactInput(facts: Data): RoundInput {
       follow: object(facts.following)?.work,
       episode: attention?.episode,
       reviewed: object(facts.work)?.candidate,
+      delegation: object(facts.delegation)?.id,
     },
   };
 }
