@@ -9,7 +9,7 @@ namespace {
 using Json = nlohmann::json;
 
 // 核对各节点实际使用的参数，准备传给现有游戏技能的参数。
-// 步骤：按技能选择约束 → 排除不属于该技能的键 → 固定采掘语义。
+// 步骤：按技能选择约束 → 排除不属于该技能的键 → 固定动作参数。
 bool prepare_action(std::string_view skill, Json& args) {
     const auto name = [&](const char* key) {
         return args.contains(key) && args.at(key).is_string() && !args.at(key).get_ref<const std::string&>().empty() &&
@@ -30,19 +30,9 @@ bool prepare_action(std::string_view skill, Json& args) {
     if (skill == "observe") return args.empty() || (args.contains("message") &&
         args.at("message").is_number_unsigned() && args.at("message") > 0 &&
         (args.size() == 1 || (args.size() == 2 && (args.value("focus","") == "hit" || args.value("focus","") == "openings"))));
-    if (skill == "gather_ground") {
-        if (!name("item") || !quantity("requiredStock") ||
-            (args.size() != 2 && (args.size() != 3 || !name("block")))) return false;
-        args["count"] = args.at("requiredStock");
-        args["source"] = "ground";
-        return true;
-    }
-    if (skill != "dig_block" || args.size() != 4+args.count("message") || !name("block") ||
-        (args.contains("message") && (!args.at("message").is_number_unsigned() || args.at("message") == 0))) return false;
-    if (!valid_action_cell(args)) return false;
-    args["source"] = "visible";
-    args["count"] = 1;
-    return true;
+    if (skill == "gather_ground") return valid_stock_request(args);
+    return skill == "dig_block" && args.size() == 4+args.count("message") && name("block") && valid_action_cell(args) &&
+        (!args.contains("message") || (args.at("message").is_number_unsigned() && args.at("message") > 0));
 }
 
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
@@ -145,6 +135,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             args.erase("message");
         }
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");
+        if (action->executor == "collect") bind_collection(skill,args);
         if (const auto reason = bind_placement_target(action->executor,args); !reason.empty()) return invalid(reason);
         if (requires_approval(action->executor,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
@@ -270,7 +261,6 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
                 node.reading = std::make_unique<GameWork>(GameAction::partner,config,node.work,request,std::string(skill));
             } else {
                 auto args = node.arguments;
-                if (node.skill == "gather_ground") task_.bind_collection(args);
                 if (node.skill == "route") task_.accept_route(args);
                 queued_.push_back({plan.order,plan.request,plan.id,plan.revision,node.work,skill,std::move(args),node.pickup,true,false,index});
                 pause_follow();

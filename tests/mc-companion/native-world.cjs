@@ -5,18 +5,24 @@ const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
-const { requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
+const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
+const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
 
-// 在固定高度返回一片能掉落泥土的完整地面，供实际审批算法选用。
+// 提供固定地面与登记过的对象，复用执行器的取材和保护判定。
+// 步骤：构造方格和掉落表 → 登记已建对象 → 返回候选及现场读口。
 function refusedGround() {
-  // 复用被检查方格的原方向和高度偏移。
   const position = (x, y, z) => ({ x, y, z, offset: (dx, dy, dz) => position(x + dx, y + dy, z + dz) });
-  const dirt = { id: 3, name: 'dirt', drops: [3], boundingBox: 'block' };
+  const dirt = { id: 3, type: 3, name: 'dirt', drops: [3], boundingBox: 'block' };
+  const coarse = { ...dirt, id: 4, type: 4, name: 'coarse_dirt' };
+  const candidates = [2, 3, 4, 5].map(x => ({ ...(x < 4 ? dirt : coarse), position: position(x, -61, 0) }));
+  const built = new BuiltObjects();
+  built.bind({});
+  built.placed([{ x: 4, y: -61, z: 0, block: 'coarse_dirt' }]);
   return {
-    registry: { blocksByName: { dirt }, itemsByName: { dirt: { id: 3 } } },
-    block: { ...dirt, type: 3, position: position(2, -61, 0) },
-    blockAt: point => point.y <= -61 ? dirt : { name: 'air' },
+    registry: { blocksByName: { dirt, coarse_dirt: coarse }, itemsByName: { dirt: { id: 3 } } },
+    players: {}, candidates, built,
+    blockAt: ({ x, y, z }) => y === -61 && z === 0 && x >= 4 ? coarse : y <= -61 ? dirt : { name: 'air' },
   };
 }
 
@@ -32,7 +38,7 @@ async function main() {
   const follow = suspend || recovery || variant === 'partner-follow';
   const motion = follow || variant === 'partner-motion';
   const confirm = variant === 'partner-confirm';
-  const refusedCollection = variant === 'partner-refused-collection';
+  const refusedCollection = variant?.startsWith('partner-refused-collection');
   const scene = variant === 'partner-scene';
   const departure = variant === 'partner-departure';
   const execution = variant?.startsWith('partner-execution-');
@@ -96,6 +102,7 @@ async function main() {
   let routeApproach;
   const hostWork = [];
   let explicitReply, replyReads = 0;
+  const collectionWorks = new Map();
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
@@ -126,7 +133,9 @@ async function main() {
             line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
         }
         const latest = initial ? 1 :
-          refusedCollection ? (approvedId ? (after >= 3 ? 4 : 3) : 2) :
+          refusedCollection ? (!approvedId || !fs.existsSync(path.join(root, 'collection-pending-checked')) ? 2 :
+            after < 3 ? 3 : fs.existsSync(path.join(root, 'collection-receipt-2')) ? 6 :
+            fs.existsSync(path.join(root, 'collection-receipt-1')) ? 5 : 4) :
           repairPlanObserve ? (fs.existsSync(path.join(root, 'observe-plan-settled')) ? 4 :
             fs.existsSync(path.join(root, 'observe-plan-rejected')) ? 3 : 2) :
           rejoin ? (planReading ? 5 : 2) :
@@ -148,8 +157,11 @@ async function main() {
         if (departure) messages[2] = left;
         if (refusedCollection) {
           messages[1].text = '先问我，再从地面把泥土补到一个';
+          messages[1].sceneAtMessage.position = { x: 2, y: -60, z: 2 };
           messages[2].text = '拒绝 ' + approvedId;
           messages[3].text = '再检查一下原来的取材';
+          messages[4].text = '再检查用泥土补库存';
+          messages.push({ sequence: 6, text: '从没有保护的表层砂土补齐' });
         }
         if (revision) {
           messages[1].text = '清理门边两格草方块';
@@ -245,8 +257,8 @@ async function main() {
       assert.match(controller, /^[a-f0-9]{32}$/);
       assert.equal(controller, controllerOwner);
       if (refusedCollection) {
-        assert.equal(method, 'partner.begin');
         if (skill === 'reply') {
+          assert.equal(method, 'partner.begin');
           assert.equal(context.order, 2);
           const match = /确认 (\d+) 或 拒绝 \1$/.exec(args.text);
           assert.ok(match && !approvedId);
@@ -254,15 +266,32 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
         assert.equal(skill, 'collect');
-        assert.equal(context.order, 4);
-        assert.equal(args.block, 'dirt');
-        assert.equal(++replies, 1);
+        if (method === 'partner.read') {
+          assert.ok(collectionWorks.has(id));
+          return { ...context, skill, exited: true, result: collectionWorks.get(id) };
+        }
+        assert.equal(method, 'partner.begin');
+        assert.equal(context.order, 4 + collectionWorks.size);
+        const target = [{ x: 3, y: -60, z: 0 }];
+        assert.equal(args.source, 'ground');
+        assert.equal(args.count, 1);
+        assert.deepEqual(args.protectedCells, target);
+        assert.deepEqual(args.collectionGuards, [{ item: 'dirt', block: 'dirt', source: 'ground', protectedCells: target }]);
         const ground = refusedGround();
-        if (requiresCollectionApproval(ground, args.collectionGuards, [ground.block]))
-          return { ...context, skill, exited: true, result: { status: 'blocked', reasonCode: 'approval_required',
-            broken: 0, changes: [], inventoryDelta: {} } };
-        return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
-          changes: [{ x: 2, y: -61, z: 0, before: 'dirt', after: 'air' }], inventoryDelta: { dirt: 1 } } };
+        const [refused, support, built, spare] = ground.candidates;
+        const stock = context.order >= 5;
+        if (stock) assert.equal(args.requiredStock, 1);
+        else assert.deepEqual([args.x, args.y, args.z], [2, -61, 0]);
+        const candidates = !stock ? [refused] : args.block === 'dirt' ? [support, refused] : [built, spare];
+        const selected = candidates.find(block => block.name === args.block && fromGround(ground, block, args.protectedCells) &&
+          ground.built.permits([block], false, ground.blockAt));
+        assert.ok(selected, 'fixture needs an unprotected candidate');
+        const blocked = requiresCollectionApproval(ground, args.collectionGuards, [selected]);
+        const { x, y, z } = selected.position;
+        collectionWorks.set(id, blocked ? { status: 'blocked', reasonCode: 'approval_required', broken: 0, changes: [], inventoryDelta: {} } :
+          { status: 'done', broken: 1, changes: [{ x, y, z, before: selected.name, after: 'air' }],
+            inventoryDelta: { dirt: 1 }, stock: { item: 'dirt', before: 0, required: 1, after: 1 } });
+        return { ...context, skill, exited: false, result: {} };
       }
       if (controllerRestart) {
         if (method === 'partner.begin') hostWork.push({ id, context, args });
@@ -718,8 +747,8 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute || rejoin || directPlace ? 5 :
-      first || motion || confirm || refusedCollection || pointedCraft || attention || repairPlanObserve ? 4 :
+    return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || directPlace ? 5 :
+      first || motion || confirm || pointedCraft || attention || repairPlanObserve ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -864,7 +893,8 @@ async function main() {
         assert.ok(action >= 0 && action < left && left < entered);
       }
       console.log(path.join(root, 'trace', 'events.jsonl'));
-    } else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
+    } else if (refusedCollection) assert.equal(collectionWorks.size, 3);
+    else if (motion) { assert.equal(replies, 1); assert.equal(stopped, suspend ? 2 : 1); }
     else if (interrupt) assert.equal(stopped, 1);
     else if (partnerLoop) assert.equal(replies, first || delayed || departure || execution ? 0 : 1);
     else if (boardWindow) assert.ok(reads > 0); else assert.equal(reads, 2);

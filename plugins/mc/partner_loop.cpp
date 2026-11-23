@@ -659,12 +659,19 @@ std::string_view PartnerLoop::bind_placement_target(std::string_view skill, Json
     return {};
 }
 
-// 给采掘原命令附上当前任务的取材约束。
-void PartnerLoop::bind_collection(std::uint64_t session, std::string& envelope) const {
-    if (session != session_ || !permits(session)) return;
-    auto input = Json::parse(envelope);
-    task_.bind_collection(input.at("arguments"));
-    envelope = input.dump();
+// 为精确采掘、普通采集和补库存准备同一执行器的参数。
+// 步骤：按技能固定采掘量及来源 → 为普通取材绑定任务范围和保护格。
+void PartnerLoop::bind_collection(std::string_view skill, Json& args) const {
+    if (skill == "dig_block") {
+        args["count"] = 1;
+        args["source"] = "visible";
+    } else if (skill == "gather_ground") {
+        args["count"] = args.at("requiredStock");
+        args["source"] = "ground";
+    }
+
+    // 显式拆改保留独立的确认门槛，由游戏侧核对已建对象及其支撑。
+    if (!args.value("editBuilt",false)) task_.bind_collection(args);
 }
 
 // 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。

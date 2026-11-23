@@ -107,6 +107,11 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_partner_refused_collection COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-refused-collection)
   set_tests_properties(plugins.mc_partner_refused_collection PROPERTIES TIMEOUT 25)
+  foreach(entry queue plan)
+    add_test(NAME plugins.mc_partner_refused_collection_${entry} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
+      "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-refused-collection-${entry})
+    set_tests_properties(plugins.mc_partner_refused_collection_${entry} PROPERTIES TIMEOUT 25)
+  endforeach()
   add_test(NAME plugins.mc_partner_task COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-task)
   set_tests_properties(plugins.mc_partner_task PROPERTIES TIMEOUT 25)

@@ -16,6 +16,7 @@ bool valid_step(std::string_view skill, const Json& args) {
         args.at("distance").is_number_integer() && args.at("distance") >= 2 && args.at("distance") <= 5);
     if (skill == "move" && args.size() == 1) return (args.contains("place") && args.at("place").is_string()) ||
         (args.contains("message") && args.at("message").is_number_unsigned() && args.at("message") > 0);
+    if (skill == "gather_ground") return valid_stock_request(args);
     if (!valid_action_cell(args)) return false;
     if (skill == "move") return args.size() == 3;
     if (!args.contains("block") || !args.at("block").is_string()) return false;
@@ -60,8 +61,6 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         if (step.contains("id") || step.contains("after")) return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
         const auto name = step.at("skill").get<std::string>();
         auto parameters = step.at("arguments");
-        if (name == "collect" && requires_pointed_dig(session_))
-            return {{"status","blocked"},{"reason","pointed_block_unverified"}};
         const auto pickup = step.value("pickup",std::string{});
         const auto required = item_name(pickup);
         if (step.contains("pickup") && (name != "collect" || required.empty()))
@@ -71,12 +70,13 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         if (!action || !action->sequence || skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
             (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
+        if (action->executor == "collect") {
+            if (requires_pointed_dig(session_)) return {{"status","blocked"},{"reason","pointed_block_unverified"}};
+            bind_collection(name,parameters);
+        }
         if (const auto reason = bind_placement_target(action->executor,parameters); !reason.empty())
             return {{"status","blocked"},{"reason",reason}};
-        if (requires_approval(action->executor,parameters)) {
-            if (name == "place") return {{"status","blocked"},{"reason","approval_required"}};
-            throw std::invalid_argument("MC queue: step is outside the current action scope");
-        }
+        if (requires_approval(action->executor,parameters)) return {{"status","blocked"},{"reason","approval_required"}};
         if (pending.empty()) {
             const auto question = action_question(session_,action->executor,parameters);
             if (!question.is_null()) return question;
@@ -173,8 +173,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (request_ && order_ > step.order) return;
     if (body_busy || motion_ || !feed_.ready() || !feed_.pending().empty()) return;
     auto args = step.arguments;
-    // 指定单格沿用原范围，普通采集继承当前任务的取材约束。
-    if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
+    if (step.skill == "collect") bind_collection(step.skill,args);
     const auto reason = bind_placement_target(step.skill,args);
     auto blocked = reason.empty() ? action_question(session_,step.skill,args) : Json{{"status","blocked"},{"reason",reason}};
     if (blocked.is_null() && requires_approval(step.skill,args)) blocked = {{"status","blocked"},{"reason","approval_required"}};

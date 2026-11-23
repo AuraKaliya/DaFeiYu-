@@ -30,7 +30,7 @@ inline constexpr std::array partner_actions{
     PartnerAction{"collect","collect",false,true},
     PartnerAction{"collect_confirmed","collect"},
     PartnerAction{"dig_block","collect",true,false,"x,y,z,block, plus the observed message for a pointed target."},
-    PartnerAction{"gather_ground","collect",true,false,"item, requiredStock, optional source block."},
+    PartnerAction{"gather_ground","collect",true,true,"item, requiredStock, optional source block."},
     PartnerAction{"place","place",true,true,"x,y,z,block within the bound target. Exit reports changed cells."},
     PartnerAction{"fill_target","fill_target",true,false,"block for the bound cells. Exit reports each cell's result."},
     PartnerAction{"route","route",true,false,"Validated route.id and laps (1-8). A restarted task retains its wall and lap count. Exit reports verified laps."},
@@ -49,6 +49,18 @@ inline bool valid_action_cell(const nlohmann::json& args) {
         return args.contains(axis) && args.at(axis).is_number_integer() &&
             args.at(axis) >= -30000000 && args.at(axis) <= 30000000;
     });
+}
+
+// 核对顺序队列和计划中的目标库存及可选来源材料。
+// 步骤：固定可用键 → 校验物品与来源名称 → 检查库存上限。
+inline bool valid_stock_request(const nlohmann::json& args) {
+    const auto name = [&](const char* key) {
+        return args.contains(key) && args.at(key).is_string() && !args.at(key).get_ref<const std::string&>().empty() &&
+            args.at(key).get_ref<const std::string&>().size() <= 90;
+    };
+    return args.size() == 2+args.count("block") && name("item") && (!args.contains("block") || name("block")) &&
+        args.contains("requiredStock") && args.at("requiredStock").is_number_integer() &&
+        args.at("requiredStock") >= 1 && args.at("requiredStock") <= 32;
 }
 
 // 把当前可编排的节点目录提供给首次选工具以及显式分类查询。

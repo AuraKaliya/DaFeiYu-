@@ -72,8 +72,8 @@ class PartnerLoop {
         bool body_busy);
     // 核对直调回合并绑定放置命令，返回拒绝原因或空值。
     std::string_view bind_placement(std::uint64_t session, std::string_view skill, std::string& envelope) const;
-    // 给当前子回合的采掘命令附上任务持有的取材范围。
-    void bind_collection(std::uint64_t session, std::string& envelope) const;
+    // 按采掘类型绑定执行参数与当前任务的取材保护范围。
+    void bind_collection(std::string_view skill, nlohmann::json& arguments) const;
     // 判断来自本体委托的当前可变更技能是否需要强制确认。
     bool delegated(std::uint64_t session) const noexcept { return session == session_ && active_delegation_.has_value(); }
     // 为游戏动作固定原参数和确认渠道，只允许当前插件角色提出。

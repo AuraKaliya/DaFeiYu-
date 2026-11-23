@@ -903,43 +903,76 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
 }
 
 namespace {
-// 用固定模型响应验证拒绝补库存后改用普通采掘的实际结算。
-// 步骤：提出补库存确认 → 接收拒绝后扩展采掘工具 → 改用普通采掘并核对退出回执。
-int verify_refused_collection(const std::filesystem::path& package, const std::filesystem::path& root) {
+// 用等效采掘请求核对直调、顺序队列和计划的授权与保护结果。
+// 步骤：绑定任务范围并提出确认 → 用普通采掘和补库存尝试原候选 → 核对合法取材的原工作回执。
+int verify_refused_collection(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
     using namespace dfy;
     using namespace model;
     using Json = nlohmann::json;
-    std::atomic_bool receipt_seen = false;
+    const bool sequence = variant.ends_with(L"-queue"), plan = variant.ends_with(L"-plan");
+    std::atomic_uint receipts = 0;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
         const Response silent{{Role::assistant,R"({"internal":"fixed fixture settled"})"}};
-        const auto call = [&](std::string_view name, Json args) -> Response {
+        const auto call = [&](std::string_view name, std::string call_id, Json args) -> Response {
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& entry) { return entry.name.ends_with(name); });
             if (tool == request.tools.end()) throw std::runtime_error("required collection test tool was not visible");
-            return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
+            return {{Role::assistant,"",{{std::move(call_id),tool->name,args.dump()}}},FinishReason::tool_calls};
+        };
+        // 以当前测试入口提交同一种实际取材意图。
+        // 步骤：构造固定单格或目标库存 → 以对应入口包装候选。
+        const auto collect = [&](bool stock, bool allowed, std::string call_id = "collect") -> Response {
+            Json args = stock ? Json{{"item","dirt"},{"requiredStock",1},{"block",allowed ? "coarse_dirt" : "dirt"}} :
+                Json{{"x",2},{"y",-61},{"z",0},{"block","dirt"}};
+            if (!sequence && !plan) return call(stock ? "_gather_ground" : "_dig_block",std::move(call_id),std::move(args));
+            if (sequence && !stock) args["count"] = 1;
+            Json step{{"skill",stock ? "gather_ground" : plan ? "dig_block" : "collect"},{"arguments",std::move(args)}};
+            if (plan) step["id"] = "collection";
+            return call("_queue_actions",std::move(call_id),{{"operation",plan ? "plan" : "append"},{"steps",Json::array({step})}});
         };
         const auto& message = request.messages.back();
-        // 即时拒绝走工具回执，已经接纳的动作走原工作结算。
+        // 用实际回执核对未授权候选无修改，以及合法取材只影响未受保护的格。
+        // 步骤：检查拒绝或成功的实际证据 → 标记原回执已消费以推进夹具。
         const auto verify = [&](const Json& result) {
-            receipt_seen = result.value("reasonCode","") == "approval_required" && result.value("broken",-1) == 0;
-            if (!receipt_seen) throw std::runtime_error("ordinary collection modified a refused candidate");
+            if (receipts < 2) {
+                if (result.value("reasonCode","") != "approval_required" || result.at("broken") != 0 || !result.at("changes").empty())
+                    throw std::runtime_error("refused collection changed the world: "+result.dump());
+            } else if (receipts != 2 || result.at("status") != "done" || result.at("stock").at("after") != 1 ||
+                result.at("inventoryDelta").at("dirt") != 1 || result.at("changes") != Json::array({
+                    {{"x",5},{"y",-61},{"z",0},{"before","coarse_dirt"},{"after","air"}}})) {
+                throw std::runtime_error("approved scope did not spare the protected cells: "+result.dump());
+            }
+            std::ofstream(root/("collection-receipt-"+std::to_string(++receipts))).put('1');
         };
         if (message.role == Role::tool) {
-            if (message.tool_call_id == "_collect") {
+            if (message.tool_call_id == "bind")
+                return call("_skills","discover",{{"categories",{"dig_break"}}});
+            if (message.tool_call_id == "discover")
+                return call("_gather_ground","ask",{{"item","dirt"},{"block","dirt"},{"requiredStock",1},{"approval","game"}});
+            if (message.tool_call_id == "pending") {
                 const auto result = Json::parse(message.content.substr(message.content.find('{')));
-                if (result.value("status","") != "accepted") verify(result);
+                if (result.at("status") != "blocked" || result.at("reason") != "approval_required")
+                    throw std::runtime_error("collection entered while confirmation was pending: "+result.dump());
+                std::ofstream(root/"collection-pending-checked").put('1');
+            } else if (message.tool_call_id == "collect") {
+                const auto result = Json::parse(message.content.substr(message.content.find('{')));
+                if (result.at("status") != "accepted" && result.at("status") != "queued") verify(result);
             }
             return silent;
         }
         const auto input = Json::parse(message.content);
+        if (input.contains("planSettlements")) { verify(input.at("planSettlements").front().at("nodes").front().at("result")); return silent; }
         if (input.contains("workSettlement")) { verify(primary_receipt(input).at("result")); return silent; }
-        if (input.at("trigger") == "skills.expanded") return call("_collect",{{"block","dirt"},{"count",1}});
+        if (input.at("trigger") == "skills.expanded" && input.contains("pendingApproval")) return collect(false,false,"pending");
         if (input.at("events").empty()) return silent;
         const auto& event = input.at("events").back();
         if (event.at("sequence") == 2)
-            return call("_gather_ground",{{"item","dirt"},{"requiredStock",1},{"approval","game"}});
-        if (event.at("sequence") == 4) return call("_skills",{{"categories",{"dig_break"}}});
+            return call("_task_update","bind",{{"goal","从地面取材并保留墙边"},{"next","player"},{"collection","ground"},
+                {"target",{{"message",2},{"cells",Json::array({{{"x",3},{"y",-60},{"z",0}}})}}}});
+        if (event.at("sequence") == 4) return collect(false,false);
+        if (event.at("sequence") == 5) return collect(true,false);
+        if (event.at("sequence") == 6) return collect(true,true);
         return silent;
     }},std::move(run));
     host.plugins().install(package);
@@ -952,7 +985,7 @@ int verify_refused_collection(const std::filesystem::path& package, const std::f
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("collection loop failed");
         if (stopping && host.companion_status()->closed) return 0;
-        if (!stopping && receipt_seen && host.companion_status()->settled_event == 4) {
+        if (!stopping && receipts == 3 && host.companion_status()->settled_event == 6) {
             host.stop_companion(id);
             stopping = true;
         }
@@ -974,8 +1007,8 @@ int wmain(int argc, wchar_t** argv) {
             return verify_unavailable_partner(argv[1],argv[2],std::wstring_view(argv[3]).ends_with(L"-scenario"));
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-reply-"))
             return verify_reply_delivery(argv[1],argv[2],argv[3]);
-        if (argc == 4 && std::wstring_view(argv[3]) == L"partner-refused-collection")
-            return verify_refused_collection(argv[1],argv[2]);
+        if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-refused-collection"))
+            return verify_refused_collection(argv[1],argv[2],argv[3]);
         if (argc == 3) {
             verify_follow_windows();
             verify_collection_effect();
