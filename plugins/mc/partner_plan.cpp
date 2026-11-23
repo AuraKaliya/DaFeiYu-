@@ -98,6 +98,9 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     auto steps = arguments.value("steps",Json::array());
     if (arguments.contains("work") || !steps.is_array() || steps.empty() || steps.size() > 4)
         return {{"status","invalid_plan"},{"reason","expected_one_to_four_steps"}};
+    const auto remaining = arguments.value("remainingGoal","");
+    if (arguments.contains("remainingGoal") && (remaining.empty() || remaining.size() > 1024))
+        return {{"status","invalid_plan"},{"reason","invalid_remaining_goal"}};
     const auto resolves = arguments.value("resolves",std::uint64_t{});
     if (resolves) {
         if (steps.size() != 1 || steps.front().at("skill") != "dig_block")
@@ -116,6 +119,14 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         }
     }
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
+    if (events_.empty() && plan.supersedes) plan.origin = plan_->origin;
+    else {
+        const auto& source = events_.empty() ? recent_events_ : events_;
+        if (!source.empty() && source.back().at("type") == "player.message") plan.origin = source.back();
+    }
+    if (!remaining.empty() && plan.origin.is_null())
+        return {{"status","invalid_plan"},{"reason","remaining_goal_requires_player_request"}};
+    plan.remaining_goal = remaining;
     if (has_pickup_continuation(resolves)) plan.pickup_question = resolves;
     for (const auto& step : steps) {
         auto id = step.value("id",std::string{});
@@ -210,6 +221,8 @@ Json PartnerLoop::plan_context() const {
         {"nodes",std::move(nodes)}};
     if (!plan.cancellation.empty()) context["cancelReason"] = plan.cancellation;
     if (plan.pickup_question) context["resolves"] = plan.pickup_question;
+    if (!plan.origin.is_null()) context["origin"] = plan.origin;
+    if (!plan.remaining_goal.empty()) context["remainingGoal"] = plan.remaining_goal;
     return context;
 }
 

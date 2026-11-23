@@ -180,8 +180,7 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
     };
     const auto& last = request.messages.back();
     if (last.role == Role::tool) {
-        if (last.tool_call_id == "start-steps") return resupply ?
-            invoke("observe","material-survey",{{"sources",{"self"}},{"radius",5},{"verify",sources}}) :
+        if (last.tool_call_id == "start-steps") return
             invoke("observe","step-survey",{{"sources",{"self"}},{"verify",pads}});
         if (last.tool_call_id == "material-survey") {
             const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -199,7 +198,8 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
                 steps.push_back({{"id","material-"+std::to_string(i+1)},{"skill","dig_block"},{"pickup","dirt"},
                     {"arguments",std::move(candidate)}});
             }
-            return invoke("queue_actions","gather-materials",{{"operation","plan"},{"steps",std::move(steps)}});
+            return invoke("queue_actions","gather-materials",{{"operation","plan"},{"remainingGoal","垫两步靠近高处玩家"},
+                {"steps",std::move(steps)}});
         }
         if (last.tool_call_id == "step-survey") {
             const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -233,6 +233,10 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
     if (trigger == "plan.finished") {
         const auto& layers = input.at("planSettlements");
         if (resupply && layers.size() == 1) {
+            const auto& plan = input.at("taskPlan");
+            if (plan.at("origin").at("sequence") != 4 || plan.at("remainingGoal") != "垫两步靠近高处玩家" ||
+                input.at("task").contains("id"))
+                throw std::runtime_error("resupply probe: the plan lost the unregistered goal or original message");
             const auto& nodes = layers.front().at("nodes");
             if (nodes.size() != 2 || std::ranges::any_of(nodes,[](const auto& node) {
                 const auto& result = node.at("result");
@@ -250,7 +254,12 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request, b
     if (text == "大肥鱼，跟着我") return {{Role::assistant,"",{call("follow","follow",Json::object()),
         call("reply","following",{{"text","跟着呢。"}})}},FinishReason::tool_calls};
     if (text == "能听见吗") return {{Role::assistant,"听得见。"}};
-    if (text == "你可以垫上来" || text == "挖两块泥土给自己垫上来")
+    if (resupply && text == "你挖俩方块垫一下") {
+        if (request.messages.front().content.find("nearbyMaterials") == std::string::npos)
+            throw std::runtime_error("resupply probe: material guidance was missing before selecting a block");
+        return invoke("observe","material-survey",{{"sources",{"self"}},{"radius",5},{"verify",sources}});
+    }
+    if (text == "你可以垫上来")
         return invoke("task_update","start-steps",{{"operation","start_task"},{"message",4},{"kind","work"},{"goal","垫两步靠近高处玩家"}});
     if (text == "不用跟了") return invoke("stop_motion","stop-follow",{{"work",input.at("following").at("work")}});
     return {{Role::assistant,R"({"internal":"probe settlement"})"}};

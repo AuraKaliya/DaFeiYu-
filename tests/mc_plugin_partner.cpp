@@ -413,7 +413,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto& plan = input.at("taskPlan");
                 const auto& layers = input.at("planSettlements");
                 const std::size_t first_failed = layered_stock ? 2 : layered_blocked ? 1 : 4;
-                if (checked || plan.at("status") != (first_failed < 4 ? "blocked" : "done") || layers.size() != 4 ||
+                if (checked || plan.at("origin").at("sequence") != 3 ||
+                    plan.at("status") != (first_failed < 4 ? "blocked" : "done") || layers.size() != 4 ||
                     input.at("following").at("work") != follow_id)
                     throw std::runtime_error("layered plan did not settle all dependencies");
                 for (std::size_t i = 0; i < layers.size(); ++i) {

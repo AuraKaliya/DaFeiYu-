@@ -121,7 +121,7 @@ DigIntent read_dig_intent(std::string_view text) {
         const auto has_word = [&](auto word) { return clause.find(word) != clause.npos; };
         if (std::ranges::any_of(verbs,has_word)) {
             const auto material = named_material(clause);
-            gathering_hint |= !material.empty();
+            gathering_hint = true;
             for (const auto relation : {"上方的"sv,"上面的"sv,"上边的"sv,"上的"sv,"上面那块"sv}) {
                 const auto at = clause.find(relation);
                 if (at == clause.npos) continue;

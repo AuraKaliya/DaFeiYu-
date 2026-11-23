@@ -70,7 +70,9 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
     const std::array entries{
         Guidance{"flowGuidance","scene","结合新原话和当前现场，决定是否接话、观察、行动或等待。"},
-        Guidance{"flowGuidance","task","沿共同目标和当前修订推进。提交步骤时带上已知的前置依赖。",has_goal},
+        Guidance{"flowGuidance","task","沿原话和当前任务修订推进，给步骤写出已知依赖。复合委托若只提交准备步骤，用计划的 remainingGoal 保留尚未完成的用户目标。",has_goal || player_message},
+        Guidance{"flowGuidance","planOutcome","计划结束时对照原话、剩余目标和实效。条件已具备就提交下一步。需要新证据就定向补查。现场变化使后续操作已无必要时，按最新事实结算。只承诺继续之前先登记实际后继。",
+            input.contains("planSettlements")},
         Guidance{"flowGuidance","correction","按当前纠正重核目标和证据，沿用仍有效的原话引用。",correcting},
         Guidance{"flowGuidance","handoff","先核对旧工作实际退出与当前修订，再推进有冲突的步骤。",input.contains("taskHandoff")},
         Guidance{"flowGuidance","pendingQuestion","保留原待答事项与已知后继，依赖答复的步骤等待，获准的独立步骤可以推进。",

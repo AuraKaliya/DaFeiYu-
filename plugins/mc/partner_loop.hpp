@@ -281,6 +281,8 @@ class PartnerLoop {
         bool active = true;
         std::string cancellation;
         std::uint64_t pickup_question = 0;
+        nlohmann::json origin;
+        std::string remaining_goal;
     };
     std::optional<Plan> plan_;
     nlohmann::json plan_receipts_ = nlohmann::json::array();

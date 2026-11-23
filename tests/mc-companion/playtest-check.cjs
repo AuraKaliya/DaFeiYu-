@@ -217,7 +217,7 @@ async function checkLayeredFollow(fixture, player, whispers, resupply) {
   player.chat('能听见吗');
   await until(() => whispers.includes('听得见。'), '受阻时仍能聊天');
   await until(() => mail('motion').some(row => row.body.status === 'blocked'), '原物理跟随进入受阻');
-  player.chat(resupply ? '挖两块泥土给自己垫上来' : '你可以垫上来');
+  player.chat(resupply ? '你挖俩方块垫一下' : '你可以垫上来');
   await until(() => whispers.includes('我踩到第二格了。'), '两次放置和精确移动均已结算', 40000);
   assert.deepEqual(pads.map(block), ['dirt', 'dirt']);
   assert.equal(fixture.materialCount('dirt'), 0);
