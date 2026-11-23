@@ -494,15 +494,22 @@ void PartnerTask::record(const Json& receipt, bool current) {
     if (receipt.at("skill") == "observe" && result.contains("observation")) {
         auto& observation = result["observation"];
         auto& samples = observation["samples"];
-        if (current && !samples.empty() && result.at("status") == "done" && samples.back().contains("verified")) {
+        if (current && !samples.empty() && result.at("status") == "done") {
             const auto& sample = samples.back();
             const auto& views = sample.at("views");
             const auto own = std::ranges::find_if(views,[](const auto& view) {
                 return view.at("source") == "self" && view.at("status") == "sampled";
             });
-            if (own != views.end()) {
+            if (own != views.end() && (sample.contains("verified") || own->contains("belowFeet"))) {
+                auto verified = sample.value("verified",Json::array());
+                if (auto below = own->find("belowFeet"); below != own->end() && below->at("block").is_string() &&
+                    std::ranges::none_of(verified,[&](const auto& cell) { return same_cell(cell,*below); })) {
+                    auto cell = *below;
+                    cell["atSelf"] = true;
+                    verified.push_back(std::move(cell));
+                }
                 local_observation_ = {{"id",observation.at("id")},{"dimension",observation.at("dimension")},{"revision",revision_},
-                    {"position",own->at("actor").at("position")},{"verified",sample.at("verified")}};
+                    {"position",own->at("actor").at("position")},{"verified",std::move(verified)}};
                 observation_time_ = std::chrono::steady_clock::now();
             }
         }

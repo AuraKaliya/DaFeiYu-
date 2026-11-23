@@ -13,6 +13,7 @@ const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, coll
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
 const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
+const { belowFeet } = require('./world.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
 function inventory(bot) {
@@ -189,13 +190,17 @@ async function collect(bot, args, check, result, built) {
       const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
       if (!block) throw fixed ? digBlocked('dig_target_unloaded', '目标格尚未加载') :
         digBlocked('dig_source_missing', '当前视野内没有符合取材范围的方块');
-      if (!matching.includes(block.type)) throw digBlocked('dig_target_changed', '目标格现在是' + block.name);
+      if (!matching.includes(block.type)) {
+        if (!fixed) throw digBlocked('dig_source_missing', '读取的候选已不是所需材质');
+        result.targetBlock = { x: fixed.x, y: fixed.y, z: fixed.z, expected: type.name, observed: block.name, phase: 'initial' };
+        throw digBlocked('dig_material_mismatch', '目标格读到' + block.name + '，请求材质是' + type.name);
+      }
       if (!block.diggable) throw digBlocked('dig_not_breakable', '该方块无法采掘');
       if (!permitsDig(affectedByDig(bot, block))) throw digBlocked('dig_protected', '目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(block)) throw digBlocked('dig_outside_scope', '目标不在地面取材范围内');
       checkApproval(affectedByDig(bot, block));
       const pos = block.position;
-      if (pos.equals(bot.entity.position.floored().offset(0, -1, 0)))
+      if (pos.equals(belowFeet(bot.entity.position)))
         throw digBlocked('dig_stand_support', '目标支撑着角色，请先移动');
       if (!digReachable(bot, pos, bot.entity.position)) {
         try { await walk(bot, new DigStandGoal(bot, pos)); }
@@ -215,8 +220,12 @@ async function collect(bot, args, check, result, built) {
       check();
       const here = bot.blockAt(pos);
       if (!here) throw digBlocked('dig_target_unloaded', '到达后目标格未加载');
-      if (here.type !== block.type || !here.diggable) throw digBlocked('dig_target_changed', '到达后目标方块已经变化');
+      if (here.type !== block.type || !here.diggable) {
+        if (fixed) result.targetBlock = { x: pos.x, y: pos.y, z: pos.z, expected: block.name, observed: here.name, phase: 'before_break' };
+        throw digBlocked('dig_target_changed', '到达后目标方块已经变化');
+      }
       if (!here.canHarvest(bot.heldItem?.type)) throw digBlocked('dig_tool_missing', '没有可采掘这个方块的工具');
+      if (pos.equals(belowFeet(bot.entity.position))) throw digBlocked('dig_stand_support', '目标支撑着角色，请先移动');
       if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position))
         throw digBlocked('dig_stand_unusable', '实际站位没有安全的采掘视线');
       const affected = affectedByDig(bot, here);

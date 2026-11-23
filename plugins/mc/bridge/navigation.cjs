@@ -1,4 +1,5 @@
 const { goals } = require('mineflayer-pathfinder');
+const { belowFeet } = require('./world.cjs');
 
 // 读取候选脚位是否位于有完整承重面的干地。
 function dryStand(bot, point) {
@@ -30,7 +31,7 @@ class DryStandGoal extends goals.Goal {
 // 从实际眼高检查目标中心及近顶面，允许站到格心稍外时仍命中同一个目标。
 // 步骤：排除脚下支撑 → 分别检查距离和遮挡 → 确认视线命中的原格。
 function digReachable(bot, target, feet, range = 4.5) {
-  if (target.equals(feet.floored().offset(0, -1, 0))) return false;
+  if (target.equals(belowFeet(feet))) return false;
   const eye = feet.offset(0, bot.entity.eyeHeight, 0);
   return [0.5, 0.875].some(height => {
     const direction = target.offset(0.5, height, 0.5).minus(eye);

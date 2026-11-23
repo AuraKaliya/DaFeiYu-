@@ -200,6 +200,33 @@ void verify_opening_selection() {
         throw std::runtime_error("verified original openings did not become one bounded placement target");
 }
 
+// 只把角色脚下已加载的格子加入自身取证，并核对精确材质与维度。
+// 步骤：提交同帧各来源 → 核对负坐标对应格和材质 → 拒绝其他玩家和其他维度的读回。
+void verify_below_feet_evidence() {
+    using Json = nlohmann::json;
+    dfy::mc::PartnerTask task;
+    const Json self{{"x",1},{"y",-61},{"z",-6},{"block","grass_block"}};
+    const Json player{{"x",2},{"y",-61},{"z",-5},{"block","dirt"}};
+    const Json views = Json::array({{{"source","self"},{"status","sampled"},{"belowFeet",self},
+        {"actor",{{"position",{{"x",1.25},{"y",-60},{"z",-5.41}}}}}},
+        {{"source","player"},{"status","sampled"},{"belowFeet",player}}});
+    task.record({{"skill","observe"},{"result",{{"status","done"},{"observation",
+        {{"id","underfoot"},{"dimension","overworld"},{"samples",Json::array({{{"views",views}}})}}}}}});
+    auto candidate = self;
+    candidate["observation"] = "underfoot";
+    const Json scene{{"dimension","overworld"}};
+    if (!task.dig_observation_issue(candidate,scene).empty() ||
+        task.dig_observation_issue(candidate,{{"dimension","the_nether"}}) != "observation_stale")
+        throw std::runtime_error("loaded below-feet evidence lost its coordinate or world binding");
+    candidate["block"] = "dirt";
+    if (task.dig_observation_issue(candidate,scene) != "observation_block_mismatch")
+        throw std::runtime_error("another material was accepted under the same observation");
+    candidate = player;
+    candidate["observation"] = "underfoot";
+    if (task.dig_observation_issue(candidate,scene) != "observation_cell_unverified")
+        throw std::runtime_error("the player's below-feet voxel was accepted as self evidence");
+}
+
 // 检查原话的独立子句和导航修订边界。
 // 步骤：区分取材和指向 → 接纳一次路线 → 核对新修订仍须沿用原墙。
 void verify_route_and_dig_intent() {
@@ -1401,6 +1428,7 @@ int wmain(int argc, wchar_t** argv) {
             verify_target_evidence();
             verify_opening_geometry();
             verify_opening_selection();
+            verify_below_feet_evidence();
             verify_route_and_dig_intent();
             verify_knowledge();
         }

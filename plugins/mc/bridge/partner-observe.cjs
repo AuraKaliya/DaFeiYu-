@@ -1,5 +1,6 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const { playerFocus } = require('./player-focus.cjs');
+const { belowFeet } = require('./world.cjs');
 
 const symbols = '0123456789abcdefghijklmnopqrstuvwxyz';
 const air = new Set(['air', 'cave_air', 'void_air']);
@@ -123,6 +124,10 @@ function takeSample(bot, options, player, messageAnchor, inventory, prior) {
       if (source === 'self') Object.assign(view.actor, { health: bot.health, food: bot.food, inventory: inventory() });
     }
     surveyView(world, view, center, options.radius, cells, palette, options.detail);
+    if (source !== 'message' && view.status === 'sampled') {
+      const { x, y, z } = belowFeet(center);
+      view.belowFeet = { x, y, z, block: cells.get(`${x},${y},${z}`) ?? null };
+    }
     if (source === 'message' && view.status === 'sampled') view.playerFocus = playerFocus(world, view.anchor, center, options.focus,
       { player_nearby: options.sources.includes('player') ? player?.position : undefined,
         self_nearby: options.sources.includes('self') ? bot.entity.position : undefined });

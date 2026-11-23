@@ -1,5 +1,8 @@
 const { randomUUID } = require('node:crypto');
 
+// 返回实体脚位所在格正下方的整数格，负坐标也向下取整。
+function belowFeet(point) { return point.floored().offset(0, -1, 0); }
+
 // 为当前出生到撤销之间的游戏世界建立只读绑定，记录最近的服务端信号。
 // 步骤：绑定游戏事件 → 按代次复制角色状态 → 撤销后丢弃旧世界。
 function observeWorld(bot) {
@@ -60,4 +63,4 @@ function observeWorld(bot) {
   };
 }
 
-module.exports = { observeWorld };
+module.exports = { observeWorld, belowFeet };

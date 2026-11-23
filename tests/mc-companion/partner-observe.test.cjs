@@ -55,6 +55,20 @@ test('combined survey reads shared coordinates once', async () => {
   assert.deepEqual(sample.verified.map(cell => [cell.block, cell.atSelf]), [['dirt', true], ['air', false], [null, false]]);
 });
 
+// 在负坐标区分角色脚下格、其他玩家脚下格及未加载状态。
+test('live views read the loaded voxel below each actor', async () => {
+  const { bot, player, context } = fixture(), result = {};
+  bot.entity.position = new Position(-1.4, -60, -5.41);
+  player.position = new Position(-0.45, -60, -4.1);
+  bot.blockAt = ({ x, y, z }) => x === -1 ? null :
+    { name: x === -2 && y === -61 && z === -6 ? 'grass_block' : 'air' };
+  await observeWindow(bot, { sources: ['self', 'player', 'message'], message: 12, radius: 1 }, result, context);
+  const [sample] = result.observation.samples;
+  assert.deepEqual(sample.views[0].belowFeet, { x: -2, y: -61, z: -6, block: 'grass_block' });
+  assert.deepEqual(sample.views[1].belowFeet, { x: -1, y: -61, z: -5, block: null });
+  assert.equal(sample.views[2].belowFeet, undefined);
+});
+
 // 玩家移动后，原话中心保持不动，变化只比较前后都可读的格子。
 test('sample series keeps original message apart from live actors', async () => {
   const { bot, player, context, reads } = fixture(), result = {};
