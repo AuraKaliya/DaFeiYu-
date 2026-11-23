@@ -468,6 +468,9 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
 
                     const auto& entry = craft_entry->at("plan");
                     const Json categories{{"categories",Json::array({"observation","craft_process"})}};
+                    const auto& procedure = result.at("procedures").front();
+                    if (procedure.at("name") != "就近取材" || procedure.at("category") != "dig_break" || procedure.contains("guidance"))
+                        throw std::runtime_error("the light directory did not disclose the name of the gathering skill");
                     if (last.tool_call_id == "list-skills") {
                         if (entry.contains("arguments")) throw std::runtime_error("default list expanded plan details");
                         return call("_skills","expand-skills",categories);

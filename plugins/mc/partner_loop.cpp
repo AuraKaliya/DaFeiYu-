@@ -36,9 +36,33 @@ std::string render_guidance(std::string_view title, std::span<const Guidance> en
     return std::string(title)+"\n"+sections.dump();
 }
 
+constexpr std::string_view nearby_materials =
+    "先用当前自身观察核对背包和缺口数量。指定对象沿原话查指向。可自选时从已许可范围选候选，"
+    "确切采掘格用自身 verify 读回坐标和材质，脚下材质和可见列表可用来筛选。"
+    "自然地面补库存用 gather_ground，填写所需总量并遵守材料、区域和支撑限制。"
+    "需要合成或放置时，按实际入包和执行结果推进依赖。受阻时按具体回执补查会改变判断的条件，"
+    "或另选已获准的候选。需要替代材料时只把依赖答复的步骤挂到追问。效果未知沿原工作回查。";
+
+// 由原话或实际取材状态判定本轮是否相关。
+// 步骤：核对当前指令提示 → 查看任务范围和实际采掘 → 检查正在交付的计划结果。
+bool needs_materials_guidance(const Json& input, bool player_message) {
+    if (player_message && read_dig_intent(input.at("events").back().at("text").get_ref<const std::string&>()).gathering_hint)
+        return true;
+    const auto& task = input.at("task");
+    if (task.at("collection") == "ground" && task.at("next") != "done") return true;
+    if (input.contains("activeMotion") && input.at("activeMotion").at("skill") == "collect") return true;
+    if (const auto work = input.find("workSettlement"); work != input.end() &&
+        work->at("receipts").at(work->at("primary").get<std::size_t>()).at("skill") == "collect") return true;
+    const auto plan = input.find("taskPlan");
+    return plan != input.end() && (plan->at("status") == "running" || input.contains("planSettlements")) &&
+        std::ranges::any_of(plan->at("nodes"),[](const auto& node) {
+            return node.at("skill") == "dig_block" || node.at("skill") == "gather_ground";
+        });
+}
+
 // 由当前局内状态选取同场指引，具体技能参数由工具目录提供。
 // 步骤：读取目标、证据和工作状态 → 声明各条指引的适用条件 → 按用途送入领域系统段。
-std::string companion_instructions(const Json& input, bool player_message, bool actual_outcome) {
+std::string companion_instructions(const Json& input, bool player_message, bool actual_outcome, bool tools_for_gathering) {
     const auto& task = input.at("task");
     const bool has_goal = !task.at("goal").get_ref<const std::string&>().empty();
     const bool correcting = task.contains("pendingCorrection");
@@ -56,6 +80,7 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
         Guidance{"domainExperience","targetEvidence","已有原话现场能区分候选时直接使用。补查应能缩小候选范围，需玩家提供线索时问一个具体问题。",
             player_message || correcting || input.contains("questionResult")},
+        Guidance{"domainExperience","nearbyMaterials",nearby_materials,tools_for_gathering && needs_materials_guidance(input,player_message)},
         Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
             input.at("trigger") == "follow.attention"},
         Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说明现场，游戏发言省略内部编号和工具名。",
@@ -378,8 +403,6 @@ void PartnerLoop::submit(std::string_view wake) {
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
     const bool player_message = !facts.empty() && facts.back().at("type") == "player.message";
-    const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
-        companion_instructions(input,player_message,actual_outcome);
     const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
     std::array<std::string,partner_skills.size()> ids;
@@ -408,6 +431,8 @@ void PartnerLoop::submit(std::string_view wake) {
         observe_visible |= skill.name == "observe";
         plan_visible |= skill.kind == SkillKind::action_queue;
     }
+    const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
+        companion_instructions(input,player_message,actual_outcome,observe_visible && plan_visible);
     const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
@@ -749,8 +774,11 @@ Json PartnerLoop::discover(const Json& arguments) {
     if (changed) {
         expansion_pending_ = true;
     }
+    Json procedure{{"name","就近取材"},{"category","dig_break"}};
+    if (std::ranges::find(wanted,"dig_break") != wanted.end()) procedure["guidance"] = nearby_materials;
     return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},{"planNodes",plan_skills()},
         {"contracts",std::move(contracts)},
+        {"procedures",Json::array({std::move(procedure)})},
         {"wake",expansion_pending_ && task_.can_continue()}};
 }
 

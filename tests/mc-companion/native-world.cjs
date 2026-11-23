@@ -1112,6 +1112,17 @@ async function main() {
     } else if (questionScope) {
       assert.ok(questionPresented && collectExited);
       assert.equal(stopped, 0);
+    } else if (observeDigScope) {
+      assert.ok(collectExited);
+      assert.equal(stopped, 0);
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const firstTurns = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse)
+        .filter(row => row.kind === 'model.prepared' && row.step === 1).map(readPartnerContext);
+      assert.equal(firstTurns[0].guidance.domainExperience?.nearbyMaterials, undefined);
+      const settled = firstTurns.find(turn => ['motion.finished', 'plan.finished'].includes(turn.input.trigger));
+      assert.match(settled.guidance.domainExperience.nearbyMaterials, /实际入包/);
+      for (const tool of ['observe', 'dig_block', 'gather_ground', 'queue_actions'])
+        assert.ok(settled.tools.some(entry => entry.name.endsWith('_' + tool)), tool);
     } else if (layered) {
       assert.equal(nodeExits.length, layeredStepCount);
       assert.equal(replies, layeredStepCount < 4 ? 1 : 0);
@@ -1154,6 +1165,8 @@ async function main() {
         assert.match(fields.steps.items.properties.skill.description, /route: Validated route\.id/);
         assert.match(fields.steps.items.properties.skill.description, /craft: Plank item/);
         if (pointedCraft) {
+          const original = turns.find(turn => turn.input.events.some(event => event.sequence === 2));
+          assert.match(original.guidance.domainExperience.nearbyMaterials, /原话查指向/);
           assert.ok(turns.every(turn => turn.input.trigger !== 'skills.expanded'));
           assert.equal(context.input.pendingQuestion.afterPickup.count, 4);
           assert.match(fields.resolves.description, /saved successor is retained/);
@@ -1173,6 +1186,7 @@ async function main() {
         const settled = turns.find(turn => turn.input.trigger === 'plan.finished' &&
           turn.input.taskPlan?.status !== 'cancelled');
         assert.equal(typeof settled.guidance.outputConstraints.workOutcome, 'string');
+        assert.equal(settled.guidance.domainExperience?.nearbyMaterials, undefined);
         assert.deepEqual(settled.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
       }
       if (correctionLost) assert.ok(stopped >= 2);

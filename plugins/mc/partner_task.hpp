@@ -9,6 +9,7 @@ namespace dfy::mc {
 struct DigIntent {
     bool pointed = false;
     std::string_view material, support;
+    bool gathering_hint = false;
 };
 // 从玩家原话识别可确定的指向、材料和上下关系。
 DigIntent read_dig_intent(std::string_view text);

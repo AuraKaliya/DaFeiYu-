@@ -111,6 +111,7 @@ DigIntent read_dig_intent(std::string_view text) {
     constexpr std::array verbs{"挖"sv,"敲"sv,"拆"sv,"铲"sv,"砸"sv,"打掉"sv,"移除"sv};
     constexpr std::array pointing{"这块"sv,"这个"sv,"这格"sv,"这根"sv,"这里"sv,"我面前"sv,"眼前"sv,"掉它"sv};
     std::string_view previous;
+    bool gathering_hint = false;
     while (!text.empty()) {
         std::size_t end = text.size(), separator = 0;
         for (const auto delimiter : {"，"sv,"。"sv,"；"sv,"！"sv,"？"sv,","sv,";"sv,"!"sv,"?"sv}) {
@@ -119,23 +120,25 @@ DigIntent read_dig_intent(std::string_view text) {
         const auto clause = text.substr(0,end);
         const auto has_word = [&](auto word) { return clause.find(word) != clause.npos; };
         if (std::ranges::any_of(verbs,has_word)) {
+            const auto material = named_material(clause);
+            gathering_hint |= !material.empty();
             for (const auto relation : {"上方的"sv,"上面的"sv,"上边的"sv,"上的"sv,"上面那块"sv}) {
                 const auto at = clause.find(relation);
                 if (at == clause.npos) continue;
                 const auto support = named_material(clause.substr(at > 18 ? at-18 : 0,std::min<std::size_t>(at,18)));
                 const auto target = named_material(clause.substr(at+relation.size(),24));
-                if (!support.empty() && !target.empty()) return {true,target,support};
+                if (!support.empty() && !target.empty()) return {true,target,support,true};
             }
             if (std::ranges::any_of(pointing,has_word)) {
-                auto target = named_material(clause);
+                auto target = material;
                 if (target.empty() && has_word("掉它")) target = named_material(previous);
-                return {true,target,{}};
+                return {true,target,{},true};
             }
         }
         text.remove_prefix(end+separator);
         previous = clause;
     }
-    return {};
+    return {false,{},{},gathering_hint};
 }
 
 // 提供明确的当前目标、等待条件和最后一份由执行器报告的事实。
