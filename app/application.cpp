@@ -9,7 +9,6 @@
 
 namespace dfy::app {
 namespace {
-constexpr std::size_t dialogue_limit = 1024*1024;
 // 固定应用的编译配置、已知源码提交及后端公开档案。
 agent::RunVersionLabels build_labels(std::optional<std::string> model_profile) {
     agent::RunVersionLabels labels;
@@ -47,7 +46,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       channel_(std::make_shared<events::BroadcastChannel>(std::make_shared<events::EventStore>(256,64),16,8)),
       mailbox_host_{std::make_shared<events::Mailboxes>(events::MailboxLimits{52,16,128,16*1024}),runtime::next_domain()},
       dialogue_sender_(runtime::next_domain()),
-      dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_limit)),
+      dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_text_limit)),
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
       plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))),
@@ -88,7 +87,7 @@ agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
     if (dialogue_sequence_ == UINT64_MAX) throw std::overflow_error("dialogue: mailbox sequence exhausted");
     auto& mail = *mailbox_host_.network;
     const auto receipt = mail.deliver(dialogue_sender_,dialogue_mailbox_,dialogue_sequence_+1,
-        events::mailbox_text("dialogue.text",1,text,dialogue_limit));
+        events::mailbox_text("dialogue.text",1,text,dialogue_text_limit));
     if (receipt.state != events::DeliveryState::accepted) throw std::logic_error("dialogue: unexpected acceptance state");
     ++dialogue_sequence_;
     if (run_log_) run_log_->mail("mail.accepted",dialogue_mailbox_.value,dialogue_sender_,receipt.event,"dialogue.text",text);

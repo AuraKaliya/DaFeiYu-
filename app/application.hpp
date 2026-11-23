@@ -13,6 +13,7 @@
 #include <deque>
 
 namespace dfy::app {
+inline constexpr std::size_t dialogue_text_limit = 1024*1024;
 class RunLog;
 struct VerificationReport {
     agent::RunId run;
