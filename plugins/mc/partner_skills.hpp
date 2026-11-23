@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -17,29 +18,37 @@ enum class SkillCategory : std::uint8_t {
 enum class SkillKind { game, confirmed, task, catalog, knowledge, question, motion, motion_stop, approval_withdraw, action_queue };
 struct PartnerAction {
     std::string_view name, executor;
+    SkillCategory category;
     bool plan = false, sequence = false;
     std::string_view plan_arguments = {};
-    SkillCategory category = SkillCategory::control;
     std::string_view plan_requirements = {};
+    std::string_view sequence_arguments = {};
 };
 
 // 计划、顺序队列与直接工具统一查找实际执行技能，空执行器可结算已知但未实现的能力。
 inline constexpr std::array partner_actions{
-    PartnerAction{"observe","observe",true,false,"{} for a snapshot, or message with optional focus=hit or openings.",
-        SkillCategory::observation,"Read only. Pointed observations require the original player message in the active world."},
-    PartnerAction{"move","move",true,true,"Exact standing x,y,z. Exit verifies arrival."},
-    PartnerAction{"start_move","move"},
-    PartnerAction{"follow","follow",false,true},
-    PartnerAction{"collect","collect",false,true},
-    PartnerAction{"collect_confirmed","collect"},
-    PartnerAction{"dig_block","collect",true,false,"x,y,z,block; message for pointing, observation for self verify."},
-    PartnerAction{"gather_ground","collect",true,true,"item, requiredStock, optional source block."},
-    PartnerAction{"place","place",true,true,"x,y,z,block within the bound target. Exit reports changed cells."},
-    PartnerAction{"fill_target","fill_target",true,false,"block for the bound cells. Exit reports each cell's result."},
-    PartnerAction{"route","route",true,false,"Validated route.id and laps (1-8). A restarted task retains its wall and lap count. Exit reports verified laps."},
-    PartnerAction{"craft","craft",true,false,"Plank item and desired new count (1-32), optional ingredient naming a log or stem.",
-        SkillCategory::craft_process,"A prerequisite dig needs verified pickup. Check recipe, stock, space and workbench. Exit verifies consumption and output."},
+    PartnerAction{"observe","observe",SkillCategory::observation,true,false,"{} for a snapshot, or message with optional focus=hit or openings.",
+        "Read only. Pointed observations require the original player message in the active world."},
+    PartnerAction{"move","move",SkillCategory::movement,true,true,"Exact standing x,y,z. Exit verifies arrival.",{},"x,y,z, place or original message."},
+    PartnerAction{"start_move","move",SkillCategory::movement},
+    PartnerAction{"follow","follow",SkillCategory::movement,false,true,{},{},"Optional distance (2-5). Append or replace."},
+    PartnerAction{"collect","collect",SkillCategory::dig_break,false,true,{},{},"x,y,z,block,count=1. Optional pickup on the step."},
+    PartnerAction{"collect_confirmed","collect",SkillCategory::dig_break},
+    PartnerAction{"dig_block","collect",SkillCategory::dig_break,true,false,"x,y,z,block with message for pointing or observation for self verify."},
+    PartnerAction{"gather_ground","collect",SkillCategory::dig_break,true,true,"item, requiredStock, optional source block.",{},
+        "item, requiredStock, optional source block."},
+    PartnerAction{"place","place",SkillCategory::place,true,true,"x,y,z,block within the bound target. Exit reports changed cells.",{},
+        "x,y,z,block within the bound target."},
+    PartnerAction{"fill_target","fill_target",SkillCategory::place,true,false,"block for the bound cells. Exit reports each cell's result."},
+    PartnerAction{"route","route",SkillCategory::movement,true,false,"Validated route.id and laps (1-8). A restart retains the original wall and lap count. Exit verifies laps."},
+    PartnerAction{"craft","craft",SkillCategory::craft_process,true,false,"Plank item and desired new count (1-32), optional ingredient naming a log or stem.",
+        "A prerequisite dig needs verified pickup. Check recipe, stock, space and workbench. Exit verifies consumption and output."},
 };
+
+// 顺序队列和能力目录使用相同的已开放分类规则。
+inline bool sequence_available(const PartnerAction& action, const std::bitset<categories.size()>& enabled) {
+    return action.sequence && (action.category == SkillCategory::movement || enabled.test(static_cast<std::size_t>(action.category)));
+}
 
 // 返回同一技能在各入口所用的实际执行能力。
 inline const PartnerAction* partner_action(std::string_view name) noexcept {
@@ -158,12 +167,16 @@ inline std::string_view partner_schema(const PartnerSkill& skill) {
         description += "\nFor append, interrupt or replace:";
         for (const auto& action : partner_actions) if (action.sequence) description += " "+std::string(action.name);
         description += ". Interrupt cannot start a new follow.";
+        std::string sequence = "Ordinary sequence parameters:";
+        for (const auto& action : partner_actions) if (action.sequence)
+            sequence += "\n"+std::string(action.name)+": "+std::string(action.sequence_arguments);
         auto value = nlohmann::json::parse(skill.schema);
         auto& fields = value["properties"];
         fields["resolves"]["description"] = "Pending question item for a newer verified dig. Supply one dig_block node with the answer message; any saved successor is retained.";
         auto& node = fields["steps"]["items"]["properties"];
         node["skill"]["description"] = std::move(description);
-        node["pickup"]["description"] = "For dig_block, the item that must actually enter inventory before a dependent node can advance.";
+        node["arguments"]["description"] = std::move(sequence);
+        node["pickup"]["description"] = "For a dig_block plan node or an ordinary collect step, the item that must actually enter inventory before the successor can advance.";
         return value.dump();
     }();
     return schema;

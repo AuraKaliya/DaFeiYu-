@@ -458,6 +458,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     const auto& contracts = result.at("contracts");
                     const auto craft_entry = std::ranges::find_if(contracts,[](const auto& item) { return item.at("skill") == "craft"; });
                     const auto observe = std::ranges::find_if(contracts,[](const auto& item) { return item.at("skill") == "observe"; });
+                    const auto extract = [&](std::string_view skill) -> const Json& {
+                        const auto entry = std::ranges::find_if(contracts,[&](const auto& row) {
+                            return row.at("skill").template get_ref<const std::string&>() == skill;
+                        });
+                        if (entry == contracts.end()) throw std::runtime_error("missing capability "+std::string(skill));
+                        return *entry;
+                    };
                     if (result.at("status") != "listed" || result.at("wake") != false || craft == directory.end() ||
                         craft->at("available") != true || !craft->at("tools").empty() || craft->at("planNodes") != Json::array({"craft"}) ||
                         craft_entry == contracts.end() || observe == contracts.end() || craft_entry->at("implemented") != true ||
@@ -465,6 +472,14 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                         craft_entry->at("plan").at("conditions").at("status") != "check_on_execution" ||
                         observe->at("direct").at("visible") != true || observe->at("plan").at("visible") != true)
                         throw std::runtime_error("directory conflicted with the existing plan or tool scope");
+                    const auto dig = std::ranges::find_if(directory,[](const auto& row) { return row.at("category") == "dig_break"; });
+                    const auto& move = extract("move"), &collect = extract("collect"), &place = extract("place");
+                    if (dig == directory.end() || dig->at("planNodes") != Json::array({"dig_block","gather_ground"}) ||
+                        move.contains("direct") || move.at("sequence").at("visible") != true ||
+                        collect.contains("plan") || collect.at("direct").at("visible") != false || collect.at("sequence").at("visible") != false ||
+                        place.at("plan").at("conditions").at("status") != "target_unbound" ||
+                        extract("stop_motion").at("direct").at("visible") != false)
+                        throw std::runtime_error("directory confused an entry point or a known execution prerequisite");
 
                     const auto& entry = craft_entry->at("plan");
                     const Json categories{{"categories",Json::array({"observation","craft_process"})}};

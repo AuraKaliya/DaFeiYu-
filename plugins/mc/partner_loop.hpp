@@ -302,7 +302,7 @@ class PartnerLoop {
     std::deque<WorkSettlement>::const_iterator ready_settlement() const;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;
-    bool observe_visible_ = false, plan_visible_ = false;
+    std::bitset<partner_skills.size()> visible_skills_;
     const dfy_v2_agent_api* agent_ = nullptr;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;

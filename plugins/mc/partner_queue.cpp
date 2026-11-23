@@ -65,10 +65,8 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         const auto required = item_name(pickup);
         if (step.contains("pickup") && (name != "collect" || required.empty()))
             throw std::invalid_argument("MC queue: invalid required pickup");
-        const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
         const auto* action = partner_action(name);
-        if (!action || !action->sequence || skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
-            (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))))
+        if (!action || !sequence_available(*action,enabled) || (interrupt && name == "follow") || !valid_step(name,parameters))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
         if (action->executor == "collect") {
             if (requires_pointed_dig(session_)) return {{"status","blocked"},{"reason","pointed_block_unverified"}};
