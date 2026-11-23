@@ -220,6 +220,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool layered_stock = variant == L"partner-revision-layered-stock";
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
+    const bool question_scope = variant == L"partner-revision-question-scope";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
     const bool pointed_support = variant == L"partner-revision-pointed-support";
@@ -619,6 +620,46 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (input.at("events").back().at("sequence") == 2) return call("_dig_block","bad-stone",stone);
             return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
+        if (question_scope) {
+            const Json scope{{"skill","collect"},{"block","grass_block"}};
+            const Json grass{{"x",1},{"y",-61},{"z",2},{"block","minecraft:grass_block"}};
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "ask-about-grass") {
+                    placement_item = result.at("item").get<std::uint64_t>();
+                    return call("_dig_block","wait-on-grass",grass);
+                }
+                if (last.tool_call_id != "wait-on-grass" || result.at("reason") != "waiting_for_player" || result.at("item") != placement_item)
+                    throw std::runtime_error("a direct action entered the scoped question");
+                auto dirt = grass;
+                dirt["z"] = 3;
+                dirt["block"] = "dirt";
+                return call("_queue_actions","collect-while-waiting",{{"operation","plan"},{"steps",Json::array({
+                    {{"id","grass"},{"skill","dig_block"},{"arguments",grass}},
+                    {{"id","dirt"},{"skill","dig_block"},{"arguments",dirt}}})}});
+            }
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                const auto& nodes = input.at("planSettlements").at(0).at("nodes");
+                const auto& pending = input.at("pendingQuestion");
+                if (pending.at("item") != placement_item || pending.at("scope") != scope || pending.at("sourceMessage") != 2 ||
+                    nodes.at(0).at("result").at("reason") != "waiting_for_player" ||
+                    nodes.at(1).at("result").at("inventoryDelta").at("dirt") != 1)
+                    throw std::runtime_error("the question prevented independent gathering or changed identity");
+                std::ofstream(root/"scoped-question-checked").put('1');
+            } else if (const auto sequence = input.at("events").back().at("sequence"); sequence == 2) {
+                return call("_ask_player","ask-about-grass",{{"question","草方块也可以吗？"},
+                    {"scope",scope},{"options",{"可以用草方块","还是用泥土"}}});
+            } else if (sequence == 3) {
+                const auto& result = input.at("questionResult");
+                if (input.contains("pendingQuestion") || result.at("item") != placement_item || result.at("scope") != scope ||
+                    result.at("status") != "answered" || result.at("answerMessage") != 3 || result.at("answer") != "还是用泥土")
+                    throw std::runtime_error("new clarification did not settle the original question");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            return {{Role::assistant,R"({"internal":"waiting"})"}};
         }
         if (question_expiry) {
             if (last.role == Role::tool) {

@@ -68,8 +68,9 @@ Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
         return result;
     }
     const auto reason = result.value("reason","");
-    if (reason == "answer_target_mismatch" || (reason == "waiting_for_player" && placement_choice_pending() &&
-        result.at("item") == placement_choice_.item)) {
+    if (reason == "answer_target_mismatch" || (reason == "waiting_for_player" &&
+        ((placement_choice_pending() && result.at("item") == placement_choice_.item) ||
+            (question_ && !question_->scope.is_null() && result.at("item") == question_->item)))) {
         result["attempt"] = invocation;
         result["retryAllowed"] = false;
         publish("mc.partner.plan",{{"status","step_blocked"},{"revision",task_.revision()},{"order",order_},{"result",result}});

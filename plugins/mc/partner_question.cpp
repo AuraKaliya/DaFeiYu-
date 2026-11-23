@@ -75,7 +75,7 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
 }
 
 // 保存现地追问及目标确定后要继续的操作。
-// 步骤：验证渠道及问题 → 核对后继能力或放置选项 → 按玩家原话和任务修订登记。
+// 步骤：验证渠道及问题 → 核对影响范围、后继能力或放置选项 → 按原话和任务修订登记。
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!id) throw std::invalid_argument("MC question: unavailable");
     if (question_) return {{"status","waiting"},{"item",question_->item}};
@@ -88,6 +88,19 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
         option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
     const auto after_pickup = args.value("afterPickup",Json(nullptr));
+    auto scope = args.value("scope",Json(nullptr));
+    if (!scope.is_null()) {
+        const auto& skill = scope.at("skill").get_ref<const std::string&>();
+        if (path != "local" || args.contains("placementOptions") || (!after_pickup.is_null() && skill != "collect") ||
+            (skill != "collect" && skill != "place" && skill != "craft") ||
+            (skill == "place" && scope.contains("item")) || (skill == "craft" && scope.contains("block")))
+            throw std::invalid_argument("MC question: invalid action scope");
+        for (const auto key : {"block","item"}) if (scope.contains(key)) {
+            const auto canonical = item_name(scope.at(key).get_ref<const std::string&>());
+            if (canonical.empty()) throw std::invalid_argument("MC question: invalid scope material");
+            scope[key] = std::string(canonical);
+        }
+    }
     if (args.contains("afterPickup") && (path != "local" || events_.empty() || events_.back().at("type") != "player.message" ||
         !after_pickup.is_object() ||
         after_pickup.size() != 2+after_pickup.count("pickup") ||
@@ -128,6 +141,7 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
     question_->options = options;
     question_->after_pickup = after_pickup;
+    question_->scope = std::move(scope);
     question_->task_revision = task_.revision();
     if (!events_.empty()) question_->origin = events_.back().value("text",std::string{});
     question_result_.clear();
@@ -179,6 +193,10 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     }
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
+    if (!question_->scope.is_null()) {
+        question_result_["scope"] = question_->scope;
+        question_result_["sourceMessage"] = question_->order;
+    }
     if (status == "answered" && placement_choice_pending() && placement_choice_.item == question_->item) {
         for (const auto& option : placement_choice_.options) {
             if (option.at("answer") == question_result_.at("answer")) question_result_["placementCells"] = option.at("cells");
@@ -197,13 +215,24 @@ bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves
         !question_->approval && question_->task_revision == task_.revision() && resolves != question_->item;
 }
 
+// 判断候选是否依赖该问题，材料未固定时保留可能的重叠。
+// 步骤：匹配执行器 → 核对已知的材料限制。
+bool PartnerLoop::question_covers(std::string_view skill, const Json& args) const {
+    const auto& scope = question_->scope;
+    if (scope.is_null()) return true;
+    if (scope.at("skill").get_ref<const std::string&>() != (skill == "fill_target" ? "place" : skill)) return false;
+    for (const auto key : {"block","item"}) if (scope.contains(key) && args.contains(key) &&
+        scope.at(key).get_ref<const std::string&>() != item_name(args.at(key).get_ref<const std::string&>())) return false;
+    return true;
+}
+
 // 放置选择在实际答复后解除等待，未获选的格仍受原任务修订约束。
 bool PartnerLoop::placement_choice_pending() const noexcept {
     return placement_choice_.revision == task_.revision() && !placement_choice_.options.empty();
 }
 
 // 按实际写入范围核对步骤是否需要玩家答复。
-// 步骤：处理原无范围追问 → 核对未获选的放置格 → 比对待答方格及其支撑。
+// 步骤：按执行器及材料核对追问 → 核对未获选的放置格 → 比对待答方格及其支撑。
 Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill, const Json& args, std::uint64_t resolves) const {
     const bool placing = skill == "place" || skill == "fill_target";
     if ((!placing && skill != "collect" && skill != "craft") || session != session_ || !session || delegated(session)) return {};
@@ -211,7 +240,7 @@ Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill,
         return Json{{"status","blocked"},{"reason",reason},{"item",item}};
     };
     const bool pending = placement_choice_pending();
-    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item))
+    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item) && question_covers(skill,args))
         return blocked(question_->item,"waiting_for_player");
     if (skill == "craft" || placement_choice_.revision != task_.revision()) return {};
     const bool fixed_cell = valid_action_cell(args);
@@ -264,7 +293,7 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     if (message != order_ || !player_event ||
         (item && (!question_ || question_->item != item || (placement_choice_pending() && placement_choice_.item == item) ||
             question_->approval || question_->path != "local" ||
-            question_->order >= order_ || question_->task_revision != task_.revision()))) return std::nullopt;
+            question_->order >= order_ || question_->task_revision != task_.revision() || !question_covers("collect",args)))) return std::nullopt;
     if (item) {
         const auto& text = events_.back().at("text").get_ref<const std::string&>();
         if (has_pickup_continuation(item) && std::ranges::none_of(
@@ -349,7 +378,7 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
     const bool local = q.path == "local";
     if (local && !q.expired && std::chrono::steady_clock::now() >= q.local_answer_deadline) {
         q.expired = true;
-        if (!placement_choice_pending() || placement_choice_.item != q.item) task_.disarm();
+        if (q.scope.is_null() && (!placement_choice_pending() || placement_choice_.item != q.item)) task_.disarm();
         publish("mc.partner.question",{{"status","expired"},{"generation",q.world},{"order",q.order},{"item",q.item}});
     }
     if (q.presented && !q.forwarded) {

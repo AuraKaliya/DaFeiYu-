@@ -182,6 +182,8 @@ class PartnerLoop {
     bool placement_choice_pending() const noexcept;
     // 核对是否有同一任务的普通局内追问。
     bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
+    // 判断普通局内追问是否覆盖该执行器及其材料。
+    bool question_covers(std::string_view skill, const nlohmann::json& arguments) const;
     // 关闭已由当前原话和动作证据共同确认的局内追问。
     void complete_pointed_question();
     // 检查原候选在执行时使用的世界、玩家及游标。
@@ -198,7 +200,7 @@ class PartnerLoop {
         bool expired = false;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
-        nlohmann::json options, after_pickup;
+        nlohmann::json options, after_pickup, scope;
         std::string origin;
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;

@@ -359,6 +359,11 @@ void PartnerLoop::submit(std::string_view wake) {
         input["pendingQuestion"]["afterPickup"] = question_->after_pickup;
         input["pendingQuestion"]["originalText"] = question_->origin;
     }
+    if (question_ && !question_->scope.is_null()) {
+        input["pendingQuestion"]["scope"] = question_->scope;
+        input["pendingQuestion"]["sourceMessage"] = question_->order;
+        input["pendingQuestion"]["originalText"] = question_->origin;
+    }
     if (question_ && placement_choice_pending() && question_->item == placement_choice_.item)
         input["pendingQuestion"]["placementOptions"] = placement_choice_.options;
     if (placement_choice_.revision == task_.revision() && !placement_choice_.rejected.empty())
@@ -487,8 +492,10 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     }
     if (skill == "ask_player") {
         auto question = open_question(invocation,args);
-        if (question.at("status") == "recorded" || question.at("status") == "waiting")
-            question_requested_ = wait_for_work_ = true;
+        if (question.at("status") == "recorded" || question.at("status") == "waiting") {
+            question_requested_ = true;
+            wait_for_work_ |= question_->scope.is_null();
+        }
         return question;
     }
     if (skill == "stop_motion") {
@@ -543,12 +550,15 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
     const auto resolves = args.value("resolves",std::uint64_t{});
     const bool waiting = waits_for_player(session_);
-    const bool answers_question = waiting && committing && resolves == question_->item && player_order > question_->order;
+    const bool supports_placement = waiting && (question_->scope.is_null() || question_->scope.at("skill") == "place");
+    const bool answers_question = supports_placement && committing && resolves == question_->item && player_order > question_->order;
+    const bool independent_target = waiting && !supports_placement && !committing && !args.contains("collection") &&
+        args.at("goal").get_ref<const std::string&>() == task_.goal();
     if (placement_choice_pending() && !task_.correcting() &&
         (committing || target != args.end() || args.value("collection",std::string(task_.collection())) != task_.collection() ||
             args.at("goal").get_ref<const std::string&>() != task_.goal()))
         return {{"status","waiting_for_player"},{"item",placement_choice_.item}};
-    if (waiting && (committing || target != args.end() || args.contains("collection") ||
+    if (waiting && !independent_target && (committing || target != args.end() || args.contains("collection") ||
         args.at("goal").get_ref<const std::string&>() != task_.goal()) &&
         (player_order <= question_->order || (committing && !answers_question)))
         return {{"status","waiting_for_player"},{"item",question_->item}};
@@ -559,6 +569,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
         complete_question("resolved",events_.back().at("text").get<std::string>());
     }
     if (task_.revision() != prior_revision) {
+        if (independent_target) question_->task_revision = task_.revision();
         cancel_plan("task_changed");
         clear_queue("task_changed");
         settlements_.clear();
@@ -766,7 +777,8 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
-    if (waits_for_player(session_) && (!placement_choice_pending() || question_->item != placement_choice_.item)) return {};
+    if (waits_for_player(session_) && question_->scope.is_null() &&
+        (!placement_choice_pending() || question_->item != placement_choice_.item)) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());

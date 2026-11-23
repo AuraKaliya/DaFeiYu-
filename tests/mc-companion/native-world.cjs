@@ -171,6 +171,7 @@ async function main() {
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const layeredStepCount = layeredStock ? 3 : layeredBlocked ? 2 : 4;
   const attention = variant === 'partner-revision-attention';
+  const questionScope = variant === 'partner-revision-question-scope';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
   const pointedSupport = variant === 'partner-revision-pointed-support';
@@ -259,6 +260,7 @@ async function main() {
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
+          questionScope ? (questionPresented && fs.existsSync(path.join(root, 'scoped-question-checked')) ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
           directPlace ? (planReading ? 5 : !questionPresented ? 2 : fs.existsSync(path.join(root, 'placement-waiting-checked')) ? 4 : 3) :
@@ -314,6 +316,10 @@ async function main() {
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
+          }
+          if (questionScope) {
+            messages[1].text = '挖一块泥土来垫脚';
+            messages[2].text = '还是用泥土';
           }
           if (repairPlanObserve) {
             messages[1].text = '先列个观察计划。';
@@ -545,6 +551,28 @@ async function main() {
             layeredBlocked ? { status: 'blocked', reasonCode: 'unsafe_stand' } :
               { status: 'done', arrived: true, position: { x: pad.x + 0.5, y: pad.y + 1, z: pad.z + 0.5 } };
           return { ...context, skill, exited: true, result };
+        }
+        if (questionScope) {
+          assert.equal(context.order, 2);
+          if (skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            assert.ok(!questionPresented);
+            assert.equal(args.text, '草方块也可以吗？');
+            questionPresented = true;
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          assert.equal(skill, 'collect');
+          assert.deepEqual(args, { x: 1, y: -61, z: 3, count: 1, block: 'dirt', source: 'visible' });
+          if (method === 'partner.begin') {
+            assert.ok(!collecting);
+            collecting = id;
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, collecting);
+          collectExited = true;
+          return { ...context, skill, exited: true, result: { status: 'done', broken: 1, inventoryDelta: { dirt: 1 },
+            changes: [{ x: 1, y: -61, z: 3, before: 'dirt', after: 'air' }] } };
         }
         if (questionExpiry) {
           assert.equal(method, 'partner.begin');
@@ -1079,6 +1107,9 @@ async function main() {
       assert.deepEqual(alerts.map(row => [row.body.status, row.body.work, row.body.episode]),
         [['raised', following, 1], ['recovered', following, 1]]);
       console.log(trace);
+    } else if (questionScope) {
+      assert.ok(questionPresented && collectExited);
+      assert.equal(stopped, 0);
     } else if (layered) {
       assert.equal(nodeExits.length, layeredStepCount);
       assert.equal(replies, layeredStepCount < 4 ? 1 : 0);
