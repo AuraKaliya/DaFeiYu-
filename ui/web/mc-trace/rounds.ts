@@ -48,6 +48,8 @@ export interface RecordEntry {
   readonly callId?: string;
   readonly name?: string;
   readonly result?: string;
+  readonly effect?: string;
+  readonly fault?: string;
   readonly reason?: string;
   readonly business?: string;
   readonly timing?: Readonly<{ submitted?: string; started?: string; finished?: string }>;
@@ -135,7 +137,7 @@ function project(row: Data, ref: LineRef): RecordEntry {
     ref, kind, time: id(row.timeNs), key: session && run ? `${session}/${run}` : undefined,
     step: id(row.step), attempt: id(row.attempt), request: id(row.request), candidate: id(row.candidate),
     invocation: id(row.invocation), callId: text(row.callId), name: text(row.toolId) ?? text(row.name),
-    result: text(row.result), business: text(output?.status),
+    result: text(row.result), effect: text(row.effect), fault: text(row.fault), business: text(output?.status),
     reason: text(output?.reason) ?? text(output?.reasonCode) ??
       (timeline?.stop_reason === 'none' ? undefined : text(timeline?.stop_reason)) ??
       (row.error === 'none' ? undefined : text(row.error)),
