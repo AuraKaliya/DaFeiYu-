@@ -342,8 +342,15 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
                 raw->partner.bind_collection_guards(input.at("arguments"));
                 job.arguments = input.dump();
             }
+            bool finish = false;
+            if (game_skill == "reply") {
+                auto input = nlohmann::json::parse(job.arguments);
+                auto& args = input.at("arguments");
+                finish = args.value("finish",false);
+                if (args.erase("finish")) job.arguments = input.dump();
+            }
             auto work = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job.id,job.arguments,std::string(game_skill));
-            if (game_skill == "reply" && !raw->partner.reserve_reply(call->session,job.id)) {
+            if (game_skill == "reply" && !raw->partner.reserve_reply(call->session,job.id,finish)) {
                 job.output = R"({"status":"already_requested","sent":false})";
                 job.ready = job.success = true;
             } else job.action = std::move(work);
@@ -645,7 +652,7 @@ dfy_v2_status DFY_V2_CALL decide_partner_hook(dfy_v2_instance* raw, uint32_t ind
     if (!owned(raw) || !raw->running || !input || index > 1) return report(DFY_V2_INVALID_CONTEXT,error);
     *verdict = raw->partner.permits(input->session) ? DFY_V2_HOOK_ALLOW : DFY_V2_HOOK_DENY;
     if (*verdict == DFY_V2_HOOK_ALLOW && input->point == DFY_V2_HOOK_MODEL_REQUEST && input->step >= 2) {
-        if (raw->partner.waits_for_work()) *verdict = DFY_V2_HOOK_YIELD;
+        if (raw->partner.should_yield_model(input->session)) *verdict = DFY_V2_HOOK_YIELD;
         else if (!raw->partner.permits_model_step(input->session,input->step)) *verdict = DFY_V2_HOOK_DENY;
     }
     return report(DFY_V2_OK,error);

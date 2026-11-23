@@ -433,6 +433,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             case 2: return call("_follow","start-follow",Json::object());
             case 3:
                 if (input.at("following").at("work") != follow_id || input.at("followAttention").at("status") != "recovered" ||
+                    input.at("followAttention").contains("reason") || input.at("followAttention").at("previousReason") != "unreachable_height" ||
                     input.at("activeMotion").at("progress").at("path") != "reachable")
                     throw std::runtime_error("new player chat could not see recovery of the same work");
                 return {{Role::assistant,"听得见，我跟上了。"}};
@@ -860,7 +861,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (events.empty()) return quiet;
             const auto order = events.back().at("sequence").get<unsigned>();
             if (order == 4) {
-                if (input.contains("planRejection") || !std::filesystem::exists(root/"observe-plan-settled"))
+                if (input.contains("planRejection") || input.contains("previousPlanRejection") ||
+                    !std::filesystem::exists(root/"observe-plan-settled"))
                     throw std::runtime_error("next message lost the settled observation plan");
                 checked = true;
                 return {{Role::assistant,"看过了，我还在。"}};
@@ -868,7 +870,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (order != 2 && order != 3) return quiet;
             Json node{{"id","nearby"},{"skill","observe"},{"arguments",Json::object()}};
             if (order == 2) node["after"] = {"missing"};
-            else if (input.at("planRejection").at("result").at("reason") != "invalid_dependency")
+            else if (input.contains("planRejection") || input.at("previousPlanRejection").at("order") != 2 ||
+                input.at("previousPlanRejection").at("result").at("reason") != "invalid_dependency")
                 throw std::runtime_error("repair turn did not see the original rejection");
             return call("_queue_actions",order == 2 ? "reject-observe-plan" : "accept-observe-plan",
                 {{"operation","plan"},{"steps",Json::array({node})}});
@@ -1276,7 +1279,8 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     using namespace dfy;
     using namespace model;
     using Json = nlohmann::json;
-    const auto outcome = variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
+    const bool finish = variant.ends_with(L"-finish");
+    const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
     const bool internal = variant.ends_with(L"-internal");
     const std::string reply = "我在这儿。";
     std::atomic_bool received = false;
@@ -1285,6 +1289,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
         const auto& message = request.messages.back();
         if (message.role == Role::tool) {
+            if (finish) throw std::runtime_error("confirmed closing reply submitted another model step");
             const auto result = Json::parse(message.content.substr(message.content.find('{')));
             if (result.at("delivery") != outcome || received.exchange(true)) throw std::runtime_error("lost actual reply delivery state");
             return {{Role::assistant,internal ? R"({"internal":"keep quiet"})" : reply}};
@@ -1293,8 +1298,16 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
         const auto tool = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_reply"); });
         if (received || tool == request.tools.end()) throw std::runtime_error("reply was unavailable or the turn repeated");
-        const Json args{{"text",std::string_view(outcome) == "not_sent" ? "第一行。\n第二行。" : reply}};
-        return {{Role::assistant,"",{{"explicit-reply",tool->name,args.dump()}}},FinishReason::tool_calls};
+        Json args{{"text",std::string_view(outcome) == "not_sent" ? "第一行。\n第二行。" : reply}};
+        if (finish || std::string_view(outcome) != "sent") args["finish"] = true;
+        Response response{{Role::assistant,"",{{"explicit-reply",tool->name,args.dump()}}},FinishReason::tool_calls};
+        if (finish) {
+            const auto observe = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_observe"); });
+            if (observe == request.tools.end()) throw std::runtime_error("missing sibling observation");
+            response.message.tool_calls.push_back({"sibling-observe",observe->name,"{}"});
+            received = true;
+        }
+        return response;
     }},std::move(run));
     host.plugins().install(package);
     if (host.plugins().load("mc.companion")) throw std::runtime_error("could not load reply package");

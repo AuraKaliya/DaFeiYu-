@@ -82,14 +82,16 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         Guidance{"flowGuidance","clarification","局内疑问用本地追问及动作范围。玩家用自然语言补足线索时，先核对原消息和候选，再用 task_update 的 resolves 结算该事项。仍有不确定的步骤维持等待。",
             player_message && input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")},
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
+        Guidance{"flowGuidance","previousPlanRejection","较早消息的计划退回原因只供修订原计划时查阅。先处理当前原话与最新实效。",
+            input.contains("previousPlanRejection")},
         Guidance{"domainExperience","targetEvidence","按原话的对象和数量选择现场候选。开口的准星不唯一只说明视线，明确授权多个开口时用原观察的候选组。补查应缩小范围或核验选中格，需要线索时只问缺失的一项。",
             player_message || correcting || input.contains("questionResult")},
         Guidance{"domainExperience","nearbyMaterials",nearby_materials,tools_for_gathering && needs_materials_guidance(input,player_message)},
         Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
             input.at("trigger") == "follow.attention"},
-        Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说明现场，游戏发言省略内部编号和工具名。",
+        Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说话，省略内部编号和工具名。只需答话时直接输出文本。需要边做边说时用 reply；回复后本轮就结束可用 finish。",
             player_message || actual_outcome},
-        Guidance{"outputConstraints","workOutcome","按已核实的游戏效果说进展和完工，已接纳的步骤仍待实际回执。",
+        Guidance{"outputConstraints","workOutcome","按最近核实的方块、库存、站位或投递回执说进展。跨轮状态先核对是否已恢复，再说明现场。已接纳的步骤仍待实际回执。",
             has_work || actual_outcome}
     };
     return render_guidance("Minecraft 同场规则",entries);
@@ -248,10 +250,15 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         const auto text = answered ? std::string(state.answer.data,state.answer.length) : std::string("伙伴未交付本次委托的文字答复，请查实际回执");
         publish("mc.partner.report",{{"generation",active_delegation_->world},{"id",active_delegation_->id},{"ok",answered},{"text",text}});
         active_delegation_.reset();
-    } else publish("mc.partner.turn",{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
-        {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel},
-        {"outcome",cancel ? (feed_.departed() || feed_.departure() ? "player_left" : "cancelled") :
-            state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}});
+    } else {
+        Json turn{{"generation",session_world_},{"order",order_},{"session",session_},{"request",request_},
+            {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel},
+            {"outcome",cancel ? (feed_.departed() || feed_.departure() ? "player_left" : "cancelled") :
+                state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}};
+        const auto& reply = plan_repair_exhausted_ ? rejection_reply_ : reply_;
+        if (reply.finish && reply.delivered) turn["closingReply"] = reply.work;
+        publish("mc.partner.turn",turn);
+    }
     request_ = 0;
     attention_turn_.reset();
     return true;
@@ -360,7 +367,7 @@ void PartnerLoop::submit(std::string_view wake) {
         Json{{"work",handoff_->work},{"status","waiting_for_old_work"}} : handoff_->receipt;
     if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
     if (!delegated && plan_rejection_.is_object() && plan_rejection_.at("revision") == task_.revision())
-        input["planRejection"] = plan_rejection_;
+        input[plan_rejection_.at("order") == order ? "planRejection" : "previousPlanRejection"] = plan_rejection_;
     const auto completed = delegated ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
     bool actual_outcome = wake == "follow.attention" ||
@@ -672,13 +679,20 @@ bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args)
     return false;
 }
 
-// 给普通答复或计划失败结论登记原工作，退出前保留本轮的发言机会。
-bool PartnerLoop::reserve_reply(std::uint64_t session, std::string_view work) {
+// 在原回合接纳发言时登记工作和可选的结束条件。
+bool PartnerLoop::reserve_reply(std::uint64_t session, std::string_view work, bool finish) {
     if (session != session_ || active_delegation_) return true;
     auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
     if (!reserved.work.empty()) return false;
     reserved.work = work;
+    reserved.finish = finish;
     return true;
+}
+
+// 结尾发言只有读回已发送才可以让出下一次送模，不影响正在归还的同批工具。
+bool PartnerLoop::should_yield_model(std::uint64_t session) const noexcept {
+    const auto& reply = plan_repair_exhausted_ ? rejection_reply_ : reply_;
+    return session == session_ && (wait_for_work_ || (reply.finish && reply.delivered));
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
@@ -864,10 +878,15 @@ std::string_view PartnerLoop::front_barrier(std::uint64_t session) const noexcep
     return {};
 }
 
-// 把原退出票据的效果与正文移动到本轮预留槽位。
+// 登记原发言的实效并保存退出票据。
+// 步骤：确认属于本轮 → 为下一模型请求登记投递终态 → 保存回执。
 void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
     std::string work, std::string output) noexcept {
     if (!session_ || session != session_ || !request_) return;
+    if (skill == "reply" && effect == DFY_V2_TOOL_APPLIED) {
+        auto& reply = work == reply_.work ? reply_ : rejection_reply_;
+        if (work == reply.work) reply.delivered = true;
+    }
     if (action_count_ >= actions_.size()) return;
     actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
 }
@@ -949,9 +968,10 @@ std::deque<PartnerLoop::WorkSettlement>::const_iterator PartnerLoop::ready_settl
 // 将最新样本与逻辑跟随和当前桥接执行段关联。
 Json PartnerLoop::follow_attention_context() const {
     const auto& follow = *follow_;
+    const auto active = follow.attention.active();
     return {{"generation",session_world_},{"work",follow.id},{"segment",follow.segment},
-        {"episode",follow.attention.episode()},{"status",follow.attention.active() ? "raised" : "recovered"},
-        {"reason",follow.attention.reason()},{"progress",follow.attention.evidence()}};
+        {"episode",follow.attention.episode()},{"status",active ? "raised" : "recovered"},
+        {active ? "reason" : "previousReason",follow.attention.reason()},{"progress",follow.attention.evidence()}};
 }
 
 // 同一异常只请求一次模型判断，恢复更新可见状态与 Trace。

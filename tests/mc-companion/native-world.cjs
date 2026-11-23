@@ -437,8 +437,14 @@ async function main() {
         else assert.deepEqual({ id, context, args }, hostWork.at(-1));
       }
       if (delivery) {
-        assert.equal(skill, 'reply');
         assert.equal(context.order, 2);
+        if (delivery === 'finish' && skill === 'observe') {
+          assert.equal(method, 'partner.begin');
+          assert.deepEqual(args, {});
+          return { ...context, skill, exited: true, result: { status: 'done', position: state.position } };
+        }
+        assert.equal(skill, 'reply');
+        assert.ok(!Object.hasOwn(args, 'finish'));
         const text = '我在这儿。';
         if (id.startsWith('reply.')) {
           assert.ok(explicitReply && delivery === 'fallback');
@@ -464,7 +470,7 @@ async function main() {
         assert.equal(args.text, text);
         if (delivery === 'unknown') return { ...context, skill, exited: true, result: { status: 'blocked', sent: false, delivery } };
         assert.equal(++replies, 1);
-        return { ...context, skill, exited: true, result: { status: 'done', sent: true, delivery, text } };
+        return { ...context, skill, exited: true, result: { status: 'done', sent: true, delivery: 'sent', text } };
       }
       if (revision) {
         if (attention) {
@@ -1105,15 +1111,21 @@ async function main() {
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (showGame) assert.ok(approvedId);
     if (delivery) {
-      assert.equal(replies, delivery === 'fallback' || delivery === 'sent' ? 1 : 0);
+      assert.equal(replies, ['fallback', 'sent', 'finish'].includes(delivery) ? 1 : 0);
       assert.equal(replyReads, delivery === 'unknown' ? 1 : 0);
       const trace = path.join(root, 'trace', 'events.jsonl');
       const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
       const speech = rows.filter(row => row.category === 'mc.partner.action' && row.body.skill === 'reply').map(row => row.body);
       assert.equal(speech.length, delivery === 'fallback' ? 2 : 1);
       assert.equal(speech[0].bridgeWork, explicitReply.id);
-      assert.equal(speech[0].result.delivery, delivery === 'sent' || delivery === 'unknown' ? delivery : 'not_sent');
+      assert.equal(speech[0].result.delivery, delivery === 'unknown' ? 'unknown' : ['sent', 'finish'].includes(delivery) ? 'sent' : 'not_sent');
       if (delivery === 'fallback') assert.equal(speech[1].source, 'final_text');
+      const explicit = rows.find(row => row.kind === 'tool.exited' && row.callId === 'explicit-reply');
+      assert.equal(rows.filter(row => row.kind === 'model.prepared' && row.run === explicit.run).length, delivery === 'finish' ? 1 : 2);
+      if (delivery === 'finish') {
+        assert.ok(rows.some(row => row.kind === 'tool.exited' && row.callId === 'sibling-observe' && row.succeeded));
+        assert.ok(rows.some(row => row.category === 'mc.partner.turn' && row.body.closingReply === explicitReply.id && row.body.outcome === 'completed'));
+      }
       console.log(trace);
     } else if (questionExpiry) {
       assert.ok(questionPresented && expiredAt !== undefined);

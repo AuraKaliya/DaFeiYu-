@@ -32,8 +32,8 @@ class PartnerLoop {
     bool permits(std::uint64_t session) const noexcept;
     // 新游戏动作等待原收件恢复，在途工作仍按原号读回。
     bool waiting_for_feed(std::uint64_t session) const noexcept { return session == session_ && feed_.recovering(); }
-    // 在本轮已交出一次性工作时将下次模型请求交还给外层调度。
-    bool waits_for_work() const noexcept { return wait_for_work_; }
+    // 在本轮已交出一次性工作或完成明确的结尾发言后让出模型请求。
+    bool should_yield_model(std::uint64_t session) const noexcept;
     // 同类计划两次失败后，只再给原回合一次模型结算机会。
     bool permits_model_step(std::uint64_t session, std::uint64_t step) noexcept;
     // 返回当前配对的前台动作门槛，空值表示可以继续验证动作。
@@ -43,7 +43,7 @@ class PartnerLoop {
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
     bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
     // 给当前对话或回执分配唯一的玩家发言机会。
-    bool reserve_reply(std::uint64_t session, std::string_view work);
+    bool reserve_reply(std::uint64_t session, std::string_view work, bool finish);
     // 核对步骤的实际影响是否需要待答证据，或与已选目标冲突。
     nlohmann::json action_question(std::uint64_t session, std::string_view skill, const nlohmann::json& args,
         std::uint64_t resolves = 0) const;
@@ -319,7 +319,7 @@ class PartnerLoop {
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     std::unique_ptr<GameWork> final_reply_;
-    struct ReplyReservation { std::string work; bool unsent = false; };
+    struct ReplyReservation { std::string work; bool unsent = false, finish = false, delivered = false; };
     ReplyReservation reply_, rejection_reply_;
     bool question_requested_ = false;
     bool final_text_for_player_ = false;
