@@ -120,6 +120,7 @@ async function main() {
   const repairObserve = variant === 'partner-revision-repair-observe';
   const repairPlan = variant === 'partner-revision-repair-plan';
   const repairPlanObserve = variant === 'partner-revision-repair-plan-observe';
+  const observationBatch = variant === 'partner-revision-observation-batch';
   const layered = variant?.startsWith('partner-revision-layered');
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const attention = variant === 'partner-revision-attention';
@@ -148,6 +149,8 @@ async function main() {
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
   let pickupPending = false, placementQuestionWork;
+  const sceneReads = [];
+  let meetingWork;
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
   let planReading = false, nextBlock = false;
@@ -230,6 +233,7 @@ async function main() {
         }
         if (revision) {
           messages[1].text = '清理门边两格草方块';
+          if (observationBatch) messages[1].text = '看看我在哪，能找到就过来';
           if (attention) {
             messages[1].text = '大肥鱼，跟着我';
             messages[2].text = '你听得到吗';
@@ -532,6 +536,39 @@ async function main() {
           assert.equal(args.text, '看过了，我还在。');
           assert.equal(++replies, 1);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        if (observationBatch) {
+          assert.equal(context.order, 2);
+          if (skill === 'observe') {
+            assert.equal(method, 'partner.begin');
+            assert.deepEqual(args, { mode: 'scene', sources: ['self', 'player', 'message'], message: 2, radius: 1 });
+            assert.ok(!sceneReads.includes(id));
+            sceneReads.push(id);
+            const livePlayer = sceneReads.length > 1;
+            return { ...context, skill, exited: true, result: { status: 'done', observation: {
+              id, generation: context.generation, dimension: 'overworld', requested: 1, samples: [{
+                sampledAtMs: livePlayer ? 242 : 142, views: [
+                  { source: 'self', status: 'sampled', actor: { position: state.position } },
+                  { source: 'player', status: livePlayer ? 'sampled' : 'unavailable',
+                    actor: livePlayer ? { position: { x: 2.5, y: -60, z: 1.25 } } : null },
+                  { source: 'message', status: 'sampled', message: 2, anchor: { dimension: 'overworld', sampledAtMs: 42,
+                    position: { x: -0.5, y: -57, z: 9.25 } } },
+                ],
+              }],
+            } } };
+          }
+          assert.equal(skill, 'move');
+          assert.equal(sceneReads.length, 2);
+          assert.deepEqual(args, { x: 2, y: -60, z: 1, exact: true });
+          if (method === 'partner.begin') {
+            assert.equal(meetingWork, undefined);
+            meetingWork = id;
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, meetingWork);
+          return { ...context, skill, exited: true, result: { status: 'done', arrived: true,
+            position: { x: 2.5, y: -60, z: 1.25 } } };
         }
         if (pointedCraft) {
           const log = { x: 1, y: -59, z: 2, block: 'oak_log' };
@@ -862,7 +899,7 @@ async function main() {
     assert.equal(generation, state.generation);
     return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -956,6 +993,18 @@ async function main() {
       const paused = checkFollowReceipt(rows, following, following, 'paused');
       const layers = checkPlanReceiptOrder(rows, nodeExits, paused.seq);
       checkFollowReceipt(rows, resumed, following, 'exited', layers.at(-1).seq);
+      console.log(trace);
+    } else if (observationBatch) {
+      assert.equal(sceneReads.length, 2);
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+      const observations = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+        row.body.skill === 'observe');
+      assert.deepEqual(observations.map(row => row.body.bridgeWork), sceneReads);
+      const queued = rows.find(row => row.kind === 'tool.exited' && row.callId === 'meet-player');
+      const next = rows.find(row => row.seq > queued.seq && row.kind === 'model.prepared');
+      assert.equal(readPartnerContext(next).input.trigger, 'plan.finished');
+      checkPlanReceiptOrder(rows, [meetingWork], 0);
       console.log(trace);
     } else if (revision) {
       if (restartRoute || pointedCraft) {

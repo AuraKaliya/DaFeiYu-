@@ -35,7 +35,7 @@ function fixture() {
     },
   };
   const context = { id: 'probe', generation: 'world', player: () => player, inventory: () => ({ dirt: 4 }),
-    messageAnchor: () => ({ anchor: { position: origin }, center: origin }), check: () => {} };
+    messageAnchor: () => ({ anchor: { position: origin, dimension: 'overworld', sampledAtMs: 42 }, center: origin }), check: () => {} };
   return { bot, player, context, reads };
 }
 
@@ -56,16 +56,20 @@ test('combined survey reads shared coordinates once', async () => {
 });
 
 // 玩家移动后，原话中心保持不动，变化只比较前后都可读的格子。
-test('sample series keeps original message apart from live player', async () => {
-  const { bot, player, context } = fixture(), result = {};
+test('sample series keeps original message apart from live actors', async () => {
+  const { bot, player, context, reads } = fixture(), result = {};
   let frame = 0;
   context.check = () => { if (++frame === 2) player.position = player.position.offset(1, 0, 0); };
-  await observeWindow(bot, { sources: ['message', 'player'], message: 12, radius: 1, samples: { count: 2, intervalMs: 100 } }, result, context);
+  await observeWindow(bot, { sources: ['message', 'player', 'self'], message: 12, radius: 1,
+    samples: { count: 2, intervalMs: 100 } }, result, context);
   const [first, second] = result.observation.samples;
   assert.ok(second.sampledAtMs - first.sampledAtMs >= 90);
   assert.equal(second.views[0].message, 12);
+  assert.equal(second.views[0].anchor.sampledAtMs, 42);
   assert.equal(second.views[0].anchor.position.x, 0);
   assert.equal(second.views[1].actor.position.x, 2);
+  assert.equal(second.views[2].actor.position.x, 0);
+  assert.equal(reads.get('0,-60,0'), 2);
   assert.deepEqual(second.delta, { total: 1, changes: [{ cell: [0, -60, 0], before: 'dirt', after: 'air' }] });
 });
 

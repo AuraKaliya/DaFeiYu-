@@ -214,6 +214,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool repair_observe = variant == L"partner-revision-repair-observe";
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool repair_plan_observe = variant == L"partner-revision-repair-plan-observe";
+    const bool observation_batch = variant == L"partner-revision-observation-batch";
     const bool layered = variant.starts_with(L"partner-revision-layered");
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
@@ -255,6 +256,45 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return call("_queue_actions",std::move(id),{{"operation",plan ? "plan" : "append"},{"steps",Json::array({step})}});
         };
         const auto& last = request.messages.back();
+        if (observation_batch) {
+            const Json args{{"mode","scene"},{"sources",{"self","player","message"}},{"message",2},{"radius",1}};
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "duplicate-scene") {
+                    const auto first = std::ranges::find(request.messages,"first-scene",&Message::tool_call_id);
+                    if (first == request.messages.end()) throw std::runtime_error("the original observation is missing from the batch");
+                    const auto observation = Json::parse(first->content.substr(first->content.find('{'))).at("observation");
+                    const auto& sample = observation.at("samples").front();
+                    const auto& views = sample.at("views");
+                    if (result != Json{{"status","done"},{"observationWork",observation.at("id")}} ||
+                        sample.at("sampledAtMs") != 142 || views.at(0).at("source") != "self" ||
+                        views.at(0).at("actor").at("position").at("x") != -1.5 || views.at(1).at("source") != "player" ||
+                        views.at(1).at("status") != "unavailable" || views.at(2).at("source") != "message" ||
+                        views.at(2).at("message") != 2 || views.at(2).at("anchor").at("sampledAtMs") != 42)
+                        throw std::runtime_error("batch did not retain one observation with its original sources and time");
+                    return call("_observe","refresh-scene",args);
+                }
+                if (last.tool_call_id != "refresh-scene") throw std::runtime_error("unexpected observation turn");
+                const auto& sample = result.at("observation").at("samples").front();
+                const auto& views = sample.at("views");
+                if (sample.at("sampledAtMs") != 242 || views.at(1).at("status") != "sampled" ||
+                    views.at(1).at("actor").at("position").at("x") != 2.5 || views.at(2).at("anchor").at("sampledAtMs") != 42)
+                    throw std::runtime_error("explicit refresh reused a previous batch or lost the original anchor");
+                const Json step{{"id","meet"},{"skill","move"},{"arguments",{{"x",2},{"y",-60},{"z",1}}}};
+                return call("_queue_actions","meet-player",{{"operation","plan"},{"steps",Json::array({step})}});
+            }
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                if (input.at("planSettlements").at(0).at("nodes").at(0).at("result").at("arrived") != true)
+                    throw std::runtime_error("the verified plan did not proceed to actual arrival");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,R"({"internal":"ready"})"}};
+            auto batch = call("_observe","first-scene",args);
+            batch.message.tool_calls.push_back(call("_observe","duplicate-scene",args).message.tool_calls.front());
+            return batch;
+        }
         if (attention) {
             if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"ready"})"}};
             const auto input = Json::parse(last.content);
@@ -849,7 +889,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+            (repair_observe || repair_plan || pointed_support || observation_batch ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
                 pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {

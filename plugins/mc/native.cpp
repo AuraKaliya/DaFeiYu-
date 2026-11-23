@@ -10,7 +10,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <map>
 #include <memory>
+
+using SceneBatch = std::array<std::uint64_t,4>;
 
 struct NativeJob {
     std::uint64_t sequence = 0;
@@ -28,6 +31,7 @@ struct NativeJob {
     bool wait_for_work = false;
     bool pointed_dig = false;
     std::uint64_t resolves = 0;
+    SceneBatch scene_batch{};
     std::string_view skill;
     std::unique_ptr<dfy::mc::GameWork> action;
     std::unique_ptr<dfy::mc::PipeExchange> pipe;
@@ -39,6 +43,8 @@ struct dfy_v2_instance {
     dfy_v2_query_interface_fn host = nullptr;
     dfy::mc::PartnerLoop partner;
     std::array<NativeJob, 4> jobs;
+    SceneBatch scene_batch{};
+    std::map<std::string,std::string> scene_readings;
 };
 
 namespace {
@@ -198,7 +204,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     return report(DFY_V2_OK, error);
 }
 // 将只读请求和独占移动分配到有界工作槽，接纳本身不执行游戏动作。
-// 步骤：校验能力与参数 → 核对移动互斥并分配独立槽位 → 签发工作票据。
+// 步骤：校验能力与批次 → 复用已完成的同批观察或核验动作 → 签发工作票据。
 dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, const dfy_v2_tool_call* call,
     dfy_v2_tool_ticket* ticket, dfy_v2_error* error) noexcept {
     if (!ticket) return report(DFY_V2_INVALID_ARGUMENT, error);
@@ -239,6 +245,13 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     if (found == raw->jobs.end()) return report(DFY_V2_BUSY, error);
     auto& job = *found;
     if (raw->sequence == UINT64_MAX) return report(DFY_V2_RESOURCE_EXHAUSTED, error);
+    const SceneBatch batch{call->session,call->run,call->step,call->attempt};
+    const bool reuse_scene = game_skill == "observe" && partner_turn && !raw->partner.delegated(call->session) &&
+        raw->partner.permits(call->session) && !raw->partner.waiting_for_feed(call->session);
+    if (!reuse_scene || raw->scene_batch != batch) {
+        raw->scene_batch = batch;
+        raw->scene_readings.clear();
+    }
     bool confirmed = legacy, pending_approval = false;
     try {
         job.id = std::to_string(raw->owner) + "." + std::to_string(raw->sequence + 1);
@@ -248,6 +261,17 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         bool observation_blocked = false;
         if (game_skill == "observe") {
             const auto input = nlohmann::json::parse(job.arguments);
+            if (reuse_scene) {
+                job.arguments = input.dump();
+                if (const auto original = raw->scene_readings.find(job.arguments); original != raw->scene_readings.end()) {
+                    job.output = nlohmann::json{{"status","done"},{"observationWork",original->second}}.dump();
+                    job.ready = job.success = true;
+                    job.sequence = ++raw->sequence;
+                    *ticket = {raw->owner,job.sequence};
+                    return report(DFY_V2_OK,error);
+                }
+                job.scene_batch = batch;
+            }
             observation_blocked = !raw->partner.admit_hit_observation(call->session,input.at("arguments"));
         }
         if (game_skill == "collect") {
@@ -478,12 +502,21 @@ dfy_v2_status DFY_V2_CALL cancel(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket
     }
     return report(DFY_V2_OK, error);
 }
-// 归还已退出的票据，未退出工作保持占用。
+// 归还已退出的票据，并为同一批次保留可复用的场景观察编号。
+// 步骤：核对退出 → 登记已完成的场景读数 → 交付原事实并归还槽位。
 dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, dfy_v2_error* error) noexcept {
     auto* job = find_job(raw, ticket);
     if (!job) return report(DFY_V2_INVALID_HANDLE, error);
     if (!job->exited) return report(DFY_V2_BUSY, error);
     if (job->confirmation) raw->partner.confirm_exited(job->invocation);
+    // 只有本批已读回真实采样的工具才能成为其他调用的证据来源。
+    if (job->success && job->skill == "observe" && job->scene_batch == raw->scene_batch && raw->scene_readings.size() < 64) {
+        try {
+            const auto result = nlohmann::json::parse(job->output);
+            if (result.at("status") == "done" && result.contains("observation") && !result.at("observation").at("samples").empty())
+                raw->scene_readings.try_emplace(job->arguments,job->id);
+        } catch (...) {} // 复用登记失败仍正常交付原观察回执。
+    }
     if (job->partner_session && job->method != NativeJob::Method::local && !job->motion_transferred)
         raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,
         std::move(job->id),std::move(job->output));
