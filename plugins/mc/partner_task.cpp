@@ -82,6 +82,23 @@ Json candidate_cells(const Json& observation, const Json& candidate) {
     return cells;
 }
 
+// 展开同一原话中的多个开口并保留确定的准星约束。
+// 步骤：核对候选身份与原指向 → 展开每个候选 → 合并已观察的格子。
+Json opening_cells(const Json& observation, const Json& candidates) {
+    if (!candidates.is_array() || candidates.empty() || candidates.size() > 8) return nullptr;
+    const auto& choice = observation.at("playerFocus").at("choice");
+    if (choice.is_string() && std::ranges::find(candidates,choice) == candidates.end()) return nullptr;
+    Json cells = Json::array();
+    for (auto it = candidates.begin(); it != candidates.end(); ++it) {
+        if (!it->is_string() || std::find(candidates.begin(),it,*it) != it) return nullptr;
+        const auto selected = candidate_cells(observation,*it);
+        if (selected.is_null()) return nullptr;
+        for (const auto& cell : selected)
+            if (std::ranges::find(cells,cell) == cells.end()) cells.push_back(cell);
+    }
+    return cells;
+}
+
 // 检查目标显式坐标的形状、范围和唯一性。
 bool valid_cells(const Json& cells) {
     if (!cells.is_array() || cells.empty() || cells.size() > 16) return false;
@@ -161,7 +178,7 @@ Json PartnerTask::context() const {
     if (has_target()) {
         value["target"] = target_;
         const auto message = target_.at("message").get<std::uint64_t>();
-        const auto& source = target_.contains("candidate") ? openings_ : observations_;
+        const auto& source = (target_.contains("candidate") || target_.contains("candidates")) ? openings_ : observations_;
         const auto original = source.find(message);
         if (original != source.end()) value["targetObservation"] = original->second;
     }
@@ -290,10 +307,18 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
             if (!commit && has_target() && !existing && (!target.value("replace",false) || player_order != message))
                 return {{"status","invalid_target"},{"reason","new player instruction required to replace the target"}};
             if (approach && !(existing && target_.value("approach",false)) &&
-                (player_order != message || target.contains("cells") || target.contains("candidate")))
+                (player_order != message || target.contains("cells") || target.contains("candidate") || target.contains("candidates")))
                 return {{"status","invalid_target"},{"reason","record the original approach before choosing cells"}};
             const auto original = openings_.find(message);
-            if (target.contains("candidate")) {
+            if (target.contains("candidates")) {
+                if (target.contains("candidate") || target.contains("cells") || approach || original == openings_.end())
+                    return {{"status","invalid_target"},{"reason","opening_selection_requires_original_observation"}};
+                auto cells = opening_cells(original->second,target.at("candidates"));
+                if (cells.is_null()) return {{"status","invalid_target"},{"reason","opening_selection_unverified"}};
+                target["cells"] = std::move(cells);
+                if (!target.contains("observation"))
+                    return {{"status","invalid_target"},{"reason","current_observation_required"},{"cells",target.at("cells")}};
+            } else if (target.contains("candidate")) {
                 if (target.contains("cells") || approach) return {{"status","invalid_target"},{"reason","choose an original candidate or cells"}};
                 if (commit && existing && original != openings_.end()) {
                     const auto choice = target_.value("candidate",original->second.at("playerFocus").at("choice"));
@@ -313,7 +338,7 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                 if (!approach && !commit && target.contains("observation") &&
                     (!verified_cells(target,scene) || local_observation_.at("revision") != revision_))
                     return {{"status","invalid_target"},{"reason","current_observation_required"},{"cells",cells}};
-                if (!approach && !target.contains("candidate") && original != openings_.end()) {
+                if (!approach && !target.contains("candidate") && !target.contains("candidates") && original != openings_.end()) {
                     const auto& choice = original->second.at("playerFocus").at("choice");
                     if (choice.is_string()) {
                         const auto expected = candidate_cells(original->second,choice);
@@ -422,6 +447,12 @@ void PartnerTask::bind_collection(Json& arguments) const {
     if (collection_ != "ground" && arguments.value("source","") != "ground") return;
     arguments["source"] = "ground";
     if (target_ready()) arguments["protectedCells"] = target_cells();
+}
+
+// 读取原话的开口证据，后续简要观察保留该记录。
+const Json* PartnerTask::opening_observation(std::uint64_t message) const {
+    const auto original = openings_.find(message);
+    return original == openings_.end() ? nullptr : &original->second;
 }
 
 // 分别归档最后一次视线和原话首次确定的墙面，简要观察不会覆盖墙面证据。

@@ -166,6 +166,40 @@ void verify_opening_geometry() {
         throw std::runtime_error("wall geometry was lost after hit observation");
 }
 
+// 核对原话的多开口选择在自身复查后才生成放置范围。
+// 步骤：登记两个竖向开口 → 拦截越过确定指向或缺少读回的选择 → 绑定已核实的四格。
+void verify_opening_selection() {
+    using Json = nlohmann::json;
+    dfy::mc::PartnerTask task;
+    const Json position{{"x",4},{"y",-60},{"z",-6}};
+    const Json anchor{{"dimension","overworld"},{"position",position}};
+    const Json gaps = Json::array({
+        {{"id","near"},{"x",3},{"y",-60},{"z",-3},{"width",1},{"height",2},{"axis","x"}},
+        {{"id","far"},{"x",5},{"y",-60},{"z",-3},{"width",1},{"height",2},{"axis","x"}}});
+    task.record({{"skill","observe"},{"result",{{"status","done"},{"anchor",{{"message",2}}},
+        {"sampledAtMs",10},{"playerFocus",{{"choice","near"},{"candidates",gaps}}}}}});
+    Json args{{"goal","补原墙的两处开口"},{"next","player"},{"target",{{"message",2},{"candidates",{"far"}}}}};
+    if (task.update(args,anchor,0,&anchor).at("reason") != "opening_selection_unverified")
+        throw std::runtime_error("opening selection dropped the original pointed candidate");
+    args["target"]["candidates"] = {"near","far"};
+    const auto pending = task.update(args,anchor,0,&anchor);
+    if (pending.at("reason") != "current_observation_required" || pending.at("cells").size() != 4 || task.revision())
+        throw std::runtime_error("multiple openings did not require a verified cell scope");
+    auto verified = pending.at("cells");
+    for (auto& cell : verified) {
+        cell["block"] = "air";
+        cell["atSelf"] = true;
+    }
+    const Json sample{{"views",Json::array({{{"source","self"},{"status","sampled"},{"actor",{{"position",position}}}}})},
+        {"verified",verified}};
+    task.record({{"skill","observe"},{"result",{{"status","done"},{"observation",
+        {{"id","original-voids"},{"dimension","overworld"},{"samples",Json::array({sample})}}}}}});
+    args["target"]["observation"] = "original-voids";
+    if (task.update(args,anchor,0,&anchor).at("status") != "updated" || task.target_cells() != pending.at("cells") ||
+        task.context().at("targetObservation").at("playerFocus").at("candidates") != gaps)
+        throw std::runtime_error("verified original openings did not become one bounded placement target");
+}
+
 // 检查原话的独立子句和导航修订边界。
 // 步骤：区分取材和指向 → 接纳一次路线 → 核对新修订仍须沿用原墙。
 void verify_route_and_dig_intent() {
@@ -1318,6 +1352,7 @@ int wmain(int argc, wchar_t** argv) {
             verify_collection_effect();
             verify_target_evidence();
             verify_opening_geometry();
+            verify_opening_selection();
             verify_route_and_dig_intent();
             verify_knowledge();
         }

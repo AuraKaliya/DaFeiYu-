@@ -80,7 +80,7 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         Guidance{"flowGuidance","questionResult","根据事项的结算状态、所选目标和当前证据判断原步骤能否继续。",
             input.contains("questionResult")},
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
-        Guidance{"domainExperience","targetEvidence","已有原话现场能区分候选时直接使用。补查应能缩小候选范围，需玩家提供线索时问一个具体问题。",
+        Guidance{"domainExperience","targetEvidence","按原话的对象和数量选择现场候选。开口的准星不唯一只说明视线，明确授权多个开口时用原观察的候选组。补查应缩小范围或核验选中格，需要线索时只问缺失的一项。",
             player_message || correcting || input.contains("questionResult")},
         Guidance{"domainExperience","nearbyMaterials",nearby_materials,tools_for_gathering && needs_materials_guidance(input,player_message)},
         Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
@@ -380,16 +380,18 @@ void PartnerLoop::submit(std::string_view wake) {
         })) task.erase(latest);
     }
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
-    if (question_) input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
-        {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
+    if (question_) {
+        input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
+            {"sourceMessage",question_->order},{"originalText",question_->origin},
+            {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
+        if (const auto* opening = task_.opening_observation(question_->order))
+            input["pendingQuestion"]["openingObservation"] = *opening;
+    }
     if (question_ && !question_->after_pickup.is_null()) {
         input["pendingQuestion"]["afterPickup"] = question_->after_pickup;
-        input["pendingQuestion"]["originalText"] = question_->origin;
     }
     if (question_ && !question_->scope.is_null()) {
         input["pendingQuestion"]["scope"] = question_->scope;
-        input["pendingQuestion"]["sourceMessage"] = question_->order;
-        input["pendingQuestion"]["originalText"] = question_->origin;
     }
     if (question_ && placement_choice_pending() && question_->item == placement_choice_.item)
         input["pendingQuestion"]["placementOptions"] = placement_choice_.options;

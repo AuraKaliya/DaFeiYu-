@@ -57,6 +57,8 @@ class PartnerTask {
     bool bind_placement(nlohmann::json& arguments) const;
     // 以固定顺序返回当前目标的全部方格。
     const nlohmann::json& target_cells() const { return target_.at("cells"); }
+    // 找回原玩家消息的紧凑开口证据，供绑定和待答上下文复用。
+    const nlohmann::json* opening_observation(std::uint64_t message) const;
     // 将当前任务的取材范围固定到实际采掘参数中。
     void bind_collection(nlohmann::json& arguments) const;
     // 更新最近动作，按原消息号独立保存指向证据。
