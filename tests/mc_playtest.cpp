@@ -515,10 +515,10 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             const auto& first = layers.front().at("nodes");
             const auto& fill = layers.back().at("nodes").front().at("result");
             if (graph.at("supersedes") == 0) {
-                if (first.size() != 1 || first.front().at("result").at("reasonCode") != "skill_unavailable" ||
+                if (first.size() != 1 || first.front().at("result").at("reasonCode") != "insufficient_materials" ||
                     fill.at("status") != "skipped")
-                    throw std::runtime_error("unavailable craft did not block its dependent fill");
-                return call("reply",{{"text","我现在做不了木板，那四格我记着呢。"}});
+                    throw std::runtime_error("insufficient logs did not block the dependent fill");
+                return call("reply",{{"text","一根原木做不够五块木板，那四格我记着呢。"}});
             }
             const auto& collected = first.front().at("result");
             if (first.size() != 2 || first.back().at("result").at("status") != "done" ||
@@ -593,7 +593,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
                 throw std::runtime_error("resumed plan lost its original opening");
             return {{Role::assistant,"",{use("check-stock","observe",Json::object())}},FinishReason::tool_calls};
         }
-        if (text.starts_with("从地上取够泥土") || text.starts_with("把原木做成四个木板"))
+        if (text.starts_with("从地上取够泥土") || text.starts_with("把原木做成五个木板"))
             return call("observe",{{"sources",{"message","self"}},{"message",events.back().at("sequence")},{"radius",5},{"verify",cells},
                 {"samples",{{"count",2},{"intervalMs",100}}}});
     } else if (last.role == Role::tool) {
@@ -669,7 +669,7 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
             if (result.at("task").at("goal") == "站到墙上")
                 return call("dig_block",{{"block","dirt"},{"x",3},{"y",-59},{"z",-3}});
             if (result.at("task").at("target").at("cells") != cells) throw std::runtime_error("fill-four probe: gap bound wrong cells");
-            if (combined) return plan(Json::array({step("planks","craft",{{"item","oak_planks"},{"count",4}}),
+            if (combined) return plan(Json::array({step("planks","craft",{{"item","oak_planks"},{"count",5}}),
                 step("fill","fill_target",{{"block","oak_planks"}},{"planks"})}));
             return call("gather_ground",{{"item","dirt"},{"requiredStock",4}});
         }

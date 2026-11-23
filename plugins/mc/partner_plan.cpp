@@ -25,7 +25,9 @@ bool prepare_action(std::string_view skill, Json& args) {
         args["exact"] = true;
         return true;
     }
-    if (skill == "craft") return args.size() == 2 && name("item") && quantity("count");
+    if (skill == "craft") return args.size() == 2+args.count("ingredient") && name("item") && quantity("count") &&
+        !item_name(args.at("item").get_ref<const std::string&>()).empty() && (!args.contains("ingredient") ||
+            (name("ingredient") && !item_name(args.at("ingredient").get_ref<const std::string&>()).empty()));
     if (skill == "route") return args.size() == 2 && name("route") && quantity("laps") && args.at("laps") <= 8;
     if (skill == "observe") return args.empty() || (args.contains("message") &&
         args.at("message").is_number_unsigned() && args.at("message") > 0 &&
@@ -39,7 +41,7 @@ bool prepare_action(std::string_view skill, Json& args) {
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
     for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","changes","cells",
-        "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter"})
+        "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted"})
         if (result.contains(name)) evidence[name] = result.at(name);
     return evidence;
 }
@@ -108,7 +110,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             steps.front()["pickup"] = pickup;
             const auto parent = steps.front().at("id");
             steps.push_back({{"id","after_pickup"},{"skill","craft"},{"after",Json::array({parent})},
-                {"arguments",{{"item",item},{"count",next.at("count")}}}});
+                {"arguments",{{"item",item},{"count",next.at("count")},{"ingredient",pickup}}}});
         }
     }
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};

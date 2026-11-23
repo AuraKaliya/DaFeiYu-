@@ -333,7 +333,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (pointed_craft) {
             const Json continuation{{"item","planks"},{"count",4}};
             const std::string question = "你指哪块原木？";
-            const std::string final = no_pickup ? "木头敲下来了，我还没捡到。" : "木头捡到了，我现在做不了木板。";
+            const std::string final = no_pickup ? "木头敲下来了，我还没捡到。" : "一根原木做成了四块木板。";
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (last.tool_call_id == "first-focus") return call("_ask_player","which-log",{{"question",question},{"afterPickup",continuation}});
@@ -363,15 +363,18 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto& nodes = input.at("taskPlan").at("nodes");
                 const auto& first = layers.at(0).at("nodes").at(0);
                 const auto& dig = first.at("result");
-                const auto& craft = layers.at(1).at("nodes").at(0).at("result");
+                const auto& successor = layers.at(1).at("nodes").at(0);
+                const auto& craft = successor.at("result");
                 if (checked || input.contains("pendingQuestion") || request.tools.size() != 1 ||
                     !request.tools.front().name.ends_with("_reply") || layers.size() != 2 ||
                     nodes.at(1).at("after") != Json::array({"gather_log"}) || nodes.at(0).at("requiresPickup") != "oak_log" ||
-                    first.at("work") != nodes.at(0).at("work") || dig.at("changes").at(0).at("before") != "oak_log")
+                    first.at("work") != nodes.at(0).at("work") || successor.at("work") != nodes.at(1).at("work") ||
+                    dig.at("changes").at(0).at("before") != "oak_log")
                     throw std::runtime_error("compound goal or original pickup work was lost at settlement");
                 if (no_pickup ? dig.at("reasonCode") != "pickup_unverified" || craft.at("reason") != "prerequisite_failed" :
-                    dig.at("inventoryDelta").at("oak_log") != 1 || craft.at("reasonCode") != "skill_unavailable" ||
-                    craft.at("item") != "oak_planks" || craft.at("count") != 4)
+                    dig.at("inventoryDelta").at("oak_log") != 1 || craft.at("status") != "done" ||
+                    craft.at("craft").at("consumed") != 1 || craft.at("craft").at("produced") != 4 ||
+                    craft.at("inventoryDelta") != Json{{"oak_log",-1},{"oak_planks",4}} || craft.at("count") != 4)
                     throw std::runtime_error("crafting advanced without pickup or lost its requested product");
                 return call("_reply","final-line",{{"text",final}});
             }

@@ -355,8 +355,8 @@ async function checkFillFour(fixture, player, whispers, combined) {
   const traceRows = () => readRows(fixture, 'trace/events.jsonl');
   if (combined) {
     await until(() => fixture.materialCount('oak_log') === 1, '原木已入包');
-    player.chat('把原木做成四个木板，然后填上我面前这堵墙的四个缺口');
-    await until(() => whispers.includes('我现在做不了木板，那四格我记着呢。'), '合成节点受阻后记住原开口');
+    player.chat('把原木做成五个木板，然后填上我面前这堵墙的四个缺口');
+    await until(() => whispers.includes('一根原木做不够五块木板，那四格我记着呢。'), '合成缺料后记住原开口');
     assert.ok(fourCells.every(cell => read(cell) === 'air'));
     fixture.send(`tp DfyGuestCheck ${wall.doorStand.join(' ')}`);
     await until(() => fixture.ownerEntity()?.position.x > 7, '玩家已经走到另一处门洞');
@@ -412,7 +412,7 @@ async function checkFillFour(fixture, player, whispers, combined) {
   }
   assert.deepEqual([read(wall.doorLower), read(wall.doorUpper)], ['air', 'air']);
   assert.deepEqual(whispers, [...(combined ? ['好，我跟着你。','嗯，跟着呢。','你指哪一格？','听得见。',
-    '我现在做不了木板，那四格我记着呢。','下面两格补好了，上面有块石头挡着。'] : []),
+    '一根原木做不够五块木板，那四格我记着呢。','下面两格补好了，上面有块石头挡着。'] : []),
     '四格都补上了，另一处缺口留着。']);
   if (combined) {
     for (const [index, line] of ['你站到墙上，先换个目标。', '试一下普通采掘入口。'].entries()) {

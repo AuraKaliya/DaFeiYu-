@@ -6,6 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
+const { craftPlanks } = require('./crafting.cjs');
 const { followPlayer } = require('./follow.cjs');
 const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop,
   matchesDigReference } = require('./collection.cjs');
@@ -438,6 +439,7 @@ function partnerService(bot, world, inbox, places, owner) {
         await followPlayer(bot, owner, args.distance ?? 3, check, result,
           (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
       } else if (r.skill === 'collect') await collect(bot, args, check, result, built);
+      else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
           if (args.sourceMode === 'approach') {
@@ -459,7 +461,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['collect', 'place', 'fill_target', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (builtSpace && world.space() === builtSpace) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
@@ -470,7 +472,7 @@ function partnerService(bot, world, inbox, places, owner) {
         }
       }
       r.exited = true;
-      if (['move', 'route', 'follow', 'collect', 'place', 'fill_target'].includes(r.skill))
+      if (['move', 'route', 'follow', 'collect', 'place', 'fill_target', 'craft'].includes(r.skill))
         previous = { controller: r.controller, action: { ...result, generation: r.generation, order: r.order, skill: r.skill } };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }

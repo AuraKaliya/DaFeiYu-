@@ -84,7 +84,7 @@ async function main() {
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
-  let following, collecting, resumed, collectExited = false;
+  let following, collecting, craftingWork, resumed, collectExited = false;
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
   let planReading = false, nextBlock = false;
@@ -460,11 +460,26 @@ async function main() {
               case 2: assert.equal(args.text, '听得到。'); heardAt = performance.now(); break;
               case 3:
                 assert.ok(collectExited);
-                assert.equal(args.text, noPickup ? '木头敲下来了，我还没捡到。' : '木头捡到了，我现在做不了木板。');
+                assert.equal(args.text, noPickup ? '木头敲下来了，我还没捡到。' : '一根原木做成了四块木板。');
                 break;
               default: assert.fail('unexpected repeated game reply');
             }
             return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          if (skill === 'craft') {
+            assert.ok(!noPickup && collectExited);
+            assert.equal(context.order, 4);
+            assert.deepEqual(args, { item: 'oak_planks', ingredient: 'oak_log', count: 4 });
+            if (method === 'partner.begin') {
+              assert.equal(craftingWork, undefined);
+              craftingWork = id;
+              return { ...context, skill, exited: false, result: {} };
+            }
+            assert.equal(method, 'partner.read');
+            assert.equal(id, craftingWork);
+            return { ...context, skill, exited: true, result: { status: 'done', item: 'oak_planks', count: 4,
+              craftAttempted: true, inventoryDelta: { oak_log: -1, oak_planks: 4 }, craft: { ingredient: 'oak_log',
+                perBatch: 4, requiresTable: false, batches: 1, completedBatches: 1, consumed: 1, produced: 4, remaining: 0 } } };
           }
           assert.equal(skill, 'collect');
           assert.equal(context.order, 4);
@@ -851,11 +866,14 @@ async function main() {
         const queue = context.tools.find(tool => tool.name.endsWith('_queue_actions'));
         const fields = JSON.parse(queue.parameters).properties;
         assert.match(fields.steps.items.properties.skill.description, /route: Validated route\.id/);
-        assert.match(fields.steps.items.properties.skill.description, /craft \(unavailable\)/);
+        assert.match(fields.steps.items.properties.skill.description, /craft: Plank item/);
         if (pointedCraft) {
           assert.equal(context.input.pendingQuestion.afterPickup.count, 4);
           assert.match(fields.resolves.description, /saved successor is retained/);
           assert.match(fields.steps.items.properties.pickup.description, /actually enter inventory/);
+          const exit = rows.find(row => row.category === 'mc.partner.action' && row.body.skill === 'craft');
+          assert.equal(exit?.body.bridgeWork, craftingWork);
+          assert.equal(Boolean(exit), !noPickup);
         }
         const settled = turns.find(turn => turn.input.trigger === 'plan.finished' &&
           turn.input.taskPlan?.status !== 'cancelled');

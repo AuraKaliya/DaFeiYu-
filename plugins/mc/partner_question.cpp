@@ -206,14 +206,14 @@ bool PartnerLoop::placement_choice_pending() const noexcept {
 // 步骤：处理原无范围追问 → 核对未获选的放置格 → 比对待答方格及其支撑。
 Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill, const Json& args, std::uint64_t resolves) const {
     const bool placing = skill == "place" || skill == "fill_target";
-    if ((!placing && skill != "collect") || session != session_ || !session || delegated(session)) return {};
+    if ((!placing && skill != "collect" && skill != "craft") || session != session_ || !session || delegated(session)) return {};
     const auto blocked = [](std::uint64_t item, std::string_view reason) {
         return Json{{"status","blocked"},{"reason",reason},{"item",item}};
     };
     const bool pending = placement_choice_pending();
     if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item))
         return blocked(question_->item,"waiting_for_player");
-    if (placement_choice_.revision != task_.revision()) return {};
+    if (skill == "craft" || placement_choice_.revision != task_.revision()) return {};
     const bool fixed_cell = valid_action_cell(args);
     // 无固定格的地面取材由已绑定的保护格及实际地形筛选。
     if (skill == "collect" && !fixed_cell && args.value("source","") == "ground") return {};

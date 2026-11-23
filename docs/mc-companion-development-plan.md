@@ -9,7 +9,7 @@
 | `e40ea9f` | 普通队列与计划共用较新回合的下发门槛。询问进度沿用原修订，旧工作照常推进并读回。明确纠正撤下旧待执行步骤，新动作等原工作实际退出后下发。 |
 | `3ddd201` | 局内放置选择按步骤的实际范围核验，涵盖直调、普通队列和计划。聊天、观察、原跟随及授权范围内的独立动作仍可推进。匹配答复带回选中格，核验通过后才能下发相应放置。 |
 | `aafea37` | 拒绝计划后再接纳观察计划时清除旧拒绝记录。观察实际退出并结算，宿主继续处理下一条玩家原话。 |
-| `4c11fdb` | MC 领域系统段按当轮状态选取指引，参数和证据归工具契约。绕行、挖掘后合成、缺口待答三条链在隔离 Paper 对照了 67 次实际送模，可见工具和参数校验结构与基线一致。合成后继当前以 `skill_unavailable` 结算。 |
+| `4c11fdb` | MC 领域系统段按当轮状态选取指引，参数和证据归工具契约。绕行、挖掘后合成、缺口待答三条链在隔离 Paper 对照了 67 次实际送模，可见工具和参数校验结构与基线一致。当时合成后继以 `skill_unavailable` 结算。 |
 
 四格补墙恢复是待定位的独立问题。玩家说「石头挪开了，把刚才剩下的补上。」后，`aafea37` 和 `4c11fdb` 都在恢复最后两格时超时，续补工作 `1.35` 在夹具收尾时退出，回执为 `interrupted` 和 `placementAttempted=false`。这能定位到放置尝试之前，具体阻塞条件仍待复现确认。体验根目录的 `evidence/mc-context-aafea37-mws05jz6` 中，`comparison.json` 索引三条通过的链路，四格探针在 `regression-paper-baseline/evidence/run-zHqY8d` 和 `regression-paper/evidence/run-Vd0IZ9`。[四格探针](../tests/mc-companion/README.md#固定响应验收场地) · [游戏放置](../plugins/mc/bridge/placement.cjs)
 

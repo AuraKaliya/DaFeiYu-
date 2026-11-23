@@ -1,4 +1,5 @@
 #include "world_protocol.hpp"
+#include "partner_effect.hpp"
 #include "pipe_exchange.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -82,6 +83,29 @@ void verify_placement(const Json& result, const Json& args) {
             (door && cell.at("half") != (index ? "upper" : "lower")))
             throw std::invalid_argument("MC: placement evidence differs from target");
     }
+}
+
+// 检查合成退出回执是否对应原目标，并保留部分完成的物品变化。
+// 步骤：匹配原物品和产量 → 核对耗料及产出差量 → 验证完成条件。
+bool verified_craft(const Json& result, const Json& args, bool attempted) {
+    const auto item = item_name(args.at("item").get_ref<const std::string&>());
+    const auto& craft = result.at("craft");
+    const auto ingredient = craft.value("ingredient","");
+    const auto& delta = result.at("inventoryDelta");
+    const auto requested = args.at("count").get<int>();
+    if (result.at("item").get_ref<const std::string&>() != item || result.at("count") != requested || !delta.is_object() ||
+        delta.size() != delta.count(item)+delta.count(ingredient) || (!attempted && !delta.empty()) ||
+        (!ingredient.empty() && args.contains("ingredient") && ingredient != item_name(args.at("ingredient").get_ref<const std::string&>())))
+        throw std::invalid_argument("MC: crafting evidence differs from original request");
+
+    const auto consumed = std::max<std::int64_t>(0,-static_cast<std::int64_t>(delta.value(ingredient,0)));
+    const auto produced = std::max(0,delta.value(item,0));
+    if (craft.at("consumed") != consumed || craft.at("produced") != produced ||
+        craft.at("remaining") != std::max(0,requested-produced) ||
+        (result.at("status") == "done" && (!attempted || ingredient.empty() || consumed == 0 || produced < requested ||
+            craft.at("completedBatches") != craft.at("batches"))))
+        throw std::invalid_argument("MC: invalid crafting inventory evidence");
+    return !delta.empty();
 }
 
 // 校验已读回的实际方格变化，可与未完成的工作一同返回。
@@ -273,9 +297,11 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_route(result,args,exited);
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
-    const bool changed = exited && result.contains("changes") && verified_changes(result.at("changes"));
+    const bool craft_attempted = exited && skill == "craft" && result.at("craftAttempted").get<bool>();
+    const bool changed = exited && (skill == "craft" ? verified_craft(result,args,craft_attempted) :
+        result.contains("changes") && verified_changes(result.at("changes")));
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},
-        std::move(progress)};
+        std::move(progress), craft_attempted};
 }
 // 将普通退出和显式接管分别绑定到控制实例或原游戏世界。
 // 步骤：核对目标范围 → 选择释放或接管方法 → 生成原请求帧。

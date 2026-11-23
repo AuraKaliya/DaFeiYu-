@@ -53,7 +53,7 @@ function readReply(input, world, inbox, key, actions) {
       request.arguments.collectionGuards.length > 0 && request.arguments.collectionGuards.length <= 128;
     const skill = guarded ? 'collect' : request.skill;
     if (!['partner.begin', 'partner.read', 'partner.stop'].includes(request.method) ||
-      !['observe', 'move', 'route', 'follow', 'collect', 'place', 'fill_target', 'reply'].includes(skill)) throw new Error('不是伙伴会话的能力');
+      !['observe', 'move', 'route', 'follow', 'collect', 'place', 'fill_target', 'craft', 'reply'].includes(skill)) throw new Error('不是伙伴会话的能力');
     const receipt = actions.partner.call(request.method, request.id, request.context, skill, request.arguments);
     return { version: 1, id: request.id, action: receipt };
   }

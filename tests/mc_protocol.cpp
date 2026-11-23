@@ -145,6 +145,14 @@ int main() {
         if (!placed.exited || placed.arrived || !placed.placement_verified || !placed.placement_attempted) return 1;
         receipt["action"]["result"]["blocks"][1]["z"] = 4;
         rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"place",placement); });
+        const auto crafting = Json{{"context",source},{"arguments",{{"item","minecraft:oak_planks"},{"count",4},{"ingredient","oak_log"}}}}.dump();
+        receipt["action"].update(Json{{"skill","craft"},{"result",{{"status","done"},{"item","oak_planks"},{"count",4},{"craftAttempted",true},
+            {"craft",{{"ingredient","oak_log"},{"consumed",1},{"produced",4},{"remaining",0},{"batches",1},{"completedBatches",1}}},
+            {"inventoryDelta",{{"oak_log",-1},{"oak_planks",4}}}}}});
+        const auto crafted = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"craft",crafting);
+        if (!crafted.changed || !crafted.craft_attempted) return 1;
+        receipt["action"]["result"]["inventoryDelta"]["oak_planks"] = 0;
+        rejects([&] { dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"craft",crafting); });
         const Json first{{"x",1},{"y",-60},{"z",3}}, second{{"x",2},{"y",-60},{"z",3}};
         const auto fill = Json{{"context",source},{"arguments",{{"block","dirt"},{"cells",Json::array({first,second})},
             {"sourceMessage",1},{"taskRevision",2}}}}.dump();
