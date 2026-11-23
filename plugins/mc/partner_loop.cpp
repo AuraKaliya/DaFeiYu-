@@ -380,6 +380,7 @@ void PartnerLoop::submit(std::string_view wake) {
     std::array<std::string,partner_skills.size()> ids;
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
     std::size_t count = 0;
+    bool observe_visible = delegated, plan_visible = false;
     const auto enabled = scope();
     const bool completed_route = wake == "plan.finished" && task_.navigation() && plan_ && !plan_->active &&
         plan_->revision == task_.revision() && plan_->nodes.size() == 1 && plan_->nodes.front().skill == "route" &&
@@ -399,12 +400,16 @@ void PartnerLoop::submit(std::string_view wake) {
         ids[count] = "mc.companion/"+std::string(skill.name);
         visible[count] = view(ids[count]);
         ++count;
+        observe_visible |= skill.name == "observe";
+        plan_visible |= skill.kind == SkillKind::action_queue;
     }
     const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
+    observe_visible_ = observe_visible;
+    plan_visible_ = plan_visible;
     attention_turn_.reset();
     if (wake == "follow.attention") attention_turn_ = AttentionTurn{follow_->id,follow_->attention.episode()};
     if (!delegated) {
@@ -674,8 +679,29 @@ void PartnerLoop::bind_collection(std::string_view skill, Json& args) const {
     if (!args.value("editBuilt",false)) task_.bind_collection(args);
 }
 
-// 输出游戏分类和已实现的工具，展开请求只影响后续回合的固定快照。
-// 步骤：核对选择 → 汇总实现状态 → 在选择实际变化后登记一次唤醒。
+// 用原计划回执区分合成等待入包和执行时复核。
+// 步骤：确认当前修订的计划 → 查找待执行合成的前序 → 返回已知依赖或待复核条件。
+Json PartnerLoop::skill_conditions(const PartnerAction& action) const {
+    Json conditions{{"status","check_on_execution"},{"requirements",action.plan_requirements}};
+    if (action.name != "craft" || !plan_ || !plan_->active || plan_->revision != task_.revision()) return conditions;
+
+    for (const auto& node : plan_->nodes) {
+        if (node.skill != action.name || node.state != PlanNode::State::pending) continue;
+        for (const auto parent : node.after) {
+            const auto& prerequisite = plan_->nodes.at(parent);
+            if (prerequisite.pickup.empty() || (prerequisite.state != PlanNode::State::pending &&
+                prerequisite.state != PlanNode::State::running)) continue;
+            conditions["status"] = "waiting_for_pickup";
+            conditions["work"] = prerequisite.work;
+            conditions["item"] = prerequisite.pickup;
+            return conditions;
+        }
+    }
+    return conditions;
+}
+
+// 输出分类和入口契约，计划节点详情用已有状态回答。
+// 步骤：核对分类 → 按当前快照生成入口说明 → 仅在直调范围扩大时登记唤醒。
 Json PartnerLoop::discover(const Json& arguments) {
     const auto wanted = arguments.value("categories",std::vector<std::string>{});
     if (wanted.size() > 3) throw std::length_error("MC skills: choose up to three categories");
@@ -686,14 +712,26 @@ Json PartnerLoop::discover(const Json& arguments) {
             return {{"status","invalid_category"},{"category",name},{"validCategories",categories},{"planNodes",plan_skills()}};
         next.set(found-categories.begin());
     }
-    Json directory = Json::array();
+    Json directory = Json::array(), contracts = Json::array();
     for (std::size_t index = 0; index < categories.size(); ++index) {
-        Json names = Json::array();
+        Json names = Json::array(), nodes = Json::array();
         for (const auto& skill : partner_skills) if (skill.kind != SkillKind::confirmed && skill.name != "move" &&
             static_cast<std::size_t>(skill.category) == index)
             names.push_back(skill.name);
+
+        for (const auto& action : partner_actions) {
+            if (!action.plan || static_cast<std::size_t>(action.category) != index) continue;
+            nodes.push_back(action.name);
+            Json contract{{"skill",action.name},{"implemented",!action.executor.empty()},
+                {"plan",{{"tool","queue_actions"},{"visible",plan_visible_},{"conditions",skill_conditions(action)}}}};
+            if (next.test(index)) contract["plan"]["arguments"] = action.plan_arguments;
+            if (action.name == "observe") contract["direct"] = {{"tool",action.name},{"visible",observe_visible_}};
+            contracts.push_back(std::move(contract));
+        }
         if (names.empty() || base_category(static_cast<SkillCategory>(index))) next.reset(index);
-        directory.push_back({{"category",categories[index]},{"available",!names.empty()},{"tools",std::move(names)}});
+        Json category{{"category",categories[index]},{"available",!names.empty() || !nodes.empty()},{"tools",std::move(names)}};
+        if (!nodes.empty()) category["planNodes"] = std::move(nodes);
+        directory.push_back(std::move(category));
     }
     const bool changed = (next & ~scope()).any();
     expanded_ |= next;
@@ -701,6 +739,7 @@ Json PartnerLoop::discover(const Json& arguments) {
         expansion_pending_ = true;
     }
     return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},{"planNodes",plan_skills()},
+        {"contracts",std::move(contracts)},
         {"wake",expansion_pending_ && task_.can_continue()}};
 }
 

@@ -1104,6 +1104,7 @@ async function main() {
         assert.match(fields.steps.items.properties.skill.description, /route: Validated route\.id/);
         assert.match(fields.steps.items.properties.skill.description, /craft: Plank item/);
         if (pointedCraft) {
+          assert.ok(turns.every(turn => turn.input.trigger !== 'skills.expanded'));
           assert.equal(context.input.pendingQuestion.afterPickup.count, 4);
           assert.match(fields.resolves.description, /saved successor is retained/);
           assert.match(fields.steps.items.properties.pickup.description, /actually enter inventory/);

@@ -237,7 +237,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     std::atomic_bool checked = false;
     unsigned attention_turns = 0;
     std::uint64_t placement_item = 0;
-    std::string follow_id, old_work;
+    std::string follow_id, old_work, plan_tool;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
@@ -425,7 +425,45 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const std::string question = "你指哪块原木？";
             const std::string final = no_pickup ? "木头敲下来了，我还没捡到。" : "一根原木做成了四块木板。";
             if (last.role == Role::tool) {
+                if (last.tool_call_id == "plan-focus-denied" || last.tool_call_id == "restricted-plan") {
+                    if (!last.content.starts_with("status=rejected; effect=not_applied"))
+                        throw std::runtime_error("plan-only focus or restricted plan was accepted");
+                    if (last.tool_call_id == "restricted-plan") return call("_reply","final-line",{{"text",final}});
+                    return call("_observe","first-focus",{{"mode","pointed"},{"message",2},{"focus","objects"}});
+                }
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "list-skills" || last.tool_call_id == "expand-skills" || last.tool_call_id == "repeat-skills") {
+                    const auto& directory = result.at("categories");
+                    const auto craft = std::ranges::find_if(directory,[](const auto& item) { return item.at("category") == "craft_process"; });
+                    const auto& contracts = result.at("contracts");
+                    const auto craft_entry = std::ranges::find_if(contracts,[](const auto& item) { return item.at("skill") == "craft"; });
+                    const auto observe = std::ranges::find_if(contracts,[](const auto& item) { return item.at("skill") == "observe"; });
+                    if (result.at("status") != "listed" || result.at("wake") != false || craft == directory.end() ||
+                        craft->at("available") != true || !craft->at("tools").empty() || craft->at("planNodes") != Json::array({"craft"}) ||
+                        craft_entry == contracts.end() || observe == contracts.end() || craft_entry->at("implemented") != true ||
+                        craft_entry->contains("direct") || craft_entry->at("plan").at("visible") != true ||
+                        craft_entry->at("plan").at("conditions").at("status") != "check_on_execution" ||
+                        observe->at("direct").at("visible") != true || observe->at("plan").at("visible") != true)
+                        throw std::runtime_error("directory conflicted with the existing plan or tool scope");
+
+                    const auto& entry = craft_entry->at("plan");
+                    const Json categories{{"categories",Json::array({"observation","craft_process"})}};
+                    if (last.tool_call_id == "list-skills") {
+                        if (entry.contains("arguments")) throw std::runtime_error("default list expanded plan details");
+                        return call("_skills","expand-skills",categories);
+                    }
+                    const auto tool = std::ranges::find(request.tools,plan_tool,&ToolDefinition::name);
+                    if (tool == request.tools.end()) throw std::runtime_error("plan-only expansion removed the queue tool");
+                    const auto schema = Json::parse(tool->parameters);
+                    const auto& description = schema.at("properties").at("steps").at("items").at("properties")
+                        .at("skill").at("description").get_ref<const std::string&>();
+                    if (description.find(entry.at("arguments").get_ref<const std::string&>()) == description.npos ||
+                        description.find(observe->at("plan").at("arguments").get_ref<const std::string&>()) == description.npos)
+                        throw std::runtime_error("catalog parameters differed from the actual tool snapshot");
+                    if (last.tool_call_id == "expand-skills") return call("_skills","repeat-skills",categories);
+                    return call("_queue_actions","plan-focus-denied",{{"operation","plan"},{"steps",Json::array({
+                        {{"skill","observe"},{"arguments",{{"message",2},{"focus","objects"}}}}})}});
+                }
                 if (last.tool_call_id == "first-focus") return call("_ask_player","which-log",{{"question",question},{"afterPickup",continuation}});
                 if (last.tool_call_id == "answer-focus" || last.tool_call_id == "keep-successor") {
                     const auto original = std::ranges::find(request.messages,Role::user,&Message::role);
@@ -465,11 +503,19 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     craft.at("craft").at("consumed") != 1 || craft.at("craft").at("produced") != 4 ||
                     craft.at("inventoryDelta") != Json{{"oak_log",-1},{"oak_planks",4}} || craft.at("count") != 4)
                     throw std::runtime_error("crafting advanced without pickup or lost its requested product");
-                return call("_reply","final-line",{{"text",final}});
+                return {{Role::assistant,"",{{"restricted-plan",plan_tool,R"({"operation":"plan","steps":[{"skill":"observe","arguments":{}}]})"}}},
+                    FinishReason::tool_calls};
             }
             const auto& event = input.at("events").back();
             const auto sequence = event.at("sequence").get<std::uint64_t>();
             if (sequence == 1) return {{Role::assistant,R"({"internal":"ready"})"}};
+            if (sequence == 2) {
+                const auto tool = std::ranges::find_if(request.tools,[](const auto& item) { return item.name.ends_with("_queue_actions"); });
+                if (tool == request.tools.end() || std::ranges::any_of(request.tools,[](const auto& item) { return item.name.ends_with("_craft"); }))
+                    throw std::runtime_error("default scope did not expose craft exclusively as a plan node");
+                plan_tool = tool->name;
+                return call("_skills","list-skills",Json::object());
+            }
             if (sequence == 3 || sequence == 4) {
                 const auto& pending = input.at("pendingQuestion");
                 if (pending.at("question") != question || pending.at("afterPickup") != continuation ||
@@ -477,8 +523,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     throw std::runtime_error("compound goal did not persist through ordinary chat");
                 if (sequence == 3) return call("_reply","heard-player",{{"text","听得到。"}});
             }
-            return call("_observe",sequence == 2 ? "first-focus" : "answer-focus",
-                {{"mode","pointed"},{"message",sequence},{"focus","objects"}});
+            return call("_observe","answer-focus",{{"mode","pointed"},{"message",sequence},{"focus","objects"}});
         }
         if (pointed_support) {
             const Json stone{{"x",1},{"y",-60},{"z",2},{"block","stone"}};

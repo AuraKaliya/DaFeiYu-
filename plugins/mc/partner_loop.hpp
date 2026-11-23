@@ -102,6 +102,8 @@ class PartnerLoop {
     void submit(std::string_view wake);
     // 分组查看已实现能力，并安排在下一轮更换可见的详细契约。
     nlohmann::json discover(const nlohmann::json& arguments);
+    // 用已接纳计划标明能力当前等待的原工作条件。
+    nlohmann::json skill_conditions(const PartnerAction& action) const;
     // 合并查询选中的类别与已知任务目标所需的类别。
     std::bitset<categories.size()> scope() const noexcept;
     // 按放置类型绑定实际占用格和原话来源，返回拒绝原因或空值。
@@ -295,6 +297,7 @@ class PartnerLoop {
     std::deque<WorkSettlement>::const_iterator ready_settlement() const;
     std::bitset<categories.size()> expanded_;
     bool expansion_pending_ = false;
+    bool observe_visible_ = false, plan_visible_ = false;
     const dfy_v2_agent_api* agent_ = nullptr;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;

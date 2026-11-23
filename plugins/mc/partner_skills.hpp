@@ -19,11 +19,14 @@ struct PartnerAction {
     std::string_view name, executor;
     bool plan = false, sequence = false;
     std::string_view plan_arguments = {};
+    SkillCategory category = SkillCategory::control;
+    std::string_view plan_requirements = {};
 };
 
 // 计划、顺序队列与直接工具统一查找实际执行技能，空执行器可结算已知但未实现的能力。
 inline constexpr std::array partner_actions{
-    PartnerAction{"observe","observe",true,false,"{} for a snapshot, or message with optional focus=hit or openings."},
+    PartnerAction{"observe","observe",true,false,"{} for a snapshot, or message with optional focus=hit or openings.",
+        SkillCategory::observation,"Read only. Pointed observations require the original player message in the active world."},
     PartnerAction{"move","move",true,true,"Exact standing x,y,z. Exit verifies arrival."},
     PartnerAction{"start_move","move"},
     PartnerAction{"follow","follow",false,true},
@@ -34,7 +37,8 @@ inline constexpr std::array partner_actions{
     PartnerAction{"place","place",true,true,"x,y,z,block within the bound target. Exit reports changed cells."},
     PartnerAction{"fill_target","fill_target",true,false,"block for the bound cells. Exit reports each cell's result."},
     PartnerAction{"route","route",true,false,"Validated route.id and laps (1-8). A restarted task retains its wall and lap count. Exit reports verified laps."},
-    PartnerAction{"craft","craft",true,false,"Plank item and desired new count (1-32), optional log ingredient. Uses the game recipe and verifies consumption and output."},
+    PartnerAction{"craft","craft",true,false,"Plank item and desired new count (1-32), optional ingredient naming a log or stem.",
+        SkillCategory::craft_process,"Wait for verified pickup if a dig is a prerequisite. At execution check the game recipe, stock, inventory space and a workbench if required. Exit verifies consumption and output."},
 };
 
 // 返回同一技能在各入口所用的实际执行能力。
@@ -96,7 +100,7 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
     {"stop_motion", "partner.stop_motion", "Cancel following by the stable following.work ID, or cancel the matching activeMotion work. Actual exit is reported separately.",
         R"({"type":"object","properties":{"work":{"type":"string"}},"required":["work"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::motion_stop},
     {"queue_actions", "partner.queue_actions", "Submit a plan with up to four nodes, unique id and optional after IDs. Successors wait for their predecessors' verified results. "
-        "See skill for node contracts and availability. A queued plan reports actual results by layer. Rejections report a reason and may include the node and retryAllowed. "
+        "See skills for node contracts and availability. A queued plan reports actual results by layer. Rejections report a reason and may include the node and retryAllowed. "
         "Append, interrupt and replace take sequence steps. Clear stops the plan and waiting actions.",
         R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"ingredient":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. "
@@ -130,7 +134,8 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"placementOptions":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"cells":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}}},"required":["answer","cells"],"additionalProperties":false}},"path":{"type":"string","enum":["local","direct","main"]},"afterPickup":{"type":"object","properties":{"item":{"type":"string"},"count":{"type":"integer"},"pickup":{"type":"string"}},"required":["item","count"],"additionalProperties":false}},"required":["question"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::question},
     {"withdraw_confirmation", "partner.withdraw_confirmation", "Withdraw the waiting item from pendingApproval when the candidate is obsolete. Verify any new inventory or world state before deciding what to do next.",
         R"({"type":"object","properties":{"item":{"type":"integer"}},"required":["item"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::approval_withdraw},
-    {"skills", "partner.skills", "List Minecraft skill categories and availability. Request up to three category keys in categories to include their available tools with full parameters in the next decision.",
+    {"skills", "partner.skills", "List Minecraft skills by entry. A category can have plan nodes even without standalone tools. "
+        "Contracts report current tool visibility and execution requirements. Request up to three category keys for plan parameters and to expose newly available standalone tools in the next decision.",
         R"({"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"}}},"additionalProperties":false})", SkillCategory::query, true, SkillKind::catalog},
     {"knowledge", "partner.knowledge", "Look up versioned vanilla rules by block or item name, such as grass_block drops. Confirm quantities and changed cells using current game receipts.",
         R"({"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false})", SkillCategory::query, false, SkillKind::knowledge}
@@ -146,6 +151,7 @@ inline std::string_view partner_schema(const PartnerSkill& skill) {
             description += "\n"+std::string(action.name);
             if (action.executor.empty()) description += " (unavailable)";
             description += ": "+std::string(action.plan_arguments);
+            if (!action.plan_requirements.empty()) description += " "+std::string(action.plan_requirements);
         }
         description += "\nFor append, interrupt or replace:";
         for (const auto& action : partner_actions) if (action.sequence) description += " "+std::string(action.name);
