@@ -220,6 +220,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
+    const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
     const bool pointed_support = variant == L"partner-revision-pointed-support";
     const bool pointed_craft = variant.starts_with(L"partner-revision-pointed-craft");
     const bool no_pickup = variant == L"partner-revision-pointed-craft-no-pickup";
@@ -524,6 +525,30 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (sequence == 3) return call("_reply","heard-player",{{"text","听得到。"}});
             }
             return call("_observe","answer-focus",{{"mode","pointed"},{"message",sequence},{"focus","objects"}});
+        }
+        if (observe_dig_scope) {
+            const bool plan = variant.ends_with(L"-plan");
+            if (last.role == Role::tool) {
+                if (last.tool_call_id != "look-at-other-block")
+                    throw std::runtime_error("the unrelated look prevented the dig from starting: " + last.content);
+                const Json args{{"x",1},{"y",-59},{"z",2},{"block","dirt"}};
+                if (!plan) return call("_dig_block","dig-in-scope",args);
+                return call("_queue_actions","dig-in-scope",{{"operation","plan"},{"steps",Json::array({
+                    {{"id","dig"},{"skill","dig_block"},{"arguments",args}}})}});
+            }
+
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == (plan ? "plan.finished" : "motion.finished")) {
+                const auto& receipt = plan ? input.at("planSettlements").at(0).at("nodes").at(0) :
+                    input.at("workSettlement").at("receipts").at(0);
+                if (receipt.at("result").at("inventoryDelta").value("dirt",0) != 1)
+                    throw std::runtime_error("dig did not collect the requested material");
+                checked = true;
+                return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+            }
+            if (input.at("events").back().at("sequence") == 2)
+                return call("_observe","look-at-other-block",{{"mode","pointed"},{"message",2},{"focus","objects"}});
+            return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (pointed_support) {
             const Json stone{{"x",1},{"y",-60},{"z",2},{"block","stone"}};
@@ -982,7 +1007,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || observation_batch ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+            (repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
                 pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {

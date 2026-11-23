@@ -170,6 +170,7 @@ async function main() {
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const attention = variant === 'partner-revision-attention';
   const questionExpiry = variant === 'partner-revision-question-expiry';
+  const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
   const pointedSupport = variant === 'partner-revision-pointed-support';
   const pointedCraft = variant?.startsWith('partner-revision-pointed-craft');
   const noPickup = variant === 'partner-revision-pointed-craft-no-pickup';
@@ -318,6 +319,7 @@ async function main() {
             messages[3].text = '看完了吗？';
           }
           if (pointedSupport) messages[1].text = '把这石块上的泥土敲掉';
+          if (observeDigScope) messages[1].text = '就近取一块泥土';
           if (pointedCraft) {
             messages[1].text = '这里有个原木，敲掉它，然后做成4个木板';
             messages[2].text = '你听得到吗';
@@ -706,7 +708,7 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'done', broken: 1, changes,
             inventoryDelta: noPickup ? {} : { oak_log: 1 } } };
         }
-        if (pointedSupport) {
+        if (pointedSupport || observeDigScope) {
           const stone = { x: 1, y: -60, z: 2, block: 'stone' };
           const dirt = { x: 1, y: -59, z: 2, block: 'dirt' };
           assert.equal(context.order, 2);
@@ -719,7 +721,7 @@ async function main() {
           assert.equal(skill, 'collect');
           if (method === 'partner.begin') {
             assert.ok(!collecting);
-            assert.deepEqual(args, { ...dirt, count: 1, source: 'visible', digReference: stone });
+            assert.deepEqual(args, { ...dirt, count: 1, source: 'visible', ...(pointedSupport ? { digReference: stone } : {}) });
             collecting = id;
             return { ...context, skill, exited: false, result: {} };
           }
@@ -976,7 +978,7 @@ async function main() {
     assert.equal(generation, state.generation);
     return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -1126,7 +1128,7 @@ async function main() {
         assert.deepEqual(settled.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
       }
       if (correctionLost) assert.ok(stopped >= 2);
-      else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft || stalePlace ? 0 : 2);
+      else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft || stalePlace || observeDigScope ? 0 : 2);
       assert.equal(collectExited, !correctionLost && !restartRoute && !stalePlace);
       assert.equal(nextBlock, notes && !directRevision);
       assert.equal(wallFilled, !!correction && !correctionLost);

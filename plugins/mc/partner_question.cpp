@@ -252,14 +252,14 @@ void PartnerLoop::complete_pointed_question() {
     complete_question("resolved",events_.back().at("text").get<std::string>());
 }
 
-// 校验模型所选的格确实来自本轮玩家指向，必要时同时核对待答事项。
-// 步骤：识别当前指向 → 核对原问题身份 → 匹配坐标和材质。
+// 按原话和动作引用判定是否需要校验玩家指向。
+// 步骤：识别指向要求 → 核对原话和待答事项 → 匹配坐标和材质。
 std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
     Json& args) const {
     if (session != session_ || active_delegation_) return !message && !item ? std::optional(false) : std::nullopt;
     const bool player_event = !events_.empty() && events_.back().at("type") == "player.message";
     auto intent = player_event ? read_dig_intent(events_.back().at("text").get_ref<const std::string&>()) : DigIntent{};
-    if (!message && !item && !intent.pointed && !hit_queries_.contains(order_)) return false;
+    if (!message && !item && !intent.pointed) return false;
     if (!message) message = order_;
     if (message != order_ || !player_event ||
         (item && (!question_ || question_->item != item || (placement_choice_pending() && placement_choice_.item == item) ||
