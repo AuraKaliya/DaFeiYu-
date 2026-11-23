@@ -33,7 +33,11 @@
 
 使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
 
+### Trace 审阅与回放
+
 MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响应、改写结果和运行退出摘要。重复使用运行目录时，后续日志保存在新的 `trace-N` 子目录。启动输出中的 `DFY_TRACE` 给出实际文件位置。普通终端会话可用 `--chat CONFIG --trace DIR` 开启同一格式。文件包含本局对话与工具正文。模型记录用 `thinking` 标记模式，DeepSeek 返回的 `reasoningContent` 随本地记录保存，用于还原同一工具链的实际上下文。玩家可见输出仍取正文和实际发言回执。
+
+Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回执和实际发言。 [MC Trace 查看器](mc-trace-viewer.md)
 
 在 `model.prepared` 中，`personaProfile` 标识本体人格，`promptTemplate` 标识额外场景规则的版本或摘要。`input.messages` 与 `input.tools` 保留本轮实际送模的正文和工具定义，可与 `model.exited`、`tool.exited` 及游戏回执交叉核对。比较体验时分别计算收件到首次实际发言、收件到动作接纳、接纳到游戏退出，并单列动作接纳后无实效或仅部分完成的情况。
 
@@ -50,6 +54,8 @@ MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响�
 使用 `dafeiyu --review-trace FILE` 列出运行及关联的玩家消息，附加 `SESSION RUN` 查看原始记录和同一子请求的游戏回执。读取时校验文件版本和连续序号。未正常关停时仍可读取已落完整的行，并提示记录缺尾。
 
 使用 `dafeiyu --replay-trace FILE SESSION RUN` 离线重跑一轮已退出的直接运行。正式 Agent 协调器读取起始上下文，用固定模型响应、已记录的响应和参数改写以及工具结果重跑，逐次核对送模消息、工具定义、调用、回执和最终结果。工具回执可包含 MC 业务确认后的游戏实效。若新游戏消息导致原回合的下一次送模被拒，回放会按原记录重现停止。执行只读取本地文件和内存替身。取消、Agent 宿主审批、规划、观察绑定和最终答复 Hook 改写仍通过原日志审阅。
+
+### 交互命令
 
 | 输入 | 行为 |
 |---|---|

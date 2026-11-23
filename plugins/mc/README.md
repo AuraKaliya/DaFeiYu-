@@ -22,7 +22,7 @@
 
 在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。等状态显示 `listening` 后可正常聊天或委托。每次技能调用绑定原世界和事件号。玩家在场、离场和原话分别进入模型。工作进行中收到新事件时，由同一配置的模型决定是否提前停止该项工作；随后在决策边界处理新事实。玩家可见文字来自实际发言工具，内部回合收尾不会变成第二句聊天。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。
 
-真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。该目录保存 `board.txt`、`game-actions.jsonl` 与 `DFY_TRACE` 指定的模型和工具日志。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。[启动与验收](../../tests/mc-companion/README.md#首次真人体验) · [日志审阅与回放](../../docs/run-guide.md)
+真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。该目录保存 `board.txt`、`game-actions.jsonl` 与 `DFY_TRACE` 指定的模型和工具日志。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。 [启动与验收](../../tests/mc-companion/README.md#首次真人体验) · [MC Trace 查看器](../../docs/mc-trace-viewer.md) · [日志审阅与回放](../../docs/run-guide.md)
 
 ## 本体委托与确认
 
