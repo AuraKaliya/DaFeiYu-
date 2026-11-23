@@ -6,10 +6,16 @@
 
 namespace dfy::app {
 using runtime::OperationState;
+namespace {
+constexpr std::size_t display_turn_limit = 16;
+// 单轮有效正文受应用入口和 Session 已提交历史的容量约束。
+constexpr std::size_t display_byte_limit = 2*1024*1024;
+}
 
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
-// 步骤：核对当前回合 → 注入构建标签并合并宿主控制 → 通过原会话接纳并返回开始状态。
-agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options, bool player_facing) {
+// 步骤：核对当前回合 → 合并宿主控制 → 预留显示条目 → 通过原会话接纳并关联身份。
+agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options, bool player_facing,
+    const std::string* display_prompt) {
     if (current_) throw std::logic_error("session: wait for the current request to finish");
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
@@ -35,9 +41,22 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
             options.extension = std::move(host);
         }
     }
-    current_ = session_.begin(prompt,std::move(options));
+    if (display_prompt) display_.turns.push_back({{},*display_prompt});
+    try { current_ = session_.begin(prompt,std::move(options)); }
+    catch (...) {
+        if (display_prompt) display_.turns.pop_back();
+        throw;
+    }
     reported_ = false;
-    return current_->diagnostics();
+    const auto accepted = current_->diagnostics();
+    if (display_prompt) {
+        auto& turn = display_.turns.back();
+        turn.run = {accepted.session,accepted.turn};
+        display_bytes_ += turn.prompt.size();
+        trim_display();
+        ++display_.revision;
+    }
+    return accepted;
 }
 
 // 仅向当前待结算回合请求协作取消。
@@ -45,6 +64,44 @@ bool Conversation::cancel() {
     if (!current_ || current_->operation()->state() != OperationState::pending) return false;
     current_->request_cancel(runtime::CancelReason::user);
     return true;
+}
+
+// 原会话确认清空后收回本进程可见正文，同时保留原通知回执。
+events::ObservationReceipt Conversation::clear() {
+    const auto receipt = session_.clear();
+    if (!display_.turns.empty()) {
+        display_.turns.clear();
+        display_bytes_ = 0;
+        ++display_.revision;
+    }
+    return receipt;
+}
+
+// 回收最早显示条目，保留最新问答和原身份。
+void Conversation::trim_display() noexcept {
+    while (display_.turns.size() > display_turn_limit || display_bytes_ > display_byte_limit) {
+        const auto& oldest = display_.turns.front();
+        display_bytes_ -= oldest.prompt.size()+oldest.answer.size();
+        display_.turns.erase(display_.turns.begin());
+    }
+}
+
+// 将用户回合的唯一结算与实际退出分别写入显示记录。
+// 步骤：核对原回合身份 → 写入首次结果及成功答复 → 刷新退出与显示修订。
+void Conversation::update_display(const agent::TurnDiagnostics& status, const std::optional<CompletedTurn>& completed) {
+    if (display_.turns.empty()) return;
+    auto& turn = display_.turns.back();
+    if (turn.run != agent::RunId{status.session,status.turn} || (!completed && turn.exit == status.exit)) return;
+    if (completed) {
+        turn.result = status.result;
+        if (status.result == OperationState::succeeded && !completed->error) {
+            turn.answer = completed->answer;
+            display_bytes_ += turn.answer.size();
+        }
+    }
+    turn.exit = status.exit;
+    trim_display();
+    ++display_.revision;
 }
 
 // 返回当前回合或最近一次实际退出的诊断值。
@@ -89,6 +146,7 @@ std::optional<CompletedTurn> Conversation::advance() {
         reported_ = true;
     }
 
+    update_display(status,completed);
     if (status.exit != OperationState::pending) {
         last_ = status;
         try { last_diagnostic_.emplace(capture_diagnostic()); diagnostic_error_ = {}; }

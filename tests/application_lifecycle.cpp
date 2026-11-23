@@ -4,6 +4,7 @@
 #include "ask.hpp"
 #include "trace_commands.hpp"
 #include "../plugins/examples/observer/observer_api.h"
+#include <dafeiyu/diagnostic_json.hpp>
 #include <dafeiyu/run_loop.hpp>
 #include <fstream>
 #include <iostream>
@@ -60,6 +61,9 @@ void shared_application(const fs::path& run) {
     auto& conversation = application.conversation();
     const std::string prompt = "hello-"+std::string(20*1024,'a');
     const auto accepted = application.submit_dialogue(prompt);
+    const auto& display = conversation.display();
+    check(display.turns.size() == 1 && display.turns.front().prompt == prompt &&
+        display.turns.front().result == OperationState::pending && display.turns.front().answer.empty(),"accepted dialogue not displayed");
     bool busy = false;
     try { (void)application.submit_dialogue("another line"); } catch (const std::logic_error&) { busy = true; }
     check(busy,"mailbox changed direct chat busy semantics");
@@ -75,6 +79,13 @@ void shared_application(const fs::path& run) {
         conversation.status()->exit == OperationState::succeeded,"shared application lost result or actual exit");
     std::ostringstream observed, replay;
     const dfy::agent::RunId id{accepted.session,accepted.turn};
+    check(display.turns.size() == 1 && display.turns.front().run == id && display.turns.front().answer == result->answer &&
+        display.turns.front().result == OperationState::succeeded && display.turns.front().exit == OperationState::succeeded,
+        "display lost the first ordinary reply or exit");
+    const auto revision = display.revision;
+    check(!conversation.advance() && display.revision == revision &&
+        dfy::agent::encode_diagnostic(*conversation.diagnostic()).find(prompt) == std::string::npos,
+        "repeated advance changed visible completion or public diagnostic published text");
     dfy::app::review_trace(application.trace_file(),id,observed);
     dfy::app::replay_trace(application.trace_file(),id,replay);
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
@@ -86,6 +97,51 @@ void shared_application(const fs::path& run) {
 
     conversation.close();
     check(conversation.closed() && application.close_plugins() == ShutdownResult::closed,"shared application could not finish shutdown");
+}
+
+// 验证可见记录按原回合结算失败和取消，并限制留存正文及条数。
+// 步骤：阻塞后取消 → 解除阻塞并确认退出 → 连续失败压过条数和字节上限 → 清空。
+void display_outcomes(const fs::path& run) {
+    std::promise<void> release, entered;
+    auto gate = release.get_future().share();
+    auto started = entered.get_future();
+    dfy::app::Application application({},run/"display-plugins",run/"display-user",dfy::model::Backend{
+        // 将取消场景保持在途，其他请求返回固定失败。
+        // 步骤：匹配指定原话 → 等待放行或抛出替身错误 → 返回迟到文本。
+        [&](const auto&, const auto& request) -> dfy::model::Response {
+            if (request.messages.back().content == "visible cancelled prompt") {
+                entered.set_value(); gate.wait();
+                return {{dfy::model::Role::assistant,"late private answer"}};
+            }
+            throw std::runtime_error("private backend failure");
+        }});
+    Release cleanup{release};
+    auto& conversation = application.conversation();
+    const auto& display = conversation.display();
+    // 有界推进原会话，等待业务线程确认实际退出。
+    // 步骤：固定期限 → 推进等待 → 断言会话空闲。
+    const auto finish = [&] {
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (conversation.busy() && std::chrono::steady_clock::now() < deadline) { conversation.advance(); std::this_thread::yield(); }
+        check(!conversation.busy(),"display fixture did not exit");
+    };
+    const auto cancelled = application.submit_dialogue("visible cancelled prompt");
+    check(started.wait_for(std::chrono::seconds(2)) == std::future_status::ready && conversation.cancel(),"display test could not cancel pending request");
+    const auto completion = conversation.advance();
+    check(completion && display.turns.size() == 1 && display.turns.back().run.sequence == cancelled.turn &&
+        display.turns.back().result == OperationState::cancelled && display.turns.back().exit == OperationState::pending &&
+        display.turns.back().prompt == "visible cancelled prompt" && display.turns.back().answer.empty(),"display lost cancel before actual exit");
+    cleanup.open(); finish();
+    check(display.turns.back().exit == OperationState::succeeded && display.turns.back().answer.empty(),"display replaced cancelled result with late text");
+
+    for (unsigned i = 0; i < 17; ++i) { application.submit_dialogue("visible failed prompt"); finish(); }
+    check(display.turns.size() == 16 && display.turns.front().run.sequence > cancelled.turn &&
+        display.turns.back().prompt == "visible failed prompt" && display.turns.back().result == OperationState::failed &&
+        display.turns.back().answer.empty(),"display retained excess turns or published failure text");
+    for (unsigned i = 0; i < 5; ++i) { application.submit_dialogue(std::string(512*1024,'x')); finish(); }
+    check(display.turns.size() == 4 && display.turns.front().prompt.size() == 512*1024,"display retained text past its byte budget");
+    (void)conversation.clear();
+    check(display.turns.empty(),"successful session clear retained display text");
 }
 
 // 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。
@@ -251,6 +307,7 @@ void room_mailbox(const fs::path& run, bool automatic) {
     }
     check(result && result->answer.find("room.addressed") != std::string::npos && result->answer.find("hello fish") != std::string::npos &&
         result->answer.find("joined") == std::string::npos,"room envelope lost its source or leaked a filtered fact");
+    check(application.conversation().display().turns.empty(),"unsolicited mailbox round became a displayed dialogue");
     std::ostringstream observed;
     review_trace(application.trace_file(),dfy::agent::RunId{result->status.session,result->status.turn},observed);
     std::ostringstream replay;
@@ -278,6 +335,9 @@ void room_mailbox(const fs::path& run, bool automatic) {
         check(result && result->answer.find("passive context") != std::string::npos &&
             result->answer.find("direct text") != std::string::npos &&
             result->answer.find("filtered second") == std::string::npos,"dialogue did not collect the reviewed mailbox context");
+        const auto& turns = application.conversation().display().turns;
+        check(turns.size() == 1 && turns.front().prompt == "direct text" && turns.front().run.sequence == dialogue.turn,
+            "display replaced the visible prompt with an internal mailbox envelope");
         check(application.review_room() == MailboxIntakeResult::idle,"combined turn left a consumed message in the room inbox");
     }
 }
@@ -288,6 +348,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
         shared_application(run);
+        display_outcomes(run);
         trace_rewrites(run);
         priority_mailboxes(run);
         ask_lifecycle();

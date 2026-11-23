@@ -2,6 +2,7 @@
 #include <dafeiyu/session.hpp>
 #include <dafeiyu/diagnostic_snapshot.hpp>
 #include <exception>
+#include <vector>
 
 namespace dfy::plugins { class PluginManager; }
 namespace dfy::app {
@@ -10,6 +11,16 @@ struct CompletedTurn {
     agent::TurnDiagnostics status;
     std::string answer;
     std::exception_ptr error;
+};
+// 仅供受信界面读取的本进程对话，使用正式会话签发的回合身份。
+struct DisplayedTurn {
+    agent::RunId run;
+    std::string prompt, answer;
+    runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
+};
+struct ConversationDisplay {
+    std::uint64_t revision = 0;
+    std::vector<DisplayedTurn> turns;
 };
 
 // 在宿主线程接纳问答并提供值快照，实际退出后归还回合引用。
@@ -23,12 +34,15 @@ class Conversation {
     Conversation(const Conversation&) = delete;
     // 禁止替换已经绑定的会话。
     Conversation& operator=(const Conversation&) = delete;
-    // 按应用宿主提供的范围接纳运行并返回本轮开始状态。
-    agent::TurnDiagnostics submit(const std::string& prompt, agent::RunOptions options = {}, bool player_facing = false);
+    // 接纳运行并返回开始状态，显式提供用户原话时才保留显示条目。
+    agent::TurnDiagnostics submit(const std::string& prompt, agent::RunOptions options = {}, bool player_facing = false,
+        const std::string* display_prompt = nullptr);
     // 向尚待结算的回合登记用户取消。
     bool cancel();
     // 空闲时清空会话上下文，返回原通知回执。
-    events::ObservationReceipt clear() { return session_.clear(); }
+    events::ObservationReceipt clear();
+    // 业务线程借用受信对话值，跨线程调用方须按修订复制快照。
+    const ConversationDisplay& display() const noexcept { return display_; }
     // 查询当前或最近回合，不推进会话。
     std::optional<agent::TurnDiagnostics> status() const noexcept;
     // 获取当前或最近回合的完整无正文诊断值。
@@ -51,6 +65,10 @@ class Conversation {
     friend class CompanionSession;
     // 构造当前会话命名空间并从原回合提取诊断。
     agent::DiagnosticSnapshot capture_diagnostic() const;
+    // 用原回合的结算与退出更新最后一条受信对话。
+    void update_display(const agent::TurnDiagnostics& status, const std::optional<CompletedTurn>& completed);
+    // 按条目数和正文预算从最早的条目收回显示记录。
+    void trim_display() noexcept;
 
     agent::Session& session_;
     const agent::RunVersionLabels version_labels_;
@@ -61,6 +79,8 @@ class Conversation {
     std::optional<agent::DiagnosticSnapshot> last_diagnostic_;
     std::exception_ptr diagnostic_error_;
     mutable std::string diagnostic_namespace_;
+    ConversationDisplay display_;
+    std::size_t display_bytes_ = 0;
     bool reported_ = false;
 };
 }

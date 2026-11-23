@@ -81,7 +81,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 // 只读取本次记录位置，不打开原始会话或推进工作。
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
-// 在独立地址上交付终端原话，并为同一主回合加入已审查的待收信件。
+// 在独立地址上交付用户原话，并为同一主回合加入已审查的待收信件。
 // 步骤：核对主会话空闲 → 投递并读回原正文 → 接纳带收件的主动对话。
 agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
