@@ -3,6 +3,7 @@ import { computed, ref, useTemplateRef, watch } from 'vue';
 import RoundList from './RoundList.vue';
 import RunTimeline from './RunTimeline.vue';
 import PromptView from './PromptView.vue';
+import OutcomeView from './OutcomeView.vue';
 import { modelStages } from './model-stages.ts';
 import { sourceLabel } from './display.ts';
 import { useTraceFiles } from './viewer-state.ts';
@@ -134,7 +135,8 @@ watch(loaded, (next, prior) => {
         <PromptView v-if="panel === 'prompt' && stage?.prepared" :key="selectedKey + '/' + stage.key"
           :source="loaded" :prepared="stage.prepared" :previous="earlierPrepared" @inspect="inspect" />
         <p v-else-if="panel === 'prompt'" class="empty">所选阶段未见装配记录。</p>
-        <p v-else-if="panel === 'outcome'" class="empty">模型步骤 {{ stage?.step ?? '—' }}</p>
+        <OutcomeView v-else-if="panel === 'outcome' && selected" :key="selectedKey + '/' + stageId"
+          :source="loaded" :round="selected" :stage="stage" @inspect="inspect" />
         <h3 v-else-if="panel === 'mc'">MC 实效</h3>
         <h3 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h3>
         <p v-if="rawRef" class="muted">{{ sourceLabel(rawRef) }}</p>
