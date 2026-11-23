@@ -10,6 +10,7 @@ export default defineConfig({
     target: 'es2022', emptyOutDir: false,
     rollupOptions: { input: {
       main: fileURLToPath(new URL('./index.html', import.meta.url)),
+      panel: fileURLToPath(new URL('./main-panel.html', import.meta.url)),
       frame: fileURLToPath(new URL('./frames/index.html', import.meta.url)),
     } },
   },

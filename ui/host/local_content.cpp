@@ -5,7 +5,7 @@ namespace dfy::ui {
 // 导航前完成映射及事件登记，任一步失败由临时实例回收此前登记。
 // 步骤：持有环境和页面 → 固定本地来源 → 登记资源及导航约束 → 返回已准备实例。
 std::shared_ptr<LocalContent> LocalContent::attach(ICoreWebView2Environment* environment, ICoreWebView2* view,
-    const std::filesystem::path& assets) {
+    const std::filesystem::path& assets, bool main_panel) {
     auto self = std::shared_ptr<LocalContent>(new LocalContent()); self->environment_ = environment; self->view_ = view;
     ComPtr<ICoreWebView2_3> mapping; require_hresult(view->QueryInterface(IID_PPV_ARGS(&mapping)));
     require_hresult(mapping->SetVirtualHostNameToFolderMapping(L"center.dafeiyu.invalid",assets.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS));
@@ -21,9 +21,12 @@ std::shared_ptr<LocalContent> LocalContent::attach(ICoreWebView2Environment* env
     self->resources_.bind(view,&ICoreWebView2::remove_WebResourceRequested,[&](auto* token) { return view->add_WebResourceRequested(resource.Get(),token); });
     // 按原生观察到的导航地址裁定主文档，读取失败保持拒绝。
     // 步骤：读取并核对主入口 → 将允许或拒绝写回导航参数。
-    const auto navigation = Callback<ICoreWebView2NavigationStartingEventHandler>([](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+    const auto navigation = Callback<ICoreWebView2NavigationStartingEventHandler>([main_panel](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
         bool allowed = false;
-        try { allowed = center_document(read_text([&](auto** uri) { return args->get_Uri(uri); })); } catch (...) {}
+        try {
+            const auto uri = read_text([&](auto** value) { return args->get_Uri(value); });
+            allowed = center_document(uri) || (main_panel && main_panel_document(uri));
+        } catch (...) {}
         return args->put_Cancel(!allowed);
     });
     self->navigation_.bind(view,&ICoreWebView2::remove_NavigationStarting,[&](auto* token) { return view->add_NavigationStarting(navigation.Get(),token); });

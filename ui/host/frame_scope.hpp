@@ -5,10 +5,13 @@
 
 namespace dfy::ui {
 inline constexpr std::wstring_view center_url = L"https://center.dafeiyu.invalid/index.html";
+inline constexpr std::wstring_view main_panel_url = L"https://center.dafeiyu.invalid/main-panel.html";
 // 仅供 U01 的固定本地来源，denied 来源用于真实未授权页面的反向验证。
 bool local_resource(std::wstring_view uri) noexcept;
 // 主页面允许同文档 hash 路由，但不接受改变路径或查询参数。
 bool center_document(std::wstring_view uri) noexcept;
+// 桌面对话使用独立的主文档路径，片段只表示同文档位置。
+bool main_panel_document(std::wstring_view uri) noexcept;
 // 为宿主签发的非零视图生成唯一初始地址，不接受前端自报来源。
 std::wstring probe_url(std::uint64_t view);
 enum class FrameDecision { allowed, inactive, wrong_source, stale_view, forbidden_method };

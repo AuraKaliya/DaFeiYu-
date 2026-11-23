@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "dialogue_channel.hpp"
 #include "frame_channel.hpp"
 #include "application.hpp"
 #include <functional>
@@ -9,8 +10,12 @@ namespace dfy::ui {
 class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
   public:
     using ReadRun = std::function<std::optional<app::RunStatusSnapshot>()>;
+    struct Dialogue {
+        std::function<DialogueView(std::uint64_t)> read;
+        std::function<DialogueReceipt(std::uint64_t,std::string)> submit;
+    };
     // 绑定原生主页面消息与 Frame 创建，回调始终属于当前 STA。
-    static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run = {});
+    static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run = {}, Dialogue dialogue = {});
     // 关闭全部 UI 入口及当前 Frame 持有，后台浏览器退出由窗口独立确认。
     void close() noexcept;
     // 提供原生事实的只读统计，统计不持有浏览器或页面。
@@ -19,12 +24,14 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     ~ProbeHost() { close(); }
   private:
     // 准备尚未登记的探针宿主。
-    explicit ProbeHost(std::function<void()> failure, ReadRun read_run)
-        : failure_(std::move(failure)), read_run_(std::move(read_run)) {}
+    explicit ProbeHost(std::function<void()> failure, ReadRun read_run, Dialogue dialogue)
+        : failure_(std::move(failure)), read_run_(std::move(read_run)), dialogue_(std::move(dialogue)) {}
     // 核对实际主文档并分发已允许的固定请求。
     HRESULT message(ICoreWebView2WebMessageReceivedEventArgs* args) noexcept;
     // 发送与原请求及可选运行身份匹配的只读状态。
     HRESULT run_status_reply(const nlohmann::json& request);
+    // 仅为实际主面板处理普通对话命令及正文查询。
+    HRESULT dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source);
     // 将具体 Frame 与待签发身份绑定，无票据的额外 Frame 明确失败。
     void created(ICoreWebView2Frame* frame);
     ComPtr<ICoreWebView2> view_;
@@ -35,6 +42,7 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     std::shared_ptr<FrameChannel> frame_;
     std::function<void()> failure_;
     ReadRun read_run_;
+    Dialogue dialogue_;
     std::uint64_t next_ = 0, ticket_ = 0;
     bool closed_ = false;
 };

@@ -26,6 +26,27 @@ std::string_view operation_state(runtime::OperationState state) noexcept {
     return "unknown";
 }
 
+// 将窗口命令状态映射成固定标签，结果及实际退出来自独立的回合条目。
+std::string_view dialogue_state(DialogueCommandState state) noexcept {
+    using State = DialogueCommandState;
+    switch (state) {
+    case State::unavailable: return "unavailable";
+    case State::queued: return "queued";
+    case State::accepted: return "accepted";
+    case State::busy: return "busy";
+    case State::rejected: return "rejected";
+    case State::conflict: return "conflict";
+    case State::expired: return "expired";
+    }
+    return "rejected";
+}
+
+// 以十进制字符串返回原命令和正式回合身份。
+nlohmann::json dialogue_receipt(const DialogueReceipt& receipt) {
+    return {{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
+        {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)}};
+}
+
 // 区分普通回合、等待读回和已裁定的读回证据。
 nlohmann::json verification_state(const std::optional<app::VerificationReport>& report) {
     if (!report) return nullptr;
@@ -41,8 +62,8 @@ nlohmann::json verification_state(const std::optional<app::VerificationReport>& 
 
 // 创建和消息入口都只弱引用宿主，部分登记失败由临时实例回滚。
 // 步骤：持有浏览器 → 登记主页面消息 → 登记原生 Frame 创建 → 发布已准备宿主。
-std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run) {
-    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run))); self->view_ = view;
+std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run, Dialogue dialogue) {
+    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run),std::move(dialogue))); self->view_ = view;
     const std::weak_ptr<ProbeHost> weak = self;
     const auto message = Callback<ICoreWebView2WebMessageReceivedEventHandler>([weak](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) return state->message(args);
@@ -62,16 +83,20 @@ std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<
     self->frames_.bind(source.Get(),&ICoreWebView2_4::remove_FrameCreated,[&](auto* token) { return source->add_FrameCreated(created.Get(),token); });
     return self;
 }
-// 处理主文档的只读快照请求或固定 Frame 申请。
-// 步骤：核对原生来源及结构 → 按固定类型分发 → 为 Frame 申请签发一次票据。
+// 处理主文档的快照、对话命令或固定 Frame 申请。
+// 步骤：核对原生来源及大小 → 按固定类型分发 → 为 Frame 申请签发一次票据。
 HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexcept {
     bool issued = false;
     try {
-        if (!center_document(read_text([&](auto** value) { return args->get_Source(value); }))) return E_ACCESSDENIED;
-        const auto message = nlohmann::json::parse(utf8(read_text([&](auto** value) { return args->get_WebMessageAsJson(value); })));
+        const auto source = read_text([&](auto** value) { return args->get_Source(value); });
+        if (!center_document(source) && !(dialogue_.read && main_panel_document(source))) return E_ACCESSDENIED;
+        const auto body = read_text([&](auto** value) { return args->get_WebMessageAsJson(value); });
+        if (body.size() > 6*app::dialogue_text_limit+512) return E_INVALIDARG;
+        const auto message = nlohmann::json::parse(utf8(body));
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
         if (type == "state.read") return run_status_reply(message);
+        if (type == "dialogue.read" || type == "dialogue.submit") return dialogue_reply(message,type,source);
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
         if (next_ == std::numeric_limits<std::uint64_t>::max()) return E_FAIL;
@@ -81,6 +106,43 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (FAILED(status)) ticket_ = 0;
         return status;
     } catch (...) { if (issued) ticket_ = 0; return E_INVALIDARG; }
+}
+
+// 复核实际页面后进入对话桥，变化时才发回正文快照。
+// 步骤：核对活动来源与协议 → 交付命令或复制受信快照 → 复核当前来源并回发。
+HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source) {
+    const auto active = [&] { return main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); })); };
+    if (!dialogue_.read || !dialogue_.submit || !main_panel_document(source) || !active()) return E_ACCESSDENIED;
+    if (request.size() != 5 || request.at("version") != "1") return E_INVALIDARG;
+    const auto& id = request.at("request").get_ref<const std::string&>();
+    if (id.empty() || id.size() > 64) return E_INVALIDARG;
+
+    nlohmann::json reply{{"version","1"},{"request",id}};
+    if (type == "dialogue.submit") {
+        const auto command = run_id_part(request.at("command"));
+        auto receipt = dialogue_.submit(command,request.at("text").get<std::string>());
+        reply["event"] = "dialogue.receipt";
+        reply["receipt"] = dialogue_receipt(receipt);
+    } else {
+        const auto& after = request.at("revision").get_ref<const std::string&>();
+        if (after.size() > 20) return E_INVALIDARG;
+        const auto& command = request.at("command");
+        const auto view = dialogue_.read(command == "" ? 0 : run_id_part(command));
+        const auto revision = view.display ? std::to_string(view.display->revision) : std::string();
+        nlohmann::json turns = nullptr;
+        if (view.display && revision != after) {
+            turns = nlohmann::json::array();
+            for (const auto& turn : view.display->turns) {
+                turns.push_back({{"session",std::to_string(turn.run.session)},{"turn",std::to_string(turn.run.sequence)},
+                    {"prompt",turn.prompt},{"answer",turn.answer},{"result",operation_state(turn.result)},{"exit",operation_state(turn.exit)}});
+            }
+        }
+        reply.update({{"event","dialogue.snapshot"},{"ready",bool(view.display)},{"accepting",view.accepting},
+            {"latestCommand",std::to_string(view.latest_command)},{"revision",revision},{"turns",std::move(turns)},
+            {"receipt",view.receipt ? dialogue_receipt(*view.receipt) : nlohmann::json(nullptr)}});
+    }
+    if (!active()) return E_ACCESSDENIED;
+    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
 }
 // 从副本构造有界运行摘要，并在发回前复核当前 WebView 文档。
 // 步骤：核对协议、请求及运行身份 → 复制并筛选快照 → 核对当前来源后发回 JSON。
@@ -100,7 +162,8 @@ HRESULT ProbeHost::run_status_reply(const nlohmann::json& request) {
             {"result",operation_state(status.result)},{"exit",operation_state(status.exit)},
             {"waiting_confirmations",status.waiting_confirmations},{"verification",verification_state(snapshot->verification)}};
     }
-    if (!center_document(read_text([&](auto** value) { return view_->get_Source(value); }))) return E_ACCESSDENIED;
+    const auto current = read_text([&](auto** value) { return view_->get_Source(value); });
+    if (!center_document(current) && !(dialogue_.read && main_panel_document(current))) return E_ACCESSDENIED;
     const nlohmann::json reply{{"event","state.snapshot"},{"version","1"},{"topic","run"},{"request",id},
         {"available",static_cast<bool>(read_run_)},{"run",std::move(run)}};
     return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());

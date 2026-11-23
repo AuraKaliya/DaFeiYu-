@@ -29,6 +29,7 @@ void require(HRESULT status) { if (FAILED(status)) throw std::runtime_error("Web
 struct Window : std::enable_shared_from_this<Window> {
     HWND handle = nullptr;
     std::filesystem::path assets;
+    std::filesystem::path model_config;
     dfy::ui::ProbeProfile profile;
     dfy::ui::BrowserProcesses processes;
     ComPtr<ICoreWebView2Environment> environment;
@@ -54,6 +55,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
+    bool main_panel = false, main_panel_check = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -110,7 +112,7 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：取得能力与设置 → 映射本地资源 → 登记导航结果 → 加载离线页面。
     void configure() {
         require(controller->get_CoreWebView2(&view));
-        content = dfy::ui::LocalContent::attach(environment.Get(),view.Get(),assets);
+        content = dfy::ui::LocalContent::attach(environment.Get(),view.Get(),assets,main_panel);
         ComPtr<ICoreWebView2Settings> settings; require(view->get_Settings(&settings));
         require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(!room_preview));
         const auto weak = weak_from_this();
@@ -119,7 +121,19 @@ struct Window : std::enable_shared_from_this<Window> {
             if (const auto self = weak.lock()) return self->run_status_host->snapshot();
             return std::optional<dfy::app::RunStatusSnapshot>{};
         };
-        host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },std::move(read_run));
+        dfy::ui::ProbeHost::Dialogue dialogue;
+        if (main_panel) {
+            dialogue.read = [weak](auto command) -> dfy::ui::DialogueView {
+                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->dialogue(command);
+                return {};
+            };
+            dialogue.submit = [weak](auto command, auto text) -> dfy::ui::DialogueReceipt {
+                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->submit_dialogue(command,std::move(text));
+                return {command,dfy::ui::DialogueCommandState::unavailable,{}};
+            };
+        }
+        host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
+            std::move(read_run),std::move(dialogue));
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
         // 处理主文档导航回执，自动验收由计时器另行推进。
@@ -140,9 +154,10 @@ struct Window : std::enable_shared_from_this<Window> {
         if (smoke || interaction_mode || run_status_host) SetTimer(handle,1,20,nullptr);
         if (offline) prepare_offline(); else navigate();
     }
-    // 以固定验收片段选择页面检查。
-    // 步骤：选择探针片段 → 导航至同一受信任的主文档。
+    // 按模式导航到正式主面板或固定探针文档。
+    // 步骤：选择受信入口 → 为探针附加固定场景片段 → 提交导航。
     void navigate() {
+        if (main_panel) { require(view->Navigate(dfy::ui::main_panel_url.data())); return; }
         const wchar_t* fragment = offline ? L"#offline" : smoke ? L"#verify" : L"";
         if (room_preview) fragment = room_busy ? L"#room-busy" : L"#room-idle";
 #ifdef DFY_UI_RUN_STATUS_TEST
@@ -198,6 +213,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 });
 #ifdef DFY_UI_RUN_STATUS_TEST
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
+                if (main_panel_check) { interaction->start_main_panel(checks); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -241,7 +257,7 @@ struct Window : std::enable_shared_from_this<Window> {
         if (close_controller) PostMessageW(handle,WM_CLOSE,0,0);
     }
     // 在业务线程创建拥有运行状态的 Application，测试使用独占路径和显式替身。
-    // 步骤：选择固定测试入口或普通配置 → 移交业务线程 → 保留只读快照来源。
+    // 步骤：选择固定测试入口或普通配置 → 移交业务线程 → 保留窗口消息的接收端。
     void start_application() {
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_probe) {
@@ -251,11 +267,26 @@ struct Window : std::enable_shared_from_this<Window> {
                 [probe](auto& application) { probe->drive(application); });
             return;
         }
+        if (main_panel_check) {
+            const auto work = profile.path()/L"agent";
+            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([work] {
+                return std::make_unique<dfy::app::Application>(dfy::model::Config{},work/"plugins",work/"user",dfy::model::Backend{
+                    // 核对浏览器原话抵达正式应用的请求，并交付固定文本或固定失败。
+                    // 步骤：取出原话 → 按夹具文本选择结果 → 返回完成回复。
+                    [](const auto&,const auto& request) -> dfy::model::Response {
+                        const auto& text = request.messages.back().content;
+                        if (text == "模拟请求失败") throw std::runtime_error("fixed private provider error");
+                        return {{dfy::model::Role::assistant,"固定回复："+text}};
+                    }});
+            });
+            return;
+        }
 #endif
         if (business_mode) {
             const auto root = assets.parent_path();
-            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([root] {
-                return std::make_unique<dfy::app::Application>(dfy::model::load_config(root/"config"/"deepseek.example.json"),
+            const auto config = model_config.empty() ? root/"config"/"deepseek.example.json" : model_config;
+            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([root,config] {
+                return std::make_unique<dfy::app::Application>(dfy::model::load_config(config),
                     root/"plugins",dfy::app::default_user_data());
             });
         }
@@ -263,7 +294,8 @@ struct Window : std::enable_shared_from_this<Window> {
     // 创建独立环境，配置路径与回调寿命由当前窗口拥有。
     // 步骤：检查离线入口 → 提交环境创建 → 接收环境或错误 → 按窗口状态继续或收尾。
     void start() {
-        if (!std::filesystem::is_regular_file(assets/L"index.html")) throw std::runtime_error("UI assets missing");
+        if (!std::filesystem::is_regular_file(assets/(main_panel ? L"main-panel.html" : L"index.html")))
+            throw std::runtime_error("UI assets missing");
         profile.create();
         start_application();
         const auto weak = weak_from_this(); ++pending;
@@ -316,15 +348,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
     const bool sample = __argc == 3 && (std::wstring_view(__wargv[2]) == L"idle" || std::wstring_view(__wargv[2]) == L"busy");
     const bool room_preview = sample && std::wstring_view(__wargv[1]) == L"--room-preview";
+    const bool main_panel = (__argc == 2 || __argc == 3) && std::wstring_view(__wargv[1]) == L"--main-panel";
 #ifdef DFY_UI_RUN_STATUS_TEST
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
+    const bool main_panel_check = __argc == 2 && std::wstring_view(__wargv[1]) == L"--check-main-panel";
 #else
     const bool room_check = false;
     const bool run_status_mode = false;
+    const bool main_panel_check = false;
 #endif
-    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check;
-    if (__argc > 1 && !automatic && !room_preview) return 2;
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check;
+    if (__argc > 1 && !automatic && !room_preview && !main_panel) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     try {
@@ -342,7 +377,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->offline = offline;
         state->room_preview = room_preview || room_check;
         state->room_busy = state->room_preview && std::wstring_view(__wargv[2]) == L"busy";
-        state->interaction_mode |= room_check;
+        state->main_panel = main_panel || main_panel_check;
+        state->main_panel_check = main_panel_check;
+        if (main_panel && __argc == 3) state->model_config = __wargv[2];
+        state->interaction_mode |= room_check || main_panel_check;
         state->business_mode = !automatic && !room_preview;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
@@ -351,7 +389,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");
         const DWORD extended = automatic ? WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW : 0;
-        state->handle = CreateWindowExW(extended,kind.lpszClassName,state->room_preview ? L"大肥鱼管理中心 · 首屏预览" : L"大肥鱼管理中心 · U01 验证",WS_OVERLAPPEDWINDOW,
+        const auto title = state->main_panel ? L"大肥鱼" : state->room_preview ? L"大肥鱼管理中心 · 首屏预览" : L"大肥鱼管理中心 · U01 验证";
+        state->handle = CreateWindowExW(extended,kind.lpszClassName,title,WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
         ShowWindow(state->handle,automatic ? SW_HIDE : show);

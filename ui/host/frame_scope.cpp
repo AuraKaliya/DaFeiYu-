@@ -8,6 +8,8 @@ std::wstring_view document_uri(std::wstring_view uri) noexcept { return uri.subs
 }
 // 只允许主入口文档及其内部 hash 路由。
 bool center_document(std::wstring_view uri) noexcept { return document_uri(uri) == center_url; }
+// 精确核对主面板文档路径，拒绝未登记的路径或查询参数。
+bool main_panel_document(std::wstring_view uri) noexcept { return document_uri(uri) == main_panel_url; }
 // 固定来源包含结尾斜线，拒绝同名前缀域、其他协议和未登记端口。
 bool local_resource(std::wstring_view uri) noexcept {
     return uri.starts_with(L"https://center.dafeiyu.invalid/") ||

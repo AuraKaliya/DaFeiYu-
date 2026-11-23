@@ -206,6 +206,8 @@ if(BUILD_GUI)
   endforeach()
   add_test(NAME ui.run_status COMMAND dfy_ui_probe --run-status "$<TARGET_FILE_DIR:dfy_status_example>")
   set_tests_properties(ui.run_status PROPERTIES TIMEOUT 60 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
+  add_test(NAME ui.main_panel COMMAND dfy_ui_probe --check-main-panel)
+  set_tests_properties(ui.main_panel PROPERTIES TIMEOUT 45 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
 endif()
 
 # 验证生产域签发器与同一内部算法的整数边界，不连接任何插件或模型服务。

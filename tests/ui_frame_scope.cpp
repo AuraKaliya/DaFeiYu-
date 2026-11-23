@@ -10,6 +10,8 @@ void check(bool value, const char* message) { if (!value) throw std::runtime_err
 void origins() {
     check(local_resource(center_url) && local_resource(probe_url(1)),"local assets rejected");
     check(center_document(std::wstring(center_url)+L"#/status") && !center_document(std::wstring(center_url)+L"?other=1"),"main document boundary changed");
+    check(main_panel_document(main_panel_url) && !main_panel_document(center_url) &&
+        !main_panel_document(std::wstring(main_panel_url)+L"?view=1"),"dialogue allowed outside the panel document");
     for (const auto uri : {L"https://center.dafeiyu.invalid.evil/index.html",L"http://center.dafeiyu.invalid/index.html",
         L"https://center.dafeiyu.invalid:444/index.html",L"file:///C:/secret",L"https://example.com/",L"data:text/html,hello"})
         check(!local_resource(uri),"unregistered resource origin allowed");

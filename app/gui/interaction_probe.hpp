@@ -18,6 +18,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
 #ifdef DFY_UI_RUN_STATUS_TEST
     // 检查固定房间样本的输入、忙时选项、详情和窄屏布局。
     void start_room_preview(bool busy);
+    // 通过真实主文档发送普通对话，核对重复回执和文档权限。
+    void start_main_panel(std::shared_ptr<const FrameChecks> checks);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif
