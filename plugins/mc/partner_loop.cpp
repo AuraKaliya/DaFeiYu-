@@ -79,6 +79,8 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
             input.contains("pendingQuestion")},
         Guidance{"flowGuidance","questionResult","根据事项的结算状态、所选目标和当前证据判断原步骤能否继续。",
             input.contains("questionResult")},
+        Guidance{"flowGuidance","clarification","局内疑问用本地追问及动作范围。玩家用自然语言补足线索时，先核对原消息和候选，再用 task_update 的 resolves 结算该事项。仍有不确定的步骤维持等待。",
+            player_message && input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")},
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
         Guidance{"domainExperience","targetEvidence","按原话的对象和数量选择现场候选。开口的准星不唯一只说明视线，明确授权多个开口时用原观察的候选组。补查应缩小范围或核验选中格，需要线索时只问缺失的一项。",
             player_message || correcting || input.contains("questionResult")},
@@ -580,7 +582,16 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto resolves = args.value("resolves",std::uint64_t{});
     const bool waiting = waits_for_player(session_);
     const bool supports_placement = waiting && (question_->scope.is_null() || question_->scope.at("skill") == "place");
-    const bool answers_question = supports_placement && committing && resolves == question_->item && player_order > question_->order;
+    const bool scoped_answer = resolves && waiting && resolves == question_->item && player_order > question_->order &&
+        question_->presented && !question_->expired && std::chrono::steady_clock::now() < question_->local_answer_deadline &&
+        !question_->scope.is_null() && question_->after_pickup.is_null() && !placement_choice_pending() &&
+        (target == args.end() || (question_->scope.at("skill") == "place" && target->value("message",std::uint64_t{}) == question_->order)) &&
+        (!args.contains("collection") || question_->scope.at("skill") == "collect");
+    const bool correction_answer = committing && supports_placement && question_->scope.is_null() &&
+        resolves == question_->item && player_order > question_->order;
+    if (resolves && !scoped_answer && !correction_answer)
+        return {{"status","invalid_target"},{"reason","question_resolution_mismatch"}};
+    const bool answers_question = scoped_answer || correction_answer;
     const bool independent_target = waiting && !supports_placement && !committing && !args.contains("collection") &&
         args.at("goal").get_ref<const std::string&>() == task_.goal();
     if (placement_choice_pending() && !task_.correcting() &&
@@ -596,6 +607,13 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (answers_question && result.at("status") == "updated") {
         question_->answer_order = player_order;
         complete_question("resolved",events_.back().at("text").get<std::string>());
+        if (scoped_answer) {
+            result["resolvedQuestion"] = question_result_;
+            auto fact = question_result_;
+            fact["generation"] = session_world_;
+            fact["order"] = player_order;
+            publish("mc.partner.question",fact);
+        }
     }
     if (task_.revision() != prior_revision) {
         if (independent_target) question_->task_revision = task_.revision();

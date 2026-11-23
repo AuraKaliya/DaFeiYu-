@@ -261,6 +261,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
     const bool question_scope = variant == L"partner-revision-question-scope";
+    const bool opening_answer = variant == L"partner-revision-opening-answer";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
     const bool pointed_support = variant == L"partner-revision-pointed-support";
@@ -680,6 +681,53 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (input.at("events").back().at("sequence") == 2) return call("_dig_block","bad-stone",stone);
             return {{Role::assistant,R"({"internal":"ready"})"}};
+        }
+        if (opening_answer) {
+            const Json scope{{"skill","place"}};
+            const Json cells = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",2},{"y",-59},{"z",-5}},
+                {{"x",4},{"y",-60},{"z",-5}},{{"x",4},{"y",-59},{"z",-5}}});
+            if (last.role == Role::tool) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const auto& id = last.tool_call_id;
+                if (id == "original-openings") return call("_ask_player","ask-openings",{{"question","补哪些缺口？"},{"scope",scope}});
+                if (id == "ask-openings") placement_item = result.at("item").get<std::uint64_t>();
+                if (id == "wrong-question") {
+                    if (result.at("reason") != "question_resolution_mismatch") throw std::runtime_error("wrong question item accepted");
+                    return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
+                }
+                if (id == "verify-openings") return call("_task_update","answer-openings",{{"goal","补齐原墙的两处开口"},
+                    {"next","continue"},{"resolves",placement_item},{"target",{{"message",2},{"candidates",{"left","right"}},
+                        {"observation",result.at("observation").at("id")}}}});
+                if (id == "answer-openings") {
+                    const auto& answer = result.at("resolvedQuestion");
+                    if (answer.at("item") != placement_item || answer.at("sourceMessage") != 2 || answer.at("answerMessage") != 3 ||
+                        answer.at("scope") != scope || answer.at("answer") != "两边都补上吧" || result.at("task").at("target").at("cells") != cells)
+                        throw std::runtime_error("natural clarification lost the original source or the chosen scope");
+                    const Json fill{{"id","fill"},{"skill","fill_target"},{"arguments",{{"block","dirt"}}}};
+                    return call("_queue_actions","fill-openings",{{"operation","plan"},{"steps",Json::array({fill})}});
+                }
+            } else {
+                const auto input = Json::parse(last.content);
+                if (input.at("trigger") == "plan.finished") {
+                    const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+                    if (input.contains("pendingQuestion") || result.at("changes").size() != cells.size())
+                        throw std::runtime_error("the scope did not settle both openings");
+                    checked = true;
+                    return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+                }
+                if (!input.at("events").empty()) {
+                    const auto sequence = input.at("events").back().at("sequence");
+                    if (sequence == 2) return call("_observe","original-openings",{{"sources",{"message"}},{"message",2},{"focus","openings"}});
+                    if (sequence == 3) {
+                        const auto& pending = input.at("pendingQuestion");
+                        if (pending.at("item") != placement_item || pending.at("sourceMessage") != 2 ||
+                            pending.at("openingObservation").at("playerFocus").at("candidates").size() != 2)
+                            throw std::runtime_error("the answer did not receive original opening evidence");
+                        return call("_task_update","wrong-question",{{"goal","补墙"},{"next","continue"},{"resolves",placement_item+1}});
+                    }
+                }
+            }
+            return {{Role::assistant,R"({"internal":"waiting"})"}};
         }
         if (question_scope) {
             const Json scope{{"skill","collect"},{"block","grass_block"}};

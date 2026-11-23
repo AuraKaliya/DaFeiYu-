@@ -172,6 +172,7 @@ async function main() {
   const layeredStepCount = layeredStock ? 3 : layeredBlocked ? 2 : 4;
   const attention = variant === 'partner-revision-attention';
   const questionScope = variant === 'partner-revision-question-scope';
+  const openingAnswer = variant === 'partner-revision-opening-answer';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
   const pointedSupport = variant === 'partner-revision-pointed-support';
@@ -260,6 +261,7 @@ async function main() {
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
+          openingAnswer ? (questionPresented ? 3 : 2) :
           questionScope ? (questionPresented && fs.existsSync(path.join(root, 'scoped-question-checked')) ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
@@ -320,6 +322,11 @@ async function main() {
           if (questionScope) {
             messages[1].text = '挖一块泥土来垫脚';
             messages[2].text = '还是用泥土';
+          }
+          if (openingAnswer) {
+            messages[1].text = '把墙上的口补一下';
+            messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
+            messages[2].text = '两边都补上吧';
           }
           if (repairPlanObserve) {
             messages[1].text = '先列个观察计划。';
@@ -552,6 +559,39 @@ async function main() {
             layeredBlocked ? { status: 'blocked', reasonCode: 'unsafe_stand' } :
               { status: 'done', arrived: true, position: { x: pad.x + 0.5, y: pad.y + 1, z: pad.z + 0.5 } };
           return { ...context, skill, exited: true, result };
+        }
+        if (openingAnswer) {
+          assert.equal(method, 'partner.begin');
+          if (skill === 'reply') {
+            assert.ok(!questionPresented);
+            assert.equal(context.order, 2);
+            assert.equal(args.text, '补哪些缺口？');
+            questionPresented = true;
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          if (skill === 'observe' && context.order === 2) {
+            assert.equal(args.message, 2);
+            const candidates = [2, 4].map((x, i) => ({ id: i ? 'right' : 'left', x, y: -60, z: -5, width: 1, height: 2, axis: 'x' }));
+            return { ...context, skill, exited: true, result: { status: 'done', anchor: { message: 2 }, sampledAtMs: 42,
+              playerFocus: { choice: null, status: 'ambiguous', candidates } } };
+          }
+          assert.equal(context.order, 3);
+          const cells = [2, 4].flatMap(x => [-60, -59].map(y => ({ x, y, z: -5 })));
+          if (skill === 'observe') {
+            assert.deepEqual(args.verify, cells);
+            return { ...context, skill, exited: true, result: { status: 'done', observation: {
+              id, dimension: 'overworld', generation: context.generation, requested: 1, samples: [{ sampledAtMs: 84,
+                views: [{ source: 'self', status: 'sampled', actor: { position: { x: 3, y: -60, z: -6 } } }],
+                verified: cells.map(cell => ({ ...cell, atSelf: true, block: 'air' })) }],
+            } } };
+          }
+          assert.equal(skill, 'fill_target');
+          assert.ok(!wallFilled);
+          assert.deepEqual(args, { cells: [cells[0], cells[2], cells[1], cells[3]], block: 'dirt', sourceMessage: 2, taskRevision: 1 });
+          wallFilled = true;
+          return { ...context, skill, exited: true, result: { status: 'done', sourceMessage: 2, taskRevision: 1, placementAttempted: true,
+            cells: cells.map(cell => ({ ...cell, before: 'air', block: 'dirt', status: 'placed' })),
+            changes: cells.map(cell => ({ ...cell, before: 'air', after: 'dirt' })) } };
         }
         if (questionScope) {
           assert.equal(context.order, 2);
@@ -1109,6 +1149,9 @@ async function main() {
         [['raised', following, 1], ['recovered', following, 1]]);
       assert.equal(alerts[1].body.progress.vertical, 0);
       console.log(trace);
+    } else if (openingAnswer) {
+      assert.ok(questionPresented && wallFilled);
+      assert.equal(stopped, 0);
     } else if (questionScope) {
       assert.ok(questionPresented && collectExited);
       assert.equal(stopped, 0);
