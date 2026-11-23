@@ -1,6 +1,14 @@
 # 大肥鱼 U01 验证窗口运行说明
 
-`dafeiyu-ui-probe.exe` 是管理中心的原生容器验证程序，提供运行状态只读查询、本地输入、对话框和独立 Frame 页面。正式问答使用 `dafeiyu.exe`。
+`dafeiyu-ui-probe.exe` 提供桌面主面板、房间预览和原生容器探针。终端问答使用 `dafeiyu.exe`。
+
+## 桌面主面板
+
+在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。模型凭据沿用配置的环境变量。
+
+状态显示「可以聊天」后，输入一条中文消息并发送。收到回复后，可以发一句引用上一轮内容的追问，确认主会话延续。上一轮处理期间可编辑草稿，宿主空闲后再发送。关窗重开会创建新会话，当前进程内最多显示最近 16 轮，正文合计至多 2 MiB。
+
+`ui.main_panel` 使用空插件目录及固定模型响应，在隐藏 WebView2 中检查真实正文、一次性回执、冲突、来源隔离、失败与刷新。真人验证可检查本机实体输入法选字、实际模型配置和对话连贯性。 [主 Agent 开发计划](main-agent-room-development-plan.md#7-分步开发顺序)
 
 ## 房间首屏预览
 
