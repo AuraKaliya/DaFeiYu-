@@ -307,6 +307,9 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
                     (!anchor->at("position").is_null() && !std::ranges::all_of(cells,[&](const auto& cell) {
                         return cell_near_anchor(cell,anchor->at("position")); })))
                     return {{"status","invalid_target"},{"reason","target cells lack current and original coverage"}};
+                if (!approach && !commit && target.contains("observation") &&
+                    (!verified_cells(target,scene) || local_observation_.at("revision") != revision_))
+                    return {{"status","invalid_target"},{"reason","current_observation_required"},{"cells",cells}};
                 if (!approach && !target.contains("candidate") && original != openings_.end()) {
                     const auto& choice = original->second.at("playerFocus").at("choice");
                     if (choice.is_string()) {

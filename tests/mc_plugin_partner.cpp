@@ -217,6 +217,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool observation_batch = variant == L"partner-revision-observation-batch";
     const bool response_timing = variant == L"partner-revision-response-timing";
     const bool layered = variant.starts_with(L"partner-revision-layered");
+    const bool layered_stock = variant == L"partner-revision-layered-stock";
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
@@ -374,9 +375,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (last.tool_call_id == "register") return call("_observe","survey",{{"sources",{"self"}},{"verify",pads}});
-                if (last.tool_call_id == "survey")
+                if (last.tool_call_id == "survey") {
+                    old_work = result.at("observation").at("id").get<std::string>();
+                    return call("_task_update","bind-stale",{{"goal","垫两级站位"},{"next","player"},{"target",{{"message",3},
+                        {"cells",pads},{"observation","older-observation"}}}});
+                }
+                if (last.tool_call_id == "bind-stale") {
+                    if (result.at("reason") != "current_observation_required") throw std::runtime_error("stale pad binding was admitted");
                     return call("_task_update","bind",{{"goal","垫两级站位"},{"next","player"},{"target",{{"message",3},{"cells",pads},
-                        {"observation",result.at("observation").at("id")}}}});
+                        {"observation",old_work}}}});
+                }
                 if (last.tool_call_id != "bind" || result.at("status") != "updated")
                     throw std::runtime_error("layered plan made an intervening model request");
 
@@ -397,17 +405,21 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (input.at("trigger") == "plan.finished") {
                 const auto& plan = input.at("taskPlan");
                 const auto& layers = input.at("planSettlements");
-                if (checked || plan.at("status") != (layered_blocked ? "blocked" : "done") || layers.size() != 4 ||
+                const std::size_t first_failed = layered_stock ? 2 : layered_blocked ? 1 : 4;
+                if (checked || plan.at("status") != (first_failed < 4 ? "blocked" : "done") || layers.size() != 4 ||
                     input.at("following").at("work") != follow_id)
                     throw std::runtime_error("layered plan did not settle all dependencies");
                 for (std::size_t i = 0; i < layers.size(); ++i) {
                     const auto& result = layers.at(i).at("nodes").at(0).at("result");
-                    if (result.at("status") != (!layered_blocked || i == 0 ? "done" : i == 1 ? "blocked" : "skipped") ||
-                        ((!layered_blocked || i == 0) && (i%2 == 0 ? result.at("placed") != true : result.at("arrived") != true)))
+                    if (result.at("status") != (i < first_failed ? "done" : i == first_failed ? "blocked" : "skipped") ||
+                        (i < first_failed && (i%2 == 0 ? result.at("placed") != true : result.at("arrived") != true)))
                         throw std::runtime_error("layer lacked placement, arrival, or skip evidence");
                 }
+                if (layered_stock && layers.at(2).at("nodes").at(0).at("result").at("reasonCode") != "material_missing")
+                    throw std::runtime_error("a blocked placement lost its specific cause");
                 checked = true;
-                return {{Role::assistant,layered_blocked ? "第一块垫好了，但我站不上去。" : R"({"internal":"plan exit checked"})"}};
+                return {{Role::assistant,layered_stock ? "第一块垫好了，背包没有第二块了。" :
+                    layered_blocked ? "第一块垫好了，但我站不上去。" : R"({"internal":"plan exit checked"})"}};
             }
             if (!input.at("events").empty()) {
                 const auto& sequence = input.at("events").back().at("sequence");
@@ -1023,7 +1035,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
                 ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
                     line.find(repair_plan_observe ? "看过了，我还在。" : question_expiry ? "这段内部结算" :
-                        layered_blocked ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
+                        layered_blocked || layered_stock ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
         }
         return false;
     };

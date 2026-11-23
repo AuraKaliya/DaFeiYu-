@@ -167,7 +167,9 @@ async function main() {
   const observationBatch = variant === 'partner-revision-observation-batch';
   const responseTiming = variant === 'partner-revision-response-timing';
   const layered = variant?.startsWith('partner-revision-layered');
+  const layeredStock = variant === 'partner-revision-layered-stock';
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
+  const layeredStepCount = layeredStock ? 3 : layeredBlocked ? 2 : 4;
   const attention = variant === 'partner-revision-attention';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
@@ -479,7 +481,7 @@ async function main() {
           if (method === 'partner.begin') {
             if (!following) following = id;
             else {
-              if (layered) assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
+              if (layered) assert.equal(nodeExits.length, layeredStepCount);
               else assert.equal(restartReads, 9);
               assert.equal(id, following + '.resume.2');
               resumed = id;
@@ -499,10 +501,10 @@ async function main() {
         }
         if (layered) {
           assert.equal(context.order, 3);
-          if (layeredBlocked && skill === 'reply') {
+          if (layeredStepCount < 4 && skill === 'reply') {
             assert.equal(method, 'partner.begin');
-            assert.equal(args.text, '第一块垫好了，但我站不上去。');
-            assert.equal(nodeExits.length, 2);
+            assert.equal(args.text, layeredStock ? '第一块垫好了，背包没有第二块了。' : '第一块垫好了，但我站不上去。');
+            assert.equal(nodeExits.length, layeredStepCount);
             assert.equal(++replies, 1);
             return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
           }
@@ -519,7 +521,7 @@ async function main() {
           const index = nodeExits.length;
           const pad = pads[Math.floor(index / 2)];
           const place = index % 2 === 0;
-          assert.ok(index < (layeredBlocked ? 2 : 4));
+          assert.ok(index < layeredStepCount);
           assert.equal(followPauseReads, 2);
           assert.equal(skill, place ? 'place' : 'move');
           if (method === 'partner.begin') {
@@ -535,6 +537,8 @@ async function main() {
           if (nodeReads++ === 0) return { ...context, skill, exited: false, result: {} };
           nodeExits.push(id);
           nodeAtWork = undefined;
+          if (layeredStock && index === 2) return { ...context, skill, exited: true,
+            result: { status: 'blocked', reasonCode: 'material_missing', placementAttempted: false, placed: false } };
           const result = place ? { status: 'done', placementAttempted: true, placed: true,
             sourceMessage: 3, taskRevision: 2, blocks: [{ ...pad, block: 'dirt' }],
             changes: [{ ...pad, before: 'air', after: 'dirt' }], materialBefore: 2 - index / 2, materialAfter: 1 - index / 2 } :
@@ -1076,8 +1080,8 @@ async function main() {
         [['raised', following, 1], ['recovered', following, 1]]);
       console.log(trace);
     } else if (layered) {
-      assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
-      assert.equal(replies, layeredBlocked ? 1 : 0);
+      assert.equal(nodeExits.length, layeredStepCount);
+      assert.equal(replies, layeredStepCount < 4 ? 1 : 0);
       const trace = path.join(root, 'trace', 'events.jsonl');
       const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
       const paused = checkFollowReceipt(rows, following, following, 'paused');
