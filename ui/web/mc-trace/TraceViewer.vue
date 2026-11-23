@@ -29,6 +29,16 @@ const stages = computed(() => selected.value ? modelStages(selected.value) : [])
 const stage = computed(() => stages.value.find(entry => entry.key === stageId.value));
 const evidence = computed(() => loaded.value?.index.evidence.get(selectedKey.value));
 const unlinkedGame = computed(() => loaded.value?.index.unlinked.filter(row => row.ref.stream === 'game').length ?? 0);
+const timeFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' });
+
+// 显示原 Trace 起始时刻，便于区分来自不同局的同名文件。
+const captureTime = computed(() => {
+  const stamp = loaded.value?.index.utcMs;
+  if (stamp === undefined) return;
+  const date = new Date(stamp);
+  if (Number.isFinite(date.getTime())) return { local: timeFormat.format(date), iso: date.toISOString() };
+});
+
 const earlierPrepared = computed(() => {
   const active = stages.value.findIndex(entry => entry.key === stageId.value);
   if (active > 0) return stages.value.slice(0, active).reverse().find(entry => entry.prepared)?.prepared;
@@ -144,6 +154,7 @@ watch(loaded, (next, prior) => {
       <div class="top-files" v-if="loaded">
         <span :title="loaded.trace.name">{{ loaded.trace.name }} · {{ loaded.index.source.lines }} 条</span>
         <span v-if="loaded.game" :title="loaded.game.name">{{ loaded.game.name }} · {{ loaded.index.game?.lines }} 条</span>
+        <time v-if="captureTime" :datetime="captureTime.iso" :title="captureTime.iso">录制 {{ captureTime.local }}</time>
       </div>
       <div class="file-actions">
         <button v-if="loaded" class="button on-dark" type="button" @click="gameInput?.click()">附加游戏回执</button>
@@ -179,7 +190,7 @@ watch(loaded, (next, prior) => {
     <div v-else class="workspace">
       <RoundList :key="traceRevision" :rounds="rounds" :selected="selectedKey"
         @select="select" @raw="inspect(undefined, true)" />
-      <RunTimeline v-if="selected" :key="selectedKey" :round="selected" :stages="stages" :active="stageId"
+      <RunTimeline v-if="selected" :key="`${traceRevision}/${selectedKey}`" :round="selected" :stages="stages" :active="stageId"
         :evidence-count="(evidence?.entries.length ?? 0) + (evidence?.references.length ?? 0)"
         @stage="selectStage" @record="inspect" @mc="show('mc')" />
       <main v-else class="round"><p class="empty">文件中没有可确认的 MC 伙伴回合。</p></main>
@@ -197,7 +208,7 @@ watch(loaded, (next, prior) => {
           :source="loaded" :round="selected" :stage="stage" @inspect="inspect" />
         <McEvidenceView v-else-if="panel === 'mc'" :key="selectedKey" :source="loaded" :evidence="evidence"
           @inspect="inspect" @follow="follow" />
-        <RawView v-else :source="loaded" :round="selected" :scope="rawScope" :address="rawRef"
+        <RawView v-else :key="traceRevision" :source="loaded" :round="selected" :scope="rawScope" :address="rawRef"
           @change="(ref, scope) => inspect(ref, scope === 'global')" />
       </aside>
     </div>
