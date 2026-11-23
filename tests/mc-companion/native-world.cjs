@@ -70,6 +70,50 @@ function checkPlanReceiptOrder(rows, works, after) {
   return layers;
 }
 
+// 核对同一局从玩家原话到实际发言的各段时序。
+// 步骤：用消息号找模型回合 → 用请求号和工作号核对发言及动作 → 输出 Trace 上相邻阶段的耗时。
+function checkResponseTiming(rows, works, delivered) {
+  const mail = rows.filter(row => row.kind === 'mail.received');
+  const message = order => mail.find(row => row.category === 'mc.partner.event' && row.body.event.sequence === order);
+  const work = (category, id) => mail.find(row => row.category === category &&
+    (row.body.status === 'accepted' ? row.body.action : row.body).bridgeWork === id);
+  const turns = rows.filter(row => row.kind === 'model.prepared' && row.step === 1)
+    .map(row => ({ row, input: readPartnerContext(row).input }));
+  const original = message(2), question = message(3);
+  const outcomes = [original, question].map(event => turns.find(turn =>
+    turn.input.events.some(input => input.sequence === event.body.event.sequence)));
+  outcomes.push(turns.find(turn => turn.input.trigger === 'plan.finished'));
+  assert.ok(outcomes.every(Boolean));
+  assert.deepEqual(outcomes.slice(0, 2).map(turn => turn.input.events[0]), [original.body.event, question.body.event]);
+  const requests = outcomes.map(({ row: { session, run } }) =>
+    rows.find(row => row.kind === 'subagent.accepted' && row.session === session && row.run === run));
+
+  const replies = mail.filter(row => row.category === 'mc.partner.action' && row.body.skill === 'reply');
+  assert.deepEqual(replies.map(({ body }) => [body.bridgeWork, body.order, body.result.text, body.result.sent]),
+    delivered.map(({ id, order, text }) => [id, order, text, true]));
+  assert.deepEqual(replies.map(({ body }) => [body.session, body.request]), requests.map(row => [row.session, row.request]));
+  assert.deepEqual(replies.map(({ body }) => body.source ?? 'tool'), ['tool', 'final_text', 'final_text']);
+  const [firstReply, liveReply, finalReply] = replies;
+  const firstTool = rows.find(row => row.kind === 'tool.exited' && row.callId === 'timing-first-reply');
+  assert.deepEqual([firstReply.body.session, firstReply.body.invocation], [firstTool.session, firstTool.invocation]);
+  const [first, second] = works;
+  const completion = checkPlanReceiptOrder(rows, works, firstReply.seq).at(-1);
+  const firstAction = work('mc.partner.motion', first), firstExit = work('mc.partner.action', first);
+  const secondExit = work('mc.partner.action', second);
+  for (const exit of [firstExit, secondExit]) {
+    assert.deepEqual([exit.body.order, exit.body.session, exit.body.request, exit.body.result.arrived],
+      [2, requests[0].session, requests[0].request, true]);
+  }
+  const liveModel = kind => rows.find(row => row.kind === kind && row.session === requests[1].session && row.run === requests[1].run);
+  const timeline = [original, firstReply, firstAction, question, firstExit, liveReply, secondExit, completion, finalReply];
+  assert.ok(timeline.every((row, i) => !i || (timeline[i - 1].seq < row.seq && timeline[i - 1].timeNs <= row.timeNs)));
+  assert.ok(liveModel('model.submitted').seq < firstExit.seq && firstExit.seq < liveModel('model.exited').seq);
+  const elapsedMs = (start, end) => Math.round((end.timeNs - start.timeNs) / 1e6);
+  console.log('response-timing', JSON.stringify({ messageToFirstReplyMs: elapsedMs(original, firstReply),
+    firstReplyToActionMs: elapsedMs(firstReply, firstAction), actionToCompletionMs: elapsedMs(firstAction, secondExit),
+    completionToReplyMs: elapsedMs(secondExit, finalReply), questionToReplyMs: elapsedMs(question, liveReply) }));
+}
+
 // 提供固定地面与登记过的对象，复用执行器的取材和保护判定。
 // 步骤：构造方格和掉落表 → 登记已建对象 → 返回候选及现场读口。
 function refusedGround() {
@@ -121,6 +165,7 @@ async function main() {
   const repairPlan = variant === 'partner-revision-repair-plan';
   const repairPlanObserve = variant === 'partner-revision-repair-plan-observe';
   const observationBatch = variant === 'partner-revision-observation-batch';
+  const responseTiming = variant === 'partner-revision-response-timing';
   const layered = variant?.startsWith('partner-revision-layered');
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const attention = variant === 'partner-revision-attention';
@@ -151,6 +196,8 @@ async function main() {
   let pickupPending = false, placementQuestionWork;
   const sceneReads = [];
   let meetingWork;
+  const timingWorks = [], timingSpeech = [];
+  let timingFirstRead = false;
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
   let planReading = false, nextBlock = false;
@@ -205,6 +252,7 @@ async function main() {
             fs.existsSync(path.join(root, 'collection-receipt-1')) ? 5 : 4) :
           repairPlanObserve ? (fs.existsSync(path.join(root, 'observe-plan-settled')) ? 4 :
             fs.existsSync(path.join(root, 'observe-plan-rejected')) ? 3 : 2) :
+          responseTiming ? (timingFirstRead ? 3 : 2) :
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
@@ -246,6 +294,10 @@ async function main() {
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
+          if (responseTiming) {
+            messages[1].text = '走到拐角，再去门边。';
+            messages[2].text = '还在走吗？';
+          }
           if (layered) {
             messages[1].text = '大肥鱼，跟着我';
             messages[2].text = '你可以垫上来';
@@ -536,6 +588,31 @@ async function main() {
           assert.equal(args.text, '看过了，我还在。');
           assert.equal(++replies, 1);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
+        if (responseTiming) {
+          if (skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            assert.deepEqual([context.order, args.text], [[2, '好，我现在过去。'], [3, '还在走，接着去门边。'],
+              [3, '两段都走完了。']][timingSpeech.length]);
+            timingSpeech.push({ id, order: context.order, text: args.text });
+            return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+          }
+          assert.equal(skill, 'move');
+          if (method === 'partner.begin') {
+            assert.equal(context.order, timingWorks.length === 0 ? 2 : 3);
+            assert.deepEqual(args, { x: timingWorks.length ? 4 : 2, y: -60, z: 1, exact: true });
+            timingWorks.push(id);
+            return { ...context, skill, exited: false, result: {} };
+          }
+          assert.equal(method, 'partner.read');
+          assert.equal(id, timingWorks.at(-1));
+          assert.equal(context.order, timingWorks.length === 1 ? 2 : 3);
+          if (timingWorks.length === 1) {
+            timingFirstRead = true;
+            if (!fs.existsSync(path.join(root, 'timing-chat-open'))) return { ...context, skill, exited: false, result: {} };
+          } else if (timingSpeech.length < 2) return { ...context, skill, exited: false, result: {} };
+          return { ...context, skill, exited: true, result: { status: 'done', arrived: true,
+            position: { x: args.x + 0.5, y: -60, z: 1.5 } } };
         }
         if (observationBatch) {
           assert.equal(context.order, 2);
@@ -993,6 +1070,13 @@ async function main() {
       const paused = checkFollowReceipt(rows, following, following, 'paused');
       const layers = checkPlanReceiptOrder(rows, nodeExits, paused.seq);
       checkFollowReceipt(rows, resumed, following, 'exited', layers.at(-1).seq);
+      console.log(trace);
+    } else if (responseTiming) {
+      assert.equal(timingWorks.length, 2);
+      assert.equal(timingSpeech.length, 3);
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+      checkResponseTiming(rows, timingWorks, timingSpeech);
       console.log(trace);
     } else if (observationBatch) {
       assert.equal(sceneReads.length, 2);

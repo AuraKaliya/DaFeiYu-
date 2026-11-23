@@ -84,6 +84,32 @@ node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\windows-tests\bin
 
 复测时在同一份证据中记录玩家消息、入轮、实际发言、动作接纳与读回时刻。这样可以分别定位通信等待、模型耗时和游戏动作耗时。
 
+### 观察与响应的分段时序
+
+构建 `dfy_mc_plugin_partner_tests` 后，运行固定响应和受控游戏桥接的定向用例。
+
+```powershell
+ctest --test-dir build/rebuild/windows-tests -C Debug -V -R '^plugins\.mc_partner_revision_response-timing$'
+```
+
+用玩家消息号 2 串起原话、首答实发和首次移动接纳。第一段移动在消息 3 的模型响应期间按原工作号读回抵达。消息 3 的实际回复在两段移动都完成前送达。第二段仍归原任务和原请求，完工后的发言以独立送达回执核对。
+
+`-V` 打印 Trace 路径和五段相对耗时。起点采用宿主 Trace 中的原话投影，动作采用桥接接纳和实际抵达的回执，发言采用 `sent=true` 的桥接回执。夹具仅检查因果顺序，耗时用于查看本次回放。 [断言](native-world.cjs#L73)
+
+若从构建盘运行时宿主在送模前超时或无法创建 Trace，可把相同的可执行文件和插件包复制到本机临时目录运行该夹具。
+
+```powershell
+$build = (Resolve-Path 'build/rebuild/windows-tests').Path
+$fixture = New-Item -ItemType Directory (Join-Path $env:TEMP ('dfy-response-timing-' + [Guid]::NewGuid().ToString('N')))
+$package = New-Item -ItemType Directory (Join-Path $fixture.FullName 'mc.companion')
+Copy-Item -LiteralPath "$build/tests/Debug/dfy_mc_plugin_partner_tests.exe" -Destination $fixture.FullName
+foreach ($file in 'plugin.json', 'defaults.json', 'dfy_mc_companion.dll') {
+  Copy-Item -LiteralPath "$build/plugins/mc/Debug/mc.companion/$file" -Destination $package.FullName
+}
+node .\tests\mc-companion\native-world.cjs (Join-Path $fixture.FullName 'dfy_mc_plugin_partner_tests.exe') `
+  $package.FullName (Join-Path $fixture.FullName 'runs') partner-revision-response-timing
+```
+
 ### 绕墙与「垫上来」回归
 
 构建 `dfy_mc_plugin_partner_tests` 后运行下列定向用例。固定响应使用受控游戏读口和正式插件、队列与回合。用 CTest 的 `-V` 查看各场景的 `tests/mc-partner/world-*/trace/events.jsonl`，按消息号、任务修订和原工作号查回执。

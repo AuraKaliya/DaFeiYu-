@@ -215,6 +215,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool repair_plan = variant == L"partner-revision-repair-plan";
     const bool repair_plan_observe = variant == L"partner-revision-repair-plan-observe";
     const bool observation_batch = variant == L"partner-revision-observation-batch";
+    const bool response_timing = variant == L"partner-revision-response-timing";
     const bool layered = variant.starts_with(L"partner-revision-layered");
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
@@ -256,6 +257,47 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return call("_queue_actions",std::move(id),{{"operation",plan ? "plan" : "append"},{"steps",Json::array({step})}});
         };
         const auto& last = request.messages.back();
+        if (response_timing) {
+            if (last.role == Role::tool) {
+                if (last.tool_call_id == "timing-first-reply") {
+                    const Json steps = Json::array({
+                        {{"id","corner"},{"skill","move"},{"arguments",{{"x",2},{"y",-60},{"z",1}}}},
+                        {{"id","door"},{"skill","move"},{"after",{"corner"}},{"arguments",{{"x",4},{"y",-60},{"z",1}}}},
+                    });
+                    return call("_queue_actions","timing-plan",{{"operation","plan"},{"steps",steps}});
+                }
+                if (last.tool_call_id != "timing-plan") throw std::runtime_error("unexpected timing tool result");
+                return {{Role::assistant,R"({"internal":"计划已接纳"})"}};
+            }
+
+            const auto input = Json::parse(last.content);
+            if (input.at("trigger") == "plan.finished") {
+                checked = true;
+                return {{Role::assistant,"两段都走完了。"}};
+            }
+            const auto& event = input.at("events").back();
+            const auto order = event.at("sequence");
+            if (order == 1) return {{Role::assistant,R"({"internal":"ready"})"}};
+            if (order == 2) return call("_reply","timing-first-reply",{{"text","好，我现在过去。"}});
+
+            const auto& motion = input.at("activeMotion");
+            if (order != 3 || event.at("text") != "还在走吗？" || motion.at("order") != 2 || motion.at("status") != "running")
+                throw std::runtime_error("the live question did not see the original running work");
+            // 保持固定模型响应在途，直到宿主收到原动作的实际抵达回执。
+            std::ofstream(root/"timing-chat-open").put('1');
+            const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+            while (std::chrono::steady_clock::now() < deadline) {
+                std::ifstream trace(root/"trace"/"events.jsonl");
+                for (std::string line; std::getline(trace,line);) {
+                    const auto row = Json::parse(line,nullptr,false);
+                    if (row.is_object() && row.value("category","") == "mc.partner.action" &&
+                        row.at("body").at("bridgeWork") == motion.at("work") && row.at("body").at("result").value("arrived",false))
+                        return {{Role::assistant,"还在走，接着去门边。"}};
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            throw std::runtime_error("the original work stopped progressing while the model answered");
+        }
         if (observation_batch) {
             const Json args{{"mode","scene"},{"sources",{"self","player","message"}},{"message",2},{"radius",1}};
             if (last.role == Role::tool) {
@@ -876,11 +918,17 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     // 等待验证回合真正退出，再关闭伴玩会话。
     const auto receipt_turn_finished = [&] {
         std::ifstream trace(host.trace_file());
-        for (std::string line; std::getline(trace,line);)
+        for (std::string line; std::getline(trace,line);) {
+            if (response_timing) {
+                if (line.find("\"category\":\"mc.partner.action\"") != line.npos &&
+                    line.find("\"sent\":true") != line.npos && line.find("\"text\":\"两段都走完了。\"") != line.npos) return true;
+                continue;
+            }
             if (line.find("\"kind\":\"run.exited\"") != line.npos && line.find("\"result\":\"succeeded\"") != line.npos &&
                 ((repair_observe || repair_plan) ? line.find("\"run\":2,") != line.npos :
                     line.find(repair_plan_observe ? "看过了，我还在。" : question_expiry ? "这段内部结算" :
                         layered_blocked ? "第一块垫好了" : "plan exit checked") != line.npos)) return true;
+        }
         return false;
     };
     bool stopping = false;
