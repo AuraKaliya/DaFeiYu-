@@ -317,12 +317,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     input.at("following").at("work") != follow_id)
                     throw std::runtime_error("layered plan did not settle all dependencies");
                 for (std::size_t i = 0; i < layers.size(); ++i) {
-                    const auto& node = layers.at(i).at("nodes").at(0);
-                    const auto& result = node.at("result");
-                    if (node.at("work") != plan.at("nodes").at(i).at("work") ||
-                        result.at("status") != (!layered_blocked || i == 0 ? "done" : i == 1 ? "blocked" : "skipped") ||
+                    const auto& result = layers.at(i).at("nodes").at(0).at("result");
+                    if (result.at("status") != (!layered_blocked || i == 0 ? "done" : i == 1 ? "blocked" : "skipped") ||
                         ((!layered_blocked || i == 0) && (i%2 == 0 ? result.at("placed") != true : result.at("arrived") != true)))
-                        throw std::runtime_error("layer lacked execution or skip proof under its original work ID");
+                        throw std::runtime_error("layer lacked placement, arrival, or skip evidence");
                 }
                 checked = true;
                 return {{Role::assistant,layered_blocked ? "第一块垫好了，但我站不上去。" : R"({"internal":"plan exit checked"})"}};
@@ -704,15 +702,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (navigation) {
                 const auto route_index = mixed_route ? 1u : 0u;
                 const auto count = mixed_route ? 3u : 1u;
-                const auto& node = layers.at(route_index).at("nodes").at(0);
-                const auto& route = node.at("result").at("route");
-                if (checked || plan.at("status") != "done" || layers.size() != count || plan.at("nodes").size() != count ||
-                    node.at("work") != plan.at("nodes").at(route_index).at("work") || route.at("laps") != 2 ||
+                const auto& route = layers.at(route_index).at("nodes").at(0).at("result").at("route");
+                if (checked || plan.at("status") != "done" || layers.size() != count || route.at("laps") != 2 ||
                     route.at("checkpoints").size() != 9 || input.at("task").at("next") != "done" ||
                     (mixed_route ? first.at("result").at("arrived") != true ||
                         layers.at(2).at("nodes").at(0).at("result").at("arrived") != true :
                         request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply")))
-                    throw std::runtime_error("route checkpoints woke the model separately or did not settle by plan ID");
+                    throw std::runtime_error("route plan did not report verified checkpoints and arrivals at settlement");
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
             }

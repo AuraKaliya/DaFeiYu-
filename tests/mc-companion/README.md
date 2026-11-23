@@ -84,18 +84,36 @@ node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\windows-tests\bin
 
 复测时在同一份证据中记录玩家消息、入轮、实际发言、动作接纳与读回时刻。这样可以分别定位通信等待、模型耗时和游戏动作耗时。
 
-### 多段移动与指向操作回归
+### 绕墙与「垫上来」回归
 
-构建 `dfy_mc_plugin_partner_tests` 后，可用以下定向命令运行固定响应验收。路线回执来自受控游戏读口，插件 DLL、回合、队列与 Trace 使用正式代码。每个场景的 Trace 保存于构建目录的 `tests/mc-partner/world-*/trace/events.jsonl`，用 CTest 的 `-V` 可看到本次文件位置。
+构建 `dfy_mc_plugin_partner_tests` 后运行下列定向用例。固定响应使用受控游戏读口和正式插件、队列与回合。用 CTest 的 `-V` 查看各场景的 `tests/mc-partner/world-*/trace/events.jsonl`，按消息号、任务修订和原工作号查回执。
 
 ```powershell
-ctest --test-dir build/windows-tests -C Debug --output-on-failure -R '^(mc\.partner_observe|plugins\.mc_partner_revision_(navigation.*|pointed.*))$'
+ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^(mc\.partner_observe|plugins\.mc_partner_revision_(navigation(-mixed|-restart)?|layered(-blocked)?|repair-plan|attention))$'
+```
+
+下表中的场景名省略 `plugins.mc_partner_revision_` 前缀。绕墙和垫高共用按原号核对前台接纳、唯一退出、分层结算和后继放行的断言。被跳过的节点不得出现前台动作回执。恢复跟随时，新执行段仍归属原逻辑工作号。[共用回执断言](native-world.cjs#L12)
+
+| 现场问题与追溯入口 | 要守住的行为 | 定向回归 |
+| --- | --- | --- |
+| 补墙途中说「现在绕着这个墙跑两圈」。任务切换见 `9cf0e97`，计圈见 `7e18a5e`。[固定原话](native-world.cjs) | 旧采掘按原号退出，保留已拾取的一块泥土。新任务重新核验墙和四个站位，单条路线只在实际退出后唤醒子 Agent。 | `navigation` 核对任务切换。`mc.partner_observe` 核对站位、闭环和半圈计数。 |
+| 绕行与普通移动串联。计划合并见 `a537ea4`，在途回执见 `1546ce4`。 | 9 个检查点齐全但路线仍在途时，后继移动继续等待。 | `navigation-mixed` 保留到达起点、绕两圈、后继移动三层。 |
+| 「中途重新绕」，见 `451b1f7`。[固定原话](native-world.cjs) | 旧路线带一圈按原号退出，旧追问撤下。新修订沿原墙从零开始，完成后恢复原跟随。 | `navigation-restart` 先返回仍在途的停止回执，再返回原号退出。 |
+| 「你可以垫上来」后计划被拒却进入等待，见原始基线 `run-CA2yMm` 的回合 8、9。[历史回放](replay-follow-climb-baseline.cjs#L43) | 合法的放置和移动节点可接纳。无效计划在修订额度用完后明确结算。 | `layered` 验证合法计划接纳。`repair-plan` 验证两次拒绝后正常结算回合。 |
+| 高台掉队后请求垫上来，见同一基线的跟随工作 `1.240`、`1.267`、`1.276`、`1.315`。[历史回放](replay-follow-climb-baseline.cjs#L22) | 受阻和恢复沿用原跟随身份。垫高每次放置或移动按原号结算。中途站位失败时保留已有方块，跳过依赖步骤。 | `attention` 覆盖异常与恢复。`layered` 和 `layered-blocked` 分别覆盖四层完成和第一步移动受阻。后者的站位失败由夹具注入。 |
+
+`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../../docs/mc-companion-development-plan.md#已验证的基线)
+
+**Paper 验证。** 绕墙的 Paper 探针从上述对照索引追溯。实际验收核对脚位经过墙两侧和两端、返回起点，以及重开时从起点重新跑。垫高沿用 `--layered-follow-probe`，用协议玩家读回两格实际方块，结合游戏回执核对两次精确站位和库存扣减，并检查受阻时的发言、原跟随恢复及实际停跟。两条路径使用固定响应。[垫高探针](playtest-check.cjs#L198)
+
+### 指向操作回归
+
+```powershell
+ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^plugins\.mc_partner_revision_pointed.*$'
 ```
 
 | 场景 | 核对项 |
 | --- | --- |
-| 绕墙两圈 | 旧工作按原号读回，原墙和 4 个站位核验后以一个游戏工作实际读回 9 个检查点，终态才唤醒子 Agent。 |
-| 中途重新绕 | 第一项路线带一圈退出，旧问题撤下，新修订沿用原墙从零开始，结束后恢复原跟随意图。 |
 | 敲掉石块上的泥土 | 视线命中石块时拒绝直接挖石和挖石计划，只允许通过核验的泥土目标。 |
 | 原木追问后续接合成 | 其他聊天仍可回应，玩家指明后用原要求续接。入包后回报当前合成受阻，未入包时后继跳过。 |
 

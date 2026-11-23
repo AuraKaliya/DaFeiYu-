@@ -9,9 +9,31 @@ const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bri
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
 
+// 核对一个前台工作的接纳和唯一退出，并检查它是否等到所需的前序回执。
+// 步骤：按桥接工作号查接纳与退出 → 核对顺序并返回原记录。
+function checkWorkReceipt(rows, work, after = 0) {
+  const accepted = rows.find(row => row.kind === 'mail.received' && row.category === 'mc.partner.motion' &&
+    row.body.status === 'accepted' && row.body.action.bridgeWork === work);
+  const exits = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+    row.body.bridgeWork === work);
+  assert.equal(exits.length, 1, `原工作应有一次退出 ${work}`);
+  const [exit] = exits;
+  assert.ok(accepted && after < accepted.seq && accepted.seq < exit.seq, `前台接纳与退出顺序 ${work}`);
+  return { accepted, exit };
+}
+
+// 核对跟随执行段的退出，并确认前台交接沿用原逻辑工作号。
+// 步骤：按执行段查回执 → 对照逻辑工作号与跟随状态。
+function checkFollowReceipt(rows, work, following, transition, after = 0) {
+  const { accepted, exit } = checkWorkReceipt(rows, work, after);
+  assert.equal(accepted.body.action.work, following);
+  assert.deepEqual([exit.body.work, exit.body.transition, exit.body.result.status], [following, transition, 'interrupted']);
+  return exit;
+}
+
 // 按原工作号核对每层只有一个动作的测试计划。
 // 步骤：定位模型收到的计划 → 对照信箱结算 → 核对退出与接纳顺序。
-function checkPlanReceiptOrder(rows, works) {
+function checkPlanReceiptOrder(rows, works, after) {
   const turn = rows.filter(row => row.kind === 'model.prepared' && row.step === 1)
     .map(readPartnerContext).find(turn => turn.input.trigger === 'plan.finished');
   const plan = turn.input.taskPlan;
@@ -19,23 +41,22 @@ function checkPlanReceiptOrder(rows, works) {
   const layers = mail.filter(row => row.category === 'mc.partner.plan' && row.body.status === 'settled' && row.body.plan === plan.id);
   assert.deepEqual(turn.input.planSettlements, layers.map(row => row.body));
   assert.equal(layers.length, plan.nodes.length);
-  let previous = 0;
+  assert.ok(layers.length >= works.length);
+  let previous = after;
   for (const [index, layer] of layers.entries()) {
     assert.equal(layer.body.layer, index + 1);
+    assert.equal(layer.body.nodes.length, 1);
     const [node] = layer.body.nodes;
     assert.equal(node.work, plan.nodes[index].work);
-    const exits = mail.filter(row => row.category === 'mc.partner.action' && row.body.bridgeWork === node.work);
-    const accepted = mail.find(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted' &&
-      row.body.action.bridgeWork === node.work);
     if (index < works.length) {
       assert.equal(node.work, works[index]);
-      assert.equal(exits.length, 1);
-      assert.ok(accepted.seq > previous && exits[0].seq > accepted.seq && layer.seq > exits[0].seq);
-      for (const [key, value] of Object.entries(node.result)) assert.deepEqual(value, exits[0].body.result[key]);
+      const { exit } = checkWorkReceipt(rows, node.work, previous);
+      assert.ok(exit.seq < layer.seq);
+      for (const [key, value] of Object.entries(node.result)) assert.deepEqual(value, exit.body.result[key]);
     } else {
       assert.equal(node.result.reason, 'prerequisite_failed');
-      assert.equal(accepted, undefined);
-      assert.equal(exits.length, 0);
+      assert.ok(!mail.some(row => (row.category === 'mc.partner.motion' && row.body.action?.bridgeWork === node.work) ||
+        (row.category === 'mc.partner.action' && row.body.bridgeWork === node.work)));
     }
     previous = layer.seq;
   }
@@ -915,14 +936,9 @@ async function main() {
       assert.equal(replies, layeredBlocked ? 1 : 0);
       const trace = path.join(root, 'trace', 'events.jsonl');
       const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
-      const layers = checkPlanReceiptOrder(rows, nodeExits);
-      const paused = rows.find(row => row.category === 'mc.partner.action' && row.body.transition === 'paused');
-      const accepted = rows.filter(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted');
-      assert.deepEqual([paused.body.work, paused.body.bridgeWork, paused.body.result.status], [following, following, 'interrupted']);
-      assert.ok(paused.seq < accepted.find(row => row.body.action.bridgeWork === nodeExits[0]).seq);
-      const resumedMotion = accepted.find(row => row.body.action.bridgeWork === resumed);
-      assert.equal(resumedMotion.body.action.work, following);
-      assert.ok(resumedMotion.seq > layers.at(-1).seq);
+      const paused = checkFollowReceipt(rows, following, following, 'paused');
+      const layers = checkPlanReceiptOrder(rows, nodeExits, paused.seq);
+      checkFollowReceipt(rows, resumed, following, 'exited', layers.at(-1).seq);
       console.log(trace);
     } else if (revision) {
       if (restartRoute || pointedCraft) {
@@ -945,13 +961,14 @@ async function main() {
           assert.equal(exit?.body.bridgeWork, craftingWork);
           assert.equal(Boolean(exit), !noPickup);
         } else {
-          const exit = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === routeWork);
+          assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 2);
+          const paused = checkFollowReceipt(rows, following, following, 'paused');
+          const { exit } = checkWorkReceipt(rows, routeWork, paused.seq);
           const handoff = context.input.taskHandoff;
-          const successor = rows.find(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted' &&
-            row.body.action.bridgeWork === restartWork);
           assert.equal(handoff.work, routeWork);
           assert.deepEqual(handoff.action, exit.body);
-          assert.ok(exit.seq < successor.seq);
+          const layers = checkPlanReceiptOrder(rows, [restartWork], exit.seq);
+          checkFollowReceipt(rows, resumed, following, 'exited', layers.at(-1).seq);
         }
         const settled = turns.find(turn => turn.input.trigger === 'plan.finished' &&
           turn.input.taskPlan?.status !== 'cancelled');
@@ -963,12 +980,12 @@ async function main() {
       assert.equal(collectExited, !correctionLost && !restartRoute);
       assert.equal(nextBlock, notes && !directRevision);
       assert.equal(wallFilled, !!correction && !correctionLost);
-      if (mixedRoute) {
-        assert.equal(routeReads, 10);
+      if (navigation && !restartRoute) {
+        assert.equal(routeReads, mixedRoute ? 10 : 9);
         const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-        checkPlanReceiptOrder(rows, [routeApproach, routeWork, routeDeparture]);
-      } else if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 2);
-      else if (navigation) assert.equal(routeReads, 9);
+        const { exit } = checkWorkReceipt(rows, collecting);
+        checkPlanReceiptOrder(rows, mixedRoute ? [routeApproach, routeWork, routeDeparture] : [routeWork], exit.seq);
+      }
       if (pointedCraft) assert.equal(replies, 3);
       if (recoverInbox) {
         assert.equal(failedReads, 3);
