@@ -162,12 +162,13 @@ dfy::model::Response follow_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"processed"})"}};
 }
 
-// 让两个放置与移动节点在真的游戏世界中按回执续行。
-// 步骤：开始跟随并说明受阻 → 观察及绑定两个支撑点 → 提交任务图 → 按实际站位答复。
-dfy::model::Response layered_follow_sample(const dfy::model::Request& request) {
+// 在真实场地用固定响应验证取材、垫高和原跟随恢复。
+// 步骤：开始跟随并说明受阻 → 按库存分流取材 → 观察并绑定支撑点 → 按实际站位答复。
+dfy::model::Response layered_follow_sample(const dfy::model::Request& request, bool resupply) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const Json pads = Json::array({{{"x",32},{"y",-60},{"z",-13}},{{"x",33},{"y",-59},{"z",-13}}});
+    const Json sources = Json::array({{{"x",30},{"y",-60},{"z",-16}},{{"x",31},{"y",-60},{"z",-16}}});
     const auto call = [&](std::string_view skill, std::string id, const Json& args) {
         const auto suffix = "_"+std::string(skill);
         const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(suffix); });
@@ -179,7 +180,27 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request) {
     };
     const auto& last = request.messages.back();
     if (last.role == Role::tool) {
-        if (last.tool_call_id == "start-steps") return invoke("observe","step-survey",{{"sources",{"self"}},{"verify",pads}});
+        if (last.tool_call_id == "start-steps") return resupply ?
+            invoke("observe","material-survey",{{"sources",{"self"}},{"radius",5},{"verify",sources}}) :
+            invoke("observe","step-survey",{{"sources",{"self"}},{"verify",pads}});
+        if (last.tool_call_id == "material-survey") {
+            const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            const auto& observation = result.at("observation"), &sample = observation.at("samples").back();
+            if (sample.at("views").front().at("actor").at("inventory").value("dirt",0) != 0)
+                throw std::runtime_error("resupply probe: the actor already had dirt");
+            Json steps = Json::array();
+            for (std::size_t i = 0; i < sources.size(); ++i) {
+                const auto& verified = sample.at("verified").at(i);
+                if (verified.at("atSelf") != true || verified.at("block") != "dirt")
+                    throw std::runtime_error("resupply probe: the source cells were not read back");
+                auto candidate = sources.at(i);
+                candidate["block"] = "dirt";
+                candidate["observation"] = observation.at("id");
+                steps.push_back({{"id","material-"+std::to_string(i+1)},{"skill","dig_block"},{"pickup","dirt"},
+                    {"arguments",std::move(candidate)}});
+            }
+            return invoke("queue_actions","gather-materials",{{"operation","plan"},{"steps",std::move(steps)}});
+        }
         if (last.tool_call_id == "step-survey") {
             const auto result = Json::parse(last.content.substr(last.content.find('{')));
             const auto& observation = result.at("observation");
@@ -211,6 +232,14 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request) {
     if (trigger == "follow.attention") return {{Role::assistant,"上面有点高，我先找找路。"}};
     if (trigger == "plan.finished") {
         const auto& layers = input.at("planSettlements");
+        if (resupply && layers.size() == 1) {
+            const auto& nodes = layers.front().at("nodes");
+            if (nodes.size() != 2 || std::ranges::any_of(nodes,[](const auto& node) {
+                const auto& result = node.at("result");
+                return node.at("skill") != "dig_block" || result.at("status") != "done" || result.at("inventoryDelta").value("dirt",0) != 1;
+            })) throw std::runtime_error("resupply probe: material pickup was not confirmed");
+            return invoke("observe","step-survey",{{"sources",{"self"}},{"verify",pads}});
+        }
         if (layers.size() != 4 || input.at("taskPlan").at("status") != "done")
             throw std::runtime_error("layered follow probe: incomplete pad work");
         return {{Role::assistant,"我踩到第二格了。"}};
@@ -221,7 +250,7 @@ dfy::model::Response layered_follow_sample(const dfy::model::Request& request) {
     if (text == "大肥鱼，跟着我") return {{Role::assistant,"",{call("follow","follow",Json::object()),
         call("reply","following",{{"text","跟着呢。"}})}},FinishReason::tool_calls};
     if (text == "能听见吗") return {{Role::assistant,"听得见。"}};
-    if (text == "你可以垫上来")
+    if (text == "你可以垫上来" || text == "挖两块泥土给自己垫上来")
         return invoke("task_update","start-steps",{{"operation","start_task"},{"message",4},{"kind","work"},{"goal","垫两步靠近高处玩家"}});
     if (text == "不用跟了") return invoke("stop_motion","stop-follow",{{"work",input.at("following").at("work")}});
     return {{Role::assistant,R"({"internal":"probe settlement"})"}};
@@ -761,7 +790,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool combined = mode == L"--follow-dig-fill-probe";
         const bool fill_four = combined || mode == L"--fill-four-probe";
         const bool water = mode == L"--water-probe";
-        const bool layered = mode == L"--layered-follow-probe";
+        const bool resupply = mode == L"--layered-resupply-probe";
+        const bool layered = resupply || mode == L"--layered-follow-probe";
         const bool craft = mode == L"--craft-probe";
         const bool partner = wall || follow || door || materials || fill_four || water || layered || craft || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
@@ -776,9 +806,9 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,materials,fill_four,combined,water,layered,craft,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,fill_four,combined,water,layered,resupply,craft,ask,gap,root](const auto&, const auto& request) {
                 if (craft) return craft_sample(request);
-                if (layered) return layered_follow_sample(request);
+                if (layered) return layered_follow_sample(request,resupply);
                 if (water) return water_sample(request);
                 if (fill_four) return fill_four_sample(request,combined);
                 if (materials) return materials_sample(request);

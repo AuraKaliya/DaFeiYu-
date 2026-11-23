@@ -8,7 +8,12 @@ const course = [
 ];
 const waterCourse = { west: [-37.5, -60, -24.5], east: [-23.5, -60, -24.5] };
 const fourCells = [[3, -60, -3], [4, -60, -3], [3, -59, -3], [4, -59, -3]];
-const layeredStands = { pads: [[32, -60, -13], [33, -59, -13]], upper: [34.5, -56, -13.5] };
+const layeredStands = {
+  pads: [[32, -60, -13], [33, -59, -13]],
+  sources: [[30, -60, -16], [31, -60, -16]],
+  foothold: [34, -58, -13],
+  upper: [34.5, -56, -13.5],
+};
 
 // 在独立体验世界布置补墙缺格、预留门洞和方向可辨的左右地标。
 function prepareWall(send, withDirt, withExistingDoor, moveDoor) {
@@ -57,12 +62,19 @@ function prepareWater(send) {
     `tp DfyCompanion ${waterCourse.west.join(' ')}`, `tp DfyGuestCheck ${waterCourse.west.join(' ')}`]) send(command);
 }
 
-// 布置初始无法抵达的高台及可用两个方块接续的站位。
-function prepareLayered(send) {
+// 布置高台和两处垫脚位，并按场景提供取材地块和最后一个落脚点。
+// 步骤：清理场地并定位两名玩家 → 按场景放置取材地块或发放材料。
+function prepareLayered(send, resupply) {
   for (const command of ['fill 26 -61 -19 39 -61 -9 minecraft:stone',
     'fill 26 -60 -19 39 -53 -9 minecraft:air', 'setblock 34 -57 -14 minecraft:stone',
     'setblock 33 -59 -14 minecraft:stone', 'tp DfyCompanion 30.5 -60 -13.5',
-    'tp DfyGuestCheck 32.5 -60 -13.5', 'give DfyCompanion minecraft:dirt 2']) send(command);
+    'tp DfyGuestCheck 32.5 -60 -13.5']) send(command);
+  if (resupply) {
+    for (const point of layeredStands.sources) send(`setblock ${point.join(' ')} minecraft:dirt`);
+    send(`setblock ${layeredStands.foothold.join(' ')} minecraft:stone`);
+  } else {
+    send('give DfyCompanion minecraft:dirt 2');
+  }
 }
 
 // 让独立协议玩家读回所选场地的原状和检验点，未加载或不符时等待下一次读取。

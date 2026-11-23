@@ -117,8 +117,10 @@ async function checkPlayer(fixture, mode) {
     const actor = fish.uuid;
     const doorProbe = mode === '--door-probe';
     const combined = mode === '--follow-dig-fill-probe';
+    const resupply = mode === '--layered-resupply-probe';
+    const layered = resupply || mode === '--layered-follow-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--layered-follow-probe', '--craft-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -127,8 +129,8 @@ async function checkPlayer(fixture, mode) {
       await checkFillFour(fixture, player, whispers, combined);
     } else if (mode === '--craft-probe') {
       await checkCraft(fixture, player, whispers);
-    } else if (mode === '--layered-follow-probe') {
-      await checkLayeredFollow(fixture, player, whispers);
+    } else if (layered) {
+      await checkLayeredFollow(fixture, player, whispers, resupply);
     } else if (doorProbe) {
       await checkDoor(fixture, player, whispers);
     } else if (mode === '--water-probe') {
@@ -195,14 +197,16 @@ async function checkPlayer(fixture, mode) {
   } finally { player.quit(); }
 }
 
-// 在真实世界中验证高台掉队、继续对话、四段执行和原跟随的恢复。
-// 步骤：制造高差并等待一次异常 → 聊天后提交垫块 → 检查终态与原跟随实际退出。
-async function checkLayeredFollow(fixture, player, whispers) {
+// 在真实世界中验证高台掉队、取材后垫高和原跟随恢复。
+// 步骤：核对初始材料及高度 → 触发受阻和新指令 → 核对取材、落块及站位 → 核实跟随恢复及退出。
+async function checkLayeredFollow(fixture, player, whispers, resupply) {
   const trace = () => readRows(fixture, 'trace/events.jsonl');
   const mail = type => trace().filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.' + type);
-  const { pads, upper } = layeredStands;
+  const { pads, sources, foothold, upper } = layeredStands;
   const block = point => player.blockAt(player.entity.position.clone().set(...point))?.name;
-  await until(() => fixture.materialCount('dirt') === 2 && pads.every(point => block(point) === 'air') &&
+  await until(() => fixture.materialCount('dirt') === (resupply ? 0 : 2) && pads.every(point => block(point) === 'air') &&
+    (!resupply || sources.every(point => block(point) === 'dirt')) &&
+    block(foothold) === (resupply ? 'stone' : 'air') &&
     block([34, -57, -14]) === 'stone', '游戏读回两格空位与高台');
   player.chat('大肥鱼，跟着我');
   const original = await until(() => mail('motion').find(row => row.body.status === 'accepted'), '原跟随接纳');
@@ -213,12 +217,22 @@ async function checkLayeredFollow(fixture, player, whispers) {
   player.chat('能听见吗');
   await until(() => whispers.includes('听得见。'), '受阻时仍能聊天');
   await until(() => mail('motion').some(row => row.body.status === 'blocked'), '原物理跟随进入受阻');
-  player.chat('你可以垫上来');
+  player.chat(resupply ? '挖两块泥土给自己垫上来' : '你可以垫上来');
   await until(() => whispers.includes('我踩到第二格了。'), '两次放置和精确移动均已结算', 40000);
   assert.deepEqual(pads.map(block), ['dirt', 'dirt']);
   assert.equal(fixture.materialCount('dirt'), 0);
   const layers = mail('plan').filter(row => row.body.status === 'settled');
   const actions = readRows(fixture, 'game-actions.jsonl');
+  if (resupply) {
+    const gathered = layers.shift().body.nodes;
+    assert.deepEqual(gathered.map(node => [node.skill, node.result.inventoryDelta?.dirt]), [['dig_block', 1], ['dig_block', 1]]);
+    assert.deepEqual(sources.map(block), ['air', 'air']);
+    for (const [index, node] of gathered.entries()) {
+      const receipt = actions.find(action => action.work === node.work);
+      assert.deepEqual(receipt?.result.changes.map(cell => [cell.x, cell.y, cell.z, cell.before, cell.after]),
+        [[...sources[index], 'dirt', 'air']]);
+    }
+  }
   assert.deepEqual(layers.map(row => row.body.nodes[0].skill), ['place', 'move', 'place', 'move']);
   const queue = trace().find(row => row.kind === 'tool.exited' && row.callId === 'steps');
   const next = trace().find(row => row.kind === 'model.prepared' && row.seq > queue.seq);
@@ -234,15 +248,25 @@ async function checkLayeredFollow(fixture, player, whispers) {
     else assert.deepEqual(['x', 'y', 'z'].map(axis => Math.floor(work.result.position[axis])),
       [pads[(i - 1) / 2][0], pads[(i - 1) / 2][1] + 1, -13]);
   }
+  const work = original.body.action.work;
+  if (!resupply) {
+    await until(() => mail('motion').find(row => row.seq > queue.seq && row.body.action.work === work &&
+      row.body.status === 'blocked' && row.body.progress?.vertical >= 2 && row.body.progress?.path === 'unreachable'),
+    '到达第二格后仍没有可达路径');
+    assert.deepEqual(mail('attention').map(row => row.body.status), ['raised']);
+    fixture.send(`tp DfyGuestCheck ${pads[0][0] + 0.5} ${pads[0][1] + 1} ${pads[0][2] + 0.5}`);
+  }
   const recovered = await until(() => mail('attention').find(row => row.body.status === 'recovered'), '原跟随已稳定恢复');
   const accepted = mail('motion').filter(row => row.body.status === 'accepted' && row.body.action.skill === 'follow');
-  const work = original.body.action.work;
-  assert.deepEqual(accepted.map(row => [row.body.action.work, row.body.action.bridgeWork]), [[work, work], [work, work + '.resume.2']]);
+  assert.ok(accepted.length >= 2);
+  for (const { body: { action } } of accepted)
+    assert.deepEqual([action.work, action.bridgeWork], [work, action.segment === 1 ? work : `${work}.resume.${action.segment}`]);
   assert.deepEqual([raised.body.work, recovered.body.work], [work, work]);
   assert.deepEqual(mail('attention').map(row => row.body.status), ['raised', 'recovered']);
   player.chat('不用跟了');
+  const lastSegment = accepted.at(-1).body.action.bridgeWork;
   await until(() => mail('action').some(row => row.body.skill === 'follow' && row.body.work === work &&
-    row.body.bridgeWork === work + '.resume.2' && row.body.result.status === 'interrupted'), '原跟随的真实退出回执');
+    row.body.bridgeWork === lastSegment && row.body.result.status === 'interrupted'), '原跟随的真实退出回执');
   assert.deepEqual(whispers, ['跟着呢。', '上面有点高，我先找找路。', '听得见。', '我垫两步上来。', '我踩到第二格了。']);
 }
 

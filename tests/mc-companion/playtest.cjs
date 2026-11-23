@@ -79,7 +79,8 @@ async function play(fixture, exe, pkg, mode, config) {
       '角色与原玩家同时入场', 30000);
     prepareScene(send);
     if (mode === '--water-probe') prepareWater(send);
-    if (mode === '--layered-follow-probe') prepareLayered(send);
+    if (mode === '--layered-follow-probe' || mode === '--layered-resupply-probe')
+      prepareLayered(send, mode === '--layered-resupply-probe');
     if (mode === '--craft-probe') send('give DfyCompanion minecraft:oak_log 1');
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
     if (fillFour) prepareFourCells(send, combined);
@@ -205,7 +206,7 @@ async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--craft-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
