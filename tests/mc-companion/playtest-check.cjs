@@ -294,6 +294,7 @@ async function checkMaterials(fixture, player, whispers) {
   const work = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'collect');
   assert.equal(work.length, 2);
   assert.ok(work.every(row => row.arguments.source === 'ground' && row.result.status === 'blocked'));
+  assert.deepEqual(work.map(row => row.result.reasonCode), ['dig_outside_scope', 'dig_source_missing']);
   assert.deepEqual(work[0].result.changes, []);
   assert.deepEqual(work[1].result.changes, [{ x: 2, y: -61, z: 0, before: 'dirt', after: 'air' }]);
   assert.deepEqual(work[1].result.inventoryDelta, { dirt: 1 });

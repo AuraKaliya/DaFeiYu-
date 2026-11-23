@@ -145,13 +145,18 @@ async function pickup(bot, point, known, check, result) {
   } finally { clearTimeout(timer); }
 }
 
+// 为当前采掘阻碍保留可供后续决策使用的原因。
+function digBlocked(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
 // 逐块执行本次采集，指定坐标时保持目标，实际破坏与背包增减分别取证。
 // 步骤：核对材料和目标 → 走近并选择可采工具 → 读回方块 → 走近掉落并记录背包变化。
 async function collect(bot, args, check, result, built) {
   const fixed = ['x', 'y', 'z'].some(k => Object.hasOwn(args, k)) ? targetPoint(bot, args) : null;
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
     throw new Error('数量应为 1～32，指定的单格只能采一次');
-  const referenceChanged = () => Object.assign(new Error('目标下方的原参照已变化'), { code: 'dig_reference_changed' });
+  const referenceChanged = () => digBlocked('dig_reference_changed', '目标下方的原参照已变化');
   if (args.digReference && (!fixed || !matchesDigReference(bot, fixed, args.digReference))) throw referenceChanged();
   const before = inventory(bot);
   const expected = args.item?.replace(/^minecraft:/, '');
@@ -180,17 +185,24 @@ async function collect(bot, args, check, result, built) {
       check();
       const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
-      if (!matching.length) throw new Error('当前地面取材规则未找到这种物品的自然来源');
+      if (!matching.length) throw digBlocked('dig_source_missing', '当前地面没有这种物品的自然来源');
       const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
-      if (block && matching.includes(block.type) && !permitsDig(affectedByDig(bot, block)))
-        throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
-      if (!block || !matching.includes(block.type) || !block.diggable || !allowed(block))
-        throw new Error(args.source === 'ground' ? '未读到符合取材范围的地面' : '指定目标已变化或附近没有可见的目标方块');
+      if (!block) throw fixed ? digBlocked('dig_target_unloaded', '目标格尚未加载') :
+        digBlocked('dig_source_missing', '当前视野内没有符合取材范围的方块');
+      if (!matching.includes(block.type)) throw digBlocked('dig_target_changed', '目标格现在是' + block.name);
+      if (!block.diggable) throw digBlocked('dig_not_breakable', '该方块无法采掘');
+      if (!permitsDig(affectedByDig(bot, block))) throw digBlocked('dig_protected', '目标属于已验收的对象或其支撑，需要指定拆改');
+      if (!allowed(block)) throw digBlocked('dig_outside_scope', '目标不在地面取材范围内');
       checkApproval(affectedByDig(bot, block));
       const pos = block.position;
-      if (pos.equals(bot.entity.position.floored().offset(0, -1, 0))) throw new Error('目标支撑着角色，请先移动');
+      if (pos.equals(bot.entity.position.floored().offset(0, -1, 0)))
+        throw digBlocked('dig_stand_support', '目标支撑着角色，请先移动');
       if (!digReachable(bot, pos, bot.entity.position)) {
         try { await walk(bot, new DigStandGoal(bot, pos)); }
+        catch (error) {
+          check();
+          throw digBlocked('dig_path_blocked', '无法走到目标的采掘站位：' + error.message);
+        }
         finally { result.approachPosition = bot.entity.position.clone(); }
       }
       check();
@@ -202,12 +214,14 @@ async function collect(bot, args, check, result, built) {
       else if (!suitable(bot.heldItem)) await bot.unequip('hand');
       check();
       const here = bot.blockAt(pos);
-      if (!here || here.type !== block.type || !here.diggable) throw new Error('到达后目标方块已经变化');
-      if (!here.canHarvest(bot.heldItem?.type)) throw new Error('没有可采掘这个方块的工具');
-      if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position)) throw new Error('实际站位没有安全的采掘视线');
+      if (!here) throw digBlocked('dig_target_unloaded', '到达后目标格未加载');
+      if (here.type !== block.type || !here.diggable) throw digBlocked('dig_target_changed', '到达后目标方块已经变化');
+      if (!here.canHarvest(bot.heldItem?.type)) throw digBlocked('dig_tool_missing', '没有可采掘这个方块的工具');
+      if (!bot.canDigBlock(here) || !digReachable(bot, pos, bot.entity.position))
+        throw digBlocked('dig_stand_unusable', '实际站位没有安全的采掘视线');
       const affected = affectedByDig(bot, here);
-      if (!permitsDig(affected)) throw new Error('目标属于已验收的对象或其支撑，需要指定拆改');
-      if (!allowed(here)) throw new Error('目标已不符合地面取材范围');
+      if (!permitsDig(affected)) throw digBlocked('dig_protected', '目标属于已验收的对象或其支撑，需要指定拆改');
+      if (!allowed(here)) throw digBlocked('dig_outside_scope', '目标已不符合地面取材范围');
       if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
       checkApproval(affected);
       const readback = collectReadback(bot, here, affected);
@@ -220,9 +234,10 @@ async function collect(bot, args, check, result, built) {
       check();
       await pickup(bot, pos, known, check, result);
       if (expected && (inventory(bot)[expected] ?? 0) <= stock)
-        throw new Error('没有读到所需物品入包，已停止取材');
+        throw digBlocked('pickup_unverified', '没有读到所需物品入包，已停止取材');
     }
-    if (expected && (inventory(bot)[expected] ?? 0) < args.requiredStock) throw new Error('实际背包仍缺少所需物品');
+    if (expected && (inventory(bot)[expected] ?? 0) < args.requiredStock)
+      throw digBlocked('pickup_unverified', '实际背包仍缺少所需物品');
   } finally {
     const after = inventory(bot);
     if (expected) result.stock.after = after[expected] ?? 0;
