@@ -2,6 +2,7 @@
 import { computed, ref, useTemplateRef, watch } from 'vue';
 import RoundList from './RoundList.vue';
 import RunTimeline from './RunTimeline.vue';
+import PromptView from './PromptView.vue';
 import { modelStages } from './model-stages.ts';
 import { sourceLabel } from './display.ts';
 import { useTraceFiles } from './viewer-state.ts';
@@ -20,6 +21,10 @@ const selected = computed(() => rounds.value.find(round => round.key === selecte
 const stages = computed(() => selected.value ? modelStages(selected.value) : []);
 const stage = computed(() => stages.value.find(entry => entry.key === stageId.value));
 const evidence = computed(() => loaded.value?.index.evidence.get(selectedKey.value));
+const earlierPrepared = computed(() => {
+  const active = stages.value.findIndex(entry => entry.key === stageId.value);
+  if (active > 0) return stages.value.slice(0, active).reverse().find(entry => entry.prepared)?.prepared;
+});
 
 // 导入同批文件时取宿主索引与可选游戏回执；单独附加回执时保留宿主快照。
 // 步骤：读取文件选择 → 确认输入来源 → 启动导入并清空选择框。
@@ -120,9 +125,18 @@ watch(loaded, (next, prior) => {
         @stage="selectStage" @record="inspect" @mc="panel = 'mc'" />
       <main v-else class="round"><p class="empty">文件中没有可确认的 MC 伙伴回合。</p></main>
       <aside class="inspector" aria-label="记录详情">
-        <h2 v-if="panel === 'prompt' || panel === 'outcome'">模型步骤 {{ stage?.step }}</h2>
-        <h2 v-else-if="panel === 'mc'">MC 实效</h2>
-        <h2 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h2>
+        <header v-if="selected" class="inspector-header" aria-label="详情切换">
+          <button type="button" :aria-pressed="panel === 'prompt'" @click="panel = 'prompt'">实际送模</button>
+          <button type="button" :aria-pressed="panel === 'outcome'" @click="panel = 'outcome'">响应与裁定</button>
+          <button type="button" :aria-pressed="panel === 'mc'" @click="panel = 'mc'">MC 实效</button>
+          <button type="button" :aria-pressed="panel === 'raw'" @click="panel = 'raw'">原始记录</button>
+        </header>
+        <PromptView v-if="panel === 'prompt' && stage?.prepared" :key="selectedKey + '/' + stage.key"
+          :source="loaded" :prepared="stage.prepared" :previous="earlierPrepared" @inspect="inspect" />
+        <p v-else-if="panel === 'prompt'" class="empty">所选阶段未见装配记录。</p>
+        <p v-else-if="panel === 'outcome'" class="empty">模型步骤 {{ stage?.step ?? '—' }}</p>
+        <h3 v-else-if="panel === 'mc'">MC 实效</h3>
+        <h3 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h3>
         <p v-if="rawRef" class="muted">{{ sourceLabel(rawRef) }}</p>
       </aside>
     </div>
