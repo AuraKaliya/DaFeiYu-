@@ -1,6 +1,6 @@
 # Agent 循环的提示词设计与大肥鱼的应用
 
-大肥鱼当前应先对齐 `observe` 和 `craft` 的能力说明、入口校验与游戏回执。模型需要知道当前任务能用什么、依据是什么、做到哪一步了。项目已有按场景选择的系统指引、工具准入和实际送模 Trace，可以从这两个技能验证同一份能力定义是否足以支撑模型决策和宿主执行。 [MC 开发顺序](mc-companion-development-plan.md#接下来的开发顺序)
+`observe` 和 `craft` 已建立能力说明、入口校验和游戏回执的基线。下一步从 `observe → dig_block` 对齐原话指向与自身现场证据的使用，再按计划推进放置、追问、续行和插件 Skill。模型依据实际可见的工具和已核实的进展决定下一步。 [MC 开发顺序](mc-companion-development-plan.md#接下来的开发顺序)
 
 这里的一个 Agent 回合从接纳用户任务开始，到交付答复、中断或失败结束。每次模型请求及其工具调用、结果回传属于其中一个步骤。在 MC 中，任务和已接纳的游戏工作可以跨多个回合推进。 [当前 Agent 流程](architecture.md#agent-会话与工具流程) · [MC 运行边界](architecture.md#运行边界)
 
@@ -34,7 +34,7 @@
 
 ## 首步方案与验收
 
-从 `observe` 和 `craft` 开始，复用现有技能定义、入口校验和游戏执行器。先保留当前 `model.prepared` 和行为结果作为基线，再核对目录与实际请求。默认回合、显式展开和受限结算回合各取一个固定场景。 [首批样例](mc-companion-development-plan.md#首批样例) · [首步验收](mc-companion-development-plan.md#首步验收与延迟基线)
+首步用 `observe` 和 `craft` 验证技能定义、入口校验和游戏执行器的衔接，覆盖默认回合、显式展开和受限结算回合。实际 `model.prepared` 和行为结果为后续工具契约及 Skill 装配提供对照。 [首批样例](mc-companion-development-plan.md#首批样例) · [首步验收](mc-companion-development-plan.md#首步验收与延迟基线)
 
 | 场景 | 核对项 |
 | --- | --- |
