@@ -1,5 +1,5 @@
 const { setTimeout: delay } = require('node:timers/promises');
-const { dryStand, SurfaceFollowGoal, monitorSurface } = require('./navigation.cjs');
+const { dryStand, followHeightClose, SurfaceFollowGoal, monitorSurface } = require('./navigation.cjs');
 
 // 在同一跟随工作内等待玩家重现或可行路线，保留同一动态目标。
 // 步骤：采样当前位置 → 跟随或按新证据探路 → 回传进展 → 按原工作退出。
@@ -40,7 +40,9 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
         result.progress = { phase: 'waiting_player', terrain, sampledAtMs: Math.floor(now) };
       } else {
         const distance = position.distanceTo(playerPosition);
-        const nearby = distance <= range + 0.5 && (!dryStand(bot, playerPosition) ||
+        const vertical = Math.round((playerPosition.y - position.y) * 10) / 10;
+        const closeHeight = followHeightClose(vertical);
+        const nearby = distance <= range + 0.5 && closeHeight && (!dryStand(bot, playerPosition) ||
           (!bot.entity.isInWater && dryStand(bot, position)));
         const evidence = `${position.floored()}:${playerPosition.floored()}:${terrainRevision}`;
         if (blocked && (nearby || (evidence !== lastProbe && now >= nextProbe))) {
@@ -50,7 +52,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
           blocked = path !== 'reachable';
         }
         if (!blocked) {
-          const movedGoal = goal && distance > range + 1 && goal.isEnd(position.floored()) &&
+          const movedGoal = goal && (distance > range + 1 || !closeHeight) && goal.isEnd(position.floored()) &&
             (goal.x !== Math.floor(playerPosition.x) || goal.y !== Math.floor(playerPosition.y) || goal.z !== Math.floor(playerPosition.z));
           if (goal?.entity !== entity || movedGoal) {
             goal = new SurfaceFollowGoal(bot, entity, range);
@@ -78,7 +80,7 @@ async function followPlayer(bot, owner, range, check, result, probe, probeFirst)
           }
         }
         result.progress = { phase: blocked ? 'blocked' : nearby ? 'in_range' : retried ? 'replanning' : 'following',
-          terrain, distance: Math.round(distance * 10) / 10, vertical: Math.round((playerPosition.y - position.y) * 10) / 10,
+          terrain, distance: Math.round(distance * 10) / 10, vertical,
           path: nearby ? 'reachable' : path, sampledAtMs: Math.floor(now) };
       }
       await delay(125);

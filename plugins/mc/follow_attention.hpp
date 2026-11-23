@@ -26,10 +26,12 @@ class FollowAttention {
         const auto distance = progress.value("distance",0.0);
         if (distance <= range+2) distant_.reset();
         else if (!distant_ || distance+1 <= baseline_) { distant_ = at; baseline_ = distance; }
-        const auto high = sustain(high_,std::abs(progress.value("vertical",0.0)) >= 2 &&
-            progress.value("path","") == "unreachable",at,2000);
+        const auto path = progress.value("path","");
+        const bool height_known = progress.contains("vertical");
+        const bool close_height = height_known && std::abs(progress.at("vertical").get<double>()) < 2;
+        const auto high = sustain(high_,height_known && !close_height && path == "unreachable",at,2000);
         const auto missing = sustain(missing_,phase == "waiting_player",at,5000);
-        const auto near = sustain(near_,phase == "in_range" && distance <= range+0.5,at,1000);
+        const auto near = sustain(near_,phase == "in_range" && distance <= range+0.5 && close_height && path == "reachable",at,1000);
         if (active_) {
             if (!near) return FollowSignal::none;
             active_ = false;

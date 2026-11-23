@@ -479,6 +479,7 @@ async function main() {
           const sampledAtMs = ++attentionSamples * 500;
           if (replies) ++recoveredReads;
           const progress = recoveredReads > 4 ? { phase: 'in_range', terrain: 'dry', distance: 1.5, vertical: 0, path: 'reachable' } :
+            recoveredReads > 1 ? { phase: 'in_range', terrain: 'dry', distance: 2.8, vertical: 2.8, path: 'reachable' } :
             attentionSamples <= 3 ? { phase: 'following', terrain: 'swimming', distance: 4, vertical: 0.5, path: 'reachable' } :
               { phase: replies ? 'blocked' : 'following', terrain: 'dry', distance: 8, vertical: 5, path: 'unreachable' };
           return { ...context, skill, exited: false, result: { progress: { ...progress, sampledAtMs } } };
@@ -1106,6 +1107,7 @@ async function main() {
       const alerts = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.attention');
       assert.deepEqual(alerts.map(row => [row.body.status, row.body.work, row.body.episode]),
         [['raised', following, 1], ['recovered', following, 1]]);
+      assert.equal(alerts[1].body.progress.vertical, 0);
       console.log(trace);
     } else if (questionScope) {
       assert.ok(questionPresented && collectExited);

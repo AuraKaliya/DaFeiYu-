@@ -46,6 +46,12 @@ void verify_follow_windows() {
             throw std::runtime_error("vertical obstacle ignored the no-path evidence");
     if (attention.reason() != "unreachable_height" || attention.episode() != 2)
         throw std::runtime_error("separate vertical obstacle lost its own episode");
+    for (std::uint64_t at = 11500; at <= 12500; at += 500)
+        if (sample(at,2.8,2.8,"in_range","reachable") != FollowSignal::none)
+            throw std::runtime_error("range alone falsely recovered from a height obstacle");
+    for (std::uint64_t at = 13000; at <= 14000; at += 500)
+        if (sample(at,2.8,1,"in_range","reachable") != (at == 14000 ? FollowSignal::recovered : FollowSignal::none))
+            throw std::runtime_error("the same follow episode did not recover after the height changed");
 
     attention = {};
     for (std::uint64_t at = 0; at <= 5000; at += 500)

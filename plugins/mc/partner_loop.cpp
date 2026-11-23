@@ -207,7 +207,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     const auto answer = state.answer.length ? std::string_view(state.answer.data,state.answer.length) : std::string_view{};
     if (!settle_reply(config,instance,answer,cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) return false;
 
-    if (!active_delegation_ && (cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) {
+    if (!active_delegation_ && (cancel || (!attention_turn_ && state.phase != DFY_V2_AGENT_SUCCEEDED))) {
         task_.disarm();
         expansion_pending_ = false;
     }

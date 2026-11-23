@@ -54,6 +54,11 @@ class DigStandGoal extends goals.GoalLookAtBlock {
   isEnd(node) { return digReachable(this.bot, this.pos, this.pos.clone().set(node.x + 0.5, node.y, node.z + 0.5), 3.8); }
 }
 
+// 核对双方高差仍在可视为同一跟随站位的范围内。
+function followHeightClose(vertical) {
+  return Math.abs(vertical) < 2;
+}
+
 // 用同一个动态目标跨水，干岸玩家的到达条件也要求跟随者能落在干岸。
 class SurfaceFollowGoal extends goals.GoalFollow {
   // 记录实际实体和寻路使用的客户端世界。
@@ -62,9 +67,10 @@ class SurfaceFollowGoal extends goals.GoalFollow {
     this.bot = bot;
   }
 
-  // 在原跟随距离条件上叠加干岸站位约束。
+  // 在原跟随距离条件上叠加高差和干岸站位约束。
   isEnd(node) {
-    return super.isEnd(node) && (!dryStand(this.bot, this.entity.position) || dryStand(this.bot, node));
+    return super.isEnd(node) && followHeightClose(node.y - this.y) &&
+      (!dryStand(this.bot, this.entity.position) || dryStand(this.bot, node));
   }
 }
 
@@ -92,4 +98,4 @@ function monitorSurface(bot, result) {
   return { sample, stop() { sample(); bot.removeListener('physicsTick', sample); } };
 }
 
-module.exports = { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, SurfaceFollowGoal, monitorSurface };
+module.exports = { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, followHeightClose, SurfaceFollowGoal, monitorSurface };
