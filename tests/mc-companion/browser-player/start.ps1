@@ -1,6 +1,7 @@
 ﻿# 准备上游浏览器客户端并打开本机体验服；试玩的下载、缓存和浏览器资料均放在指定目录。
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$FixtureRoot, [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG, [switch]$PrepareOnly)
+param([Parameter(Mandatory)][string]$FixtureRoot, [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG,
+    [string]$BuildDirectory, [string]$Configuration = 'Debug', [switch]$PrepareOnly)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $FixtureRoot).Path
 $dir = Join-Path $root 'mwc'
@@ -41,6 +42,7 @@ function Test-Listening([int]$Port) {
 }
 
 $stampTime = Get-Date -Format 'yyyyMMdd-HHmmssfff'
+$build = if ($BuildDirectory) { (Resolve-Path -LiteralPath $BuildDirectory).Path }
 if (Test-Listening 25580) {
     $info = Join-Path $root 'servers/playtest-1.21.4/dfy-launch.json'
     if (-not (Test-Path -LiteralPath $info)) { throw '该端口已有旧体验服或其他服务，结束该场后可开启模型伙伴。' }
@@ -48,11 +50,17 @@ if (Test-Listening 25580) {
     if ($active.mode -ne '--live' -or ($ModelConfig -and $active.config -ne (Resolve-Path -LiteralPath $ModelConfig).Path)) {
         throw '当前体验服使用另一种模式或模型配置，结束该场后重启即可切换。'
     }
+    if (($build -and $active.buildDirectory -ne $build) -or
+        (($build -or $PSBoundParameters.ContainsKey('Configuration')) -and $active.configuration -ne $Configuration)) {
+        throw '当前体验服使用另一构建，结束该场后可启动指定版本。'
+    }
 } else {
     $paper = Join-Path (Split-Path $PSScriptRoot) 'start-playtest.ps1'
     $out = Join-Path $dir "$stampTime-paper.log"
     $err = Join-Path $dir "$stampTime-paper.err"
     $arguments = @('-NoProfile','-File',('"' + $paper + '"'),'-FixtureRoot',('"' + $root + '"'))
+    if ($build) { $arguments += @('-BuildDirectory',('"' + $build + '"')) }
+    $arguments += @('-Configuration',('"' + $Configuration + '"'))
     if ($ModelConfig) { $arguments += @('-ModelConfig',('"' + (Resolve-Path -LiteralPath $ModelConfig).Path + '"')) }
     $job = Start-Process -FilePath (Get-Process -Id $PID).Path -WindowStyle Hidden -PassThru -ArgumentList $arguments -RedirectStandardOutput $out -RedirectStandardError $err
     $until = (Get-Date).AddSeconds(90)

@@ -8,6 +8,7 @@ $root = (Resolve-Path -LiteralPath $FixtureRoot).Path
 $baseServer = Join-Path $root 'servers/stone-1.21.4'
 if ((Get-Content -LiteralPath (Join-Path $baseServer 'eula.txt')) -notcontains 'eula=true') { throw '本项目本机测试服尚未接受 Minecraft EULA' }
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'native' }
+if (Test-Path -LiteralPath $BuildDirectory) { $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path }
 if ($Probe -and $PartnerProbe) { throw '请选择一种验收场景' }
 $exe = if ($Probe -or $PartnerProbe) { Join-Path $BuildDirectory "tests/$Configuration/dfy_mc_playtest.exe" } else {
     Join-Path $BuildDirectory "bin/$Configuration/dafeiyu.exe"
@@ -54,7 +55,8 @@ try {
     )
     [IO.File]::WriteAllLines((Join-Path $server 'server.properties'), [string[]]$properties, [Text.UTF8Encoding]::new($false))
     [string[]]$extra = if ($Probe) { '--probe' } elseif ($PartnerProbe) { '--partner-probe' } else { '--live', $ModelConfig }
-    [IO.File]::WriteAllText($launchInfo, (@{ mode = $extra[0]; config = $ModelConfig } | ConvertTo-Json -Compress))
+    [IO.File]::WriteAllText($launchInfo, (@{ mode = $extra[0]; config = $ModelConfig;
+        buildDirectory = $BuildDirectory; configuration = $Configuration } | ConvertTo-Json -Compress))
     & node (Join-Path $PSScriptRoot 'playtest.cjs') $exe $package @extra
     if ($LASTEXITCODE) { throw "真人体验进程退出码 $LASTEXITCODE" }
 } finally {
