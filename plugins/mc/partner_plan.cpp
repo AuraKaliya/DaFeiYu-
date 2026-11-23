@@ -33,7 +33,8 @@ bool prepare_action(std::string_view skill, Json& args) {
         args.at("message").is_number_unsigned() && args.at("message") > 0 &&
         (args.size() == 1 || (args.size() == 2 && (args.value("focus","") == "hit" || args.value("focus","") == "openings"))));
     if (skill == "gather_ground") return valid_stock_request(args);
-    return skill == "dig_block" && args.size() == 4+args.count("message") && name("block") && valid_action_cell(args) &&
+    return skill == "dig_block" && args.size() == 4+args.count("message")+args.count("observation") &&
+        name("block") && valid_action_cell(args) && (!args.contains("observation") || name("observation")) &&
         (!args.contains("message") || (args.at("message").is_number_unsigned() && args.at("message") > 0));
 }
 
@@ -134,6 +135,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (skill == "dig_block") {
             const auto pointed = pointed_dig(session_,args.value("message",std::uint64_t{}),resolves,args);
             if (!pointed.has_value() || (resolves && !*pointed)) return invalid("pointed_block_unverified");
+            if (const auto issue = check_dig_observation(session_,args); !issue.empty()) return invalid(issue);
             args.erase("message");
         }
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");

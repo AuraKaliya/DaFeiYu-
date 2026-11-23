@@ -277,6 +277,14 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     return true;
 }
 
+// 核对自选目标引用的自身读回，并移除已由宿主校验的引用。
+std::string_view PartnerLoop::check_dig_observation(std::uint64_t session, Json& args) const {
+    if (!args.contains("observation")) return {};
+    const auto issue = session == session_ && !active_delegation_ ? task_.dig_observation_issue(args,feed_.observation()) : "observation_stale";
+    args.erase("observation");
+    return issue;
+}
+
 // 阻止用无指向的采料入口绕过明确的单格指令。
 bool PartnerLoop::requires_pointed_dig(std::uint64_t session) const {
     return session == session_ && !active_delegation_ && !events_.empty() && events_.back().at("type") == "player.message" &&

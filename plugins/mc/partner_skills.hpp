@@ -32,13 +32,13 @@ inline constexpr std::array partner_actions{
     PartnerAction{"follow","follow",false,true},
     PartnerAction{"collect","collect",false,true},
     PartnerAction{"collect_confirmed","collect"},
-    PartnerAction{"dig_block","collect",true,false,"x,y,z,block, plus the observed message for a pointed target."},
+    PartnerAction{"dig_block","collect",true,false,"x,y,z,block; message for pointing, observation for self verify."},
     PartnerAction{"gather_ground","collect",true,true,"item, requiredStock, optional source block."},
     PartnerAction{"place","place",true,true,"x,y,z,block within the bound target. Exit reports changed cells."},
     PartnerAction{"fill_target","fill_target",true,false,"block for the bound cells. Exit reports each cell's result."},
     PartnerAction{"route","route",true,false,"Validated route.id and laps (1-8). A restarted task retains its wall and lap count. Exit reports verified laps."},
     PartnerAction{"craft","craft",true,false,"Plank item and desired new count (1-32), optional ingredient naming a log or stem.",
-        SkillCategory::craft_process,"Wait for verified pickup if a dig is a prerequisite. At execution check the game recipe, stock, inventory space and a workbench if required. Exit verifies consumption and output."},
+        SkillCategory::craft_process,"A prerequisite dig needs verified pickup. Check recipe, stock, space and workbench. Exit verifies consumption and output."},
 };
 
 // 返回同一技能在各入口所用的实际执行能力。
@@ -102,14 +102,14 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
     {"queue_actions", "partner.queue_actions", "Submit a plan with up to four nodes, unique id and optional after IDs. Successors wait for their predecessors' verified results. "
         "See skills for node contracts and availability. A queued plan reports actual results by layer. Rejections report a reason and may include the node and retryAllowed. "
         "Append, interrupt and replace take sequence steps. Clear stops the plan and waiting actions.",
-        R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"ingredient":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
+        R"({"type":"object","properties":{"operation":{"type":"string","enum":["append","clear","replace","interrupt","plan"]},"work":{"type":"string"},"resolves":{"type":"integer"},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"after":{"type":"array","items":{"type":"string"}},"skill":{"type":"string"},"pickup":{"type":"string"},"arguments":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"message":{"type":"integer"},"observation":{"type":"string"},"focus":{"type":"string","enum":["hit","openings"]},"place":{"type":"string"},"distance":{"type":"integer"},"block":{"type":"string"},"count":{"type":"integer"},"item":{"type":"string"},"ingredient":{"type":"string"},"requiredStock":{"type":"integer"},"route":{"type":"string"},"laps":{"type":"integer"}},"additionalProperties":false}},"required":["skill","arguments"],"additionalProperties":false}}},"required":["operation"],"additionalProperties":false})", SkillCategory::control, true, SkillKind::action_queue},
     {"collect", "partner.collect", "Gather visible blocks by Minecraft registry name and count (1-32), within the task's collection scope. For a specific block supply x,y,z and count=1. "
         "Set approval to game or main when consent is needed. Delegated collection requires player consent and defaults to main. Exit reports cell and inventory changes separately.",
         R"({"type":"object","properties":{"block":{"type":"string"},"count":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["block","count"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::game, true},
-    {"dig_block", "partner.dig_block", "Dig the exact observed block at x,y,z with its expected block name. For a pointed target supply the observed message ID. "
-        "Direct resolves accepts the pending question item when there is no saved successor. A saved successor requires plan admission (pointed_plan_required). "
-        "Set editBuilt with approval to change a completed structure. Exit reports the changed cell and inventory pickup separately.",
-        R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"editBuilt":{"type":"boolean"},"message":{"type":"integer"},"resolves":{"type":"integer"}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
+    {"dig_block", "partner.dig_block", "Dig exact x,y,z with the expected block. Use message for a pointed target, or observation.id from self verify for a self-selected cell. "
+        "Use resolves for a pending question. A saved successor requires a plan. Set editBuilt with approval to change completed structures. "
+        "Exit reports block and inventory changes.",
+        R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"editBuilt":{"type":"boolean"},"message":{"type":"integer"},"observation":{"type":"string"},"resolves":{"type":"integer"}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
     {"gather_ground", "partner.gather_ground", "Bring inventory of item up to requiredStock (1-32) from exposed ground. Use the total you need. Set block only to restrict the search to one permitted source. Stops on enough stock or unverified pickup.",
         R"({"type":"object","properties":{"block":{"type":"string"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]}},"required":["item","requiredStock"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
     {"reply", "partner.reply", "Send one line to the bound player and return its delivery receipt.",

@@ -714,6 +714,17 @@ async function main() {
           assert.equal(context.order, 2);
           if (skill === 'observe') {
             assert.equal(method, 'partner.begin');
+            if (variant.includes('-evidence')) {
+              const { block, ...cell } = dirt;
+              const unloaded = { ...cell, z: 3 };
+              assert.deepEqual(args, { mode: 'scene', sources: ['self'], verify: [cell, unloaded] });
+              return { ...context, skill, exited: true, result: { status: 'done', observation: {
+                id, generation: context.generation, dimension: 'overworld', requested: 1, samples: [{ sampledAtMs: 42,
+                  verified: [{ ...dirt, atSelf: true }, { ...unloaded, atSelf: true, block: null }],
+                  views: [{ source: 'self', status: 'sampled', actor: { position: { x: 0.5, y: -59, z: 2.5 } } }],
+                }],
+              } } };
+            }
             assert.deepEqual(args, { mode: 'pointed', message: 2, focus: 'objects' });
             return { ...context, skill, exited: true, result: { status: 'done', anchor: { message: 2 }, sampledAtMs: 42,
               playerFocus: { status: 'observed', hit: stone, objects: [{ ...dirt, visible: true, below: 'stone' }] } } };

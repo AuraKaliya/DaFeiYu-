@@ -33,11 +33,15 @@ bool same_material(std::string_view block, std::string_view material) {
     return material.empty() || block == material;
 }
 
+// 比较两个来源是否指向同一格。
+bool same_cell(const Json& left, const Json& right) {
+    return std::ranges::all_of(std::array{"x","y","z"},[&](auto axis) { return left.at(axis) == right.at(axis); });
+}
+
 // 比较候选与实际动作所用的坐标和方块。
 bool same_block(const Json& candidate, const Json& args) {
     return candidate.is_object() && same_material(args.at("block").get_ref<const std::string&>(),
-        candidate.at("block").get_ref<const std::string&>()) &&
-        std::ranges::all_of(std::array{"x","y","z"},[&](auto axis) { return candidate.at(axis) == args.at(axis); });
+        candidate.at("block").get_ref<const std::string&>()) && same_cell(candidate,args);
 }
 
 // 提取现场变化修订与实际地点，忽略采样时间和小幅位置抖动。
@@ -353,16 +357,20 @@ Json PartnerTask::update(const Json& input, const Json& scene, std::uint64_t sce
     return {{"status","updated"},{"executionChanged",execution_changed},{"task",context()}};
 }
 
+// 核对最近一次自身读回的身份、维度和时效。
+bool PartnerTask::current_observation(const Json& id, const Json& scene) const {
+    return id.is_string() && !local_observation_.is_null() && local_observation_.at("id") == id &&
+        scene.contains("dimension") && local_observation_.at("dimension") == scene.at("dimension") &&
+        std::chrono::steady_clock::now()-observation_time_ <= std::chrono::seconds(30);
+}
+
 // 核对插件保存的本轮现场证据及确切坐标，允许原动作已完成的格。
 // 步骤：核对观察身份和时效 → 要求全部目标格在本机已加载范围内。
 bool PartnerTask::verified_cells(const Json& target,const Json& scene) const {
-    if (local_observation_.is_null() || !target.contains("observation") ||
-        local_observation_.at("id") != target.at("observation") || local_observation_.at("dimension") != scene.at("dimension") ||
-        std::chrono::steady_clock::now()-observation_time_ > std::chrono::seconds(30)) return false;
+    if (!target.contains("observation") || !current_observation(target.at("observation"),scene)) return false;
     return std::ranges::all_of(target.at("cells"),[&](const auto& cell) {
         return std::ranges::any_of(local_observation_.at("verified"),[&](const auto& sample) {
-            return sample.at("atSelf") == true && sample.at("block").is_string() &&
-                cell.at("x") == sample.at("x") && cell.at("y") == sample.at("y") && cell.at("z") == sample.at("z");
+            return sample.at("atSelf") == true && sample.at("block").is_string() && same_cell(cell,sample);
         });
     });
 }
@@ -370,10 +378,8 @@ bool PartnerTask::verified_cells(const Json& target,const Json& scene) const {
 // 允许原接近请求在实际到达后使用现场明确读回的空格。
 // 步骤：核对工作来源和采样时间 → 验证角色在原到达点附近 → 核对每个空格。
 bool PartnerTask::verified_after_approach(const Json& target, const Json& scene) const {
-    if (arrival_.is_null() || local_observation_.is_null() || !target.contains("observation") ||
-        arrival_.at("order") != target.at("message") || local_observation_.at("id") != target.at("observation") ||
-        local_observation_.at("dimension") != scene.at("dimension") ||
-        std::chrono::steady_clock::now()-observation_time_ > std::chrono::seconds(30)) return false;
+    if (arrival_.is_null() || !target.contains("observation") || arrival_.at("order") != target.at("message") ||
+        !current_observation(target.at("observation"),scene)) return false;
     const auto& position = arrival_.at("position");
     const auto& observed = local_observation_.at("position");
     for (const auto axis : {"x","y","z"})
@@ -381,8 +387,7 @@ bool PartnerTask::verified_after_approach(const Json& target, const Json& scene)
     const auto& verified = local_observation_.at("verified");
     return std::ranges::all_of(target.at("cells"),[&](const auto& cell) {
         return std::ranges::any_of(verified,[&](const auto& sample) {
-            return sample.at("atSelf") == true && sample.at("block") == "air" &&
-                cell.at("x") == sample.at("x") && cell.at("y") == sample.at("y") && cell.at("z") == sample.at("z");
+            return sample.at("atSelf") == true && sample.at("block") == "air" && same_cell(cell,sample);
         });
     });
 }
@@ -452,14 +457,14 @@ void PartnerTask::record(const Json& receipt, bool current) {
     if (receipt.at("skill") == "observe" && result.contains("observation")) {
         auto& observation = result["observation"];
         auto& samples = observation["samples"];
-        if (!samples.empty() && result.at("status") == "done" && samples.back().contains("verified")) {
+        if (current && !samples.empty() && result.at("status") == "done" && samples.back().contains("verified")) {
             const auto& sample = samples.back();
             const auto& views = sample.at("views");
             const auto own = std::ranges::find_if(views,[](const auto& view) {
                 return view.at("source") == "self" && view.at("status") == "sampled";
             });
             if (own != views.end()) {
-                local_observation_ = {{"id",observation.at("id")},{"dimension",observation.at("dimension")},
+                local_observation_ = {{"id",observation.at("id")},{"dimension",observation.at("dimension")},{"revision",revision_},
                     {"position",own->at("actor").at("position")},{"verified",sample.at("verified")}};
                 observation_time_ = std::chrono::steady_clock::now();
             }
@@ -484,6 +489,20 @@ void PartnerTask::record(const Json& receipt, bool current) {
     }
     if (result.is_object() && result.erase("survey")) result["surveyAvailable"] = true;
     if (current && summary.dump().size() <= 4096) receipt_ = std::move(summary);
+}
+
+// 核对自选采掘格来自当前任务有效的自身读回。
+// 步骤：核对采样和任务修订 → 找到已加载的确切格 → 核对材质。
+std::string_view PartnerTask::dig_observation_issue(const Json& arguments, const Json& scene) const {
+    if (!current_observation(arguments.at("observation"),scene) || local_observation_.at("revision") != revision_)
+        return "observation_stale";
+    const auto& verified = local_observation_.at("verified");
+    const auto cell = std::ranges::find_if(verified,[&](const auto& sample) {
+        return sample.at("atSelf") == true && sample.at("block").is_string() && same_cell(sample,arguments);
+    });
+    if (cell == verified.end()) return "observation_cell_unverified";
+    return same_material(arguments.at("block").get_ref<const std::string&>(),cell->at("block").get_ref<const std::string&>()) ?
+        std::string_view{} : "observation_block_mismatch";
 }
 
 // 固定原话命中、唯一可见候选或物体与参照的上下关系。

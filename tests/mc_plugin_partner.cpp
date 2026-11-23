@@ -528,12 +528,35 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         }
         if (observe_dig_scope) {
             const bool plan = variant.ends_with(L"-plan");
+            const bool evidence = variant.find(L"-evidence") != variant.npos;
+            const Json cell{{"x",1},{"y",-59},{"z",2}};
+            const Json unloaded{{"x",1},{"y",-59},{"z",3}};
             if (last.role == Role::tool) {
-                if (last.tool_call_id != "look-at-other-block")
+                const auto& id = last.tool_call_id;
+                if (id != "look-at-other-block" && id != "stale-sample" && id != "invalid-cell")
                     throw std::runtime_error("the unrelated look prevented the dig from starting: " + last.content);
-                const Json args{{"x",1},{"y",-59},{"z",2},{"block","dirt"}};
-                if (!plan) return call("_dig_block","dig-in-scope",args);
-                return call("_queue_actions","dig-in-scope",{{"operation","plan"},{"steps",Json::array({
+                auto args = cell;
+                args["block"] = "dirt";
+                const char* call_id = "dig-in-scope";
+                if (evidence) {
+                    const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                    if (id == "look-at-other-block") {
+                        old_work = result.at("observation").at("id").get<std::string>();
+                        args["observation"] = "older-observation";
+                        call_id = "stale-sample";
+                    } else if (id == "stale-sample") {
+                        if (result.at(plan ? "reason" : "reasonCode") != "observation_stale")
+                            throw std::runtime_error("a stale observation reference was admitted");
+                        if (plan) args["z"] = unloaded.at("z");
+                        else args["block"] = "grass_block";
+                        call_id = "invalid-cell";
+                    } else if (result.at(plan ? "reason" : "reasonCode") != (plan ? "observation_cell_unverified" : "observation_block_mismatch")) {
+                        throw std::runtime_error("a cell that did not match the loaded observation was admitted");
+                    }
+                    if (id != "look-at-other-block") args["observation"] = old_work;
+                }
+                if (!plan) return call("_dig_block",call_id,args);
+                return call("_queue_actions",call_id,{{"operation","plan"},{"steps",Json::array({
                     {{"id","dig"},{"skill","dig_block"},{"arguments",args}}})}});
             }
 
@@ -546,8 +569,11 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
             }
-            if (input.at("events").back().at("sequence") == 2)
+            if (input.at("events").back().at("sequence") == 2) {
+                if (evidence) return call("_observe","look-at-other-block",{{"mode","scene"},{"sources",{"self"}},
+                    {"verify",Json::array({cell,unloaded})}});
                 return call("_observe","look-at-other-block",{{"mode","pointed"},{"message",2},{"focus","objects"}});
+            }
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (pointed_support) {

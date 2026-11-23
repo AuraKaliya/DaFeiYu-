@@ -50,6 +50,8 @@ class PartnerLoop {
     // 返回指向核对结果，空值表示本次无法把动作关联到可信命中。
     std::optional<bool> pointed_dig(std::uint64_t session, std::uint64_t message, std::uint64_t item,
         nlohmann::json& args) const;
+    // 校验可选的自身观察引用，并只向执行器保留动作参数。
+    std::string_view check_dig_observation(std::uint64_t session, nlohmann::json& args) const;
     // 判断原玩家指令是否只允许明确绑定的单格破坏。
     bool requires_pointed_dig(std::uint64_t session) const;
     // 有后继动作的追问只能由保留原依赖的计划消费。

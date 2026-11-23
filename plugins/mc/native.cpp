@@ -259,6 +259,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         std::uint64_t resolves = 0;
         std::optional<bool> pointed = false;
         bool observation_blocked = false;
+        std::string_view dig_observation_issue;
         if (game_skill == "observe") {
             const auto input = nlohmann::json::parse(job.arguments);
             if (reuse_scene) {
@@ -284,6 +285,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             if (exact_dig) {
                 resolves = args.value("resolves",std::uint64_t{});
                 pointed = raw->partner.pointed_dig(call->session,args.value("message",std::uint64_t{}),resolves,args);
+                dig_observation_issue = raw->partner.check_dig_observation(call->session,args);
                 args.erase("message");
             } else if (raw->partner.requires_pointed_dig(call->session)) pointed = std::nullopt;
             args.erase("resolves");
@@ -298,7 +300,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             nlohmann::json::parse(job.arguments).at("arguments"),pointed.value_or(false) ? resolves : 0) : nlohmann::json{};
         const bool needs_plan = exact_dig && pointed.value_or(false) && raw->partner.has_pickup_continuation(resolves);
         const bool input_blocked = !front_block.empty() || !question.is_null() || needs_plan || !pointed.has_value() ||
-            observation_blocked || !action_block.empty();
+            observation_blocked || !dig_observation_issue.empty() || !action_block.empty();
         if (!input_blocked && partner && skill->supports_approval) {
             const auto args = nlohmann::json::parse(job.arguments).at("arguments");
             confirmed = args.contains("approval") || raw->partner.delegated(call->session);
@@ -323,6 +325,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             else if (!question.is_null()) job.output = question.dump();
             else if (needs_plan) job.output = R"({"status":"blocked","reasonCode":"pointed_plan_required"})";
             else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
+            else if (!dig_observation_issue.empty()) job.output = nlohmann::json{{"status","blocked"},{"reasonCode",dig_observation_issue}}.dump();
             else if (observation_blocked) job.output = R"({"status":"blocked","reasonCode":"hit_observation_limit","next":"ask_player"})";
             else if (placing) job.output = nlohmann::json{{"status","blocked"},{"reason",action_block},{"placementAttempted",false},{"placed",false}}.dump();
             else job.output = nlohmann::json{{"status","blocked"},{"reason",action_block},{"broken",0}}.dump();

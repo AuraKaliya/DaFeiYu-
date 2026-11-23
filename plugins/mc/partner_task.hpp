@@ -62,6 +62,8 @@ class PartnerTask {
     void record(const nlohmann::json& receipt, bool current = true);
     // 比对原话和可信观察，存在参照关系时把它传给执行器重验。
     bool bind_dig(std::uint64_t message, const DigIntent& intent, nlohmann::json& arguments) const;
+    // 核对自选采掘格在当前任务的自身视图中确实是预期方块。
+    std::string_view dig_observation_issue(const nlohmann::json& arguments, const nlohmann::json& scene) const;
     // 返回当前到期的唤醒原因，只有新的玩家输入才能补充自动回合额度。
     std::string_view trigger(const nlohmann::json& scene, std::uint64_t scene_revision) const;
     // 返回本次玩家窗口内是否还有自主回合额度。
@@ -77,6 +79,8 @@ class PartnerTask {
     bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
     // 验证近期自身视图已覆盖全部拟切换的方格。
     bool verified_cells(const nlohmann::json& target, const nlohmann::json& scene) const;
+    // 判断指定自身观察仍与当前世界和采样时效相符。
+    bool current_observation(const nlohmann::json& id, const nlohmann::json& scene) const;
     std::uint64_t revision_ = 0, id_ = 0, instruction_ = 0;
     std::uint64_t last_correction_ = 0;
     std::string kind_, goal_, detail_, next_ = "player", collection_ = "visible";
