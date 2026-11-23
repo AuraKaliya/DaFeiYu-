@@ -9,6 +9,39 @@ const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bri
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
 
+// 按原工作号核对每层只有一个动作的测试计划。
+// 步骤：定位模型收到的计划 → 对照信箱结算 → 核对退出与接纳顺序。
+function checkPlanReceiptOrder(rows, works) {
+  const turn = rows.filter(row => row.kind === 'model.prepared' && row.step === 1)
+    .map(readPartnerContext).find(turn => turn.input.trigger === 'plan.finished');
+  const plan = turn.input.taskPlan;
+  const mail = rows.filter(row => row.kind === 'mail.received');
+  const layers = mail.filter(row => row.category === 'mc.partner.plan' && row.body.status === 'settled' && row.body.plan === plan.id);
+  assert.deepEqual(turn.input.planSettlements, layers.map(row => row.body));
+  assert.equal(layers.length, plan.nodes.length);
+  let previous = 0;
+  for (const [index, layer] of layers.entries()) {
+    assert.equal(layer.body.layer, index + 1);
+    const [node] = layer.body.nodes;
+    assert.equal(node.work, plan.nodes[index].work);
+    const exits = mail.filter(row => row.category === 'mc.partner.action' && row.body.bridgeWork === node.work);
+    const accepted = mail.find(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted' &&
+      row.body.action.bridgeWork === node.work);
+    if (index < works.length) {
+      assert.equal(node.work, works[index]);
+      assert.equal(exits.length, 1);
+      assert.ok(accepted.seq > previous && exits[0].seq > accepted.seq && layer.seq > exits[0].seq);
+      for (const [key, value] of Object.entries(node.result)) assert.deepEqual(value, exits[0].body.result[key]);
+    } else {
+      assert.equal(node.result.reason, 'prerequisite_failed');
+      assert.equal(accepted, undefined);
+      assert.equal(exits.length, 0);
+    }
+    previous = layer.seq;
+  }
+  return layers;
+}
+
 // 提供固定地面与登记过的对象，复用执行器的取材和保护判定。
 // 步骤：构造方格和掉落表 → 登记已建对象 → 返回候选及现场读口。
 function refusedGround() {
@@ -91,15 +124,16 @@ async function main() {
   let failedReads = 0, workReadFailures = 0, lastWorldRead = 0;
   let regressScene = false;
   const nodeExits = [];
-  let nodeAtWork;
+  let nodeAtWork, nodeReads;
   let wallFilled = false;
   let badObservations = 0;
   let questionPresented = false, expiredAt;
   let clarificationAck = false;
   let heardAt;
   let surveyId, checkedRoute, routeWork, routeReads = 0, oldCheckpoint = -1;
-  let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false;
-  let routeApproach;
+  let restartWork, restartReads = 0, routeStops = 0, followIsRunning = false, resumedFollowRead = false;
+  let followPauseReads = 0, oldRouteExited = false, routeCompleted = false;
+  let routeApproach, routeDeparture;
   const hostWork = [];
   let explicitReply, replyReads = 0;
   const collectionWorks = new Map();
@@ -140,6 +174,7 @@ async function main() {
             fs.existsSync(path.join(root, 'observe-plan-rejected')) ? 3 : 2) :
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
+          layered ? (followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
           directPlace ? (planReading ? 5 : !questionPresented ? 2 : fs.existsSync(path.join(root, 'placement-waiting-checked')) ? 4 : 3) :
@@ -170,10 +205,6 @@ async function main() {
             messages[2].text = '你听得到吗';
             messages[3].text = '不用跟了';
           }
-          if (layered) {
-            messages[1].text = '你可以垫上来';
-            messages[1].sceneAtMessage.position = { x: 3.5, y: -60, z: 25.5 };
-          }
           if (correction || navigation || directPlace) {
             messages[1].text = '把我面前墙上的四格补上';
             messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
@@ -181,6 +212,11 @@ async function main() {
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
+          if (layered) {
+            messages[1].text = '大肥鱼，跟着我';
+            messages[2].text = '你可以垫上来';
+            messages[2].sceneAtMessage = { ...messages[1].sceneAtMessage, position: { x: 3.5, y: -60, z: 25.5 } };
+          }
           if (directPlace) {
             messages[2].text = '等我选一下';
             messages[3].text = '左边';
@@ -351,8 +387,30 @@ async function main() {
               { phase: replies ? 'blocked' : 'following', terrain: 'dry', distance: 8, vertical: 5, path: 'unreachable' };
           return { ...context, skill, exited: false, result: { progress: { ...progress, sampledAtMs } } };
         }
+        if ((layered || restartRoute) && skill === 'follow') {
+          if (method === 'partner.begin') {
+            if (!following) following = id;
+            else {
+              if (layered) assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
+              else assert.equal(restartReads, 9);
+              assert.equal(id, following + '.resume.2');
+              resumed = id;
+            }
+          }
+          assert.equal(id, resumed || following);
+          if (method === 'partner.read') {
+            followIsRunning = true;
+            if (resumed && !resumedFollowRead) {
+              resumedFollowRead = true;
+              fs.writeFileSync(path.join(root, 'original-follow-resumed'), '');
+            }
+          }
+          if (method !== 'partner.stop' || (id === following && ++followPauseReads === 1))
+            return { ...context, skill, exited: false, result: {} };
+          return { ...context, skill, exited: true, result: { status: 'interrupted' } };
+        }
         if (layered) {
-          assert.equal(context.order, 2);
+          assert.equal(context.order, 3);
           if (layeredBlocked && skill === 'reply') {
             assert.equal(method, 'partner.begin');
             assert.equal(args.text, '第一块垫好了，但我站不上去。');
@@ -374,20 +432,23 @@ async function main() {
           const pad = pads[Math.floor(index / 2)];
           const place = index % 2 === 0;
           assert.ok(index < (layeredBlocked ? 2 : 4));
+          assert.equal(followPauseReads, 2);
           assert.equal(skill, place ? 'place' : 'move');
           if (method === 'partner.begin') {
             assert.ok(!nodeAtWork && !nodeExits.includes(id));
-            assert.deepEqual(args, place ? { ...pad, block: 'dirt', sourceMessage: 2, taskRevision: 2 } :
+            assert.deepEqual(args, place ? { ...pad, block: 'dirt', sourceMessage: 3, taskRevision: 2 } :
               { ...pad, y: pad.y + 1, exact: true });
             nodeAtWork = id;
+            nodeReads = 0;
             return { ...context, skill, exited: false, result: {} };
           }
           assert.equal(method, 'partner.read');
           assert.equal(id, nodeAtWork);
+          if (nodeReads++ === 0) return { ...context, skill, exited: false, result: {} };
           nodeExits.push(id);
           nodeAtWork = undefined;
           const result = place ? { status: 'done', placementAttempted: true, placed: true,
-            sourceMessage: 2, taskRevision: 2, blocks: [{ ...pad, block: 'dirt' }],
+            sourceMessage: 3, taskRevision: 2, blocks: [{ ...pad, block: 'dirt' }],
             changes: [{ ...pad, before: 'air', after: 'dirt' }], materialBefore: 2 - index / 2, materialAfter: 1 - index / 2 } :
             layeredBlocked ? { status: 'blocked', reasonCode: 'unsafe_stand' } :
               { status: 'done', arrived: true, position: { x: pad.x + 0.5, y: pad.y + 1, z: pad.z + 0.5 } };
@@ -520,21 +581,6 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
             changes: [{ ...position, before: block, after: 'air' }], inventoryDelta: { dirt: 1 } } };
         }
-        if (restartRoute && skill === 'follow') {
-          if (method === 'partner.begin') {
-            if (!following) following = id;
-            else {
-              assert.equal(restartReads, 9);
-              assert.equal(id, following + '.resume.2');
-              resumed = id;
-              fs.writeFileSync(path.join(root, 'original-follow-resumed'), '');
-            }
-          }
-          assert.equal(id, resumed || following);
-          if (method === 'partner.read') followIsRunning = true;
-          return { ...context, skill, exited: method === 'partner.stop',
-            result: method === 'partner.stop' ? { status: 'interrupted' } : {} };
-        }
         if (restartRoute && skill === 'reply') {
           assert.ok(routeWork && !restartWork && !questionPresented);
           assert.equal(context.order, 4);
@@ -551,6 +597,7 @@ async function main() {
             return { ...context, skill, exited: true, result: { status: 'done',
               wallSurvey: { id, status: 'selected', choice: 'wall' } } };
           }
+          if (context.order === 5) assert.ok(oldRouteExited);
           assert.deepEqual(args, { mode: 'route', observation: surveyId, ...(context.order === 5 ? { wall: 'wall' } : {}) });
           checkedRoute = id;
           return { ...context, skill, exited: true, result: { status: 'done', route: { id, status: 'validated',
@@ -561,19 +608,25 @@ async function main() {
             assert.ok(!resumed);
             if (mixedRoute) assert.ok(routeApproach);
             if (routeWork) {
-              assert.ok(restartRoute && routeStops === 1 && !restartWork);
+              assert.ok(restartRoute && oldRouteExited && !restartWork);
               restartWork = id;
             } else routeWork = id;
+            if (restartRoute) assert.equal(followPauseReads, 2);
             assert.deepEqual(args, { route: checkedRoute, taskId: 3, taskRevision: restartRoute && !restartWork ? 1 : 2, waypoints, laps: 2 });
           }
           assert.equal(id, restartWork || routeWork);
-          if (method === 'partner.stop') ++routeStops;
+          if (method === 'partner.stop') {
+            assert.ok(restartRoute && !restartWork && ++routeStops <= 2);
+            oldRouteExited = routeStops === 2;
+          }
           const checkpoint = restartWork ? restartReads++ : Math.min(routeReads++, restartRoute ? questionPresented ? 5 : 2 : 8);
           if (!restartWork) oldCheckpoint = checkpoint;
           const checkpoints = Array.from({ length: checkpoint + 1 }, (_, index) =>
             ({ index, position: { ...waypoints[index % 4], x: waypoints[index % 4].x + 0.5 } }));
           const laps = Math.floor(checkpoint / 4);
-          const status = method === 'partner.stop' ? 'interrupted' : laps === 2 ? 'done' : null;
+          const status = method === 'partner.stop' ? oldRouteExited ? 'interrupted' : null :
+            laps === 2 && (!mixedRoute || routeReads === 10) ? 'done' : null;
+          if (status === 'done') routeCompleted = true;
           return { ...context, skill, exited: Boolean(status), result: {
             ...(status && { status }),
             progress: { phase: 'route', checkpoint, laps, requested: 2 },
@@ -581,12 +634,19 @@ async function main() {
           } };
         }
         if (mixedRoute && skill === 'move') {
-          assert.equal(method, 'partner.begin');
-          assert.ok(collectExited && checkedRoute && !routeApproach && !routeWork);
-          assert.deepEqual(args, { ...waypoints[0], exact: true });
-          routeApproach = id;
+          if (method === 'partner.begin') {
+            assert.ok(collectExited && checkedRoute && !routeDeparture);
+            if (routeApproach) {
+              assert.ok(routeCompleted);
+              routeDeparture = id;
+            } else routeApproach = id;
+          } else assert.equal(method, 'partner.read');
+          assert.equal(id, routeDeparture || routeApproach);
+          const waypoint = waypoints[routeDeparture ? 1 : 0];
+          assert.deepEqual(args, { ...waypoint, exact: true });
+          if (method === 'partner.begin') return { ...context, skill, exited: false, result: {} };
           return { ...context, skill, exited: true, result: { status: 'done', arrived: true,
-            position: { ...waypoints[0], x: waypoints[0].x + 0.5 } } };
+            position: { ...waypoint, x: waypoint.x + 0.5 } } };
         }
         if (correction && skill === 'observe') {
           assert.ok(collectExited);
@@ -764,7 +824,7 @@ async function main() {
     assert.equal(generation, state.generation);
     return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || directPlace ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve ? 4 :
-      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
+      interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
   close() {} } : null);
@@ -853,7 +913,17 @@ async function main() {
     } else if (layered) {
       assert.equal(nodeExits.length, layeredBlocked ? 2 : 4);
       assert.equal(replies, layeredBlocked ? 1 : 0);
-      console.log(path.join(root, 'trace', 'events.jsonl'));
+      const trace = path.join(root, 'trace', 'events.jsonl');
+      const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+      const layers = checkPlanReceiptOrder(rows, nodeExits);
+      const paused = rows.find(row => row.category === 'mc.partner.action' && row.body.transition === 'paused');
+      const accepted = rows.filter(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted');
+      assert.deepEqual([paused.body.work, paused.body.bridgeWork, paused.body.result.status], [following, following, 'interrupted']);
+      assert.ok(paused.seq < accepted.find(row => row.body.action.bridgeWork === nodeExits[0]).seq);
+      const resumedMotion = accepted.find(row => row.body.action.bridgeWork === resumed);
+      assert.equal(resumedMotion.body.action.work, following);
+      assert.ok(resumedMotion.seq > layers.at(-1).seq);
+      console.log(trace);
     } else if (revision) {
       if (restartRoute || pointedCraft) {
         const trace = path.join(root, 'trace', 'events.jsonl');
@@ -874,6 +944,14 @@ async function main() {
           const exit = rows.find(row => row.category === 'mc.partner.action' && row.body.skill === 'craft');
           assert.equal(exit?.body.bridgeWork, craftingWork);
           assert.equal(Boolean(exit), !noPickup);
+        } else {
+          const exit = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === routeWork);
+          const handoff = context.input.taskHandoff;
+          const successor = rows.find(row => row.category === 'mc.partner.motion' && row.body.status === 'accepted' &&
+            row.body.action.bridgeWork === restartWork);
+          assert.equal(handoff.work, routeWork);
+          assert.deepEqual(handoff.action, exit.body);
+          assert.ok(exit.seq < successor.seq);
         }
         const settled = turns.find(turn => turn.input.trigger === 'plan.finished' &&
           turn.input.taskPlan?.status !== 'cancelled');
@@ -885,7 +963,11 @@ async function main() {
       assert.equal(collectExited, !correctionLost && !restartRoute);
       assert.equal(nextBlock, notes && !directRevision);
       assert.equal(wallFilled, !!correction && !correctionLost);
-      if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 1);
+      if (mixedRoute) {
+        assert.equal(routeReads, 10);
+        const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        checkPlanReceiptOrder(rows, [routeApproach, routeWork, routeDeparture]);
+      } else if (restartRoute) assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 2);
       else if (navigation) assert.equal(routeReads, 9);
       if (pointedCraft) assert.equal(replies, 3);
       if (recoverInbox) {

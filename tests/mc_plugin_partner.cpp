@@ -291,7 +291,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (last.tool_call_id == "register") return call("_observe","survey",{{"sources",{"self"}},{"verify",pads}});
                 if (last.tool_call_id == "survey")
-                    return call("_task_update","bind",{{"goal","垫两级站位"},{"next","player"},{"target",{{"message",2},{"cells",pads},
+                    return call("_task_update","bind",{{"goal","垫两级站位"},{"next","player"},{"target",{{"message",3},{"cells",pads},
                         {"observation",result.at("observation").at("id")}}}});
                 if (last.tool_call_id != "bind" || result.at("status") != "updated")
                     throw std::runtime_error("layered plan made an intervening model request");
@@ -313,7 +313,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (input.at("trigger") == "plan.finished") {
                 const auto& plan = input.at("taskPlan");
                 const auto& layers = input.at("planSettlements");
-                if (checked || plan.at("status") != (layered_blocked ? "blocked" : "done") || layers.size() != 4)
+                if (checked || plan.at("status") != (layered_blocked ? "blocked" : "done") || layers.size() != 4 ||
+                    input.at("following").at("work") != follow_id)
                     throw std::runtime_error("layered plan did not settle all dependencies");
                 for (std::size_t i = 0; i < layers.size(); ++i) {
                     const auto& node = layers.at(i).at("nodes").at(0);
@@ -326,8 +327,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 checked = true;
                 return {{Role::assistant,layered_blocked ? "第一块垫好了，但我站不上去。" : R"({"internal":"plan exit checked"})"}};
             }
-            if (!input.at("events").empty() && input.at("events").back().at("sequence") == 2)
-                return call("_task_update","register",{{"operation","start_task"},{"kind","work"},{"message",2},{"goal","垫两级站位"}});
+            if (!input.at("events").empty()) {
+                const auto& sequence = input.at("events").back().at("sequence");
+                if (sequence == 2) return call("_follow","start-follow",Json::object());
+                if (sequence == 3) {
+                    follow_id = input.at("following").at("work").get<std::string>();
+                    if (input.at("activeMotion").at("work") != follow_id || input.at("activeMotion").at("status") != "running")
+                        throw std::runtime_error("layered plan did not start during the original active follow");
+                    return call("_task_update","register",{{"operation","start_task"},{"kind","work"},{"message",3},{"goal","垫两级站位"}});
+                }
+            }
             return {{Role::assistant,R"({"internal":"ready"})"}};
         }
         if (pointed_craft) {
@@ -546,7 +555,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 Json steps = Json::array();
                 if (mixed_route) steps.push_back({{"id","approach"},{"skill","move"},{"arguments",route.at("waypoints").at(0)}});
                 steps.push_back({{"id","circle"},{"skill","route"},{"arguments",{{"route",route.at("id")},{"laps",2}}}});
-                if (mixed_route) steps.back()["after"] = {"approach"};
+                if (mixed_route) {
+                    steps.back()["after"] = {"approach"};
+                    steps.push_back({{"id","leave"},{"skill","move"},{"arguments",route.at("waypoints").at(1)},{"after",{"circle"}}});
+                }
                 return call("_queue_actions","route-plan",{{"operation","plan"},{"steps",std::move(steps)}});
             }
             if (last.tool_call_id == "switch-to-route") {
@@ -669,7 +681,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& exit = input.at("taskHandoff");
             const auto& action = exit.at("action");
             if (checked || input.contains("taskPlan") || input.contains("workSettlement") || input.contains("planSettlements") ||
-                exit.at("work") != action.at("bridgeWork") || action.at("result").at("status") != "interrupted" ||
+                exit.at("status") != "exited" || exit.at("work") != old_work || exit.at("work") != action.at("bridgeWork") ||
+                action.at("result").at("status") != "interrupted" ||
                 action.at("taskRevision") != 1)
                 throw std::runtime_error("old work did not settle separately by original ID");
             if (restart_route) {
@@ -690,12 +703,14 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& first = layers.at(0).at("nodes").at(0);
             if (navigation) {
                 const auto route_index = mixed_route ? 1u : 0u;
+                const auto count = mixed_route ? 3u : 1u;
                 const auto& node = layers.at(route_index).at("nodes").at(0);
                 const auto& route = node.at("result").at("route");
-                if (checked || plan.at("status") != "done" || layers.size() != route_index+1 || plan.at("nodes").size() != route_index+1 ||
+                if (checked || plan.at("status") != "done" || layers.size() != count || plan.at("nodes").size() != count ||
                     node.at("work") != plan.at("nodes").at(route_index).at("work") || route.at("laps") != 2 ||
                     route.at("checkpoints").size() != 9 || input.at("task").at("next") != "done" ||
-                    (mixed_route ? first.at("result").at("arrived") != true :
+                    (mixed_route ? first.at("result").at("arrived") != true ||
+                        layers.at(2).at("nodes").at(0).at("result").at("arrived") != true :
                         request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply")))
                     throw std::runtime_error("route checkpoints woke the model separately or did not settle by plan ID");
                 checked = true;
@@ -766,7 +781,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (event.at("sequence") == (direct_place ? 5 : 3)) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
-                if (direct) old_work = input.at("activeMotion").at("work");
+                if (direct || navigation) old_work = input.at("activeMotion").at("work");
                 if (direct_place) return call("_queue_actions","outside-replace",{{"operation","replace"},{"work",old_work},
                     {"steps",Json::array({{{"skill","move"},{"arguments",wall.front()}},outside_step})}});
                 if (navigation) return call("_task_update","switch-to-route",{{"operation","start_task"},{"message",3},
@@ -786,6 +801,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             if (restart_route && event.at("sequence") == 5) {
                 if (input.at("activeMotion").at("progress").at("laps") != 1 || !input.contains("pendingQuestion"))
                     throw std::runtime_error("restart was not issued mid-route");
+                old_work = input.at("activeMotion").at("work");
                 return call("_task_update","restart-route",{{"operation","restart_task"},{"message",5},{"task",3}});
             }
         }
@@ -811,10 +827,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin || direct_place ? 5u :
+            (repair_observe || repair_plan || pointed_support ? 2u : restart_route || rejoin || direct_place ? 5u :
                 pointed_craft || attention || repair_plan_observe ? 4u : 3u) &&
             receipt_turn_finished() &&
-            (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {
+            ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
             stopping = true;
         }
