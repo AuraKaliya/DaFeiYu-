@@ -10,7 +10,7 @@
 | 运行大肥鱼、选择模型、查询终端命令 | [运行说明](run-guide.md) |
 | 运行桌面主面板、只读探针和房间预览 | [桌面运行说明](ui-probe-run-guide.md) |
 | 和 MC 伙伴实际进服 | [MC 插件](../plugins/mc/README.md) · [本机或浏览器游玩](../tests/mc-companion/README.md#首次真人体验) |
-| 评审 MC 陪玩的通用交互和接下来的开发 | [开发顺序](mc-companion-development-plan.md#接下来的开发顺序) · [通用交互流程](mc-companion-development-plan.md) · [能力清单和参考项目](mc-partner-capability-review.md) |
+| 评审 MC 陪玩的功能范围、实施顺序和通用交互 | [按方向的功能开发列表](mc-companion-development-plan.md#按方向的功能开发列表) · [实施顺序与跨方向验收](mc-companion-development-plan.md#实施顺序与跨方向验收) · [参考项目复核](mc-partner-capability-review.md) |
 | 评审桌面主面板与内置房间 | [主面板与内置房间](main-agent-room-development-plan.md) · [UI 框架](ui-framework-design.md) · [技术选型](ui-technology-decisions.md) |
 | 开发插件或核对接口 | [SDK 指南](../sdk/README.md) · [v2 契约](plugin-abi-v2.md) · [冻结的 v1 契约](plugin-abi.md) |
 
