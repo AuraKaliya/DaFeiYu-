@@ -109,13 +109,14 @@ ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^(
 ### 指向操作回归
 
 ```powershell
-ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^plugins\.mc_partner_revision_pointed.*$'
+ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^plugins\.mc_partner_revision_(pointed.*|direct-place(-stale)?)$'
 ```
 
 | 场景 | 核对项 |
 | --- | --- |
 | 敲掉石块上的泥土 | 视线命中石块时拒绝直接挖石和挖石计划，只允许通过核验的泥土目标。 |
-| 原木追问后续接合成 | 其他聊天仍可回应，玩家指明后用原要求续接。入包后回报当前合成受阻，未入包时后继跳过。 |
+| 原木追问后续接合成 | 其他聊天仍可回应，玩家指明后用原要求续接。方块挖掉但原工作仍在途时，合成继续等待。原号退出确认入包后，核对合成消耗一根原木并产出四块木板。未入包时保留挖掘实效，跳过合成。 |
+| 缺口选项与旧答复 | `direct-place` 核对原问题在答复前保持等待，匹配答复只放行原修订获选格。`direct-place-stale` 在更换任务后送达同一句答复，原问题仍为已撤销状态，旧格无游戏工作。 |
 
 `run-JKvHIw` 的历史故障可用原始 Trace 离线回放会话 52 的回合 11 和 36。旧门上下格见 Trace 第 244 行，发言称未找到见第 254 行。原话候选在第 1973 行读到，随后观察覆盖原读回，第 2026 行绑定失败。新回归用同一组门坐标检验合并，再用 `--gap-probe` 验证实际游戏观察和固定模型绑定。
 

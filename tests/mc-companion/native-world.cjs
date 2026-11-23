@@ -52,7 +52,14 @@ function checkPlanReceiptOrder(rows, works, after) {
       assert.equal(node.work, works[index]);
       const { exit } = checkWorkReceipt(rows, node.work, previous);
       assert.ok(exit.seq < layer.seq);
-      for (const [key, value] of Object.entries(node.result)) assert.deepEqual(value, exit.body.result[key]);
+      const { gameStatus, ...evidence } = node.result;
+      if (gameStatus !== undefined) {
+        assert.equal(evidence.status, 'blocked');
+        assert.equal(evidence.reasonCode, 'pickup_unverified');
+        delete evidence.reasonCode;
+        evidence.status = gameStatus;
+      }
+      for (const [key, value] of Object.entries(evidence)) assert.deepEqual(value, exit.body.result[key]);
     } else {
       assert.equal(node.result.reason, 'prerequisite_failed');
       assert.ok(!mail.some(row => (row.category === 'mc.partner.motion' && row.body.action?.bridgeWork === node.work) ||
@@ -100,7 +107,8 @@ async function main() {
   const delivery = variant?.startsWith('partner-reply-') ? variant.slice('partner-reply-'.length) : null;
   const revision = controllerRestart || variant?.startsWith('partner-revision-');
   const directRevision = controllerRestart || variant?.startsWith('partner-revision-direct-');
-  const directPlace = variant === 'partner-revision-direct-place';
+  const directPlace = variant?.startsWith('partner-revision-direct-place');
+  const stalePlace = variant === 'partner-revision-direct-place-stale';
   const rejoin = variant === 'partner-revision-direct-rejoin';
   const recoverInbox = variant === 'partner-revision-direct-recover-notes';
   const notes = revision && variant.endsWith('-notes');
@@ -139,6 +147,7 @@ async function main() {
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
+  let pickupPending = false, placementQuestionWork;
   let blockedReads = 0, recoveredReads = 0;
   let attentionSamples = 0;
   let planReading = false, nextBlock = false;
@@ -239,7 +248,7 @@ async function main() {
             messages[2].sceneAtMessage = { ...messages[1].sceneAtMessage, position: { x: 3.5, y: -60, z: 25.5 } };
           }
           if (directPlace) {
-            messages[2].text = '等我选一下';
+            messages[2].text = stalePlace ? '改成清理另一处' : '等我选一下';
             messages[3].text = '左边';
             messages[4].text = '改成清理另一处';
           }
@@ -573,10 +582,15 @@ async function main() {
           }
           assert.equal(method, 'partner.read');
           assert.equal(id, collecting);
-          collectExited = true;
           const { block, ...position } = log;
-          return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
-            changes: [{ ...position, before: block, after: 'air' }], inventoryDelta: noPickup ? {} : { oak_log: 1 } } };
+          const changes = [{ ...position, before: block, after: 'air' }];
+          if (!pickupPending) {
+            pickupPending = true;
+            return { ...context, skill, exited: false, result: { broken: 1, changes } };
+          }
+          collectExited = true;
+          return { ...context, skill, exited: true, result: { status: 'done', broken: 1, changes,
+            inventoryDelta: noPickup ? {} : { oak_log: 1 } } };
         }
         if (pointedSupport) {
           const stone = { x: 1, y: -60, z: 2, block: 'stone' };
@@ -704,10 +718,13 @@ async function main() {
         if (directPlace && skill === 'reply') {
           assert.equal(context.order, 2);
           assert.equal(args.text, '补左边还是右边？');
+          assert.equal(placementQuestionWork, undefined);
+          placementQuestionWork = id;
           questionPresented = true;
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
         if (directRevision) {
+          assert.ok(!stalePlace, 'a superseded answer must not reach the game');
           assert.equal(skill, directPlace ? 'place' : 'collect');
           assert.equal(context.order, directPlace ? 4 : 2);
           if (method === 'partner.begin') {
@@ -843,8 +860,8 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || directPlace ? 5 :
-      first || motion || confirm || pointedCraft || attention || repairPlanObserve ? 4 :
+    return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
+      first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -957,9 +974,8 @@ async function main() {
           assert.equal(context.input.pendingQuestion.afterPickup.count, 4);
           assert.match(fields.resolves.description, /saved successor is retained/);
           assert.match(fields.steps.items.properties.pickup.description, /actually enter inventory/);
-          const exit = rows.find(row => row.category === 'mc.partner.action' && row.body.skill === 'craft');
-          assert.equal(exit?.body.bridgeWork, craftingWork);
-          assert.equal(Boolean(exit), !noPickup);
+          assert.ok(pickupPending);
+          checkPlanReceiptOrder(rows, noPickup ? [collecting] : [collecting, craftingWork], 0);
         } else {
           assert.ok(restartWork && resumed && restartReads === 9 && routeStops === 2);
           const paused = checkFollowReceipt(rows, following, following, 'paused');
@@ -976,8 +992,8 @@ async function main() {
         assert.deepEqual(settled.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
       }
       if (correctionLost) assert.ok(stopped >= 2);
-      else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft ? 0 : 2);
-      assert.equal(collectExited, !correctionLost && !restartRoute);
+      else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft || stalePlace ? 0 : 2);
+      assert.equal(collectExited, !correctionLost && !restartRoute && !stalePlace);
       assert.equal(nextBlock, notes && !directRevision);
       assert.equal(wallFilled, !!correction && !correctionLost);
       if (navigation && !restartRoute) {
@@ -987,6 +1003,23 @@ async function main() {
         checkPlanReceiptOrder(rows, mixedRoute ? [routeApproach, routeWork, routeDeparture] : [routeWork], exit.seq);
       }
       if (pointedCraft) assert.equal(replies, 3);
+      if (directPlace) {
+        const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        const question = rows.find(row => row.kind === 'tool.exited' && row.callId === 'choose-cell');
+        const presented = rows.find(row => row.kind === 'mail.received' && row.category === 'mc.partner.question' &&
+          row.body.status === 'presented' && row.body.bridgeWork === placementQuestionWork);
+        const answer = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
+          readPartnerContext(row).input.events.some(event => event.sequence === 4));
+        assert.deepEqual(JSON.parse(question.output), { status: 'recorded', item: presented.body.item });
+        assert.ok(question.seq < presented.seq && presented.seq < answer.seq);
+        assert.equal(readPartnerContext(answer).input.questionResult.item, presented.body.item);
+        if (stalePlace) assert.equal(collecting, undefined);
+        else {
+          const { exit } = checkWorkReceipt(rows, collecting, answer.seq);
+          assert.equal(exit.body.taskRevision, 1);
+          assert.deepEqual(exit.body.result.blocks, [{ ...wall[0], block: 'dirt' }]);
+        }
+      }
       if (recoverInbox) {
         assert.equal(failedReads, 3);
         assert.ok(workReadFailures > 0);

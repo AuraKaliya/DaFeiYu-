@@ -200,7 +200,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     using namespace model;
     using Json = nlohmann::json;
     const bool direct = variant.starts_with(L"partner-revision-direct-");
-    const bool direct_place = variant.ends_with(L"-direct-place");
+    const bool direct_place = variant.starts_with(L"partner-revision-direct-place");
+    const bool stale_place = variant.ends_with(L"-direct-place-stale");
     const bool rejoin = variant.ends_with(L"-direct-rejoin");
     const bool notes = variant.ends_with(L"-notes");
     const bool approval = variant.ends_with(L"-approval");
@@ -375,7 +376,6 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (checked || input.contains("pendingQuestion") || request.tools.size() != 1 ||
                     !request.tools.front().name.ends_with("_reply") || layers.size() != 2 ||
                     nodes.at(1).at("after") != Json::array({"gather_log"}) || nodes.at(0).at("requiresPickup") != "oak_log" ||
-                    first.at("work") != nodes.at(0).at("work") || successor.at("work") != nodes.at(1).at("work") ||
                     dig.at("changes").at(0).at("before") != "oak_log")
                     throw std::runtime_error("compound goal or original pickup work was lost at settlement");
                 if (no_pickup ? dig.at("reasonCode") != "pickup_unverified" || craft.at("reason") != "prerequisite_failed" :
@@ -634,6 +634,19 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     throw std::runtime_error("new foreground work entered before the old exit reached the turn");
             }
             const auto& id = last.tool_call_id;
+            if (stale_place && (id == "switch-placement-task" || id == "stale-placement")) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (id == "switch-placement-task") {
+                    if (result.at("status") != "updated" || result.at("task").at("revision") != 2)
+                        throw std::runtime_error("placement task was not superseded");
+                    std::ofstream(root/"placement-waiting-checked").put('1');
+                } else {
+                    if (result.at("status") != "invalid_plan" || result.at("reason") != "target_unbound")
+                        throw std::runtime_error("old answer authorized placement after task replacement");
+                    checked = true;
+                    return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+                }
+            }
             if (direct_place && (id.starts_with("outside-") || id.starts_with("waiting-") || id.starts_with("unchosen-"))) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 const bool out = id.starts_with("outside-"), waiting = id.starts_with("waiting-");
@@ -765,14 +778,27 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             }
             if (direct_place && event.at("sequence") == 3) {
                 const auto& question = input.at("pendingQuestion");
-                if (question.at("status") != "waiting") throw std::runtime_error("placement question did not stay open");
+                if (question.at("status") != "waiting" || input.contains("questionResult"))
+                    throw std::runtime_error("the original placement question did not stay open");
                 placement_item = question.at("item").get<std::uint64_t>();
+                if (stale_place) return call("_task_update","switch-placement-task",{{"operation","start_task"},
+                    {"message",3},{"kind","work"},{"goal","改清理另一处"}});
                 return probe_placement("waiting-append",chosen);
             }
             if (direct_place && event.at("sequence") == 4) {
                 const auto& answer = input.at("questionResult");
-                if (answer.at("item") != placement_item || answer.at("placementCells") != Json::array({wall.at(0)}))
-                    throw std::runtime_error("placement answer did not identify the chosen cell");
+                if (answer.at("item") != placement_item || input.contains("pendingQuestion"))
+                    throw std::runtime_error("placement reply did not retain the original item");
+                if (stale_place) {
+                    if (input.at("task").at("revision") != 2 || answer.at("status") != "superseded" ||
+                        answer.contains("answerMessage") || answer.contains("placementCells"))
+                        throw std::runtime_error("late reply resolved a superseded placement question");
+                    return call("_queue_actions","stale-placement",{{"operation","plan"},{"steps",Json::array({
+                        {{"id","old_cell"},{"skill","place"},{"arguments",chosen}}})}});
+                }
+                if (input.at("task").at("revision") != 1 || answer.at("status") != "answered" || answer.at("answerMessage") != 4 ||
+                    answer.at("answer") != "左边" || answer.at("placementCells") != Json::array({wall.at(0)}))
+                    throw std::runtime_error("placement answer lost its selected cell or original task revision");
                 return probe_placement("unchosen-append",unchosen);
             }
             if (event.at("sequence") == (direct_place ? 5 : 3)) {
@@ -823,8 +849,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support ? 2u : restart_route || rejoin || direct_place ? 5u :
-                pointed_craft || attention || repair_plan_observe ? 4u : 3u) &&
+            (repair_observe || repair_plan || pointed_support ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+                pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {
             host.stop_companion(id);
