@@ -223,12 +223,17 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const auto revision = notes || approval || correction ? 1 : 2;
     const Json wall = Json::array({{{"x",2},{"y",-60},{"z",-5}},{{"x",3},{"y",-60},{"z",-5}},
         {{"x",2},{"y",-59},{"z",-5}},{{"x",3},{"y",-59},{"z",-5}}});
+    const Json outside{{"x",2},{"y",-58},{"z",-5},{"block","dirt"}};
+    const Json outside_step{{"skill","place"},{"arguments",outside}};
+    auto chosen = wall.at(0), unchosen = wall.at(1);
+    chosen["block"] = unchosen["block"] = "dirt";
     const Json pads = Json::array({{{"x",3},{"y",-62},{"z",24}},{{"x",3},{"y",-61},{"z",25}}});
     auto floor = wall;
     for (int i : {2,3}) { floor.at(i)["y"] = -60; floor.at(i)["z"] = -4; }
     const auto reason = approval ? "approval_changed" : "task_changed";
     std::atomic_bool checked = false;
     unsigned attention_turns = 0;
+    std::uint64_t placement_item = 0;
     std::string follow_id, old_work;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
@@ -238,6 +243,15 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(name); });
             if (tool == request.tools.end()) throw std::runtime_error("revision probe missing required tool");
             return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
+        };
+        // 用同一个放置候选依次检查三个入口。
+        // 步骤：直调使用原参数 → 队列和计划按各自契约提交一个相同步骤。
+        const auto probe_placement = [&](std::string id, const Json& args) -> Response {
+            if (id.ends_with("-direct")) return call("_place",std::move(id),args);
+            const bool plan = id.ends_with("-plan");
+            Json step{{"skill","place"},{"arguments",args}};
+            if (plan) step["id"] = "placement";
+            return call("_queue_actions",std::move(id),{{"operation",plan ? "plan" : "append"},{"steps",Json::array({step})}});
         };
         const auto& last = request.messages.back();
         if (attention) {
@@ -606,15 +620,33 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (result.value("reason","") != "waiting_for_old_work")
                     throw std::runtime_error("new foreground work entered before the old exit reached the turn");
             }
+            const auto& id = last.tool_call_id;
+            if (direct_place && (id.starts_with("outside-") || id.starts_with("waiting-") || id.starts_with("unchosen-"))) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const bool out = id.starts_with("outside-"), waiting = id.starts_with("waiting-");
+                const auto prefix = id.substr(0,id.find('-'));
+                const auto expected_reason = out ? "placement_outside_target" : waiting ? "waiting_for_player" : "answer_target_mismatch";
+                if (result.value("status","") != (id == "outside-plan" ? "invalid_plan" : "blocked") ||
+                    result.value("reason","") != expected_reason || (!out && result.at("item") != placement_item))
+                    throw std::runtime_error(id+" returned an inconsistent placement decision: "+result.dump());
+
+                const auto& candidate = out ? outside : waiting ? chosen : unchosen;
+                if (id.ends_with("-append")) return probe_placement(prefix+"-plan",candidate);
+                if (id.ends_with("-plan")) return probe_placement(prefix+"-direct",candidate);
+                if (id == "outside-direct") return call("_ask_player","choose-cell",{{"question","补左边还是右边？"},
+                    {"placementOptions",Json::array({{{"answer","左边"},{"cells",Json::array({wall.at(0)})}},
+                        {{"answer","右边"},{"cells",Json::array({wall.at(1)})}}})}});
+                if (id == "unchosen-direct") return call("_place","direct-work",chosen);
+                if (id == "outside-replace")
+                    return call("_task_update","update-task",{{"goal","改清理另一处"},{"next","player"},{"target",Json::object()}});
+                std::ofstream(root/"placement-waiting-checked").put('1');
+            }
             return {{Role::assistant,R"({"internal":"receipt stored"})"}};
         }
         const auto input = Json::parse(last.content);
         if (direct && input.at("trigger") == "skills.expanded") {
-            if (direct_place) {
-                auto cell = wall.front();
-                cell["block"] = "dirt";
-                return call("_place","direct-work",cell);
-            }
+            if (direct_place)
+                return probe_placement("outside-append",outside);
             return call("_collect","direct-work",{{"block","grass_block"},{"count",2}});
         }
         if (direct && (input.at("trigger") == "task.ready" || input.at("trigger") == "motion.finished")) {
@@ -717,9 +749,23 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
             }
-            if (event.at("sequence") == 3) {
+            if (direct_place && event.at("sequence") == 3) {
+                const auto& question = input.at("pendingQuestion");
+                if (question.at("status") != "waiting") throw std::runtime_error("placement question did not stay open");
+                placement_item = question.at("item").get<std::uint64_t>();
+                return probe_placement("waiting-append",chosen);
+            }
+            if (direct_place && event.at("sequence") == 4) {
+                const auto& answer = input.at("questionResult");
+                if (answer.at("item") != placement_item || answer.at("placementCells") != Json::array({wall.at(0)}))
+                    throw std::runtime_error("placement answer did not identify the chosen cell");
+                return probe_placement("unchosen-append",unchosen);
+            }
+            if (event.at("sequence") == (direct_place ? 5 : 3)) {
                 if (input.at("activeMotion").at("status") != "running") throw std::runtime_error("no accepted work at revision change");
                 if (direct) old_work = input.at("activeMotion").at("work");
+                if (direct_place) return call("_queue_actions","outside-replace",{{"operation","replace"},{"work",old_work},
+                    {"steps",Json::array({{{"skill","move"},{"arguments",wall.front()}},outside_step})}});
                 if (navigation) return call("_task_update","switch-to-route",{{"operation","start_task"},{"message",3},
                     {"kind","navigation"},{"goal","绕着这面墙跑两圈"}});
                 if (correction) return call("_task_update","register-correction",{{"operation","begin_correction"},{"message",3}});
@@ -727,7 +773,6 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 Json update{{"goal",goal ? "改清理另一处" : "清理门边"},{"next",notes ? "continue" : "player"}};
                 if (notes) update["detail"] = "补记角落";
                 if (!notes && !goal) update["collection"] = "ground";
-                if (direct_place) update["target"] = Json::object();
                 return call("_task_update","update-task",update);
             }
             if (restart_route && event.at("sequence") == 4) {
@@ -763,7 +808,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin ? 5u :
+            (repair_observe || repair_plan || pointed_support || layered ? 2u : restart_route || rejoin || direct_place ? 5u :
                 pointed_craft || attention || repair_plan_observe ? 4u : 3u) &&
             receipt_turn_finished() &&
             (!restart_route || std::filesystem::exists(root/"original-follow-resumed"))) {

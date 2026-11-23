@@ -59,7 +59,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
     for (const auto& step : steps) {
         if (step.contains("id") || step.contains("after")) return {{"status","invalid_plan"},{"reason","plan_operation_required"}};
         const auto name = step.at("skill").get<std::string>();
-        const auto& parameters = step.at("arguments");
+        auto parameters = step.at("arguments");
         if (name == "collect" && requires_pointed_dig(session_))
             return {{"status","blocked"},{"reason","pointed_block_unverified"}};
         const auto pickup = step.value("pickup",std::string{});
@@ -69,16 +69,21 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         const auto skill = std::ranges::find(partner_skills,name,&PartnerSkill::name);
         const auto* action = partner_action(name);
         if (!action || !action->sequence || skill == partner_skills.end() || (interrupt && name == "follow") || !valid_step(name,parameters) ||
-            (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))) ||
-            (name == "place" && !task_.target_ready()) || requires_approval(name,parameters))
+            (skill->category != SkillCategory::movement && !enabled.test(static_cast<std::size_t>(skill->category))))
             throw std::invalid_argument("MC queue: step is outside the current action scope");
+        if (const auto reason = bind_placement_target(action->executor,parameters); !reason.empty())
+            return {{"status","blocked"},{"reason",reason}};
+        if (requires_approval(action->executor,parameters)) {
+            if (name == "place") return {{"status","blocked"},{"reason","approval_required"}};
+            throw std::invalid_argument("MC queue: step is outside the current action scope");
+        }
         if (pending.empty()) {
             const auto question = action_question(session_,action->executor,parameters);
             if (!question.is_null()) return question;
         }
         auto id = "queued."+std::to_string(invocation)+"."+std::to_string(pending.size()+1);
         ids.push_back(id);
-        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),action->executor,parameters,std::string(required),interrupt});
+        pending.push_back({order_,request_,invocation,task_.revision(),std::move(id),action->executor,std::move(parameters),std::string(required),interrupt});
     }
 
     if (replace) {
@@ -170,23 +175,18 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     auto args = step.arguments;
     // 指定单格沿用原范围，普通采集继承当前任务的取材约束。
     if (step.skill == "collect" && !args.contains("source")) task_.bind_collection(args);
-    if (auto question = action_question(session_,step.skill,args); !question.is_null()) {
+    const auto reason = bind_placement_target(step.skill,args);
+    auto blocked = reason.empty() ? action_question(session_,step.skill,args) : Json{{"status","blocked"},{"reason",reason}};
+    if (blocked.is_null() && requires_approval(step.skill,args)) blocked = {{"status","blocked"},{"reason","approval_required"}};
+    if (!blocked.is_null()) {
         if (step.plan_node) {
-            finish_plan_node(*step.plan_node,false,question);
+            finish_plan_node(*step.plan_node,false,blocked);
             queued_.pop_front();
         } else {
-            question["work"] = step.work;
-            publish("mc.partner.queue",question);
-            clear_queue(question.at("reason").get_ref<const std::string&>(),step.invocation);
+            blocked["work"] = step.work;
+            publish("mc.partner.queue",blocked);
+            clear_queue(blocked.at("reason").get_ref<const std::string&>(),step.invocation);
         }
-        return;
-    }
-    if (requires_approval(step.skill,args) || (step.skill == "place" && !task_.bind_placement(args)) ||
-        (step.skill == "fill_target" && !bind_fill(args))) {
-        if (step.plan_node) {
-            finish_plan_node(*step.plan_node,false,{{"status","blocked"},{"reason","scope_or_approval"}});
-            queued_.pop_front();
-        } else clear_queue("blocked",step.invocation);
         return;
     }
     if (step.skill == "collect") bind_collection_guards(args);

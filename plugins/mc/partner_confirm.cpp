@@ -88,7 +88,7 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     confirmation_ = std::move(item);
     if (plan_ && plan_->active && std::ranges::any_of(plan_->nodes,[&](const auto& node) {
         return (node.state == PlanNode::State::pending || node.state == PlanNode::State::running) &&
-            plan_action_requires_approval(node.skill,node.arguments);
+            requires_approval(partner_action(node.skill)->executor,node.arguments);
     })) cancel_plan("approval_changed");
     if (confirmation_->work && motion_ && !motion_->plan_node &&
         (motion_->skill == skill || (skill == "place" && motion_->skill == "fill_target"))) hold_task_motion();
@@ -96,10 +96,16 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
 }
 
 // 阻止与待确认工作争用的动作，并按已绑定格检查放置候选。
+// 步骤：检查同技能的在途确认 → 整区填充逐格检查 → 单次放置比对已登记候选。
 bool PartnerLoop::requires_approval(std::string_view skill, const Json& args) const {
-    return awaiting_approval(skill) || (skill == "place" && std::ranges::any_of(guarded_actions_,[&](const auto& action) {
+    if (awaiting_approval(skill)) return true;
+    if (skill == "fill_target" && task_.target_ready()) return std::ranges::any_of(task_.target_cells(),[&](auto cell) {
+        cell["block"] = args.at("block");
+        return requires_approval("place",cell);
+    });
+    return skill == "place" && std::ranges::any_of(guarded_actions_,[&](const auto& action) {
         return action.first == skill && same_placement(action.second,args);
-    }));
+    });
 }
 
 // 将原采掘候选的材料和取材约束交给游戏侧逐格核验。

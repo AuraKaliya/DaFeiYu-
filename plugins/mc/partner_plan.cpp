@@ -67,17 +67,6 @@ std::string craft_item(std::string_view item, std::string_view block) {
 }
 }
 
-// 按执行器使用的采掘或逐格放置参数检查计划的当前授权条件。
-bool PartnerLoop::plan_action_requires_approval(std::string_view skill, const Json& args) const {
-    if (skill == "gather_ground" || skill == "dig_block") return requires_approval("collect",args);
-    if (skill == "place") return requires_approval("place",args);
-    if (skill != "fill_target" || !task_.target_ready()) return false;
-    return std::ranges::any_of(task_.target_cells(),[&](auto cell) {
-        cell["block"] = args.at("block");
-        return requires_approval("place",cell);
-    });
-}
-
 // 记下计划提交的确定性拒绝，并保留一次有界修订后的自然结算。
 // 步骤：归还成功提交 → 单独结算待答步骤 → 为其他拒绝记录修订额度和原任务身份。
 Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
@@ -156,12 +145,8 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
             args.erase("message");
         }
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");
-        if (skill == "fill_target" && !task_.target_ready()) return invalid("target_unbound");
-        if (skill == "place") {
-            auto bound = args;
-            if (!task_.bind_placement(bound)) return invalid("placement_outside_target");
-        }
-        if (plan_action_requires_approval(skill,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
+        if (const auto reason = bind_placement_target(action->executor,args); !reason.empty()) return invalid(reason);
+        if (requires_approval(action->executor,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),action->name,
             std::move(args),{},std::string(required)});

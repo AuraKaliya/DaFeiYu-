@@ -619,36 +619,44 @@ bool PartnerLoop::reserve_reply(std::uint64_t session, std::string_view work) {
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
-bool PartnerLoop::bind_placement(std::uint64_t session, std::string& envelope, bool whole_target) const {
-    if (session != session_) return !whole_target;
-    if (!task_.target_ready()) return false;
+// 步骤：核对回合和来源 → 按动作绑定目标 → 保存可下发的命令。
+std::string_view PartnerLoop::bind_placement(std::uint64_t session, std::string_view skill, std::string& envelope) const {
+    if (session != session_) {
+        if (skill == "fill_target") return "placement_context_stale";
+        return {};
+    }
     auto input = Json::parse(envelope);
-    auto& arguments = input.at("arguments");
-    if (!permits(session) || (whole_target && delegated(session)) || input.at("context").at("generation") != session_world_ ||
-        input.at("context").at("order") != order_ ||
-        !(whole_target ? bind_fill(arguments) : task_.bind_placement(arguments))) return false;
+    const auto& context = input.at("context");
+    if (!permits(session) || (skill == "fill_target" && delegated(session)) ||
+        context.at("generation") != session_world_ || context.at("order") != order_) return "placement_context_stale";
+
+    if (const auto reason = bind_placement_target(skill,input.at("arguments")); !reason.empty()) return reason;
     envelope = input.dump();
-    return true;
+    return {};
 }
 
-// 拷贝固定目标的格子，逐格沿用单格放置的来源与确认规则。
-// 步骤：限定单格材料 → 核对全部格的约束 → 固定顺序和原话来源。
-bool PartnerLoop::bind_fill(Json& arguments) const {
-    const auto& material = arguments.at("block").get_ref<const std::string&>();
-    if (!task_.target_ready() || material.ends_with("_door")) return false;
+// 让直调、顺序队列和计划使用同一放置范围及来源。
+// 步骤：检查当前任务目标 → 单次放置核对占用格，整区填充展开已有目标 → 固定下发参数。
+std::string_view PartnerLoop::bind_placement_target(std::string_view skill, Json& arguments) const {
+    if (skill != "place" && skill != "fill_target") return {};
+    if (!task_.target_ready()) return "target_unbound";
+    if (skill == "place") {
+        if (!task_.bind_placement(arguments)) return "placement_outside_target";
+        return {};
+    }
+
+    if (arguments.at("block").get_ref<const std::string&>().ends_with("_door")) return "invalid_fill_material";
     auto cells = task_.target_cells();
     std::ranges::stable_sort(cells.get_ref<Json::array_t&>(),[](const auto& a, const auto& b) { return a.at("y") < b.at("y"); });
-    Json placement;
-    for (const auto& cell : cells) {
-        placement = cell;
-        placement["block"] = material;
-        if (requires_approval("place",placement) || !task_.bind_placement(placement)) return false;
-    }
+    auto placement = cells.front();
+    placement["block"] = arguments.at("block");
+    if (!task_.bind_placement(placement)) return "placement_outside_target";
+
     arguments["cells"] = std::move(cells);
     arguments["sourceMessage"] = placement.at("sourceMessage");
     arguments["taskRevision"] = placement.at("taskRevision");
     if (placement.contains("sourceMode")) arguments["sourceMode"] = placement.at("sourceMode");
-    return true;
+    return {};
 }
 
 // 给采掘原命令附上当前任务的取材约束。

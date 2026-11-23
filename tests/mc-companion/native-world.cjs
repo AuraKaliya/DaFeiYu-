@@ -133,6 +133,7 @@ async function main() {
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
+          directPlace ? (planReading ? 5 : !questionPresented ? 2 : fs.existsSync(path.join(root, 'placement-waiting-checked')) ? 4 : 3) :
           revision ? (planReading || (expiredAt !== undefined && performance.now() - expiredAt >= 700) ? 3 : 2) :
           departure ? (fs.existsSync(path.join(root, 'turn-started')) ? 3 : 2) :
           suspend ? resumed ? 5 : collecting ? 4 : following ? 3 : 2 :
@@ -166,8 +167,13 @@ async function main() {
             messages[1].sceneAtMessage.position = { x: 3, y: -60, z: -7 };
           }
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
-            notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' || directPlace ? '改成清理另一处' :
+            notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
+          if (directPlace) {
+            messages[2].text = '等我选一下';
+            messages[3].text = '左边';
+            messages[4].text = '改成清理另一处';
+          }
           if (questionExpiry) {
             messages[1].text = '把我面前的挖掉';
             messages[2].text = '你还在吗';
@@ -570,9 +576,15 @@ async function main() {
           assert.match(args.text, /确认 \d+/);
           return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
         }
+        if (directPlace && skill === 'reply') {
+          assert.equal(context.order, 2);
+          assert.equal(args.text, '补左边还是右边？');
+          questionPresented = true;
+          return { ...context, skill, exited: true, result: { status: 'done', sent: true, text: args.text } };
+        }
         if (directRevision) {
           assert.equal(skill, directPlace ? 'place' : 'collect');
-          assert.equal(context.order, 2);
+          assert.equal(context.order, directPlace ? 4 : 2);
           if (method === 'partner.begin') {
             assert.equal(collecting, undefined);
             assert.deepEqual(args, directPlace ? { ...wall[0], block: 'dirt', sourceMessage: 2, taskRevision: 1 } :
@@ -706,7 +718,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: restartRoute || rejoin ? 5 :
+    return { generation, order: restartRoute || rejoin || directPlace ? 5 :
       first || motion || confirm || refusedCollection || pointedCraft || attention || repairPlanObserve ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !layered) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
