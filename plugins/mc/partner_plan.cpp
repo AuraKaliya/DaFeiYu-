@@ -116,6 +116,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         }
     }
     Plan plan{invocation,task_.revision(),order_,request_,plan_ && plan_->revision == task_.revision() ? plan_->id : 0};
+    if (has_pickup_continuation(resolves)) plan.pickup_question = resolves;
     for (const auto& step : steps) {
         auto id = step.value("id",std::string{});
         const auto skill = step.at("skill").get<std::string>();
@@ -208,6 +209,7 @@ Json PartnerLoop::plan_context() const {
         {"status",plan.active ? "running" : !plan.cancellation.empty() ? "cancelled" : complete ? "done" : "blocked"},
         {"nodes",std::move(nodes)}};
     if (!plan.cancellation.empty()) context["cancelReason"] = plan.cancellation;
+    if (plan.pickup_question) context["resolves"] = plan.pickup_question;
     return context;
 }
 

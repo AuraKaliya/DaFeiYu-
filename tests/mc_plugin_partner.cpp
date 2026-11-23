@@ -578,8 +578,9 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     if (id != "look-at-other-block") args["observation"] = old_work;
                 }
                 if (!plan) return call("_dig_block",call_id,args);
-                return call("_queue_actions",call_id,{{"operation","plan"},{"steps",Json::array({
-                    {{"id","dig"},{"skill","dig_block"},{"arguments",args}}})}});
+                Json node{{"id","dig"},{"skill","dig_block"},{"arguments",args}};
+                if (evidence) node["pickup"] = "dirt";
+                return call("_queue_actions",call_id,{{"operation","plan"},{"steps",Json::array({std::move(node)})}});
             }
 
             const auto input = Json::parse(last.content);

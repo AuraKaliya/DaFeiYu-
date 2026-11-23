@@ -280,6 +280,7 @@ class PartnerLoop {
         std::size_t layer = 1;
         bool active = true;
         std::string cancellation;
+        std::uint64_t pickup_question = 0;
     };
     std::optional<Plan> plan_;
     nlohmann::json plan_receipts_ = nlohmann::json::array();

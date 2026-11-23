@@ -413,8 +413,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const bool completed_route = wake == "plan.finished" && task_.navigation() && plan_ && !plan_->active &&
         plan_->revision == task_.revision() && plan_->nodes.size() == 1 && plan_->nodes.front().skill == "route" &&
         plan_->nodes.front().state == PlanNode::State::done;
-    const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active &&
-        std::ranges::any_of(plan_->nodes,[](const auto& node) { return !node.pickup.empty(); });
+    const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active && plan_->pickup_question;
     if (!delegated) for (const auto& skill : partner_skills) {
         if ((completed_dig || completed_route || completed_pickup_plan) && skill.name != "reply") continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
