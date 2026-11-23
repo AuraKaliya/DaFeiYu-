@@ -7,7 +7,7 @@ import type { Round, RecordEntry } from './rounds.ts';
 import type { LineRef } from './trace-file.ts';
 
 const props = defineProps<{ round: Round; stages: readonly ModelStage[]; active: string; evidenceCount: number }>();
-const emit = defineEmits<{ stage: [key: string, outcome?: boolean]; record: [ref: LineRef]; mc: [] }>();
+const emit = defineEmits<{ stage: [key: string, tool?: string]; record: [ref: LineRef]; mc: [] }>();
 const start = computed(() => props.round.events[0]?.time);
 const total = computed(() => milliseconds(start.value, props.round.exit?.time));
 const nodes = computed(() => {
@@ -72,7 +72,7 @@ function toolStatus(entry?: RecordEntry) {
                 :key="phase.ref.line" type="button" class="chip" :title="`查看原记录第 ${phase.ref.line} 行`"
                 @click="emit('record', phase.ref)">{{ phaseLabel(phase.kind) }}</button>
             </div>
-            <button v-for="tool in stage.tools" :key="tool.key" class="tool-preview" type="button" @click="emit('stage', stage.key, true)">
+            <button v-for="tool in stage.tools" :key="tool.key" class="tool-preview" type="button" @click="emit('stage', stage.key, tool.key)">
               <code>{{ tool.name }}</code>
               <span class="tone-text" :data-tone="tone(tool.exited?.business ?? tool.exited?.result)">{{ toolStatus(tool.exited) }}</span>
             </button>

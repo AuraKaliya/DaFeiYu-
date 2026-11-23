@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useTemplateRef, watch } from 'vue';
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
 import RoundList from './RoundList.vue';
 import RunTimeline from './RunTimeline.vue';
 import PromptView from './PromptView.vue';
@@ -14,9 +14,12 @@ import type { LineRef, ScanResult } from './trace-file.ts';
 const { loaded, importing, error, open, cancel } = useTraceFiles();
 const traceInput = useTemplateRef<HTMLInputElement>('trace-input');
 const gameInput = useTemplateRef<HTMLInputElement>('game-input');
+const inspector = useTemplateRef<HTMLElement>('inspector');
 const selectedKey = ref('');
+const traceRevision = ref(0);
 const stageId = ref('');
-const panel = ref<'prompt' | 'outcome' | 'mc' | 'raw'>('prompt');
+type Panel = 'prompt' | 'outcome' | 'mc' | 'raw';
+const panel = ref<Panel>('prompt');
 const rawRef = ref<LineRef>();
 const rawScope = ref<'round' | 'global'>('round');
 const rounds = computed(() => loaded.value?.index.rounds ?? []);
@@ -61,24 +64,48 @@ function select(key: string) {
   rawScope.value = 'round';
 }
 
-// 选择送模尝试并打开相应的输入或输出视图。
-function selectStage(key: string, outcome = false) {
+// 将新选中的详情带入视口，窄屏时定位到独立详情区域。
+// 步骤：等待内容挂载 → 展开选中的工具 → 定位详情或回到面板顶部。
+async function revealInspector(tool?: string) {
+  await nextTick();
+  const target = inspector.value;
+  if (!target) return;
+  const selected = tool ? target.querySelector<HTMLDetailsElement>(`[data-tool="${CSS.escape(tool)}"]`) : undefined;
+  if (selected) {
+    selected.open = true;
+    selected.scrollIntoView({ block: 'nearest' });
+  } else if (matchMedia('(max-width: 1050px)').matches) {
+    target.scrollIntoView({ block: 'start' });
+  } else {
+    target.scrollTop = 0;
+  }
+}
+
+// 打开详情后将阅读位置复位到可见处。
+function show(next: Panel) {
+  panel.value = next;
+  void revealInspector();
+}
+
+// 选择送模尝试，可直接查看具体工具的裁定和结果。
+function selectStage(key: string, tool?: string) {
   stageId.value = key;
-  panel.value = outcome ? 'outcome' : 'prompt';
+  panel.value = tool === undefined ? 'prompt' : 'outcome';
+  void revealInspector(tool);
 }
 
 // 在右侧固定一条已归属或未归属的原始记录。
 function inspect(ref?: LineRef, global = false) {
   rawRef.value = ref;
   rawScope.value = global ? 'global' : 'round';
-  panel.value = 'raw';
+  show('raw');
 }
 
 // 跳到原工作或后继回合，带定位的链接打开对应原行。
 function follow(link: RoundLink) {
   select(link.round);
   if (link.ref) inspect(link.ref);
-  else panel.value = 'mc';
+  else show('mc');
 }
 
 // 新文件选择第一回合，附加游戏回执时保持浏览位置。
@@ -87,8 +114,12 @@ watch(loaded, (next, prior) => {
     if (next?.game !== prior?.game && rawRef.value?.stream === 'game') rawRef.value = undefined;
     return;
   }
+  traceRevision.value += 1;
   select(next?.index.rounds[0]?.key ?? '');
-  if (!selected.value) inspect(undefined, true);
+  if (!selected.value) {
+    panel.value = 'raw';
+    rawScope.value = 'global';
+  }
 });
 </script>
 
@@ -131,18 +162,18 @@ watch(loaded, (next, prior) => {
       </div>
     </main>
     <div v-else class="workspace">
-      <RoundList :key="loaded.trace.name + loaded.trace.lastModified" :rounds="rounds" :selected="selectedKey"
+      <RoundList :key="traceRevision" :rounds="rounds" :selected="selectedKey"
         @select="select" @raw="inspect(undefined, true)" />
-      <RunTimeline v-if="selected" :round="selected" :stages="stages" :active="stageId"
+      <RunTimeline v-if="selected" :key="selectedKey" :round="selected" :stages="stages" :active="stageId"
         :evidence-count="(evidence?.entries.length ?? 0) + (evidence?.references.length ?? 0)"
-        @stage="selectStage" @record="inspect" @mc="panel = 'mc'" />
+        @stage="selectStage" @record="inspect" @mc="show('mc')" />
       <main v-else class="round"><p class="empty">文件中没有可确认的 MC 伙伴回合。</p></main>
-      <aside class="inspector" aria-label="记录详情">
+      <aside ref="inspector" class="inspector" aria-label="记录详情">
         <header v-if="selected" class="inspector-header" aria-label="详情切换">
-          <button type="button" :aria-pressed="panel === 'prompt'" @click="panel = 'prompt'">实际送模</button>
-          <button type="button" :aria-pressed="panel === 'outcome'" @click="panel = 'outcome'">响应与裁定</button>
-          <button type="button" :aria-pressed="panel === 'mc'" @click="panel = 'mc'">MC 实效</button>
-          <button type="button" :aria-pressed="panel === 'raw'" @click="panel = 'raw'">原始记录</button>
+          <button type="button" :aria-pressed="panel === 'prompt'" @click="show('prompt')">实际送模</button>
+          <button type="button" :aria-pressed="panel === 'outcome'" @click="show('outcome')">响应与裁定</button>
+          <button type="button" :aria-pressed="panel === 'mc'" @click="show('mc')">MC 实效</button>
+          <button type="button" :aria-pressed="panel === 'raw'" @click="show('raw')">原始记录</button>
         </header>
         <PromptView v-if="panel === 'prompt' && stage?.prepared" :key="selectedKey + '/' + stage.key"
           :source="loaded" :prepared="stage.prepared" :previous="earlierPrepared" @inspect="inspect" />

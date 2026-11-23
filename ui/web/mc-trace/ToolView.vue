@@ -24,7 +24,7 @@ function toggle(event: Event) {
 </script>
 
 <template>
-  <details class="tool-card" @toggle="toggle">
+  <details class="tool-card" :data-tool="tool.key" @toggle="toggle">
     <summary>
       <code>{{ tool.name }}</code>
       <span class="pill" :data-tone="tone(observed)">
