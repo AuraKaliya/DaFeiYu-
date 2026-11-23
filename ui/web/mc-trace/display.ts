@@ -1,5 +1,6 @@
 import type { Round } from './rounds.ts';
 import type { LineRef } from './trace-file.ts';
+import { object } from './trace-file.ts';
 
 const phases: Readonly<Record<string, string>> = {
   'trace.open': 'Trace 开始', 'trace.closed': 'Trace 关闭', 'subagent.accepted': '宿主接纳',
@@ -12,7 +13,7 @@ const phases: Readonly<Record<string, string>> = {
 };
 
 const statuses: Readonly<Record<string, string>> = {
-  succeeded: '成功', success: '成功', completed: '完成', failed: '失败', cancelled: '取消', canceled: '取消',
+  succeeded: '成功', success: '成功', completed: '完成', done: '完成', failed: '失败', cancelled: '取消', canceled: '取消',
   partial: '部分完成', sent: '已发言', accepted: '已接纳', rejected: '已拒绝', blocked: '受阻',
   unknown: '效果未知', invalid_plan: '计划无效', running: '工作已开始', stopped: '已停止',
   prepared: '已装配', submitted: '已提交', answered: '已回答', expired: '已过期', finished: '已结束',
@@ -30,7 +31,7 @@ export function statusLabel(code: string) {
 
 // 选择状态色，文字仍显示原有的业务状态。
 export function tone(code?: string) {
-  if (code && ['succeeded', 'success', 'completed', 'accepted', 'sent', 'answered'].includes(code)) return 'success';
+  if (code && ['succeeded', 'success', 'completed', 'done', 'accepted', 'sent', 'answered'].includes(code)) return 'success';
   if (code && ['failed', 'rejected', 'invalid_plan', 'cancelled', 'canceled'].includes(code)) return 'error';
   if (code && ['partial', 'blocked', 'unknown', 'pending'].includes(code)) return 'pending';
   return 'neutral';
@@ -54,4 +55,12 @@ export function duration(value?: number) {
 // 同时显示来源文件和原始行号。
 export function sourceLabel(ref: LineRef) {
   return `${ref.stream === 'game' ? 'game-actions.jsonl' : 'events.jsonl'} · 第 ${ref.line} 行`;
+}
+
+// 显示确切格坐标或角色位置，维度和采样来源由调用方展示。
+export function coordinates(value: unknown) {
+  const point = object(value);
+  if (typeof point?.x === 'number' && typeof point.y === 'number' && typeof point.z === 'number')
+    return [point.x, point.y, point.z].join(', ');
+  return '—';
 }

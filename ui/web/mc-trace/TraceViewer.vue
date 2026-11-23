@@ -4,9 +4,11 @@ import RoundList from './RoundList.vue';
 import RunTimeline from './RunTimeline.vue';
 import PromptView from './PromptView.vue';
 import OutcomeView from './OutcomeView.vue';
+import McEvidenceView from './McEvidenceView.vue';
 import { modelStages } from './model-stages.ts';
 import { sourceLabel } from './display.ts';
 import { useTraceFiles } from './viewer-state.ts';
+import type { RoundLink } from './mc-links.ts';
 import type { LineRef, ScanResult } from './trace-file.ts';
 
 const { loaded, importing, error, open, cancel } = useTraceFiles();
@@ -70,6 +72,13 @@ function inspect(ref?: LineRef, global = false) {
   rawRef.value = ref;
   rawScope.value = global ? 'global' : 'round';
   panel.value = 'raw';
+}
+
+// 跳到原工作或后继回合，带定位的链接打开对应原行。
+function follow(link: RoundLink) {
+  select(link.round);
+  if (link.ref) inspect(link.ref);
+  else panel.value = 'mc';
 }
 
 // 新文件选择第一回合，附加游戏回执时保持浏览位置。
@@ -137,7 +146,8 @@ watch(loaded, (next, prior) => {
         <p v-else-if="panel === 'prompt'" class="empty">所选阶段未见装配记录。</p>
         <OutcomeView v-else-if="panel === 'outcome' && selected" :key="selectedKey + '/' + stageId"
           :source="loaded" :round="selected" :stage="stage" @inspect="inspect" />
-        <h3 v-else-if="panel === 'mc'">MC 实效</h3>
+        <McEvidenceView v-else-if="panel === 'mc'" :key="selectedKey" :source="loaded" :evidence="evidence"
+          @inspect="inspect" @follow="follow" />
         <h3 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h3>
         <p v-if="rawRef" class="muted">{{ sourceLabel(rawRef) }}</p>
       </aside>
