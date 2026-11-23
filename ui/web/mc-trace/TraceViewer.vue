@@ -5,8 +5,8 @@ import RunTimeline from './RunTimeline.vue';
 import PromptView from './PromptView.vue';
 import OutcomeView from './OutcomeView.vue';
 import McEvidenceView from './McEvidenceView.vue';
+import RawView from './RawView.vue';
 import { modelStages } from './model-stages.ts';
-import { sourceLabel } from './display.ts';
 import { useTraceFiles } from './viewer-state.ts';
 import type { RoundLink } from './mc-links.ts';
 import type { LineRef, ScanResult } from './trace-file.ts';
@@ -83,7 +83,10 @@ function follow(link: RoundLink) {
 
 // 新文件选择第一回合，附加游戏回执时保持浏览位置。
 watch(loaded, (next, prior) => {
-  if (next?.trace === prior?.trace && selected.value) return;
+  if (next?.trace === prior?.trace && selected.value) {
+    if (next?.game !== prior?.game && rawRef.value?.stream === 'game') rawRef.value = undefined;
+    return;
+  }
   select(next?.index.rounds[0]?.key ?? '');
   if (!selected.value) inspect(undefined, true);
 });
@@ -148,8 +151,8 @@ watch(loaded, (next, prior) => {
           :source="loaded" :round="selected" :stage="stage" @inspect="inspect" />
         <McEvidenceView v-else-if="panel === 'mc'" :key="selectedKey" :source="loaded" :evidence="evidence"
           @inspect="inspect" @follow="follow" />
-        <h3 v-else>{{ rawScope === 'global' ? '全局日志' : '原始记录' }}</h3>
-        <p v-if="rawRef" class="muted">{{ sourceLabel(rawRef) }}</p>
+        <RawView v-else :source="loaded" :round="selected" :scope="rawScope" :address="rawRef"
+          @change="(ref, scope) => inspect(ref, scope === 'global')" />
       </aside>
     </div>
   </div>
