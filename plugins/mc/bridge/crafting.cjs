@@ -68,6 +68,20 @@ function chooseRecipe(bot, args, result) {
   return { ...choice, table: choice.recipe.requiresTable ? table.position : null };
 }
 
+// 核对服务端背包，合成点击产生的中间全量包可能先于最终入包到达。
+// 步骤：请求全量读回 → 核对当前批次增减 → 仅在读回不符时跨游戏刻再查。
+async function readBatch(bot, { input, output }, materialBefore, outputBefore) {
+  for (let read = 1; ; ++read) {
+    // 锁定版本的同步只等待下一个全量包，可能读到原料仍在合成格的状态。
+    await bot._syncWindow(bot.inventory);
+    const after = slots(bot);
+    const consumed = materialBefore - count(after, input);
+    const produced = count(after, output) - outputBefore;
+    if ((consumed === -input.count && produced === output.count) || read === 3) return { consumed, produced };
+    await bot.waitForTicks(1);
+  }
+}
+
 // 逐批执行选中的配方，同一工作保留已发生的耗料与产出。
 // 步骤：查询并选择配方 → 每批复核原条件 → 读回实际背包变化并核对产量。
 async function craftPlanks(bot, args, check, result) {
@@ -90,12 +104,8 @@ async function craftPlanks(bot, args, check, result) {
     let consumed, produced;
     try { await bot.craft(recipe, 1, station); }
     finally {
-      // 合成点击会先更新客户端槽位，使用锁定版本的全量同步取得服务端库存。
-      try { await bot._syncWindow(bot.inventory); }
+      try { ({ consumed, produced } = await readBatch(bot, choice, materialBefore, outputBefore)); }
       catch { throw blocked('craft_inventory_unconfirmed', '本批提交后的服务端库存未确认'); }
-      const after = slots(bot);
-      consumed = materialBefore - count(after, input);
-      produced = count(after, output) - outputBefore;
       for (const [name, change] of [[ingredient, -consumed], [result.item, produced]]) {
         const total = (result.inventoryDelta[name] ?? 0) + change;
         if (total) result.inventoryDelta[name] = total;

@@ -24,6 +24,7 @@ function actor(recipes, stock = 2, emptySlots = [null]) {
     blockAt() { return this.table; }, // 返回当前工作台或失效后的空格。
     canSeeBlock() { return true; }, // 固定角色站位可见工作台。
     async _syncWindow(window) { assert.equal(window, this.inventory); }, // 确认替身的服务端库存已同步。
+    async waitForTicks(ticks) { assert.equal(ticks, 1); }, // 替身按游戏刻步进，无需真实计时。
     // 处理一批替身合成，修改实际槽位以供生产代码读回。
     // 步骤：记录提交 → 扣除原料 → 堆叠或存入成品。
     async craft(selected, batches, table) {
@@ -103,4 +104,16 @@ test('服务端读回未证实产物时不把客户端预测当作入包', async
   assert.equal(result.craftAttempted, true);
   assert.deepEqual(result.inventoryDelta, {});
   assert.equal(result.craft.produced, 0);
+});
+
+test('合成全量包先到时等待入包，同一批配方只提交一次', async () => {
+  const bot = actor([recipe(1, 4)], 1);
+  let reads = 0;
+  // 第一次服务端快照仍在处理合成，下一刻才显示成品入包。
+  bot._syncWindow = async window => { window.slots[1] = ++reads === 1 ? null : { type: 3, metadata: 0, count: 4 }; };
+  const result = {};
+  await craftPlanks(bot, { item: 'oak_planks', count: 4 }, () => {}, result);
+  assert.equal(reads, 2);
+  assert.equal(bot.calls.length, 1);
+  assert.deepEqual(result.inventoryDelta, { oak_log: -1, oak_planks: 4 });
 });

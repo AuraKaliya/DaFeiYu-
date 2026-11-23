@@ -118,13 +118,15 @@ async function checkPlayer(fixture, mode) {
     const doorProbe = mode === '--door-probe';
     const combined = mode === '--follow-dig-fill-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--layered-follow-probe'].includes(mode) ?
+    const arena = partner && !combined && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--layered-follow-probe', '--craft-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
     }
     if (combined || mode === '--fill-four-probe') {
       await checkFillFour(fixture, player, whispers, combined);
+    } else if (mode === '--craft-probe') {
+      await checkCraft(fixture, player, whispers);
     } else if (mode === '--layered-follow-probe') {
       await checkLayeredFollow(fixture, player, whispers);
     } else if (doorProbe) {
@@ -334,6 +336,37 @@ async function checkFollowDig(fixture, player, whispers) {
   assert.equal(exit.body.bridgeWork, resumed.bridgeWork);
   assert.equal(exit.body.result.status, 'interrupted');
   await until(() => fixture.settled >= 7, '跟随停止原话已处理');
+}
+
+// 用独立游戏客户端核对场景读数、合成实效和玩家收到的结果。
+// 步骤：确认布置 → 发出固定原话 → 比对游戏回执、模型读回和实际发言。
+async function checkCraft(fixture, player, whispers) {
+  await until(() => fixture.materialCount('oak_log') === 1, '测试原木实际入包');
+  const cell = player.entity.position.clone().set(3, -60, 0);
+  await until(() => player.blockAt(cell)?.name === 'dirt', '独立客户端读到观察目标');
+  assert.equal(fixture.materialCount('oak_planks'), 0);
+  player.chat('看看你旁边，把原木做成四块木板。');
+  await until(() => whispers.includes('原木已经做成四块橡木木板。'), '合成结果实际发言');
+
+  assert.deepEqual(whispers, ['原木已经做成四块橡木木板。']);
+  assert.equal(fixture.materialCount('oak_log'), 0);
+  assert.equal(fixture.materialCount('oak_planks'), 4);
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  const observation = actions.find(row => row.skill === 'observe');
+  const sample = observation.result.observation.samples[0];
+  assert.deepEqual(sample.views.map(view => [view.source, view.status]),
+    [['self', 'sampled'], ['player', 'sampled'], ['message', 'sampled']]);
+  assert.equal(sample.views[2].message, 2);
+  assert.ok(Number.isInteger(sample.sampledAtMs));
+  assert.equal(sample.verified[0].block, player.blockAt(cell).name);
+
+  const crafts = actions.filter(row => row.skill === 'craft');
+  assert.equal(crafts.length, 1);
+  const [craft] = crafts;
+  assert.deepEqual(craft.result.inventoryDelta, { oak_log: -1, oak_planks: 4 });
+  const readback = readRows(fixture, 'trace/events.jsonl').find(row => row.kind === 'mail.received' &&
+    row.category === 'mc.partner.action' && row.body.bridgeWork === craft.work);
+  assert.deepEqual(readback.body.result.craft, craft.result.craft);
 }
 
 // 以独立客户端验证取材、四格放置和旁边门洞保持原样。

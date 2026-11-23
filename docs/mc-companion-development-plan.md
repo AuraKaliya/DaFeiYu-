@@ -14,6 +14,8 @@
 | `1546ce4`、`fd3bdb8`、`f6c14dc` | 绕墙和「垫上来」核对前台交接、实际退出和分层结算。实际入包按原工作号解锁合成，有效答复按原问题和任务修订解锁获选放置。原问题、最小回归及独立 Paper 探针可在测试说明追溯。 |
 | `e3cc59a`、`0fadb1e` | 同批场景观察复用原读数并保留各来源和采样时间。固定响应可按首答、首次动作、完工和实际发言对照时序，在途工作继续推进时新消息仍收到实际答复。 |
 
+首批 `observe`、`craft` 契约已通过定向回归及隔离 Paper 1.21.4 的 `--craft-probe`。独立客户端核对实地方块，合成窗口的中间库存包经有限重读后才确认实际入包，伴侣只报出一次完成。 [固定响应验收场地](../tests/mc-companion/README.md#固定响应验收场地)
+
 四格补墙恢复是待定位的独立问题。玩家说「石头挪开了，把刚才剩下的补上。」后，`aafea37` 和 `4c11fdb` 都在恢复最后两格时超时，续补工作 `1.35` 在夹具收尾时退出，回执为 `interrupted` 和 `placementAttempted=false`。这能定位到放置尝试之前，具体阻塞条件仍待复现确认。体验根目录的 `evidence/mc-context-aafea37-mws05jz6` 中，`comparison.json` 索引三条通过的链路，四格探针在 `regression-paper-baseline/evidence/run-zHqY8d` 和 `regression-paper/evidence/run-Vd0IZ9`。[四格探针](../tests/mc-companion/README.md#固定响应验收场地) · [游戏放置](../plugins/mc/bridge/placement.cjs)
 
 ## 接下来的开发顺序

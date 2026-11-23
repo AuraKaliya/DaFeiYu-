@@ -677,6 +677,42 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
     return {{Role::assistant,R"({"internal":"game work continues"})"}};
 }
 
+// 用隔离服的观察和合成回执决定何时向玩家报告产出。
+// 步骤：按原话采样 → 核对已加载方块和原料 → 提交合成并等待实际库存变化。
+dfy::model::Response craft_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string_view name, const Json& args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
+        if (tool == request.tools.end()) throw std::runtime_error("craft probe: required tool missing");
+        return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::tool && last.tool_call_id == "_observe") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("observation").at("samples").front();
+        if (sample.at("verified").front().at("block") != "dirt" || sample.at("views").size() != 3 ||
+            sample.at("views").front().at("actor").at("inventory").at("oak_log") != 1)
+            throw std::runtime_error("craft probe: expected actual block and input stock");
+        const Json node{{"id","planks"},{"skill","craft"},{"arguments",{{"item","oak_planks"},{"count",4},{"ingredient","oak_log"}}}};
+        return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({node})}});
+    }
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "plan.finished") {
+            const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+            if (result.at("status") != "done" || result.at("inventoryDelta") != Json{{"oak_log",-1},{"oak_planks",4}} ||
+                result.at("craft").at("remaining") != 0)
+                throw std::runtime_error("craft probe: outcome was not verified");
+            return {{Role::assistant,"原木已经做成四块橡木木板。"}};
+        }
+        if (!input.at("events").empty() && input.at("events").back().value("text",std::string{}) == "看看你旁边，把原木做成四块木板。")
+            return call("_observe",{{"mode","scene"},{"sources",{"self","player","message"}},{"message",input.at("events").back().at("sequence")},
+                {"verify",Json::array({{{"x",3},{"y",-60},{"z",0}}})}});
+    }
+    return {{Role::assistant,R"({"internal":"waiting for craft probe"})"}};
+}
+
 // 用固定响应调度两次渡水，聊天和停下只使用当前跟随工作的实际身份。
 dfy::model::Response water_sample(const dfy::model::Request& request) {
     using namespace dfy::model;
@@ -726,7 +762,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool fill_four = combined || mode == L"--fill-four-probe";
         const bool water = mode == L"--water-probe";
         const bool layered = mode == L"--layered-follow-probe";
-        const bool partner = wall || follow || door || materials || fill_four || water || layered || mode == L"--partner-probe";
+        const bool craft = mode == L"--craft-probe";
+        const bool partner = wall || follow || door || materials || fill_four || water || layered || craft || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -739,7 +776,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,follow,door,materials,fill_four,combined,water,layered,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,follow,door,materials,fill_four,combined,water,layered,craft,ask,gap,root](const auto&, const auto& request) {
+                if (craft) return craft_sample(request);
                 if (layered) return layered_follow_sample(request);
                 if (water) return water_sample(request);
                 if (fill_four) return fill_four_sample(request,combined);
