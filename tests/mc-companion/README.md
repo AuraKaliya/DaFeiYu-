@@ -12,6 +12,10 @@
 
 正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
 
+体验启动脚本及浏览器玩家启动脚本均可加 `-PlayerThinking low`。DeepSeek 玩家回合启用低强度思考，`off` 关闭，默认 `inherit` 使用宿主设置。独立部署在插件的 `settings.json` 中设置 `"playerThinking":"low"`。查看 `model.prepared` 的 `thinking` 和 `reasoningEffort` 可核对实际送模配置。玩家等待时间从发话计到收到有用反馈。
+
+固定响应的两处开口场景可在 `playtest.cjs` 的 `--gap-group-probe` 后加 `low` 或 `off`。复用同一构建和场地分别运行，两局的 `player-feedback.json` 都记录实际送模档位、原消息、投递工作和玩家端首反馈耗时。
+
 ### 动作调度和目标绑定基线
 
 在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。

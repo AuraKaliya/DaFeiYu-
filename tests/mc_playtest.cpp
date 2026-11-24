@@ -899,6 +899,10 @@ int wmain(int argc, wchar_t** argv) {
         if (partner) run.trace_directory = root;
         run.wake_for_plugin_mail = !manual;
         model::Config config;
+        if (gap_group) {
+            config.provider = "deepseek";
+            config.model = "fixed-openings";
+        }
         if (follow) {
             config.provider = "deepseek";
             config.model = "fixed-follow";

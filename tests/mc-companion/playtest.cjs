@@ -34,7 +34,7 @@ function prepareScene(send) {
 
 // 只让本次回环服先到场的玩家发出委托，同时保留这次真实交互的宿主证据。
 // 步骤：等待玩家入场 → 绑定角色和观察端 → 运行宿主至接管或离场 → 收尾本次连接。
-async function play(fixture, exe, pkg, mode, config) {
+async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
   const combined = mode === '--follow-dig-fill-probe';
@@ -56,7 +56,7 @@ async function play(fixture, exe, pkg, mode, config) {
   if (owner.toLowerCase() === 'dfycompanion') throw new Error('DfyCompanion 是陪伴账号，请使用自己的玩家名');
   const channel = randomUUID(), bridgeKey = randomBytes(32).toString('hex');
   const file = path.join(evidence, 'adapter.json');
-  fs.writeFileSync(path.join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey }));
+  fs.writeFileSync(path.join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey, playerThinking }));
   fs.writeFileSync(file, JSON.stringify({ host: '127.0.0.1', port, username: 'DfyCompanion', auth: 'offline',
     mode: mode === '--probe' ? 'scenario' : 'partner', owner: offlineId(owner), channel, bridgeKey, places: {
       hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
@@ -161,14 +161,19 @@ async function play(fixture, exe, pkg, mode, config) {
 }
 
 // 在同一次体验服生命周期内运行真实协议玩家；任一方失败都先回收本轮宿主。
-async function rehearse(fixture, exe, pkg, mode) {
-  const host = play(fixture, exe, pkg, mode);
+async function rehearse(fixture, exe, pkg, mode, playerThinking) {
+  const host = play(fixture, exe, pkg, mode, undefined, playerThinking);
   const guest = require('./playtest-check.cjs').checkPlayer(fixture, mode).catch(error => {
     fs.closeSync(fs.openSync(path.join(fixture.evidence, 'host/stop'), 'a'));
     throw error;
   });
   const results = await Promise.allSettled([host, guest]);
   for (const result of results) if (result.status === 'rejected') throw result.reason;
+  if (['--gap-group-probe', '--gap-left-probe', '--gap-both-probe'].includes(mode)) {
+    const feedback = JSON.parse(fs.readFileSync(path.join(fixture.evidence, 'player-feedback.json'), 'utf8'));
+    const expected = playerThinking === 'low' ? { enabled: true, effort: 'low' } : { enabled: false };
+    require('node:assert/strict').deepEqual(feedback.modelThinking, expected);
+  }
   if (mode === '--partner-probe') {
     const assert = require('node:assert/strict');
     const seen = fs.readFileSync(path.join(fixture.evidence, 'host/model-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -215,7 +220,9 @@ async function rehearse(fixture, exe, pkg, mode) {
 
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
-  const [exe, pkg, mode, config] = process.argv.slice(2);
+  const [exe, pkg, mode, config, liveThinking] = process.argv.slice(2);
+  const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
+  if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
     '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe'].includes(mode) ||
@@ -233,7 +240,8 @@ async function main() {
   httpd.listen(25581, '127.0.0.1');
   await once(httpd, 'listening');
   try {
-    await withPaper(fixture => mode === '--live' ? play(fixture, exe, pkg, mode, config) : rehearse(fixture, exe, pkg, mode), true);
+    await withPaper(fixture => mode === '--live' ? play(fixture, exe, pkg, mode, config, playerThinking) :
+      rehearse(fixture, exe, pkg, mode, playerThinking), true);
   }
   finally { httpd.close(); }
 }

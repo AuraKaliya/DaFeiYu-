@@ -247,7 +247,8 @@ async function checkOpeningGroup(fixture, player, whispers) {
   assert.deepEqual([delivery.order, delivery.generation], [answer.sourceMessage, presented.body.generation]);
   assert.ok(Number.isFinite(sample.elapsedMs));
   writeFileSync(feedbackPath, JSON.stringify({ ...sample, sourceMessage: answer.sourceMessage,
-    session: input.session, run: input.run, work: delivery.work }, null, 2));
+    session: input.session, run: input.run, work: delivery.work,
+    modelThinking: { enabled: input.thinking, effort: input.reasoningEffort } }, null, 2));
   const placed = actions.find(row => row.skill === 'fill_target');
   assert.deepEqual([placed.exited, placed.result.sourceMessage, placed.result.changes.length], [true, 2, 4]);
 }
@@ -293,7 +294,8 @@ async function checkOpeningScope(fixture, player, whispers, left) {
   const delivery = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === speech.work);
   assert.equal(delivery.body.session, turn.session);
   writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: 2, session: turn.session, run: turn.run,
-    work: speech.work, observation: original.work }, null, 2));
+    work: speech.work, observation: original.work,
+    modelThinking: { enabled: turn.thinking, effort: turn.reasoningEffort } }, null, 2));
 }
 
 // 在真实世界中验证高台掉队、取材后垫高和原跟随恢复。

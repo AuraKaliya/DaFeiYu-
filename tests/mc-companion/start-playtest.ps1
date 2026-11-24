@@ -1,7 +1,8 @@
 ﻿# 在已接受协议的本机测试环境旁启动独立的真人体验世界。
 [CmdletBinding()]
 param([string]$FixtureRoot = $env:DFY_MC_TEST_ROOT, [string]$BuildDirectory, [string]$Configuration = 'Debug',
-    [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG, [switch]$Probe, [switch]$PartnerProbe)
+    [string]$ModelConfig = $env:DFY_MC_MODEL_CONFIG, [switch]$Probe, [switch]$PartnerProbe,
+    [ValidateSet('inherit','off','low')][string]$PlayerThinking = 'inherit')
 $ErrorActionPreference = 'Stop'
 if (-not $FixtureRoot -or -not [IO.Path]::IsPathRooted($FixtureRoot)) { throw '请给出已准备好的测试根目录' }
 $root = (Resolve-Path -LiteralPath $FixtureRoot).Path
@@ -55,7 +56,8 @@ try {
     )
     [IO.File]::WriteAllLines((Join-Path $server 'server.properties'), [string[]]$properties, [Text.UTF8Encoding]::new($false))
     [string[]]$extra = if ($Probe) { '--probe' } elseif ($PartnerProbe) { '--partner-probe' } else { '--live', $ModelConfig }
-    [IO.File]::WriteAllText($launchInfo, (@{ mode = $extra[0]; config = $ModelConfig;
+    $extra += $PlayerThinking.ToLowerInvariant()
+    [IO.File]::WriteAllText($launchInfo, (@{ mode = $extra[0]; config = $ModelConfig; playerThinking = $PlayerThinking.ToLowerInvariant();
         buildDirectory = $BuildDirectory; configuration = $Configuration } | ConvertTo-Json -Compress))
     & node (Join-Path $PSScriptRoot 'playtest.cjs') $exe $package @extra
     if ($LASTEXITCODE) { throw "真人体验进程退出码 $LASTEXITCODE" }
