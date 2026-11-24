@@ -57,15 +57,9 @@ inline void verify_handoff_stock(const nlohmann::json& stock, int count) {
         throw std::invalid_argument("MC: incorrect handoff inventory total");
 }
 
-// 绑定交物观察的原工作、当前接收者与位置覆盖，并按原数量核对库存分配。
-// 步骤：检查请求和世界 → 核验可见实体及双方距离 → 复核窗口和备料。
-inline void verify_handoff(const nlohmann::json& sample, const nlohmann::json& args, std::string_view id, const nlohmann::json& generation) {
-    if (!valid_handoff_request(args) || sample.at("id").get_ref<const std::string&>() != id || sample.at("generation") != generation ||
-        sample.at("recipient") != args.at("recipient") || sample.at("item").get_ref<const std::string&>() != item_name(args.at("item").get_ref<const std::string&>()) || sample.at("count") != args.at("count") ||
-        !sample.at("sampledAtMs").is_number_unsigned() || !sample.at("dimension").is_string() || sample.at("dimension").get_ref<const std::string&>().empty())
-        throw std::invalid_argument("MC: invalid handoff source");
-    const auto& actor = sample.at("actor");
-    const auto& target = sample.at("target");
+// 核对交物双方的位置覆盖与可见实体，并用同次坐标复算距离。
+// 步骤：检查角色及目标状态 → 校验状态对应的字段 → 核实时空读数中的双方距离。
+inline void verify_handoff_location(const nlohmann::json& actor, const nlohmann::json& target) {
     const auto& state = target.at("state");
     const bool tracked = state == "visible" || state == "unlocated";
     const auto point = [](const auto& p) {
@@ -83,9 +77,49 @@ inline void verify_handoff(const nlohmann::json& sample, const nlohmann::json& a
         if (!target.at("distance").is_number() || std::abs(target.at("distance").get<double>()-std::hypot(delta("x"),delta("y"),delta("z"))) > 1e-8)
             throw std::invalid_argument("MC: inconsistent recipient distance");
     }
+}
+
+// 绑定交物观察的原工作、当前接收者与位置覆盖，并按原数量核对库存分配。
+// 步骤：检查请求和世界 → 核验可见实体及双方距离 → 复核窗口和备料。
+inline void verify_handoff(const nlohmann::json& sample, const nlohmann::json& args, std::string_view id, const nlohmann::json& generation) {
+    if (!valid_handoff_request(args) || sample.at("id").get_ref<const std::string&>() != id || sample.at("generation") != generation ||
+        sample.at("recipient") != args.at("recipient") || sample.at("item").get_ref<const std::string&>() != item_name(args.at("item").get_ref<const std::string&>()) || sample.at("count") != args.at("count") ||
+        !sample.at("sampledAtMs").is_number_unsigned() || !sample.at("dimension").is_string() || sample.at("dimension").get_ref<const std::string&>().empty())
+        throw std::invalid_argument("MC: invalid handoff source");
+    verify_handoff_location(sample.at("actor"),sample.at("target"));
     if (sample.at("window") != "inventory" && sample.at("window") != "container" && sample.at("window") != "cursor_occupied")
         throw std::invalid_argument("MC: unknown handoff window");
     verify_handoff_stock(sample.at("stock"),args.at("count").get<int>());
+}
+
+// 把停止投物时的收件人采样绑定到原观察和真实未提交量。
+// 步骤：核对角色、时序及剩余数量 → 复核可见范围 → 对照受阻原因与实际位置。
+inline void verify_recipient_check(const nlohmann::json& result, bool exited) {
+    const auto& check = result.at("recipientCheck");
+    const auto& initial = result.at("handoff");
+    const auto& transfer = result.at("transfer");
+    const auto& target = check.at("target");
+    const auto& reason = check.at("reasonCode");
+    if (check.at("observation") != initial.at("id") || check.at("generation") != initial.at("generation") ||
+        check.at("dimension") != initial.at("dimension") || check.at("recipient") != initial.at("recipient") ||
+        check.at("actor").at("uuid") != initial.at("actor").at("uuid") || !check.at("sampledAtMs").is_number_unsigned() ||
+        check.at("sampledAtMs") < initial.at("sampledAtMs") || (transfer.contains("sampledAtMs") && check.at("sampledAtMs") > transfer.at("sampledAtMs")) ||
+        !check.at("remaining").is_number_unsigned() || check.at("remaining") == 0 ||
+        check.at("remaining") != initial.at("count").get<int>()-transfer.at("submitted").get<int>() ||
+        (exited && (result.at("status") == "done" || result.at("reasonCode") != reason)))
+        throw std::invalid_argument("MC: invalid stopped handoff context");
+    verify_handoff_location(check.at("actor"),target);
+    if (reason == "handoff_recipient_unavailable") return;
+    if (target.at("state") != "visible" || !target.contains("distance") || target.at("entityId") != initial.at("target").at("entityId"))
+        throw std::invalid_argument("MC: stopped handoff lacks a recipient position");
+    if (reason == "handoff_recipient_distant" && target.at("distance") > 3) return;
+    if (reason == "handoff_recipient_moved" && target.at("distance") <= 3) {
+        const auto delta = [&](const char* axis) {
+            return target.at("position").at(axis).get<double>()-initial.at("target").at("position").at(axis).get<double>();
+        };
+        if (std::hypot(delta("x"),delta("y"),delta("z")) > 0.75) return;
+    }
+    throw std::invalid_argument("MC: stopped handoff disagrees with recipient position");
 }
 
 // 核对投出、原玩家收取、他人收取及两类待证数量，并复核可回查的服务端流和实体。
@@ -169,7 +203,8 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
         throw std::invalid_argument("MC: missing original handoff work");
     if (result.contains("handoff")) verify_handoff(result.at("handoff"),args,args.at("observation").get_ref<const std::string&>(),generation);
     if (!result.contains("transfer")) {
-        if (result.contains("receipt") || (exited && result.at("status") == "done")) throw std::invalid_argument("MC: handoff completion without execution");
+        if (result.contains("receipt") || result.contains("recipientCheck") || (exited && result.at("status") == "done"))
+            throw std::invalid_argument("MC: handoff completion without execution");
         return false;
     }
     const auto& transfer = result.at("transfer");
@@ -190,6 +225,7 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
     if (clicks != 0 && (sample.at("window") != "inventory" || sample.at("target").at("state") != "visible" ||
         !sample.at("target").contains("distance") || sample.at("target").at("distance") > 3 || sample.at("stock").at("missing") != 0))
         throw std::invalid_argument("MC: handoff started without verified conditions");
+    if (result.contains("recipientCheck")) verify_recipient_check(result,exited);
     if (result.contains("receipt")) verify_handoff_proof(result.at("receipt"),submitted.get<int>(),sample.at("recipient"));
     if (!exited) return false;
     if (!transfer.at("sampledAtMs").is_number_unsigned() || transfer.at("sampledAtMs") < sample.at("sampledAtMs") ||

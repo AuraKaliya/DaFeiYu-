@@ -246,8 +246,8 @@ void vitals_protocol() {
     rejects(read);
 }
 
-// 核对交物观察按接收者、距离与槽位总数结算，拒绝跨人或重复选槽。
-// 步骤：构造跨堆备料 → 替换玩家和脚位 → 伪造选择或缺料量并验证拒绝。
+// 核对交物观察、停止位置和收件证据都属于同一玩家与原工作。
+// 步骤：构造跨堆备料 → 核对提交与收件 → 对照停投位置、剩余量和迟到回执。
 void handoff_protocol() {
     const std::string world = "00112233-4455-6677-8899-aabbccddeeff", owner = "00112233-4455-6677-8899-aabbccddee00";
     const auto controller = std::string(32,'d');
@@ -343,6 +343,41 @@ void handoff_protocol() {
     proof["recipientPicked"] = 66;
     proof["pickupUnknown"] = 0;
     const Json late = proof;
+    auto stopped = frame;
+    auto& stop_result = stopped["action"]["result"];
+    stop_result["status"] = "blocked";
+    stop_result["reasonCode"] = "handoff_recipient_distant";
+    stop_result.erase("receipt");
+    stop_result["transfer"].update(Json{{"submitted",64},{"attemptedClicks",1},{"returnedClicks",1},{"stockAfter",6}});
+    stop_result["inventoryDelta"]["dirt"] = -64;
+    auto& check = stop_result["recipientCheck"] = {{"observation","offer"},{"generation",world},{"dimension","overworld"},
+        {"sampledAtMs",43},{"recipient",owner},{"remaining",2},{"actor",sample.at("actor")},{"target",sample.at("target")},
+        {"reasonCode","handoff_recipient_distant"}};
+    auto& target = check["target"];
+    target["distance"] = target["position"]["x"] = 8;
+    const auto partial = [&] { return dfy::mc::partner_reply(stopped.dump(),"give",controller,"give_item",command.dump()); };
+    if (!partial().inventory_attempted) throw std::runtime_error("partial handoff lost the original attempt");
+    check["remaining"] = 66;
+    rejects(partial);
+    check["remaining"] = 2;
+    check["sampledAtMs"] = 19;
+    rejects(partial);
+    check["sampledAtMs"] = 51;
+    rejects(partial);
+    check["sampledAtMs"] = 43;
+    check["recipient"] = world;
+    rejects(partial);
+    check["recipient"] = owner;
+    target["distance"] = target["position"]["x"] = 1;
+    rejects(partial);
+    stop_result["reasonCode"] = check["reasonCode"] = "handoff_recipient_moved";
+    if (!partial().inventory_attempted) throw std::runtime_error("change of aim within range was lost");
+    target["distance"] = target["position"]["x"] = 1.75;
+    rejects(partial);
+    stop_result["reasonCode"] = check["reasonCode"] = "handoff_recipient_unavailable";
+    target = {{"state","not_tracked"}};
+    if (!partial().inventory_attempted) throw std::runtime_error("loss of recipient tracking fabricated a position");
+
     frame["action"]["skill"] = "observe";
     frame["id"] = "lookup";
     command["arguments"] = {{"mode","handoff_receipt"},{"work","give"}};

@@ -20,15 +20,23 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
     sourceClaimed: false, progressAtMs: live.sampledAtMs };
   const recipient = live.target.state === 'visible' && bot.entities[live.target.entityId];
 
+  // 封存实际阻止下一次投物的玩家位置、可见范围和当时尚未提交的数量。
+  function recipientBlocked(sample, code, message) {
+    result.recipientCheck = { observation: sample.id, generation: sample.generation, dimension: sample.dimension,
+      recipient: sample.recipient, sampledAtMs: sample.sampledAtMs, remaining: sample.count,
+      actor: sample.actor, target: sample.target, reasonCode: code };
+    return blocked(code,message);
+  }
+
   // 每次落键前复核同一角色、活的接收者、窗口和剩余库存。
   function ready(sample) {
     check();
     if (bot.entity !== actor || bot.game.dimension !== source.dimension) throw blocked('handoff_world_changed', '交物的原角色或维度已改变');
     if (actor.isValid === false || bot.health <= 0) throw blocked('handoff_actor_unavailable', '交物角色目前无法在场操作');
-    if (!recipient || sample.target.state !== 'visible' || bot.entities[sample.target.entityId] !== recipient)
-      throw blocked('handoff_recipient_unavailable', '无法确认原接收者仍在当前视野');
-    if (!Number.isFinite(sample.target.distance) || sample.target.distance > 3)
-      throw blocked('handoff_recipient_distant', '配对玩家尚未进入三格交物距离');
+    if (!recipient || sample.target.state !== 'visible' || bot.entities[sample.target.entityId] !== recipient || !Number.isFinite(sample.target.distance))
+      throw recipientBlocked(sample,'handoff_recipient_unavailable', '无法确认原接收者仍在当前交物现场的位置');
+    if (sample.target.distance > 3)
+      throw recipientBlocked(sample,'handoff_recipient_distant', '配对玩家尚未进入三格交物距离');
     if (sample.window !== 'inventory') throw blocked('handoff_window_busy', '交物需要普通物品栏且光标空闲');
     if (sample.stock.missing) throw blocked('handoff_stock_short', '可确认的普通库存不足以交出剩余数量');
   }
@@ -45,7 +53,7 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
       const sample = observeHandoff(bot,owner,{ ...args, count: remaining },source.id,source.generation);
       ready(sample);
       if (recipient.position.distanceTo(aimed) > 0.75)
-        throw blocked('handoff_recipient_moved', '接收者已离开本次瞄准的位置，剩余部分尚未投出');
+        throw recipientBlocked(sample,'handoff_recipient_moved', '接收者已离开本次瞄准的位置，剩余部分尚未投出');
       const row = sample.stock.selected[0];
       const whole = row.take === row.held;
       const quantity = whole ? row.held : 1;

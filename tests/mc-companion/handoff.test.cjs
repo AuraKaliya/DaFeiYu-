@@ -86,6 +86,8 @@ test('moving recipient and interrupted clicks retain only submitted quantities',
   before.bot.lookAt = async () => { before.bot.players.owner.entity.position.x += 6; setImmediate(() => before.bot.emit('physicsTick')); };
   await assert.rejects(before.run(), { code: 'handoff_recipient_distant' });
   assert.deepEqual([before.claims(),before.clicks.length,before.result.inventoryDelta], [0,0,{}]);
+  assert.deepEqual([before.result.handoff.target.distance,before.result.recipientCheck.target.distance,before.result.recipientCheck.remaining],
+    [3,9,66]);
 
   const moving = tossFixture(), click = moving.bot.clickWindow;
   moving.bot.clickWindow = async (...args) => {
@@ -95,10 +97,24 @@ test('moving recipient and interrupted clicks retain only submitted quantities',
   await assert.rejects(moving.run(), { code: 'handoff_recipient_distant' });
   assert.deepEqual([moving.clicks,moving.claims(),moving.result.transfer.submitted,moving.result.transfer.returnedClicks,
     moving.result.transfer.requested-moving.result.transfer.submitted,moving.result.inventoryDelta], [[[2,1]],1,60,1,6,{ dirt:-60 }]);
+  const stop = moving.result.recipientCheck;
+  assert.deepEqual([stop.observation,stop.recipient,stop.target.distance,stop.remaining,stop.reasonCode],
+    [moving.source.id,moving.owner,9,6,'handoff_recipient_distant']);
+  assert.ok(stop.sampledAtMs >= moving.result.handoff.sampledAtMs && stop.sampledAtMs <= moving.result.transfer.sampledAtMs);
+
+  const shifted = tossFixture();
+  shifted.bot.lookAt = async () => { shifted.bot.players.owner.entity.position.x -= 1; setImmediate(() => shifted.bot.emit('physicsTick')); };
+  await assert.rejects(shifted.run(), { code:'handoff_recipient_moved' });
+  assert.deepEqual([shifted.result.recipientCheck.target.distance,shifted.result.recipientCheck.remaining,shifted.clicks.length],[2,66,0]);
+  const unseen = tossFixture();
+  unseen.bot.lookAt = async () => { delete unseen.bot.entities[7]; setImmediate(() => unseen.bot.emit('physicsTick')); };
+  await assert.rejects(unseen.run(), { code:'handoff_recipient_unavailable' });
+  assert.deepEqual(unseen.result.recipientCheck.target,{ state:'not_tracked' });
 
   const after = tossFixture();
   await assert.rejects(after.run(() => { if (after.clicks.length) throw new Error('cancelled'); }), /cancelled/);
   assert.deepEqual([after.claims(),after.result.transfer.submitted,after.result.inventoryDelta], [1,60,{ dirt: -60 }]);
+  assert.equal(after.result.recipientCheck,undefined);
   const lost = tossFixture();
   lost.bot.clickWindow = async () => { throw new Error('transport closed'); };
   await assert.rejects(lost.run(), /transport closed/);
