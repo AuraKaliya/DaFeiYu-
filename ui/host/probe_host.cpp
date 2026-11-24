@@ -38,14 +38,39 @@ std::string_view dialogue_state(DialogueCommandState state) noexcept {
     case State::conflict: return "conflict";
     case State::expired: return "expired";
     case State::stale: return "stale";
+    case State::full: return "full";
     }
     return "rejected";
 }
 
-// 以十进制字符串返回原命令和正式回合身份。
+// 以十进制字符串返回原命令、正式回合和待发消息身份。
 nlohmann::json dialogue_receipt(const DialogueReceipt& receipt) {
     return {{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
-        {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)}};
+        {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)},{"message",std::to_string(receipt.message)}};
+}
+
+// 按固定命令名逐项核对字段，只从对应入口读取正文、原回合或待发消息。
+// 步骤：解析命令身份 → 验证该命令的字段数量与目标 → 交付带类型的业务命令。
+DialogueCommand dialogue_command(const nlohmann::json& request, std::string_view type) {
+    DialogueCommand command{run_id_part(request.at("command")),DialogueAction::send,{},{}};
+    if (type == "dialogue.submit" && request.size() == 5) {
+        command.text = request.at("text").get<std::string>();
+        return command;
+    }
+    command.target.session = run_id_part(request.at("session"));
+    if ((type == "dialogue.resume" || type == "dialogue.remove") && request.size() == 6) {
+        command.action = type == "dialogue.resume" ? DialogueAction::resume : DialogueAction::remove;
+        command.message = run_id_part(request.at("message"));
+        return command;
+    }
+    command.target.sequence = run_id_part(request.at("turn"));
+    if (type == "dialogue.enqueue" && request.size() == 7) {
+        command.action = DialogueAction::enqueue;
+        command.text = request.at("text").get<std::string>();
+    } else if ((type == "dialogue.cancel" || type == "dialogue.clear") && request.size() == 6) {
+        command.action = type == "dialogue.cancel" ? DialogueAction::cancel : DialogueAction::clear;
+    } else throw std::invalid_argument("UI: invalid dialogue command");
+    return command;
 }
 
 // 区分普通回合、等待读回和已裁定的读回证据。
@@ -97,8 +122,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
         if (type == "state.read") return run_status_reply(message);
-        if (type == "dialogue.read" || type == "dialogue.submit" || type == "dialogue.cancel" || type == "dialogue.clear")
-            return dialogue_reply(message,type,source);
+        if (type.starts_with("dialogue.")) return dialogue_reply(message,type,source);
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
         if (next_ == std::numeric_limits<std::uint64_t>::max()) return E_FAIL;
@@ -115,36 +139,36 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
 HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source) {
     const auto active = [&] { return main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); })); };
     if (!dialogue_.read || !dialogue_.submit || !main_panel_document(source) || !active()) return E_ACCESSDENIED;
-    const bool control = type == "dialogue.cancel" || type == "dialogue.clear";
-    if (request.size() != (control ? 6 : 5) || request.at("version") != "1") return E_INVALIDARG;
+    if (request.at("version") != "1") return E_INVALIDARG;
     const auto& id = request.at("request").get_ref<const std::string&>();
     if (id.empty() || id.size() > 64) return E_INVALIDARG;
 
     nlohmann::json reply{{"version","1"},{"request",id}};
     if (type != "dialogue.read") {
-        DialogueCommand command{run_id_part(request.at("command")),DialogueAction::send,{},{}};
-        if (control) {
-            command.action = type == "dialogue.cancel" ? DialogueAction::cancel : DialogueAction::clear;
-            command.target = {run_id_part(request.at("session")),run_id_part(request.at("turn"))};
-        } else command.text = request.at("text").get<std::string>();
         reply["event"] = "dialogue.receipt";
-        reply["receipt"] = dialogue_receipt(dialogue_.submit(std::move(command)));
+        reply["receipt"] = dialogue_receipt(dialogue_.submit(dialogue_command(request,type)));
     } else {
+        if (request.size() != 5) return E_INVALIDARG;
         const auto& after = request.at("revision").get_ref<const std::string&>();
         if (after.size() > 20) return E_INVALIDARG;
         const auto& command = request.at("command");
         const auto view = dialogue_.read(command == "" ? 0 : run_id_part(command));
         const auto revision = view.display ? std::to_string(view.display->revision) : std::string();
-        nlohmann::json turns = nullptr;
+        nlohmann::json turns = nullptr, queue = nullptr;
         if (view.display && revision != after) {
             turns = nlohmann::json::array();
             for (const auto& turn : view.display->turns) {
                 turns.push_back({{"session",std::to_string(turn.run.session)},{"turn",std::to_string(turn.run.sequence)},
-                    {"prompt",turn.prompt},{"answer",turn.answer},{"result",operation_state(turn.result)},{"exit",operation_state(turn.exit)}});
+                    {"prompt",turn.prompt},{"answer",turn.answer},{"result",operation_state(turn.result)},{"exit",operation_state(turn.exit)},
+                    {"queuedMessage",std::to_string(turn.queued_message)}});
             }
+            queue = nlohmann::json::array();
+            for (const auto& item : view.display->queue)
+                queue.push_back({{"message",std::to_string(item.message)},{"session",std::to_string(item.session)},{"text",item.text}});
         }
         reply.update({{"event","dialogue.snapshot"},{"ready",bool(view.display)},{"accepting",view.accepting},
             {"latestCommand",std::to_string(view.latest_command)},{"revision",revision},{"turns",std::move(turns)},
+            {"queue",std::move(queue)},{"queuePaused",view.display && view.display->queue_paused},
             {"receipt",view.receipt ? dialogue_receipt(*view.receipt) : nlohmann::json(nullptr)}});
     }
     if (!active()) return E_ACCESSDENIED;

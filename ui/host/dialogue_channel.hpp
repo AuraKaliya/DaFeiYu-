@@ -2,15 +2,16 @@
 #include "conversation.hpp"
 
 namespace dfy::ui {
-enum class DialogueAction { send, cancel, clear };
-enum class DialogueCommandState { unavailable, queued, accepted, busy, rejected, conflict, expired, stale };
+enum class DialogueAction { send, cancel, clear, enqueue, resume, remove };
+enum class DialogueCommandState { unavailable, queued, accepted, busy, rejected, conflict, expired, stale, full };
 
-// 发送携带原话，停止与清空绑定用户操作时看见的最后一轮。
+// 发送与排队携带原话，回合命令与待发消息命令绑定各自的原身份。
 struct DialogueCommand {
     std::uint64_t id;
     DialogueAction action;
     agent::RunId target;
     std::string text;
+    std::uint64_t message = 0;
 };
 
 // 从业务线程接纳前的排队到正式 Session 回合，复用原窗口命令身份。
@@ -18,6 +19,7 @@ struct DialogueReceipt {
     std::uint64_t command;
     DialogueCommandState state;
     agent::RunId run;
+    std::uint64_t message = 0;
 };
 
 // 借用已发布的不可变正文，浏览器线程可以在应用锁外编码 JSON。

@@ -34,6 +34,10 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     bool pending() const noexcept { return waiting_; }
   private:
     using Json = nlohmann::json;
+#ifdef DFY_UI_RUN_STATUS_TEST
+    // 在已打开的正式主文档追加原生队列容量、身份与恢复检查。
+    void check_dialogue_queue(std::shared_ptr<tests::UiDialogueGate> gate);
+#endif
     struct Step { std::string name; std::wstring method; Json parameters; bool frame; std::function<void(const Json&)> check; std::function<bool()> ready; };
     // 添加固定协议调用，不接收来自插件的脚本或方法名。
     void call(std::string name, std::wstring method, Json parameters, std::function<void(const Json&)> check = {});

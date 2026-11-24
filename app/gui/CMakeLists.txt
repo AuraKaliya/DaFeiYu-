@@ -14,7 +14,7 @@ target_link_libraries(dfy_ui_probe PRIVATE dfy_ui_scope dfy_webview2 dfy_build_o
 target_link_libraries(dfy_ui_probe PRIVATE dfy_application nlohmann_json::nlohmann_json)
 if(BUILD_TESTING)
   target_sources(dfy_ui_probe PRIVATE ../../tests/ui_run_status_probe.cpp ../../tests/ui_run_status_probe.hpp)
-  target_sources(dfy_ui_probe PRIVATE ../../tests/ui_room_preview.cpp ../../tests/ui_main_panel.cpp)
+  target_sources(dfy_ui_probe PRIVATE ../../tests/ui_room_preview.cpp ../../tests/ui_main_panel.cpp ../../tests/ui_dialogue_queue.cpp)
   target_include_directories(dfy_ui_probe PRIVATE ../../tests)
   target_compile_definitions(dfy_ui_probe PRIVATE DFY_UI_RUN_STATUS_TEST)
   add_dependencies(dfy_ui_probe dfy_status_example)

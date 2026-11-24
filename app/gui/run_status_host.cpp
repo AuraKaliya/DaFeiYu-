@@ -9,8 +9,8 @@ namespace {
 constexpr auto interval = std::chrono::milliseconds(5);
 constexpr std::size_t command_limit = 16;
 
-// 依受信页面看见的原回合执行发送、停止或清空。
-// 步骤：普通发送交给应用 → 控制命令复核显示身份与当前状态 → 提交取消或清空空闲上下文。
+// 依受信页面提供的回合或消息身份，在业务线程执行一次对话操作。
+// 步骤：发送或排队交给应用 → 按原待发消息恢复或移除 → 对原回合提交停止或清空。
 DialogueReceipt apply_dialogue(app::Application& application, const DialogueCommand& command) {
     using State = DialogueCommandState;
     if (command.action == DialogueAction::send) {
@@ -19,6 +19,22 @@ DialogueReceipt apply_dialogue(app::Application& application, const DialogueComm
     }
 
     auto& conversation = application.conversation();
+    if (command.action == DialogueAction::enqueue) {
+        const auto receipt = application.enqueue_dialogue(command.target,command.text);
+        State state = State::rejected;
+        switch (receipt.state) {
+        case app::QueueAdmission::accepted: state = State::accepted; break;
+        case app::QueueAdmission::full: state = State::full; break;
+        case app::QueueAdmission::stale: state = State::stale; break;
+        case app::QueueAdmission::rejected: break;
+        }
+        return {command.id,state,{command.target.session,0},receipt.message};
+    }
+    if (command.action == DialogueAction::remove || command.action == DialogueAction::resume) {
+        const bool matched = command.target.session == conversation.id() && (command.action == DialogueAction::remove
+            ? application.remove_queued_dialogue(command.message) : application.resume_dialogue_queue(command.message));
+        return {command.id,matched ? State::accepted : State::stale,command.target,command.message};
+    }
     const auto& turns = conversation.display().turns;
     if (turns.empty() || turns.back().run != command.target) return {command.id,State::stale,command.target};
     if (command.action == DialogueAction::cancel) {
@@ -80,29 +96,34 @@ DialogueView RunStatusHost::dialogue(std::uint64_t command) const {
 // 步骤：校验参数 → 复用原身份或报告冲突 → 核对槽位及忙碌状态 → 登记待交付命令。
 DialogueReceipt RunStatusHost::submit_dialogue(DialogueCommand command) {
     using State = DialogueCommandState;
-    const bool sending = command.action == DialogueAction::send;
-    if (!command.id || (sending && (command.target != agent::RunId{} || command.text.size() > app::dialogue_text_limit ||
-        command.text.find_first_not_of(" \t\r\n") == std::string::npos)) ||
-        (!sending && (!command.target.session || !command.target.sequence || !command.text.empty())))
+    const bool with_text = command.action == DialogueAction::send || command.action == DialogueAction::enqueue;
+    const bool by_message = command.action == DialogueAction::resume || command.action == DialogueAction::remove;
+    const bool target_valid = command.action == DialogueAction::send ? command.target == agent::RunId{} :
+        command.target.session && (by_message ? !command.target.sequence : command.target.sequence != 0);
+    if (!command.id || !target_valid || by_message != (command.message != 0) ||
+        (with_text ? command.text.size() > app::dialogue_text_limit || command.text.find_first_not_of(" \t\r\n") == std::string::npos : !command.text.empty()))
         return {command.id,State::rejected,{}};
-    auto fingerprint = sending ? platform::sha256(command.text) : std::string{};
+    auto fingerprint = with_text ? platform::sha256(command.text) : std::string{};
 
     std::lock_guard lock(mutex_);
     if (command.id <= latest_command_) {
         const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.receipt.command == command.id; });
         if (record == commands_.end()) return {command.id,State::expired,{}};
-        if (record->action != command.action || record->target != command.target || record->fingerprint != fingerprint)
+        if (record->action != command.action || record->target != command.target || record->message != command.message ||
+            record->fingerprint != fingerprint)
             return {command.id,State::conflict,{}};
         return record->receipt;
     }
     if (!display_ || exited_ || worker_.get_stop_token().stop_requested()) return {command.id,State::unavailable,{}};
 
-    const bool available = !pending_ && (command.action == DialogueAction::cancel || can_submit_);
+    auto& slot = command.action == DialogueAction::cancel ? stop_command_ : pending_;
+    const bool needs_idle = command.action == DialogueAction::send || command.action == DialogueAction::clear;
+    const bool available = !slot && (!needs_idle || can_submit_);
     const DialogueReceipt receipt{command.id,available ? State::queued : State::busy,command.target};
-    commands_.push_back({receipt,command.action,command.target,std::move(fingerprint)});
+    commands_.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint)});
     latest_command_ = command.id;
     if (available) {
-        pending_.emplace(std::move(command));
+        slot.emplace(std::move(command));
         can_submit_ = false;
     }
     if (commands_.size() > command_limit) {
@@ -113,14 +134,14 @@ DialogueReceipt RunStatusHost::submit_dialogue(DialogueCommand command) {
     return receipt;
 }
 
-// 由唯一推进 Application 的线程交付命令，回执写回前保留单一槽位。
+// 由唯一推进 Application 的线程交付命令，回执写回前保留对应槽位。
 // 步骤：取走参数并保留占位 → 执行业务命令 → 写回同号结果并归还槽位。
-void RunStatusHost::advance_dialogue(app::Application& application) {
+void RunStatusHost::advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot) {
     std::optional<DialogueCommand> command;
     {
         std::lock_guard lock(mutex_);
-        if (!pending_) return;
-        command.emplace(std::move(*pending_));
+        if (!slot) return;
+        command.emplace(std::move(*slot));
     }
 
     DialogueReceipt receipt{command->id,DialogueCommandState::rejected,command->target};
@@ -132,7 +153,7 @@ void RunStatusHost::advance_dialogue(app::Application& application) {
     std::lock_guard lock(mutex_);
     const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.receipt.command == command->id; });
     record->receipt = receipt;
-    pending_.reset();
+    slot.reset();
 }
 
 // 只在业务线程拥有和使用应用服务。
@@ -144,7 +165,8 @@ void RunStatusHost::run(std::stop_token stop, const Open& open, const Drive& dri
         std::shared_ptr<const app::ConversationDisplay> display;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
-            advance_dialogue(*application);
+            advance_dialogue(*application,stop_command_);
+            advance_dialogue(*application,pending_);
             if (application->advance_plugins() == runtime::RunResult::failed) std::fputs("A plugin notification failed.\n",stderr);
             conversation.advance();
 
@@ -155,7 +177,8 @@ void RunStatusHost::run(std::stop_token stop, const Open& open, const Drive& dri
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;
                 display_ = display;
-                can_submit_ = conversation.accepting() && !conversation.busy() && !pending_;
+                can_submit_ = conversation.accepting() && !conversation.busy() && !pending_ && !stop_command_ &&
+                    (visible.queue.empty() || visible.queue_paused);
             }
             std::this_thread::sleep_for(interval);
         }

@@ -187,6 +187,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     })())JS");
     expect("clear removes history but preserves editable draft","!document.querySelector('.turn') && !document.querySelector('dialog').open && "
         "document.querySelector('.room-still img')?.naturalWidth>0 && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
+    check_dialogue_queue(gate);
     next();
 }
 }
