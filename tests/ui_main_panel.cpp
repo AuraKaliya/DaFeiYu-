@@ -39,6 +39,23 @@ namespace dfy::ui {
 void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> checks, std::shared_ptr<tests::UiDialogueGate> gate) {
     expect("main dialogue ready","document.querySelector('#dialogue-state')?.dataset.accepting === 'true'");
     expect("room position rendered","document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
+    evaluate("room and chat share a desktop row",R"JS((()=>{
+        const room=document.querySelector('.room-view').getBoundingClientRect();
+        const chat=document.querySelector('.chat-pane').getBoundingClientRect();
+        return room.width>0 && chat.width>0 && room.right<=chat.left+1 && room.top===chat.top;
+    })())JS");
+    evaluate("visit settings with a draft",R"JS((()=>{
+        const draft=document.querySelector('#dialogue-draft');
+        draft.value='切换时保留的草稿'; draft.dispatchEvent(new Event('input'));
+        document.querySelector('#board-settings').click(); return true;
+    })())JS");
+    expect("settings takes the full workspace","document.querySelector('#board-settings').getAttribute('aria-current')==='page' && "
+        "!document.querySelector('.chat-pane').getClientRects().length && "
+        "document.querySelector('.settings-view').getBoundingClientRect().right===innerWidth");
+    evaluate("return to room","document.querySelector('#board-room').click(); true");
+    expect("same draft on return","document.querySelector('#dialogue-draft').value==='切换时保留的草稿' && "
+        "document.querySelector('#board-room').getAttribute('aria-current')==='page'");
+    evaluate("clear test draft","const draft=document.querySelector('#dialogue-draft'); draft.value=''; draft.dispatchEvent(new Event('input')); true");
     call("enable document lifecycle events",L"Page.enable",Json::object());
     call("hold first room query in the reloaded document",L"Page.addScriptToEvaluateOnNewDocument",{{"source",R"JS(document.addEventListener('readystatechange',()=>{
         if (document.readyState!=='interactive' || location.origin!=='https://panel.dafeiyu.invalid' || sessionStorage.getItem('fixture-room-drop')) return;

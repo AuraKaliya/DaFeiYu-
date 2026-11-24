@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import ManagementShell from './ManagementShell.vue';
 import { recoverDialogue, rememberDialogue, rememberDraft, type IntentAction, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -317,17 +318,26 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="main-panel">
-    <header class="panel-header">
-      <div>
-        <div class="panel-identity">
-          <h1>大肥鱼</h1>
-          <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
-        </div>
-        <p v-if="room" id="room-location" :data-room="room.instance" :data-body="room.body">{{ room.name }}<span aria-hidden="true"> · </span>{{ room.place }}</p>
-      </div>
-      <button v-if="turns.length" id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">清空对话</button>
-    </header>
+  <ManagementShell>
+    <template #status>
+      <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
+    </template>
+    <template #room>
+      <h2 class="view-title">房间</h2>
+      <h3 class="group-title">最新状态</h3>
+      <dl class="state-fields">
+        <dt>当前位置</dt>
+        <dd v-if="room" id="room-location" :data-room="room.instance" :data-body="room.body">{{ room.name }}<span aria-hidden="true"> · </span>{{ room.place }}</dd>
+        <dd v-else>等待读取</dd>
+        <dt>最近回合</dt><dd>{{ lastTurn?.turn ?? (ready ? '尚无回合' : '等待读取') }}</dd>
+        <dt>待发消息</dt><dd>{{ ready ? queue.length + ' 条' : '等待读取' }}</dd>
+      </dl>
+    </template>
+    <template #settings>
+      <h3 class="group-title">插件管理</h3>
+      <p class="source-note">插件目录尚未接入此视图。</p>
+    </template>
+    <h2 class="chat-title">和大肥鱼聊天</h2>
     <section class="conversation-space" aria-label="主会话">
       <ol ref="transcript" class="transcript" aria-label="对话" aria-live="polite">
         <li v-for="turn in turns" :key="`${turn.session}/${turn.turn}`" class="turn" :data-turn="turn.turn" :data-result="turn.result" :data-exit="turn.exit" :data-queued-message="turn.queuedMessage">
@@ -355,15 +365,16 @@ onUnmounted(() => {
       <button v-if="queuePaused && queue[0]" id="dialogue-resume" type="button" class="queue-resume" :disabled="!!pending" @click="editQueue('resume', queue[0])">继续发送</button>
     </details>
     <form class="panel-compose" @submit.prevent="send">
-      <fieldset v-if="canChoose" class="send-destination">
-        <legend class="visually-hidden">忙时消息去向</legend>
-        <label><input v-model="destination" type="radio" name="destination" value="current"><span>本轮补充</span></label>
-        <label><input v-model="destination" type="radio" name="destination" value="next"><span>下一轮</span></label>
-      </fieldset>
       <textarea id="dialogue-draft" ref="composer" v-model="draft" rows="2" :maxlength="byteLimit" aria-label="给大肥鱼的消息" placeholder="给大肥鱼发消息" @keydown.enter="enter"></textarea>
-      <div class="compose-actions">
+      <button id="dialogue-send" class="primary-action" type="submit" :disabled="!canSend">{{ appendMode ? '追加本轮' : queueMode ? '排到下一轮' : '发送' }}</button>
+      <div v-if="turns.length" class="compose-tools" role="group" aria-label="聊天工具">
+        <fieldset v-if="canChoose" class="send-destination">
+          <legend class="visually-hidden">忙时消息去向</legend>
+          <label><input v-model="destination" type="radio" name="destination" value="current"><span>本轮补充</span></label>
+          <label><input v-model="destination" type="radio" name="destination" value="next"><span>下一轮</span></label>
+        </fieldset>
         <button v-if="lastTurn?.exit === 'pending'" id="dialogue-stop" class="stop-action" type="button" :disabled="!canStop" @click="stop">停止回复</button>
-        <button id="dialogue-send" class="primary-action" type="submit" :disabled="!canSend">{{ appendMode ? '追加本轮' : queueMode ? '排到下一轮' : '发送' }}</button>
+        <button id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">清空对话</button>
       </div>
       <output v-if="tooLong || notice" aria-live="polite">{{ tooLong ? '消息不能超过 1 MiB。' : notice }}</output>
     </form>
@@ -375,7 +386,7 @@ onUnmounted(() => {
         <button id="dialogue-confirm-clear" class="primary-action" type="button" @click="confirmClear">确认清空</button>
       </div>
     </dialog>
-  </main>
+  </ManagementShell>
 </template>
 
 <style src="./main-panel.css"></style>

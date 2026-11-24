@@ -1,43 +1,31 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   font-synthesis: none;
   --ink: #243a32;
   --muted: #54665c;
   --accent: #275a49;
-  --line: #cccec0;
-  --paper: #fffcf4;
+  --line: #d7dfda;
+  --paper: #fdfefd;
   color: var(--ink);
-  background: #f4f2e9;
+  background: #f6f8f6;
 }
 * { box-sizing: border-box }
 body { margin: 0 }
 button, textarea { font: inherit }
 button { cursor: pointer }
 button:disabled { cursor: default }
-.main-panel {
-  display: flex;
-  flex-direction: column;
-  width: min(100%, 860px);
-  height: 100dvh;
-  margin: auto;
-  padding: 0 clamp(16px, 4vw, 40px) clamp(16px, 3vh, 32px);
-}
-.panel-header, .panel-identity, .compose-actions, .dialog-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.panel-header {
-  justify-content: space-between;
-  padding: 20px 0 16px;
-  border-bottom: 1px solid var(--line);
-}
-.panel-header h1, .clear-dialog h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); font-weight: 650 }
+.view-title, .clear-dialog h2 { margin: 0; font-size: clamp(20px, 3vw, 27px); font-weight: 650 }
+.group-title { margin: 24px 0 10px; font-size: 15px; font-weight: 650 }
+.source-note { color: var(--muted); font-size: 14px }
+.state-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; gap: 0 20px; font-size: 14px; line-height: 1.5 }
+.state-fields dt, .state-fields dd { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere }
+.state-fields dt { color: var(--muted) }
+.state-fields dd { font-weight: 550 }
+.chat-title { flex: none; margin: 0; padding: 0 0 12px; border-bottom: 1px solid var(--line); font-size: 16px; font-weight: 650 }
+.dialog-actions { display: flex; align-items: center }
 #dialogue-state, .turn-status, .panel-compose output { color: var(--muted); font-size: 13px }
 #dialogue-state { display: inline-flex; align-items: center; gap: 6px }
-#room-location { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5 }
-#room-location span { padding-inline: 2px }
 #dialogue-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #a07642 }
 #dialogue-state[data-accepting="true"]::before { background: #458064 }
 .conversation-space { flex: 1; min-height: 0; position: relative; display: flex }
@@ -51,11 +39,14 @@ button:disabled { cursor: default }
   padding: 24px 4px;
 }
 .turn { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-bottom: 24px }
-.message { max-width: min(88%, 60ch); padding: 12px 16px; line-height: 1.65 }
+.message { position: relative; max-width: calc(100% - 42px); padding: 9px 12px; line-height: 1.6 }
+.message::before { position: absolute; top: 0; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600 }
+.incoming::before { content: "鱼"; right: calc(100% + 6px); color: #286451; background: #d8ece3 }
+.outgoing::before { content: "你"; left: calc(100% + 6px); color: #325775; background: #dfebf5 }
 .message b { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--muted) }
 .message p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere }
-.incoming { background: var(--paper); border-radius: 4px 16px 16px; box-shadow: 0 1px 3px #283c3414 }
-.outgoing { align-self: flex-end; background: #dfe9de; border-radius: 16px 4px 16px 16px }
+.incoming { margin-left: 32px; background: #edf2ee; border-radius: 4px 14px 14px }
+.outgoing { margin-right: 32px; align-self: flex-end; background: #e0eef7; border-radius: 14px 4px 14px 14px }
 .turn-status { margin: 0 8px }
 .queue-origin { padding-inline-start: 8px; font-weight: 400 }
 .turn-input { background: #ebf0e7; border-inline-start: 2px solid #81a28c }
@@ -98,6 +89,8 @@ button:disabled { cursor: default }
   box-shadow: 0 4px 14px -9px #3c4c3b58;
 }
 .panel-compose:focus-within { border-color: var(--accent) }
+.compose-tools { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding-top: 6px; border-top: 1px solid var(--line) }
+.compose-tools button { min-height: 30px; padding: 4px 7px; font-size: 12px }
 .send-destination { grid-column: 1 / -1; display: inline-flex; justify-self: start; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: 10px; background: #edefe6 }
 .send-destination label { position: relative; cursor: pointer; font-size: 13px }
 .visually-hidden, .send-destination input { position: absolute; width: 1px; height: 1px; margin: -1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap }
@@ -145,12 +138,11 @@ button:disabled { cursor: default }
 }
 .clear-dialog::backdrop { background: #24382f50 }
 .clear-dialog p { margin: 12px 0 24px; line-height: 1.6; color: var(--muted) }
-.dialog-actions, .compose-actions { justify-content: flex-end; gap: 8px }
-.main-panel :focus-visible { outline: 2px solid #247863; outline-offset: 2px }
+.dialog-actions { justify-content: flex-end; gap: 8px }
+.management-shell :focus-visible { outline: 2px solid #247863; outline-offset: 2px }
 @media (max-width: 520px) {
-  .main-panel { padding-inline: 12px }
-  .panel-header { padding-block: 12px }
-  .panel-identity { gap: 8px }
-  .panel-compose { grid-template-columns: 1fr; padding: 8px }
+  .panel-compose { padding: 6px; gap: 4px }
+  .chat-title { padding-bottom: 6px; font-size: 14px }
+  .send-destination span { padding: 4px 6px }
   .transcript { padding-block: 16px }
 }
