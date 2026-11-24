@@ -111,6 +111,16 @@ async function verifyCase(fixture, owner, fish, mode, initialStock = 0) {
     assert.deepEqual(ownPickupRange([...rows, pickup], self, gift, fish.player.uuid), range);
     const proof = pickupEvidence([...rows, pickup], fish.player.uuid, target, visibleDrops);
     assert.deepEqual([proof?.lower, proof?.upper], range);
+    if (mode === 'full') {
+      // 在同一批实际记录上分别提前合堆、拾取的读回，重放时保留原实体、数量和实际收取人。
+      for (const event of [rows.find(row => row.kind === 'merge' &&
+        origins.some(origin => origin.item === row.item) && origins.some(origin => origin.item === row.target)), pickup]) {
+        const readback = rows.find(row => row.kind === event.kind+'Readback' && row.cause === event.seq);
+        const changed = rows.map(row => row.seq === event.seq ? { ...row, seq: readback.seq } :
+          row.seq === readback.seq ? { ...row, seq: event.seq, cause: readback.seq } : row);
+        assert.equal(pickupEvidence(changed,fish.player.uuid,target,visibleDrops),null);
+      }
+    }
     assert.equal(pickupEvidence(rows, fish.player.uuid, target, new Set()), null);
     assert.equal(ownPickupRange(rows.filter(row => row.seq !== pickup.seq), self, gift, fish.player.uuid), null);
     writeFileSync(join(fixture.evidence, mode + '.json'), JSON.stringify({ mode, client, clientStock, pickup: pickup.seq,
