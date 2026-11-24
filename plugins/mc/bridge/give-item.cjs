@@ -1,5 +1,7 @@
 const { observeHandoff } = require('./handoff.cjs');
 const { inventory, inventoryDelta } = require('./inventory-capacity.cjs');
+const { handoffEvidence } = require('./handoff-evidence.cjs');
+const { setTimeout: delay } = require('node:timers/promises');
 
 // 保留交物失败的原因，供原工作区分条件变化和已提交的投物。
 function blocked(code, message) { return Object.assign(new Error(message), { code }); }
@@ -29,11 +31,14 @@ async function tossHandoff(bot, owner, args, source, check, claim, result) {
   }
   try {
     ready(live);
+    const aimed = recipient.position.clone();
     await bot.lookAt(recipient.position.offset(0, Math.min(1,recipient.height ?? 1), 0), false);
     while (transfer.submitted < live.count) {
       const remaining = live.count-transfer.submitted;
       const sample = observeHandoff(bot,owner,{ ...args, count: remaining },source.id,source.generation);
       ready(sample);
+      if (recipient.position.distanceTo(aimed) > 0.75)
+        throw blocked('handoff_recipient_moved', '接收者已离开本次瞄准的位置，剩余部分尚未投出');
       const row = sample.stock.selected[0];
       const whole = row.take === row.held;
       const quantity = whole ? row.held : 1;
@@ -55,4 +60,48 @@ async function tossHandoff(bot, owner, args, source, check, claim, result) {
   }
 }
 
-module.exports = { tossHandoff };
+// 在同一服务端观察流中读回原工作的投物和去向；读断时保留此前已经核实的数量。
+async function readHandoffProof(witness, evidence, last) {
+  if (!evidence?.mark) return last;
+  try {
+    const rows = await witness.read(evidence.mark);
+    const proof = handoffEvidence(rows,evidence.mark,evidence.actor,evidence.recipient,evidence.item,evidence.submitted,evidence.sourceThrough);
+    return { ...proof, coverage: 'read' };
+  } catch {
+    return { ...last, coverage: 'interrupted' };
+  }
+}
+
+// 用可选只读观察端结算实际投出和接收者，普通服务器仍可完成丢物并说明未证数量。
+// 步骤：固定取证窗口 → 执行原工作并保留中断 → 有界等待收件实效 → 封存投物来源上界。
+async function giveItem(bot, owner, args, source, check, claim, job, witness) {
+  const result = job.receipt.result;
+  let mark, failure;
+  if (witness) {
+    try { mark = await witness.begin(source.dimension); } catch { /* 现场没有可读的观察流。 */ }
+  }
+  try { await tossHandoff(bot,owner,args,source,check,claim,result); }
+  catch (error) { failure = error; }
+  const submitted = result.transfer?.submitted ?? 0;
+  if (submitted) {
+    const evidence = job.handoffEvidence = { mark, actor: source.actor.uuid, recipient: owner, item: source.item, submitted };
+    result.receipt = { source: 'unavailable', coverage: mark ? 'interrupted' : 'unavailable', thrown: 0,
+      recipientPicked: 0, otherPicked: 0, throwUnknown: submitted, pickupUnknown: 0 };
+    const deadline = performance.now()+4000;
+    if (mark) for (;;) {
+      result.receipt = await readHandoffProof(witness,evidence,result.receipt);
+      if (result.receipt.coverage !== 'read' || result.receipt.recipientPicked+result.receipt.otherPicked === submitted || failure) break;
+      try { check(); } catch (error) { failure = error; break; }
+      if (performance.now() >= deadline) break;
+      await delay(80);
+    }
+    evidence.sourceThrough = result.receipt.throughSeq ?? mark?.seq;
+  }
+  if (failure) throw failure;
+  if (result.receipt?.recipientPicked !== source.count) {
+    if (result.receipt?.otherPicked) throw blocked('handoff_other_collector', '已有物品由其他实体收取，保留原玩家的实收量');
+    throw blocked('handoff_receipt_unconfirmed', '丢物操作已经提交，原玩家的实收量尚未全部确认');
+  }
+}
+
+module.exports = { tossHandoff, giveItem, readHandoffProof };

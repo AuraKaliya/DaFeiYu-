@@ -2,6 +2,7 @@
 #include "partner_effect.hpp"
 #include <array>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 
 namespace dfy::mc {
@@ -87,16 +88,51 @@ inline void verify_handoff(const nlohmann::json& sample, const nlohmann::json& a
     verify_handoff_stock(sample.at("stock"),args.at("count").get<int>());
 }
 
+// 核对投出、原玩家收取、他人收取及两类待证数量，并复核可回查的服务端流和实体。
+// 步骤：对齐提交总量 → 按取证覆盖复核来源 → 对照有界实体列表及省略量。
+inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
+    const auto number = [&](const char* key) {
+        const auto& v = proof.at(key);
+        if (!v.is_number_unsigned() || v > submitted) throw std::invalid_argument("MC: invalid handoff proof number");
+        return v.get<int>();
+    };
+    const int thrown = number("thrown"), picked = number("recipientPicked"), other = number("otherPicked");
+    if (number("throwUnknown") != submitted-thrown || number("pickupUnknown") != thrown-picked-other)
+        throw std::invalid_argument("MC: unbalanced handoff proof");
+    if (proof.at("source") == "unavailable") {
+        if (thrown || proof.contains("stream") || (proof.at("coverage") != "unavailable" && proof.at("coverage") != "interrupted"))
+            throw std::invalid_argument("MC: unsourced handoff claim");
+        return;
+    }
+    const auto& first = proof.at("afterSeq"), last = proof.at("throughSeq"), stacks = proof.at("stacks");
+    if (proof.at("source") != "server_events" || (proof.at("coverage") != "read" && proof.at("coverage") != "interrupted") ||
+        !game_uuid(proof.at("stream")) || !first.is_number_unsigned() || !last.is_number_unsigned() || first > last ||
+        !stacks.is_array() || stacks.size() > 12) throw std::invalid_argument("MC: invalid handoff evidence window");
+    std::set<std::string> ids;
+    int shown = 0;
+    for (const auto& stack : stacks) {
+        if (!game_uuid(stack.at("uuid")) || !ids.insert(stack.at("uuid").get<std::string>()).second ||
+            !stack.at("count").is_number_unsigned() || stack.at("count") == 0 || stack.at("count") > thrown)
+            throw std::invalid_argument("MC: invalid handoff stack");
+        for (const auto field : {"dropSeq","spawnSeq"}) if (!stack.at(field).is_number_unsigned() || stack.at(field) <= first || stack.at(field) > last)
+            throw std::invalid_argument("MC: handoff entity outside the original stream window");
+        shown += stack.at("count").get<int>();
+    }
+    const int omitted = number("omittedStacks");
+    if (shown+omitted > thrown || (!omitted && shown != thrown) || (omitted && stacks.size() != 12))
+        throw std::invalid_argument("MC: inconsistent handoff stack count");
+}
+
 // 对照交物原观察核对已经提交的丢物操作与退出库存，实际收件由独立来源确认。
 // 步骤：核对原工作及请求 → 区分已提交与调用返回 → 按同一角色的读数校验退出差量。
-inline void verify_transfer(const nlohmann::json& result, const nlohmann::json& args, const nlohmann::json& generation, bool exited) {
+inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& args, const nlohmann::json& generation, bool exited) {
     if (result.value("reasonCode","") == "handoff_already_started" &&
         (result.at("originalWork").get_ref<const std::string&>().empty() || result.contains("transfer")))
         throw std::invalid_argument("MC: missing original handoff work");
     if (result.contains("handoff")) verify_handoff(result.at("handoff"),args,args.at("observation").get_ref<const std::string&>(),generation);
     if (!result.contains("transfer")) {
-        if (exited && result.at("status") == "done") throw std::invalid_argument("MC: handoff completion without execution");
-        return;
+        if (result.contains("receipt") || (exited && result.at("status") == "done")) throw std::invalid_argument("MC: handoff completion without execution");
+        return false;
     }
     const auto& transfer = result.at("transfer");
     const auto& sample = result.at("handoff");
@@ -112,13 +148,16 @@ inline void verify_transfer(const nlohmann::json& result, const nlohmann::json& 
     if (clicks != 0 && (sample.at("window") != "inventory" || sample.at("target").at("state") != "visible" ||
         !sample.at("target").contains("distance") || sample.at("target").at("distance") > 3 || sample.at("stock").at("missing") != 0))
         throw std::invalid_argument("MC: handoff started without verified conditions");
-    if (!exited) return;
+    if (result.contains("receipt")) verify_handoff_proof(result.at("receipt"),submitted.get<int>());
+    if (!exited) return false;
     if (!transfer.at("sampledAtMs").is_number_unsigned() || transfer.at("sampledAtMs") < sample.at("sampledAtMs") ||
         !transfer.at("stockCurrent").is_boolean() || transfer.contains("stockAfter") != transfer.at("stockCurrent").get<bool>() ||
         result.contains("inventoryDelta") != transfer.contains("stockAfter")) throw std::invalid_argument("MC: invalid handoff stock source");
     if (transfer.contains("stockAfter") && (!transfer.at("stockAfter").is_number_unsigned() || transfer.at("stockAfter") > 16384 ||
         result.at("inventoryDelta").value(item,0) != transfer.at("stockAfter").get<int>()-transfer.at("stockBefore").get<int>()))
         throw std::invalid_argument("MC: inconsistent handoff stock change");
-    if (result.at("status") == "done") throw std::invalid_argument("MC: handoff completion without recipient evidence");
+    if (result.at("status") == "done" && (!result.contains("receipt") || result.at("receipt").at("recipientPicked") != sample.at("count")))
+        throw std::invalid_argument("MC: handoff completion without recipient evidence");
+    return result.contains("receipt") && result.at("receipt").at("thrown") != 0;
 }
 }

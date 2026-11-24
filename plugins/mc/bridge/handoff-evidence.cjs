@@ -2,7 +2,7 @@ const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 // 对照同一工作窗口的服务端丢物和实体入场，再按数量守恒核验收件与合堆。
 // 步骤：绑定同角色同材质的投物 → 追踪纯来源的堆与实际库存读回 → 汇总已知归属和未知余量。
-function handoffEvidence(rows, mark, actor, recipient, item, submitted) {
+function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceThrough = Infinity) {
   const material = 'minecraft:' + item;
   const kind = row => row.kind.startsWith('item.') ? row.kind.slice(5) : row.kind;
   const count = n => Number.isSafeInteger(n) && n >= 0;
@@ -19,7 +19,7 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted) {
     if (['pickupReadback','mergeReadback'].includes(kind(row))) after.set(row.cause,after.has(row.cause) ? null : row);
   }
   for (const row of rows) {
-    if (kind(row) !== 'playerDrop' || row.actor !== actor || row.material !== material) continue;
+    if (row.seq > sourceThrough || kind(row) !== 'playerDrop' || row.actor !== actor || row.material !== material) continue;
     const spawn = added.get(row.item);
     if (!uuid.test(row.item) || !count(row.amount) || !row.amount || !spawn || spawn.networkId !== row.networkId || spawn.amount !== row.amount) continue;
     if (origins.has(row.item) || proof.thrown+row.amount > submitted) throw new Error('交物窗口含有无法分开的投物');

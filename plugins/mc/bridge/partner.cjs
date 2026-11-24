@@ -8,7 +8,7 @@ const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
-const { tossHandoff } = require('./give-item.cjs');
+const { giveItem } = require('./give-item.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -289,7 +289,7 @@ async function collect(bot, args, check, job, built) {
 
 // 为当前玩家提供独立读写技能，重读同一动作只返回已有回执。
 // 步骤：验证消息与世界 → 按角色资源接纳技能 → 执行或协作取消 → 原票据读回实际结果。
-function partnerService(bot, world, inbox, places, owner) {
+function partnerService(bot, world, inbox, places, owner, witness = null) {
   let active, previous, closed = false, done = Promise.resolve();
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
@@ -560,8 +560,7 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       else if (r.skill === 'give_item') {
         const record = handoffSource(r,args,result);
-        await tossHandoff(bot,owner,args,record.receipt.result.handoff,check,() => { record.transferWork = job.id; },result);
-        throw Object.assign(new Error('丢物操作已经提交，目前没有能确认收件的回执'), { code: 'handoff_receipt_unconfirmed' });
+        await giveItem(bot,owner,args,record.receipt.result.handoff,check,() => { record.transferWork = job.id; },job,witness);
       }
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {

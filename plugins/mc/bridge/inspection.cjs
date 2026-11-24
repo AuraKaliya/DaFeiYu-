@@ -80,7 +80,7 @@ function inspectionService(bot, world, inbox, places, witness = null, modelLed =
   const mining = miningService(bot, world, deliveries, places, (generation, order) =>
     current?.generation === generation && current.order === order ? current : null, witness);
   const returning = returnService(bot, world, deliveries, mining, places, witness);
-  const partner = modelLed ? partnerService(bot, world, inbox, places, owner) : null;
+  const partner = modelLed ? partnerService(bot, world, inbox, places, owner, witness) : null;
   // 在当前路径尚未退出时保存实际观察到的位移。
   function moved() {
     if (current && !current.exited && origin && bot.entity.position.distanceTo(origin) > 0.05) current.moved = true;

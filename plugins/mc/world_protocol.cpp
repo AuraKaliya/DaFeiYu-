@@ -531,7 +531,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
-    if (skill == "give_item") verify_transfer(result,args,context.at("generation"),exited);
+    const bool thrown = skill == "give_item" && verify_transfer(result,args,context.at("generation"),exited);
     if (skill == "observe" && (result.contains("handoff") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff"))) {
         if (args.value("mode","") != "handoff") throw std::invalid_argument("MC: unexpected handoff observation");
         verify_handoff(result.at("handoff"),args,id,context.at("generation"));
@@ -649,7 +649,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool craft_attempted = exited && skill == "craft" && result.at("craftAttempted").get<bool>();
-    const bool changed = exited && (skill == "give_item" ? false : skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
+    const bool changed = exited && (skill == "give_item" ? thrown : skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
         result.contains("changes") && verified_changes(result.at("changes")));
     const bool inventory_attempted = (skill == "give_item" && result.contains("transfer") && result.at("transfer").at("attemptedClicks") != 0) ||
         (skill == "pickup_drop" && result.contains("pickup") && result.at("pickup").at("approachAttempted") == true);

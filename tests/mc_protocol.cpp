@@ -234,6 +234,22 @@ void handoff_protocol() {
     transfer["submitted"] = 66;
     result["inventoryDelta"]["dirt"] = -65;
     rejects(give);
+    result["inventoryDelta"]["dirt"] = -66;
+    auto& proof = result["receipt"] = {{"source","unavailable"},{"coverage","unavailable"},{"thrown",0},{"recipientPicked",0},
+        {"otherPicked",0},{"throwUnknown",66},{"pickupUnknown",0}};
+    if (give().changed) throw std::runtime_error("unsupported observer reported a handoff");
+    proof = {{"source","server_events"},{"coverage","read"},{"stream",world},{"afterSeq",12},{"throughSeq",25},
+        {"thrown",66},{"recipientPicked",66},{"otherPicked",0},{"throwUnknown",0},{"pickupUnknown",0},{"omittedStacks",0},
+        {"stacks",Json::array({{{"uuid",owner},{"count",64},{"dropSeq",13},{"spawnSeq",14}},
+            {{"uuid",world},{"count",2},{"dropSeq",15},{"spawnSeq",16}}})}};
+    result["status"] = "done";
+    result.erase("reasonCode");
+    if (!give().changed || !give().arrived) throw std::runtime_error("confirmed recipient pickup lost");
+    proof["recipientPicked"] = 65;
+    rejects(give);
+    proof["recipientPicked"] = 66;
+    proof["stacks"][1]["uuid"] = owner;
+    rejects(give);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。

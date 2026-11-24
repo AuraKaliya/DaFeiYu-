@@ -46,7 +46,7 @@ Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
     for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","pickup","dropTarget","nearbyDrop","capacity","changes","cells",
         "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted",
-        "transfer","originalWork"})
+        "transfer","receipt","originalWork"})
         if (result.contains(name)) evidence[name] = result.at(name);
     if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");
     return evidence;

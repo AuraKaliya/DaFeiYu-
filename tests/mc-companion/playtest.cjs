@@ -37,6 +37,7 @@ function prepareScene(send) {
 async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
+  const handoff = mode === '--handoff-probe' || mode === '--handoff-unobserved-probe';
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
   const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
@@ -61,7 +62,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     mode: mode === '--probe' ? 'scenario' : 'partner', owner: offlineId(owner), channel, bridgeKey, places: {
       hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
       riverside: { label: '河边', dimension: 'overworld', x: 0, y: -60, z: 0 } },
-    observer: { directory: path.join(server, 'plugins/DfyStoneObserver'), dimension: 'overworld',
+    observer: mode === '--handoff-unobserved-probe' ? undefined : { directory: path.join(server, 'plugins/DfyStoneObserver'), dimension: 'overworld',
       world: formatId(fs.readFileSync(path.join(server, 'playtest-world/uid.dat'))) } }));
   const game = await launch(file);
   fixture.ownerEntity = () => game.bot.players[owner]?.entity;
@@ -90,7 +91,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       for (const [x, z, item, count] of [[-3.5, 0.5, 'dirt', 2], [-2.5, 1.5, 'stone', 1], [-8.5, 0.5, 'dirt', 4]])
         send(`summon minecraft:item ${x} -60 ${z} {Item:{id:"minecraft:${item}",count:${count}},PickupDelay:32767s}`);
     }
-    if (mode === '--handoff-probe') {
+    if (handoff) {
       send('fill -3 -61 -3 7 -61 3 minecraft:dirt');
       send('fill -3 -60 -3 7 -58 3 minecraft:air');
       send('kill @e[type=minecraft:item,x=-3,y=-61,z=-3,dx=10,dy=5,dz=6]');
@@ -133,7 +134,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('setblock 2 -61 0 minecraft:dirt');
       send('tp DfyGuestCheck -1.5 -60 -1.5');
     }
-    else if (!wallProbe && mode !== '--probe' && mode !== '--pickup-probe' && mode !== '--handoff-probe') {
+    else if (!wallProbe && mode !== '--probe' && mode !== '--pickup-probe' && !handoff) {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
       if (mode === '--partner-probe' || mode === '--follow-probe') prepareCourse(send);
@@ -258,7 +259,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

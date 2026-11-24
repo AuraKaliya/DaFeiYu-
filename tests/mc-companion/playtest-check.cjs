@@ -117,13 +117,14 @@ async function checkPlayer(fixture, mode) {
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
     const doorProbe = mode === '--door-probe';
+    const handoff = mode === '--handoff-probe' || mode === '--handoff-unobserved-probe';
     const combined = mode === '--follow-dig-fill-probe';
     const resupply = mode === '--layered-resupply-probe';
     const layered = resupply || mode === '--layered-follow-probe';
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !handoff && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -134,8 +135,8 @@ async function checkPlayer(fixture, mode) {
       await checkCraft(fixture, player, whispers);
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
-    } else if (mode === '--handoff-probe') {
-      await checkHandoff(fixture, player, whispers);
+    } else if (handoff) {
+      await checkHandoff(fixture, player, whispers, mode === '--handoff-probe');
     } else if (mode === '--pickup-probe') {
       await checkPickup(fixture, player, whispers);
     } else if (layered) {
@@ -269,7 +270,7 @@ async function checkGroundPickup(fixture, player, whispers) {
 }
 
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
-async function checkHandoff(fixture, player, whispers) {
+async function checkHandoff(fixture, player, whispers, witnessed) {
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
   const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
@@ -283,14 +284,18 @@ async function checkHandoff(fixture, player, whispers) {
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
   player.chat('那就给我六十六块泥土。');
-  const sent = '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
+  const sent = witnessed ? '你已经捡到六十六块泥土，我的背包还剩四块。' : '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
   await until(() => whispers.includes(sent), '按原观察投物后说明可核实的库存变化');
   await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66, '独立玩家在生存模式实际拾到六十六块', 12000);
   const jobs = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'give_item');
   assert.equal(jobs.length,1);
   const [job] = jobs;
-  assert.deepEqual([job.arguments.recipient,job.result.transfer.submitted,job.result.transfer.stockAfter,
-    job.result.reasonCode,fixture.materialCount('dirt')], [player.player.uuid,66,4,'handoff_receipt_unconfirmed',4]);
+  assert.deepEqual([job.arguments.recipient,job.result.transfer.submitted,job.result.transfer.stockAfter,fixture.materialCount('dirt')],
+    [player.player.uuid,66,4,4]);
+  const proof = job.result.receipt;
+  assert.deepEqual([job.result.status,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.throwUnknown],
+    witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
+  if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
   assert.deepEqual(whispers, [reply,sent]);
 }
 

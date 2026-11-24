@@ -832,8 +832,15 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "plan.finished") {
             const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
             if (result.at("transfer").at("submitted") != 66 || result.at("transfer").at("returnedClicks") != 3 ||
-                result.at("inventoryDelta") != Json{{"dirt",-66}} || result.value("reasonCode","") != "handoff_receipt_unconfirmed")
-                throw std::runtime_error("handoff: transfer amount or uncertainty lost");
+                result.at("inventoryDelta") != Json{{"dirt",-66}}) throw std::runtime_error("handoff: transfer amount lost");
+            const auto& proof = result.at("receipt");
+            if (result.at("status") == "done") {
+                if (proof.at("thrown") != 66 || proof.at("recipientPicked") != 66 || proof.at("pickupUnknown") != 0)
+                    throw std::runtime_error("handoff: recipient amount lost");
+                return {{Role::assistant,"你已经捡到六十六块泥土，我的背包还剩四块。"}};
+            }
+            if (result.value("reasonCode","") != "handoff_receipt_unconfirmed" || proof.at("source") != "unavailable" || proof.at("throwUnknown") != 66)
+                throw std::runtime_error("handoff: missing unconfirmed amount");
             return {{Role::assistant,"我这边背包少了六十六块泥土，还不能确认你捡到了多少。"}};
         }
         if (!input.at("events").empty()) {
@@ -1048,7 +1055,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool handoff = mode == L"--handoff-probe";
+        const bool handoff = mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
