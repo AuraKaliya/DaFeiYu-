@@ -2,13 +2,14 @@ const { observeHandoff } = require('./handoff.cjs');
 const { inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { handoffEvidence } = require('./handoff-evidence.cjs');
 const { setTimeout: delay } = require('node:timers/promises');
+const { once } = require('node:events');
 
 // 保留交物失败的原因，供原工作区分条件变化和已提交的投物。
 function blocked(code, message) { return Object.assign(new Error(message), { code }); }
 
 // 在普通物品栏按选中槽位丢出指定总数，跨堆和部分栈逐次重验，绝不自动补投。
 // 步骤：核对原观察、角色和收件人 → 朝向同一玩家 → 逐次提交生存丢物 → 保存退出时的库存读数。
-async function tossHandoff(bot, owner, args, source, check, claim, result) {
+async function tossHandoff(bot, owner, args, source, check, claim, result, signal) {
   const live = result.handoff = observeHandoff(bot, owner, args, source.id, source.generation);
   if (args.observation !== source.id || live.recipient !== source.recipient || live.item !== source.item || live.count !== source.count ||
       !live.actor.uuid || live.actor.uuid !== source.actor.uuid || live.dimension !== source.dimension)
@@ -22,6 +23,7 @@ async function tossHandoff(bot, owner, args, source, check, claim, result) {
   function ready(sample) {
     check();
     if (bot.entity !== actor || bot.game.dimension !== source.dimension) throw blocked('handoff_world_changed', '交物的原角色或维度已改变');
+    if (actor.isValid === false || bot.health <= 0) throw blocked('handoff_actor_unavailable', '交物角色目前无法在场操作');
     if (!recipient || sample.target.state !== 'visible' || bot.entities[sample.target.entityId] !== recipient)
       throw blocked('handoff_recipient_unavailable', '无法确认原接收者仍在当前视野');
     if (!Number.isFinite(sample.target.distance) || sample.target.distance > 3)
@@ -32,7 +34,11 @@ async function tossHandoff(bot, owner, args, source, check, claim, result) {
   try {
     ready(live);
     const aimed = recipient.position.clone();
-    await bot.lookAt(recipient.position.offset(0, Math.min(1,recipient.height ?? 1), 0), false);
+    await bot.lookAt(recipient.position.offset(0, Math.min(1,recipient.height ?? 1), 0), true);
+    // 强制转向先更新客户端，下一物理刻才发送朝向；缺区块或断线时这里仍可取消或到期。
+    const timeout = AbortSignal.timeout(1500);
+    try { await once(bot,'physicsTick',{ signal: signal ? AbortSignal.any([signal,timeout]) : timeout }); }
+    catch { check(); throw blocked('handoff_facing_unconfirmed', '还没有能送出交物朝向的物理刻'); }
     while (transfer.submitted < live.count) {
       const remaining = live.count-transfer.submitted;
       const sample = observeHandoff(bot,owner,{ ...args, count: remaining },source.id,source.generation);
@@ -82,7 +88,7 @@ async function giveItem(bot, owner, args, source, check, claim, job, witness) {
   if (witness) {
     try { mark = await witness.begin(source.dimension); } catch { /* 现场没有可读的观察流。 */ }
   }
-  try { await tossHandoff(bot,owner,args,source,check,claim,result); }
+  try { await tossHandoff(bot,owner,args,source,check,claim,result,job.abort?.signal); }
   catch (error) { failure = error; }
   const submitted = result.transfer?.submitted ?? 0;
   if (submitted) {

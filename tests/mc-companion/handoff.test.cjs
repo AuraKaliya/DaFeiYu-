@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const { EventEmitter } = require('node:events');
 const { observeHandoff } = require('../../plugins/mc/bridge/handoff.cjs');
 const { tossHandoff } = require('../../plugins/mc/bridge/give-item.cjs');
 const { observationInput } = require('../../plugins/mc/bridge/partner-observe.cjs');
@@ -11,10 +12,10 @@ function handoffFixture() {
   const recipient = { id: 7, uuid: owner, position: new Position(3.5,-60,0.5) };
   const slots = [null, { name: 'dirt', count: 32 }, { name: 'dirt', count: 60 }, { name: 'dirt', count: 10 },
     { name: 'dirt', count: 4, components: [{ type: 'custom_name' }] }, null, { name: 'dirt', count: 15 }];
-  const bot = { entity: { uuid: actor, position: new Position(0.5,-60,0.5) }, entities: { 7: recipient },
+  const bot = Object.assign(new EventEmitter(), { entity: { uuid: actor, position: new Position(0.5,-60,0.5) }, entities: { 7: recipient },
     players: { owner: { uuid: owner, entity: recipient } }, game: { dimension: 'overworld' },
     registry: { itemsByName: { dirt: { stackSize: 64 } } }, inventory: { inventoryStart: 2, inventoryEnd: 6, slots,
-      items() { return this.slots.slice(this.inventoryStart,this.inventoryEnd).filter(Boolean); } } };
+      items() { return this.slots.slice(this.inventoryStart,this.inventoryEnd).filter(Boolean); } } });
   const args = { mode: 'handoff', recipient: owner, item: 'minecraft:dirt', count: 66 };
   return { bot, args, owner, read: () => observeHandoff(bot,owner,observationInput(args).options,'sample','world') };
 }
@@ -58,7 +59,7 @@ function tossFixture() {
   const f = handoffFixture(), result = {}, clicks = [];
   const source = f.read();
   let claims = 0;
-  f.bot.lookAt = async () => {};
+  f.bot.lookAt = async () => { setImmediate(() => f.bot.emit('physicsTick')); };
   f.bot.clickWindow = async (slot, button, mode) => {
     assert.equal(mode,4);
     clicks.push([slot,button]);
@@ -66,7 +67,7 @@ function tossFixture() {
     if (button === 1 || --entry.count === 0) f.bot.inventory.slots[slot] = null;
   };
   return { ...f, result, clicks, source, claims: () => claims,
-    run: (check = () => {}) => tossHandoff(f.bot,f.owner,{ ...f.args, observation: source.id },source,check,() => { ++claims; },result) };
+    run: (check = () => {}, signal) => tossHandoff(f.bot,f.owner,{ ...f.args, observation: source.id },source,check,() => { ++claims; },result,signal) };
 }
 
 // 多槽位的最后一个部分栈逐件投递，特殊栈和其余数量保持原状。
@@ -82,7 +83,7 @@ test('survival toss issues exactly the requested total from ordinary slots', asy
 // 朝向后和跨堆后都重验玩家距离；未起步与部分投出分别保留工作及实效。
 test('moving recipient and interrupted clicks retain only submitted quantities', async () => {
   const before = tossFixture();
-  before.bot.lookAt = async () => { before.bot.players.owner.entity.position.x += 6; };
+  before.bot.lookAt = async () => { before.bot.players.owner.entity.position.x += 6; setImmediate(() => before.bot.emit('physicsTick')); };
   await assert.rejects(before.run(), { code: 'handoff_recipient_distant' });
   assert.deepEqual([before.claims(),before.clicks.length,before.result.inventoryDelta], [0,0,{}]);
 
@@ -93,4 +94,12 @@ test('moving recipient and interrupted clicks retain only submitted quantities',
   lost.bot.clickWindow = async () => { throw new Error('transport closed'); };
   await assert.rejects(lost.run(), /transport closed/);
   assert.deepEqual([lost.claims(),lost.result.transfer.submitted,lost.result.transfer.returnedClicks,lost.result.inventoryDelta], [1,60,0,{}]);
+});
+
+// 无物理刻时取消仍可退出，不留监听、投物或被占用的原观察。
+test('a cancelled turn before the look packet releases the work without tossing', async () => {
+  const f = tossFixture(), controller = new AbortController();
+  f.bot.lookAt = async () => { setImmediate(() => controller.abort()); };
+  await assert.rejects(f.run(() => { if (controller.signal.aborted) throw new Error('cancelled'); },controller.signal), /cancelled/);
+  assert.deepEqual([f.claims(),f.clicks.length,f.bot.listenerCount('physicsTick')], [0,0,0]);
 });

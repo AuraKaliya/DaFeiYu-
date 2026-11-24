@@ -307,6 +307,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
   function cancel() {
     if (!active || active.receipt.exited) return;
     active.cancelled = true;
+    active.abort?.abort();
     bot.pathfinder.setGoal(null);
     if (bot.targetDigBlock) bot.stopDigging();
     bot.clearControlStates();
@@ -652,6 +653,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       records.set(key, job);
       if (controlsBody) {
         active = job;
+        if (skill === 'give_item') job.abort = new AbortController();
         const timer = setInterval(() => {
           if (active === job && (!lease.owns(context.controller) || !inbox.inPresence(context.generation, context.order) ||
               performance.now() - job.polled > 4000)) cancel();
