@@ -25,17 +25,56 @@ function Read-Resident {
     return $state
 }
 
+# 启动仅使用本测试目录与离线配置的终端，保留标准输入供有界关闭。
+function Start-TestRuntime([string]$Mode) {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $App
+    $info.Arguments = $Mode + ' "' + $config + '" --data "' + $data + '" --plugins "' + (Join-Path $data 'plugins') + '"'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    return [Diagnostics.Process]::Start($info)
+}
+
+# 核对另一类入口占用目录时，程序拒绝启动且没有创建新的业务会话。
+function Assert-RuntimeRefused([string]$Mode) {
+    $other = Start-TestRuntime $Mode
+    try {
+        $other.StandardInput.Close()
+        if (!$other.WaitForExit(5000) -or $other.ExitCode -eq 0 -or
+            !$other.StandardError.ReadToEnd().Contains('already in use')) { throw "Duplicate runtime accepted: $Mode" }
+    } finally {
+        if (!$other.HasExited) { $other.Kill(); $other.WaitForExit() }
+        $other.Dispose()
+    }
+}
+
 $owner = $null
 try {
     Invoke-Observer @()
     $first = Read-Resident
     $owner = [Diagnostics.Process]::GetProcessById([int]$first.pid)
     $null = $owner.Handle
+    Assert-RuntimeRefused '--chat'
     Invoke-Observer @()
     $second = Read-Resident
     if ($second.instance -ne $first.instance -or $second.pid -ne $first.pid) { throw 'Reopening replaced the resident' }
     Invoke-Observer @('stop')
     if (!$owner.WaitForExit(6000) -or $owner.ExitCode -ne 0) { throw 'Resident did not exit cleanly' }
+    $terminal = Start-TestRuntime '--chat'
+    try {
+        $banner = $terminal.StandardOutput.ReadLineAsync()
+        if (!$banner.Wait(5000) -or $banner.Result -ne 'DaFeiYu') { throw 'Terminal could not reclaim the profile' }
+        Assert-RuntimeRefused '--host'
+        $terminal.StandardInput.WriteLine('/exit')
+        $terminal.StandardInput.Close()
+        if (!$terminal.WaitForExit(5000) -or $terminal.ExitCode -ne 0) { throw 'Terminal failed to exit cleanly' }
+    } finally {
+        if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }
+        $terminal.Dispose()
+    }
 } finally {
     if (!$owner -or !$owner.HasExited) {
         & $App --stop-host $data 2>$null | Out-Null

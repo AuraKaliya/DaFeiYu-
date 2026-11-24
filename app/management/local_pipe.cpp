@@ -131,6 +131,26 @@ void send_frame(HANDLE pipe, const std::string& value, std::size_t limit, Deadli
 }
 
 struct LocalPipe::State { Handle pipe; };
+struct ProfileLease::State { Handle file; };
+
+// 用独占文件句柄协调所有会创建本体的产品入口和目录别名。
+// 步骤：准备数据目录 → 请求独占写入资格 → 区分已被占用和其他系统错误。
+ProfileLease::ProfileLease(const std::filesystem::path& profile) : state_(std::make_unique<State>()) {
+    std::filesystem::create_directories(profile);
+    const auto path = profile/L".dafeiyu-runtime.lock";
+    const auto file = CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if (file==INVALID_HANDLE_VALUE) {
+        const auto code = GetLastError();
+        if (code==ERROR_SHARING_VIOLATION || code==ERROR_LOCK_VIOLATION)
+            throw std::runtime_error("DaFeiYu: this data directory is already in use by a host or terminal.");
+        fail(code,"management profile lease");
+    }
+    state_->file.reset(file);
+}
+
+// 关闭独占句柄，之后其他进程可直接取得同一目录。
+ProfileLease::~ProfileLease() = default;
 
 // 以当前用户专属访问表创建唯一实例，在同一目录重复启动时由系统拒绝。
 // 步骤：定位或建立用户目录 → 构造当前用户的访问表 → 独占创建本地命名管道。

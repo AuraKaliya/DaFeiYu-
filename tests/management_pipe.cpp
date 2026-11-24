@@ -13,6 +13,14 @@ void exercise(const std::filesystem::path& root) {
     const auto profile = root/"profile";
     const auto alias = profile/".";
     {
+        dfy::management::ProfileLease first(profile);
+        bool refused = false;
+        try { dfy::management::ProfileLease duplicate(alias); }
+        catch (const std::runtime_error& error) { refused = std::string(error.what()).find("already in use") != std::string::npos; }
+        if (!refused) throw std::runtime_error("second runtime accepted on profile alias");
+    }
+    dfy::management::ProfileLease released(alias);
+    {
         LocalPipe owner(profile);
         try { LocalPipe other(alias); throw std::runtime_error("second owner accepted"); }
         catch (const std::system_error& duplicate) {

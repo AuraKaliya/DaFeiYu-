@@ -54,6 +54,7 @@ std::string startup_identity(const std::filesystem::path& model, const std::file
 // 先取得端点再创建应用，退出期间继续回答状态查询并等待工作实际结束。
 // 步骤：取得用户目录所有权 → 建立宿主与本次实例号 → 接纳有界交换 → 返回实际收尾结果。
 int serve_resident(const std::filesystem::path& profile, const std::string& identity, Host::Open open, std::stop_token stop) {
+    ProfileLease lease(profile);
     LocalPipe pipe(profile);
     std::random_device random;
     const auto instance = std::to_string(random())+"-"+std::to_string(random())+"-"+std::to_string(random());

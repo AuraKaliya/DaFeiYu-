@@ -6,6 +6,7 @@
 #include "diagnostics.hpp"
 #include "paths.hpp"
 #include "management/resident.hpp"
+#include "management/local_pipe.hpp"
 #include <nlohmann/json.hpp>
 #include "trace_commands.hpp"
 #ifdef _WIN32
@@ -73,6 +74,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         if (args.size() == 5 && args[1] == "--mc-partner") {
             const auto& root = args[4];
+            dfy::management::ProfileLease lease(root/"user");
             dfy::app::ApplicationRunConfig run;
             run.trace_directory = root;
             dfy::app::Application application(dfy::model::load_config(args[2]), root / "packages", root / "user",
@@ -114,6 +116,7 @@ int run(const std::vector<std::filesystem::path>& args) {
                         dfy::model::Backend{dfy::model::complete_response},run);
                 });
             }
+            dfy::management::ProfileLease lease(user_data);
             dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data,
                 dfy::model::Backend{dfy::model::complete_response},std::move(run));
             auto& manager = application.plugins();
