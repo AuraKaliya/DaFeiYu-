@@ -1,4 +1,6 @@
 #include "management/host.hpp"
+#include "management/protocol.hpp"
+#include <nlohmann/json.hpp>
 #include <iostream>
 #include <semaphore>
 
@@ -49,6 +51,13 @@ void background_turn(const std::filesystem::path& root) {
         turn.result != runtime::OperationState::succeeded || turn.exit != runtime::OperationState::succeeded ||
         host.submit_dialogue(command).run != turn.run || calls != 1)
         throw std::runtime_error("observer did not recover the original completed turn");
+
+    const auto room = management::dispatch(&host,{{"version","1"},{"request","position"},{"type","room.read"}});
+    const auto view = management::dispatch(&host,{{"version","1"},{"request","chat"},{"type","dialogue.read"},{"revision",""},{"command","1"}});
+    const auto status = management::dispatch(&host,{{"version","1"},{"request","status"},{"type","state.read"},{"topic","run"}});
+    if (room.at("room").at("placeName") != "书桌旁" || view.at("turns").at(0).at("answer") != turn.answer ||
+        status.at("run").at("exit") != "succeeded" || status.dump().find(turn.answer) != std::string::npos)
+        throw std::runtime_error("management protocol exposed the wrong projection");
 
     host.close();
     until([&] { return host.exited(); },"explicit shutdown did not finish");

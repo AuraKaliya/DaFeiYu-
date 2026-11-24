@@ -47,7 +47,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
 
 # 管理宿主独立持有业务线程，桌面和无窗口消费者共用同一套快照与命令处理。
 add_library(dfy_management STATIC management/host.cpp management/host.hpp management/dialogue_channel.hpp management/room_location.hpp)
-target_link_libraries(dfy_management PUBLIC dfy_application PRIVATE dfy_build_options dfy_digest)
+target_sources(dfy_management PRIVATE management/protocol.cpp management/protocol.hpp)
+target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json PRIVATE dfy_build_options dfy_digest)
 set_target_properties(dfy_management PROPERTIES FOLDER App)
 
 # 定义异步终端交互目标，便于独立验证输入和本地命令。

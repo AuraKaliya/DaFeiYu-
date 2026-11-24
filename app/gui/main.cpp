@@ -5,6 +5,7 @@
 #include "probe_host.hpp"
 #include "browser_lifetime.hpp"
 #include "management/host.hpp"
+#include "management/protocol.hpp"
 #ifdef DFY_UI_RUN_STATUS_TEST
 #include "ui_main_panel_fixture.hpp"
 #include "ui_run_status_probe.hpp"
@@ -119,29 +120,11 @@ struct Window : std::enable_shared_from_this<Window> {
         ComPtr<ICoreWebView2Settings> settings; require(view->get_Settings(&settings));
         require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(!room_preview));
         const auto weak = weak_from_this();
-        dfy::ui::ProbeHost::ReadRun read_run;
-        if (run_status_host) read_run = [weak] {
-            if (const auto self = weak.lock()) return self->run_status_host->snapshot();
-            return std::optional<dfy::app::RunStatusSnapshot>{};
-        };
-        dfy::ui::ProbeHost::Dialogue dialogue;
-        dfy::ui::ProbeHost::ReadRoom read_room;
-        if (main_panel) {
-            read_room = [weak]() -> std::optional<dfy::management::RoomLocation> {
-                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->room_location();
-                return {};
-            };
-            dialogue.read = [weak](auto command) -> dfy::management::DialogueView {
-                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->dialogue(command);
-                return {};
-            };
-            dialogue.submit = [weak](dfy::management::DialogueCommand command) -> dfy::management::DialogueReceipt {
-                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->submit_dialogue(std::move(command));
-                return {command.id,dfy::management::DialogueCommandState::unavailable,{}};
-            };
-        }
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
-            std::move(read_run),std::move(dialogue),std::move(read_room));
+            main_panel,[weak](const nlohmann::json& request) {
+                const auto self = weak.lock();
+                return dfy::management::dispatch(self && !self->closing ? self->run_status_host.get() : nullptr,request);
+            });
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
         // 处理主文档导航回执，自动验收由计时器另行推进。

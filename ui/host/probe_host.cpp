@@ -1,98 +1,13 @@
 #include "probe_host.hpp"
 #include <nlohmann/json.hpp>
-#include <charconv>
+#include "management/protocol.hpp"
 #include <limits>
 
 namespace dfy::ui {
-namespace {
-// JSON 控制字符最长占六字节，协议字段另留空间；普通探针仍使用小消息上限。
-constexpr auto dialogue_input_limit = 6*app::dialogue_text_limit+512;
-constexpr auto dialogue_snapshot_limit = 6*(app::dialogue_display_byte_limit+app::dialogue_queue_byte_limit)+probe_text_limit;
-// 读取完整非零十进制身份，保留 64 位精度。
-std::uint64_t run_id_part(const nlohmann::json& value) {
-    const auto& text = value.get_ref<const std::string&>();
-    std::uint64_t id = 0;
-    const auto result = std::from_chars(text.data(),text.data()+text.size(),id);
-    if (result.ec != std::errc{} || result.ptr != text.data()+text.size() || !id)
-        throw std::invalid_argument("UI: invalid run identity");
-    return id;
-}
-
-// 将原业务及实际退出状态转换为稳定的界面状态名。
-std::string_view operation_state(runtime::OperationState state) noexcept {
-    switch (state) {
-    case runtime::OperationState::pending: return "pending";
-    case runtime::OperationState::succeeded: return "succeeded";
-    case runtime::OperationState::failed: return "failed";
-    case runtime::OperationState::cancelled: return "cancelled";
-    }
-    return "unknown";
-}
-
-// 将窗口命令状态映射成固定标签，结果及实际退出来自独立的回合条目。
-std::string_view dialogue_state(management::DialogueCommandState state) noexcept {
-    using State = management::DialogueCommandState;
-    switch (state) {
-    case State::unavailable: return "unavailable";
-    case State::queued: return "queued";
-    case State::accepted: return "accepted";
-    case State::busy: return "busy";
-    case State::rejected: return "rejected";
-    case State::conflict: return "conflict";
-    case State::expired: return "expired";
-    case State::stale: return "stale";
-    case State::full: return "full";
-    }
-    return "rejected";
-}
-
-// 以十进制字符串返回原命令、正式回合和待发消息身份。
-nlohmann::json dialogue_receipt(const management::DialogueReceipt& receipt) {
-    return {{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
-        {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)},{"message",std::to_string(receipt.message)}};
-}
-
-// 按固定命令名逐项核对字段，只从对应入口读取正文、原回合或待发消息。
-// 步骤：解析命令身份 → 验证该命令的字段数量与目标 → 交付带类型的业务命令。
-management::DialogueCommand dialogue_command(const nlohmann::json& request, std::string_view type) {
-    management::DialogueCommand command{run_id_part(request.at("command")),management::DialogueAction::send,{},{}};
-    if (type == "dialogue.submit" && request.size() == 5) {
-        command.text = request.at("text").get<std::string>();
-        return command;
-    }
-    command.target.session = run_id_part(request.at("session"));
-    if ((type == "dialogue.resume" || type == "dialogue.remove") && request.size() == 6) {
-        command.action = type == "dialogue.resume" ? management::DialogueAction::resume : management::DialogueAction::remove;
-        command.message = run_id_part(request.at("message"));
-        return command;
-    }
-    command.target.sequence = run_id_part(request.at("turn"));
-    if ((type == "dialogue.enqueue" || type == "dialogue.append") && request.size() == 7) {
-        command.action = type == "dialogue.enqueue" ? management::DialogueAction::enqueue : management::DialogueAction::append;
-        command.text = request.at("text").get<std::string>();
-    } else if ((type == "dialogue.cancel" || type == "dialogue.clear") && request.size() == 6) {
-        command.action = type == "dialogue.cancel" ? management::DialogueAction::cancel : management::DialogueAction::clear;
-    } else throw std::invalid_argument("UI: invalid dialogue command");
-    return command;
-}
-
-// 区分普通回合、等待读回和已裁定的读回证据。
-nlohmann::json verification_state(const std::optional<app::VerificationReport>& report) {
-    if (!report) return nullptr;
-    if (!report->match) return "pending";
-    switch (*report->match) {
-    case agent::ObservationMatch::satisfied: return "satisfied";
-    case agent::ObservationMatch::not_satisfied: return "not_satisfied";
-    case agent::ObservationMatch::unknown: return "unknown";
-    }
-    return "unknown";
-}
-}
-
 // 创建和消息入口都只弱引用宿主，部分登记失败由临时实例回滚。
 // 步骤：持有浏览器 → 登记主页面消息 → 登记原生 Frame 创建 → 发布已准备宿主。
-std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run, Dialogue dialogue, ReadRoom read_room) {
-    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run),std::move(dialogue),std::move(read_room))); self->view_ = view;
+std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, bool panel, Request request) {
+    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),panel,std::move(request))); self->view_ = view;
     const std::weak_ptr<ProbeHost> weak = self;
     const auto message = Callback<ICoreWebView2WebMessageReceivedEventHandler>([weak](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) return state->message(args);
@@ -118,16 +33,15 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
     bool issued = false;
     try {
         const auto source = read_text([&](auto** value) { return args->get_Source(value); });
-        const bool panel = dialogue_.read && main_panel_document(source);
+        const bool panel = panel_ && main_panel_document(source);
         if (!center_document(source) && !panel) return E_ACCESSDENIED;
-        const auto limit = panel ? dialogue_input_limit : probe_text_limit;
+        const auto limit = panel ? management::request_limit : probe_text_limit;
         const auto body = read_text([&](auto** value) { return args->get_WebMessageAsJson(value); },limit);
         const auto message = nlohmann::json::parse(utf8(body,limit));
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
-        if (type == "state.read") return run_status_reply(message);
-        if (type == "room.read") return room_reply(message,source);
-        if (type.starts_with("dialogue.")) return dialogue_reply(message,type,source);
+        if (type == "state.read" || type == "room.read" || type.starts_with("dialogue."))
+            return management_reply(message,source,type == "state.read");
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
         if (next_ == std::numeric_limits<std::uint64_t>::max()) return E_FAIL;
@@ -139,93 +53,19 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
     } catch (...) { if (issued) ticket_ = 0; return E_INVALIDARG; }
 }
 
-// 向实际主面板返回所属房间和角色位置，未取得业务快照时明确返回空值。
-// 步骤：核对原生来源与请求形状 → 读取位置摘要 → 复核活动文档后回发。
-HRESULT ProbeHost::room_reply(const nlohmann::json& request, std::wstring_view source) {
-    if (!read_room_ || !main_panel_document(source)) return E_ACCESSDENIED;
-    if (request.size()!=3 || request.at("version")!="1") return E_INVALIDARG;
-    const auto& id = request.at("request").get_ref<const std::string&>();
-    if (id.empty() || id.size()>64) return E_INVALIDARG;
-    nlohmann::json room = nullptr;
-    if (const auto location = read_room_()) {
-        const auto& self = location->self;
-        room = {{"instance",std::to_string(self.room.instance)},{"generation",std::to_string(self.room.generation)},
-            {"layoutVersion",std::to_string(location->layout_version)},{"body",std::to_string(self.body)},
-            {"revision",std::to_string(self.revision)},{"roomName",location->room_name},{"placeName",location->place_name},
-            {"x",self.position.x},{"y",self.position.y},{"activity",self.activity == app::RoomActivity::resting ? "resting" : "unknown"}};
-    }
-    if (!main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); }))) return E_ACCESSDENIED;
-    const nlohmann::json reply{{"event","room.snapshot"},{"version","1"},{"request",id},{"room",std::move(room)}};
-    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
-}
-
-// 复核实际页面后进入对话桥，变化时才发回正文快照。
-// 步骤：核对活动来源与协议 → 交付命令或复制受信快照 → 复核当前来源并回发。
-HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source) {
-    const auto active = [&] { return main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); })); };
-    if (!dialogue_.read || !dialogue_.submit || !main_panel_document(source) || !active()) return E_ACCESSDENIED;
-    if (request.at("version") != "1") return E_INVALIDARG;
-    const auto& id = request.at("request").get_ref<const std::string&>();
-    if (id.empty() || id.size() > 64) return E_INVALIDARG;
-
-    nlohmann::json reply{{"version","1"},{"request",id}};
-    if (type != "dialogue.read") {
-        reply["event"] = "dialogue.receipt";
-        reply["receipt"] = dialogue_receipt(dialogue_.submit(dialogue_command(request,type)));
-    } else {
-        if (request.size() != 5) return E_INVALIDARG;
-        const auto& after = request.at("revision").get_ref<const std::string&>();
-        if (after.size() > 20) return E_INVALIDARG;
-        const auto& command = request.at("command");
-        const auto view = dialogue_.read(command == "" ? 0 : run_id_part(command));
-        const auto revision = view.display ? std::to_string(view.display->revision) : std::string();
-        nlohmann::json turns = nullptr, queue = nullptr;
-        if (view.display && revision != after) {
-            turns = nlohmann::json::array();
-            for (const auto& turn : view.display->turns) {
-                auto inputs = nlohmann::json::array();
-                for (const auto& input : turn.inputs)
-                    inputs.push_back({{"message",std::to_string(input.message)},{"text",input.text},{"state",agent::input_state_name(input.state)},
-                        {"modelStep",std::to_string(input.model_step)}});
-                turns.push_back({{"session",std::to_string(turn.run.session)},{"turn",std::to_string(turn.run.sequence)},
-                    {"prompt",turn.prompt},{"answer",turn.answer},{"result",operation_state(turn.result)},{"exit",operation_state(turn.exit)},
-                    {"queuedMessage",std::to_string(turn.queued_message)},{"acceptsInput",turn.accepts_input},{"inputs",std::move(inputs)}});
-            }
-            queue = nlohmann::json::array();
-            for (const auto& item : view.display->queue)
-                queue.push_back({{"message",std::to_string(item.message)},{"session",std::to_string(item.session)},{"text",item.text}});
-        }
-        reply.update({{"event","dialogue.snapshot"},{"ready",bool(view.display)},{"accepting",view.accepting},
-            {"latestCommand",std::to_string(view.latest_command)},{"revision",revision},{"turns",std::move(turns)},
-            {"queue",std::move(queue)},{"queuePaused",view.display && view.display->queue_paused},
-            {"receipt",view.receipt ? dialogue_receipt(*view.receipt) : nlohmann::json(nullptr)}});
-    }
+// 按实际来源授予公开或主会话读写，业务分派不持有 WebView2。
+// 步骤：核对发送文档与当前文档 → 分派到本体 → 复核文档后交付值副本。
+HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_view source, bool public_read) {
+    const bool from_panel = panel_ && main_panel_document(source);
+    if (!from_panel && (!public_read || !center_document(source))) return E_ACCESSDENIED;
+    const auto active = [&] {
+        const auto current = read_text([&](auto** value) { return view_->get_Source(value); });
+        return from_panel ? main_panel_document(current) : center_document(current);
+    };
     if (!active()) return E_ACCESSDENIED;
-    return view_->PostWebMessageAsJson(utf16(reply.dump(),dialogue_snapshot_limit).c_str());
-}
-// 从副本构造有界运行摘要，并在发回前复核当前 WebView 文档。
-// 步骤：核对协议、请求及运行身份 → 复制并筛选快照 → 核对当前来源后发回 JSON。
-HRESULT ProbeHost::run_status_reply(const nlohmann::json& request) {
-    if ((request.size() != 4 && request.size() != 6) || request.at("version") != "1" || request.at("topic") != "run")
-        return E_INVALIDARG;
-    const auto& id = request.at("request").get_ref<const std::string&>();
-    if (id.empty() || id.size() > 64) return E_INVALIDARG;
-    std::optional<agent::RunId> expected;
-    if (request.size() == 6) expected = agent::RunId{run_id_part(request.at("session")),run_id_part(request.at("turn"))};
-
-    const auto snapshot = read_run_ ? read_run_() : std::nullopt;
-    nlohmann::json run = nullptr;
-    if (snapshot && (!expected || *expected == agent::RunId{snapshot->status.session,snapshot->status.turn})) {
-        const auto& status = snapshot->status;
-        run = {{"session",std::to_string(status.session)},{"turn",std::to_string(status.turn)},
-            {"result",operation_state(status.result)},{"exit",operation_state(status.exit)},
-            {"waiting_confirmations",status.waiting_confirmations},{"verification",verification_state(snapshot->verification)}};
-    }
-    const auto current = read_text([&](auto** value) { return view_->get_Source(value); });
-    if (!center_document(current) && !(dialogue_.read && main_panel_document(current))) return E_ACCESSDENIED;
-    const nlohmann::json reply{{"event","state.snapshot"},{"version","1"},{"topic","run"},{"request",id},
-        {"available",static_cast<bool>(read_run_)},{"run",std::move(run)}};
-    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
+    const auto reply = request_(request);
+    if (!active()) return E_ACCESSDENIED;
+    return view_->PostWebMessageAsJson(utf16(reply.dump(),public_read ? probe_text_limit : management::response_limit).c_str());
 }
 // 归还旧对象后绑定新代次，真实销毁确认才通知主页面允许重新打开。
 // 步骤：核对票据与活动数 → 建立授权通道 → 登记销毁确认 → 消费票据。
