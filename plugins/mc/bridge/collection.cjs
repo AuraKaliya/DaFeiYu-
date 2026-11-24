@@ -3,6 +3,23 @@ const terrain = new Set(['grass_block', 'dirt', 'coarse_dirt', 'rooted_dirt', 'p
 const vacant = new Set(['air', 'cave_air', 'void_air']);
 const neighbours = [[-1,0],[1,0],[0,-1],[0,1]];
 
+// 在原十六格半径内按可见性和动作条件选择近处方块，结果数量限制只作用于合格候选。
+// 步骤：枚举有界区域内该材质的匹配 → 复核视线、脚下支撑及授权条件 → 取够后停止。
+function visibleBlocks(bot, matching, center, limit, allowed = () => true) {
+  const radius = 16, feet = bot.entity.position.floored();
+  // 上游会在一个区块层找到足够材质后提前退出。用包围盒体积覆盖整个半径，再按用途取前几个。
+  const points = bot.findBlocks({ matching, point: center, maxDistance: radius, count: (2*radius+1)**3 });
+  const selected = [];
+  for (const p of points) {
+    if (p.x === feet.x && p.z === feet.z && p.y < feet.y) continue;
+    const block = bot.blockAt(p);
+    if (!block || !bot.canSeeBlock(block) || !allowed(block)) continue;
+    selected.push(block);
+    if (selected.length === limit) break;
+  }
+  return selected;
+}
+
 // 从当前版本的默认掉落中选取允许的表层地形，动作仍须核对实际入包。
 function groundTypes(registry, item) {
   const candidates = [...terrain].map(name => registry.blocksByName[name]);
@@ -147,5 +164,5 @@ function collectionProgress(result, readStock, now = () => performance.now()) {
   };
 }
 
-module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress,
+module.exports = { visibleBlocks, fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress,
   pickupStand, matchesDigReference };

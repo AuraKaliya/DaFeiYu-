@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
-const { matchesDigReference, collectionProgress, digAndReadback } = require('../../plugins/mc/bridge/collection.cjs');
+const { visibleBlocks, matchesDigReference, collectionProgress, digAndReadback } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops, readDropTarget } = require('../../plugins/mc/bridge/dropped-items.cjs');
@@ -12,6 +12,21 @@ const { inventoryCapacity } = require('../../plugins/mc/bridge/inventory-capacit
 const { EventEmitter } = require('node:events');
 
 const { Position } = require('./test-position.cjs');
+
+// 复现区块层提前截取材质的现场，读取和采掘都应对可见且获准的候选计数。
+test('nearby block limits apply after visibility, support and action scope', () => {
+  const center = new Position(0.5,-60,0.5);
+  const points = [center.floored().offset(0,-1,0), ...Array.from({ length: 105 }, (_,i) => new Position(i%11,-60,1+Math.floor(i/11)))];
+  let checks = 0;
+  const bot = { entity: { position: center }, findBlocks({ count, maxDistance, point }) {
+    assert.equal(maxDistance,16); assert.equal(point,center);
+    return points.slice(0,count);
+  }, blockAt: position => ({ position }), canSeeBlock(block) { ++checks; return points.indexOf(block.position) >= 95; } };
+  const result = visibleBlocks(bot,[1],center,1,block => points.indexOf(block.position) >= 100);
+  assert.equal(result[0].position,points[100]);
+  assert.equal(checks,100);
+  assert.deepEqual(visibleBlocks(bot,1,center,3).map(block => block.position),points.slice(95,98));
+});
 
 // 提供互相覆盖的两个实时来源和固定原话中心。
 function fixture() {

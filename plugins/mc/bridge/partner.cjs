@@ -14,7 +14,7 @@ const { observeWall, surface, validateRoute, runRoute } = require('./partner-rou
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress, pickupStand,
+const { visibleBlocks, fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress, pickupStand,
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
@@ -39,14 +39,6 @@ function targetPoint(bot, args) {
   const point = bot.entity.position.clone().set(args.x, args.y, args.z);
   if (point.distanceTo(bot.entity.position) > 64) throw new Error('目标超过本次移动范围');
   return point;
-}
-
-// 在指定中心附近搜索，仅返回角色可见且不在自己脚下的候选方块。
-function visible(bot, matching, center = bot.entity.position) {
-  const feet = bot.entity.position.floored();
-  return bot.findBlocks({ matching, point: center, maxDistance: 16, count: 96 })
-    .map(pos => bot.blockAt(pos)).filter(block => block && bot.canSeeBlock(block) &&
-      !(block.position.x === feet.x && block.position.z === feet.z && block.position.y < feet.y));
 }
 
 // 从已加载的局部观察范围识别门，包括细碰撞盒导致视线检测漏掉的半格。
@@ -203,7 +195,7 @@ async function collect(bot, args, check, job, built) {
       if (expected && stock >= args.requiredStock) break;
       checkCapacity();
       if (!matching.length) throw digBlocked('dig_source_missing', '当前地面没有这种物品的自然来源');
-      const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
+      const block = fixed ? bot.blockAt(fixed) : visibleBlocks(bot, matching, bot.entity.position, 1, allowed)[0];
       if (!block) throw fixed ? digBlocked('dig_target_unloaded', '目标格尚未加载') :
         digBlocked('dig_source_missing', '当前视野内没有符合取材范围的方块');
       if (!matching.includes(block.type)) {
@@ -481,7 +473,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         } else if (args.around) result.survey = blockSurvey(bot, center);
         if (args.block) {
           const type = blockType(bot, args.block);
-          const blocks = visible(bot, type.id, center).slice(0, 10);
+          const blocks = visibleBlocks(bot, type.id, center, 10);
           result.blockSearch = { block: type.name, center: center.floored(), radius: 16, coverage: 'loaded_visible_only' };
           result.visible = blocks.map(block => block.position.clone());
           if (type.name.endsWith('_door')) {
