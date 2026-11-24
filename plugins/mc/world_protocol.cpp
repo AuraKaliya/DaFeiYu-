@@ -1,5 +1,6 @@
 #include "world_protocol.hpp"
 #include "partner_effect.hpp"
+#include "handoff_receipt.hpp"
 #include "pipe_exchange.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -506,6 +507,9 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         context.at("order") > 9007199254740991ULL) throw std::invalid_argument("MC: invalid partner context");
     if (skill == "pickup_drop" && !valid_pickup_request(envelope.at("arguments")))
         throw std::invalid_argument("MC: invalid ground pickup arguments");
+    const auto& args = envelope.at("arguments");
+    if (skill == "observe" && args.value("mode","") == "handoff" && (args.size() != 4 || !valid_handoff_request(args)))
+        throw std::invalid_argument("MC: invalid handoff observation arguments");
     context["controller"] = config.controller;
     // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
     const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
@@ -526,6 +530,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "observe" && (result.contains("handoff") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff"))) {
+        if (args.value("mode","") != "handoff") throw std::invalid_argument("MC: unexpected handoff observation");
+        verify_handoff(result.at("handoff"),args,id,context.at("generation"));
+    }
     if (skill == "observe" && (result.contains("dropTarget") ||
         (exited && result.at("status") == "done" && args.value("mode","") == "drop"))) {
         if (args.value("mode","") != "drop") throw std::invalid_argument("MC: unexpected drop reference");

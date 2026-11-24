@@ -7,6 +7,7 @@ const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
+const { observeHandoff } = require('./handoff.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -382,7 +383,9 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
-      if (observation?.mode === 'drops') {
+      if (observation?.mode === 'handoff') {
+        result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
+      } else if (observation?.mode === 'drops') {
         result.dropObservation = observeDrops(bot, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'drop') {
         result.dropTarget = readDropTarget(bot, dropSource(r, args.observation), args.entity);

@@ -2,6 +2,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { playerFocus } = require('./player-focus.cjs');
 const { belowFeet } = require('./world.cjs');
 const { validDropReference } = require('./dropped-items.cjs');
+const { handoffInput } = require('./handoff.cjs');
 
 const symbols = '0123456789abcdefghijklmnopqrstuvwxyz';
 const air = new Set(['air', 'cave_air', 'void_air']);
@@ -17,6 +18,13 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'handoff') {
+    if (Object.keys(args).some(key => !['mode', 'recipient', 'item', 'count'].includes(key)))
+      throw invalidObservation('handoff_parameters', '交物观察只接受配对玩家、物品与总数');
+    return { mode, options: handoffInput(args) };
+  }
+  if (Object.hasOwn(args, 'recipient') || Object.hasOwn(args, 'count'))
+    throw invalidObservation('handoff_parameters', '按接收者和总数核对库存需要 mode=handoff');
   if (mode === 'drop') {
     if (!validDropReference(args) || Object.keys(args).some(key => !['mode', 'observation', 'entity'].includes(key)))
       throw invalidObservation('observe_drop_reference', '复查需要原掉落观察编号和实体 UUID');

@@ -178,6 +178,41 @@ void ground_pickup_protocol() {
     rejects(read);
 }
 
+// 核对交物观察按接收者、距离与槽位总数结算，拒绝跨人或重复选槽。
+// 步骤：构造跨堆备料 → 替换玩家和脚位 → 伪造选择或缺料量并验证拒绝。
+void handoff_protocol() {
+    const std::string world = "00112233-4455-6677-8899-aabbccddeeff", owner = "00112233-4455-6677-8899-aabbccddee00";
+    const auto controller = std::string(32,'d');
+    const Json context{{"generation",world},{"order",2}};
+    const auto args = Json{{"context",context},{"arguments",{{"mode","handoff"},{"recipient",owner},{"item","minecraft:dirt"},{"count",66}}}}.dump();
+    auto action = context;
+    action.update(Json{{"controller",controller},{"skill","observe"},{"exited",true}});
+    Json frame{{"version",1},{"id","offer"},{"action",action}};
+    auto& result = frame["action"]["result"];
+    result["status"] = "done";
+    auto& sample = result["handoff"] = {{"id","offer"},{"generation",world},{"dimension","overworld"},{"sampledAtMs",20},
+        {"recipient",owner},{"item","dirt"},{"count",66},{"window","inventory"},
+        {"actor",{{"uuid",world},{"position",{{"x",0},{"y",-60},{"z",0}}}}},
+        {"target",{{"state","visible"},{"entityId",8},{"position",{{"x",3},{"y",-60},{"z",0}}},{"distance",3}}}};
+    auto& stock = sample["stock"] = {{"status","sampled"},{"scope","main_and_hotbar"},{"start",9},{"end",45},{"stackSize",64},
+        {"available",70},{"missing",0},{"excluded",0},{"unknownSlots",0},{"selected",Json::array({
+            {{"slot",9},{"held",64},{"take",64}},{{"slot",10},{"held",6},{"take",2}}})}};
+    const auto read = [&] { return dfy::mc::partner_reply(frame.dump(),"offer",controller,"observe",args); };
+    if (!read().arrived || read().changed) throw std::runtime_error("read-only handoff inventory lost");
+    sample["recipient"] = world;
+    rejects(read);
+    sample["recipient"] = owner;
+    sample["target"]["distance"] = 2;
+    rejects(read);
+    sample["target"] = {{"state","not_tracked"}};
+    if (!read().arrived) throw std::runtime_error("unknown recipient position lost");
+    stock["selected"][1]["slot"] = 9;
+    rejects(read);
+    stock["selected"][1]["slot"] = 10;
+    stock["missing"] = 1;
+    rejects(read);
+}
+
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
 // 步骤：核对查询帧 → 注入收件断档或替换来源 → 验证到达和非法终态。
 void private_protocol() {
@@ -280,6 +315,7 @@ int main() {
         move_progress_protocol();
         collect_progress_protocol();
         ground_pickup_protocol();
+        handoff_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         using dfy::mc::PlayerThinking;
