@@ -182,7 +182,8 @@ async function main() {
   const attention = variant === 'partner-revision-attention';
   const questionScope = variant === 'partner-revision-question-scope';
   const openingAnswer = variant === 'partner-revision-opening-answer';
-  const airBudget = variant === 'partner-revision-air-budget';
+  const airPriority = variant === 'partner-revision-air-priority';
+  const airBudget = airPriority || variant === 'partner-revision-air-budget';
   const continuationBudget = airBudget || variant === 'partner-revision-continuation-budget';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
@@ -208,6 +209,7 @@ async function main() {
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking }));
   let reads = 0, airAttempts = 0, airTail = 0;
+  const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
@@ -246,7 +248,7 @@ async function main() {
     airNotice(generation,after) {
       if (legacyAir) { ++airAttempts; throw new Error('unsupported private inbox extension'); }
       if (!airBudget || !fs.existsSync(path.join(root,'air-budget-ready'))) return;
-      if (fs.existsSync(path.join(root,'air-budget-observed'))) airTail = 4;
+      if (fs.existsSync(path.join(root,'air-budget-observed')) && (!airPriority || slowAir.work)) airTail = 4;
       else airTail = 1;
       if (after >= airTail) return;
       return { generation, actor:state.actor, entityId:8, dimension:state.dimension, source:'entity_metadata.air_supply', sequence:airTail,
@@ -332,7 +334,10 @@ async function main() {
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
-          if (airBudget) messages[2].text = '刚才空气又有变化吗？';
+          if (airBudget) {
+            messages[2].text = '刚才空气又有变化吗？';
+            if (airPriority && latest === 3) slowAir.messageAt ??= performance.now();
+          }
           if (responseTiming) {
             messages[1].text = '走到拐角，再去门边。';
             messages[2].text = '还在走吗？';
@@ -599,8 +604,22 @@ async function main() {
           return { ...context, skill, exited: true, result };
         }
         if (continuationBudget) {
+          if (airPriority && skill === 'observe' && args.mode === 'vitals') {
+            if (!slowAir.work) {
+              assert.equal(method,'partner.begin');
+              slowAir.work = id;
+            }
+            assert.equal(id,slowAir.work);
+            if (method === 'partner.stop' && ++slowAir.stops >= 2) slowAir.exitedAt ??= performance.now();
+            return { ...context, skill, exited:slowAir.exitedAt !== null,
+              result: { status:slowAir.exitedAt === null ? 'running' : 'interrupted' } };
+          }
           if (airBudget && skill === 'reply') {
             assert.deepEqual([context.order,args.text],[3,'我收到你的问题了，刚才两条空气变化的细节还需要复查。']);
+            if (airPriority) {
+              assert.notEqual(slowAir.exitedAt,null);
+              slowAir.repliedAt = performance.now();
+            }
             ++replies;
             return { ...context, skill, exited:true, result:{ status:'done', sent:true, reused:false, text:args.text } };
           }
@@ -1223,6 +1242,18 @@ async function main() {
         const rows = fs.readFileSync(path.join(root,'trace/events.jsonl'),'utf8').trim().split('\n').map(line => JSON.parse(line));
         const notices = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.attention' && row.body.source === 'air');
         assert.deepEqual(notices.map(row => [row.body.trigger,row.body.notices[0].sequence]),[['vitals.attention',1],['game.event',4]]);
+        if (airPriority) {
+          assert.ok(slowAir.stops >= 2 && slowAir.messageAt < slowAir.exitedAt && slowAir.exitedAt <= slowAir.repliedAt);
+          assert.ok(slowAir.repliedAt-slowAir.messageAt < 5000);
+          const turn = rows.find(row => row.category === 'mc.partner.turn' && row.body.request === notices[0].body.request);
+          assert.deepEqual([turn.body.outcome,turn.body.yieldRequestedBy],['yielded_to_player',3]);
+          const prepared = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
+            row.session === notices[1].body.session && row.run === notices[1].body.request);
+          const input = JSON.parse(prepared.input.messages.at(-1).content);
+          assert.equal(input.interruptedAirCheck.lastObservation.work,slowAir.work);
+          fs.writeFileSync(path.join(root,'air-priority-timing.json'),JSON.stringify({ ...slowAir,
+            clock:'private_bridge_fixture_monotonic_ms', elapsedMs:slowAir.repliedAt-slowAir.messageAt },null,2));
+        }
       }
     } else if (openingAnswer) {
       assert.ok(questionPresented && wallFilled);

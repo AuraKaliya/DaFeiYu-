@@ -230,6 +230,7 @@ void PartnerLoop::reset() noexcept {
     final_reply_.reset();
     reply_origin_ = nullptr;
     air_only_turn_ = false;
+    air_check_ = nullptr;
     next_air_wake_ = {};
     attention_turn_.reset();
     reply_ = rejection_reply_ = {};
@@ -257,6 +258,12 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     else if (result || state.request != request_) throw std::runtime_error("MC partner: original turn unavailable");
     if (state.phase == DFY_V2_AGENT_QUEUED || state.phase == DFY_V2_AGENT_RUNNING) {
         if (cancel) agent_->cancel(session_,request_,nullptr);
+        else if (air_only_turn_ && !air_check_.contains("yieldRequestedBy") && feed_.ready()) {
+            const auto& pending = feed_.pending();
+            const auto player = std::ranges::find_if(pending,[](const auto& event) { return event.at("type") == "player.message"; });
+            if (player != pending.end() && agent_->cancel(session_,request_,nullptr) == DFY_V2_OK)
+                air_check_["yieldRequestedBy"] = player->at("sequence");
+        }
         return false;
     }
     const auto answer = state.answer.length ? std::string_view(state.answer.data,state.answer.length) : std::string_view{};
@@ -279,6 +286,11 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
             {"failed",state.phase == DFY_V2_AGENT_FAILED && permits(session_) && !cancel},
             {"outcome",cancel ? (feed_.departed() || feed_.departure() ? "player_left" : "cancelled") :
                 state.phase == DFY_V2_AGENT_SUCCEEDED ? "completed" : "unavailable"}};
+        if (!cancel && air_only_turn_ && air_check_.contains("yieldRequestedBy")) {
+            if (state.phase == DFY_V2_AGENT_CANCELLED) turn["outcome"] = "yielded_to_player";
+            turn["yieldRequestedBy"] = air_check_.at("yieldRequestedBy");
+            air_check_["outcome"] = turn.at("outcome");
+        }
         const auto& reply = plan_repair_exhausted_ ? rejection_reply_ : reply_;
         if (reply.finish && reply.delivered) turn["closingReply"] = reply.work;
         publish("mc.partner.turn",turn);
@@ -337,6 +349,7 @@ void PartnerLoop::retire() {
     events_.clear();
     reply_origin_ = nullptr;
     air_only_turn_ = false;
+    air_check_ = nullptr;
     next_air_wake_ = {};
     recent_events_.clear();
     dialogue_.clear();
@@ -392,6 +405,8 @@ void PartnerLoop::submit(std::string_view wake) {
     }
     if (autonomous && !air_only) input["recentEvents"] = recent_events_;
     if (!delegated && !feed_.air_notices().empty()) input["airNotices"] = feed_.air_notices();
+    const bool interrupted_air = !delegated && !facts.empty() && air_check_.contains("outcome");
+    if (interrupted_air) input["interruptedAirCheck"] = air_check_;
     if (settlement_only) input["continuationBudgetExhausted"] = true;
     if (!delegated && plan_ && (!task_.id() || plan_->revision == task_.revision())) input["taskPlan"] = plan_context();
     if (!delegated && handoff_) input["taskHandoff"] = handoff_->receipt.is_null() ?
@@ -506,9 +521,14 @@ void PartnerLoop::submit(std::string_view wake) {
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     reply_origin_ = std::move(reply_origin);
     air_only_turn_ = air_only;
+    if (interrupted_air) air_check_ = nullptr;
     if (!delegated && !feed_.air_notices().empty()) {
         publish("mc.partner.attention",{{"source","air"},{"trigger",wake},{"session",session_},{"request",request_},{"notices",feed_.air_notices()}});
-        if (air_only) next_air_wake_ = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        if (air_only) {
+            const auto& notice = feed_.air_notices().back();
+            air_check_ = {{"request",request_},{"noticeSequence",notice.at("sequence")},{"episode",notice.at("airEpisode").at("episode")}};
+            next_air_wake_ = std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        }
         feed_.consume_air();
     }
     visible_skills_ = disclosed;
@@ -973,6 +993,8 @@ void PartnerLoop::report_actions() {
         if (active_delegation_) fact["task"] = active_delegation_->id;
         if (!action.body.empty() && action.body.size() <= 8*1024) fact["result"] = Json::parse(action.body);
         else if (!action.body.empty()) fact["bodyOmitted"] = true;
+        if (air_only_turn_ && action.skill == "observe")
+            air_check_["lastObservation"] = {{"work",action.work},{"status",fact.contains("result") ? fact.at("result").value("status","unconfirmed") : "unconfirmed"}};
         if (!active_delegation_ && !air_only_turn_ && action.skill == "observe" && fact.contains("result")) {
             auto code = fact.at("result").value("reasonCode",std::string{});
             if (code.starts_with("observe_")) limit_repair(std::move(code));

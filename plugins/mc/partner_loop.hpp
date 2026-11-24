@@ -326,6 +326,7 @@ class PartnerLoop {
     bool question_requested_ = false;
     bool final_text_for_player_ = false;
     bool air_only_turn_ = false;
+    nlohmann::json air_check_;
     std::chrono::steady_clock::time_point next_air_wake_{};
     nlohmann::json reply_origin_;
     struct Release {

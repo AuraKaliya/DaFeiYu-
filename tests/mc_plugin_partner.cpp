@@ -299,7 +299,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool attention = variant == L"partner-revision-attention";
     const bool question_scope = variant == L"partner-revision-question-scope";
     const bool opening_answer = variant == L"partner-revision-opening-answer";
-    const bool air_budget = variant == L"partner-revision-air-budget";
+    const bool air_priority = variant == L"partner-revision-air-priority";
+    const bool air_budget = air_priority || variant == L"partner-revision-air-budget";
     const bool continuation_budget = air_budget || variant == L"partner-revision-continuation-budget";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
@@ -745,12 +746,19 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     input.at("airNotices").back().at("sequence") != 1 || request.tools.size() != 1 ||
                     !request.tools.front().name.ends_with("_observe")) throw std::runtime_error("independent air budget unavailable");
                 std::ofstream(root/"air-budget-observed").put('1');
+                if (air_priority) return call("_observe","slow-air",{{"mode","vitals"}});
                 return {{Role::assistant,"独立观察已核对。"}};
             }
             if (air_budget && !input.at("events").empty() && input.at("events").back().at("sequence") == 3) {
                 const auto& notice = input.at("airNotices").back();
                 if (attention_turns != 1 || notice.at("sequence") != 4 || notice.at("missedBefore") != 2 ||
                     input.at("replyOrigin").at("sourceMessage") != 3) throw std::runtime_error("chat lost its turn or missed air boundaries");
+                if (air_priority) {
+                    const auto& prior = input.at("interruptedAirCheck");
+                    if (prior.at("noticeSequence") != 1 || prior.at("yieldRequestedBy") != 3 ||
+                        prior.at("lastObservation").at("status") != "interrupted" || prior.at("outcome") != "yielded_to_player")
+                        throw std::runtime_error("cancelled air check lost its actual exit or source");
+                }
                 checked = true;
                 return {{Role::assistant,"我收到你的问题了，刚才两条空气变化的细节还需要复查。"}};
             }
