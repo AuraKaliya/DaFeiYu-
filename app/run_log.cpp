@@ -127,6 +127,9 @@ void RunLog::exit(std::string_view source, const agent::TurnRequest& request) {
     const auto id = request.run_id();
     const auto state = request.operation()->state();
     Json item{{"source",source},{"session",id.session},{"run",id.sequence},{"result",states.at(static_cast<std::size_t>(state))}};
+    for (const auto& input : request.inputs())
+        append("dialogue.input_settled",{{"source",source},{"session",id.session},{"run",id.sequence},{"message",input.message},
+            {"state",agent::input_state_name(input.state)},{"modelStep",input.model_step}});
     if (state == runtime::OperationState::succeeded) item["answer"] = request.answer();
     try { item["diagnostic"] = Json::parse(agent::encode_diagnostic(agent::diagnostic_snapshot(request,"trace"))); }
     catch (...) { item["diagnosticMissing"] = true; }

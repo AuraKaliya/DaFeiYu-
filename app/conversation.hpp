@@ -19,6 +19,9 @@ struct DisplayedTurn {
     std::string prompt, answer;
     runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
     std::uint64_t queued_message = 0;
+    bool accepts_input = false;
+    std::uint64_t input_revision = 0;
+    std::vector<agent::TurnInput> inputs;
 };
 struct QueuedDialogue {
     std::uint64_t message;

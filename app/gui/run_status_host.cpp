@@ -19,6 +19,18 @@ DialogueReceipt apply_dialogue(app::Application& application, const DialogueComm
     }
 
     auto& conversation = application.conversation();
+    if (command.action == DialogueAction::append) {
+        const auto receipt = application.append_dialogue(command.target,command.text);
+        State state = State::rejected;
+        switch (receipt.state) {
+        case agent::InputAdmission::accepted: state = State::accepted; break;
+        case agent::InputAdmission::closed: state = State::stale; break;
+        case agent::InputAdmission::full: state = State::full; break;
+        case agent::InputAdmission::unavailable: state = State::unavailable; break;
+        case agent::InputAdmission::rejected: break;
+        }
+        return {command.id,state,command.target,receipt.message};
+    }
     if (command.action == DialogueAction::enqueue) {
         const auto receipt = application.enqueue_dialogue(command.target,command.text);
         State state = State::rejected;
@@ -96,7 +108,7 @@ DialogueView RunStatusHost::dialogue(std::uint64_t command) const {
 // 步骤：校验参数 → 复用原身份或报告冲突 → 核对槽位及忙碌状态 → 登记待交付命令。
 DialogueReceipt RunStatusHost::submit_dialogue(DialogueCommand command) {
     using State = DialogueCommandState;
-    const bool with_text = command.action == DialogueAction::send || command.action == DialogueAction::enqueue;
+    const bool with_text = command.action == DialogueAction::send || command.action == DialogueAction::enqueue || command.action == DialogueAction::append;
     const bool by_message = command.action == DialogueAction::resume || command.action == DialogueAction::remove;
     const bool target_valid = command.action == DialogueAction::send ? command.target == agent::RunId{} :
         command.target.session && (by_message ? !command.target.sequence : command.target.sequence != 0);

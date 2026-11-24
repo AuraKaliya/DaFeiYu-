@@ -58,6 +58,8 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
     agent::TurnDiagnostics submit_dialogue(const std::string& text);
+    // 向用户所见的原回合投递补充，保留有来源的收件回执。
+    agent::InputReceipt append_dialogue(agent::RunId expected, std::string text);
     // 接纳排在指定可见回合之后的原话，返回独立消息身份。
     DialogueQueueReceipt enqueue_dialogue(agent::RunId after, std::string text);
     // 仅恢复用户见到的原队首，实际启动仍需等待在途回合退出。

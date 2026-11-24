@@ -87,6 +87,19 @@ agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
     return begin_dialogue(text);
 }
 
+// 将收到的真人补充绑定原会话，收件和实际送模分别记录。
+// 步骤：核对可见回合 → 交给正式 Session → 把接纳身份与原话关联到本机 Trace。
+agent::InputReceipt Application::append_dialogue(agent::RunId expected, std::string text) {
+    const auto& turns = conversation_.display().turns;
+    if (turns.empty() || turns.back().run != expected) return {agent::InputAdmission::closed};
+    const auto receipt = session_.append_input(expected,std::move(text));
+    if (run_log_ && receipt.state == agent::InputAdmission::accepted) {
+        const auto& input = conversation_.current_->inputs().back();
+        run_log_->append("dialogue.input_accepted",{{"session",expected.session},{"run",expected.sequence},{"message",input.message},{"body",input.text}});
+    }
+    return receipt;
+}
+
 // 在独立地址上交付用户原话，并为同一主回合加入已审查的待收信件。
 // 步骤：核对主会话空闲 → 投递并读回原正文 → 接纳带收件的主动对话。
 agent::TurnDiagnostics Application::begin_dialogue(const std::string& text) {

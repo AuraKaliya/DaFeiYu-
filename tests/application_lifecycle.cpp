@@ -227,6 +227,35 @@ void dialogue_queue(const fs::path& run) {
         "mail callback failure lost the accepted turn or redelivered its mail");
 }
 
+// 核对真人补充在正式应用的收件、显示和本机 Trace 指向实际送模步骤。
+// 步骤：向原对话接纳补充 → 推进单一回合 → 比对显示、模型实收与 Trace。
+void dialogue_inputs(const fs::path& run) {
+    dfy::app::ApplicationRunConfig config;
+    config.trace_directory = run/"input-trace";
+    dfy::app::Application application({},run/"input-plugins",run/"input-user",dfy::model::Backend{
+        [](const auto&,const auto& request) -> dfy::model::Response { return {{dfy::model::Role::assistant,"收到："+request.messages.back().content}}; }
+    },config);
+    const auto begun = application.submit_dialogue("第一句话");
+    const dfy::agent::RunId id{begun.session,begun.turn};
+    check(application.append_dialogue({id.session,id.sequence+1},"错轮").state==dfy::agent::InputAdmission::closed,"stale supplement altered session");
+    const auto receipt = application.append_dialogue(id,"后到的原话");
+    check(receipt.state==dfy::agent::InputAdmission::accepted && receipt.message,"supplement did not receive message identity");
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    while (application.conversation().busy() && std::chrono::steady_clock::now()<deadline) {
+        application.advance_plugins(); application.conversation().advance(); std::this_thread::yield();
+    }
+    const auto& turns = application.conversation().display().turns;
+    check(turns.size()==1 && turns.front().run==id && turns.front().accepts_input && turns.front().answer=="收到：后到的原话" &&
+        turns.front().inputs.size()==1 && turns.front().inputs.front().message==receipt.message &&
+        turns.front().inputs.front().state==dfy::agent::InputState::submitted && turns.front().inputs.front().model_step==2,
+        "display lost original message, run, or actual model step");
+    std::ostringstream log;
+    dfy::app::review_trace(application.trace_file(),id,log);
+    check(log.str().find("dialogue.input_accepted")!=std::string::npos && log.str().find("dialogue.input_settled")!=std::string::npos &&
+        log.str().find("\"modelStep\":2")!=std::string::npos && log.str().find("后到的原话")!=std::string::npos,
+        "local trace cannot correlate accepted input to actual model step");
+}
+
 // 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。
 // 步骤：记录固定模型及有序改写 → 比对工具回执 → 脱离原 Hook 重新执行。
 void trace_rewrites(const fs::path& run) {
@@ -433,6 +462,7 @@ int wmain(int argc, wchar_t** argv) {
         shared_application(run);
         display_outcomes(run);
         dialogue_queue(run);
+        dialogue_inputs(run);
         trace_rewrites(run);
         priority_mailboxes(run);
         ask_lifecycle();

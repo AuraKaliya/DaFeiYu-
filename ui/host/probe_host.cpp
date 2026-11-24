@@ -67,8 +67,8 @@ DialogueCommand dialogue_command(const nlohmann::json& request, std::string_view
         return command;
     }
     command.target.sequence = run_id_part(request.at("turn"));
-    if (type == "dialogue.enqueue" && request.size() == 7) {
-        command.action = DialogueAction::enqueue;
+    if ((type == "dialogue.enqueue" || type == "dialogue.append") && request.size() == 7) {
+        command.action = type == "dialogue.enqueue" ? DialogueAction::enqueue : DialogueAction::append;
         command.text = request.at("text").get<std::string>();
     } else if ((type == "dialogue.cancel" || type == "dialogue.clear") && request.size() == 6) {
         command.action = type == "dialogue.cancel" ? DialogueAction::cancel : DialogueAction::clear;
@@ -162,9 +162,13 @@ HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_vie
         if (view.display && revision != after) {
             turns = nlohmann::json::array();
             for (const auto& turn : view.display->turns) {
+                auto inputs = nlohmann::json::array();
+                for (const auto& input : turn.inputs)
+                    inputs.push_back({{"message",std::to_string(input.message)},{"text",input.text},{"state",agent::input_state_name(input.state)},
+                        {"modelStep",std::to_string(input.model_step)}});
                 turns.push_back({{"session",std::to_string(turn.run.session)},{"turn",std::to_string(turn.run.sequence)},
                     {"prompt",turn.prompt},{"answer",turn.answer},{"result",operation_state(turn.result)},{"exit",operation_state(turn.exit)},
-                    {"queuedMessage",std::to_string(turn.queued_message)}});
+                    {"queuedMessage",std::to_string(turn.queued_message)},{"acceptsInput",turn.accepts_input},{"inputs",std::move(inputs)}});
             }
             queue = nlohmann::json::array();
             for (const auto& item : view.display->queue)

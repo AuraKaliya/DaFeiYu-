@@ -39,7 +39,11 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
             options.extension = std::move(host);
         }
     }
-    if (display_prompt) display_.turns.push_back({{},*display_prompt});
+    if (display_prompt) {
+        options.accept_user_input = options.origin == agent::RunOrigin::user_request && !options.planning;
+        display_.turns.push_back({{},*display_prompt});
+        display_.turns.back().accepts_input = options.accept_user_input;
+    }
     try { current_ = session_.begin(prompt,std::move(options)); }
     catch (...) {
         if (display_prompt) display_.turns.pop_back();
@@ -80,16 +84,25 @@ void Conversation::trim_display() noexcept {
     while (display_.turns.size() > display_turn_limit || display_bytes_ > dialogue_display_byte_limit) {
         const auto& oldest = display_.turns.front();
         display_bytes_ -= oldest.prompt.size()+oldest.answer.size();
+        for (const auto& input : oldest.inputs) display_bytes_ -= input.text.size();
         display_.turns.erase(display_.turns.begin());
     }
 }
 
 // 将用户回合的唯一结算与实际退出分别写入显示记录。
-// 步骤：核对原回合身份 → 写入首次结果及成功答复 → 刷新退出与显示修订。
+// 步骤：核对原回合身份 → 同步新收件与送模步骤 → 写入首次结果 → 刷新退出及显示修订。
 void Conversation::update_display(const agent::TurnDiagnostics& status, const std::optional<CompletedTurn>& completed) {
     if (display_.turns.empty()) return;
     auto& turn = display_.turns.back();
-    if (turn.run != agent::RunId{status.session,status.turn} || (!completed && turn.exit == status.exit)) return;
+    if (turn.run != agent::RunId{status.session,status.turn}) return;
+    const bool input_changed = turn.input_revision != current_->input_revision();
+    if (!completed && turn.exit == status.exit && !input_changed) return;
+    if (input_changed) {
+        auto inputs = current_->inputs();
+        for (std::size_t i=turn.inputs.size(); i<inputs.size(); ++i) display_bytes_ += inputs[i].text.size();
+        turn.inputs.swap(inputs);
+        turn.input_revision = current_->input_revision();
+    }
     if (completed) {
         turn.result = status.result;
         if (status.result == OperationState::succeeded && !completed->error) {

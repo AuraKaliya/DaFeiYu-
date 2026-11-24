@@ -2,7 +2,7 @@
 #include "conversation.hpp"
 
 namespace dfy::ui {
-enum class DialogueAction { send, cancel, clear, enqueue, resume, remove };
+enum class DialogueAction { send, cancel, clear, enqueue, resume, remove, append };
 enum class DialogueCommandState { unavailable, queued, accepted, busy, rejected, conflict, expired, stale, full };
 
 // 发送与排队携带原话，回合命令与待发消息命令绑定各自的原身份。

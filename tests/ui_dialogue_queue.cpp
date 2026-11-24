@@ -32,6 +32,15 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
         return active.state==='accepted';
     })())JS");
     wait_for("queue predecessor entered backend",[gate] { return gate->entered.load() == 3; });
+    evaluate("original append command keeps one waiting message",R"JS((async()=>{
+        const {active,command,read}=queueProbe;
+        const fields={...active,text:'只补充在原轮'};
+        const first=await command('append',fields), same=await command('append',fields,first.command);
+        const conflict=await command('enqueue',fields,first.command), stale=await command('append',{...fields,turn:'99999'});
+        const inputs=(await read()).turns.at(-1).inputs;
+        return first.state==='accepted' && first.turn===active.turn && same.message===first.message && conflict.state==='conflict' &&
+            stale.state==='stale' && inputs.length===1 && inputs[0].message===first.message && inputs[0].state==='waiting' && inputs[0].modelStep==='0';
+    })())JS");
     evaluate("full queue retains identities and private content",R"JS((async()=>{
         const {active,command,items,read,ask}=queueProbe;
         for(let i=0;i<8;i++) {
@@ -55,7 +64,9 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
     })())JS");
     expect("paused queue belongs to cancelled and still running request",R"JS((await (async()=>{
         const s=await queueProbe.read();
-        return s.queuePaused && s.queue.length===8 && s.turns.at(-1).result==='cancelled' && s.turns.at(-1).exit==='pending';
+        const turn=s.turns.at(-1);
+        return s.queuePaused && s.queue.length===8 && turn.result==='cancelled' && turn.exit==='pending' &&
+            turn.inputs[0].state==='cancelled' && turn.inputs[0].modelStep==='0';
     })()))JS");
     evaluate("remove by original message and resume exact head only",R"JS((async()=>{
         const {command,active,items}=queueProbe;
