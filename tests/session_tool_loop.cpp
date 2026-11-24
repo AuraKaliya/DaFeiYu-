@@ -98,6 +98,60 @@ class PendingWork final : public ToolWork {
   private:
     std::shared_ptr<Gate> gate_;
 };
+// 在真实工具结果已成立但尚未退出时接收用户补充，核对整批提交顺序与原授权。
+// 步骤：启动双调用批次 → 在工具收尾时追加 → 按场景取消或放行 → 核对实际请求和动作效果。
+void tool_supplements(InputState expected) {
+    auto gate = std::make_shared<Gate>();
+    ToolCatalog catalog;
+    catalog.add({"fixture/pending",1,1,{"pending","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,false},
+        [gate](const auto&) { return std::make_unique<PendingWork>(gate); });
+    const std::vector<std::string> ids{"fixture/pending"};
+    auto scope = catalog.snapshot(ids,true);
+    const auto name = scope.definitions().at(0).name;
+    std::vector<Request> received;
+    Backend backend{[&](const auto&,const Request& input) -> Response {
+        received.push_back(input);
+        if (received.size()==1) return {{Role::assistant,"",{{"one",name,"{}"},{"two",name,"{}"}}},FinishReason::tool_calls};
+        return {{Role::assistant,"工具后的答复"}};
+    }};
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),1,8);
+    Session session({},channel,std::move(backend));
+    RunOptions options; options.tools = scope; options.accept_user_input = true;
+    if (expected==InputState::limit) options.policy.model_limit = 1;
+    const auto request = session.begin("原授权",options);
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now()<deadline) {
+        session.advance();
+        const auto tools = request->tool_steps();
+        if (!tools.empty() && tools.front().result!=OperationState::pending) break;
+        std::this_thread::yield();
+    }
+    const auto working = request->tool_steps();
+    check(!working.empty() && working.front().effect==ToolEffect::applied && working.front().exit==OperationState::pending,
+        "tool effect was not in flight during supplement");
+    check(session.append_input(request->run_id(),"补充一").message==1 && session.append_input(request->run_id(),"补充二").message==2,
+        "in-flight tool rejected supplements");
+    if (expected==InputState::cancelled) request->request_cancel(CancelReason::user);
+    session.advance();
+    check(request->diagnostics().model_requests==1 && !request->inputs().front().model_step,"input entered a partial tool batch");
+    gate->released = true;
+    drain(session,request);
+    for (const auto& input : request->inputs()) check(input.state==expected,"tool-boundary supplement got wrong outcome");
+    check(request->tool_steps().front().effect==ToolEffect::applied,"supplement settlement lost applied effect");
+    if (expected!=InputState::submitted) {
+        check(received.size()==1 && session.message_count()>=3,"stopped continuation lost tool facts or made another model request");
+        return;
+    }
+
+    check(received.size()==2 && received.back().messages.size()==6 && received.back().tools.size()==1 &&
+        received.back().tools.front().name==name,"supplement changed original tool scope or call count");
+    const auto& messages = received.back().messages;
+    check(messages[1].tool_calls.size()==2 && messages[2].role==Role::tool && messages[2].tool_call_id=="one" &&
+        messages[3].role==Role::tool && messages[3].tool_call_id=="two" && messages[4].role==Role::user && messages[4].content=="补充一" &&
+        messages[5].role==Role::user && messages[5].content=="补充二" && request->inputs()[1].model_step==2 &&
+        request->answer()=="工具后的答复","tool pair was split or a supplement was reordered");
+}
+
 // 验证 Session 关闭后的责任归属，以及模型结束与工具收尾的独立展示。
 // 步骤：进入工具阶段 → 查询模型和运行退出 → 销毁会话 → 放行并重试保留运行。
 void session_retention() {
@@ -131,6 +185,7 @@ int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"expected package and settings"); const auto manifest = load_manifest(argv[1]);
         native_case(manifest,argv[2],false); native_case(manifest,argv[2],true); admission_close(); preflight_deadline(); callback_cancel(); session_retention();
+        tool_supplements(InputState::submitted); tool_supplements(InputState::cancelled); tool_supplements(InputState::limit);
         std::cout << "Session native tool loop checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

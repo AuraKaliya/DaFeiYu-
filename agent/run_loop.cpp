@@ -653,8 +653,8 @@ void RunLoop::advance() { state_->advance(); }
 // 步骤：核对来源和当前状态 → 检查条数、编码与正文预算 → 保存原话并签发回合内消息号。
 InputReceipt RunLoop::append_input(std::string text) {
     auto& record = *state_->record;
-    if (!state_->options.accept_user_input || state_->options.origin != RunOrigin::user_request || state_->options.planning ||
-        state_->options.tools) return {InputAdmission::unavailable};
+    if (!state_->options.accept_user_input || state_->options.origin != RunOrigin::user_request || state_->options.planning)
+        return {InputAdmission::unavailable};
     if (state_->advancing || record.operation()->state() != runtime::OperationState::pending ||
         record.operation()->cancellation_reason() != runtime::CancelReason::none || state_->options.now() >= state_->deadline)
         return {InputAdmission::closed};
