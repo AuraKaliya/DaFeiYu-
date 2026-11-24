@@ -86,23 +86,28 @@ function affectedByDig(bot, block) {
   return cells;
 }
 
-// 记录实际变化格，并对同一批已核验的目标逐格读回。
-function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
-  return async changes => {
-    const pending = new Set(cells);
+// 在发起采掘前固定本格与连带格，调用中断后也按原位置结算已经读到的变化。
+// 步骤：保存原坐标和材料 → 发起一次挖掘 → 分别核对原目标与连带变化。
+async function digAndReadback(bot, target, cells, result, onBreak) {
+  const pending = new Set(cells.map(cell => ({ position: cell.position.clone(), before: cell.name, primary: cell === target })));
+  let broken = false;
+  try { await bot.dig(target, true); }
+  finally {
     for (let attempt = 0; attempt < 5; ++attempt) {
       for (const cell of pending) {
-        const { position, name } = cell;
+        const { position, before } = cell;
         const after = bot.blockAt(position);
-        if (!after || after.name === name) continue;
+        if (!after || after.name === before) continue;
         const { x, y, z } = position;
-        changes.push({ x, y, z, before: name, after: after.name });
+        result.changes.push({ x, y, z, before, after: after.name });
+        if (cell.primary) { ++result.broken; broken = true; onBreak(); }
         pending.delete(cell);
       }
       if (!pending.size || attempt === 4) break;
       await delay(50);
     }
-  };
+  }
+  return broken;
 }
 
 // 按原工作轮询采样采掘阶段、已读回的破坏数和目标物品的当前库存。
@@ -142,5 +147,5 @@ function collectionProgress(result, readStock, now = () => performance.now()) {
   };
 }
 
-module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress,
+module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress,
   pickupStand, matchesDigReference };

@@ -79,6 +79,13 @@ void verify_collection_effect() {
         throw std::runtime_error("block removal and material pickup were conflated");
     result["status"] = "blocked";
     if (verified_action(result,"collect","")) throw std::runtime_error("partial collect may not advance a dependency");
+    result["status"] = "done";
+    result["progress"] = {{"block","oak_door"},{"targetCell",{{"x",3},{"y",-60},{"z",2}}}};
+    result["changes"] = {{{"x",3},{"y",-59},{"z",2},{"before","oak_door"},{"after","air"}},
+        {{"x",3},{"y",-60},{"z",2},{"before","oak_door"},{"after","stone"}}};
+    if (verified_action(result,"collect","")) throw std::runtime_error("cleared upper half certified the wrong target");
+    result["changes"][1]["after"] = "air";
+    if (!verified_action(result,"collect","")) throw std::runtime_error("delayed target change was missed");
 }
 
 // 保留知识的版本和条件，未知变种由执行器现场读取。

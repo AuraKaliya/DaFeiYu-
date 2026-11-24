@@ -1,5 +1,6 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <string>
 #include <string_view>
 
@@ -19,8 +20,15 @@ inline bool verified_action(const nlohmann::json& result, std::string_view skill
     if (const auto stock = result.find("stock"); pickup.empty() && stock != result.end())
         return stock->at("after").get<int>() >= stock->at("required").get<int>();
     const auto changes = result.find("changes");
-    if (result.value("broken",0) != 1 || changes == result.end() || !changes->is_array() ||
-        changes->empty() || changes->front().value("after","") != "air") return false;
+    if (result.value("broken",0) != 1 || changes == result.end() || !changes->is_array() || changes->empty()) return false;
+    const auto progress = result.find("progress");
+    if (progress != result.end() && progress->contains("targetCell")) {
+        const auto& target = progress->at("targetCell");
+        if (!std::ranges::any_of(*changes,[&](const auto& cell) {
+            return cell.at("x") == target.at("x") && cell.at("y") == target.at("y") && cell.at("z") == target.at("z") &&
+                cell.at("before") == progress->at("block") && cell.at("after") == "air";
+        })) return false;
+    } else if (changes->front().value("after","") != "air") return false;
     const auto inventory = result.find("inventoryDelta");
     if (pickup.empty()) return true;
     const auto evidence = result.find("pickups");

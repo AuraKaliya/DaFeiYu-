@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
-const { matchesDigReference, collectionProgress } = require('../../plugins/mc/bridge/collection.cjs');
+const { matchesDigReference, collectionProgress, digAndReadback } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
@@ -140,6 +140,28 @@ test('missing pickup reports the observed collector, visibility or missing inven
     [{ state: 'left_view' }, 'pickup_lost'], [{ state: 'left_view', otherCount: 1 }, 'pickup_other_collector'],
     [{ state: 'left_view', otherCount: 2, selfCount: 1 }, 'pickup_stock_unconfirmed']])
     assert.equal(pickupShortfall(entry).code, code);
+});
+
+// 注入动作中断和迟到的门格更新，验证只按原目标计数并保留连带效果。
+// 步骤：修改调用中的对象再抛错 → 读回原两格 → 单独验证只变化连带格时的结果。
+test('dig readback preserves original cells and partial effects after interruption', async () => {
+  const target = { name: 'oak_door', position: new Position(3, -60, 2) };
+  const upper = { name: 'oak_door', position: target.position.offset(0, 1, 0) };
+  let reads = 0, notifications = 0;
+  const interrupted = new Error('interrupted');
+  const result = { broken: 0, changes: [] };
+  const bot = { dig: async () => { target.position.x += 1; target.name = 'air'; throw interrupted; },
+    blockAt: pos => pos.x !== 3 || (pos.y === -60 && reads++ === 0) ? null : { name: 'air' } };
+  await assert.rejects(digAndReadback(bot, target, [target, upper], result, () => ++notifications), error => error === interrupted);
+  assert.deepEqual([result.broken, notifications, result.changes.map(c => [c.x, c.y, c.before, c.after])],
+    [1, 1, [[3, -59, 'oak_door', 'air'], [3, -60, 'oak_door', 'air']]]);
+  const partial = { broken: 0, changes: [] };
+  target.name = 'oak_door';
+  target.position.x = 3;
+  bot.dig = async () => {};
+  bot.blockAt = pos => pos.y === -60 ? target : { name: 'air' };
+  assert.equal(await digAndReadback(bot, target, [target, upper], partial, () => ++notifications), false);
+  assert.deepEqual([partial.broken, partial.changes.length, notifications], [0, 1, 1]);
 });
 
 // 对照工作时点、换目标、破坏和库存，核对采掘在途样本的独立读数。

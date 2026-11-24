@@ -11,7 +11,7 @@ const { observeWall, surface, validateRoute, runRoute } = require('./partner-rou
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress, pickupStand,
+const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, digAndReadback, collectionProgress, pickupStand,
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
@@ -258,20 +258,11 @@ async function collect(bot, args, check, job, built) {
       checkApproval(affected);
       if (expected && (inventory(bot)[expected] ?? 0) >= args.requiredStock) break;
       checkCapacity();
-      const readback = collectReadback(bot, here, affected);
       progress.enter('digging', here);
-      const changeStart = result.changes.length;
       const drops = trackBreakDrop(bot, pos, pickupItem, result);
       try {
-        try { await bot.dig(here, true); }
-        finally {
-          await readback(result.changes);
-          if (result.changes.slice(changeStart).some(cell => pos.x === cell.x && pos.y === cell.y && pos.z === cell.z)) {
-            ++result.broken;
-            progress.sample();
-          }
-        }
-        if (result.broken !== n + 1) throw digBlocked('dig_change_unverified', '目标方块变化未核实');
+        if (!await digAndReadback(bot, here, affected, result, progress.sample))
+          throw digBlocked('dig_change_unverified', '目标方块变化未核实');
         check();
         progress.enter('awaiting_pickup');
         await pickup(bot, pos, drops, check, result);
