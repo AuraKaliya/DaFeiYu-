@@ -3,6 +3,11 @@ target_link_libraries(dfy_management_host_tests PRIVATE dfy_management dfy_build
 set_target_properties(dfy_management_host_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.management_host COMMAND dfy_management_host_tests "${CMAKE_CURRENT_BINARY_DIR}/management-host")
 set_tests_properties(app.management_host PROPERTIES TIMEOUT 15)
+add_executable(dfy_management_pipe_tests management_pipe.cpp)
+target_link_libraries(dfy_management_pipe_tests PRIVATE dfy_management dfy_build_options)
+set_target_properties(dfy_management_pipe_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.management_pipe COMMAND dfy_management_pipe_tests "${CMAKE_CURRENT_BINARY_DIR}/management-pipe")
+set_tests_properties(app.management_pipe PROPERTIES TIMEOUT 20)
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)
