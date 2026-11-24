@@ -3,27 +3,32 @@ import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import study from './art/study.png';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
-type CommandState = 'unavailable' | 'queued' | 'accepted' | 'busy' | 'rejected' | 'conflict' | 'expired' | 'stale';
-interface Turn { readonly session: string; readonly turn: string; readonly prompt: string; readonly answer: string; readonly result: Operation; readonly exit: Operation }
+type CommandState = 'unavailable' | 'queued' | 'accepted' | 'busy' | 'rejected' | 'conflict' | 'expired' | 'stale' | 'full';
+interface Turn { readonly session: string; readonly turn: string; readonly prompt: string; readonly answer: string; readonly result: Operation; readonly exit: Operation; readonly queuedMessage: string }
+interface QueuedMessage { readonly session: string; readonly message: string; readonly text: string }
 interface Receipt { readonly command: string; readonly state: CommandState }
 type Target = Pick<Turn, 'session' | 'turn'>;
-type Pending = { readonly id: string; readonly action: 'send'; readonly text: string } |
-  { readonly id: string; readonly action: 'cancel' | 'clear' };
+type Pending = { readonly id: string; readonly action: 'send' | 'enqueue'; readonly text: string } |
+  { readonly id: string; readonly action: 'clear' | 'resume' | 'remove' };
 
 const operations: ReadonlySet<unknown> = new Set<Operation>(['pending', 'succeeded', 'failed', 'cancelled']);
-const commandStates: ReadonlySet<unknown> = new Set<CommandState>(['unavailable', 'queued', 'accepted', 'busy', 'rejected', 'conflict', 'expired', 'stale']);
+const commandStates: ReadonlySet<unknown> = new Set<CommandState>(['unavailable', 'queued', 'accepted', 'busy', 'rejected', 'conflict', 'expired', 'stale', 'full']);
 const statusText: Record<Operation, string> = { pending: '正在回复', succeeded: '本轮已完成', failed: '本轮回复失败', cancelled: '已停止回复' };
 const rejection: Record<Exclude<CommandState, 'queued' | 'accepted'>, string> = {
   unavailable: '会话暂时无法使用。', busy: '会话正在处理其他操作。',
   rejected: '这次操作未被接纳。', conflict: '此命令编号已用于其他操作。', expired: '本次回执已过期。',
-  stale: '原回合已结束或发生变化。',
+  stale: '这条消息的状态已改变，请查看最新对话。', full: '待发队列已满。可以先移除一条，或等它发出后再试。',
 };
 const byteLimit = 1024 * 1024;
 const encoder = new TextEncoder();
 const bridge = window.chrome.webview;
 const scope = `${crypto.randomUUID()}-`;
 const turns = shallowRef<readonly Turn[]>([]);
+const queue = shallowRef<readonly QueuedMessage[]>([]);
+const queuePaused = ref(false);
 const pending = shallowRef<Pending>();
+const pendingStop = ref('');
+const stopTarget = shallowRef<Target>();
 const transcript = ref<HTMLOListElement>();
 const composer = ref<HTMLTextAreaElement>();
 const clearDialog = ref<HTMLDialogElement>();
@@ -33,16 +38,20 @@ const notice = ref('');
 const ready = ref(false);
 const accepting = ref(false);
 const tooLong = computed(() => encoder.encode(draft.value).length > byteLimit);
-const canSend = computed(() => accepting.value && !pending.value && !!draft.value.trim() && !tooLong.value);
 const lastTurn = computed(() => turns.value.at(-1));
-const canStop = computed(() => ready.value && !pending.value && lastTurn.value?.result === 'pending');
+const queueMode = computed(() => lastTurn.value?.exit === 'pending');
+const canSend = computed(() => ready.value && (accepting.value || queueMode.value) && !pending.value && !!draft.value.trim() && !tooLong.value);
+const stoppedCurrent = computed(() => !!stopTarget.value && stopTarget.value.session === lastTurn.value?.session && stopTarget.value.turn === lastTurn.value?.turn);
+const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurrent.value && lastTurn.value?.result === 'pending');
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
 // 区分页面提交、后端收尾与可接纳下一轮，上一轮的结果留在原条目。
 const panelStatus = computed(() => {
   if (!ready.value) return '正在连接';
-  if (pending.value) return { send: '正在提交', cancel: '已请求停止', clear: '正在清空' }[pending.value.action];
+  if (lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending') return '正在收尾';
+  if (stoppedCurrent.value && lastTurn.value?.result === 'pending') return '已请求停止';
+  if (pending.value) return { send: '正在提交', enqueue: '正在排队', clear: '正在清空', resume: '正在恢复', remove: '正在移除' }[pending.value.action];
   if (accepting.value) return '可以聊天';
-  return lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending' ? '正在收尾' : '正在处理对话';
+  return '正在处理对话';
 });
 let command = 0n;
 let request = 0, latestSnapshot = 0;
@@ -62,7 +71,12 @@ function isDecimal(value: unknown): value is string {
 // 只接受同时具有原会话身份、正文及两项运行状态的显示条目。
 function isTurn(value: unknown): value is Turn {
   return isRecord(value) && isDecimal(value.session) && isDecimal(value.turn) &&
-    typeof value.prompt === 'string' && typeof value.answer === 'string' && operations.has(value.result) && operations.has(value.exit);
+    isDecimal(value.queuedMessage) && typeof value.prompt === 'string' && typeof value.answer === 'string' && operations.has(value.result) && operations.has(value.exit);
+}
+
+// 只有带原生身份和完整原话的待发项可以进入列表。
+function isQueuedMessage(value: unknown): value is QueuedMessage {
+  return isRecord(value) && isDecimal(value.session) && isDecimal(value.message) && typeof value.text === 'string';
 }
 
 // 验证窗口命令回执，以原命令号关联本地草稿。
@@ -77,17 +91,27 @@ function post(fields: Readonly<Record<string, string>>): void {
 
 // 按已读修订查询快照，等待原提交时同时查询同号回执。
 function read(): void {
-  post({ type: 'dialogue.read', revision, command: pending.value?.id ?? '' });
+  post({ type: 'dialogue.read', revision, command: pending.value?.id ?? pendingStop.value });
+  if (pending.value && pendingStop.value) post({ type: 'dialogue.read', revision, command: pendingStop.value });
 }
 
 // 只在原发送获接纳时清掉未改动的原稿，控制命令由正式快照呈现结果。
 // 步骤：核对待交付身份 → 按命令结算草稿与焦点 → 显示宿主拒绝原因。
 function settle(receipt: Receipt): void {
+  if (receipt.state === 'queued') return;
+  if (receipt.command === pendingStop.value) {
+    pendingStop.value = '';
+    if (receipt.state !== 'accepted') {
+      stopTarget.value = undefined;
+      notice.value = rejection[receipt.state];
+    }
+    return;
+  }
   const current = pending.value;
-  if (!current || current.id !== receipt.command || receipt.state === 'queued') return;
+  if (!current || current.id !== receipt.command) return;
   pending.value = undefined;
   if (receipt.state === 'accepted') {
-    if (current.action === 'send' && draft.value === current.text) draft.value = '';
+    if ((current.action === 'send' || current.action === 'enqueue') && draft.value === current.text) draft.value = '';
     if (current.action === 'clear') composer.value?.focus();
   } else notice.value = rejection[receipt.state];
 }
@@ -101,42 +125,58 @@ function receive(event: MessageEvent<unknown>): void {
     const sequence = Number(value.request.slice(scope.length));
     if (!Number.isSafeInteger(sequence) || sequence <= latestSnapshot || typeof value.ready !== 'boolean' ||
         typeof value.accepting !== 'boolean' || !isDecimal(value.latestCommand) || typeof value.revision !== 'string' ||
-        (value.turns !== null && (!Array.isArray(value.turns) || !value.turns.every(isTurn)))) return;
+        typeof value.queuePaused !== 'boolean' || (value.turns === null) !== (value.queue === null) ||
+        (value.turns !== null && (!Array.isArray(value.turns) || !value.turns.every(isTurn))) ||
+        (value.queue !== null && (!Array.isArray(value.queue) || !value.queue.every(isQueuedMessage)))) return;
     latestSnapshot = sequence;
     ready.value = value.ready;
     accepting.value = value.accepting;
+    queuePaused.value = value.queuePaused;
     const latestCommand = BigInt(value.latestCommand);
     if (latestCommand > command) command = latestCommand;
-    if (value.turns !== null) {
+    if (value.turns !== null && value.queue !== null) {
       revision = value.revision;
       turns.value = value.turns;
+      queue.value = value.queue;
     }
   } else if (value.event !== 'dialogue.receipt') return;
   if (isReceipt(value.receipt)) settle(value.receipt);
 }
 
-// 在页面重复提交前固定一个原命令，原稿等实际接纳再清除。
-// 步骤：核对接纳和草稿 → 标记待交付 → 发给原生主文档入口。
+// 按输入区当前标明的去向发送原稿，只有原生接纳后才清除。
+// 步骤：核对草稿 → 固定命令和所见回合 → 提交立即发送或下一轮排队。
 function send(): void {
   if (!canSend.value) return;
-  const submission = { id: String(++command), action: 'send' as const, text: draft.value };
-  pending.value = submission;
-  accepting.value = false;
+  const id = String(++command), target = lastTurn.value;
+  const text = draft.value;
   notice.value = '';
-  post({ type: 'dialogue.submit', command: submission.id, text: submission.text });
+  if (target && queueMode.value) {
+    pending.value = { id, action: 'enqueue', text };
+    post({ type: 'dialogue.enqueue', command: id, session: target.session, turn: target.turn, text });
+  } else {
+    pending.value = { id, action: 'send', text };
+    accepting.value = false;
+    post({ type: 'dialogue.submit', command: id, text });
+  }
 }
 
-// 发出绑定原会话和回合的控制命令，并沿同一编号查询回执。
-function control(action: 'cancel' | 'clear', target: Target): void {
+// 只操作列表中的原消息，恢复命令由宿主再次核对队首。
+function editQueue(action: 'resume' | 'remove', item: QueuedMessage): void {
+  if (pending.value) return;
   const id = String(++command);
   pending.value = { id, action };
   notice.value = '';
-  post({ type: 'dialogue.' + action, command: id, session: target.session, turn: target.turn });
+  post({ type: 'dialogue.' + action, command: id, session: item.session, message: item.message });
 }
 
-// 对当前显示的原回合发出停止，草稿仍可编辑。
+// 使用独立控制槽位停止当前回合，正在接纳的待发项继续沿原编号核对。
 function stop(): void {
-  if (canStop.value && lastTurn.value) control('cancel', lastTurn.value);
+  const target = lastTurn.value;
+  if (!canStop.value || !target) return;
+  pendingStop.value = String(++command);
+  stopTarget.value = { session: target.session, turn: target.turn };
+  notice.value = '';
+  post({ type: 'dialogue.cancel', command: pendingStop.value, ...stopTarget.value });
 }
 
 // 打开清空确认时固定所见回合，避免确认期间的新对话被清掉。
@@ -154,7 +194,10 @@ function confirmClear(): void {
     notice.value = '对话已更新，请重新选择要清空的会话。';
     return;
   }
-  control('clear', target);
+  const id = String(++command);
+  pending.value = { id, action: 'clear' };
+  notice.value = '';
+  post({ type: 'dialogue.clear', command: id, ...target });
 }
 
 // 区分正常发送、输入法确认和 Shift+Enter 换行。
@@ -188,25 +231,35 @@ onUnmounted(() => {
     <section class="conversation-space" aria-label="主会话">
       <div v-if="ready && !turns.length" class="room-still" aria-hidden="true"><img :src="study" alt=""></div>
       <ol ref="transcript" class="transcript" aria-label="对话" aria-live="polite">
-        <li v-for="turn in turns" :key="`${turn.session}/${turn.turn}`" class="turn" :data-turn="turn.turn" :data-result="turn.result" :data-exit="turn.exit">
-          <div class="message outgoing"><b>你</b><p>{{ turn.prompt }}</p></div>
+        <li v-for="turn in turns" :key="`${turn.session}/${turn.turn}`" class="turn" :data-turn="turn.turn" :data-result="turn.result" :data-exit="turn.exit" :data-queued-message="turn.queuedMessage">
+          <div class="message outgoing"><b>你<span v-if="turn.queuedMessage !== '0'" class="queue-origin">从待发队列发出</span></b><p>{{ turn.prompt }}</p></div>
           <div v-if="turn.answer" class="message incoming"><b>大肥鱼</b><p>{{ turn.answer }}</p></div>
           <div v-else class="turn-status">{{ statusText[turn.result] }}</div>
           <small v-if="turn.result !== 'pending' && turn.exit === 'pending'" class="turn-status">本轮仍在收尾</small>
         </li>
       </ol>
     </section>
+    <details v-if="queue.length" class="queue-panel" :data-paused="queuePaused" open>
+      <summary><strong>待发消息</strong><span>{{ queuePaused ? '已暂停' : '按顺序发送' }} · {{ queue.length }} 条</span></summary>
+      <ol class="queue-list" aria-label="等待下一轮的消息">
+        <li v-for="(item, index) in queue" :key="item.message" :data-message="item.message">
+          <span>{{ item.text }}</span>
+          <button type="button" class="queue-remove" :disabled="!!pending" :aria-label="`移除第 ${index + 1} 条待发消息`" @click="editQueue('remove', item)">移除</button>
+        </li>
+      </ol>
+      <button v-if="queuePaused && queue[0]" id="dialogue-resume" type="button" class="queue-resume" :disabled="!!pending" @click="editQueue('resume', queue[0])">继续发送</button>
+    </details>
     <form class="panel-compose" @submit.prevent="send">
       <textarea id="dialogue-draft" ref="composer" v-model="draft" rows="2" :maxlength="byteLimit" aria-label="给大肥鱼的消息" placeholder="给大肥鱼发消息" @keydown.enter="enter"></textarea>
       <div class="compose-actions">
         <button v-if="lastTurn?.exit === 'pending'" id="dialogue-stop" class="stop-action" type="button" :disabled="!canStop" @click="stop">停止回复</button>
-        <button id="dialogue-send" class="primary-action" type="submit" :disabled="!canSend">发送</button>
+        <button id="dialogue-send" class="primary-action" type="submit" :disabled="!canSend">{{ queueMode ? '排到下一轮' : '发送' }}</button>
       </div>
       <output v-if="tooLong || notice" aria-live="polite">{{ tooLong ? '消息不能超过 1 MiB。' : notice }}</output>
     </form>
     <dialog ref="clearDialog" class="clear-dialog" aria-labelledby="clear-title" @close="clearTarget = undefined">
       <h2 id="clear-title">清空本次对话？</h2>
-      <p>下一次发送将从空白对话开始。<template v-if="draft">输入框里的草稿会保留。</template></p>
+      <p>下一次发送将从空白对话开始。<template v-if="draft">输入框里的草稿会保留。</template><template v-if="queue.length">{{ queue.length }} 条待发消息也会保留。</template></p>
       <div class="dialog-actions">
         <button class="quiet-action" type="button" autofocus @click="clearDialog?.close()">保留对话</button>
         <button id="dialogue-confirm-clear" class="primary-action" type="button" @click="confirmClear">确认清空</button>

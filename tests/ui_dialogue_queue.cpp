@@ -77,5 +77,41 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
         return snapshot.queue.length===0 && started.length===2 && started[0].turn!==started[1].turn &&
             started.every((t,i)=>t.queuedMessage===items[i].message && t.exit==='succeeded' && t.answer==='固定回复：排队中的同一句');
     })()))JS");
+
+    expect("composer is available for another round","document.querySelector('#dialogue-state').dataset.accepting==='true'");
+    evaluate("start a held round from composer",R"JS((async()=>{
+        const draft=document.querySelector('#dialogue-draft');
+        draft.value='等待桌面停止'; draft.dispatchEvent(new Event('input')); await Promise.resolve();
+        document.querySelector('#dialogue-send').click(); return true;
+    })())JS");
+    wait_for("composer round actually entered backend",[gate] { return gate->entered.load() == 4; });
+    expect("busy primary control names next round","document.querySelector('#dialogue-send').textContent==='排到下一轮'");
+    evaluate("focus actual queue composer","document.querySelector('#dialogue-draft').focus(); document.activeElement.id==='dialogue-draft'");
+    call("input first waiting item",L"Input.insertText",{{"text","稍后聊窗边的书"}});
+    key("queue first using Enter","Enter",13);
+    expect("first waiting item with editable composer","document.querySelector('.queue-list li span')?.textContent==='稍后聊窗边的书' && !document.querySelector('#dialogue-draft').value");
+    call("input second waiting item",L"Input.insertText",{{"text","可移除的消息"}});
+    evaluate("queue by button","document.querySelector('#dialogue-send').click(); true");
+    expect("both waiting items displayed","document.querySelectorAll('.queue-list li').length===2");
+    call("reload while queue is waiting",L"Page.reload",Json::object());
+    expect("reload restores both waiting items","document.querySelectorAll('.queue-list li').length===2 && document.querySelector('#dialogue-stop')?.disabled===false");
+    evaluate("remove second visible waiting item","document.querySelectorAll('.queue-remove')[1].click(); true");
+    expect("removal preserves first waiting item","document.querySelectorAll('.queue-list li').length===1 && document.querySelector('.queue-list li span').textContent==='稍后聊窗边的书'");
+    evaluate("stop original with remaining item","document.querySelector('#dialogue-stop').click(); true");
+    expect("paused list and narrow input both remain reachable","document.querySelector('.queue-panel')?.dataset.paused==='true' && "
+        "document.querySelector('#dialogue-resume')?.disabled===false && document.querySelector('#dialogue-state').textContent==='正在收尾' && "
+        "document.documentElement.scrollWidth<=innerWidth && document.querySelector('#dialogue-send').getBoundingClientRect().bottom<=innerHeight");
+    wait_for("release the held composer round",[gate] { gate->release.release(); return true; });
+    expect("history can be cleared with paused queue","document.querySelector('#dialogue-clear')?.disabled===false");
+    evaluate("clear confirmation describes waiting items",R"JS((()=>{
+        document.querySelector('#dialogue-clear').click();
+        if (!document.querySelector('dialog').textContent.includes('1 条待发消息也会保留')) return false;
+        document.querySelector('#dialogue-confirm-clear').click(); return true;
+    })())JS");
+    expect("clear retains queue and original text","!document.querySelector('.turn') && document.querySelector('.queue-list li span')?.textContent==='稍后聊窗边的书'");
+    evaluate("resume visible head","window.resumedMessage=document.querySelector('.queue-list li').dataset.message; document.querySelector('#dialogue-resume').click(); true");
+    expect("resumed text appears in its own finished turn","!document.querySelector('.queue-list') && document.querySelectorAll('.turn').length===1 && "
+        "document.querySelector('.turn').dataset.queuedMessage===window.resumedMessage && document.querySelector('.turn').dataset.exit==='succeeded' && "
+        "document.querySelector('.incoming p')?.textContent==='固定回复：稍后聊窗边的书'");
 }
 }
