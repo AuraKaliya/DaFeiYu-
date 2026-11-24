@@ -8,6 +8,7 @@ const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
+const { tossHandoff } = require('./give-item.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -363,6 +364,21 @@ function partnerService(bot, world, inbox, places, owner) {
     return source;
   }
 
+  // 复核备料观察并保留首次提交投物的工作号，新的工作只能查回该次效果。
+  function handoffSource(receipt, args, result) {
+    const record = records.get(workKey(receipt.controller, args.observation));
+    const original = record?.receipt;
+    const source = original?.result.handoff;
+    if (!source || original.skill !== 'observe' || !original.exited || original.result.status !== 'done' ||
+        source.generation !== receipt.generation || source.dimension !== bot.game.dimension || !inbox.inPresence(receipt.generation, original.order))
+      throw Object.assign(new Error('当前在场周期内没有可用的交物观察'), { code: 'handoff_observation_stale' });
+    if (record.transferWork) {
+      result.originalWork = record.transferWork;
+      throw Object.assign(new Error('这次备料已提交投物，请查原工作的实效'), { code: 'handoff_already_started' });
+    }
+    return record;
+  }
+
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
@@ -542,6 +558,11 @@ function partnerService(bot, world, inbox, places, owner) {
           stop() { bot.pathfinder.setGoal(null); bot.clearControlStates(); },
         });
       }
+      else if (r.skill === 'give_item') {
+        const record = handoffSource(r,args,result);
+        await tossHandoff(bot,owner,args,record.receipt.result.handoff,check,() => { record.transferWork = job.id; },result);
+        throw Object.assign(new Error('丢物操作已经提交，目前没有能确认收件的回执'), { code: 'handoff_receipt_unconfirmed' });
+      }
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
@@ -564,7 +585,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['collect', 'pickup_drop', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'pickup_drop', 'give_item', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (builtSpace && world.space() === builtSpace) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
@@ -575,7 +596,7 @@ function partnerService(bot, world, inbox, places, owner) {
         }
       }
       r.exited = true;
-      if (['move', 'route', 'follow', 'collect', 'pickup_drop', 'place', 'fill_target', 'craft'].includes(r.skill))
+      if (['move', 'route', 'follow', 'collect', 'pickup_drop', 'give_item', 'place', 'fill_target', 'craft'].includes(r.skill))
         previous = { controller: r.controller, action: { ...result, generation: r.generation, order: r.order, skill: r.skill } };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }

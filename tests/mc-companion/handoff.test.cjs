@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observeHandoff } = require('../../plugins/mc/bridge/handoff.cjs');
+const { tossHandoff } = require('../../plugins/mc/bridge/give-item.cjs');
 const { observationInput } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { Position } = require('./test-position.cjs');
 
@@ -12,7 +13,8 @@ function handoffFixture() {
     { name: 'dirt', count: 4, components: [{ type: 'custom_name' }] }, null, { name: 'dirt', count: 15 }];
   const bot = { entity: { uuid: actor, position: new Position(0.5,-60,0.5) }, entities: { 7: recipient },
     players: { owner: { uuid: owner, entity: recipient } }, game: { dimension: 'overworld' },
-    registry: { itemsByName: { dirt: { stackSize: 64 } } }, inventory: { inventoryStart: 2, inventoryEnd: 6, slots } };
+    registry: { itemsByName: { dirt: { stackSize: 64 } } }, inventory: { inventoryStart: 2, inventoryEnd: 6, slots,
+      items() { return this.slots.slice(this.inventoryStart,this.inventoryEnd).filter(Boolean); } } };
   const args = { mode: 'handoff', recipient: owner, item: 'minecraft:dirt', count: 66 };
   return { bot, args, owner, read: () => observeHandoff(bot,owner,observationInput(args).options,'sample','world') };
 }
@@ -49,4 +51,46 @@ test('handoff binds the paired player UUID and current tracked entity', () => {
   assert.throws(f.read, { code: 'handoff_item_unknown' });
   for (const bad of [{ count: 0 }, { count: 2305 }, { recipient: 'owner' }, { radius: 3 }])
     assert.throws(() => observationInput({ ...f.args, ...bad }), { code: 'handoff_parameters' });
+});
+
+// 用可控槽位模拟游戏丢整栈和单件的实际差别，观察领取与鼠标发包互相独立。
+function tossFixture() {
+  const f = handoffFixture(), result = {}, clicks = [];
+  const source = f.read();
+  let claims = 0;
+  f.bot.lookAt = async () => {};
+  f.bot.clickWindow = async (slot, button, mode) => {
+    assert.equal(mode,4);
+    clicks.push([slot,button]);
+    const entry = f.bot.inventory.slots[slot];
+    if (button === 1 || --entry.count === 0) f.bot.inventory.slots[slot] = null;
+  };
+  return { ...f, result, clicks, source, claims: () => claims,
+    run: (check = () => {}) => tossHandoff(f.bot,f.owner,{ ...f.args, observation: source.id },source,check,() => { ++claims; },result) };
+}
+
+// 多槽位的最后一个部分栈逐件投递，特殊栈和其余数量保持原状。
+test('survival toss issues exactly the requested total from ordinary slots', async () => {
+  const f = tossFixture();
+  await f.run();
+  assert.deepEqual(f.clicks, [[2,1], ...Array.from({ length: 6 }, () => [3,0])]);
+  assert.deepEqual([f.claims(), f.result.transfer.submitted, f.result.transfer.returnedClicks, f.result.inventoryDelta.dirt], [1,66,7,-66]);
+  assert.equal(f.bot.inventory.slots[3].count, 4);
+  assert.equal(f.bot.inventory.slots[4].components[0].type, 'custom_name');
+});
+
+// 朝向后和跨堆后都重验玩家距离；未起步与部分投出分别保留工作及实效。
+test('moving recipient and interrupted clicks retain only submitted quantities', async () => {
+  const before = tossFixture();
+  before.bot.lookAt = async () => { before.bot.players.owner.entity.position.x += 6; };
+  await assert.rejects(before.run(), { code: 'handoff_recipient_distant' });
+  assert.deepEqual([before.claims(),before.clicks.length,before.result.inventoryDelta], [0,0,{}]);
+
+  const after = tossFixture();
+  await assert.rejects(after.run(() => { if (after.clicks.length) throw new Error('cancelled'); }), /cancelled/);
+  assert.deepEqual([after.claims(),after.result.transfer.submitted,after.result.inventoryDelta], [1,60,{ dirt: -60 }]);
+  const lost = tossFixture();
+  lost.bot.clickWindow = async () => { throw new Error('transport closed'); };
+  await assert.rejects(lost.run(), /transport closed/);
+  assert.deepEqual([lost.claims(),lost.result.transfer.submitted,lost.result.transfer.returnedClicks,lost.result.inventoryDelta], [1,60,0,{}]);
 });
