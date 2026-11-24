@@ -103,7 +103,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('fill -3 -60 -3 7 -58 3 minecraft:air');
       send('kill @e[type=minecraft:item,x=-3,y=-61,z=-3,dx=10,dy=5,dz=6]');
       send('tp DfyGuestCheck 2.5 -60 0.5');
-      send('clear DfyGuestCheck minecraft:dirt');
+      send('clear DfyGuestCheck');
       if (gatherHandoff) {
         if (movingHandoff) {
           send('fill 3 -61 -2 13 -61 10 minecraft:dirt');

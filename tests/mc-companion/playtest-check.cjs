@@ -355,8 +355,8 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
   const moving = mode !== '--handoff-gather-probe';
   const cells = [[-2,-60,0],[-3,-60,0]].map(c => player.entity.position.clone().set(...c));
   const dirt = player.registry.itemsByName.dirt.id;
-  await until(() => fixture.materialCount('dirt') === 0 && player.inventory.count(dirt) === 0 &&
-    cells.every(cell => player.blockAt(cell)?.name === 'grass_block'), '两处取材格与双方零库存');
+  await until(() => fixture.materialCount('dirt') === 0 && player.inventory.items().length === 0 &&
+    cells.every(cell => player.blockAt(cell)?.name === 'grass_block'), '两处取材格、伙伴零泥土与收件玩家空背包');
   const first = '我背包里还没有泥土，正在附近给你备两块。', during = '我在挖第一块，泥土还没进背包。';
   const finished = '刚挖的两块泥土你都捡到了。';
   const trace = () => readRows(fixture,'trace/events.jsonl');
@@ -434,7 +434,9 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
 // 步骤：等待第一堆入世界 → 移出交物距离 → 对照原工作、玩家端物品及两边库存。
 async function checkPartialHandoff(fixture, player, whispers, initialReply) {
   const dirt = player.registry.itemsByName.dirt.id;
-  const ground = () => Object.values(player.entities).map(entity => entity.getDroppedItem?.())
+  const origin = player.entity.position.clone();
+  const ground = () => Object.values(player.entities).filter(entity => entity.position.distanceTo(origin) <= 5)
+    .map(entity => entity.getDroppedItem?.())
     .filter(item => item?.type === dirt).reduce((sum,item) => sum+item.count,0);
   const message = '刚才投出了六十四块，你走远以后我停了，另外两块还没丢。';
   player.chat('那就给我六十六块泥土。');
@@ -459,7 +461,8 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   const staleFeedback = mode === '--handoff-stale-feedback-probe';
   const late = interrupt || feedback || mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
-  await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
+  await until(() => fixture.materialCount('dirt') === 70 && player.inventory.items().length === 0 &&
+    actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土，原玩家空背包同场');
   const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
   await measurePlayerFeedback(player, '你身上能分给我六十六块泥土吗？', reply, () => until(() => whispers.includes(reply), '实际库存询问回复'),
     sample => writeFileSync(join(fixture.evidence, 'player-feedback.json'), JSON.stringify(sample, null, 2)));
