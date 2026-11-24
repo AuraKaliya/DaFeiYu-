@@ -6,6 +6,7 @@
 #include "browser_lifetime.hpp"
 #include "run_status_host.hpp"
 #ifdef DFY_UI_RUN_STATUS_TEST
+#include "ui_main_panel_fixture.hpp"
 #include "ui_run_status_probe.hpp"
 #endif
 #include <windows.h>
@@ -42,6 +43,7 @@ struct Window : std::enable_shared_from_this<Window> {
     std::unique_ptr<dfy::ui::RunStatusHost> run_status_host;
 #ifdef DFY_UI_RUN_STATUS_TEST
     std::shared_ptr<dfy::tests::UiRunStatusProbe> run_status_probe;
+    std::shared_ptr<dfy::tests::UiDialogueGate> panel_gate;
 #endif
     std::chrono::steady_clock::time_point deadline;
     std::chrono::steady_clock::time_point close_deadline;
@@ -127,9 +129,9 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->dialogue(command);
                 return {};
             };
-            dialogue.submit = [weak](auto command, auto text) -> dfy::ui::DialogueReceipt {
-                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->submit_dialogue(command,std::move(text));
-                return {command,dfy::ui::DialogueCommandState::unavailable,{}};
+            dialogue.submit = [weak](dfy::ui::DialogueCommand command) -> dfy::ui::DialogueReceipt {
+                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->submit_dialogue(std::move(command));
+                return {command.id,dfy::ui::DialogueCommandState::unavailable,{}};
             };
         }
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
@@ -213,7 +215,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 });
 #ifdef DFY_UI_RUN_STATUS_TEST
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
-                if (main_panel_check) { interaction->start_main_panel(checks); return; }
+                if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -269,15 +271,9 @@ struct Window : std::enable_shared_from_this<Window> {
         }
         if (main_panel_check) {
             const auto work = profile.path()/L"agent";
-            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([work] {
-                return std::make_unique<dfy::app::Application>(dfy::model::Config{},work/"plugins",work/"user",dfy::model::Backend{
-                    // 核对浏览器原话抵达正式应用的请求，并交付固定文本或固定失败。
-                    // 步骤：取出原话 → 按夹具文本选择结果 → 返回完成回复。
-                    [](const auto&,const auto& request) -> dfy::model::Response {
-                        const auto& text = request.messages.back().content;
-                        if (text == "模拟请求失败") throw std::runtime_error("fixed private provider error");
-                        return {{dfy::model::Role::assistant,"固定回复："+text}};
-                    }});
+            panel_gate = std::make_shared<dfy::tests::UiDialogueGate>();
+            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([work,gate = panel_gate] {
+                return dfy::tests::open_panel_fixture(work,gate);
             });
             return;
         }

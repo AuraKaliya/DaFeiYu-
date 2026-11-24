@@ -37,6 +37,7 @@ std::string_view dialogue_state(DialogueCommandState state) noexcept {
     case State::rejected: return "rejected";
     case State::conflict: return "conflict";
     case State::expired: return "expired";
+    case State::stale: return "stale";
     }
     return "rejected";
 }
@@ -96,7 +97,8 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
         if (type == "state.read") return run_status_reply(message);
-        if (type == "dialogue.read" || type == "dialogue.submit") return dialogue_reply(message,type,source);
+        if (type == "dialogue.read" || type == "dialogue.submit" || type == "dialogue.cancel" || type == "dialogue.clear")
+            return dialogue_reply(message,type,source);
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
         if (next_ == std::numeric_limits<std::uint64_t>::max()) return E_FAIL;
@@ -113,16 +115,20 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
 HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source) {
     const auto active = [&] { return main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); })); };
     if (!dialogue_.read || !dialogue_.submit || !main_panel_document(source) || !active()) return E_ACCESSDENIED;
-    if (request.size() != 5 || request.at("version") != "1") return E_INVALIDARG;
+    const bool control = type == "dialogue.cancel" || type == "dialogue.clear";
+    if (request.size() != (control ? 6 : 5) || request.at("version") != "1") return E_INVALIDARG;
     const auto& id = request.at("request").get_ref<const std::string&>();
     if (id.empty() || id.size() > 64) return E_INVALIDARG;
 
     nlohmann::json reply{{"version","1"},{"request",id}};
-    if (type == "dialogue.submit") {
-        const auto command = run_id_part(request.at("command"));
-        auto receipt = dialogue_.submit(command,request.at("text").get<std::string>());
+    if (type != "dialogue.read") {
+        DialogueCommand command{run_id_part(request.at("command")),DialogueAction::send,{},{}};
+        if (control) {
+            command.action = type == "dialogue.cancel" ? DialogueAction::cancel : DialogueAction::clear;
+            command.target = {run_id_part(request.at("session")),run_id_part(request.at("turn"))};
+        } else command.text = request.at("text").get<std::string>();
         reply["event"] = "dialogue.receipt";
-        reply["receipt"] = dialogue_receipt(receipt);
+        reply["receipt"] = dialogue_receipt(dialogue_.submit(std::move(command)));
     } else {
         const auto& after = request.at("revision").get_ref<const std::string&>();
         if (after.size() > 20) return E_INVALIDARG;

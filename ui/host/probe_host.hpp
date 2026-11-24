@@ -12,7 +12,7 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     using ReadRun = std::function<std::optional<app::RunStatusSnapshot>()>;
     struct Dialogue {
         std::function<DialogueView(std::uint64_t)> read;
-        std::function<DialogueReceipt(std::uint64_t,std::string)> submit;
+        std::function<DialogueReceipt(DialogueCommand)> submit;
     };
     // 绑定原生主页面消息与 Frame 创建，回调始终属于当前 STA。
     static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run = {}, Dialogue dialogue = {});
@@ -30,7 +30,7 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     HRESULT message(ICoreWebView2WebMessageReceivedEventArgs* args) noexcept;
     // 发送与原请求及可选运行身份匹配的只读状态。
     HRESULT run_status_reply(const nlohmann::json& request);
-    // 仅为实际主面板处理普通对话命令及正文查询。
+    // 为当前可信主面板处理正文查询和绑定原回合的会话操作。
     HRESULT dialogue_reply(const nlohmann::json& request, std::string_view type, std::wstring_view source);
     // 将具体 Frame 与待签发身份绑定，无票据的额外 Frame 明确失败。
     void created(ICoreWebView2Frame* frame);
