@@ -138,8 +138,9 @@ DialogueView Host::dialogue(std::uint64_t command, const std::string& client) co
     owner->second.seen = std::chrono::steady_clock::now();
     DialogueView view{display_,owner->second.latest,can_submit_ && !exited_ && !worker_.get_stop_token().stop_requested(),{}};
     if (command && command <= owner->second.latest) {
-        const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==client && item.receipt.command==command; });
-        view.receipt = record != commands_.end() ? record->receipt : DialogueReceipt{command,DialogueCommandState::expired,{}};
+        const auto& commands = owner->second.commands;
+        const auto record = std::ranges::find_if(commands,[&](const auto& item) { return item.receipt.command==command; });
+        view.receipt = record != commands.end() ? record->receipt : DialogueReceipt{command,DialogueCommandState::expired,{}};
     }
     return view;
 }
@@ -161,9 +162,10 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     const auto owner = clients_.find(command.client);
     if (owner == clients_.end()) return {command.id,State::unavailable,{}};
     owner->second.seen = std::chrono::steady_clock::now();
+    auto& commands = owner->second.commands;
     if (command.id <= owner->second.latest) {
-        const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==command.client && item.receipt.command==command.id; });
-        if (record == commands_.end()) return {command.id,State::expired,{}};
+        const auto record = std::ranges::find_if(commands,[&](const auto& item) { return item.receipt.command==command.id; });
+        if (record == commands.end()) return {command.id,State::expired,{}};
         if (record->action != command.action || record->target != command.target || record->message != command.message ||
             record->fingerprint != fingerprint)
             return {command.id,State::conflict,{}};
@@ -175,16 +177,16 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     const bool needs_idle = command.action == DialogueAction::send || command.action == DialogueAction::clear;
     const bool available = !slot && (!needs_idle || can_submit_);
     const DialogueReceipt receipt{command.id,available ? State::queued : State::busy,command.target};
-    commands_.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint),command.client});
+    commands.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint)});
     owner->second.latest = command.id;
     if (available) {
         slot.emplace(std::move(command));
         can_submit_ = false;
     }
-    if (commands_.size() > command_limit) {
+    if (commands.size() > command_limit) {
         // 暂未交付的命令必须能在同一身份写回确认。
-        const auto oldest = std::ranges::find_if(commands_,[](const auto& item) { return item.receipt.state != State::queued; });
-        commands_.erase(oldest);
+        const auto oldest = std::ranges::find_if(commands,[](const auto& item) { return item.receipt.state != State::queued; });
+        commands.erase(oldest);
     }
     return receipt;
 }
@@ -206,8 +208,11 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
         // 拒绝回执只交付类别，异常正文可能包括宿主内部数据。
     }
     std::lock_guard lock(mutex_);
-    const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==command->client && item.receipt.command==command->id; });
-    record->receipt = receipt;
+    if (const auto owner = clients_.find(command->client); owner!=clients_.end()) {
+        auto& commands = owner->second.commands;
+        const auto record = std::ranges::find_if(commands,[&](const auto& item) { return item.receipt.command==command->id; });
+        if (record!=commands.end()) record->receipt = receipt;
+    }
     slot.reset();
 }
 

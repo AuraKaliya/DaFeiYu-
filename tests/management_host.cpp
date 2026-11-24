@@ -43,6 +43,19 @@ void background_turn(const std::filesystem::path& root) {
             first.receipt->state == management::DialogueCommandState::accepted;
     },"original receipt missing");
 
+    // 一个窗口持续提交忙时命令，只能占用自己的历史回执额度。
+    const auto other = host.open_client();
+    for (std::uint64_t id=1; id<=20; ++id) {
+        const management::DialogueCommand attempt{id,management::DialogueAction::send,{},"忙时普通发送",0,other};
+        if (host.submit_dialogue(attempt).state!=management::DialogueCommandState::busy)
+            throw std::runtime_error("busy observer submitted a new turn");
+    }
+    const auto original = host.dialogue(1).receipt, retired = host.dialogue(1,other).receipt;
+    if (!original || original->state!=management::DialogueCommandState::accepted ||
+        !retired || retired->state!=management::DialogueCommandState::expired)
+        throw std::runtime_error("one observer evicted another observer's original receipt");
+    host.close_client(other);
+
     release.release();
     until([&] { return host.dialogue().accepting; },"background turn did not exit");
     const auto later = host.dialogue(1);
@@ -77,6 +90,40 @@ void background_turn(const std::filesystem::path& root) {
     until([&] { return host.exited(); },"explicit shutdown did not finish");
     if (host.failed() || host.dialogue().accepting) throw std::runtime_error("host did not close cleanly");
 }
+
+// 在宿主消费已接纳命令前撤销客户端，命令仍交给原业务线程一次。
+// 步骤：暂停已就绪的宿主 → 投递并立即断开 → 放行业务 → 新观察者核对原消息与实际退出。
+void detach_before_apply(const std::filesystem::path& root) {
+    std::atomic_bool hold = false;
+    std::binary_semaphore entered(0), release(0);
+    management::Host host([&] {
+        return std::make_unique<app::Application>(model::Config{},root/"plugins",root/"detach",model::Backend{
+            [](const auto&,const auto&) { return model::Response{{model::Role::assistant,"已办理"}}; }});
+    },[&](auto&) {
+        if (!hold.exchange(false)) return;
+        entered.release();
+        if (!release.try_acquire_for(3s)) throw std::runtime_error("host advance gate timed out");
+    });
+    until([&] { return host.dialogue().accepting; },"detachment host unavailable");
+    hold = true;
+    if (!entered.try_acquire_for(3s)) throw std::runtime_error("host advance was not paused");
+    const auto client = host.open_client();
+    const auto queued = host.submit_dialogue({1,management::DialogueAction::send,{},"关窗前已提交",0,client});
+    host.close_client(client);
+    release.release();
+    if (queued.state!=management::DialogueCommandState::queued) throw std::runtime_error("command was not queued");
+
+    const auto observer = host.open_client();
+    until([&] {
+        const auto snapshot = host.dialogue(0,observer);
+        if (!snapshot.accepting || snapshot.display->turns.size()!=1) return false;
+        const auto& turn = snapshot.display->turns.front();
+        return turn.prompt=="关窗前已提交" && turn.answer=="已办理" && turn.exit==runtime::OperationState::succeeded;
+    },"detached command lost before application admission");
+    host.close();
+    until([&] { return host.exited(); },"detachment host did not exit");
+    if (host.failed()) throw std::runtime_error("detachment host failed");
+}
 }
 
 // 在 CTest 分配的目录运行无窗口业务生命周期回归。
@@ -84,6 +131,7 @@ int main(int argc, char** argv) {
     try {
         if (argc != 2) return 2;
         background_turn(argv[1]);
+        detach_before_apply(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

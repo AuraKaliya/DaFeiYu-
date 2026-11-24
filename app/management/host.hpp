@@ -38,8 +38,12 @@ class Host {
     // 查询初始化、推进或退出是否出现宿主错误。
     bool failed() const noexcept { return failed_; }
   private:
-    struct CommandRecord { DialogueReceipt receipt; DialogueAction action; agent::RunId target; std::uint64_t message; std::string fingerprint, client; };
-    struct Client { std::uint64_t latest = 0; std::chrono::steady_clock::time_point seen = std::chrono::steady_clock::now(); };
+    struct CommandRecord { DialogueReceipt receipt; DialogueAction action; agent::RunId target; std::uint64_t message; std::string fingerprint; };
+    struct Client {
+        std::uint64_t latest = 0;
+        std::chrono::steady_clock::time_point seen = std::chrono::steady_clock::now();
+        std::deque<CommandRecord> commands;
+    };
     // 在业务线程执行指定槽位中的命令，并将原回执保留到发布结果。
     void advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot);
     // 推进原应用服务、发布值快照并在拥有线程上完成关闭。
@@ -49,7 +53,6 @@ class Host {
     std::optional<app::RunStatusSnapshot> snapshot_;
     std::optional<RoomLocation> room_location_;
     std::shared_ptr<const app::ConversationDisplay> display_;
-    std::deque<CommandRecord> commands_;
     std::optional<DialogueCommand> pending_, stop_command_;
     mutable std::map<std::string,Client> clients_{{"",{}}};
     bool can_submit_ = false;
