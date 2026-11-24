@@ -114,6 +114,64 @@ void collect_progress_protocol() {
     rejects(read);
 }
 
+// 验证独立拾取的工作只按原实体、实际收取人与角色库存结算。
+// 步骤：构造完整拾取 → 注入异堆和库存错配 → 核对受阻后的部分实效。
+void ground_pickup_protocol() {
+    const std::string generation = "00112233-4455-6677-8899-aabbccddeeff", entity = "00112233-4455-6677-8899-aabbccddee00";
+    const auto controller = std::string(32,'c');
+    const Json context{{"generation",generation},{"order",2}}, position{{"x",2},{"y",-60},{"z",1}};
+    const Json args{{"observation","source"},{"entity",entity},{"item","minecraft:dirt"},{"count",3}};
+    const auto envelope = Json{{"context",context},{"arguments",args}}.dump();
+    const dfy::mc::BridgeConfig config{{},std::string(64,'a'),controller};
+    auto invalid = args;
+    const auto submit = [&] { return dfy::mc::partner_request("partner.start","ground",config,"pickup_drop",
+        Json{{"context",context},{"arguments",invalid}}.dump()); };
+    if (Json::parse(submit()).at("arguments") != args) throw std::runtime_error("pickup arguments lost");
+    invalid["entity"] = std::string(36,'x');
+    rejects(submit);
+    invalid = args;
+    invalid["observation"] = std::string(129,'a');
+    rejects(submit);
+    auto action = context;
+    action.update(Json{{"controller",controller},{"skill","pickup_drop"},{"exited",true}});
+    Json frame{{"version",1},{"id","ground"},{"action",action}};
+    auto& result = frame["action"]["result"];
+    result["status"] = "done";
+    result["dropTarget"] = {{"observation","source"},{"entity",entity},{"generation",generation},{"dimension","overworld"},
+        {"observedAtMs",100},{"sampledAtMs",105},{"radius",8},{"original",{{"entityId",8},{"item","dirt"},{"count",3}}},
+        {"state","tracked"},{"entityId",8},{"position",position},{"distance",2},{"withinOriginalRadius",true},{"item","dirt"},{"count",3}};
+    auto& pickup = result["pickup"] = {{"item","dirt"},{"requested",3},{"stockBefore",2},{"stockAfter",5},{"stockCurrent",true},
+        {"stockSampledAtMs",125},{"verifiedCount",3},{"approachAttempted",true}};
+    auto& observed = pickup["observed"] = {{"state","left_view"},{"entityId",8},{"uuid",entity},{"item","dirt"},{"seenCount",3},
+        {"position",position},{"seenAtMs",106},{"leftAtMs",121},{"selfCount",3},{"otherCount",0},
+        {"lastCollector",{{"entityId",1},{"self",true},{"count",3},{"sampledAtMs",120}}}};
+    result["inventoryDelta"] = {{"dirt",3}};
+    auto& progress = result["progress"] = {{"phase","received"},{"entity",entity},{"item","dirt"},{"requested",3},
+        {"selfCount",3},{"otherCount",0},{"stock",5},{"sampledAtMs",125}};
+    const auto read = [&] { return dfy::mc::partner_reply(frame.dump(),"ground",controller,"pickup_drop",envelope); };
+    const auto success = read();
+    if (!success.arrived || !success.changed || !success.inventory_attempted || Json::parse(success.progress) != progress)
+        throw std::runtime_error("ground pickup lost packet, inventory or work progress");
+    observed["uuid"] = generation;
+    rejects(read);
+    observed["uuid"] = entity;
+    result["inventoryDelta"]["dirt"] = 2;
+    rejects(read);
+    result["inventoryDelta"]["dirt"] = 3;
+    pickup["stockCurrent"] = false;
+    rejects(read);
+    pickup["stockCurrent"] = true;
+    observed["selfCount"] = progress["selfCount"] = pickup["verifiedCount"] = 0;
+    observed["otherCount"] = progress["otherCount"] = 3;
+    observed["lastCollector"]["self"] = false;
+    rejects(read);
+    result["status"] = "blocked";
+    if (read().changed) throw std::runtime_error("another collector credited the companion");
+    observed["selfCount"] = progress["selfCount"] = pickup["verifiedCount"] = 1;
+    observed["otherCount"] = progress["otherCount"] = observed["lastCollector"]["count"] = 2;
+    if (!read().changed || read().arrived) throw std::runtime_error("partial pickup lost its effect");
+}
+
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
 // 步骤：核对查询帧 → 注入收件断档或替换来源 → 验证到达和非法终态。
 void private_protocol() {
@@ -215,6 +273,7 @@ int main() {
         private_protocol();
         move_progress_protocol();
         collect_progress_protocol();
+        ground_pickup_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         using dfy::mc::PlayerThinking;

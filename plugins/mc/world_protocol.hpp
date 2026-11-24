@@ -34,7 +34,7 @@ struct PartnerReply {
     bool exited, arrived, placement_attempted, placement_verified, changed;
     ReplyDelivery delivery;
     std::string payload, progress;
-    bool craft_attempted;
+    bool craft_attempted, inventory_attempted;
 };
 // 把已绑定的玩家上下文与模型提供的技能参数发送给配对的游戏角色。
 std::string partner_request(std::string_view method, std::string_view id, const BridgeConfig& config,

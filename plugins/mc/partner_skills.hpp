@@ -37,6 +37,7 @@ inline constexpr std::array partner_actions{
     PartnerAction{"dig_block","collect",SkillCategory::dig_break,true,false,"x,y,z,block with message for pointing or observation for self verify."},
     PartnerAction{"gather_ground","collect",SkillCategory::dig_break,true,true,"item, requiredStock, optional source block.",{},
         "item, requiredStock, optional source block."},
+    PartnerAction{"pickup_drop","pickup_drop",SkillCategory::inventory,true,false,"observation, entity UUID, item, whole-stack count."},
     PartnerAction{"place","place",SkillCategory::place,true,true,"x,y,z,block within the bound target. Exit reports changed cells.",{},
         "x,y,z,block within the bound target."},
     PartnerAction{"fill_target","fill_target",SkillCategory::place,true,false,"block for the bound cells. Exit reports each cell's result."},
@@ -91,7 +92,7 @@ struct PartnerSkill {
     SkillKind kind = SkillKind::game;
     bool supports_approval = false;
 };
-inline constexpr std::array<PartnerSkill,18> partner_skills{{
+inline constexpr std::array<PartnerSkill,19> partner_skills{{
     {"observe", "partner.observe", "{} reads positions and inventory. Pointed mode uses the original message and focus=hit (crosshair), objects (cone and nearby blocks), or openings (wall gaps). "
         "choice describes aim. The player's words set the scope. Read saved terrain via mode=detail, observation=openingObservation.id. "
         "Hit/objects share two attempts per message until new events (hit_observation_limit). "
@@ -123,6 +124,8 @@ inline constexpr std::array<PartnerSkill,18> partner_skills{{
         R"({"type":"object","properties":{"block":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]},"editBuilt":{"type":"boolean"},"message":{"type":"integer"},"observation":{"type":"string"},"resolves":{"type":"integer"}},"required":["block","x","y","z"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
     {"gather_ground", "partner.gather_ground", "Bring inventory of item up to requiredStock (1-32) from exposed ground. Use the total you need. Set block only to restrict the search to one permitted source. Stops on enough stock or unverified pickup.",
         R"({"type":"object","properties":{"block":{"type":"string"},"item":{"type":"string"},"requiredStock":{"type":"integer"},"approval":{"type":"string","enum":["game","main"]}},"required":["item","requiredStock"],"additionalProperties":false})", SkillCategory::dig_break, true, SkillKind::motion, true},
+    {"pickup_drop", "partner.pickup_drop", "Pick up one whole stack from observe(mode=drops), using its observation id and entity UUID. Match item and count. The actor walks within the sampled area. Exit reports actual pickup and inventory.",
+        R"({"type":"object","properties":{"observation":{"type":"string"},"entity":{"type":"string"},"item":{"type":"string"},"count":{"type":"integer"}},"required":["observation","entity","item","count"],"additionalProperties":false})", SkillCategory::inventory, true, SkillKind::motion},
     {"reply", "partner.reply", "Send one line to the bound player. In a player turn, finish=true requests to end the decision after confirmed delivery. Omit finish when further decisions are needed. Plain final text also reaches the player.",
         R"({"type":"object","properties":{"text":{"type":"string"},"finish":{"type":"boolean"}},"required":["text"],"additionalProperties":false})", SkillCategory::communication, true},
     {"place", "partner.place", "Place an inventory block at an exact empty x,y,z cell within the bound task target. For a door choose the lower cell. "
@@ -175,6 +178,7 @@ inline std::string_view partner_schema(const PartnerSkill& skill) {
         auto& fields = value["properties"];
         fields["resolves"]["description"] = "Pending question item for a newer verified dig. Supply one dig_block node with the answer message; any saved successor is retained.";
         auto& node = fields["steps"]["items"]["properties"];
+        node["arguments"]["properties"]["entity"] = {{"type","string"}};
         node["skill"]["description"] = std::move(description);
         node["arguments"]["description"] = std::move(sequence);
         node["pickup"]["description"] = "For a dig_block plan node or an ordinary collect step, the item that must actually enter inventory before the successor can advance.";

@@ -27,18 +27,6 @@ Json parse(std::string_view text, int depth_limit = 6) {
         return true;
     });
 }
-// 验证由宿主和游戏来源使用的规范 UUID。
-bool uuid(const Json& value) {
-    if (!value.is_string()) return false;
-    const auto& text = value.get_ref<const std::string&>();
-    if (text.size() != 36) return false;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        if (i == 8 || i == 13 || i == 18 || i == 23) { if (c != '-') return false; }
-        else if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')) return false;
-    }
-    return true;
-}
 // 验证维度是可显示的 Minecraft 资源名称。
 bool dimension(const Json& value) {
     if (!value.is_string()) return false;
@@ -90,7 +78,7 @@ void verify_drop_observation(const Json& sample, std::string_view id, const Json
     for (const auto& entity : entities) {
         const auto& item = entity.at("item");
         if (!entity.at("entityId").is_number_unsigned() || entity.at("entityId") > 0x7fffffff ||
-            !ids.insert(entity.at("entityId").get<std::uint32_t>()).second || (entity.contains("uuid") && !uuid(entity.at("uuid"))) ||
+            !ids.insert(entity.at("entityId").get<std::uint32_t>()).second || (entity.contains("uuid") && !game_uuid(entity.at("uuid"))) ||
             (item.is_null() ? !entity.at("count").is_null() :
                 !dimension(item) || !entity.at("count").is_number_unsigned() || entity.at("count") == 0) ||
             (!filter.empty() && (item.is_null() || item.get_ref<const std::string&>() != filter)))
@@ -109,7 +97,7 @@ void verify_drop_observation(const Json& sample, std::string_view id, const Json
 void verify_drop_target(const Json& sample, const Json& args, const Json& generation) {
     const auto& original = sample.at("original");
     const auto& state = sample.at("state");
-    if (!uuid(sample.at("entity")) || sample.at("entity") != args.at("entity") || sample.at("observation") != args.at("observation") ||
+    if (!game_uuid(sample.at("entity")) || sample.at("entity") != args.at("entity") || sample.at("observation") != args.at("observation") ||
         sample.at("generation") != generation || !dimension(sample.at("dimension")) || !sample.at("observedAtMs").is_number_unsigned() ||
         !sample.at("sampledAtMs").is_number_unsigned() || sample.at("observedAtMs") > sample.at("sampledAtMs") ||
         !sample.at("radius").is_number_unsigned() || sample.at("radius") < 1 || sample.at("radius") > 16 ||
@@ -130,6 +118,68 @@ void verify_drop_target(const Json& sample, const Json& args, const Json& genera
     }
     if (state == "tracked" && (!dimension(sample.at("item")) || !sample.at("count").is_number_unsigned() || sample.at("count") == 0))
         throw std::invalid_argument("MC: invalid current dropped stack");
+}
+
+// 将独立拾取的选定实体、收取数量和库存增减同原命令核对。
+// 步骤：绑定原观察与目标 → 校验拾取人和原堆 → 对照进展、库存差量与成功条件。
+bool verify_ground_pickup(const Json& result, const Json& args, const Json& generation, bool exited) {
+    if (!result.contains("pickup")) {
+        if (result.contains("progress") || (exited && result.at("status") == "done"))
+            throw std::invalid_argument("MC: missing pickup evidence");
+        return false;
+    }
+    const auto& target = result.at("dropTarget");
+    verify_drop_target(target,args,generation);
+    const auto& pickup = result.at("pickup");
+    const auto& entry = pickup.at("observed");
+    const auto& name = pickup.at("item").get_ref<const std::string&>();
+    const auto requested = args.at("count").get<std::int64_t>();
+    if (name.empty() || name != item_name(args.at("item").get_ref<const std::string&>()) || requested < 1 || requested > 0x7fffffff ||
+        pickup.at("requested") != requested || !pickup.at("approachAttempted").is_boolean() || !pickup.at("stockCurrent").is_boolean() ||
+        !pickup.at("stockSampledAtMs").is_number_unsigned()) throw std::invalid_argument("MC: invalid pickup request binding");
+    if (result.contains("capacity")) verify_inventory_capacity(result.at("capacity"),name);
+    for (const auto key : {"stockBefore","stockAfter","verifiedCount"})
+        if (!pickup.at(key).is_number_unsigned() || pickup.at(key) > 0x7fffffff) throw std::invalid_argument("MC: invalid pickup stock");
+    const bool seen = entry.at("state") != "unseen";
+    if ((seen || pickup.at("approachAttempted") == true) && (target.at("state") != "tracked" || target.at("withinOriginalRadius") != true ||
+        target.at("original").at("item") != name || target.at("original").at("count") != requested ||
+        target.at("item") != name || target.at("count") != requested)) throw std::invalid_argument("MC: pickup target changed");
+    int own = 0, other = 0;
+    if (seen) {
+        if ((entry.at("state") != "visible" && entry.at("state") != "left_view") || entry.at("uuid") != target.at("entity") ||
+            entry.at("entityId") != target.at("entityId") || entry.at("item") != name || entry.at("seenCount") != requested ||
+            !entry.at("seenAtMs").is_number_unsigned() || entry.at("seenAtMs") < target.at("sampledAtMs") ||
+            entry.contains("leftAtMs") != (entry.at("state") == "left_view") || (entry.contains("leftAtMs") &&
+                (!entry.at("leftAtMs").is_number_unsigned() || entry.at("leftAtMs") < entry.at("seenAtMs"))) ||
+            !entry.at("selfCount").is_number_unsigned() || entry.at("selfCount") > 0x7fffffff ||
+            !entry.at("otherCount").is_number_unsigned() || entry.at("otherCount") > 0x7fffffff)
+            throw std::invalid_argument("MC: pickup packet refers to another stack");
+        own = entry.at("selfCount").get<int>(); other = entry.at("otherCount").get<int>();
+        if (entry.contains("lastCollector") != (own || other)) throw std::invalid_argument("MC: missing pickup collector");
+        if (own || other) {
+            const auto& last = entry.at("lastCollector");
+            if (!last.at("entityId").is_number_unsigned() || (last.contains("uuid") && !game_uuid(last.at("uuid"))) ||
+                !last.at("count").is_number_unsigned() || last.at("count") == 0 || last.at("count") > (last.at("self").get<bool>() ? own : other) ||
+                !last.at("sampledAtMs").is_number_unsigned() || last.at("sampledAtMs") < entry.at("seenAtMs") ||
+                (entry.contains("leftAtMs") && last.at("sampledAtMs") > entry.at("leftAtMs")))
+                throw std::invalid_argument("MC: invalid pickup collector");
+        }
+    } else if (entry.size() != 1) throw std::invalid_argument("MC: unseen stack has pickup events");
+
+    const auto delta = pickup.at("stockAfter").get<int>()-pickup.at("stockBefore").get<int>();
+    const int verified = pickup.at("verifiedCount").get<int>(), both = std::min(own,std::max(0,delta));
+    const auto& step = result.at("progress");
+    const auto& phase = step.at("phase");
+    if (!result.at("inventoryDelta").is_object() || result.at("inventoryDelta").value(name,0) != delta || verified > both ||
+        (pickup.at("stockCurrent") == true && verified != both) || step.at("entity") != target.at("entity") || step.at("item") != name ||
+        step.at("requested") != requested || step.at("selfCount") != own || step.at("otherCount") != other ||
+        step.at("stock") != pickup.at("stockAfter") || !step.at("sampledAtMs").is_number_unsigned() ||
+        step.at("sampledAtMs") < pickup.at("stockSampledAtMs") || (phase != "checking_target" && phase != "approaching" &&
+        phase != "awaiting_pickup" && phase != "waiting_inventory" && phase != "received"))
+        throw std::invalid_argument("MC: inconsistent pickup progress or inventory");
+    if (exited && result.at("status") == "done" && (phase != "received" || own != requested || verified != requested ||
+        other != 0 || pickup.at("stockCurrent") != true)) throw std::invalid_argument("MC: pickup completion unconfirmed");
+    return own > 0;
 }
 
 // 询问修订使用非零十进制文本，避免 JavaScript 数值精度损失。
@@ -263,7 +313,7 @@ void verify_collect_pickups(const Json& evidence, const Json& args) {
         const auto& name = entry.at("item").get_ref<const std::string&>();
         const auto& seen = entry.at("seenAtMs");
         if ((state != "visible" && state != "left_view") || !entry.at("entityId").is_number_unsigned() ||
-            (entry.contains("uuid") && !uuid(entry.at("uuid"))) || item_name(name) != name ||
+            (entry.contains("uuid") && !game_uuid(entry.at("uuid"))) || item_name(name) != name ||
             name.empty() || (!wanted.empty() && name != item_name(wanted)) ||
             !entry.at("seenCount").is_number_unsigned() || entry.at("seenCount") == 0 || !seen.is_number_unsigned() ||
             ((state == "left_view") != entry.contains("leftAtMs")) || (state == "left_view" &&
@@ -280,7 +330,7 @@ void verify_collect_pickups(const Json& evidence, const Json& args) {
         if (entry.contains("lastCollector") != (own || others)) throw std::invalid_argument("MC: missing pickup event");
         if (entry.contains("lastCollector")) {
             const auto& last = entry.at("lastCollector");
-            if (!last.at("entityId").is_number_unsigned() || (last.contains("uuid") && !uuid(last.at("uuid"))) ||
+            if (!last.at("entityId").is_number_unsigned() || (last.contains("uuid") && !game_uuid(last.at("uuid"))) ||
                 !last.at("count").is_number_unsigned() || last.at("count") == 0 ||
                 last.at("count") > (last.at("self").get<bool>() ? own : others) ||
                 !last.at("sampledAtMs").is_number_unsigned() || last.at("sampledAtMs") < seen)
@@ -434,8 +484,10 @@ std::string partner_request(std::string_view method, std::string_view id, const 
     auto& context = envelope.at("context");
     if (config.key.size() != 64 || config.controller.size() != 32 || envelope.size() != 2 ||
         !envelope.at("arguments").is_object() || context.size() != 2 ||
-        !uuid(context.at("generation")) || !context.at("order").is_number_unsigned() || context.at("order") == 0 ||
+        !game_uuid(context.at("generation")) || !context.at("order").is_number_unsigned() || context.at("order") == 0 ||
         context.at("order") > 9007199254740991ULL) throw std::invalid_argument("MC: invalid partner context");
+    if (skill == "pickup_drop" && !valid_pickup_request(envelope.at("arguments")))
+        throw std::invalid_argument("MC: invalid ground pickup arguments");
     context["controller"] = config.controller;
     // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
     const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
@@ -445,7 +497,7 @@ std::string partner_request(std::string_view method, std::string_view id, const 
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,
     std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" ? 12 : 6), envelope = parse(arguments);
+    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" || skill == "pickup_drop" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
@@ -527,6 +579,8 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
+    const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context.at("generation"),exited);
+    if (skill == "pickup_drop" && result.contains("progress")) progress = result.at("progress").dump();
     if (skill == "collect" && (result.contains("capacity") || result.value("reasonCode","") == "pickup_inventory_full")) {
         const auto& capacity = result.at("capacity");
         verify_inventory_capacity(capacity,item_name(args.at("item").get_ref<const std::string&>()));
@@ -567,10 +621,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool craft_attempted = exited && skill == "craft" && result.at("craftAttempted").get<bool>();
-    const bool changed = exited && (skill == "craft" ? verified_craft(result,args,craft_attempted) :
+    const bool changed = exited && (skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
         result.contains("changes") && verified_changes(result.at("changes")));
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},
-        std::move(progress), craft_attempted};
+        std::move(progress), craft_attempted, skill == "pickup_drop" && result.contains("pickup") && result.at("pickup").at("approachAttempted") == true};
 }
 // 将普通退出和显式接管分别绑定到控制实例或原游戏世界。
 // 步骤：核对目标范围 → 选择释放或接管方法 → 生成原请求帧。
@@ -578,7 +632,7 @@ std::string control_request(std::string_view id, std::string_view key, std::stri
     auto frame = parse(arguments);
     const auto scoped = frame.contains("controller");
     const auto& generation = frame.at("generation");
-    if (key.size() != 64 || frame.size() != (scoped ? 2u : 1u) || (!uuid(generation) && !(scoped && generation == "")) ||
+    if (key.size() != 64 || frame.size() != (scoped ? 2u : 1u) || (!game_uuid(generation) && !(scoped && generation == "")) ||
         (scoped && !controller_id(frame.at("controller").get_ref<const std::string&>()))) throw std::invalid_argument("MC: stop identity");
     frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", scoped ? "control.detach" : "control.stop"}});
     if (!scoped) frame["scope"] = "role";
@@ -668,7 +722,7 @@ std::string world_reply(std::string_view wire, std::string_view expected_id, boo
 
     const bool has_survey = with_survey && state.contains("survey");
     const bool has_answer = with_survey && state.contains("answer");
-    if (state.size() != 6u + has_survey + has_answer || !uuid(state.at("generation")) || !uuid(state.at("actor")) ||
+    if (state.size() != 6u + has_survey + has_answer || !game_uuid(state.at("generation")) || !game_uuid(state.at("actor")) ||
         !dimension(state.at("dimension")) || !state.at("cobblestone").is_number_unsigned() || state.at("cobblestone") > 9007199254740991ULL ||
         !state.at("signalAgeMs").is_number_unsigned() || state.at("signalAgeMs") > 9007199254740991ULL)
         throw std::invalid_argument("MC protocol: wrong world state");
@@ -719,7 +773,7 @@ std::string survey_request(std::string_view id, std::string_view key, std::strin
 // 步骤：核对原世界及游标 → 按有无控制实例选择真实读口。
 std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments, std::string_view controller) {
     auto request = parse(arguments);
-    if (key.size() != 64 || request.size() != 2 || !uuid(request.at("generation")) ||
+    if (key.size() != 64 || request.size() != 2 || !game_uuid(request.at("generation")) ||
         !request.at("after").is_number_unsigned() || request.at("after") > 9007199254740991ULL ||
         (!controller.empty() && !controller_id(controller)))
         throw std::invalid_argument("MC protocol: invalid inbox query");
@@ -738,7 +792,7 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     if (inbox.is_null()) return "null";
     if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") +
         inbox.count("lastDeparture") + inbox.count("execution") ||
-        inbox.at("generation") != query.at("generation") || !uuid(inbox.at("owner")) ||
+        inbox.at("generation") != query.at("generation") || !game_uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
     const auto oldest = inbox.at("oldest").get<std::uint64_t>(), latest = inbox.at("latest").get<std::uint64_t>();
@@ -819,7 +873,7 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
 // 为同一逻辑动作生成接纳、查询或停止帧，不在参数中接收私有键或方法。
 std::string inspect_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments) {
     auto frame = parse(arguments);
-    if (key.size() != 64 || frame.size() != 3 || !uuid(frame.at("generation")) || !frame.at("order").is_number_unsigned() ||
+    if (key.size() != 64 || frame.size() != 3 || !game_uuid(frame.at("generation")) || !frame.at("order").is_number_unsigned() ||
         frame.at("order") == 0 || frame.at("order") > 9007199254740991ULL || !frame.at("place").is_string() ||
         !valid_channel(frame.at("place").get_ref<const std::string&>())) throw std::invalid_argument("MC protocol: inspect target");
     if (method != "inspect.begin") {
@@ -862,7 +916,7 @@ InspectReply inspect_reply(std::string_view wire, std::string_view id, std::stri
 // 仅用原委托和固定问题号请求游戏侧提问。
 std::string question_request(std::string_view id, std::string_view key, std::string_view arguments) {
     auto value = parse(arguments);
-    if (key.size() != 64 || value.size() != 3 || !uuid(value.at("generation")) || !value.at("order").is_number_unsigned() ||
+    if (key.size() != 64 || value.size() != 3 || !game_uuid(value.at("generation")) || !value.at("order").is_number_unsigned() ||
         value.at("order") == 0 || value.at("order") > 9007199254740991ULL || !value.at("question").is_string() ||
         !valid_channel(value.at("question").get_ref<const std::string&>())) throw std::invalid_argument("MC protocol: invalid question");
     value.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", "question.open"}});
@@ -877,7 +931,7 @@ std::string delivery_request(bool admit, std::string_view id, std::string_view k
         return !text.empty() && text.size() <= 20 && text[0] != '0' && text.find_first_not_of("0123456789") == text.npos;
     };
     if (key.size() != 64 || grant.size() != 10 || !decimal("question") || !decimal("grant") || !decimal("command") ||
-        !uuid(grant.at("generation")) || !uuid(grant.at("owner")) || grant.at("material") != "minecraft:cobblestone" ||
+        !game_uuid(grant.at("generation")) || !game_uuid(grant.at("owner")) || grant.at("material") != "minecraft:cobblestone" ||
         !valid_channel(grant.at("returnPlace").get_ref<const std::string&>()) ||
         !grant.at("quantity").is_number_unsigned() || grant.at("quantity") == 0 || grant.at("quantity") > 64 ||
         !grant.at("order").is_number_unsigned() || grant.at("order") == 0 || grant.at("order") > 9007199254740991ULL ||
@@ -913,7 +967,7 @@ std::string delivery_reply(bool admit, std::string_view wire, std::string_view i
 // 只为原世界、问题、委托和有界块编号建立采掘控制帧。
 std::string mine_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments) {
     auto frame = parse(arguments);
-    if (key.size() != 64 || frame.size() != 4 || !uuid(frame.at("generation")) ||
+    if (key.size() != 64 || frame.size() != 4 || !game_uuid(frame.at("generation")) ||
         !valid_channel(frame.at("grant").get_ref<const std::string&>()) || !valid_channel(frame.at("question").get_ref<const std::string&>()) ||
         !frame.at("index").is_number_unsigned() || frame.at("index") == 0 || frame.at("index") > 64 ||
         (method != "mine.begin" && method != "mine.read" && method != "mine.stop")) throw std::invalid_argument("MC protocol: invalid mining call");
@@ -943,7 +997,7 @@ MineReply mine_reply(std::string_view wire, std::string_view id, std::string_vie
         throw std::invalid_argument("MC protocol: inconsistent mining outcome");
     if (data.contains("pickup") && !data.at("pickup").is_null()) {
         const auto& p = data.at("pickup");
-        if (!started || p.size() != 6 || !uuid(p.at("stream")) || !p.at("first").is_number_unsigned() ||
+        if (!started || p.size() != 6 || !game_uuid(p.at("stream")) || !p.at("first").is_number_unsigned() ||
             !p.at("last").is_number_unsigned() || p.at("first") == 0 || p.at("last") < p.at("first") ||
             !p.at("lower").is_number_unsigned() || !p.at("upper").is_number_unsigned() ||
             p.at("upper") > 1 || p.at("lower") > p.at("upper") || !p.at("onGround").is_boolean())
@@ -955,7 +1009,7 @@ MineReply mine_reply(std::string_view wire, std::string_view id, std::string_vie
 // 地点和数量均取自原接单事实，控制帧不允许替换目的地。
 std::string return_request(std::string_view method, std::string_view id, std::string_view key, std::string_view arguments) {
     auto frame = parse(arguments);
-    if (key.size() != 64 || frame.size() != 3 || !uuid(frame.at("generation")) ||
+    if (key.size() != 64 || frame.size() != 3 || !game_uuid(frame.at("generation")) ||
         !valid_channel(frame.at("question").get_ref<const std::string&>()) || !valid_channel(frame.at("grant").get_ref<const std::string&>()) ||
         (method != "return.begin" && method != "return.read" && method != "return.stop")) throw std::invalid_argument("MC protocol: return");
     frame.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", method}});
@@ -979,7 +1033,7 @@ InspectReply return_reply(std::string_view wire, std::string_view id, std::strin
         if (!data.at("stock").is_number_unsigned() || data.at("position").size() != 3) throw std::invalid_argument("MC protocol: arrival stock");
         for (auto axis : {"x", "y", "z"}) if (!data.at("position").at(axis).is_number()) throw std::invalid_argument("MC protocol: arrival position");
         const auto& proof = data.at("carried");
-        if (!proof.is_null() && (proof.size() != 5 || !uuid(proof.at("stream")) || !proof.at("sample").is_number_unsigned() ||
+        if (!proof.is_null() && (proof.size() != 5 || !game_uuid(proof.at("stream")) || !proof.at("sample").is_number_unsigned() ||
             proof.at("sample") == 0 || proof.at("stock") != data.at("stock") || !proof.at("lower").is_number_unsigned() ||
             !proof.at("upper").is_number_unsigned() || proof.at("lower") > proof.at("upper") || proof.at("upper") > data.at("stock")))
             throw std::invalid_argument("MC protocol: carried range");
@@ -994,7 +1048,7 @@ std::string question_reply(std::string_view wire, std::string_view id, std::stri
         reply.at("id").get_ref<const std::string&>() != id) throw std::invalid_argument("MC protocol: wrong question reply");
     const auto& value = reply.at("question");
     if ((value.size() != 7 && value.size() != 9) || value.at("id") != args.at("question") || value.at("generation") != args.at("generation") ||
-        !value.at("order").is_number_unsigned() || value.at("order") != args.at("order") || !uuid(value.at("owner")) ||
+        !value.at("order").is_number_unsigned() || value.at("order") != args.at("order") || !game_uuid(value.at("owner")) ||
         !value.at("after").is_number_unsigned() || value.at("after") < args.at("order") || value.at("after") > 9007199254740991ULL ||
         value.at("sent") != true || value.at("text").get_ref<const std::string&>().empty() ||
         value.at("text").get_ref<const std::string&>().size() > 1024) throw std::invalid_argument("MC protocol: unbound question");

@@ -228,7 +228,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto* action = partner ? dfy::mc::partner_action(skill->name) : nullptr;
     const auto game_skill = action ? action->executor : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
-    const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target";
+    const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target" || game_skill == "pickup_drop";
     const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
         skill->kind == SkillKind::action_queue);

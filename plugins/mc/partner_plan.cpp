@@ -33,6 +33,7 @@ bool prepare_action(std::string_view skill, Json& args) {
         args.at("message").is_number_unsigned() && args.at("message") > 0 &&
         (args.size() == 1 || (args.size() == 2 && (args.value("focus","") == "hit" || args.value("focus","") == "openings"))));
     if (skill == "gather_ground") return valid_stock_request(args);
+    if (skill == "pickup_drop") return valid_pickup_request(args);
     return skill == "dig_block" && args.size() == 4+args.count("message")+args.count("observation") &&
         name("block") && valid_action_cell(args) && (!args.contains("observation") || name("observation")) &&
         (!args.contains("message") || (args.at("message").is_number_unsigned() && args.at("message") > 0));
@@ -41,7 +42,7 @@ bool prepare_action(std::string_view skill, Json& args) {
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
-    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","capacity","changes","cells",
+    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","pickup","dropTarget","capacity","changes","cells",
         "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted"})
         if (result.contains(name)) evidence[name] = result.at(name);
     if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");
