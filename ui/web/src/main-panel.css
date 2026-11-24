@@ -64,6 +64,9 @@ button:disabled { cursor: default }
 .outgoing { align-self: flex-end; background: #dfe9de; border-radius: 16px 4px 16px 16px }
 .turn-status { margin: 0 8px }
 .queue-origin { padding-inline-start: 8px; font-weight: 400 }
+.turn-input { background: #ebf0e7; border-inline-start: 2px solid #81a28c }
+.input-receipt { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px }
+.input-receipt button { padding: 4px 6px; border: 0; border-radius: 4px; color: var(--accent); background: var(--paper) }
 .queue-panel {
   flex: none;
   margin-block: 4px 8px;
@@ -101,6 +104,12 @@ button:disabled { cursor: default }
   box-shadow: 0 4px 14px -9px #3c4c3b58;
 }
 .panel-compose:focus-within { border-color: var(--accent) }
+.send-destination { grid-column: 1 / -1; display: inline-flex; justify-self: start; gap: 2px; margin: 0; padding: 3px; border: 0; border-radius: 10px; background: #edefe6 }
+.send-destination label { position: relative; cursor: pointer; font-size: 13px }
+.visually-hidden, .send-destination input { position: absolute; width: 1px; height: 1px; margin: -1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap }
+.send-destination span { display: block; padding: 6px 12px; border-radius: 7px; color: var(--muted) }
+.send-destination input:checked + span { background: var(--paper); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px #314c3826 }
+.send-destination input:focus-visible + span { outline: 2px solid var(--accent) }
 .panel-compose textarea {
   width: 100%;
   min-height: 48px;

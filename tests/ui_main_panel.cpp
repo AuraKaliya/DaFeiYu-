@@ -18,6 +18,12 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
             if (text == "检查清空后的上下文" && std::ranges::count_if(request.messages,[](const auto& message) {
                 return message.role == model::Role::user || message.role == model::Role::assistant;
             }) != 1) throw std::runtime_error("UI fixture found prior dialogue");
+            if (text == "窗口补充，保持同一轮") {
+                const auto count = request.messages.size();
+                if (count<3 || request.messages[count-3].content!="等待桌面停止" ||
+                    request.messages[count-2].role!=model::Role::assistant || request.messages[count-2].content!="固定回复：等待桌面停止")
+                    throw std::runtime_error("UI fixture missing original same-turn context");
+            }
             return {{model::Role::assistant,"固定回复："+text}};
         }});
 }

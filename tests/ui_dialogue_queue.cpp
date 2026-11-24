@@ -96,6 +96,12 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
         document.querySelector('#dialogue-send').click(); return true;
     })())JS");
     wait_for("composer round actually entered backend",[gate] { return gate->entered.load() == 4; });
+    expect("busy input defaults to current run","document.querySelector('#dialogue-send').textContent==='追加本轮'");
+    evaluate("focus current input","document.querySelector('#dialogue-draft').focus(); document.activeElement.id==='dialogue-draft'");
+    call("input supplement before stop",L"Input.insertText",{{"text","留在本轮的补充"}});
+    key("append using Enter","Enter",13);
+    expect("supplement has a waiting receipt","document.querySelector('.turn:last-child .turn-input')?.dataset.state==='waiting' && !document.querySelector('#dialogue-draft').value");
+    evaluate("choose next round explicitly","document.querySelector('input[name=destination][value=next]').click(); true");
     expect("busy primary control names next round","document.querySelector('#dialogue-send').textContent==='排到下一轮'");
     evaluate("focus actual queue composer","document.querySelector('#dialogue-draft').focus(); document.activeElement.id==='dialogue-draft'");
     call("input first waiting item",L"Input.insertText",{{"text","稍后聊窗边的书"}});
@@ -105,7 +111,8 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
     evaluate("queue by button","document.querySelector('#dialogue-send').click(); true");
     expect("both waiting items displayed","document.querySelectorAll('.queue-list li').length===2");
     call("reload while queue is waiting",L"Page.reload",Json::object());
-    expect("reload restores both waiting items","document.querySelectorAll('.queue-list li').length===2 && document.querySelector('#dialogue-stop')?.disabled===false");
+    expect("reload restores both destinations","document.querySelectorAll('.queue-list li').length===2 && document.querySelector('#dialogue-stop')?.disabled===false && "
+        "document.querySelector('.turn:last-child .turn-input p')?.textContent==='留在本轮的补充'");
     evaluate("remove second visible waiting item","document.querySelectorAll('.queue-remove')[1].click(); true");
     expect("removal preserves first waiting item","document.querySelectorAll('.queue-list li').length===1 && document.querySelector('.queue-list li span').textContent==='稍后聊窗边的书'");
     evaluate("stop original with remaining item","document.querySelector('#dialogue-stop').click(); true");
@@ -114,6 +121,12 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
         "document.documentElement.scrollWidth<=innerWidth && document.querySelector('#dialogue-send').getBoundingClientRect().bottom<=innerHeight");
     wait_for("release the held composer round",[gate] { gate->release.release(); return true; });
     expect("history can be cleared with paused queue","document.querySelector('#dialogue-clear')?.disabled===false");
+    evaluate("restore undelivered input into an existing draft",R"JS((()=>{
+        const box=document.querySelector('#dialogue-draft'), input=document.querySelector('.turn:last-child .turn-input');
+        if(input.dataset.state!=='cancelled' || input.dataset.step!=='0') return false;
+        box.value='保留原稿'; box.dispatchEvent(new Event('input')); input.querySelector('button').click(); return true;
+    })())JS");
+    expect("restored input is editable only","document.querySelector('#dialogue-draft').value==='保留原稿'+String.fromCharCode(10)+'留在本轮的补充' && document.activeElement.id==='dialogue-draft'");
     evaluate("clear confirmation describes waiting items",R"JS((()=>{
         document.querySelector('#dialogue-clear').click();
         if (!document.querySelector('dialog').textContent.includes('1 条待发消息也会保留')) return false;
@@ -124,5 +137,21 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
     expect("resumed text appears in its own finished turn","!document.querySelector('.queue-list') && document.querySelectorAll('.turn').length===1 && "
         "document.querySelector('.turn').dataset.queuedMessage===window.resumedMessage && document.querySelector('.turn').dataset.exit==='succeeded' && "
         "document.querySelector('.incoming p')?.textContent==='固定回复：稍后聊窗边的书'");
+    evaluate("start a new original run for live input",R"JS((async()=>{
+        const box=document.querySelector('#dialogue-draft'); box.value='等待桌面停止'; box.dispatchEvent(new Event('input'));
+        await Promise.resolve(); document.querySelector('#dialogue-send').click(); return true;
+    })())JS");
+    wait_for("next composer run reached backend",[gate] { return gate->entered.load()==5; });
+    expect("next turn resets the destination","document.querySelector('#dialogue-send').textContent==='追加本轮'");
+    evaluate("double-click one current supplement",R"JS((async()=>{
+        const box=document.querySelector('#dialogue-draft'); box.value='窗口补充，保持同一轮'; box.dispatchEvent(new Event('input'));
+        await Promise.resolve(); const send=document.querySelector('#dialogue-send'); send.click(); send.click(); return true;
+    })())JS");
+    expect("one accepted supplement before model dispatch","document.querySelectorAll('.turn:last-child .turn-input').length===1 && "
+        "document.querySelector('.turn:last-child .turn-input').dataset.state==='waiting' && !document.querySelector('.turn:last-child .incoming')");
+    wait_for("release response to receive a same-turn supplement",[gate] { gate->release.release(); return true; });
+    expect("one final answer from actual follow-up model request","document.querySelectorAll('.turn').length===2 && document.querySelector('.turn:last-child').dataset.exit==='succeeded' && "
+        "document.querySelector('.turn:last-child .turn-input').dataset.state==='submitted' && document.querySelector('.turn:last-child .turn-input').dataset.step==='2' && "
+        "document.querySelector('.turn:last-child .incoming p')?.textContent==='固定回复：窗口补充，保持同一轮'");
 }
 }
