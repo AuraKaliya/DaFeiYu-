@@ -110,8 +110,9 @@ class PartnerLoop {
     std::bitset<categories.size()> scope() const noexcept;
     // 按放置类型绑定实际占用格和原话来源，返回拒绝原因或空值。
     std::string_view bind_placement_target(std::string_view skill, nlohmann::json& arguments) const;
-    // 仅保留有限的真人发言及已经实际投递的回复。
-    void remember_dialogue(std::string_view speaker, std::uint64_t order, const nlohmann::json& text);
+    // 在有界窗口保存真人原话和已投递发言，后者可附原委托或提问来源。
+    void remember_dialogue(std::string_view speaker, std::uint64_t order, const nlohmann::json& text,
+        const nlohmann::json& origin = nullptr);
     // 给已绑定且无新输入的游戏返回准备好的自主唤醒。
     std::string_view autonomous_wake() const;
     // 结束旧游戏绑定对应的 Agent 上下文。
@@ -324,6 +325,7 @@ class PartnerLoop {
     ReplyReservation reply_, rejection_reply_;
     bool question_requested_ = false;
     bool final_text_for_player_ = false;
+    nlohmann::json reply_origin_;
     struct Release {
         std::string world, id, arguments;
         std::unique_ptr<PipeExchange> pipe;

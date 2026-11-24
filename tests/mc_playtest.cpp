@@ -833,7 +833,8 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
             for (const auto& layer : input.at("planSettlements")) for (const auto& node : layer.at("nodes")) {
                 if (node.at("skill") != "give_item") continue;
                 const auto& result = node.at("result");
-                if (result.at("status") != "done" || result.at("receipt").at("recipientPicked") != 2)
+                if (result.at("status") != "done" || result.at("receipt").at("recipientPicked") != 2 ||
+                    input.at("replyOrigin").at("sourceMessage") != 2 || input.at("replyOrigin").at("planId") != input.at("taskPlan").at("id"))
                     throw std::runtime_error("gather handoff: delivery was not confirmed");
                 return {{Role::assistant,"刚挖的两块泥土你都捡到了。"}};
             }
@@ -847,9 +848,17 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
             if (text == "备好几块了？") {
                 const auto& motion = input.at("activeMotion");
                 const auto& progress = motion.at("progress");
-                if (motion.at("skill") != "collect" || progress.at("phase") != "digging" || progress.at("stock").at("current") != 0)
+                if (motion.at("skill") != "collect" || progress.at("phase") != "digging" || progress.at("stock").at("current") != 0 ||
+                    input.at("replyOrigin") != Json{{"sourceMessage",3}})
                     throw std::runtime_error("gather handoff: progress did not belong to the original dig");
                 return {{Role::assistant,"我在挖第一块，泥土还没进背包。"}};
+            }
+            if (text == "刚才交的是我哪次要的？") {
+                const auto& line = input.at("recentDialogue").back();
+                if (line.at("speaker") != "companion" || line.at("order") != 3 ||
+                    line.at("replyOrigin").at("sourceMessage") != 2 || !line.at("replyOrigin").contains("planId"))
+                    throw std::runtime_error("gather handoff: delivered answer lost its original commission");
+                return {{Role::assistant,"是你让我就地备两块泥土的那次。"}};
             }
         }
     } else if (last.role == Role::tool && last.tool_call_id == "check-stock") {

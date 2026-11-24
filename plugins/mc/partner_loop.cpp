@@ -226,6 +226,7 @@ void PartnerLoop::reset() noexcept {
     release_.reset();
     while (action_count_) actions_[--action_count_] = {};
     final_reply_.reset();
+    reply_origin_ = nullptr;
     attention_turn_.reset();
     reply_ = rejection_reply_ = {};
     question_requested_ = final_text_for_player_ = false;
@@ -330,6 +331,7 @@ void PartnerLoop::retire() {
     expanded_.reset();
     expansion_pending_ = false;
     events_.clear();
+    reply_origin_ = nullptr;
     recent_events_.clear();
     dialogue_.clear();
     previous_.clear();
@@ -393,6 +395,13 @@ void PartnerLoop::submit(std::string_view wake) {
     bool completed_dig = false;
     bool actual_outcome = wake == "follow.attention" ||
         (wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty());
+    Json reply_origin;
+    if (!delegated && !facts.empty() && facts.back().at("type") == "player.message" &&
+        std::ranges::count_if(facts,[](const auto& fact) { return fact.at("type") == "player.message"; }) == 1) {
+        reply_origin = {{"sourceMessage",facts.back().at("sequence")}};
+    } else if (autonomous && wake == "plan.finished" && actual_outcome && !plan_->origin.is_null()) {
+        reply_origin = {{"sourceMessage",plan_->origin.at("sequence")},{"planId",plan_->id},{"taskRevision",plan_->revision}};
+    }
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
         auto primary = receipts.size()-1;
@@ -401,6 +410,12 @@ void PartnerLoop::submit(std::string_view wake) {
         const auto& receipt = receipts.at(primary);
         const auto& status = receipt.at("result").at("status");
         actual_outcome |= wake == "motion.finished" && (status == "done" || status == "blocked") && receipt.at("skill") != "follow";
+        if (autonomous && wake == "motion.finished" && actual_outcome) {
+            reply_origin = {{"bridgeWork",receipt.at("bridgeWork")}};
+            if (std::ranges::any_of(dialogue_,[&](const auto& line) {
+                return line.at("speaker") == "player" && line.at("order") == receipt.at("order");
+            })) reply_origin["sourceMessage"] = receipt.at("order");
+        }
         completed_dig = facts.empty() && !task_.correcting() && receipt.value("pointedDig",false) &&
             verified_action(receipt.at("result"),"collect",{});
         auto& task = input.at("task");
@@ -469,6 +484,7 @@ void PartnerLoop::submit(std::string_view wake) {
         auto guidance = companion_guidance(input,player_message,actual_outcome,observe_visible && plan_visible);
         if (!guidance.empty()) input["mcGuidance"] = std::move(guidance);
     }
+    if (!reply_origin.is_null()) input["replyOrigin"] = reply_origin;
     const auto prompt = model_scene_text(std::move(input));
     const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);
@@ -478,6 +494,7 @@ void PartnerLoop::submit(std::string_view wake) {
         delegated ? delegated_skills.data() : visible.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | player_flags};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
+    reply_origin_ = std::move(reply_origin);
     visible_skills_ = disclosed;
     settling_plan_ = wake == "plan.finished" && actual_outcome ? plan_->id : 0;
     attention_turn_.reset();
@@ -873,9 +890,10 @@ std::bitset<categories.size()> PartnerLoop::scope() const noexcept {
     return enabled;
 }
 
-// 将已收原话或实际发言放入有界的对话窗口。
-void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t order, const Json& text) {
+// 将已收原话或实际发言放入有界对话窗口，同时保留当次发言可核对的来源。
+void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t order, const Json& text, const Json& origin) {
     dialogue_.push_back({{"speaker",speaker},{"order",order},{"text",text}});
+    if (!origin.is_null()) dialogue_.back()["replyOrigin"] = origin;
     if (dialogue_.size() > 8) dialogue_.pop_front();
 }
 
@@ -942,6 +960,7 @@ void PartnerLoop::report_actions() {
             if (code.starts_with("observe_")) limit_repair(std::move(code));
         }
         if (action.skill == "reply") {
+            if (!reply_origin_.is_null()) fact["replyOrigin"] = reply_origin_;
             const bool unsent = action.effect == DFY_V2_TOOL_NOT_APPLIED;
             if (action.work == reply_.work) reply_.unsent = unsent;
             if (action.work == rejection_reply_.work) rejection_reply_.unsent = unsent;
@@ -949,7 +968,7 @@ void PartnerLoop::report_actions() {
                 {"sent",false},{"delivery",unsent ? "not_sent" : "unknown"}};
             if (fact.contains("result") && fact["result"].value("sent",false) &&
                 !fact["result"].value("reused",false) && fact["result"].contains("text"))
-                remember_dialogue("companion",order_,fact["result"]["text"]);
+                remember_dialogue("companion",order_,fact["result"]["text"],reply_origin_);
         }
         if (!active_delegation_) task_.record(fact);
         publish("mc.partner.action",fact);

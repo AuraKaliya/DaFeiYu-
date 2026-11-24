@@ -306,6 +306,13 @@ async function checkGatherHandoff(fixture, player, whispers) {
   assert.deepEqual(accepted.map(r => [r.body.bridgeWork,r.body.order]),jobs.map(job => [job.work,2]));
   const plan = trace().find(r => r.category === 'mc.partner.plan' && r.body.status === 'queued')?.body.plan;
   assert.deepEqual([plan.origin.sequence,plan.origin.text,plan.nodes.map(n => n.work)], [2,'就地备两块泥土，拿来给我。',jobs.map(job => job.work)]);
+  const replies = trace().filter(r => r.kind === 'mail.received' && r.category === 'mc.partner.action' && r.body.skill === 'reply').map(r => r.body);
+  assert.deepEqual(replies.map(r => [r.result.text,r.order,r.replyOrigin.sourceMessage]),[[first,2,2],[during,3,3],[finished,3,2]]);
+  assert.deepEqual(replies[2].replyOrigin,{ sourceMessage:2, planId:plan.id, taskRevision:plan.revision });
+  assert.equal(replies[2].source,'final_text');
+  assert.ok(replies[0].invocation > 0);
+  player.chat('刚才交的是我哪次要的？');
+  await until(() => whispers.includes('是你让我就地备两块泥土的那次。'),'下轮可沿完工发言找到原委托');
 }
 
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
