@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "conversation.hpp"
+#include "builtin_room.hpp"
 #include "companion.hpp"
 #include "tool_verification.hpp"
 #include "subagents.hpp"
@@ -56,6 +57,8 @@ class Application {
     std::filesystem::path trace_file() const;
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
+    // 读取本体的房间布局和绑定身体，不依赖窗口或加载的插件。
+    const BuiltinRoom& room() const noexcept { return room_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
     agent::TurnDiagnostics submit_dialogue(const std::string& text);
     // 向用户所见的原回合投递补充，保留有来源的收件回执。
@@ -195,6 +198,7 @@ class Application {
     void advance_dialogue_queue();
 
     const agent::ToolClock tool_clock_;
+    BuiltinRoom room_;
     std::shared_ptr<events::BroadcastChannel> channel_;
     plugins::PluginMailboxHost mailbox_host_;
     const runtime::DomainId dialogue_sender_;

@@ -276,6 +276,33 @@ void dialogue_inputs(const fs::path& run) {
     check(rejected,"replay accepted a supplement assigned to the wrong model step");
 }
 
+// 在无页面、空插件下核对同名书房、固定布局和自身位置的实例隔离。
+// 步骤：创建两个应用 → 核对共有布局 → 分别复核身体与代次 → 验证查询零模型调用。
+void builtin_room(const fs::path& run) {
+    using namespace dfy::app;
+    std::atomic<unsigned> calls = 0;
+    dfy::model::Backend backend{[&](const auto&,const auto&) -> dfy::model::Response {
+        ++calls; return {{dfy::model::Role::assistant,"意外的模型调用"}};
+    }};
+    Application first({},run/"empty-room-one",run/"room-user-one",backend);
+    Application other({},run/"empty-room-two",run/"room-user-two",backend);
+    const auto layout = first.room().layout(), second = other.room().layout();
+    check(layout.name=="书房" && layout.name==second.name && layout.version==1 && layout.room!=second.room &&
+        layout.places.size()==3 && layout.objects.size()==2,"builtin layout or instance identity missing");
+    check(std::ranges::any_of(layout.passages,[](const auto& link) {
+        return link.from==RoomPlace::desk && link.to==RoomPlace::window && link.distance>0;
+    }) && std::ranges::any_of(layout.objects,[](const auto& object) {
+        return object.id==RoomObject::desk_lamp && object.place==RoomPlace::desk && !object.use.empty();
+    }),"known room omitted route or object use");
+    const auto self = first.room().self(layout.room), another = other.room().self(second.room);
+    check(self && another && self->body!=another->body && self->room==layout.room && self->place==RoomPlace::desk &&
+        self->activity==RoomActivity::resting && self->revision==1 && !first.room().self(second.room) &&
+        !first.room().self({layout.room.instance,layout.room.generation+1}),"self query crossed room binding or lost initial pose");
+    first.advance_plugins(); first.conversation().advance();
+    check(!calls.load() && !first.conversation().status() && first.room().self(layout.room)->revision==self->revision,
+        "read-only room query advanced the body or woke the model");
+}
+
 // 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。
 // 步骤：记录固定模型及有序改写 → 比对工具回执 → 脱离原 Hook 重新执行。
 void trace_rewrites(const fs::path& run) {
@@ -483,6 +510,7 @@ int wmain(int argc, wchar_t** argv) {
         display_outcomes(run);
         dialogue_queue(run);
         dialogue_inputs(run);
+        builtin_room(run);
         trace_rewrites(run);
         priority_mailboxes(run);
         ask_lifecycle();
