@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { trackSelfVitals } = require('./self-vitals.cjs');
 
 // 返回实体脚位所在格正下方的整数格，负坐标也向下取整。
 function belowFeet(point) { return point.floored().offset(0, -1, 0); }
@@ -11,6 +12,7 @@ function observeWorld(bot) {
   const maps = new Map(), spawnMaps = new Map();
   let lastSignal = 0;
   let closed = false;
+  const vitals = trackSelfVitals(bot, () => generation);
   const signal = () => { lastSignal = performance.now(); };
   const enter = () => { generation = randomUUID(); spawnMaps.clear(); signal(); };
   const leave = () => { generation = null; spawnMaps.clear(); };
@@ -29,6 +31,7 @@ function observeWorld(bot) {
   if (bot.entity && bot.player?.uuid) enter();
 
   return {
+    vitals: vitals.read,
     // 为同一连接到过的地图提供可复用的对象身份。
     // 步骤：核对出生和维度 → 或按地图名、或按本次出生保留独立身份。
     space() {
@@ -51,6 +54,7 @@ function observeWorld(bot) {
     // 停止服务端事件投影，已有快照仅保留其原世界身份。
     close() {
       closed = true;
+      vitals.close();
       disconnect();
       bot._client?.removeListener('login', login);
       bot._client?.removeListener('respawn', readLevel);

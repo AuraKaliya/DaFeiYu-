@@ -178,6 +178,34 @@ void ground_pickup_protocol() {
     rejects(read);
 }
 
+// 验证生命与空气可分别未知，拒绝旧代次、错时和错误量纲。
+// 步骤：绑定原工作和自身身份 → 回读两种样本 → 替换代次、读数或查询范围并验证拒绝。
+void vitals_protocol() {
+    const std::string world = "00112233-4455-6677-8899-aabbccddeeff", controller(32,'c');
+    const Json context{{"generation",world},{"order",2}};
+    Json command{{"context",context},{"arguments",{{"mode","vitals"}}}};
+    auto action = context;
+    action.update(Json{{"controller",controller},{"skill","observe"},{"exited",true},{"result",{{"status","done"}}}});
+    Json frame{{"version",1},{"id","health"},{"action",action}};
+    auto& sample = frame["action"]["result"]["vitals"] = {{"id","health"},{"generation",world},{"actor",world},{"entityId",4},
+        {"dimension","overworld"},{"readAtMs",42},{"health",{{"state","unknown"}}},{"air",{{"state","unknown"}}}};
+    const auto read = [&] { return dfy::mc::partner_reply(frame.dump(),"health",controller,"observe",command.dump()); };
+    if (!read().arrived || read().changed) throw std::runtime_error("unknown vitals became an action");
+    sample["health"] = {{"state","sampled"},{"source","update_health"},{"points",19.5},{"food",12},{"sampledAtMs",42}};
+    sample["air"] = {{"state","sampled"},{"source","entity_metadata.air_supply"},{"ticks",-8},{"sampledAtMs",39}};
+    if (!read().arrived) throw std::runtime_error("signed air or fractional health lost");
+    sample["air"]["sampledAtMs"] = 43;
+    rejects(read);
+    sample["air"] = {{"state","unknown"},{"ticks",300}};
+    rejects(read);
+    sample["air"] = {{"state","unknown"}};
+    sample["generation"] = "stale";
+    rejects(read);
+    sample["generation"] = world;
+    command["arguments"]["around"] = "player";
+    rejects(read);
+}
+
 // 核对交物观察按接收者、距离与槽位总数结算，拒绝跨人或重复选槽。
 // 步骤：构造跨堆备料 → 替换玩家和脚位 → 伪造选择或缺料量并验证拒绝。
 void handoff_protocol() {
@@ -393,6 +421,7 @@ int main() {
         collect_progress_protocol();
         ground_pickup_protocol();
         handoff_protocol();
+        vitals_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         using dfy::mc::PlayerThinking;

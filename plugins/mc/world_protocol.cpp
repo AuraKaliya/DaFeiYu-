@@ -37,6 +37,27 @@ bool dimension(const Json& value) {
     });
 }
 
+// 核对本人生命与空气样本的游戏来源、时间和量纲，未采样的字段只能报告未知。
+// 步骤：绑定工作与现场 → 分别核对源包和采样时刻 → 验证生命、饥饿或有符号空气刻数。
+void verify_vitals(const Json& sample, std::string_view id, const Json& generation) {
+    if (sample.at("id").get_ref<const std::string&>() != id || sample.at("generation") != generation ||
+        !game_uuid(sample.at("actor")) || !dimension(sample.at("dimension")) || !sample.at("entityId").is_number_unsigned() ||
+        sample.at("entityId") > INT32_MAX || !sample.at("readAtMs").is_number_unsigned())
+        throw std::invalid_argument("MC: invalid vitals source");
+    for (const auto key : {std::string_view("health"),std::string_view("air")}) {
+        const auto& reading = sample.at(key);
+        if (reading.at("state") == "unknown" && reading.size() == 1) continue;
+        if (reading.at("state") != "sampled" || !reading.at("sampledAtMs").is_number_unsigned() ||
+            reading.at("sampledAtMs") > sample.at("readAtMs")) throw std::invalid_argument("MC: invalid vitals sample time");
+        if (key == "health") {
+            if (reading.at("source") != "update_health" || !reading.at("points").is_number() || reading.at("points") < 0 ||
+                !reading.at("food").is_number_unsigned() || reading.at("food") > 20)
+                throw std::invalid_argument("MC: invalid health sample");
+        } else if (reading.at("source") != "entity_metadata.air_supply" || !reading.at("ticks").is_number_integer() ||
+            reading.at("ticks") < INT32_MIN || reading.at("ticks") > INT32_MAX) throw std::invalid_argument("MC: invalid air sample");
+    }
+}
+
 // 验证主背包与快捷栏的容量覆盖，只接受与已读槽位一致的可用量。
 void verify_inventory_capacity(const Json& capacity, std::string_view item) {
     if (item.empty() || capacity.at("item").get_ref<const std::string&>() != item || capacity.at("scope") != "main_and_hotbar" ||
@@ -535,6 +556,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
     const bool thrown = skill == "give_item" && verify_transfer(result,args,context.at("generation"),exited);
+    if (skill == "observe" && (result.contains("vitals") || (exited && result.at("status") == "done" && args.value("mode","") == "vitals"))) {
+        if (args.value("mode","") != "vitals" || args.size() != 1) throw std::invalid_argument("MC: unexpected vitals observation");
+        verify_vitals(result.at("vitals"),id,context.at("generation"));
+    }
     if (skill == "observe" && (result.contains("handoffReceipt") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff_receipt"))) {
         if (args.value("mode","") != "handoff_receipt") throw std::invalid_argument("MC: unexpected handoff receipt recheck");
         verify_handoff_recheck(result.at("handoffReceipt"),args,id,context);

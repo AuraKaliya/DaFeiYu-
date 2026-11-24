@@ -18,6 +18,10 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'vitals') {
+    if (Object.keys(args).length !== 1) throw invalidObservation('observe_vitals_parameters', '生命与氧气观察只读取同场伙伴自身');
+    return { mode };
+  }
   if (mode === 'handoff_receipt') {
     if (typeof args.work !== 'string' || !args.work.length || args.work.length > 128 || Object.keys(args).length !== 2)
       throw invalidObservation('handoff_work_reference', '复查收件需要原交物工作编号');

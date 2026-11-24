@@ -392,7 +392,9 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       }
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
-      if (observation?.mode === 'handoff') {
+      if (observation?.mode === 'vitals') {
+        result.vitals = world.vitals(job.id,r.generation);
+      } else if (observation?.mode === 'handoff') {
         result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'handoff_receipt') {
         const original = records.get(workKey(r.controller,args.work));
