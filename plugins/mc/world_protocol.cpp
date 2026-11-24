@@ -508,6 +508,7 @@ std::string partner_request(std::string_view method, std::string_view id, const 
     if (skill == "pickup_drop" && !valid_pickup_request(envelope.at("arguments")))
         throw std::invalid_argument("MC: invalid ground pickup arguments");
     const auto& args = envelope.at("arguments");
+    if (skill == "give_item" && !valid_handoff_action(args)) throw std::invalid_argument("MC: invalid handoff arguments");
     if (skill == "observe" && args.value("mode","") == "handoff" && (args.size() != 4 || !valid_handoff_request(args)))
         throw std::invalid_argument("MC: invalid handoff observation arguments");
     context["controller"] = config.controller;
@@ -519,7 +520,7 @@ std::string partner_request(std::string_view method, std::string_view id, const 
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,
     std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" || skill == "pickup_drop" ? 12 : 6), envelope = parse(arguments);
+    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" || skill == "pickup_drop" || skill == "give_item" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
@@ -530,6 +531,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "give_item") verify_transfer(result,args,context.at("generation"),exited);
     if (skill == "observe" && (result.contains("handoff") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff"))) {
         if (args.value("mode","") != "handoff") throw std::invalid_argument("MC: unexpected handoff observation");
         verify_handoff(result.at("handoff"),args,id,context.at("generation"));
@@ -647,10 +649,12 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool craft_attempted = exited && skill == "craft" && result.at("craftAttempted").get<bool>();
-    const bool changed = exited && (skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
+    const bool changed = exited && (skill == "give_item" ? false : skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
         result.contains("changes") && verified_changes(result.at("changes")));
+    const bool inventory_attempted = (skill == "give_item" && result.contains("transfer") && result.at("transfer").at("attemptedClicks") != 0) ||
+        (skill == "pickup_drop" && result.contains("pickup") && result.at("pickup").at("approachAttempted") == true);
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},
-        std::move(progress), craft_attempted, skill == "pickup_drop" && result.contains("pickup") && result.at("pickup").at("approachAttempted") == true};
+        std::move(progress), craft_attempted, inventory_attempted};
 }
 // 将普通退出和显式接管分别绑定到控制实例或原游戏世界。
 // 步骤：核对目标范围 → 选择释放或接管方法 → 生成原请求帧。

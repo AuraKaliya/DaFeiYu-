@@ -1,5 +1,6 @@
 #include "partner_loop.hpp"
 #include "partner_effect.hpp"
+#include "handoff_receipt.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <stdexcept>
@@ -34,6 +35,7 @@ bool prepare_action(std::string_view skill, Json& args) {
         (args.size() == 1 || (args.size() == 2 && (args.value("focus","") == "hit" || args.value("focus","") == "openings"))));
     if (skill == "gather_ground") return valid_stock_request(args);
     if (skill == "pickup_drop") return valid_pickup_request(args);
+    if (skill == "give_item") return valid_handoff_action(args);
     return skill == "dig_block" && args.size() == 4+args.count("message")+args.count("observation") &&
         name("block") && valid_action_cell(args) && (!args.contains("observation") || name("observation")) &&
         (!args.contains("message") || (args.at("message").is_number_unsigned() && args.at("message") > 0));
@@ -43,7 +45,8 @@ bool prepare_action(std::string_view skill, Json& args) {
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
     for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","pickup","dropTarget","nearbyDrop","capacity","changes","cells",
-        "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted"})
+        "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted",
+        "transfer","originalWork"})
         if (result.contains(name)) evidence[name] = result.at(name);
     if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");
     return evidence;

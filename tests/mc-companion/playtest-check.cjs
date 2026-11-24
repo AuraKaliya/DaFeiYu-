@@ -282,6 +282,16 @@ async function checkHandoff(fixture, player, whispers) {
   assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
+  player.chat('那就给我六十六块泥土。');
+  const sent = '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
+  await until(() => whispers.includes(sent), '按原观察投物后说明可核实的库存变化');
+  await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66, '独立玩家在生存模式实际拾到六十六块', 12000);
+  const jobs = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'give_item');
+  assert.equal(jobs.length,1);
+  const [job] = jobs;
+  assert.deepEqual([job.arguments.recipient,job.result.transfer.submitted,job.result.transfer.stockAfter,
+    job.result.reasonCode,fixture.materialCount('dirt')], [player.player.uuid,66,4,'handoff_receipt_unconfirmed',4]);
+  assert.deepEqual(whispers, [reply,sent]);
 }
 
 // 由独立玩家核对追问回到原消息并实际补齐相隔的两处开口。

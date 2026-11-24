@@ -821,22 +821,39 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
 dfy::model::Response handoff_sample(const dfy::model::Request& request) {
     using namespace dfy::model;
     using Json = nlohmann::json;
+    const auto call = [&](std::string_view name, std::string id, const Json& args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
+        if (tool == request.tools.end()) throw std::runtime_error("handoff: missing tool");
+        return {{Role::assistant,"",{{std::move(id),tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
-        if (!input.at("events").empty() && input.at("events").back().value("text","") == "你身上能分给我六十六块泥土吗？") {
-            const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_observe"); });
-            if (tool == request.tools.end()) throw std::runtime_error("handoff: missing observation");
-            const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",66}};
-            return {{Role::assistant,"",{{"stock",tool->name,args.dump()}}},FinishReason::tool_calls};
+        if (input.at("trigger") == "plan.finished") {
+            const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+            if (result.at("transfer").at("submitted") != 66 || result.at("transfer").at("returnedClicks") != 3 ||
+                result.at("inventoryDelta") != Json{{"dirt",-66}} || result.value("reasonCode","") != "handoff_receipt_unconfirmed")
+                throw std::runtime_error("handoff: transfer amount or uncertainty lost");
+            return {{Role::assistant,"我这边背包少了六十六块泥土，还不能确认你捡到了多少。"}};
         }
-    } else if (last.role == Role::tool && last.tool_call_id == "stock") {
+        if (!input.at("events").empty()) {
+            const auto text = input.at("events").back().value("text","");
+            const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",66}};
+            if (text == "你身上能分给我六十六块泥土吗？") return call("_observe","stock",args);
+            if (text == "那就给我六十六块泥土。") return call("_observe","give-ready",args);
+        }
+    } else if (last.role == Role::tool && (last.tool_call_id == "stock" || last.tool_call_id == "give-ready")) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         const auto& sample = result.at("handoff");
         const auto& stock = sample.at("stock");
         if (sample.at("target").at("state") != "visible" || sample.at("target").at("distance") > 3 || sample.at("window") != "inventory" ||
             stock.at("available") != 70 || stock.at("missing") != 0 || stock.at("selected").size() != 2)
             throw std::runtime_error("handoff: wrong player or stock");
+        if (last.tool_call_id == "give-ready") {
+            const Json args{{"observation",sample.at("id")},{"recipient",sample.at("recipient")},{"item","dirt"},{"count",66}};
+            const Json step{{"id","give"},{"skill","give_item"},{"arguments",args}};
+            return call("_queue_actions","give",{{"operation","plan"},{"steps",Json::array({step})}});
+        }
         return {{Role::assistant,"我身上有七十块普通泥土，从两个槽位能拿出六十六块。"}};
     }
     return {{Role::assistant,R"({"internal":"waiting for a handoff request"})"}};

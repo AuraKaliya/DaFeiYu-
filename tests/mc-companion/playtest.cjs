@@ -91,6 +91,9 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         send(`summon minecraft:item ${x} -60 ${z} {Item:{id:"minecraft:${item}",count:${count}},PickupDelay:32767s}`);
     }
     if (mode === '--handoff-probe') {
+      send('fill -3 -61 -3 7 -61 3 minecraft:dirt');
+      send('fill -3 -60 -3 7 -58 3 minecraft:air');
+      send('kill @e[type=minecraft:item,x=-3,y=-61,z=-3,dx=10,dy=5,dz=6]');
       send('tp DfyGuestCheck 2.5 -60 0.5');
       send('clear DfyGuestCheck minecraft:dirt');
       send('give DfyCompanion minecraft:dirt 70');
@@ -130,7 +133,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('setblock 2 -61 0 minecraft:dirt');
       send('tp DfyGuestCheck -1.5 -60 -1.5');
     }
-    else if (!wallProbe && mode !== '--probe' && mode !== '--pickup-probe') {
+    else if (!wallProbe && mode !== '--probe' && mode !== '--pickup-probe' && mode !== '--handoff-probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
       if (mode === '--partner-probe' || mode === '--follow-probe') prepareCourse(send);

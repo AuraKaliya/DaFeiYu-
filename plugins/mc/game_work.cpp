@@ -55,7 +55,7 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer, bool allow_
                 value.placement_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited && skill_ == "craft") return GameResult{true, value.changed ? GameEffect::observed :
                 value.craft_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
-            if (value.exited && skill_ == "pickup_drop") return GameResult{true, value.changed ? GameEffect::observed :
+            if (value.exited && (skill_ == "pickup_drop" || skill_ == "give_item")) return GameResult{true, value.changed ? GameEffect::observed :
                 value.inventory_attempted ? GameEffect::unknown : GameEffect::none,std::move(value.payload)};
             if (value.exited && skill_ == "reply") return GameResult{true, value.delivery == ReplyDelivery::sent ? GameEffect::observed :
                 value.delivery == ReplyDelivery::not_sent ? GameEffect::none : GameEffect::unknown,std::move(value.payload)};

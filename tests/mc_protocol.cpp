@@ -211,6 +211,29 @@ void handoff_protocol() {
     stock["selected"][1]["slot"] = 10;
     stock["missing"] = 1;
     rejects(read);
+    stock["missing"] = 0;
+    sample["target"] = {{"state","visible"},{"entityId",8},{"position",{{"x",2},{"y",-60},{"z",0}}},{"distance",2}};
+    frame["action"]["skill"] = "give_item";
+    frame["id"] = "give";
+    result["status"] = "blocked";
+    result["reasonCode"] = "handoff_receipt_unconfirmed";
+    auto& transfer = result["transfer"] = {{"observation","offer"},{"recipient",owner},{"item","dirt"},{"requested",66},
+        {"attemptedClicks",3},{"returnedClicks",3},{"submitted",66},{"sourceClaimed",true},
+        {"stockBefore",70},{"stockAfter",4},{"stockCurrent",true},{"sampledAtMs",50}};
+    result["inventoryDelta"] = {{"dirt",-66}};
+    auto command = Json::parse(args);
+    command["arguments"].erase("mode");
+    command["arguments"]["observation"] = "offer";
+    const auto give = [&] { return dfy::mc::partner_reply(frame.dump(),"give",controller,"give_item",command.dump()); };
+    if (!give().inventory_attempted || give().changed || give().arrived) throw std::runtime_error("uncertain transfer reported receipt");
+    result["status"] = "done";
+    rejects(give);
+    result["status"] = "blocked";
+    transfer["submitted"] = 67;
+    rejects(give);
+    transfer["submitted"] = 66;
+    result["inventoryDelta"]["dirt"] = -65;
+    rejects(give);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
