@@ -7,6 +7,7 @@ const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops, readDropTarget } = require('../../plugins/mc/bridge/dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('../../plugins/mc/bridge/collect-drops.cjs');
+const { trackDrop } = require('../../plugins/mc/bridge/drop-tracker.cjs');
 const { inventoryCapacity } = require('../../plugins/mc/bridge/inventory-capacity.cjs');
 const { EventEmitter } = require('node:events');
 
@@ -155,6 +156,28 @@ test('pickup evidence follows one new stack and credits only protocol collection
     assert.deepEqual([watcher.entry.state, watcher.entry.selfCount, watcher.entry.otherCount], ['left_view', 0, 0]);
   }
   assert.deepEqual([result.pickups.attempted, result.pickups.omitted, result.pickups.recent.length], [6, 2, 4]);
+});
+
+// 追踪事先指定的一堆物品，其他堆和换维度后的同号拾取包不计入本次工作。
+test('a preselected entity accepts only its own packets in the original dimension', () => {
+  const bot = new EventEmitter(), point = new Position(0, 0, 0);
+  bot._client = new EventEmitter();
+  bot.entity = { id: 1 };
+  bot.game = { dimension: 'overworld' };
+  const drop = id => ({ id, name: 'item', position: point, getDroppedItem: () => ({ name: 'dirt', count: 3 }) });
+  const first = drop(8), second = drop(9);
+  bot.entities = { 8: first, 9: second };
+  const entry = { state: 'unseen' }, packets = [];
+  const tracker = trackDrop(bot, entry, entity => entity === second, observed => packets.push(observed.lastCollector.count));
+  assert.equal(tracker.live(), second);
+  const receive = id => bot._client.emit('collect', { collectedEntityId: id, collectorEntityId: 1, pickupItemCount: 2 });
+  receive(8);
+  receive(9);
+  bot.game.dimension = 'the_nether';
+  receive(9);
+  tracker.stop();
+  assert.deepEqual([entry.state, entry.entityId, entry.selfCount, packets], ['left_view', 9, 2, [2]]);
+  assert.equal(bot._client.listenerCount('collect'), 0);
 });
 
 // 入包没有得到双重读回时，保留现场能够支持的具体受阻原因。

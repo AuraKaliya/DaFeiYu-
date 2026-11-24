@@ -21,4 +21,21 @@ function inventoryCapacity(bot, item) {
     emptySlots, mergeSpace, knownSpace: emptySlots*size + mergeSpace, unknownSlots };
 }
 
-module.exports = { inventoryCapacity };
+// 按物品汇总主背包与快捷栏中已经同步的数量。
+function inventory(bot) {
+  const stock = {};
+  for (const stack of bot.inventory.items()) stock[stack.name] = (stock[stack.name] ?? 0) + stack.count;
+  return stock;
+}
+
+// 按同一物品名称比对两次实际库存，保留期间发生的所有净变化。
+function inventoryDelta(before, after) {
+  const delta = {};
+  for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const amount = (after[name] ?? 0) - (before[name] ?? 0);
+    if (amount) delta[name] = amount;
+  }
+  return delta;
+}
+
+module.exports = { inventoryCapacity, inventory, inventoryDelta };

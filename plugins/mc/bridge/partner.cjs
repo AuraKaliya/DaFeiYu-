@@ -6,7 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
-const { inventoryCapacity } = require('./inventory-capacity.cjs');
+const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
@@ -18,13 +18,6 @@ const { controllerLease } = require('./controller.cjs');
 const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
 const { monitorMove } = require('./move-progress.cjs');
 const { belowFeet } = require('./world.cjs');
-
-// 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
-function inventory(bot) {
-  const stock = {};
-  for (const item of bot.inventory.items()) stock[item.name] = (stock[item.name] ?? 0) + item.count;
-  return stock;
-}
 
 // 将宿主局部编号限定在原控制实例内。
 function workKey(controller, id) { return controller + '/' + id; }
@@ -285,11 +278,7 @@ async function collect(bot, args, check, job, built) {
   } finally {
     const after = inventory(bot);
     if (expected) result.stock.after = after[expected] ?? 0;
-    result.inventoryDelta = {};
-    for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      const diff = (after[name] ?? 0) - (before[name] ?? 0);
-      if (diff) result.inventoryDelta[name] = diff;
-    }
+    result.inventoryDelta = inventoryDelta(before, after);
     progress.sample();
     job.sampleProgress = undefined;
   }
