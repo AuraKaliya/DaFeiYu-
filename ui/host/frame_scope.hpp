@@ -5,7 +5,7 @@
 
 namespace dfy::ui {
 inline constexpr std::wstring_view center_url = L"https://center.dafeiyu.invalid/index.html";
-inline constexpr std::wstring_view main_panel_url = L"https://center.dafeiyu.invalid/main-panel.html";
+inline constexpr std::wstring_view main_panel_url = L"https://panel.dafeiyu.invalid/main-panel.html";
 // 仅供 U01 的固定本地来源，denied 来源用于真实未授权页面的反向验证。
 bool local_resource(std::wstring_view uri) noexcept;
 // 主页面允许同文档 hash 路由，但不接受改变路径或查询参数。

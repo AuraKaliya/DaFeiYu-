@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import study from './art/study.png';
+import { recoverDialogue, rememberDialogue, rememberDraft, type IntentAction, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 type CommandState = 'unavailable' | 'queued' | 'accepted' | 'busy' | 'rejected' | 'conflict' | 'expired' | 'stale' | 'full';
@@ -69,6 +70,33 @@ let command = 0n;
 let request = 0, latestSnapshot = 0;
 let revision = '';
 let refresh = 0;
+const outstanding = new Map<string, WireCommand>();
+const reconnecting = new Set<string>();
+
+// 在提交、结算及离开页面时固定草稿和未决原件。
+function remember(): void {
+  try { rememberDialogue(draft.value, outstanding.values()); }
+  catch { notice.value = '当前窗口无法保留刷新前的草稿，请先等待操作回执。'; }
+}
+
+// 从同一窗口历史项恢复未决身份，等原生快照核对后决定是否补投原命令。
+// 步骤：还原草稿 → 固定命令水位及两个槽位 → 等待正式回执。
+function recover(): void {
+  const saved = recoverDialogue();
+  draft.value = saved.draft;
+  for (const fields of saved.commands) {
+    const id = fields.command;
+    outstanding.set(id, fields);
+    reconnecting.add(id);
+    if (BigInt(id) > command) command = BigInt(id);
+    const action = (fields.type === 'dialogue.submit' ? 'send' : fields.type.slice(9)) as IntentAction;
+    if (action === 'cancel') {
+      pendingStop.value = id;
+      stopTarget.value = { session: fields.session, turn: fields.turn };
+    } else if (action === 'send' || action === 'append' || action === 'enqueue') pending.value = { id, action, text: fields.text };
+    else pending.value = { id, action };
+  }
+}
 
 // 先确认浏览器回包是可读取字段的对象。
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,6 +134,10 @@ function isReceipt(value: unknown): value is Receipt {
 
 // 给当前页面的所有命令使用独立请求身份，便于拒绝其他文档的回包。
 function post(fields: Readonly<Record<string, string>>): void {
+  if (fields.type !== 'dialogue.read') {
+    outstanding.set(fields.command, fields);
+    remember();
+  }
   bridge.postMessage({ ...fields, version: '1', request: `${scope}${++request}` });
 }
 
@@ -119,12 +151,15 @@ function read(): void {
 // 步骤：核对待交付身份 → 按命令结算草稿与焦点 → 显示宿主拒绝原因。
 function settle(receipt: Receipt): void {
   if (receipt.state === 'queued') return;
+  if (!outstanding.delete(receipt.command)) return;
+  reconnecting.delete(receipt.command);
   if (receipt.command === pendingStop.value) {
     pendingStop.value = '';
     if (receipt.state !== 'accepted') {
       stopTarget.value = undefined;
       notice.value = rejection[receipt.state];
     }
+    remember();
     return;
   }
   const current = pending.value;
@@ -136,6 +171,7 @@ function settle(receipt: Receipt): void {
   } else if (current.action === 'append' && receipt.state === 'full') notice.value = '本轮可接收的补充已满，草稿已保留。';
   else if (current.action === 'append' && receipt.state === 'stale') notice.value = '原回合已结束，草稿已保留，可以另发。';
   else notice.value = rejection[receipt.state];
+  remember();
 }
 
 // 将原生快照投影为当前页面的对话，过滤协议不符及迟到的旧快照。
@@ -161,6 +197,12 @@ function receive(event: MessageEvent<unknown>): void {
       turns.value = value.turns;
       queue.value = value.queue;
     }
+    if (value.ready && reconnecting.size) {
+      // 宿主水位尚未登记的原件才按原编号补投一次；其他原件继续只读查询。
+      for (const [id, fields] of outstanding) {
+        if (reconnecting.delete(id) && BigInt(id) > latestCommand) post(fields);
+      }
+    }
   } else if (value.event !== 'dialogue.receipt') return;
   if (isReceipt(value.receipt)) settle(value.receipt);
 }
@@ -185,7 +227,12 @@ function send(): void {
 
 // 由用户把未带入的原话放回编辑区，保留已有草稿并等待显式发送。
 function reuseInput(input: TurnInput): void {
-  draft.value = draft.value ? draft.value + '\n' + input.text : input.text;
+  const combined = draft.value ? draft.value + '\n' + input.text : input.text;
+  if (encoder.encode(combined).length > byteLimit) {
+    notice.value = '加入后草稿会超过 1 MiB，请先缩短当前草稿。';
+    return;
+  }
+  draft.value = combined;
   composer.value?.focus();
 }
 
@@ -238,12 +285,18 @@ function enter(event: KeyboardEvent): void {
 
 watch(turns, () => { if (transcript.value) transcript.value.scrollTop = transcript.value.scrollHeight; }, { flush: 'post' });
 watch(() => lastTurn.value?.turn, () => { destination.value = 'current'; });
+watch(draft, value => {
+  try { rememberDraft(value); } catch { notice.value = '当前窗口无法保留刷新前的草稿。'; }
+}, { flush: 'sync' });
 onMounted(() => {
+  recover();
+  window.addEventListener('pagehide', remember);
   bridge.addEventListener('message', receive);
   read();
   refresh = window.setInterval(read, 250);
 });
 onUnmounted(() => {
+  window.removeEventListener('pagehide', remember);
   window.clearInterval(refresh);
   bridge.removeEventListener('message', receive);
 });

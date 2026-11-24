@@ -96,10 +96,13 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.postMessage({type:'dialogue.submit',version:'1',request:'other-write',command:'3',text:'wrong document'});
         bridge.postMessage({type:'dialogue.read',version:'1',request:'other-read',command:'',revision:''});
         for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
+        for (const kind of ['append','enqueue']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1',text:'wrong document'});
+        for (const kind of ['remove','resume']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',message:'1'});
         bridge.postMessage({type:'state.read',version:'1',request:'other-barrier',topic:'run'});
         const end=performance.now()+1800;
         while (!replies.has('other-barrier') && performance.now()<end) await new Promise(r=>setTimeout(r,20));
-        return replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','cancel','clear'].every(key=>!replies.has('other-'+key));
+        return location.origin==='https://center.dafeiyu.invalid' && !history.state?.dialogue &&
+            replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
     })())JS");
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");
@@ -194,6 +197,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     expect("clear removes history but preserves editable draft","!document.querySelector('.turn') && !document.querySelector('dialog').open && "
         "document.querySelector('.room-still img')?.naturalWidth>0 && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
     check_dialogue_queue(gate);
+    check_dialogue_recovery();
     evaluate("dialogue bridge honors application byte limits",R"JS((async()=>{
         const bridge=window.chrome.webview, replies=new Map();
         const collect=({data})=>{ if(data.request?.startsWith('size-')) replies.set(data.request,data); };

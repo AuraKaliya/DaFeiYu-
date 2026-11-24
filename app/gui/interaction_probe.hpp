@@ -37,6 +37,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
 #ifdef DFY_UI_RUN_STATUS_TEST
     // 在已打开的正式主文档追加原生队列容量、身份与恢复检查。
     void check_dialogue_queue(std::shared_ptr<tests::UiDialogueGate> gate);
+    // 模拟待发命令或回执在刷新边界丢失，核对原身份和实际生效次数。
+    void check_dialogue_recovery();
 #endif
     struct Step { std::string name; std::wstring method; Json parameters; bool frame; std::function<void(const Json&)> check; std::function<bool()> ready; };
     // 添加固定协议调用，不接收来自插件的脚本或方法名。

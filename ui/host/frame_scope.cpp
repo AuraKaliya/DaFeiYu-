@@ -12,7 +12,7 @@ bool center_document(std::wstring_view uri) noexcept { return document_uri(uri) 
 bool main_panel_document(std::wstring_view uri) noexcept { return document_uri(uri) == main_panel_url; }
 // 固定来源包含结尾斜线，拒绝同名前缀域、其他协议和未登记端口。
 bool local_resource(std::wstring_view uri) noexcept {
-    return uri.starts_with(L"https://center.dafeiyu.invalid/") ||
+    return uri.starts_with(L"https://center.dafeiyu.invalid/") || uri.starts_with(L"https://panel.dafeiyu.invalid/") ||
         uri.starts_with(L"https://probe.dafeiyu.invalid/") || uri.starts_with(L"https://denied.dafeiyu.invalid/");
 }
 // 生成含宿主代次的地址，使旧文档即使同源也不能复用新视图身份。

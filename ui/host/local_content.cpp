@@ -9,7 +9,7 @@ std::shared_ptr<LocalContent> LocalContent::attach(ICoreWebView2Environment* env
     auto self = std::shared_ptr<LocalContent>(new LocalContent()); self->environment_ = environment; self->view_ = view;
     ComPtr<ICoreWebView2_3> mapping; require_hresult(view->QueryInterface(IID_PPV_ARGS(&mapping)));
     require_hresult(mapping->SetVirtualHostNameToFolderMapping(L"center.dafeiyu.invalid",assets.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS));
-    for (const auto host : {L"probe.dafeiyu.invalid",L"denied.dafeiyu.invalid"})
+    for (const auto host : {L"panel.dafeiyu.invalid",L"probe.dafeiyu.invalid",L"denied.dafeiyu.invalid"})
         require_hresult(mapping->SetVirtualHostNameToFolderMapping(host,assets.c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS));
     require_hresult(view->AddWebResourceRequestedFilter(L"*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL));
 
