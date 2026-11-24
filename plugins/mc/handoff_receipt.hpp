@@ -90,7 +90,7 @@ inline void verify_handoff(const nlohmann::json& sample, const nlohmann::json& a
 
 // 核对投出、原玩家收取、他人收取及两类待证数量，并复核可回查的服务端流和实体。
 // 步骤：对齐提交总量 → 按取证覆盖复核来源 → 对照有界实体列表及省略量。
-inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
+inline void verify_handoff_proof(const nlohmann::json& proof, int submitted, const nlohmann::json& recipient) {
     const auto number = [&](const char* key) {
         const auto& v = proof.at(key);
         if (!v.is_number_unsigned() || v > submitted) throw std::invalid_argument("MC: invalid handoff proof number");
@@ -100,7 +100,8 @@ inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
     if (number("throwUnknown") != submitted-thrown || number("pickupUnknown") != thrown-picked-other)
         throw std::invalid_argument("MC: unbalanced handoff proof");
     if (proof.at("source") == "unavailable") {
-        if (thrown || proof.contains("stream") || (proof.at("coverage") != "unavailable" && proof.at("coverage") != "interrupted"))
+        if (thrown || proof.contains("stream") || proof.contains("stacks") || proof.contains("collectors") ||
+            (proof.at("coverage") != "unavailable" && proof.at("coverage") != "interrupted"))
             throw std::invalid_argument("MC: unsourced handoff claim");
         return;
     }
@@ -123,6 +124,20 @@ inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
     const int omitted = number("omittedStacks");
     if (shown+omitted > thrown || (!omitted && shown != thrown) || (omitted && stacks.size() != 12))
         throw std::invalid_argument("MC: inconsistent handoff stack count");
+    if (proof.contains("collectors") || proof.contains("omittedOtherUnits")) {
+        const auto& collectors = proof.at("collectors");
+        if (!collectors.is_array() || collectors.size() > 9) throw std::invalid_argument("MC: invalid handoff collectors");
+        ids.clear();
+        int for_recipient = 0, for_others = number("omittedOtherUnits");
+        for (const auto& entry : collectors) {
+            if (!game_uuid(entry.at("uuid")) || !ids.insert(entry.at("uuid").get<std::string>()).second ||
+                !entry.at("count").is_number_unsigned() || entry.at("count") == 0 || entry.at("count") > thrown)
+                throw std::invalid_argument("MC: invalid handoff collector identity");
+            (entry.at("uuid") == recipient ? for_recipient : for_others) += entry.at("count").get<int>();
+        }
+        if (for_recipient != picked || for_others != other || (number("omittedOtherUnits") && collectors.size() != 9))
+            throw std::invalid_argument("MC: inconsistent handoff collector totals");
+    }
 }
 
 // 将只读复查限制在原交物的实体来源上界，并保留工作实际退出的状态。
@@ -137,7 +152,7 @@ inline void verify_handoff_recheck(const nlohmann::json& sample, const nlohmann:
         !sample.at("sampledAtMs").is_number_unsigned() || (sample.at("originalStatus") != "done" && sample.at("originalStatus") != "blocked" &&
             sample.at("originalStatus") != "interrupted")) throw std::invalid_argument("MC: invalid original handoff work");
     const auto& proof = sample.at("receipt");
-    verify_handoff_proof(proof,sample.at("submitted").get<int>());
+    verify_handoff_proof(proof,sample.at("submitted").get<int>(),sample.at("recipient"));
     const auto& seal = sample.at("sourceThrough");
     if (!seal.is_null() && !seal.is_number_unsigned()) throw std::invalid_argument("MC: invalid handoff source limit");
     if (proof.at("source") == "server_events") {
@@ -171,7 +186,7 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
     if (clicks != 0 && (sample.at("window") != "inventory" || sample.at("target").at("state") != "visible" ||
         !sample.at("target").contains("distance") || sample.at("target").at("distance") > 3 || sample.at("stock").at("missing") != 0))
         throw std::invalid_argument("MC: handoff started without verified conditions");
-    if (result.contains("receipt")) verify_handoff_proof(result.at("receipt"),submitted.get<int>());
+    if (result.contains("receipt")) verify_handoff_proof(result.at("receipt"),submitted.get<int>(),sample.at("recipient"));
     if (!exited) return false;
     if (!transfer.at("sampledAtMs").is_number_unsigned() || transfer.at("sampledAtMs") < sample.at("sampledAtMs") ||
         !transfer.at("stockCurrent").is_boolean() || transfer.contains("stockAfter") != transfer.at("stockCurrent").get<bool>() ||

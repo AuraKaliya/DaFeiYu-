@@ -28,7 +28,7 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
     if (proof.stacks.length < 12) proof.stacks.push({ uuid: row.item, count: row.amount, dropSeq: row.seq, spawnSeq: spawn.seq });
     else ++proof.omittedStacks;
   }
-  const ground = new Map(), following = new Map(), byActor = new Map();
+  const ground = new Map(), following = new Map(), byActor = new Map(), collected = new Map();
   for (let i = rows.length-1; i >= 0; --i) {
     const row = rows[i];
     if (kind(row) !== 'pickup' || row.material !== material) continue;
@@ -64,10 +64,21 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
     const stock = next && next.seq < end.seq ? next.beforeStock : end.afterStock;
     if (!count(stock) || stock-r.beforeStock !== taken) continue;
     proof[r.actor === recipient ? 'recipientPicked' : 'otherPicked'] += taken;
+    collected.set(r.actor,(collected.get(r.actor) ?? 0)+taken);
     if (r.remaining) ground.set(r.item,r.remaining);
   }
   proof.throwUnknown = submitted-proof.thrown;
   proof.pickupUnknown = proof.thrown-proof.recipientPicked-proof.otherPicked;
+  proof.collectors = [];
+  if (collected.has(recipient)) {
+    proof.collectors.push({ uuid: recipient, count: collected.get(recipient) });
+    collected.delete(recipient);
+  }
+  proof.omittedOtherUnits = 0;
+  for (const [uuid,units] of collected) {
+    if (proof.collectors.length < 9) proof.collectors.push({ uuid, count: units });
+    else proof.omittedOtherUnits += units;
+  }
   return proof;
 }
 

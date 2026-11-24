@@ -245,6 +245,11 @@ void handoff_protocol() {
     result["status"] = "done";
     result.erase("reasonCode");
     if (!give().changed || !give().arrived) throw std::runtime_error("confirmed recipient pickup lost");
+    proof["collectors"] = Json::array({{{"uuid",world},{"count",66}}});
+    proof["omittedOtherUnits"] = 0;
+    rejects(give);
+    proof["collectors"][0]["uuid"] = owner;
+    if (!give().arrived) throw std::runtime_error("verified collector UUID lost");
     proof["recipientPicked"] = 65;
     rejects(give);
     proof["recipientPicked"] = 66;

@@ -48,6 +48,7 @@ test('handoff preserves uncertainty and attributes a verified pickup by a differ
   foreign[10].afterStock = 64;
   Object.assign(foreign[11],{ actor: stranger, afterStock: 7 });
   assert.deepEqual([read(foreign).recipientPicked,read(foreign).otherPicked], [64,2]);
+  assert.deepEqual(read(foreign).collectors, [{uuid:owner,count:64},{uuid:stranger,count:2}]);
   foreign[11].afterStock = 6;
   assert.deepEqual([read(foreign).otherPicked,read(foreign).pickupUnknown], [0,2]);
   assert.deepEqual([read(evidenceRows().slice(0,8)).thrown,read(evidenceRows().slice(0,8)).pickupUnknown], [66,66]);
