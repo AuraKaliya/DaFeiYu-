@@ -7,6 +7,7 @@ namespace dfy::tests {
 // 固定模型已进入原请求后，由原生验收序列决定迟到答复何时返回。
 struct UiDialogueGate {
     std::atomic_uint entered = 0;
+    std::atomic<runtime::DomainId> room = 0, body = 0;
     std::binary_semaphore release{0};
 };
 

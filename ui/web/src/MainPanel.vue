@@ -36,6 +36,8 @@ const scope = `${crypto.randomUUID()}-`;
 const turns = shallowRef<readonly Turn[]>([]);
 const queue = shallowRef<readonly QueuedMessage[]>([]);
 const queuePaused = ref(false);
+const room = shallowRef<{ instance: string; body: string; name: string; place: string }>();
+let roomRequested = false;
 const pending = shallowRef<Pending>();
 const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
@@ -134,7 +136,7 @@ function isReceipt(value: unknown): value is Receipt {
 
 // 给当前页面的所有命令使用独立请求身份，便于拒绝其他文档的回包。
 function post(fields: Readonly<Record<string, string>>): void {
-  if (fields.type !== 'dialogue.read') {
+  if (fields.command && fields.type !== 'dialogue.read') {
     outstanding.set(fields.command, fields);
     remember();
   }
@@ -179,6 +181,14 @@ function settle(receipt: Receipt): void {
 function receive(event: MessageEvent<unknown>): void {
   const value = event.data;
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
+  if (value.event === 'room.snapshot') {
+    roomRequested = false;
+    const data = value.room;
+    if (isRecord(data) && isDecimal(data.instance) && isDecimal(data.body) && isDecimal(data.generation) &&
+        isDecimal(data.revision) && isDecimal(data.layoutVersion) && typeof data.roomName === 'string' && typeof data.placeName === 'string')
+      room.value = { instance: data.instance, body: data.body, name: data.roomName, place: data.placeName };
+    return;
+  }
   if (value.event === 'dialogue.snapshot') {
     const sequence = Number(value.request.slice(scope.length));
     if (!Number.isSafeInteger(sequence) || sequence <= latestSnapshot || typeof value.ready !== 'boolean' ||
@@ -188,6 +198,10 @@ function receive(event: MessageEvent<unknown>): void {
         (value.queue !== null && (!Array.isArray(value.queue) || !value.queue.every(isQueuedMessage)))) return;
     latestSnapshot = sequence;
     ready.value = value.ready;
+    if (ready.value && !room.value && !roomRequested) {
+      roomRequested = true;
+      post({ type: 'room.read' });
+    }
     accepting.value = value.accepting;
     queuePaused.value = value.queuePaused;
     const latestCommand = BigInt(value.latestCommand);
@@ -305,9 +319,12 @@ onUnmounted(() => {
 <template>
   <main class="main-panel">
     <header class="panel-header">
-      <div class="panel-identity">
-        <h1>大肥鱼</h1>
-        <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
+      <div>
+        <div class="panel-identity">
+          <h1>大肥鱼</h1>
+          <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
+        </div>
+        <p v-if="room" id="room-location" :data-room="room.instance" :data-body="room.body">{{ room.name }}<span aria-hidden="true"> · </span>{{ room.place }}</p>
       </div>
       <button v-if="turns.length" id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">清空对话</button>
     </header>

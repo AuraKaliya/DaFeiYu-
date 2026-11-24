@@ -36,6 +36,8 @@ button:disabled { cursor: default }
 .panel-header h1, .clear-dialog h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); font-weight: 650 }
 #dialogue-state, .turn-status, .panel-compose output { color: var(--muted); font-size: 13px }
 #dialogue-state { display: inline-flex; align-items: center; gap: 6px }
+#room-location { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5 }
+#room-location span { padding-inline: 2px }
 #dialogue-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #a07642 }
 #dialogue-state[data-accepting="true"]::before { background: #458064 }
 .conversation-space { flex: 1; min-height: 0; position: relative; display: flex }

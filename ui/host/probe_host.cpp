@@ -91,8 +91,8 @@ nlohmann::json verification_state(const std::optional<app::VerificationReport>& 
 
 // 创建和消息入口都只弱引用宿主，部分登记失败由临时实例回滚。
 // 步骤：持有浏览器 → 登记主页面消息 → 登记原生 Frame 创建 → 发布已准备宿主。
-std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run, Dialogue dialogue) {
-    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run),std::move(dialogue))); self->view_ = view;
+std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run, Dialogue dialogue, ReadRoom read_room) {
+    auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),std::move(read_run),std::move(dialogue),std::move(read_room))); self->view_ = view;
     const std::weak_ptr<ProbeHost> weak = self;
     const auto message = Callback<ICoreWebView2WebMessageReceivedEventHandler>([weak](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) return state->message(args);
@@ -126,6 +126,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
         if (type == "state.read") return run_status_reply(message);
+        if (type == "room.read") return room_reply(message,source);
         if (type.starts_with("dialogue.")) return dialogue_reply(message,type,source);
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
         if (ticket_ || checks_->active) return view_->PostWebMessageAsJson(L"{\"event\":\"frame.busy\"}");
@@ -136,6 +137,25 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         if (FAILED(status)) ticket_ = 0;
         return status;
     } catch (...) { if (issued) ticket_ = 0; return E_INVALIDARG; }
+}
+
+// 向实际主面板返回所属房间和角色位置，未取得业务快照时明确返回空值。
+// 步骤：核对原生来源与请求形状 → 读取位置摘要 → 复核活动文档后回发。
+HRESULT ProbeHost::room_reply(const nlohmann::json& request, std::wstring_view source) {
+    if (!read_room_ || !main_panel_document(source)) return E_ACCESSDENIED;
+    if (request.size()!=3 || request.at("version")!="1") return E_INVALIDARG;
+    const auto& id = request.at("request").get_ref<const std::string&>();
+    if (id.empty() || id.size()>64) return E_INVALIDARG;
+    nlohmann::json room = nullptr;
+    if (const auto location = read_room_()) {
+        const auto& self = location->self;
+        room = {{"instance",std::to_string(self.room.instance)},{"generation",std::to_string(self.room.generation)},
+            {"layoutVersion",std::to_string(location->layout_version)},{"body",std::to_string(self.body)},
+            {"revision",std::to_string(self.revision)},{"roomName",location->room_name},{"placeName",location->place_name}};
+    }
+    if (!main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); }))) return E_ACCESSDENIED;
+    const nlohmann::json reply{{"event","room.snapshot"},{"version","1"},{"request",id},{"room",std::move(room)}};
+    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
 }
 
 // 复核实际页面后进入对话桥，变化时才发回正文快照。

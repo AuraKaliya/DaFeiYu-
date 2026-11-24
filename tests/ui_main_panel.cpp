@@ -5,7 +5,7 @@
 namespace dfy::tests {
 // 构造空插件应用，固定模型可阻塞至原生验收放行并检查清空后的真实请求。
 std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path& work, std::shared_ptr<UiDialogueGate> gate) {
-    return std::make_unique<app::Application>(model::Config{},work/"plugins",work/"user",model::Backend{
+    auto application = std::make_unique<app::Application>(model::Config{},work/"plugins",work/"user",model::Backend{
         // 依据约定原话制造失败或在途答复，并核对后继请求使用的上下文。
         // 步骤：选择固定响应 → 按场景等待放行或核验历史 → 归还实际答复。
         [gate](const auto&, const auto& request) -> model::Response {
@@ -26,6 +26,10 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
             }
             return {{model::Role::assistant,"固定回复："+text}};
         }});
+    const auto layout = application->room().layout();
+    gate->room = layout.room.instance;
+    gate->body = application->room().self(layout.room)->body;
+    return application;
 }
 }
 
@@ -34,6 +38,13 @@ namespace dfy::ui {
 // 步骤：发送原话并比对回执 → 核对来源、失败与刷新 → 阻塞原请求并停止 → 放行迟到结果并核实清空。
 void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> checks, std::shared_ptr<tests::UiDialogueGate> gate) {
     expect("main dialogue ready","document.querySelector('#dialogue-state')?.dataset.accepting === 'true'");
+    expect("room position rendered","document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
+    call("room matches original application body",L"Runtime.evaluate",{{"expression","({...document.querySelector('#room-location').dataset})"},{"returnByValue",true}},
+        [gate](const Json& reply) {
+            const auto& data = reply.at("result").at("value");
+            if (data.at("room")!=std::to_string(gate->room.load()) || data.at("body")!=std::to_string(gate->body.load()))
+                throw std::runtime_error("UI location differs from native room binding");
+        });
     evaluate("observe dialogue bridge replies",R"JS((()=>{
         const bridge = window.chrome.webview;
         const replies = new Map();
@@ -49,6 +60,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         return true;
     })())JS");
     const std::string prompt = "你好，大肥鱼 <b>验证</b>";
+    evaluate("opening room does not start a model turn","(async()=>{const s=await dialogueAsk('probe-idle',{type:'state.read',topic:'run'});return s.run===null;})()");
     const auto text = Json(prompt).dump();
     call("focus emulation",L"Emulation.setFocusEmulationEnabled",{{"enabled",true}});
     evaluate("focus composer","document.querySelector('#dialogue-draft').focus(); document.activeElement.id === 'dialogue-draft'");
@@ -95,6 +107,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.addEventListener('message',({data})=>replies.set(data.request,data));
         bridge.postMessage({type:'dialogue.submit',version:'1',request:'other-write',command:'3',text:'wrong document'});
         bridge.postMessage({type:'dialogue.read',version:'1',request:'other-read',command:'',revision:''});
+        bridge.postMessage({type:'room.read',version:'1',request:'other-room'});
         for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
         for (const kind of ['append','enqueue']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1',text:'wrong document'});
         for (const kind of ['remove','resume']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',message:'1'});
@@ -102,7 +115,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         const end=performance.now()+1800;
         while (!replies.has('other-barrier') && performance.now()<end) await new Promise(r=>setTimeout(r,20));
         return location.origin==='https://center.dafeiyu.invalid' && !history.state?.dialogue &&
-            replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
+            replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','room','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
     })())JS");
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");

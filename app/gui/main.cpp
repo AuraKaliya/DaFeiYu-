@@ -125,7 +125,12 @@ struct Window : std::enable_shared_from_this<Window> {
             return std::optional<dfy::app::RunStatusSnapshot>{};
         };
         dfy::ui::ProbeHost::Dialogue dialogue;
+        dfy::ui::ProbeHost::ReadRoom read_room;
         if (main_panel) {
+            read_room = [weak]() -> std::optional<dfy::ui::RoomLocation> {
+                if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->room_location();
+                return {};
+            };
             dialogue.read = [weak](auto command) -> dfy::ui::DialogueView {
                 if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->dialogue(command);
                 return {};
@@ -136,7 +141,7 @@ struct Window : std::enable_shared_from_this<Window> {
             };
         }
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
-            std::move(read_run),std::move(dialogue));
+            std::move(read_run),std::move(dialogue),std::move(read_room));
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
         // 处理主文档导航回执，自动验收由计时器另行推进。

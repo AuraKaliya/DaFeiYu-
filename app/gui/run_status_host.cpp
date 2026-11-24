@@ -92,6 +92,12 @@ std::optional<app::RunStatusSnapshot> RunStatusHost::snapshot() const {
     return snapshot_;
 }
 
+// 读取最近的本体位置，查询不驱动原生房间。
+std::optional<RoomLocation> RunStatusHost::room_location() const {
+    std::lock_guard lock(mutex_);
+    return room_location_;
+}
+
 // 返回只读快照，旧命令保留期外明确过期。
 // 步骤：复制已发布正文和接纳标志 → 查找原命令回执或过期状态。
 DialogueView RunStatusHost::dialogue(std::uint64_t command) const {
@@ -174,6 +180,7 @@ void RunStatusHost::run(std::stop_token stop, const Open& open, const Drive& dri
     try {
         const auto application = open();
         auto& conversation = application->conversation();
+        const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
@@ -183,11 +190,18 @@ void RunStatusHost::run(std::stop_token stop, const Open& open, const Drive& dri
             conversation.advance();
 
             const auto snapshot = application->run_status();
+            const auto self = application->room().self(layout.room);
+            std::optional<RoomLocation> location;
+            if (self) {
+                const auto place = std::ranges::find(layout.places,self->place,&app::KnownPlace::id);
+                if (place != layout.places.end()) location = RoomLocation{*self,layout.version,layout.name,place->name};
+            }
             const auto& visible = conversation.display();
             if (!display || display->revision != visible.revision) display = std::make_shared<const app::ConversationDisplay>(visible);
             {
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;
+                room_location_ = location;
                 display_ = display;
                 can_submit_ = conversation.accepting() && !conversation.busy() && !pending_ && !stop_command_ &&
                     (visible.queue.empty() || visible.queue_paused);

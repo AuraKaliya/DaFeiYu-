@@ -1,6 +1,7 @@
 #pragma once
 #include "application.hpp"
 #include "dialogue_channel.hpp"
+#include "room_location.hpp"
 #include <atomic>
 #include <deque>
 #include <functional>
@@ -17,6 +18,8 @@ class RunStatusHost {
     explicit RunStatusHost(Open open, Drive drive = {});
     // 只复制最近发布的快照，锁内不调用应用服务。
     std::optional<app::RunStatusSnapshot> snapshot() const;
+    // 复制业务线程已经核实的房间与身体位置，无需唤醒主会话。
+    std::optional<RoomLocation> room_location() const;
     // 读取激活状态、最新显示快照及指定命令的接纳回执。
     DialogueView dialogue(std::uint64_t command = 0) const;
     // 核对命令编号、种类、目标和原话，复用同一命令的回执。
@@ -36,6 +39,7 @@ class RunStatusHost {
 
     mutable std::mutex mutex_;
     std::optional<app::RunStatusSnapshot> snapshot_;
+    std::optional<RoomLocation> room_location_;
     std::shared_ptr<const app::ConversationDisplay> display_;
     std::deque<CommandRecord> commands_;
     std::optional<DialogueCommand> pending_, stop_command_;
