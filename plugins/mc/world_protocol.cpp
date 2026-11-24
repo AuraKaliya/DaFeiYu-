@@ -280,11 +280,12 @@ void verify_collect_progress(const Json& result, const Json& args, bool exited) 
     const auto& sampled = step.at("sampledAtMs");
     const auto& broken = step.at("broken");
     const bool finished = phase == "finished";
-    if ((phase != "selecting" && phase != "approaching" && phase != "preparing" && phase != "digging" &&
+    if ((phase != "selecting" && phase != "checking_target" && phase != "approaching" && phase != "preparing" && phase != "digging" &&
         phase != "awaiting_pickup" && !finished) || (finished && !exited) || (exited && result.at("status") == "done" && !finished) ||
         !sampled.is_number_unsigned() || !step.at("phaseSinceMs").is_number_unsigned() || step.at("phaseSinceMs") > sampled ||
         !broken.is_number_unsigned() || broken != result.at("broken") || broken > args.at("count") ||
         ((broken != 0) != step.contains("lastBreakAtMs")) || (phase == "awaiting_pickup" && broken == 0) ||
+        (phase == "checking_target" && broken >= args.at("count")) ||
         (step.contains("lastBreakAtMs") && (!step.at("lastBreakAtMs").is_number_unsigned() || step.at("lastBreakAtMs") > sampled)))
         throw std::invalid_argument("MC: invalid collect progress");
 

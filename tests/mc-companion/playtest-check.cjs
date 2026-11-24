@@ -565,6 +565,7 @@ async function checkPickup(fixture, player, whispers) {
   } finally {
     player._client.removeListener('collect', onCollect);
     player.removeListener('itemDrop', onDrop);
+    fixture.send('effect clear DfyCompanion minecraft:mining_fatigue');
     fixture.send('tp DfyGuestCheck 0.5 -60 -2.5');
   }
 }
@@ -718,6 +719,10 @@ async function checkFillFour(fixture, player, whispers, combined) {
       assert.equal(attempted.result.status, 'blocked');
       assert.match(attempted.result.reason, /已验收的对象/);
       assert.deepEqual(attempted.result.changes, []);
+      const { x, y, z, block } = attempted.arguments;
+      assert.deepEqual([attempted.result.reasonCode, attempted.result.progress.phase, attempted.result.progress.targetCell,
+        attempted.result.progress.block, attempted.result.progress.broken], ['dig_protected', 'checking_target', { x,y,z }, block, 0]);
+      assert.equal(read([x,y,z]), block);
       await until(() => fixture.settled >= order, '受阻原话已处理');
     }
     assert.deepEqual(fourCells.map(read), ['dirt','dirt','dirt','dirt']);

@@ -26,7 +26,7 @@ function formatId(bytes) {
 
 // 体验场只重置预留给采石的地点和陪伴角色的物资，原玩家保留自己的背包。
 function prepareScene(send) {
-  for (const command of ['time set day', 'gamerule doDaylightCycle false', 'gamerule doMobSpawning false',
+  for (const command of ['time set day', 'gamerule doDaylightCycle false', 'gamerule doMobSpawning false', 'effect clear DfyCompanion minecraft:mining_fatigue',
     'fill -12 -61 4 9 -61 6 minecraft:water', 'fill 19 -60 -3 23 -59 3 minecraft:stone',
     'fill 20 -58 -2 23 -58 2 minecraft:grass_block', 'fill 15 -60 -1 18 -60 2 minecraft:cobblestone',
     'tp DfyCompanion 0.5 -60 0.5', 'clear DfyCompanion', 'give DfyCompanion minecraft:iron_pickaxe 1']) send(command);

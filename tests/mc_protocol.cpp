@@ -62,6 +62,14 @@ void collect_progress_protocol() {
         {"targetCell",target},{"block","grass_block"},{"stock",{{"item","dirt"},{"current",0},{"required",1}}}};
     const auto read = [&] { return dfy::mc::partner_reply(receipt.dump(),"dig",controller,"collect",arguments); };
     if (Json::parse(read().progress) != step) throw std::runtime_error("collection progress lost");
+    const Json awaiting = step;
+    step["phase"] = "checking_target";
+    rejects(read);
+    result["broken"] = step["broken"] = 0;
+    step.erase("lastBreakAtMs");
+    if (Json::parse(read().progress).at("targetCell") != target) throw std::runtime_error("checked target lost its identity");
+    step = awaiting;
+    result["broken"] = 1;
     step["targetCell"]["x"] = 3;
     rejects(read);
     step["targetCell"] = target;

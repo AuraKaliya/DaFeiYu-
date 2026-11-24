@@ -215,6 +215,7 @@ async function collect(bot, args, check, job, built) {
         result.targetBlock = { x: fixed.x, y: fixed.y, z: fixed.z, expected: type.name, observed: block.name, phase: 'initial' };
         throw digBlocked('dig_material_mismatch', '目标格读到' + block.name + '，请求材质是' + type.name);
       }
+      progress.enter('checking_target', block);
       if (!block.diggable) throw digBlocked('dig_not_breakable', '该方块无法采掘');
       if (!permitsDig(affectedByDig(bot, block))) throw digBlocked('dig_protected', '目标属于已验收的对象或其支撑，需要指定拆改');
       if (!allowed(block)) throw digBlocked('dig_outside_scope', '目标不在地面取材范围内');
