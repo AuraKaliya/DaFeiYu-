@@ -44,6 +44,7 @@ Json plan_evidence(const Json& result) {
     for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","changes","cells",
         "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted"})
         if (result.contains(name)) evidence[name] = result.at(name);
+    if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");
     return evidence;
 }
 

@@ -196,6 +196,44 @@ void verify_fill(const Json& result, const Json& args, bool done) {
     }
 }
 
+// 核对采掘进展属于原目标，破坏数和当前库存各自有对应读数。
+// 步骤：验证阶段与时点 → 检查原目标和破坏数量 → 对照取材要求与最终库存。
+void verify_collect_progress(const Json& result, const Json& args, bool exited) {
+    const auto& step = result.at("progress");
+    const auto& phase = step.at("phase");
+    const auto& sampled = step.at("sampledAtMs");
+    const auto& broken = step.at("broken");
+    const bool finished = phase == "finished";
+    if ((phase != "selecting" && phase != "approaching" && phase != "preparing" && phase != "digging" &&
+        phase != "awaiting_pickup" && !finished) || (finished && !exited) || (exited && result.at("status") == "done" && !finished) ||
+        !sampled.is_number_unsigned() || !step.at("phaseSinceMs").is_number_unsigned() || step.at("phaseSinceMs") > sampled ||
+        !broken.is_number_unsigned() || broken != result.at("broken") || broken > args.at("count") ||
+        ((broken != 0) != step.contains("lastBreakAtMs")) || (phase == "awaiting_pickup" && broken == 0) ||
+        (step.contains("lastBreakAtMs") && (!step.at("lastBreakAtMs").is_number_unsigned() || step.at("lastBreakAtMs") > sampled)))
+        throw std::invalid_argument("MC: invalid collect progress");
+
+    const bool has_target = step.contains("targetCell");
+    if (has_target != step.contains("block") || (phase == "selecting" && has_target) ||
+        (phase != "selecting" && !finished && !has_target))
+        throw std::invalid_argument("MC: missing or stale collect target");
+    if (has_target) {
+        if (!dimension(step.at("block")) || (args.contains("block") &&
+            step.at("block").get_ref<const std::string&>() != item_name(args.at("block").get_ref<const std::string&>())))
+            throw std::invalid_argument("MC: collect progress material changed");
+        for (const auto axis : {"x","y","z"}) if (!step.at("targetCell").at(axis).is_number_integer() ||
+            (args.contains(axis) && step.at("targetCell").at(axis) != args.at(axis)))
+            throw std::invalid_argument("MC: collect progress target changed");
+    }
+    if (step.contains("stock") != args.contains("item")) throw std::invalid_argument("MC: collect progress stock missing");
+    if (step.contains("stock")) {
+        const auto& stock = step.at("stock");
+        if (stock.at("item").get_ref<const std::string&>() != item_name(args.at("item").get_ref<const std::string&>()) ||
+            stock.at("required") != args.at("requiredStock") || !stock.at("current").is_number_unsigned() ||
+            (exited && stock.at("current") != result.at("stock").at("after")))
+            throw std::invalid_argument("MC: inconsistent collect stock");
+    }
+}
+
 // 核对移动样本的原目标、现场读数、寻路状态及末次真实抵达。
 // 步骤：校验时点与阶段 → 对照原命令的目标格 → 核对已知位置与实际距离。
 void verify_move_progress(const Json& result, const Json& args, bool exited) {
@@ -370,6 +408,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
+    if (skill == "collect" && result.contains("progress")) {
+        verify_collect_progress(result,args,exited);
+        progress = result.at("progress").dump();
+    }
     if (skill == "move" && result.contains("progress")) {
         verify_move_progress(result,args,exited);
         progress = result.at("progress").dump();

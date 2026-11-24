@@ -9,7 +9,7 @@ const { observeWall, surface, validateRoute, runRoute } = require('./partner-rou
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop,
+const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress, pickupStand, nearbyDrop,
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
@@ -155,7 +155,8 @@ function digBlocked(code, message) {
 
 // 逐块执行本次采集，指定坐标时保持目标，实际破坏与背包增减分别取证。
 // 步骤：核对材料和目标 → 走近并选择可采工具 → 读回方块 → 走近掉落并记录背包变化。
-async function collect(bot, args, check, result, built) {
+async function collect(bot, args, check, job, built) {
+  const result = job.receipt.result;
   const fixed = ['x', 'y', 'z'].some(k => Object.hasOwn(args, k)) ? targetPoint(bot, args) : null;
   if (!Number.isInteger(args.count) || args.count < 1 || args.count > 32 || (fixed && args.count !== 1))
     throw new Error('数量应为 1～32，指定的单格只能采一次');
@@ -183,8 +184,11 @@ async function collect(bot, args, check, result, built) {
     if (requiresCollectionApproval(bot, args.collectionGuards, cells))
       throw Object.assign(new Error('目标仍在需要重新确认的取材范围内'), { code: 'approval_required' });
   };
+  const progress = collectionProgress(result, () => inventory(bot)[expected] ?? 0);
+  job.sampleProgress = progress.sample;
   try {
     for (let n = 0; n < missing; ++n) {
+      progress.enter('selecting');
       check();
       const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
@@ -205,6 +209,7 @@ async function collect(bot, args, check, result, built) {
       if (pos.equals(belowFeet(bot.entity.position)))
         throw digBlocked('dig_stand_support', '目标支撑着角色，请先移动');
       if (!digReachable(bot, pos, bot.entity.position)) {
+        progress.enter('approaching', block);
         try { await walk(bot, new DigStandGoal(bot, pos)); }
         catch (error) {
           check();
@@ -213,6 +218,7 @@ async function collect(bot, args, check, result, built) {
         finally { result.approachPosition = bot.entity.position.clone(); }
       }
       check();
+      progress.enter('preparing', block);
       const suitable = item => !expected || !item?.enchants?.some(enchant => enchant.name?.endsWith('silk_touch'));
       const items = bot.inventory.items().filter(item => block.canHarvest(item.type) && suitable(item));
       const best = items.reduce((item, next) => !item || block.digTime(next.type) < block.digTime(item.type) ? next : item, null);
@@ -237,18 +243,26 @@ async function collect(bot, args, check, result, built) {
       checkApproval(affected);
       const readback = collectReadback(bot, here, affected);
       const known = new Set(Object.keys(bot.entities));
+      progress.enter('digging', here);
+      const changeStart = result.changes.length;
       try { await bot.dig(here, true); }
-      finally { await readback(result.changes); }
-      const after = bot.blockAt(pos);
-      if (!after || after.type === block.type) throw new Error('方块变化未核实');
-      ++result.broken;
+      finally {
+        await readback(result.changes);
+        if (result.changes.slice(changeStart).some(cell => pos.x === cell.x && pos.y === cell.y && pos.z === cell.z)) {
+          ++result.broken;
+          progress.sample();
+        }
+      }
+      if (result.broken !== n + 1) throw digBlocked('dig_change_unverified', '目标方块变化未核实');
       check();
+      progress.enter('awaiting_pickup');
       await pickup(bot, pos, known, check, result);
       if (expected && (inventory(bot)[expected] ?? 0) <= stock)
         throw digBlocked('pickup_unverified', '没有读到所需物品入包，已停止取材');
     }
     if (expected && (inventory(bot)[expected] ?? 0) < args.requiredStock)
       throw digBlocked('pickup_unverified', '实际背包仍缺少所需物品');
+    progress.enter('finished');
   } finally {
     const after = inventory(bot);
     if (expected) result.stock.after = after[expected] ?? 0;
@@ -257,6 +271,8 @@ async function collect(bot, args, check, result, built) {
       const diff = (after[name] ?? 0) - (before[name] ?? 0);
       if (diff) result.inventoryDelta[name] = diff;
     }
+    progress.sample();
+    job.sampleProgress = undefined;
   }
 }
 
@@ -467,7 +483,7 @@ function partnerService(bot, world, inbox, places, owner) {
         if (anchored) result.sourceMessage = args.message;
         const surface = monitorSurface(bot, result);
         const movement = monitorMove(bot, pos, goal, result);
-        job.sampleMove = movement.sample;
+        job.sampleProgress = movement.sample;
         try {
           await walk(bot, goal);
           check();
@@ -485,7 +501,7 @@ function partnerService(bot, world, inbox, places, owner) {
           if (error.name === 'Timeout') error.code = 'move_path_timeout';
           throw error;
         } finally {
-          job.sampleMove = undefined;
+          job.sampleProgress = undefined;
           movement.stop(result.arrived === true);
           surface.stop();
           result.position = bot.entity?.position?.clone() ?? null;
@@ -494,7 +510,7 @@ function partnerService(bot, world, inbox, places, owner) {
         bot.pathfinder.setMovements(walkingMovements(bot));
         await followPlayer(bot, owner, args.distance ?? 3, check, result,
           (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
-      } else if (r.skill === 'collect') await collect(bot, args, check, result, built);
+      } else if (r.skill === 'collect') await collect(bot, args, check, job, built);
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
@@ -553,7 +569,7 @@ function partnerService(bot, world, inbox, places, owner) {
           throw new Error('工作身份冲突');
         if (known === active) {
           known.polled = performance.now();
-          known.sampleMove?.();
+          known.sampleProgress?.();
           if (method === 'partner.stop') cancel();
         }
         if (method === 'partner.stop' && known.abort && !receipt.exited) {

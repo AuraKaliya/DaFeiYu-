@@ -116,4 +116,33 @@ function collectReadback(bot, block, cells = affectedByDig(bot, block)) {
   };
 }
 
-module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, pickupStand, nearbyDrop, matchesDigReference };
+// 按原工作轮询采样采掘阶段、已读回的破坏数和目标物品的当前库存。
+// 步骤：记住本次目标与阶段起点 → 读取实效和库存 → 发布同一工作的新样本。
+function collectionProgress(result, readStock, now = () => performance.now()) {
+  let phase = 'selecting', phaseSinceMs = Math.floor(now()), target, lastBreakAtMs, broken = 0;
+  // 采样时间随轮询更新，只有实际破坏数增长才更新破坏时点。
+  function sample() {
+    const sampledAtMs = Math.floor(now());
+    if (result.broken > broken) { broken = result.broken; lastBreakAtMs = sampledAtMs; }
+    const progress = result.progress = { phase, phaseSinceMs, sampledAtMs, broken, ...target };
+    if (lastBreakAtMs !== undefined) progress.lastBreakAtMs = lastBreakAtMs;
+    if (result.stock) progress.stock = { item: result.stock.item, required: result.stock.required, current: readStock() };
+  }
+  sample();
+  return { sample,
+    // 换目标时清除上一格，后续阶段沿用已确认的本次目标格和材料。
+    enter(next, block) {
+      phase = next;
+      phaseSinceMs = Math.floor(now());
+      if (phase === 'selecting') target = undefined;
+      if (block) {
+        const { x, y, z } = block.position;
+        target = { targetCell: { x, y, z }, block: block.name };
+      }
+      sample();
+    },
+  };
+}
+
+module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress,
+  pickupStand, nearbyDrop, matchesDigReference };

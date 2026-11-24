@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
-const { matchesDigReference } = require('../../plugins/mc/bridge/collection.cjs');
+const { matchesDigReference, collectionProgress } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
@@ -69,6 +69,28 @@ test('drop observation distinguishes filtered stacks, missing data and bounded c
     assert.throws(() => observationInput(args), { code: 'observe_drop_parameters' });
   delete bot.entity.position;
   assert.throws(() => observeDrops(bot, options, 'work', 'world'), { code: 'observe_drop_position_unavailable' });
+});
+
+// 对照工作时点、换目标、破坏和库存，核对采掘在途样本的独立读数。
+test('collection polls retain the phase start and sample breaks separately from stock', () => {
+  let time = 100, stock = 1;
+  const result = { broken: 0, stock: { item: 'dirt', required: 3 } };
+  const progress = collectionProgress(result, () => stock, () => time);
+  const block = { position: new Position(2, -61, 0), name: 'grass_block' };
+  progress.enter('digging', block);
+  time = 200;
+  progress.sample();
+  assert.deepEqual([result.progress.phaseSinceMs, result.progress.sampledAtMs, result.progress.broken], [100, 200, 0]);
+  result.broken = 1;
+  progress.enter('awaiting_pickup');
+  assert.deepEqual([result.progress.targetCell, result.progress.lastBreakAtMs, result.progress.stock.current],
+    [{ x: 2, y: -61, z: 0 }, 200, 1]);
+  stock = 2;
+  time = 300;
+  progress.sample();
+  assert.deepEqual([result.progress.stock.current, result.progress.lastBreakAtMs, result.progress.phaseSinceMs], [2, 200, 200]);
+  progress.enter('selecting');
+  assert.equal(Object.hasOwn(result.progress, 'targetCell'), false);
 });
 
 // 在同一移动上分别注入真实位移、无路、位置未知和核实抵达。

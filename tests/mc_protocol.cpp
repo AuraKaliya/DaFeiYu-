@@ -43,6 +43,39 @@ void move_progress_protocol() {
     rejects(read);
 }
 
+// 检查采掘轮询只接受原目标、已核实的破坏数和本次库存。
+// 步骤：读取真实阶段 → 注入错格和倒置时点 → 对照退出时的库存。
+void collect_progress_protocol() {
+    const Json source{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
+    const auto controller = std::string(32,'b');
+    const Json target{{"x",2},{"y",-61},{"z",0}};
+    Json args = target;
+    args.update(Json{{"block","grass_block"},{"count",1},{"item","minecraft:dirt"},{"requiredStock",1}});
+    const auto arguments = Json{{"context",source},{"arguments",args}}.dump();
+    Json action = source;
+    action.update(Json{{"controller",controller},{"exited",false},{"skill","collect"}});
+    Json receipt{{"version",1},{"id","dig"},{"action",action}};
+    auto& result = receipt["action"]["result"];
+    result["broken"] = 1;
+    auto& step = result["progress"];
+    step = {{"phase","awaiting_pickup"},{"phaseSinceMs",110},{"sampledAtMs",125},{"lastBreakAtMs",108},{"broken",1},
+        {"targetCell",target},{"block","grass_block"},{"stock",{{"item","dirt"},{"current",0},{"required",1}}}};
+    const auto read = [&] { return dfy::mc::partner_reply(receipt.dump(),"dig",controller,"collect",arguments); };
+    if (Json::parse(read().progress) != step) throw std::runtime_error("collection progress lost");
+    step["targetCell"]["x"] = 3;
+    rejects(read);
+    step["targetCell"] = target;
+    step["lastBreakAtMs"] = 130;
+    rejects(read);
+    step["lastBreakAtMs"] = 108;
+    receipt["action"]["exited"] = true;
+    result["status"] = "interrupted";
+    result["stock"] = {{"after",0}};
+    if (!read().exited) throw std::runtime_error("partial collect progress lost");
+    step["stock"]["current"] = 1;
+    rejects(read);
+}
+
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
 // 步骤：核对查询帧 → 注入收件断档或替换来源 → 验证到达和非法终态。
 void private_protocol() {
@@ -143,6 +176,7 @@ int main() {
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
         private_protocol();
         move_progress_protocol();
+        collect_progress_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         using dfy::mc::PlayerThinking;

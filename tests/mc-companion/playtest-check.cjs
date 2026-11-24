@@ -587,6 +587,13 @@ async function checkFillFour(fixture, player, whispers, combined) {
   assert.deepEqual(collect.result.stock, { item: 'dirt', before: combined ? 1 : 3, required: 4, after: 4 });
   assert.deepEqual(collect.result.inventoryDelta, { dirt: combined ? 3 : 1 });
   assert.equal(collect.result.changes.length, combined ? 3 : 1);
+  const progress = traceRows().filter(row => row.category === 'mc.partner.motion' &&
+    row.body.action?.bridgeWork === collect.work && row.body.progress).map(row => row.body.progress);
+  const collecting = progress.find(step => step.phase === 'awaiting_pickup');
+  assert.ok(collecting?.broken > 0 && collecting.lastBreakAtMs <= collecting.sampledAtMs);
+  assert.ok(collect.result.changes.some(cell => ['x','y','z'].every(axis => cell[axis] === collecting.targetCell[axis])));
+  assert.deepEqual([collect.result.progress.phase, collect.result.progress.broken, collect.result.progress.stock.current],
+    ['finished', collect.result.changes.length, 4]);
   for (const ground of collect.result.changes) {
     assert.equal(ground.y, -61);
     assert.equal(ground.before, 'grass_block');
