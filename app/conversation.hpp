@@ -17,10 +17,18 @@ struct DisplayedTurn {
     agent::RunId run;
     std::string prompt, answer;
     runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
+    std::uint64_t queued_message = 0;
+};
+struct QueuedDialogue {
+    std::uint64_t message;
+    runtime::DomainId session;
+    std::string text;
 };
 struct ConversationDisplay {
     std::uint64_t revision = 0;
     std::vector<DisplayedTurn> turns;
+    std::vector<QueuedDialogue> queue;
+    bool queue_paused = false;
 };
 
 // 在宿主线程接纳问答并提供值快照，实际退出后归还回合引用。

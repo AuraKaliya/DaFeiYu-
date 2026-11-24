@@ -14,6 +14,12 @@
 
 namespace dfy::app {
 inline constexpr std::size_t dialogue_text_limit = 1024*1024;
+inline constexpr std::size_t dialogue_queue_limit = 8;
+enum class QueueAdmission { accepted, stale, full, rejected };
+struct DialogueQueueReceipt {
+    QueueAdmission state;
+    std::uint64_t message = 0;
+};
 class RunLog;
 struct VerificationReport {
     agent::RunId run;
@@ -51,6 +57,12 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
     agent::TurnDiagnostics submit_dialogue(const std::string& text);
+    // 接纳排在指定可见回合之后的原话，返回独立消息身份。
+    DialogueQueueReceipt enqueue_dialogue(agent::RunId after, std::string text);
+    // 仅恢复用户见到的原队首，实际启动仍需等待在途回合退出。
+    bool resume_dialogue_queue(std::uint64_t first);
+    // 只移除仍在等待的原消息，已经启动的回合继续沿原身份结算。
+    bool remove_queued_dialogue(std::uint64_t message);
     // 受信房间服务把已知事实投递到单独地址，接纳回执独立于主回合。
     events::DeliveryReceipt post_room_event(RoomEvent event, const std::string& room, const std::string& text);
     // 在当前主会话允许时主动审查一封房间来信。
@@ -174,6 +186,10 @@ class Application {
     void collect_tool_registration() noexcept;
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
     void advance_verification();
+    // 从同一个直接对话信箱启动普通或排队的用户原话。
+    agent::TurnDiagnostics begin_dialogue(const std::string& text);
+    // 在应用推进点核对前驱结果及实际退出，再从队首启动一个新回合。
+    void advance_dialogue_queue();
 
     const agent::ToolClock tool_clock_;
     std::shared_ptr<events::BroadcastChannel> channel_;
@@ -181,6 +197,8 @@ class Application {
     const runtime::DomainId dialogue_sender_;
     const events::MailboxId dialogue_mailbox_;
     std::uint64_t dialogue_sequence_ = 0;
+    std::uint64_t queued_message_sequence_ = 0;
+    std::optional<agent::RunId> queued_after_;
     const runtime::DomainId room_sender_;
     const events::MailboxId room_mailbox_;
     plugins::PluginManager plugins_;

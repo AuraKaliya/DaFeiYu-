@@ -80,9 +80,16 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 // 只读取本次记录位置，不打开原始会话或推进工作。
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
+// 保持已获准自动启动的队首优先，再从直接对话信箱接纳新轮。
+agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
+    const auto& display = conversation_.display();
+    if (!display.queue.empty() && !display.queue_paused) throw std::logic_error("dialogue: next message already queued");
+    return begin_dialogue(text);
+}
+
 // 在独立地址上交付用户原话，并为同一主回合加入已审查的待收信件。
 // 步骤：核对主会话空闲 → 投递并读回原正文 → 接纳带收件的主动对话。
-agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
+agent::TurnDiagnostics Application::begin_dialogue(const std::string& text) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
     if (dialogue_sequence_ == UINT64_MAX) throw std::overflow_error("dialogue: mailbox sequence exhausted");
     auto& mail = *mailbox_host_.network;
@@ -408,7 +415,7 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 }
 
 // 在宿主线程上推进子会话和插件，主会话的调用方仍拥有其结算回执。
-// 步骤：复核原工具范围 → 推进独立子会话 → 推进共享插件通知。
+// 步骤：复核原工具范围 → 推进子会话与插件 → 处理排队对话和信箱。
 runtime::RunResult Application::advance_plugins() {
     collect_tool_registration();
     advance_verification();
@@ -429,6 +436,7 @@ runtime::RunResult Application::advance_plugins() {
         run_log_->append("hook.observations_dropped",{{"point",DFY_V2_TRANSITION_EVENT_CAPTURED},{"count",dropped}});
     dispatch_event(plugins_,interactions_,run_log_.get());
     interactions_.advance();
+    advance_dialogue_queue();
     const auto mail = mailbox_intake_.advance();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }

@@ -65,13 +65,13 @@ MailboxIntakeResult MailboxIntake::dispatch(const Route& route, const std::strin
         const bool player_facing = dialogue || (route.host_source && type->name() == "room.addressed");
         const auto result = conversation_.submit(prompt.dump(),std::move(options),player_facing,dialogue);
         if (accepted) *accepted = result;
-        if (route.accepted) route.accepted({route.mailbox,route.sender,*event},{result.session,result.turn});
         const auto delivered = host_.network->read(host_.identity,route.mailbox);
         if (log_) {
             log_->mail("mail.received",route.mailbox.value,route.sender,event->id,type->name(),original);
             log_->mail("mail.dispatched",route.mailbox.value,route.sender,event->id,type->name(),original,
                 agent::RunId{result.session,result.turn});
         }
+        if (route.accepted) route.accepted({route.mailbox,route.sender,delivered.event.get()},{result.session,result.turn});
         return MailboxIntakeResult::submitted;
     } catch (...) { return MailboxIntakeResult::rejected; }
 }
@@ -127,7 +127,8 @@ agent::TurnDiagnostics MailboxIntake::submit_dialogue(const std::string& text) {
         if (!route) break;
         agent::TurnDiagnostics accepted{};
         const auto status = dispatch(*route,&text,&accepted);
-        if (status == MailboxIntakeResult::submitted) return accepted;
+        // 回合一经接纳，即使后续收件回调失败，也沿用原回合。
+        if (accepted.turn) return accepted;
         if (status != MailboxIntakeResult::handled) break;
     }
     return conversation_.submit(text,{},true,&text);

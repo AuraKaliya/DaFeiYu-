@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <semaphore>
 #include <thread>
 namespace {
 using namespace dfy::runtime;
@@ -142,6 +143,88 @@ void display_outcomes(const fs::path& run) {
     check(display.turns.size() == 4 && display.turns.front().prompt.size() == 512*1024,"display retained text past its byte budget");
     (void)conversation.clear();
     check(display.turns.empty(),"successful session clear retained display text");
+}
+
+// 使用真实主会话验证排队身份、容量、停止收尾、失败恢复和清空后的去向。
+// 步骤：阻塞原轮并压满队列 → 停止并提前恢复 → 核对逐条新轮 → 清空后恢复剩余原话。
+void dialogue_queue(const fs::path& run) {
+    using dfy::app::QueueAdmission;
+    std::binary_semaphore entered(0), release(0);
+    dfy::app::Application application({},run/"queue-plugins",run/"queue-user",dfy::model::Backend{
+        // 按原话保持首次请求在途、制造一次失败或回复实际收到的最后一句。
+        // 步骤：识别受控输入 → 依场景等待或失败 → 返回可核对的原话。
+        [&](const auto&, const auto& request) -> dfy::model::Response {
+            const auto& text = request.messages.back().content;
+            if (text == "当前原话") {
+                entered.release();
+                if (!release.try_acquire_for(std::chrono::seconds(5))) throw std::runtime_error("fixture release timed out");
+            }
+            if (text == "固定失败") throw std::runtime_error("fixed queued failure");
+            return {{dfy::model::Role::assistant,text}};
+        }});
+    auto& conversation = application.conversation();
+    const auto& display = conversation.display();
+    const auto original = application.submit_dialogue("当前原话");
+    const dfy::agent::RunId after{original.session,original.turn};
+    check(entered.try_acquire_for(std::chrono::seconds(2)),"original request did not enter fixture");
+    check(application.enqueue_dialogue({after.session,after.sequence+1},"过期目标").state == QueueAdmission::stale &&
+        application.enqueue_dialogue(after,"  ").state == QueueAdmission::rejected &&
+        application.enqueue_dialogue(after,"\xff").state == QueueAdmission::rejected,"invalid queue target or input was admitted");
+
+    const std::string large(dfy::app::dialogue_text_limit,'a');
+    const auto large1 = application.enqueue_dialogue(after,large), large2 = application.enqueue_dialogue(after,large);
+    check(large1.message && large2.message && application.enqueue_dialogue(after,"x").state == QueueAdmission::full,
+        "queue exceeded its total text budget");
+    check(application.remove_queued_dialogue(large1.message) && application.remove_queued_dialogue(large2.message),"queue did not recover text capacity");
+    const auto first = application.enqueue_dialogue(after,"同样的原话").message;
+    const auto failed = application.enqueue_dialogue(after,"固定失败").message;
+    const auto last = application.enqueue_dialogue(after,"同样的原话").message;
+    check(first && failed > first && last > failed,"independent queued messages lost their identities");
+    while (display.queue.size() < dfy::app::dialogue_queue_limit)
+        check(application.enqueue_dialogue(after,"可移除").state == QueueAdmission::accepted,"premature queue refusal");
+    check(application.enqueue_dialogue(after,"已满").state == QueueAdmission::full && conversation.cancel(),"full queue blocked stop");
+    conversation.advance(); application.advance_plugins();
+    check(display.queue_paused && display.turns.size() == 1 && display.turns.front().exit == OperationState::pending,
+        "cancelled active round did not pause pending items before exit");
+    while (display.queue.size() > 3) check(application.remove_queued_dialogue(display.queue.back().message),"cannot remove tail item");
+    check(!application.resume_dialogue_queue(last) && application.resume_dialogue_queue(first),"resume bypassed head identity");
+    application.advance_plugins(); conversation.advance();
+    check(display.queue.size() == 3 && display.turns.size() == 1,"queue started while cancelled request was still running");
+
+    // 按应用常规次序推进，等待指定状态并保留主回合的实际退出。
+    const auto until = [&](const auto& done) {
+        const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while (!done() && std::chrono::steady_clock::now() < deadline) {
+            application.advance_plugins(); conversation.advance(); std::this_thread::yield();
+        }
+        check(done(),"queue did not reach expected state");
+    };
+    release.release();
+    until([&] { return display.queue_paused && !conversation.busy(); });
+    check(display.turns.size() == 3 && display.turns[1].queued_message == first &&
+        display.turns[1].answer == "同样的原话" && display.turns[2].queued_message == failed &&
+        display.turns[2].result == OperationState::failed && display.queue.size() == 1 &&
+        display.queue.front().message == last && !application.remove_queued_dialogue(first),"queue lost FIFO, result, or original identity");
+    const auto failed_run = display.turns.back().run;
+    conversation.clear();
+    check(display.turns.empty() && display.queue_paused && display.queue.front().text == "同样的原话" &&
+        application.resume_dialogue_queue(last),"idle clear lost the paused queue");
+    until([&] { return display.queue.empty() && !conversation.busy(); });
+    check(display.turns.size() == 1 && display.turns.front().queued_message == last &&
+        display.turns.front().run.sequence > failed_run.sequence && display.turns.front().answer == "同样的原话",
+        "resumed independent message did not get its own new turn");
+
+    const auto& host = application.mailbox_host();
+    const auto source = next_domain();
+    const auto box = host.network->open(host.identity,source);
+    application.mailbox_intake().watch(box,{},[](const auto&) { return dfy::app::MailboxProjection{"旁听消息"}; },
+        dfy::app::MailboxPriority::normal,{},{},[](const auto&, auto) { throw std::runtime_error("fixed after admission"); });
+    host.network->deliver_next(source,box,dfy::events::mailbox_text("fixture.note",1,"附带来信",128));
+    const auto with_mail = application.enqueue_dialogue(display.turns.back().run,"带收件的新轮").message;
+    until([&] { return display.queue.empty() && !conversation.busy(); });
+    check(with_mail && display.turns.size() == 2 && display.turns.back().queued_message == with_mail &&
+        display.turns.back().answer.find("带收件的新轮") != std::string::npos && !host.network->front(host.identity,box),
+        "mail callback failure lost the accepted turn or redelivered its mail");
 }
 
 // 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。
@@ -349,6 +432,7 @@ int wmain(int argc, wchar_t** argv) {
         check(argc == 3,"observer package and workspace required"); const auto run = workspace(argv[2]);
         shared_application(run);
         display_outcomes(run);
+        dialogue_queue(run);
         trace_rewrites(run);
         priority_mailboxes(run);
         ask_lifecycle();
