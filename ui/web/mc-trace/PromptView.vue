@@ -29,6 +29,7 @@ const difference = computed(() => {
   if (earlier && current) return comparePrompts(earlier, current);
 });
 const factNames: Readonly<Record<string, string>> = {
+  mcGuidance: '本轮 MC 指引',
   events: '本轮游戏输入', currentEvents: '原游戏事件', newEvents: '新增游戏事件', lastObservation: '最近观测',
   sceneRevision: '现场修订', task: '任务状态', taskPlan: '当前计划', taskHandoff: '任务交接',
   planSettlements: '计划结算', workSettlement: '动作回执', work: '复核中的工作', following: '跟随状态',

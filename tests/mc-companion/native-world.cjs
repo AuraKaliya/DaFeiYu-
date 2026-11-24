@@ -1171,6 +1171,10 @@ async function main() {
       assert.deepEqual(alerts.map(row => [row.body.status, row.body.work, row.body.episode]),
         [['raised', following, 1], ['recovered', following, 1]]);
       assert.equal(alerts[1].body.progress.vertical, 0);
+      const turns = rows.filter(row => row.kind === 'model.prepared' && row.step === 1).map(readPartnerContext);
+      const blocked = turns.find(turn => turn.input.trigger === 'follow.attention');
+      assert.equal(typeof blocked.guidance.domainExperience.followAttention, 'string');
+      assert.ok(turns.every(turn => turn.system === blocked.system));
       console.log(trace);
     } else if (continuationBudget) {
       assert.equal(sceneReads.length, 5);
@@ -1225,8 +1229,8 @@ async function main() {
         const trace = path.join(root, 'trace', 'events.jsonl');
         const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
         const turns = rows.filter(row => row.kind === 'model.prepared' && row.step === 1).map(readPartnerContext);
-        assert.deepEqual(Object.keys(turns[0].guidance.flowGuidance), ['scene']);
-        assert.equal(turns[0].guidance.domainExperience, undefined);
+        assert.equal(turns[0].input.mcGuidance, undefined);
+        assert.ok(turns.every(turn => turn.system === turns[0].system));
         const context = turns.find(turn => restartRoute ? turn.input.trigger === 'task.ready' :
           turn.input.events.some(event => event.sequence === 4));
         const queue = context.tools.find(tool => tool.name.endsWith('_queue_actions'));

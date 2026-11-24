@@ -19,6 +19,9 @@ struct Guidance {
     bool applies = true;
 };
 
+constexpr std::array player_guidance{
+    Guidance{"flowGuidance","scene","你和玩家身处同一个 Minecraft 世界。按玩家原话确定行动范围，结合现场决定接话、观察、行动或等待。用实际游戏回执说明进展。正文中的 mcGuidance 是 MC 陪玩插件提供的当轮指引。"}
+};
 constexpr std::array review_guidance{
     Guidance{"flowGuidance","workReview","结合当前分工、现场和新事件，判断列出的在途工作是否应停止。"},
     Guidance{"outputConstraints","decision","只输出 stop 或 continue。"}
@@ -28,12 +31,17 @@ constexpr std::array delegation_guidance{
     Guidance{"outputConstraints","result","向委托方报告已核实的结果及受阻原因。"}
 };
 
-// 按用途渲染本次适用的领域指引，原话与现场事实由请求正文承载。
-std::string render_guidance(std::string_view title, std::span<const Guidance> entries) {
+// 按用途收集当前适用的指引条目。
+Json guidance_sections(std::span<const Guidance> entries) {
     Json sections = Json::object();
     for (const auto& entry : entries)
         if (entry.applies) sections[entry.purpose][entry.key] = entry.text;
-    return std::string(title)+"\n"+sections.dump();
+    return sections;
+}
+
+// 为玩家对话、委托或动作复核渲染该入口固定的系统约定。
+std::string render_guidance(std::string_view title, std::span<const Guidance> entries) {
+    return std::string(title)+"\n"+guidance_sections(entries).dump();
 }
 
 constexpr std::string_view nearby_materials =
@@ -60,16 +68,15 @@ bool needs_materials_guidance(const Json& input, bool player_message) {
         });
 }
 
-// 由当前局内状态选取同场指引，具体技能参数由工具目录提供。
-// 步骤：读取目标、证据和工作状态 → 声明各条指引的适用条件 → 按用途送入领域系统段。
-std::string companion_instructions(const Json& input, bool player_message, bool actual_outcome, bool tools_for_gathering) {
+// 由当前局内状态选取送入动态正文的插件指引。
+// 步骤：读取目标、证据和工作状态 → 核对各条指引的适用条件 → 按用途返回。
+Json companion_guidance(const Json& input, bool player_message, bool actual_outcome, bool tools_for_gathering) {
     const auto& task = input.at("task");
     const bool has_goal = !task.at("goal").get_ref<const std::string&>().empty();
     const bool correcting = task.contains("pendingCorrection");
     const bool has_work = input.contains("activeMotion") || input.contains("taskPlan") ||
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
     const std::array entries{
-        Guidance{"flowGuidance","scene","结合新原话和当前现场，决定是否接话、观察、行动或等待。"},
         Guidance{"flowGuidance","task","沿原话和当前任务修订推进，给步骤写出已知依赖。复合委托若只提交准备步骤，用计划的 remainingGoal 保留尚未完成的用户目标。",has_goal || player_message},
         Guidance{"flowGuidance","planOutcome","计划结束时对照原话、剩余目标和实效。条件已具备就提交下一步。需要新证据就定向补查。现场变化使后续操作已无必要时，按最新事实结算。只承诺继续之前先登记实际后继。",
             input.contains("planSettlements")},
@@ -96,7 +103,7 @@ std::string companion_instructions(const Json& input, bool player_message, bool 
         Guidance{"outputConstraints","workOutcome","按最近核实的方块、库存、站位或投递回执说进展。跨轮状态先核对是否已恢复，再说明现场。已接纳的步骤仍待实际回执。",
             has_work || actual_outcome}
     };
-    return render_guidance("Minecraft 同场规则",entries);
+    return guidance_sections(entries);
 }
 
 // 将基本观察、沟通和发现能力作为同场陪玩的初始契约。
@@ -322,7 +329,7 @@ void PartnerLoop::retire() {
 }
 
 // 将按序收到的原始事实及绑定游戏数据送入同一子会话。
-// 步骤：创建或复用上下文 → 定格原玩家及候选范围 → 接纳后消费事实。
+// 步骤：复用子会话 → 定格玩家与现场 → 组装同场约定、当轮指引和工具 → 接纳后消费事实。
 void PartnerLoop::submit(std::string_view wake) {
     if (!session_) {
         auto world = feed_.world();
@@ -420,7 +427,6 @@ void PartnerLoop::submit(std::string_view wake) {
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
     const bool player_message = !facts.empty() && facts.back().at("type") == "player.message";
-    const auto prompt = input.dump();
     const auto binding = Json{{"generation",session_world_},{"order",order}}.dump();
     std::array<std::string,partner_skills.size()> ids;
     std::array<dfy_v2_string_view,partner_skills.size()> visible{};
@@ -449,8 +455,13 @@ void PartnerLoop::submit(std::string_view wake) {
         observe_visible |= skill.name == "observe";
         plan_visible |= skill.kind == SkillKind::action_queue;
     }
+    if (!delegated) {
+        auto guidance = companion_guidance(input,player_message,actual_outcome,observe_visible && plan_visible);
+        if (!guidance.empty()) input["mcGuidance"] = std::move(guidance);
+    }
+    const auto prompt = input.dump();
     const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
-        companion_instructions(input,player_message,actual_outcome,observe_visible && plan_visible);
+        render_guidance("Minecraft 同场规则",player_guidance);
     const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
