@@ -1,6 +1,7 @@
 #include "partner_loop.hpp"
 #include "partner_effect.hpp"
 #include "partner_knowledge.hpp"
+#include "partner_model_view.hpp"
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <array>
@@ -459,7 +460,7 @@ void PartnerLoop::submit(std::string_view wake) {
         auto guidance = companion_guidance(input,player_message,actual_outcome,observe_visible && plan_visible);
         if (!guidance.empty()) input["mcGuidance"] = std::move(guidance);
     }
-    const auto prompt = input.dump();
+    const auto prompt = model_scene_text(std::move(input));
     const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);
     const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
@@ -1182,9 +1183,9 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
         feed_.pending().size() == 1 && confirmation_->approved_order > confirmation_->order) return;
     if (question_ && question_->approval && question_->item == work.invocation && question_->answer_order == feed_.cursor() &&
         feed_.pending().size() == 1) return;
-    const auto input = Json{{"currentEvents",events_.empty() ? recent_events_ : events_},{"newEvents",feed_.pending()},
+    const auto input = model_scene_text(Json{{"currentEvents",events_.empty() ? recent_events_ : events_},{"newEvents",feed_.pending()},
         {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},
-        {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}}.dump();
+        {"player",feed_.owner()},{"generation",session_world_},{"lastObservation",feed_.observation()}});
     reviewed_ = feed_.cursor();
     const auto instructions = render_guidance("Minecraft 动作复核",review_guidance);
     const dfy_v2_agent_input assessment{view(input),view(instructions),{},{},0,0};

@@ -39,6 +39,19 @@ function fixture() {
   return { bot, player, context, reads };
 }
 
+// 用原局高度及整数另一侧读取脚下格，核对执行采样采用的坐标。
+test('live below-feet cells use the original height on both sides of a block boundary', async () => {
+  const { bot, context } = fixture();
+  for (const [height, below] of [[-60.000041050085805, -62], [-59.99996, -61]]) {
+    bot.entity.position.set(0, height, 0);
+    const result = {};
+    await observeWindow(bot, { sources: ['self'], radius: 1 }, result, context);
+    const view = result.observation.samples[0].views[0];
+    assert.equal(view.actor.position.y, height);
+    assert.equal(view.belowFeet.y, below);
+  }
+});
+
 // 两个实时中心重叠时同格只读取一次，来源与玩家状态仍可各自追查。
 test('combined survey reads shared coordinates once', async () => {
   const { bot, context, reads } = fixture(), result = {};

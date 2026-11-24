@@ -381,6 +381,12 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     const auto observation = Json::parse(first->content.substr(first->content.find('{'))).at("observation");
                     const auto& sample = observation.at("samples").front();
                     const auto& views = sample.at("views");
+                    const auto& anchor = views.at(2).at("anchor");
+                    if (anchor.at("position") != Json{{"x",0},{"y",-60},{"z",10}} ||
+                        anchor.at("positionCell") != Json{{"x",-1},{"y",-61},{"z",9}} ||
+                        !anchor.at("positionCell").at("y").is_number_integer() ||
+                        anchor.at("facing") != Json{{"yaw",0.12},{"pitch",-0.99}})
+                        throw std::runtime_error("model observation lost the original block at a rounding boundary");
                     if (result != Json{{"status","done"},{"observationWork",observation.at("id")}} ||
                         sample.at("sampledAtMs") != 142 || views.at(0).at("source") != "self" ||
                         views.at(0).at("actor").at("position").at("x") != -1.5 || views.at(1).at("source") != "player" ||

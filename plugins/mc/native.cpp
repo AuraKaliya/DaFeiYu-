@@ -2,6 +2,7 @@
 #include "game_work.hpp"
 #include "world_protocol.hpp"
 #include "partner_loop.hpp"
+#include "partner_model_view.hpp"
 #include "partner_skills.hpp"
 #include <dafeiyu/activity_abi_v2.h>
 #include <dafeiyu/hook_abi_v2.h>
@@ -18,7 +19,7 @@ using SceneBatch = std::array<std::uint64_t,4>;
 struct NativeJob {
     std::uint64_t sequence = 0;
     bool ready = false, success = false, exited = false;
-    std::string id, output, wire, arguments;
+    std::string id, output, model_output, wire, arguments;
     enum class Method { world, survey, inbox, ask, admit, receipt, control, local } method = Method::world;
     std::chrono::steady_clock::time_point next{};
     bool attempted = false;
@@ -405,7 +406,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 result.at("status") == "recorded" || result.at("status") == "stopping" || result.at("status") == "withdrawn" ||
                 result.at("status") == "queued" || result.at("status") == "cleared" || result.at("status") == "stopped" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
-            job->output = result.dump();
+            job->output = dfy::mc::model_scene_text(result);
         } catch (...) {}
         job->ready = true;
     } else if (job->waiting) {
@@ -444,6 +445,13 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 case dfy::mc::GameEffect::unknown: job->effect = DFY_V2_TOOL_UNKNOWN; break;
                 }
                 job->success = value->success && !job->cancelled;
+                if (job->partner_session && !job->motion_transferred && !job->output.empty()) {
+                    // 原回执随工作票交给插件登记，工具通道使用独立的展示副本。
+                    try {
+                        auto result = nlohmann::json::parse(job->output,nullptr,false);
+                        if (!result.is_discarded()) job->model_output = dfy::mc::model_scene_text(std::move(result));
+                    } catch (...) {} // 展示失败时仍按原回执交付已经产生的实效。
+                }
                 job->ready = true;
             }
         } catch (...) {
@@ -496,7 +504,8 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
             job->ready = true;
         }
     }
-    *out = {sizeof(*out), job->ready, job->success, job->effect, job->exited, 0, view(job->output)};
+    *out = {sizeof(*out), job->ready, job->success, job->effect, job->exited, 0,
+        view(job->model_output.empty() ? job->output : job->model_output)};
     return report(DFY_V2_OK, error);
 }
 // 取消尚未交付结果的世界查询，原票据继续负责退出。

@@ -226,6 +226,9 @@ async function main() {
   const waypoints = [[1, -6], [4, -6], [4, -4], [1, -4]].map(([x, z]) => ({ x, y: -60, z }));
   const state = { generation: randomUUID(), actor: randomUUID(), dimension: 'overworld',
     position: { x: -1.5, y: -60, z: 0.5 }, cobblestone: 5, signalAgeMs: 20 };
+  const boundaryAnchor = { dimension: 'overworld', sampledAtMs: 42,
+    position: { x: -0.000041, y: -60.000041050085805, z: 9.99996 },
+    facing: { yaw: 0.1234567, pitch: -0.9876543 } };
   const bridge = await openBridge(channel, {
     // 第二次查询模拟原世界已撤销。
     read() { ++reads; return partnerLoop || boardWindow || reads === 1 ? state : null; },
@@ -289,7 +292,10 @@ async function main() {
         }
         if (revision) {
           messages[1].text = '清理门边两格草方块';
-          if (observationBatch) messages[1].text = '看看我在哪，能找到就过来';
+          if (observationBatch) {
+            messages[1].text = '看看我在哪，能找到就过来';
+            messages[1].sceneAtMessage = boundaryAnchor;
+          }
           if (attention) {
             messages[1].text = '大肥鱼，跟着我';
             messages[2].text = '你听得到吗';
@@ -720,8 +726,7 @@ async function main() {
                   { source: 'self', status: 'sampled', actor: { position: state.position } },
                   { source: 'player', status: livePlayer ? 'sampled' : 'unavailable',
                     actor: livePlayer ? { position: { x: 2.5, y: -60, z: 1.25 } } : null },
-                  { source: 'message', status: 'sampled', message: 2, anchor: { dimension: 'overworld', sampledAtMs: 42,
-                    position: { x: -0.5, y: -57, z: 9.25 } } },
+                  { source: 'message', status: 'sampled', message: 2, anchor: boundaryAnchor },
                 ],
               }],
             } } };
@@ -1219,6 +1224,15 @@ async function main() {
       const observations = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
         row.body.skill === 'observe');
       assert.deepEqual(observations.map(row => row.body.bridgeWork), sceneReads);
+      const original = rows.find(row => row.kind === 'mail.received' && row.body?.event?.sequence === 2);
+      assert.deepEqual(original.body.event.sceneAtMessage, boundaryAnchor);
+      for (const entry of observations)
+        assert.deepEqual(entry.body.result.observation.samples[0].views[2].anchor, boundaryAnchor);
+      const playerTurn = rows.filter(row => row.kind === 'model.prepared' && row.step === 1)
+        .map(readPartnerContext).find(turn => turn.input.events.some(event => event.sequence === 2));
+      const shown = playerTurn.input.events.find(event => event.sequence === 2).sceneAtMessage;
+      assert.deepEqual(shown, { dimension: 'overworld', sampledAtMs: 42, position: { x: 0, y: -60, z: 10 },
+        positionCell: { x: -1, y: -61, z: 9 }, facing: { yaw: 0.12, pitch: -0.99 } });
       const queued = rows.find(row => row.kind === 'tool.exited' && row.callId === 'meet-player');
       const next = rows.find(row => row.seq > queued.seq && row.kind === 'model.prepared');
       assert.equal(readPartnerContext(next).input.trigger, 'plan.finished');
