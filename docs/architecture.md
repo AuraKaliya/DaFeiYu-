@@ -7,11 +7,13 @@
 | 方向 | 已经走通的路径 | 接续位置 |
 | --- | --- | --- |
 | 本体与插件宿主 | 主会话和插件子会话各自持有上下文和当轮工具。终端工具委托能从授权、审批走到执行和结果读回。信箱、ASK 与 Trace 能沿原消息找到回合、投递及收件回执。 | 当前任务和会话状态保留在进程内。长期记忆、跨会话保存与恢复、通用多 Agent 协作各自待评审。[宿主装配](../app/application.cpp) · [当前边界](#当前边界) |
-| 桌面主面板与内置房间 | 主面板 01～08 已接通收发、本轮补充、下一轮队列、停止、清空和刷新恢复。补充关联实际模型步骤。09 已在应用中建立书房、熟悉布局和绑定身体，角色初始在书桌旁。另有两份固定预览。 | 10 起接入感官可达范围、观察和身体动作。[原生书房](../app/builtin_room.cpp) · [面板实施顺序](main-agent-room-development-plan.md#7-分步开发顺序) |
+| 桌面主面板与内置房间 | 01～08 已接通对话、忙时补充与排队、停止、清空和刷新恢复。09 将原生房间和身体位置接到正式面板。10 可按身体采样、距离和屏风遮挡筛选一次台灯变化，分别返回亲见的灯态、声响来向或空结果。 | 11 记录事件发生时的角色感知，并提供按当前位置主动观察的读口。移动、开灯与图形随动在后续步骤接入。[原生书房](../app/builtin_room.cpp) · [面板实施顺序](main-agent-room-development-plan.md#7-分步开发顺序) |
 | MC 任务与消息 | 跟随、采掘、指定整堆拾取、原木合成木板和补墙已有实际读回。隔离服已验证伙伴从零库存备料，到配对玩家的新位置会合，投物并核对实收。同批原话中的一条可被指定为追问来源。 | 先让同批的两条独立原话各有发言回执，再让两个同时待答的事项各自解除。[MC 实施顺序](mc-companion-development-plan.md#实施顺序与跨方向验收) |
 | MC 环境事件 | 桥接能读取伙伴自身的生命、饥饿和余气。同次空气耗尽合并为一次只读复查，玩家插话可以接替正在运行的复查。 | 先把水中角色与可达岸边站位用只读证据关联，再评审恢复动作的授权与实效。[领域事件与唤醒](mc-companion-development-plan.md#事件源归并与-agent-唤醒) |
 
-2026-11-24 17:10 的验收提交 `0588db3` 记录了 Release 全量构建和 245 项离线 CTest 通过。隔离 Paper 另用固定模型响应和独立协议玩家核对游戏里的收件和发言。桌面主面板的固定响应验收通过隐藏 WebView2 操作正式页面。真实模型选工具、理解现场与思考耗时按项目约定「仅记录，不执行」。[MC 验收记录](mc-companion-development-plan.md#最近一次验收) · [桌面验收用例](../tests/ui_main_panel.cpp) · [测试原则](../AGENTS.md#测试原则)
+2026-11-24 的功能提交 `6c4afe0` 已完成含 GUI 的 Debug 和 Release 全量构建，两种配置各通过 257 项离线 CTest。正式面板通过固定响应和隐藏 WebView2 验证。独立 Release 安装包关闭测试入口，已核对离线加载、键盘输入、正常回收及默认空插件目录。[桌面验收用例](../tests/ui_main_panel.cpp) · [安装包检查](ui-probe-run-guide.md#自动验证)
+
+MC 的隔离 Paper 实服验收沿用当日 17:10 的 `0588db3` 记录，当时以固定模型响应和独立协议玩家核对局内收件与发言。真实模型选工具、理解现场和思考耗时按约定「仅记录，不执行」。[MC 验收记录](mc-companion-development-plan.md#最近一次验收) · [测试原则](../AGENTS.md#测试原则)
 
 ## 架构图
 
@@ -31,7 +33,8 @@ flowchart TB
 
     subgraph Host["宿主进程 · C++20"]
         App["Application<br/>人格、信箱、ASK 与 Trace"]
-        Main["Conversation<br/>主会话"]
+        Main["Conversation<br/>主会话与下一轮队列"]
+        Room["BuiltinRoom<br/>书房布局、身体与感知规则"]
         Child["Subagents<br/>插件的独立子会话"]
         Run["Session / RunLoop<br/>模型、工具、审批与取消"]
         Plugins["PluginManager / PluginTools<br/>插件生命周期、工具与活动调度"]
@@ -39,6 +42,7 @@ flowchart TB
         Model["Model<br/>DeepSeek / Qwen 协议"]
 
         App --> Main --> Run
+        App --> Room
         App --> Child --> Run
         App --> Plugins
         Plugins -->|dfy.agent| Child
@@ -49,7 +53,7 @@ flowchart TB
 
     Terminal --> App
     GameHost --> App
-    Gui <-->|主面板收发正文、探针查询摘要| App
+    Gui <-->|对话命令与回执、运行及位置查询| App
     App -->|本地 Trace 文件| Viewer["浏览器 MC Trace 查看器"]
     Model -->|Platform / WinHTTP| Service["模型服务"]
     Mc <-->|Windows 命名管道| Bridge["Node / Mineflayer<br/>观察与角色动作"]
@@ -67,9 +71,15 @@ flowchart TB
 | **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../app/ask.cpp) · [交互路由](../app/interaction_routes.cpp) · [事件解析](#事件注册与解析) · [信箱唤醒](#信箱优先级与唤醒) |
 | **回信与回执** | `mail_reply` 将模型工具调用解析为绑定原信和本轮的转发意图。`ReplyDelivery` 处理两条路径的最终入箱与确认。入箱回执和插件消费回执各有身份。[回信工具](../app/mail_reply_tool.cpp) · [结果投递](../app/reply_delivery.cpp) |
 | **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../app/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
-| **Desktop** | WebView2 的独立主面板文档经原生业务线程发送、停止、清空和管理下一轮队列。待发消息由应用持有，新回合保留其消息号。公开 `state.read` 按会话号和回合号返回无正文运行摘要。房间预览取固定样本。[业务线程](../app/gui/run_status_host.cpp) · [应用队列](../app/dialogue_queue.cpp) · [运行说明](ui-probe-run-guide.md) |
+| **Desktop** | Vue 主面板通过 WebView2 向原生业务线程提交用户意图。应用管理主会话和下一轮队列，Agent 记录本轮补充实际进入的模型步骤。刷新按原命令查回执。受信页面通过 `room.read` 读取身体位置，公开 `state.read` 返回无正文运行摘要。[业务线程](../app/gui/run_status_host.cpp) · [应用队列](../app/dialogue_queue.cpp) · [面板运行说明](ui-probe-run-guide.md) |
 
 构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。终端是默认启动目标，`BUILD_GUI` 和 `BUILD_TESTING` 控制探针和测试目标。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
+
+## 桌面主面板的回执和位置
+
+同一句原话在忙时可以有两个去向。「本轮补充」绑定当前会话和回合，先取得消息号，真正进入后续模型请求后才有步骤号。「下一轮」把原话放入应用队列，前一轮成功且实际退出后才开新回合，新回合保留排队消息号。停止有独立的命令槽位，页面能同时显示本轮已取消、原工作正在收尾和队列已暂停。[回合补充](../agent/run_loop.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [原生命令桥](../app/gui/run_status_host.cpp)
+
+草稿属于当前窗口，已接纳的原话、队列和结果由应用持有。页面刷新后先查询宿主的命令水位，未登记的原件沿用原命令号补投，已登记的命令取回原回执。标题位置由本体另行提供。书房插画用于空闲画面，角色能否看见灯态由本体按身体坐标、距离和屏风计算。当前主会话读写和房间快照的生命周期均限于本进程。[窗口恢复](../ui/web/src/dialogue-recovery.ts) · [主面板](../ui/web/src/MainPanel.vue) · [书房](../app/builtin_room.cpp)
 
 ## Agent 会话与工具流程
 
@@ -104,13 +114,15 @@ flowchart TB
     Verify -->|下一步骤| Model
     Verify -->|全部通过| Done["以已提交的回答结算成功"]
     Verify -->|取消、超时或运行失败| Stop
-    Plan -->|否| Done
+    Plan -->|普通文本| Pending{"本轮有已接纳的补充？"}
+    Pending -->|无| Done
+    Pending -->|有| Continue
     Response -->|模型失败、取消或超时| Stop
     Done --> Exit["发布终态通知<br/>实际退出后释放活动槽"]
     Stop --> Exit
 ```
 
-- **普通问答**每轮接收一次完整文本。成功时提交整轮对话。失败或取消后，仍保留先前已经提交的对话与工具事实。[历史提交](../agent/run_context.cpp) · [会话推进](../agent/session.cpp)
+- **普通问答**收到完整文本后准备结算。允许本轮补充的入口若已收到新原话，就把阶段文本与这些原话带入同一回合的后续请求。工具执行中到达的补充排在该批全部工具结果之后。每条补充记录实际模型步骤或未带入原因。失败或取消保留此前已提交的事实。[回合循环](../agent/run_loop.cpp) · [原话回执](../agent/include/dafeiyu/turn_input.hpp) · [离线回放](../app/trace_replay.cpp)
 - **终端委托**中，`/run` 授予一个只读工具，`/run-confirmed` 允许具体变更候选进入审批。`/task` 固定同一个插件实例上的首读、变更、末读，宿主核对步骤顺序、实际回执和期望值。原候选的批准与实际调用分开记录。[应用入口](../app/application.cpp) · [工具批次](../agent/tool_batch.cpp) · [读回验证](../app/tool_verification.cpp)
 - **原生观察与计划控制**通过显式宿主入口接纳。观察触发默认只读，变更分支要求声明条件、可信当前采样和确认。计划步骤支持有界重规划、目标修订和等待验证时换入新观察。诊断和离线比较沿用运行身份和版本信息。[观察控制](../agent/observation_controller.cpp) · [计划与观察入口](../agent/session.cpp) · [离线场景](../tests/offline_scenario.cpp)
 
@@ -362,7 +374,7 @@ ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠�
 | 交付 | 验收标准 |
 | --- | --- |
 | 实际上下文记录与离线回放 | 按原会话、回合、步骤和调用身份读到送模消息、详细工具、模型输出、工具回执与最终结果。固定证据重跑得到相同的模型输入和结果。 |
-| 桌面主面板 | 空插件目录下发送普通对话，同号同文复用原回合，同号异文返回冲突。刷新后可查正文，探针文档与独立 Frame 的正文请求被拒。[正式页面验收](../tests/ui_main_panel.cpp) |
+| 桌面主面板 | 空插件时读到本体位置，首次发言前模型调用数为零。正式窗口按原号收发、停止和清空。320 像素宽的页面可补充本轮、管理待发队列，重载后查回原回合。探针和独立 Frame 的正文请求被拒。[正式面板](../tests/ui_main_panel.cpp) · [窄窗队列](../tests/ui_dialogue_queue.cpp) · [刷新验收](../tests/ui_dialogue_recovery.cpp) |
 | 插件局内循环 | 一轮模型结束后，插件仍收取世界和玩家事实。固定样本验证无新聊天时自主继续、现场变化触发、插话、退出和回收。 |
 | 分类展开和通用候选确认 | 初始工具范围保持精简，展开类别后核对正式送模契约。采集与放置共用确认状态机，批准与实际执行分别取证。 |
 | 放置与目标核验 | 隔离游戏由独立协议玩家核对原墙、补上的一格、审批前的空门洞和批准后的上下门格。[固定响应验收场地](../tests/mc-companion/README.md#固定响应验收场地) |
