@@ -39,6 +39,20 @@ namespace dfy::ui {
 void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> checks, std::shared_ptr<tests::UiDialogueGate> gate) {
     expect("main dialogue ready","document.querySelector('#dialogue-state')?.dataset.accepting === 'true'");
     expect("room position rendered","document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
+    call("enable document lifecycle events",L"Page.enable",Json::object());
+    call("hold first room query in the reloaded document",L"Page.addScriptToEvaluateOnNewDocument",{{"source",R"JS(document.addEventListener('readystatechange',()=>{
+        if (document.readyState!=='interactive' || location.origin!=='https://panel.dafeiyu.invalid' || sessionStorage.getItem('fixture-room-drop')) return;
+        sessionStorage.setItem('fixture-room-drop','1');
+        const bridge=window.chrome.webview, post=bridge.postMessage.bind(bridge);
+        window.fixtureRoomReads=0;
+        Object.defineProperty(bridge,'postMessage',{configurable:true,value:fields=>{
+            if (fields.type==='room.read' && ++window.fixtureRoomReads===1) return;
+            post(fields);
+        }});
+    }))JS"}});
+    call("reload before room read",L"Page.reload",Json::object());
+    expect("lost room query is recovered without leaving the panel","window.fixtureRoomReads>=2 && "
+        "document.querySelector('#room-location')?.textContent==='书房 · 书桌旁' && !document.querySelector('.turn')");
     call("room matches original application body",L"Runtime.evaluate",{{"expression","({...document.querySelector('#room-location').dataset})"},{"returnByValue",true}},
         [gate](const Json& reply) {
             const auto& data = reply.at("result").at("value");

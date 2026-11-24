@@ -37,7 +37,7 @@ const turns = shallowRef<readonly Turn[]>([]);
 const queue = shallowRef<readonly QueuedMessage[]>([]);
 const queuePaused = ref(false);
 const room = shallowRef<{ instance: string; body: string; name: string; place: string }>();
-let roomRequested = false;
+let nextRoomRead = 0;
 const pending = shallowRef<Pending>();
 const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
@@ -182,7 +182,6 @@ function receive(event: MessageEvent<unknown>): void {
   const value = event.data;
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
   if (value.event === 'room.snapshot') {
-    roomRequested = false;
     const data = value.room;
     if (isRecord(data) && isDecimal(data.instance) && isDecimal(data.body) && isDecimal(data.generation) &&
         isDecimal(data.revision) && isDecimal(data.layoutVersion) && typeof data.roomName === 'string' && typeof data.placeName === 'string')
@@ -198,8 +197,10 @@ function receive(event: MessageEvent<unknown>): void {
         (value.queue !== null && (!Array.isArray(value.queue) || !value.queue.every(isQueuedMessage)))) return;
     latestSnapshot = sequence;
     ready.value = value.ready;
-    if (ready.value && !room.value && !roomRequested) {
-      roomRequested = true;
+    const now = performance.now();
+    if (ready.value && !room.value && now >= nextRoomRead) {
+      // 首读或回包可能随页面重载丢失，取得原生位置前最多每秒补查一次。
+      nextRoomRead = now + 1000;
       post({ type: 'room.read' });
     }
     accepting.value = value.accepting;
