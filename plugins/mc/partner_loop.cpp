@@ -467,9 +467,9 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
     if (question_) {
         input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
-            {"sourceMessage",question_->order},{"originalText",question_->origin.is_null() ? Json("") : question_->origin.at("text")},
+            {"sourceMessage",question_->source_order()},{"originalText",question_->origin.is_null() ? Json("") : question_->origin.at("text")},
             {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
-        if (const auto* opening = task_.opening_observation(question_->order))
+        if (const auto* opening = task_.opening_observation(question_->source_order()))
             input["pendingQuestion"]["openingObservation"] = *opening;
     }
     if (question_ && !question_->after_pickup.is_null()) {
@@ -695,7 +695,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const bool scoped_answer = resolves && waiting && resolves == question_->item && player_order > question_->order &&
         question_->presented && !question_->expired && std::chrono::steady_clock::now() < question_->local_answer_deadline &&
         !question_->scope.is_null() && question_->after_pickup.is_null() && !placement_choice_pending() &&
-        (target == args.end() || (question_->scope.at("skill") == "place" && target->value("message",std::uint64_t{}) == question_->order)) &&
+        (target == args.end() || (question_->scope.at("skill") == "place" && target->value("message",std::uint64_t{}) == question_->source_order())) &&
         (!args.contains("collection") || question_->scope.at("skill") == "collect");
     const bool correction_answer = committing && supports_placement && question_->scope.is_null() &&
         resolves == question_->item && player_order > question_->order;

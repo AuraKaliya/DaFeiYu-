@@ -180,7 +180,8 @@ async function main() {
   const layeredBlocked = variant === 'partner-revision-layered-blocked';
   const layeredStepCount = layeredStock ? 3 : layeredBlocked ? 2 : 4;
   const attention = variant === 'partner-revision-attention';
-  const questionScope = variant === 'partner-revision-question-scope';
+  const questionBatch = variant === 'partner-revision-question-batch';
+  const questionScope = questionBatch || variant === 'partner-revision-question-scope';
   const openingAnswer = variant === 'partner-revision-opening-answer';
   const airPriority = variant === 'partner-revision-air-priority';
   const airBudget = airPriority || variant === 'partner-revision-air-budget';
@@ -292,7 +293,7 @@ async function main() {
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
           openingAnswer ? (questionPresented ? 3 : 2) :
-          questionScope ? (questionPresented && fs.existsSync(path.join(root, 'scoped-question-checked')) ? 3 : 2) :
+          questionScope ? (questionBatch ? 3 : 2) + Number(questionPresented && fs.existsSync(path.join(root,'scoped-question-checked'))) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
           directPlace ? (planReading ? 5 : !questionPresented ? 2 : fs.existsSync(path.join(root, 'placement-waiting-checked')) ? 4 : 3) :
@@ -358,7 +359,8 @@ async function main() {
           }
           if (questionScope) {
             messages[1].text = '挖一块泥土来垫脚';
-            messages[2].text = '还是用泥土';
+            if (questionBatch) messages[2].text = '旁边那块普通泥土也先挖出来';
+            messages[questionBatch ? 3 : 2].text = '还是用泥土';
           }
           if (openingAnswer) {
             messages[1].text = '把墙上的口补一下';
@@ -666,7 +668,7 @@ async function main() {
             changes: cells.map(cell => ({ ...cell, before: 'air', after: 'dirt' })) } };
         }
         if (questionScope) {
-          assert.equal(context.order, 2);
+          assert.equal(context.order,questionBatch ? 3 : 2);
           if (skill === 'reply') {
             assert.equal(method, 'partner.begin');
             assert.ok(!questionPresented);
@@ -1135,7 +1137,7 @@ async function main() {
   releaseControl(generation) {
     assert.equal(generation, state.generation);
     return { generation, order: airBudget ? 3 : refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
-      first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
+      first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace || questionBatch ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope && !continuationBudget) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
   },
@@ -1261,6 +1263,11 @@ async function main() {
     } else if (questionScope) {
       assert.ok(questionPresented && collectExited);
       assert.equal(stopped, 0);
+      if (questionBatch) {
+        const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+        const presented = rows.find(row => row.category === 'mc.partner.question' && row.body.status === 'presented');
+        assert.deepEqual([presented.body.order,presented.body.sourceMessage],[3,2]);
+      }
     } else if (observeDigScope) {
       assert.ok(collectExited);
       assert.equal(stopped, 0);

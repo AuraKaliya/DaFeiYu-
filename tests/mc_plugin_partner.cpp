@@ -297,7 +297,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool layered_stock = variant == L"partner-revision-layered-stock";
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
-    const bool question_scope = variant == L"partner-revision-question-scope";
+    const bool question_batch = variant == L"partner-revision-question-batch";
+    const bool question_scope = question_batch || variant == L"partner-revision-question-scope";
     const bool opening_answer = variant == L"partner-revision-opening-answer";
     const bool air_priority = variant == L"partner-revision-air-priority";
     const bool air_budget = air_priority || variant == L"partner-revision-air-budget";
@@ -840,8 +841,14 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (question_scope) {
             const Json scope{{"skill","collect"},{"block","grass_block"}};
             const Json grass{{"x",1},{"y",-61},{"z",2},{"block","minecraft:grass_block"}};
+            Json question{{"question","草方块也可以吗？"},{"scope",scope},{"options",{"可以用草方块","还是用泥土"}}};
+            if (question_batch) question["sourceMessage"] = 2;
             if (last.role == Role::tool) {
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                if (last.tool_call_id == "wrong-source") {
+                    if (result.at("status") != "invalid_source_message") throw std::runtime_error("non-player source registered a question");
+                    return call("_ask_player","ask-about-grass",question);
+                }
                 if (last.tool_call_id == "ask-about-grass") {
                     placement_item = result.at("item").get<std::uint64_t>();
                     return call("_dig_block","wait-on-grass",grass);
@@ -860,17 +867,23 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto& nodes = input.at("planSettlements").at(0).at("nodes");
                 const auto& pending = input.at("pendingQuestion");
                 if (pending.at("item") != placement_item || pending.at("scope") != scope || pending.at("sourceMessage") != 2 ||
+                    pending.at("originalText") != "挖一块泥土来垫脚" ||
                     nodes.at(0).at("result").at("reason") != "waiting_for_player" ||
                     nodes.at(1).at("result").at("inventoryDelta").at("dirt") != 1)
                     throw std::runtime_error("the question prevented independent gathering or changed identity");
                 std::ofstream(root/"scoped-question-checked").put('1');
-            } else if (const auto sequence = input.at("events").back().at("sequence"); sequence == 2) {
-                return call("_ask_player","ask-about-grass",{{"question","草方块也可以吗？"},
-                    {"scope",scope},{"options",{"可以用草方块","还是用泥土"}}});
-            } else if (sequence == 3) {
+            } else if (const auto sequence = input.at("events").back().at("sequence"); sequence == (question_batch ? 3 : 2)) {
+                if (question_batch) {
+                    if (input.at("events").size() != 2) throw std::runtime_error("expected two independent player messages");
+                    question["sourceMessage"] = 1;
+                    return call("_ask_player","wrong-source",question);
+                }
+                return call("_ask_player","ask-about-grass",question);
+            } else if (sequence == (question_batch ? 4 : 3)) {
                 const auto& result = input.at("questionResult");
                 if (input.contains("pendingQuestion") || result.at("item") != placement_item || result.at("scope") != scope ||
-                    result.at("status") != "answered" || result.at("answerMessage") != 3 || result.at("answer") != "还是用泥土")
+                    result.at("sourceMessage") != 2 || result.at("status") != "answered" ||
+                    result.at("answerMessage") != sequence || result.at("answer") != "还是用泥土")
                     throw std::runtime_error("new clarification did not settle the original question");
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};

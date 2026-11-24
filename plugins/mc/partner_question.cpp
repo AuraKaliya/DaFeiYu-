@@ -87,6 +87,18 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         throw std::invalid_argument("MC question: invalid request");
     for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
         option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
+    const auto& source = events_.empty() ? recent_events_ : events_;
+    const Json* original = nullptr;
+    if (const auto ref = args.find("sourceMessage"); ref != args.end()) {
+        const auto event = std::ranges::find_if(events_,[&](const auto& entry) {
+            return entry.at("type") == "player.message" && entry.at("sequence") == *ref;
+        });
+        if (!ref->is_number_unsigned() || event == events_.end()) return {{"status","invalid_source_message"}};
+        original = &*event;
+    } else if (!source.empty() && source.back().at("type") == "player.message" && source.back().at("sequence") == order_) {
+        original = &source.back();
+    }
+
     const auto after_pickup = args.value("afterPickup",Json(nullptr));
     auto scope = args.value("scope",Json(nullptr));
     if (!scope.is_null()) {
@@ -101,7 +113,7 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
             scope[key] = std::string(canonical);
         }
     }
-    if (args.contains("afterPickup") && (path != "local" || events_.empty() || events_.back().at("type") != "player.message" ||
+    if (args.contains("afterPickup") && (path != "local" || events_.empty() || !original ||
         !after_pickup.is_object() ||
         after_pickup.size() != 2+after_pickup.count("pickup") ||
         item_name(after_pickup.at("item").get_ref<const std::string&>()).empty() ||
@@ -143,11 +155,8 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     question_->after_pickup = after_pickup;
     question_->scope = std::move(scope);
     question_->task_revision = task_.revision();
-    const auto& source = events_.empty() ? recent_events_ : events_;
-    if (!source.empty() && source.back().at("type") == "player.message" && source.back().at("sequence") == order_ &&
-        source.back().contains("text"))
-        question_->origin = source.back();
-    if (!question_->scope.is_null() && question_->scope.at("skill") == "place") task_.pin_opening_observation(order_);
+    if (original) question_->origin = *original;
+    if (!question_->scope.is_null() && question_->scope.at("skill") == "place") task_.pin_opening_observation(question_->source_order());
     question_result_.clear();
     return {{"status","recorded"},{"item",id}};
 }
@@ -197,10 +206,8 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
     }
     question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
     if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
-    if (!question_->scope.is_null()) {
-        question_result_["scope"] = question_->scope;
-        question_result_["sourceMessage"] = question_->order;
-    }
+    if (!question_->scope.is_null()) question_result_["scope"] = question_->scope;
+    if (!question_->scope.is_null() || !question_->origin.is_null()) question_result_["sourceMessage"] = question_->source_order();
     if (status == "answered" && placement_choice_pending() && placement_choice_.item == question_->item) {
         for (const auto& option : placement_choice_.options) {
             if (option.at("answer") == question_result_.at("answer")) question_result_["placementCells"] = option.at("cells");
@@ -369,9 +376,10 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
             if (question.path == "local" && !question.presented) { complete_question("unavailable",{}); return; }
             if (question.path == "local") {
-                remember_dialogue("companion",question.order,question.text);
+                const Json origin{{"sourceMessage",question.source_order()},{"questionItem",question.item}};
+                remember_dialogue("companion",question.order,question.text,origin);
                 publish("mc.partner.question",{{"status","presented"},{"generation",question.world},
-                    {"order",question.order},{"item",question.item},{"text",question.text},
+                    {"order",question.order},{"sourceMessage",question.source_order()},{"item",question.item},{"text",question.text},
                     {"bridgeWork","ask."+std::to_string(instance)+".l."+std::to_string(question.item)}});
             }
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},

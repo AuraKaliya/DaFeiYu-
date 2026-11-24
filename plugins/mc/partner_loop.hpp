@@ -202,6 +202,8 @@ class PartnerLoop {
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
         nlohmann::json options, after_pickup, scope, origin;
+        // 返回追问所指的原话，登记时的收件水位继续用于筛选后来的答复。
+        std::uint64_t source_order() const { return origin.is_object() ? origin.value("sequence",order) : order; }
     };
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;
