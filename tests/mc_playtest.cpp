@@ -878,6 +878,36 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"waiting for the original gathering work"})"}};
 }
 
+// 用固定响应查询原角色的服务端生命与空气，随两次现场读回回答水下和恢复状态。
+// 步骤：按玩家问题选择只读入口 → 核对各自的游戏读数 → 返回能由另一位玩家复核的答复。
+dfy::model::Response vitals_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (!input.at("events").empty()) {
+            const auto question = input.at("events").back().value("text","");
+            if (question == "你现在还有多少血和空气？" || question == "上岸后空气恢复了吗？") {
+                const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_observe"); });
+                if (tool == request.tools.end()) throw std::runtime_error("vitals: observation tool missing");
+                return {{Role::assistant,"",{{question == "上岸后空气恢复了吗？" ? "shore" : "under",tool->name,R"({"mode":"vitals"})"}}},FinishReason::tool_calls};
+            }
+        }
+    } else if (last.role == Role::tool) {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("vitals");
+        if (sample.at("health").at("state") != "sampled" || sample.at("air").at("state") != "sampled")
+            throw std::runtime_error("vitals: actor packets unavailable");
+        if (last.tool_call_id == "under" && sample.at("air").at("ticks") < 240 && sample.at("health").at("points") < 20)
+            return {{Role::assistant,"我的生命值还没回满，空气已经不到两百四十刻了。"}};
+        if (last.tool_call_id == "shore" && sample.at("air").at("ticks") == 300)
+            return {{Role::assistant,"上岸后我又查了一次，空气已经恢复到三百刻了。"}};
+        throw std::runtime_error("vitals: scene and sampled state differ");
+    }
+    return {{Role::assistant,R"({"internal":"awaiting a vitals question"})"}};
+}
+
 // 用实际收件者和跨堆库存回答玩家的备料询问。
 // 步骤：从原话取得配对身份 → 选择只读交付观察 → 核对数量与距离后回答。
 dfy::model::Response handoff_sample(const dfy::model::Request& request) {
@@ -1145,7 +1175,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool gather_handoff = mode == L"--handoff-gather-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
-        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
+        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe" || mode == L"--vitals-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -1163,6 +1193,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
             [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,ask,gap,root,mode](const auto&, const auto& request) {
+                if (mode == L"--vitals-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
                 if (handoff) return handoff_sample(request);
                 if (ground_pickup) return ground_pickup_sample(request);

@@ -124,7 +124,7 @@ async function checkPlayer(fixture, mode) {
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !handoff && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !handoff && !['--water-probe', '--vitals-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -149,6 +149,8 @@ async function checkPlayer(fixture, mode) {
       await checkDoor(fixture, player, whispers);
     } else if (mode === '--water-probe') {
       await checkWater(fixture, player, whispers);
+    } else if (mode === '--vitals-probe') {
+      await checkVitals(fixture, player, whispers);
     } else if (mode === '--gap-materials-probe') {
       await checkMaterials(fixture, player, whispers);
     } else if (explicitOpenings) {
@@ -213,6 +215,52 @@ async function checkPlayer(fixture, mode) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 用独立玩家收到的本人实体元数据核验水下与回到空气后的两次只读查询。
+// 步骤：固定角色身份和水槽 → 对照掉血与余气采样 → 核实出水恢复及玩家收到的答复。
+async function checkVitals(fixture, player, whispers) {
+  const actor = player.players.DfyCompanion.entity;
+  const keys = player.registry.entitiesByName.player.metadataKeys;
+  const air = keys.indexOf('air_supply'), health = keys.indexOf('health');
+  const seen = { air: new Set(), health: new Set() };
+  const metadata = packet => {
+    if (packet.entityId !== actor.id) return;
+    for (const row of packet.metadata) {
+      if (row.key === air) seen.air.add(row.value);
+      if (row.key === health) seen.health.add(row.value);
+    }
+  };
+  player._client.on('entity_metadata',metadata);
+  const wet = '我的生命值还没回满，空气已经不到两百四十刻了。';
+  const dry = '上岸后我又查了一次，空气已经恢复到三百刻了。';
+  try {
+    fixture.send('fill 4 -61 9 6 -57 11 minecraft:glass');
+    fixture.send('fill 5 -60 10 5 -58 10 minecraft:water');
+    fixture.send('tp DfyCompanion 5.5 -60 10.5');
+    await until(() => actor.metadata[air] > 0 && actor.metadata[air] < 210,'旁观玩家核对原角色正在耗气',15000);
+    fixture.send('damage DfyCompanion 4 minecraft:generic');
+    await until(() => actor.metadata[health] > 0 && actor.metadata[health] < 20,'独立玩家读到角色实际掉血');
+    await measurePlayerFeedback(player,'你现在还有多少血和空气？',wet,() => until(() => whispers.includes(wet),'自身生命与余气答复'),
+      sample => writeFileSync(join(fixture.evidence,'player-feedback.json'),JSON.stringify(sample,null,2)));
+    fixture.send('tp DfyCompanion 0.5 -60 0.5');
+    await until(() => actor.metadata[air] === 300,'独立玩家观察到原角色出水及空气恢复');
+    player.chat('上岸后空气恢复了吗？');
+    await until(() => whispers.includes(dry),'同一原角色出水后的答复');
+
+    const reads = readRows(fixture,'game-actions.jsonl').filter(row => row.skill === 'observe' && row.result.vitals);
+    assert.deepEqual(reads.map(row => [row.order,row.arguments.mode,row.result.vitals.actor,row.result.vitals.entityId]),
+      [[2,'vitals',actor.uuid,actor.id],[3,'vitals',actor.uuid,actor.id]]);
+    const [under,shore] = reads.map(row => row.result.vitals);
+    assert.equal(under.generation,shore.generation);
+    assert.ok(under.air.ticks < 240 && under.health.points < 20 && seen.air.has(under.air.ticks) && seen.health.has(under.health.points));
+    assert.ok(shore.air.ticks === 300 && seen.air.has(300) && shore.air.sampledAtMs > under.air.sampledAtMs);
+    assert.deepEqual(whispers,[wet,dry]);
+  } finally {
+    player._client.removeListener('entity_metadata',metadata);
+    fixture.send('tp DfyCompanion 0.5 -60 0.5');
+    fixture.send('fill 4 -60 9 6 -57 11 minecraft:air');
+  }
 }
 
 // 独立客户端对照原实体、服务端拾取包、旁边的物品和角色的实际入包数量。
