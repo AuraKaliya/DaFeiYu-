@@ -1,4 +1,5 @@
 #include "world_protocol.hpp"
+#include <cmath>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -9,6 +10,37 @@ using Json = nlohmann::json;
 void rejects(const auto& action) {
     try { action(); } catch (const std::exception&) { return; }
     throw std::runtime_error("invalid MC message accepted");
+}
+
+// 从原工作读回已知与未知位置，拒绝替换目标、捏造到达和混用旧位置。
+// 步骤：建立移动帧 → 核对数据缺失 → 注入冲突的目标、终态和时点。
+void move_progress_protocol() {
+    const Json source{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
+    const auto controller = std::string(32,'a');
+    const Json target{{"x",2},{"y",-60},{"z",0}};
+    const auto arguments = Json{{"context",source},{"arguments",target}}.dump();
+    Json action = source;
+    action.update(Json{{"controller",controller},{"exited",false},{"skill","move"}});
+    Json receipt{{"version",1},{"id","walk"},{"action",action}};
+    auto& sample = receipt["action"]["result"]["progress"];
+    sample = {{"phase","unknown"},{"path","timeout"},{"sampledAtMs",210},{"targetCell",target}};
+    const auto read = [&] { return dfy::mc::partner_reply(receipt.dump(),"walk",controller,"move",arguments); };
+    if (Json::parse(read().progress) != sample) throw std::runtime_error("unknown move sample lost its time or target");
+    sample["position"] = target;
+    rejects(read);
+    sample.update(Json{{"phase","moving"},{"path","partial"},{"distance",std::sqrt(0.5)},{"lastMovedAtMs",200}});
+    if (Json::parse(read().progress) != sample) throw std::runtime_error("measured movement was lost");
+    sample["distance"] = 0;
+    rejects(read);
+    sample["distance"] = std::sqrt(0.5);
+    sample["targetCell"]["x"] = 3;
+    rejects(read);
+    sample["targetCell"] = target;
+    sample["lastMovedAtMs"] = 220;
+    rejects(read);
+    sample["lastMovedAtMs"] = 200;
+    sample["phase"] = "arrived";
+    rejects(read);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。
@@ -110,6 +142,7 @@ int main() {
         rejects([] { dfy::mc::configured_channel(R"({"channel":"ok","channel":"also-ok"})"); });
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
         private_protocol();
+        move_progress_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
         using dfy::mc::PlayerThinking;

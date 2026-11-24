@@ -1610,6 +1610,9 @@ int wmain(int argc, wchar_t** argv) {
                 const auto& active = input.at("activeMotion");
                 const bool reply = input.at("events").back().at("sequence") == 3;
                 if (active.at("order") != 2) throw std::runtime_error("active motion lost the original order");
+                if (!follow && (active.at("progress").at("targetCell").at("x") != 4 ||
+                    active.at("progress").at("phase") != "moving" || active.at("progress").at("distance") != 3.25))
+                    throw std::runtime_error("active walk lost its latest measured position or distance");
                 if (recovery) {
                     const auto& tracking = input.at("following");
                     const auto& progress = active.at("progress");

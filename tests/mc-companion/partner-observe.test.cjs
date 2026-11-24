@@ -4,6 +4,8 @@ const { observationInput, observeWindow } = require('../../plugins/mc/bridge/par
 const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
 const { matchesDigReference } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
+const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
+const { EventEmitter } = require('node:events');
 
 class Position {
   // 保存本次测试的世界坐标。
@@ -38,6 +40,45 @@ function fixture() {
     messageAnchor: () => ({ anchor: { position: origin, dimension: 'overworld', sampledAtMs: 42 }, center: origin }), check: () => {} };
   return { bot, player, context, reads };
 }
+
+// 在同一移动上分别注入真实位移、无路、位置未知和核实抵达。
+// 步骤：对照位置与路径 → 注入数据缺失并复位 → 核对末次采样与监听回收。
+test('movement samples keep path outcomes separate from observed position and arrival', () => {
+  const bot = new EventEmitter(), result = {}, goal = {};
+  const target = { x: 3, y: -60, z: 0 };
+  let time = 100;
+  bot.entity = { position: new Position(0.5, -60, 0.5) };
+  bot.pathfinder = { goal: {} };
+  const monitor = monitorMove(bot, target, goal, result, () => time);
+  bot.emit('path_update', { status: 'noPath' });
+  monitor.sample();
+  assert.equal(result.progress.path, 'unknown');
+  bot.pathfinder.goal = goal;
+  assert.deepEqual([result.progress.phase, result.progress.distance], ['waiting', 3]);
+  bot.emit('path_update', { status: 'success' });
+  monitor.sample();
+  assert.equal(result.progress.phase, 'waiting');
+  bot.entity.position.x += 1;
+  time += 40;
+  monitor.sample();
+  assert.deepEqual([result.progress.phase, result.progress.distance, result.progress.startDistance,
+    result.progress.vertical, result.progress.lastMovedAtMs], ['moving', 2, 3, 0, time]);
+  time += 501;
+  monitor.sample();
+  assert.equal(result.progress.phase, 'waiting');
+  bot.emit('path_update', { status: 'noPath' });
+  monitor.sample();
+  assert.equal(result.progress.phase, 'no_path');
+  bot.entity = null;
+  bot.emit('path_update', { status: 'timeout' });
+  monitor.sample();
+  assert.deepEqual(result.progress, { phase: 'unknown', path: 'timeout', targetCell: target, sampledAtMs: time });
+  bot.entity = { position: new Position(3.5,-60,0.5) };
+  monitor.stop(true);
+  assert.equal(result.progress.phase, 'arrived');
+  assert.equal(result.progress.distance, 0);
+  assert.equal(bot.listenerCount('path_update'), 0);
+});
 
 // 用原局高度及整数另一侧读取脚下格，核对执行采样采用的坐标。
 test('live below-feet cells use the original height on both sides of a block boundary', async () => {

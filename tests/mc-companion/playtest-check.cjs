@@ -408,12 +408,21 @@ async function checkWater(fixture, player, whispers) {
   const moved = await until(() => rows().find(row => row.category === 'mc.partner.action' && row.body.skill === 'move'),
     '固定目的地反向渡水', 30000);
   assert.equal(moved.body.result.status, 'done');
+  const moving = rows().filter(row => row.category === 'mc.partner.motion' && row.body.action.bridgeWork === moved.body.bridgeWork &&
+    row.body.progress?.phase === 'moving');
+  assert.ok(moving.length && moving[0].body.progress.distance > moved.body.result.progress.distance);
+  assert.equal(moving[0].body.progress.startDistance, moved.body.result.progress.startDistance);
+  assert.ok(moved.body.result.progress.startDistance > moved.body.result.progress.distance);
+  assert.equal(moved.body.result.progress.phase, 'arrived');
+  assert.deepEqual(moved.body.result.progress.position, moved.body.result.position);
   assert.deepEqual(moved.body.result.navigation, { crossings: 1, phase: 'dry' });
   assert.ok(moved.body.result.position.x < -34);
   player.chat('去封住的地方');
   const blocked = await until(() => rows().find(row => row.seq > moved.seq && row.category === 'mc.partner.action' &&
     row.body.skill === 'move'), '封闭目标给出失败回执', 40000);
   assert.equal(blocked.body.result.status, 'blocked');
+  assert.equal(blocked.body.result.reasonCode, 'move_no_path');
+  assert.equal(blocked.body.result.progress.phase, 'no_path');
   assert.ok(blocked.body.result.reason);
   assert.ok(!readRows(fixture, 'game-actions.jsonl').some(row => ['collect', 'place'].includes(row.skill)));
 }

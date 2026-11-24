@@ -60,7 +60,7 @@ void display_scene(Json& node) {
         if (name == "arguments" || name == "args") continue;
         if ((name == "position" || name == "player" || name == "eye" || name == "approachPosition") && value.contains("x"))
             display_position(node,name,value);
-        else if ((name == "distance" || name == "vertical" || name == "yaw" || name == "pitch" || name == "angle") &&
+        else if ((name == "distance" || name == "startDistance" || name == "vertical" || name == "yaw" || name == "pitch" || name == "angle") &&
                  value.is_number_float())
             value = displayed_number(value.get<double>());
         else display_scene(value);

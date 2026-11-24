@@ -157,6 +157,48 @@ void verify_fill(const Json& result, const Json& args, bool done) {
     }
 }
 
+// 核对移动样本的原目标、现场读数、寻路状态及末次真实抵达。
+// 步骤：校验时点与阶段 → 对照原命令的目标格 → 核对已知位置与实际距离。
+void verify_move_progress(const Json& result, const Json& args, bool exited) {
+    const auto& step = result.at("progress");
+    const auto& phase = step.at("phase");
+    const auto& path = step.at("path");
+    const auto& time = step.at("sampledAtMs");
+    const auto& target = step.at("targetCell");
+    if ((phase != "waiting" && phase != "moving" && phase != "unknown" && phase != "no_path" && phase != "arrived") ||
+        (path != "unknown" && path != "partial" && path != "success" && path != "noPath" && path != "timeout") ||
+        !time.is_number_unsigned() || time > 9007199254740991ULL ||
+        (step.contains("lastMovedAtMs") && (!step.at("lastMovedAtMs").is_number_unsigned() || step.at("lastMovedAtMs") > time)) ||
+        (phase == "moving" && !step.contains("lastMovedAtMs")) || (phase == "no_path" && path != "noPath") ||
+        ((phase == "arrived") != (exited && result.at("status") == "done")) ||
+        (phase == "arrived" && (!result.value("arrived",false) || step.at("position") != result.at("position"))))
+        throw std::invalid_argument("MC: invalid move progress");
+    for (const auto axis : {"x","y","z"}) {
+        if (!target.at(axis).is_number_integer() || (args.contains(axis) && args.at(axis) != target.at(axis)))
+            throw std::invalid_argument("MC: move progress target changed");
+    }
+    const bool known = phase != "unknown";
+    if (known != step.contains("position") || known != step.contains("distance") || (!known && step.contains("vertical")))
+        throw std::invalid_argument("MC: inconsistent move position");
+    if (known) {
+        const auto& reported = step.at("distance");
+        if (!reported.is_number() || !std::isfinite(reported.get<double>()) || reported < 0)
+            throw std::invalid_argument("MC: invalid move distance");
+        const auto& position = step.at("position");
+        for (const auto axis : {"x","y","z"}) if (!position.at(axis).is_number() ||
+            !std::isfinite(position.at(axis).get<double>())) throw std::invalid_argument("MC: invalid move position");
+        const auto offset = [&](const char* axis) { return position.at(axis).get<double>() - target.at(axis).get<double>(); };
+        const double distance = std::hypot(offset("x")-0.5,offset("y"),offset("z")-0.5);
+        if (!std::isfinite(distance) || std::abs(reported.get<double>()-distance) > 1e-8 * std::max(1.0,distance))
+            throw std::invalid_argument("MC: move distance does not match sampled position");
+        if (step.contains("vertical") && step.at("vertical") != -offset("y"))
+            throw std::invalid_argument("MC: move height does not match sampled position");
+        if (step.contains("startDistance") && (!step.at("startDistance").is_number() ||
+            !std::isfinite(step.at("startDistance").get<double>()) || step.at("startDistance") < 0))
+            throw std::invalid_argument("MC: invalid starting distance");
+    }
+}
+
 // 按原路线核对有序的实际脚位和圈数，允许失败或取消时返回已完成的前缀。
 // 步骤：核对工作参数 → 验证前缀实际站位 → 核对进度和终态。
 void verify_route(const Json& result, const Json& args, bool exited) {
@@ -286,6 +328,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
+    if (skill == "move" && result.contains("progress")) {
+        verify_move_progress(result,args,exited);
+        progress = result.at("progress").dump();
+    }
     if (skill == "follow" && result.contains("progress")) {
         const auto& step = result.at("progress");
         const auto name = step.at("phase").get<std::string>();

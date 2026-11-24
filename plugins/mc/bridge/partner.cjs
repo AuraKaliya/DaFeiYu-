@@ -13,6 +13,7 @@ const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, coll
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
 const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
+const { monitorMove } = require('./move-progress.cjs');
 const { belowFeet } = require('./world.cjs');
 
 // 汇总实际背包里的物品，合并不同槽位内的同名堆叠。
@@ -462,14 +463,30 @@ function partnerService(bot, world, inbox, places, owner) {
           conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby;
         if (anchored) result.sourceMessage = args.message;
         const surface = monitorSurface(bot, result);
-        try { await walk(bot, goal); }
-        finally { surface.stop(); result.position = bot.entity.position.clone(); }
-        check();
-        const arrived = bot.entity.position.floored();
-        if (!goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater) || (exact && !clearStand(bot, pos)))
-          throw Object.assign(new Error('到达站位未核实'), { code: 'arrival_unverified' });
-        if (exact) result.arrived = true;
-        if (args.place === 'player') result.target = 'player';
+        const movement = monitorMove(bot, pos, goal, result);
+        job.sampleMove = movement.sample;
+        try {
+          await walk(bot, goal);
+          check();
+          movement.sample();
+          const arrived = bot.entity?.position?.floored();
+          if (!arrived || !goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater) || (exact && !clearStand(bot, pos))) {
+            if (result.progress.path === 'noPath') throw Object.assign(new Error('本次寻路未找到路径'), { code: 'move_no_path' });
+            if (result.progress.path === 'timeout') throw Object.assign(new Error('本次寻路在时限内未完成'), { code: 'move_path_timeout' });
+            throw Object.assign(new Error('到达站位未核实'), { code: 'arrival_unverified' });
+          }
+          result.arrived = true;
+          if (args.place === 'player') result.target = 'player';
+        } catch (error) {
+          if (error.name === 'NoPath') error.code = 'move_no_path';
+          if (error.name === 'Timeout') error.code = 'move_path_timeout';
+          throw error;
+        } finally {
+          job.sampleMove = undefined;
+          movement.stop(result.arrived === true);
+          surface.stop();
+          result.position = bot.entity?.position?.clone() ?? null;
+        }
       } else if (r.skill === 'follow') {
         bot.pathfinder.setMovements(walkingMovements(bot));
         await followPlayer(bot, owner, args.distance ?? 3, check, result,
@@ -533,6 +550,7 @@ function partnerService(bot, world, inbox, places, owner) {
           throw new Error('工作身份冲突');
         if (known === active) {
           known.polled = performance.now();
+          known.sampleMove?.();
           if (method === 'partner.stop') cancel();
         }
         if (method === 'partner.stop' && known.abort && !receipt.exited) {

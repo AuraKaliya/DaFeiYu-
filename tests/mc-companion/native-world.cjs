@@ -1068,7 +1068,9 @@ async function main() {
             { phase: 'blocked', terrain: 'land', distance: 8, vertical: 5, path: 'unreachable' } } };
         }
         return { ...context, skill, exited: stopped > 0, result: stopped ? { status: 'interrupted' } :
-          follow ? { progress: { phase: 'following', distance: 4.5 } } : {} };
+          follow ? { progress: { phase: 'following', distance: 4.5 } } :
+          { progress: { phase: 'moving', path: 'success', targetCell: { x: 4, y: -60, z: 0 },
+            position: { x: 1.25, y: -60, z: 0.5 }, distance: 3.25, sampledAtMs: 82, lastMovedAtMs: 81 } } };
       }
       assert.equal(method, 'partner.begin');
       assert.deepEqual(context, { generation: state.generation, order: 2, controller });

@@ -82,7 +82,7 @@ function monitorSurface(bot, result) {
   let wasWet = false;
   const sample = () => {
     const actor = bot.entity;
-    if (!actor) return navigation.phase;
+    if (!actor?.position) return navigation.phase;
     const feet = actor.position.floored();
     const wet = actor.isInWater || [feet,feet.offset(0,-1,0)].some(point => bot.blockAt(point)?.name === 'water');
     const dry = !wet && actor.onGround && dryStand(bot, actor.position);
