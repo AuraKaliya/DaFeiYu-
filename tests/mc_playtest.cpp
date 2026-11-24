@@ -816,6 +816,59 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"waiting for the original stack"})"}};
 }
 
+// 用原玩家的备料委托连接实际采掘、会合和交物，插话只读取当前采掘工作。
+// 步骤：核对零库存并先回话 → 排列取得材料、回到原站位与交付 → 依原工作答进度和实收。
+dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string_view name, std::string id, const Json& args) -> ToolCall {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
+        if (tool == request.tools.end()) throw std::runtime_error("gather handoff: missing tool");
+        return {std::move(id),tool->name,args.dump()};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "plan.finished") {
+            for (const auto& layer : input.at("planSettlements")) for (const auto& node : layer.at("nodes")) {
+                if (node.at("skill") != "give_item") continue;
+                const auto& result = node.at("result");
+                if (result.at("status") != "done" || result.at("receipt").at("recipientPicked") != 2)
+                    throw std::runtime_error("gather handoff: delivery was not confirmed");
+                return {{Role::assistant,"刚挖的两块泥土你都捡到了。"}};
+            }
+        }
+        if (!input.at("events").empty()) {
+            const auto text = input.at("events").back().value("text","");
+            if (text == "就地备两块泥土，拿来给我。") {
+                const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",2}};
+                return {{Role::assistant,"",{call("_observe","check-stock",args)}},FinishReason::tool_calls};
+            }
+            if (text == "备好几块了？") {
+                const auto& motion = input.at("activeMotion");
+                const auto& progress = motion.at("progress");
+                if (motion.at("skill") != "collect" || progress.at("phase") != "digging" || progress.at("stock").at("current") != 0)
+                    throw std::runtime_error("gather handoff: progress did not belong to the original dig");
+                return {{Role::assistant,"我在挖第一块，泥土还没进背包。"}};
+            }
+        }
+    } else if (last.role == Role::tool && last.tool_call_id == "check-stock") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("handoff");
+        if (sample.at("stock").at("available") != 0 || sample.at("stock").at("missing") != 2 || sample.at("target").at("state") != "visible")
+            throw std::runtime_error("gather handoff: unexpected starting inventory");
+        Json stand = Json::object();
+        for (const auto axis : {"x","y","z"}) stand[axis] = static_cast<int>(std::floor(sample.at("actor").at("position").at(axis).get<double>()));
+        const Json give{{"observation",sample.at("id")},{"recipient",sample.at("recipient")},{"item","dirt"},{"count",2}};
+        const Json steps = Json::array({{{"id","soil"},{"skill","gather_ground"},{"arguments",{{"item","dirt"},{"requiredStock",2},{"block","grass_block"}}}},
+            {{"id","meet"},{"skill","move"},{"after",{"soil"}},{"arguments",stand}},
+            {{"id","give"},{"skill","give_item"},{"after",{"meet"}},{"arguments",give}}});
+        return {{Role::assistant,"",{call("_reply","starting",{{"text","我背包里还没有泥土，正在附近给你备两块。"}}),
+            call("_queue_actions","gather-and-give",{{"operation","plan"},{"steps",steps}})}},FinishReason::tool_calls};
+    }
+    return {{Role::assistant,R"({"internal":"waiting for the original gathering work"})"}};
+}
+
 // 用实际收件者和跨堆库存回答玩家的备料询问。
 // 步骤：从原话取得配对身份 → 选择只读交付观察 → 核对数量与距离后回答。
 dfy::model::Response handoff_sample(const dfy::model::Request& request) {
@@ -839,6 +892,9 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
                     throw std::runtime_error("handoff: recipient amount lost");
                 return {{Role::assistant,"你已经捡到六十六块泥土，我的背包还剩四块。"}};
             }
+            if (result.value("reasonCode","") == "handoff_other_collector" && proof.at("otherPicked") == 66 &&
+                proof.at("collectors").size() == 1 && proof.at("collectors").front().at("uuid") != input.at("player"))
+                return {{Role::assistant,"这六十六块泥土被旁边的另一位玩家捡到了。"}};
             if (proof.at("source") == "server_events" && proof.at("thrown") == 66 && proof.at("pickupUnknown") == 66)
                 return {{Role::assistant,"六十六块泥土都已经丢出来了，暂时还没看到你捡到。"}};
             if (result.value("reasonCode","") != "handoff_receipt_unconfirmed" || proof.at("source") != "unavailable" || proof.at("throwUnknown") != 66)
@@ -1068,7 +1124,9 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool handoff = mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" || mode == L"--handoff-late-probe";
+        const bool gather_handoff = mode == L"--handoff-gather-probe";
+        const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
+            mode == L"--handoff-late-probe" || mode == L"--handoff-other-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
@@ -1086,7 +1144,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,ask,gap,root,mode](const auto&, const auto& request) {
+                if (gather_handoff) return gather_handoff_sample(request);
                 if (handoff) return handoff_sample(request);
                 if (ground_pickup) return ground_pickup_sample(request);
                 if (pickup) return pickup_sample(request);

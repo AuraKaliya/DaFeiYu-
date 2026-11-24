@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto');
 const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const mineflayer = require('mineflayer');
-const { until } = require('./players.cjs');
+const { connect, until } = require('./players.cjs');
 const { wall, waterCourse, fourCells, layeredStands, readArena } = require('./playtest-arena.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
 const { measurePlayerFeedback } = require('./player-feedback.cjs');
@@ -135,8 +135,12 @@ async function checkPlayer(fixture, mode) {
       await checkCraft(fixture, player, whispers);
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
+    } else if (mode === '--handoff-gather-probe') {
+      await checkGatherHandoff(fixture, player, whispers);
     } else if (handoff) {
-      await checkHandoff(fixture, player, whispers, mode);
+      const other = mode === '--handoff-other-probe' ? await connect('DfyCollector',fixture.port) : null;
+      try { await checkHandoff(fixture, player, whispers, mode, other); }
+      finally { other?.quit(); }
     } else if (mode === '--pickup-probe') {
       await checkPickup(fixture, player, whispers);
     } else if (layered) {
@@ -269,8 +273,43 @@ async function checkGroundPickup(fixture, player, whispers) {
   } finally { player._client.removeListener('collect', onCollect); }
 }
 
+// 从零库存核验原任务的两次破坏、入包、会合和玩家实收，并在采集中询问实际进度。
+// 步骤：记录原话和首条有用反馈 → 读取在途工作回答插话 → 对照双方库存、逐格变化及完整工序。
+async function checkGatherHandoff(fixture, player, whispers) {
+  const cells = [[-2,-60,0],[-3,-60,0]].map(c => player.entity.position.clone().set(...c));
+  const dirt = player.registry.itemsByName.dirt.id;
+  await until(() => fixture.materialCount('dirt') === 0 && player.inventory.count(dirt) === 0 &&
+    cells.every(cell => player.blockAt(cell)?.name === 'grass_block'), '两处取材格与双方零库存');
+  const first = '我背包里还没有泥土，正在附近给你备两块。', during = '我在挖第一块，泥土还没进背包。';
+  const finished = '刚挖的两块泥土你都捡到了。';
+  const trace = () => readRows(fixture,'trace/events.jsonl');
+  await measurePlayerFeedback(player,'就地备两块泥土，拿来给我。',first,() => until(() => whispers.includes(first),'核实零库存后的首条答复'),
+    sample => writeFileSync(join(fixture.evidence,'player-feedback.json'),JSON.stringify(sample,null,2)));
+  const digging = await until(() => trace().find(r => r.category === 'mc.partner.motion' && r.body.status === 'digging'), '原任务已开挖');
+  await measurePlayerFeedback(player,'备好几块了？',during,() => until(() => whispers.includes(during),'采掘插话回答'),
+    sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify({ ...sample, work: digging.body.action.bridgeWork },null,2)));
+  await until(() => whispers.includes(finished),'两块实际入包并交给原玩家',45000);
+
+  const actions = readRows(fixture,'game-actions.jsonl');
+  const jobs = actions.filter(row => ['collect','move','give_item'].includes(row.skill));
+  // 桥接按最新在场原话准入。计划和宿主动作保留委托来源，二者通过同一工作号关联。
+  assert.deepEqual(jobs.map(row => [row.skill,row.order,row.exited,row.result.status]), [['collect',2,true,'done'],['move',3,true,'done'],['give_item',3,true,'done']]);
+  const [soil,meet,give] = jobs;
+  assert.equal(soil.work,digging.body.action.bridgeWork);
+  assert.deepEqual([soil.result.broken,soil.result.stock.before,soil.result.stock.after,soil.result.pickups.selfCollected.dirt],[2,0,2,2]);
+  assert.equal(meet.result.arrived,true);
+  assert.deepEqual([give.result.transfer.stockBefore,give.result.transfer.stockAfter,give.result.receipt.recipientPicked],[2,0,2]);
+  assert.ok(cells.every(cell => player.blockAt(cell)?.name === 'air'));
+  assert.deepEqual([fixture.materialCount('dirt'),player.inventory.count(dirt)], [0,2]);
+  assert.deepEqual(whispers, [first,during,finished]);
+  const accepted = trace().filter(r => r.kind === 'mail.received' && r.category === 'mc.partner.action' && jobs.some(job => job.work === r.body.bridgeWork));
+  assert.deepEqual(accepted.map(r => [r.body.bridgeWork,r.body.order]),jobs.map(job => [job.work,2]));
+  const plan = trace().find(r => r.category === 'mc.partner.plan' && r.body.status === 'queued')?.body.plan;
+  assert.deepEqual([plan.origin.sequence,plan.origin.text,plan.nodes.map(n => n.work)], [2,'就地备两块泥土，拿来给我。',jobs.map(job => job.work)]);
+}
+
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
-async function checkHandoff(fixture, player, whispers, mode) {
+async function checkHandoff(fixture, player, whispers, mode, other) {
   const late = mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
@@ -284,12 +323,17 @@ async function checkHandoff(fixture, player, whispers, mode) {
   assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
-  if (late) {
+  if (late || other) {
     fixture.send('clear DfyGuestCheck');
     fixture.send('give DfyGuestCheck minecraft:stone 2304');
     await until(() => player.inventory.count(player.registry.itemsByName.stone.id) === 2304,'收件玩家的 36 个槽位已满');
   }
-  const sent = late ? '六十六块泥土都已经丢出来了，暂时还没看到你捡到。' :
+  if (other) {
+    fixture.send('clear DfyCollector');
+    fixture.send('tp DfyCollector 3.5 -60 0.5');
+    await until(() => other.entity.position.x === 3.5 && other.inventory.count(other.registry.itemsByName.dirt.id) === 0,'第三位协议玩家等在物品落点');
+  }
+  const sent = other ? '这六十六块泥土被旁边的另一位玩家捡到了。' : late ? '六十六块泥土都已经丢出来了，暂时还没看到你捡到。' :
     witnessed ? '你已经捡到六十六块泥土，我的背包还剩四块。' : '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
   await measurePlayerFeedback(player,'那就给我六十六块泥土。',sent,() => until(() => whispers.includes(sent),'按原观察投物后说明可核实的效果'),
     sample => writeFileSync(join(fixture.evidence,'handoff-feedback.json'),JSON.stringify(sample,null,2)));
@@ -300,11 +344,24 @@ async function checkHandoff(fixture, player, whispers, mode) {
     [player.player.uuid,66,4,4]);
   const proof = job.result.receipt;
   assert.deepEqual([job.result.status,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.throwUnknown],
-    late ? ['blocked',66,0,0,0] : witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
+    other ? ['blocked',66,0,66,0] : late ? ['blocked',66,0,0,0] : witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
   if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
   assert.deepEqual(whispers, [reply,sent]);
+  if (other) {
+    assert.deepEqual(proof.collectors,[{ uuid: other.player.uuid, count: 66 }]);
+    assert.equal(other.inventory.count(other.registry.itemsByName.dirt.id),66);
+    assert.equal(player.inventory.count(player.registry.itemsByName.dirt.id),0);
+    fixture.send('clear DfyGuestCheck minecraft:stone');
+    return;
+  }
   if (late) {
     assert.equal(player.inventory.count(player.registry.itemsByName.dirt.id),0);
+    const original = await fixture.repeatHandoff(job,job.work);
+    assert.deepEqual(original.action.result,job.result);
+    const replacement = await fixture.repeatHandoff(job,'retry.'+job.work);
+    assert.deepEqual([replacement.action.exited,replacement.action.result.reasonCode,replacement.action.result.originalWork],
+      [true,'handoff_already_started',job.work]);
+    assert.equal(replacement.action.result.transfer,undefined);
     fixture.send('clear DfyGuestCheck minecraft:stone');
   }
   await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66, '独立玩家在生存模式实际拾到六十六块', 12000);
@@ -316,7 +373,7 @@ async function checkHandoff(fixture, player, whispers, mode) {
     const check = all.find(row => row.result.handoffReceipt)?.result.handoffReceipt;
     assert.deepEqual([check.work,check.order,check.sourceThrough,check.originalStatus,check.receipt.recipientPicked],
       [job.work,job.order,proof.throughSeq,'blocked',66]);
-    assert.equal(all.filter(row => row.skill === 'give_item').length,1);
+    assert.equal(all.filter(row => row.skill === 'give_item' && row.result.transfer?.submitted > 0).length,1);
     assert.deepEqual(whispers, [reply,sent,final]);
   }
 }
