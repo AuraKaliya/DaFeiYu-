@@ -138,6 +138,24 @@ bool verify_ground_pickup(const Json& result, const Json& args, const Json& gene
         pickup.at("requested") != requested || !pickup.at("approachAttempted").is_boolean() || !pickup.at("stockCurrent").is_boolean() ||
         !pickup.at("stockSampledAtMs").is_number_unsigned()) throw std::invalid_argument("MC: invalid pickup request binding");
     if (result.contains("capacity")) verify_inventory_capacity(result.at("capacity"),name);
+    const auto reason = result.value("reasonCode","");
+    if (reason == "pickup_insufficient_space" || reason == "pickup_capacity_unknown") {
+        const auto& cap = result.at("capacity");
+        if ((cap.at("status") == "sampled") != (reason == "pickup_insufficient_space") ||
+            (cap.contains("knownSpace") && cap.at("knownSpace") >= requested) || pickup.at("approachAttempted") != false)
+            throw std::invalid_argument("MC: unverified pickup capacity limit");
+    }
+    if (result.contains("nearbyDrop") || reason == "pickup_other_stack_nearby") {
+        const auto& blocker = result.at("nearbyDrop");
+        const auto& stack = blocker.at("stack");
+        if (!blocker.at("entityId").is_number_unsigned() || blocker.at("entityId") == target.at("entityId") ||
+            (blocker.contains("uuid") && (!game_uuid(blocker.at("uuid")) || blocker.at("uuid") == target.at("entity"))) ||
+            !blocker.at("sampledAtMs").is_number_unsigned() || (!stack.is_null() && (!dimension(stack.at("item")) ||
+                !stack.at("count").is_number_unsigned() || stack.at("count") == 0)))
+            throw std::invalid_argument("MC: invalid neighboring drop");
+        for (const auto axis : {"x","y","z"}) if (!blocker.at("position").at(axis).is_number())
+            throw std::invalid_argument("MC: missing neighboring drop position");
+    }
     for (const auto key : {"stockBefore","stockAfter","verifiedCount"})
         if (!pickup.at(key).is_number_unsigned() || pickup.at(key) > 0x7fffffff) throw std::invalid_argument("MC: invalid pickup stock");
     const bool seen = entry.at("state") != "unseen";

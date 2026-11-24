@@ -170,6 +170,12 @@ void ground_pickup_protocol() {
     observed["selfCount"] = progress["selfCount"] = pickup["verifiedCount"] = 1;
     observed["otherCount"] = progress["otherCount"] = observed["lastCollector"]["count"] = 2;
     if (!read().changed || read().arrived) throw std::runtime_error("partial pickup lost its effect");
+    result["reasonCode"] = "pickup_other_stack_nearby";
+    rejects(read);
+    result["nearbyDrop"] = {{"entityId",9},{"uuid",generation},{"stack",nullptr},{"position",position},{"sampledAtMs",121}};
+    if (!read().changed) throw std::runtime_error("new neighboring stack discarded an earlier pickup");
+    result["nearbyDrop"]["uuid"] = entity;
+    rejects(read);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。

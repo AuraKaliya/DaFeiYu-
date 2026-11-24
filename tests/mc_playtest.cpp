@@ -767,24 +767,35 @@ dfy::model::Response pickup_sample(const dfy::model::Request& request) {
 dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
     using namespace dfy::model;
     using Json = nlohmann::json;
-    const auto call = [&](std::string name, const Json& args) -> Response {
+    const auto call = [&](std::string name, const Json& args, std::string id = {}) -> Response {
         const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
         if (tool == request.tools.end()) throw std::runtime_error("ground pickup: missing " + name);
-        return {{Role::assistant,"",{{name,tool->name,args.dump()}}},FinishReason::tool_calls};
+        return {{Role::assistant,"",{{id.empty() ? name : id,tool->name,args.dump()}}},FinishReason::tool_calls};
     };
     const auto& last = request.messages.back();
-    if (last.role == Role::tool && last.tool_call_id == "_observe") {
+    if (last.role == Role::tool && (last.tool_call_id == "_observe" || last.tool_call_id == "remaining-soil")) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         const auto& sample = result.at("dropObservation");
         const auto& stacks = sample.at("entities");
-        const auto target = std::ranges::find_if(stacks,[](const auto& entry) { return entry.at("count") == 3; });
-        if (stacks.size() != 2 || target == stacks.end()) throw std::runtime_error("ground pickup: cannot distinguish the stacks");
-        const Json args{{"observation",sample.at("id")},{"entity",target->at("uuid")},{"item","dirt"},{"count",3}};
+        const int count = last.tool_call_id == "remaining-soil" ? 2 : 3;
+        const auto matches = [&](const auto& entry) { return entry.at("count") == count; };
+        if (std::ranges::count_if(stacks,matches) != 1) throw std::runtime_error("ground pickup: cannot distinguish the stacks");
+        const auto target = std::ranges::find_if(stacks,matches);
+        const Json args{{"observation",sample.at("id")},{"entity",target->at("uuid")},{"item","dirt"},{"count",count}};
+        if (count == 2) return call("_pickup_drop",args);
         const Json step{{"id","soil"},{"skill","pickup_drop"},{"arguments",args}};
         return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({step})}});
     }
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "motion.finished") {
+            const auto& work = primary_receipt(input);
+            const auto& result = work.at("result");
+            if (work.at("skill") != "pickup_drop" || result.at("reasonCode") != "pickup_other_stack_nearby" ||
+                result.at("nearbyDrop").at("stack").at("item") != "stone" || result.at("pickup").at("approachAttempted") != false)
+                throw std::runtime_error("ground pickup: overlapping stack did not keep the actor in place");
+            return {{Role::assistant,"那两块泥土紧挨着石头，一起捡起的风险太大，我停在原地了。"}};
+        }
         if (input.at("trigger") == "plan.finished") {
             const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
             const auto& pickup = result.at("pickup");
@@ -793,7 +804,13 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
                 throw std::runtime_error("ground pickup: unconfirmed stack or inventory");
             return {{Role::assistant,"三块泥土都进了我的背包。"}};
         }
-        if (!input.at("events").empty() && input.at("events").back().value("text","") == "把那一堆三块泥土捡起来。")
+        const auto& events = input.at(input.at("trigger") == "skills.expanded" ? "recentEvents" : "events");
+        if (!events.empty() && events.back().value("text","") == "只拿剩下的两块泥土，石头留给我。") {
+            if (std::ranges::none_of(request.tools,[](const auto& def) { return def.name.ends_with("_pickup_drop"); }))
+                return call("_skills",{{"categories",{"inventory"}}});
+            return call("_observe",{{"mode","drops"},{"item","dirt"},{"radius",8}},"remaining-soil");
+        }
+        if (!events.empty() && events.back().value("text","") == "把那一堆三块泥土捡起来。")
             return call("_observe",{{"mode","drops"},{"item","dirt"},{"radius",8}});
     }
     return {{Role::assistant,R"({"internal":"waiting for the original stack"})"}};

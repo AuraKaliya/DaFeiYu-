@@ -248,6 +248,21 @@ async function checkGroundPickup(fixture, player, whispers) {
     assert.equal(actions.filter(row => row.skill === 'reply' && row.result.text === reply && row.result.sent).length, 1);
     assert.ok(readRows(fixture, 'trace/events.jsonl').some(row => row.category === 'mc.partner.action' &&
       row.body.bridgeWork === job.work && row.body.order === job.order && row.body.result?.pickup?.verifiedCount === 3));
+
+    fixture.send(`tp ${stone.uuid} 0.85 -60 -5.5`);
+    await until(() => stone.position.distanceTo(other.position) < 1, '两堆不同材质在客户端实际重叠');
+    const start = actor.position.clone();
+    const stopped = '那两块泥土紧挨着石头，一起捡起的风险太大，我停在原地了。';
+    player.chat('只拿剩下的两块泥土，石头留给我。');
+    await until(() => whispers.includes(stopped), '直接工具读回相邻掉落并回答玩家', 15000);
+    const attempts = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'pickup_drop');
+    assert.equal(attempts.length, 2);
+    const blocked = attempts[1];
+    assert.deepEqual([blocked.arguments.entity, blocked.result.nearbyDrop.uuid, blocked.result.pickup.approachAttempted,
+      blocked.result.reasonCode, blocked.result.inventoryDelta], [other.uuid, stone.uuid, false, 'pickup_other_stack_nearby', {}]);
+    assert.ok(actor.position.distanceTo(start) < 0.1);
+    assert.equal(fixture.materialCount('dirt'), 3);
+    assert.deepEqual(whispers, [reply, stopped]);
   } finally { player._client.removeListener('collect', onCollect); }
 }
 

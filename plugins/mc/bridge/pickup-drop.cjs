@@ -1,11 +1,17 @@
 const { setTimeout: delay } = require('node:timers/promises');
-const { dropStack, readDropTarget, validDropReference } = require('./dropped-items.cjs');
+const { isDrop, dropStack, readDropTarget, validDropReference } = require('./dropped-items.cjs');
 const { trackDrop } = require('./drop-tracker.cjs');
 const { inventory, inventoryCapacity, inventoryDelta } = require('./inventory-capacity.cjs');
 const { pickupStand } = require('./collection.cjs');
 
 // 为独立拾取保留宿主与玩家可以区分的受阻原因。
 function blocked(code, message) { return Object.assign(new Error(message), { code }); }
+
+// 给步行拾取留出角色宽度和移向格中心的余量，检查这个脚位附近是否还有其他已知掉落。
+function nearbyStack(others, feet) {
+  return others.find(({ position: p }) => Math.abs(p.x-feet.x) <= 1.8 && Math.abs(p.z-feet.z) <= 1.8 &&
+    p.y >= feet.y-1 && p.y <= feet.y+2.5);
+}
 
 // 走近原观察确认的整堆物品，按目标实体的拾取包和本次背包变化分别结算。
 // 步骤：复核原栈、现场身份和容量 → 在原观察范围内接近目标 → 读回拾取人与库存 → 等待导航退出。
@@ -49,11 +55,14 @@ async function pickupDrop(bot, args, source, check, result, movement) {
     if (!target.withinOriginalRadius || !inside(bot.entity.position))
       throw blocked('pickup_outside_observation', '角色或目标已移出原观察半径');
     const capacity = result.capacity = inventoryCapacity(bot, item);
-    if (capacity.status === 'sampled' && capacity.knownSpace < args.count)
-      throw blocked('pickup_insufficient_space', '主背包和快捷栏的容量不足以接收整堆');
+    if (capacity.status === 'unavailable' || capacity.knownSpace < args.count) {
+      if (capacity.status === 'sampled') throw blocked('pickup_insufficient_space', '主背包和快捷栏的容量不足以接收整堆');
+      throw blocked('pickup_capacity_unknown', '已读槽位的容量尚不足以确认能接收整堆');
+    }
 
     const selected = bot.entities[target.entityId];
-    tracker = trackDrop(bot, entry, (entity, stack) => entity === selected && entity.uuid === args.entity && stack.item === item);
+    tracker = trackDrop(bot, entry, (entity, stack) => entity === selected && entity.uuid === args.entity && stack.item === item, undefined, now);
+    let others = [];
     while (true) {
       check();
       const entity = tracker.live();
@@ -76,10 +85,21 @@ async function pickupDrop(bot, args, source, check, result, movement) {
         if (walkError) throw blocked('pickup_path_blocked', '本次未能抵达拾取站位');
         const stand = pickupStand(bot, entity.position.floored());
         if (!stand) throw blocked('pickup_stand_unavailable', '原堆附近没有已知且可站立的位置');
+        others = Object.values(bot.entities).filter(other => other !== entity && isDrop(other) && other.position &&
+          source.position.distanceTo(other.position) <= source.radius+4);
+        const blocker = nearbyStack(others, stand.offset(0.5, 0, 0.5)) ?? nearbyStack(others, bot.entity.position);
+        if (blocker) {
+          result.nearbyDrop = { entityId: blocker.id, ...(blocker.uuid && { uuid: blocker.uuid }), stack: dropStack(blocker),
+            position: blocker.position.clone(), sampledAtMs: Math.floor(now()) };
+          throw blocked('pickup_other_stack_nearby', '另一堆地面物品靠近拾取站位或当前脚位，继续移动可能一起捡起');
+        }
         if (!walking && !stand.equals(bot.entity.position.floored()) && (!lastStand || !stand.equals(lastStand))) {
           lastStand = stand;
           pickup.approachAttempted = walking = true;
-          walk = movement.go(stand, point => inside(point.offset(0.5, 0, 0.5)))
+          walk = movement.go(stand, point => {
+            const feet = point.offset(0.5, 0, 0.5);
+            return inside(feet) && !nearbyStack(others, feet);
+          })
             .catch(error => { walkError = error; }).finally(() => { walking = false; });
         }
       }

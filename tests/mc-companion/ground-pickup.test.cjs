@@ -48,12 +48,36 @@ test('an exact pickup waits for both the selected entity and its inventory incre
 test('pickup revalidates the original whole stack, radius and capacity before walking', async () => {
   for (const [change, code] of [[f => { f.args.count = 2; }, 'pickup_whole_stack_required'],
     [f => { f.stack.count = 2; }, 'pickup_stack_changed'], [f => { f.entity.position.x = 9; }, 'pickup_outside_observation'],
+    [f => { f.bot.inventory.slots.fill(undefined); }, 'pickup_capacity_unknown'],
+    [f => { delete f.bot.inventory.inventoryStart; }, 'pickup_capacity_unknown'],
     [f => { f.bot.inventory.slots.fill({ name: 'stone', count: 64 }); }, 'pickup_insufficient_space']]) {
     const f = pickupFixture();
     change(f);
     await assert.rejects(f.run(), { code });
     assert.deepEqual([f.moves(), f.result.pickup.verifiedCount], [0, 0]);
   }
+});
+
+// 相邻未知栈会阻止起步，沿途其他栈排除自己的候选格；新物品出现时等原路退出。
+test('pickup keeps adjacent stacks and the walking corridor outside its effect', async () => {
+  const conflict = pickupFixture();
+  const stone = { name: 'item', id: 6, position: conflict.entity.position.offset(1,0,0), getDroppedItem: () => null };
+  conflict.bot.entities[6] = stone;
+  await assert.rejects(conflict.run(), { code: 'pickup_other_stack_nearby' });
+  assert.deepEqual([conflict.moves(), conflict.result.nearbyDrop.entityId, conflict.result.nearbyDrop.stack], [0,6,null]);
+
+  const f = pickupFixture();
+  const decoy = f.bot.entities[7] = { ...stone, id: 7, position: new Position(1.5,-60,3.5) };
+  let exitWalk, stopped = 0;
+  f.movement.go = async (stand, allowed) => {
+    assert.ok(allowed(stand));
+    assert.equal(allowed(decoy.position.floored()), false);
+    await new Promise(resolve => { exitWalk = resolve; });
+  };
+  f.movement.stop = () => { ++stopped; exitWalk(); };
+  f.movement.pause = async () => { decoy.position = f.entity.position.offset(0,0,1); };
+  await assert.rejects(f.run(), { code: 'pickup_other_stack_nearby' });
+  assert.deepEqual([stopped, f.result.nearbyDrop.entityId, f.result.pickup.approachAttempted], [1,7,true]);
 });
 
 // 其他实体拾走原堆时，背包里的同名物品不会替代原堆回执。
