@@ -157,8 +157,8 @@ struct RunLoopState {
         if (!options.model_capture) return;
         const auto& versions = record->versions_;
         const auto view = [](const std::optional<std::string>& label) { return label ? std::string_view(*label) : std::string_view{}; };
-        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking,
-            view(versions.persona_profile),view(versions.prompt_template)}); }
+        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking_enabled(),
+            view(versions.persona_profile),view(versions.prompt_template),config.reasoning_effort()}); }
         catch (...) {}
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
@@ -610,6 +610,7 @@ struct RunLoopState {
 // 步骤：核对运行容量 → 准备完整状态 → 提交模型 → 记录接纳事实。
 RunLoop::RunLoop(RunId run, model::Config config, model::Backend backend, std::shared_ptr<const MessageHistory> history, std::string prompt, RunOptions options) {
     if (resident_count >= 64) throw std::length_error("run: resident capacity exhausted");
+    if (options.thinking != model::ThinkingPreference::inherit) config.session_thinking = options.thinking;
     state_ = std::make_unique<RunLoopState>(run,std::move(config),std::move(backend),std::move(history),std::move(prompt),std::move(options));
     state_->start_model();
     if (!state_->record->model_requests_) throw std::runtime_error("run: stopped before model admission");

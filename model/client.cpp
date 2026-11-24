@@ -1,4 +1,5 @@
 #include <dafeiyu/model_client.hpp>
+#include "thinking.hpp"
 #include <dafeiyu/model_protocol.hpp>
 #include <dafeiyu/http.hpp>
 #include <nlohmann/json.hpp>
@@ -61,13 +62,7 @@ std::string complete(const Config& config, const std::vector<Message>& messages)
     }
 
     Json request{{"model", config.model}, {"stream", false}, {"messages", std::move(serialized)}};
-    if (config.provider == "deepseek") {
-        request["thinking"] = {{"type", config.thinking ? "enabled" : "disabled"}};
-    } else if (config.provider == "qwen") {
-        request["enable_thinking"] = false;
-    } else {
-        throw std::runtime_error("provider: expected deepseek or qwen");
-    }
+    if (!encode_thinking(request,config)) throw std::runtime_error("provider: expected deepseek or qwen");
     std::string body;
     try {
         body = request.dump();

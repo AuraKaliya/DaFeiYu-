@@ -1,4 +1,5 @@
 #include <dafeiyu/model_protocol.hpp>
+#include "thinking.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -38,7 +39,7 @@ std::string encode_request(const Config& config, const Request& request) {
                     {"function",{{"name",call.name},{"arguments",call.arguments}}}});
             }
             if (message.role == Role::tool) item["tool_call_id"] = message.tool_call_id;
-            if (config.provider == "deepseek" && config.thinking && !request.tools.empty() && message.reasoning_content)
+            if (config.thinking_enabled() && !request.tools.empty() && message.reasoning_content)
                 item["reasoning_content"] = *message.reasoning_content;
             messages.push_back(std::move(item));
         }
@@ -49,9 +50,7 @@ std::string encode_request(const Config& config, const Request& request) {
                 {"function",{{"name",tool.name},{"description",tool.description},{"parameters",Json::parse(tool.parameters)}}}});
         }
         if (request.max_output_tokens) body["max_tokens"] = *request.max_output_tokens;
-        if (config.provider == "deepseek") body["thinking"] = {{"type",config.thinking ? "enabled" : "disabled"}};
-        else if (config.provider == "qwen") body["enable_thinking"] = false;
-        else throw std::invalid_argument("provider: expected deepseek or qwen");
+        if (!encode_thinking(body,config)) throw std::invalid_argument("provider: expected deepseek or qwen");
         return body.dump();
     } catch (const Json::exception&) { throw std::invalid_argument("model: invalid UTF-8 or JSON request"); }
 }

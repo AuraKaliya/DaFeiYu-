@@ -56,15 +56,19 @@ template<uint32_t version>
 dfy_v2_status DFY_V2_CALL submit(uint64_t session, const dfy_v2_agent_input* input, uint64_t* request, dfy_v2_error* error) {
     if (request) *request = 0;
     return boundary(error,[&](auto& host) {
+        constexpr auto thinking = DFY_V2_AGENT_THINKING_OFF | DFY_V2_AGENT_THINKING_LOW;
         constexpr auto flags = DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY |
-            (version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0);
+            (version >= DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0) |
+            (version >= DFY_V2_AGENT_THINKING_VERSION ? thinking : 0);
         if (!session || !request || !input || input->tool_count > 16 || (!input->tools && input->tool_count) ||
-            (input->flags & ~flags)) return DFY_V2_INVALID_ARGUMENT;
+            (input->flags & ~flags) || (input->flags & thinking) == thinking) return DFY_V2_INVALID_ARGUMENT;
         const auto service = host.agents.lock();
         if (!service) return DFY_V2_UNSUPPORTED;
         SubagentInput copied{text(input->prompt,64*1024),text(input->instructions,8*1024),text(input->binding,8*1024),{},
             (input->flags & DFY_V2_AGENT_ALLOW_CHANGES) != 0, (input->flags & DFY_V2_AGENT_REPLACE_HISTORY) != 0,
             (input->flags & DFY_V2_AGENT_PLAYER_FACING) != 0};
+        if (input->flags & DFY_V2_AGENT_THINKING_OFF) copied.thinking = SubagentThinking::off;
+        if (input->flags & DFY_V2_AGENT_THINKING_LOW) copied.thinking = SubagentThinking::low;
         copied.tools.reserve(input->tool_count);
         for (uint32_t index = 0; index < input->tool_count; ++index) copied.tools.push_back(text(input->tools[index],128));
         try { *request = service->submit(host.agent_owner,session,std::move(copied)); }
@@ -117,6 +121,9 @@ const dfy_v2_agent_api& agent_api(uint32_t version) {
     static const dfy_v2_agent_api basic{{sizeof(dfy_v2_agent_api),DFY_V2_AGENT_VERSION},open,submit<DFY_V2_AGENT_VERSION>,status,cancel,close};
     static const dfy_v2_agent_api persona{{sizeof(dfy_v2_agent_api),DFY_V2_AGENT_PERSONA_VERSION},open,
         submit<DFY_V2_AGENT_PERSONA_VERSION>,status,cancel,close};
+    static const dfy_v2_agent_api thinking{{sizeof(dfy_v2_agent_api),DFY_V2_AGENT_THINKING_VERSION},open,
+        submit<DFY_V2_AGENT_THINKING_VERSION>,status,cancel,close};
+    if (version == DFY_V2_AGENT_THINKING_VERSION) return thinking;
     return version == DFY_V2_AGENT_PERSONA_VERSION ? persona : basic;
 }
 }

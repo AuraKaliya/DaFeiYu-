@@ -83,8 +83,12 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     result.model_profile = labels.model_profile; result.policy = options.policy.revision; result.control_extension = labels.control_extension;
     result.persona_profile = labels.persona_profile;
     if (!options.extension && !options.text_hook && !result.control_extension) result.control_extension = "none";
-    if (result.provider && result.model && config.timeout_ms > 0) result.public_model_config = "sha256:"+platform::sha256(Json{
-        {"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}}.dump());
+    if (result.provider && result.model && config.timeout_ms > 0) {
+        Json profile{{"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}};
+        if (config.thinking_enabled()) profile["thinking"] = true;
+        if (!config.reasoning_effort().empty()) profile["reasoning_effort"] = config.reasoning_effort();
+        result.public_model_config = "sha256:"+platform::sha256(profile.dump());
+    }
     Json policy{{"revision",options.policy.revision},{"model_limit",options.policy.model_limit},{"tool_limit",options.policy.tool_limit},
         {"allow_observation",options.policy.allow_observation},{"confirm_changes",options.policy.confirm_changes},{"timeout_ms",effective_timeout.count()},
         {"goal_update_limit",options.goal_update_limit},{"observation_rebind_limit",options.observation_rebind_limit},

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <dafeiyu/async_model.hpp>
 #include <dafeiyu/run_identity.hpp>
 #include <string_view>
@@ -16,7 +16,7 @@ struct ModelCapture {
     const model::CallDiagnostics* call = nullptr;
     runtime::OperationState result = runtime::OperationState::pending;
     bool thinking = false;
-    std::string_view persona_profile, prompt_template;
+    std::string_view persona_profile, prompt_template, reasoning_effort;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;

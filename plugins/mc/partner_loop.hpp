@@ -306,6 +306,7 @@ class PartnerLoop {
     bool expansion_pending_ = false;
     std::bitset<partner_skills.size()> visible_skills_;
     const dfy_v2_agent_api* agent_ = nullptr;
+    uint32_t thinking_flags_ = 0;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
     const dfy_v2_reference_api* refs_ = nullptr;

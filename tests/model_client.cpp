@@ -77,6 +77,13 @@ int main() {
         thinking.thinking = true;
         check(dfy::model::complete(thinking,prompt) == "你好！\n完整回答" &&
             sent.at("thinking").at("type") == "enabled","thinking text transport lost final text or mode");
+        thinking.session_thinking = dfy::model::ThinkingPreference::low;
+        (void)dfy::model::complete(thinking,prompt);
+        check(sent.at("reasoning_effort") == "low" && sent.at("thinking").at("type") == "enabled","low text request mismatch");
+        thinking.provider = "qwen";
+        (void)dfy::model::complete(thinking,prompt);
+        check(!sent.contains("reasoning_effort") && !sent.contains("thinking") && !sent.at("enable_thinking").get<bool>(),
+            "unsupported provider used the DeepSeek dialect");
 
         using dfy::model::Role;
         using Messages = std::vector<dfy::model::Message>;

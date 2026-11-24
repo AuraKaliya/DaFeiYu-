@@ -65,13 +65,21 @@ void thinking_protocol() {
     config.provider = "deepseek";
     config.thinking = true;
     auto body = Json::parse(encode_request(config,request));
-    check(body["thinking"]["type"] == "enabled" && body["messages"][1]["reasoning_content"] == "fixed inference before text" &&
+    check(!body.contains("reasoning_effort") && body["thinking"]["type"] == "enabled" && body["messages"][1]["reasoning_content"] == "fixed inference before text" &&
         body["messages"][3]["reasoning_content"] == "fixed inference before tool" &&
         body["messages"][4]["tool_call_id"] == "call_1","thinking continuation lost original ordering");
     config.thinking = false;
+    config.session_thinking = ThinkingPreference::low;
     body = Json::parse(encode_request(config,request));
+    check(body.at("reasoning_effort") == "low" && body.at("thinking").at("type") == "enabled" &&
+        body.at("messages")[3].at("reasoning_content") == "fixed inference before tool","low effort lost tool continuation");
+    config.thinking = true;
+    config.session_thinking = ThinkingPreference::off;
+    body = Json::parse(encode_request(config,request));
+    check(body.at("thinking").at("type") == "disabled" && !body.contains("reasoning_effort"),"explicit off lost its scope");
     check(!body["messages"][1].contains("reasoning_content") && !body["messages"][3].contains("reasoning_content"),
         "thinking disabled request forwarded reasoning");
+    config.session_thinking = ThinkingPreference::inherit;
     config.thinking = true;
     request.messages.resize(3);
     request.tools.clear();

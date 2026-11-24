@@ -116,6 +116,8 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     slot.queued.reset();
     slot.phase = SubagentPhase::running;
     agent::RunOptions options;
+    if (input.thinking == plugins::SubagentThinking::off) options.thinking = model::ThinkingPreference::off;
+    if (input.thinking == plugins::SubagentThinking::low) options.thinking = model::ThinkingPreference::low;
     options.now = clock_;
     options.version_labels = labels_;
     const auto snapshot = plugins_.capture_hooks(slot.owner);

@@ -54,6 +54,27 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     return DFY_V2_OK;
 }
 
+// 核对旧服务拒绝新标志，新服务拒绝同一请求同时关闭和开启思考。
+// 步骤：协商精确版本 → 提交该版本不接受的标志 → 确认宿主未接纳请求。
+static dfy_v2_status check_thinking_flags(dfy_v2_instance* instance) {
+    for (uint32_t version = DFY_V2_AGENT_VERSION; version <= DFY_V2_AGENT_THINKING_VERSION; ++version) {
+        const void* table = NULL;
+        const dfy_v2_status queried = instance->host((dfy_v2_string_view){DFY_V2_AGENT_INTERFACE,sizeof(DFY_V2_AGENT_INTERFACE)-1},
+            version,&table,NULL);
+        if (queried == DFY_V2_UNSUPPORTED) continue;
+        if (queried || !table) return DFY_V2_ABI_MISMATCH;
+
+        const dfy_v2_agent_api* service = table;
+        dfy_v2_agent_input input = {{"flags",5},{0},{0},NULL,0,DFY_V2_AGENT_THINKING_LOW};
+        if (version == DFY_V2_AGENT_THINKING_VERSION) input.flags |= DFY_V2_AGENT_THINKING_OFF;
+        uint64_t request = 0;
+        if (service->header.interface_version != version ||
+            service->submit(instance->session,&input,&request,NULL) != DFY_V2_INVALID_ARGUMENT || request)
+            return DFY_V2_ABI_MISMATCH;
+    }
+    return DFY_V2_OK;
+}
+
 // 在实例载入阶段显式注册双向信箱。
 // 步骤：协商信箱及引用版本 → 校验布局 → 接入并保留接口。
 static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* error) {
@@ -87,7 +108,8 @@ static dfy_v2_status DFY_V2_CALL start(dfy_v2_instance* instance, dfy_v2_error* 
     if (status == DFY_V2_UNSUPPORTED) return DFY_V2_OK;
     if (status || !agent || ((const dfy_v2_api_header*)agent)->struct_size != sizeof(dfy_v2_agent_api)) return DFY_V2_UNSUPPORTED;
     instance->agent = agent;
-    return instance->agent->open(&instance->session,error);
+    status = instance->agent->open(&instance->session,error);
+    return status ? status : check_thinking_flags(instance);
 }
 
 // 消费真实队首并按原测试序号向本体回信。

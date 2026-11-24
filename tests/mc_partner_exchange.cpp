@@ -17,7 +17,13 @@ int wmain(int argc, wchar_t** argv) {
         const std::filesystem::path root = argv[2];
         std::atomic_bool permit{false};
         std::atomic_uint delegated{0}, main_calls{0};
-        Application host({},root/"packages",root/"user",Backend{[&](const auto&,const Request& input) -> Response {
+        Config config;
+        config.provider = "deepseek";
+        config.model = "fixed-exchange";
+        Application host(config,root/"packages",root/"user",Backend{[&](const Config& effective,const Request& input) -> Response {
+            const bool player = input.messages.front().content.find("Minecraft 同场规则") != std::string::npos;
+            if (effective.thinking_enabled() != player || effective.reasoning_effort() != (player ? "low" : ""))
+                throw std::runtime_error("player thinking preference crossed a session boundary");
             const auto& last = input.messages.back();
             if (std::ranges::any_of(input.tools,[](const auto& item) { return item.name == "read_game_receipts"; })) {
                 ++main_calls;

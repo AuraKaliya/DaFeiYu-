@@ -313,7 +313,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     std::string follow_id, old_work, plan_tool;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
-    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+    Config model_config;
+    if (observation_batch || response_timing) {
+        model_config.provider = "deepseek";
+        model_config.model = "fixed-context";
+        model_config.thinking = response_timing;
+    }
+    app::Application host(model_config,root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
         // 固定响应仅使用本轮实际开放的工具名。
         const auto call = [&](std::string_view name, std::string id, const Json& args) -> Response {
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(name); });

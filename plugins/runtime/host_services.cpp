@@ -204,7 +204,8 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     return detail::boundary(error, [&](auto& host) {
         const std::string_view requested(name.data, name.length);
         if (requested == DFY_V2_AGENT_INTERFACE) {
-            if (host.agents.expired() || (version != DFY_V2_AGENT_VERSION && version != DFY_V2_AGENT_PERSONA_VERSION))
+            if (host.agents.expired() || (version != DFY_V2_AGENT_VERSION && version != DFY_V2_AGENT_PERSONA_VERSION &&
+                version != DFY_V2_AGENT_THINKING_VERSION))
                 return DFY_V2_UNSUPPORTED;
             *output = &detail::agent_api(version);
             return DFY_V2_OK;

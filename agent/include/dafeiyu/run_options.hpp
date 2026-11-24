@@ -57,5 +57,6 @@ struct RunOptions {
     std::shared_ptr<runtime::Budget> budget;
     // 宿主为本轮提供的角色引导，仅在构造模型请求时注入。
     std::string system_instructions;
+    model::ThinkingPreference thinking = model::ThinkingPreference::inherit;
 };
 }

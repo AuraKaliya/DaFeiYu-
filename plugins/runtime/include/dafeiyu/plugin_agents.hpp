@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <dafeiyu/runtime_ids.hpp>
 #include <memory>
 #include <string>
@@ -7,12 +7,14 @@
 
 namespace dfy::plugins {
 class PluginInstance;
+enum class SubagentThinking { inherit, off, low };
 struct SubagentInput {
     std::string prompt, instructions, binding;
     std::vector<std::string> tools;
     bool allow_changes = false;
     bool replace_history = false;
     bool player_facing = false;
+    SubagentThinking thinking = SubagentThinking::inherit;
 };
 enum class SubagentPhase { idle, queued, running, succeeded, failed, cancelled };
 struct SubagentStatus {

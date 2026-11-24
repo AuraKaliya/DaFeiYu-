@@ -337,11 +337,12 @@ std::string control_reply(std::string_view wire, std::string_view id, std::strin
     return value.at("phase") == "requested" ? std::string{} : value.dump();
 }
 
-// 读取独立通道及可选私有配对键，错误配置在实例建立前失败。
+// 读取插件的独立通道、可选私有配对键和玩家回合的思考偏好。
+// 步骤：核对配置字段 → 校验配对键 → 解析玩家回合模式并签发控制身份。
 BridgeConfig configured_bridge(std::string_view config) {
     const auto value = parse(config);
     const auto channel = value.at("channel").get<std::string>();
-    if (!valid_channel(channel) || value.size() != (value.contains("bridgeKey") ? 2u : 1u))
+    if (!valid_channel(channel) || value.size() != 1 + value.count("bridgeKey") + value.count("playerThinking"))
         throw std::invalid_argument("MC protocol: channel");
     std::string key;
     if (value.contains("bridgeKey")) {
@@ -349,7 +350,10 @@ BridgeConfig configured_bridge(std::string_view config) {
         if (key.size() != 64 || key.find_first_not_of("0123456789abcdef") != key.npos)
             throw std::invalid_argument("MC protocol: invalid private configuration");
     }
-    return {channel,std::move(key),new_controller()};
+    const auto mode = value.value("playerThinking",std::string("inherit"));
+    if (mode != "inherit" && mode != "off" && mode != "low") throw std::invalid_argument("MC protocol: playerThinking");
+    return {channel,std::move(key),new_controller(),
+        mode == "low" ? PlayerThinking::low : mode == "off" ? PlayerThinking::off : PlayerThinking::inherit};
 }
 // 生成独立于工作序号的控制周期身份。
 std::string new_controller() {

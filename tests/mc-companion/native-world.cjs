@@ -194,7 +194,8 @@ async function main() {
   fs.mkdirSync(config, { recursive: true });
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
-  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key }));
+  const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
+  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking }));
   let reads = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
@@ -1216,6 +1217,8 @@ async function main() {
       const trace = path.join(root, 'trace', 'events.jsonl');
       const rows = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
       checkResponseTiming(rows, timingWorks, timingSpeech);
+      const prepared = rows.filter(row => row.kind === 'model.prepared' && row.personaProfile);
+      assert.ok(prepared.length && prepared.every(row => row.thinking === false && row.reasoningEffort === undefined));
       console.log(trace);
     } else if (observationBatch) {
       assert.equal(sceneReads.length, 2);
@@ -1224,6 +1227,8 @@ async function main() {
       const observations = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
         row.body.skill === 'observe');
       assert.deepEqual(observations.map(row => row.body.bridgeWork), sceneReads);
+      const prepared = rows.filter(row => row.kind === 'model.prepared' && row.personaProfile);
+      assert.ok(prepared.length && prepared.every(row => row.thinking === true && row.reasoningEffort === 'low'));
       const original = rows.find(row => row.kind === 'mail.received' && row.body?.event?.sequence === 2);
       assert.deepEqual(original.body.event.sceneAtMessage, boundaryAnchor);
       for (const entry of observations)

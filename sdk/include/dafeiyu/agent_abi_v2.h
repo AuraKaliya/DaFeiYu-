@@ -4,6 +4,7 @@
 #define DFY_V2_AGENT_INTERFACE "dfy.agent"
 #define DFY_V2_AGENT_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_PERSONA_VERSION UINT32_C(2)
+#define DFY_V2_AGENT_THINKING_VERSION UINT32_C(3)
 #define DFY_V2_AGENT_IDLE UINT32_C(1)
 #define DFY_V2_AGENT_QUEUED UINT32_C(2)
 #define DFY_V2_AGENT_RUNNING UINT32_C(3)
@@ -14,6 +15,9 @@
 #define DFY_V2_AGENT_REPLACE_HISTORY UINT32_C(2)
 // 只在第 2 版服务请求把本体人格用于面向玩家的回合。
 #define DFY_V2_AGENT_PLAYER_FACING UINT32_C(4)
+// 第 3 版可为本次请求选择关闭或低强度思考，两者互斥，省略时继承宿主配置。
+#define DFY_V2_AGENT_THINKING_OFF UINT32_C(8)
+#define DFY_V2_AGENT_THINKING_LOW UINT32_C(16)
 
 #ifdef __cplusplus
 extern "C" {

@@ -3,7 +3,11 @@
 #include <string_view>
 
 namespace dfy::mc {
-struct BridgeConfig { std::string channel, key, controller; };
+enum class PlayerThinking { inherit, off, low };
+struct BridgeConfig {
+    std::string channel, key, controller;
+    PlayerThinking player_thinking = PlayerThinking::inherit;
+};
 // 为配对的角色生成幂等接管请求，或按控制实例释放原监听。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments);
 // 校验接管来源，尚未释放时返回空串供继续轮询。

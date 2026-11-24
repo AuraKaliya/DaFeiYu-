@@ -112,6 +112,11 @@ int main() {
         private_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};
         const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
+        using dfy::mc::PlayerThinking;
+        if (config.player_thinking != PlayerThinking::inherit ||
+            dfy::mc::configured_bridge(R"({"channel":"test","playerThinking":"low"})").player_thinking != PlayerThinking::low ||
+            dfy::mc::configured_bridge(R"({"channel":"test","playerThinking":"off"})").player_thinking != PlayerThinking::off) return 1;
+        rejects([] { dfy::mc::configured_bridge(R"({"channel":"test","playerThinking":"high"})"); });
         const auto envelope = Json{{"context",source},{"arguments",{{"block","dirt"},{"count",2}}}}.dump();
         auto action = source;
         action["controller"] = config.controller;

@@ -148,9 +148,13 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, BridgeConfig& confi
     if (config.key.empty()) return DFY_V2_UNSUPPORTED;
     auto controller = new_controller();
     const void* api = nullptr;
-    auto version = DFY_V2_AGENT_PERSONA_VERSION;
+    auto version = DFY_V2_AGENT_THINKING_VERSION;
     auto result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
-    if (result == DFY_V2_UNSUPPORTED) {
+    if (result == DFY_V2_UNSUPPORTED && config.player_thinking == PlayerThinking::inherit) {
+        version = DFY_V2_AGENT_PERSONA_VERSION;
+        result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
+    }
+    if (result == DFY_V2_UNSUPPORTED && config.player_thinking == PlayerThinking::inherit) {
         version = DFY_V2_AGENT_VERSION;
         result = host(view(DFY_V2_AGENT_INTERFACE),version,&api,nullptr);
     }
@@ -176,6 +180,8 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, BridgeConfig& confi
     if (mail_text_->header.struct_size != sizeof(*mail_text_) || refs_->header.struct_size != sizeof(*refs_) ||
         !mail_text_->inspect || !refs_->release) return DFY_V2_ABI_MISMATCH;
     agent_ = &agent;
+    thinking_flags_ = config.player_thinking == PlayerThinking::low ? DFY_V2_AGENT_THINKING_LOW :
+        config.player_thinking == PlayerThinking::off ? DFY_V2_AGENT_THINKING_OFF : 0;
     mail_ = &mail;
     config.controller = std::move(controller);
     phase_ = DFY_V2_PARTNER_LISTENING;
@@ -463,10 +469,11 @@ void PartnerLoop::submit(std::string_view wake) {
     const auto prompt = model_scene_text(std::move(input));
     const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);
-    const auto persona = !delegated && agent_->header.interface_version == DFY_V2_AGENT_PERSONA_VERSION ? DFY_V2_AGENT_PLAYER_FACING : 0;
+    const auto player_flags = !delegated && agent_->header.interface_version >= DFY_V2_AGENT_PERSONA_VERSION ?
+        DFY_V2_AGENT_PLAYER_FACING | thinking_flags_ : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
-        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | persona};
+        static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY | player_flags};
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     visible_skills_ = disclosed;
     settling_plan_ = wake == "plan.finished" && actual_outcome ? plan_->id : 0;
