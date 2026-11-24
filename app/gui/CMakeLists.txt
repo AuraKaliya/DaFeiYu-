@@ -10,7 +10,7 @@ target_sources(dfy_ui_probe PRIVATE ../../ui/host/local_content.cpp ../../ui/hos
 target_sources(dfy_ui_probe PRIVATE ../../ui/host/frame_channel.cpp ../../ui/host/frame_channel.hpp)
 target_sources(dfy_ui_probe PRIVATE ../../ui/host/probe_host.cpp ../../ui/host/probe_host.hpp ../../ui/host/dialogue_channel.hpp)
 target_sources(dfy_ui_probe PRIVATE ../../ui/host/browser_lifetime.cpp ../../ui/host/browser_lifetime.hpp)
-target_link_libraries(dfy_ui_probe PRIVATE dfy_ui_scope dfy_webview2 dfy_build_options ole32 shell32 user32)
+target_link_libraries(dfy_ui_probe PRIVATE dfy_ui_scope dfy_webview2 dfy_build_options ole32 shell32 user32 dwmapi)
 target_link_libraries(dfy_ui_probe PRIVATE dfy_application nlohmann_json::nlohmann_json)
 if(BUILD_TESTING)
   target_sources(dfy_ui_probe PRIVATE ../../tests/ui_run_status_probe.cpp ../../tests/ui_run_status_probe.hpp)

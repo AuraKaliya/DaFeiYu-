@@ -9,6 +9,7 @@ void InteractionProbe::start_room_preview(bool busy) {
         "' && [...document.querySelectorAll('.scene img')].every(i => i.complete && i.naturalWidth > 0)");
     expect("preview isolation", "document.querySelectorAll('iframe').length === 0 && !document.querySelector('#run-status')");
     call("focus emulation", L"Emulation.setFocusEmulationEnabled", {{"enabled",true}});
+    expect("first content paint","performance.getEntriesByName('first-contentful-paint').length > 0");
     if (!busy) {
         evaluate("enter idle draft", "document.querySelector('textarea').focus(); document.activeElement.id === 'room-draft'");
         call("type into preview", L"Input.insertText", {{"text","你好，大肥鱼"}});

@@ -30,13 +30,13 @@
 
 ## 自动验证
 
-以下模式都使用不激活的隐藏窗口，不进行 Computer Use 或系统键鼠注入，也不开放远程调试端口。
+自动模式使用不激活的隐藏窗口。交互验收窗口由 Windows 桌面合成器隐藏，以便 WebView2 生成可接收浏览器键盘事件的首帧。宿主核对隐藏标记及前台窗口。输入使用固定浏览器协议。
 
 | 参数 | 验证内容 |
 |---|---|
 | `--smoke` | 本地资产、外部资源拒绝、Frame 编码与授权 |
 | `--offline` | 浏览器离线模拟状态下，从全新配置加载本地页面并完成 Frame 检查 |
-| `--interaction` | 43 个固定协议步骤：中文组合输入、Tab／Shift+Tab、Enter、Escape、焦点返回与 Frame 回显 |
+| `--interaction` | 等待首帧后验证中文组合输入、Tab／Shift+Tab、Enter、Escape、焦点返回与独立 Frame 回显 |
 | `--lifecycle` | 20 轮 Frame 创建、销毁、对象归还及旧身份拒绝 |
 | `--close-early` | 环境创建中请求关闭，等待回调责任归还 |
 | `--close-controller` | 控制器创建中请求关闭，等待实际进程退出 |

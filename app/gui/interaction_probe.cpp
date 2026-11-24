@@ -37,6 +37,7 @@ void InteractionProbe::key(std::string name, std::string value, int code, int mo
 // 步骤：模拟页面聚焦 → 主页面组合提交 → 对话框焦点与 Escape → 独立 Frame 输入和原生回显。
 void InteractionProbe::start() {
     call("focus emulation",L"Emulation.setFocusEmulationEnabled",{{"enabled",true}});
+    expect("first content paint","performance.getEntriesByName('first-contentful-paint').length > 0");
     evaluate("main focus","document.querySelector('#main-text').focus(); document.activeElement.id === 'main-text'");
     evaluate("track input event kinds","window.__u01_events=[]; for(const type of ['compositionstart','compositionend','input','change']) document.querySelector('#main-text').addEventListener(type,e=>window.__u01_events.push({type:e.type,trusted:e.isTrusted,composing:e.isComposing ?? null})); true");
     call("main composition",L"Input.imeSetComposition",{{"text","大肥"},{"selectionStart",2},{"selectionEnd",2}});
@@ -77,6 +78,8 @@ void InteractionProbe::start() {
         context_ = reply.at("executionContextId").get<int>();
     });
     evaluate("frame focus","document.querySelector('#frame-text').focus(); document.activeElement.id === 'frame-text'",true);
+    // 跨来源 Frame 的程序化聚焦需要本次受控用户手势。
+    steps_.back().parameters["userGesture"] = true;
     call("frame composition",L"Input.imeSetComposition",{{"text","独立"},{"selectionStart",2},{"selectionEnd",2}});
     call("frame commit",L"Input.insertText",{{"text","独立页面中文"}});
     evaluate("frame committed","document.querySelector('#frame-text').value === '独立页面中文' && Number(document.querySelector('#composition').dataset.count) > 0",true);

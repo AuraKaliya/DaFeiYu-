@@ -10,6 +10,7 @@
 #include "ui_run_status_probe.hpp"
 #endif
 #include <windows.h>
+#include <dwmapi.h>
 #include <objbase.h>
 #include <wrl.h>
 #include <WebView2.h>
@@ -389,7 +390,16 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->handle = CreateWindowExW(extended,kind.lpszClassName,title,WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,1100,760,nullptr,nullptr,instance,state.get());
         if (!state->handle) throw std::runtime_error("window creation failed");
-        ShowWindow(state->handle,automatic ? SW_HIDE : show);
+        if (state->interaction_mode) {
+            // 保留浏览器的绘制与输入路由，同时由桌面合成器隐藏验收窗口。
+            const BOOL cloaked = TRUE;
+            require(DwmSetWindowAttribute(state->handle,DWMWA_CLOAK,&cloaked,sizeof(cloaked)));
+            ShowWindow(state->handle,SW_SHOWNOACTIVATE);
+            DWORD flags = 0;
+            require(DwmGetWindowAttribute(state->handle,DWMWA_CLOAKED,&flags,sizeof(flags)));
+            if (!(flags & DWM_CLOAKED_APP) || GetForegroundWindow() == state->handle)
+                throw std::runtime_error("UI: interaction fixture must remain hidden and inactive");
+        } else ShowWindow(state->handle,automatic ? SW_HIDE : show);
         try { state->start(); } catch (const std::exception& error) { state->fail(error.what()); }
         catch (...) { state->fail(); }
         MSG message{}; BOOL next;
