@@ -100,17 +100,20 @@ nlohmann::json room_snapshot(const Host& host) {
 
 // 通过同一命令入口交付聊天意图，按已读修订返回对话与队列。
 // 步骤：区分读写命令 → 校验命令或按修订装配正文 → 返回对应的命令回执。
-nlohmann::json dialogue_response(Host& host, const nlohmann::json& request, const std::string& type, const std::string& id) {
+nlohmann::json dialogue_response(Host& host, const nlohmann::json& request, const std::string& type, const std::string& id,
+    const std::string& client) {
     nlohmann::json reply{{"version","1"},{"request",id}};
     if (type != "dialogue.read") {
         reply["event"] = "dialogue.receipt";
-        reply["receipt"] = dialogue_receipt(host.submit_dialogue(dialogue_command(request,type)));
+        auto command = dialogue_command(request,type);
+        command.client = client;
+        reply["receipt"] = dialogue_receipt(host.submit_dialogue(std::move(command)));
     } else {
         if (request.size() != 5) throw std::invalid_argument("management: invalid dialogue read");
         const auto& after = request.at("revision").get_ref<const std::string&>();
         if (after.size() > 20) throw std::invalid_argument("management: invalid dialogue read");
         const auto& command = request.at("command");
-        const auto view = host.dialogue(command == "" ? 0 : run_id_part(command));
+        const auto view = host.dialogue(command == "" ? 0 : run_id_part(command),client);
         const auto revision = view.display ? std::to_string(view.display->revision) : std::string();
         nlohmann::json turns = nullptr, queue = nullptr;
         if (view.display && revision != after) {
@@ -155,7 +158,7 @@ nlohmann::json run_snapshot(const Host* host, const nlohmann::json& request) {
 
 // 在正式本体入口解析一次版本化请求，读取状态或提交具体对话命令。
 // 步骤：校验版本与身份 → 区分公开查询和会话请求 → 经宿主处理并回传原请求号。
-nlohmann::json dispatch(Host* host, const nlohmann::json& request) {
+nlohmann::json dispatch(Host* host, const nlohmann::json& request, const std::string& client) {
     if (!request.is_object() || request.at("version") != "1") throw std::invalid_argument("management: invalid protocol");
     const auto& id = request.at("request").get_ref<const std::string&>();
     const auto& type = request.at("type").get_ref<const std::string&>();
@@ -167,7 +170,7 @@ nlohmann::json dispatch(Host* host, const nlohmann::json& request) {
     if (!host) throw std::runtime_error("management: host unavailable");
     if (type == "room.read" && request.size()==3)
         return {{"event","room.snapshot"},{"version","1"},{"request",id},{"room",room_snapshot(*host)}};
-    if (type.starts_with("dialogue.")) return dialogue_response(*host,request,type,id);
+    if (type.starts_with("dialogue.")) return dialogue_response(*host,request,type,id,client);
     throw std::invalid_argument("management: unknown request");
 }
 }

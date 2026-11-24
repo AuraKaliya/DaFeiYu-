@@ -59,6 +59,20 @@ void background_turn(const std::filesystem::path& root) {
         status.at("run").at("exit") != "succeeded" || status.dump().find(turn.answer) != std::string::npos)
         throw std::runtime_error("management protocol exposed the wrong projection");
 
+    const auto first_client = host.open_client(), second_client = host.open_client();
+    const nlohmann::json same{{"type","dialogue.submit"},{"version","1"},{"request","send"},{"command","1"},{"text",command.text}};
+    for (const auto& client : {first_client,second_client}) {
+        if (host.dialogue(0,client).latest_command != 0 ||
+            management::dispatch(&host,same,client).at("receipt").at("state") != "queued" || !entered.try_acquire_for(3s))
+            throw std::runtime_error("independent client command was merged");
+        host.close_client(client);
+        release.release();
+        until([&] { return host.dialogue().accepting; },"detached work did not exit");
+        if (management::dispatch(&host,same,client).at("receipt").at("state") != "unavailable")
+            throw std::runtime_error("closed client could submit");
+    }
+    if (calls!=3 || host.dialogue().display->turns.size()!=3) throw std::runtime_error("independent messages lost");
+
     host.close();
     until([&] { return host.exited(); },"explicit shutdown did not finish");
     if (host.failed() || host.dialogue().accepting) throw std::runtime_error("host did not close cleanly");

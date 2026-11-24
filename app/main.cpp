@@ -5,6 +5,8 @@
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "paths.hpp"
+#include "management/resident.hpp"
+#include <nlohmann/json.hpp>
 #include "trace_commands.hpp"
 #ifdef _WIN32
 #include "console.hpp"
@@ -84,7 +86,15 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
-        if (args.size() == 1 || (args.size() >= 3 && args[1] == "--chat")) {
+        if ((args.size()==2 || args.size()==3) && (args[1]=="--host-status" || args[1]=="--stop-host")) {
+            const auto data = args.size()==3 ? args[2] : dfy::app::default_user_data();
+            auto status = dfy::management::resident_request(data,{{"op","status"}});
+            if (args[1]=="--stop-host")
+                status = dfy::management::resident_request(data,{{"op","stop"},{"instance",status.at("instance")}});
+            std::cout << status.dump() << '\n';
+            return 0;
+        }
+        if (args.size() == 1 || (args.size() >= 3 && (args[1] == "--chat" || args[1] == "--host"))) {
             const auto configuration = args.size() == 1 ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
             std::filesystem::path plugins, user_data;
             dfy::app::ApplicationRunConfig run;
@@ -97,6 +107,13 @@ int run(const std::vector<std::filesystem::path>& args) {
             }
             if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
             if (user_data.empty()) user_data = dfy::app::default_user_data();
+            if (args.size()>=3 && args[1]=="--host") {
+                const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
+                return dfy::management::serve_resident(user_data,identity,[=] {
+                    return std::make_unique<dfy::app::Application>(dfy::model::load_config(configuration),plugins,user_data,
+                        dfy::model::Backend{dfy::model::complete_response},run);
+                });
+            }
             dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data,
                 dfy::model::Backend{dfy::model::complete_response},std::move(run));
             auto& manager = application.plugins();
@@ -126,6 +143,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
+            << " | --host CONFIG [--plugins DIR] [--data DIR] [--trace DIR] | --host-status [DATA] | --stop-host [DATA]"
             << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --replay-trace FILE SESSION RUN | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "No arguments: chat with the bundled DeepSeek configuration.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"

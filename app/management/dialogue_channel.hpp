@@ -12,6 +12,7 @@ struct DialogueCommand {
     agent::RunId target;
     std::string text;
     std::uint64_t message = 0;
+    std::string client;
 };
 
 // 从业务线程接纳前的排队到正式 Session 回合，复用原窗口命令身份。

@@ -2,6 +2,7 @@
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
+#include <random>
 #include <utility>
 
 namespace dfy::management {
@@ -98,13 +99,46 @@ std::optional<RoomLocation> Host::room_location() const {
     return room_location_;
 }
 
-// 返回只读快照，旧命令保留期外明确过期。
-// 步骤：复制已发布正文和接纳标志 → 查找原命令回执或过期状态。
-DialogueView Host::dialogue(std::uint64_t command) const {
+// 给连接生成跨进程重启可区分的身份，回收长时间未访问的观察者名额。
+// 步骤：生成随机身份 → 核对客户端容量与空闲时间 → 登记独立水位。
+std::string Host::open_client() {
+    std::random_device random;
+    std::string id = "client";
+    for (unsigned part=0; part<4; ++part) id += "-"+std::to_string(random());
     std::lock_guard lock(mutex_);
-    DialogueView view{display_,latest_command_,can_submit_ && !exited_ && !worker_.get_stop_token().stop_requested(),{}};
-    if (command && command <= latest_command_) {
-        const auto record = std::ranges::find_if(commands_,[=](const auto& item) { return item.receipt.command == command; });
+    if (clients_.size()>=33) {
+        const auto stale = std::chrono::steady_clock::now()-std::chrono::minutes(5);
+        std::erase_if(clients_,[&](const auto& entry) { return !entry.first.empty() && entry.second.seen<stale; });
+    }
+    if (clients_.size()>=33 || !clients_.try_emplace(id).second) throw std::runtime_error("management: client unavailable");
+    return id;
+}
+
+// 关闭远端观察者身份，保留未完成命令的宿主责任。
+void Host::close_client(const std::string& client) {
+    std::lock_guard lock(mutex_);
+    if (!client.empty()) clients_.erase(client);
+}
+
+// 只续期仍有效的远端观察身份，空值保留给进程内适配器。
+bool Host::visit_client(const std::string& client) {
+    std::lock_guard lock(mutex_);
+    const auto found = clients_.find(client);
+    if (client.empty() || found == clients_.end()) return false;
+    found->second.seen = std::chrono::steady_clock::now();
+    return true;
+}
+
+// 返回共享快照，原回执受客户端身份与独立水位约束。
+// 步骤：核对客户端 → 复制已发布快照 → 查找该客户端原命令或过期状态。
+DialogueView Host::dialogue(std::uint64_t command, const std::string& client) const {
+    std::lock_guard lock(mutex_);
+    const auto owner = clients_.find(client);
+    if (owner == clients_.end()) return {};
+    owner->second.seen = std::chrono::steady_clock::now();
+    DialogueView view{display_,owner->second.latest,can_submit_ && !exited_ && !worker_.get_stop_token().stop_requested(),{}};
+    if (command && command <= owner->second.latest) {
+        const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==client && item.receipt.command==command; });
         view.receipt = record != commands_.end() ? record->receipt : DialogueReceipt{command,DialogueCommandState::expired,{}};
     }
     return view;
@@ -124,8 +158,11 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     auto fingerprint = with_text ? platform::sha256(command.text) : std::string{};
 
     std::lock_guard lock(mutex_);
-    if (command.id <= latest_command_) {
-        const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.receipt.command == command.id; });
+    const auto owner = clients_.find(command.client);
+    if (owner == clients_.end()) return {command.id,State::unavailable,{}};
+    owner->second.seen = std::chrono::steady_clock::now();
+    if (command.id <= owner->second.latest) {
+        const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==command.client && item.receipt.command==command.id; });
         if (record == commands_.end()) return {command.id,State::expired,{}};
         if (record->action != command.action || record->target != command.target || record->message != command.message ||
             record->fingerprint != fingerprint)
@@ -138,8 +175,8 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     const bool needs_idle = command.action == DialogueAction::send || command.action == DialogueAction::clear;
     const bool available = !slot && (!needs_idle || can_submit_);
     const DialogueReceipt receipt{command.id,available ? State::queued : State::busy,command.target};
-    commands_.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint)});
-    latest_command_ = command.id;
+    commands_.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint),command.client});
+    owner->second.latest = command.id;
     if (available) {
         slot.emplace(std::move(command));
         can_submit_ = false;
@@ -169,7 +206,7 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
         // 拒绝回执只交付类别，异常正文可能包括宿主内部数据。
     }
     std::lock_guard lock(mutex_);
-    const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.receipt.command == command->id; });
+    const auto record = std::ranges::find_if(commands_,[&](const auto& item) { return item.client==command->client && item.receipt.command==command->id; });
     record->receipt = receipt;
     slot.reset();
 }
