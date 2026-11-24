@@ -79,6 +79,8 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
     const auto motion = input.find("activeMotion");
     const bool reading_collection = player_message && motion != input.end() && motion->at("skill") == "collect" && motion->contains("progress");
+    const bool settling_handoff = input.contains("planSettlements") && input.contains("taskPlan") &&
+        std::ranges::any_of(input.at("taskPlan").at("nodes"),[](const auto& node) { return node.at("skill") == "give_item"; });
     const std::array entries{
         Guidance{"flowGuidance","task","沿原话和当前任务修订推进，给步骤写出已知依赖。复合委托若只提交准备步骤，用计划的 remainingGoal 保留尚未完成的用户目标。",has_goal || player_message},
         Guidance{"flowGuidance","planOutcome","计划结束时对照原话、剩余目标和实效。条件已具备就提交下一步。需要新证据就定向补查。现场变化使后续操作已无必要时，按最新事实结算。只承诺继续之前先登记实际后继。",
@@ -104,6 +106,9 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
             input.at("trigger") == "follow.attention"},
         Guidance{"domainExperience","airEvidence","空气记录标明本人何时耗尽或开始回升。要判断此刻余气时，用 observe(mode=vitals) 复核最新样本。",
             input.contains("airNotices")},
+        Guidance{"outputConstraints","handoffProgress","原工作仍在等收件。可用当前已核实的投出和实收数量先答复原委托。玩家已得到这份进展时可静默。",
+            input.at("trigger") == "handoff.progress"},
+        Guidance{"outputConstraints","handoffOutcome","对照原投物工作已送达的发言，报告新增的实收数量、去向或需要玩家处理的障碍。已告知且证据相同可以静默。",settling_handoff},
         Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说话，省略内部编号和工具名。只需答话时直接输出文本。需要边做边说时用 reply；回复后本轮就结束可用 finish。",
             player_message || actual_outcome},
         Guidance{"outputConstraints","workOutcome","按最近核实的方块、库存、站位或投递回执说进展。跨轮状态先核对是否已恢复，再说明现场。已接纳的步骤仍待实际回执。",
@@ -230,6 +235,7 @@ void PartnerLoop::reset() noexcept {
     final_reply_.reset();
     reply_origin_ = nullptr;
     air_only_turn_ = false;
+    pickup_feedback_work_.clear();
     air_check_ = nullptr;
     next_air_wake_ = {};
     attention_turn_.reset();
@@ -258,6 +264,8 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     else if (result || state.request != request_) throw std::runtime_error("MC partner: original turn unavailable");
     if (state.phase == DFY_V2_AGENT_QUEUED || state.phase == DFY_V2_AGENT_RUNNING) {
         if (cancel) agent_->cancel(session_,request_,nullptr);
+        else if (!pickup_feedback_work_.empty() && !pickup_feedback_stopping_ && !permits(session_))
+            pickup_feedback_stopping_ = agent_->cancel(session_,request_,nullptr) == DFY_V2_OK;
         else if (air_only_turn_ && !air_check_.contains("yieldRequestedBy") && feed_.ready()) {
             const auto& pending = feed_.pending();
             const auto player = std::ranges::find_if(pending,[](const auto& event) { return event.at("type") == "player.message"; });
@@ -269,11 +277,11 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     const auto answer = state.answer.length ? std::string_view(state.answer.data,state.answer.length) : std::string_view{};
     if (!settle_reply(config,instance,answer,cancel || state.phase != DFY_V2_AGENT_SUCCEEDED)) return false;
 
-    if (!active_delegation_ && (cancel || (!air_only_turn_ && !attention_turn_ && state.phase != DFY_V2_AGENT_SUCCEEDED))) {
+    if (!active_delegation_ && (cancel || (!air_only_turn_ && pickup_feedback_work_.empty() && !attention_turn_ && state.phase != DFY_V2_AGENT_SUCCEEDED))) {
         task_.disarm();
         expansion_pending_ = false;
     }
-    if (!handoff_ && !air_only_turn_) awaiting_restarted_plan_ = false;
+    if (!handoff_ && !air_only_turn_ && pickup_feedback_work_.empty()) awaiting_restarted_plan_ = false;
     if (cancel || autonomous_wake().empty()) settled_ = order_;
     if (!permits(session_) && !cancel) previous_ = Json{{"events",events_},{"stopRequested",stopped_work_}};
     if (active_delegation_) {
@@ -296,6 +304,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
         publish("mc.partner.turn",turn);
     }
     request_ = 0;
+    pickup_feedback_work_.clear();
     attention_turn_.reset();
     return true;
 }
@@ -349,6 +358,7 @@ void PartnerLoop::retire() {
     events_.clear();
     reply_origin_ = nullptr;
     air_only_turn_ = false;
+    pickup_feedback_work_.clear();
     air_check_ = nullptr;
     next_air_wake_ = {};
     recent_events_.clear();
@@ -372,8 +382,10 @@ void PartnerLoop::submit(std::string_view wake) {
     const bool delegated = wake == "main.delegation";
     const bool answer = wake == "question.result";
     const bool air_only = wake == "vitals.attention";
+    const bool pickup_feedback = wake == "handoff.progress";
+    const bool background_observation = air_only || pickup_feedback;
     const bool autonomous = facts.empty() && !delegated && !answer && wake != "approval.result";
-    const bool settlement_only = autonomous && !air_only && !task_.can_continue();
+    const bool settlement_only = autonomous && !background_observation && !task_.can_continue();
     const auto order = facts.empty() ? feed_.cursor() : facts.back().at("sequence").get<std::uint64_t>();
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
@@ -414,9 +426,9 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated && !plan_receipts_.empty()) input["planSettlements"] = plan_receipts_;
     if (!delegated && plan_rejection_.is_object() && plan_rejection_.at("revision") == task_.revision())
         input[plan_rejection_.at("order") == order ? "planRejection" : "previousPlanRejection"] = plan_rejection_;
-    const auto completed = delegated || air_only ? settlements_.cend() : ready_settlement();
+    const auto completed = delegated || background_observation ? settlements_.cend() : ready_settlement();
     bool completed_dig = false;
-    bool actual_outcome = wake == "follow.attention" ||
+    bool actual_outcome = pickup_feedback || wake == "follow.attention" ||
         (wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty());
     Json reply_origin;
     if (!delegated && !facts.empty() && facts.back().at("type") == "player.message" &&
@@ -424,6 +436,11 @@ void PartnerLoop::submit(std::string_view wake) {
         reply_origin = {{"sourceMessage",facts.back().at("sequence")}};
     } else if (autonomous && wake == "plan.finished" && actual_outcome && !plan_->origin.is_null()) {
         reply_origin = {{"sourceMessage",plan_->origin.at("sequence")},{"planId",plan_->id},{"taskRevision",plan_->revision}};
+    } else if (pickup_feedback) {
+        reply_origin = {{"sourceMessage",motion_->order},{"bridgeWork",motion_->work}};
+        if (motion_->plan_node && plan_ && !plan_->origin.is_null()) {
+            reply_origin.update(Json{{"sourceMessage",plan_->origin.at("sequence")},{"planId",plan_->id},{"taskRevision",plan_->revision}});
+        }
     }
     if (completed != settlements_.cend()) {
         const auto& receipts = completed->receipts;
@@ -488,7 +505,7 @@ void PartnerLoop::submit(std::string_view wake) {
     const bool completed_pickup_plan = wake == "plan.finished" && plan_ && !plan_->active && plan_->pickup_question;
     if (!delegated) for (const auto& skill : partner_skills) {
         if (air_only && skill.name != "observe") continue;
-        if ((completed_dig || completed_route || completed_pickup_plan || settlement_only) && skill.name != "reply") continue;
+        if ((completed_dig || completed_route || completed_pickup_plan || settlement_only || pickup_feedback) && skill.name != "reply") continue;
         if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
@@ -521,8 +538,13 @@ void PartnerLoop::submit(std::string_view wake) {
     if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
     reply_origin_ = std::move(reply_origin);
     air_only_turn_ = air_only;
+    if (pickup_feedback) {
+        motion_->feedback_offered = true;
+        pickup_feedback_work_ = motion_->work;
+        pickup_feedback_stopping_ = false;
+    }
     if (interrupted_air) air_check_ = nullptr;
-    if (!delegated && !feed_.air_notices().empty()) {
+    if (!delegated && !pickup_feedback && !feed_.air_notices().empty()) {
         publish("mc.partner.attention",{{"source","air"},{"trigger",wake},{"session",session_},{"request",request_},{"notices",feed_.air_notices()}});
         if (air_only) {
             const auto& notice = feed_.air_notices().back();
@@ -535,7 +557,7 @@ void PartnerLoop::submit(std::string_view wake) {
     settling_plan_ = wake == "plan.finished" && actual_outcome ? plan_->id : 0;
     attention_turn_.reset();
     if (wake == "follow.attention") attention_turn_ = AttentionTurn{follow_->id,follow_->attention.episode()};
-    if (!delegated && !air_only) {
+    if (!delegated && !background_observation) {
         if (follow_) follow_->attention_pending = false;
         if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") != "old_work_exit_unconfirmed")
             handoff_.reset();
@@ -548,7 +570,7 @@ void PartnerLoop::submit(std::string_view wake) {
         approval_result_ = nullptr;
     }
     order_ = order;
-    if (!air_only) wait_for_work_ = false;
+    if (!background_observation) wait_for_work_ = false;
     plan_failures_ = 0;
     plan_repair_exhausted_ = false;
     plan_reply_step_ = 0;
@@ -577,6 +599,7 @@ bool PartnerLoop::permits(std::uint64_t session) const noexcept {
         feed_.binding_revision() == session_binding_ &&
         !feed_.departed() && !feed_.departure() &&
         feed_.pending().empty() && !feed_.gap() &&
+        (pickup_feedback_work_.empty() || (motion_ && motion_->work == pickup_feedback_work_ && motion_->awaiting_pickup && !motion_->stopping)) &&
         (!attention_turn_ || (follow_ && follow_->id == attention_turn_->work &&
             follow_->attention.episode() == attention_turn_->episode && follow_->attention.active()));
 }
@@ -940,6 +963,12 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (plan_ && !plan_->active && !plan_receipts_.empty()) return "plan.finished";
     if (!feed_.air_notices().empty() && feed_.air_notices().back().at("airEpisode").at("phase") == "depleted" &&
         std::chrono::steady_clock::now() >= next_air_wake_) return "vitals.attention";
+    if (motion_ && motion_->awaiting_pickup && !motion_->feedback_offered && !motion_->stopping && !handoff_ &&
+        !task_.correcting() && motion_->revision == task_.revision() &&
+        (!motion_->plan_node || (plan_ && plan_->active && plan_->cancellation.empty() && !plan_->origin.is_null())) &&
+        std::ranges::any_of(dialogue_,[&](const auto& line) {
+            return line.at("speaker") == "player" && line.at("order") == motion_->order;
+        })) return "handoff.progress";
     if (plan_ && plan_->active) return {};
     if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
@@ -1010,7 +1039,7 @@ void PartnerLoop::report_actions() {
                 !fact["result"].value("reused",false) && fact["result"].contains("text"))
                 remember_dialogue("companion",order_,fact["result"]["text"],reply_origin_);
         }
-        if (!active_delegation_ && !air_only_turn_) task_.record(fact);
+        if (!active_delegation_ && !air_only_turn_ && pickup_feedback_work_.empty()) task_.record(fact);
         publish("mc.partner.action",fact);
         action = {};
     }
@@ -1115,6 +1144,8 @@ void PartnerLoop::advance_motion(bool stopping) {
         if (motion.skill == "collect" && progress.contains("pickup"))
             marker += ":"+progress.at("broken").dump()+":"+progress.at("pickup").dump();
         if (motion.skill == "give_item" && progress.contains("submitted")) {
+            motion.awaiting_pickup = progress.value("coverage","") == "read" && progress.value("throwUnknown",1) == 0 &&
+                progress.value("pickupUnknown",0) > 0 && progress.value("thrown",0) == progress.at("requested");
             auto quantities = progress;
             quantities.erase("sampledAtMs");
             marker += ":"+quantities.dump();

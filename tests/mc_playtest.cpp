@@ -929,7 +929,7 @@ dfy::model::Response vitals_sample(const dfy::model::Request& request) {
 
 // 用实际收件者和跨堆库存回答玩家的备料询问。
 // 步骤：从原话取得配对身份 → 选择只读交付观察 → 核对数量与距离后回答。
-dfy::model::Response handoff_sample(const dfy::model::Request& request) {
+dfy::model::Response handoff_sample(const dfy::model::Request& request, bool report_progress) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto call = [&](std::string_view name, std::string id, const Json& args) -> Response {
@@ -940,6 +940,18 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "handoff.progress") {
+            const auto& active = input.at("activeMotion");
+            const auto& origin = input.at("replyOrigin");
+            const auto& progress = active.at("progress");
+            if (!input.at("events").empty() || request.tools.size() != 1 || !request.tools.front().name.ends_with("_reply") ||
+                origin.at("sourceMessage") != 3 || origin.at("bridgeWork") != active.at("work") ||
+                origin.at("planId") != input.at("taskPlan").at("id") || progress.at("recipient") != input.at("player") ||
+                progress.at("coverage") != "read" || progress.at("thrown") != 66 || progress.at("pickupUnknown") != 66)
+                throw std::runtime_error("handoff: premature or misdirected progress feedback");
+            if (report_progress) return {{Role::assistant,"六十六块泥土都已经丢出来了，暂时还没看到你捡到。"}};
+            return {{Role::assistant,R"({"internal":"waiting for the actual pickup"})"}};
+        }
         if (input.at("trigger") == "plan.finished") {
             const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
             if (result.at("transfer").at("submitted") != 66 || result.at("transfer").at("returnedClicks") != 3 ||
@@ -953,8 +965,15 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
             if (result.value("reasonCode","") == "handoff_other_collector" && proof.at("otherPicked") == 66 &&
                 proof.at("collectors").size() == 1 && proof.at("collectors").front().at("uuid") != input.at("player"))
                 return {{Role::assistant,"这六十六块泥土被旁边的另一位玩家捡到了。"}};
-            if (proof.at("source") == "server_events" && proof.at("thrown") == 66 && proof.at("pickupUnknown") == 66)
+            if (proof.at("source") == "server_events" && proof.at("thrown") == 66 && proof.at("pickupUnknown") == 66) {
+                if (report_progress) {
+                    const auto& delivered = input.at("recentDialogue").back();
+                    if (delivered.at("speaker") != "companion" || delivered.at("replyOrigin").at("bridgeWork") !=
+                        input.at("taskPlan").at("nodes").at(0).at("work")) throw std::runtime_error("handoff: delivered progress missing");
+                    return {{Role::assistant,R"({"internal":"player already received this quantity"})"}};
+                }
                 return {{Role::assistant,"六十六块泥土都已经丢出来了，暂时还没看到你捡到。"}};
+            }
             if (result.value("reasonCode","") != "handoff_receipt_unconfirmed" || proof.at("source") != "unavailable" || proof.at("throwUnknown") != 66)
                 throw std::runtime_error("handoff: missing unconfirmed amount");
             return {{Role::assistant,"我这边背包少了六十六块泥土，还不能确认你捡到了多少。"}};
@@ -1194,7 +1213,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
-            mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
+            mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" || mode == L"--handoff-other-probe";
         const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe" || vitals;
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
@@ -1216,7 +1235,7 @@ int wmain(int argc, wchar_t** argv) {
             [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,ask,gap,root,mode](const auto&, const auto& request) {
                 if (mode == L"--vitals-probe" || mode == L"--air-episode-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
-                if (handoff) return handoff_sample(request);
+                if (handoff) return handoff_sample(request,mode == L"--handoff-feedback-probe");
                 if (ground_pickup) return ground_pickup_sample(request);
                 if (pickup) return pickup_sample(request);
                 if (craft) return craft_sample(request);

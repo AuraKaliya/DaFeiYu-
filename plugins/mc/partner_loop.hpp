@@ -231,6 +231,7 @@ class PartnerLoop {
         std::optional<std::size_t> plan_node;
         bool pointed = false;
         std::uint64_t task = 0, revision = 0;
+        bool awaiting_pickup = false, feedback_offered = false;
     };
     std::optional<Motion> motion_;
     struct Handoff {
@@ -326,6 +327,8 @@ class PartnerLoop {
     bool question_requested_ = false;
     bool final_text_for_player_ = false;
     bool air_only_turn_ = false;
+    std::string pickup_feedback_work_;
+    bool pickup_feedback_stopping_ = false;
     nlohmann::json air_check_;
     std::chrono::steady_clock::time_point next_air_wake_{};
     nlohmann::json reply_origin_;

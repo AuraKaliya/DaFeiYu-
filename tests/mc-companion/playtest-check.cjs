@@ -433,7 +433,8 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
 async function checkHandoff(fixture, player, whispers, mode, other) {
   const interrupt = mode === '--handoff-progress-probe';
-  const late = interrupt || mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
+  const feedback = mode === '--handoff-feedback-probe';
+  const late = interrupt || feedback || mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
   const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
@@ -469,8 +470,14 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
         sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify({ ...sample, work:current.body.action.bridgeWork },null,2)));
     }
     await until(() => whispers.includes(sent),'按原观察投物后说明可核实的效果');
+    if (feedback) {
+      assert.equal(readRows(fixture,'game-actions.jsonl').some(row => row.skill === 'give_item'),false);
+      assert.equal(player.inventory.count(player.registry.itemsByName.dirt.id),0);
+    }
   },
     sample => writeFileSync(join(fixture.evidence,'handoff-feedback.json'),JSON.stringify(sample,null,2)));
+  if (feedback) await until(() => readRows(fixture,'game-actions.jsonl').some(row => row.skill === 'give_item'),
+    '已向玩家报告进展的投物工作随后实际退出');
   const jobs = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'give_item');
   assert.equal(jobs.length,1);
   const [job] = jobs;
@@ -483,6 +490,16 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   const expected = interrupt ? [reply,during,sent] : [reply,sent];
   assert.deepEqual(whispers,expected);
   if (interrupt) assert.deepEqual(pending().map(row => row.body.action.bridgeWork),[job.work]);
+  if (feedback) {
+    const events = await until(() => {
+      const actions = readRows(fixture,'trace/events.jsonl').filter(row => row.category === 'mc.partner.action');
+      return actions.some(row => row.body.bridgeWork === job.work) && actions;
+    },'按原投物工作核对发言和实际退出在宿主中的顺序');
+    const replies = events.filter(row => row.body.result?.text === sent);
+    assert.equal(replies.length,1);
+    assert.deepEqual([replies[0].body.replyOrigin.sourceMessage,replies[0].body.replyOrigin.bridgeWork],[job.order,job.work]);
+    assert.ok(replies[0].seq < events.find(row => row.body.bridgeWork === job.work).seq);
+  }
   if (other) {
     assert.deepEqual(proof.collectors,[{ uuid: other.player.uuid, count: 66 }]);
     assert.equal(other.inventory.count(other.registry.itemsByName.dirt.id),66);
