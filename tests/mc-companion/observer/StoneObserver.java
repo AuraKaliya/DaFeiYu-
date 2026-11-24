@@ -30,7 +30,7 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
-// 在独立测试世界旁路记录圆石来源，各处理器仅读取游戏对象。
+// 在独立世界旁路记录物品的生成、交付与收取，保留圆石采掘的兼容证据。
 public final class StoneObserver extends JavaPlugin implements Listener {
     private final String stream = UUID.randomUUID().toString();
     private long sequence;
@@ -76,7 +76,13 @@ public final class StoneObserver extends JavaPlugin implements Listener {
     private void item(JsonObject row, Item entity) {
         row.addProperty("item", entity.getUniqueId().toString());
         row.addProperty("networkId", entity.getEntityId());
+        row.addProperty("material", entity.getItemStack().getType().getKey().toString());
         row.addProperty("amount", entity.getItemStack().getAmount());
+    }
+
+    // 旧圆石夹具沿用原事件名，其他物品使用同结构的独立事件。
+    private String itemEvent(String name, Material material) {
+        return material == Material.COBBLESTONE ? name : "item." + name;
     }
 
     // 逐条保存证据，写失败时保留故障并让其后的序号暴露缺口。
@@ -111,12 +117,11 @@ public final class StoneObserver extends JavaPlugin implements Listener {
         record(row);
     }
 
-    // 记录玩家从库存中主动丢出的圆石身份。
+    // 记录玩家从库存中主动丢出的物品身份与数量。
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void playerDrop(PlayerDropItemEvent drop) {
         Item entity = drop.getItemDrop();
-        if (entity.getItemStack().getType() != Material.COBBLESTONE) return;
-        var row = event("playerDrop", entity.getLocation());
+        var row = event(itemEvent("playerDrop", entity.getItemStack().getType()), entity.getLocation());
         row.addProperty("actor", drop.getPlayer().getUniqueId().toString());
         item(row, entity);
         record(row);
@@ -127,23 +132,26 @@ public final class StoneObserver extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void added(EntityAddToWorldEvent added) {
         Entity entity = added.getEntity();
-        if (!(entity instanceof Item drop) || drop.getItemStack().getType() != Material.COBBLESTONE) return;
-        var row = event("added", drop.getLocation());
+        if (!(entity instanceof Item drop)) return;
+        var material = drop.getItemStack().getType();
+        var row = event(itemEvent("added", material), drop.getLocation());
         item(row, drop);
-        var others = new JsonArray();
-        for (var nearby : drop.getNearbyEntities(5, 5, 5)) {
-            if (nearby instanceof Item other && other.getItemStack().getType() == Material.COBBLESTONE)
-                others.add(other.getUniqueId().toString());
+        if (material == Material.COBBLESTONE) {
+            var others = new JsonArray();
+            for (var nearby : drop.getNearbyEntities(5, 5, 5)) {
+                if (nearby instanceof Item other && other.getItemStack().getType() == material)
+                    others.add(other.getUniqueId().toString());
+            }
+            row.add("nearbyStone", others);
         }
-        row.add("nearbyStone", others);
         record(row);
     }
 
-    // 返回玩家存储栏中实际携带的圆石数量，装备格不参与本夹具。
-    private int stock(Player player) {
+    // 返回玩家存储栏中实际携带的指定物品数量，装备格单独排除。
+    private int stock(Player player, Material material) {
         int count = 0;
         for (var stack : player.getInventory().getStorageContents()) {
-            if (stack != null && stack.getType() == Material.COBBLESTONE) count += stack.getAmount();
+            if (stack != null && stack.getType() == material) count += stack.getAmount();
         }
         return count;
     }
@@ -161,7 +169,7 @@ public final class StoneObserver extends JavaPlugin implements Listener {
             if (!player.isOnline()) return;
             var row = event("positionStock", player.getLocation());
             row.addProperty("actor", player.getUniqueId().toString());
-            row.addProperty("stock", stock(player));
+            row.addProperty("stock", stock(player, Material.COBBLESTONE));
             record(row);
         });
     }
@@ -189,7 +197,7 @@ public final class StoneObserver extends JavaPlugin implements Listener {
         var row = event("sample", player.getLocation());
         row.addProperty("actor", player.getUniqueId().toString());
         row.addProperty("request", args[1]);
-        row.addProperty("stock", stock(player));
+        row.addProperty("stock", stock(player, Material.COBBLESTONE));
         var stacks = new JsonArray();
         for (var stack : player.getInventory().getStorageContents()) {
             if (stack != null && stack.getType() == Material.COBBLESTONE) stacks.add(stack.getAmount());
@@ -205,15 +213,15 @@ public final class StoneObserver extends JavaPlugin implements Listener {
     public void merged(ItemMergeEvent merge) {
         Item source = merge.getEntity();
         Item target = merge.getTarget();
-        if (source.getItemStack().getType() != Material.COBBLESTONE) return;
-        var row = event("merge", source.getLocation());
+        var material = source.getItemStack().getType();
+        var row = event(itemEvent("merge", material), source.getLocation());
         item(row, source);
         row.addProperty("target", target.getUniqueId().toString());
         row.addProperty("targetAmount", target.getItemStack().getAmount());
         record(row);
 
         Bukkit.getScheduler().runTask(this, () -> {
-            var after = event("mergeReadback", target.getLocation());
+            var after = event(itemEvent("mergeReadback", material), target.getLocation());
             after.addProperty("cause", row.get("seq").getAsLong());
             after.addProperty("sourceRemaining", source.isValid() ? source.getItemStack().getAmount() : 0);
             after.addProperty("targetRemaining", target.isValid() ? target.getItemStack().getAmount() : 0);
@@ -226,19 +234,20 @@ public final class StoneObserver extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void pickup(EntityPickupItemEvent pickup) {
         Item entity = pickup.getItem();
-        if (!(pickup.getEntity() instanceof Player player) || entity.getItemStack().getType() != Material.COBBLESTONE) return;
-        var row = event("pickup", entity.getLocation());
+        if (!(pickup.getEntity() instanceof Player player)) return;
+        var material = entity.getItemStack().getType();
+        var row = event(itemEvent("pickup", material), entity.getLocation());
         item(row, entity);
         row.addProperty("actor", player.getUniqueId().toString());
-        row.addProperty("beforeStock", stock(player));
+        row.addProperty("beforeStock", stock(player, material));
         row.addProperty("remaining", pickup.getRemaining());
         record(row);
 
         Bukkit.getScheduler().runTask(this, () -> {
-            var after = event("pickupReadback", player.getLocation());
+            var after = event(itemEvent("pickupReadback", material), player.getLocation());
             after.addProperty("cause", row.get("seq").getAsLong());
             after.addProperty("actor", player.getUniqueId().toString());
-            after.addProperty("afterStock", stock(player));
+            after.addProperty("afterStock", stock(player, material));
             after.addProperty("ground", entity.isValid() ? entity.getItemStack().getAmount() : 0);
             record(after);
         });

@@ -2,10 +2,12 @@
 [CmdletBinding()]
 param(
     [string]$FixtureRoot = $env:DFY_MC_TEST_ROOT,
-    [string]$Java = $env:DFY_MC_JAVA
+    [string]$Java = $env:DFY_MC_JAVA,
+    [ValidateSet('stone-1.21.4', 'playtest-1.21.4')]
+    [string]$ServerName = 'stone-1.21.4'
 )
 $ErrorActionPreference = 'Stop'
-$server = Join-Path $FixtureRoot 'servers/stone-1.21.4'
+$server = Join-Path (Join-Path $FixtureRoot 'servers') $ServerName
 $libraries = @(Get-ChildItem -LiteralPath (Join-Path $server 'libraries') -Recurse -File -Filter '*.jar')
 if (-not ($libraries.Name -contains 'paper-api-1.21.4-R0.1-SNAPSHOT.jar')) { throw '缺少已启动过的 1.21.4 版 Paper 依赖' }
 $classes = Join-Path $FixtureRoot ('observer-build/' + [guid]::NewGuid().ToString('N'))
