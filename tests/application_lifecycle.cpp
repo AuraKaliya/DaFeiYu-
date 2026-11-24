@@ -254,6 +254,26 @@ void dialogue_inputs(const fs::path& run) {
     check(log.str().find("dialogue.input_accepted")!=std::string::npos && log.str().find("dialogue.input_settled")!=std::string::npos &&
         log.str().find("\"modelStep\":2")!=std::string::npos && log.str().find("后到的原话")!=std::string::npos,
         "local trace cannot correlate accepted input to actual model step");
+    std::ostringstream replay;
+    dfy::app::replay_trace(application.trace_file(),id,replay);
+    check(replay.str().find("2 model requests, 0 tool exits, succeeded")!=std::string::npos,"same-turn supplement could not be replayed");
+    const auto altered = run/"altered-input-step.jsonl";
+    {
+        std::ifstream source(application.trace_file(),std::ios::binary);
+        std::ofstream changed(altered,std::ios::binary);
+        std::string line;
+        while (std::getline(source,line)) {
+            if (line.find("dialogue.input_settled") != line.npos) {
+                const auto at = line.find("\"modelStep\":2"); check(at!=line.npos,"missing recorded model step");
+                line.replace(at,13,"\"modelStep\":3");
+            }
+            changed << line << '\n';
+        }
+    }
+    bool rejected = false;
+    try { dfy::app::replay_trace(altered,id,replay); }
+    catch (const std::runtime_error& error) { rejected = std::string_view(error.what())=="replay: dialogue input settlement differs"; }
+    check(rejected,"replay accepted a supplement assigned to the wrong model step");
 }
 
 // 核对离线运行保留同名工具的原调用顺序和 Hook 实际使用的参数。

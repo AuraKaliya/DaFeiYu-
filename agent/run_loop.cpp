@@ -658,12 +658,11 @@ InputReceipt RunLoop::append_input(std::string text) {
     if (state_->advancing || record.operation()->state() != runtime::OperationState::pending ||
         record.operation()->cancellation_reason() != runtime::CancelReason::none || state_->options.now() >= state_->deadline)
         return {InputAdmission::closed};
-    constexpr std::size_t byte_limit = 1024*1024;
-    if (text.size() > byte_limit || text.find_first_not_of(" \t\r\n") == std::string::npos ||
+    if (text.size() > turn_input_byte_limit || text.find_first_not_of(" \t\r\n") == std::string::npos ||
         !runtime::valid_utf8(text)) return {InputAdmission::rejected};
     std::size_t bytes = text.size();
     for (const auto& item : record.inputs_) bytes += item.text.size();
-    if (record.inputs_.size() >= 8 || bytes > byte_limit) return {InputAdmission::full};
+    if (record.inputs_.size() >= turn_input_count_limit || bytes > turn_input_byte_limit) return {InputAdmission::full};
 
     const auto message = record.inputs_.size()+1;
     record.inputs_.push_back({message,std::move(text)});

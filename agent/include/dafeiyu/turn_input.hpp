@@ -1,8 +1,11 @@
 ﻿#pragma once
 #include <cstdint>
+#include <cstddef>
 #include <string>
 
 namespace dfy::agent {
+inline constexpr std::size_t turn_input_count_limit = 8;
+inline constexpr std::size_t turn_input_byte_limit = 1024*1024;
 enum class InputState { waiting, submitted, cancelled, deadline, limit, failed, closed };
 enum class InputAdmission { accepted, closed, full, rejected, unavailable };
 // 把收件状态映射为 Trace 与可信主面板共同使用的固定名称。

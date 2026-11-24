@@ -51,9 +51,16 @@ struct RecordedModel {
     bool rewrite_observed = false;
 };
 struct RecordedTool { Json exit; bool invoked = false, observed = false; };
+struct RecordedInput {
+    std::string text;
+    std::size_t after_step;
+    std::optional<std::string> state;
+    std::uint64_t model_step = 0;
+};
 struct RecordedRun {
     std::vector<RecordedModel> models;
     std::vector<RecordedTool> tools;
+    std::vector<RecordedInput> inputs;
     Json terminal;
     std::optional<agent::PolicyDecision> next_model_control;
 };
@@ -119,6 +126,19 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
             if (result.models.empty() || row.at("step") != result.models.size() || row.at("attempt") != 1)
                 throw std::invalid_argument("replay: unexpected model rewrite");
             record_rewrite(result.models.back(),row);
+        } else if (kind == "dialogue.input_accepted") {
+            if (result.models.empty() || !result.terminal.is_null() || result.inputs.size() >= agent::turn_input_count_limit ||
+                row.at("message") != result.inputs.size()+1) throw std::invalid_argument("replay: invalid dialogue input identity");
+            const auto& text = row.at("body").get_ref<const std::string&>();
+            if (text.size() > agent::turn_input_byte_limit) throw std::length_error("replay: dialogue input too large");
+            result.inputs.push_back({text,result.models.size(),{}});
+        } else if (kind == "dialogue.input_settled") {
+            const auto message = row.at("message").get<std::uint64_t>();
+            if (!message || message > result.inputs.size() || !result.terminal.is_null()) throw std::invalid_argument("replay: unknown dialogue input");
+            auto& input = result.inputs[static_cast<std::size_t>(message-1)];
+            if (input.state) throw std::invalid_argument("replay: duplicate dialogue input settlement");
+            input.state = row.at("state").get<std::string>();
+            input.model_step = row.at("modelStep").get<std::uint64_t>();
         } else if (kind == "run.exited") {
             if (!result.terminal.is_null()) throw std::invalid_argument("replay: duplicate run exit");
             result.terminal = row;
@@ -206,6 +226,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     std::size_t model_index = 0;
     agent::ToolCatalog catalog;
     agent::RunOptions options;
+    options.accept_user_input = !original.inputs.empty();
     constexpr std::array origins{"user_request","observation_rule","mailbox"};
     options.origin = tagged<agent::RunOrigin>(original.terminal.at("diagnostic").at("data").at("timeline").at("source"),origins);
     if (std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) { return entry.rewritten.has_value(); }))
@@ -272,8 +293,21 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
             return *original.models[index].response;
         }},std::move(history),std::move(prompt),std::move(options));
     const auto request = loop.request();
+    std::size_t next_input = 0;
+    bool admission_differs = false;
     const auto until = std::chrono::steady_clock::now()+std::chrono::seconds(5);
     while (request->exit()->state() == OperationState::pending && std::chrono::steady_clock::now() < until) {
+        // 只在原收件所处的请求边界交给正式循环，工具仍按自己的结果与退出推进。
+        while (next_input < original.inputs.size() && original.inputs[next_input].after_step == request->diagnostics().model_requests) {
+            const auto receipt = loop.append_input(original.inputs[next_input].text);
+            if (receipt.state != agent::InputAdmission::accepted || receipt.message != next_input+1) {
+                admission_differs = true;
+                next_input = original.inputs.size();
+                request->request_cancel(runtime::CancelReason::owner_stop);
+                break;
+            }
+            ++next_input;
+        }
         loop.advance();
         if (request->exit()->state() == OperationState::pending) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -282,6 +316,13 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     if (!model_difference.empty()) throw std::runtime_error("replay: "+model_difference);
     if (!rewrite_difference.empty()) throw std::runtime_error("replay: "+rewrite_difference);
     if (!tool_difference.empty()) throw std::runtime_error("replay: "+tool_difference);
+    if (admission_differs || request->inputs().size() != original.inputs.size()) throw std::runtime_error("replay: dialogue input admission differs");
+    for (std::size_t i=0; i<original.inputs.size(); ++i) {
+        const auto& actual = request->inputs()[i];
+        const auto& recorded = original.inputs[i];
+        if (!recorded.state || *recorded.state != agent::input_state_name(actual.state) || recorded.model_step != actual.model_step)
+            throw std::runtime_error("replay: dialogue input settlement differs");
+    }
     if (model_index != original.models.size() ||
         model_control_seen != original.next_model_control.has_value() ||
         std::any_of(original.models.begin(),original.models.end(),[](const auto& entry) {
