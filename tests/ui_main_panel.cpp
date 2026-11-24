@@ -188,6 +188,36 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     expect("clear removes history but preserves editable draft","!document.querySelector('.turn') && !document.querySelector('dialog').open && "
         "document.querySelector('.room-still img')?.naturalWidth>0 && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
     check_dialogue_queue(gate);
+    evaluate("dialogue bridge honors application byte limits",R"JS((async()=>{
+        const bridge=window.chrome.webview, replies=new Map();
+        const collect=({data})=>{ if(data.request?.startsWith('size-')) replies.set(data.request,data); };
+        bridge.addEventListener('message',collect);
+        let serial=0;
+        // 从真实文档取得一条限定时间内返回的宿主消息。
+        async function ask(fields) {
+            const request='size-'+ ++serial;
+            bridge.postMessage({...fields,version:'1',request});
+            const end=performance.now()+1800;
+            while(!replies.has(request) && performance.now()<end) await new Promise(r=>setTimeout(r,10));
+            return replies.get(request);
+        }
+        try {
+            const read={type:'dialogue.read',command:'',revision:''};
+            let command=BigInt((await ask(read)).latestCommand)+1n;
+            const excess=await ask({type:'dialogue.submit',command:String(command++),text:'x'.repeat(1024*1024+1)});
+            if(excess?.receipt?.state!=='rejected') return false;
+            const text=('窗边\n"\u0001').repeat(10000), id=String(command);
+            const accepted=await ask({type:'dialogue.submit',command:id,text});
+            if(!['queued','accepted'].includes(accepted?.receipt?.state)) return false;
+            const end=performance.now()+2500;
+            while(performance.now()<end) {
+                const s=await ask({...read,command:id}), turn=s?.turns?.at(-1);
+                if(turn?.prompt===text && turn.exit==='succeeded')
+                    return s.receipt?.turn===turn.turn && turn.answer==='固定回复：'+text;
+            }
+            return false;
+        } finally { bridge.removeEventListener('message',collect); }
+    })())JS");
     next();
 }
 }

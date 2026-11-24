@@ -8,8 +8,6 @@ namespace dfy::app {
 using runtime::OperationState;
 namespace {
 constexpr std::size_t display_turn_limit = 16;
-// 单轮有效正文受应用入口和 Session 已提交历史的容量约束。
-constexpr std::size_t display_byte_limit = 2*1024*1024;
 }
 
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
@@ -79,7 +77,7 @@ events::ObservationReceipt Conversation::clear() {
 
 // 回收最早显示条目，保留最新问答和原身份。
 void Conversation::trim_display() noexcept {
-    while (display_.turns.size() > display_turn_limit || display_bytes_ > display_byte_limit) {
+    while (display_.turns.size() > display_turn_limit || display_bytes_ > dialogue_display_byte_limit) {
         const auto& oldest = display_.turns.front();
         display_bytes_ -= oldest.prompt.size()+oldest.answer.size();
         display_.turns.erase(display_.turns.begin());

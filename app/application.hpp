@@ -15,6 +15,7 @@
 namespace dfy::app {
 inline constexpr std::size_t dialogue_text_limit = 1024*1024;
 inline constexpr std::size_t dialogue_queue_limit = 8;
+inline constexpr std::size_t dialogue_queue_byte_limit = 2*dialogue_text_limit;
 enum class QueueAdmission { accepted, stale, full, rejected };
 struct DialogueQueueReceipt {
     QueueAdmission state;

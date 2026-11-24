@@ -16,7 +16,7 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
         !runtime::valid_utf8(text) || queued_message_sequence_ == UINT64_MAX) return {QueueAdmission::rejected};
     std::size_t bytes = text.size();
     for (const auto& item : display.queue) bytes += item.text.size();
-    if (display.queue.size() >= dialogue_queue_limit || bytes > 2*dialogue_text_limit) return {QueueAdmission::full};
+    if (display.queue.size() >= dialogue_queue_limit || bytes > dialogue_queue_byte_limit) return {QueueAdmission::full};
 
     const auto message = queued_message_sequence_+1;
     display.queue.push_back({message,after.session,std::move(text)});

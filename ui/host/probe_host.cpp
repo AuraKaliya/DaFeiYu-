@@ -5,6 +5,9 @@
 
 namespace dfy::ui {
 namespace {
+// JSON 控制字符最长占六字节，协议字段另留空间；普通探针仍使用小消息上限。
+constexpr auto dialogue_input_limit = 6*app::dialogue_text_limit+512;
+constexpr auto dialogue_snapshot_limit = 6*(app::dialogue_display_byte_limit+app::dialogue_queue_byte_limit)+probe_text_limit;
 // 读取完整非零十进制身份，保留 64 位精度。
 std::uint64_t run_id_part(const nlohmann::json& value) {
     const auto& text = value.get_ref<const std::string&>();
@@ -115,10 +118,11 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
     bool issued = false;
     try {
         const auto source = read_text([&](auto** value) { return args->get_Source(value); });
-        if (!center_document(source) && !(dialogue_.read && main_panel_document(source))) return E_ACCESSDENIED;
-        const auto body = read_text([&](auto** value) { return args->get_WebMessageAsJson(value); });
-        if (body.size() > 6*app::dialogue_text_limit+512) return E_INVALIDARG;
-        const auto message = nlohmann::json::parse(utf8(body));
+        const bool panel = dialogue_.read && main_panel_document(source);
+        if (!center_document(source) && !panel) return E_ACCESSDENIED;
+        const auto limit = panel ? dialogue_input_limit : probe_text_limit;
+        const auto body = read_text([&](auto** value) { return args->get_WebMessageAsJson(value); },limit);
+        const auto message = nlohmann::json::parse(utf8(body,limit));
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
         if (type == "state.read") return run_status_reply(message);
@@ -172,7 +176,7 @@ HRESULT ProbeHost::dialogue_reply(const nlohmann::json& request, std::string_vie
             {"receipt",view.receipt ? dialogue_receipt(*view.receipt) : nlohmann::json(nullptr)}});
     }
     if (!active()) return E_ACCESSDENIED;
-    return view_->PostWebMessageAsJson(utf16(reply.dump()).c_str());
+    return view_->PostWebMessageAsJson(utf16(reply.dump(),dialogue_snapshot_limit).c_str());
 }
 // 从副本构造有界运行摘要，并在发回前复核当前 WebView 文档。
 // 步骤：核对协议、请求及运行身份 → 复制并筛选快照 → 核对当前来源后发回 JSON。

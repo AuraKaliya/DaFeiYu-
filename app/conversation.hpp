@@ -6,6 +6,7 @@
 
 namespace dfy::plugins { class PluginManager; }
 namespace dfy::app {
+inline constexpr std::size_t dialogue_display_byte_limit = 2*1024*1024;
 struct PersonaProfile;
 struct CompletedTurn {
     agent::TurnDiagnostics status;
