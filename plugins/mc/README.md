@@ -1,8 +1,8 @@
 # Minecraft 游戏陪伴插件
 
-本页说明当前可运行版本。伙伴将绑定玩家的在场变化和原话按序交给模型；发言和是否停手均由模型决定。[通用交互设计与实施进度](../../docs/mc-companion-development-plan.md)
+伙伴按序接收配对玩家的在场变化和原话。子会话根据这些事实提出回答或动作，插件核对授权和任务修订，桥接执行并读回实际效果。[当前架构](../../docs/architecture.md#mc-陪玩插件) · [最近一次验收](../../docs/mc-companion-development-plan.md#最近一次验收)
 
-默认伙伴模式按原游戏游标处理绑定玩家的聊天和在场变化，保存局内目标及最近实际回执。插件使用 `dfy.agent@1` 托管的独立子会话，沿用本体所选模型配置。模型可以发言、执行、继续或等待，插件根据玩家消息、验证过的现场变化和任务状态唤醒下一轮。`mc.companion/world` 返回角色 UUID、出生代次、维度、坐标、背包圆石总数及最近游戏信号的年龄。世界撤销时可读到 `null`，连接失败时工具返回失败。
+默认伙伴模式按游戏游标保存原话、局内目标及最近实际回执。插件优先使用 `dfy.agent@3` 的独立子会话，沿用本体所选供应商和模型。`playerThinking` 控制面向玩家的回合，设为 `inherit` 时可兼容第 2、1 版子会话接口。玩家消息、已核实的现场变化和任务状态都能唤醒下一轮。`mc.companion/world` 返回角色 UUID、出生代次、维度、坐标、背包圆石总数及最近游戏信号的年龄。世界撤销时可读到 `null`，连接失败时工具返回失败。[子会话协商与回合装配](partner_loop.cpp)
 
 在 D 盘等指定运行目录准备 Node 22 或以上环境，并按 `bridge/package-lock.json` 安装依赖。若将依赖装在源码目录外，设置 `NODE_PATH` 指向对应的 `node_modules`。为自己的连接在该运行目录创建 JSON 配置，例如隔离的本机测试服使用：
 
@@ -16,11 +16,11 @@
 
 地标使用 `"places":{"hillside":{"label":"山脚","dimension":"overworld","x":12,"y":-60,"z":0}}` 的形状。观察工具提供世界、玩家和背包，并可按坐标网格查看玩家或角色附近已加载的方块。移动可用地标、玩家或附近坐标。采集接受游戏注册表中的方块名和数量，也可锁定一格坐标。放置使用背包里的实际建材，指定一个空格，门的坐标取下半格。回执记录核实的目标格和材料读数。
 
-基础范围包含 `observe`、`reply`、`skills` 和 `task_update`。用 `skills` 可了解十二类动作的当前实现和可用性。选定至多三类之后，下一轮送模才提供对应的详细契约。已有分类为观察、交流、查询、移动、挖掘与破坏、放置。[完整分类与契约](partner_skills.hpp)
+普通玩家回合可直接观察、发言、跟随、挖指定单格或按库存取材。`skills` 列出十二个分类以及各入口已支持的动作，一次可选至多三类，在下一轮展开对应契约。物品栏类支持按原观察拾取指定整堆、按约定数量向配对玩家投物，合成类支持按配方把原木加工为木板。[完整分类与契约](partner_skills.hpp)
 
 构建目标 `dfy_mc_companion` 会在对应配置下生成 `mc.companion` 包目录。使用原终端的 `/plugins install "<包目录>"`、`/plugins load mc.companion` 显式装载，或由共享应用服务接入。普通模型问答保持独立。定向验收见 [MC 探针](../../tests/mc-companion/README.md)。
 
-在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。等状态显示 `listening` 后可正常聊天或委托。每次技能调用绑定原世界和事件号。玩家在场、离场和原话分别进入模型。工作进行中收到新事件时，由同一配置的模型决定是否提前停止该项工作；随后在决策边界处理新事实。玩家可见文字来自实际发言工具，内部回合收尾不会变成第二句聊天。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。
+在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。用 `/companion status` 查看执行入口，`partner ready` 表示当前实例已取得角色控制权。每次技能调用绑定原世界和事件号。玩家回合可以通过 `reply` 或可交付的最终文本发言，两者共用游戏投递和回执。委托回合的最终文本返回委托方，内部结算保持静默。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。[控制权](bridge/controller.cjs) · [回合结算](partner_loop.cpp)
 
 真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。该目录保存 `board.txt`、`game-actions.jsonl` 与 `DFY_TRACE` 指定的模型和工具日志。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。 [启动与验收](../../tests/mc-companion/README.md#首次真人体验) · [MC Trace 查看器](../../docs/mc-trace-viewer.md) · [日志审阅与回放](../../docs/run-guide.md)
 
@@ -30,7 +30,7 @@
 
 游戏动作可在候选参数中请求确认。`approval=game` 在游戏向配对玩家询问，`approval=main` 经通用 ASK 交由主 Agent 选择终端或游戏渠道。终端用 `/ask answer 编号 approve` 或 `/ask answer 编号 deny`，游戏内通过普通聊天回复 `确认 编号` 或 `拒绝 编号`。首个符合身份和时效的答复决定原候选结果，当前确认期限为 25 秒。批准后仍需依据原世界、玩家和最新游标通过动作校验。本体委托的采集强制进入同一确认流程。
 
-局内疑问可先由子 Agent 用 `ask_player` 登记。配对玩家以 `答复 编号 内容` 回答，等待期满时由插件触发求助事件，按事项选择直接 ASK 或交主 Agent。终端用 `/mail wake manual` 切换到主动收件，再用 `/mail review` 处理。`/mail wake auto` 恢复插件信箱到件后在主会话空闲时触发。呈现、答复与动作实效分别记录。[架构与信箱规范](../../docs/architecture.md)
+`ask_player` 默认在局内提问。同批原话中可用 `sourceMessage` 指定要澄清的那条消息。玩家按选项或用普通聊天补充，到期后插件保留原事项和等待范围。显式选择 `direct` 或 `main` 才进入本体 ASK，游戏渠道会提示玩家以 `答复 编号 内容` 回答。终端用 `/mail wake manual` 切换到手动收件，再用 `/mail review` 处理。`/mail wake auto` 恢复到件唤醒空闲主会话。呈现、答复与动作实效分别记录。[局内待答](partner_question.cpp) · [本体 ASK](../../docs/architecture.md#通用-ask)
 
 ## 固定圆石场景
 

@@ -1,10 +1,21 @@
 # 大肥鱼当前架构
 
-大肥鱼本体通过 `Application` 装配主 Agent、内置模型、插件宿主和受信用户入口。MC 插件持有自己的陪玩循环、游戏知识和技能，使用宿主托管的独立子会话。终端和桌面主面板都可接纳普通对话。桌面另有只读运行摘要探针和固定样本房间预览。
+终端和桌面主面板通过各自进程的 `Application` 进入主 Agent。模型层内置 DeepSeek 和 Qwen，空插件目录也能问答。MC 陪玩插件通过宿主托管的独立子会话使用同一套 Agent 运行能力。插件保存玩家原话、局内任务和动作回执，Node / Mineflayer 桥接持有游戏角色，负责采样和执行。
+
+## 当前开发进度
+
+| 方向 | 已经走通的路径 | 接续位置 |
+| --- | --- | --- |
+| 本体与插件宿主 | 主会话和插件子会话各自持有上下文和当轮工具。终端工具委托能从授权、审批走到执行和结果读回。信箱、ASK 与 Trace 能沿原消息找到回合、投递及收件回执。 | 当前任务和会话状态保留在进程内。长期记忆、跨会话保存与恢复、通用多 Agent 协作各自待评审。[宿主装配](../app/application.cpp) · [当前边界](#当前边界) |
+| 桌面主面板与内置房间 | 主面板方案的 01～03 已交付。房间有空闲、忙碌两份固定预览，正式主面板能提交普通对话，刷新后能读回本进程最近的正文和原回合回执。 | 下一步是 04，将停止、实际退出状态和空闲清空接入面板。05～08 规划忙时排队与追加，09 起规划原生房间实例、感知和身体动作。[面板实施顺序](main-agent-room-development-plan.md#7-分步开发顺序) |
+| MC 任务与消息 | 跟随、采掘、指定整堆拾取、原木合成木板和补墙已有实际读回。隔离服已验证伙伴从零库存备料，到配对玩家的新位置会合，投物并核对实收。同批原话中的一条可被指定为追问来源。 | 先让同批的两条独立原话各有发言回执，再让两个同时待答的事项各自解除。[MC 实施顺序](mc-companion-development-plan.md#实施顺序与跨方向验收) |
+| MC 环境事件 | 桥接能读取伙伴自身的生命、饥饿和余气。同次空气耗尽合并为一次只读复查，玩家插话可以接替正在运行的复查。 | 先把水中角色与可达岸边站位用只读证据关联，再评审恢复动作的授权与实效。[领域事件与唤醒](mc-companion-development-plan.md#事件源归并与-agent-唤醒) |
+
+2026-11-24 17:10 的验收提交 `0588db3` 记录了 Release 全量构建和 245 项离线 CTest 通过。隔离 Paper 另用固定模型响应和独立协议玩家核对游戏里的收件和发言。桌面主面板的固定响应验收通过隐藏 WebView2 操作正式页面。真实模型选工具、理解现场与思考耗时按项目约定「仅记录，不执行」。[MC 验收记录](mc-companion-development-plan.md#最近一次验收) · [桌面验收用例](../tests/ui_main_panel.cpp) · [测试原则](../AGENTS.md#测试原则)
 
 ## 架构图
 
-箭头表示运行时调用或数据方向。终端、专用游戏宿主和桌面按各自入口创建应用实例。
+箭头表示调用或数据方向。终端、专用游戏宿主和桌面业务线程分别创建应用实例。桌面的 `--room-preview` 直接显示固定样本。
 
 ```mermaid
 ---
@@ -14,94 +25,48 @@ config:
     nodeSpacing: 24
 ---
 flowchart TB
-    Terminal["终端 dafeiyu<br/>问答、插件与委托"]
+    Terminal["终端 dafeiyu"]
     GameHost["游戏宿主<br/>dafeiyu --mc-partner"]
-    Gui["桌面 dfy_ui_probe<br/>WebView2 / Vue"]
+    Gui["桌面 dafeiyu-ui-probe<br/>WebView2 / Vue"]
 
-    subgraph Host["大肥鱼本体"]
-        App["Application<br/>本体入口与业务命令"]
-        Intake["Mailboxes / MailboxIntake<br/>直接对话、房间、插件各有地址"]
-        Partner["CompanionSession<br/>计划板投影、委托与固定场景"]
-        Dispatch["事件分派器<br/>验证类型化解析结果"]
-        Routes["InteractionRoutes<br/>原事项关联"]
-        Ask["通用 ASK<br/>渠道、呈现、答复与时限"]
-        ReplyTool["mail_reply 工具<br/>核对模型意图与原信绑定"]
-        Delivery["ReplyDelivery<br/>入箱重试、保留原件、核对回执"]
-        Main["主 Agent Session"]
-        Persona["本体人格档案<br/>身份、说话方式和版本"]
-        Agent["通用 Session / RunLoop<br/>上下文、工具、审批、效果与退出"]
-        Model["Model 异步客户端<br/>DeepSeek / Qwen"]
-        Trace["局内 Trace<br/>模型、工具、事件、信箱及 ASK"]
-        App --> Intake
-        Intake --> Main
-        Persona --> Main
-        App --> Partner
-        Partner <-->|原插件收发地址| Intake
-        App --> Dispatch --> Routes
-        Routes <-->|票据及渠道回执| Ask
-        Routes <-->|原消息与答复| Intake
-        Main -->|结构化 ask 调用| Routes
-        Main -->|结构化 mail_reply 调用| ReplyTool
-        ReplyTool -->|原回合的转发意图| Routes
-        Routes -->|原通用 ASK 的终态| Delivery --> Intake
-        Main --> Agent
-        Agent --> Model
-        Routes --> Trace
-        Dispatch --> Trace
-        Delivery --> Trace
-        Intake --> Trace
-        Agent --> Trace
+    subgraph Host["宿主进程 · C++20"]
+        App["Application<br/>人格、信箱、ASK 与 Trace"]
+        Main["Conversation<br/>主会话"]
+        Child["Subagents<br/>插件的独立子会话"]
+        Run["Session / RunLoop<br/>模型、工具、审批与取消"]
+        Plugins["PluginManager / PluginTools<br/>插件生命周期、工具与活动调度"]
+        Mc["MC 插件 DLL · PartnerLoop<br/>玩家原话、局内任务与回执"]
+        Model["Model<br/>DeepSeek / Qwen 协议"]
+
+        App --> Main --> Run
+        App --> Child --> Run
+        App --> Plugins
+        Plugins -->|dfy.agent| Child
+        Run <-->|工具调用、Hook| Plugins
+        Plugins <-->|SDK C ABI v2| Mc
+        Run --> Model
     end
-    subgraph PluginHost["插件宿主"]
-        Plugins["PluginManager<br/>依赖图、生命周期、活动调度"]
-        Capture["HostServices<br/>接纳事件并签发来源和序号"]
-        Decoder["宿主调用插件登记的解析器<br/>按类型和版本"]
-        Hooks["Hook 登记与顺序表<br/>系统转换与 Agent 回合"]
-        Child["Subagents<br/>插件子会话与授权范围"]
-        Plugins --> Hooks
-        Plugins --> Capture --> Decoder
-        Plugins --> Child
-    end
-    subgraph MC["MC 陪玩插件"]
-        Mc["PartnerLoop<br/>原话现场、任务目标、待答事项、持续调度"]
-        Skills["技能与原动作确认<br/>渐进展开、验证、执行读回"]
-        Motion["在途移动<br/>动作编号、进展、停止及退出"]
-        Mc --> Skills
-        Skills -->|接纳后移交原票据| Motion
-        Mc <-->|独立推进与动作回执| Motion
-    end
-    Agent <-->|回合 Hook 快照| Hooks
-    Capture --> Trace
-    Decoder -->|带原事件身份的投影| Dispatch
-    Dispatch <-->|系统转换 Hook| Hooks
-    Intake <-->|信件上下文 Hook| Hooks
-    Mc -->|启动独立会话、提交本轮上下文| Child
-    Persona -->|面向玩家的子回合| Child
-    Child --> Agent
-    Mc <-->|SDK C ABI v2| Plugins
-    Mc -->|私有业务事件和收件凭据| Capture
-    Mc <-->|插件入箱、原发箱| Intake
 
     Terminal --> App
     GameHost --> App
-    Gui -->|只读运行摘要| App
-    Model -->|Platform WinHTTP| Service["模型服务"]
-    Skills <-->|Windows 命名管道| Bridge["Node / Mineflayer<br/>发言、只读观察和独占角色动作"]
-    Motion <-->|原工作查询、停止| Bridge
+    Gui <-->|主面板收发正文、探针查询摘要| App
+    App -->|本地 Trace 文件| Viewer["浏览器 MC Trace 查看器"]
+    Model -->|Platform / WinHTTP| Service["模型服务"]
+    Mc <-->|Windows 命名管道| Bridge["Node / Mineflayer<br/>观察与角色动作"]
     Bridge <-->|独立玩家连接| Minecraft["Minecraft 服务器"]
 ```
 
 | 模块 | 职责与源码入口 |
 | --- | --- |
-| **App** | 组装模型、插件和主会话，接纳终端工具授权、审批与状态读回。普通聊天、`--mc-partner` 和桌面主面板共享应用服务代码。另有 `--complete` 直接调用模型的单次文本入口。[命令行](../app/main.cpp) · [Application](../app/application.cpp) · [Conversation](../app/conversation.cpp) |
+| **App** | 组装模型、插件和主会话，接纳工具授权、审批与状态读回。普通聊天、`--mc-partner` 和桌面主面板共享应用服务代码。`CompanionSession` 处理伙伴计划板、信箱委托和固定场景。`--complete` 是直接调用模型的单次文本入口。[命令行](../app/main.cpp) · [Application](../app/application.cpp) · [伙伴会话](../app/companion.cpp) |
 | **Agent** | `Session` 持有当前运行和有界历史。每个 `RunLoop` 按工具快照、策略和预算推进模型、工具、计划与诊断。主 Agent 和插件子会话共享执行器并独立保存上下文。[Session](../agent/session.cpp) · [RunLoop](../agent/run_loop.cpp) · [子会话宿主](../app/subagents.cpp) |
 | **人格与场景** | 本体读取一个版本化人格档案，直接对话、房间点名和声明面向玩家的子回合共用。插件提供领域规则、原话和游戏事实。宿主按人格、场景规则、当前回合消息的顺序装配，固定本轮工具定义。内部停手判断和委托结算使用独立契约。真实送模记录保存人格和场景版本。[人格档案](../app/persona.cpp) · [子回合装配](../app/subagents.cpp) · [SDK 声明](../sdk/include/dafeiyu/agent_abi_v2.h) |
 | **Model / Platform** | Model 编解码请求并通过异步客户端接收完整响应。HTTP、控制台输入、DLL 装载和摘要算法属于 Windows Platform。默认 Provider 内置，空插件目录可直接问答。[模型客户端](../model/client.cpp) · [协议](../model/protocol.cpp) · [WinHTTP](../platform/winhttp.cpp) · [代码装载](../platform/code_module.cpp) |
-| **Plugins / SDK** | 插件包使用同进程 v2 C ABI，安装后显式加载。宿主按依赖发布 Hook 顺序，独立接纳插件事件并调用对应解析器，公平推进插件活动步骤。卸载等原工作退出，再撤销地址与注册。[管理器](../plugins/runtime/manager.cpp) · [事件宿主](../plugins/runtime/host_routed_events.cpp) · [接口](../sdk/include/dafeiyu/routed_event_abi_v2.h) |
+| **Plugins / SDK** | 可信 DLL 通过版本化 C ABI 接入，安装后显式加载。`plugins/runtime` 管理实例与依赖、Hook 顺序、事件及活动调度。`plugins/tools` 把实例登记的工具接到 Agent 执行器。实例忙碌时拒绝卸载，等原工作实际退出后可重试。[管理器](../plugins/runtime/manager.cpp) · [工具登记](../plugins/tools/registration.cpp) · [原生工具执行](../plugins/tools/native_work.cpp) · [SDK 契约](../sdk/README.md) |
 | **Runtime / Events** | Runtime 提供有界操作、预算和调度，Events 提供广播通知与定向信箱。信箱地址绑定发送方、接收方与独立 FIFO，类别和版本决定处理方式。接纳、业务结果和实际退出分别结算。[广播通道](../events/broadcast_channel.cpp) · [信箱](../events/mailboxes.cpp) · [本体收件](../app/mailbox_intake.cpp) |
-| **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../app/ask.cpp) · [交互路由](../app/interaction_routes.cpp) |
+| **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../app/ask.cpp) · [交互路由](../app/interaction_routes.cpp) · [事件解析](#事件注册与解析) · [信箱唤醒](#信箱优先级与唤醒) |
 | **回信与回执** | `mail_reply` 将模型工具调用解析为绑定原信和本轮的转发意图。`ReplyDelivery` 处理两条路径的最终入箱与确认。入箱回执和插件消费回执各有身份。[回信工具](../app/mail_reply_tool.cpp) · [结果投递](../app/reply_delivery.cpp) |
-| **Trace** | 主会话和插件子会话记录实际提交的统一模型请求、独立退出的模型响应、各工具及信件结果。事件、信箱、ASK 和游戏回执通过原身份关联。支持按回合查看，并用录制响应和工具回执离线重跑单轮。[模型与工具记录](../agent/include/dafeiyu/run_capture.hpp) · [本体落盘](../app/run_log.cpp) · [审阅与回放](run-guide.md) |
+| **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../app/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
 | **Desktop** | WebView2 的独立主面板文档经原生业务线程提交普通对话并读取本进程的有界正文。重复命令关联原回合，公开 `state.read` 按会话号和回合号返回无正文运行摘要。房间预览取固定样本。[业务线程](../app/gui/run_status_host.cpp) · [主文档桥接](../ui/host/probe_host.cpp) · [运行说明](ui-probe-run-guide.md) |
 
 构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。终端是默认启动目标，`BUILD_GUI` 和 `BUILD_TESTING` 控制探针和测试目标。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
@@ -217,6 +182,12 @@ flowchart TB
 | 跟随与注意力 | 桥接约每 125 ms 采样距离、高差、可见性和寻路结果。受阻时清除移动控制，跟随等到现场或站位变化并读到可达证据后可原段恢复。前台任务接管时，通常结束当前执行段并在任务结算后以同一逻辑工作号恢复，新的桥接段使用 `.resume.N`。[跟随执行](../plugins/mc/bridge/follow.cjs) · [原号交接](../plugins/mc/partner_queue.cpp) |
 | 本插件的 Hook | MC 登记本插件会话的 `MODEL_REQUEST` 和 `TOOL_START`。有更新的玩家输入、世界变化或过期的异常回合时，Hook 可拒绝旧过渡。已接纳一次性工作等需要等待的场景，在下一次模型请求前让出当前回合，插件照常推进原工作。[MC Hook 登记与裁定](../plugins/mc/native.cpp) · [宿主应用快照](../app/subagents.cpp) |
 | 提问与交付 | 自然追问持有自己的事项和投递回执，玩家可以先听到接话，再收到问题。普通回复和可发言的实际结果使用同一个游戏投递入口。显式 `direct` 或 `main` 求助由插件发出路由事件，宿主捕获并调用登记的解析器。主 Agent 处理路径由 `mail_reply({})` 提交回信意图，原插件收到结果后确认收件并裁定动作。[局内追问](../plugins/mc/partner_question.cpp) · [应用分派](../app/event_dispatch.cpp) · [回信工具](../app/mail_reply_tool.cpp) |
+
+### 从备料到实际收件
+
+玩家说「就地备两块泥土，拿来给我」时，原委托贯穿采集、会合、投物和完工发言。采集中插话可以查询原工作进展。入包经核实后，`move(place=player)` 跟踪同一配对玩家的当前位置。玩家离开原移动范围或失去跟踪时，会合工作退出，依赖它的交物步骤跳过。[任务计划](../plugins/mc/partner_plan.cpp) · [动态会合](../plugins/mc/bridge/navigation.cjs) · [隔离服验收场地](../tests/mc-companion/README.md#固定响应验收场地)
+
+`observe(mode=handoff)` 读取接收者、距离和普通库存。`give_item` 引用这份观察，在每次投物前复核现场。桥接用服务端掉落和实体记录核实已投量，再结合拾取人和库存读回核实原玩家或旁人各收了多少，缺证的数量保留未知。已有投出证据时，伙伴可以在等待收件期间先发一条进展。若实收先于进展答复返回，则以最新结果发言。工作退出后仍可通过 `observe(mode=handoff_receipt)` 按原工作号核对迟到的拾取。[投物执行](../plugins/mc/bridge/give-item.cjs) · [收件证据](../plugins/mc/bridge/handoff-evidence.cjs) · [进展回合](../plugins/mc/partner_loop.cpp)
 
 ### 垫上来与跟随掉队
 
@@ -391,12 +362,12 @@ ASK 票据关联原事件、事项和修订。原事件声明可用的游戏渠�
 | 交付 | 验收标准 |
 | --- | --- |
 | 实际上下文记录与离线回放 | 按原会话、回合、步骤和调用身份读到送模消息、详细工具、模型输出、工具回执与最终结果。固定证据重跑得到相同的模型输入和结果。 |
-| 整理测试 | 功能回归采用固定模型、传输替身或隔离 Paper。真人操作仅保留已搭墙体主题。 |
+| 桌面主面板 | 空插件目录下发送普通对话，同号同文复用原回合，同号异文返回冲突。刷新后可查正文，探针文档与独立 Frame 的正文请求被拒。[正式页面验收](../tests/ui_main_panel.cpp) |
 | 插件局内循环 | 一轮模型结束后，插件仍收取世界和玩家事实。固定样本验证无新聊天时自主继续、现场变化触发、插话、退出和回收。 |
 | 分类展开和通用候选确认 | 初始工具范围保持精简，展开类别后核对正式送模契约。采集与放置共用确认状态机，批准与实际执行分别取证。 |
-| 放置及首次架构审查 | 隔离游戏由独立协议玩家核对原墙、补上的一格、审批前的空门洞和批准后的上下门格。用户审查本页后进行实际模型体验，并按日志讨论。 |
+| 放置与目标核验 | 隔离游戏由独立协议玩家核对原墙、补上的一格、审批前的空门洞和批准后的上下门格。[固定响应验收场地](../tests/mc-companion/README.md#固定响应验收场地) |
 | 事件注册与解析 | 拒绝无对应版本、非法载荷、冲突重投和未登记的信箱分类；实例停止后回收原登记。 |
 | 优先级、主动收件与 ASK | 检查两档取件、主回合接纳后出队、主动对话带入待收件、呈现后首答、到期及重复、迟到答复。 |
 | 两条墙体路径 | 固定后端和隔离 Paper 验证直接 ASK、主 Agent 自动唤醒及手动审查；检查同一答复进入子 Agent 后续上下文并继续原墙。 |
 
-子会话使用主程序选定的模型和供应商。`dfy.agent` 第 3 版允许插件为单次请求选择低强度思考或关闭思考，省略时继承原配置。MC 仅在玩家入口使用独立配置的 `playerThinking`，模型层编码供应商参数，Trace 记录实际生效的开关和强度。长期记忆、跨会话保存和真实房间面板另行审查。首次真人体验采用同一正式伙伴入口。[子会话 ABI](../sdk/include/dafeiyu/agent_abi_v2.h) · [首轮实机设计](../tests/mc-companion/README.md#首轮实机接续我已经搭的墙)
+子会话使用主程序选定的模型和供应商。`dfy.agent` 第 3 版允许插件为单次请求选择低强度思考或关闭思考，省略时继承原配置。MC 仅在面向玩家的回合使用 `playerThinking`，模型层编码供应商参数，Trace 记录实际生效的开关和强度。[子会话 ABI](../sdk/include/dafeiyu/agent_abi_v2.h) · [游戏体验入口](../tests/mc-companion/README.md#首次真人体验)

@@ -48,7 +48,7 @@ cmake --build .\build-status --config Release
 | [信箱](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox@1`：启用后可接入本体，按独立地址交付、去重及读取 |
 | [信箱文本](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox.text@1`：从已收信件读取分类、版本和单文本正文 |
 | [事件解析与主信箱策略](include/dafeiyu/routed_event_abi_v2.h) | `dfy.event.routes@1` 登记事件契约和解析器，`dfy.mailbox.rules@1` 声明主信箱的分类、优先级及唤醒 |
-| [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1`：插件可以独立创建会话，排队提交回合并在实际退出后读取结果 |
+| [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1` 提供独立会话、排队提交与退出读回。第 2 版支持标记面向玩家的回合以装配本体人格，第 3 版支持为单次请求指定低强度或关闭思考。 |
 | [后台推进](include/dafeiyu/activity_abi_v2.h) | 插件可公开 `dfy.activity@1`，宿主公平调度非阻塞步骤，每个实例最多排队一步 |
 | [Hook](include/dafeiyu/hook_abi_v2.h) | 插件可公开 `dfy.hooks@1` 控制模型请求、工具启动、工具结果，以及 `dfy.hook.text@1` 改写指定阶段的文本字段 |
 | `dfy.groups` | 1：宿主明确授予组时加入、退出和查看本成员状态 |
