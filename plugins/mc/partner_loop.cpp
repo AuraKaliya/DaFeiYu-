@@ -526,6 +526,20 @@ void PartnerLoop::submit(std::string_view wake) {
         if (!guidance.empty()) input["mcGuidance"] = std::move(guidance);
     }
     if (!reply_origin.is_null()) input["replyOrigin"] = reply_origin;
+    if (pickup_feedback) {
+        // 此轮只说明原投物的当前实效，保留原话、已送达的发言及工作号。
+        auto& task = input.at("task");
+        const auto previous = task.find("lastAction");
+        const auto& progress = input.at("activeMotion").at("progress");
+        if (previous != task.end() && previous->value("skill","") == "observe" &&
+            progress.at("observation") == previous->value("bridgeWork","")) task.erase(previous);
+        input.erase("lastObservation");
+        for (auto& event : input.at("recentEvents")) event.erase("sceneAtMessage");
+        if (const auto plan = input.find("taskPlan"); plan != input.end()) {
+            plan->erase("nodes");
+            if (auto origin = plan->find("origin"); origin != plan->end() && origin->is_object()) origin->erase("sceneAtMessage");
+        }
+    }
     const auto prompt = model_scene_text(std::move(input));
     const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);

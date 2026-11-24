@@ -524,6 +524,24 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
   const expected = interrupt ? [reply,during,sent] : [reply,sent];
   assert.deepEqual(whispers,expected);
+  if (feedback || staleFeedback) {
+    const requests = await until(() => {
+      const inputs = readRows(fixture,'trace/events.jsonl').filter(row => row.kind === 'model.prepared' && row.step === 1)
+        .map(row => readPartnerContext(row).input);
+      return inputs.some(input => input.trigger === 'plan.finished' && input.taskPlan.nodes.some(node => node.work === job.work)) && inputs;
+    },'同一投物计划的完整结算已送模');
+    const notices = requests.filter(input => input.trigger === 'handoff.progress');
+    assert.equal(notices.length,1);
+    const [notice] = notices;
+    assert.deepEqual([notice.replyOrigin.bridgeWork,notice.taskPlan.origin.sequence,notice.taskPlan.origin.text],
+      [job.work,job.order,'那就给我六十六块泥土。']);
+    assert.ok(notice.recentDialogue.some(line => line.speaker === 'player' && line.order === job.order));
+    assert.equal(notice.task.lastAction,undefined);
+    assert.equal(notice.lastObservation,undefined);
+    assert.equal(notice.taskPlan.nodes,undefined);
+    assert.equal(notice.taskPlan.origin.sceneAtMessage,undefined);
+    assert.ok(notice.recentEvents.every(event => !event.sceneAtMessage));
+  }
   if (staleFeedback) assert.deepEqual(readRows(fixture,'model-events.jsonl').filter(row => row.returnedOldProgress),
     [{ returnedOldProgress:job.work }]);
   if (interrupt) assert.deepEqual(pending().map(row => row.body.action.bridgeWork),[job.work]);
