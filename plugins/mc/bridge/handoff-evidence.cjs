@@ -21,7 +21,8 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
   for (const row of rows) {
     if (row.seq > sourceThrough || kind(row) !== 'playerDrop' || row.actor !== actor || row.material !== material) continue;
     const spawn = added.get(row.item);
-    if (!uuid.test(row.item) || !count(row.amount) || !row.amount || !spawn || spawn.networkId !== row.networkId || spawn.amount !== row.amount) continue;
+    if (!uuid.test(row.item) || !count(row.amount) || !row.amount || !spawn || !Number.isInteger(row.networkId) ||
+        row.networkId < -2147483648 || row.networkId > 2147483647 || spawn.networkId !== row.networkId || spawn.amount !== row.amount) continue;
     if (origins.has(row.item) || proof.thrown+row.amount > submitted) throw new Error('交物窗口含有无法分开的投物');
     proof.thrown += row.amount;
     origins.set(row.item,{ readySeq: Math.max(row.seq,spawn.seq), amount: row.amount });
@@ -46,7 +47,7 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
       const pure = ground.get(r.item) === r.amount && ground.get(r.target) === r.targetAmount;
       ground.delete(r.item);
       ground.delete(r.target);
-      if (pure && settled && kind(settled) === 'mergeReadback' && count(settled.sourceRemaining) && count(settled.targetRemaining) &&
+      if (pure && settled && settled.seq > r.seq && kind(settled) === 'mergeReadback' && count(settled.sourceRemaining) && count(settled.targetRemaining) &&
           settled.sourceRemaining <= r.amount && settled.targetRemaining >= r.targetAmount &&
           settled.sourceRemaining+settled.targetRemaining === r.amount+r.targetAmount) {
         if (settled.sourceRemaining) ground.set(r.item,settled.sourceRemaining);

@@ -65,3 +65,39 @@ test('late readback seals original throws while allowing later pickups', () => {
   assert.deepEqual(result.stacks,open.stacks);
   assert.throws(() => handoffEvidence(rows,mark,actor,owner,'dirt',66), /无法分开/);
 });
+
+// 投物与生成记录都缺运行号时，仅保留其他能独立核实的投物与收取。
+test('missing entity identities retain unverified thrown units', () => {
+  const missing = evidenceRows();
+  delete missing[0].networkId;
+  delete missing[1].networkId;
+  const first = handoffEvidence(missing,mark,actor,owner,'dirt',66);
+  assert.deepEqual([first.thrown,first.recipientPicked,first.throwUnknown],[2,2,64]);
+});
+
+// 合堆读回早于原事件时，该堆的后续收取归属仍待核实。
+test('premature merge readback retains unverified pickup units', () => {
+  const premature = evidenceRows();
+  const merge = premature[6], readback = premature[7];
+  premature[6] = { ...readback, seq:7, cause:8 };
+  premature[7] = { ...merge, seq:8 };
+  const second = handoffEvidence(premature,mark,actor,owner,'dirt',66);
+  assert.deepEqual([second.thrown,second.recipientPicked,second.pickupUnknown],[66,64,2]);
+});
+
+// 原玩家最后收取时仍优先展示其身份，超过九名收取者的部分按实际件数结算。
+test('bounded collector details preserve the recipient and omitted unit totals', () => {
+  const rows = [];
+  const add = (kind,fields) => rows.push({ kind:'item.'+kind, seq:rows.length+1, stream:mark.stream, tick:5, ...fields });
+  for (let amount=1; amount<=11; ++amount) {
+    const item = { item:id(100+amount), material:'minecraft:dirt', networkId:amount, amount };
+    const collector = amount === 11 ? owner : id(20+amount);
+    add('playerDrop',{ ...item,actor });
+    add('added',item);
+    add('pickup',{ ...item,actor:collector,remaining:0,beforeStock:0 });
+    add('pickupReadback',{ cause:rows.length,actor:collector,afterStock:amount,ground:0 });
+  }
+  const proof = handoffEvidence(rows,mark,actor,owner,'dirt',66);
+  assert.deepEqual([proof.recipientPicked,proof.otherPicked,proof.collectors.length,proof.omittedOtherUnits],[11,55,9,19]);
+  assert.deepEqual(proof.collectors[0],{ uuid:owner,count:11 });
+});
