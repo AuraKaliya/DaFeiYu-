@@ -22,6 +22,7 @@ bool prepare_action(std::string_view skill, Json& args) {
     if (skill == "fill_target") return args.size() == 1 && name("block");
     if (skill == "place") return args.size() == 4 && name("block") && valid_action_cell(args);
     if (skill == "move") {
+        if (args.size() == 1 && args.contains("place") && args.at("place") == "player") return true;
         if (args.size() != 3 || !valid_action_cell(args)) return false;
         args["exact"] = true;
         return true;
@@ -46,7 +47,7 @@ Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
     for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","pickup","dropTarget","nearbyDrop","capacity","changes","cells",
         "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted",
-        "transfer","receipt","originalWork"})
+        "transfer","receipt","originalWork","meeting"})
         if (result.contains(name)) evidence[name] = result.at(name);
     if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");
     return evidence;
@@ -149,6 +150,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         const auto required = item_name(pickup);
         if ((step.contains("pickup") && (skill != "dig_block" || required.empty())) || !prepare_action(skill,args))
             return invalid("invalid_node_arguments");
+        if (skill == "move" && args.contains("place")) args["recipient"] = feed_.owner();
         if (skill == "route" && (!task_.bind_route(args) ||
             std::ranges::find(plan.nodes,skill,&PlanNode::skill) != plan.nodes.end())) return invalid("route_not_verified");
         if (skill == "dig_block") {

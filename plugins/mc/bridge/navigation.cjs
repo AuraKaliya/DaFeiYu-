@@ -75,6 +75,41 @@ class SurfaceFollowGoal extends goals.GoalFollow {
   }
 }
 
+// 一次会合只追踪起步时绑定的配对角色，目标离开原移动范围即停止。
+class PlayerMeetingGoal extends SurfaceFollowGoal {
+  // 固定双方实体、配对记录、地图和本次移动的起点。
+  constructor(bot, player) {
+    super(bot, player.entity, 1);
+    this.player = player;
+    this.actor = bot.entity;
+    this.origin = this.actor.position.clone();
+    this.dimension = bot.game.dimension;
+  }
+
+  // 目标丢失、同编号实体被替换和原范围失效时分别阻止继续移动。
+  issue() {
+    const point = this.entity.position;
+    if (this.bot.entity !== this.actor || this.bot.game.dimension !== this.dimension ||
+        this.player.entity !== this.entity || this.player.uuid !== this.entity.uuid || this.entity.isValid === false ||
+        this.bot.entities[this.entity.id] !== this.entity || !point || ![point.x,point.y,point.z].every(Number.isFinite))
+      return 'meeting_player_unavailable';
+    return this.origin.distanceTo(point) > 64 ? 'meeting_out_of_range' : '';
+  }
+
+  // 寻路器在每次更新路径之前复核目标身份和原活动范围。
+  isValid() { return !this.issue(); }
+
+  // 玩家进入另一格时重算同一工作目标，当前位置变更由寻路器消费。
+  hasChanged() {
+    const next = this.entity.position.floored();
+    if (this.x === next.x && this.y === next.y && this.z === next.z) return false;
+    this.x = next.x;
+    this.y = next.y;
+    this.z = next.z;
+    return true;
+  }
+}
+
 // 在真实物理帧跟踪入水、游动、离水与落地，终态也保存实际角色位置。
 // 步骤：登记首个样本 → 跟踪水面和干地转换 → 在工作退出时收回采样。
 function monitorSurface(bot, result) {
@@ -99,4 +134,4 @@ function monitorSurface(bot, result) {
   return { sample, stop() { sample(); bot.removeListener('physicsTick', sample); } };
 }
 
-module.exports = { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, followHeightClose, SurfaceFollowGoal, monitorSurface };
+module.exports = { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, followHeightClose, SurfaceFollowGoal, PlayerMeetingGoal, monitorSurface };

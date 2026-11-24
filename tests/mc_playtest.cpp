@@ -817,7 +817,7 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
 }
 
 // 用原玩家的备料委托连接实际采掘、会合和交物，插话只读取当前采掘工作。
-// 步骤：核对零库存并先回话 → 排列取得材料、回到原站位与交付 → 依原工作答进度和实收。
+// 步骤：核对零库存并先回话 → 排列取得材料、与原玩家会合及交付 → 依原工作答进度和实收。
 dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
     using namespace dfy::model;
     using Json = nlohmann::json;
@@ -866,11 +866,9 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
         const auto& sample = result.at("handoff");
         if (sample.at("stock").at("available") != 0 || sample.at("stock").at("missing") != 2 || sample.at("target").at("state") != "visible")
             throw std::runtime_error("gather handoff: unexpected starting inventory");
-        Json stand = Json::object();
-        for (const auto axis : {"x","y","z"}) stand[axis] = static_cast<int>(std::floor(sample.at("actor").at("position").at(axis).get<double>()));
         const Json give{{"observation",sample.at("id")},{"recipient",sample.at("recipient")},{"item","dirt"},{"count",2}};
         const Json steps = Json::array({{{"id","soil"},{"skill","gather_ground"},{"arguments",{{"item","dirt"},{"requiredStock",2},{"block","grass_block"}}}},
-            {{"id","meet"},{"skill","move"},{"after",{"soil"}},{"arguments",stand}},
+            {{"id","meet"},{"skill","move"},{"after",{"soil"}},{"arguments",{{"place","player"}}}},
             {{"id","give"},{"skill","give_item"},{"after",{"meet"}},{"arguments",give}}});
         return {{Role::assistant,"",{call("_reply","starting",{{"text","我背包里还没有泥土，正在附近给你备两块。"}}),
             call("_queue_actions","gather-and-give",{{"operation","plan"},{"steps",steps}})}},FinishReason::tool_calls};
@@ -1184,7 +1182,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool gather_handoff = mode == L"--handoff-gather-probe";
+        const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
         const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";

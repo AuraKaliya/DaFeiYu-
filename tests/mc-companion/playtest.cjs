@@ -38,6 +38,8 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
   const handoff = mode.startsWith('--handoff-');
+  const movingHandoff = mode === '--handoff-moving-probe';
+  const gatherHandoff = movingHandoff || mode === '--handoff-gather-probe';
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
   const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
@@ -102,7 +104,11 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('kill @e[type=minecraft:item,x=-3,y=-61,z=-3,dx=10,dy=5,dz=6]');
       send('tp DfyGuestCheck 2.5 -60 0.5');
       send('clear DfyGuestCheck minecraft:dirt');
-      if (mode === '--handoff-gather-probe') {
+      if (gatherHandoff) {
+        if (movingHandoff) {
+          send('fill 3 -61 -2 13 -61 10 minecraft:dirt');
+          send('fill 3 -60 -2 13 -57 10 minecraft:air');
+        }
         send('fill -5 -62 -5 6 -61 5 minecraft:dirt');
         send('fill -6 -60 -3 -2 -58 3 minecraft:air');
         send('fill -6 -60 -3 -2 -60 3 minecraft:dirt');
@@ -160,7 +166,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     const readyBlock = mode === '--pickup-probe' ? [73, -60, 0, 'grass_block'] : [15, -60, 0, 'cobblestone'];
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(...readyBlock.slice(0, 3)))?.name === readyBlock[3], '场地与工具就绪');
-    if (mode === '--handoff-gather-probe') {
+    if (gatherHandoff) {
       const { fromGround } = require('../../plugins/mc/bridge/collection.cjs');
       const cells = [[-2,-60,0],[-3,-60,0]].map(cell => game.bot.entity.position.clone().set(...cell));
       await until(() => cells.every((cell,index) => {
@@ -214,7 +220,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     const [code] = await exit;
     if (code !== 0) throw new Error('体验宿主退出码 ' + code);
   } finally {
-    if (mode === '--pickup-probe' || mode === '--handoff-gather-probe') send('effect clear DfyCompanion minecraft:mining_fatigue');
+    if (mode === '--pickup-probe' || gatherHandoff) send('effect clear DfyCompanion minecraft:mining_fatigue');
     fs.closeSync(fs.openSync(stop, 'a'));
     try { if (exit) await exit; }
     finally { game.stop(); await gameDone; }
@@ -286,7 +292,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-gather-probe', '--handoff-other-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

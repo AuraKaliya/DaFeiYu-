@@ -1,7 +1,6 @@
 // 在原移动工作被读取时采样脚位、到目标格中心的距离和本次寻路状态。
 // 步骤：绑定目标及寻路监听 → 按读回时刻核对位移 → 在原工作退出时保存末次读数并释放监听。
 function monitorMove(bot, target, goal, result, now = () => performance.now()) {
-  const targetCell = { x: target.x, y: target.y, z: target.z };
   let path = 'unknown', previous, lastMovedAtMs, startDistance;
   const onPath = update => {
     if (bot.pathfinder.goal === goal) path = ['success', 'partial', 'noPath', 'timeout'].includes(update?.status) ? update.status : 'unknown';
@@ -11,6 +10,7 @@ function monitorMove(bot, target, goal, result, now = () => performance.now()) {
   function sample(arrived = false) {
     const sampledAtMs = Math.floor(now());
     const position = bot.entity?.position;
+    const targetCell = { x: target.x, y: target.y, z: target.z };
     const state = result.progress = { phase: 'unknown', path, targetCell, sampledAtMs };
     if (!position || ![position.x, position.y, position.z].every(Number.isFinite)) {
       previous = lastMovedAtMs = undefined;

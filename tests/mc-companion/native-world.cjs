@@ -1326,6 +1326,7 @@ async function main() {
         const fields = JSON.parse(queue.parameters).properties;
         assert.match(fields.steps.items.properties.skill.description, /route: Validated route\.id/);
         assert.match(fields.steps.items.properties.skill.description, /craft: Plank item/);
+        assert.match(fields.steps.items.description, /craft: A prerequisite dig needs verified pickup/);
         assert.match(fields.steps.items.properties.arguments.description, /Ordinary sequence parameters:[\s\S]*collect: x,y,z,block,count=1/);
         if (pointedCraft) {
           const original = turns.find(turn => turn.input.events.some(event => event.sequence === 2));

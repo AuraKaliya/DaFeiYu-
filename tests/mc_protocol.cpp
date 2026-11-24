@@ -43,6 +43,35 @@ void move_progress_protocol() {
     rejects(read);
 }
 
+// 仅接受原玩家、最后目标格和双方实际距离一致的会合回执。
+// 步骤：建立三格内的有效读数 → 改换玩家、最终格和距离 → 核对只有旧站位的回执。
+void meeting_protocol() {
+    const Json context{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",3}};
+    const auto controller = std::string(32,'c');
+    const auto owner = "11002233-4455-6677-8899-aabbccddeeff";
+    const Json args{{"place","player"},{"recipient",owner}};
+    const Json actor{{"x",5.5},{"y",-60},{"z",2.5}}, player{{"x",6.5},{"y",-60},{"z",2.5}}, cell{{"x",6},{"y",-60},{"z",2}};
+    const Json meeting{{"recipient",owner},{"entityId",8},{"dimension","overworld"},{"position",player},{"distance",1.0},{"sampledAtMs",40}};
+    Json action = context;
+    action.update(Json{{"controller",controller},{"exited",true},{"skill","move"}});
+    auto& result = action["result"];
+    result = {{"status","done"},{"arrived",true},{"target","player"},{"position",actor},{"meeting",meeting},
+        {"progress",{{"phase","arrived"},{"path","success"},{"sampledAtMs",41},{"targetCell",cell},{"position",actor},{"distance",1.0}}}};
+    const auto read = [&] {
+        return dfy::mc::partner_reply(Json{{"version",1},{"id","meet"},{"action",action}}.dump(),"meet",controller,"move",
+            Json{{"context",context},{"arguments",args}}.dump());
+    };
+    if (!read().exited) throw std::runtime_error("meeting did not exit");
+    for (const auto& changed : Json::array({Json{{"recipient",context.at("generation")}},Json{{"sampledAtMs",42}},
+        Json{{"position",actor}},Json{{"distance",4.0}}})) {
+        result["meeting"] = meeting;
+        result["meeting"].update(changed);
+        rejects(read);
+    }
+    result.erase("meeting");
+    rejects(read);
+}
+
 // 检查采掘轮询只接受原目标、已核实的破坏数和本次库存。
 // 步骤：读取真实阶段 → 注入错格和倒置时点 → 对照退出时的库存。
 void collect_progress_protocol() {
@@ -446,6 +475,7 @@ int main() {
         rejects([] { dfy::mc::configured_channel(R"({"channel":"../outside"})"); });
         private_protocol();
         move_progress_protocol();
+        meeting_protocol();
         collect_progress_protocol();
         ground_pickup_protocol();
         handoff_protocol();

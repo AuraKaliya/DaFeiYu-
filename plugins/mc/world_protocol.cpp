@@ -469,6 +469,28 @@ void verify_collect_progress(const Json& result, const Json& args, bool exited) 
     }
 }
 
+// 用原配对身份和末次实测的双方位置确认会合。
+// 步骤：核对绑定和采样时点 → 对齐寻路终点格 → 重算三格内的实际距离。
+void verify_meeting(const Json& result, const Json& args, bool exited) {
+    const auto& meeting = result.at("meeting");
+    const auto& step = result.at("progress");
+    if (!exited || args.value("place","") != "player" || result.at("target") != "player" || result.at("arrived") != true ||
+        !game_uuid(meeting.at("recipient")) || (args.contains("recipient") && args.at("recipient") != meeting.at("recipient")) ||
+        !meeting.at("entityId").is_number_unsigned() || meeting.at("entityId") > INT32_MAX || !dimension(meeting.at("dimension")) ||
+        !meeting.at("sampledAtMs").is_number_unsigned() || meeting.at("sampledAtMs") > step.at("sampledAtMs"))
+        throw std::invalid_argument("MC: meeting identity or sample time not verified");
+    const auto delta = [&](const char* axis) {
+        const auto& target = meeting.at("position").at(axis);
+        if (!target.is_number() || std::floor(target.get<double>()) != step.at("targetCell").at(axis).get<double>())
+            throw std::invalid_argument("MC: meeting target differs from final movement sample");
+        return result.at("position").at(axis).get<double>() - target.get<double>();
+    };
+    const auto distance = std::hypot(delta("x"),delta("y"),delta("z"));
+    if (!meeting.at("distance").is_number() || !std::isfinite(distance) || distance > 3 ||
+        std::abs(distance-meeting.at("distance").get<double>()) > 1e-8)
+        throw std::invalid_argument("MC: paired player was not within meeting distance");
+}
+
 // 核对移动样本的原目标、现场读数、寻路状态及末次真实抵达。
 // 步骤：校验时点与阶段 → 对照原命令的目标格 → 核对已知位置与实际距离。
 void verify_move_progress(const Json& result, const Json& args, bool exited) {
@@ -650,6 +672,8 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (sent) delivery = ReplyDelivery::sent;
         else if (state == "not_sent") delivery = ReplyDelivery::not_sent;
     }
+    if (skill == "move" && (result.contains("meeting") || (args.contains("recipient") && exited && result.at("status") == "done")))
+        verify_meeting(result,args,exited);
     if (exited && skill == "move" && args.value("exact",false) && result.at("status") == "done") {
         if (result.at("arrived") != true) throw std::invalid_argument("MC: exact arrival not verified");
         const auto& position = result.at("position");

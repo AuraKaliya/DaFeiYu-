@@ -29,7 +29,7 @@ struct PartnerAction {
 inline constexpr std::array partner_actions{
     PartnerAction{"observe","observe",SkillCategory::observation,true,false,"{} for a snapshot, or message with optional focus=hit or openings.",
         "Read only. Pointed observations require the original player message in the active world."},
-    PartnerAction{"move","move",SkillCategory::movement,true,true,"Exact standing x,y,z. Exit verifies arrival.",{},"x,y,z, place or original message."},
+    PartnerAction{"move","move",SkillCategory::movement,true,true,"Exact standing x,y,z or place=player to meet the paired player at their current position. Exit verifies arrival.",{},"x,y,z, place or original message."},
     PartnerAction{"start_move","move",SkillCategory::movement},
     PartnerAction{"follow","follow",SkillCategory::movement,false,true,{},{},"Optional distance (2-5). Append or replace."},
     PartnerAction{"collect","collect",SkillCategory::dig_break,false,true,{},{},"x,y,z,block,count=1. Optional pickup on the step."},
@@ -102,7 +102,7 @@ inline constexpr std::array<PartnerSkill,20> partner_skills{{
         "Scene takes sources=self/player/message, message and focus for the original view, radius 1-5, verify, detail and samples (count 1-3, intervalMs 100-1000). "
         "Same-batch repeats return observationWork=original observation.id. Use belowFeet for exact cells under actors and self for verification. Search: block, optional around. Drops: item, radius 1-16. Drop: observation=dropObservation.id, entity=UUID.",
         R"({"type":"object","properties":{"mode":{"type":"string","description":"Vitals reads this companion's health, food and air ticks with their packet times.","enum":["pointed","scene","search","wall","route","detail","drops","drop","handoff","handoff_receipt","vitals"]},"work":{"type":"string","description":"Handoff receipt: original give_item work ID to recheck late pickup after exit."},"recipient":{"type":"string","description":"Handoff: paired player UUID. Supply item and count (1-2304) to check current distance, player visibility and ordinary inventory slots."},"count":{"type":"integer"},"entity":{"type":"string"},"item":{"type":"string"},"observation":{"type":"string"},"wall":{"type":"string"},"waypoints":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}},"block":{"type":"string"},"around":{"type":"string","enum":["player","self"]},"message":{"type":"integer"},"focus":{"type":"string","enum":["hit","openings","objects"]},"sources":{"type":"array","items":{"type":"string","enum":["self","player","message"]}},"radius":{"type":"integer"},"detail":{"type":"string","enum":["summary","cells"]},"verify":{"type":"array","items":{"type":"object","properties":{"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"required":["x","y","z"],"additionalProperties":false}},"samples":{"type":"object","properties":{"count":{"type":"integer"},"intervalMs":{"type":"integer"}},"additionalProperties":false}},"additionalProperties":false})", SkillCategory::observation, false},
-    {"move", "partner.move", "Walk without digging to a landmark, player (place=player), or integer x,y,z. An accepted result is a running work ID. Read actual arrival in the next activity context.",
+    {"move", "partner.move", "Walk without digging to a landmark, integer x,y,z, or the paired player's current position (place=player). For a meeting, track the same visible player within 64 blocks of the start. Arrival reports their sampled position and distance.",
         R"({"type":"object","properties":{"place":{"type":"string"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true},
     {"start_move", "partner.start_move", "Start moving toward one target: original message position (message), a landmark or current player (place), or xyz. Returns at acceptance when in flight. Movement continues while you listen and reply.",
         R"({"type":"object","properties":{"place":{"type":"string"},"message":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},"z":{"type":"integer"}},"additionalProperties":false})", SkillCategory::movement, true, SkillKind::motion},
@@ -165,11 +165,13 @@ inline std::string_view partner_schema(const PartnerSkill& skill) {
     if (skill.kind != SkillKind::action_queue) return skill.schema;
     static const auto schema = [&skill] {
         std::string description = "Plan node parameters:";
+        std::string conditions = "Plan node conditions:";
         for (const auto& action : partner_actions) if (action.plan) {
             description += "\n"+std::string(action.name);
             if (action.executor.empty()) description += " (unavailable)";
             description += ": "+std::string(action.plan_arguments);
-            if (!action.plan_requirements.empty()) description += " "+std::string(action.plan_requirements);
+            if (!action.plan_requirements.empty())
+                conditions += "\n"+std::string(action.name)+": "+std::string(action.plan_requirements);
         }
         std::string sequence = "Ordinary sequence parameters:";
         for (const auto& action : partner_actions) if (action.sequence)
@@ -178,7 +180,9 @@ inline std::string_view partner_schema(const PartnerSkill& skill) {
         auto value = nlohmann::json::parse(skill.schema);
         auto& fields = value["properties"];
         fields["resolves"]["description"] = "Pending question item for a newer verified dig. Supply one dig_block node with the answer message; any saved successor is retained.";
-        auto& node = fields["steps"]["items"]["properties"];
+        auto& step = fields["steps"]["items"];
+        step["description"] = std::move(conditions);
+        auto& node = step["properties"];
         node["arguments"]["properties"]["entity"] = {{"type","string"}};
         node["arguments"]["properties"]["recipient"] = {{"type","string"}};
         node["skill"]["description"] = std::move(description);

@@ -136,8 +136,8 @@ async function checkPlayer(fixture, mode) {
       await checkCraft(fixture, player, whispers);
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
-    } else if (mode === '--handoff-gather-probe') {
-      await checkGatherHandoff(fixture, player, whispers);
+    } else if (mode === '--handoff-gather-probe' || mode === '--handoff-moving-probe') {
+      await checkGatherHandoff(fixture, player, whispers, mode === '--handoff-moving-probe');
     } else if (handoff) {
       const other = mode === '--handoff-other-probe' ? await connect('DfyCollector',fixture.port) : null;
       try { await checkHandoff(fixture, player, whispers, mode, other); }
@@ -351,7 +351,7 @@ async function checkGroundPickup(fixture, player, whispers) {
 
 // 从零库存核验原任务的两次破坏、入包、会合和玩家实收，并在采集中询问实际进度。
 // 步骤：记录原话和首条有用反馈 → 读取在途工作回答插话 → 对照双方库存、逐格变化及完整工序。
-async function checkGatherHandoff(fixture, player, whispers) {
+async function checkGatherHandoff(fixture, player, whispers, moving) {
   const cells = [[-2,-60,0],[-3,-60,0]].map(c => player.entity.position.clone().set(...c));
   const dirt = player.registry.itemsByName.dirt.id;
   await until(() => fixture.materialCount('dirt') === 0 && player.inventory.count(dirt) === 0 &&
@@ -364,6 +364,18 @@ async function checkGatherHandoff(fixture, player, whispers) {
   const digging = await until(() => trace().find(r => r.category === 'mc.partner.motion' && r.body.status === 'digging'), '原任务已开挖');
   await measurePlayerFeedback(player,'备好几块了？',during,() => until(() => whispers.includes(during),'采掘插话回答'),
     sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify({ ...sample, work: digging.body.action.bridgeWork },null,2)));
+  if (moving) {
+    fixture.send('tp DfyGuestCheck 10.5 -60 0.5');
+    await until(() => player.entity.position.x === 10.5, '配对玩家已离开原交物位置');
+    await until(() => {
+      const oldGive = readRows(fixture,'game-actions.jsonl').find(row => row.skill === 'give_item');
+      if (oldGive) throw new Error('伙伴在旧站位尝试交物，回执 '+oldGive.result.reasonCode+'，已提交 '+oldGive.result.transfer?.submitted);
+      return player.players.DfyCompanion.entity.position.x >= 3.5;
+    },'伙伴携两块材料向配对玩家的新位置移动',45000);
+    assert.deepEqual([fixture.materialCount('dirt'),player.inventory.count(dirt)],[2,0]);
+    fixture.send('tp DfyGuestCheck 7.5 -60 8.5');
+    await until(() => player.entity.position.z === 8.5, '玩家在会合途中再次移动');
+  }
   await until(() => whispers.includes(finished),'两块实际入包并交给原玩家',45000);
 
   const actions = readRows(fixture,'game-actions.jsonl');
@@ -374,6 +386,13 @@ async function checkGatherHandoff(fixture, player, whispers) {
   assert.equal(soil.work,digging.body.action.bridgeWork);
   assert.deepEqual([soil.result.broken,soil.result.stock.before,soil.result.stock.after,soil.result.pickups.selfCollected.dirt],[2,0,2,2]);
   assert.equal(meet.result.arrived,true);
+  assert.deepEqual([meet.arguments.place,meet.arguments.recipient,meet.result.meeting.recipient,meet.result.meeting.entityId],
+    ['player',player.player.uuid,player.player.uuid,player.entity.id]);
+  if (moving) {
+    const end = player.entity.position.clone().set(meet.result.position.x,meet.result.position.y,meet.result.position.z);
+    assert.ok(end.distanceTo(player.entity.position) <= 3 && end.distanceTo(end.clone().set(10.5,-60,0.5)) > 3);
+    assert.equal(give.result.handoff.target.entityId,player.entity.id);
+  }
   assert.deepEqual([give.result.transfer.stockBefore,give.result.transfer.stockAfter,give.result.receipt.recipientPicked],[2,0,2]);
   assert.ok(cells.every(cell => player.blockAt(cell)?.name === 'air'));
   assert.deepEqual([fixture.materialCount('dirt'),player.inventory.count(dirt)], [0,2]);

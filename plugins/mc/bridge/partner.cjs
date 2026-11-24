@@ -18,7 +18,7 @@ const { visibleBlocks, fromGround, groundTypes, requiresCollectionApproval, affe
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
-const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, monitorSurface } = require('./navigation.cjs');
+const { dryStand, clearStand, DryStandGoal, digReachable, DigStandGoal, PlayerMeetingGoal, monitorSurface } = require('./navigation.cjs');
 const { monitorMove } = require('./move-progress.cjs');
 const { belowFeet } = require('./world.cjs');
 
@@ -515,7 +515,14 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         const exact = args.exact === true;
         if (named && ['x','y','z'].some(k => Object.hasOwn(args,k))) throw new Error('请选择地标或坐标之一');
         if (anchored && (named || ['x','y','z'].some(k => Object.hasOwn(args,k)))) throw new Error('请选择一个移动目标');
-        const point = args.place === 'player' ? player?.entity?.position?.floored() :
+        const toPlayer = args.place === 'player';
+        if (Object.hasOwn(args,'recipient') && (!toPlayer || args.recipient !== owner))
+          throw Object.assign(new Error('会合对象与本次配对玩家不符'), { code: 'meeting_player_unbound' });
+        if (toPlayer && (!player?.entity?.position || player.entity.uuid !== owner))
+          throw Object.assign(new Error('当前无法定位配对玩家'), { code: 'meeting_player_unavailable' });
+        const meeting = toPlayer ? new PlayerMeetingGoal(bot,player) : null;
+        if (meeting && !meeting.isValid()) throw Object.assign(new Error('会合目标已离开当前现场'), { code: meeting.issue() });
+        const point = toPlayer ? player.entity.position.floored() :
           places.get(args.place) ?? [...places.values()].find(p => p.label === args.place);
         if (named && (!point || (point.dimension && point.dimension !== bot.game.dimension))) throw new Error('地标未知或玩家不在视野');
         const target = anchored ? messageAnchor(r.generation, args.message).center.floored() : named ? point : args;
@@ -527,29 +534,42 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         const conditions = [nearby];
         if (anchored) conditions.push(new goals.GoalY(pos.y));
         if (dryTarget) conditions.push(new DryStandGoal(bot));
-        const goal = exact ? new goals.GoalBlock(pos.x, pos.y, pos.z) :
-          conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby;
+        const goal = meeting || (exact ? new goals.GoalBlock(pos.x, pos.y, pos.z) :
+          conditions.length > 1 ? new goals.GoalCompositeAll(conditions) : nearby);
         if (anchored) result.sourceMessage = args.message;
         const surface = monitorSurface(bot, result);
-        const movement = monitorMove(bot, pos, goal, result);
+        const movement = monitorMove(bot, meeting || pos, goal, result);
         job.sampleProgress = movement.sample;
         try {
           await walk(bot, goal);
           check();
+          if (meeting && !meeting.isValid()) throw Object.assign(new Error('原会合对象已不在当前移动范围'), { code: meeting.issue() });
+          if (meeting) meeting.hasChanged();
           movement.sample();
           const arrived = bot.entity?.position?.floored();
-          if (!arrived || !goal.isEnd(arrived) || (dryTarget && bot.entity.isInWater) || (exact && !clearStand(bot, pos))) {
+          const dryArrival = meeting ? dryStand(bot,meeting.entity.position) : dryTarget;
+          if (!arrived || !goal.isEnd(arrived) || (dryArrival && bot.entity.isInWater) || (exact && !clearStand(bot, pos))) {
             if (result.progress.path === 'noPath') throw Object.assign(new Error('本次寻路未找到路径'), { code: 'move_no_path' });
             if (result.progress.path === 'timeout') throw Object.assign(new Error('本次寻路在时限内未完成'), { code: 'move_path_timeout' });
             throw Object.assign(new Error('到达站位未核实'), { code: 'arrival_unverified' });
           }
+          if (meeting) {
+            const position = meeting.entity.position.clone();
+            const distance = bot.entity.position.distanceTo(position);
+            if (distance > 3) throw Object.assign(new Error('尚未到达玩家当前三格范围'), { code: 'arrival_unverified' });
+            result.target = 'player';
+            result.meeting = { recipient: owner, entityId: meeting.entity.id, dimension: bot.game.dimension,
+              position, distance, sampledAtMs: Math.floor(performance.now()) };
+          }
           result.arrived = true;
-          if (args.place === 'player') result.target = 'player';
         } catch (error) {
           if (error.name === 'NoPath') error.code = 'move_no_path';
           if (error.name === 'Timeout') error.code = 'move_path_timeout';
+          const issue = meeting?.issue();
+          if (issue) error.code = issue;
           throw error;
         } finally {
+          if (meeting && bot.pathfinder.goal === meeting) { bot.pathfinder.setGoal(null); bot.clearControlStates(); }
           job.sampleProgress = undefined;
           movement.stop(result.arrived === true);
           surface.stop();
