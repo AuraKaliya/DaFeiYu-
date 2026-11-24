@@ -46,7 +46,8 @@ function trackSelfVitals(bot, currentGeneration) {
     health = Number.isFinite(packet.health) && packet.health >= 0 && Number.isInteger(packet.food) && packet.food >= 0 && packet.food <= 20
       ? capture({ source: 'update_health', points: packet.health, food: packet.food }) : undefined;
   }
-  // 只认本人运行时实体号和当前版本注册表命名的空气字段，保留有符号游戏刻数。
+  // 只认本人运行时实体号和当前版本注册表命名的空气字段，按实际读数归并同次耗尽。
+  // 步骤：核对实体和字段 → 绑定有效空气样本 → 更新同次记录并保留最新状态边界。
   function onMetadata(packet) {
     if (!bot.entity || packet.entityId !== bot.entity.id) return;
     const index = bot.registry?.entitiesByName?.player?.metadataKeys?.indexOf('air_supply') ?? -1;
@@ -75,6 +76,7 @@ function trackSelfVitals(bot, currentGeneration) {
       return { sequence, generation, actor, entityId, dimension, source: 'entity_metadata.air_supply', airEpisode: { ...airEpisode } };
     },
     // 仅复制与本次原工作和当前角色相符的读数，重复查询保留原来的采样时刻。
+    // 步骤：核对出生、实体与地图 → 分别选取有来源的状态 → 附上同次空气耗尽记录。
     read(id, generation) {
       const entity = bot.entity, actor = bot.player?.uuid, dimension = bot.game?.dimension;
       if (closed || !generation || currentGeneration() !== generation || !actor || !dimension ||
