@@ -84,6 +84,8 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     if (mode === '--layered-follow-probe' || mode === '--layered-resupply-probe')
       prepareLayered(send, mode === '--layered-resupply-probe');
     if (mode === '--craft-probe') {
+      send('tp DfyGuestCheck 0.5 -60 -2.5');
+      send('kill @e[type=minecraft:item,x=-10,y=-62,z=-1,dx=8,dy=5,dz=5]');
       send('give DfyCompanion minecraft:oak_log 1');
       for (const [x, z, item, count] of [[-3.5, 0.5, 'dirt', 2], [-2.5, 1.5, 'stone', 1], [-8.5, 0.5, 'dirt', 4]])
         send(`summon minecraft:item ${x} -60 ${z} {Item:{id:"minecraft:${item}",count:${count}},PickupDelay:32767s}`);

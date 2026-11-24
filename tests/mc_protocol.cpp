@@ -86,6 +86,18 @@ void collect_progress_protocol() {
     pickups["selfCollected"] = Json::object();
     pickups["recent"][0]["targetCell"]["x"] = 3;
     rejects(read);
+    result.erase("pickups");
+    result["capacity"] = {{"item","dirt"},{"scope","main_and_hotbar"},{"sampledAtMs",123},{"status","sampled"},
+        {"slots",36},{"stackSize",64},{"mergeSpace",0},{"emptySlots",0},{"unknownSlots",0},{"knownSpace",0}};
+    result["status"] = "blocked";
+    result["reasonCode"] = "pickup_inventory_full";
+    if (!read().exited) throw std::runtime_error("full inventory lost its capacity sample");
+    result["capacity"]["emptySlots"] = 1;
+    rejects(read);
+    result["capacity"]["knownSpace"] = 64;
+    rejects(read);
+    result.erase("capacity");
+    rejects(read);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。

@@ -731,6 +731,12 @@ dfy::model::Response pickup_sample(const dfy::model::Request& request) {
     const auto input = Json::parse(message.content);
     if (input.at("trigger") == "plan.finished") {
         const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+        if (result.value("reasonCode","") == "pickup_inventory_full") {
+            if (result.at("broken") != 0 || !result.at("changes").empty() || result.at("capacity").at("knownSpace") != 0 ||
+                result.at("capacity").at("status") != "sampled" || result.at("capacity").at("slots") != 36)
+                throw std::runtime_error("pickup probe: incomplete full inventory evidence");
+            return {{Role::assistant,"背包和快捷栏都满了，草方块还在原处。"}};
+        }
         if (result.value("reasonCode","") != "pickup_other_collector" || result.at("stock").at("after") != 0 ||
             result.at("broken") != 1 || result.at("pickups").at("recent").back().at("lastCollector").at("uuid") != input.at("player"))
             throw std::runtime_error("pickup probe: missing confirmed collector or stock");
@@ -738,7 +744,7 @@ dfy::model::Response pickup_sample(const dfy::model::Request& request) {
     }
     if (!input.at("events").empty()) {
         const auto text = input.at("events").back().value("text","");
-        if (text == "帮我就地取一块泥土。") {
+        if (text == "帮我就地取一块泥土。" || text == "再帮我取一块泥土。") {
             const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_queue_actions"); });
             if (tool == request.tools.end()) throw std::runtime_error("pickup probe: missing plan entry");
             const Json node{{"id","soil"},{"skill","gather_ground"},{"arguments",{{"item","dirt"},{"requiredStock",1},{"block","grass_block"}}}};
@@ -777,8 +783,10 @@ dfy::model::Response craft_sample(const dfy::model::Request& request) {
     }
     if (last.role == Role::tool && last.tool_call_id == "nearby-dirt") {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
-        const auto& items = result.at("dropObservation").at("entities");
-        if (items.size() != 1 || items.front().at("item") != "dirt" || items.front().at("count") != 2)
+        const auto& drops = result.at("dropObservation");
+        const auto& items = drops.at("entities");
+        if (items.size() != 1 || items.front().at("item") != "dirt" || items.front().at("count") != 2 ||
+            drops.at("capacity").at("status") != "sampled" || drops.at("capacity").at("knownSpace") <= 0)
             throw std::runtime_error("craft probe: nearby dropped stack was not observed");
         const Json node{{"id","planks"},{"skill","craft"},{"arguments",{{"item","oak_planks"},{"count",4},{"ingredient","oak_log"}}}};
         return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({node})}});

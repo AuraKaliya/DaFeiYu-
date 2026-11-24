@@ -6,6 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
+const { inventoryCapacity } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
@@ -191,12 +192,20 @@ async function collect(bot, args, check, job, built) {
   };
   const progress = collectionProgress(result, () => inventory(bot)[expected] ?? 0);
   job.sampleProgress = progress.sample;
+  // 只有已读全的容量为零时停止取材，保留特殊物品栈和未同步槽位的不确定性。
+  const checkCapacity = () => {
+    if (!expected) return;
+    const capacity = result.capacity = inventoryCapacity(bot, expected);
+    if (capacity.status === 'sampled' && capacity.knownSpace === 0)
+      throw digBlocked('pickup_inventory_full', '主背包和快捷栏已经放不下所需物品');
+  };
   try {
     for (let n = 0; n < missing; ++n) {
       progress.enter('selecting');
       check();
       const stock = pickupItem ? (inventory(bot)[pickupItem] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
+      checkCapacity();
       if (!matching.length) throw digBlocked('dig_source_missing', '当前地面没有这种物品的自然来源');
       const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
       if (!block) throw fixed ? digBlocked('dig_target_unloaded', '目标格尚未加载') :
@@ -246,6 +255,8 @@ async function collect(bot, args, check, job, built) {
       if (!allowed(here)) throw digBlocked('dig_outside_scope', '目标已不符合地面取材范围');
       if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
       checkApproval(affected);
+      if (expected && (inventory(bot)[expected] ?? 0) >= args.requiredStock) break;
+      checkCapacity();
       const readback = collectReadback(bot, here, affected);
       progress.enter('digging', here);
       const changeStart = result.changes.length;

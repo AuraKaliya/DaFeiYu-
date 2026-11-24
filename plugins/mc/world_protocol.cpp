@@ -48,12 +48,30 @@ bool dimension(const Json& value) {
     });
 }
 
+// 验证主背包与快捷栏的容量覆盖，只接受与已读槽位一致的可用量。
+void verify_inventory_capacity(const Json& capacity, std::string_view item) {
+    if (item.empty() || capacity.at("item").get_ref<const std::string&>() != item || capacity.at("scope") != "main_and_hotbar" ||
+        !capacity.at("sampledAtMs").is_number_unsigned()) throw std::invalid_argument("MC: invalid inventory capacity source");
+    const auto& status = capacity.at("status");
+    if (status == "unavailable" && capacity.size() == 4) return;
+    for (const auto field : {"slots","stackSize","emptySlots","unknownSlots","mergeSpace","knownSpace"})
+        if (!capacity.at(field).is_number_unsigned() || capacity.at(field) > 16384)
+            throw std::invalid_argument("MC: invalid inventory capacity measure");
+    const auto slots = capacity.at("slots").get<int>(), size = capacity.at("stackSize").get<int>();
+    const auto empty = capacity.at("emptySlots").get<int>(), unknown = capacity.at("unknownSlots").get<int>();
+    const auto merge = capacity.at("mergeSpace").get<int>();
+    if (slots < 1 || slots > 128 || size < 1 || size > 128 || empty+unknown > slots ||
+        merge > (slots-empty-unknown)*(size-1) || capacity.at("knownSpace") != empty*size+merge ||
+        status != (unknown ? "partial" : "sampled")) throw std::invalid_argument("MC: inconsistent inventory capacity");
+}
+
 // 对照原查询检查掉落来源、覆盖和实体列表，缺失物品栈保持未知。
 // 步骤：绑定原工作和查询范围 → 校验角色与实体位置 → 核对物品过滤和距离。
 void verify_drop_observation(const Json& sample, std::string_view id, const Json& generation, const Json& args) {
     const auto radius = args.value("radius",8);
     const auto requested_item = args.value("item",std::string{});
     const auto filter = item_name(requested_item);
+    if (sample.contains("capacity")) verify_inventory_capacity(sample.at("capacity"),filter);
     const auto& entities = sample.at("entities");
     if (args.value("mode","") != "drops" || sample.at("id").get_ref<const std::string&>() != id ||
         sample.at("generation") != generation || !dimension(sample.at("dimension")) ||
@@ -466,6 +484,13 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
+    if (skill == "collect" && (result.contains("capacity") || result.value("reasonCode","") == "pickup_inventory_full")) {
+        const auto& capacity = result.at("capacity");
+        verify_inventory_capacity(capacity,item_name(args.at("item").get_ref<const std::string&>()));
+        if (result.value("reasonCode","") == "pickup_inventory_full" && (capacity.at("status") != "sampled" ||
+            capacity.at("knownSpace") != 0 || !exited || result.at("status") != "blocked"))
+            throw std::invalid_argument("MC: unverified full inventory");
+    }
     if (skill == "collect" && result.contains("pickups")) verify_collect_pickups(result.at("pickups"),args);
     if (skill == "collect" && result.contains("progress")) {
         verify_collect_progress(result,args,exited);

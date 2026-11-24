@@ -41,7 +41,7 @@ bool prepare_action(std::string_view skill, Json& args) {
 // 保留推进图所需的结果，不在信箱中复制一次完整的背景观察。
 Json plan_evidence(const Json& result) {
     Json evidence = Json::object();
-    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","changes","cells",
+    for (const auto name : {"status","reason","reasonCode","broken","stock","inventoryDelta","pickups","capacity","changes","cells",
         "sampledAtMs","route","item","count","position","arrived","blocks","placed","materialBefore","materialAfter","craft","craftAttempted"})
         if (result.contains(name)) evidence[name] = result.at(name);
     if (result.contains("broken") && result.contains("progress")) evidence["progress"] = result.at("progress");

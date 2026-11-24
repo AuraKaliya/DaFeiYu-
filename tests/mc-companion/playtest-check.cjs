@@ -541,9 +541,25 @@ async function checkPickup(fixture, player, whispers) {
     assert.ok(Number.isFinite(sample.elapsedMs));
     writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: reply.order, replyWork: reply.work,
       progress: prepared.input.activeMotion.progress }, null, 2));
+    fixture.send('tp DfyGuestCheck 72.5 -60 0.5');
+    fixture.send('setblock 73 -60 0 minecraft:grass_block');
+    fixture.send('clear DfyCompanion');
+    fixture.send('give DfyCompanion minecraft:stone 2304');
+    await until(() => fixture.materialCount('stone') === 36 * 64 && player.blockAt(point)?.name === 'grass_block',
+      '背包与快捷栏装满，独立玩家读到复位后的草方块');
+    const full = '背包和快捷栏都满了，草方块还在原处。';
+    player.chat('再帮我取一块泥土。');
+    await until(() => whispers.includes(full), '满包取材按实际容量结算');
+    const attempts = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'collect');
+    assert.equal(attempts.length, 2);
+    assert.deepEqual([attempts[1].result.reasonCode, attempts[1].result.broken, attempts[1].result.changes,
+      attempts[1].result.capacity.knownSpace], ['pickup_inventory_full', 0, [], 0]);
+    assert.equal(player.blockAt(point).name, 'grass_block');
+    assert.deepEqual(whispers, [feedback, completion, full]);
   } finally {
     player._client.removeListener('collect', onCollect);
     player.removeListener('itemDrop', onDrop);
+    fixture.send('tp DfyGuestCheck 0.5 -60 -2.5');
   }
 }
 

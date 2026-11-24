@@ -1,3 +1,5 @@
+const { inventoryCapacity } = require('./inventory-capacity.cjs');
+
 // 识别当前游戏版本在客户端登记的掉落实体。
 function isDrop(entity) {
   return entity?.isValid !== false && ['item', 'Item', 'item_stack'].includes(entity?.name);
@@ -37,7 +39,8 @@ function observeDrops(bot, options, id, generation) {
       distance, item: stack?.item ?? null, count: stack?.count ?? null });
   }
   matches.sort((a, b) => a.distance - b.distance || a.entityId - b.entityId);
-  return { ...sample, omitted: Math.max(0, matches.length - 12), entities: matches.slice(0, 12) };
+  return { ...sample, ...(item && { capacity: inventoryCapacity(bot, item) }),
+    omitted: Math.max(0, matches.length - 12), entities: matches.slice(0, 12) };
 }
 
 module.exports = { isDrop, dropStack, observeDrops };

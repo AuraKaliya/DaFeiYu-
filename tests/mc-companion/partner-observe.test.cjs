@@ -7,6 +7,7 @@ const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('../../plugins/mc/bridge/collect-drops.cjs');
+const { inventoryCapacity } = require('../../plugins/mc/bridge/inventory-capacity.cjs');
 const { EventEmitter } = require('node:events');
 
 class Position {
@@ -70,6 +71,26 @@ test('drop observation distinguishes filtered stacks, missing data and bounded c
     assert.throws(() => observationInput(args), { code: 'observe_drop_parameters' });
   delete bot.entity.position;
   assert.throws(() => observeDrops(bot, options, 'work', 'world'), { code: 'observe_drop_position_unavailable' });
+});
+
+// 验证库存空间只包括主背包与快捷栏，缺读和自定义堆叠保留未知。
+test('inventory capacity separates empty and merge space from unconfirmed or excluded slots', () => {
+  const dirt = { name: 'dirt', count: 62 }, stone = { name: 'stone', count: 5 };
+  const bot = { registry: { itemsByName: { dirt: { stackSize: 64 } } },
+    inventory: { inventoryStart: 1, inventoryEnd: 5, slots: [null, null, dirt, stone, { ...dirt, count: 64 }, null] } };
+  const fields = () => {
+    const { status, slots, emptySlots, mergeSpace, knownSpace, unknownSlots } = inventoryCapacity(bot, 'dirt');
+    return [status, slots, emptySlots, mergeSpace, knownSpace, unknownSlots];
+  };
+  assert.deepEqual(fields(), ['sampled', 4, 1, 2, 66, 0]);
+  bot.inventory.slots[1] = stone;
+  dirt.count = 64;
+  assert.deepEqual(fields(), ['sampled', 4, 0, 0, 0, 0]);
+  bot.inventory.slots[3] = { ...dirt, components: [{ type: 'custom_name' }] };
+  delete bot.inventory.slots[4];
+  assert.deepEqual(fields(), ['partial', 4, 0, 0, 0, 2]);
+  bot.inventory.inventoryEnd = 8;
+  assert.equal(inventoryCapacity(bot, 'dirt').status, 'unavailable');
 });
 
 // 核对采掘附近新堆的部分拾取、其他角色拾取、看丢和实体编号复用。
