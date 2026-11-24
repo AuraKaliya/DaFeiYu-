@@ -4,6 +4,31 @@ const { EventEmitter } = require('node:events');
 const { Position } = require('./test-position.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
 const { pickupDrop } = require('../../plugins/mc/bridge/pickup-drop.cjs');
+const { pickupEvidence } = require('../../plugins/mc/bridge/stone-evidence.cjs');
+
+// 用同一块自采圆石对照有效合堆、倒序合堆和倒序拾取的归属证据。
+// 步骤：核对正常入包 → 分别提前两种读回 → 确认倒序时归属未知。
+test('mined stone requires merge and pickup readbacks after their own events', () => {
+  const at = { actor: 'fish', x: 1, y: 2, z: 3 };
+  const rows = [
+    { seq: 1, kind: 'blockBroken', ...at, candidateAmount: 1 },
+    { seq: 2, kind: 'blockDrop', ...at, networkId: 17, item: 'self', amount: 1 },
+    { seq: 3, kind: 'added', networkId: 17, item: 'self', amount: 1 },
+    { seq: 4, kind: 'merge', item: 'self', amount: 1, target: 'pile', targetAmount: 1 },
+    { seq: 5, kind: 'mergeReadback', cause: 4, sourceRemaining: 0, targetRemaining: 2 },
+    { seq: 6, kind: 'pickup', actor: 'fish', item: 'pile', beforeStock: 0, remaining: 0 },
+    { seq: 7, kind: 'pickupReadback', actor: 'fish', cause: 6, ground: 0, afterStock: 2 },
+  ];
+  const read = evidence => pickupEvidence(evidence, at.actor, at, new Set([17]));
+  assert.equal(read(rows)?.lower, 1);
+  for (const index of [3, 5]) {
+    const changed = rows.map(row => ({ ...row }));
+    changed[index].seq = rows[index + 1].seq;
+    changed[index + 1].seq = rows[index].seq;
+    changed[index + 1].cause = changed[index].seq;
+    assert.equal(read(changed), null);
+  }
+});
 
 // 建立可独立控制导航、实体拾取包、背包同步和时钟的地面物品现场。
 function pickupFixture() {

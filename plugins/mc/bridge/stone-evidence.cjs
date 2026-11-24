@@ -77,7 +77,7 @@ function pickupEvidence(rows, actor, target, clientDrops) {
     if (!ground || row.seq <= source.seq) continue;
     if (row.kind === 'merge' && (row.item === item || row.target === item)) {
       const after = rows.find(v => v.kind === 'mergeReadback' && v.cause === row.seq);
-      if (!after || after.sourceRemaining !== 0 || after.targetRemaining !== row.amount + row.targetAmount ||
+      if (!after || after.seq <= row.seq || after.sourceRemaining !== 0 || after.targetRemaining !== row.amount + row.targetAmount ||
         (row.item === item ? row.amount : row.targetAmount) !== ground) return null;
       item = row.target;
       ground = after.targetRemaining;
@@ -85,7 +85,7 @@ function pickupEvidence(rows, actor, target, clientDrops) {
     }
     if (row.kind === 'pickup' && row.item === item) {
       const after = rows.find(v => v.kind === 'pickupReadback' && v.cause === row.seq && v.actor === row.actor);
-      if (!after || after.ground !== row.remaining || after.ground < 0 || after.ground >= ground ||
+      if (!after || after.seq <= row.seq || after.ground !== row.remaining || after.ground < 0 || after.ground >= ground ||
         after.afterStock - row.beforeStock !== ground - after.ground) return null;
       if (row.actor === actor) byFish = true; else byOthers = true;
       ground = after.ground;
