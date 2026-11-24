@@ -721,6 +721,41 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
     return {{Role::assistant,R"({"internal":"game work continues"})"}};
 }
 
+// 用在途采掘读数回答插话，并按真实拾取人与库存结算原取材请求。
+// 步骤：提交一次取材 → 读取原工作回答进展 → 对照拾取人和入包量后报告。
+dfy::model::Response pickup_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto& message = request.messages.back();
+    if (message.role != Role::user) return {{Role::assistant,R"({"internal":"waiting for pickup"})"}};
+    const auto input = Json::parse(message.content);
+    if (input.at("trigger") == "plan.finished") {
+        const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+        if (result.value("reasonCode","") != "pickup_other_collector" || result.at("stock").at("after") != 0 ||
+            result.at("broken") != 1 || result.at("pickups").at("recent").back().at("lastCollector").at("uuid") != input.at("player"))
+            throw std::runtime_error("pickup probe: missing confirmed collector or stock");
+        return {{Role::assistant,"这块泥土是你捡到的，我的背包里还是零块。"}};
+    }
+    if (!input.at("events").empty()) {
+        const auto text = input.at("events").back().value("text","");
+        if (text == "帮我就地取一块泥土。") {
+            const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_queue_actions"); });
+            if (tool == request.tools.end()) throw std::runtime_error("pickup probe: missing plan entry");
+            const Json node{{"id","soil"},{"skill","gather_ground"},{"arguments",{{"item","dirt"},{"requiredStock",1},{"block","grass_block"}}}};
+            const Json args{{"operation","plan"},{"steps",Json::array({node})}};
+            return {{Role::assistant,"",{{"soil",tool->name,args.dump()}}},FinishReason::tool_calls};
+        }
+        if (text == "挖得怎么样了？") {
+            const auto& progress = input.at("activeMotion").at("progress");
+            if (progress.at("phase") != "digging" || progress.at("block") != "grass_block" ||
+                progress.at("broken") != 0 || progress.at("stock").at("current") != 0)
+                throw std::runtime_error("pickup probe: missing current work progress");
+            return {{Role::assistant,"我正在挖草方块，泥土还没进背包。"}};
+        }
+    }
+    return {{Role::assistant,R"({"internal":"waiting for pickup"})"}};
+}
+
 // 用隔离服的观察和合成回执决定何时向玩家报告产出。
 // 步骤：按原话采样 → 核对方块、原料和地上物品 → 提交合成并等待读回。
 dfy::model::Response craft_sample(const dfy::model::Request& request) {
@@ -899,7 +934,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool resupply = mode == L"--layered-resupply-probe";
         const bool layered = resupply || mode == L"--layered-follow-probe";
         const bool craft = mode == L"--craft-probe";
-        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || mode == L"--partner-probe";
+        const bool pickup = mode == L"--pickup-probe";
+        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -916,7 +952,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ask,gap,root,mode](const auto&, const auto& request) {
+                if (pickup) return pickup_sample(request);
                 if (craft) return craft_sample(request);
                 if (gap_group) return opening_group_sample(request,mode);
                 if (layered) return layered_follow_sample(request,resupply);

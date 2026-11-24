@@ -88,6 +88,15 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       for (const [x, z, item, count] of [[-3.5, 0.5, 'dirt', 2], [-2.5, 1.5, 'stone', 1], [-8.5, 0.5, 'dirt', 4]])
         send(`summon minecraft:item ${x} -60 ${z} {Item:{id:"minecraft:${item}",count:${count}},PickupDelay:32767s}`);
     }
+    if (mode === '--pickup-probe') {
+      send('tp DfyCompanion 70.5 -60 0.5');
+      send('tp DfyGuestCheck 72.5 -60 0.5');
+      await until(() => game.bot.entity.position.x === 70.5 && [[66,-62,-6],[80,-61,5]].every(cell =>
+        game.bot.blockAt(game.bot.entity.position.clone().set(...cell))), '独立取材场区块已加载');
+      for (const command of ['fill 66 -62 -6 80 -61 5 minecraft:dirt', 'fill 67 -60 -5 79 -55 3 minecraft:air',
+        'fill 73 -60 -2 76 -60 2 minecraft:dirt', 'setblock 73 -60 0 minecraft:grass_block',
+        'tp DfyGuestCheck 72.5 -60 0.5', 'clear DfyGuestCheck', 'effect give DfyCompanion minecraft:mining_fatigue 55 1 true']) send(command);
+    }
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
     if (gapGroup) {
       send('setblock 3 -60 -3 minecraft:air');
@@ -106,7 +115,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('setblock 2 -61 0 minecraft:dirt');
       send('tp DfyGuestCheck -1.5 -60 -1.5');
     }
-    else if (!wallProbe && mode !== '--probe') {
+    else if (!wallProbe && mode !== '--probe' && mode !== '--pickup-probe') {
       send('fill 3 -60 0 4 -60 0 minecraft:dirt');
       send('setblock 5 -60 1 minecraft:oak_log');
       if (mode === '--partner-probe' || mode === '--follow-probe') prepareCourse(send);
@@ -116,8 +125,9 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       }
     }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
+    const readyBlock = mode === '--pickup-probe' ? [73, -60, 0, 'grass_block'] : [15, -60, 0, 'cobblestone'];
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
-      game.bot.blockAt(game.bot.entity.position.clone().set(15, -60, 0))?.name === 'cobblestone', '山脚与工具就绪');
+      game.bot.blockAt(game.bot.entity.position.clone().set(...readyBlock.slice(0, 3)))?.name === readyBlock[3], '场地与工具就绪');
     if (mode === '--partner-probe') await until(() => [3, 4].every(x =>
       game.bot.blockAt(game.bot.entity.position.clone().set(x, -60, 0))?.name === 'dirt'), '客户端读回探针布置的两块泥土');
     if (wallProbe) {
@@ -158,6 +168,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     const [code] = await exit;
     if (code !== 0) throw new Error('体验宿主退出码 ' + code);
   } finally {
+    if (mode === '--pickup-probe') send('effect clear DfyCompanion minecraft:mining_fatigue');
     fs.closeSync(fs.openSync(stop, 'a'));
     try { if (exit) await exit; }
     finally { game.stop(); await gameDone; }
@@ -229,7 +240,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

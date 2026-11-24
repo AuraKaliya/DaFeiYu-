@@ -123,7 +123,7 @@ async function checkPlayer(fixture, mode) {
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -132,6 +132,8 @@ async function checkPlayer(fixture, mode) {
       await checkFillFour(fixture, player, whispers, combined);
     } else if (mode === '--craft-probe') {
       await checkCraft(fixture, player, whispers);
+    } else if (mode === '--pickup-probe') {
+      await checkPickup(fixture, player, whispers);
     } else if (layered) {
       await checkLayeredFollow(fixture, player, whispers, resupply);
     } else if (doorProbe) {
@@ -489,6 +491,60 @@ async function checkFollowDig(fixture, player, whispers) {
   assert.equal(exit.body.bridgeWork, resumed.bridgeWork);
   assert.equal(exit.body.result.status, 'interrupted');
   await until(() => fixture.settled >= 7, '跟随停止原话已处理');
+}
+
+// 用实际插话和另一客户端拾取，核对原采掘在途反馈、受阻原因和双方库存。
+// 步骤：发起取材 → 在实际开挖时插话并计时 → 对照真实掉落、拾取人和结算发言。
+async function checkPickup(fixture, player, whispers) {
+  const point = player.entity.position.clone().set(73, -60, 0);
+  await until(() => player.entity.position.x === 72.5 && player.blockAt(point)?.name === 'grass_block', '取材格与独立拾取人就位');
+  const events = () => readRows(fixture, 'trace/events.jsonl');
+  const feedback = '我正在挖草方块，泥土还没进背包。';
+  const completion = '这块泥土是你捡到的，我的背包里还是零块。';
+  const collectPacket = packet => packet.collectorEntityId === player.entity.id && packet.pickupItemCount === 1;
+  const packets = [];
+  const onCollect = packet => packets.push(packet);
+  // 独立玩家看到泥土生成才进入已经挖开的格，由服务器正常判定拾取。
+  const onDrop = entity => {
+    if (entity.position.distanceTo(point) < 2 && entity.getDroppedItem?.()?.name === 'dirt')
+      fixture.send('tp DfyGuestCheck 73.5 -60 0.5');
+  };
+  player.on('itemDrop', onDrop);
+  player._client.on('collect', onCollect);
+  try {
+    player.chat('帮我就地取一块泥土。');
+    const digging = await until(() => events().find(row => row.category === 'mc.partner.motion' && row.body.status === 'digging'),
+      '宿主按原工作读到实际开挖');
+    const path = join(fixture.evidence, 'player-feedback.json');
+    await measurePlayerFeedback(player, '挖得怎么样了？', feedback, () => until(() => whispers.includes(feedback), '采掘中的实际反馈'),
+      sample => writeFileSync(path, JSON.stringify({ ...sample, bridgeWork: digging.body.action.bridgeWork }, null, 2)));
+    await until(() => whispers.includes(completion), '角色报告由原玩家拾取', 20000);
+    const actions = readRows(fixture, 'game-actions.jsonl');
+    const jobs = actions.filter(row => row.skill === 'collect');
+    assert.equal(jobs.length, 1);
+    const [job] = jobs;
+    assert.equal(job.work, digging.body.action.bridgeWork);
+    assert.deepEqual([job.result.status, job.result.reasonCode, job.result.broken, job.result.stock.after],
+      ['blocked', 'pickup_other_collector', 1, 0]);
+    const entry = job.result.pickups.recent[0];
+    assert.ok(packets.some(packet => collectPacket(packet) && packet.collectedEntityId === entry.entityId));
+    assert.equal(player.inventory.items().filter(item => item.name === 'dirt').reduce((n, item) => n + item.count, 0), 1);
+    assert.equal(fixture.materialCount('dirt'), 0);
+    assert.equal(player.blockAt(point).name, 'air');
+    assert.deepEqual(whispers, [feedback, completion]);
+    const reply = actions.find(row => row.skill === 'reply' && row.result.text === feedback);
+    const prepared = events().filter(row => row.kind === 'model.prepared' && row.step === 1 &&
+      row.session === digging.body.action.session).map(readPartnerContext)
+      .find(turn => turn.input.events.some(event => event.sequence === reply.order && event.text === '挖得怎么样了？'));
+    assert.equal(prepared.input.activeMotion.work, job.work);
+    const sample = JSON.parse(readFileSync(path, 'utf8'));
+    assert.ok(Number.isFinite(sample.elapsedMs));
+    writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: reply.order, replyWork: reply.work,
+      progress: prepared.input.activeMotion.progress }, null, 2));
+  } finally {
+    player._client.removeListener('collect', onCollect);
+    player.removeListener('itemDrop', onDrop);
+  }
 }
 
 // 用独立游戏客户端核对场景读数、合成实效和玩家收到的结果。
