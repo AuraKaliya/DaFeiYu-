@@ -39,7 +39,8 @@ async function play(fixture, exe, pkg, mode, config) {
   const doorProbe = mode === '--door-probe';
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
-  const gapGroup = mode === '--gap-group-probe';
+  const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
+  const gapGroup = explicitOpenings || mode === '--gap-group-probe';
   const wallProbe = doorProbe || fillFour || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
   const withDirt = !fillFour && mode !== '--gap-ambiguous-probe';
   const root = path.join(evidence, 'host');
@@ -88,6 +89,11 @@ async function play(fixture, exe, pkg, mode, config) {
       send('setblock 3 -60 -3 minecraft:air');
       send('tp DfyCompanion 5.5 -60 -0.5');
       send('tp DfyGuestCheck 3.5 -60 -0.5 0 4');
+      if (explicitOpenings) {
+        send('clear DfyCompanion minecraft:dirt');
+        send('give DfyCompanion minecraft:dirt 2');
+        send('tp DfyGuestCheck 5.5 -60 -0.5 180 4');
+      }
     }
     if (fillFour) prepareFourCells(send, combined);
     if (mode === '--gap-materials-probe') {
@@ -113,7 +119,7 @@ async function play(fixture, exe, pkg, mode, config) {
     if (wallProbe) {
       const block = (x, y) => game.bot.blockAt(game.bot.entity.position.clone().set(x,y,-3))?.name;
       await until(() => fixture.materialCount('oak_door') === (doorProbe ? 0 : 1) &&
-        fixture.materialCount('dirt') === (combined ? 0 : fillFour ? 3 : withDirt ? 8 : 0) &&
+        fixture.materialCount('dirt') === (explicitOpenings ? 2 : combined ? 0 : fillFour ? 3 : withDirt ? 8 : 0) &&
         block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === (fillFour || gapGroup ? 'air' : 'dirt') && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
     }
@@ -211,7 +217,7 @@ async function rehearse(fixture, exe, pkg, mode) {
 async function main() {
   const [exe, pkg, mode, config] = process.argv.slice(2);
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
-    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
+    '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
     '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');

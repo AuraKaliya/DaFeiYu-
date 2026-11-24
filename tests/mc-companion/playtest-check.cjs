@@ -120,7 +120,8 @@ async function checkPlayer(fixture, mode) {
     const combined = mode === '--follow-dig-fill-probe';
     const resupply = mode === '--layered-resupply-probe';
     const layered = resupply || mode === '--layered-follow-probe';
-    const gapGroup = mode === '--gap-group-probe';
+    const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
+    const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
     const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
@@ -139,6 +140,8 @@ async function checkPlayer(fixture, mode) {
       await checkWater(fixture, player, whispers);
     } else if (mode === '--gap-materials-probe') {
       await checkMaterials(fixture, player, whispers);
+    } else if (explicitOpenings) {
+      await checkOpeningScope(fixture, player, whispers, mode === '--gap-left-probe');
     } else if (gapGroup) {
       await checkOpeningGroup(fixture, player, whispers);
     } else if (wallProbe) {
@@ -247,6 +250,50 @@ async function checkOpeningGroup(fixture, player, whispers) {
     session: input.session, run: input.run, work: delivery.work }, null, 2));
   const placed = actions.find(row => row.skill === 'fill_target');
   assert.deepEqual([placed.exited, placed.result.sourceMessage, placed.result.changes.length], [true, 2, 4]);
+}
+
+// 用同一面墙和初始库存核对不同玩家授权的首反馈和实际放置格。
+// 步骤：从玩家发话计时 → 按实际材料缺口补给 → 对照玩家视野、原观察与执行回执。
+async function checkOpeningScope(fixture, player, whispers, left) {
+  const columns = [3, 7];
+  const blocks = () => columns.flatMap(x => [-60, -59].map(y => player.blockAt(player.entity.position.clone().set(x,y,-3))?.name));
+  await until(() => blocks().every(name => name === 'air') && fixture.materialCount('dirt') === 2, '同场两处开口及两块泥土');
+  const message = left ? '只补左边的缺口' : '墙上两个缺口都补';
+  const feedback = left ? '左边的缺口有两格，我有两块泥土，够补。' : '两处缺口共四格，我有两块泥土，还差两块。';
+  const path = join(fixture.evidence, 'player-feedback.json');
+  let sample;
+  await measurePlayerFeedback(player, message, feedback,
+    () => until(() => whispers.includes(feedback), '收到与原目标和材料相符的反馈'), result => {
+      sample = result;
+      writeFileSync(path, JSON.stringify(result, null, 2));
+    });
+  if (!left) {
+    assert.deepEqual(blocks(), ['air','air','air','air']);
+    fixture.send('give DfyCompanion minecraft:dirt 2');
+    await until(() => fixture.materialCount('dirt') === 4, '两块补给进入角色背包');
+    player.chat('缺的两块泥土给你了，按原范围补');
+  }
+
+  const completion = left ? '左边的缺口补好了。' : '两处缺口都补齐了。';
+  await until(() => whispers.includes(completion), '玩家收到实际放置结果', 40000);
+  assert.deepEqual(whispers, [feedback, completion]);
+  assert.deepEqual(blocks(), left ? ['dirt','dirt','air','air'] : ['dirt','dirt','dirt','dirt']);
+  assert.equal(fixture.materialCount('dirt'), 0);
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  const original = actions.find(row => row.result.openingObservation);
+  const speech = actions.find(row => row.skill === 'reply' && row.result.text === feedback);
+  const fills = actions.filter(row => row.skill === 'fill_target');
+  assert.deepEqual([original.result.openingObservation.message, original.result.inventory.dirt, speech.order, speech.result.sent], [2, 2, 2, true]);
+  const expectedCells = (left ? [3] : columns).flatMap(x => [-60,-59].map(y => [x,y,-3].join(','))).sort();
+  assert.deepEqual(fills.map(row => [row.result.sourceMessage,
+    row.result.changes.map(({ x, y, z }) => [x,y,z].join(',')).sort()]), [[2, expectedCells]]);
+  const rows = readRows(fixture, 'trace/events.jsonl');
+  const turn = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
+    readPartnerContext(row).input.events.some(event => event.sequence === 2 && event.text === message));
+  const delivery = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === speech.work);
+  assert.equal(delivery.body.session, turn.session);
+  writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: 2, session: turn.session, run: turn.run,
+    work: speech.work, observation: original.work }, null, 2));
 }
 
 // 在真实世界中验证高台掉队、取材后垫高和原跟随恢复。

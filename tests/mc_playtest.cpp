@@ -1,6 +1,7 @@
 #include "companion_host.hpp"
 #include "application.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -788,13 +789,18 @@ dfy::model::Response water_sample(const dfy::model::Request& request) {
 }
 
 // 用实际游戏读回核对自然答复后补齐原话中的两个开口。
-// 步骤：记录原墙开口 → 发出局内追问 → 逐格读回并按原编号绑定 → 结算放置。
-dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
+// 步骤：核对候选和库存 → 依据范围澄清或反馈材料 → 逐格绑定原目标 → 结算放置。
+dfy::model::Response opening_group_sample(const dfy::model::Request& request, std::wstring_view mode) {
     using namespace dfy::model;
     using Json = nlohmann::json;
-    const Json cells = Json::array({{{"x",3},{"y",-60},{"z",-3}},{{"x",3},{"y",-59},{"z",-3}},
-        {{"x",7},{"y",-60},{"z",-3}},{{"x",7},{"y",-59},{"z",-3}}});
-    const Json candidates{"3,-60,-3:x","7,-60,-3:x"};
+    const bool left = mode == L"--gap-left-probe";
+    const bool explicit_scope = left || mode == L"--gap-both-probe";
+    Json cells = Json::array({{{"x",3},{"y",-60},{"z",-3}},{{"x",3},{"y",-59},{"z",-3}}});
+    Json candidates = Json::array({"3,-60,-3:x"});
+    if (!left) {
+        candidates.push_back("7,-60,-3:x");
+        for (int y : {-60,-59}) cells.push_back({{"x",7},{"y",y},{"z",-3}});
+    }
     const auto call = [&](std::string_view suffix, std::string id, const Json& args) -> Response {
         const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(suffix); });
         if (tool == request.tools.end()) throw std::runtime_error("opening group probe: missing visible tool");
@@ -806,11 +812,17 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
         if (last.tool_call_id == "look-at-openings") {
             const auto& focus = result.at("playerFocus");
             if (result.contains("survey") || result.contains("nearby") || result.contains("lastAction") ||
-                result.at("openingObservation").at("coverage").at("width") != 11 || result.at("inventory").at("dirt") != 8 ||
-                focus.at("candidateCount") < 2 || focus.at("status") != "ambiguous" || !std::ranges::all_of(candidates,[&](const auto& id) {
-                return std::ranges::any_of(focus.at("candidates"),[&](const auto& gap) { return gap.at("id") == id && gap.at("height") == 2; });
+                result.at("openingObservation").at("coverage").at("width") != 11 || result.at("inventory").at("dirt") != (explicit_scope ? 2 : 8) ||
+                focus.at("candidateCount") < 2 || focus.at("status") != "ambiguous" || !std::ranges::all_of(std::array{"3,-60,-3:x","7,-60,-3:x"},[&](const auto& id) {
+                return std::ranges::any_of(focus.at("candidates"),[&](const auto& gap) { return gap.at("id") == id && gap.at("width") == 1 && gap.at("height") == 2; });
             })) throw std::runtime_error("opening group probe: original view did not expose both openings");
+            if (explicit_scope) return call("_reply","scope-feedback",{{"text",left ?
+                "左边的缺口有两格，我有两块泥土，够补。" : "两处缺口共四格，我有两块泥土，还差两块。"}});
             return call("_ask_player","ask-about-openings",{{"question","两处缺口都要补吗？"},{"scope",{{"skill","place"}}}});
+        }
+        if (last.tool_call_id == "scope-feedback") {
+            if (!left) return {{Role::assistant,R"({"internal":"等待建材"})"}};
+            return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
         }
         if (last.tool_call_id == "expand-original") {
             if (result.at("sourceObservation").at("message") != 2 || survey_block(result.at("survey"),3,-60,-3) != ".")
@@ -818,6 +830,9 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
             return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
         }
         if (last.tool_call_id == "verify-openings") {
+            Json update{{"goal",left ? "只补左边的缺口" : "补齐两处墙面缺口"},{"next","continue"},
+                {"target",{{"message",2},{"candidates",candidates},{"observation",result.at("observation").at("id")}}}};
+            if (explicit_scope) return call("_task_update","resolve-openings",update);
             const auto input = std::ranges::find_if(request.messages.rbegin(),request.messages.rend(),[](const auto& message) {
                 return message.role == Role::user;
             });
@@ -825,11 +840,11 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
             const auto pending = Json::parse(input->content).at("pendingQuestion");
             if (pending.at("sourceMessage") != 2 || pending.at("openingObservation").at("pinned") != true)
                 throw std::runtime_error("opening group probe: the original question lost its evidence");
-            return call("_task_update","resolve-openings",{{"goal","补齐两处墙面缺口"},{"next","continue"},
-                {"resolves",pending.at("item")},{"target",{{"message",2},{"candidates",candidates},{"observation",result.at("observation").at("id")}}}});
+            update["resolves"] = pending.at("item");
+            return call("_task_update","resolve-openings",update);
         }
         if (last.tool_call_id == "resolve-openings") {
-            if (result.at("task").at("target").at("cells") != cells || result.at("resolvedQuestion").at("answer") != "都补")
+            if (result.at("task").at("target").at("cells") != cells || (!explicit_scope && result.at("resolvedQuestion").at("answer") != "都补"))
                 throw std::runtime_error("opening group probe: verified range or answer mismatch");
             const Json node{{"id","fill"},{"skill","fill_target"},{"arguments",{{"block","dirt"}}}};
             return call("_queue_actions","fill-openings",{{"operation","plan"},{"steps",Json::array({node})}});
@@ -840,14 +855,15 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
             const auto& plan = input.at("taskPlan");
             const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
             if (result.at("status") != "done" || result.at("changes").size() != cells.size() ||
-                plan.at("origin").at("text") != "帮我把墙上的缺口补好" || plan.at("origin").at("sequence") != 2 ||
-                plan.at("clarification").at("answerMessage") != 3 || plan.at("clarification").at("answer") != "都补")
-                throw std::runtime_error("opening group probe: did not complete both openings");
-            return {{Role::assistant,"两处缺口都补齐了。"}};
+                (!explicit_scope && (plan.at("origin").at("text") != "帮我把墙上的缺口补好" || plan.at("origin").at("sequence") != 2 ||
+                plan.at("clarification").at("answerMessage") != 3 || plan.at("clarification").at("answer") != "都补")))
+                throw std::runtime_error("opening group probe: actual placement did not match original scope");
+            return {{Role::assistant,left ? "左边的缺口补好了。" : "两处缺口都补齐了。"}};
         }
         if (!input.at("events").empty()) {
             const auto sequence = input.at("events").back().at("sequence");
             if (sequence == 2) return call("_observe","look-at-openings",{{"mode","pointed"},{"focus","openings"},{"message",2}});
+            if (sequence == 3 && explicit_scope) return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
             if (sequence == 3) return call("_observe","expand-original",{{"mode","detail"},
                 {"observation",input.at("pendingQuestion").at("openingObservation").at("observationWork")}});
         }
@@ -866,7 +882,7 @@ int wmain(int argc, wchar_t** argv) {
             manual || mode == L"--ask-main-probe" ? "main" : mode == L"--gap-ambiguous-probe" ? "local" : "";
         const bool gap = mode == L"--gap-probe" || mode == L"--gap-ambiguous-probe";
         const bool wall = !ask.empty() || mode == L"--wall-probe" || gap;
-        const bool gap_group = mode == L"--gap-group-probe";
+        const bool gap_group = mode == L"--gap-group-probe" || mode == L"--gap-left-probe" || mode == L"--gap-both-probe";
         const bool follow = mode == L"--follow-probe";
         const bool door = mode == L"--door-probe";
         const bool materials = mode == L"--gap-materials-probe";
@@ -889,9 +905,9 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,ask,gap,root](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,ask,gap,root,mode](const auto&, const auto& request) {
                 if (craft) return craft_sample(request);
-                if (gap_group) return opening_group_sample(request);
+                if (gap_group) return opening_group_sample(request,mode);
                 if (layered) return layered_follow_sample(request,resupply);
                 if (water) return water_sample(request);
                 if (fill_four) return fill_four_sample(request,combined);
