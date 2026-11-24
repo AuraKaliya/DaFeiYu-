@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import ManagementShell from './ManagementShell.vue';
+import RoomStateView, { type StateReading } from './RoomStateView.vue';
 import { recoverDialogue, rememberDialogue, rememberDraft, type IntentAction, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -36,8 +37,12 @@ const scope = `${crypto.randomUUID()}-`;
 const turns = shallowRef<readonly Turn[]>([]);
 const queue = shallowRef<readonly QueuedMessage[]>([]);
 const queuePaused = ref(false);
-const room = shallowRef<{ instance: string; body: string; name: string; place: string }>();
-let nextRoomRead = 0;
+const room = shallowRef<StateReading>();
+const conversation = shallowRef<StateReading>();
+const roomCurrent = ref(false);
+let nextRoomRead = 0, latestRoomSnapshot = 0;
+let roomConfirmed = -Infinity, dialogueConfirmed = -Infinity;
+const freshnessMs = 3500;
 const pending = shallowRef<Pending>();
 const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
@@ -61,7 +66,7 @@ const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurr
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
 // 区分页面提交、后端收尾与可接纳下一轮，上一轮的结果留在原条目。
 const panelStatus = computed(() => {
-  if (!ready.value) return '正在连接';
+  if (!ready.value) return conversation.value ? '连接中断' : '正在连接';
   if (lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending') return '正在收尾';
   if (stoppedCurrent.value && lastTurn.value?.result === 'pending') return '已请求停止';
   if (pending.value) return { send: '正在提交', enqueue: '正在排队', append: '正在提交补充', clear: '正在清空', resume: '正在恢复', remove: '正在移除' }[pending.value.action];
@@ -143,10 +148,58 @@ function post(fields: Readonly<Record<string, string>>): void {
   bridge.postMessage({ ...fields, version: '1', request: `${scope}${++request}` });
 }
 
-// 按已读修订查询快照，等待原提交时同时查询同号回执。
+// 查询两类快照与原命令回执，失联时保留最后可信的可见值。
+// 步骤：检查接收时效 → 查询对话与未决回执 → 按房间频率补读。
 function read(): void {
+  const now = performance.now();
+  if (now - dialogueConfirmed > freshnessMs) { ready.value = false; accepting.value = false; }
+  if (now - roomConfirmed > freshnessMs) roomCurrent.value = false;
   post({ type: 'dialogue.read', revision, command: pending.value?.id ?? pendingStop.value });
   if (pending.value && pendingStop.value) post({ type: 'dialogue.read', revision, command: pendingStop.value });
+  if (now >= nextRoomRead) {
+    nextRoomRead = now + 1000;
+    post({ type: 'room.read' });
+  }
+}
+
+// 验证房间位置与原生身份，将有序快照投影为只读状态字段。
+// 步骤：核对请求顺序与载荷 → 区分断开及旧修订 → 保存已核实的当前位置和行为。
+function receiveRoom(data: unknown, sequence: number): void {
+  if (sequence <= latestRoomSnapshot) return;
+  if (data === null) {
+    latestRoomSnapshot = sequence;
+    roomConfirmed = -Infinity;
+    roomCurrent.value = false;
+    return;
+  }
+  if (!isRecord(data) || !isDecimal(data.instance) || !isDecimal(data.generation) || !isDecimal(data.body) ||
+      !isDecimal(data.revision) || !isDecimal(data.layoutVersion) || typeof data.roomName !== 'string' ||
+      typeof data.placeName !== 'string' || !Number.isSafeInteger(data.x) || !Number.isSafeInteger(data.y) ||
+      typeof data.activity !== 'string') return;
+
+  const identity = `${data.instance}/${data.generation}/${data.body}`;
+  if (room.value?.identity === identity && BigInt(data.revision) < BigInt(room.value.revision)) return;
+  latestRoomSnapshot = sequence;
+  roomConfirmed = performance.now();
+  roomCurrent.value = true;
+  room.value = { source: '本体书房', identity, revision: data.revision, time: Date.now(),
+    binding: { instance: data.instance, body: data.body }, fields: {
+      '当前位置': `${data.roomName} · ${data.placeName}`, '身体坐标': `(${data.x}, ${data.y})`,
+      '身体行为': data.activity === 'resting' ? '停留' : '未知', '房间实例 / 代次': `${data.instance} / ${data.generation}`,
+      '身体编号': data.body, '布局版本': data.layoutVersion,
+    } };
+}
+
+// 从同一份原生对话快照提取状态，分别记录业务结果、实际退出与待发项。
+function publishConversation(canAccept: boolean, currentRevision: string): void {
+  const turn = turns.value.at(-1);
+  const result = { pending: '处理中', succeeded: '成功', failed: '失败', cancelled: '已取消' };
+  const exit = { pending: '尚未退出', succeeded: '已退出', failed: '退出失败', cancelled: '已取消' };
+  conversation.value = { source: '主会话', identity: 'main', revision: currentRevision, time: Date.now(), fields: {
+    '接纳新对话': canAccept ? '可以接纳' : '暂不可接纳', '最近回合': turn ? `${turn.session} / ${turn.turn}` : '尚无回合',
+    '回合结果': turn ? result[turn.result] : '无', '实际退出': turn ? exit[turn.exit] : '无',
+    '待发消息': `${queue.value.length} 条`, '队列状态': queuePaused.value ? '已暂停' : queue.value.length ? '等待发送' : '空',
+  } };
 }
 
 // 只在原发送获接纳时清掉未改动的原稿，控制命令由正式快照呈现结果。
@@ -181,28 +234,22 @@ function settle(receipt: Receipt): void {
 function receive(event: MessageEvent<unknown>): void {
   const value = event.data;
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
+  const sequence = Number(value.request.slice(scope.length));
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
   if (value.event === 'room.snapshot') {
-    const data = value.room;
-    if (isRecord(data) && isDecimal(data.instance) && isDecimal(data.body) && isDecimal(data.generation) &&
-        isDecimal(data.revision) && isDecimal(data.layoutVersion) && typeof data.roomName === 'string' && typeof data.placeName === 'string')
-      room.value = { instance: data.instance, body: data.body, name: data.roomName, place: data.placeName };
+    receiveRoom(value.room, sequence);
     return;
   }
   if (value.event === 'dialogue.snapshot') {
-    const sequence = Number(value.request.slice(scope.length));
-    if (!Number.isSafeInteger(sequence) || sequence <= latestSnapshot || typeof value.ready !== 'boolean' ||
+    if (sequence <= latestSnapshot || typeof value.ready !== 'boolean' ||
         typeof value.accepting !== 'boolean' || !isDecimal(value.latestCommand) || typeof value.revision !== 'string' ||
         typeof value.queuePaused !== 'boolean' || (value.turns === null) !== (value.queue === null) ||
         (value.turns !== null && (!Array.isArray(value.turns) || !value.turns.every(isTurn))) ||
         (value.queue !== null && (!Array.isArray(value.queue) || !value.queue.every(isQueuedMessage)))) return;
+    if (value.ready && !isDecimal(value.revision)) return;
     latestSnapshot = sequence;
+    dialogueConfirmed = performance.now();
     ready.value = value.ready;
-    const now = performance.now();
-    if (ready.value && !room.value && now >= nextRoomRead) {
-      // 首读或回包可能随页面重载丢失，取得原生位置前最多每秒补查一次。
-      nextRoomRead = now + 1000;
-      post({ type: 'room.read' });
-    }
     accepting.value = value.accepting;
     queuePaused.value = value.queuePaused;
     const latestCommand = BigInt(value.latestCommand);
@@ -212,6 +259,7 @@ function receive(event: MessageEvent<unknown>): void {
       turns.value = value.turns;
       queue.value = value.queue;
     }
+    if (value.ready) publishConversation(value.accepting, value.revision);
     if (value.ready && reconnecting.size) {
       // 宿主水位尚未登记的原件才按原编号补投一次；其他原件继续只读查询。
       for (const [id, fields] of outstanding) {
@@ -323,15 +371,7 @@ onUnmounted(() => {
       <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
     </template>
     <template #room>
-      <h2 class="view-title">房间</h2>
-      <h3 class="group-title">最新状态</h3>
-      <dl class="state-fields">
-        <dt>当前位置</dt>
-        <dd v-if="room" id="room-location" :data-room="room.instance" :data-body="room.body">{{ room.name }}<span aria-hidden="true"> · </span>{{ room.place }}</dd>
-        <dd v-else>等待读取</dd>
-        <dt>最近回合</dt><dd>{{ lastTurn?.turn ?? (ready ? '尚无回合' : '等待读取') }}</dd>
-        <dt>待发消息</dt><dd>{{ ready ? queue.length + ' 条' : '等待读取' }}</dd>
-      </dl>
+      <RoomStateView :room="room" :conversation="conversation" :room-current="roomCurrent" :conversation-current="ready" />
     </template>
     <template #settings>
       <h3 class="group-title">插件管理</h3>

@@ -63,13 +63,26 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         const bridge=window.chrome.webview, post=bridge.postMessage.bind(bridge);
         window.fixtureRoomReads=0;
         Object.defineProperty(bridge,'postMessage',{configurable:true,value:fields=>{
-            if (fields.type==='room.read' && ++window.fixtureRoomReads===1) return;
+            if (fields.type==='room.read' && (++window.fixtureRoomReads===1 || window.fixtureHoldRoom)) return;
             post(fields);
         }});
     }))JS"}});
     call("reload before room read",L"Page.reload",Json::object());
     expect("lost room query is recovered without leaving the panel","window.fixtureRoomReads>=2 && "
         "document.querySelector('#room-location')?.textContent==='书房 · 书桌旁' && !document.querySelector('.turn')");
+    expect("native room coordinates and activity are readable","document.querySelector('[data-source=room]')?.textContent.includes('(4, 0)') && "
+        "document.querySelector('[data-source=room]').textContent.includes('停留') && !document.querySelector('.changes li')");
+    evaluate("hold room updates and retain last confirmed position",R"JS((async()=>{
+        window.fixtureHoldRoom=true;
+        const end=performance.now()+6500;
+        while (document.querySelector('[data-source=room]').dataset.current!=='false' && performance.now()<end)
+            await new Promise(r=>setTimeout(r,50));
+        return document.querySelector('[data-source=room]').textContent.includes('数据过期') &&
+            document.querySelector('#room-location')?.textContent==='书房 · 书桌旁' &&
+            document.querySelector('[data-source=conversation]').dataset.current==='true';
+    })())JS");
+    evaluate("resume real room queries","window.fixtureHoldRoom=false; true");
+    expect("room snapshot is current again","document.querySelector('[data-source=room]').dataset.current==='true'");
     call("room matches original application body",L"Runtime.evaluate",{{"expression","({...document.querySelector('#room-location').dataset})"},{"returnByValue",true}},
         [gate](const Json& reply) {
             const auto& data = reply.at("result").at("value");
@@ -106,6 +119,8 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     evaluate("same command reuses real turn", "(async()=>{const receipt=(await window.dialogueAsk('probe-repeat',"
         "{type:'dialogue.submit',command:'1',text:"+text+"})).receipt; return receipt.state==='accepted' && "
         "receipt.turn===document.querySelector('.turn').dataset.turn;})()");
+    expect("changes are attributed to the observed conversation","[...document.querySelectorAll('.changes li')].some(item=>"
+        "item.textContent.includes('最近回合：尚无回合 → ') && item.textContent.includes('主会话 · 修订'))");
     evaluate("different text conflicts",R"JS((async()=>{
         const r = await window.dialogueAsk('probe-conflict',{type:'dialogue.submit',command:'1',text:'conflicting text'});
         return r.receipt.state === 'conflict';

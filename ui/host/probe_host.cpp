@@ -151,7 +151,8 @@ HRESULT ProbeHost::room_reply(const nlohmann::json& request, std::wstring_view s
         const auto& self = location->self;
         room = {{"instance",std::to_string(self.room.instance)},{"generation",std::to_string(self.room.generation)},
             {"layoutVersion",std::to_string(location->layout_version)},{"body",std::to_string(self.body)},
-            {"revision",std::to_string(self.revision)},{"roomName",location->room_name},{"placeName",location->place_name}};
+            {"revision",std::to_string(self.revision)},{"roomName",location->room_name},{"placeName",location->place_name},
+            {"x",self.position.x},{"y",self.position.y},{"activity",self.activity == app::RoomActivity::resting ? "resting" : "unknown"}};
     }
     if (!main_panel_document(read_text([&](auto** value) { return view_->get_Source(value); }))) return E_ACCESSDENIED;
     const nlohmann::json reply{{"event","room.snapshot"},{"version","1"},{"request",id},{"room",std::move(room)}};
