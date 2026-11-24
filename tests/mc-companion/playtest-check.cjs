@@ -430,10 +430,12 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
   await until(() => whispers.includes('是你让我就地备两块泥土的那次。'),'下轮可沿完工发言找到原委托');
 }
 
-// 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
+// 用独立玩家核对备料询问、投物在途发言与最终实际收件。
+// 步骤：读回初始库存 → 发送委托并按场景控制收件时机 → 核对实际发言、原工作和库存。
 async function checkHandoff(fixture, player, whispers, mode, other) {
   const interrupt = mode === '--handoff-progress-probe';
   const feedback = mode === '--handoff-feedback-probe';
+  const staleFeedback = mode === '--handoff-stale-feedback-probe';
   const late = interrupt || feedback || mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
@@ -447,7 +449,7 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
-  if (late || other) {
+  if (late || other || staleFeedback) {
     fixture.send('clear DfyGuestCheck');
     fixture.send('give DfyGuestCheck minecraft:stone 2304');
     await until(() => player.inventory.count(player.registry.itemsByName.stone.id) === 2304,'收件玩家的 36 个槽位已满');
@@ -464,6 +466,16 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
     row.category === 'mc.partner.motion' && row.body.status === 'awaiting_receipt' && row.body.progress.thrown === 66 &&
     row.body.progress.pickupUnknown === 66 && row.body.progress.coverage === 'read');
   await measurePlayerFeedback(player,'那就给我六十六块泥土。',sent,async () => {
+    if (staleFeedback) {
+      const waiting = await until(() => existsSync(join(fixture.evidence,'host/model-events.jsonl')) &&
+        readRows(fixture,'model-events.jsonl').find(row => row.waitingForPickup),'进展答复已在固定后端等待');
+      fixture.send('clear DfyGuestCheck minecraft:stone');
+      await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66 &&
+        readRows(fixture,'trace/events.jsonl').some(row => row.category === 'mc.partner.action' &&
+          row.body.bridgeWork === waiting.waitingForPickup && row.body.result.receipt?.recipientPicked === 66),
+        '原玩家已收件且宿主已归档原投物工作');
+      writeFileSync(join(fixture.evidence,'host/pickup-confirmed'),waiting.waitingForPickup);
+    }
     if (interrupt) {
       const current = await until(() => pending()[0],'原工作已投出，尚待收取');
       await measurePlayerFeedback(player,'东西已经丢出来了吗？',during,() => until(() => whispers.includes(during),'交物等待中的实际答复'),
@@ -489,6 +501,8 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
   const expected = interrupt ? [reply,during,sent] : [reply,sent];
   assert.deepEqual(whispers,expected);
+  if (staleFeedback) assert.deepEqual(readRows(fixture,'model-events.jsonl').filter(row => row.returnedOldProgress),
+    [{ returnedOldProgress:job.work }]);
   if (interrupt) assert.deepEqual(pending().map(row => row.body.action.bridgeWork),[job.work]);
   if (feedback) {
     const events = await until(() => {
