@@ -285,16 +285,25 @@ async function checkOpeningScope(fixture, player, whispers, left) {
   const speech = actions.find(row => row.skill === 'reply' && row.result.text === feedback);
   const fills = actions.filter(row => row.skill === 'fill_target');
   assert.deepEqual([original.result.openingObservation.message, original.result.inventory.dirt, speech.order, speech.result.sent], [2, 2, 2, true]);
-  const expectedCells = (left ? [3] : columns).flatMap(x => [-60,-59].map(y => [x,y,-3].join(','))).sort();
+  const rows = readRows(fixture, 'trace/events.jsonl');
+  const summary = JSON.parse(rows.find(row => row.kind === 'tool.exited' && row.callId === 'look-at-openings').output);
+  assert.equal(summary.openingObservation.id, original.work);
+  const wall = summary.playerFocus.candidates.filter(gap => gap.block === 'dirt' && gap.axis === 'x' && gap.z === -3 && gap.y === -60)
+    .sort((a, b) => a.x - b.x);
+  assert.deepEqual(wall.map(gap => [gap.x, gap.width, gap.height]), [[3,1,2],[7,1,2]]);
+  const selected = left ? wall.slice(0, 1) : wall;
+  const expectedCells = selected.flatMap(gap => Array.from({ length: gap.height }, (_, dy) => [gap.x,gap.y+dy,gap.z].join(','))).sort();
+  const materials = { needed: expectedCells.length, available: summary.inventory.dirt,
+    missing: Math.max(0, expectedCells.length - summary.inventory.dirt) };
+  assert.equal(materials.missing, left ? 0 : 2);
   assert.deepEqual(fills.map(row => [row.result.sourceMessage,
     row.result.changes.map(({ x, y, z }) => [x,y,z].join(',')).sort()]), [[2, expectedCells]]);
-  const rows = readRows(fixture, 'trace/events.jsonl');
   const turn = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
     readPartnerContext(row).input.events.some(event => event.sequence === 2 && event.text === message));
   const delivery = rows.find(row => row.category === 'mc.partner.action' && row.body.bridgeWork === speech.work);
   assert.equal(delivery.body.session, turn.session);
   writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: 2, session: turn.session, run: turn.run,
-    work: speech.work, observation: original.work,
+    work: speech.work, observation: original.work, candidates: selected.map(gap => gap.id), materials,
     modelThinking: { enabled: turn.thinking, effort: turn.reasoningEffort } }, null, 2));
 }
 

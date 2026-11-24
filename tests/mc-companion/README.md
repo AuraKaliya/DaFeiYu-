@@ -16,6 +16,8 @@
 
 固定响应的两处开口场景可在 `playtest.cjs` 的 `--gap-group-probe` 后加 `low` 或 `off`。复用同一构建和场地分别运行，两局的 `player-feedback.json` 都记录实际送模档位、原消息、投递工作和玩家端首反馈耗时。
 
+明确范围的两局还从首次送模摘要取出对应墙面的开口尺寸与泥土库存。在 `player-feedback.json` 中，`candidates` 关联原候选编号，`materials` 给出所需、已有及短缺数量。可将候选展开的坐标与游戏实际放置回执逐格比较。
+
 ### 动作调度和目标绑定基线
 
 在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
