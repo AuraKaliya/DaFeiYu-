@@ -71,13 +71,13 @@ flowchart TB
 | **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../app/ask.cpp) · [交互路由](../app/interaction_routes.cpp) · [事件解析](#事件注册与解析) · [信箱唤醒](#信箱优先级与唤醒) |
 | **回信与回执** | `mail_reply` 将模型工具调用解析为绑定原信和本轮的转发意图。`ReplyDelivery` 处理两条路径的最终入箱与确认。入箱回执和插件消费回执各有身份。[回信工具](../app/mail_reply_tool.cpp) · [结果投递](../app/reply_delivery.cpp) |
 | **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../app/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
-| **Desktop** | Vue 主面板通过 WebView2 向原生业务线程提交用户意图。应用管理主会话和下一轮队列，Agent 记录本轮补充实际进入的模型步骤。刷新按原命令查回执。受信页面通过 `room.read` 读取身体位置，公开 `state.read` 返回无正文运行摘要。[业务线程](../app/gui/run_status_host.cpp) · [应用队列](../app/dialogue_queue.cpp) · [面板运行说明](ui-probe-run-guide.md) |
+| **Desktop** | Vue 主面板通过 WebView2 向原生业务线程提交用户意图。应用管理主会话和下一轮队列，Agent 记录本轮补充实际进入的模型步骤。刷新按原命令查回执。受信页面通过 `room.read` 读取身体位置，公开 `state.read` 返回无正文运行摘要。[业务线程](../app/management/host.cpp) · [应用队列](../app/dialogue_queue.cpp) · [面板运行说明](ui-probe-run-guide.md) |
 
 构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。终端是默认启动目标，`BUILD_GUI` 和 `BUILD_TESTING` 控制探针和测试目标。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
 
 ## 桌面主面板的回执和位置
 
-同一句原话在忙时可以有两个去向。「本轮补充」绑定当前会话和回合，先取得消息号，真正进入后续模型请求后才有步骤号。「下一轮」把原话放入应用队列，前一轮成功且实际退出后才开新回合，新回合保留排队消息号。停止有独立的命令槽位，页面能同时显示本轮已取消、原工作正在收尾和队列已暂停。[回合补充](../agent/run_loop.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [原生命令桥](../app/gui/run_status_host.cpp)
+同一句原话在忙时可以有两个去向。「本轮补充」绑定当前会话和回合，先取得消息号，真正进入后续模型请求后才有步骤号。「下一轮」把原话放入应用队列，前一轮成功且实际退出后才开新回合，新回合保留排队消息号。停止有独立的命令槽位，页面能同时显示本轮已取消、原工作正在收尾和队列已暂停。[回合补充](../agent/run_loop.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [原生命令桥](../app/management/host.cpp)
 
 草稿属于当前窗口，已接纳的原话、队列和结果由应用持有。页面刷新后先查询宿主的命令水位，未登记的原件沿用原命令号补投，已登记的命令取回原回执。房间位置由本体另行提供。正式面板和预览均已移除旧书房图，角色能否看见灯态由本体按身体坐标、距离和屏风计算。当前主会话读写和房间快照的生命周期均限于本进程。[窗口恢复](../ui/web/src/dialogue-recovery.ts) · [主面板](../ui/web/src/MainPanel.vue) · [书房](../app/builtin_room.cpp)
 

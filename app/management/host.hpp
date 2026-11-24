@@ -8,14 +8,14 @@
 #include <mutex>
 #include <thread>
 
-namespace dfy::ui {
-// 业务线程独占应用服务，主窗口只借用快照的值副本。
-class RunStatusHost {
+namespace dfy::management {
+// 业务线程独占应用服务，观察端可独立读取快照或离开。
+class Host {
   public:
     using Open = std::function<std::unique_ptr<app::Application>()>;
     using Drive = std::function<void(app::Application&)>;
     // 在业务线程创建应用，按原顺序推进会话与插件。
-    explicit RunStatusHost(Open open, Drive drive = {});
+    explicit Host(Open open, Drive drive = {});
     // 只复制最近发布的快照，锁内不调用应用服务。
     std::optional<app::RunStatusSnapshot> snapshot() const;
     // 复制业务线程已经核实的房间与身体位置，无需唤醒主会话。

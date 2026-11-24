@@ -30,8 +30,8 @@ std::string_view operation_state(runtime::OperationState state) noexcept {
 }
 
 // 将窗口命令状态映射成固定标签，结果及实际退出来自独立的回合条目。
-std::string_view dialogue_state(DialogueCommandState state) noexcept {
-    using State = DialogueCommandState;
+std::string_view dialogue_state(management::DialogueCommandState state) noexcept {
+    using State = management::DialogueCommandState;
     switch (state) {
     case State::unavailable: return "unavailable";
     case State::queued: return "queued";
@@ -47,31 +47,31 @@ std::string_view dialogue_state(DialogueCommandState state) noexcept {
 }
 
 // 以十进制字符串返回原命令、正式回合和待发消息身份。
-nlohmann::json dialogue_receipt(const DialogueReceipt& receipt) {
+nlohmann::json dialogue_receipt(const management::DialogueReceipt& receipt) {
     return {{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
         {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)},{"message",std::to_string(receipt.message)}};
 }
 
 // 按固定命令名逐项核对字段，只从对应入口读取正文、原回合或待发消息。
 // 步骤：解析命令身份 → 验证该命令的字段数量与目标 → 交付带类型的业务命令。
-DialogueCommand dialogue_command(const nlohmann::json& request, std::string_view type) {
-    DialogueCommand command{run_id_part(request.at("command")),DialogueAction::send,{},{}};
+management::DialogueCommand dialogue_command(const nlohmann::json& request, std::string_view type) {
+    management::DialogueCommand command{run_id_part(request.at("command")),management::DialogueAction::send,{},{}};
     if (type == "dialogue.submit" && request.size() == 5) {
         command.text = request.at("text").get<std::string>();
         return command;
     }
     command.target.session = run_id_part(request.at("session"));
     if ((type == "dialogue.resume" || type == "dialogue.remove") && request.size() == 6) {
-        command.action = type == "dialogue.resume" ? DialogueAction::resume : DialogueAction::remove;
+        command.action = type == "dialogue.resume" ? management::DialogueAction::resume : management::DialogueAction::remove;
         command.message = run_id_part(request.at("message"));
         return command;
     }
     command.target.sequence = run_id_part(request.at("turn"));
     if ((type == "dialogue.enqueue" || type == "dialogue.append") && request.size() == 7) {
-        command.action = type == "dialogue.enqueue" ? DialogueAction::enqueue : DialogueAction::append;
+        command.action = type == "dialogue.enqueue" ? management::DialogueAction::enqueue : management::DialogueAction::append;
         command.text = request.at("text").get<std::string>();
     } else if ((type == "dialogue.cancel" || type == "dialogue.clear") && request.size() == 6) {
-        command.action = type == "dialogue.cancel" ? DialogueAction::cancel : DialogueAction::clear;
+        command.action = type == "dialogue.cancel" ? management::DialogueAction::cancel : management::DialogueAction::clear;
     } else throw std::invalid_argument("UI: invalid dialogue command");
     return command;
 }

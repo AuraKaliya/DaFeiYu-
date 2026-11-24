@@ -1,7 +1,7 @@
 #pragma once
 #include "conversation.hpp"
 
-namespace dfy::ui {
+namespace dfy::management {
 enum class DialogueAction { send, cancel, clear, enqueue, resume, remove, append };
 enum class DialogueCommandState { unavailable, queued, accepted, busy, rejected, conflict, expired, stale, full };
 

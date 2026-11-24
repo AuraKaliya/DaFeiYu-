@@ -1,3 +1,9 @@
+add_executable(dfy_management_host_tests management_host.cpp)
+target_link_libraries(dfy_management_host_tests PRIVATE dfy_management dfy_build_options)
+set_target_properties(dfy_management_host_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.management_host COMMAND dfy_management_host_tests "${CMAKE_CURRENT_BINARY_DIR}/management-host")
+set_tests_properties(app.management_host PROPERTIES TIMEOUT 15)
+
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)
 target_link_libraries(dfy_mc_playtest PRIVATE dfy_terminal nlohmann_json::nlohmann_json dfy_build_options)

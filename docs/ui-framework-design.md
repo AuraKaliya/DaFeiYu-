@@ -15,7 +15,7 @@
 | 主体已有模型配置读取，插件在实例创建时合并包内默认值和独立的用户覆盖文件。 | 主体和插件分别持有配置文件，通过同一设置界面契约登记只读、可写字段，并由宿主执行保存与校验。 |
 | 主会话与插件子会话已使用 `Session / RunLoop`，SDK 已能托管插件子会话。 | 核对两条实际入口的共用循环和输出归属，补齐通用 SDK 能力。用一个独立测试插件验证 UI 注册、双窗口和卸载。 |
 
-宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../app/application.cpp) · [会话显示记录](../app/conversation.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [桌面业务线程](../app/gui/run_status_host.cpp) · [插件配置读取](../plugins/runtime/config.cpp) · [现有 SDK](../sdk/README.md)
+宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../app/application.cpp) · [会话显示记录](../app/conversation.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [桌面业务线程](../app/management/host.cpp) · [插件配置读取](../plugins/runtime/config.cpp) · [现有 SDK](../sdk/README.md)
 
 | 当前事实 | 对设计的约束 |
 |---|---|
@@ -372,7 +372,7 @@ U02 已接入首个桌面只读查询。业务线程推进 [共享运行状态�
 
 功能验收用固定模型响应、传输替身、真实线程、DLL、临时文件、原生窗口与固定浏览器协议。开发和全量均禁止调用真实模型，UI 测试禁用 Computer Use。模型在真实场景能否自主选对工具、恰当地追问属「仅记录，不执行」。[项目测试原则](../AGENTS.md#测试原则)
 
-可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取本进程的回合正文和命令回执。`dialogue.cancel` 与 `dialogue.clear` 使用同一命令编号空间，执行前复核原会话和回合。取消与实际退出分别显示，清空只在空闲时执行。[桌面业务线程](../app/gui/run_status_host.cpp) · [正式主面板验收](../tests/ui_main_panel.cpp)
+可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取本进程的回合正文和命令回执。`dialogue.cancel` 与 `dialogue.clear` 使用同一命令编号空间，执行前复核原会话和回合。取消与实际退出分别显示，清空只在空闲时执行。[桌面业务线程](../app/management/host.cpp) · [正式主面板验收](../tests/ui_main_panel.cpp)
 
 下一轮消息由 `dialogue.enqueue` 绑定用户所见的原回合，应用为每条原话签发消息号。`dialogue.resume` 核对会话和队首，`dialogue.remove` 只作用于仍待发的原项。受信快照在修订变化时一起交付对话和队列，停止命令有独立槽位。[队列桥接验收](../tests/ui_dialogue_queue.cpp)
 

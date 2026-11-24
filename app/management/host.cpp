@@ -1,10 +1,10 @@
-#include "run_status_host.hpp"
+#include "host.hpp"
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
 #include <utility>
 
-namespace dfy::ui {
+namespace dfy::management {
 namespace {
 constexpr auto interval = std::chrono::milliseconds(5);
 constexpr std::size_t command_limit = 16;
@@ -83,24 +83,24 @@ void shutdown(app::Application& application) {
 }
 
 // 将创建和推进入口移交新业务线程，线程的寿命短于快照存储。
-RunStatusHost::RunStatusHost(Open open, Drive drive)
+Host::Host(Open open, Drive drive)
     : worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
 
 // 返回脱离业务对象寿命的当前值。
-std::optional<app::RunStatusSnapshot> RunStatusHost::snapshot() const {
+std::optional<app::RunStatusSnapshot> Host::snapshot() const {
     std::lock_guard lock(mutex_);
     return snapshot_;
 }
 
 // 读取最近的本体位置，查询不驱动原生房间。
-std::optional<RoomLocation> RunStatusHost::room_location() const {
+std::optional<RoomLocation> Host::room_location() const {
     std::lock_guard lock(mutex_);
     return room_location_;
 }
 
 // 返回只读快照，旧命令保留期外明确过期。
 // 步骤：复制已发布正文和接纳标志 → 查找原命令回执或过期状态。
-DialogueView RunStatusHost::dialogue(std::uint64_t command) const {
+DialogueView Host::dialogue(std::uint64_t command) const {
     std::lock_guard lock(mutex_);
     DialogueView view{display_,latest_command_,can_submit_ && !exited_ && !worker_.get_stop_token().stop_requested(),{}};
     if (command && command <= latest_command_) {
@@ -112,7 +112,7 @@ DialogueView RunStatusHost::dialogue(std::uint64_t command) const {
 
 // 签收页面命令并保留原目标，只有业务线程可以改变会话。
 // 步骤：校验参数 → 复用原身份或报告冲突 → 核对槽位及忙碌状态 → 登记待交付命令。
-DialogueReceipt RunStatusHost::submit_dialogue(DialogueCommand command) {
+DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     using State = DialogueCommandState;
     const bool with_text = command.action == DialogueAction::send || command.action == DialogueAction::enqueue || command.action == DialogueAction::append;
     const bool by_message = command.action == DialogueAction::resume || command.action == DialogueAction::remove;
@@ -154,7 +154,7 @@ DialogueReceipt RunStatusHost::submit_dialogue(DialogueCommand command) {
 
 // 由唯一推进 Application 的线程交付命令，回执写回前保留对应槽位。
 // 步骤：取走参数并保留占位 → 执行业务命令 → 写回同号结果并归还槽位。
-void RunStatusHost::advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot) {
+void Host::advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot) {
     std::optional<DialogueCommand> command;
     {
         std::lock_guard lock(mutex_);
@@ -176,7 +176,7 @@ void RunStatusHost::advance_dialogue(app::Application& application, std::optiona
 
 // 只在业务线程拥有和使用应用服务。
 // 步骤：创建应用 → 推进原工作并发布快照 → 有序关闭并报告退出。
-void RunStatusHost::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
+void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
     try {
         const auto application = open();
         auto& conversation = application->conversation();

@@ -1,7 +1,7 @@
 #pragma once
 #include "builtin_room.hpp"
 
-namespace dfy::ui {
+namespace dfy::management {
 // 原生房间和身体签发的位置摘要，名称来自不可变布局。
 struct RoomLocation {
     app::RoomSelf self;

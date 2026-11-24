@@ -45,6 +45,11 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tool_verification.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_files.hpp")
 
+# 管理宿主独立持有业务线程，桌面和无窗口消费者共用同一套快照与命令处理。
+add_library(dfy_management STATIC management/host.cpp management/host.hpp management/dialogue_channel.hpp management/room_location.hpp)
+target_link_libraries(dfy_management PUBLIC dfy_application PRIVATE dfy_build_options dfy_digest)
+set_target_properties(dfy_management PROPERTIES FOLDER App)
+
 # 定义异步终端交互目标，便于独立验证输入和本地命令。
 add_library(dfy_terminal STATIC application_commands.cpp application_commands.hpp chat.cpp chat.hpp async_chat.hpp)
 target_sources(dfy_terminal PRIVATE diagnostics.cpp diagnostics.hpp)

@@ -4,7 +4,7 @@
 #include "interaction_probe.hpp"
 #include "probe_host.hpp"
 #include "browser_lifetime.hpp"
-#include "run_status_host.hpp"
+#include "management/host.hpp"
 #ifdef DFY_UI_RUN_STATUS_TEST
 #include "ui_main_panel_fixture.hpp"
 #include "ui_run_status_probe.hpp"
@@ -41,7 +41,7 @@ struct Window : std::enable_shared_from_this<Window> {
     std::shared_ptr<dfy::ui::ProbeHost> host;
     std::shared_ptr<const dfy::ui::FrameChecks> checks;
     std::shared_ptr<dfy::ui::InteractionProbe> interaction;
-    std::unique_ptr<dfy::ui::RunStatusHost> run_status_host;
+    std::unique_ptr<dfy::management::Host> run_status_host;
 #ifdef DFY_UI_RUN_STATUS_TEST
     std::shared_ptr<dfy::tests::UiRunStatusProbe> run_status_probe;
     std::shared_ptr<dfy::tests::UiDialogueGate> panel_gate;
@@ -127,17 +127,17 @@ struct Window : std::enable_shared_from_this<Window> {
         dfy::ui::ProbeHost::Dialogue dialogue;
         dfy::ui::ProbeHost::ReadRoom read_room;
         if (main_panel) {
-            read_room = [weak]() -> std::optional<dfy::ui::RoomLocation> {
+            read_room = [weak]() -> std::optional<dfy::management::RoomLocation> {
                 if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->room_location();
                 return {};
             };
-            dialogue.read = [weak](auto command) -> dfy::ui::DialogueView {
+            dialogue.read = [weak](auto command) -> dfy::management::DialogueView {
                 if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->dialogue(command);
                 return {};
             };
-            dialogue.submit = [weak](dfy::ui::DialogueCommand command) -> dfy::ui::DialogueReceipt {
+            dialogue.submit = [weak](dfy::management::DialogueCommand command) -> dfy::management::DialogueReceipt {
                 if (const auto self = weak.lock(); self && !self->closing) return self->run_status_host->submit_dialogue(std::move(command));
-                return {command.id,dfy::ui::DialogueCommandState::unavailable,{}};
+                return {command.id,dfy::management::DialogueCommandState::unavailable,{}};
             };
         }
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
@@ -271,14 +271,14 @@ struct Window : std::enable_shared_from_this<Window> {
         if (run_status_probe) {
             const auto probe = run_status_probe;
             const auto work = profile.path()/L"agent";
-            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([probe,work] { return probe->open(work); },
+            run_status_host = std::make_unique<dfy::management::Host>([probe,work] { return probe->open(work); },
                 [probe](auto& application) { probe->drive(application); });
             return;
         }
         if (main_panel_check) {
             const auto work = profile.path()/L"agent";
             panel_gate = std::make_shared<dfy::tests::UiDialogueGate>();
-            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([work,gate = panel_gate] {
+            run_status_host = std::make_unique<dfy::management::Host>([work,gate = panel_gate] {
                 return dfy::tests::open_panel_fixture(work,gate);
             });
             return;
@@ -287,7 +287,7 @@ struct Window : std::enable_shared_from_this<Window> {
         if (business_mode) {
             const auto root = assets.parent_path();
             const auto config = model_config.empty() ? root/"config"/"deepseek.example.json" : model_config;
-            run_status_host = std::make_unique<dfy::ui::RunStatusHost>([root,config] {
+            run_status_host = std::make_unique<dfy::management::Host>([root,config] {
                 return std::make_unique<dfy::app::Application>(dfy::model::load_config(config),
                     root/"plugins",dfy::app::default_user_data());
             });

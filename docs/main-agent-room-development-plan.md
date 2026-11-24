@@ -24,7 +24,7 @@
 | 阅读入口 | 已有能力 | 本次需要补的部分 |
 |---|---|---|
 | [桌面容器](ui-probe-run-guide.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 主面板](../ui/web/src/MainPanel.vue) | 可信面板可收发、追加本轮、排到下一轮、停止和空闲清空。读位置可得到当前房间与身体，刷新沿原命令核对。 | 用现有快照驱动文字详情。原生移动和物件效果可读回后，再逐项补入同一展示接口。 |
-| [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/gui/run_status_host.cpp) | 应用一次只推进一个活动主回合，按该轮实际退出调度待发队列，并发布补充的送模回执。 | 将角色感知按来源和采样条件接入获准的请求，将身体动作与原委托关联。 |
+| [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/management/host.cpp) | 应用一次只推进一个活动主回合，按该轮实际退出调度待发队列，并发布补充的送模回执。 | 将角色感知按来源和采样条件接入获准的请求，将身体动作与原委托关联。 |
 | [工具目录](../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。房间及其身体已有本体签发的实例身份。 | 为获准的回合绑定房间本地工具，沿用已有的调用校验和执行约束。 |
 | [原生书房](../app/builtin_room.cpp)、[观察收件](../agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../agent/include/dafeiyu/run_journal.hpp) | 书房能按角色采样筛选可知字段。通用收件已有来源、代次、修订、时效、重复、断档及重采样语义。 | 把发生时可感知的事件记入角色记录，主动查询用当前位置重采样，再按来源和水位带入获准回合。 |
 
@@ -109,7 +109,7 @@ flowchart LR
 
 步骤 01 已提供空闲和忙碌两份空插件固定样本，附显式预览入口。步骤 02 已在主会话保留最近 16 个主动对话，正文合计至多 2 MiB。用户原话、一次性业务结果与实际退出按原回合关联，随进程保留，公开运行诊断沿用无正文摘要。步骤 03 的 `--main-panel` 从可信主文档经原业务线程进入正式对话，同号同文复用回执，使用不同正文时返回冲突。 [桌面主面板](ui-probe-run-guide.md#桌面主面板) · [打开首屏预览](ui-probe-run-guide.md#房间首屏预览)
 
-步骤 04 已接入原回合停止与空闲清空。页面从宿主快照读取取消和实际退出，清空确认绑定打开时看到的回合，保留当前草稿。正式面板空白时展示书房插画，对话时把正文、发送和独立停止入口留在可用区域。[业务线程](../app/gui/run_status_host.cpp) · [主面板](../ui/web/src/MainPanel.vue) · [原生验收](../tests/ui_main_panel.cpp)
+步骤 04 已接入原回合停止与空闲清空。页面从宿主快照读取取消和实际退出，清空确认绑定打开时看到的回合，保留当前草稿。正式面板空白时展示书房插画，对话时把正文、发送和独立停止入口留在可用区域。[业务线程](../app/management/host.cpp) · [主面板](../ui/web/src/MainPanel.vue) · [原生验收](../tests/ui_main_panel.cpp)
 
 步骤 05 的应用队列最多保留八条待发消息，单条上限 1 MiB，合计上限 2 MiB。前一轮成功结算并退出后，应用从原对话信箱逐条启动新轮，显示记录保留原排队消息号。取消或失败会暂停待发项，清空空闲对话后仍可恢复或移除。[应用队列](../app/dialogue_queue.cpp) · [生命周期验收](../tests/application_lifecycle.cpp)
 

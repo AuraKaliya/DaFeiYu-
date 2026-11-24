@@ -1,7 +1,7 @@
 ﻿#pragma once
-#include "dialogue_channel.hpp"
+#include "management/dialogue_channel.hpp"
 #include "frame_channel.hpp"
-#include "room_location.hpp"
+#include "management/room_location.hpp"
 #include "application.hpp"
 #include <functional>
 #include <nlohmann/json_fwd.hpp>
@@ -11,10 +11,10 @@ namespace dfy::ui {
 class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
   public:
     using ReadRun = std::function<std::optional<app::RunStatusSnapshot>()>;
-    using ReadRoom = std::function<std::optional<RoomLocation>()>;
+    using ReadRoom = std::function<std::optional<management::RoomLocation>()>;
     struct Dialogue {
-        std::function<DialogueView(std::uint64_t)> read;
-        std::function<DialogueReceipt(DialogueCommand)> submit;
+        std::function<management::DialogueView(std::uint64_t)> read;
+        std::function<management::DialogueReceipt(management::DialogueCommand)> submit;
     };
     // 绑定原生主页面消息与 Frame 创建，回调始终属于当前 STA。
     static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, ReadRun read_run = {}, Dialogue dialogue = {}, ReadRoom read_room = {});
