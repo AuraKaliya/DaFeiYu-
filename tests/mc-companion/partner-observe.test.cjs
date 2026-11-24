@@ -6,7 +6,7 @@ const { matchesDigReference, collectionProgress } = require('../../plugins/mc/br
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
-const { trackBreakDrop } = require('../../plugins/mc/bridge/collect-drops.cjs');
+const { trackBreakDrop, pickupShortfall } = require('../../plugins/mc/bridge/collect-drops.cjs');
 const { EventEmitter } = require('node:events');
 
 class Position {
@@ -111,6 +111,14 @@ test('pickup evidence follows one new stack and credits only protocol collection
     assert.deepEqual([watcher.entry.state, watcher.entry.selfCount, watcher.entry.otherCount], ['left_view', 0, 0]);
   }
   assert.deepEqual([result.pickups.attempted, result.pickups.omitted, result.pickups.recent.length], [6, 2, 4]);
+});
+
+// 入包没有得到双重读回时，保留现场能够支持的具体受阻原因。
+test('missing pickup reports the observed collector, visibility or missing inventory update', () => {
+  for (const [entry, code] of [[{ state: 'unseen' }, 'pickup_unverified'], [{ state: 'visible' }, 'pickup_still_visible'],
+    [{ state: 'left_view' }, 'pickup_lost'], [{ state: 'left_view', otherCount: 1 }, 'pickup_other_collector'],
+    [{ state: 'left_view', otherCount: 2, selfCount: 1 }, 'pickup_stock_unconfirmed']])
+    assert.equal(pickupShortfall(entry).code, code);
 });
 
 // 对照工作时点、换目标、破坏和库存，核对采掘在途样本的独立读数。

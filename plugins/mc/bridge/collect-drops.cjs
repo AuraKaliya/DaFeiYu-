@@ -69,4 +69,13 @@ function trackBreakDrop(bot, point, wanted, result, now = () => performance.now(
   };
 }
 
-module.exports = { trackBreakDrop };
+// 从本次实测拾取、现存实体和库存缺口生成受阻原因。
+function pickupShortfall(entry) {
+  if (entry.selfCount > 0) return { code: 'pickup_stock_unconfirmed', message: '游戏已报告角色拾取，尚未读到所需物品净入包' };
+  if (entry.otherCount > 0) return { code: 'pickup_other_collector', message: '游戏已报告其他实体拾取本次追踪物品，未核实角色取得所需数量' };
+  if (entry.state === 'visible') return { code: 'pickup_still_visible', message: '本次追踪的掉落实体仍在视野内，未核实角色拾取' };
+  if (entry.state === 'left_view') return { code: 'pickup_lost', message: '本次追踪的掉落已离开视野，拾取人未知' };
+  return { code: 'pickup_unverified', message: '未读到目标附近新出现的所需物品，拾取未核实' };
+}
+
+module.exports = { trackBreakDrop, pickupShortfall };

@@ -9,6 +9,15 @@ const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bri
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
 
+// 为原坐标提供固定拾取包，用于独立验证计划对拾取人及实际库存的要求。
+function pickedStack(targetCell, item, self = true) {
+  const entry = { targetCell, state: 'left_view', entityId: 8, item, seenCount: 1, position: targetCell,
+    seenAtMs: 41, leftAtMs: 43, selfCount: self ? 1 : 0, otherCount: self ? 0 : 1,
+    lastCollector: { entityId: self ? 2 : 3, self, count: 1, sampledAtMs: 42 } };
+  return { scope: 'one_new_stack_near_each_target', attempted: 1, omitted: 0, recent: [entry],
+    selfCollected: self ? { [item]: 1 } : {}, otherCollected: self ? {} : { [item]: 1 } };
+}
+
 // 核对一个前台工作的接纳和唯一退出，并检查它是否等到所需的前序回执。
 // 步骤：按桥接工作号查接纳与退出 → 核对顺序并返回原记录。
 function checkWorkReceipt(rows, work, after = 0) {
@@ -788,7 +797,7 @@ async function main() {
           assert.equal(context.order, 4);
           if (method === 'partner.begin') {
             assert.ok(!collecting);
-            assert.deepEqual(args, { ...log, count: 1, source: 'visible' });
+            assert.deepEqual(args, { ...log, count: 1, source: 'visible', pickupItem: 'oak_log' });
             collecting = id;
             return { ...context, skill, exited: false, result: {} };
           }
@@ -802,7 +811,7 @@ async function main() {
           }
           collectExited = true;
           return { ...context, skill, exited: true, result: { status: 'done', broken: 1, changes,
-            inventoryDelta: noPickup ? {} : { oak_log: 1 } } };
+            pickups: pickedStack(position, 'oak_log', !noPickup), inventoryDelta: { oak_log: 1 } } };
         }
         if (pointedSupport || observeDigScope) {
           const stone = { x: 1, y: -60, z: 2, block: 'stone' };
@@ -828,7 +837,8 @@ async function main() {
           assert.equal(skill, 'collect');
           if (method === 'partner.begin') {
             assert.ok(!collecting);
-            assert.deepEqual(args, { ...dirt, count: 1, source: 'visible', ...(pointedSupport ? { digReference: stone } : {}) });
+            assert.deepEqual(args, { ...dirt, count: 1, source: 'visible', ...(pointedSupport ? { digReference: stone } : {}),
+              ...(variant.endsWith('-evidence-plan') ? { pickupItem: 'dirt' } : {}) });
             collecting = id;
             return { ...context, skill, exited: false, result: {} };
           }
@@ -837,7 +847,7 @@ async function main() {
           collectExited = true;
           const { block, ...position } = dirt;
           return { ...context, skill, exited: true, result: { status: 'done', broken: 1,
-            changes: [{ ...position, before: block, after: 'air' }], inventoryDelta: { dirt: 1 } } };
+            changes: [{ ...position, before: block, after: 'air' }], pickups: pickedStack(position, 'dirt'), inventoryDelta: { dirt: 1 } } };
         }
         if (restartRoute && skill === 'reply') {
           assert.ok(routeWork && !restartWork && !questionPresented);

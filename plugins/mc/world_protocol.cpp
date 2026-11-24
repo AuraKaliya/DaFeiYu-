@@ -206,7 +206,7 @@ void verify_collect_pickups(const Json& evidence, const Json& args) {
         recent.size() != std::min(4u,attempts) || evidence.at("omitted") != attempts-recent.size())
         throw std::invalid_argument("MC: invalid pickup coverage");
     Json self = Json::object(), other = Json::object();
-    const auto wanted = args.value("item",std::string{});
+    const auto wanted = args.value("item",args.value("pickupItem",std::string{}));
     for (const auto& entry : recent) {
         const auto& target = entry.at("targetCell");
         for (const auto axis : {"x","y","z"}) if (!target.at(axis).is_number_integer() ||

@@ -69,7 +69,10 @@ void verify_follow_windows() {
 void verify_collection_effect() {
     using dfy::mc::verified_action;
     auto result = nlohmann::json::parse(R"({"status":"done","broken":1,"changes":[{"before":"grass_block","after":"air"}],"inventoryDelta":{"dirt":1}})");
-    if (!verified_action(result,"collect","") || !verified_action(result,"collect","dirt") ||
+    if (!verified_action(result,"collect","") || verified_action(result,"collect","dirt"))
+        throw std::runtime_error("unattributed inventory gain advanced a pickup dependency");
+    result["pickups"] = {{"selfCollected",{{"dirt",1}}}};
+    if (!verified_action(result,"collect","dirt") ||
         verified_action(result,"collect","grass_block")) throw std::runtime_error("grass drop was not dirt");
     result["inventoryDelta"].clear();
     if (!verified_action(result,"collect","") || verified_action(result,"collect","dirt"))
@@ -614,7 +617,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     nodes.at(1).at("after") != Json::array({"gather_log"}) || nodes.at(0).at("requiresPickup") != "oak_log" ||
                     dig.at("changes").at(0).at("before") != "oak_log")
                     throw std::runtime_error("compound goal or original pickup work was lost at settlement");
-                if (no_pickup ? dig.at("reasonCode") != "pickup_unverified" || craft.at("reason") != "prerequisite_failed" :
+                if (no_pickup ? dig.at("reasonCode") != "pickup_unverified" || dig.at("inventoryDelta").at("oak_log") != 1 ||
+                    dig.at("pickups").at("otherCollected").at("oak_log") != 1 || craft.at("reason") != "prerequisite_failed" :
                     dig.at("inventoryDelta").at("oak_log") != 1 || craft.at("status") != "done" ||
                     craft.at("craft").at("consumed") != 1 || craft.at("craft").at("produced") != 4 ||
                     craft.at("inventoryDelta") != Json{{"oak_log",-1},{"oak_planks",4}} || craft.at("count") != 4)

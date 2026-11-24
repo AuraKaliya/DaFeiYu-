@@ -188,7 +188,10 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
         }
         return;
     }
-    if (step.skill == "collect") bind_collection_guards(args);
+    if (step.skill == "collect") {
+        bind_collection_guards(args);
+        if (!step.pickup.empty()) args["pickupItem"] = step.pickup;
+    }
     const auto envelope = Json{{"context",{{"generation",session_world_},{"order",feed_.cursor()}}},
         {"arguments",std::move(args)}}.dump();
     auto action = std::make_unique<GameWork>(GameAction::partner,config,step.work,envelope,std::string(step.skill));

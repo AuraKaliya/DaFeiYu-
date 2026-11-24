@@ -5,7 +5,7 @@ const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.c
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops } = require('./dropped-items.cjs');
-const { trackBreakDrop } = require('./collect-drops.cjs');
+const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
@@ -165,6 +165,10 @@ async function collect(bot, args, check, job, built) {
   if (args.digReference && (!fixed || !matchesDigReference(bot, fixed, args.digReference))) throw referenceChanged();
   const before = inventory(bot);
   const expected = args.item?.replace(/^minecraft:/, '');
+  const pickupItem = expected ?? args.pickupItem;
+  if (Object.hasOwn(args, 'pickupItem') && (!fixed || expected || typeof args.pickupItem !== 'string' ||
+      !Object.hasOwn(bot.registry.itemsByName, args.pickupItem)))
+    throw digBlocked('pickup_item_invalid', '定点采掘需要可核实的拾取物品');
   if (Object.hasOwn(args, 'item') && (!Object.hasOwn(bot.registry.itemsByName, expected) ||
       args.requiredStock !== args.count || args.source !== 'ground'))
     throw new Error('地面取材需要已知物品和目标库存');
@@ -191,7 +195,7 @@ async function collect(bot, args, check, job, built) {
     for (let n = 0; n < missing; ++n) {
       progress.enter('selecting');
       check();
-      const stock = expected ? (inventory(bot)[expected] ?? 0) : 0;
+      const stock = pickupItem ? (inventory(bot)[pickupItem] ?? 0) : 0;
       if (expected && stock >= args.requiredStock) break;
       if (!matching.length) throw digBlocked('dig_source_missing', '当前地面没有这种物品的自然来源');
       const block = fixed ? bot.blockAt(fixed) : visible(bot, matching).find(allowed);
@@ -245,7 +249,7 @@ async function collect(bot, args, check, job, built) {
       const readback = collectReadback(bot, here, affected);
       progress.enter('digging', here);
       const changeStart = result.changes.length;
-      const drops = trackBreakDrop(bot, pos, expected, result);
+      const drops = trackBreakDrop(bot, pos, pickupItem, result);
       try {
         try { await bot.dig(here, true); }
         finally {
@@ -259,9 +263,18 @@ async function collect(bot, args, check, job, built) {
         check();
         progress.enter('awaiting_pickup');
         await pickup(bot, pos, drops, check, result);
+        if (pickupItem) {
+          // 游戏拾取包与库存更新可分包到达，沿原工作短等最新的背包读回。
+          for (let retry = 0; retry < 8 && drops.entry.selfCount > 0 && (inventory(bot)[pickupItem] ?? 0) <= stock; ++retry) {
+            check();
+            await delay(50);
+          }
+          if ((inventory(bot)[pickupItem] ?? 0) <= stock || (args.pickupItem && !drops.entry.selfCount)) {
+            const failure = pickupShortfall(drops.entry);
+            throw digBlocked(failure.code, failure.message);
+          }
+        }
       } finally { drops.stop(); }
-      if (expected && (inventory(bot)[expected] ?? 0) <= stock)
-        throw digBlocked('pickup_unverified', '没有读到所需物品入包，已停止取材');
     }
     if (expected && (inventory(bot)[expected] ?? 0) < args.requiredStock)
       throw digBlocked('pickup_unverified', '实际背包仍缺少所需物品');
