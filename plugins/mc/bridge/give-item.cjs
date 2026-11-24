@@ -43,7 +43,9 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
   try {
     ready(live);
     const aimed = recipient.position.clone();
-    await bot.lookAt(recipient.position.offset(0, Math.min(1,recipient.height ?? 1), 0), true);
+    // 贴身时朝脚边投，给原地收件留出拾取范围；距离增加后逐渐抬高瞄准点。
+    const aimHeight = Math.min(recipient.height ?? 1,1,Math.max(0,live.target.distance-1));
+    await bot.lookAt(recipient.position.offset(0,aimHeight,0), true);
     // 强制转向先更新客户端，下一物理刻才发送朝向；缺区块或断线时这里仍可取消或到期。
     const timeout = AbortSignal.timeout(1500);
     try { await once(bot,'physicsTick',{ signal: signal ? AbortSignal.any([signal,timeout]) : timeout }); }

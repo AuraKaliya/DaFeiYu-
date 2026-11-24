@@ -80,6 +80,18 @@ test('survival toss issues exactly the requested total from ordinary slots', asy
   assert.equal(f.bot.inventory.slots[4].components[0].type, 'custom_name');
 });
 
+// 近身同层向脚边丢物，在距离增大时平滑抬高瞄准点。
+test('nearby handoff aims toward the feet and raises the aim with distance', async () => {
+  for (const [distance,height] of [[1,0],[1.5,0.5],[3,1]]) {
+    const f = tossFixture();
+    f.bot.players.owner.entity.position.x = 0.5+distance;
+    let aim;
+    f.bot.lookAt = async point => { aim = point; setImmediate(() => f.bot.emit('physicsTick')); };
+    await f.run();
+    assert.deepEqual([aim.x,aim.y,aim.z],[0.5+distance,-60+height,0.5]);
+  }
+});
+
 // 朝向后和跨堆后都重验玩家距离；未起步与部分投出分别保留工作及实效。
 test('moving recipient and interrupted clicks retain only submitted quantities', async () => {
   const before = tossFixture();
