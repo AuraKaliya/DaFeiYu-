@@ -3,7 +3,7 @@
 大肥鱼采用 C++20、CMake、VS2022 和 Windows x64。终端与桌面主面板共用主 Agent 的普通对话入口，空插件目录也能问答。终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。桌面另有只读运行摘要和固定样本房间预览。
 
 - **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
-- **想审当前设计**，见[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)、[MC 能力清单](docs/mc-partner-capability-review.md)以及[主面板与内置房间](docs/main-agent-room-development-plan.md)。
+- **想审当前设计**，见[管理中心首版开发方案](docs/ui-framework-design.md)、[主面板与内置房间](docs/main-agent-room-development-plan.md)、[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)与[MC 能力清单](docs/mc-partner-capability-review.md)。
 - **想了解工程进展**，可从各开发线的交付范围和下一步读到对应源码与验收记录。[当前开发进度](docs/architecture.md#当前开发进度) · [架构图](docs/architecture.md#架构图) · [文档导航](docs/README.md)
 
 ## 运行与构建
