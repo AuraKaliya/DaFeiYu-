@@ -31,7 +31,7 @@ add_custom_target(dfy_ui_assets
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PROJECT_SOURCE_DIR}/config/deepseek.example.json" "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/config"
   WORKING_DIRECTORY "${DFY_UI_WEB}" VERBATIM)
 set_target_properties(dfy_ui_assets PROPERTIES FOLDER App)
-add_dependencies(dfy_ui_probe dfy_ui_assets)
+add_dependencies(dfy_ui_probe dfy_ui_assets dafeiyu)
 install(TARGETS dfy_ui_probe RUNTIME DESTINATION . CONFIGURATIONS Release)
 install(DIRECTORY "${PROJECT_BINARY_DIR}/bin/Release/ui/" DESTINATION ui CONFIGURATIONS Release)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/ui-probe-run-guide.md" DESTINATION . RENAME UI验证说明.md CONFIGURATIONS Release)

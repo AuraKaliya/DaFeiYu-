@@ -7,7 +7,8 @@ namespace dfy::ui {
 // 主文档的固定消息入口，分发容器验证和宿主只读查询。
 class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
   public:
-    using Request = std::function<nlohmann::json(const nlohmann::json&)>;
+    using Reply = std::function<void(const nlohmann::json&)>;
+    using Request = std::function<bool(const nlohmann::json&,Reply)>;
     // 绑定原生主页面消息与 Frame 创建，回调始终属于当前 STA。
     static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, bool panel, Request request);
     // 关闭全部 UI 入口及当前 Frame 持有，后台浏览器退出由窗口独立确认。
@@ -28,6 +29,7 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     void created(ICoreWebView2Frame* frame);
     ComPtr<ICoreWebView2> view_;
     EventSlot<ICoreWebView2> messages_;
+    EventSlot<ICoreWebView2> navigations_;
     EventSlot<ICoreWebView2_4> frames_;
     EventSlot<ICoreWebView2Frame> gone_;
     std::shared_ptr<FrameChecks> checks_ = std::make_shared<FrameChecks>();
@@ -36,6 +38,7 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     bool panel_;
     Request request_;
     std::uint64_t next_ = 0, ticket_ = 0;
+    std::uint64_t generation_ = 0;
     bool closed_ = false;
 };
 }

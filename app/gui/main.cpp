@@ -5,6 +5,8 @@
 #include "probe_host.hpp"
 #include "browser_lifetime.hpp"
 #include "management/host.hpp"
+#include "management/client.hpp"
+#include "management/resident.hpp"
 #include "management/protocol.hpp"
 #ifdef DFY_UI_RUN_STATUS_TEST
 #include "ui_main_panel_fixture.hpp"
@@ -43,9 +45,12 @@ struct Window : std::enable_shared_from_this<Window> {
     std::shared_ptr<const dfy::ui::FrameChecks> checks;
     std::shared_ptr<dfy::ui::InteractionProbe> interaction;
     std::unique_ptr<dfy::management::Host> run_status_host;
+    std::unique_ptr<dfy::management::Client> resident_client;
 #ifdef DFY_UI_RUN_STATUS_TEST
     std::shared_ptr<dfy::tests::UiRunStatusProbe> run_status_probe;
     std::shared_ptr<dfy::tests::UiDialogueGate> panel_gate;
+    std::atomic_int fixture_result{-1};
+    std::jthread fixture_server;
 #endif
     std::chrono::steady_clock::time_point deadline;
     std::chrono::steady_clock::time_point close_deadline;
@@ -81,6 +86,7 @@ struct Window : std::enable_shared_from_this<Window> {
         KillTimer(handle,1); if (host) host->close();
         if (interaction) interaction->close();
         if (run_status_host) run_status_host->close();
+        if (resident_client) resident_client->close();
         if (environment) {
             try { processes.observe(environment.Get()); }
             catch (const std::exception& error) { process_check_failed = true; result = 1; std::fprintf(stderr,"%s\n",error.what()); }
@@ -98,7 +104,14 @@ struct Window : std::enable_shared_from_this<Window> {
     void finish_close() noexcept {
         const bool callbacks_done = !pending && (!interaction || !interaction->pending());
         const bool frames_done = !checks || (!checks->active && !checks->ready && !checks->live_channels);
-        const bool business_done = !run_status_host || run_status_host->exited();
+        bool business_done = (!run_status_host || run_status_host->exited()) && (!resident_client || resident_client->exited());
+#ifdef DFY_UI_RUN_STATUS_TEST
+        if (business_done && fixture_server.joinable()) {
+            fixture_server.request_stop();
+            business_done = fixture_result.load()>=0;
+            if (business_done && fixture_result.load()!=0) result = 1;
+        }
+#endif
         if (business_done && run_status_host && run_status_host->failed()) result = 1;
         if (callbacks_done && frames_done && business_done && processes.exited() && !process_check_failed && profile.cleanup()) {
             if (!finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
@@ -121,9 +134,12 @@ struct Window : std::enable_shared_from_this<Window> {
         require(settings->put_AreHostObjectsAllowed(FALSE)); require(settings->put_IsWebMessageEnabled(!room_preview));
         const auto weak = weak_from_this();
         host = dfy::ui::ProbeHost::attach(view.Get(),[weak] { if (const auto self = weak.lock()) self->fail("Frame host failed"); },
-            main_panel,[weak](const nlohmann::json& request) {
+            main_panel,[weak](const nlohmann::json& request,dfy::ui::ProbeHost::Reply reply) {
                 const auto self = weak.lock();
-                return dfy::management::dispatch(self && !self->closing ? self->run_status_host.get() : nullptr,request);
+                if (!self || self->closing) return false;
+                if (self->resident_client) return self->resident_client->post(request,std::move(reply));
+                reply(dfy::management::dispatch(self->run_status_host.get(),request));
+                return true;
             });
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
@@ -141,8 +157,8 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get(),&navigation));
         navigation_bound = true; resize();
-        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(20);
-        if (smoke || interaction_mode || run_status_host) SetTimer(handle,1,20,nullptr);
+        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(main_panel_check ? 35 : 20);
+        if (smoke || interaction_mode || run_status_host || resident_client) SetTimer(handle,1,20,nullptr);
         if (offline) prepare_offline(); else navigate();
     }
     // 按模式导航到正式主面板或固定探针文档。
@@ -185,12 +201,13 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：分流收尾状态 → 启动或推进协议 → 核对完成条件与期限。
     void tick() noexcept {
         if (closing) { finish_close(); return; }
+        if (resident_client) resident_client->advance();
         if (run_status_host && run_status_host->exited()) { fail("UI application host stopped"); return; }
         if (!smoke && !interaction_mode) return;
         if (loaded && interaction_mode && !interaction) {
             try {
                 const auto weak = weak_from_this();
-                if (!lifecycle_mode && !run_status_host) {
+                if (!lifecycle_mode && !run_status_host && !resident_client) {
                     const auto foreground = GetForegroundWindow();
                     require(controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC));
                     if (foreground != handle && GetForegroundWindow() == handle) throw std::runtime_error("U01: focus probe activated its window");
@@ -247,8 +264,8 @@ struct Window : std::enable_shared_from_this<Window> {
         if (FAILED(status)) { --pending; require(status); }
         if (close_controller) PostMessageW(handle,WM_CLOSE,0,0);
     }
-    // 在业务线程创建拥有运行状态的 Application，测试使用独占路径和显式替身。
-    // 步骤：选择固定测试入口或普通配置 → 移交业务线程 → 保留窗口消息的接收端。
+    // 连接后台本体，固定测试使用隔离宿主和受控模型。
+    // 步骤：选择测试或产品入口 → 接入本地端点 → 在缺少正式本体时启动独立进程。
     void start_application() {
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_probe) {
@@ -261,18 +278,24 @@ struct Window : std::enable_shared_from_this<Window> {
         if (main_panel_check) {
             const auto work = profile.path()/L"agent";
             panel_gate = std::make_shared<dfy::tests::UiDialogueGate>();
-            run_status_host = std::make_unique<dfy::management::Host>([work,gate = panel_gate] {
-                return dfy::tests::open_panel_fixture(work,gate);
+            fixture_server = std::jthread([this,work,gate=panel_gate](std::stop_token stop) {
+                try {
+                    fixture_result = dfy::management::serve_resident(work,"panel-fixture",[work,gate] {
+                        return dfy::tests::open_panel_fixture(work,gate);
+                    },stop);
+                } catch (const std::exception& error) { std::fprintf(stderr,"%s\n",error.what()); fixture_result = 1; }
             });
+            resident_client = std::make_unique<dfy::management::Client>(work,"panel-fixture",[] {});
             return;
         }
 #endif
         if (business_mode) {
             const auto root = assets.parent_path();
             const auto config = model_config.empty() ? root/"config"/"deepseek.example.json" : model_config;
-            run_status_host = std::make_unique<dfy::management::Host>([root,config] {
-                return std::make_unique<dfy::app::Application>(dfy::model::load_config(config),
-                    root/"plugins",dfy::app::default_user_data());
+            const auto data = dfy::app::default_user_data();
+            const auto packages = root/"plugins";
+            resident_client = std::make_unique<dfy::management::Client>(data,dfy::management::startup_identity(config,packages),[=] {
+                dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
             });
         }
     }

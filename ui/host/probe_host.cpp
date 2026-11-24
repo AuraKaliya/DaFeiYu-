@@ -9,6 +9,11 @@ namespace dfy::ui {
 std::shared_ptr<ProbeHost> ProbeHost::attach(ICoreWebView2* view, std::function<void()> failure, bool panel, Request request) {
     auto self = std::shared_ptr<ProbeHost>(new ProbeHost(std::move(failure),panel,std::move(request))); self->view_ = view;
     const std::weak_ptr<ProbeHost> weak = self;
+    const auto navigation = Callback<ICoreWebView2NavigationStartingEventHandler>([weak](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs*) -> HRESULT {
+        if (const auto state = weak.lock()) ++state->generation_;
+        return S_OK;
+    });
+    self->navigations_.bind(view,&ICoreWebView2::remove_NavigationStarting,[&](auto* token) { return view->add_NavigationStarting(navigation.Get(),token); });
     const auto message = Callback<ICoreWebView2WebMessageReceivedEventHandler>([weak](ICoreWebView2*,ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
         if (const auto state = weak.lock(); state && !state->closed_) return state->message(args);
         return E_ABORT;
@@ -58,14 +63,26 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
 HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_view source, bool public_read) {
     const bool from_panel = panel_ && main_panel_document(source);
     if (!from_panel && (!public_read || !center_document(source))) return E_ACCESSDENIED;
-    const auto active = [&] {
-        const auto current = read_text([&](auto** value) { return view_->get_Source(value); });
-        return from_panel ? main_panel_document(current) : center_document(current);
+    const auto current = read_text([&](auto** value) { return view_->get_Source(value); });
+    if (!(from_panel ? main_panel_document(current) : center_document(current))) return E_ACCESSDENIED;
+
+    // 异步回包只交给原始文档代次，即使刷新后使用相同 URL 也须重新查询。
+    // 步骤：核对窗口和文档代次 → 从原生浏览器复核来源 → 回发有界消息。
+    const auto deliver = [weak=weak_from_this(),epoch=generation_,from_panel,public_read](const nlohmann::json& reply) {
+        const auto self = weak.lock();
+        if (!self || self->closed_ || self->generation_!=epoch) return;
+        try {
+            const auto url = read_text([&](auto** out) { return self->view_->get_Source(out); });
+            if (!(from_panel ? main_panel_document(url) : center_document(url))) return;
+            require_hresult(self->view_->PostWebMessageAsJson(utf16(reply.dump(),public_read ? probe_text_limit : management::response_limit).c_str()));
+        } catch (...) { self->failure_(); }
     };
-    if (!active()) return E_ACCESSDENIED;
-    const auto reply = request_(request);
-    if (!active()) return E_ACCESSDENIED;
-    return view_->PostWebMessageAsJson(utf16(reply.dump(),public_read ? probe_text_limit : management::response_limit).c_str());
+    if (!request_(request,deliver) && request.contains("request") && request.at("request").is_string()) {
+        if (request.contains("command") && request.at("type")!="dialogue.read")
+            deliver({{"event","dialogue.receipt"},{"version","1"},{"request",request.at("request")},
+                {"receipt",{{"command",request.at("command")},{"state","busy"}}}});
+    }
+    return S_OK;
 }
 // 归还旧对象后绑定新代次，真实销毁确认才通知主页面允许重新打开。
 // 步骤：核对票据与活动数 → 建立授权通道 → 登记销毁确认 → 消费票据。
@@ -89,7 +106,7 @@ void ProbeHost::created(ICoreWebView2Frame* frame) {
 // 先关闭接纳和事件，再释放当前授权对象；值统计可独立保留。
 // 步骤：停止接纳并撤销登记 → 归还 Frame 通道 → 释放浏览器引用。
 void ProbeHost::close() noexcept {
-    closed_ = true; ticket_ = 0; messages_.reset(); frames_.reset(); gone_.reset();
+    closed_ = true; ticket_ = 0; messages_.reset(); navigations_.reset(); frames_.reset(); gone_.reset();
     if (frame_) frame_->close();
     frame_.reset(); view_.Reset();
 }

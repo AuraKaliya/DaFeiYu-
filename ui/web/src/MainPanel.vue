@@ -53,6 +53,7 @@ const clearTarget = shallowRef<Target>();
 const draft = ref('');
 const destination = ref<'current' | 'next'>('current');
 const notice = ref('');
+const connectionNotice = ref('');
 const ready = ref(false);
 const accepting = ref(false);
 const tooLong = computed(() => encoder.encode(draft.value).length > byteLimit);
@@ -66,6 +67,7 @@ const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurr
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
 // 区分页面提交、后端收尾与可接纳下一轮，上一轮的结果留在原条目。
 const panelStatus = computed(() => {
+  if (connectionNotice.value) return '本体连接中断';
   if (!ready.value) return conversation.value ? '连接中断' : '正在连接';
   if (lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending') return '正在收尾';
   if (stoppedCurrent.value && lastTurn.value?.result === 'pending') return '已请求停止';
@@ -236,6 +238,17 @@ function receive(event: MessageEvent<unknown>): void {
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
   const sequence = Number(value.request.slice(scope.length));
   if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
+  if (value.event === 'management.error') {
+    if (sequence < latestSnapshot) return;
+    ready.value = false;
+    accepting.value = false;
+    roomCurrent.value = false;
+    connectionNotice.value = typeof value.reason === 'string' && value.reason.includes('configuration differs')
+      ? '本体已使用另一份启动配置，请用相同配置重新打开管理中心。'
+      : '无法连接后台本体。请检查本体状态，再重新打开管理中心。';
+    for (const id of outstanding.keys()) reconnecting.add(id);
+    return;
+  }
   if (value.event === 'room.snapshot') {
     receiveRoom(value.room, sequence);
     return;
@@ -248,6 +261,7 @@ function receive(event: MessageEvent<unknown>): void {
         (value.queue !== null && (!Array.isArray(value.queue) || !value.queue.every(isQueuedMessage)))) return;
     if (value.ready && !isDecimal(value.revision)) return;
     latestSnapshot = sequence;
+    connectionNotice.value = '';
     dialogueConfirmed = performance.now();
     ready.value = value.ready;
     accepting.value = value.accepting;
@@ -416,7 +430,7 @@ onUnmounted(() => {
         <button v-if="lastTurn?.exit === 'pending'" id="dialogue-stop" class="stop-action" type="button" :disabled="!canStop" @click="stop">停止回复</button>
         <button id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">清空对话</button>
       </div>
-      <output v-if="tooLong || notice" aria-live="polite">{{ tooLong ? '消息不能超过 1 MiB。' : notice }}</output>
+      <output v-if="tooLong || connectionNotice || notice" aria-live="polite">{{ tooLong ? '消息不能超过 1 MiB。' : connectionNotice || notice }}</output>
     </form>
     <dialog ref="clearDialog" class="clear-dialog" aria-labelledby="clear-title" @close="clearTarget = undefined">
       <h2 id="clear-title">清空本次对话？</h2>
