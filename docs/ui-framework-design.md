@@ -323,7 +323,7 @@ U02 已接入首个桌面只读查询。业务线程推进 [共享运行状态�
 
 所有 UI 验收也不调用真实模型；预设响应驱动业务状态，原生事件与固定浏览器协议验证界面，不使用 Computer Use。模型选择工具、生成计划等表现仅记录，不作为 UI 验收门槛。
 
-普通对话命令已接通。可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取本进程的回合正文和命令回执。运行和审批事实由宿主持有。主面板 04 接入停止、实际退出状态和空闲清空。[桌面业务线程](../app/gui/run_status_host.cpp) · [正式主面板验收](../tests/ui_main_panel.cpp)
+可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取本进程的回合正文和命令回执。`dialogue.cancel` 与 `dialogue.clear` 使用同一命令编号空间，执行前复核原会话和回合。取消与实际退出分别显示，清空只在空闲时执行。[桌面业务线程](../app/gui/run_status_host.cpp) · [正式主面板验收](../tests/ui_main_panel.cpp)
 
 首版必须覆盖以下场景，而不只检查页面是否显示：
 

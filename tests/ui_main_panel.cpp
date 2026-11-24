@@ -89,10 +89,11 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.addEventListener('message',({data})=>replies.set(data.request,data));
         bridge.postMessage({type:'dialogue.submit',version:'1',request:'other-write',command:'3',text:'wrong document'});
         bridge.postMessage({type:'dialogue.read',version:'1',request:'other-read',command:'',revision:''});
+        for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
         bridge.postMessage({type:'state.read',version:'1',request:'other-barrier',topic:'run'});
         const end=performance.now()+1800;
         while (!replies.has('other-barrier') && performance.now()<end) await new Promise(r=>setTimeout(r,20));
-        return replies.get('other-barrier')?.run?.result === 'failed' && !replies.has('other-write') && !replies.has('other-read');
+        return replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','cancel','clear'].every(key=>!replies.has('other-'+key));
     })())JS");
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");
@@ -154,6 +155,38 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         return (await control('clear','7')).state==='accepted' && (await control('clear','9')).state==='stale';
     })())JS");
     expect("new dialogue remains visible","document.querySelectorAll('.turn').length===1 && !!document.querySelector('.incoming p')");
+    call("reopen functional controls",L"Page.reload",Json::object());
+    expect("history offers clear","document.querySelector('#dialogue-clear')?.disabled===false");
+    evaluate("open real clear confirmation","document.querySelector('#dialogue-clear').click(); document.querySelector('dialog').open");
+    key("dismiss clear with escape","Escape",27);
+    expect("dismissal leaves history","!document.querySelector('dialog').open && document.querySelectorAll('.turn').length===1");
+    call("narrow composer",L"Emulation.setDeviceMetricsOverride",{{"width",320},{"height",560},{"deviceScaleFactor",1},{"mobile",false}});
+    evaluate("submit slow dialogue through the composer",R"JS((()=>{
+        const draft=document.querySelector('#dialogue-draft');
+        draft.value='等待桌面停止'; draft.dispatchEvent(new Event('input'));
+        return Promise.resolve().then(()=>{document.querySelector('#dialogue-send').click(); return true;});
+    })())JS");
+    wait_for("second fixed reply is in flight",[gate] { return gate->entered.load() == 2; });
+    expect("narrow viewport keeps stop available","document.querySelector('#dialogue-stop')?.disabled===false && "
+        "document.querySelector('#dialogue-stop').getBoundingClientRect().bottom<=innerHeight && document.documentElement.scrollWidth<=innerWidth && document.querySelector('#dialogue-clear').disabled");
+    evaluate("preserve a new draft and stop via the button",R"JS((()=>{
+        const draft=document.querySelector('#dialogue-draft');
+        draft.value='留给下一轮'; draft.dispatchEvent(new Event('input'));
+        document.querySelector('#dialogue-stop').click(); return true;
+    })())JS");
+    expect("visible closing state while worker still holds the call","document.querySelector('#dialogue-state').textContent==='正在收尾' && "
+        "document.querySelector('.turn:last-child .turn-status').textContent==='已停止回复' && document.querySelector('#dialogue-stop').disabled");
+    wait_for("release second cancelled reply",[gate] { gate->release.release(); return true; });
+    expect("actual exit enables idle controls","!document.querySelector('#dialogue-stop') && document.querySelector('#dialogue-clear')?.disabled===false && "
+        "document.querySelector('#dialogue-state').textContent==='可以聊天' && document.querySelector('#dialogue-draft').value==='留给下一轮'");
+    evaluate("confirm clear with a retained draft",R"JS((()=>{
+        document.querySelector('#dialogue-clear').click();
+        const box=document.querySelector('dialog');
+        if (!box.open || !box.textContent.includes('草稿会保留')) return false;
+        document.querySelector('#dialogue-confirm-clear').click(); return true;
+    })())JS");
+    expect("clear removes history but preserves editable draft","!document.querySelector('.turn') && !document.querySelector('dialog').open && "
+        "document.querySelector('.room-still img')?.naturalWidth>0 && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
     next();
 }
 }
