@@ -194,6 +194,17 @@ void vitals_protocol() {
     sample["health"] = {{"state","sampled"},{"source","update_health"},{"points",19.5},{"food",12},{"sampledAtMs",42}};
     sample["air"] = {{"state","sampled"},{"source","entity_metadata.air_supply"},{"ticks",-8},{"sampledAtMs",39}};
     if (!read().arrived) throw std::runtime_error("signed air or fractional health lost");
+    auto& event = sample["airEpisode"] = {{"episode",1},{"phase","depleted"},{"samples",2},{"firstAtMs",33},{"lastAtMs",39},
+        {"firstTicks",0},{"lastTicks",-8},{"minimumTicks",-8}};
+    if (!read().arrived) throw std::runtime_error("depletion evidence lost");
+    event["phase"] = "recovered";
+    rejects(read);
+    event.update(Json{{"samples",4},{"lastTicks",6},{"recoveryTicks",2},{"recoveryAtMs",38}});
+    sample["air"]["ticks"] = 16;
+    if (!read().arrived) throw std::runtime_error("confirmed positive air lost");
+    event["recoveryTicks"] = 6;
+    rejects(read);
+    sample.erase("airEpisode");
     sample["air"]["sampledAtMs"] = 43;
     rejects(read);
     sample["air"] = {{"state","unknown"},{"ticks",300}};
@@ -343,6 +354,23 @@ void private_protocol() {
     Json reply{{"version", 1}, {"id", "r"}, {"inbox", {{"generation", generation}, {"owner", generation},
         {"oldest", 2}, {"latest", 2}, {"gap", false}, {"more", false}, {"messages", {{{"sequence", 2}, {"text", "查看"}}}}}}};
     if (Json::parse(dfy::mc::inbox_reply(reply.dump(), "r", args)) != reply.at("inbox")) throw std::runtime_error("inbox lost");
+    const auto air_query = Json{{"generation",generation},{"after",1},{"airAfter",1}}.dump();
+    if (Json::parse(dfy::mc::inbox_request("r",key,air_query,controller)).at("airAfter") != 1)
+        throw std::runtime_error("air cursor lost");
+    rejects([&] { dfy::mc::inbox_request("r",key,air_query); });
+    auto air_frame = reply;
+    air_frame["inbox"]["execution"] = {{"mode","partner"},{"state","ready"}};
+    auto& notice = air_frame["inbox"]["airNotice"] = {{"generation",generation},{"dimension","overworld"},{"actor",generation},{"entityId",7},
+        {"sequence",2},{"source","entity_metadata.air_supply"},{"airEpisode",{{"episode",1},{"phase","recovered"},{"samples",3},
+            {"firstAtMs",4},{"lastAtMs",7},{"firstTicks",0},{"minimumTicks",0},{"lastTicks",8},{"recoveryAtMs",6},{"recoveryTicks",4}}}};
+    const auto read_air = [&] { return Json::parse(dfy::mc::inbox_reply(air_frame.dump(),"r",air_query)); };
+    if (read_air().at("airNotice") != notice) throw std::runtime_error("recovered air notice lost");
+    rejects([&] { dfy::mc::inbox_reply(air_frame.dump(),"r",args); });
+    notice["sequence"] = 1;
+    rejects(read_air);
+    notice["sequence"] = 2;
+    air_frame["inbox"]["execution"]["state"] = "busy";
+    rejects(read_air);
     auto released = reply;
     released["inbox"]["execution"] = {{"mode","partner"},{"state","released"}};
     if (Json::parse(dfy::mc::inbox_reply(released.dump(), "r", args)) != released.at("inbox"))

@@ -26,7 +26,9 @@ function readReply(input, world, inbox, key, actions) {
     return { version: 1, id: request.id, state: state ? { ...state, ...(survey && { survey }), ...(answer && { answer }) } : null };
   }
   const controller = typeof request.controller === 'string' && /^[a-f0-9]{32}$/.test(request.controller);
-  const listening = request.method === 'partner.listen' && Object.keys(request).length === 7 && controller;
+  const withAir = Object.hasOwn(request,'airAfter');
+  const listening = request.method === 'partner.listen' && Object.keys(request).length === 7+Number(withAir) && controller &&
+    (!withAir || (Number.isSafeInteger(request.airAfter) && request.airAfter >= 0));
   if ((listening || (request.method === 'chat.read' && Object.keys(request).length === 6)) && inbox &&
     typeof request.generation === 'string' && Number.isSafeInteger(request.after) && request.after >= 0) {
     const batch = inbox.read(request.generation, request.after);
@@ -36,8 +38,10 @@ function readReply(input, world, inbox, key, actions) {
       state: actions ? 'ready' : 'unavailable' };
     if (listening && batch && execution.mode === 'partner' && execution.state === 'ready' &&
         !actions?.partner?.claim(request.controller)) execution = { mode: 'partner', state: 'busy' };
+    const airNotice = listening && batch && withAir && execution.mode === 'partner' && execution.state === 'ready' &&
+      world.airNotice?.(request.generation,request.airAfter);
     return { version: 1, id: request.id, inbox: batch && { ...batch, execution, ...(control && { control }),
-      ...(sceneRevision != null && { sceneRevision }) } };
+      ...(sceneRevision != null && { sceneRevision }), ...(airNotice && { airNotice }) } };
   }
   // 伙伴的全局接管必须表明范围，旧宿主的无范围停止不能释放角色。
   const takeover = Object.keys(request).length === 6 && request.scope === 'role';

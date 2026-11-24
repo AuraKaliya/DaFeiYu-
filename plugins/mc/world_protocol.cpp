@@ -37,6 +37,36 @@ bool dimension(const Json& value) {
     });
 }
 
+// 判断空气值是否为游戏协议可表示的有符号刻数。
+bool air_ticks(const Json& value) {
+    return value.is_number_integer() && value >= INT32_MIN && value <= INT32_MAX;
+}
+
+// 核对原缺氧记录的首末样本、最低读数和恢复证据，单次正读数仅表示恢复中。
+// 步骤：复核身份、窗口和数量 → 对照最低值与当前原始读数 → 按阶段核验连续恢复证据。
+void verify_air_episode(const Json& event, const Json& air) {
+    const auto& phase = event.at("phase");
+    const auto& samples = event.at("samples");
+    const auto& first = event.at("firstTicks");
+    const auto& last = event.at("lastTicks");
+    const auto& low = event.at("minimumTicks");
+    if (air.at("state") != "sampled" || !event.at("episode").is_number_unsigned() || event.at("episode") == 0 ||
+        !samples.is_number_unsigned() || samples == 0 || !event.at("firstAtMs").is_number_unsigned() ||
+        !event.at("lastAtMs").is_number_unsigned() || event.at("firstAtMs") > event.at("lastAtMs") ||
+        event.at("lastAtMs") > air.at("sampledAtMs") || !air_ticks(first) || !air_ticks(last) || !air_ticks(low) ||
+        first > 0 || low > first || low > last || (samples == 1 && (first != last || first != low || event.at("firstAtMs") != event.at("lastAtMs"))))
+        throw std::invalid_argument("MC: invalid air episode evidence");
+    if (phase != "recovered" && (last != air.at("ticks") || event.at("lastAtMs") != air.at("sampledAtMs")))
+        throw std::invalid_argument("MC: stale active air episode");
+    if (phase == "depleted" && last <= 0 && !event.contains("recoveryAtMs") && !event.contains("recoveryTicks")) return;
+    if ((phase != "recovering" && phase != "recovered") || !event.at("recoveryAtMs").is_number_unsigned() ||
+        event.at("recoveryAtMs") < event.at("firstAtMs") || event.at("recoveryAtMs") > event.at("lastAtMs") ||
+        !air_ticks(event.at("recoveryTicks")) || event.at("recoveryTicks") <= 0 || air.at("ticks") <= 0 || samples < 2 ||
+        (phase == "recovering" && last != event.at("recoveryTicks")) ||
+        (phase == "recovered" && (samples < 3 || last <= event.at("recoveryTicks"))))
+        throw std::invalid_argument("MC: unconfirmed air recovery");
+}
+
 // 核对本人生命与空气样本的游戏来源、时间和量纲，未采样的字段只能报告未知。
 // 步骤：绑定工作与现场 → 分别核对源包和采样时刻 → 验证生命、饥饿或有符号空气刻数。
 void verify_vitals(const Json& sample, std::string_view id, const Json& generation) {
@@ -53,9 +83,10 @@ void verify_vitals(const Json& sample, std::string_view id, const Json& generati
             if (reading.at("source") != "update_health" || !reading.at("points").is_number() || reading.at("points") < 0 ||
                 !reading.at("food").is_number_unsigned() || reading.at("food") > 20)
                 throw std::invalid_argument("MC: invalid health sample");
-        } else if (reading.at("source") != "entity_metadata.air_supply" || !reading.at("ticks").is_number_integer() ||
-            reading.at("ticks") < INT32_MIN || reading.at("ticks") > INT32_MAX) throw std::invalid_argument("MC: invalid air sample");
+        } else if (reading.at("source") != "entity_metadata.air_supply" || !air_ticks(reading.at("ticks")))
+            throw std::invalid_argument("MC: invalid air sample");
     }
+    if (sample.contains("airEpisode")) verify_air_episode(sample.at("airEpisode"),sample.at("air"));
 }
 
 // 验证主背包与快捷栏的容量覆盖，只接受与已读槽位一致的可用量。
@@ -835,8 +866,9 @@ std::string survey_request(std::string_view id, std::string_view key, std::strin
 // 步骤：核对原世界及游标 → 按有无控制实例选择真实读口。
 std::string inbox_request(std::string_view id, std::string_view key, std::string_view arguments, std::string_view controller) {
     auto request = parse(arguments);
-    if (key.size() != 64 || request.size() != 2 || !game_uuid(request.at("generation")) ||
+    if (key.size() != 64 || request.size() != 2+request.count("airAfter") || !game_uuid(request.at("generation")) ||
         !request.at("after").is_number_unsigned() || request.at("after") > 9007199254740991ULL ||
+        (request.contains("airAfter") && (controller.empty() || !request.at("airAfter").is_number_unsigned() || request.at("airAfter") > 9007199254740991ULL)) ||
         (!controller.empty() && !controller_id(controller)))
         throw std::invalid_argument("MC protocol: invalid inbox query");
     request.update(Json{{"version", 1}, {"id", id}, {"key", key}, {"method", controller.empty() ? "chat.read" : "partner.listen"}});
@@ -853,12 +885,24 @@ std::string inbox_reply(std::string_view wire, std::string_view id, std::string_
     const auto& inbox = reply.at("inbox");
     if (inbox.is_null()) return "null";
     if (inbox.size() != 7u + inbox.count("control") + inbox.count("presence") + inbox.count("sceneRevision") +
-        inbox.count("lastDeparture") + inbox.count("execution") ||
+        inbox.count("lastDeparture") + inbox.count("execution") + inbox.count("airNotice") ||
         inbox.at("generation") != query.at("generation") || !game_uuid(inbox.at("owner")) ||
         !inbox.at("oldest").is_number_unsigned() || !inbox.at("latest").is_number_unsigned() ||
         !inbox.at("gap").is_boolean() || !inbox.at("more").is_boolean()) throw std::invalid_argument("MC protocol: inbox shape");
     const auto oldest = inbox.at("oldest").get<std::uint64_t>(), latest = inbox.at("latest").get<std::uint64_t>();
     const auto after = query.at("after").get<std::uint64_t>();
+    if (inbox.contains("airNotice")) {
+        const auto& notice = inbox.at("airNotice");
+        if (!query.contains("airAfter") || !notice.at("sequence").is_number_unsigned() || notice.at("sequence") <= query.at("airAfter") ||
+            notice.at("sequence") > 9007199254740991ULL || notice.at("generation") != query.at("generation") ||
+            !game_uuid(notice.at("actor")) || !notice.at("entityId").is_number_unsigned() || notice.at("entityId") > INT32_MAX ||
+            !dimension(notice.at("dimension")) || notice.at("source") != "entity_metadata.air_supply" ||
+            inbox.at("execution").at("mode") != "partner" || inbox.at("execution").at("state") != "ready")
+            throw std::invalid_argument("MC: invalid air notice source");
+        const auto& event = notice.at("airEpisode");
+        if (event.at("phase") != "depleted" && event.at("phase") != "recovered") throw std::invalid_argument("MC: invalid air notice phase");
+        verify_air_episode(event,{{"state","sampled"},{"sampledAtMs",event.at("lastAtMs")},{"ticks",event.at("lastTicks")}});
+    }
     if (inbox.contains("presence") && (!presence_fact(inbox.at("presence")) || inbox.at("presence").at("sequence") > latest))
         throw std::invalid_argument("MC protocol: invalid player presence");
     if (inbox.contains("lastDeparture")) {

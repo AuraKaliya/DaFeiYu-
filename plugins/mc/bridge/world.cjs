@@ -32,6 +32,7 @@ function observeWorld(bot) {
 
   return {
     vitals: vitals.read,
+    airNotice: vitals.notice,
     // 为同一连接到过的地图提供可复用的对象身份。
     // 步骤：核对出生和维度 → 或按地图名、或按本次出生保留独立身份。
     space() {

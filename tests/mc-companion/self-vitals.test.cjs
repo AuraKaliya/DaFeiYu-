@@ -57,3 +57,33 @@ test('vital readings stay with their original spawn, entity and dimension', () =
   assert.deepEqual(f.bot._client.eventNames(),[]);
   assert.throws(f.read,{ code:'observe_vitals_unavailable' });
 });
+
+// 反复耗气和短时正值沿用原记录，只有持续回升才结算，再次耗尽另起一份。
+test('air depletion coalesces real packets and confirms recovery before starting another episode', () => {
+  const f = fixture();
+  f.air(17,4);
+  assert.equal(f.read().airEpisode,undefined);
+  for (const ticks of [0,-1,-4,1,0]) f.air(17,ticks);
+  const original = f.read().airEpisode;
+  assert.deepEqual([original.episode,original.phase,original.samples,original.minimumTicks,original.lastTicks],[1,'depleted',5,-4,0]);
+  const notice = f.vitals.notice('a',0);
+  assert.deepEqual([notice.sequence,notice.airEpisode.phase,notice.airEpisode.samples],[1,'depleted',1]);
+  assert.deepEqual(f.vitals.notice('a',0),notice);
+  assert.equal(f.vitals.notice('a',1),undefined);
+  f.air(18,300);
+  assert.deepEqual(f.read().airEpisode,original);
+  for (const ticks of [3,3,2]) f.air(17,ticks);
+  assert.deepEqual([f.read().airEpisode.phase,f.read().airEpisode.recoveryTicks],['recovering',2]);
+  f.air(17,6);
+  const recovered = f.read().airEpisode;
+  f.air(17,300);
+  assert.deepEqual([recovered.episode,recovered.phase,recovered.samples,recovered.minimumTicks,recovered.lastTicks],[1,'recovered',9,-4,6]);
+  assert.deepEqual(f.read().airEpisode,recovered);
+  assert.deepEqual(f.vitals.notice('a',1).airEpisode,recovered);
+  assert.equal(f.vitals.notice('a',2),undefined);
+  f.air(17,-1);
+  assert.deepEqual([f.read().airEpisode.episode,f.read().airEpisode.samples],[2,1]);
+  f.spawn();
+  assert.equal(f.read().airEpisode,undefined);
+  assert.equal(f.vitals.notice('b',0),undefined);
+});
