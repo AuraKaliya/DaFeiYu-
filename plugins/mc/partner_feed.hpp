@@ -54,6 +54,10 @@ class PartnerFeed {
     const nlohmann::json* message_scene(std::uint64_t sequence) const noexcept;
     // 返回待交付事件之前是否丢失完整窗口。
     bool gap() const noexcept { return gap_; }
+    // 返回本次在场尚未交给决策的空气边界；读取不会消费原玩家消息。
+    const nlohmann::json& air_notices() const noexcept { return air_notices_; }
+    // 仅在同场决策实际接纳后消费已展示的空气边界。
+    void consume_air() noexcept { air_notices_.clear(); }
     // 清除已经交给原世界子会话的批次。
     void consumed();
   private:
@@ -67,11 +71,14 @@ class PartnerFeed {
     std::string generation_, owner_, id_, arguments_, mode_, execution_;
     nlohmann::json observation_, control_;
     nlohmann::json pending_ = nlohmann::json::array();
+    nlohmann::json air_notices_ = nlohmann::json::array();
     std::deque<nlohmann::json> anchored_messages_;
     std::unique_ptr<PipeExchange> pipe_;
     std::chrono::steady_clock::time_point next_{}, world_due_{}, recover_until_{};
     std::uint64_t sequence_ = 0, cursor_ = 0, departed_ = 0, departure_ = 0, scene_revision_ = 0;
     std::uint64_t binding_revision_ = 0;
+    std::uint64_t air_cursor_ = 0;
+    bool air_requested_ = false, air_legacy_ = false, air_confirmed_ = false;
     bool reading_world_ = false, ready_ = false, more_ = false, gap_ = false;
 };
 }

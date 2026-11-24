@@ -886,12 +886,19 @@ dfy::model::Response vitals_sample(const dfy::model::Request& request) {
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "vitals.attention") {
+            if (!input.at("events").empty() || input.at("airNotices").back().at("airEpisode").at("phase") != "depleted" ||
+                request.tools.size() != 1 || !request.tools.front().name.ends_with("_observe"))
+                throw std::runtime_error("vitals: autonomous observation scope changed");
+            return {{Role::assistant,"",{{"air-read",request.tools.front().name,R"({"mode":"vitals"})"}}},FinishReason::tool_calls};
+        }
         if (!input.at("events").empty()) {
             const auto question = input.at("events").back().value("text","");
-            if (question == "你现在还有多少血和空气？" || question == "上岸后空气恢复了吗？") {
+            if (question == "你现在还有多少血和空气？" || question == "上岸后空气恢复了吗？" || question == "刚才真的耗尽空气了吗？") {
                 const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_observe"); });
                 if (tool == request.tools.end()) throw std::runtime_error("vitals: observation tool missing");
-                return {{Role::assistant,"",{{question == "上岸后空气恢复了吗？" ? "shore" : "under",tool->name,R"({"mode":"vitals"})"}}},FinishReason::tool_calls};
+                const auto id = question == "上岸后空气恢复了吗？" ? "shore" : question == "刚才真的耗尽空气了吗？" ? "depleted" : "under";
+                return {{Role::assistant,"",{{id,tool->name,R"({"mode":"vitals"})"}}},FinishReason::tool_calls};
             }
         }
     } else if (last.role == Role::tool) {
@@ -899,10 +906,15 @@ dfy::model::Response vitals_sample(const dfy::model::Request& request) {
         const auto& sample = result.at("vitals");
         if (sample.at("health").at("state") != "sampled" || sample.at("air").at("state") != "sampled")
             throw std::runtime_error("vitals: actor packets unavailable");
+        if (last.tool_call_id == "air-read" && sample.at("airEpisode").at("phase") == "depleted")
+            return {{Role::assistant,"已经在原角色上复核了耗尽记录。"}};
         if (last.tool_call_id == "under" && sample.at("air").at("ticks") < 240 && sample.at("health").at("points") < 20)
             return {{Role::assistant,"我的生命值还没回满，空气已经不到两百四十刻了。"}};
         if (last.tool_call_id == "shore" && sample.at("air").at("ticks") == 300)
             return {{Role::assistant,"上岸后我又查了一次，空气已经恢复到三百刻了。"}};
+        if (last.tool_call_id == "depleted" && sample.at("airEpisode").at("phase") == "depleted" &&
+            sample.at("airEpisode").at("samples") >= 2 && sample.at("airEpisode").at("minimumTicks") < 0)
+            return {{Role::assistant,"这一次空气确实耗尽了，我连续读到了零和负值。"}};
         throw std::runtime_error("vitals: scene and sampled state differ");
     }
     return {{Role::assistant,R"({"internal":"awaiting a vitals question"})"}};
@@ -1175,7 +1187,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool gather_handoff = mode == L"--handoff-gather-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
-        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe" || mode == L"--vitals-probe";
+        const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";
+        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe" || vitals;
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -1193,7 +1206,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
             [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,ask,gap,root,mode](const auto&, const auto& request) {
-                if (mode == L"--vitals-probe") return vitals_sample(request);
+                if (mode == L"--vitals-probe" || mode == L"--air-episode-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
                 if (handoff) return handoff_sample(request);
                 if (ground_pickup) return ground_pickup_sample(request);

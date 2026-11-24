@@ -12,6 +12,9 @@ void PartnerFeed::reset_binding() noexcept {
     execution_.clear();
     cursor_ = departed_ = departure_ = 0;
     scene_revision_ = 0;
+    air_cursor_ = 0;
+    air_requested_ = air_legacy_ = air_confirmed_ = false;
+    air_notices_.clear();
     recover_until_ = {};
     ready_ = more_ = gap_ = false;
     pending_.clear();
@@ -109,6 +112,21 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     // 新持权者从接管水位接收，等候期间收集的旧原话不进入它的子 Agent。
     if (acquired) { gap_ = false; departure_ = 0; anchored.clear(); }
     else gap_ |= ready_ && reset_window;
+    if (!permitted || departed || departure_) air_notices_.clear();
+    if (const auto notice = batch.find("airNotice"); notice != batch.end()) {
+        const auto sequence = notice->at("sequence").get<std::uint64_t>();
+        if (!departed && !departure_ && notice->at("actor") == observation_.at("actor") && notice->at("dimension") == observation_.at("dimension")) {
+            auto fact = *notice;
+            if (air_cursor_ && sequence > air_cursor_+1) fact["missedBefore"] = sequence-air_cursor_-1;
+            if (air_notices_.size() == 4) {
+                const auto missing = air_notices_.front().value("missedBefore",std::uint64_t{})+1;
+                air_notices_.erase(air_notices_.begin());
+                air_notices_.front()["missedBefore"] = air_notices_.front().value("missedBefore",std::uint64_t{})+missing;
+            }
+            air_notices_.push_back(std::move(fact));
+        }
+        air_cursor_ = sequence;
+    }
     if (execution_bound() && !permitted) ++binding_revision_;
     more_ = !reset_window && batch.at("more").get<bool>();
     cursor_ = cursor;
@@ -121,6 +139,7 @@ void PartnerFeed::accept_inbox(std::string_view wire) {
     execution_ = std::move(state);
     owner_ = std::move(owner);
     ready_ = true;
+    if (air_requested_) air_confirmed_ = true;
     recover_until_ = {};
 }
 
@@ -136,7 +155,12 @@ void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
             if (sequence_ == UINT64_MAX) throw std::overflow_error("MC feed: request sequence exhausted");
             id_ = "feed."+std::to_string(owner)+"."+std::to_string(++sequence_);
             reading_world_ = generation_.empty() || now >= world_due_;
-            if (!reading_world_) arguments_ = Json{{"generation",generation_},{"after",cursor_}}.dump();
+            if (!reading_world_) {
+                Json args{{"generation",generation_},{"after",cursor_}};
+                air_requested_ = ready_ && !air_legacy_;
+                if (air_requested_) args["airAfter"] = air_cursor_;
+                arguments_ = args.dump();
+            }
             auto request = reading_world_ ? world_request(id_) : inbox_request(id_,config.key,arguments_,config.controller);
             pipe_ = std::make_unique<PipeExchange>(config.channel,std::move(request));
         }
@@ -152,6 +176,14 @@ void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
             next_ = more_ ? now : now+milliseconds(100);
         }
     } catch (const std::exception&) {
+        // 旧桥接只支持基础监听。沿原聊天游标重读，遥测扩展失败不会吞去原话。
+        if (!reading_world_ && air_requested_ && !air_confirmed_) {
+            air_legacy_ = true;
+            air_requested_ = false;
+            pipe_.reset();
+            next_ = now;
+            return;
+        }
         if (ready_) {
             pipe_.reset();
             if (!recovering()) recover_until_ = now+seconds(3);

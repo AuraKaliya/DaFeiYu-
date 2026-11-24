@@ -124,7 +124,8 @@ async function checkPlayer(fixture, mode) {
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !handoff && !['--water-probe', '--vitals-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
+    const vitals = mode === '--vitals-probe' || mode === '--air-episode-probe';
+    const arena = partner && !combined && !layered && !gapGroup && !handoff && !vitals && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -149,8 +150,8 @@ async function checkPlayer(fixture, mode) {
       await checkDoor(fixture, player, whispers);
     } else if (mode === '--water-probe') {
       await checkWater(fixture, player, whispers);
-    } else if (mode === '--vitals-probe') {
-      await checkVitals(fixture, player, whispers);
+    } else if (vitals) {
+      await checkVitals(fixture, player, whispers,mode === '--air-episode-probe');
     } else if (mode === '--gap-materials-probe') {
       await checkMaterials(fixture, player, whispers);
     } else if (explicitOpenings) {
@@ -219,7 +220,7 @@ async function checkPlayer(fixture, mode) {
 
 // 用独立玩家收到的本人实体元数据核验水下与回到空气后的两次只读查询。
 // 步骤：固定角色身份和水槽 → 对照掉血与余气采样 → 核实出水恢复及玩家收到的答复。
-async function checkVitals(fixture, player, whispers) {
+async function checkVitals(fixture, player, whispers, followDepletion) {
   const actor = player.players.DfyCompanion.entity;
   const keys = player.registry.entitiesByName.player.metadataKeys;
   const air = keys.indexOf('air_supply'), health = keys.indexOf('health');
@@ -234,6 +235,7 @@ async function checkVitals(fixture, player, whispers) {
   player._client.on('entity_metadata',metadata);
   const wet = '我的生命值还没回满，空气已经不到两百四十刻了。';
   const dry = '上岸后我又查了一次，空气已经恢复到三百刻了。';
+  const exhausted = '这一次空气确实耗尽了，我连续读到了零和负值。';
   try {
     fixture.send('fill 4 -61 9 6 -57 11 minecraft:glass');
     fixture.send('fill 5 -60 10 5 -58 10 minecraft:water');
@@ -243,19 +245,45 @@ async function checkVitals(fixture, player, whispers) {
     await until(() => actor.metadata[health] > 0 && actor.metadata[health] < 20,'独立玩家读到角色实际掉血');
     await measurePlayerFeedback(player,'你现在还有多少血和空气？',wet,() => until(() => whispers.includes(wet),'自身生命与余气答复'),
       sample => writeFileSync(join(fixture.evidence,'player-feedback.json'),JSON.stringify(sample,null,2)));
+    if (followDepletion) {
+      await until(() => actor.metadata[air] < -3,'同一身体的余气连续耗尽',20000);
+      await until(() => {
+        const rows = readRows(fixture,'trace/events.jsonl');
+        const notice = rows.find(r => r.category === 'mc.partner.attention' && r.body.source === 'air' && r.body.trigger === 'vitals.attention');
+        return notice && rows.some(r => r.category === 'mc.partner.turn' && r.body.request === notice.body.request && r.body.outcome === 'completed');
+      },'耗尽只读回合已复核原角色并静默退出');
+      player.chat('刚才真的耗尽空气了吗？');
+      await until(() => whispers.includes(exhausted),'按同一次耗尽的连续读数回答');
+    }
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     await until(() => actor.metadata[air] === 300,'独立玩家观察到原角色出水及空气恢复');
     player.chat('上岸后空气恢复了吗？');
     await until(() => whispers.includes(dry),'同一原角色出水后的答复');
 
     const reads = readRows(fixture,'game-actions.jsonl').filter(row => row.skill === 'observe' && row.result.vitals);
+    const orders = followDepletion ? [2,2,3,4] : [2,3];
     assert.deepEqual(reads.map(row => [row.order,row.arguments.mode,row.result.vitals.actor,row.result.vitals.entityId]),
-      [[2,'vitals',actor.uuid,actor.id],[3,'vitals',actor.uuid,actor.id]]);
-    const [under,shore] = reads.map(row => row.result.vitals);
+      orders.map(order => [order,'vitals',actor.uuid,actor.id]));
+    const under = reads[0].result.vitals, shore = reads.at(-1).result.vitals;
     assert.equal(under.generation,shore.generation);
     assert.ok(under.air.ticks < 240 && under.health.points < 20 && seen.air.has(under.air.ticks) && seen.health.has(under.health.points));
     assert.ok(shore.air.ticks === 300 && seen.air.has(300) && shore.air.sampledAtMs > under.air.sampledAtMs);
-    assert.deepEqual(whispers,[wet,dry]);
+    if (followDepletion) {
+      const low = reads[2].result.vitals.airEpisode, recovered = shore.airEpisode;
+      assert.ok(low.samples >= 2 && low.minimumTicks < 0 && seen.air.has(low.minimumTicks));
+      assert.deepEqual([recovered.episode,recovered.phase,recovered.firstAtMs],[low.episode,'recovered',low.firstAtMs]);
+      assert.ok(recovered.samples > low.samples && recovered.lastTicks > recovered.recoveryTicks && recovered.recoveryTicks > 0);
+      const trace = readRows(fixture,'trace/events.jsonl');
+      const prepared = trace.filter(r => r.kind === 'model.prepared' && r.source === 'plugin' && r.step === 1)
+        .map(r => ({ input:JSON.parse(r.input.messages.at(-1).content), tools:r.input.tools }));
+      const noticed = prepared.filter(turn => turn.input.airNotices);
+      assert.deepEqual(noticed.map(turn => [turn.input.trigger,turn.input.airNotices.map(n => n.airEpisode.phase)]),
+        [['vitals.attention',['depleted']],['game.event',['recovered']]]);
+      assert.equal(noticed[0].tools.length,1);
+      assert.ok(noticed[0].tools[0].name.endsWith('_observe'));
+      assert.equal(noticed[1].input.events.at(-1).text,'上岸后空气恢复了吗？');
+    }
+    assert.deepEqual(whispers,followDepletion ? [wet,exhausted,dry] : [wet,dry]);
   } finally {
     player._client.removeListener('entity_metadata',metadata);
     fixture.send('tp DfyCompanion 0.5 -60 0.5');

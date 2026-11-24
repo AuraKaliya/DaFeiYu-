@@ -196,7 +196,8 @@ async function main() {
   const delayed = variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
-  const partnerLoop = variant === 'partner-loop' || interrupt || motion || confirm || refusedCollection || task || route || exchange || departure || revision || execution || delivery;
+  const legacyAir = variant === 'partner-legacy-air';
+  const partnerLoop = variant === 'partner-loop' || legacyAir || interrupt || motion || confirm || refusedCollection || task || route || exchange || departure || revision || execution || delivery;
   fs.mkdirSync(temp, { recursive: true });
   let root = fs.mkdtempSync(path.join(temp, 'world-'));
   const config = path.join(root, 'user', 'plugins', 'mc.companion');
@@ -205,7 +206,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking }));
-  let reads = 0;
+  let reads = 0, airAttempts = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
@@ -240,6 +241,10 @@ async function main() {
     position: { x: -0.000041, y: -60.000041050085805, z: 9.99996 },
     facing: { yaw: 0.1234567, pitch: -0.9876543 } };
   const bridge = await openBridge(channel, {
+    // 模拟老适配器拒绝带空气游标的监听，基础聊天监听仍可沿原水位重读。
+    airNotice() {
+      if (legacyAir) { ++airAttempts; throw new Error('unsupported private inbox extension'); }
+    },
     // 第二次查询模拟原世界已撤销。
     read() { ++reads; return partnerLoop || boardWindow || reads === 1 ? state : null; },
     // 替身没有待释放的游戏资源。
@@ -1138,6 +1143,7 @@ async function main() {
       assert.equal((await once(child, 'exit'))[0], 0);
     }
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
+    if (legacyAir) assert.equal(airAttempts,1);
     if (showGame) assert.ok(approvedId);
     if (delivery) {
       assert.equal(replies, ['fallback', 'sent', 'finish'].includes(delivery) ? 1 : 0);
