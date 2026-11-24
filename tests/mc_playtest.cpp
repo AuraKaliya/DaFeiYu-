@@ -762,6 +762,43 @@ dfy::model::Response pickup_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"waiting for pickup"})"}};
 }
 
+// 通过普通玩家消息选择原观察中的整堆物品，并在计划读回后回答实际入包量。
+// 步骤：读取周围掉落 → 将指定堆的稳定身份送入计划 → 按收取人与库存共同核对。
+dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto call = [&](std::string name, const Json& args) -> Response {
+        const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
+        if (tool == request.tools.end()) throw std::runtime_error("ground pickup: missing " + name);
+        return {{Role::assistant,"",{{name,tool->name,args.dump()}}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::tool && last.tool_call_id == "_observe") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("dropObservation");
+        const auto& stacks = sample.at("entities");
+        const auto target = std::ranges::find_if(stacks,[](const auto& entry) { return entry.at("count") == 3; });
+        if (stacks.size() != 2 || target == stacks.end()) throw std::runtime_error("ground pickup: cannot distinguish the stacks");
+        const Json args{{"observation",sample.at("id")},{"entity",target->at("uuid")},{"item","dirt"},{"count",3}};
+        const Json step{{"id","soil"},{"skill","pickup_drop"},{"arguments",args}};
+        return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({step})}});
+    }
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (input.at("trigger") == "plan.finished") {
+            const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+            const auto& pickup = result.at("pickup");
+            if (result.at("status") != "done" || pickup.at("verifiedCount") != 3 || pickup.at("observed").at("otherCount") != 0 ||
+                pickup.at("observed").at("uuid") != result.at("dropTarget").at("entity") || result.at("inventoryDelta") != Json{{"dirt",3}})
+                throw std::runtime_error("ground pickup: unconfirmed stack or inventory");
+            return {{Role::assistant,"三块泥土都进了我的背包。"}};
+        }
+        if (!input.at("events").empty() && input.at("events").back().value("text","") == "把那一堆三块泥土捡起来。")
+            return call("_observe",{{"mode","drops"},{"item","dirt"},{"radius",8}});
+    }
+    return {{Role::assistant,R"({"internal":"waiting for the original stack"})"}};
+}
+
 // 用隔离服的观察和合成回执决定何时向玩家报告产出。
 // 步骤：按原话采样 → 核对方块、原料和地上物品 → 提交合成并等待读回。
 dfy::model::Response craft_sample(const dfy::model::Request& request) {
@@ -950,7 +987,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool layered = resupply || mode == L"--layered-follow-probe";
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
-        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || mode == L"--partner-probe";
+        const bool ground_pickup = mode == L"--ground-pickup-probe";
+        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -967,7 +1005,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,ask,gap,root,mode](const auto&, const auto& request) {
+                if (ground_pickup) return ground_pickup_sample(request);
                 if (pickup) return pickup_sample(request);
                 if (craft) return craft_sample(request);
                 if (gap_group) return opening_group_sample(request,mode);

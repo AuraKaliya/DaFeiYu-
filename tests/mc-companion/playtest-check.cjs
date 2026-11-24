@@ -123,7 +123,7 @@ async function checkPlayer(fixture, mode) {
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -132,6 +132,8 @@ async function checkPlayer(fixture, mode) {
       await checkFillFour(fixture, player, whispers, combined);
     } else if (mode === '--craft-probe') {
       await checkCraft(fixture, player, whispers);
+    } else if (mode === '--ground-pickup-probe') {
+      await checkGroundPickup(fixture, player, whispers);
     } else if (mode === '--pickup-probe') {
       await checkPickup(fixture, player, whispers);
     } else if (layered) {
@@ -204,6 +206,49 @@ async function checkPlayer(fixture, mode) {
     }
     writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
   } finally { player.quit(); }
+}
+
+// 独立客户端对照原实体、服务端拾取包、旁边的物品和角色的实际入包数量。
+// 步骤：区分三堆初始物品 → 用玩家原话委托 → 串查身份、库存、退出与可见回复。
+async function checkGroundPickup(fixture, player, whispers) {
+  const tracked = (item, count) => Object.values(player.entities).find(entity => {
+    const stack = entity.getDroppedItem?.();
+    return stack?.name === item && stack.count === count;
+  });
+  const [original, other, stone] = await until(() => {
+    const stacks = [tracked('dirt', 3), tracked('dirt', 2), tracked('stone', 1)];
+    return stacks.every(stack => stack?.uuid) && stacks;
+  }, '独立客户端识别两堆泥土和一堆石头');
+  const actor = player.players.DfyCompanion.entity;
+  const packets = [];
+  const onCollect = packet => packets.push(packet);
+  player._client.on('collect', onCollect);
+  try {
+    assert.equal(fixture.materialCount('dirt'), 0);
+    const message = '把那一堆三块泥土捡起来。', reply = '三块泥土都进了我的背包。';
+    await measurePlayerFeedback(player, message, reply, () => until(() => whispers.includes(reply), '实际入包后的玩家回复', 18000),
+      sample => writeFileSync(join(fixture.evidence, 'player-feedback.json'), JSON.stringify(sample, null, 2)));
+    const actions = readRows(fixture, 'game-actions.jsonl');
+    const jobs = actions.filter(row => row.skill === 'pickup_drop');
+    assert.equal(jobs.length, 1);
+    const [job] = jobs;
+    const source = actions.find(row => row.work === job.arguments.observation);
+    assert.ok(source?.result.dropObservation.entities.some(entity => entity.uuid === original.uuid && entity.count === 3));
+    assert.equal(job.order, source.order);
+    assert.deepEqual([job.arguments.entity, job.result.pickup.observed.uuid, job.result.pickup.observed.lastCollector.uuid],
+      [original.uuid, original.uuid, actor.uuid]);
+    assert.deepEqual([job.exited, job.result.status, job.result.pickup.verifiedCount, job.result.inventoryDelta],
+      [true, 'done', 3, { dirt: 3 }]);
+    assert.deepEqual(packets.filter(packet => packet.collectedEntityId === original.id).map(packet =>
+      [packet.collectorEntityId, packet.pickupItemCount]), [[actor.id, 3]]);
+    assert.equal(tracked('dirt', 2)?.uuid, other.uuid);
+    assert.equal(tracked('stone', 1)?.uuid, stone.uuid);
+    assert.equal(fixture.materialCount('dirt'), 3);
+    assert.deepEqual(whispers, [reply]);
+    assert.equal(actions.filter(row => row.skill === 'reply' && row.result.text === reply && row.result.sent).length, 1);
+    assert.ok(readRows(fixture, 'trace/events.jsonl').some(row => row.category === 'mc.partner.action' &&
+      row.body.bridgeWork === job.work && row.body.order === job.order && row.body.result?.pickup?.verifiedCount === 3));
+  } finally { player._client.removeListener('collect', onCollect); }
 }
 
 // 由独立玩家核对追问回到原消息并实际补齐相隔的两处开口。
