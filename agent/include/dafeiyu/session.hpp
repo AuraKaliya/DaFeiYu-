@@ -108,6 +108,10 @@ class TurnRequest {
     TurnNotifications notifications() const noexcept { return notifications_; }
     // 返回当前或已退出回合的诊断值副本，不保留模型请求、事件载荷或正文。
     TurnDiagnostics diagnostics() const noexcept;
+    // 借用当前回合的有界补充原话与实际送模回执，限可信宿主线程使用。
+    const std::vector<TurnInput>& inputs() const noexcept { return inputs_; }
+    // 给显示端区分新收件、实际送模和未带入的终态。
+    std::uint64_t input_revision() const noexcept { return input_revision_; }
     // 复制当前诊断与已发生事实，读取不推进执行且不依赖通知是否接纳。
     RunSnapshot snapshot() const noexcept;
     // 复制已实际退出的模型步骤，不返回后台请求或业务正文。
@@ -148,6 +152,11 @@ class TurnRequest {
     explicit TurnRequest(RunId run, std::size_t trace_capacity) : attempt_{{run,1},1},journal_(run,trace_capacity) {}
     AttemptId attempt_;
     RunJournal journal_;
+    // 一次结算从上次水位起等待的消息，旧回执保持原步骤及结果。
+    void settle_inputs(InputState state, std::uint64_t step = 0) noexcept;
+    std::vector<TurnInput> inputs_;
+    std::size_t settled_inputs_ = 0;
+    std::uint64_t input_revision_ = 0;
     TraceVersions versions_;
     std::vector<ObservationInputFact> observation_inputs_;
     runtime::DomainId initial_observation_binding_ = 0;
@@ -212,6 +221,8 @@ class Session {
     std::shared_ptr<TurnRequest> begin(const std::string& prompt);
     // 用明确的工具范围、策略和限额接纳一次运行，旧入口保持无工具行为。
     std::shared_ptr<TurnRequest> begin(const std::string& prompt, RunOptions options);
+    // 只向匹配身份的活动回合签收一条补充，已经封闭时保留原结果。
+    InputReceipt append_input(RunId expected, std::string text);
     // 使用宿主绑定凭证处理确认命令，不在提交决定时执行动作；保留结果期间可重取原回执。
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 由宿主绑定的验证入口确认步骤完成条件；重复同证据不重复推进，调用本身不执行后续工作。

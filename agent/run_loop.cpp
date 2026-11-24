@@ -401,8 +401,8 @@ struct RunLoopState {
         } catch (...) { advancing = false; throw; }
     }
     // 先运行模型前控制点，再提交不可变消息；提交后不再分配运行元数据。
-    // 步骤：裁定停止 → 检查规则及观察资格 → 准备完整输入 → 重查停止后接纳并发布步骤身份。
-    void start_model() {
+    // 步骤：裁定停止及规则 → 合入已签收的真人原话 → 准备完整输入 → 接纳后关联实际送模步骤。
+    void start_model(const model::Message* prior_answer = nullptr) {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         stage = TurnFailure::control; auto current = control(); current.attempt.step.sequence = record->model_requests_+1;
         const auto decision = restrict_policy(policy->before_model(current),options.extension,ControlPoint::model_request,current);
@@ -425,6 +425,8 @@ struct RunLoopState {
         if (decision.verdict != PolicyVerdict::allow) { record->stop_reason_ = decision.reason; throw std::runtime_error("run: model request denied"); }
         stage = TurnFailure::model_request;
         const auto& scope = record->plan_ ? step_tools : options.tools;
+        const auto pending = std::span<const TurnInput>(record->inputs_).subspan(record->settled_inputs_);
+        if (!pending.empty()) record->context_->append_user_inputs(pending,prior_answer);
         model::Request input = planning_request ? planning_request->request :
             model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
         if (!options.system_instructions.empty()) {
@@ -450,6 +452,7 @@ struct RunLoopState {
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
+        record->settle_inputs(InputState::submitted,current.attempt.step.sequence);
         record->model_contexts_.push_back(std::move(context));
         TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
@@ -506,8 +509,16 @@ struct RunLoopState {
         record->record_fact(RunFactKind::model_finished); record->model_.reset(); models.collect();
     }
     // 仅在全部真实工作退出后结算运行退出，不丢弃未完成工具占位。
-    // 步骤：核对全部工作已退出 → 封闭上下文和模型接纳 → 发布运行退出。
+    // 步骤：结算未带入的补充 → 核对全部工作已退出 → 封闭上下文并发布退出。
     void finish() {
+        const auto result = record->operation()->state();
+        if (result != runtime::OperationState::pending && record->settled_inputs_ < record->inputs_.size()) {
+            auto state = result == runtime::OperationState::failed ? InputState::failed : InputState::closed;
+            if (record->stop_reason_ == PolicyReason::cancelled) state = InputState::cancelled;
+            if (record->stop_reason_ == PolicyReason::deadline) state = InputState::deadline;
+            if (record->stop_reason_ == PolicyReason::model_limit || record->stop_reason_ == PolicyReason::tool_limit) state = InputState::limit;
+            record->settle_inputs(state);
+        }
         if (record->operation()->state() == runtime::OperationState::pending || record->model_ || (record->tools_ && record->tools_->busy()) || (batch && !batch->done())) return;
         if (plan_step && plan_step->exit.operation()->state() == runtime::OperationState::pending) plan_step->exit.settle(runtime::OperationState::succeeded);
         record->context_->seal(); models.close(); record->exited_ = std::chrono::steady_clock::now();
@@ -574,6 +585,8 @@ struct RunLoopState {
                             record->plan_outputs_.push_back(std::move(output));
                             plan_step->answer = std::move(response->message.content);
                             plan_step->result.settle(OperationState::succeeded); plan_step->exit.settle(OperationState::succeeded);
+                        } else if (record->inputs_.size() > record->settled_inputs_) {
+                            start_model(&response->message);
                         } else {
                             auto answer = response->message.content;
                             stage = TurnFailure::control;
@@ -602,6 +615,9 @@ struct RunLoopState {
                 if (planning_request) start_model(); else advance_plan();
             }
             finish();
+        } catch (const std::length_error&) {
+            record->settle_inputs(InputState::limit);
+            fail(std::current_exception()); try { finish(); } catch (...) {}
         } catch (...) { fail(std::current_exception()); try { finish(); } catch (...) {} }
         advancing = false;
     }
@@ -633,6 +649,27 @@ std::shared_ptr<TurnRequest> RunLoop::request() const noexcept { return state_->
 std::shared_ptr<const MessageHistory> RunLoop::history() const noexcept { return state_->record->context_->committed(); }
 // 推进当前运行的一个阶段。
 void RunLoop::advance() { state_->advance(); }
+// 只在获准的真人问答中签收补充，不改变已经发出的请求或本轮权限。
+// 步骤：核对来源和当前状态 → 检查条数、编码与正文预算 → 保存原话并签发回合内消息号。
+InputReceipt RunLoop::append_input(std::string text) {
+    auto& record = *state_->record;
+    if (!state_->options.accept_user_input || state_->options.origin != RunOrigin::user_request || state_->options.planning ||
+        state_->options.tools) return {InputAdmission::unavailable};
+    if (state_->advancing || record.operation()->state() != runtime::OperationState::pending ||
+        record.operation()->cancellation_reason() != runtime::CancelReason::none || state_->options.now() >= state_->deadline)
+        return {InputAdmission::closed};
+    constexpr std::size_t byte_limit = 1024*1024;
+    if (text.size() > byte_limit || text.find_first_not_of(" \t\r\n") == std::string::npos ||
+        !runtime::valid_utf8(text)) return {InputAdmission::rejected};
+    std::size_t bytes = text.size();
+    for (const auto& item : record.inputs_) bytes += item.text.size();
+    if (record.inputs_.size() >= 8 || bytes > byte_limit) return {InputAdmission::full};
+
+    const auto message = record.inputs_.size()+1;
+    record.inputs_.push_back({message,std::move(text)});
+    ++record.input_revision_;
+    return {InputAdmission::accepted,message};
+}
 // 只转交可信控制命令，不驱动模型或工具执行。
 ConfirmationReceipt RunLoop::decide(const ConfirmationCaller& caller, const ConfirmationCommand& command) { return state_->decide(caller,command); }
 // 转交可信验证，调用本身不继续运行或改变原工作结果。

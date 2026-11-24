@@ -86,6 +86,21 @@ void RunContext::commit_tools() {
         throw std::logic_error("context: incomplete tool batch");
     committed_ = pending_; pending_.reset(); replies_.clear();
 }
+// 将前一阶段的助手答复及真人原话放入待发上下文，到成功提交历史前可整体丢弃。
+// 步骤：核对事务与消息类型 → 按收件顺序准备后续输入 → 验证完整请求并发布待发副本。
+void RunContext::append_user_inputs(std::span<const TurnInput> inputs, const model::Message* prior_answer) {
+    if (finished_ || !replies_.empty() || inputs.empty()) throw std::logic_error("context: input boundary unavailable");
+    auto pending = std::make_shared<MessageHistory>(messages());
+    if (prior_answer) {
+        if (prior_answer->role != model::Role::assistant || !prior_answer->tool_calls.empty())
+            throw std::invalid_argument("context: expected plain assistant output");
+        pending->push_back(*prior_answer);
+    }
+    for (const auto& input : inputs) pending->push_back({model::Role::user,input.text});
+    model::validate_request({*pending});
+    pending_ = std::move(pending);
+}
+
 // 步骤数据作为普通输入附加，不能通过正文改变角色、权限或原目标。
 // 步骤：核对阶段及数据边界 → 复制完整输入并追加数据消息 → 校验整体预算 → 发布待提交输入。
 void RunContext::begin_step(std::string data) {

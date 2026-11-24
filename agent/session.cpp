@@ -4,6 +4,23 @@
 
 namespace dfy::agent {
 using namespace runtime;
+// 写入本批等待输入的实际送模步骤或未带入原因，修订在整批更新后发布。
+void TurnRequest::settle_inputs(InputState state, std::uint64_t step) noexcept {
+    if (settled_inputs_ == inputs_.size()) return;
+    while (settled_inputs_ < inputs_.size()) {
+        auto& input = inputs_[settled_inputs_++];
+        input.state = state;
+        input.model_step = step;
+    }
+    ++input_revision_;
+}
+
+// 将补充绑定到原活动回合，关闭、重入或过期身份不会产生新工作。
+InputReceipt Session::append_input(RunId expected, std::string text) {
+    if (working_ || !accepting() || !active_ || active_->request()->run_id() != expected) return {InputAdmission::closed};
+    return active_->append_input(std::move(text));
+}
+
 namespace {
 // 将原文本调用包装为明确的文本后端，不允许静默丢弃工具字段。
 // 步骤：选取明确调用或内置文本 Provider → 包装完整响应并标记文本能力。

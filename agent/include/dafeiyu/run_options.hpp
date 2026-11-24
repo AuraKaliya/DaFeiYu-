@@ -58,5 +58,7 @@ struct RunOptions {
     // 宿主为本轮提供的角色引导，仅在构造模型请求时注入。
     std::string system_instructions;
     model::ThinkingPreference thinking = model::ThinkingPreference::inherit;
+    // 仅由允许真人对话的宿主开启，当轮正文不能改变既有授权。
+    bool accept_user_input = false;
 };
 }

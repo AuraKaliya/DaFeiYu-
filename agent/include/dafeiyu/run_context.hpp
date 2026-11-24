@@ -1,5 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/tool_work.hpp>
+#include <dafeiyu/turn_input.hpp>
+#include <span>
 
 namespace dfy::agent {
 using MessageHistory = std::vector<model::Message>;
@@ -24,6 +26,8 @@ class RunContext {
         ToolError fault = ToolError::none, bool accepted = true);
     // 仅在全部结果已准备时发布本批历史，提交不分配内存。
     void commit_tools();
+    // 在完整步骤后准备用户补充和可选阶段答复，保持已提交历史独立。
+    void append_user_inputs(std::span<const TurnInput> inputs, const model::Message* prior_answer);
     // 在无未完成工具时追加有界步骤数据，准备失败不改变已提交历史或当前输入。
     void begin_step(std::string data);
     // 在无未完成工具时追加宿主明确更新的用户目标，保留旧目标及动作事实供解释。

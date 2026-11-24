@@ -1,5 +1,5 @@
 # 定义会话静态库，显式列出实现与公开接口。
-add_library(dfy_agent STATIC session.cpp include/dafeiyu/session.hpp include/dafeiyu/run_identity.hpp)
+add_library(dfy_agent STATIC session.cpp include/dafeiyu/session.hpp include/dafeiyu/run_identity.hpp include/dafeiyu/turn_input.hpp)
 
 # 配置接口依赖：向使用者公开会话头文件及其依赖的模型、事件接口。
 target_include_directories(dfy_agent PUBLIC include)
