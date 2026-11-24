@@ -1,6 +1,6 @@
 ---
 name: dafeiyu-design
-description: 在大肥鱼项目开发、设计评审或 Trace 分析中，需要判断模块职责、Agent 上下文、动作实效或用户反馈时使用。按当前问题展开项目已认可的设计取舍，也用于用户发起的阶段性整理。
+description: 在大肥鱼项目开发、设计评审或 Trace 分析中，需要判断模块职责、Agent 上下文、管理中心与插件界面的数据来源、动作实效或用户反馈时使用。也用于用户发起的设计取舍整理。
 ---
 
 # 大肥鱼项目设计取舍
@@ -16,6 +16,7 @@ description: 在大肥鱼项目开发、设计评审或 Trace 分析中，需要
 | 某项能力归本体、模型层还是插件？谁持有事实和执行状态？ | [模块职责](references/architecture.md) |
 | 哪些指令常驻，哪些事实、领域指引和工具随当轮提供？ | [Agent 上下文与工具](references/agent-context.md) |
 | 用户实际收到了什么，工作做到哪一步，等待花在哪里？ | [Trace、反馈与验收](references/trace-feedback.md) |
+| 管理中心如何展示状态与聊天，插件如何接入板块、窗体及设置？ | [管理中心与插件界面](references/management-center.md) |
 | 设计主面板或内置房间时，面板和角色各能看到什么？ | [房间方案中的事实与感知](../../../docs/main-agent-room-development-plan.md#3-谁保存事实谁能看到什么) |
 | 分析 MC 的同场指引、方块定位、目标歧义或首条反馈？ | [MC 陪玩](references/minecraft.md) |
 
