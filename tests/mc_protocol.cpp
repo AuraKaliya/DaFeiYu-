@@ -74,6 +74,18 @@ void collect_progress_protocol() {
     if (!read().exited) throw std::runtime_error("partial collect progress lost");
     step["stock"]["current"] = 1;
     rejects(read);
+    step["stock"]["current"] = 0;
+    Json stack{{"state","left_view"},{"entityId",9},{"item","dirt"},{"seenCount",1},{"targetCell",target},
+        {"position",target},{"seenAtMs",107},{"leftAtMs",112},{"selfCount",0},{"otherCount",1},
+        {"lastCollector",{{"entityId",10},{"self",false},{"count",1},{"sampledAtMs",110}}}};
+    auto& pickups = result["pickups"] = {{"scope","one_new_stack_near_each_target"},{"attempted",1},{"omitted",0},
+        {"recent",Json::array({stack})},{"selfCollected",Json::object()},{"otherCollected",{{"dirt",1}}}};
+    if (!read().exited) throw std::runtime_error("other collector receipt lost");
+    pickups["selfCollected"]["dirt"] = 1;
+    rejects(read);
+    pickups["selfCollected"] = Json::object();
+    pickups["recent"][0]["targetCell"]["x"] = 3;
+    rejects(read);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。

@@ -6,6 +6,7 @@ const { matchesDigReference, collectionProgress } = require('../../plugins/mc/br
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
 const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
+const { trackBreakDrop } = require('../../plugins/mc/bridge/collect-drops.cjs');
 const { EventEmitter } = require('node:events');
 
 class Position {
@@ -69,6 +70,47 @@ test('drop observation distinguishes filtered stacks, missing data and bounded c
     assert.throws(() => observationInput(args), { code: 'observe_drop_parameters' });
   delete bot.entity.position;
   assert.throws(() => observeDrops(bot, options, 'work', 'world'), { code: 'observe_drop_position_unavailable' });
+});
+
+// 核对采掘附近新堆的部分拾取、其他角色拾取、看丢和实体编号复用。
+// 步骤：排除旧堆与异物 → 注入实际数量与消失事件 → 检查同号换实体和监听回收。
+test('pickup evidence follows one new stack and credits only protocol collection events', () => {
+  const bot = new EventEmitter(), point = new Position(2, -61, 0), result = {};
+  bot._client = new EventEmitter();
+  bot.entity = { id: 1, uuid: 'self' };
+  bot.game = { dimension: 'overworld' };
+  const drop = (id, item) => ({ id, name: 'item', uuid: 'stack-' + id, position: point.clone(),
+    getDroppedItem: () => ({ name: item, count: 5 }) });
+  const old = drop(3, 'dirt'), other = { id: 2, uuid: 'other' };
+  bot.entities = { 1: bot.entity, 2: other, 3: old };
+  const observer = trackBreakDrop(bot, point, 'dirt', result);
+  bot.emit('itemDrop', old);
+  bot.emit('itemDrop', bot.entities[4] = drop(4, 'stone'));
+  bot.entities[5] = { ...drop(5, 'dirt'), position: point.offset(9, 0, 0) };
+  assert.equal(observer.live(), undefined);
+  const picked = bot.entities[6] = drop(6, 'dirt');
+  bot.emit('itemDrop', picked);
+  const collect = (id, collector, count) => bot._client.emit('collect',
+    { collectedEntityId: id, collectorEntityId: collector, pickupItemCount: count });
+  collect(6, 1, 2);
+  collect(6, 2, 1);
+  collect(3, 1, 5);
+  const entry = observer.entry;
+  assert.deepEqual([entry.selfCount, entry.otherCount, entry.lastCollector.uuid, entry.state], [2, 1, 'other', 'visible']);
+  bot.emit('entityGone', picked);
+  bot.entities[6] = drop(6, 'dirt');
+  collect(6, 1, 2);
+  observer.stop();
+  assert.deepEqual([entry.state, result.pickups.selfCollected, result.pickups.otherCollected], ['left_view', { dirt: 2 }, { dirt: 1 }]);
+  assert.deepEqual([bot.listenerCount('itemDrop'), bot.listenerCount('entityGone'), bot._client.listenerCount('collect')], [0, 0, 0]);
+  for (let i = 10; i < 15; ++i) {
+    const watcher = trackBreakDrop(bot, point, 'dirt', result);
+    bot.emit('itemDrop', bot.entities[i] = drop(i, 'dirt'));
+    delete bot.entities[i];
+    watcher.stop();
+    assert.deepEqual([watcher.entry.state, watcher.entry.selfCount, watcher.entry.otherCount], ['left_view', 0, 0]);
+  }
+  assert.deepEqual([result.pickups.attempted, result.pickups.omitted, result.pickups.recent.length], [6, 2, 4]);
 });
 
 // 对照工作时点、换目标、破坏和库存，核对采掘在途样本的独立读数。

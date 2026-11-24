@@ -55,17 +55,6 @@ function requiresCollectionApproval(bot, guards, affected) {
   }) ?? false;
 }
 
-// 查找这次破坏后出现且仍在附近的实际掉落物。
-function nearbyDrop(bot, point, known) {
-  let closest, distance = 3;
-  for (const [id, entity] of Object.entries(bot.entities)) {
-    if (known.has(id) || !entity.position || !['item', 'Item', 'item_stack'].includes(entity.name)) continue;
-    const current = entity.position.distanceTo(point);
-    if (current < distance) { distance = current; closest = entity; }
-  }
-  return closest;
-}
-
 // 核对原话参照仍紧邻目标下方，未知格与材料变更都不能通过。
 function matchesDigReference(bot, point, reference) {
   if (!reference) return true;
@@ -145,4 +134,4 @@ function collectionProgress(result, readStock, now = () => performance.now()) {
 }
 
 module.exports = { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress,
-  pickupStand, nearbyDrop, matchesDigReference };
+  pickupStand, matchesDigReference };

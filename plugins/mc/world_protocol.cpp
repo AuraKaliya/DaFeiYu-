@@ -196,6 +196,64 @@ void verify_fill(const Json& result, const Json& args, bool done) {
     }
 }
 
+// 按原采掘范围核对近期掉落实体和拾取数量，离开视野本身不产生拾取实效。
+// 步骤：核对观察覆盖 → 检查每个目标与实体来源 → 对照拾取人及累计数量。
+void verify_collect_pickups(const Json& evidence, const Json& args) {
+    const auto& recent = evidence.at("recent");
+    const auto attempts = evidence.at("attempted").get<unsigned>();
+    if (evidence.at("scope") != "one_new_stack_near_each_target" || !evidence.at("attempted").is_number_unsigned() ||
+        attempts == 0 || attempts > 32 || attempts > args.at("count").get<unsigned>() || !recent.is_array() ||
+        recent.size() != std::min(4u,attempts) || evidence.at("omitted") != attempts-recent.size())
+        throw std::invalid_argument("MC: invalid pickup coverage");
+    Json self = Json::object(), other = Json::object();
+    const auto wanted = args.value("item",std::string{});
+    for (const auto& entry : recent) {
+        const auto& target = entry.at("targetCell");
+        for (const auto axis : {"x","y","z"}) if (!target.at(axis).is_number_integer() ||
+            (args.contains(axis) && args.at(axis) != target.at(axis)))
+            throw std::invalid_argument("MC: pickup target changed");
+        const auto& state = entry.at("state");
+        if (state == "unseen" && entry.size() == 2) continue;
+        const auto& name = entry.at("item").get_ref<const std::string&>();
+        const auto& seen = entry.at("seenAtMs");
+        if ((state != "visible" && state != "left_view") || !entry.at("entityId").is_number_unsigned() ||
+            (entry.contains("uuid") && !uuid(entry.at("uuid"))) || item_name(name) != name ||
+            name.empty() || (!wanted.empty() && name != item_name(wanted)) ||
+            !entry.at("seenCount").is_number_unsigned() || entry.at("seenCount") == 0 || !seen.is_number_unsigned() ||
+            ((state == "left_view") != entry.contains("leftAtMs")) || (state == "left_view" &&
+            (!entry.at("leftAtMs").is_number_unsigned() || entry.at("leftAtMs") < seen)))
+            throw std::invalid_argument("MC: invalid pickup entity");
+        const auto offset = [&](const char* axis) { return entry.at("position").at(axis).get<double>()-target.at(axis).get<double>()-0.5; };
+        if (std::hypot(offset("x"),offset("y"),offset("z")) > 3.00000001)
+            throw std::invalid_argument("MC: pickup entity outside observed radius");
+        for (const auto key : {"selfCount","otherCount"}) if (!entry.at(key).is_number_unsigned() || entry.at(key) > 0x7fffffff)
+            throw std::invalid_argument("MC: invalid collected quantity");
+        const auto own = entry.at("selfCount").get<unsigned>(), others = entry.at("otherCount").get<unsigned>();
+        if (own) self[name] = self.value(name,0ULL)+own;
+        if (others) other[name] = other.value(name,0ULL)+others;
+        if (entry.contains("lastCollector") != (own || others)) throw std::invalid_argument("MC: missing pickup event");
+        if (entry.contains("lastCollector")) {
+            const auto& last = entry.at("lastCollector");
+            if (!last.at("entityId").is_number_unsigned() || (last.contains("uuid") && !uuid(last.at("uuid"))) ||
+                !last.at("count").is_number_unsigned() || last.at("count") == 0 ||
+                last.at("count") > (last.at("self").get<bool>() ? own : others) ||
+                !last.at("sampledAtMs").is_number_unsigned() || last.at("sampledAtMs") < seen)
+                throw std::invalid_argument("MC: invalid pickup event");
+        }
+    }
+    const auto verify_totals = [&](const Json& total, const Json& sampled) {
+        if (!total.is_object() || (evidence.at("omitted") == 0 && total != sampled))
+            throw std::invalid_argument("MC: pickup totals differ from observed events");
+        for (const auto& [item,count] : total.items()) if (item.empty() || item_name(item) != item ||
+            (!wanted.empty() && item != item_name(wanted)) || !count.is_number_unsigned() || count == 0)
+            throw std::invalid_argument("MC: invalid pickup totals");
+        for (const auto& [item,count] : sampled.items()) if (!total.contains(item) || total.at(item) < count)
+            throw std::invalid_argument("MC: pickup total lost observed events");
+    };
+    verify_totals(evidence.at("selfCollected"),self);
+    verify_totals(evidence.at("otherCollected"),other);
+}
+
 // 核对采掘进展属于原目标，破坏数和当前库存各自有对应读数。
 // 步骤：验证阶段与时点 → 检查原目标和破坏数量 → 对照取材要求与最终库存。
 void verify_collect_progress(const Json& result, const Json& args, bool exited) {
@@ -331,7 +389,7 @@ std::string partner_request(std::string_view method, std::string_view id, const 
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,
     std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire,skill == "observe" || skill == "route" ? 12 : 6), envelope = parse(arguments);
+    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
@@ -408,6 +466,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress;
+    if (skill == "collect" && result.contains("pickups")) verify_collect_pickups(result.at("pickups"),args);
     if (skill == "collect" && result.contains("progress")) {
         verify_collect_progress(result,args,exited);
         progress = result.at("progress").dump();

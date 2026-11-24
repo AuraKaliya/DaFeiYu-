@@ -5,11 +5,12 @@ const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.c
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops } = require('./dropped-items.cjs');
+const { trackBreakDrop } = require('./collect-drops.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
 const { followPlayer } = require('./follow.cjs');
-const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress, pickupStand, nearbyDrop,
+const { fromGround, groundTypes, requiresCollectionApproval, affectedByDig, collectReadback, collectionProgress, pickupStand,
   matchesDigReference } = require('./collection.cjs');
 const { BuiltObjects } = require('./built-objects.cjs');
 const { controllerLease } = require('./controller.cjs');
@@ -125,23 +126,23 @@ function remember(records, id, value) {
 
 // 到实际掉落物脚下收取，回退到挖掘位置并限制占用前台的时间。
 // 步骤：等待物品出现 → 核对支撑并导航 → 等待拾取更新或报告受阻。
-async function pickup(bot, point, known, check, result) {
-  let expired = false, tracked;
+async function pickup(bot, point, drops, check, result) {
+  let expired = false;
   const timer = setTimeout(() => { expired = true; bot.pathfinder.setGoal(null); bot.clearControlStates(); }, 6000);
   try {
     await delay(400);
     for (let attempt = 0; attempt < 3; ++attempt) {
       check();
       if (expired) throw new Error('拾取超时');
-      if (tracked && bot.entities[tracked.id] !== tracked) return;
-      tracked ??= nearbyDrop(bot, point, known);
+      const tracked = drops.live();
+      if (!tracked && drops.entry.state === 'left_view') return;
       const stand = pickupStand(bot, tracked?.position.floored() ?? point);
       if (!stand) throw new Error('掉落物附近没有已知站位');
       if (!stand.equals(bot.entity.position.floored())) await walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z));
       await delay(450);
-      if (!tracked && !nearbyDrop(bot, point, known)) return;
+      if (!drops.live()) return;
     }
-    if (tracked && bot.entities[tracked.id] === tracked) result.pickupIssue = '未读到附近掉落物的拾取';
+    if (drops.live()) result.pickupIssue = '附近掉落物仍在客户端视野内';
   } catch (error) {
     check();
     result.pickupIssue = expired ? '未能在期限内抵达拾取站位' : String(error.message).slice(0, 120);
@@ -242,21 +243,23 @@ async function collect(bot, args, check, job, built) {
       if (!matchesDigReference(bot, pos, args.digReference)) throw referenceChanged();
       checkApproval(affected);
       const readback = collectReadback(bot, here, affected);
-      const known = new Set(Object.keys(bot.entities));
       progress.enter('digging', here);
       const changeStart = result.changes.length;
-      try { await bot.dig(here, true); }
-      finally {
-        await readback(result.changes);
-        if (result.changes.slice(changeStart).some(cell => pos.x === cell.x && pos.y === cell.y && pos.z === cell.z)) {
-          ++result.broken;
-          progress.sample();
+      const drops = trackBreakDrop(bot, pos, expected, result);
+      try {
+        try { await bot.dig(here, true); }
+        finally {
+          await readback(result.changes);
+          if (result.changes.slice(changeStart).some(cell => pos.x === cell.x && pos.y === cell.y && pos.z === cell.z)) {
+            ++result.broken;
+            progress.sample();
+          }
         }
-      }
-      if (result.broken !== n + 1) throw digBlocked('dig_change_unverified', '目标方块变化未核实');
-      check();
-      progress.enter('awaiting_pickup');
-      await pickup(bot, pos, known, check, result);
+        if (result.broken !== n + 1) throw digBlocked('dig_change_unverified', '目标方块变化未核实');
+        check();
+        progress.enter('awaiting_pickup');
+        await pickup(bot, pos, drops, check, result);
+      } finally { drops.stop(); }
       if (expected && (inventory(bot)[expected] ?? 0) <= stock)
         throw digBlocked('pickup_unverified', '没有读到所需物品入包，已停止取材');
     }

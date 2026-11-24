@@ -545,6 +545,9 @@ async function checkFillFour(fixture, player, whispers, combined) {
   }
   const source = combined ? 8 : 2;
   const collectionOrder = combined ? source + 1 : source;
+  const independentPickups = [];
+  const onPickup = packet => independentPickups.push(packet);
+  player._client.on('collect', onPickup);
   await until(() => fixture.ownerEntity()?.position.x > 6 && read(material) === (combined ? 'air' : 'grass_block') &&
     fourCells.every(cell => read(cell) === 'air'), '四格、取材格原状和独立观察站位');
   const obstruction = fourCells[2];
@@ -581,11 +584,22 @@ async function checkFillFour(fixture, player, whispers, combined) {
   const mutations = actions.filter(row => ['collect', 'place', 'fill_target'].includes(row.skill));
   assert.deepEqual(mutations.map(row => row.skill), combined ? ['collect','collect','fill_target','fill_target'] : ['collect','fill_target']);
   const collect = mutations.find(row => row.arguments.source === 'ground');
+  player._client.removeListener('collect', onPickup);
   const fill = mutations.at(-1);
   assert.equal(collect.arguments.source, 'ground');
   assert.deepEqual(collect.arguments.protectedCells, fourCells.map(([x,y,z]) => ({ x,y,z })));
   assert.deepEqual(collect.result.stock, { item: 'dirt', before: combined ? 1 : 3, required: 4, after: 4 });
   assert.deepEqual(collect.result.inventoryDelta, { dirt: combined ? 3 : 1 });
+  const evidence = collect.result.pickups;
+  assert.deepEqual(evidence.selfCollected, collect.result.inventoryDelta);
+  assert.deepEqual(evidence.otherCollected, {});
+  for (const entry of evidence.recent) {
+    assert.equal(entry.item, 'dirt');
+    assert.equal(entry.selfCount, 1);
+    assert.equal(entry.lastCollector.uuid, player.players.DfyCompanion.uuid);
+    assert.ok(independentPickups.some(packet => packet.collectedEntityId === entry.entityId &&
+      packet.collectorEntityId === entry.lastCollector.entityId && packet.pickupItemCount === entry.selfCount));
+  }
   assert.equal(collect.result.changes.length, combined ? 3 : 1);
   const progress = traceRows().filter(row => row.category === 'mc.partner.motion' &&
     row.body.action?.bridgeWork === collect.work && row.body.progress).map(row => row.body.progress);
