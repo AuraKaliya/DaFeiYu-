@@ -182,7 +182,8 @@ async function main() {
   const attention = variant === 'partner-revision-attention';
   const questionScope = variant === 'partner-revision-question-scope';
   const openingAnswer = variant === 'partner-revision-opening-answer';
-  const continuationBudget = variant === 'partner-revision-continuation-budget';
+  const airBudget = variant === 'partner-revision-air-budget';
+  const continuationBudget = airBudget || variant === 'partner-revision-continuation-budget';
   const questionExpiry = variant === 'partner-revision-question-expiry';
   const observeDigScope = variant?.startsWith('partner-revision-observe-dig-scope');
   const pointedSupport = variant === 'partner-revision-pointed-support';
@@ -206,7 +207,7 @@ async function main() {
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking }));
-  let reads = 0, airAttempts = 0;
+  let reads = 0, airAttempts = 0, airTail = 0;
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
@@ -242,8 +243,15 @@ async function main() {
     facing: { yaw: 0.1234567, pitch: -0.9876543 } };
   const bridge = await openBridge(channel, {
     // 模拟老适配器拒绝带空气游标的监听，基础聊天监听仍可沿原水位重读。
-    airNotice() {
+    airNotice(generation,after) {
       if (legacyAir) { ++airAttempts; throw new Error('unsupported private inbox extension'); }
+      if (!airBudget || !fs.existsSync(path.join(root,'air-budget-ready'))) return;
+      if (fs.existsSync(path.join(root,'air-budget-observed'))) airTail = 4;
+      else airTail = 1;
+      if (after >= airTail) return;
+      return { generation, actor:state.actor, entityId:8, dimension:state.dimension, source:'entity_metadata.air_supply', sequence:airTail,
+        airEpisode:{ episode:airTail === 1 ? 1 : 3, phase:'depleted', samples:1, firstTicks:0, minimumTicks:0, lastTicks:0,
+          firstAtMs:airTail*100, lastAtMs:airTail*100 } };
     },
     // 第二次查询模拟原世界已撤销。
     read() { ++reads; return partnerLoop || boardWindow || reads === 1 ? state : null; },
@@ -271,6 +279,7 @@ async function main() {
             line.includes('"category":"mc.partner.question"') && line.includes('"status":"expired"'))) expiredAt = performance.now();
         }
         const latest = initial ? 1 :
+          airBudget ? (airTail === 4 ? 3 : 2) :
           refusedCollection ? (!approvedId || !fs.existsSync(path.join(root, 'collection-pending-checked')) ? 2 :
             after < 3 ? 3 : fs.existsSync(path.join(root, 'collection-receipt-2')) ? 6 :
             fs.existsSync(path.join(root, 'collection-receipt-1')) ? 5 : 4) :
@@ -323,6 +332,7 @@ async function main() {
           messages[2].text = navigation ? '现在绕着这个墙跑两圈' : correction ? '我说的是墙，你应该竖着补' :
             notes ? '补记一下角落，接着做' : variant === 'partner-revision-goal' ? '改成清理另一处' :
             controllerRestart || variant.endsWith('-scope') ? '只从地面取材' : '这次采掘先问我确认';
+          if (airBudget) messages[2].text = '刚才空气又有变化吗？';
           if (responseTiming) {
             messages[1].text = '走到拐角，再去门边。';
             messages[2].text = '还在走吗？';
@@ -589,6 +599,11 @@ async function main() {
           return { ...context, skill, exited: true, result };
         }
         if (continuationBudget) {
+          if (airBudget && skill === 'reply') {
+            assert.deepEqual([context.order,args.text],[3,'我收到你的问题了，刚才两条空气变化的细节还需要复查。']);
+            ++replies;
+            return { ...context, skill, exited:true, result:{ status:'done', sent:true, reused:false, text:args.text } };
+          }
           assert.equal(context.order, 2);
           assert.equal(skill, 'observe');
           assert.equal(method, 'partner.begin');
@@ -1100,7 +1115,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
+    return { generation, order: airBudget ? 3 : refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope && !continuationBudget) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
@@ -1203,6 +1218,12 @@ async function main() {
     } else if (continuationBudget) {
       assert.equal(sceneReads.length, 5);
       assert.equal(stopped, 0);
+      if (airBudget) {
+        assert.equal(replies,1);
+        const rows = fs.readFileSync(path.join(root,'trace/events.jsonl'),'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const notices = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.partner.attention' && row.body.source === 'air');
+        assert.deepEqual(notices.map(row => [row.body.trigger,row.body.notices[0].sequence]),[['vitals.attention',1],['game.event',4]]);
+      }
     } else if (openingAnswer) {
       assert.ok(questionPresented && wallFilled);
       assert.equal(stopped, 0);

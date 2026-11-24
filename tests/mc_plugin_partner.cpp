@@ -299,7 +299,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool attention = variant == L"partner-revision-attention";
     const bool question_scope = variant == L"partner-revision-question-scope";
     const bool opening_answer = variant == L"partner-revision-opening-answer";
-    const bool continuation_budget = variant == L"partner-revision-continuation-budget";
+    const bool air_budget = variant == L"partner-revision-air-budget";
+    const bool continuation_budget = air_budget || variant == L"partner-revision-continuation-budget";
     const bool question_expiry = variant == L"partner-revision-question-expiry";
     const bool observe_dig_scope = variant.starts_with(L"partner-revision-observe-dig-scope");
     const bool pointed_support = variant == L"partner-revision-pointed-support";
@@ -739,13 +740,28 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const Response quiet{{Role::assistant,R"({"internal":"ready"})"}};
             if (last.role == Role::tool) return quiet;
             const auto input = Json::parse(last.content);
+            if (air_budget && input.at("trigger") == "vitals.attention") {
+                if (budget_plans != 5 || ++attention_turns != 1 || input.contains("continuationBudgetExhausted") ||
+                    input.at("airNotices").back().at("sequence") != 1 || request.tools.size() != 1 ||
+                    !request.tools.front().name.ends_with("_observe")) throw std::runtime_error("independent air budget unavailable");
+                std::ofstream(root/"air-budget-observed").put('1');
+                return {{Role::assistant,"独立观察已核对。"}};
+            }
+            if (air_budget && !input.at("events").empty() && input.at("events").back().at("sequence") == 3) {
+                const auto& notice = input.at("airNotices").back();
+                if (attention_turns != 1 || notice.at("sequence") != 4 || notice.at("missedBefore") != 2 ||
+                    input.at("replyOrigin").at("sourceMessage") != 3) throw std::runtime_error("chat lost its turn or missed air boundaries");
+                checked = true;
+                return {{Role::assistant,"我收到你的问题了，刚才两条空气变化的细节还需要复查。"}};
+            }
             if (input.at("trigger") == "plan.finished") {
                 const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
                 if (result.at("status") != "done") throw std::runtime_error("continuation lost an actual settlement");
                 if (++budget_plans == 5) {
                     if (input.at("continuationBudgetExhausted") != true || request.tools.size() != 1 ||
                         !request.tools.front().name.ends_with("_reply")) throw std::runtime_error("settlements could keep creating new work");
-                    checked = true;
+                    if (air_budget) std::ofstream(root/"air-budget-ready").put('1');
+                    else checked = true;
                     return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
                 }
                 if (input.contains("continuationBudgetExhausted")) throw std::runtime_error("continuation stopped before the last allowed step");
@@ -1280,7 +1296,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope || continuation_budget ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+            (air_budget ? 3u : repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope || continuation_budget ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
                 pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {
