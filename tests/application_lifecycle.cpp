@@ -276,6 +276,43 @@ void dialogue_inputs(const fs::path& run) {
     check(rejected,"replay accepted a supplement assigned to the wrong model step");
 }
 
+// 以同一台灯和受控的身体采样核对距离、屏风边缘、可知字段与实例隔离。
+// 步骤：核对亲见及听距边界 → 改变屏风相交条件 → 拒绝外部事件及错误的角色身份。
+void room_senses(const dfy::app::BuiltinRoom& room, dfy::app::RoomSelf resident, dfy::app::RoomSelf visitor) {
+    using namespace dfy::app;
+    const auto binding = resident.room;
+    const auto observe = [&](RoomPoint point, bool on) {
+        auto sample = resident;
+        sample.position = point;
+        return room.perceive_switch(sample,{binding,on});
+    };
+    const auto visible = [&](RoomPoint point, bool on) {
+        const auto cue = observe(point,on);
+        const auto* seen = cue ? std::get_if<SeenLampChange>(&*cue) : nullptr;
+        return seen && seen->place == RoomPlace::desk && seen->on == on;
+    };
+    const auto audible = [&](RoomPoint point, bool on) {
+        const auto cue = observe(point,on);
+        const auto* heard = cue ? std::get_if<HeardSwitch>(&*cue) : nullptr;
+        return heard && heard->direction == RoomPlace::desk;
+    };
+    check(visible(resident.position,true) && visible({2,0},false) && visible({1,0},true),"near lamp or inclusive sight threshold lost");
+    check(audible({0,0},true) && !observe({-1,0},true) && !observe({-32768,-32768},false),
+        "hearing threshold or distant sample wrong");
+    check(audible({4,3},true) && audible({4,3},false) && audible({3,2},false) && audible({5,2},true) &&
+        visible({2,2},true) && visible({6,2},false),"screen edge or sound-only lamp change wrong");
+
+    check(!room.perceive_switch(resident,{visitor.room,true}) && !room.perceive_switch(visitor,{binding,true}),
+        "percept crossed room instances");
+    visitor.room = binding;
+    check(!room.perceive_switch(visitor,{binding,false}),"percept crossed body bindings");
+    auto stale = binding;
+    ++stale.generation;
+    check(!room.perceive_switch(resident,{stale,true}),"stale event generation produced a percept");
+    resident.room = stale;
+    check(!room.perceive_switch(resident,{binding,true}),"stale body sample produced a percept");
+}
+
 // 在无页面、空插件下核对同名书房、固定布局和自身位置的实例隔离。
 // 步骤：创建两个应用 → 核对共有布局 → 分别复核身体与代次 → 验证查询零模型调用。
 void builtin_room(const fs::path& run) {
@@ -298,6 +335,7 @@ void builtin_room(const fs::path& run) {
     check(self && another && self->body!=another->body && self->room==layout.room && self->place==RoomPlace::desk &&
         self->activity==RoomActivity::resting && self->revision==1 && !first.room().self(second.room) &&
         !first.room().self({layout.room.instance,layout.room.generation+1}),"self query crossed room binding or lost initial pose");
+    room_senses(first.room(),*self,*another);
     first.advance_plugins(); first.conversation().advance();
     check(!calls.load() && !first.conversation().status() && first.room().self(layout.room)->revision==self->revision,
         "read-only room query advanced the body or woke the model");
