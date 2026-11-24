@@ -4,9 +4,9 @@
 
 ## 桌面主面板
 
-在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。模型凭据沿用配置的环境变量。
+在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。需要独立数据目录时，运行 `dafeiyu-ui-probe.exe --main-panel CONFIG --data DIR`。模型凭据沿用配置的环境变量。
 
-第一次打开会启动同目录的后台程序。相同用户数据目录和配置的窗口共用一个本体。可用 `dafeiyu.exe --host-status` 查看实例编号，或用 `dafeiyu.exe --stop-host` 请求本体退出。若已有实例使用另一份配置，面板会显示连接原因。
+第一次打开会启动同目录的后台程序。相同用户数据目录和配置的窗口共用一个本体。可用 `dafeiyu.exe --host-status` 查看实例编号，在「设置 → 后台运行」选择「退出大肥鱼」并确认，或用 `dafeiyu.exe --stop-host` 请求本体退出。指定了独立数据目录时，终端查询和退出命令后面也要加上该目录。若已有实例使用另一份配置，面板会显示连接原因。
 
 管理中心左栏上方为「房间」，底部为「设置」。房间中央的「书房 · 书桌旁」由当前应用实例的房间和身体快照提供，右侧是聊天。窄窗可切换「房间状态」与「聊天」。进入设置后内容区使用完整宽度，返回房间可继续编辑原草稿。打开或刷新时会读取位置，首次读回丢失会自动补查。
 
@@ -19,6 +19,8 @@
 同一窗口刷新会保留草稿。正式面板使用独立的本地来源，原命令留在当前历史项中。重载先查询业务线程的命令水位，已登记的操作查回执，尚未登记的操作按原编号、原参数补投一次。关窗会回收该窗口的浏览器临时目录。
 
 `ui.main_panel` 用空插件目录和固定响应，经真实本地命名管道，在隐藏 WebView2 中核对来源、原消息号、独立停止、实际退出与清空后的模型输入。窄窗口验收覆盖排队、移除、刷新、暂停和继续发送。[主面板验收](../tests/ui_main_panel.cpp) · [待发队列验收](../tests/ui_dialogue_queue.cpp) · [刷新边界验收](../tests/ui_dialogue_recovery.cpp)
+
+`ui.resident_windows` 依次打开三个独立桌面进程，在前两次关窗后核对后台进程号和实例号，在第三个窗口确认退出后等待原后台进程实际结束。[跨进程验收](../tests/ui_resident_windows.ps1)
 
 ## 房间首屏预览
 

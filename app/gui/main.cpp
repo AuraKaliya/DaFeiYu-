@@ -35,6 +35,7 @@ struct Window : std::enable_shared_from_this<Window> {
     HWND handle = nullptr;
     std::filesystem::path assets;
     std::filesystem::path model_config;
+    std::filesystem::path user_data;
     dfy::ui::ProbeProfile profile;
     dfy::ui::BrowserProcesses processes;
     ComPtr<ICoreWebView2Environment> environment;
@@ -65,6 +66,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
     bool main_panel = false, main_panel_check = false;
+    bool observer_check = false, observer_stop = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -222,6 +224,7 @@ struct Window : std::enable_shared_from_this<Window> {
 #ifdef DFY_UI_RUN_STATUS_TEST
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
+                if (observer_check) { interaction->start_observer(observer_stop); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -292,8 +295,8 @@ struct Window : std::enable_shared_from_this<Window> {
         if (business_mode) {
             const auto root = assets.parent_path();
             const auto config = model_config.empty() ? root/"config"/"deepseek.example.json" : model_config;
-            const auto data = dfy::app::default_user_data();
-            const auto packages = root/"plugins";
+            const auto data = user_data.empty() ? dfy::app::default_user_data() : user_data;
+            const auto packages = observer_check ? data/"plugins" : root/"plugins";
             resident_client = std::make_unique<dfy::management::Client>(data,dfy::management::startup_identity(config,packages),[=] {
                 dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
             });
@@ -356,17 +359,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
     const bool sample = __argc == 3 && (std::wstring_view(__wargv[2]) == L"idle" || std::wstring_view(__wargv[2]) == L"busy");
     const bool room_preview = sample && std::wstring_view(__wargv[1]) == L"--room-preview";
-    const bool main_panel = (__argc == 2 || __argc == 3) && std::wstring_view(__wargv[1]) == L"--main-panel";
+    const bool main_panel = (__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
+        std::wstring_view(__wargv[1]) == L"--main-panel";
 #ifdef DFY_UI_RUN_STATUS_TEST
+    const bool observer_check = (__argc==4 || (__argc==5 && std::wstring_view(__wargv[4])==L"stop")) &&
+        std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
     const bool main_panel_check = __argc == 2 && std::wstring_view(__wargv[1]) == L"--check-main-panel";
 #else
+    const bool observer_check = false;
     const bool room_check = false;
     const bool run_status_mode = false;
     const bool main_panel_check = false;
 #endif
-    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check;
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check || observer_check;
     if (__argc > 1 && !automatic && !room_preview && !main_panel) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
@@ -385,11 +392,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->offline = offline;
         state->room_preview = room_preview || room_check;
         state->room_busy = state->room_preview && std::wstring_view(__wargv[2]) == L"busy";
-        state->main_panel = main_panel || main_panel_check;
+        state->main_panel = main_panel || main_panel_check || observer_check;
         state->main_panel_check = main_panel_check;
-        if (main_panel && __argc == 3) state->model_config = __wargv[2];
-        state->interaction_mode |= room_check || main_panel_check;
-        state->business_mode = !automatic && !room_preview;
+        state->observer_check = observer_check;
+        state->observer_stop = observer_check && __argc==5;
+        if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
+        if (main_panel && __argc==5) state->user_data = __wargv[4];
+        if (observer_check) state->user_data = __wargv[3];
+        state->interaction_mode |= room_check || main_panel_check || observer_check;
+        state->business_mode = (!automatic && !room_preview) || observer_check;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
 #endif

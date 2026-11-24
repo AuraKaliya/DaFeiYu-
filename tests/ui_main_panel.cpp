@@ -34,6 +34,20 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
 }
 
 namespace dfy::ui {
+// 通过正式页面读取原生房间，并验证取消或确认后台退出的实际界面回执。
+// 步骤：等待真实后台数据 → 进入设置并取消退出 → 按场景确认退出 → 交回观察窗口。
+void InteractionProbe::start_observer(bool stop) {
+    expect("resident observer ready","document.querySelector('#dialogue-state')?.dataset.accepting==='true' && document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
+    evaluate("inspect resident settings","document.querySelector('#board-settings').click(); document.querySelector('#host-stop').click(); true");
+    expect("confirmation visible","document.querySelector('#host-stop-title').closest('dialog').open");
+    evaluate("leave resident running","document.querySelector('#host-stay').click(); !document.querySelector('#host-stop-title').closest('dialog').open");
+    if (stop) {
+        evaluate("request explicit completion","document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
+        expect("shutdown was accepted","document.querySelector('#host-shutdown-status')?.textContent.includes('已接收退出请求')");
+    }
+    next();
+}
+
 // 在空插件正式会话上验证真实输入与按原回合停止、清空的执行结果。
 // 步骤：发送原话并比对回执 → 核对来源、失败与刷新 → 阻塞原请求并停止 → 放行迟到结果并核实清空。
 void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> checks, std::shared_ptr<tests::UiDialogueGate> gate) {

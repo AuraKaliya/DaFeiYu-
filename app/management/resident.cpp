@@ -4,6 +4,7 @@
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <random>
+#include <windows.h>
 
 namespace dfy::management {
 namespace {
@@ -15,7 +16,8 @@ Json handle(Host& host, const std::string& identity, const std::string& instance
     if (!request.is_object() || request.at("v")!=1) throw std::invalid_argument("invalid protocol");
     const auto& op = request.at("op").get_ref<const std::string&>();
     if (op=="status" && request.size()==2)
-        return {{"state",stopping ? "stopping" : host.dialogue().display ? "running" : "starting"},{"instance",instance},{"definition",identity}};
+        return {{"state",stopping ? "stopping" : host.dialogue().display ? "running" : "starting"},
+            {"instance",instance},{"pid",GetCurrentProcessId()},{"definition",identity}};
     if (op=="stop" && request.size()==3 && request.at("instance")==instance) {
         stopping = true;
         host.close();

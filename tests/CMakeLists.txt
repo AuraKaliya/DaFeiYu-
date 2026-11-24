@@ -232,6 +232,10 @@ if(BUILD_GUI)
   set_tests_properties(ui.run_status PROPERTIES TIMEOUT 60 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
   add_test(NAME ui.main_panel COMMAND dfy_ui_probe --check-main-panel)
   set_tests_properties(ui.main_panel PROPERTIES TIMEOUT 45 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
+  add_test(NAME ui.resident_windows COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_resident_windows.ps1" -Panel "$<TARGET_FILE:dfy_ui_probe>"
+    -App "$<TARGET_FILE:dafeiyu>" -Root "${run_status_temp}")
+  set_tests_properties(ui.resident_windows PROPERTIES TIMEOUT 75 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
 endif()
 
 # 验证生产域签发器与同一内部算法的整数边界，不连接任何插件或模型服务。
