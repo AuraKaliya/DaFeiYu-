@@ -6,6 +6,7 @@ const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
+const { pickupDrop } = require('./pickup-drop.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -531,6 +532,13 @@ function partnerService(bot, world, inbox, places, owner) {
         await followPlayer(bot, owner, args.distance ?? 3, check, result,
           (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
       } else if (r.skill === 'collect') await collect(bot, args, check, job, built);
+      else if (r.skill === 'pickup_drop') {
+        await pickupDrop(bot, args, dropSource(r, args.observation), check, result, {
+          go: (stand, allowed) => walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z), allowed),
+          setSampler: sample => { job.sampleProgress = sample; },
+          stop() { bot.pathfinder.setGoal(null); bot.clearControlStates(); },
+        });
+      }
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
@@ -553,7 +561,7 @@ function partnerService(bot, world, inbox, places, owner) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['collect', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'pickup_drop', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (builtSpace && world.space() === builtSpace) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
@@ -564,7 +572,7 @@ function partnerService(bot, world, inbox, places, owner) {
         }
       }
       r.exited = true;
-      if (['move', 'route', 'follow', 'collect', 'place', 'fill_target', 'craft'].includes(r.skill))
+      if (['move', 'route', 'follow', 'collect', 'pickup_drop', 'place', 'fill_target', 'craft'].includes(r.skill))
         previous = { controller: r.controller, action: { ...result, generation: r.generation, order: r.order, skill: r.skill } };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
