@@ -31,6 +31,13 @@ function blockSurvey(bot, center, depthBelow = 1) {
   return { origin, palette: Object.fromEntries([...palette].map(([name, key]) => [key, name])), layers };
 }
 
+// 从同一份网格提取覆盖边界和未加载格数，供目标摘要引用。
+function surveyCoverage({ origin, layers }) {
+  let unknown = 0;
+  for (const rows of layers) for (const row of rows) unknown += row.split('?').length - 1;
+  return { origin, width: layers[0][0].length, height: layers.length, depth: layers[0].length, unknown };
+}
+
 // 将同一扇门的观察归到下半格，缺失或不相配的半扇保留为未确认。
 // 步骤：从命中的半格定位下半格 → 读回另一半并核对门的状态 → 按下半格去重。
 function observedDoors(bot, blocks) {
@@ -52,4 +59,4 @@ function observedDoors(bot, blocks) {
   return [...doors.values()];
 }
 
-module.exports = { blockSurvey, observedDoors };
+module.exports = { blockSurvey, surveyCoverage, observedDoors };

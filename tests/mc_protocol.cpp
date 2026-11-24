@@ -121,6 +121,17 @@ int main() {
         }
         action.update(Json{{"skill","collect"},{"exited",true},{"result",{{"status","blocked"},{"broken",1}}}});
         Json receipt{{"version",1},{"id","work"},{"action",action}};
+        auto detail = receipt;
+        const auto detail_args = Json{{"context",source},{"arguments",{{"mode","detail"},{"observation","original"}}}}.dump();
+        detail["action"]["skill"] = "observe";
+        detail["action"]["result"] = {{"status","done"},{"survey",Json::object()},
+            {"sourceObservation",{{"id","original"},{"dimension","overworld"},{"generation",source.at("generation")}}}};
+        if (!dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",detail_args).exited) return 1;
+        detail["action"]["result"]["sourceObservation"]["id"] = "other";
+        rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",detail_args); });
+        detail["action"]["result"]["sourceObservation"]["id"] = "original";
+        detail["action"]["result"]["sourceObservation"]["generation"] = "other-world";
+        rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",detail_args); });
         const auto partial = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope);
         const auto speech = Json{{"context",source},{"arguments",{{"text","我在这儿。"}}}}.dump();
         auto delivered = receipt;

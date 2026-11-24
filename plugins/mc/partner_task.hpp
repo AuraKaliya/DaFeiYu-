@@ -83,7 +83,8 @@ class PartnerTask {
     void disarm() noexcept { armed_ = false; }
   private:
     // 保存最新命中并保留原话首次确切的墙面指向。
-    void record_focus(std::uint64_t message, const nlohmann::json& sampled_at, const nlohmann::json& focus);
+    void record_focus(std::uint64_t message, const nlohmann::json& sampled_at, const nlohmann::json& focus,
+        const nlohmann::json& observation_work = nullptr);
     // 核对接近原请求后的现场证据仍属于同一任务和维度。
     bool verified_after_approach(const nlohmann::json& target, const nlohmann::json& scene) const;
     // 验证近期自身视图已覆盖全部拟切换的方格。

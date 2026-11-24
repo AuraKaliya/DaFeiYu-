@@ -471,8 +471,9 @@ void PartnerTask::pin_opening_observation(std::uint64_t message) {
 
 // 分别归档最后一次视线和原话首次确定的墙面，简要观察不会覆盖墙面证据。
 // 步骤：更新原话命中 → 固定确切候选 → 回收超出窗口的旧记录。
-void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, const Json& focus) {
-    const Json evidence{{"message",message},{"sampledAtMs",sampled_at},{"playerFocus",focus}};
+void PartnerTask::record_focus(std::uint64_t message, const Json& sampled_at, const Json& focus, const Json& observation_work) {
+    Json evidence{{"message",message},{"sampledAtMs",sampled_at},{"playerFocus",focus}};
+    if (observation_work.is_string()) evidence["observationWork"] = observation_work;
     observations_[message] = evidence;
     if (focus.contains("objects")) object_observations_[message] = focus;
     if (focus.contains("candidates")) {
@@ -504,7 +505,8 @@ void PartnerTask::record(const Json& receipt, bool current) {
     }
     if (receipt.at("skill") == "observe" && result.contains("anchor") && result.contains("playerFocus")) {
         const auto message = result.at("anchor").at("message").get<std::uint64_t>();
-        record_focus(message,result.at("sampledAtMs"),result.at("playerFocus"));
+        record_focus(message,result.at("sampledAtMs"),result.at("playerFocus"),
+            result.contains("openingObservation") ? result.at("openingObservation").at("id") : Json{});
     }
     if (receipt.at("skill") == "observe" && result.contains("observation")) {
         auto& observation = result["observation"];

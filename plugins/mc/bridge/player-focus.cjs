@@ -165,7 +165,7 @@ function playerFocus(bot, anchor, center, focus = 'openings', nearby = {}) {
   const pointed = candidates.filter(gap => gap.pointed);
   const choice = !unavailable && pointed.length === 1 ? pointed[0].id : null;
   return { status: choice ? 'pointed' : unavailable ? 'unavailable' : candidates.length ? 'ambiguous' : 'none',
-    choice, hit: hit ?? null, candidates: candidates.slice(0, 8) };
+    choice, hit: hit ?? null, candidateCount: candidates.length, candidates: candidates.slice(0, 8) };
 }
 
 module.exports = { playerFocus };

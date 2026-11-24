@@ -232,6 +232,18 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
             !samples.is_array() || samples.size() > requested)
             throw std::invalid_argument("MC: invalid observation series");
     }
+    if (skill == "observe" && result.contains("openingObservation")) {
+        const auto& source = result.at("openingObservation");
+        if (source.at("id").get_ref<const std::string&>() != id || source.at("message") != args.at("message") || source.at("generation") != context.at("generation") ||
+            !dimension(source.at("dimension")) || source.at("dimension") != result.at("dimension"))
+            throw std::invalid_argument("MC: invalid opening observation");
+    }
+    if (skill == "observe" && result.contains("sourceObservation")) {
+        const auto& source = result.at("sourceObservation");
+        if (args.value("mode","") != "detail" || source.at("id") != args.at("observation") ||
+            source.at("generation") != context.at("generation") || !dimension(source.at("dimension")) || !result.contains("survey"))
+            throw std::invalid_argument("MC: invalid terrain detail source");
+    }
     if (skill == "observe" && result.contains("route")) {
         const auto& route = result.at("route");
         if (args.value("mode","") != "route" || (route.at("status") == "validated" &&

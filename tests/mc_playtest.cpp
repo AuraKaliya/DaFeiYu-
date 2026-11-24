@@ -805,10 +805,17 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         if (last.tool_call_id == "look-at-openings") {
             const auto& focus = result.at("playerFocus");
-            if (focus.at("status") != "ambiguous" || !std::ranges::all_of(candidates,[&](const auto& id) {
+            if (result.contains("survey") || result.contains("nearby") || result.contains("lastAction") ||
+                result.at("openingObservation").at("coverage").at("width") != 11 || result.at("inventory").at("dirt") != 8 ||
+                focus.at("candidateCount") < 2 || focus.at("status") != "ambiguous" || !std::ranges::all_of(candidates,[&](const auto& id) {
                 return std::ranges::any_of(focus.at("candidates"),[&](const auto& gap) { return gap.at("id") == id && gap.at("height") == 2; });
             })) throw std::runtime_error("opening group probe: original view did not expose both openings");
             return call("_ask_player","ask-about-openings",{{"question","两处缺口都要补吗？"},{"scope",{{"skill","place"}}}});
+        }
+        if (last.tool_call_id == "expand-original") {
+            if (result.at("sourceObservation").at("message") != 2 || survey_block(result.at("survey"),3,-60,-3) != ".")
+                throw std::runtime_error("opening group probe: original terrain unavailable");
+            return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
         }
         if (last.tool_call_id == "verify-openings") {
             const auto input = std::ranges::find_if(request.messages.rbegin(),request.messages.rend(),[](const auto& message) {
@@ -841,7 +848,8 @@ dfy::model::Response opening_group_sample(const dfy::model::Request& request) {
         if (!input.at("events").empty()) {
             const auto sequence = input.at("events").back().at("sequence");
             if (sequence == 2) return call("_observe","look-at-openings",{{"mode","pointed"},{"focus","openings"},{"message",2}});
-            if (sequence == 3) return call("_observe","verify-openings",{{"sources",{"self"}},{"verify",cells}});
+            if (sequence == 3) return call("_observe","expand-original",{{"mode","detail"},
+                {"observation",input.at("pendingQuestion").at("openingObservation").at("observationWork")}});
         }
     }
     return {{Role::assistant,R"({"internal":"opening group ready"})"}};

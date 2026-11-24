@@ -118,6 +118,9 @@ test('observation modes preserve the original source and explain invalid fields'
   assert.equal(observationInput({ mode: 'search', around: 'player', block: 'dirt' }).mode, 'search');
   assert.throws(() => observationInput({ block: 'dirt', radius: 3 }), { code: 'observe_mixed_modes' });
   assert.throws(() => observationInput({ mode: 'pointed' }), { code: 'observe_message_required' });
+  assert.deepEqual(observationInput({ mode: 'detail', observation: 'original' }).options, { mode: 'detail', observation: 'original' });
+  for (const extra of [{}, { observation: '' }, { observation: 'original', message: 2 }])
+    assert.throws(() => observationInput({ mode: 'detail', ...extra }), { code: 'observe_detail_parameters' });
   await assert.rejects(observeWindow(bot, { sources: ['message'] }, {}, context), { code: 'observe_invalid_sources' });
   assert.equal(reads.size, 0);
 });

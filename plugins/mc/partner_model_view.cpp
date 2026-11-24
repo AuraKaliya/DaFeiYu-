@@ -51,6 +51,11 @@ void display_scene(Json& node) {
         return;
     }
     if (!node.is_object()) return;
+    if (node.contains("openingObservation") && node.contains("playerFocus")) {
+        // 原话开口查询先展示能判断范围与材料的事实，地形按原观察编号展开。
+        for (const auto field : {"survey","position","player","ground","landmarks","nearby","selfLook","lastAction"})
+            node.erase(field);
+    }
     for (auto& [name,value] : node.items()) {
         if (name == "arguments" || name == "args") continue;
         if ((name == "position" || name == "player" || name == "eye" || name == "approachPosition") && value.contains("x"))

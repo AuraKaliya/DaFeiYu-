@@ -231,6 +231,14 @@ async function checkOpeningGroup(fixture, player, whispers) {
     row.body.order === answer.sourceMessage && row.body.item === answer.item);
   const actions = readRows(fixture, 'game-actions.jsonl');
   assert.ok(input && presented, '原话送模回合与同一事项的追问呈现');
+  const raw = actions.find(action => action.result.openingObservation);
+  const detail = actions.find(action => action.result.sourceObservation);
+  assert.deepEqual(detail.result.sourceObservation, raw.result.openingObservation);
+  assert.equal(detail.result.sampledAtMs, raw.result.sampledAtMs);
+  assert.deepEqual(detail.result.survey, raw.result.survey);
+  const summary = JSON.parse(rows.find(row => row.kind === 'tool.exited' && row.callId === 'look-at-openings').output);
+  assert.equal(summary.openingObservation.id, raw.work);
+  assert.ok(Buffer.byteLength(JSON.stringify(summary)) < Buffer.byteLength(JSON.stringify(raw.result)));
   const delivery = actions.find(action => action.work === presented.body.bridgeWork);
   assert.ok(delivery?.exited && delivery.result.sent && delivery.result.text === question);
   assert.deepEqual([delivery.order, delivery.generation], [answer.sourceMessage, presented.body.generation]);

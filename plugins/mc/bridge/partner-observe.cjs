@@ -16,6 +16,12 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'detail') {
+    if (typeof args.observation !== 'string' || !args.observation.length || args.observation.length > 128 ||
+        Object.keys(args).some(key => !['mode', 'observation'].includes(key)))
+      throw invalidObservation('observe_detail_parameters', '展开原开口地形需要 openingObservation.id');
+    return { mode, options: args };
+  }
   if (mode === 'wall') {
     const radius = args.radius ?? 8;
     if (!Number.isSafeInteger(args.message) || args.message <= 0 || !Number.isSafeInteger(radius) || radius < 5 || radius > 13 ||

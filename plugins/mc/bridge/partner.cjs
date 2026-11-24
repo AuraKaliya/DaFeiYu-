@@ -1,7 +1,7 @@
 const { Movements, goals } = require('mineflayer-pathfinder');
 const { setTimeout: delay } = require('node:timers/promises');
 const { tellOwner } = require('./chat.cjs');
-const { blockSurvey, observedDoors } = require('./block-survey.cjs');
+const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
@@ -345,7 +345,16 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
-      if (observation?.mode === 'wall') {
+      if (observation?.mode === 'detail') {
+        const original = records.get(workKey(r.controller, args.observation))?.receipt;
+        const source = original?.result.openingObservation;
+        if (!source || !original.exited || original.result.status !== 'done' || source.generation !== r.generation ||
+            source.dimension !== bot.game.dimension || !inbox.inPresence(r.generation, source.message))
+          throw Object.assign(new Error('当前在场周期内没有可展开的原开口观察'), { code: 'observe_detail_unavailable' });
+        result.sourceObservation = source;
+        result.sampledAtMs = original.result.sampledAtMs;
+        result.survey = original.result.survey;
+      } else if (observation?.mode === 'wall') {
         const { message, radius } = observation.options;
         const { anchor, center } = messageAnchor(r.generation, message);
         result.wallSurvey = { ...observeWall(bot, anchor, center, radius), id: job.id, message, radius,
@@ -390,6 +399,9 @@ function partnerService(bot, world, inbox, places, owner) {
           if (args.focus !== 'hit' && args.focus !== 'objects') result.survey = blockSurvey(bot, center, 4);
           result.playerFocus = playerFocus(bot, anchor, center, args.focus,
             { player_nearby: player?.entity?.position, self_nearby: bot.entity.position });
+          if (result.survey && !args.block && (args.mode === 'pointed' || args.focus === 'openings'))
+            result.openingObservation = { id: job.id, generation: r.generation, dimension: bot.game.dimension,
+              message: args.message, coverage: surveyCoverage(result.survey) };
         } else if (args.focus !== undefined) {
           throw new Error('指向查询需要原玩家消息');
         } else if (args.around) result.survey = blockSurvey(bot, center);
