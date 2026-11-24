@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import room from './art/study.png?no-inline';
 
 const props = defineProps<{ initialBusy: boolean }>();
 const busy = ref(props.initialBusy);
@@ -42,12 +41,13 @@ function enter(event: KeyboardEvent): void {
       </div>
     </header>
     <section aria-labelledby="room-title" class="room-card">
-      <div class="room-bar"><h2 id="room-title">起居室</h2>
+      <div class="room-bar"><h2 id="room-title">书房</h2>
         <span class="presence" :class="{ working: busy && !stopped }"><i></i>{{ busy && !stopped ? '正在前往窗边' : stopped ? '已在途中停下' : '在书桌旁 · 可以聊天' }}</span>
       </div>
-      <div class="scene" role="img" :aria-label="busy ? '大肥鱼在书桌和窗边之间，右侧是屏风' : '大肥鱼在书桌前，窗外是青山，桌上有台灯'">
-        <img class="backdrop" :src="room" alt=""><span class="resident" :class="{ walking: busy }" aria-hidden="true">大肥鱼</span>
-      </div>
+      <dl class="sample-state" aria-label="固定样本状态">
+        <dt>位置</dt><dd>{{ busy ? '书桌与窗边之间' : '书桌旁' }}</dd>
+        <dt>身体行为</dt><dd>{{ busy && !stopped ? '移动中' : '停留' }}</dd>
+      </dl>
     </section>
     <section class="conversation" aria-labelledby="chat-heading">
       <div class="chat-bar"><h2 id="chat-heading">和大肥鱼说话</h2>

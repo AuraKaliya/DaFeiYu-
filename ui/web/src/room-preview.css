@@ -20,12 +20,9 @@
 .presence { display:inline-flex; align-items:center; gap:7px; font-size:12px; color:#426556 }
 .presence i { width:7px; height:7px; border-radius:50%; background:#4f8167 }
 .presence.working { color:#825727 } .working i { background:#ac7739 }
-.scene { position:relative; overflow:hidden; line-height:0; background:#ddbe99 }
-.backdrop { width:100%; display:block; image-rendering:pixelated }
-.resident { position:absolute; left:50%; top:62%; padding:5px 9px; border-radius:6px; background:#354f42; color:#fffbea;
-  font-size:12px; line-height:1.35; letter-spacing:.06em; box-shadow:0 2px 4px #3c493428 }
-.resident::after { content:""; position:absolute; left:45%; bottom:-5px; border:5px solid transparent; border-top-color:#354f42; border-bottom:0 }
-.resident.walking { left:35%; top:65% }
+.sample-state { display:grid; grid-template-columns:auto 1fr; gap:8px 20px; margin:0; padding:12px 18px 18px; font-size:14px }
+.sample-state dt { color:#536356 }
+.sample-state dd { margin:0 }
 .conversation { margin-top:12px; padding:12px 18px 10px }
 .chat-bar { min-height:28px; gap:12px }
 .chat-bar h2 { flex:1 }
@@ -48,9 +45,7 @@
 @media(max-width:570px) {
   .room-preview { padding:0 12px 12px } .mast { min-height:52px; gap:7px; margin-bottom:10px }
   .samples small { font-size:10px; padding:0 2px } .samples button { padding:5px 6px }
-  .room-bar,.conversation { padding:10px 12px } .scene { aspect-ratio:2/1 }
-  .backdrop { height:100%; object-fit:cover; object-position:50% 55% }
-  .resident { left:48% } .resident.walking { left:29% }
+  .room-bar,.conversation,.sample-state { padding:10px 12px }
   .chat-bar { gap:3px; flex-wrap:wrap } .chat-bar h2 { font-size:15px }
   .sample-lines { display:block } .send { padding:7px 9px }
 }

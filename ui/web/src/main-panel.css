@@ -41,14 +41,6 @@ button:disabled { cursor: default }
 #dialogue-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #a07642 }
 #dialogue-state[data-accepting="true"]::before { background: #458064 }
 .conversation-space { flex: 1; min-height: 0; position: relative; display: flex }
-.room-still { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none }
-.room-still img {
-  width: min(100%, 560px);
-  height: auto;
-  border-radius: 16px;
-  box-shadow: 0 12px 30px -20px #584b35;
-  image-rendering: pixelated;
-}
 .transcript {
   position: relative;
   flex: 1;
@@ -161,7 +153,4 @@ button:disabled { cursor: default }
   .panel-identity { gap: 8px }
   .panel-compose { grid-template-columns: 1fr; padding: 8px }
   .transcript { padding-block: 16px }
-}
-@media (max-height: 400px) {
-  .room-still img { max-height: 90%; width: auto; max-width: 100%; object-fit: contain }
 }

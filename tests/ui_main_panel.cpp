@@ -222,7 +222,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         document.querySelector('#dialogue-confirm-clear').click(); return true;
     })())JS");
     expect("clear removes history but preserves editable draft","!document.querySelector('.turn') && !document.querySelector('dialog').open && "
-        "document.querySelector('.room-still img')?.naturalWidth>0 && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
+        "document.querySelector('#room-location')?.textContent==='书房 · 书桌旁' && document.querySelector('#dialogue-draft').value==='留给下一轮' && document.activeElement.id==='dialogue-draft'");
     check_dialogue_queue(gate);
     check_dialogue_recovery();
     evaluate("dialogue bridge honors application byte limits",R"JS((async()=>{

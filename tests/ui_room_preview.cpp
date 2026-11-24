@@ -2,11 +2,11 @@
 
 namespace dfy::ui {
 // 从主要预览入口验证公开样本，所有控制仅改变页面本地状态。
-// 步骤：确认素材和首屏 → 检验键盘与消息去向 → 检验待决定事项和独立停止。
+// 步骤：核对文本样本与首屏 → 检验键盘与消息去向 → 检验待决定事项和独立停止。
 void InteractionProbe::start_room_preview(bool busy) {
     const auto sample = busy ? "busy" : "idle";
     expect("initial room", std::string("document.querySelector('main')?.dataset.sample === '") + sample +
-        "' && [...document.querySelectorAll('.scene img')].every(i => i.complete && i.naturalWidth > 0)");
+        "' && document.querySelector('.sample-state dd')?.textContent === '" + (busy ? "书桌与窗边之间" : "书桌旁") + "'");
     expect("preview isolation", "document.querySelectorAll('iframe').length === 0 && !document.querySelector('#run-status')");
     call("focus emulation", L"Emulation.setFocusEmulationEnabled", {{"enabled",true}});
     expect("first content paint","performance.getEntriesByName('first-contentful-paint').length > 0");
