@@ -104,7 +104,9 @@ inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
             throw std::invalid_argument("MC: unsourced handoff claim");
         return;
     }
-    const auto& first = proof.at("afterSeq"), last = proof.at("throughSeq"), stacks = proof.at("stacks");
+    const auto& first = proof.at("afterSeq");
+    const auto& last = proof.at("throughSeq");
+    const auto& stacks = proof.at("stacks");
     if (proof.at("source") != "server_events" || (proof.at("coverage") != "read" && proof.at("coverage") != "interrupted") ||
         !game_uuid(proof.at("stream")) || !first.is_number_unsigned() || !last.is_number_unsigned() || first > last ||
         !stacks.is_array() || stacks.size() > 12) throw std::invalid_argument("MC: invalid handoff evidence window");
@@ -121,6 +123,27 @@ inline void verify_handoff_proof(const nlohmann::json& proof, int submitted) {
     const int omitted = number("omittedStacks");
     if (shown+omitted > thrown || (!omitted && shown != thrown) || (omitted && stacks.size() != 12))
         throw std::invalid_argument("MC: inconsistent handoff stack count");
+}
+
+// 将只读复查限制在原交物的实体来源上界，并保留工作实际退出的状态。
+// 步骤：绑定原工作及消息 → 检查原数量和采样 → 核对新收件证据来自封存的投物。
+inline void verify_handoff_recheck(const nlohmann::json& sample, const nlohmann::json& args, std::string_view id, const nlohmann::json& context) {
+    if (sample.at("id").get_ref<const std::string&>() != id || sample.at("work") != args.at("work") || sample.at("generation") != context.at("generation") ||
+        !sample.at("order").is_number_unsigned() || sample.at("order") == 0 || sample.at("order") > context.at("order") ||
+        sample.at("observation").get_ref<const std::string&>().empty() || !game_uuid(sample.at("recipient")) ||
+        sample.at("dimension").get_ref<const std::string&>().empty() || item_name(sample.at("item").get_ref<const std::string&>()).empty() ||
+        !sample.at("requested").is_number_unsigned() || sample.at("requested") == 0 || sample.at("requested") > 2304 ||
+        !sample.at("submitted").is_number_unsigned() || sample.at("submitted") == 0 || sample.at("submitted") > sample.at("requested") ||
+        !sample.at("sampledAtMs").is_number_unsigned() || (sample.at("originalStatus") != "done" && sample.at("originalStatus") != "blocked" &&
+            sample.at("originalStatus") != "interrupted")) throw std::invalid_argument("MC: invalid original handoff work");
+    const auto& proof = sample.at("receipt");
+    verify_handoff_proof(proof,sample.at("submitted").get<int>());
+    const auto& seal = sample.at("sourceThrough");
+    if (!seal.is_null() && !seal.is_number_unsigned()) throw std::invalid_argument("MC: invalid handoff source limit");
+    if (proof.at("source") == "server_events") {
+        if (seal.is_null() || seal < proof.at("afterSeq") || seal > proof.at("throughSeq")) throw std::invalid_argument("MC: unsealed handoff sources");
+        for (const auto& stack : proof.at("stacks")) if (stack.at("dropSeq") > seal) throw std::invalid_argument("MC: later transfer attributed to old work");
+    }
 }
 
 // 对照交物原观察核对已经提交的丢物操作与退出库存，实际收件由独立来源确认。

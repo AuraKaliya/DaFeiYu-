@@ -250,6 +250,21 @@ void handoff_protocol() {
     proof["recipientPicked"] = 66;
     proof["stacks"][1]["uuid"] = owner;
     rejects(give);
+    proof["stacks"][1]["uuid"] = world;
+    const Json late = proof;
+    frame["action"]["skill"] = "observe";
+    frame["id"] = "lookup";
+    command["arguments"] = {{"mode","handoff_receipt"},{"work","give"}};
+    result = {{"status","done"},{"handoffReceipt",{{"id","lookup"},{"work","give"},{"order",2},{"observation","offer"},
+        {"generation",world},{"dimension","overworld"},{"recipient",owner},{"item","dirt"},{"requested",66},{"submitted",66},
+        {"originalStatus","blocked"},{"sampledAtMs",150},{"sourceThrough",16},{"receipt",late}}}};
+    const auto lookup = [&] { return dfy::mc::partner_reply(frame.dump(),"lookup",controller,"observe",command.dump()); };
+    if (!lookup().arrived || lookup().changed) throw std::runtime_error("read-only late handoff lost");
+    result["handoffReceipt"]["sourceThrough"] = 14;
+    rejects(lookup);
+    result["handoffReceipt"]["sourceThrough"] = 16;
+    result["handoffReceipt"]["work"] = "another-give";
+    rejects(lookup);
 }
 
 // 用固定读数验证私有收件窗口及查看行动的目标、序号和退出状态。

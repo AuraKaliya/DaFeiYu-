@@ -52,3 +52,15 @@ test('handoff preserves uncertainty and attributes a verified pickup by a differ
   assert.deepEqual([read(foreign).otherPicked,read(foreign).pickupUnknown], [0,2]);
   assert.deepEqual([read(evidenceRows().slice(0,8)).thrown,read(evidenceRows().slice(0,8)).pickupUnknown], [66,66]);
 });
+
+// 迟到收件仍可解释旧实体，同一角色随后另外丢出的同名物品不能计入旧工作。
+test('late readback seals original throws while allowing later pickups', () => {
+  const rows = evidenceRows();
+  const next = { ...rows[0], item: id(9), networkId: 9, amount: 64, seq: 13 };
+  rows.push(next,{ ...next, kind: 'item.added', seq: 14 });
+  const open = handoffEvidence(rows.slice(0,8),mark,actor,owner,'dirt',66);
+  const result = handoffEvidence(rows,mark,actor,owner,'dirt',66,open.throughSeq);
+  assert.deepEqual([result.thrown,result.recipientPicked,result.throughSeq], [66,66,14]);
+  assert.deepEqual(result.stacks,open.stacks);
+  assert.throws(() => handoffEvidence(rows,mark,actor,owner,'dirt',66), /无法分开/);
+});

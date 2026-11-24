@@ -117,7 +117,7 @@ async function checkPlayer(fixture, mode) {
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
     const doorProbe = mode === '--door-probe';
-    const handoff = mode === '--handoff-probe' || mode === '--handoff-unobserved-probe';
+    const handoff = mode.startsWith('--handoff-');
     const combined = mode === '--follow-dig-fill-probe';
     const resupply = mode === '--layered-resupply-probe';
     const layered = resupply || mode === '--layered-follow-probe';
@@ -136,7 +136,7 @@ async function checkPlayer(fixture, mode) {
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
     } else if (handoff) {
-      await checkHandoff(fixture, player, whispers, mode === '--handoff-probe');
+      await checkHandoff(fixture, player, whispers, mode);
     } else if (mode === '--pickup-probe') {
       await checkPickup(fixture, player, whispers);
     } else if (layered) {
@@ -270,7 +270,8 @@ async function checkGroundPickup(fixture, player, whispers) {
 }
 
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
-async function checkHandoff(fixture, player, whispers, witnessed) {
+async function checkHandoff(fixture, player, whispers, mode) {
+  const late = mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
   const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
@@ -283,10 +284,15 @@ async function checkHandoff(fixture, player, whispers, witnessed) {
   assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
-  player.chat('那就给我六十六块泥土。');
-  const sent = witnessed ? '你已经捡到六十六块泥土，我的背包还剩四块。' : '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
-  await until(() => whispers.includes(sent), '按原观察投物后说明可核实的库存变化');
-  await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66, '独立玩家在生存模式实际拾到六十六块', 12000);
+  if (late) {
+    fixture.send('clear DfyGuestCheck');
+    fixture.send('give DfyGuestCheck minecraft:stone 2304');
+    await until(() => player.inventory.count(player.registry.itemsByName.stone.id) === 2304,'收件玩家的 36 个槽位已满');
+  }
+  const sent = late ? '六十六块泥土都已经丢出来了，暂时还没看到你捡到。' :
+    witnessed ? '你已经捡到六十六块泥土，我的背包还剩四块。' : '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
+  await measurePlayerFeedback(player,'那就给我六十六块泥土。',sent,() => until(() => whispers.includes(sent),'按原观察投物后说明可核实的效果'),
+    sample => writeFileSync(join(fixture.evidence,'handoff-feedback.json'),JSON.stringify(sample,null,2)));
   const jobs = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'give_item');
   assert.equal(jobs.length,1);
   const [job] = jobs;
@@ -294,9 +300,25 @@ async function checkHandoff(fixture, player, whispers, witnessed) {
     [player.player.uuid,66,4,4]);
   const proof = job.result.receipt;
   assert.deepEqual([job.result.status,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.throwUnknown],
-    witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
+    late ? ['blocked',66,0,0,0] : witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
   if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
   assert.deepEqual(whispers, [reply,sent]);
+  if (late) {
+    assert.equal(player.inventory.count(player.registry.itemsByName.dirt.id),0);
+    fixture.send('clear DfyGuestCheck minecraft:stone');
+  }
+  await until(() => player.inventory.count(player.registry.itemsByName.dirt.id) === 66, '独立玩家在生存模式实际拾到六十六块', 12000);
+  if (late) {
+    player.chat('看看我后来捡到刚才那批了没。');
+    const final = '刚复查了那次交物，你后来把六十六块都捡到了。';
+    await until(() => whispers.includes(final), '迟到拾取沿第一次交物核对');
+    const all = readRows(fixture, 'game-actions.jsonl');
+    const check = all.find(row => row.result.handoffReceipt)?.result.handoffReceipt;
+    assert.deepEqual([check.work,check.order,check.sourceThrough,check.originalStatus,check.receipt.recipientPicked],
+      [job.work,job.order,proof.throughSeq,'blocked',66]);
+    assert.equal(all.filter(row => row.skill === 'give_item').length,1);
+    assert.deepEqual(whispers, [reply,sent,final]);
+  }
 }
 
 // 由独立玩家核对追问回到原消息并实际补齐相隔的两处开口。

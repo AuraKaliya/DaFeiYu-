@@ -66,6 +66,8 @@ async function readHandoffProof(witness, evidence, last) {
   try {
     const rows = await witness.read(evidence.mark);
     const proof = handoffEvidence(rows,evidence.mark,evidence.actor,evidence.recipient,evidence.item,evidence.submitted,evidence.sourceThrough);
+    if (last.source === 'server_events' && (proof.throughSeq < last.throughSeq || proof.thrown < last.thrown ||
+        proof.recipientPicked < last.recipientPicked || proof.otherPicked < last.otherPicked)) return { ...last, coverage: 'interrupted' };
     return { ...proof, coverage: 'read' };
   } catch {
     return { ...last, coverage: 'interrupted' };

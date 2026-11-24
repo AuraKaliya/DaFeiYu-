@@ -511,6 +511,9 @@ std::string partner_request(std::string_view method, std::string_view id, const 
     if (skill == "give_item" && !valid_handoff_action(args)) throw std::invalid_argument("MC: invalid handoff arguments");
     if (skill == "observe" && args.value("mode","") == "handoff" && (args.size() != 4 || !valid_handoff_request(args)))
         throw std::invalid_argument("MC: invalid handoff observation arguments");
+    if (skill == "observe" && args.value("mode","") == "handoff_receipt" && (args.size() != 2 || !args.contains("work") ||
+        !args.at("work").is_string() || args.at("work").get_ref<const std::string&>().empty() || args.at("work").get_ref<const std::string&>().size() > 128))
+        throw std::invalid_argument("MC: invalid handoff work reference");
     context["controller"] = config.controller;
     // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
     const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
@@ -532,6 +535,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
     const bool thrown = skill == "give_item" && verify_transfer(result,args,context.at("generation"),exited);
+    if (skill == "observe" && (result.contains("handoffReceipt") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff_receipt"))) {
+        if (args.value("mode","") != "handoff_receipt") throw std::invalid_argument("MC: unexpected handoff receipt recheck");
+        verify_handoff_recheck(result.at("handoffReceipt"),args,id,context);
+    }
     if (skill == "observe" && (result.contains("handoff") || (exited && result.at("status") == "done" && args.value("mode","") == "handoff"))) {
         if (args.value("mode","") != "handoff") throw std::invalid_argument("MC: unexpected handoff observation");
         verify_handoff(result.at("handoff"),args,id,context.at("generation"));

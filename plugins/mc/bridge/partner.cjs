@@ -8,7 +8,7 @@ const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
-const { giveItem } = require('./give-item.cjs');
+const { giveItem, readHandoffProof } = require('./give-item.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -401,6 +401,20 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       const observation = r.skill === 'observe' ? observationInput(args) : null;
       if (observation?.mode === 'handoff') {
         result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
+      } else if (observation?.mode === 'handoff_receipt') {
+        const original = records.get(workKey(r.controller,args.work));
+        const action = original?.receipt, transfer = action?.result.transfer;
+        if (!action || action.skill !== 'give_item' || action.generation !== r.generation || !inbox.inPresence(r.generation,action.order) ||
+            action.result.handoff?.dimension !== bot.game.dimension || !transfer?.submitted || !action.result.receipt || !action.exited)
+          throw Object.assign(new Error('当前世界找不到已经退出并提交过投物的原工作'), { code: 'handoff_work_unavailable' });
+        original.proofRead ??= readHandoffProof(witness,original.handoffEvidence,original.latestProof ?? action.result.receipt)
+          .then(proof => { original.latestProof = proof; return proof; }).finally(() => { delete original.proofRead; });
+        const proof = await original.proofRead;
+        check();
+        result.handoffReceipt = { id: job.id, work: args.work, order: action.order, observation: transfer.observation,
+          generation: action.generation, dimension: bot.game.dimension, recipient: transfer.recipient, item: transfer.item,
+          requested: transfer.requested, submitted: transfer.submitted, originalStatus: action.result.status,
+          sampledAtMs: Math.floor(performance.now()), sourceThrough: original.handoffEvidence?.sourceThrough ?? null, receipt: proof };
       } else if (observation?.mode === 'drops') {
         result.dropObservation = observeDrops(bot, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'drop') {

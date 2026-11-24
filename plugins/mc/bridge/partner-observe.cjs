@@ -18,6 +18,12 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'handoff_receipt') {
+    if (typeof args.work !== 'string' || !args.work.length || args.work.length > 128 || Object.keys(args).length !== 2)
+      throw invalidObservation('handoff_work_reference', '复查收件需要原交物工作编号');
+    return { mode, options: { work: args.work } };
+  }
+  if (Object.hasOwn(args, 'work')) throw invalidObservation('handoff_work_reference', '按工作复查收件需要 mode=handoff_receipt');
   if (mode === 'handoff') {
     if (Object.keys(args).some(key => !['mode', 'recipient', 'item', 'count'].includes(key)))
       throw invalidObservation('handoff_parameters', '交物观察只接受配对玩家、物品与总数');

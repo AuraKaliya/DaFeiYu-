@@ -839,6 +839,8 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
                     throw std::runtime_error("handoff: recipient amount lost");
                 return {{Role::assistant,"你已经捡到六十六块泥土，我的背包还剩四块。"}};
             }
+            if (proof.at("source") == "server_events" && proof.at("thrown") == 66 && proof.at("pickupUnknown") == 66)
+                return {{Role::assistant,"六十六块泥土都已经丢出来了，暂时还没看到你捡到。"}};
             if (result.value("reasonCode","") != "handoff_receipt_unconfirmed" || proof.at("source") != "unavailable" || proof.at("throwUnknown") != 66)
                 throw std::runtime_error("handoff: missing unconfirmed amount");
             return {{Role::assistant,"我这边背包少了六十六块泥土，还不能确认你捡到了多少。"}};
@@ -848,6 +850,11 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
             const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",66}};
             if (text == "你身上能分给我六十六块泥土吗？") return call("_observe","stock",args);
             if (text == "那就给我六十六块泥土。") return call("_observe","give-ready",args);
+            if (text == "看看我后来捡到刚才那批了没。") {
+                const auto& previous = input.at("task").at("lastAction");
+                if (previous.at("skill") != "give_item") throw std::runtime_error("handoff: original work missing from context");
+                return call("_observe","recheck",{{"mode","handoff_receipt"},{"work",previous.at("bridgeWork")}});
+            }
         }
     } else if (last.role == Role::tool && (last.tool_call_id == "stock" || last.tool_call_id == "give-ready")) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
@@ -862,6 +869,12 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
             return call("_queue_actions","give",{{"operation","plan"},{"steps",Json::array({step})}});
         }
         return {{Role::assistant,"我身上有七十块普通泥土，从两个槽位能拿出六十六块。"}};
+    } else if (last.role == Role::tool && last.tool_call_id == "recheck") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("handoffReceipt");
+        if (sample.at("originalStatus") != "blocked" || sample.at("receipt").at("recipientPicked") != 66)
+            throw std::runtime_error("handoff: late receipt did not use the original work");
+        return {{Role::assistant,"刚复查了那次交物，你后来把六十六块都捡到了。"}};
     }
     return {{Role::assistant,R"({"internal":"waiting for a handoff request"})"}};
 }
@@ -1055,7 +1068,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool handoff = mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe";
+        const bool handoff = mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" || mode == L"--handoff-late-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
