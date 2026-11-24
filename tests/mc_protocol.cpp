@@ -256,6 +256,24 @@ void handoff_protocol() {
     proof["stacks"][1]["uuid"] = owner;
     rejects(give);
     proof["stacks"][1]["uuid"] = world;
+    frame["action"]["exited"] = false;
+    result["status"] = "running";
+    transfer["progressAtMs"] = 58;
+    proof["collectors"] = Json::array();
+    proof["recipientPicked"] = 0;
+    proof["pickupUnknown"] = 66;
+    const auto progress = Json::parse(give().progress);
+    if (progress.at("phase") != "awaiting_receipt" || progress.at("submitted") != 66 || progress.at("thrown") != 66 ||
+        progress.at("recipientPicked") != 0 || progress.at("pickupUnknown") != 66 || progress.at("sampledAtMs") != 58)
+        throw std::runtime_error("in-flight handoff mixed submitted and received quantities");
+    transfer["progressAtMs"] = 19;
+    rejects(give);
+    transfer.erase("progressAtMs");
+    if (!give().progress.empty()) throw std::runtime_error("legacy handoff fabricated a new progress sample");
+    frame["action"]["exited"] = true;
+    proof["collectors"] = Json::array({{{"uuid",owner},{"count",66}}});
+    proof["recipientPicked"] = 66;
+    proof["pickupUnknown"] = 0;
     const Json late = proof;
     frame["action"]["skill"] = "observe";
     frame["id"] = "lookup";

@@ -915,6 +915,15 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request) {
             const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",66}};
             if (text == "你身上能分给我六十六块泥土吗？") return call("_observe","stock",args);
             if (text == "那就给我六十六块泥土。") return call("_observe","give-ready",args);
+            if (text == "东西已经丢出来了吗？") {
+                const auto& motion = input.at("activeMotion");
+                const auto& step = motion.at("progress");
+                if (motion.at("skill") != "give_item" || motion.at("work") != input.at("taskPlan").at("nodes").at(0).at("work") ||
+                    step.at("phase") != "awaiting_receipt" || step.at("recipient") != input.at("player") || step.at("submitted") != 66 ||
+                    step.at("thrown") != 66 || step.at("recipientPicked") != 0 || step.at("pickupUnknown") != 66)
+                    throw std::runtime_error("handoff: missing original in-flight evidence");
+                return {{Role::assistant,"已经投出六十六块，这会儿还在等你捡。"}};
+            }
             if (text == "看看我后来捡到刚才那批了没。") {
                 const auto& previous = input.at("task").at("lastAction");
                 if (previous.at("skill") != "give_item") throw std::runtime_error("handoff: original work missing from context");
@@ -1135,7 +1144,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool ground_pickup = mode == L"--ground-pickup-probe";
         const bool gather_handoff = mode == L"--handoff-gather-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
-            mode == L"--handoff-late-probe" || mode == L"--handoff-other-probe";
+            mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];

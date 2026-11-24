@@ -65,9 +65,9 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     observer: mode === '--handoff-unobserved-probe' ? undefined : { directory: path.join(server, 'plugins/DfyStoneObserver'), dimension: 'overworld',
       world: formatId(fs.readFileSync(path.join(server, 'playtest-world/uid.dat'))) } }));
   const game = await launch(file);
-  if (mode === '--handoff-late-probe') {
-    fixture.repeatHandoff = (job, id) => require('./bridge-world.cjs').query(channel, { version: 1, method: 'partner.begin',
-      key: bridgeKey, id, context: { generation: job.generation, order: job.order, controller: job.controller },
+  if (mode === '--handoff-late-probe' || mode === '--handoff-progress-probe') {
+    fixture.repeatHandoff = (job, id, order = job.order) => require('./bridge-world.cjs').query(channel, { version: 1, method: 'partner.begin',
+      key: bridgeKey, id, context: { generation: job.generation, order, controller: job.controller },
       skill: 'give_item', arguments: job.arguments });
   }
   fixture.ownerEntity = () => game.bot.players[owner]?.entity;
@@ -286,7 +286,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-gather-probe', '--handoff-other-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-gather-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

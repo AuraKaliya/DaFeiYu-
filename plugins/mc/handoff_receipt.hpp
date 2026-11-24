@@ -175,6 +175,10 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
     const auto& transfer = result.at("transfer");
     const auto& sample = result.at("handoff");
     const auto& item = sample.at("item").get_ref<const std::string&>();
+    if (transfer.contains("progressAtMs") && (!transfer.at("progressAtMs").is_number_unsigned() ||
+        transfer.at("progressAtMs") < sample.at("sampledAtMs") ||
+        (transfer.contains("sampledAtMs") && transfer.at("progressAtMs") < transfer.at("sampledAtMs"))))
+        throw std::invalid_argument("MC: invalid handoff progress time");
     if (transfer.at("observation") != sample.at("id") || transfer.at("recipient") != sample.at("recipient") ||
         transfer.at("item") != item || transfer.at("requested") != sample.at("count")) throw std::invalid_argument("MC: handoff work changed");
     const auto& clicks = transfer.at("attemptedClicks");
@@ -197,5 +201,22 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
     if (result.at("status") == "done" && (!result.contains("receipt") || result.at("receipt").at("recipientPicked") != sample.at("count")))
         throw std::invalid_argument("MC: handoff completion without recipient evidence");
     return result.contains("receipt") && result.at("receipt").at("thrown") != 0;
+}
+
+// 从已核验的原工作读数生成在途进展，区分操作提交、投出实证和实际收取。
+// 步骤：按当前操作选择阶段 → 带回最近采样与提交量 → 有收件读数时附上来源和去向。
+inline std::string handoff_progress(const nlohmann::json& result) {
+    if (!result.contains("transfer") || !result.at("transfer").contains("progressAtMs")) return {};
+    const auto& transfer = result.at("transfer");
+    nlohmann::json step{{"phase",result.contains("receipt") ? "awaiting_receipt" :
+        transfer.at("attemptedClicks") == 0 ? "preparing_handoff" : "submitting_handoff"},
+        {"sampledAtMs",transfer.at("progressAtMs")},{"observation",transfer.at("observation")},{"recipient",transfer.at("recipient")},
+        {"item",transfer.at("item")},{"requested",transfer.at("requested")},{"submitted",transfer.at("submitted")}};
+    if (result.contains("receipt")) {
+        const auto& proof = result.at("receipt");
+        for (const auto* key : {"coverage","thrown","recipientPicked","otherPicked","throwUnknown","pickupUnknown"})
+            step[key] = proof.at(key);
+    }
+    return step.dump();
 }
 }

@@ -16,7 +16,8 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
     throw blocked('handoff_source_changed', '本次接收者、物品、数量、角色或维度与原交物观察不一致');
   const actor = bot.entity, before = inventory(bot);
   const transfer = result.transfer = { observation: source.id, recipient: owner, item: live.item, requested: live.count,
-    submitted: 0, returnedClicks: 0, attemptedClicks: 0, stockBefore: before[live.item] ?? 0, sourceClaimed: false };
+    submitted: 0, returnedClicks: 0, attemptedClicks: 0, stockBefore: before[live.item] ?? 0,
+    sourceClaimed: false, progressAtMs: live.sampledAtMs };
   const recipient = live.target.state === 'visible' && bot.entities[live.target.entityId];
 
   // 每次落键前复核同一角色、活的接收者、窗口和剩余库存。
@@ -51,9 +52,11 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
       if (!transfer.sourceClaimed) { claim(); transfer.sourceClaimed = true; }
       ++transfer.attemptedClicks;
       transfer.submitted += quantity;
+      transfer.progressAtMs = Math.floor(performance.now());
       // 丢整栈或单件均直接作用于选中槽，不把其余物品留在光标，也不切换快捷栏。
       await bot.clickWindow(row.slot, whole ? 1 : 0, 4);
       ++transfer.returnedClicks;
+      transfer.progressAtMs = Math.floor(performance.now());
     }
   } finally {
     transfer.stockCurrent = bot.entity === actor && bot.game.dimension === source.dimension;
@@ -63,6 +66,7 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
       result.inventoryDelta = inventoryDelta(before,after);
     }
     transfer.sampledAtMs = Math.floor(performance.now());
+    transfer.progressAtMs = transfer.sampledAtMs;
   }
 }
 
@@ -98,6 +102,7 @@ async function giveItem(bot, owner, args, source, check, claim, job, witness) {
     const deadline = performance.now()+4000;
     if (mark) for (;;) {
       result.receipt = await readHandoffProof(witness,evidence,result.receipt);
+      result.transfer.progressAtMs = Math.floor(performance.now());
       if (result.receipt.coverage !== 'read' || result.receipt.recipientPicked+result.receipt.otherPicked === submitted || failure) break;
       try { check(); } catch (error) { failure = error; break; }
       if (performance.now() >= deadline) break;

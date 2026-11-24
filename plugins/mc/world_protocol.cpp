@@ -613,7 +613,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         attempted = result.at("placementAttempted").get<bool>();
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
-    std::string progress;
+    std::string progress = skill == "give_item" && !exited ? handoff_progress(result) : std::string{};
     const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context.at("generation"),exited);
     if (skill == "pickup_drop" && result.contains("progress")) progress = result.at("progress").dump();
     if (skill == "collect" && (result.contains("capacity") || result.value("reasonCode","") == "pickup_inventory_full")) {

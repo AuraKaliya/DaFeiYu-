@@ -1074,6 +1074,11 @@ void PartnerLoop::advance_motion(bool stopping) {
         auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
         if (motion.skill == "collect" && progress.contains("pickup"))
             marker += ":"+progress.at("broken").dump()+":"+progress.at("pickup").dump();
+        if (motion.skill == "give_item" && progress.contains("submitted")) {
+            auto quantities = progress;
+            quantities.erase("sampledAtMs");
+            marker += ":"+quantities.dump();
+        }
         if (!phase.empty() && motion.last_phase != marker) {
             publish("mc.partner.motion",{{"action",fact},{"status",phase},{"progress",std::move(progress)}});
             motion.last_phase = marker;

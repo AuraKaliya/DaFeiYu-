@@ -317,7 +317,8 @@ async function checkGatherHandoff(fixture, player, whispers) {
 
 // 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
 async function checkHandoff(fixture, player, whispers, mode, other) {
-  const late = mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
+  const interrupt = mode === '--handoff-progress-probe';
+  const late = interrupt || mode === '--handoff-late-probe', witnessed = mode !== '--handoff-unobserved-probe';
   const actor = player.players.DfyCompanion.entity;
   await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
   const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
@@ -342,7 +343,18 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   }
   const sent = other ? '这六十六块泥土被旁边的另一位玩家捡到了。' : late ? '六十六块泥土都已经丢出来了，暂时还没看到你捡到。' :
     witnessed ? '你已经捡到六十六块泥土，我的背包还剩四块。' : '我这边背包少了六十六块泥土，还不能确认你捡到了多少。';
-  await measurePlayerFeedback(player,'那就给我六十六块泥土。',sent,() => until(() => whispers.includes(sent),'按原观察投物后说明可核实的效果'),
+  const during = '已经投出六十六块，这会儿还在等你捡。';
+  const pending = () => readRows(fixture,'trace/events.jsonl').filter(row => row.kind === 'mail.received' &&
+    row.category === 'mc.partner.motion' && row.body.status === 'awaiting_receipt' && row.body.progress.thrown === 66 &&
+    row.body.progress.pickupUnknown === 66 && row.body.progress.coverage === 'read');
+  await measurePlayerFeedback(player,'那就给我六十六块泥土。',sent,async () => {
+    if (interrupt) {
+      const current = await until(() => pending()[0],'原工作已投出，尚待收取');
+      await measurePlayerFeedback(player,'东西已经丢出来了吗？',during,() => until(() => whispers.includes(during),'交物等待中的实际答复'),
+        sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify({ ...sample, work:current.body.action.bridgeWork },null,2)));
+    }
+    await until(() => whispers.includes(sent),'按原观察投物后说明可核实的效果');
+  },
     sample => writeFileSync(join(fixture.evidence,'handoff-feedback.json'),JSON.stringify(sample,null,2)));
   const jobs = readRows(fixture, 'game-actions.jsonl').filter(row => row.skill === 'give_item');
   assert.equal(jobs.length,1);
@@ -353,7 +365,9 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   assert.deepEqual([job.result.status,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.throwUnknown],
     other ? ['blocked',66,0,66,0] : late ? ['blocked',66,0,0,0] : witnessed ? ['done',66,66,0,0] : ['blocked',0,0,0,66]);
   if (witnessed) assert.deepEqual(proof.stacks.map(stack => stack.count),[64,1,1]);
-  assert.deepEqual(whispers, [reply,sent]);
+  const expected = interrupt ? [reply,during,sent] : [reply,sent];
+  assert.deepEqual(whispers,expected);
+  if (interrupt) assert.deepEqual(pending().map(row => row.body.action.bridgeWork),[job.work]);
   if (other) {
     assert.deepEqual(proof.collectors,[{ uuid: other.player.uuid, count: 66 }]);
     assert.equal(other.inventory.count(other.registry.itemsByName.dirt.id),66);
@@ -365,7 +379,7 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
     assert.equal(player.inventory.count(player.registry.itemsByName.dirt.id),0);
     const original = await fixture.repeatHandoff(job,job.work);
     assert.deepEqual(original.action.result,job.result);
-    const replacement = await fixture.repeatHandoff(job,'retry.'+job.work);
+    const replacement = await fixture.repeatHandoff(job,'retry.'+job.work,interrupt ? job.order+1 : job.order);
     assert.deepEqual([replacement.action.exited,replacement.action.result.reasonCode,replacement.action.result.originalWork],
       [true,'handoff_already_started',job.work]);
     assert.equal(replacement.action.result.transfer,undefined);
@@ -381,7 +395,7 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
     assert.deepEqual([check.work,check.order,check.sourceThrough,check.originalStatus,check.receipt.recipientPicked],
       [job.work,job.order,proof.throughSeq,'blocked',66]);
     assert.equal(all.filter(row => row.skill === 'give_item' && row.result.transfer?.submitted > 0).length,1);
-    assert.deepEqual(whispers, [reply,sent,final]);
+    assert.deepEqual(whispers,[...expected,final]);
   }
 }
 
