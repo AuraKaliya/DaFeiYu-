@@ -153,15 +153,20 @@ test('collection polls retain the phase start and sample breaks separately from 
   progress.sample();
   assert.deepEqual([result.progress.phaseSinceMs, result.progress.sampledAtMs, result.progress.broken], [100, 200, 0]);
   result.broken = 1;
+  result.pickups = { recent: [{ targetCell: { x: 2, y: -61, z: 0 }, state: 'unseen' }] };
   progress.enter('awaiting_pickup');
+  assert.deepEqual(result.progress.pickup, { state: 'unseen' });
   assert.deepEqual([result.progress.targetCell, result.progress.lastBreakAtMs, result.progress.stock.current],
     [{ x: 2, y: -61, z: 0 }, 200, 1]);
   stock = 2;
   time = 300;
+  Object.assign(result.pickups.recent[0], { state: 'left_view', entityId: 7, item: 'dirt', selfCount: 1, otherCount: 0 });
   progress.sample();
+  assert.deepEqual(result.progress.pickup, { state: 'left_view', entityId: 7, item: 'dirt', selfCount: 1, otherCount: 0 });
   assert.deepEqual([result.progress.stock.current, result.progress.lastBreakAtMs, result.progress.phaseSinceMs], [2, 200, 200]);
   progress.enter('selecting');
   assert.equal(Object.hasOwn(result.progress, 'targetCell'), false);
+  assert.equal(Object.hasOwn(result.progress, 'pickup'), false);
 });
 
 // 在同一移动上分别注入真实位移、无路、位置未知和核实抵达。

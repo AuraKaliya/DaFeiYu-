@@ -81,6 +81,12 @@ void collect_progress_protocol() {
     auto& pickups = result["pickups"] = {{"scope","one_new_stack_near_each_target"},{"attempted",1},{"omitted",0},
         {"recent",Json::array({stack})},{"selfCollected",Json::object()},{"otherCollected",{{"dirt",1}}}};
     if (!read().exited) throw std::runtime_error("other collector receipt lost");
+    step["pickup"] = {{"state","left_view"},{"entityId",9},{"item","dirt"},{"selfCount",0},{"otherCount",1},
+        {"lastCollector",stack.at("lastCollector")}};
+    if (Json::parse(read().progress).at("pickup") != step.at("pickup")) throw std::runtime_error("active pickup missing");
+    step["pickup"]["selfCount"] = 1;
+    rejects(read);
+    step.erase("pickup");
     pickups["selfCollected"]["dirt"] = 1;
     rejects(read);
     pickups["selfCollected"] = Json::object();

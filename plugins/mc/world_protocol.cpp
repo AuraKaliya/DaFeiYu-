@@ -300,6 +300,15 @@ void verify_collect_progress(const Json& result, const Json& args, bool exited) 
             (args.contains(axis) && step.at("targetCell").at(axis) != args.at(axis)))
             throw std::invalid_argument("MC: collect progress target changed");
     }
+    if (step.contains("pickup")) {
+        const auto& recent = result.at("pickups").at("recent");
+        if (phase != "awaiting_pickup" || recent.empty() || recent.back().at("targetCell") != step.at("targetCell"))
+            throw std::invalid_argument("MC: pickup progress target changed");
+        Json summary = Json::object();
+        for (const auto key : {"state","entityId","item","selfCount","otherCount","lastCollector"})
+            if (recent.back().contains(key)) summary[key] = recent.back().at(key);
+        if (step.at("pickup") != summary) throw std::invalid_argument("MC: stale pickup progress");
+    }
     if (step.contains("stock") != args.contains("item")) throw std::invalid_argument("MC: collect progress stock missing");
     if (step.contains("stock")) {
         const auto& stock = step.at("stock");

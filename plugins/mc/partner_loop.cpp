@@ -77,6 +77,8 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
     const bool correcting = task.contains("pendingCorrection");
     const bool has_work = input.contains("activeMotion") || input.contains("taskPlan") ||
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
+    const auto motion = input.find("activeMotion");
+    const bool reading_collection = player_message && motion != input.end() && motion->at("skill") == "collect" && motion->contains("progress");
     const std::array entries{
         Guidance{"flowGuidance","task","沿原话和当前任务修订推进，给步骤写出已知依赖。复合委托若只提交准备步骤，用计划的 remainingGoal 保留尚未完成的用户目标。",has_goal || player_message},
         Guidance{"flowGuidance","planOutcome","计划结束时对照原话、剩余目标和实效。条件已具备就提交下一步。需要新证据就定向补查。现场变化使后续操作已无必要时，按最新事实结算。只承诺继续之前先登记实际后继。",
@@ -96,7 +98,8 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
             input.contains("previousPlanRejection")},
         Guidance{"domainExperience","targetEvidence","按原话的对象和数量选择现场候选。开口的准星不唯一只说明视线，明确授权多个开口时用原观察的候选组。补查应缩小范围或核验选中格，需要线索时只问缺失的一项。",
             player_message || correcting || input.contains("questionResult")},
-        Guidance{"domainExperience","nearbyMaterials",nearby_materials,tools_for_gathering && needs_materials_guidance(input,player_message)},
+        Guidance{"domainExperience","nearbyMaterials",nearby_materials,tools_for_gathering && !reading_collection && needs_materials_guidance(input,player_message)},
+        Guidance{"domainExperience","collectionProgress","回答采掘进展时，按原工作最近采样的目标格、破坏数和实际库存说明。掉落离开视野且没有拾取回执时，拾取人未知。",reading_collection},
         Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
             input.at("trigger") == "follow.attention"},
         Guidance{"outputConstraints","gameConversation","用玩家认得的地点、物品和动作说话，省略内部编号和工具名。只需答话时直接输出文本。需要边做边说时用 reply；回复后本轮就结束可用 finish。",
@@ -1049,7 +1052,9 @@ void PartnerLoop::advance_motion(bool stopping) {
         if (motion.skill == "follow" && !motion.stopping) track_follow(progress);
         const auto phase = motion.stopping ? std::string("stopping") : progress.value("phase",std::string{});
         const auto observed = phase+":"+progress.value("terrain",std::string{});
-        const auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
+        auto marker = progress.contains("checkpoint") ? observed+":"+progress.at("checkpoint").dump() : observed;
+        if (motion.skill == "collect" && progress.contains("pickup"))
+            marker += ":"+progress.at("broken").dump()+":"+progress.at("pickup").dump();
         if (!phase.empty() && motion.last_phase != marker) {
             publish("mc.partner.motion",{{"action",fact},{"status",phase},{"progress",std::move(progress)}});
             motion.last_phase = marker;

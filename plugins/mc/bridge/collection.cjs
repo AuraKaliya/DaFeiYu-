@@ -116,6 +116,15 @@ function collectionProgress(result, readStock, now = () => performance.now()) {
     const progress = result.progress = { phase, phaseSinceMs, sampledAtMs, broken, ...target };
     if (lastBreakAtMs !== undefined) progress.lastBreakAtMs = lastBreakAtMs;
     if (result.stock) progress.stock = { item: result.stock.item, required: result.stock.required, current: readStock() };
+    if (phase === 'awaiting_pickup') {
+      const entry = result.pickups?.recent.at(-1);
+      if (entry && ['x','y','z'].every(axis => entry.targetCell[axis] === target.targetCell[axis])) {
+        const pickup = progress.pickup = { state: entry.state };
+        if (entry.entityId !== undefined) Object.assign(pickup, { entityId: entry.entityId, item: entry.item,
+          selfCount: entry.selfCount, otherCount: entry.otherCount });
+        if (entry.lastCollector) pickup.lastCollector = entry.lastCollector;
+      }
+    }
   }
   sample();
   return { sample,

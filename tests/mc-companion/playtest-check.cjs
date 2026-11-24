@@ -537,6 +537,12 @@ async function checkPickup(fixture, player, whispers) {
       row.session === digging.body.action.session).map(readPartnerContext)
       .find(turn => turn.input.events.some(event => event.sequence === reply.order && event.text === '挖得怎么样了？'));
     assert.equal(prepared.input.activeMotion.work, job.work);
+    assert.match(prepared.guidance.domainExperience.collectionProgress, /最近采样/);
+    assert.equal(prepared.guidance.domainExperience.nearbyMaterials, undefined);
+    const pickupUpdates = events().filter(row => row.category === 'mc.partner.motion' &&
+      row.body.action?.bridgeWork === job.work && row.body.progress?.pickup).map(row => row.body.progress.pickup);
+    assert.ok(pickupUpdates.some(p => p.entityId === entry.entityId && p.item === 'dirt'));
+    assert.ok(pickupUpdates.every((p, i) => !i || JSON.stringify(p) !== JSON.stringify(pickupUpdates[i-1])));
     const sample = JSON.parse(readFileSync(path, 'utf8'));
     assert.ok(Number.isFinite(sample.elapsedMs));
     writeFileSync(path, JSON.stringify({ ...sample, sourceMessage: reply.order, replyWork: reply.work,
