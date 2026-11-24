@@ -816,6 +816,32 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"waiting for the original stack"})"}};
 }
 
+// 用实际收件者和跨堆库存回答玩家的备料询问。
+// 步骤：从原话取得配对身份 → 选择只读交付观察 → 核对数量与距离后回答。
+dfy::model::Response handoff_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto input = Json::parse(last.content);
+        if (!input.at("events").empty() && input.at("events").back().value("text","") == "你身上能分给我六十六块泥土吗？") {
+            const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_observe"); });
+            if (tool == request.tools.end()) throw std::runtime_error("handoff: missing observation");
+            const Json args{{"mode","handoff"},{"recipient",input.at("player")},{"item","dirt"},{"count",66}};
+            return {{Role::assistant,"",{{"stock",tool->name,args.dump()}}},FinishReason::tool_calls};
+        }
+    } else if (last.role == Role::tool && last.tool_call_id == "stock") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& sample = result.at("handoff");
+        const auto& stock = sample.at("stock");
+        if (sample.at("target").at("state") != "visible" || sample.at("target").at("distance") > 3 || sample.at("window") != "inventory" ||
+            stock.at("available") != 70 || stock.at("missing") != 0 || stock.at("selected").size() != 2)
+            throw std::runtime_error("handoff: wrong player or stock");
+        return {{Role::assistant,"我身上有七十块普通泥土，从两个槽位能拿出六十六块。"}};
+    }
+    return {{Role::assistant,R"({"internal":"waiting for a handoff request"})"}};
+}
+
 // 用隔离服的观察和合成回执决定何时向玩家报告产出。
 // 步骤：按原话采样 → 核对方块、原料和地上物品 → 提交合成并等待读回。
 dfy::model::Response craft_sample(const dfy::model::Request& request) {
@@ -1005,7 +1031,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || mode == L"--partner-probe";
+        const bool handoff = mode == L"--handoff-probe";
+        const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe";
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");
         const std::filesystem::path root = argv[2];
         app::ApplicationRunConfig run;
@@ -1022,7 +1049,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,ask,gap,root,mode](const auto&, const auto& request) {
+                if (handoff) return handoff_sample(request);
                 if (ground_pickup) return ground_pickup_sample(request);
                 if (pickup) return pickup_sample(request);
                 if (craft) return craft_sample(request);

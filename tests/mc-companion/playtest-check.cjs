@@ -123,7 +123,7 @@ async function checkPlayer(fixture, mode) {
     const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
-    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -134,6 +134,8 @@ async function checkPlayer(fixture, mode) {
       await checkCraft(fixture, player, whispers);
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
+    } else if (mode === '--handoff-probe') {
+      await checkHandoff(fixture, player, whispers);
     } else if (mode === '--pickup-probe') {
       await checkPickup(fixture, player, whispers);
     } else if (layered) {
@@ -264,6 +266,22 @@ async function checkGroundPickup(fixture, player, whispers) {
     assert.equal(fixture.materialCount('dirt'), 3);
     assert.deepEqual(whispers, [reply, stopped]);
   } finally { player._client.removeListener('collect', onCollect); }
+}
+
+// 核对玩家询问的目标、数量及真实库存，纯询问期间物品留在原有角色。
+async function checkHandoff(fixture, player, whispers) {
+  const actor = player.players.DfyCompanion.entity;
+  await until(() => fixture.materialCount('dirt') === 70 && actor.position.distanceTo(player.entity.position) <= 3, '角色持有两堆泥土并与原玩家同场');
+  const reply = '我身上有七十块普通泥土，从两个槽位能拿出六十六块。';
+  await measurePlayerFeedback(player, '你身上能分给我六十六块泥土吗？', reply, () => until(() => whispers.includes(reply), '实际库存询问回复'),
+    sample => writeFileSync(join(fixture.evidence, 'player-feedback.json'), JSON.stringify(sample, null, 2)));
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  const query = actions.find(row => row.result.handoff);
+  const sample = query.result.handoff;
+  assert.deepEqual([sample.id, sample.recipient, sample.actor.uuid, sample.target.entityId], [query.work, player.player.uuid, actor.uuid, player.entity.id]);
+  assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
+  assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
+  assert.deepEqual(whispers, [reply]);
 }
 
 // 由独立玩家核对追问回到原消息并实际补齐相隔的两处开口。
