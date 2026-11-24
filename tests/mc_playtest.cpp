@@ -966,6 +966,14 @@ dfy::model::Response handoff_sample(const dfy::model::Request& request, std::wst
         }
         if (input.at("trigger") == "plan.finished") {
             const auto& result = input.at("planSettlements").at(0).at("nodes").at(0).at("result");
+            if (mode == L"--handoff-partial-probe") {
+                const auto& check = result.at("recipientCheck");
+                if (result.at("reasonCode") != "handoff_recipient_distant" || check.at("recipient") != input.at("player") ||
+                    check.at("target").at("distance") <= 3 || check.at("remaining") != 2 || result.at("transfer").at("submitted") != 64 ||
+                    result.at("receipt").at("thrown") != 64 || result.at("receipt").at("recipientPicked") != 0 ||
+                    result.at("inventoryDelta") != Json{{"dirt",-64}}) throw std::runtime_error("handoff: partial result lost at settlement");
+                return {{Role::assistant,"刚才投出了六十四块，你走远以后我停了，另外两块还没丢。"}};
+            }
             if (result.at("transfer").at("submitted") != 66 || result.at("transfer").at("returnedClicks") != 3 ||
                 result.at("inventoryDelta") != Json{{"dirt",-66}}) throw std::runtime_error("handoff: transfer amount lost");
             const auto& proof = result.at("receipt");
@@ -1226,7 +1234,7 @@ int wmain(int argc, wchar_t** argv) {
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" ||
-            mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-other-probe";
+            mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-partial-probe" || mode == L"--handoff-other-probe";
         const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";
         const bool partner = wall || gap_group || follow || door || materials || fill_four || water || layered || craft || pickup || ground_pickup || handoff || mode == L"--partner-probe" || vitals;
         if (argc != 3 && !partner) throw std::invalid_argument("package and playtest directory required");

@@ -430,6 +430,27 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
   await until(() => whispers.includes('是你让我就地备两块泥土的那次。'),'下轮可沿完工发言找到原委托');
 }
 
+// 在两个真实投物操作之间移开玩家，核对停投读数、现场掉落及原委托的实际发言。
+// 步骤：等待第一堆入世界 → 移出交物距离 → 对照原工作、玩家端物品及两边库存。
+async function checkPartialHandoff(fixture, player, whispers, initialReply) {
+  const dirt = player.registry.itemsByName.dirt.id;
+  const ground = () => Object.values(player.entities).map(entity => entity.getDroppedItem?.())
+    .filter(item => item?.type === dirt).reduce((sum,item) => sum+item.count,0);
+  const message = '刚才投出了六十四块，你走远以后我停了，另外两块还没丢。';
+  player.chat('那就给我六十六块泥土。');
+  await until(() => ground() === 64,'独立玩家看到第一堆六十四块已在场');
+  fixture.send('tp DfyGuestCheck 6.5 -60 0.5');
+  await until(() => player.entity.position.x === 6.5 && whispers.includes(message),'玩家移开后收到原委托的实际停投结果');
+  const actions = readRows(fixture,'game-actions.jsonl').filter(row => row.skill === 'give_item');
+  assert.equal(actions.length,1);
+  const [job] = actions, check = job.result.recipientCheck;
+  assert.deepEqual([job.exited,job.result.reasonCode,job.result.transfer.submitted,job.result.transfer.returnedClicks,
+    job.result.receipt.thrown,job.result.receipt.recipientPicked], [true,'handoff_recipient_distant',64,1,64,0]);
+  assert.deepEqual([check.observation,check.recipient,check.target.distance,check.target.position.x,check.remaining],
+    [job.arguments.observation,player.player.uuid,6,6.5,2]);
+  assert.deepEqual([ground(),fixture.materialCount('dirt'),player.inventory.count(dirt),whispers],[64,6,0,[initialReply,message]]);
+}
+
 // 用独立玩家核对备料询问、投物在途发言与最终实际收件。
 // 步骤：读回初始库存 → 发送委托并按场景控制收件时机 → 核对实际发言、原工作和库存。
 async function checkHandoff(fixture, player, whispers, mode, other) {
@@ -449,11 +470,13 @@ async function checkHandoff(fixture, player, whispers, mode, other) {
   assert.deepEqual(sample.stock.selected.map(slot => [slot.held, slot.take]), [[64,64],[6,2]]);
   assert.deepEqual([fixture.materialCount('dirt'), player.inventory.count(player.registry.itemsByName.dirt.id)], [70,0]);
   assert.deepEqual(whispers, [reply]);
-  if (late || other || staleFeedback) {
+  const partial = mode === '--handoff-partial-probe';
+  if (late || other || staleFeedback || partial) {
     fixture.send('clear DfyGuestCheck');
     fixture.send('give DfyGuestCheck minecraft:stone 2304');
     await until(() => player.inventory.count(player.registry.itemsByName.stone.id) === 2304,'收件玩家的 36 个槽位已满');
   }
+  if (partial) return checkPartialHandoff(fixture,player,whispers,reply);
   if (other) {
     fixture.send('clear DfyCollector');
     fixture.send('tp DfyCollector 3.5 -60 0.5');

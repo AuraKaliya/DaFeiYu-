@@ -194,6 +194,16 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         block(2,-59) === 'dirt' && block(6,-59) === 'dirt' && block(3,-60) === (fillFour || gapGroup ? 'air' : 'dirt') && block(3,-59) === 'air',
         '原墙、缺口和建材就绪');
     }
+    if (mode === '--handoff-partial-probe') {
+      const click = game.bot.clickWindow.bind(game.bot);
+      // 在正式丢物包发出后留出玩家移动的窗口，桥接按实际同步的玩家位置决定下一次操作。
+      game.bot.clickWindow = async (...args) => {
+        const result = await click(...args);
+        if (args[2] === 4) await until(() => game.bot.players[owner]?.entity?.position.x >= 6,
+          '第一堆已投出，原玩家实际移开');
+        return result;
+      };
+    }
     const args = mode === '--live' ? ['--mc-partner', config, pkg, root] : mode === '--probe' ? [pkg, root] : [pkg, root, mode];
     const review = mode === '--ask-main-manual-probe';
     child = spawn(exe, args, { windowsHide: true, stdio: [review ? 'pipe' : 'ignore', 'pipe', 'inherit'] });
@@ -297,7 +307,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))
