@@ -47,6 +47,45 @@ bool dimension(const Json& value) {
         return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || std::string_view(":/._-").find(c) != std::string_view::npos;
     });
 }
+
+// 对照原查询检查掉落来源、覆盖和实体列表，缺失物品栈保持未知。
+// 步骤：绑定原工作和查询范围 → 校验角色与实体位置 → 核对物品过滤和距离。
+void verify_drop_observation(const Json& sample, std::string_view id, const Json& generation, const Json& args) {
+    const auto radius = args.value("radius",8);
+    const auto requested_item = args.value("item",std::string{});
+    const auto filter = item_name(requested_item);
+    const auto& entities = sample.at("entities");
+    if (args.value("mode","") != "drops" || sample.at("id").get_ref<const std::string&>() != id ||
+        sample.at("generation") != generation || !dimension(sample.at("dimension")) ||
+        !sample.at("sampledAtMs").is_number_unsigned() || sample.at("coverage") != "client_tracked_entities" ||
+        sample.at("radius") != radius || radius < 1 || radius > 16 || sample.value("item",std::string{}) != filter ||
+        !sample.at("unknownStack").is_number_unsigned() || !sample.at("unlocated").is_number_unsigned() ||
+        !sample.at("omitted").is_number_unsigned() || !entities.is_array() || entities.size() > 12 ||
+        (sample.at("omitted") != 0 && entities.size() != 12))
+        throw std::invalid_argument("MC: invalid drop observation scope");
+
+    const auto& center = sample.at("position");
+    for (const auto axis : {"x","y","z"}) if (!center.at(axis).is_number())
+        throw std::invalid_argument("MC: missing drop observation center");
+    std::set<std::uint32_t> ids;
+    double previous = 0;
+    for (const auto& entity : entities) {
+        const auto& item = entity.at("item");
+        if (!entity.at("entityId").is_number_unsigned() || entity.at("entityId") > 0x7fffffff ||
+            !ids.insert(entity.at("entityId").get<std::uint32_t>()).second || (entity.contains("uuid") && !uuid(entity.at("uuid"))) ||
+            (item.is_null() ? !entity.at("count").is_null() :
+                !dimension(item) || !entity.at("count").is_number_unsigned() || entity.at("count") == 0) ||
+            (!filter.empty() && (item.is_null() || item.get_ref<const std::string&>() != filter)))
+            throw std::invalid_argument("MC: invalid dropped stack");
+        const auto& point = entity.at("position");
+        const double measured = std::hypot(point.at("x").get<double>()-center.at("x").get<double>(),
+            point.at("y").get<double>()-center.at("y").get<double>(),point.at("z").get<double>()-center.at("z").get<double>());
+        const auto distance = entity.at("distance").get<double>();
+        if (distance < previous || distance > radius || std::abs(distance-measured) > 1e-8)
+            throw std::invalid_argument("MC: inconsistent drop observation distance");
+        previous = distance;
+    }
+}
 // 询问修订使用非零十进制文本，避免 JavaScript 数值精度损失。
 bool inquiry_id(const Json& value) {
     if (!value.is_string()) return false;
@@ -265,6 +304,9 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "observe" && (result.contains("dropObservation") ||
+        (exited && result.at("status") == "done" && args.value("mode","") == "drops")))
+        verify_drop_observation(result.at("dropObservation"),id,context.at("generation"),args);
     if (skill == "observe" && result.contains("observation")) {
         const auto& observation = result.at("observation");
         const auto& samples = observation.at("samples");

@@ -5,6 +5,7 @@ const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridg
 const { matchesDigReference } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
+const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
 const { EventEmitter } = require('node:events');
 
 class Position {
@@ -40,6 +41,35 @@ function fixture() {
     messageAnchor: () => ({ anchor: { position: origin, dimension: 'overworld', sampledAtMs: 42 }, center: origin }), check: () => {} };
   return { bot, player, context, reads };
 }
+
+// 用缺读、异物和同距离的实体核对只读掉落观察的覆盖及顺序。
+// 步骤：布置带身份的掉落 → 对照过滤前后快照 → 验证截断和参数边界。
+test('drop observation distinguishes filtered stacks, missing data and bounded coverage', () => {
+  const { bot } = fixture();
+  const center = bot.entity.position;
+  const drop = (id, x, name = 'dirt') => ({ id, name: 'item', position: center.offset(x, 0, 0),
+    getDroppedItem: () => ({ name, count: 2 }) });
+  bot.registry = { itemsByName: { dirt: {} } };
+  bot.entities = { a: drop(4, 2), b: drop(2, 2), c: drop(6, 1, 'stone'), far: drop(8, 5),
+    waiting: { ...drop(10, 1), getDroppedItem() { throw new Error('metadata pending'); } },
+    unseen: { id: 12, name: 'item' }, player: { name: 'player', position: center }, gone: { ...drop(13, 1), isValid: false } };
+  const options = observationInput({ mode: 'drops', item: 'minecraft:dirt', radius: 2 }).options;
+  const sample = observeDrops(bot, options, 'work', 'world');
+  assert.deepEqual(sample.entities.map(e => [e.entityId, e.item, e.count]), [[2, 'dirt', 2], [4, 'dirt', 2]]);
+  assert.deepEqual([sample.unknownStack, sample.unlocated, sample.omitted, sample.item], [1, 1, 0, 'dirt']);
+  center.x = 0.5;
+  assert.equal(sample.position.x, 0);
+  const unfiltered = observeDrops(bot, observationInput({ mode: 'drops' }).options, 'work2', 'world');
+  assert.equal(unfiltered.entities.find(e => e.entityId === 10).count, null);
+  for (let i = 20; i < 40; ++i) bot.entities[i] = drop(i, 0);
+  const crowded = observeDrops(bot, options, 'work3', 'world');
+  assert.deepEqual([crowded.entities.length, crowded.omitted], [12, 10]);
+  assert.throws(() => observeDrops(bot, { radius: 1, item: 'absent' }, 'work', 'world'), { code: 'observe_drop_item_unknown' });
+  for (const args of [{ mode: 'drops', radius: 17 }, { mode: 'drops', item: '' }, { mode: 'drops', message: 2 }, { item: 'dirt' }])
+    assert.throws(() => observationInput(args), { code: 'observe_drop_parameters' });
+  delete bot.entity.position;
+  assert.throws(() => observeDrops(bot, options, 'work', 'world'), { code: 'observe_drop_position_unavailable' });
+});
 
 // 在同一移动上分别注入真实位移、无路、位置未知和核实抵达。
 // 步骤：对照位置与路径 → 注入数据缺失并复位 → 核对末次采样与监听回收。

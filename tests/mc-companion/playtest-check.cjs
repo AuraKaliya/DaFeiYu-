@@ -497,6 +497,12 @@ async function checkCraft(fixture, player, whispers) {
   await until(() => fixture.materialCount('oak_log') === 1, '测试原木实际入包');
   const cell = player.entity.position.clone().set(3, -60, 0);
   await until(() => player.blockAt(cell)?.name === 'dirt', '独立客户端读到观察目标');
+  const stack = (name, count) => Object.values(player.entities).find(entity => {
+    const item = entity.name === 'item' && entity.getDroppedItem?.();
+    return item?.name === name && item.count === count;
+  });
+  const nearby = await until(() => stack('dirt', 2), '独立客户端读到掉落的泥土');
+  await until(() => stack('stone', 1) && stack('dirt', 4), '独立客户端读到异物和半径外泥土');
   assert.equal(fixture.materialCount('oak_planks'), 0);
   player.chat('看看你旁边，把原木做成四块木板。');
   await until(() => whispers.includes('原木已经做成四块橡木木板。'), '合成结果实际发言');
@@ -512,6 +518,10 @@ async function checkCraft(fixture, player, whispers) {
   assert.equal(sample.views[2].message, 2);
   assert.ok(Number.isInteger(sample.sampledAtMs));
   assert.equal(sample.verified[0].block, player.blockAt(cell).name);
+  const dropped = actions.find(row => row.result.dropObservation)?.result.dropObservation;
+  assert.equal(dropped.coverage, 'client_tracked_entities');
+  assert.deepEqual(dropped.entities.map(e => [e.entityId, e.uuid, e.item, e.count]), [[nearby.id, nearby.uuid, 'dirt', 2]]);
+  assert.equal(stack('dirt', 2)?.uuid, nearby.uuid);
 
   const crafts = actions.filter(row => row.skill === 'craft');
   assert.equal(crafts.length, 1);

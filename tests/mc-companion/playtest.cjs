@@ -83,7 +83,11 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     if (mode === '--water-probe') prepareWater(send);
     if (mode === '--layered-follow-probe' || mode === '--layered-resupply-probe')
       prepareLayered(send, mode === '--layered-resupply-probe');
-    if (mode === '--craft-probe') send('give DfyCompanion minecraft:oak_log 1');
+    if (mode === '--craft-probe') {
+      send('give DfyCompanion minecraft:oak_log 1');
+      for (const [x, z, item, count] of [[-3.5, 0.5, 'dirt', 2], [-2.5, 1.5, 'stone', 1], [-8.5, 0.5, 'dirt', 4]])
+        send(`summon minecraft:item ${x} -60 ${z} {Item:{id:"minecraft:${item}",count:${count}},PickupDelay:32767s}`);
+    }
     if (wallProbe) prepareWall(send, withDirt, doorProbe || mode === '--gap-probe', doorProbe);
     if (gapGroup) {
       send('setblock 3 -60 -3 minecraft:air');

@@ -16,6 +16,15 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'drops') {
+    const radius = args.radius ?? 8;
+    if (!Number.isInteger(radius) || radius < 1 || radius > 16 ||
+        (Object.hasOwn(args, 'item') && (typeof args.item !== 'string' || !/^(?:minecraft:)?[a-z0-9_]+$/.test(args.item))) ||
+        Object.keys(args).some(key => !['mode', 'radius', 'item'].includes(key)))
+      throw invalidObservation('observe_drop_parameters', '掉落观察可指定物品和 1～16 格半径');
+    return { mode, options: { radius, item: args.item?.replace(/^minecraft:/, '') } };
+  }
+  if (Object.hasOwn(args, 'item')) throw invalidObservation('observe_drop_parameters', '按掉落物品查询需要 mode=drops');
   if (mode === 'detail') {
     if (typeof args.observation !== 'string' || !args.observation.length || args.observation.length > 128 ||
         Object.keys(args).some(key => !['mode', 'observation'].includes(key)))

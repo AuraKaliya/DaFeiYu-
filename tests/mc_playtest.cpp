@@ -722,14 +722,14 @@ dfy::model::Response fill_four_sample(const dfy::model::Request& request, bool c
 }
 
 // 用隔离服的观察和合成回执决定何时向玩家报告产出。
-// 步骤：按原话采样 → 核对已加载方块和原料 → 提交合成并等待实际库存变化。
+// 步骤：按原话采样 → 核对方块、原料和地上物品 → 提交合成并等待读回。
 dfy::model::Response craft_sample(const dfy::model::Request& request) {
     using namespace dfy::model;
     using Json = nlohmann::json;
-    const auto call = [&](std::string_view name, const Json& args) -> Response {
+    const auto call = [&](std::string_view name, const Json& args, std::string id = {}) -> Response {
         const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(name); });
         if (tool == request.tools.end()) throw std::runtime_error("craft probe: required tool missing");
-        return {{Role::assistant,"",{{std::string(name),tool->name,args.dump()}}},FinishReason::tool_calls};
+        return {{Role::assistant,"",{{id.empty() ? std::string(name) : id,tool->name,args.dump()}}},FinishReason::tool_calls};
     };
     const auto& last = request.messages.back();
     if (last.role == Role::tool && last.tool_call_id == "_observe") {
@@ -738,6 +738,13 @@ dfy::model::Response craft_sample(const dfy::model::Request& request) {
         if (sample.at("verified").front().at("block") != "dirt" || sample.at("views").size() != 3 ||
             sample.at("views").front().at("actor").at("inventory").at("oak_log") != 1)
             throw std::runtime_error("craft probe: expected actual block and input stock");
+        return call("_observe",{{"mode","drops"},{"item","dirt"},{"radius",5}},"nearby-dirt");
+    }
+    if (last.role == Role::tool && last.tool_call_id == "nearby-dirt") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& items = result.at("dropObservation").at("entities");
+        if (items.size() != 1 || items.front().at("item") != "dirt" || items.front().at("count") != 2)
+            throw std::runtime_error("craft probe: nearby dropped stack was not observed");
         const Json node{{"id","planks"},{"skill","craft"},{"arguments",{{"item","oak_planks"},{"count",4},{"ingredient","oak_log"}}}};
         return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({node})}});
     }

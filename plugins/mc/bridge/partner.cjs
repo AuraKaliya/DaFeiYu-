@@ -4,6 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
+const { observeDrops } = require('./dropped-items.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
 const { craftPlanks } = require('./crafting.cjs');
@@ -346,7 +347,9 @@ function partnerService(bot, world, inbox, places, owner) {
       }
       const player = Object.values(bot.players).find(p => p.uuid === owner);
       const observation = r.skill === 'observe' ? observationInput(args) : null;
-      if (observation?.mode === 'detail') {
+      if (observation?.mode === 'drops') {
+        result.dropObservation = observeDrops(bot, observation.options, job.id, r.generation);
+      } else if (observation?.mode === 'detail') {
         const original = records.get(workKey(r.controller, args.observation))?.receipt;
         const source = original?.result.openingObservation;
         if (!source || !original.exited || original.result.status !== 'done' || source.generation !== r.generation ||

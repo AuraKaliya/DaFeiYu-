@@ -170,6 +170,22 @@ int main() {
         detail["action"]["result"]["sourceObservation"]["id"] = "original";
         detail["action"]["result"]["sourceObservation"]["generation"] = "other-world";
         rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",detail_args); });
+        const auto drop_args = Json{{"context",source},{"arguments",{{"mode","drops"},{"item","minecraft:dirt"}}}}.dump();
+        const Json origin{{"x",0},{"y",0},{"z",0}};
+        const Json dropped{{"entityId",13},{"position",origin},{"distance",0},{"item","dirt"},{"count",2}};
+        auto& drops = detail["action"]["result"] = {{"status","done"},{"dropObservation",{{"id","work"},
+            {"generation",source.at("generation")},{"dimension","overworld"},{"sampledAtMs",10},{"position",origin},
+            {"radius",8},{"coverage","client_tracked_entities"},{"item","dirt"},{"omitted",0},{"unknownStack",0},
+            {"unlocated",0},{"entities",Json::array({dropped})}}}};
+        if (!dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args).exited) return 1;
+        auto& entries = drops["dropObservation"]["entities"];
+        entries.push_back(dropped);
+        rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args); });
+        entries.erase(1);
+        entries[0]["distance"] = 3;
+        rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args); });
+        drops.erase("dropObservation");
+        rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args); });
         const auto partial = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope);
         const auto speech = Json{{"context",source},{"arguments",{{"text","我在这儿。"}}}}.dump();
         auto delivered = receipt;
