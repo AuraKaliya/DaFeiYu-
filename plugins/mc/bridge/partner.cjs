@@ -4,7 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
-const { observeDrops } = require('./dropped-items.cjs');
+const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { inventoryCapacity } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
@@ -362,6 +362,16 @@ function partnerService(bot, world, inbox, places, owner) {
     sceneNext = now + 500;
     return sceneRevision;
   }
+  // 只在原控制实例、在场周期和维度内读取已结束的掉落范围观察。
+  function dropSource(receipt, observation) {
+    const original = records.get(workKey(receipt.controller, observation))?.receipt;
+    const source = original?.result.dropObservation;
+    if (!source || !original.exited || original.result.status !== 'done' || source.generation !== receipt.generation ||
+        source.dimension !== bot.game.dimension || !inbox.inPresence(receipt.generation, original.order))
+      throw Object.assign(new Error('当前在场周期没有可用的原掉落观察'), { code: 'drop_observation_stale' });
+    return source;
+  }
+
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
@@ -384,6 +394,8 @@ function partnerService(bot, world, inbox, places, owner) {
       const observation = r.skill === 'observe' ? observationInput(args) : null;
       if (observation?.mode === 'drops') {
         result.dropObservation = observeDrops(bot, observation.options, job.id, r.generation);
+      } else if (observation?.mode === 'drop') {
+        result.dropTarget = readDropTarget(bot, dropSource(r, args.observation), args.entity);
       } else if (observation?.mode === 'detail') {
         const original = records.get(workKey(r.controller, args.observation))?.receipt;
         const source = original?.result.openingObservation;

@@ -788,6 +788,13 @@ dfy::model::Response craft_sample(const dfy::model::Request& request) {
         if (items.size() != 1 || items.front().at("item") != "dirt" || items.front().at("count") != 2 ||
             drops.at("capacity").at("status") != "sampled" || drops.at("capacity").at("knownSpace") <= 0)
             throw std::runtime_error("craft probe: nearby dropped stack was not observed");
+        return call("_observe",{{"mode","drop"},{"observation",drops.at("id")},{"entity",items.front().at("uuid")}},"same-stack");
+    }
+    if (last.role == Role::tool && last.tool_call_id == "same-stack") {
+        const auto result = Json::parse(last.content.substr(last.content.find('{')));
+        const auto& stack = result.at("dropTarget");
+        if (stack.at("state") != "tracked" || stack.at("withinOriginalRadius") != true || stack.at("item") != "dirt" || stack.at("count") != 2)
+            throw std::runtime_error("craft probe: the same stack was not rechecked");
         const Json node{{"id","planks"},{"skill","craft"},{"arguments",{{"item","oak_planks"},{"count",4},{"ingredient","oak_log"}}}};
         return call("_queue_actions",{{"operation","plan"},{"steps",Json::array({node})}});
     }

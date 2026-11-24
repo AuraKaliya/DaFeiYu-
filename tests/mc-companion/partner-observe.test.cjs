@@ -5,7 +5,7 @@ const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridg
 const { matchesDigReference, collectionProgress, digAndReadback } = require('../../plugins/mc/bridge/collection.cjs');
 const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
 const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
-const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
+const { observeDrops, readDropTarget } = require('../../plugins/mc/bridge/dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('../../plugins/mc/bridge/collect-drops.cjs');
 const { inventoryCapacity } = require('../../plugins/mc/bridge/inventory-capacity.cjs');
 const { EventEmitter } = require('node:events');
@@ -71,6 +71,29 @@ test('drop observation distinguishes filtered stacks, missing data and bounded c
     assert.throws(() => observationInput(args), { code: 'observe_drop_parameters' });
   delete bot.entity.position;
   assert.throws(() => observeDrops(bot, options, 'work', 'world'), { code: 'observe_drop_position_unavailable' });
+});
+
+// 在原观察中复查同一堆物品，核对移动、栈缺读和运行编号复用。
+// 步骤：采样稳定身份 → 改变栈与位置 → 替换实体并验证来源限制。
+test('a single dropped stack is rechecked by the UUID actually returned by the original observation', () => {
+  const { bot } = fixture();
+  const uuid = '00112233-4455-6677-8899-aabbccddeeff';
+  const stack = { name: 'dirt', count: 2 };
+  const entity = { name: 'item', uuid, id: 4, position: bot.entity.position.offset(1, 0, 0), getDroppedItem: () => stack };
+  bot.entities = { 4: entity };
+  const source = observeDrops(bot, { radius: 2 }, 'work', 'world');
+  assert.deepEqual(observationInput({ mode: 'drop', observation: 'work', entity: uuid }).mode, 'drop');
+  for (const args of [{ mode: 'drop', observation: 'work', entity: '4' }, { mode: 'drops', entity: uuid }])
+    assert.throws(() => observationInput(args));
+  stack.count = 1;
+  entity.position.x += 3;
+  const current = readDropTarget(bot, source, uuid);
+  assert.deepEqual([current.original.count, current.state, current.count, current.withinOriginalRadius], [2, 'tracked', 1, false]);
+  entity.getDroppedItem = () => null;
+  assert.equal(readDropTarget(bot, source, uuid).state, 'stack_unknown');
+  bot.entities[4] = { ...entity, uuid: '11112233-4455-6677-8899-aabbccddeeff' };
+  assert.equal(readDropTarget(bot, source, uuid).state, 'not_tracked');
+  assert.throws(() => readDropTarget(bot, source, bot.entities[4].uuid), { code: 'drop_not_in_observation' });
 });
 
 // 验证库存空间只包括主背包与快捷栏，缺读和自定义堆叠保留未知。

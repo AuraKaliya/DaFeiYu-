@@ -600,6 +600,8 @@ async function checkCraft(fixture, player, whispers) {
   const dropped = actions.find(row => row.result.dropObservation)?.result.dropObservation;
   assert.equal(dropped.coverage, 'client_tracked_entities');
   assert.deepEqual(dropped.entities.map(e => [e.entityId, e.uuid, e.item, e.count]), [[nearby.id, nearby.uuid, 'dirt', 2]]);
+  const target = actions.find(row => row.result.dropTarget).result.dropTarget;
+  assert.deepEqual([target.observation, target.entity, target.entityId, target.count], [dropped.id, nearby.uuid, nearby.id, 2]);
   assert.equal(stack('dirt', 2)?.uuid, nearby.uuid);
 
   const crafts = actions.filter(row => row.skill === 'craft');

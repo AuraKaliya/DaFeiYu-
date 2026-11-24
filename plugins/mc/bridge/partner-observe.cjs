@@ -1,6 +1,7 @@
 const { setTimeout: delay } = require('node:timers/promises');
 const { playerFocus } = require('./player-focus.cjs');
 const { belowFeet } = require('./world.cjs');
+const { validDropReference } = require('./dropped-items.cjs');
 
 const symbols = '0123456789abcdefghijklmnopqrstuvwxyz';
 const air = new Set(['air', 'cave_air', 'void_air']);
@@ -16,6 +17,12 @@ function observationInput(args) {
   const window = ['sources', 'radius', 'detail', 'samples', 'verify'].some(key => Object.hasOwn(args, key));
   const mode = args.mode ?? (window ? 'scene' : args.message !== undefined || args.focus ? 'pointed' :
     args.around || args.block ? 'search' : 'summary');
+  if (mode === 'drop') {
+    if (!validDropReference(args) || Object.keys(args).some(key => !['mode', 'observation', 'entity'].includes(key)))
+      throw invalidObservation('observe_drop_reference', '复查需要原掉落观察编号和实体 UUID');
+    return { mode, options: args };
+  }
+  if (Object.hasOwn(args, 'entity')) throw invalidObservation('observe_drop_reference', '按实体复查需要 mode=drop');
   if (mode === 'drops') {
     const radius = args.radius ?? 8;
     if (!Number.isInteger(radius) || radius < 1 || radius > 16 ||

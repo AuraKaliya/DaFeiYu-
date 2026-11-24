@@ -1,5 +1,11 @@
 const { inventoryCapacity } = require('./inventory-capacity.cjs');
 
+// 验证由原掉落观察编号和游戏实体 UUID 构成的引用。
+function validDropReference(args) {
+  return typeof args.observation === 'string' && args.observation.length > 0 && args.observation.length <= 128 &&
+    typeof args.entity === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(args.entity);
+}
+
 // 识别当前游戏版本在客户端登记的掉落实体。
 function isDrop(entity) {
   return entity?.isValid !== false && ['item', 'Item', 'item_stack'].includes(entity?.name);
@@ -43,4 +49,25 @@ function observeDrops(bot, options, id, generation) {
     omitted: Math.max(0, matches.length - 12), entities: matches.slice(0, 12) };
 }
 
-module.exports = { isDrop, dropStack, observeDrops };
+// 复查原观察中的同一 UUID，并记录当前距离、物品栈和原观察半径的覆盖情况。
+// 步骤：核对候选来源 → 按稳定身份查找当前实体 → 保留不可见、位置缺失或物品栈缺读。
+function readDropTarget(bot, source, uuid) {
+  const original = source.entities.find(entry => entry.uuid === uuid);
+  if (!original) throw Object.assign(new Error('原观察没有返回这个掉落实体'), { code: 'drop_not_in_observation' });
+  const sample = { observation: source.id, entity: uuid, generation: source.generation, dimension: source.dimension,
+    observedAtMs: source.sampledAtMs, sampledAtMs: Math.floor(performance.now()), radius: source.radius,
+    original: { entityId: original.entityId, item: original.item, count: original.count } };
+  const entity = Object.values(bot.entities).find(value => value.uuid === uuid && isDrop(value));
+  if (!entity) return { ...sample, state: 'not_tracked' };
+  sample.entityId = entity.id;
+  const p = entity.position, center = source.position, self = bot.entity?.position;
+  if (!p || !self || ![p.x,p.y,p.z,self.x,self.y,self.z].every(Number.isFinite))
+    return { ...sample, state: 'unlocated' };
+  sample.position = p.clone();
+  sample.distance = p.distanceTo(self);
+  sample.withinOriginalRadius = p.distanceTo(center) <= source.radius;
+  const stack = dropStack(entity);
+  return stack ? { ...sample, state: 'tracked', ...stack } : { ...sample, state: 'stack_unknown' };
+}
+
+module.exports = { isDrop, dropStack, observeDrops, validDropReference, readDropTarget };

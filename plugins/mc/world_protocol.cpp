@@ -104,6 +104,34 @@ void verify_drop_observation(const Json& sample, std::string_view id, const Json
         previous = distance;
     }
 }
+// 核对单堆复查的原观察、稳定身份和当前读数，失去视野时不推断拾取人。
+// 步骤：检查原观察及世界 → 验证初见栈 → 根据本次覆盖核对已读属性。
+void verify_drop_target(const Json& sample, const Json& args, const Json& generation) {
+    const auto& original = sample.at("original");
+    const auto& state = sample.at("state");
+    if (!uuid(sample.at("entity")) || sample.at("entity") != args.at("entity") || sample.at("observation") != args.at("observation") ||
+        sample.at("generation") != generation || !dimension(sample.at("dimension")) || !sample.at("observedAtMs").is_number_unsigned() ||
+        !sample.at("sampledAtMs").is_number_unsigned() || sample.at("observedAtMs") > sample.at("sampledAtMs") ||
+        !sample.at("radius").is_number_unsigned() || sample.at("radius") < 1 || sample.at("radius") > 16 ||
+        !original.at("entityId").is_number_unsigned() || (original.at("item").is_null() ? !original.at("count").is_null() :
+        !dimension(original.at("item")) || !original.at("count").is_number_unsigned() || original.at("count") == 0))
+        throw std::invalid_argument("MC: invalid drop target source");
+    const bool located = state == "tracked" || state == "stack_unknown";
+    if ((!located && state != "unlocated" && state != "not_tracked") ||
+        (sample.contains("entityId") != (state != "not_tracked")) || (sample.contains("entityId") && !sample.at("entityId").is_number_unsigned()) ||
+        sample.contains("position") != located || sample.contains("distance") != located || sample.contains("withinOriginalRadius") != located ||
+        sample.contains("item") != (state == "tracked") || sample.contains("count") != (state == "tracked"))
+        throw std::invalid_argument("MC: inconsistent drop target coverage");
+    if (located) {
+        for (const auto axis : {"x","y","z"}) if (!sample.at("position").at(axis).is_number())
+            throw std::invalid_argument("MC: invalid drop target position");
+        if (!sample.at("distance").is_number() || sample.at("distance") < 0 || !sample.at("withinOriginalRadius").is_boolean())
+            throw std::invalid_argument("MC: invalid drop target distance");
+    }
+    if (state == "tracked" && (!dimension(sample.at("item")) || !sample.at("count").is_number_unsigned() || sample.at("count") == 0))
+        throw std::invalid_argument("MC: invalid current dropped stack");
+}
+
 // 询问修订使用非零十进制文本，避免 JavaScript 数值精度损失。
 bool inquiry_id(const Json& value) {
     if (!value.is_string()) return false;
@@ -428,6 +456,11 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "observe" && (result.contains("dropTarget") ||
+        (exited && result.at("status") == "done" && args.value("mode","") == "drop"))) {
+        if (args.value("mode","") != "drop") throw std::invalid_argument("MC: unexpected drop reference");
+        verify_drop_target(result.at("dropTarget"),args,context.at("generation"));
+    }
     if (skill == "observe" && (result.contains("dropObservation") ||
         (exited && result.at("status") == "done" && args.value("mode","") == "drops")))
         verify_drop_observation(result.at("dropObservation"),id,context.at("generation"),args);

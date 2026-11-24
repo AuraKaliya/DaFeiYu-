@@ -258,6 +258,17 @@ int main() {
         rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args); });
         drops.erase("dropObservation");
         rejects([&] { dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",drop_args); });
+        const Json target_args{{"context",source},{"arguments",{{"mode","drop"},{"observation","before"},{"entity",source.at("generation")}}}};
+        auto& lost = drops["dropTarget"] = {{"observation","before"},{"entity",source.at("generation")},{"generation",source.at("generation")},
+            {"dimension","overworld"},{"observedAtMs",10},{"sampledAtMs",11},{"radius",8},{"state","not_tracked"},
+            {"original",{{"entityId",13},{"item","dirt"},{"count",2}}}};
+        const auto recheck = [&] { return dfy::mc::partner_reply(detail.dump(),"work",config.controller,"observe",target_args.dump()); };
+        if (!recheck().exited) return 1;
+        lost["entityId"] = 13;
+        rejects(recheck);
+        lost.erase("entityId");
+        lost["entity"] = "11112233-4455-6677-8899-aabbccddeeff";
+        rejects(recheck);
         const auto partial = dfy::mc::partner_reply(receipt.dump(),"work",config.controller,"collect",envelope);
         const auto speech = Json{{"context",source},{"arguments",{{"text","我在这儿。"}}}}.dump();
         auto delivered = receipt;
