@@ -113,6 +113,8 @@ ctest --test-dir build/rebuild/windows-tests -C Debug -V -R '^plugins\.mc_partne
 
 `-V` 打印 Trace 路径和五段相对耗时。起点采用宿主 Trace 中的原话投影，动作采用桥接接纳和实际抵达的回执，发言采用 `sent=true` 的桥接回执。夹具仅检查因果顺序，耗时用于查看本次回放。 [断言](native-world.cjs#L73)
 
+固定响应的 `--gap-group-probe` 另从独立玩家发出“帮我把墙上的缺口补好”计到该玩家收到伙伴的私聊。此场景原话未指定哪处开口，确认两处是否都补是有效反馈。该局证据目录的 `player-feedback.json` 保存原话、玩家端单调时钟的收发样本、耗时与判定，完成核对后附上原消息号、送模回合和游戏发言工作号。用 `node --test tests/mc-companion/player-feedback.test.cjs` 核对五秒边界，原话已明确时的重复追问、空泛应答和截尾采样分别结算。
+
 若从构建盘运行时宿主在送模前超时或无法创建 Trace，可把相同的可执行文件和插件包复制到本机临时目录运行该夹具。
 
 ```powershell

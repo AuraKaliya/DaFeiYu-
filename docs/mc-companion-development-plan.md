@@ -321,6 +321,8 @@ Agent 用 Skill 选择方法和处理新的不确定条件。已明确的后继�
 
 现有时序夹具从宿主记录的原话计到桥接 `sent=true`。`run-z65R6G` 补墙回合从第 115 行首个 `model.prepared` 到第 155 行 `ask.presented` 为 4.95 秒，终点是渠道确认“左边还是右边”的追问已送达。玩家原话已要求补两个缺口，这段耗时可用于定位调用和投递开销。[现有分段时序夹具](../tests/mc-companion/README.md#观察与响应的分段时序)
 
+第一步已接入固定响应的两处开口探针。在 `run-RYkFLu`，玩家原话“帮我把墙上的缺口补好”尚缺范围。独立玩家从发话到收到“两处缺口都要补吗？”为 183.6 毫秒，对应原消息 2、回合 2 和游戏发言工作 `ask.1.l.122`。受控时钟另覆盖超时、重复追问和缺少玩家端证据的结果。[玩家端计时](../tests/mc-companion/player-feedback.cjs) · [固定边界用例](../tests/mc-companion/player-feedback.test.cjs)
+
 **第五步为使用 DeepSeek 的 MC 会话提供可选的 `low` 思考档位。** MC 入口可显式选择低档，模型层负责将选择编码为思考开关及 `reasoning_effort=low`。用传输替身核对旧配置、关闭和低档请求，以及工具续轮所需的历史。根据首反馈基线再决定 MC 默认值。真实模型能否因此减少重复补查，按自然使用留下的 Trace 记录为「仅记录，不执行」。[模型层编码](../model/protocol.cpp) · [工具续轮协议用例](../tests/model_protocol.cpp) · [DeepSeek 思考档位](https://api-docs.deepseek.com/guides/thinking_mode/)
 
 ## 调整方向

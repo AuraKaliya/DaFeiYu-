@@ -6,6 +6,7 @@ const mineflayer = require('mineflayer');
 const { until } = require('./players.cjs');
 const { wall, waterCourse, fourCells, layeredStands, readArena } = require('./playtest-arena.cjs');
 const { readPartnerContext } = require('./partner-context.cjs');
+const { measurePlayerFeedback } = require('./player-feedback.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
 function readRows(fixture, file) {
@@ -206,8 +207,15 @@ async function checkOpeningGroup(fixture, player, whispers) {
   const names = () => [3, 7].flatMap(x => [-60, -59].map(y => player.blockAt(player.entity.position.clone().set(x, y, -3))?.name));
   await until(() => names().every(name => name === 'air') && fixture.materialCount('dirt') === 8,
     '两处竖向开口及八块泥土已就位');
-  player.chat('帮我把墙上的缺口补好');
-  await until(() => whispers.includes('两处缺口都要补吗？'), '收到本地追问');
+  const feedbackPath = join(fixture.evidence, 'player-feedback.json');
+  const message = '帮我把墙上的缺口补好';
+  const question = '两处缺口都要补吗？';
+  let sample;
+  await measurePlayerFeedback(player, message, question,
+    () => until(() => whispers.includes(question), '收到本地追问'), result => {
+      sample = result;
+      writeFileSync(feedbackPath, JSON.stringify(result, null, 2));
+    });
   assert.deepEqual(names(), ['air', 'air', 'air', 'air']);
   player.chat('都补');
   await until(() => whispers.includes('两处缺口都补齐了。'), '收到实际补齐结果', 40000);
@@ -217,7 +225,19 @@ async function checkOpeningGroup(fixture, player, whispers) {
   const rows = readRows(fixture, 'trace/events.jsonl');
   const answer = rows.find(row => row.category === 'mc.partner.question' && row.body.status === 'resolved').body;
   assert.deepEqual([answer.sourceMessage, answer.answerMessage, answer.answer], [2, 3, '都补']);
-  const placed = readRows(fixture, 'game-actions.jsonl').find(row => row.skill === 'fill_target');
+  const input = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
+    readPartnerContext(row).input.events.some(event => event.sequence === answer.sourceMessage && event.text === message));
+  const presented = rows.find(row => row.category === 'mc.partner.question' && row.body.status === 'presented' &&
+    row.body.order === answer.sourceMessage && row.body.item === answer.item);
+  const actions = readRows(fixture, 'game-actions.jsonl');
+  assert.ok(input && presented, '原话送模回合与同一事项的追问呈现');
+  const delivery = actions.find(action => action.work === presented.body.bridgeWork);
+  assert.ok(delivery?.exited && delivery.result.sent && delivery.result.text === question);
+  assert.deepEqual([delivery.order, delivery.generation], [answer.sourceMessage, presented.body.generation]);
+  assert.ok(Number.isFinite(sample.elapsedMs));
+  writeFileSync(feedbackPath, JSON.stringify({ ...sample, sourceMessage: answer.sourceMessage,
+    session: input.session, run: input.run, work: delivery.work }, null, 2));
+  const placed = actions.find(row => row.skill === 'fill_target');
   assert.deepEqual([placed.exited, placed.result.sourceMessage, placed.result.changes.length], [true, 2, 4]);
 }
 
