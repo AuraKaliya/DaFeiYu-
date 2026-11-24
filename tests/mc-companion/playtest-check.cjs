@@ -218,7 +218,7 @@ async function checkPlayer(fixture, mode) {
   } finally { player.quit(); }
 }
 
-// 用独立玩家收到的本人实体元数据核验水下与回到空气后的两次只读查询。
+// 用独立玩家收到的伙伴实体元数据核验水下与回到空气后的只读查询。
 // 步骤：固定角色身份和水槽 → 对照掉血与余气采样 → 核实出水恢复及玩家收到的答复。
 async function checkVitals(fixture, player, whispers, followDepletion) {
   const actor = player.players.DfyCompanion.entity;
@@ -382,7 +382,12 @@ async function checkGatherHandoff(fixture, player, whispers) {
   assert.deepEqual(accepted.map(r => [r.body.bridgeWork,r.body.order]),jobs.map(job => [job.work,2]));
   const plan = trace().find(r => r.category === 'mc.partner.plan' && r.body.status === 'queued')?.body.plan;
   assert.deepEqual([plan.origin.sequence,plan.origin.text,plan.nodes.map(n => n.work)], [2,'就地备两块泥土，拿来给我。',jobs.map(job => job.work)]);
-  const replies = trace().filter(r => r.kind === 'mail.received' && r.category === 'mc.partner.action' && r.body.skill === 'reply').map(r => r.body);
+  const delivery = await until(() => readRows(fixture,'game-actions.jsonl').find(r => r.skill === 'reply' && r.result.sent && r.arguments.text === finished),
+    '玩家收件对应的原发言工作已退出');
+  const replies = await until(() => {
+    const facts = trace().filter(r => r.kind === 'mail.received' && r.category === 'mc.partner.action' && r.body.skill === 'reply').map(r => r.body);
+    return facts.some(fact => fact.bridgeWork === delivery.work) && facts;
+  },'按原发言工作号等宿主归档收件回执');
   assert.deepEqual(replies.map(r => [r.result.text,r.order,r.replyOrigin.sourceMessage]),[[first,2,2],[during,3,3],[finished,3,2]]);
   assert.deepEqual(replies[2].replyOrigin,{ sourceMessage:2, planId:plan.id, taskRevision:plan.revision });
   assert.equal(replies[2].source,'final_text');
