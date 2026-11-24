@@ -2,6 +2,8 @@
 #include <dafeiyu/lifecycle_abi_v2.h>
 #define DFY_V2_TOOL_INTERFACE "dfy.tools"
 #define DFY_V2_TOOL_VERSION UINT32_C(1)
+// 宿主登记单个工具说明时复制的 UTF-8 字节上限。
+#define DFY_V2_TOOL_DESCRIPTION_MAX_BYTES UINT32_C(1024)
 #define DFY_V2_TOOL_CHANGES_STATE UINT32_C(1)
 #define DFY_V2_TOOL_IDEMPOTENT UINT32_C(2)
 #define DFY_V2_TOOL_NOT_APPLIED UINT32_C(1)

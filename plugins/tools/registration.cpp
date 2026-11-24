@@ -55,7 +55,7 @@ PluginTools::PluginTools(const std::shared_ptr<PluginInstance>& instance, std::s
             const auto local = copy(description.id,32);
             const auto id = std::string(instance->plugin_id())+"/"+local;
             agent::ToolDescription host{id,instance->generation(),description.version,
-                {model_name(id,local),copy(description.description,1024),copy(description.parameters,64*1024)},
+                {model_name(id,local),copy(description.description,DFY_V2_TOOL_DESCRIPTION_MAX_BYTES),copy(description.parameters,64*1024)},
                 (description.flags & DFY_V2_TOOL_CHANGES_STATE) != 0,(description.flags & DFY_V2_TOOL_IDEMPOTENT) != 0};
             const agent::ToolSchema schema(host.model.parameters);
             host.plugin_version = std::string(instance->plugin_version());

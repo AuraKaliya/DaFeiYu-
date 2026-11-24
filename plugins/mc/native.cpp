@@ -57,6 +57,11 @@ using dfy::mc::PartnerSkill;
 using dfy::mc::SkillKind;
 using dfy::mc::partner_skills;
 
+// 伙伴工具成组登记，构建时逐项复核字节上限，避免一条描述超长影响整组可见性。
+static_assert(std::ranges::all_of(partner_skills,[](const PartnerSkill& skill) {
+    return skill.description.size() <= DFY_V2_TOOL_DESCRIPTION_MAX_BYTES;
+}),"MC tool description exceeds the host registration limit");
+
 // 限长读取 ABI 借用文本，非法空指针不形成视图。
 std::string_view text(dfy_v2_string_view value) noexcept {
     if (!value.data || value.length > 65536) return {};
