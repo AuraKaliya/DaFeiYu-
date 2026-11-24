@@ -136,8 +136,8 @@ async function checkPlayer(fixture, mode) {
       await checkCraft(fixture, player, whispers);
     } else if (mode === '--ground-pickup-probe') {
       await checkGroundPickup(fixture, player, whispers);
-    } else if (mode === '--handoff-gather-probe' || mode === '--handoff-moving-probe') {
-      await checkGatherHandoff(fixture, player, whispers, mode === '--handoff-moving-probe');
+    } else if (['--handoff-gather-probe','--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode)) {
+      await checkGatherHandoff(fixture, player, whispers, mode);
     } else if (handoff) {
       const other = mode === '--handoff-other-probe' ? await connect('DfyCollector',fixture.port) : null;
       try { await checkHandoff(fixture, player, whispers, mode, other); }
@@ -351,7 +351,8 @@ async function checkGroundPickup(fixture, player, whispers) {
 
 // 从零库存核验原任务的两次破坏、入包、会合和玩家实收，并在采集中询问实际进度。
 // 步骤：记录原话和首条有用反馈 → 读取在途工作回答插话 → 对照双方库存、逐格变化及完整工序。
-async function checkGatherHandoff(fixture, player, whispers, moving) {
+async function checkGatherHandoff(fixture, player, whispers, mode) {
+  const moving = mode !== '--handoff-gather-probe';
   const cells = [[-2,-60,0],[-3,-60,0]].map(c => player.entity.position.clone().set(...c));
   const dirt = player.registry.itemsByName.dirt.id;
   await until(() => fixture.materialCount('dirt') === 0 && player.inventory.count(dirt) === 0 &&
@@ -365,14 +366,28 @@ async function checkGatherHandoff(fixture, player, whispers, moving) {
   await measurePlayerFeedback(player,'备好几块了？',during,() => until(() => whispers.includes(during),'采掘插话回答'),
     sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify({ ...sample, work: digging.body.action.bridgeWork },null,2)));
   if (moving) {
-    fixture.send('tp DfyGuestCheck 10.5 -60 0.5');
-    await until(() => player.entity.position.x === 10.5, '配对玩家已离开原交物位置');
+    const ranged = mode === '--handoff-range-probe', lost = mode === '--handoff-lost-probe';
+    const firstX = ranged ? 34.5 : 10.5;
+    fixture.send('tp DfyGuestCheck '+firstX+' -60 0.5');
+    await until(() => player.entity.position.x === firstX, '配对玩家已离开原交物位置');
     await until(() => {
       const oldGive = readRows(fixture,'game-actions.jsonl').find(row => row.skill === 'give_item');
       if (oldGive) throw new Error('伙伴在旧站位尝试交物，回执 '+oldGive.result.reasonCode+'，已提交 '+oldGive.result.transfer?.submitted);
-      return player.players.DfyCompanion.entity.position.x >= 3.5;
+      return player.players.DfyCompanion.entity.position.x >= (ranged ? 30.5 : 3.5);
     },'伙伴携两块材料向配对玩家的新位置移动',45000);
     assert.deepEqual([fixture.materialCount('dirt'),player.inventory.count(dirt)],[2,0]);
+    if (ranged || lost) {
+      fixture.send('tp DfyGuestCheck 72.5 -60 0.5');
+      const stopped = ranged ? '我已经备好两块泥土。你离开了这次会合的范围，两块都还在我这里。' :
+        '两块泥土备好了。我现在看不到你的位置，两块都还在我这里。';
+      await until(() => whispers.includes(stopped),'超出原范围的会合实际停止并向原玩家说明',15000);
+      const actions = readRows(fixture,'game-actions.jsonl');
+      const meet = actions.find(row => row.skill === 'move');
+      assert.deepEqual([meet.exited,meet.result.status,meet.result.reasonCode,actions.some(row => row.skill === 'give_item')],
+        [true,'blocked',ranged ? 'meeting_out_of_range' : 'meeting_player_unavailable',false]);
+      assert.deepEqual([fixture.materialCount('dirt'),player.inventory.count(dirt),whispers],[2,0,[first,during,stopped]]);
+      return;
+    }
     fixture.send('tp DfyGuestCheck 7.5 -60 8.5');
     await until(() => player.entity.position.z === 8.5, '玩家在会合途中再次移动');
   }

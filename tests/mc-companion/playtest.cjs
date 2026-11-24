@@ -38,7 +38,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const { send, port, server, evidence, present, running } = fixture;
   const doorProbe = mode === '--door-probe';
   const handoff = mode.startsWith('--handoff-');
-  const movingHandoff = mode === '--handoff-moving-probe';
+  const movingHandoff = ['--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode);
   const gatherHandoff = movingHandoff || mode === '--handoff-gather-probe';
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
@@ -108,6 +108,10 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         if (movingHandoff) {
           send('fill 3 -61 -2 13 -61 10 minecraft:dirt');
           send('fill 3 -60 -2 13 -57 10 minecraft:air');
+          if (mode === '--handoff-range-probe' || mode === '--handoff-lost-probe') {
+            send('fill 13 -61 -2 38 -61 2 minecraft:stone');
+            send('fill 13 -60 -2 38 -57 2 minecraft:air');
+          }
         }
         send('fill -5 -62 -5 6 -61 5 minecraft:dirt');
         send('fill -6 -60 -3 -2 -58 3 minecraft:air');
@@ -163,7 +167,8 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       }
     }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
-    const readyBlock = mode === '--pickup-probe' ? [73, -60, 0, 'grass_block'] : [15, -60, 0, 'cobblestone'];
+    const readyBlock = gatherHandoff ? [-2,-60,0,'grass_block'] :
+      mode === '--pickup-probe' ? [73,-60,0,'grass_block'] : [15,-60,0,'cobblestone'];
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(...readyBlock.slice(0, 3)))?.name === readyBlock[3], '场地与工具就绪');
     if (gatherHandoff) {
@@ -292,7 +297,7 @@ async function main() {
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-other-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

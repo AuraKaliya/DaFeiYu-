@@ -830,6 +830,15 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
     if (last.role == Role::user) {
         const auto input = Json::parse(last.content);
         if (input.at("trigger") == "plan.finished") {
+            const auto& nodes = input.at("taskPlan").at("nodes");
+            const auto& layers = input.at("planSettlements");
+            if (nodes.size() == 3 && nodes.at(1).at("skill") == "move" && nodes.at(1).at("status") == "failed" &&
+                nodes.at(2).at("status") == "skipped" && layers.size() == 3 &&
+                layers.at(0).at("nodes").at(0).at("result").at("stock").at("after") == 2 && input.at("replyOrigin").at("sourceMessage") == 2) {
+                const auto code = layers.at(1).at("nodes").at(0).at("result").value("reasonCode","");
+                if (code == "meeting_out_of_range") return {{Role::assistant,"我已经备好两块泥土。你离开了这次会合的范围，两块都还在我这里。"}};
+                if (code == "meeting_player_unavailable") return {{Role::assistant,"两块泥土备好了。我现在看不到你的位置，两块都还在我这里。"}};
+            }
             for (const auto& layer : input.at("planSettlements")) for (const auto& node : layer.at("nodes")) {
                 if (node.at("skill") != "give_item") continue;
                 const auto& result = node.at("result");
@@ -1182,7 +1191,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
         const bool ground_pickup = mode == L"--ground-pickup-probe";
-        const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe";
+        const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
+            mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
         const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-other-probe";
         const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";

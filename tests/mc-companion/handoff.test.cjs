@@ -87,6 +87,15 @@ test('moving recipient and interrupted clicks retain only submitted quantities',
   await assert.rejects(before.run(), { code: 'handoff_recipient_distant' });
   assert.deepEqual([before.claims(),before.clicks.length,before.result.inventoryDelta], [0,0,{}]);
 
+  const moving = tossFixture(), click = moving.bot.clickWindow;
+  moving.bot.clickWindow = async (...args) => {
+    await click(...args);
+    moving.bot.players.owner.entity.position.x += 6;
+  };
+  await assert.rejects(moving.run(), { code: 'handoff_recipient_distant' });
+  assert.deepEqual([moving.clicks,moving.claims(),moving.result.transfer.submitted,moving.result.transfer.returnedClicks,
+    moving.result.transfer.requested-moving.result.transfer.submitted,moving.result.inventoryDelta], [[[2,1]],1,60,1,6,{ dirt:-60 }]);
+
   const after = tossFixture();
   await assert.rejects(after.run(() => { if (after.clicks.length) throw new Error('cancelled'); }), /cancelled/);
   assert.deepEqual([after.claims(),after.result.transfer.submitted,after.result.inventoryDelta], [1,60,{ dirt: -60 }]);
