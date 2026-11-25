@@ -79,6 +79,8 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
     const auto motion = input.find("activeMotion");
     const bool reading_collection = player_message && motion != input.end() && motion->at("skill") == "collect" && motion->contains("progress");
+    const bool scoped_question = (input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")) ||
+        (input.contains("pendingQuestions") && std::ranges::any_of(input.at("pendingQuestions"),[](const auto& q) { return q.contains("scope"); }));
     const bool settling_handoff = input.contains("planSettlements") && input.contains("taskPlan") &&
         std::ranges::any_of(input.at("taskPlan").at("nodes"),[](const auto& node) { return node.at("skill") == "give_item"; });
     const std::array entries{
@@ -94,7 +96,7 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         Guidance{"flowGuidance","questionResult","根据事项的结算状态、所选目标和当前证据判断原步骤能否继续。",
             input.contains("questionResult") || input.contains("questionResults")},
         Guidance{"flowGuidance","clarification","局内疑问用本地追问及动作范围。玩家用自然语言补足线索时，先核对原消息和候选，再用 task_update 的 resolves 结算该事项。仍有不确定的步骤维持等待。",
-            player_message && input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")},
+            player_message && scoped_question},
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
         Guidance{"flowGuidance","previousPlanRejection","较早消息的计划退回原因只供修订原计划时查阅。先处理当前原话与最新实效。",
             input.contains("previousPlanRejection")},
@@ -138,13 +140,7 @@ std::string player_reply(std::string_view answer) {
     const auto start = text.find_first_not_of(' ');
     if (start == text.npos) return {};
     text.erase(0,start);
-    unsigned units = 0;
-    for (std::size_t index = 0; index < text.size(); ++index) {
-        const auto byte = static_cast<unsigned char>(text[index]);
-        if ((byte & 0xc0) == 0x80) continue;
-        units += byte >= 0xf0 ? 2 : 1;
-        if (units > 220) { text.resize(index); break; }
-    }
+    text.resize(chat_line_bytes(text));
     text.erase(text.find_last_not_of(' ')+1);
     return text;
 }
@@ -702,7 +698,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto resolves = args.value("resolves",std::uint64_t{});
     const auto* question = waiting_question(session_,resolves);
     const bool answer_current = question && player_order > question->presentation_order && question->presented && !question->expired &&
-        std::chrono::steady_clock::now() < question->local_answer_deadline && (!question->numbered ||
+        std::chrono::steady_clock::now() < question->local_answer_deadline && (!question->shown_with_number ||
             events_.back().at("text").get_ref<const std::string&>().starts_with(question->answer_prefix()));
     const bool scoped_answer = answer_current && !question->scope.is_null() && question->after_pickup.is_null() &&
         (!placement_choice_pending() || placement_choice_.item != resolves) &&
@@ -724,7 +720,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
             (!args.contains("collection") || q.scope.at("skill") != "collect") &&
             (target == args.end() || q.scope.at("skill") != "place")) independent.push_back(item);
         else if ((committing || target != args.end() || args.contains("collection") || !same_goal) &&
-            (q.numbered || player_order <= q.order || committing)) return {{"status","waiting_for_player"},{"item",item}};
+            (q.shown_with_number || player_order <= q.order || committing)) return {{"status","waiting_for_player"},{"item",item}};
     }
     const auto prior_revision = task_.revision();
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);

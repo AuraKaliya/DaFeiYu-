@@ -14,6 +14,18 @@
 #include <map>
 
 namespace dfy::mc {
+// 返回游戏单条私聊能容纳的完整 UTF-8 前缀，桥接按 UTF-16 单元计数。
+inline std::size_t chat_line_bytes(std::string_view text) noexcept {
+    unsigned units = 0;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        if ((byte & 0xc0) == 0x80) continue;
+        units += byte >= 0xf0 ? 2 : 1;
+        if (units > 220) return index;
+    }
+    return text.size();
+}
+
 struct PartnerWork { std::uint64_t invocation = 0; std::string_view skill; };
 // Minecraft 插件拥有事件处理、角色规则与游戏技能，模型工具循环借用宿主子会话。
 class PartnerLoop {
@@ -198,7 +210,7 @@ class PartnerLoop {
         std::chrono::steady_clock::time_point local_answer_deadline;
         bool started = false, presented = false, dispatched = false, forwarded = false;
         bool approval = false;
-        bool expired = false, numbered = false, shown_with_number = false;
+        bool expired = false, numbered = false, shown_with_number = false, hint_sent = false;
         std::uint64_t presentation_order = 0;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
@@ -225,6 +237,9 @@ class PartnerLoop {
     PlacementChoice placement_choice_;
     std::unique_ptr<GameWork> question_work_;
     std::uint64_t question_work_item_ = 0;
+    std::string question_delivery_;
+    std::vector<std::uint64_t> question_delivery_numbers_;
+    bool question_delivery_hint_ = false;
     nlohmann::json question_results_ = nlohmann::json::array();
     bool question_wake_ = false;
 

@@ -298,7 +298,9 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool layered_blocked = variant == L"partner-revision-layered-blocked";
     const bool attention = variant == L"partner-revision-attention";
     const bool question_batch = variant == L"partner-revision-question-batch";
-    const bool question_pair = variant == L"partner-revision-question-pair";
+    const bool question_pair = variant.starts_with(L"partner-revision-question-pair");
+    const bool failed_question = question_pair && variant.ends_with(L"-failed");
+    const bool failed_body = variant.ends_with(L"-body-failed");
     const bool question_scope = question_batch || variant == L"partner-revision-question-scope";
     const bool opening_answer = variant == L"partner-revision-opening-answer";
     const bool air_priority = variant == L"partner-revision-air-priority";
@@ -844,7 +846,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const Response quiet{{Role::assistant,R"({"internal":"waiting"})"}};
             const auto ask = [&](bool second) {
                 return call("_ask_player",second ? "ask-second" : "ask-first",
-                    {{"question",second ? "砂土可以吗？" : "草方块可以吗？"},{"sourceMessage",second ? 3 : 2},
+                    {{"question",std::string(215,second ? 'B' : 'A')},{"sourceMessage",second ? 3 : 2},
                      {"scope",{{"skill","collect"},{"block",second ? "coarse_dirt" : "grass_block"}}},{"options",{"可以","不行"}}});
             };
             const auto plan = [&](bool answered) {
@@ -860,15 +862,34 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto output = Json::parse(last.content.substr(last.content.find('{')));
                 if (last.tool_call_id == "pair-task") return ask(false);
                 if (last.tool_call_id == "new-task") { std::ofstream(root/"pair-revised").put('1'); return quiet; }
-                if (last.tool_call_id == "ask-first") { placement_item = output.at("item"); return ask(true); }
+                if (last.tool_call_id == "ask-first") { placement_item = output.at("item"); return failed_question ? quiet : ask(true); }
                 if (last.tool_call_id == "ask-second") {
                     second_item = output.at("item");
                     if (second_item == placement_item) throw std::runtime_error("independent questions shared an item");
-                    return plan(false);
+                    return failed_question ? quiet : plan(false);
                 }
                 return quiet;
             }
             const auto input = Json::parse(last.content);
+            if (failed_question) {
+                if (input.contains("questionResult")) {
+                    const auto& result = input.at("questionResult");
+                    if (result.at("status") == "unavailable" && result.at("item") == second_item && result.at("delivery") == "not_sent" &&
+                        result.at("bridgeWork").get<std::string>().ends_with(".number") != failed_body &&
+                        input.at("pendingQuestion").at("item") == placement_item) {
+                        std::ofstream(root/"pair-failed").put('1');
+                        return quiet;
+                    }
+                    if (result.at("status") != "answered" || result.at("item") != placement_item || result.at("answer") != "可以")
+                        throw std::runtime_error("an unseen item number locked the original question");
+                    checked = true;
+                    return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
+                }
+                const auto& events = input.at("events");
+                if (!events.empty() && events.back().at("sequence") == 2) return ask(false);
+                if (!events.empty() && events.back().at("sequence") == 3) return ask(true);
+                return quiet;
+            }
             if (input.at("trigger") == "plan.finished") {
                 const auto& nodes = input.at("planSettlements").at(0).at("nodes");
                 if (nodes[0].at("result").at("item") != placement_item) throw std::runtime_error("first dependency lost");
@@ -1399,7 +1420,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         if (!stopping && checked && host.companion_status()->settled_event ==
-            (question_pair ? 12u : air_budget ? 3u : repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope || continuation_budget ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
+            (failed_question ? 4u : question_pair ? 12u : air_budget ? 3u : repair_observe || repair_plan || pointed_support || observation_batch || observe_dig_scope || continuation_budget ? 2u : restart_route || rejoin || (direct_place && !stale_place) ? 5u :
                 pointed_craft || attention || repair_plan_observe || stale_place ? 4u : 3u) &&
             receipt_turn_finished() &&
             ((!restart_route && !layered) || std::filesystem::exists(root/"original-follow-resumed"))) {

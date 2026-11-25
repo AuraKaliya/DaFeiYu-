@@ -85,6 +85,8 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         throw std::invalid_argument("MC question: invalid request");
     for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
         option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
+    if (path == "local" && (chat_line_bytes(text) != text.size() || text.find_first_of("\r\n\0",0,3) != text.npos))
+        return {{"status","unpresentable"},{"reason","question_requires_one_chat_line"}};
     const auto& source = events_.empty() ? recent_events_ : events_;
     const Json* original = nullptr;
     if (const auto ref = args.find("sourceMessage"); ref != args.end()) {
@@ -331,7 +333,7 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     if (message != order_ || !player_event ||
         (item && (!question || (placement_choice_pending() && placement_choice_.item == item) ||
             !question->presented || question->expired || std::chrono::steady_clock::now() >= question->local_answer_deadline ||
-            question->presentation_order >= order_ || (question->numbered &&
+            question->presentation_order >= order_ || (question->shown_with_number &&
                 !events_.back().at("text").get_ref<const std::string&>().starts_with(question->answer_prefix())) ||
             !question_covers(question->scope,"collect",args)))) return std::nullopt;
     if (item) {
@@ -407,14 +409,24 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
         if (current) {
             auto& question = found->second;
             const auto receipt = Json::parse(result->payload,nullptr,false);
-            question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
-            if (question.path == "local" && !question.presented) { complete_question(question.item,"unavailable",{}); return; }
+            const bool sent = result->success && receipt.is_object() && receipt.value("sent",false);
+            if (question.path == "local" && !sent) {
+                complete_question(question.item,"unavailable",{});
+                auto& failed = question_results_.back();
+                failed["bridgeWork"] = question_delivery_;
+                failed["delivery"] = result->effect == GameEffect::none ? "not_sent" : "unknown";
+                return;
+            }
+            if (sent) for (const auto item : question_delivery_numbers_)
+                if (auto q = questions_.find(item); q != questions_.end()) q->second.shown_with_number = true;
+            question.presented = sent && !question_delivery_hint_;
             if (question.path == "local") {
                 const Json origin{{"sourceMessage",question.source_order()},{"questionItem",question.item}};
                 remember_dialogue("companion",question.order,receipt.at("text"),origin);
-                publish("mc.partner.question",{{"status","presented"},{"generation",question.world},
+                publish("mc.partner.question",{{"status",question_delivery_hint_ ? "number_presented" : "presented"},{"generation",question.world},
                     {"order",question.order},{"sourceMessage",question.source_order()},{"item",question.item},{"text",receipt.at("text")},
-                    {"bridgeWork","ask."+std::to_string(instance)+".l."+std::to_string(question.item)}});
+                    {"bridgeWork",question_delivery_}});
+                if (question_delivery_hint_) { question.hint_sent = true; question.started = false; }
             }
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
@@ -444,7 +456,7 @@ bool PartnerLoop::accept_question_answer(Question& q, const Json& event) {
     if (q.path == "local") {
         if (!q.after_pickup.is_null() || q.expired) return false;
         const bool addressed = text.starts_with(prefix);
-        if (!addressed && q.numbered) return false;
+        if (!addressed && q.shown_with_number) return false;
         answer = addressed ? text.substr(prefix.size()) : text;
         if (answer.empty() || ((!addressed || !q.options.empty()) && std::ranges::find(q.options,Json(answer)) == q.options.end()))
             return false;
@@ -492,17 +504,26 @@ void PartnerLoop::advance_question_item(Question& q, const BridgeConfig& config,
         }
         const auto token = std::to_string(q.ask ? q.ask : q.item);
         auto prompt = q.text;
-        if (!local || q.numbered) {
-            prompt += q.approval ? " 回复 确认 "+token+" 或 拒绝 "+token : " 回复 "+q.answer_prefix()+"<回答>";
-            q.shown_with_number = true;
+        std::vector<std::uint64_t> numbers;
+        bool separate_hint = false;
+        if (!local || (q.numbered && !q.hint_sent)) {
+            auto hint = q.approval ? "回复 确认 "+token+" 或 拒绝 "+token : "回复 "+q.answer_prefix()+"<回答>";
+            if (local) numbers.push_back(q.item);
             if (local) for (const auto& [item,other] : questions_)
-                if (item != q.item && other.path == "local" && other.presented && !other.shown_with_number)
-                    prompt += "（上一问编号 "+std::to_string(item)+"）";
+                if (item != q.item && other.path == "local" && other.presented && !other.shown_with_number) {
+                    hint += "（上一问编号 "+std::to_string(item)+"）";
+                    numbers.push_back(item);
+                }
+            prompt += " "+hint;
+            separate_hint = local && chat_line_bytes(prompt) != prompt.size();
+            if (separate_hint) prompt = "下一问请"+hint;
         }
         const auto arguments = Json{{"context",{{"generation",q.world},{"order",feed_.cursor()}}},
             {"arguments",{{"text",prompt}}}}.dump();
-        question_work_ = std::make_unique<GameWork>(GameAction::partner,config,
-            "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token,arguments,"reply");
+        question_delivery_ = "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token+(separate_hint ? ".number" : "");
+        question_work_ = std::make_unique<GameWork>(GameAction::partner,config,question_delivery_,arguments,"reply");
+        question_delivery_hint_ = separate_hint;
+        question_delivery_numbers_ = std::move(numbers);
         question_work_item_ = q.item;
         q.presentation_order = feed_.cursor();
         q.started = true;
