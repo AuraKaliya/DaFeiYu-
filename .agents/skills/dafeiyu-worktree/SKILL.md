@@ -7,11 +7,11 @@ description: 大肥鱼项目在 ui、plugins、core 固定工作树中分工开�
 
 ## 工作树与 Session
 
-四个目录同属一个本地 Git 仓库。每个开发 Session 固定使用自己的工作树，当前主目录的 Session 负责集成。
+工作区根目录为 `E:\Project\DaFeiYu`。其下的四个目录同属一个本地 Git 仓库。每个开发 Session 固定使用自己的工作树，主工作树的 Session 负责集成。
 
-| `E:\Project` 下的目录 | 固定分支 | 职责 |
+| 工作区根目录下的目录 | 固定分支 | 职责 |
 | --- | --- | --- |
-| `DaFeiYu-` | `master` | 协调跨线接口、审查交付范围、合并与集成验收 |
+| `DaFeiYu-Master` | `master` | 协调跨线接口、审查交付范围、合并与集成验收 |
 | `DaFeiYu-UI` | `ui` | 管理中心、WebView2、原生窗口交互 |
 | `DaFeiYu-Plugins` | `plugins` | MC 等领域插件、桥接、场景状态和业务回执 |
 | `DaFeiYu-Core` | `core` | 本体、Agent、模型、SDK，以及 `plugins/runtime` 和 `plugins/tools` 等通用宿主能力 |
@@ -28,7 +28,7 @@ description: 大肥鱼项目在 ui、plugins、core 固定工作树中分工开�
 
 ## 主目录按提交号合并
 
-1. 在 `DaFeiYu-` 确认当前分支为 `master`，记录合并前的 `HEAD`。以干净的暂存区和已跟踪文件开始新的合并。若已有合并，核对发起任务与 `MERGE_HEAD`。属于本任务且与交付 SHA 一致时，直接继续解决冲突或验收暂存结果。其他合并保留现场。仅做审查时，到范围与验证结果的核对为止。
+1. 在 `DaFeiYu-Master` 确认当前分支为 `master`，记录合并前的 `HEAD`。以干净的暂存区和已跟踪文件开始新的合并。若已有合并，核对发起任务与 `MERGE_HEAD`。属于本任务且与交付 SHA 一致时，直接继续解决冲突或验收暂存结果。其他合并保留现场。仅做审查时，到范围与验证结果的核对为止。
 2. 将交接中的来源分支、起点和交付号分别记为 `$sourceBranch`、`$baseSha` 和 `$deliverySha`。集成既有交付时使用原 SHA。若用户明确指定某分支的当前进度，先将其尖端解析为完整 SHA。缺少阶段起点时，可用 `git merge-base HEAD $deliverySha` 作为本次审查的对比基线。以下两项祖先检查的退出码都应为 0。另用 `git merge-base --is-ancestor $deliverySha HEAD` 判断是否已经集成，已包含时报告现有结果。
 
    ```powershell
