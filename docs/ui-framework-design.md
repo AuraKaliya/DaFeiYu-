@@ -242,6 +242,10 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 记录包含稳定的 `message`、本次 `revision`、宿主 UTC 毫秒时间 `utcMs`、`source`、`submission` 和该修订的 `receipt`。窗口按逻辑会话和消息号更新同一行，一页实际交付后再保存游标。多窗读取互不消费。数据库位于数据目录下的 `main-conversation.sqlite3`。[双窗口与断点验收](../tests/message_protocol.cpp)
 
+提交正文沿用 `dialogue.submit`、`dialogue.append`、`dialogue.enqueue`。窗口在第一次发送前生成并保留 `submission`（1～128 个 UTF-8 字节），三种请求仍带原有的 `command` 和 `text`。追加、排队另带订阅返回的 `instance` 及原 `session`、`turn`，也可附来源时间 `sourceUtcMs`。同一 `submission` 重试时保持原字段值。新连接使用自己的 `command` 空间，可用 `messages.receipt` 按 `source:"desktop"` 与原 `submission` 复查。相同提交号改动原文、去向或目标会返回 `conflict`。
+
+成功入库后，命令回执附加 `storedMessage`。它是持久消息号，原 `message` 仍表示回合内补充号或待发项号。初始持久回执为 `pending`，开始交付前写为 `dispatching`。已接纳的新回合为 `accepted`，追加等待带入为 `waiting`，待发项为 `queued`。终端正文来源为 `terminal`，沿用同一持久库。[后台接纳与回执](../app/main_messages.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

@@ -1,6 +1,7 @@
 #include "terminal_host.hpp"
 #include "../application.hpp"
 #include "../application_commands.hpp"
+#include "../main_messages.hpp"
 #include "../chat.hpp"
 #include "../plugin_commands.hpp"
 #include <algorithm>
@@ -77,7 +78,11 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
             }
             return app::application_command(application,command,out,err);
         },
-            [&](const std::string& text) { return application.submit_dialogue(text); });
+            [&](const std::string& text) {
+                if (!application.main_messages()) return application.submit_dialogue(text);
+                application.main_messages()->terminal(job.client+"/"+request.at("id").dump(),text);
+                return application.conversation().status().value();
+            });
         controller.line(request.at("text").get<std::string>(),app::ChatExit::detach);
         const auto after = conversation.status();
         reply["started"] = after && (!before || before->turn!=after->turn);

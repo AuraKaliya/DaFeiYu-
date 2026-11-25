@@ -549,16 +549,16 @@ onUnmounted(() => {
           <label><input v-model="destination" type="radio" name="destination" value="next"><span>下一轮</span></label>
         </fieldset>
         <button v-if="lastTurn?.exit === 'pending'" id="dialogue-stop" class="stop-action" type="button" :disabled="!canStop" @click="stop">停止回复</button>
-        <button id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">清空对话</button>
+        <button id="dialogue-clear" class="quiet-action" type="button" :disabled="!canClear" @click="askClear">重置上下文</button>
       </div>
       <output v-if="tooLong || connectionNotice || notice" aria-live="polite">{{ tooLong ? '消息不能超过 1 MiB。' : connectionNotice || notice }}</output>
     </form>
     <dialog ref="clearDialog" class="clear-dialog" aria-labelledby="clear-title" @close="clearTarget = undefined">
-      <h2 id="clear-title">清空本次对话？</h2>
-      <p>下一次发送将从空白对话开始。<template v-if="draft">输入框里的草稿会保留。</template><template v-if="queue.length">{{ queue.length }} 条待发消息也会保留。</template></p>
+      <h2 id="clear-title">重置当前对话上下文？</h2>
+      <p>下一次发送将使用新的对话上下文。已保存的聊天记录仍可查阅。<template v-if="draft">输入框里的草稿会保留。</template><template v-if="queue.length">{{ queue.length }} 条待发消息也会保留。</template></p>
       <div class="dialog-actions">
-        <button class="quiet-action" type="button" autofocus @click="clearDialog?.close()">保留对话</button>
-        <button id="dialogue-confirm-clear" class="primary-action" type="button" @click="confirmClear">确认清空</button>
+        <button class="quiet-action" type="button" autofocus @click="clearDialog?.close()">继续当前对话</button>
+        <button id="dialogue-confirm-clear" class="primary-action" type="button" @click="confirmClear">确认重置</button>
       </div>
     </dialog>
   </ManagementShell>

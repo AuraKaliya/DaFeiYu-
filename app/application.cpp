@@ -1,7 +1,9 @@
 #include "application.hpp"
 #include "run_log.hpp"
 #include "software_log.hpp"
+#include "main_messages.hpp"
 #include <dafeiyu/digest.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
 #include <array>
@@ -102,6 +104,12 @@ Application::Application(model::Config config, const std::filesystem::path& pack
         },MailboxPriority::normal,{},{},{},true);
 }
 
+// 数据目录所有者在开始处理命令前绑定唯一的持久消息入口。
+void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log) {
+    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log);
+    conversation_.main_messages_ = main_messages_.get();
+}
+
 // 只读取本次记录位置，不打开原始会话或推进工作。
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
@@ -117,31 +125,42 @@ agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
 agent::InputReceipt Application::append_dialogue(agent::RunId expected, std::string text) {
     const auto& turns = conversation_.display().turns;
     if (turns.empty() || turns.back().run != expected) return {agent::InputAdmission::closed};
-    const auto receipt = session_.append_input(expected,std::move(text));
+    if (text.size()>dialogue_text_limit || text.find_first_not_of(" \t\r\n")==std::string::npos || !runtime::valid_utf8(text))
+        return {agent::InputAdmission::rejected};
+    auto received = receive_dialogue(text,"dialogue.append");
+    const auto receipt = session_.append_input(expected,std::move(received.first));
     if (run_log_ && receipt.state == agent::InputAdmission::accepted) {
         const auto& input = conversation_.current_->inputs().back();
+        run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,"dialogue.append",input.text,expected);
         run_log_->append("dialogue.input_accepted",{{"session",expected.session},{"run",expected.sequence},{"message",input.message},{"body",input.text}});
     }
     return receipt;
 }
 
-// 在独立地址上交付用户原话，并为同一主回合加入已审查的待收信件。
-// 步骤：核对主会话空闲 → 投递并读回原正文 → 接纳带收件的主动对话。
-agent::TurnDiagnostics Application::begin_dialogue(const std::string& text) {
-    if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
+// 由本体的直接对话信箱统一签收用户原话，等待或追加不提前启动新轮。
+// 步骤：分配发送序号 → 投递到主聊天信箱 → 取回同一信封的原文。
+std::pair<std::string,events::EventId> Application::receive_dialogue(const std::string& text, const char* category) {
     if (dialogue_sequence_ == UINT64_MAX) throw std::overflow_error("dialogue: mailbox sequence exhausted");
     auto& mail = *mailbox_host_.network;
     const auto receipt = mail.deliver(dialogue_sender_,dialogue_mailbox_,dialogue_sequence_+1,
-        events::mailbox_text("dialogue.text",1,text,dialogue_text_limit));
+        events::mailbox_text(category,1,text,dialogue_text_limit));
     if (receipt.state != events::DeliveryState::accepted) throw std::logic_error("dialogue: unexpected acceptance state");
     ++dialogue_sequence_;
-    if (run_log_) run_log_->mail("mail.accepted",dialogue_mailbox_.value,dialogue_sender_,receipt.event,"dialogue.text",text);
+    if (run_log_) run_log_->mail("mail.accepted",dialogue_mailbox_.value,dialogue_sender_,receipt.event,category,text);
     const auto received = mail.read(mailbox_host_.identity,dialogue_mailbox_);
     const auto& event = received.event.get();
     const auto original = event.payload->find("text")->as_string();
-    if (run_log_) run_log_->mail("mail.received",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original);
-    const auto result = mailbox_intake_.submit_dialogue(std::string(original));
-    if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,event.id,"dialogue.text",original,
+    if (run_log_) run_log_->mail("mail.received",dialogue_mailbox_.value,dialogue_sender_,event.id,category,original);
+    return {std::string(original),event.id};
+}
+
+// 在原工作退出后用已收原文启动新轮，排队项只在入队时投递一次。
+agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail) {
+    if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
+    const auto received = mail.sequence ? std::pair{text,mail} : receive_dialogue(text,"dialogue.text");
+    const auto result = mailbox_intake_.submit_dialogue(received.first);
+    if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,
+        mail.sequence ? "dialogue.enqueue" : "dialogue.text",received.first,
         agent::RunId{result.session,result.turn});
     return result;
 }
@@ -455,6 +474,7 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 // 在宿主线程上推进子会话和插件，主会话的调用方仍拥有其结算回执。
 // 步骤：复核原工具范围 → 推进子会话与插件 → 处理排队对话和信箱。
 runtime::RunResult Application::advance_plugins() {
+    if (main_messages_) main_messages_->flush();
     collect_tool_registration();
     advance_verification();
     if (!conversation_.busy()) companion_exchange_tools_.reset();

@@ -176,8 +176,8 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     wait_for("separate document exited",[checks] { return checks->destroyed == 1 && !checks->active; });
     evaluate("enter a fixed failure request","const box=document.querySelector('#dialogue-draft'); box.focus(); box.value='模拟请求失败'; box.dispatchEvent(new Event('input')); true");
     key("send failure using Enter","Enter",13);
-    expect("failed round without exception text","document.querySelectorAll('.turn').length === 2 && document.querySelector('.turn:last-child').dataset.result === 'failed' && "
-        "document.querySelector('.turn:last-child .turn-status').textContent === '本轮回复失败' && !document.body.textContent.includes('fixed private provider error')");
+    expect("failed round without exception text","document.querySelectorAll('.turn').length === 2 && document.querySelector(':nth-last-child(1 of .turn)').dataset.result === 'failed' && "
+        "document.querySelector(':nth-last-child(1 of .turn) .turn-status').textContent === '本轮回复失败' && !document.body.textContent.includes('fixed private provider error')");
     call("open other top document",L"Page.navigate",{{"url",utf8(std::wstring(center_url)+L"#room-idle")}});
     expect("other local document loaded","!!document.querySelector('#room-draft')");
     evaluate("other top document cannot submit or read dialogue",R"JS((async()=>{
@@ -200,7 +200,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");
     call("reload same main document",L"Page.reload",Json::object());
     expect("reload restores same completed turns","document.querySelectorAll('.turn').length === 2 && document.querySelector('.incoming p').textContent.startsWith('固定回复：') && "
-        "document.querySelector('.turn:last-child').dataset.result === 'failed'");
+        "document.querySelector(':nth-last-child(1 of .turn)').dataset.result === 'failed'");
     evaluate("install numbered command checks",R"JS((()=>{
         const bridge=window.chrome.webview, replies=new Map();
         let sequence=0;
@@ -239,11 +239,11 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         const r=await control('cancel','6'), same=await control('cancel','6'), conflict=await control('clear','6');
         return r.state==='accepted' && r.turn===held.turn && same.turn===held.turn && same.state==='accepted' && conflict.state==='conflict';
     })())JS");
-    expect("cancelled output precedes exit","document.querySelector('.turn:last-child')?.dataset.result==='cancelled' && "
-        "document.querySelector('.turn:last-child').dataset.exit==='pending' && document.querySelector('#dialogue-state').dataset.accepting==='false'");
+    expect("cancelled output precedes exit","document.querySelector(':nth-last-child(1 of .turn)')?.dataset.result==='cancelled' && "
+        "document.querySelector(':nth-last-child(1 of .turn)').dataset.exit==='pending' && document.querySelector('#dialogue-state').dataset.accepting==='false'");
     wait_for("release late fixed reply",[gate] { gate->release.release(); return true; });
     expect("original cancellation survives late reply","document.querySelector('#dialogue-state').dataset.accepting==='true' && "
-        "document.querySelector('.turn:last-child').dataset.result==='cancelled' && document.querySelector('.turn:last-child').dataset.exit!=='pending' && !document.querySelector('.turn:last-child .incoming')");
+        "document.querySelector(':nth-last-child(1 of .turn)').dataset.result==='cancelled' && document.querySelector(':nth-last-child(1 of .turn)').dataset.exit!=='pending' && !document.querySelector(':nth-last-child(1 of .turn) .incoming')");
     evaluate("clear exact idle history and repeat original receipt",R"JS((async()=>{
         return (await control('clear','7')).state==='accepted' && (await control('clear','7')).state==='accepted';
     })())JS");
@@ -251,7 +251,9 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     evaluate("send from cleared history",R"JS((async()=>{
         return (await panelCommand({type:'dialogue.submit',command:'8',text:'检查清空后的上下文'})).state==='accepted';
     })())JS");
-    expect("new answer has no prior history","document.querySelectorAll('.turn').length===1 && document.querySelector('.incoming p')?.textContent==='固定回复：检查清空后的上下文'");
+    expect("new context answers while durable history remains","document.querySelectorAll('.turn').length===1 && "
+        "document.querySelector('.turn .incoming p')?.textContent==='固定回复：检查清空后的上下文' && "
+        "[...document.querySelectorAll('.history-message p')].some(p=>p.textContent===" + text + ")");
     evaluate("old clear cannot erase new dialogue",R"JS((async()=>{
         return (await control('clear','7')).state==='accepted' && (await control('clear','9')).state==='stale';
     })())JS");
@@ -276,7 +278,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         document.querySelector('#dialogue-stop').click(); return true;
     })())JS");
     expect("visible closing state while worker still holds the call","document.querySelector('#dialogue-state').textContent==='正在收尾' && "
-        "document.querySelector('.turn:last-child .turn-status').textContent==='已停止回复' && document.querySelector('#dialogue-stop').disabled");
+        "document.querySelector(':nth-last-child(1 of .turn) .turn-status').textContent==='已停止回复' && document.querySelector('#dialogue-stop').disabled");
     wait_for("release second cancelled reply",[gate] { gate->release.release(); return true; });
     expect("actual exit enables idle controls","!document.querySelector('#dialogue-stop') && document.querySelector('#dialogue-clear')?.disabled===false && "
         "document.querySelector('#dialogue-state').textContent==='可以聊天' && document.querySelector('#dialogue-draft').value==='留给下一轮'");
@@ -332,8 +334,8 @@ void InteractionProbe::start_panel_shutdown(std::shared_ptr<tests::UiDialogueGat
         await Promise.resolve(); document.querySelector('#dialogue-send').click(); return true;
     })())JS");
     wait_for("fixed model is processing original turn",[gate] { return gate->entered.load()==1; });
-    expect("record original active turn","document.querySelector('.turn:last-child')?.dataset.exit==='pending' && "
-        "(window.fixtureStopTurn=document.querySelector('.turn:last-child').dataset.turn)");
+    expect("record original active turn","document.querySelector(':nth-last-child(1 of .turn)')?.dataset.exit==='pending' && "
+        "(window.fixtureStopTurn=document.querySelector(':nth-last-child(1 of .turn)').dataset.turn)");
     evaluate("confirm shutdown during active turn","document.querySelector('#board-settings').click(); document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
     expect("show verified original turn during shutdown","document.querySelector('#host-shutdown-status')?.textContent.includes('的回合 '+window.fixtureStopTurn+' 退出')");
     evaluate("show long wait while the worker is still in flight",R"JS((async()=>{
