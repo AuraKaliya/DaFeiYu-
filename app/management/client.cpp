@@ -24,10 +24,12 @@ std::wstring quote(const std::wstring& value) {
     result.append(slashes*2,L'\\');
     return result+L"\"";
 }
+}
 
 // 在初次缺少端点时启动本体，只有尚未完成的启动才允许继续等候握手。
 // 步骤：尝试原配置握手 → 按系统错误决定启动或报告 → 有界等候端点。
-ResidentConnection connect(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Client::Launch& start, app::SoftwareLog* log) {
+ResidentConnection connect_or_launch(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition,
+    const Client::Launch& start, app::SoftwareLog* log) {
     const auto end = std::chrono::steady_clock::now()+6s;
     bool launched = false;
     while (!stop.stop_requested()) {
@@ -46,6 +48,7 @@ ResidentConnection connect(std::stop_token stop, const std::filesystem::path& pr
     throw std::runtime_error("client closed");
 }
 
+namespace {
 // 用已绑定的进程描述退出事实，收尾中的等待对象只从同一实例读回。
 // 步骤：固定内核采样 → 在原进程仍运行时补读收尾阶段 → 管道不可用时保留已核实的事实。
 Json lifecycle(const std::filesystem::path& profile, const std::string& instance, const ResidentObservation& peer,
@@ -71,9 +74,10 @@ Json lifecycle(const std::filesystem::path& profile, const std::string& instance
 // 由 Windows 直接启动本体程序，子进程不继承窗口或管道句柄。
 // 步骤：准备已引用的本地参数 → 隐藏启动 → 归还创建句柄。
 void launch_host(const std::filesystem::path& program, const std::filesystem::path& config,
-    const std::filesystem::path& packages, const std::filesystem::path& profile) {
+    const std::filesystem::path& packages, const std::filesystem::path& profile, const std::filesystem::path& trace) {
     auto command = quote(program.native())+L" --host "+quote(config.native())+L" --plugins "+quote(packages.native())+
         L" --data "+quote(profile.native());
+    if (!trace.empty()) command += L" --trace "+quote(trace.native());
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -145,7 +149,7 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
     std::string client, instance, error;
     PollLog polls(software_);
     try {
-        auto connection = connect(stop,profile,definition,start,software_);
+        auto connection = connect_or_launch(stop,profile,definition,start,software_);
         client = std::move(connection.client);
         instance = std::move(connection.instance);
         if (software_) {

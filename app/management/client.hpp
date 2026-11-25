@@ -48,5 +48,9 @@ class Client {
 
 // 隐藏启动指定的后台程序，命令参数直接传递给 CreateProcessW。
 void launch_host(const std::filesystem::path& program, const std::filesystem::path& config,
-    const std::filesystem::path& packages, const std::filesystem::path& profile);
+    const std::filesystem::path& packages, const std::filesystem::path& profile, const std::filesystem::path& trace = {});
+struct ResidentConnection;
+// 初次连接缺少端点时启动一次后台，按原配置有界重试握手。
+ResidentConnection connect_or_launch(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition,
+    const Client::Launch& start, app::SoftwareLog* log);
 }

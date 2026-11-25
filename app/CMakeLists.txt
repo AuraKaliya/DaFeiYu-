@@ -56,6 +56,7 @@ target_sources(dfy_management PRIVATE management/resident_watch.cpp management/r
 target_sources(dfy_management PRIVATE management/client.cpp management/client.hpp)
 target_sources(dfy_management PRIVATE management/poll_log.cpp management/poll_log.hpp)
 target_sources(dfy_management PRIVATE management/terminal_host.cpp management/terminal_host.hpp)
+target_sources(dfy_management PRIVATE management/terminal_client.cpp management/terminal_client.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PRIVATE advapi32)
 target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json PRIVATE dfy_build_options dfy_digest)

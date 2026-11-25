@@ -1,12 +1,12 @@
 #include "application.hpp"
-#include "application_commands.hpp"
 #include "companion_host.hpp"
-#include "chat.hpp"
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "paths.hpp"
 #include "software_log.hpp"
 #include "management/resident.hpp"
+#include "management/client.hpp"
+#include "management/terminal_client.hpp"
 #include "management/local_pipe.hpp"
 #include <nlohmann/json.hpp>
 #include "trace_commands.hpp"
@@ -21,7 +21,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <thread>
 
 namespace {
 // 在正式进程保留配置读取的结果，文件名、配置正文和异常文本不进入软件日志。
@@ -111,11 +110,12 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << status.dump() << '\n';
             return software ? software->exiting(0) : 0;
         }
-        if (args.size() == 1 || (args.size() >= 3 && (args[1] == "--chat" || args[1] == "--host"))) {
-            const auto configuration = args.size() == 1 ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
+        const bool default_chat = args.size()==1 || (args.size()>1 && (args[1]=="--data" || args[1]=="--plugins" || args[1]=="--trace"));
+        if (default_chat || (args.size() >= 3 && (args[1] == "--chat" || args[1] == "--host"))) {
+            const auto configuration = default_chat ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
             std::filesystem::path plugins, user_data;
             dfy::app::ApplicationRunConfig run;
-            for (std::size_t index = 3; index < args.size(); index += 2) {
+            for (std::size_t index = default_chat ? 1 : 3; index < args.size(); index += 2) {
                 if (index+1 >= args.size() || args[index+1].empty()) throw std::invalid_argument("app: option path required");
                 if (args[index] == "--plugins" && plugins.empty()) plugins = args[index+1];
                 else if (args[index] == "--data" && user_data.empty()) user_data = args[index+1];
@@ -135,39 +135,23 @@ int run(const std::vector<std::filesystem::path>& args) {
                 },{},&*software);
                 return software->exiting(code);
             }
-            dfy::management::ProfileLease lease(user_data,&*software);
-            dfy::app::Application application(runtime_config(configuration,*software),plugins,user_data,
-                dfy::model::Backend{dfy::model::complete_response},std::move(run));
-            auto& manager = application.plugins();
+            (void)runtime_config(configuration,*software);
+            const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
+            auto binding = dfy::management::connect_or_launch({},user_data,identity,[&] {
+                dfy::management::launch_host(dfy::app::executable_directory()/"dafeiyu.exe",configuration,plugins,user_data,run.trace_directory);
+            },software.get());
+            software->bind(binding.instance,binding.client);
+            software->record(dfy::app::SoftwareEvent::client_connected,dfy::app::SoftwareResult::ok);
             dfy::platform::LineInput input;
-            if (!manager.directory_error().empty()) std::cerr << "Plugin directory unavailable; chat remains available: " << manager.directory_error() << '\n';
-            const auto result = dfy::app::async_chat(application.conversation(),input,std::cout,std::cerr,[&] {
-                application.set_console_ask_available(input.interactive_console() && std::cout);
-                if (application.advance_plugins() == dfy::runtime::RunResult::failed) std::cerr << "A plugin notification failed.\n";
-                dfy::app::present_console_ask(application,std::cout);
-            },[&](std::string_view command) { return dfy::app::application_command(application,command,std::cout,std::cerr); },
-                [&](const std::string& text) { return application.submit_dialogue(text); });
-            application.set_console_ask_available(false);
-            const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
-            auto shutdown = application.close_plugins();
-            while (shutdown != dfy::plugins::ShutdownResult::closed) {
-                if (shutdown == dfy::plugins::ShutdownResult::failed || std::chrono::steady_clock::now() >= deadline) {
-                    std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return software->exiting(1);
-                }
-                if (application.advance_plugins() == dfy::runtime::RunResult::failed) {
-                    std::cerr << "Plugin stopping failed; its resources remain retained.\n"; return software->exiting(1);
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                shutdown = application.close_plugins();
-            }
-            return software->exiting(result);
+            return software->exiting(dfy::management::resident_chat(user_data,binding,input,std::cout,std::cerr,software.get()));
         }
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
             << " | --host CONFIG [--plugins DIR] [--data DIR] [--trace DIR] | --host-status [DATA] | --stop-host [DATA]"
             << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --replay-trace FILE SESSION RUN | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
-            << "No arguments: chat with the bundled DeepSeek configuration.\n"
+            << "Default chat uses the bundled DeepSeek configuration and accepts --data, --plugins and --trace.\n"
+            << "Chat connects to the resident for this data directory. Use /exit to leave the terminal or --stop-host to stop the resident.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"
             << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" [--request ID] for a verified state change.\n"
