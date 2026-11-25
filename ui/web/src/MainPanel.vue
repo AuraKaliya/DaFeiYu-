@@ -53,7 +53,7 @@ const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
 const transcript = ref<HTMLOListElement>();
 const messages = useMessageHistory();
-const timeline = computed(() => messageTimeline(messages.rows.value, turns.value, messages.instance.value));
+const timeline = computed(() => messageTimeline(messages.rows.value, turns.value, messages.instance.value, messages.more.value));
 const composer = ref<HTMLTextAreaElement>();
 const clearDialog = ref<HTMLDialogElement>();
 const clearTarget = shallowRef<Target>();
@@ -557,8 +557,8 @@ onUnmounted(() => {
               <button v-if="input.state !== 'submitted' && input.state !== 'waiting'" type="button" @click="reuseInput(input)">加入草稿</button>
             </div>
           </div>
-          <div v-if="entry.answer || entry.turn.answer" class="message incoming" :data-stored-message="entry.answer?.message"><b>大肥鱼 <MessageTime :record="entry.answer" /></b><p>{{ entry.answer?.text ?? entry.turn.answer }}</p></div>
-          <div v-else class="turn-status">{{ statusText[entry.turn.result] }}</div>
+          <div v-for="answer in entry.answers" :key="answer.message" class="message incoming" :data-stored-message="answer.message"><b>大肥鱼 <MessageTime :record="answer" /></b><p>{{ answer.text }}</p></div>
+          <div v-if="!entry.answers.length || entry.turn.result !== 'succeeded'" class="turn-status">{{ entry.turn.result === 'succeeded' && entry.turn.answer.trim() ? '本轮已完成，答复投递待核对' : statusText[entry.turn.result] }}</div>
           <small v-if="entry.turn.result !== 'pending' && entry.turn.exit === 'pending'" class="turn-status">本轮仍在收尾</small>
         </li>
         </template>

@@ -125,6 +125,13 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     evaluate("observe dialogue bridge replies",R"JS((()=>{
         const bridge = window.chrome.webview;
         const replies = new Map();
+        const post = bridge.postMessage.bind(bridge), heldPages=[];
+        let holdPages=true;
+        Object.defineProperty(bridge,'postMessage',{configurable:true,value:fields=>{
+            if (holdPages && fields.type==='messages.read' && fields.direction==='changes') heldPages.push(fields);
+            else post(fields);
+        }});
+        window.releaseHistory=()=>{holdPages=false; for(const page of heldPages) post(page);};
         bridge.addEventListener('message',({data})=>{ if(data.request?.startsWith('probe-')) replies.set(data.request,data); });
         window.dialogueReplies = replies;
         window.dialoguePost = (request, fields) => bridge.postMessage({ ...fields, request, version:'1' });
@@ -146,9 +153,12 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     call("commit entered prompt",L"Input.insertText",{{"text",prompt}});
     evaluate("send once on rapid double click","const button=document.querySelector('#dialogue-send'); button.click(); "
         "window.original=history.state.dialogue.commands[0]; button.click(); !!original.submission && Number.isSafeInteger(original.sourceUtcMs)");
+    expect("a completed model result is not presented before channel delivery","document.querySelector('.turn')?.dataset.exit==='succeeded' && "
+        "document.querySelector('.turn .turn-status')?.textContent.includes('答复投递待核对') && !document.querySelector('.incoming p')");
+    evaluate("release the original committed history page","window.releaseHistory(); true");
     expect("one text answer with real exit","document.querySelectorAll('.turn').length === 1 && "
         "document.querySelector('.turn').dataset.exit === 'succeeded' && document.querySelector('.outgoing p').textContent === "+text+
-        " && document.querySelector('.incoming p').textContent === "+Json("固定回复："+prompt).dump()+
+        " && document.querySelector('.incoming p')?.textContent === "+Json("固定回复："+prompt).dump()+
         " && !document.querySelector('.incoming p b') && !document.querySelector('#dialogue-draft').value");
     evaluate("same command reuses real turn and durable message", R"JS((async()=>{
         const receipt=(await dialogueAsk('probe-repeat',original)).receipt;
@@ -208,7 +218,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");
     call("reload same main document",L"Page.reload",Json::object());
-    expect("reload restores same completed turns","document.querySelectorAll('.turn').length === 2 && document.querySelector('.incoming p').textContent.startsWith('固定回复：') && "
+    expect("reload restores same completed turns","document.querySelectorAll('.turn').length === 2 && document.querySelector('.incoming p')?.textContent.startsWith('固定回复：') && "
         "document.querySelector(':nth-last-child(1 of .turn)').dataset.result === 'failed'");
     evaluate("install numbered command checks",R"JS((()=>{
         const bridge=window.chrome.webview, replies=new Map();
