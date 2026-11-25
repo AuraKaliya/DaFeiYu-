@@ -14,7 +14,7 @@ description: 大肥鱼项目在 ui、plugins、core 固定工作树中分工开�
 | `DaFeiYu-Master` | `master` | 协调跨线接口、审查交付范围、合并与集成验收 |
 | `DaFeiYu-UI` | `ui` | 管理中心、WebView2、原生窗口交互 |
 | `DaFeiYu-Plugins` | `plugins` | MC 等领域插件、桥接、场景状态和业务回执 |
-| `DaFeiYu-Core` | `core` | 本体、Agent、模型、SDK，以及 `plugins/runtime` 和 `plugins/tools` 等通用宿主能力 |
+| `DaFeiYu-Core` | `core` | 本体、Agent、模型、SDK，以及 `modules/plugin_host` 和 `modules/plugin_tools` 等通用宿主能力 |
 
 接手任务时，用 `git worktree list --porcelain` 核对目录与分支，再在目标目录用 `git status --short --branch` 核对现场。首次建树以用户认可的同一个本地 `master` 完整提交号为起点。已有匹配的工作树直接复用，已有分支保留其提交。若目录或分支已被占用，先查明归属。用户要求开 Session 时，绑定对应目录，交代分支、基线、本轮任务和停止条件。
 

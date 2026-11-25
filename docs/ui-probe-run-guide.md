@@ -30,13 +30,13 @@
 
 同一窗口刷新会保留草稿。发送、追加和排队在首次点击时取得各自的提交号。刷新或重连先查原提交，确认同一逻辑会话没有该记录时才按原号和原参数补投。手动再次发送相同文字会生成另一条独立消息。关窗会回收该窗口的浏览器临时目录。
 
-`ui.main_panel` 用空插件目录和固定响应，经真实本地命名管道，在隐藏 WebView2 中核对来源、原消息号、独立停止、实际退出与清空后的模型输入。窄窗口验收覆盖排队、移除、刷新、暂停和继续发送。[主面板验收](../tests/ui_main_panel.cpp) · [待发队列验收](../tests/ui_dialogue_queue.cpp) · [刷新边界验收](../tests/ui_dialogue_recovery.cpp)
+`ui.main_panel` 用空插件目录和固定响应，经真实本地命名管道，在隐藏 WebView2 中核对来源、原消息号、独立停止、实际退出与清空后的模型输入。窄窗口验收覆盖排队、移除、刷新、暂停和继续发送。[主面板验收](../apps/desktop/tests/ui_main_panel.cpp) · [待发队列验收](../apps/desktop/tests/ui_dialogue_queue.cpp) · [刷新边界验收](../apps/desktop/tests/ui_dialogue_recovery.cpp)
 
 `ui.resident_windows` 依次打开三个独立桌面进程，在前两次关窗后核对后台进程号和实例号，在第三个窗口确认退出后等待原后台进程实际结束。[跨进程验收](../tests/ui_resident_windows.ps1)
 
-`ui.history_windows` 由两个独立的正式面板观察 19 轮固定问答，覆盖断连续读、同文投递、全部关窗后答复入库、翻到首条、刷新和重启后按原号复查。[窗口验收](../tests/ui_history_panel.cpp) · [关闭与重启顺序](../tests/ui_history_windows.ps1)
+`ui.history_windows` 由两个独立的正式面板观察 19 轮固定问答，覆盖断连续读、同文投递、全部关窗后答复入库、翻到首条、刷新和重启后按原号复查。[窗口验收](../apps/desktop/tests/ui_history_panel.cpp) · [关闭与重启顺序](../tests/ui_history_windows.ps1)
 
-`ui.resident_exit` 核对确认退出后两个窗口的自行关闭和资源回收。`ui.resident_progress` 用保持在途的固定响应核对页面显示的原回合与长等待提示。`ui.resident_unexpected` 结束测试自己启动的后台，核对真实退出码、刷新后的页面反馈和日志目录操作。[跨进程用例](../tests/ui_resident_exit.ps1) · [固定页面用例](../tests/ui_main_panel.cpp)
+`ui.resident_exit` 核对确认退出后两个窗口的自行关闭和资源回收。`ui.resident_progress` 用保持在途的固定响应核对页面显示的原回合与长等待提示。`ui.resident_unexpected` 结束测试自己启动的后台，核对真实退出码、刷新后的页面反馈和日志目录操作。[跨进程用例](../tests/ui_resident_exit.ps1) · [固定页面用例](../apps/desktop/tests/ui_main_panel.cpp)
 
 ## 房间首屏预览
 

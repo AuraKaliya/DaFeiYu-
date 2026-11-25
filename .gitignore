@@ -6,8 +6,8 @@
 /config/*.local.json
 /modules/model/resources/config/*.local.json
 /.vscode/
-/ui/web/node_modules/
-/ui/web/dist/
-/ui/web/dist-mc-trace/
+/apps/desktop/web/node_modules/
+/apps/desktop/web/dist/
+/apps/desktop/web/dist-mc-trace/
 /plugins/mc/bridge/node_modules/
 

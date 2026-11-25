@@ -4,14 +4,14 @@
 
 ## 打开日志
 
-在项目的 `ui/web` 下使用与本体网页相同的 Node.js 24 工具链。新检出先运行 `npm ci`，然后构建并启动。
+在项目的 `apps/desktop/web` 下使用与本体网页相同的 Node.js 24 工具链。新检出先运行 `npm ci`，然后构建并启动。
 
 ```powershell
 npm run build:mc-trace
 npm run start:mc-trace
 ```
 
-用当前版 Edge 或 Chrome 打开 [本地查看器](http://127.0.0.1:4174/)。启动命令提供独立静态产物 `ui/web/dist-mc-trace`。主面板、Minecraft 网页和游戏代理使用各自的入口。
+用当前版 Edge 或 Chrome 打开 [本地查看器](http://127.0.0.1:4174/)。启动命令提供独立静态产物 `apps/desktop/web/dist-mc-trace`。主面板、Minecraft 网页和游戏代理使用各自的入口。
 
 1. 选择 `DFY_TRACE` 写出的 `events.jsonl`。体验证据包中通常位于 `host/trace/events.jsonl`。
 2. 对照实际挖掘、落块、背包或聊天时，附加同局的 `host/game-actions.jsonl`。也可以同时选择或拖入两份文件。

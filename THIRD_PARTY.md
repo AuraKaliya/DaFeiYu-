@@ -11,7 +11,7 @@ CMake 首次配置时下载并校验归档 SHA-256。依赖保存在构建目录
 
 WebView2 仅在 `BUILD_GUI=ON` 时获取，归档 SHA-256 为 `90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4`。GUI 分发附带 SDK 原始许可证和 NOTICE；不会把 Edge 浏览器当作运行库，也不把 WebView2 依赖加到终端目标。
 
-前端工具和传递依赖由 `ui/web/package-lock.json` 固定，Node.js 只用于构建。Vite 构建按实际进入页面的模块收集原始许可证，随 UI 的 `licenses/` 目录和 `packages.json` 发布；页面运行不使用 CDN 或 npm 服务。
+前端工具和传递依赖由 `apps/desktop/web/package-lock.json` 固定，Node.js 只用于构建。Vite 构建按实际进入页面的模块收集原始许可证，随 UI 的 `licenses/` 目录和 `packages.json` 发布；页面运行不使用 CDN 或 npm 服务。
 
 HTTPS 使用 Windows SDK 的 WinHTTP 接口，链接系统 `winhttp` 库；无需额外下载 HTTP 库，当前网络实现仅支持 Windows。
 

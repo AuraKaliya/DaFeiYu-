@@ -1,7 +1,4 @@
 # 安装独立 Release 运行目录，配置只携带环境变量名称，不打包用户设置或密钥。
-install(TARGETS dafeiyu RUNTIME DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)
-install(FILES "${PROJECT_SOURCE_DIR}/modules/model/resources/config/deepseek.example.json" "${PROJECT_SOURCE_DIR}/modules/model/resources/config/qwen.example.json"
-  DESTINATION config CONFIGURATIONS Release COMPONENT Runtime)
 install(DIRECTORY DESTINATION plugins CONFIGURATIONS Release COMPONENT Runtime)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/run-guide.md" DESTINATION . RENAME "运行说明.md" CONFIGURATIONS Release COMPONENT Runtime)
 

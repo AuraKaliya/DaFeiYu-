@@ -23,10 +23,10 @@
 
 | 阅读入口 | 已有能力 | 本次需要补的部分 |
 |---|---|---|
-| [桌面容器](ui-probe-run-guide.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 主面板](../ui/web/src/MainPanel.vue) | 可信面板可收发、追加本轮、排到下一轮、停止和空闲清空。读位置可得到当前房间与身体，刷新沿原命令核对。 | 用现有快照驱动文字详情。原生移动和物件效果可读回后，再逐项补入同一展示接口。 |
-| [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/management/host.cpp) | 应用一次只推进一个活动主回合，按该轮实际退出调度待发队列，并发布补充的送模回执。 | 将角色感知按来源和采样条件接入获准的请求，将身体动作与原委托关联。 |
+| [桌面容器](ui-probe-run-guide.md)、[主文档消息入口](../apps/desktop/src/host/probe_host.cpp)、[Vue 主面板](../apps/desktop/web/src/MainPanel.vue) | 可信面板可收发、追加本轮、排到下一轮、停止和空闲清空。读位置可得到当前房间与身体，刷新沿原命令核对。 | 用现有快照驱动文字详情。原生移动和物件效果可读回后，再逐项补入同一展示接口。 |
+| [应用服务](../apps/host/src/application.hpp)、[会话服务](../apps/host/src/conversation.cpp)、[桌面业务线程](../apps/host/src/management/host.cpp) | 应用一次只推进一个活动主回合，按该轮实际退出调度待发队列，并发布补充的送模回执。 | 将角色感知按来源和采样条件接入获准的请求，将身体动作与原委托关联。 |
 | [工具目录](../modules/agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../modules/agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../modules/agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。房间及其身体已有本体签发的实例身份。 | 为获准的回合绑定房间本地工具，沿用已有的调用校验和执行约束。 |
-| [原生书房](../app/builtin_room.cpp)、[观察收件](../modules/agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../modules/agent/include/dafeiyu/run_journal.hpp) | 书房能按角色采样筛选可知字段。通用收件已有来源、代次、修订、时效、重复、断档及重采样语义。 | 把发生时可感知的事件记入角色记录，主动查询用当前位置重采样，再按来源和水位带入获准回合。 |
+| [原生书房](../apps/host/src/builtin_room.cpp)、[观察收件](../modules/agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../modules/agent/include/dafeiyu/run_journal.hpp) | 书房能按角色采样筛选可知字段。通用收件已有来源、代次、修订、时效、重复、断档及重采样语义。 | 把发生时可感知的事件记入角色记录，主动查询用当前位置重采样，再按来源和水位带入获准回合。 |
 
 本方案细化 UI 总体方案中 U02 的命令桥接、U04 的主会话与 U07 的内置房间。主体面板的里程碑可以用本地宿主和可控模型替身完成。游戏伙伴有自己的交互方案和评审顺序。[UI 总体方案](ui-framework-design.md) · [MC 伙伴交互方案](mc-companion-development-plan.md)
 
@@ -55,7 +55,7 @@ flowchart LR
     Host -->|核准的动作| Room
 ```
 
-实现时，房间模型及其本地工具工厂随应用服务装配。通用 Agent 层只扩展消息投递和步骤边界。桥接放在 `ui/host` 与 `app/gui`，Vue 展示放在 `ui/web`。使用[现有工具工作接口](../modules/agent/include/dafeiyu/tool_work.hpp)分别交付结果与退出，首版可以先在同一应用目标内实现房间。
+实现时，房间模型及其本地工具工厂随应用服务装配。通用 Agent 层只扩展消息投递和步骤边界。桥接放在 `apps/desktop/src/host` 与 `apps/desktop`，Vue 展示放在 `apps/desktop/web`。使用[现有工具工作接口](../modules/agent/include/dafeiyu/tool_work.hpp)分别交付结果与退出，首版可以先在同一应用目标内实现房间。
 
 ## 4. 首间房与感知规则
 
@@ -109,19 +109,19 @@ flowchart LR
 
 步骤 01 已提供空闲和忙碌两份空插件固定样本，附显式预览入口。步骤 02 已在主会话保留最近 16 个主动对话，正文合计至多 2 MiB。用户原话、一次性业务结果与实际退出按原回合关联，随进程保留，公开运行诊断沿用无正文摘要。步骤 03 的 `--main-panel` 从可信主文档经原业务线程进入正式对话，同号同文复用回执，使用不同正文时返回冲突。 [桌面主面板](ui-probe-run-guide.md#桌面主面板) · [打开首屏预览](ui-probe-run-guide.md#房间首屏预览)
 
-步骤 04 已接入原回合停止与空闲清空。页面从宿主快照读取取消和实际退出，清空确认绑定打开时看到的回合，保留当前草稿。正式面板空白时展示书房插画，对话时把正文、发送和独立停止入口留在可用区域。[业务线程](../app/management/host.cpp) · [主面板](../ui/web/src/MainPanel.vue) · [原生验收](../tests/ui_main_panel.cpp)
+步骤 04 已接入原回合停止与空闲清空。页面从宿主快照读取取消和实际退出，清空确认绑定打开时看到的回合，保留当前草稿。正式面板空白时展示书房插画，对话时把正文、发送和独立停止入口留在可用区域。[业务线程](../apps/host/src/management/host.cpp) · [主面板](../apps/desktop/web/src/MainPanel.vue) · [原生验收](../apps/desktop/tests/ui_main_panel.cpp)
 
-步骤 05 的应用队列最多保留八条待发消息，单条上限 1 MiB，合计上限 2 MiB。前一轮成功结算并退出后，应用从原对话信箱逐条启动新轮，显示记录保留原排队消息号。取消或失败会暂停待发项，清空空闲对话后仍可恢复或移除。[应用队列](../app/dialogue_queue.cpp) · [生命周期验收](../tests/application_lifecycle.cpp)
+步骤 05 的应用队列最多保留八条待发消息，单条上限 1 MiB，合计上限 2 MiB。前一轮成功结算并退出后，应用从原对话信箱逐条启动新轮，显示记录保留原排队消息号。取消或失败会暂停待发项，清空空闲对话后仍可恢复或移除。[应用队列](../apps/host/src/dialogue_queue.cpp) · [生命周期验收](../tests/application_lifecycle.cpp)
 
 步骤 06 已在普通文本运行中验证。本轮可接收八条补充，合计最多 1 MiB。已发出的请求保持原样。宿主在提交最终答复前检查新收件，按顺序将阶段文本和补充带入同一回合的后续请求。成功分派后每条补充才获得模型步骤号，取消、期限和容量分别留下未带入回执。[原生回合验收](../modules/agent/tests/turn_input.cpp)
 
 步骤 07 复用同一份回合收件记录。工具执行和收尾期间可以接收补充，下一次请求按顺序包含完整工具调用、每个结果及收到的用户消息。停止或预算耗尽时保留已经发生的工具效果，并记录补充的未带入原因。[工具批次验收](../tests/session_tool_loop.cpp)
 
-步骤 08 已在正式页面接入本轮补充、下一轮队列和独立停止。宿主尚未登记的命令在刷新后沿原号补投，已登记的命令按原号查回执。离线 Trace 可按实际模型步骤重放补充，同时核对原话及结果。[刷新验收](../tests/ui_dialogue_recovery.cpp) · [离线回放](../app/trace_replay.cpp)
+步骤 08 已在正式页面接入本轮补充、下一轮队列和独立停止。宿主尚未登记的命令在刷新后沿原号补投，已登记的命令按原号查回执。离线 Trace 可按实际模型步骤重放补充，同时核对原话及结果。[刷新验收](../apps/desktop/tests/ui_dialogue_recovery.cpp) · [离线回放](../apps/host/src/trace_replay.cpp)
 
-步骤 09 已将书房和主角色身体装入每个应用实例。布局登记书桌旁至窗边、屏风后的两条双向路径，以及台灯与屏风的固定用途。自身查询需要匹配房间实例和代次，初始位置在书桌旁。正式面板标题下的位置来自原生只读查询，空插件、无页面也能取得相同事实。[房间接口](../app/builtin_room.hpp) · [原生书房](../app/builtin_room.cpp)
+步骤 09 已将书房和主角色身体装入每个应用实例。布局登记书桌旁至窗边、屏风后的两条双向路径，以及台灯与屏风的固定用途。自身查询需要匹配房间实例和代次，初始位置在书桌旁。正式面板标题下的位置来自原生只读查询，空插件、无页面也能取得相同事实。[房间接口](../apps/host/src/builtin_room.hpp) · [原生书房](../apps/host/src/builtin_room.cpp)
 
-步骤 10 的首版参数为视距 3、听距 4 个逻辑单位，边界计入范围。屏风边缘会遮挡视线。以同一次开关为例，亲见可取得书桌处的新灯态，只听见时只能取得声响来向，超距、错实例或错身体没有感知。事件入册、主动查询和送入角色上下文分别由 11、12 接续。[感知规则](../app/builtin_room.cpp) · [阈值与隔离验收](../tests/application_lifecycle.cpp)
+步骤 10 的首版参数为视距 3、听距 4 个逻辑单位，边界计入范围。屏风边缘会遮挡视线。以同一次开关为例，亲见可取得书桌处的新灯态，只听见时只能取得声响来向，超距、错实例或错身体没有感知。事件入册、主动查询和送入角色上下文分别由 11、12 接续。[感知规则](../apps/host/src/builtin_room.cpp) · [阈值与隔离验收](../tests/application_lifecycle.cpp)
 
 序号只在本方案内使用。每个单元定向验证并独立提交，复杂项按表中行为继续拆小，约 100～300 行手写改动作为审查参考。
 
@@ -162,7 +162,7 @@ flowchart LR
 | 受阻、断开与重建 | 阻塞路径、途中停下、旧视图重复命令、观察断档和实例更换均有明确结果。重连沿用进程内回执，重新采样保持相同感知限制。 |
 | 表现可替换 | 文字视图与替换组件读取同一组房间事实。隐藏窗口、减少动效、中文组合输入、键盘操作及窄布局均保留相同业务行为。 |
 
-开发使用固定模型响应、可控传输、可注入时钟和原生测试。UI 通过隐藏 WebView2 与固定浏览器协议操作真实主文档，沿用[桌面验证方式](ui-probe-run-guide.md)。定向测试优先大肥鱼自己的正式入口，复用[会话测试](../tests/async_chat.cpp)、[有界循环测试](../tests/session_tool_loop.cpp)和[桌面状态探针](../tests/ui_run_status_probe.cpp)。仅最终验收运行完整 Debug／Release 测试与分发检查，确认安装后的普通入口可用、测试替身只用于验收、默认包目录为空。全程无真实模型、无 Computer Use，主体验收无需实际 MC。
+开发使用固定模型响应、可控传输、可注入时钟和原生测试。UI 通过隐藏 WebView2 与固定浏览器协议操作真实主文档，沿用[桌面验证方式](ui-probe-run-guide.md)。定向测试优先大肥鱼自己的正式入口，复用[会话测试](../apps/terminal/tests/async_chat.cpp)、[有界循环测试](../tests/session_tool_loop.cpp)和[桌面状态探针](../apps/desktop/tests/ui_run_status_probe.cpp)。仅最终验收运行完整 Debug／Release 测试与分发检查，确认安装后的普通入口可用、测试替身只用于验收、默认包目录为空。全程无真实模型、无 Computer Use，主体验收无需实际 MC。
 
 “不同措辞能否自然听懂”“会不会恰好选对工具”“回复是否像大肥鱼”均**仅记录，不执行**，与确定性用例分表。判断到达、动作授权、感知范围和输入投递是否正确，以宿主事实与实际请求内容取证。可复现的合成场景和必要美术按相对路径随源码提交。凭据、个人配置、缓存、存档和本地验收记录留在本地。
 

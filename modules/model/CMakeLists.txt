@@ -9,6 +9,13 @@ target_link_libraries(dfy_model PRIVATE dfy_build_options nlohmann_json::nlohman
 target_compile_definitions(dfy_model PRIVATE _CRT_SECURE_NO_WARNINGS)
 dfy_group_target(dfy_model Model)
 
+# 配置模板也是 CMake 的输入，单独修改模板即可更新各配置的运行资源。
+foreach(asset IN ITEMS deepseek.example.json qwen.example.json)
+  file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/config/${asset}"
+    INPUT "${CMAKE_CURRENT_SOURCE_DIR}/resources/config/${asset}")
+  install(FILES "resources/config/${asset}" DESTINATION config CONFIGURATIONS Release COMPONENT Runtime)
+endforeach()
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

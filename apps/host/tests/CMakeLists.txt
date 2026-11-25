@@ -1,0 +1,43 @@
+dfy_test_executable(dfy_management_host_tests management_host.cpp)
+target_link_libraries(dfy_management_host_tests PRIVATE dfy_management dfy_build_options)
+add_test(NAME app.management_host COMMAND dfy_management_host_tests "${CMAKE_CURRENT_BINARY_DIR}/management-host")
+set_tests_properties(app.management_host PROPERTIES TIMEOUT 15)
+
+dfy_test_executable(dfy_management_pipe_tests management_pipe.cpp)
+target_link_libraries(dfy_management_pipe_tests PRIVATE dfy_management dfy_build_options)
+add_test(NAME app.management_pipe COMMAND dfy_management_pipe_tests "${CMAKE_CURRENT_BINARY_DIR}/management-pipe")
+set_tests_properties(app.management_pipe PROPERTIES TIMEOUT 20)
+
+dfy_test_executable(dfy_management_resident_tests management_resident.cpp)
+target_link_libraries(dfy_management_resident_tests PRIVATE dfy_management dfy_build_options)
+add_test(NAME app.management_resident COMMAND dfy_management_resident_tests "${CMAKE_CURRENT_BINARY_DIR}/management-resident")
+set_tests_properties(app.management_resident PROPERTIES TIMEOUT 20)
+
+dfy_test_executable(dfy_message_store_tests message_store.cpp)
+target_link_libraries(dfy_message_store_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
+add_test(NAME app.message_store COMMAND dfy_message_store_tests "${CMAKE_CURRENT_BINARY_DIR}/message-store")
+
+dfy_test_executable(dfy_binding_work_tests binding_works.cpp)
+target_link_libraries(dfy_binding_work_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
+add_test(NAME app.binding_works COMMAND dfy_binding_work_tests)
+
+dfy_test_executable(dfy_message_protocol_tests message_protocol.cpp)
+target_link_libraries(dfy_message_protocol_tests PRIVATE dfy_management dfy_build_options)
+add_test(NAME app.message_protocol COMMAND dfy_message_protocol_tests "${CMAKE_CURRENT_BINARY_DIR}/message-protocol")
+
+dfy_test_executable(dfy_persistent_dialogue_tests persistent_dialogue.cpp)
+target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
+
+dfy_test_executable(dfy_message_recovery_tests message_recovery.cpp)
+target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_management dfy_build_options winsqlite3)
+add_test(NAME app.message_recovery COMMAND dfy_message_recovery_tests "${CMAKE_CURRENT_BINARY_DIR}/message-recovery")
+
+dfy_test_executable(dfy_companion_messages_tests companion_messages.cpp)
+target_link_libraries(dfy_companion_messages_tests PRIVATE dfy_application dfy_build_options)
+add_test(NAME app.companion_messages COMMAND dfy_companion_messages_tests)
+
+dfy_test_executable(dfy_diagnostic_files_tests diagnostic_files.cpp)
+target_link_libraries(dfy_diagnostic_files_tests PRIVATE dfy_application dfy_build_options)
+add_test(NAME app.diagnostic_files COMMAND dfy_diagnostic_files_tests "${CMAKE_CURRENT_BINARY_DIR}/diagnostic-files/$<CONFIG>")
+set_tests_properties(app.diagnostic_files PROPERTIES TIMEOUT 20)

@@ -22,7 +22,7 @@
 
 本机需要单独设置时，将[个人预设模板](build-scirpt/CMakeUserPresets.json)复制到项目根目录作为 `CMakeUserPresets.json`。已有个人预设时可合并模板条目。编辑 `jobs`、`DFY_MSVC_COMPILE_JOBS` 或本机工具链路径后，运行 `.\build-scirpt\build-debug.cmd -Profile local-windows`（Release 同理）。模板使用单独的 `build/local-windows/`，本机文件由 Git 忽略。
 
-脚本用 `-Profile <名称>` 选择同名配置预设，再运行 `<名称>-debug` 或 `<名称>-release` 构建预设。选择 `windows-tests` 可构建测试，选择 `windows-ui` 可构建桌面目标 `dfy_ui_probe`。首次构建桌面前，按[前端声明](ui/web/package.json)安装 Node.js，在根目录运行 `npm --prefix ui/web ci`。
+脚本用 `-Profile <名称>` 选择同名配置预设，再运行 `<名称>-debug` 或 `<名称>-release` 构建预设。选择 `windows-tests` 可构建测试，选择 `windows-ui` 可构建桌面目标 `dfy_ui_probe`。首次构建桌面前，按[前端声明](apps/desktop/web/package.json)安装 Node.js，在根目录运行 `npm --prefix apps/desktop/web ci`。
 
 从根目录直接使用 CMake 也能构建相同的程序。
 
@@ -99,7 +99,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 
 | 职责 | 入口 |
 |---|---|
-| App：共享服务、终端及原生插件管理 | [Application](app/application.hpp)、[Conversation](app/conversation.hpp)、[终端命令](app/application_commands.cpp)、[插件命令](app/plugin_commands.cpp) |
+| App：共享服务、终端及原生插件管理 | [Application](apps/host/src/application.hpp)、[Conversation](apps/host/src/conversation.hpp)、[终端命令](apps/terminal/src/application_commands.cpp)、[插件命令](apps/terminal/src/plugin_commands.cpp) |
 | Agent：会话、运行与历史提交 | [Session](modules/agent/include/dafeiyu/session.hpp)、[实现](modules/agent/src/session.cpp) |
 | Model：异步接纳及供应商协议 | [AsyncClient](modules/model/include/dafeiyu/async_model.hpp)、[完整文本调用](modules/model/src/client.cpp) |
 | Events：不可变交付与处理 | [广播](modules/events/include/dafeiyu/broadcast_channel.hpp)、[处理](modules/events/include/dafeiyu/processing.hpp)、[控制边界](modules/events/include/dafeiyu/hooks.hpp) |

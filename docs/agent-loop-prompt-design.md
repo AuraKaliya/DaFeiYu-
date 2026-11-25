@@ -24,13 +24,13 @@
 
 ## 大肥鱼的提示词与宿主职责
 
-**从 Codex 借鉴指令与当前事实的分开装配。** 人格提供身份和表达风格。MC 根据本轮状态选取观察、追问、等待和发言指引。玩家原话、任务修订、待答事项、采样时间、在途工作和回执随正文提供。现有模型请求只在首条容纳 `system` 消息，可以沿用现有序列化，把来源和用途保留在组装处。 [角色装配](../app/conversation.cpp) · [领域指引与正文装配](../plugins/mc/src/partner_loop.cpp) · [模型消息约束](../modules/model/src/messages.cpp)
+**从 Codex 借鉴指令与当前事实的分开装配。** 人格提供身份和表达风格。MC 根据本轮状态选取观察、追问、等待和发言指引。玩家原话、任务修订、待答事项、采样时间、在途工作和回执随正文提供。现有模型请求只在首条容纳 `system` 消息，可以沿用现有序列化，把来源和用途保留在组装处。 [角色装配](../apps/host/src/conversation.cpp) · [领域指引与正文装配](../plugins/mc/src/partner_loop.cpp) · [模型消息约束](../modules/model/src/messages.cpp)
 
 **从 DeepSeek Harness 借鉴随工具提供操作指引。** 能力目录和送模契约从现有技能定义取值，分别描述技能是否实现、此轮是否可见、提交入口以及尚缺条件。当前任务已知需要的参数直接提供，其他分类按需展开。`queue_actions` 在目录和校验对齐后再缩减静态节点说明，保留当轮必要的入口、参数和依赖写法。候选接纳、授权、保护范围和执行前复核仍由宿主及插件按当前状态裁定。 [技能定义](../plugins/mc/src/partner_skills.hpp) · [计划准入](../plugins/mc/src/partner_plan.cpp) · [目录与渐进式披露](mc-companion-development-plan.md#渐进式披露)
 
 **从 Claude Code 借鉴用结果推进下一步。** 模型决定何时补查、行动、询问或汇报。插件根据当前任务修订和原工作回执推进能确定的后继，在收到新原话或需要模型判断时开启决策。例如，挖掘已接纳、原木实际入包、木板实际新增、玩家实际收到发言，分别由对应证据确认。玩家途中问进度时，角色可依据最近一次读回作答，在途动作继续推进。显式 `reply` 与面向玩家的最终文本沿同一投递路径，使用原消息或回合与投递身份去重。 [验证与回合收尾](mc-companion-development-plan.md#4-回合结束不等于事情做完) · [信箱与唤醒](architecture.md#信箱优先级与唤醒)
 
-**以实际送模请求核对变更。** `promptTemplate` 标签可以在人格叠加前生成，系统段随后还可能经请求 Hook 改写。定位某次误判时，按会话、运行、步骤和尝试编号查看 `model.prepared` 的消息及工具，再对照模型输出、宿主裁定、实际工作与渠道回执。这样可以区分送模内容缺失、参数选择偏差、准入拒绝和执行受阻。 [模板指纹](../app/conversation.cpp) · [送模前改写](../modules/agent/src/run_loop.cpp) · [Trace 记录](../app/run_log.cpp)
+**以实际送模请求核对变更。** `promptTemplate` 标签可以在人格叠加前生成，系统段随后还可能经请求 Hook 改写。定位某次误判时，按会话、运行、步骤和尝试编号查看 `model.prepared` 的消息及工具，再对照模型输出、宿主裁定、实际工作与渠道回执。这样可以区分送模内容缺失、参数选择偏差、准入拒绝和执行受阻。 [模板指纹](../apps/host/src/conversation.cpp) · [送模前改写](../modules/agent/src/run_loop.cpp) · [Trace 记录](../apps/host/src/run_log.cpp)
 
 ## 首步方案与验收
 

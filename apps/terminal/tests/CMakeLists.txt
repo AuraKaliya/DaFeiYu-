@@ -1,0 +1,6 @@
+# 验证等待期间本地命令、取消以及真实输入的异步循环。
+dfy_test_executable(dfy_async_chat_tests async_chat.cpp)
+target_link_libraries(dfy_async_chat_tests PRIVATE dfy_terminal dfy_build_options)
+target_compile_definitions(dfy_async_chat_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_test(NAME app.async_chat COMMAND dfy_async_chat_tests)
+set_tests_properties(app.async_chat PROPERTIES TIMEOUT 15)

@@ -1,0 +1,5 @@
+add_subdirectory(host)
+add_subdirectory(terminal)
+if(BUILD_GUI)
+  add_subdirectory(desktop)
+endif()

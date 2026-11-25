@@ -15,7 +15,7 @@
 | 主体已有模型配置读取，插件在实例创建时合并包内默认值和独立的用户覆盖文件。 | 主体和插件分别持有配置文件，通过同一设置界面契约登记只读、可写字段，并由宿主执行保存与校验。 |
 | 主会话与插件子会话已使用 `Session / RunLoop`，SDK 已能托管插件子会话。 | 核对两条实际入口的共用循环和输出归属，补齐通用 SDK 能力。用一个独立测试插件验证 UI 注册、双窗口和卸载。 |
 
-宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../app/application.cpp) · [会话显示记录](../app/conversation.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [桌面业务线程](../app/management/host.cpp) · [插件配置读取](../modules/plugin_host/src/config.cpp) · [现有 SDK](../sdk/README.md)
+宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../apps/host/src/application.cpp) · [会话显示记录](../apps/host/src/conversation.cpp) · [下一轮队列](../apps/host/src/dialogue_queue.cpp) · [桌面业务线程](../apps/host/src/management/host.cpp) · [插件配置读取](../modules/plugin_host/src/config.cpp) · [现有 SDK](../sdk/README.md)
 
 | 当前事实 | 对设计的约束 |
 |---|---|
@@ -59,7 +59,7 @@
 
 视觉上以留白和细分隔线区分三区，当前值比字段名醒目，时间、来源使用次级文字，状态始终带文字。设置用一致的分组标题、字段行、访问模式和保存反馈。窄窗保留房间与聊天的可达入口，消息区独立滚动，输入区保持可见。中文输入法选字、键盘切换、焦点返回、系统缩放和减少动效纳入验收。
 
-布局采用用户草图的导航和聊天关系。设置的层级与留白参考 Codex、DeepSeek Harness。插件接入借鉴 Harness 由宿主声明插槽、贡献随注册者销毁的做法。审核通过后清理 `ui/web/src/art/study.png`、正式页和预览的导入、图像样式与依赖图片加载的断言，分发包复查旧图。预览改用明确标注的文本样本。[Harness 插槽契约](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/docs/subsystems/slots.zh.md) · [正式面板](../ui/web/src/MainPanel.vue) · [房间预览](../ui/web/src/RoomPreview.vue)
+布局采用用户草图的导航和聊天关系。设置的层级与留白参考 Codex、DeepSeek Harness。插件接入借鉴 Harness 由宿主声明插槽、贡献随注册者销毁的做法。审核通过后清理 `apps/desktop/web/src/art/study.png`、正式页和预览的导入、图像样式与依赖图片加载的断言，分发包复查旧图。预览改用明确标注的文本样本。[Harness 插槽契约](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/docs/subsystems/slots.zh.md) · [正式面板](../apps/desktop/web/src/MainPanel.vue) · [房间预览](../apps/desktop/web/src/RoomPreview.vue)
 
 ## 3 软件边界与线程
 
@@ -96,10 +96,10 @@ flowchart TB
 | 拟定位置 | 职责 |
 |---|---|
 | `app/` | 本体常驻、主会话、消息持久化、配置、只读投影及实例的 UI 注册目录。复用现有 Application、Conversation、MailboxIntake |
-| `app/gui/` | 原生窗口、UI 线程、客户端连接与视图回收 |
-| `ui/host/` | WebView2 消息来源校验、授权绑定、视图及资源回收，经本地连接读取注册目录 |
-| `ui/web/` | 主界面、组件库、声明式渲染器和自定义页面客户端接口 |
-| `sdk/` 与 `plugins/runtime/` | 新 UI 能力的 C 契约及受控原生调用适配，不依赖前端框架 |
+| `apps/desktop/` | 原生窗口、UI 线程、客户端连接与视图回收 |
+| `apps/desktop/src/host/` | WebView2 消息来源校验、授权绑定、视图及资源回收，经本地连接读取注册目录 |
+| `apps/desktop/web/` | 主界面、组件库、声明式渲染器和自定义页面客户端接口 |
+| `sdk/` 与 `modules/plugin_host/` | 新 UI 能力的 C 契约及受控原生调用适配，不依赖前端框架 |
 
 **常驻与重开。** 实现建议采用一个原生后台宿主进程，按规范化用户数据目录取得唯一写入权。普通终端和管理中心通过仅限当前用户的 Windows 本地命名管道连接。首次启动可拉起宿主，再次启动连接原宿主。并发启动时由持有者发布端点，客户端等待握手并核对数据目录与启动配置。连接失败或配置冲突时显示原因。专用 MC 宿主和离线测试继续使用隔离的运行目录，接入同一生产数据目录的入口必须遵守同一所有权。`--complete` 沿用单次模型调用入口。
 
@@ -113,7 +113,7 @@ Win32 窗口线程只管理窗口、WebView2、焦点和消息收发。后台宿
 
 后台图标随本体运行。用户从设置、托盘或终端请求退出当前本体时，原实例的退出结果应到达已连接的管理窗口。软件运行日志在默认启动时记录这些动作，并提供跨进程核对入口。[后台图标、退出与软件运行日志](#后台图标退出与软件运行日志)
 
-**Agent 循环与 SDK。** 开发先对照主会话与 MC 子会话的输入、上下文装配、模型输出、工具执行、取消、投递与实际退出。共同部分复用 Agent 层的 Session / RunLoop，提炼缺失的共用接口供主体和 SDK 适配层调用。DLL 沿现有版本化 C ABI 托管子会话，新增公共能力另行协商版本。主 Agent 的用户发言、插件的领域发言及给上级的内部结算各有输出路由。每个会话独立持有上下文、当轮工具和权限，MC 继续拥有局内事实及游戏回执。[主会话](../app/conversation.cpp) · [通用循环](../modules/agent/src/run_loop.cpp) · [子会话宿主](../app/subagents.cpp) · [现有 Agent ABI](../sdk/include/dafeiyu/agent_abi_v2.h)
+**Agent 循环与 SDK。** 开发先对照主会话与 MC 子会话的输入、上下文装配、模型输出、工具执行、取消、投递与实际退出。共同部分复用 Agent 层的 Session / RunLoop，提炼缺失的共用接口供主体和 SDK 适配层调用。DLL 沿现有版本化 C ABI 托管子会话，新增公共能力另行协商版本。主 Agent 的用户发言、插件的领域发言及给上级的内部结算各有输出路由。每个会话独立持有上下文、当轮工具和权限，MC 继续拥有局内事实及游戏回执。[主会话](../apps/host/src/conversation.cpp) · [通用循环](../modules/agent/src/run_loop.cpp) · [子会话宿主](../apps/host/src/subagents.cpp) · [现有 Agent ABI](../sdk/include/dafeiyu/agent_abi_v2.h)
 
 ## 4 组件库
 
@@ -232,7 +232,7 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 #### 常驻本体已提供的消息读协议
 
-已握手的客户端通过既有本地管道的 `op=request` 发送业务请求。`body` 共用 `version:"1"`、`type` 和窗口自定的 `request`。回复回显 `request`，包含逻辑会话号 `conversation`、原后台 `instance` 和采样时的 `watermark`。消息号、游标、水位和修订号均为十进制字符串。[管理分派](../app/management/message_protocol.cpp)
+已握手的客户端通过既有本地管道的 `op=request` 发送业务请求。`body` 共用 `version:"1"`、`type` 和窗口自定的 `request`。回复回显 `request`，包含逻辑会话号 `conversation`、原后台 `instance` 和采样时的 `watermark`。消息号、游标、水位和修订号均为十进制字符串。[管理分派](../apps/host/src/management/message_protocol.cpp)
 
 | 业务请求 | 附加字段 | 成功结果 |
 |---|---|---|
@@ -240,17 +240,17 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 | `messages.read` | `conversation, direction, cursor, through, limit` | `messages.page`。固定订阅取得的 `through`，整数 `limit` 取 1～64。`history` 按消息号倒序，从 `cursor:"0"` 取最新一页，回执为该水位时的版本。`changes` 按修订正序，读取 `(cursor, through]`。有后页时用 `next` 续读，`more` 为假时结束。 |
 | `messages.receipt` | `conversation, source, submission` | `messages.receipt`。返回原提交的最新 `record`，未找到为 `null`。 |
 
-记录包含稳定的 `message`、本次 `revision`、宿主 UTC 毫秒时间 `utcMs`、`source`、`submission` 和该修订的 `receipt`。窗口按逻辑会话和消息号更新同一行，一页实际交付后再保存游标。多窗读取互不消费。数据库位于数据目录下的 `main-conversation.sqlite3`。[双窗口与断点验收](../tests/message_protocol.cpp)
+记录包含稳定的 `message`、本次 `revision`、宿主 UTC 毫秒时间 `utcMs`、`source`、`submission` 和该修订的 `receipt`。窗口按逻辑会话和消息号更新同一行，一页实际交付后再保存游标。多窗读取互不消费。数据库位于数据目录下的 `main-conversation.sqlite3`。[双窗口与断点验收](../apps/host/tests/message_protocol.cpp)
 
 新追加和待发项在入库前按已发布的原回合、条数和字节余量检查，分派时再核对当前条件。已结束回合的追加返回 `stale`，超出对应容量返回 `full`。这两种预先拒绝的提交没有 `storedMessage`。单页还受字节预算约束，即使记录数小于 `limit`，只要 `more` 为真，窗口就按 `next` 继续读取。
 
 提交正文沿用 `dialogue.submit`、`dialogue.append`、`dialogue.enqueue`。窗口在第一次发送前生成并保留 `submission`（1～128 个 UTF-8 字节），三种请求仍带原有的 `command` 和 `text`。追加、排队另带订阅返回的 `instance` 及原 `session`、`turn`，也可附来源时间 `sourceUtcMs`。同一 `submission` 重试时保持原字段值。新连接使用自己的 `command` 空间，可用 `messages.receipt` 按 `source:"desktop"` 与原 `submission` 复查。相同提交号改动原文、去向或目标会返回 `conflict`。
 
-成功入库后，命令回执附加 `storedMessage`。它是持久消息号，原 `message` 仍表示回合内补充号或待发项号。初始持久回执为 `pending`，开始交付前写为 `dispatching`。已接纳的新回合为 `accepted`，追加等待带入为 `waiting`，待发项为 `queued`。终端正文来源为 `terminal`，沿用同一持久库。[后台接纳与回执](../app/main_messages.cpp)
+成功入库后，命令回执附加 `storedMessage`。它是持久消息号，原 `message` 仍表示回合内补充号或待发项号。初始持久回执为 `pending`，开始交付前写为 `dispatching`。已接纳的新回合为 `accepted`，追加等待带入为 `waiting`，待发项为 `queued`。终端正文来源为 `terminal`，沿用同一持久库。[后台接纳与回执](../apps/host/src/main_messages.cpp)
 
-原窗口以同一 `command` 再读 `dialogue.read` 或重发相同提交，都按已绑定的 `storedMessage` 返回最新命令结果。写锁解除后，原窗口和用同一 `submission` 重连的窗口可分别查到实际接纳。持久回执中的 `submitted` 附带实际的 `modelStep`，`removed` 保留已移除的待发项，`unknown` 表示原交付实效仍待核对。[写锁与重连验收](../tests/message_recovery.cpp)
+原窗口以同一 `command` 再读 `dialogue.read` 或重发相同提交，都按已绑定的 `storedMessage` 返回最新命令结果。写锁解除后，原窗口和用同一 `submission` 重连的窗口可分别查到实际接纳。持久回执中的 `submitted` 附带实际的 `modelStep`，`removed` 保留已移除的待发项，`unknown` 表示原交付实效仍待核对。[写锁与重连验收](../apps/host/tests/message_recovery.cpp)
 
-直接对话和原生书房点名产生的非空白最终文本进入主聊天。普通结构化对话还可调用 `main_reply({"text":"…"})` 提前发言或追问。成功回执的 `delivery` 和 `message` 分别标识本次投递和已写入的消息。同一回合末尾再次给出已显式发过的相同文字时复用原投递。独立回合、不同显式调用各有自己的投递号。内部入口的结算、工具回包和纯空白结算保持在原路径。[输出适配器](../app/main_output.cpp) · [送模记录与渠道回执验收](../tests/persistent_dialogue.cpp)
+直接对话和原生书房点名产生的非空白最终文本进入主聊天。普通结构化对话还可调用 `main_reply({"text":"…"})` 提前发言或追问。成功回执的 `delivery` 和 `message` 分别标识本次投递和已写入的消息。同一回合末尾再次给出已显式发过的相同文字时复用原投递。独立回合、不同显式调用各有自己的投递号。内部入口的结算、工具回包和纯空白结算保持在原路径。[输出适配器](../apps/host/src/main_output.cpp) · [送模记录与渠道回执验收](../apps/host/tests/persistent_dialogue.cpp)
 
 发言首次写入后，在线终端即可读到正文，回合仍可继续运行。旧窗口的回合快照同步最近一条已写入的发言，持久历史保留每条发言。终端批处理读到 EOF 时，会等待自己发起的回合和待写答复。若持续无法写入，它以失败退出并显示原投递号，后台继续按该号补写。[正式终端验收](../tests/terminal_entry.ps1)
 
@@ -380,11 +380,11 @@ sequenceDiagram
 
 步骤 2 已将正式管理窗口及普通聊天终端接入同一后台。首次打开可启动本体，之后的窗口和终端复用原实例，离开只解除自己的连接。后台在唯一目录所有权内维护托盘寿命。轮询的同类错误、次数、首末时间及恢复结果写入独立的软件日志。`--host-status [DATA]` 查询实例，`--stop-host [DATA [INSTANCE]]` 可向已经核实的原实例请求退出。Release 终端包验收持有隔离后台的进程句柄，检查插件安装与卸载后显式停止它，并等待实际退出。[正式终端验收](../tests/terminal_entry.ps1) · [安装包验收](../scripts/verify-agent-package.ps1)
 
-步骤 3、4 的本体收发与存储已接通。主聊天信箱按原去向接纳普通输入、追加及排队，SQLite 保留原文、实际送模步骤、下一轮及主会话回答。运行时界面快照继续保留最近 16 轮，持久历史单独分页。后台重启后，未交付的普通输入可以续办，待发队列恢复为暂停，实效未知的工作沿原消息号保留。双窗口补读及收发接口见[第 5.5 节](#55-主会话消息与持久化)。[关闭 Trace 的长历史验收](../tests/persistent_dialogue.cpp) · [旧库重开及写入失败](../tests/message_recovery.cpp)
+步骤 3、4 的本体收发与存储已接通。主聊天信箱按原去向接纳普通输入、追加及排队，SQLite 保留原文、实际送模步骤、下一轮及主会话回答。运行时界面快照继续保留最近 16 轮，持久历史单独分页。后台重启后，未交付的普通输入可以续办，待发队列恢复为暂停，实效未知的工作沿原消息号保留。双窗口补读及收发接口见[第 5.5 节](#55-主会话消息与持久化)。[关闭 Trace 的长历史验收](../apps/host/tests/persistent_dialogue.cpp) · [旧库重开及写入失败](../apps/host/tests/message_recovery.cpp)
 
 | 步骤与依赖 | 实现入口与交付 | 当步验收 |
 |---|---|---|
-| 1 · 空插件首屏，接现有 U01／02 | 在 `ui/web` 接两个板块和房间右侧聊天，以 `room.read` 和已有回合查询绘制第一份文字状态。更新固定样本并独立清理旧图与引用。 | 正式入口能读到「书房 · 书桌旁」，切到设置占满内容区，返回继续同一对话。断开能看到数据过期。定向检查前端产物已清理旧图，最终分发再核对。 |
+| 1 · 空插件首屏，接现有 U01／02 | 在 `apps/desktop/web` 接两个板块和房间右侧聊天，以 `room.read` 和已有回合查询绘制第一份文字状态。更新固定样本并独立清理旧图与引用。 | 正式入口能读到「书房 · 书桌旁」，切到设置占满内容区，返回继续同一对话。断开能看到数据过期。定向检查前端产物已清理旧图，最终分发再核对。 |
 | 2 · 本体常驻，接现有 App | 后台宿主与桌面连接已接通。优先补齐软件运行日志、全局退出回执和后台图标，再接普通聊天终端。 | 普通关窗后原工作继续。显式退出能从日志追到原进程和各窗口实际结束。有桌面时，一个本体对应一个托盘图标。 |
 | 3 · 统一聊天信箱与存储，依赖 2 | 先接消息库、稳定身份与分页，再将普通发送、本轮追加和下一轮排队绑定到同一入口。为提交与入信箱之间的中断保留投递记录。 | 超过 16 轮及旧显示字节上限仍可翻到首条。相同提交只入库一次，同文不同提交各保留。注入写盘失败、回执丢失及重启，检查原号和实际去向。 |
 | 4 · 循环与输出归属，依赖 3 | 对照主、子入口，在 Agent／SDK 复用已验证的共同行为。将用户回复、内部结算和插件领域发言接到各自出口。 | 固定响应覆盖普通文本、显式发言后重复的最终文本、工具调用和静默结算。对照 `model.prepared` 的实际消息与工具清单、主聊天消息条数、游戏发言和上级收到的结果。 |
@@ -394,15 +394,15 @@ sequenceDiagram
 | 8 · 注册与视图，依赖 6、7 | 用同一个独立测试包逐项接入 UI 注册、追加组件、替换组件、整页板块、内嵌窗体、独立原生窗体。分别验证声明式组件与包内自定义页。 | 正式 SDK 与真实 DLL 走完第 9 节四项。双窗同时更新，关一窗另一窗继续。错误版本、争用替换位、卸载忙碌、成功卸载和重载后的旧回调分别有可核对的结果。 |
 | 9 · 联合验收，依赖 1～8 | 在正式管理中心用空插件安装与显式安装测试插件各走一遍，再作 Debug／Release 全量离线测试与分发核对。 | 从用户原话或环境触发到实际发言、消息落盘、窗口补读均可按身份对应。中文输入、缩放、键盘焦点、窄窗和正常退出通过原生容器验收。 |
 
-实现时分别从[前端主面板](../ui/web/src/MainPanel.vue)、[原生命令桥](../ui/host/probe_host.cpp)、[桌面生命周期](../app/gui/main.cpp)、[本体信箱](../app/mailbox_intake.cpp)、[事件信箱](../modules/events/src/mailboxes.cpp)、[插件管理器](../modules/plugin_host/src/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
+实现时分别从[前端主面板](../apps/desktop/web/src/MainPanel.vue)、[原生命令桥](../apps/desktop/src/host/probe_host.cpp)、[桌面生命周期](../apps/desktop/src/main.cpp)、[本体信箱](../apps/host/src/mailbox_intake.cpp)、[事件信箱](../modules/events/src/mailboxes.cpp)、[插件管理器](../modules/plugin_host/src/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
 
 ### 后台图标、退出与软件运行日志
 
-**现场与复现。** 2026-11-25 用户确认操作入口是「设置 → 退出大肥鱼」。按截图时间核对本机 00:31～00:38 的仓库、默认数据目录和 Windows 应用程序事件，未找到该次运行的应用 Trace 或崩溃、挂起记录。正式面板启动后台时只传模型配置、插件目录和数据目录，应用收到显式 Trace 目录后才创建 `RunLog`。现有 Trace 能记录模型、工具和信箱，窗口退出和 Windows 进程退出缺少默认落盘的记录。原运行的退出耗时和当时的在途任务无法还原。[启动参数](../app/management/client.cpp) · [Trace 创建条件](../app/application.cpp) · [现有 Trace 格式](../app/run_log.cpp)
+**现场与复现。** 2026-11-25 用户确认操作入口是「设置 → 退出大肥鱼」。按截图时间核对本机 00:31～00:38 的仓库、默认数据目录和 Windows 应用程序事件，未找到该次运行的应用 Trace 或崩溃、挂起记录。正式面板启动后台时只传模型配置、插件目录和数据目录，应用收到显式 Trace 目录后才创建 `RunLog`。现有 Trace 能记录模型、工具和信箱，窗口退出和 Windows 进程退出缺少默认落盘的记录。原运行的退出耗时和当时的在途任务无法还原。[启动参数](../apps/host/src/management/client.cpp) · [Trace 创建条件](../apps/host/src/application.cpp) · [现有 Trace 格式](../apps/host/src/run_log.cpp)
 
 用 `2750514` 对应的 Release 程序做了单窗和双窗两次复现。使用独立数据目录、空插件目录和离线配置，未提交聊天。在本地页面副本附加固定观测脚本，点击正式设置按钮并读取页面状态。外部观察者在确认退出前持有原后台进程句柄。双窗用例中，页面于 00:47:38.273 收到 `host.stopping`，00:47:38.353 观测到原进程以退出码 0 结束。约 7.9 秒后发起窗口仍显示「本体正在收尾」，另一窗口显示「本体连接中断」。单窗用例在进程结束约 7.8 秒后仍显示收尾。两个用例中，残留窗口均能响应 Win32 消息，显式关闭测试窗口后 WebView2 进程和临时目录正常回收。
 
-**原因。** 后台接纳退出时返回 `stopping`。桌面客户端只转交这次回执，页面随即停止轮询并忽略后续消息，原生窗口也没有等待该后台进程结束的路径。原验收在看到「已接收退出请求」时就由测试回调发送 `WM_CLOSE`，所以旧用例通过与用户看到窗口滞留可以同时成立。后台图标是另一处功能缺口。常驻入口以隐藏进程启动，当前源码未向 Windows 通知区域注册图标。[后台退出](../app/management/resident.cpp) · [页面状态](../ui/web/src/MainPanel.vue) · [测试断言](../tests/ui_main_panel.cpp) · [测试关窗回调](../app/gui/main.cpp)
+**原因。** 后台接纳退出时返回 `stopping`。桌面客户端只转交这次回执，页面随即停止轮询并忽略后续消息，原生窗口也没有等待该后台进程结束的路径。原验收在看到「已接收退出请求」时就由测试回调发送 `WM_CLOSE`，所以旧用例通过与用户看到窗口滞留可以同时成立。后台图标是另一处功能缺口。常驻入口以隐藏进程启动，当前源码未向 Windows 通知区域注册图标。[后台退出](../apps/host/src/management/resident.cpp) · [页面状态](../apps/desktop/web/src/MainPanel.vue) · [测试断言](../apps/desktop/tests/ui_main_panel.cpp) · [测试关窗回调](../apps/desktop/src/main.cpp)
 
 以下各项排在步骤 2 的普通终端适配之前，按独立功能点交付。
 
@@ -410,19 +410,19 @@ sequenceDiagram
 
 验收时关闭 Agent Trace，在两个窗口操作后重启，仍能从磁盘串起上一次启动到退出的全过程。日志在界面线程外写入，关键边界及时写出，按大小和保留预算轮转。磁盘不可写时应能看到记录失败的原因，业务和窗口仍可收尾。
 
-后台、管理窗口和普通聊天终端已默认在各自的数据目录下分进程写入启动与准备退出记录。每条带 UTC 毫秒、相对启动的纳秒数、进程序号和 PID，首条带构建标识。后台的实际退出继续由外部进程句柄核对。[软件运行日志](../app/software_log.cpp) · [正式进程验收](../tests/ui_resident_windows.ps1)
+后台、管理窗口和普通聊天终端已默认在各自的数据目录下分进程写入启动与准备退出记录。每条带 UTC 毫秒、相对启动的纳秒数、进程序号和 PID，首条带构建标识。后台的实际退出继续由外部进程句柄核对。[软件运行日志](../apps/host/src/software_log.cpp) · [正式进程验收](../tests/ui_resident_windows.ps1)
 
-写入线程已接入按完整记录换段和目录保留预算。定向验收覆盖同目录另一写入者持续换段、活动文件仍可读取，以及日志目录不可写时业务保留原退出码。[分段存储](../app/software_log_files.cpp) · [预算与故障验收](../tests/software_log.cpp)
+写入线程已接入按完整记录换段和目录保留预算。定向验收覆盖同目录另一写入者持续换段、活动文件仍可读取，以及日志目录不可写时业务保留原退出码。[分段存储](../apps/host/src/software_log_files.cpp) · [预算与故障验收](../tests/software_log.cpp)
 
-步骤 2a 的设置诊断入口已接通。进入设置后能看到本窗口的实际写入状态和数据目录下的日志位置。点击「打开日志目录」后，原生工作线程核对目录并返回 Shell 的接纳结果。以普通文件占住 `logs` 时，页面分别显示写入和打开失败的错误码，关窗与后台退出仍能完成。[设置读口](../app/gui/log_settings.cpp) · [原生页面验收](../tests/ui_main_panel.cpp)
+步骤 2a 的设置诊断入口已接通。进入设置后能看到本窗口的实际写入状态和数据目录下的日志位置。点击「打开日志目录」后，原生工作线程核对目录并返回 Shell 的接纳结果。以普通文件占住 `logs` 时，页面分别显示写入和打开失败的错误码，关窗与后台退出仍能完成。[设置读口](../apps/host/src/log_settings.cpp) · [原生页面验收](../apps/desktop/tests/ui_main_panel.cpp)
 
 **2b · 记录软件各阶段。** 本体记录启动、目录占用、配置与存储错误、插件加载与实际卸载、停止接纳、在途工作收尾和准备退出。窗口记录启动或连接、设置确认、IPC 交付或失败、原后台的实际退出码、WebView2 和窗口回收。托盘接入后记录图标注册、恢复、菜单命令和注销。普通轮询只记状态变化与汇总错误。
 
 验收时，用同一个退出操作号查到请求方、仍在等待的工作，以及观测到实际退出的进程。使用可控任务或 DLL 延迟收尾，日志能定位原工作或插件实例及等待时长。日志只保留允许的诊断字段，用合成的聊天正文、提示词和密钥核对脱敏。需要追查模型或工具时，通过回合号与工作号关联已有 Trace。
 
-后台与窗口已按握手所得的本体、客户端身份记录连接，设置和终端显式退出共用 `stop-<本体实例>` 操作号。提交、后台接纳和请求方得到的 IPC 回执分别落盘，普通状态轮询不产生逐条日志。同一目录重启后可以分别核对两次退出。[退出请求](../app/management/resident.cpp) · [跨进程记录验收](../tests/ui_resident_windows.ps1)
+后台与窗口已按握手所得的本体、客户端身份记录连接，设置和终端显式退出共用 `stop-<本体实例>` 操作号。提交、后台接纳和请求方得到的 IPC 回执分别落盘，普通状态轮询不产生逐条日志。同一目录重启后可以分别核对两次退出。[退出请求](../apps/host/src/management/resident.cpp) · [跨进程记录验收](../tests/ui_resident_windows.ps1)
 
-显式退出期间，`--host-status` 可查当前收尾阶段、阶段耗时及仍在退出的原会话与回合。后台在原会话和插件分别收尾后才记录该阶段的结果。固定响应验收阻塞原模型调用，重复退出仍得到同一操作，释放后从磁盘核对等待对象和耗时。[业务线程收尾](../app/management/host.cpp) · [管道验收](../tests/management_resident.cpp)
+显式退出期间，`--host-status` 可查当前收尾阶段、阶段耗时及仍在退出的原会话与回合。后台在原会话和插件分别收尾后才记录该阶段的结果。固定响应验收阻塞原模型调用，重复退出仍得到同一操作，释放后从磁盘核对等待对象和耗时。[业务线程收尾](../apps/host/src/management/host.cpp) · [管道验收](../apps/host/tests/management_resident.cpp)
 
 插件管理器已按实例代次报告加载、停止受阻与实际卸载。代码租约占用、已接纳但需继续轮询、原生模块已经释放在日志中各有证据，显式退出后的记录带同一操作号。受控 DLL 验收核对了上述三个边界和实际等待时长。[实例管理](../modules/plugin_host/src/manager.cpp) · [软件日志验收](../tests/software_log.cpp)
 
@@ -430,11 +430,11 @@ sequenceDiagram
 
 验收覆盖普通关窗、取消确认、重复退出和多窗口同时操作。普通关窗保留后台，确认退出后后台与关联窗口自行结束。收尾较慢时展示最近核实的等待对象，窗口仍可操作。意外断连、异常退出或等待超时时显示对应状态和日志入口，允许用户关闭当前窗口。补查只针对原实例，另一次启动须由用户发起。
 
-正式窗口已在握手回执确认前保留管道对端的进程同步句柄和原实例的退出事件。显式退出后，各窗口从内核读到原进程退出码 0，再进入原有 WebView2 与临时目录回收流程。退出验收点击正式设置按钮后只观察，分别检查原后台、发起窗口及旁观窗口的进程退出和磁盘回执。[原实例观察](../app/management/resident_watch.cpp) · [双窗口验收](../tests/ui_resident_exit.ps1)
+正式窗口已在握手回执确认前保留管道对端的进程同步句柄和原实例的退出事件。显式退出后，各窗口从内核读到原进程退出码 0，再进入原有 WebView2 与临时目录回收流程。退出验收点击正式设置按钮后只观察，分别检查原后台、发起窗口及旁观窗口的进程退出和磁盘回执。[原实例观察](../apps/host/src/management/resident_watch.cpp) · [双窗口验收](../tests/ui_resident_exit.ps1)
 
-窗口在正常对话读取中发现退出意图后改为每秒观察一次。收尾状态按原实例号查询，设置显示最近核实的回合或插件卸载阶段。等待超过 10 秒时可从该页查看日志或自行关窗。原进程意外终止时，页面显示原进程号和实际退出码，刷新仍能查看日志。[管理客户端](../app/management/client.cpp) · [界面验收](../tests/ui_main_panel.cpp)
+窗口在正常对话读取中发现退出意图后改为每秒观察一次。收尾状态按原实例号查询，设置显示最近核实的回合或插件卸载阶段。等待超过 10 秒时可从该页查看日志或自行关窗。原进程意外终止时，页面显示原进程号和实际退出码，刷新仍能查看日志。[管理客户端](../apps/host/src/management/client.cpp) · [界面验收](../apps/desktop/tests/ui_main_panel.cpp)
 
-真实管道验收在置位退出意图后断开连接，客户端收到 IPC 错误仍能核实原意图。另一端点返回的新实例进度会被丢弃。跨进程用例在相同目录启动替代本体，再刷新原窗口，核对显示的原进程号与退出码一致，并确认新本体仍在运行。[缺失回包验收](../tests/management_resident.cpp) · [同目录替换验收](../tests/ui_resident_exit.ps1)
+真实管道验收在置位退出意图后断开连接，客户端收到 IPC 错误仍能核实原意图。另一端点返回的新实例进度会被丢弃。跨进程用例在相同目录启动替代本体，再刷新原窗口，核对显示的原进程号与退出码一致，并确认新本体仍在运行。[缺失回包验收](../apps/host/tests/management_resident.cpp) · [同目录替换验收](../tests/ui_resident_exit.ps1)
 
 **2d · 由常驻本体持有通知区域图标。** 交互桌面上的本体使用隐藏的 Win32 顶层窗口和适配小尺寸、高 DPI 的应用图标，通过 `Shell_NotifyIconW` 注册。收到 `TaskbarCreated` 后恢复图标，退出收尾结束时注销。建议左键打开或唤回绑定原数据目录的管理中心，右键提供「打开管理中心」「打开日志目录」「退出大肥鱼」。退出沿用同一确认和收尾流程。[Windows 通知区域](https://learn.microsoft.com/en-us/windows/win32/shell/notification-area) · [任务栏重建通知](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar#taskbar-creation-notification)
 
@@ -444,15 +444,15 @@ sequenceDiagram
 
 ### 已有桥接与回归入口
 
-U02 已接入首个桌面只读查询。业务线程推进 [共享运行状态查询](../app/application.hpp) 并发布值副本，终端 `/task-status` 继续复用该入口。主文档以 `state.read` 请求 `topic: "run"`，协议 `version` 为字符串 `"1"`，宿主通过 `state.snapshot` 回显 `request`。可同时指定字符串 `session` 和 `turn` 查询原运行。收到 `run: null` 表示保留窗口中没有匹配运行，`available` 表示当前通道是否绑定应用宿主。非空快照分别返回业务结果、实际退出、待审批数量和读回判定。运行状态页可主动刷新。[主文档消息入口](../ui/host/probe_host.cpp) · [隐藏窗口验收](../tests/ui_run_status_probe.cpp)
+U02 已接入首个桌面只读查询。业务线程推进 [共享运行状态查询](../apps/host/src/application.hpp) 并发布值副本，终端 `/task-status` 继续复用该入口。主文档以 `state.read` 请求 `topic: "run"`，协议 `version` 为字符串 `"1"`，宿主通过 `state.snapshot` 回显 `request`。可同时指定字符串 `session` 和 `turn` 查询原运行。收到 `run: null` 表示保留窗口中没有匹配运行，`available` 表示当前通道是否绑定应用宿主。非空快照分别返回业务结果、实际退出、待审批数量和读回判定。运行状态页可主动刷新。[主文档消息入口](../apps/desktop/src/host/probe_host.cpp) · [隐藏窗口验收](../apps/desktop/tests/ui_run_status_probe.cpp)
 
 功能验收用固定模型响应、传输替身、真实线程、DLL、临时文件、原生窗口与固定浏览器协议。开发和全量均禁止调用真实模型，UI 测试禁用 Computer Use。模型在真实场景能否自主选对工具、恰当地追问属「仅记录，不执行」。[项目测试原则](../AGENTS.md#测试原则)
 
-可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取后台本体的回合正文和本窗口的命令回执。`dialogue.cancel` 与 `dialogue.clear` 使用同一命令编号空间，执行前复核原会话和回合。取消与实际退出分别显示，清空只在空闲时执行。[桌面业务线程](../app/management/host.cpp) · [正式主面板验收](../tests/ui_main_panel.cpp)
+可信主文档用 `dialogue.submit` 提交，由业务线程调用 `Application::submit_dialogue`，再用 `dialogue.read` 读取后台本体的回合正文和本窗口的命令回执。`dialogue.cancel` 与 `dialogue.clear` 使用同一命令编号空间，执行前复核原会话和回合。取消与实际退出分别显示，清空只在空闲时执行。[桌面业务线程](../apps/host/src/management/host.cpp) · [正式主面板验收](../apps/desktop/tests/ui_main_panel.cpp)
 
-下一轮消息由 `dialogue.enqueue` 绑定用户所见的原回合，应用为每条原话签发消息号。`dialogue.resume` 核对会话和队首，`dialogue.remove` 只作用于仍待发的原项。受信快照在修订变化时一起交付对话和队列，停止命令有独立槽位。[队列桥接验收](../tests/ui_dialogue_queue.cpp)
+下一轮消息由 `dialogue.enqueue` 绑定用户所见的原回合，应用为每条原话签发消息号。`dialogue.resume` 核对会话和队首，`dialogue.remove` 只作用于仍待发的原项。受信快照在修订变化时一起交付对话和队列，停止命令有独立槽位。[队列桥接验收](../apps/desktop/tests/ui_dialogue_queue.cpp)
 
-`dialogue.append` 只向原活动回合收件，后续模型请求实际提交后才展示「已带入本轮」。位置使用单独的 `room.read` 查询，由业务线程发布本体书房、身体和地点的对应关系。两类正文或位置查询均限于专用面板来源。[原生书房](../app/builtin_room.cpp) · [可信主文档](../ui/host/probe_host.cpp)
+`dialogue.append` 只向原活动回合收件，后续模型请求实际提交后才展示「已带入本轮」。位置使用单独的 `room.read` 查询，由业务线程发布本体书房、身体和地点的对应关系。两类正文或位置查询均限于专用面板来源。[原生书房](../apps/host/src/builtin_room.cpp) · [可信主文档](../apps/desktop/src/host/probe_host.cpp)
 
 首版必须覆盖以下场景，而不只检查页面是否显示：
 
