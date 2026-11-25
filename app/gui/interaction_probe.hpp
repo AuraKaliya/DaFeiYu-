@@ -28,6 +28,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_observer(bool stop, bool log_error, const std::filesystem::path& replacement_ready);
     // 从托盘冷启动的正式聊天窗内核对两次确认及取消后的原会话。
     void start_tray_panel(const std::filesystem::path& profile);
+    // 在正式面板执行长历史的双窗同步、关窗入库、分页刷新及重启核对。
+    void start_history(std::wstring_view mode, const std::filesystem::path& profile);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif
