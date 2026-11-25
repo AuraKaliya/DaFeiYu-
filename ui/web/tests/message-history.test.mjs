@@ -54,14 +54,26 @@ test('timeline associates final deliveries with their original instance and turn
   a.receipt = { state: 'accepted', instance:'old', session:'1', turn:'1', nativeMessage:'0' };
   b.receipt = { ...a.receipt, instance: 'new' };
   const current = { session:'1', turn:'1', queuedMessage:'0', inputs:[] };
-  const final = { ...sample(3), sender:'assistant', route:'reply', instance:'new', session:'1', turn:'1', delivery:'new/1/1/final' };
+  const final = { ...sample(3), sender:'assistant', source:'main', route:'reply', instance:'new', session:'1', turn:'1',
+    delivery:'new/1/1/final', receipt:{state:'delivered'} };
   const separate = { ...final, message:'4', delivery:'another-notice' };
   const blocks = messageTimeline([a,b,final,separate],[current],'new');
   assert.equal(blocks.length, 3);
   assert.equal(blocks[0].row.message,'1');
   assert.equal(blocks[1].prompt.message,'2');
-  assert.equal(blocks[1].answer.message,'3');
+  assert.deepEqual(blocks[1].answers.map(row=>row.message),['3']);
   assert.equal(blocks[2].row.message,'4');
+});
+
+// 显式发言和最终文本都以实际投递号显示，同文的其他回合及多次正式发言各有自己的消息。
+test('explicit and final deliveries render once per stored row, never from a model result alone', () => {
+  const turns = [1,2,3].map(i=>({session:'1',turn:String(i),queuedMessage:'0',inputs:[],answer:'同一回答'}));
+  const delivered = (id,turn,suffix)=>({ ...sample(id), sender:'assistant', source:'main', route:'reply', text:'同一回答',
+    instance:'resident', session:'1', turn:String(turn), delivery:'resident/1/'+turn+'/'+suffix, receipt:{state:'delivered'} });
+  const rows = [delivered(1,1,'tool-first'), delivered(2,2,'tool-second'), delivered(3,2,'final'),
+    {...delivered(4,3,'final'),receipt:{state:'pending'}}];
+  const blocks = messageTimeline(rows,turns,'resident');
+  assert.deepEqual(blocks.map(entry=>entry.answers.map(r=>r.message)),[['1'],['2','3'],[]]);
 });
 
 // 刷新后的每种持久回执沿用原窗口命令语义，仅肯定接纳才清除未改草稿。
