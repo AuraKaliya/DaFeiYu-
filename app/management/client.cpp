@@ -1,5 +1,6 @@
 #include "client.hpp"
 #include "protocol.hpp"
+#include "poll_log.hpp"
 #include "resident.hpp"
 #include <windows.h>
 #include <algorithm>
@@ -47,15 +48,19 @@ ResidentConnection connect(std::stop_token stop, const std::filesystem::path& pr
 
 // 用已绑定的进程描述退出事实，收尾中的等待对象只从同一实例读回。
 // 步骤：固定内核采样 → 在原进程仍运行时补读收尾阶段 → 管道不可用时保留已核实的事实。
-Json lifecycle(const std::filesystem::path& profile, const std::string& instance, const ResidentObservation& peer, const Json& request) {
+Json lifecycle(const std::filesystem::path& profile, const std::string& instance, const ResidentObservation& peer,
+    const Json& request, PollLog& polls) {
     Json result{{"event","host.lifecycle"},{"version","1"},{"request",request.at("request")},
         {"requested",peer.requested},{"pid",peer.pid},{"exitCode",nullptr}};
     if (peer.exit_code) result["exitCode"] = *peer.exit_code;
     else {
         try {
             const auto state = resident_request(profile,{{"op","status"},{"instance",instance}});
-            if (state.at("instance")==instance && state.at("pid")==peer.pid && state.contains("progress")) result["progress"] = state.at("progress");
-        } catch (const std::exception&) {
+            if (state.at("instance")!=instance || state.at("pid")!=peer.pid) throw std::runtime_error("management: original peer differs");
+            if (state.contains("progress")) result["progress"] = state.at("progress");
+            polls.success(app::SoftwareEvent::poll_stop);
+        } catch (const std::exception& error) {
+            polls.failure(app::SoftwareEvent::poll_stop,error);
             // 管道可能先于进程关闭，保留本次内核采样。
         }
     }
@@ -138,6 +143,7 @@ void Client::close() noexcept {
 // 步骤：取得观察身份 → 分派本窗诊断或后台请求 → 缓存回包并在停止后解除绑定。
 void Client::run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs) {
     std::string client, instance, error;
+    PollLog polls(software_);
     try {
         auto connection = connect(stop,profile,definition,start,software_);
         client = std::move(connection.client);
@@ -164,8 +170,12 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
             pending_.pop_front();
             queued_bytes_ -= item.bytes;
         }
+        const auto& type = item.message.at("type");
+        std::optional<app::SoftwareEvent> poll;
+        if (type=="dialogue.read") poll = app::SoftwareEvent::poll_dialogue;
+        else if (type=="room.read") poll = app::SoftwareEvent::poll_room;
+        else if (type=="state.read") poll = app::SoftwareEvent::poll_run;
         try {
-            const auto& type = item.message.at("type");
             const auto peer = type=="dialogue.read" ? observe() : ResidentObservation{};
             if (type=="logs.read" || type=="logs.open") {
                 if (!logs) throw std::runtime_error("window diagnostics unavailable");
@@ -173,13 +183,15 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
                 response.update(Json{{"event","logs.status"},{"version","1"},{"request",item.message.at("request")}});
                 item.message = std::move(response);
             } else if (client.empty()) throw std::runtime_error(error);
-            else if (!peer.error && (peer.requested || peer.exit_code)) item.message = lifecycle(profile,instance,peer,item.message);
+            else if (!peer.error && (peer.requested || peer.exit_code)) item.message = lifecycle(profile,instance,peer,item.message,polls);
             else if (type=="host.stop") {
                 const auto reply = request_stop(profile,instance,client,software_);
                 stop_accepted_ = true;
                 item.message = {{"event","host.stopping"},{"version","1"},{"request",item.message.at("request")},{"state",reply.at("state")}};
             } else item.message = resident_request(profile,{{"op","request"},{"client",client},{"body",item.message}});
+            if (poll) polls.success(*poll);
         } catch (const std::exception& ex) {
+            if (poll) polls.failure(*poll,ex);
             item.message = {{"event","management.error"},{"version","1"},{"request",item.message.at("request")},{"reason",ex.what()}};
         }
         std::lock_guard lock(mutex_);
