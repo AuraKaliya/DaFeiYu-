@@ -22,6 +22,7 @@ struct Subagents::Slot {
     SubagentPhase phase = SubagentPhase::idle;
     std::string answer;
     bool closing = false;
+    bool compare_projection = false;
 };
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
@@ -39,7 +40,10 @@ runtime::DomainId Subagents::open(const std::shared_ptr<plugins::PluginInstance>
         instance->phase() != plugins::InstancePhase::active)) throw std::invalid_argument("subagent: owner unavailable");
     const auto free = std::ranges::find_if(slots_,[](const auto& slot) { return !slot; });
     if (free == slots_.end()) throw std::length_error("subagent: session capacity exhausted");
-    *free = std::make_unique<Slot>(instance,config_,events_,backend_,log_ ? log_->sinks("plugin") : agent::RunCaptureSinks{});
+    const bool compare = log_ && instance->plugin_id() == "mc.companion" &&
+        std::ranges::none_of(slots_,[](const auto& slot) { return slot && slot->compare_projection; });
+    *free = std::make_unique<Slot>(instance,config_,events_,backend_,log_ ? log_->sinks("plugin",compare) : agent::RunCaptureSinks{});
+    (*free)->compare_projection = compare;
     return (*free)->session.id();
 }
 

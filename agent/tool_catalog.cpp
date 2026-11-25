@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -51,7 +52,8 @@ runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory fact
     const auto slot = std::find(entries_.begin(),entries_.end(),nullptr);
     if (slot == entries_.end()) throw std::length_error("tools: catalog full");
     ToolSchema schema(description.model.parameters);
-    description.schema_digest = "sha256:"+platform::sha256(nlohmann::json::parse(description.model.parameters).dump());
+    description.model.parameters = nlohmann::json::parse(description.model.parameters).dump();
+    description.schema_digest = "sha256:"+platform::sha256(description.model.parameters);
     TraceVersions metadata; metadata.tools.push_back({description.id,description.version,description.instance,description.plugin_version,description.schema_digest});
     validate_trace_versions(metadata);
     const auto registration = runtime::next_domain();
@@ -88,6 +90,17 @@ ToolSnapshot ToolCatalog::snapshot(std::span<const std::string> ids, bool allow_
 std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
     std::vector<model::ToolDefinition> result;
     for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description.model);
+    return result;
+}
+// 由当前可用的原注册生成与授权排列无关的模型定义。
+// 步骤：读取有效成员 → 按展示序与规范 ID 排序 → 返回有序模型契约。
+std::vector<model::ToolDefinition> ToolSnapshot::ordered_definitions() const {
+    auto descriptions = this->descriptions();
+    std::ranges::sort(descriptions, [](const ToolDescription& left, const ToolDescription& right) {
+        return std::tie(left.display_order,left.id) < std::tie(right.display_order,right.id);
+    });
+    std::vector<model::ToolDefinition> result;
+    for (auto& item : descriptions) result.push_back(std::move(item.model));
     return result;
 }
 // 按请求复制当前可用或原固定成员描述，读取不改变模型可见性或执行授权。

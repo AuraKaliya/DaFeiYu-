@@ -40,6 +40,7 @@ Response proposal() {
 // 步骤：取得工具实效并改写回复 → 交换同组授权提交新原话 → 执行规划、首步与修订 → 核对请求数和实际分派。
 void replay() {
     std::vector<Request> prepared;
+    std::vector<std::vector<ToolDefinition>> projections;
     std::atomic<unsigned> attempts = 0;
     unsigned dispatches = 0;
     Backend fixed{[&](const Config&, const Request&) -> Response {
@@ -62,8 +63,12 @@ void replay() {
     }
     const std::vector<std::string> first{"test/inventory","test/inspect"}, swapped{"test/inspect","test/inventory"};
     RunOptions options;
+    options.compare_projection = true;
     options.model_capture = [&](const ModelCapture& capture) {
-        if (capture.phase == ModelCapturePhase::prepared) prepared.push_back(*capture.input);
+        if (capture.phase == ModelCapturePhase::prepared && capture.projected_tools && capture.evidence_revision) {
+            prepared.push_back(*capture.input);
+            projections.push_back(*capture.projected_tools);
+        }
     };
     options.text_hook = [](TextHookPoint point, const auto&, auto, auto text, auto) -> std::optional<std::string> {
         if (point == TextHookPoint::reply && text == "raw-A") return "effective-B";
@@ -90,6 +95,9 @@ void replay() {
     until(session,[&] { return !session.busy(); });
 
     check(attempts == 7 && prepared.size() == 7 && dispatches == 1, "unexpected external work");
+    check(projections[0].size() == 2 && projections[2].size() == 2 &&
+        projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
+        projections[3].empty() && projections[5].empty(), "projection changed grants or followed caller order");
     check(prepared[3].tools.empty() && prepared[5].tools.empty() && contains(prepared[5],"use a chest"),"revision or planning authority changed");
     check(contains(prepared[2],"inventory-receipt-8") && contains(prepared[2],"raw-A"),"ordinary baseline lost the receipt or raw reply");
     const bool same = prepared[0].tools.front().name == prepared[2].tools.front().name;

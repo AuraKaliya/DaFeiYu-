@@ -15,6 +15,7 @@ struct ToolDescription {
     bool changes_state = false;
     bool idempotent = false;
     std::optional<std::string> plugin_version, schema_digest;
+    std::uint32_t display_order = 0;
 };
 struct ToolSelection { ToolDescription description; runtime::DomainId registration = 0; };
 struct ToolEntry;
@@ -24,6 +25,8 @@ class ToolSnapshot {
   public:
     // 返回仍获准且已绑定实现的成员描述，不追加快照建立后注册的工具。
     std::vector<model::ToolDefinition> definitions() const;
+    // 按注册展示序和规范 ID 投影当前可用工具，原注册仍负责执行及撤权。
+    std::vector<model::ToolDefinition> ordered_definitions() const;
     // 复制公开描述；默认只返回当前可用成员，版本清单可显式读取原固定成员，不取得工作或原生代码。
     std::vector<ToolDescription> descriptions(bool available_only = true) const;
     // 判断固定授予成员是否包含变更工具，禁用或撤销不会隐藏原范围的性质。

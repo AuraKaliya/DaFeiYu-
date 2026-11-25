@@ -24,32 +24,44 @@ FinishReason finish_reason(const std::string& reason) {
     if (reason == "content_filter") return FinishReason::content_filter;
     throw std::runtime_error("model: unsupported finish reason");
 }
+// 构造统一请求的兼容协议字段，对照记录与实际供应商请求共用同一编码。
+// 步骤：校验请求 → 编码原序消息与配对 → 加入工具定义及输出限额。
+Json wire_fields(const Request& request, bool thinking) {
+    validate_request(request);
+    auto messages = Json::array();
+    for (const auto& message : request.messages) {
+        Json item{{"role",role_name(message.role)},{"content",message.content}};
+        if (!message.tool_calls.empty()) {
+            item["tool_calls"] = Json::array();
+            for (const auto& call : message.tool_calls) item["tool_calls"].push_back({{"id",call.id},{"type","function"},
+                {"function",{{"name",call.name},{"arguments",call.arguments}}}});
+        }
+        if (message.role == Role::tool) item["tool_call_id"] = message.tool_call_id;
+        if (thinking && !request.tools.empty() && message.reasoning_content)
+            item["reasoning_content"] = *message.reasoning_content;
+        messages.push_back(std::move(item));
+    }
+    Json body{{"messages",std::move(messages)}};
+    if (!request.tools.empty()) {
+        body["tools"] = Json::array();
+        for (const auto& tool : request.tools) body["tools"].push_back({{"type","function"},
+            {"function",{{"name",tool.name},{"description",tool.description},{"parameters",Json::parse(tool.parameters)}}}});
+    }
+    if (request.max_output_tokens) body["max_tokens"] = *request.max_output_tokens;
+    return body;
+}
+}
+// 编码相同内容字段用于离线对照，保持当前思考模式对续行字段的选择。
+std::string encode_request_fields(const Request& request, bool thinking) {
+    return wire_fields(request,thinking).dump();
 }
 // 编码带工具历史的统一请求，供应商特有字段只在模型层选择。
-// 步骤：校验统一请求 → 序列化消息和定义 → 选择供应商参数 → 输出 UTF-8 JSON。
+// 步骤：生成已校验的消息与工具 → 选择供应商参数 → 输出 UTF-8 JSON。
 std::string encode_request(const Config& config, const Request& request) {
-    validate_request(request);
     try {
-        auto messages = Json::array();
-        for (const auto& message : request.messages) {
-            Json item{{"role",role_name(message.role)},{"content",message.content}};
-            if (!message.tool_calls.empty()) {
-                item["tool_calls"] = Json::array();
-                for (const auto& call : message.tool_calls) item["tool_calls"].push_back({{"id",call.id},{"type","function"},
-                    {"function",{{"name",call.name},{"arguments",call.arguments}}}});
-            }
-            if (message.role == Role::tool) item["tool_call_id"] = message.tool_call_id;
-            if (config.thinking_enabled() && !request.tools.empty() && message.reasoning_content)
-                item["reasoning_content"] = *message.reasoning_content;
-            messages.push_back(std::move(item));
-        }
-        Json body{{"model",config.model},{"stream",false},{"messages",std::move(messages)}};
-        if (!request.tools.empty()) {
-            body["tools"] = Json::array();
-            for (const auto& tool : request.tools) body["tools"].push_back({{"type","function"},
-                {"function",{{"name",tool.name},{"description",tool.description},{"parameters",Json::parse(tool.parameters)}}}});
-        }
-        if (request.max_output_tokens) body["max_tokens"] = *request.max_output_tokens;
+        auto body = wire_fields(request,config.thinking_enabled());
+        body["model"] = config.model;
+        body["stream"] = false;
         if (!encode_thinking(body,config)) throw std::invalid_argument("provider: expected deepseek or qwen");
         return body.dump();
     } catch (const Json::exception&) { throw std::invalid_argument("model: invalid UTF-8 or JSON request"); }

@@ -17,6 +17,9 @@ struct ModelCapture {
     runtime::OperationState result = runtime::OperationState::pending;
     bool thinking = false;
     std::string_view persona_profile, prompt_template, reasoning_effort;
+    const std::vector<model::ToolDefinition>* projected_tools = nullptr;
+    std::uint64_t evidence_revision = 0;
+    std::string_view purpose;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;
@@ -37,5 +40,6 @@ struct RunCaptureSinks {
     ModelCaptureSink model;
     TurnExitSink exit;
     ToolCaptureSink tool;
+    bool compare_projection = false;
 };
 }

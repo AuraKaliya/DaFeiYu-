@@ -162,6 +162,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
     if (!options.model_capture) options.model_capture = capture_.model;
     if (!options.exit_capture) options.exit_capture = capture_.exit;
     if (!options.tool_capture) options.tool_capture = capture_.tool;
+    options.compare_projection = options.compare_projection || capture_.compare_projection;
     if (!options.extension && !options.text_hook && !options.version_labels.control_extension) options.version_labels.control_extension = "none";
     // 用独立会话门保护规则回调，关闭发生在回调内时仍能阻止新的受控调用。
     // 步骤：调用明确规则 → 重查会话门 → 返回原决定或关闭拒绝。

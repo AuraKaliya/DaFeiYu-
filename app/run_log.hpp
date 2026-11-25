@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <nlohmann/json_fwd.hpp>
 
 namespace dfy::app {
@@ -17,7 +18,7 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
     // 返回本次运行的实际日志文件。
     const std::filesystem::path& path() const noexcept { return path_; }
     // 把同一输出绑定到指定来源的 Agent 会话。
-    agent::RunCaptureSinks sinks(std::string source);
+    agent::RunCaptureSinks sinks(std::string source, bool compare_projection = false);
     // 在宿主线程追加已核对的事件，记录失败独立于业务处理。
     void append(std::string_view kind, nlohmann::json fields) noexcept;
     // 记录本体文本信件的原地址、发送者、接纳序号及可选目标回合。
@@ -25,7 +26,8 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
         std::string_view category, std::string_view body, std::optional<agent::RunId> run = {}) noexcept;
   private:
     // 写入一次模型记录，供后续按原请求身份复盘。
-    void model(std::string_view source, const agent::ModelCapture& value);
+    void model(std::string_view source, const agent::ModelCapture& value,
+        std::map<std::string,std::vector<std::string>>& previous);
     // 写入候选、实际接纳及退出时的原工作证据。
     void tool(std::string_view source, const agent::ToolCapture& value);
     // 写入已经退出的运行，包括元数据与实际内部结算。

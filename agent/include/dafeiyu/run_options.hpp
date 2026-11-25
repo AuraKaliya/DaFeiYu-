@@ -60,5 +60,7 @@ struct RunOptions {
     model::ThinkingPreference thinking = model::ThinkingPreference::inherit;
     // 仅由允许真人对话的宿主开启，当轮正文不能改变既有授权。
     bool accept_user_input = false;
+    // 仅在同步采集回调中比较同一截止号的只读投影。
+    bool compare_projection = false;
 };
 }

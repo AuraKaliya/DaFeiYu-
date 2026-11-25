@@ -6,6 +6,7 @@
 #include "../plugins/examples/observer/observer_api.h"
 #include <dafeiyu/diagnostic_json.hpp>
 #include <dafeiyu/run_loop.hpp>
+#include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -362,6 +363,7 @@ void trace_rewrites(const fs::path& run) {
     RunOptions options;
     options.tools = catalog.snapshot(ids);
     options.model_capture = capture.model;
+    options.compare_projection = true;
     options.tool_capture = capture.tool;
     options.exit_capture = capture.exit;
     options.text_hook = [](TextHookPoint point,const auto&,auto,std::string_view value,std::size_t) -> std::optional<std::string> {
@@ -388,6 +390,16 @@ void trace_rewrites(const fs::path& run) {
     dfy::app::replay_trace(trace->path(),id,replay);
     check(replay.str().find("2 model requests, 2 tool exits, succeeded") != std::string::npos,
         "replay lost response rewrite or effective tool arguments");
+    std::ifstream rows(trace->path(),std::ios::binary);
+    std::vector<nlohmann::json> samples;
+    for (std::string line; std::getline(rows,line);) {
+        auto row = nlohmann::json::parse(line);
+        if (row.at("kind") == "model.prepared") samples.push_back(row.at("projection"));
+    }
+    check(samples.size() == 2 && samples[0].at("toolsSha256") == samples[1].at("toolsSha256") &&
+        samples[0].at("headSha256") == samples[1].at("headSha256") && samples[1].at("commonMessages") == 1 &&
+        samples[1].at("firstChangedRole") == "assistant" && samples[0].at("cutoff") < samples[1].at("cutoff"),
+        "shadow comparison lost unchanged prefix, wire tools or evidence cutoff");
 }
 
 // 验证优先取件有界且接纳失败保留原消息。

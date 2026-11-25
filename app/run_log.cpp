@@ -1,5 +1,7 @@
 #include "run_log.hpp"
 #include "trace_model.hpp"
+#include <dafeiyu/model_protocol.hpp>
+#include <dafeiyu/digest.hpp>
 #include <dafeiyu/diagnostic_json.hpp>
 #include <array>
 #include <iostream>
@@ -11,6 +13,39 @@ using namespace trace_format;
 constexpr std::array outcomes{"pending","returned","threw"};
 constexpr std::array phases{"model.prepared","model.submitted","model.exited","model.rewritten"};
 constexpr std::array tool_phases{"tool.candidate","tool.admitted","tool.exited"};
+
+// 对比同一截止号下的工具序列，并按会话与用途记录连续两次投影的消息前缀。
+// 步骤：共享供应商字段编码 → 找出首个工具差异 → 比较消息指纹和配对身份 → 保存本次有限指纹。
+Json compare_input(const agent::ModelCapture& value, std::vector<std::string>& previous) {
+    auto projected = *value.input;
+    projected.tools = *value.projected_tools;
+    const auto before = model::encode_request_fields(*value.input,value.thinking);
+    const auto after = model::encode_request_fields(projected,value.thinking);
+    const auto original = Json::parse(before);
+    const auto next = Json::parse(after);
+    const auto actual_tools = original.value("tools",Json::array());
+    const auto tools = next.value("tools",Json::array());
+    std::size_t index = 0;
+    while (index < actual_tools.size() && index < tools.size() && actual_tools[index] == tools[index]) ++index;
+    Json result{{"cutoff",value.evidence_revision},{"purpose",value.purpose},{"originalFieldBytes",before.size()},
+        {"projectedFieldBytes",after.size()},{"toolsSha256",platform::sha256(tools.dump())},{"toolCount",tools.size()}};
+    if (index < actual_tools.size() || index < tools.size()) result["firstToolDifference"] = index;
+
+    const auto& messages = next.at("messages");
+    std::vector<std::string> stamps;
+    stamps.reserve(messages.size());
+    for (const auto& message : messages) stamps.push_back(platform::sha256(message.dump()));
+    const auto common = std::mismatch(stamps.begin(),stamps.end(),previous.begin(),previous.end()).first-stamps.begin();
+    result["commonMessages"] = common;
+    result["headSha256"] = stamps.front();
+    if (static_cast<std::size_t>(common) < messages.size()) {
+        const auto& first = messages.at(common);
+        result["firstChangedRole"] = first.at("role");
+        if (first.contains("tool_call_id")) result["firstChangedCall"] = first.at("tool_call_id");
+    }
+    previous = std::move(stamps);
+    return result;
+}
 
 // 依次尝试新目录，同一夹具可保留多轮证据。
 std::filesystem::path log_path(const std::filesystem::path& root) {
@@ -36,11 +71,12 @@ RunLog::RunLog(const std::filesystem::path& root) : path_(log_path(root)), outpu
 RunLog::~RunLog() { append("trace.closed",Json::object()); }
 
 // 为原 Agent 来源签发同一份日志的记录回调。
-agent::RunCaptureSinks RunLog::sinks(std::string source) {
+agent::RunCaptureSinks RunLog::sinks(std::string source, bool compare_projection) {
     const auto log = shared_from_this();
-    return {[log, source](const auto& value) { log->model(source,value); },
+    auto previous = std::make_shared<std::map<std::string,std::vector<std::string>>>();
+    return {[log, source, previous](const auto& value) { log->model(source,value,*previous); },
         [log, source](const auto& record) { log->exit(source,record); },
-        [log, source](const auto& value) { log->tool(source,value); }};
+        [log, source](const auto& value) { log->tool(source,value); },compare_projection || source == "main"};
 }
 
 // 串联候选参数、已接纳调用和原退出回执。
@@ -99,7 +135,8 @@ void RunLog::mail(std::string_view kind, runtime::DomainId mailbox, runtime::Dom
 
 // 保留每次模型请求及其真正退出，不以准备状态推断服务已调用。
 // 步骤：固定运行与步骤身份 → 加入实际输入或输出 → 记录调用时刻与结果。
-void RunLog::model(std::string_view source, const agent::ModelCapture& value) {
+void RunLog::model(std::string_view source, const agent::ModelCapture& value,
+    std::map<std::string,std::vector<std::string>>& previous) {
     using namespace std::chrono;
     const auto attempt = value.attempt;
     Json item{{"source",source},{"session",attempt.step.run.session},{"run",attempt.step.run.sequence},
@@ -109,6 +146,10 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value) {
     if (!value.persona_profile.empty()) item["personaProfile"] = value.persona_profile;
     if (!value.prompt_template.empty()) item["promptTemplate"] = value.prompt_template;
     if (value.input) item["input"] = encode_request(*value.input);
+    if (value.input && value.projected_tools) {
+        try { item["projection"] = compare_input(value,previous[std::string(value.purpose)]); }
+        catch (...) { item["projectionUnavailable"] = true; }
+    }
     if (value.output) item["output"] = encode_response(*value.output);
     if (value.call) {
         const auto& call = *value.call;

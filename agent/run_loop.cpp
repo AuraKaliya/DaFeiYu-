@@ -157,8 +157,20 @@ struct RunLoopState {
         if (!options.model_capture) return;
         const auto& versions = record->versions_;
         const auto view = [](const std::optional<std::string>& label) { return label ? std::string_view(*label) : std::string_view{}; };
-        try { options.model_capture({phase,attempt,config.provider,config.model,input,output,call,result,config.thinking_enabled(),
-            view(versions.persona_profile),view(versions.prompt_template),config.reasoning_effort()}); }
+        try {
+            ModelCapture sample{phase,attempt,config.provider,config.model,input,output,call,result,config.thinking_enabled(),
+                view(versions.persona_profile),view(versions.prompt_template),config.reasoning_effort()};
+            sample.purpose = planning_request ? (planning_request->expected.plan_revision ? "plan_revision" : "plan_generation") :
+                (plan_step ? "plan_step" : "direct");
+            sample.evidence_revision = record->journal_.revision();
+            std::vector<model::ToolDefinition> ordered;
+            if (phase == ModelCapturePhase::prepared && options.compare_projection) {
+                const auto& scope = record->plan_ ? step_tools : options.tools;
+                if (scope && !planning_request) ordered = scope->ordered_definitions();
+                sample.projected_tools = &ordered;
+            }
+            options.model_capture(sample);
+        }
         catch (...) {}
     }
     // 停止新子调用，实际模型及工具退出仍由原完成源确认。
