@@ -1245,6 +1245,12 @@ async function main() {
       const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
       assert.ok(rows.some(row => row.category === 'mc.partner.event' && row.body.event.type === 'player.left'));
       assert.ok(!rows.some(row => row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed'));
+      const original = rows.filter(row => row.kind === 'binding.work_settled' && row.work === explicitReply.id);
+      assert.deepEqual(original.map(row => [row.revision,row.phase,row.retired]),[
+        [1,'accepted',false],[2,'effect',false],[3,'exit',true],[4,'effect',true]]);
+      assert.equal(new Set(original.map(row => row.session)).size,1);
+      assert.equal(original[3].body.result.delivery,'sent');
+      assert.ok(original[3].finalEffect);
     } else if (delivery === 'late') {
       assert.deepEqual([replies, stopped, replyReads], [1, 1, 1]);
       const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);

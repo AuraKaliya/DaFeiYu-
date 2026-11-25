@@ -33,6 +33,14 @@ struct Subagents::WorkSlot {
     runtime::DomainId owner, session;
     BindingWorks works;
     bool retired = false;
+
+    // 先结算原工作，只有水位推进才向诊断日志追加一次原回执。
+    std::uint64_t settle(std::uint64_t epoch, const plugins::SubagentWorkFact& fact, const std::shared_ptr<RunLog>& log) {
+        const auto before = works.watermark();
+        const auto receipt = works.settle(epoch,fact);
+        if (log && receipt > before) log->work_fact(owner,session,retired,fact,receipt);
+        return receipt;
+    }
 };
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
@@ -119,10 +127,10 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
 // 步骤：沿原身份查活动或退役记录 → 核对新工作的有效绑定 → 在有界索引中为首次接纳预留位置。
 std::uint64_t Subagents::settle(runtime::DomainId owner, runtime::DomainId id, plugins::SubagentWorkFact fact) {
     auto* ledger = work_slot(owner,id);
-    if (ledger && ledger->retired) return ledger->works.settle(0,fact);
+    if (ledger && ledger->retired) return ledger->settle(0,fact,log_);
     auto& slot = find(owner,id);
     const auto epoch = slot.closing || stopping_ ? 0 : slot.facts.epoch();
-    if (ledger) return ledger->works.settle(epoch,fact);
+    if (ledger) return ledger->settle(epoch,fact,log_);
 
     auto free = std::ranges::find_if(work_slots_,[](const auto& item) { return !item; });
     if (free==work_slots_.end()) {
@@ -132,7 +140,7 @@ std::uint64_t Subagents::settle(runtime::DomainId owner, runtime::DomainId id, p
     if (free==work_slots_.end()) throw std::length_error("subagent: unsettled binding capacity exhausted");
     auto next = std::make_unique<WorkSlot>();
     next->owner = owner; next->session = id;
-    const auto receipt = next->works.settle(epoch,fact);
+    const auto receipt = next->settle(epoch,fact,log_);
     *free = std::move(next);
     return receipt;
 }

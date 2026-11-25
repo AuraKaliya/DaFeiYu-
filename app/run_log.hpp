@@ -7,6 +7,7 @@
 #include <map>
 #include <nlohmann/json_fwd.hpp>
 
+namespace dfy::plugins { struct SubagentWorkFact; }
 namespace dfy::app {
 // 单一宿主线程写入的局内日志，与运行和原生操作的结算责任独立。
 class RunLog final : public std::enable_shared_from_this<RunLog> {
@@ -24,6 +25,9 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
     // 记录本体文本信件的原地址、发送者、接纳序号及可选目标回合。
     void mail(std::string_view kind, runtime::DomainId mailbox, runtime::DomainId sender, events::EventId id,
         std::string_view category, std::string_view body, std::optional<agent::RunId> run = {}) noexcept;
+    // 记录首次接纳的工作修订及所属绑定，写入失败独立于业务回执。
+    void work_fact(runtime::DomainId owner, runtime::DomainId session, bool retired, const plugins::SubagentWorkFact& fact,
+        std::uint64_t receipt) noexcept;
   private:
     // 写入一次模型记录，供后续按原请求身份复盘。
     void model(std::string_view source, const agent::ModelCapture& value,

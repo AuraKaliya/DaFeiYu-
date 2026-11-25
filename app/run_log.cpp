@@ -3,6 +3,8 @@
 #include <dafeiyu/model_protocol.hpp>
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/diagnostic_json.hpp>
+#include <dafeiyu/plugin_agents.hpp>
+#include <dafeiyu/agent_abi_v2.h>
 #include <array>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -118,6 +120,18 @@ void RunLog::append(std::string_view kind, Json fields) noexcept {
     } catch (...) {}
     failed_ = true;
     std::cerr << "Trace writing stopped; evidence is incomplete.\n";
+}
+
+// 以原绑定和宿主回执记录已生效的工作修订，供会话结束后串查。
+// 步骤：组装工作及作用域身份 → 附上已验正文及阶段 → 隔离诊断写入失败。
+void RunLog::work_fact(runtime::DomainId owner, runtime::DomainId session, bool retired, const plugins::SubagentWorkFact& fact,
+    std::uint64_t receipt) noexcept {
+    try {
+        const auto phase = fact.phase == DFY_V2_WORK_ACCEPTED ? "accepted" : fact.phase == DFY_V2_WORK_EXIT ? "exit" : "effect";
+        append("binding.work_settled",{{"owner",owner},{"session",session},{"epoch",fact.epoch},{"work",fact.work},
+            {"revision",fact.revision},{"receipt",receipt},{"phase",phase},{"finalEffect",fact.final_effect},{"retired",retired},
+            {"body",Json::parse(fact.content)}});
+    } catch (...) { failed_ = true; }
 }
 
 // 保存本体收到的原文本和关联身份，记录失败不影响原队列及主会话。
