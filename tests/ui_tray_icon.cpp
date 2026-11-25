@@ -68,6 +68,31 @@ void lifecycle() {
     expect(shell.valid && !shell.slot && shell.deletes == 2, "failed negotiation left an unusable icon");
 }
 
+// 校验原生菜单文字与键盘选择，接收原图标或菜单签发的三个命令。
+// 步骤：检查真实 HMENU → 分派 Shell 左键和菜单输入 → 拒绝其他图标及未知命令。
+void commands() {
+    using dfy::ui::TrayCommand;
+    const auto menu = dfy::ui::create_tray_menu();
+    expect(menu && GetMenuItemCount(menu) == 4 && GetMenuDefaultItem(menu, FALSE, 0) == 1, "incomplete native menu");
+    for (auto [position, label] : {std::pair{0, L"打开管理中心"}, {1, L"打开日志目录"}, {3, L"退出大肥鱼"}}) {
+        wchar_t text[32]{};
+        GetMenuStringW(menu, position, text, 32, MF_BYPOSITION);
+        expect(std::wstring_view(text) == label, "unexpected native menu label");
+    }
+    DestroyMenu(menu);
+
+    Shell shell;
+    std::vector<TrayCommand> chosen;
+    TrayIcon icon({}, [&](DWORD action, NOTIFYICONDATAW* data) { return shell.notify(action, *data); },
+        [&](TrayCommand command) { chosen.push_back(command); });
+    SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_SELECT, 2));
+    SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_SELECT, 1));
+    SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_KEYSELECT, 1));
+    for (WPARAM id : {1, 2, 3, 4}) SendMessageW(icon.window(), WM_COMMAND, id, 0);
+    expect(chosen == std::vector{TrayCommand::open_panel, TrayCommand::open_panel, TrayCommand::open_panel,
+        TrayCommand::open_logs, TrayCommand::confirm_exit}, "native action routing changed");
+}
+
 // 在有 Explorer 的桌面通过真实 Shell 独立探测图标的存在与移除。
 // 步骤：检查系统任务栏 → 核对真实图标身份 → 确认退出后的 Shell 回执。
 int desktop() {
@@ -131,6 +156,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--headless") return headless();
         if (argc == 2 && std::string_view(argv[1]) == "--explorer") return desktop();
         lifecycle();
+        commands();
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
