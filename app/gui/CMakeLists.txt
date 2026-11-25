@@ -1,4 +1,7 @@
 # 将容器的来源规则独立构建，再把共享应用服务接到桌面宿主。
+target_sources(dafeiyu PRIVATE ../../ui/native/resident_tray.cpp)
+target_link_libraries(dafeiyu PRIVATE dfy_resident_tray)
+target_compile_definitions(dafeiyu PRIVATE DFY_DESKTOP_TRAY)
 add_library(dfy_ui_scope STATIC ../../ui/host/frame_scope.cpp ../../ui/host/frame_scope.hpp)
 target_include_directories(dfy_ui_scope PUBLIC ../../ui/host)
 target_link_libraries(dfy_ui_scope PRIVATE dfy_build_options)

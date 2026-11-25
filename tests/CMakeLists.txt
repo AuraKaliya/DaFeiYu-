@@ -223,8 +223,10 @@ add_executable(dfy_ui_tray_tests ui_tray_icon.cpp)
 target_link_libraries(dfy_ui_tray_tests PRIVATE dfy_resident_tray dfy_build_options shell32 user32)
 set_target_properties(dfy_ui_tray_tests PROPERTIES FOLDER Tests)
 add_test(NAME ui.tray_icon COMMAND dfy_ui_tray_tests)
+add_test(NAME ui.tray_explorer COMMAND dfy_ui_tray_tests --explorer)
 add_test(NAME ui.tray_headless COMMAND dfy_ui_tray_tests --headless)
-set_tests_properties(ui.tray_icon ui.tray_headless PROPERTIES TIMEOUT 15)
+set_tests_properties(ui.tray_icon ui.tray_explorer ui.tray_headless PROPERTIES TIMEOUT 15)
+set_tests_properties(ui.tray_explorer ui.tray_headless PROPERTIES SKIP_RETURN_CODE 77)
 
 # 只在 GUI 构建中验证来源与 Frame 代次，不启动浏览器。
 if(BUILD_GUI)

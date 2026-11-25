@@ -94,6 +94,14 @@ try {
     Assert-Closed $observer
     Assert-Closed $initiator
     $rows = @(Read-SoftwareLog)
+    $registration = @($rows | Where-Object { $_.event -eq 'tray.start' })
+    $removal = @($rows | Where-Object { $_.event -eq 'tray.removed' })
+    if ($registration.Count -ne 1 -or $registration[0].pid -ne $owner.Id -or
+        $registration[0].instance -ne $state.instance) { throw 'Two panels must share the original resident tray' }
+    if ($registration[0].result -eq 'ok') {
+        if ($removal.Count -ne 1 -or $removal[0].pid -ne $owner.Id -or $removal[0].result -ne 'ok' -or
+            $removal[0].operation -ne ('stop-' + $state.instance)) { throw 'Original tray removal was not confirmed' }
+    } elseif ($registration[0].result -ne 'failed' -or $removal.Count -ne 0) { throw 'Invalid unavailable-desktop receipts' }
     foreach ($window in @($observer,$initiator)) {
         $witness = @($rows | Where-Object { $_.pid -eq $window.Id -and $_.event -eq 'host.exited' })
         if ($witness.Count -ne 1 -or $witness[0].peerPid -ne $owner.Id -or $witness[0].exitCode -ne 0 -or

@@ -10,7 +10,7 @@ enum class SoftwareRole { host, window, terminal };
 enum class SoftwareEvent { process_started, process_exiting, host_listening, host_launch, client_connected,
     client_disconnected, stop_submitted, stop_accepted, stop_reply, profile_claim, configuration_read,
     window_closing, webview_released, profile_cleaned, window_destroyed, conversation_drain, plugins_drain,
-    plugin_load, plugin_stop, plugin_unloaded, plugin_catalog, host_exited, tray_start };
+    plugin_load, plugin_stop, plugin_unloaded, plugin_catalog, host_exited, tray_start, tray_restored, tray_removed };
 enum class SoftwareResult { started, ok, failed, accepted, busy, pending };
 struct SoftwareFields {
     std::string_view instance{}, client{};
