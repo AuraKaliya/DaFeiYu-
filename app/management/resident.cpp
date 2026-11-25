@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <random>
 #include <array>
+#include <utility>
 #include <windows.h>
 
 namespace dfy::management {
@@ -81,8 +82,9 @@ std::string startup_identity(const std::filesystem::path& model, const std::file
 }
 
 // 先取得端点再创建应用，退出期间继续回答状态查询并等待工作实际结束。
-// 步骤：取得用户目录所有权 → 建立宿主与本次实例号 → 接纳有界交换 → 返回实际收尾结果。
-int serve_resident(const std::filesystem::path& profile, const std::string& identity, Host::Open open, std::stop_token stop, app::SoftwareLog* log) {
+// 步骤：取得目录和端点 → 启动本体 → 首次就绪后挂接可选托盘并服务请求 → 业务退出后释放托盘。
+int serve_resident(const std::filesystem::path& profile, const std::string& identity, Host::Open open,
+    std::stop_token stop, app::SoftwareLog* log, StartResidentTray start_tray) {
     ProfileLease lease(profile,log);
     LocalPipe pipe(profile);
     std::random_device random;
@@ -92,10 +94,21 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
         log->bind(instance);
         log->record(SoftwareEvent::host_listening,SoftwareResult::ok);
     }
+    // 即使管道异常离开，逆序析构也先等待业务线程，再释放托盘与目录所有权。
+    std::unique_ptr<ResidentTray> tray;
     Host host(std::move(open),{},log);
     bool stopping = false;
     while (!host.exited()) {
         if (stop.stop_requested() && !stopping) { stopping = true; host.close(); }
+        if (start_tray && !stopping && host.dialogue().display) {
+            auto start = std::exchange(start_tray,nullptr);
+            try { tray = start(profile,instance,log); }
+            catch (const std::system_error& error) {
+                if (log) log->record(SoftwareEvent::tray_start,SoftwareResult::failed,{.system_error=error.code().value()});
+            } catch (...) {
+                if (log) log->record(SoftwareEvent::tray_start,SoftwareResult::failed);
+            }
+        }
         pipe.serve_one(std::chrono::milliseconds(100),[&](const std::string& input) {
             try { return Json{{"v",1},{"result",handle(host,identity,instance,intent,stopping,Json::parse(input),log)}}.dump(); }
             catch (const Json::exception&) { return Json{{"v",1},{"error","invalid management message"}}.dump(); }
