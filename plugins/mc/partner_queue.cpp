@@ -132,7 +132,7 @@ void PartnerLoop::pause_follow() noexcept {
 void PartnerLoop::resume_follow(const BridgeConfig& config, bool body_busy) {
     if (!follow_ || !follow_->suspended || motion_ || body_busy || !feed_.ready() || feed_.gap() ||
         !feed_.pending().empty() || (!queued_.empty() && queued_.front().interrupt) || awaiting_restarted_plan_ ||
-        (handoff_ && (handoff_->receipt.is_null() || handoff_->receipt.at("status") != "exited")) ||
+        (handoff_ && !handoff_->ready()) ||
         (plan_ && plan_->active)) return;
     auto& follow = *follow_;
     const auto work = follow.id+".resume."+std::to_string(follow.segment+1);

@@ -166,7 +166,8 @@ async function main() {
   const recoverInbox = variant === 'partner-revision-direct-recover-notes';
   const notes = revision && variant.endsWith('-notes');
   const correction = variant?.startsWith('partner-revision-correction');
-  const correctionLost = variant === 'partner-revision-correction-lost';
+  const lateExit = variant === 'partner-revision-correction-late';
+  const correctionLost = lateExit || variant === 'partner-revision-correction-lost';
   const navigation = variant?.startsWith('partner-revision-navigation');
   const restartRoute = variant === 'partner-revision-navigation-restart';
   const mixedRoute = variant === 'partner-revision-navigation-mixed';
@@ -212,12 +213,14 @@ async function main() {
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
-  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking }));
+  const factPlayer = correctionLost || delivery === 'late' ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
+  fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking, factPlayer }));
   let reads = 0, airAttempts = 0, airTail = 0;
   const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
   let baselineRead = false, pendingChat = false, replies = 0, stopped = 0, releases = 0, moveId, approvedId;
   let controllerOwner;
   let following, collecting, craftingWork, resumed, collectExited = false;
+  let originalBegins = 0, lateReads = 0, lateCommands = 0;
   let pickupPending = false, placementQuestionWork;
   const sceneReads = [];
   let meetingWork;
@@ -499,6 +502,16 @@ async function main() {
         assert.equal(skill, 'reply');
         assert.ok(!Object.hasOwn(args, 'finish'));
         const text = '我在这儿。';
+        if (delivery === 'late') {
+          assert.ok(id.startsWith('reply.'));
+          assert.equal(args.text, text);
+          if (method === 'partner.begin') { ++replies; explicitReply = { id, context, args }; }
+          else assert.deepEqual({ id, context, args }, explicitReply);
+          const result = { status: 'done', sent: true, delivery: 'sent', text };
+          if (method === 'partner.receipt') { ++replyReads; return { ...context, skill, exited: true, result }; }
+          if (method === 'partner.stop') ++stopped;
+          return { ...context, order: context.order + 1, skill, exited: true, result };
+        }
         if (id.startsWith('reply.')) {
           assert.ok(explicitReply && delivery === 'fallback');
           assert.equal(method, 'partner.begin');
@@ -1061,7 +1074,10 @@ async function main() {
         }
         assert.equal(skill, 'collect');
         const x = id === collecting || !collecting ? 1 : 2;
+        const late = lateExit && fs.existsSync(path.join(root, 'awaiting-original-exit'));
+        if (late && method !== 'partner.receipt') ++lateCommands;
         if (method === 'partner.begin') {
+          if (x === 1) ++originalBegins;
           assert.deepEqual(args, { block: 'grass_block', x, y: -61, z: 2, count: 1, source: 'visible' });
           if (x === 1) { assert.equal(context.order, 2); collecting = id; }
           else { assert.ok(notes && collectExited && !nextBlock); assert.equal(context.order, 3); nextBlock = true; }
@@ -1071,8 +1087,10 @@ async function main() {
           assert.ok(!notes && x === 1 && !nextBlock);
           ++stopped;
         }
-        const exited = !correctionLost && (x === 2 || (notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped >= 2));
+        const exited = late || (!correctionLost && (x === 2 || (notes ? fs.existsSync(path.join(root, 'revision-updated')) : stopped >= 2)));
         if (!exited) return { ...context, skill, exited: false, result: {} };
+        // 第一条迟到回执属于另一条原话，只能在第二次同号读回后放行。
+        if (late && ++lateReads === 1) return { ...context, order: context.order + 1, skill, exited: true, result: { status: 'interrupted' } };
         if (x === 1) collectExited = true;
         const status = notes || variant === 'partner-revision-goal' ? 'done' : 'interrupted';
         return { ...context, skill, exited: true, result: { status, broken: 1,
@@ -1216,7 +1234,14 @@ async function main() {
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (legacyAir) assert.equal(airAttempts,1);
     if (showGame) assert.ok(approvedId);
-    if (delivery) {
+    if (delivery === 'late') {
+      assert.deepEqual([replies, stopped, replyReads], [1, 1, 1]);
+      const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+      const receipts = rows.filter(row => row.category === 'mc.partner.action' ||
+        (row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed')).map(row => row.body.action ?? row.body);
+      assert.deepEqual(receipts.map(fact => [fact.bridgeWork, fact.bridgeExited, fact.result.delivery]),
+        [[explicitReply.id, false, 'unknown'], [explicitReply.id, true, 'sent']]);
+    } else if (delivery) {
       assert.equal(replies, ['fallback', 'sent', 'finish'].includes(delivery) ? 1 : 0);
       assert.equal(replyReads, delivery === 'unknown' ? 1 : 0);
       const trace = path.join(root, 'trace', 'events.jsonl');
@@ -1224,6 +1249,7 @@ async function main() {
       const speech = rows.filter(row => row.category === 'mc.partner.action' && row.body.skill === 'reply').map(row => row.body);
       assert.equal(speech.length, delivery === 'fallback' ? 2 : 1);
       assert.equal(speech[0].bridgeWork, explicitReply.id);
+      assert.equal(speech[0].bridgeExited, true);
       assert.equal(speech[0].result.delivery, delivery === 'unknown' ? 'unknown' : ['sent', 'finish'].includes(delivery) ? 'sent' : 'not_sent');
       if (delivery === 'fallback') assert.equal(speech[1].source, 'final_text');
       const explicit = rows.find(row => row.kind === 'tool.exited' && row.callId === 'explicit-reply');
@@ -1409,9 +1435,21 @@ async function main() {
       }
       if (correctionLost) assert.ok(stopped >= 2);
       else assert.equal(stopped, notes || restartRoute || pointedSupport || pointedCraft || stalePlace || observeDigScope ? 0 : 2);
-      assert.equal(collectExited, !correctionLost && !restartRoute && !stalePlace);
+      assert.equal(collectExited, (lateExit || !correctionLost) && !restartRoute && !stalePlace);
       assert.equal(nextBlock, notes && !directRevision);
-      assert.equal(wallFilled, !!correction && !correctionLost);
+      assert.equal(wallFilled, !!correction && (!correctionLost || lateExit));
+      if (correctionLost) {
+        const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        const original = rows.filter(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting);
+        const confirmed = rows.filter(row => row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed');
+        assert.equal(original.length, 1);
+        assert.equal(original[0].body.bridgeExited, false);
+        assert.equal(originalBegins, 1);
+        assert.equal(lateCommands, 0);
+        assert.equal(lateReads, lateExit ? 2 : 0);
+        assert.equal(confirmed.length, lateExit ? 1 : 0);
+        if (lateExit) assert.deepEqual([confirmed[0].body.action.bridgeWork, confirmed[0].body.action.bridgeExited], [collecting, true]);
+      }
       if (navigation && !restartRoute) {
         assert.equal(routeReads, mixedRoute ? 10 : 9);
         const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);

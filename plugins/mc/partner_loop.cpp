@@ -11,6 +11,11 @@ namespace dfy::mc {
 namespace {
 using Json = nlohmann::json;
 
+// 将游戏已知实效映射到宿主工具回执。
+uint32_t tool_effect(GameEffect effect) noexcept {
+    return effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED : effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
+}
+
 // 借出仅本次 ABI 调用使用的字符串。
 constexpr dfy_v2_string_view view(std::string_view bytes) noexcept { return {bytes.data(),bytes.size()}; }
 constexpr std::array delegated_skills{view("mc.companion/observe"),view("mc.companion/reply"),view("mc.companion/collect")};
@@ -228,6 +233,7 @@ void PartnerLoop::reset() noexcept {
     phase_ = DFY_V2_PARTNER_CLOSED;
     agent_ = nullptr;
     fact_stream_.configure(nullptr,{});
+    exit_checks_.clear();
     mail_ = nullptr;
     mail_text_ = nullptr;
     refs_ = nullptr;
@@ -338,11 +344,8 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
     catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
     if (!result) return false;
 
-    const auto effect = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
-        result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
-    record(session_,0,"reply",effect,work,std::move(result->payload));
+    record(session_,0,"reply",tool_effect(result->effect),work,std::move(result->payload),std::move(final_reply_));
     report_actions();
-    final_reply_.reset();
     return true;
 }
 
@@ -350,6 +353,7 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
 void PartnerLoop::retire() {
     if (session_) agent_->close(session_,nullptr);
     fact_stream_.clear();
+    exit_checks_.clear();
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
@@ -586,8 +590,7 @@ void PartnerLoop::submit(std::string_view wake) {
     if (wake == "follow.attention") attention_turn_ = AttentionTurn{follow_->id,follow_->attention.episode()};
     if (!delegated && !background_observation) {
         if (follow_) follow_->attention_pending = false;
-        if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") != "old_work_exit_unconfirmed")
-            handoff_.reset();
+        if (handoff_ && handoff_->ready()) handoff_.reset();
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
         question_results_.clear();
@@ -1014,6 +1017,14 @@ void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t orde
     }
 }
 
+// 保存按原话核实的实际发言，普通交付和迟到读回使用同一条对话记录。
+void PartnerLoop::remember_reply(const Json& fact) {
+    if (fact.at("skill") != "reply" || !fact.contains("result")) return;
+    const auto& result = fact.at("result");
+    if (result.value("sent",false) && !result.value("reused",false) && result.contains("text"))
+        remember_dialogue("companion",fact.at("order"),result.at("text"),fact.value("replyOrigin",Json(nullptr)));
+}
+
 // 在有界的任务和待答集合核对真实依赖，已无依赖的旧原话可以回收。
 bool PartnerLoop::needs_origin(std::uint64_t order) const {
     return order && (task_.id() == order || task_.instruction() == order || (motion_ && motion_->order == order) ||
@@ -1043,7 +1054,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
         (!motion_->plan_node || (plan_ && plan_->active && plan_->cancellation.empty() && !plan_->origin.is_null())) &&
         has_player_origin(motion_->order)) return "handoff.progress";
     if (plan_ && plan_->active) return {};
-    if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
+    if (handoff_ && handoff_->ready()) return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
     for (const auto& [item,q] : questions_)
@@ -1065,10 +1076,10 @@ std::string_view PartnerLoop::front_barrier(std::uint64_t session) const noexcep
     return {};
 }
 
-// 登记原发言的实效并保存退出票据。
-// 步骤：确认属于本轮 → 为下一模型请求登记投递终态 → 保存回执。
+// 登记本地票据收回时已知的动作实效和原游戏工作的退出证据。
+// 步骤：确认属于本轮 → 更新直接发言的投递状态 → 保存原游戏工作及本地结果。
 void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
-    std::string work, std::string output) noexcept {
+    std::string work, std::string output, std::unique_ptr<GameWork> action) noexcept {
     if (!session_ || session != session_ || !request_) return;
     if (skill == "reply") {
         const auto reply = std::ranges::find(replies_,work,&ReplyReservation::work);
@@ -1078,7 +1089,7 @@ void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::s
         }
     }
     if (action_count_ >= actions_.size()) return;
-    actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
+    actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output),std::move(action)};
 }
 
 // 用固定分类封装已校验事实，消息正文大小保持在信箱上限内。
@@ -1089,7 +1100,61 @@ void PartnerLoop::publish(std::string_view category, const Json& payload) {
     outbound_.push_back({category,framed.dump()});
 }
 
-// 交付实际退出的动作，每份回执保留原游戏、动作编号和效果类别。
+// 给实际提交过的动作附上原桥接证据，宿主接纳未知状态后保留原读口。
+// 步骤：提取退出和最近进展 → 发布当前回执 → 移交同一工作用于迟到查证。
+void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) {
+    const bool submitted = action && action->attempted();
+    const bool exit_unknown = submitted && !action->exited();
+    if (submitted) fact["bridgeExited"] = action->exited();
+    if (exit_unknown) {
+        if (!fact.contains("result")) fact["result"] = {{"status","unconfirmed"}};
+        if (!action->progress().empty()) fact["result"]["progress"] = Json::parse(action->progress());
+    }
+    publish("mc.partner.action",fact);
+    if (exit_unknown && fact_stream_.needs_exit(session_,fact.at("bridgeWork").get_ref<const std::string&>()))
+        exit_checks_.push_back({fact,std::move(action)});
+}
+
+// 在原配对仍有效时读回未决动作，独立于当前回合补齐退出与实效。
+// 步骤：只读原工作 → 补交同号回执 → 解除与该工作匹配的交接等待。
+void PartnerLoop::advance_exit_checks() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = exit_checks_.begin(); it != exit_checks_.end() && outbound_.size() < 55;) {
+        if (now < it->retry_at) { ++it; continue; }
+        auto& fact = it->fact;
+        if (it->action) {
+            auto result = it->action->read_exit();
+            if (!result) { ++it; continue; }
+            fact["bridgeExited"] = true;
+            fact["effect"] = tool_effect(result->effect);
+            fact.erase("bodyOmitted");
+            fact.erase("result");
+            if (result->payload.size() <= 8*1024) fact["result"] = Json::parse(result->payload);
+            else fact["bodyOmitted"] = true;
+            if (fact.value("transition","") == "exit_unconfirmed") fact["transition"] = "exited";
+            it->action.reset();
+        }
+        if (fact_stream_.report(session_,"mc.partner.action",fact)) {
+            it->retry_at = now + std::chrono::seconds(1);
+            ++it;
+            continue;
+        }
+        publish("mc.partner.motion",{{"status","exit_confirmed"},{"action",fact}});
+        remember_reply(fact);
+        const auto& work = fact.at("bridgeWork").get_ref<const std::string&>();
+        if (task_.unconfirmed() == work) {
+            task_.hold_correction({});
+            if (!handoff_) handoff_ = Handoff{work};
+        }
+        if (handoff_ && handoff_->work == work) {
+            task_.record(fact,false);
+            handoff_->receipt = {{"status","exited"},{"work",work},{"action",fact}};
+        }
+        it = exit_checks_.erase(it);
+    }
+}
+
+// 交付本地动作回执，原游戏工作的退出状态独立于正文和效果类别。
 // 步骤：按原票据顺序记录 → 提取实际游戏正文或注明省略 → 发布信箱事实并归还槽位。
 void PartnerLoop::report_actions() {
     for (std::size_t index = 0; index < action_count_; ++index) {
@@ -1114,12 +1179,10 @@ void PartnerLoop::report_actions() {
             const bool unsent = action.effect == DFY_V2_TOOL_NOT_APPLIED;
             if (action.body.empty()) fact["result"] = {{"status",unsent ? "blocked" : "unconfirmed"},
                 {"sent",false},{"delivery",unsent ? "not_sent" : "unknown"}};
-            if (fact.contains("result") && fact["result"].value("sent",false) &&
-                !fact["result"].value("reused",false) && fact["result"].contains("text"))
-                remember_dialogue("companion",order_,fact["result"]["text"],origin);
+            remember_reply(fact);
         }
+        publish_action(fact,action.action);
         if (!active_delegation_ && !air_only_turn_ && pickup_feedback_work_.empty()) task_.record(fact);
-        publish("mc.partner.action",fact);
         action = {};
     }
     action_count_ = 0;
@@ -1235,24 +1298,24 @@ void PartnerLoop::advance_motion(bool stopping) {
         }
         return;
     }
-    fact["effect"] = result->effect == GameEffect::observed ? DFY_V2_TOOL_APPLIED :
-        result->effect == GameEffect::none ? DFY_V2_TOOL_NOT_APPLIED : DFY_V2_TOOL_UNKNOWN;
+    fact["effect"] = tool_effect(result->effect);
     const bool handing_off = handoff_ && handoff_->work == motion.work;
-    fact["result"] = result->payload.empty() ? Json{{"status",handing_off && !motion.action->attempted() ? "skipped" : "unconfirmed"}} :
+    const bool exit_unknown = motion.action->attempted() && !motion.action->exited();
+    const auto exit_status = !motion.action->attempted() ? "not_started" : exit_unknown ? "exit_unconfirmed" : "exited";
+    fact["result"] = result->payload.empty() ? Json{{"status",exit_unknown ? "unconfirmed" : "skipped"}} :
         Json::parse(result->payload);
     const auto& receipt = fact.at("result");
-    const bool departed = receipt.at("status") == "unconfirmed";
-    if (handing_off && departed && !stopping && !handoff_->rechecked) {
+    if (handing_off && exit_unknown && !stopping && !handoff_->rechecked) {
         handoff_->rechecked = true;
         motion.action->recheck_exit();
         return;
     }
-    if (departed && result->effect == GameEffect::unknown && motion.stopping && motion.skill != "follow")
+    if (exit_unknown && result->effect == GameEffect::unknown && motion.stopping && motion.skill != "follow")
         task_.hold_correction(motion.work);
-    const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !departed;
+    const bool paused = motion.skill == "follow" && follow_ && follow_->pausing && !stopping && !exit_unknown;
     const bool held = motion.skill == "follow" && follow_ && motion.accepted && !motion.stopping && receipt.at("status") == "blocked";
     if (motion.skill == "follow" && follow_) {
-        fact["transition"] = paused ? "paused" : held ? "blocked" : "exited";
+        fact["transition"] = paused ? "paused" : held ? "blocked" : exit_status;
         if (paused) {
             follow_->pausing = false;
             follow_->suspended = true;
@@ -1265,14 +1328,14 @@ void PartnerLoop::advance_motion(bool stopping) {
         }
         else follow_.reset();
     }
-    publish("mc.partner.action",fact);
+    publish_action(fact,motion.action);
     if (held) track_follow(receipt,true);
     const bool verified = verified_action(receipt,motion.skill,motion.pickup);
     const bool failed = motion.queued && !motion.plan_node && !verified &&
         !(replacing_motion_ && receipt.at("status") == "interrupted");
     if (handing_off) {
         if (!stopping) task_.record(fact,false);
-        handoff_->receipt = {{"status",departed ? "old_work_exit_unconfirmed" : "exited"},
+        handoff_->receipt = {{"status",exit_unknown ? "old_work_exit_unconfirmed" : exit_status},
             {"work",motion.work},{"action",fact}};
         publish("mc.partner.motion",handoff_->receipt);
     }
@@ -1284,7 +1347,7 @@ void PartnerLoop::advance_motion(bool stopping) {
         task_.record(fact,motion.skill == "follow" || motion.revision == task_.revision());
         settle_work(motion.invocation,std::move(fact));
     }
-    if (departed) {
+    if (exit_unknown) {
         follow_.reset();
         cancel_plan("exit_unconfirmed");
         clear_queue("exit_unconfirmed");
@@ -1417,6 +1480,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     const bool departed = feed_.departure() || feed_.departed();
     const bool replaced = session_ && (feed_.world() != session_world_ || feed_.binding_revision() != session_binding_);
     const bool unavailable = closing || replaced || departed || !feed_.execution_bound();
+    if (!unavailable && !feed_.recovering()) advance_exit_checks();
     advance_confirmation_presentation(config,instance,unavailable);
     advance_question(config,instance,unavailable);
     if (awaiting_delegation_ && (unavailable || awaiting_delegation_->world != feed_.world())) {

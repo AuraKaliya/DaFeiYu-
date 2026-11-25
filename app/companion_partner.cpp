@@ -167,7 +167,11 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
     const auto type = descriptor->name();
     const auto* text = payload.find("text");
     if (!text || text->kind() != runtime::ValueKind::string) return;
-    const auto data = nlohmann::json::parse(text->as_string(),nullptr,false);
+    const auto frame = nlohmann::json::parse(text->as_string(),nullptr,false);
+    if (!frame.is_object()) return;
+    const bool confirmed = type == "mc.partner.motion" && frame.value("status","") == "exit_confirmed" && frame.contains("action");
+    const bool action = type == "mc.partner.action" || confirmed;
+    const auto& data = confirmed ? frame.at("action") : frame;
     if (!data.is_object() || !data.contains("generation")) return;
     if (type == "mc.partner.control") {
         const auto phase = data.at("phase");
@@ -198,10 +202,10 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
         partner_->revisions[order%partner_->revisions.size()] = {order,message.revision};
         return;
     }
-    if (type != "mc.partner.action" && type != "mc.partner.turn") return;
-    if (type == "mc.partner.action" && data.contains("task")) {
+    if (!action && type != "mc.partner.turn") return;
+    if (action && data.contains("task")) {
         if (data.at("task") == messages_.task()) {
-            auto brief = std::string(text->as_string());
+            auto brief = confirmed ? data.dump() : std::string(text->as_string());
             if (brief.size() > 4096) brief = nlohmann::json{{"skill",data.at("skill")},{"effect",data.at("effect")},
                 {"invocation",data.at("invocation")},{"bodyOmitted",true}}.dump();
             messages_.post(*address_,CompanionSide::game,CompanionMessageKind::status,messages_.next(CompanionSide::game),
@@ -214,7 +218,7 @@ void CompanionSession::accept_partner(const runtime::StructValue& payload) {
     if (known != order || !revision) return;
     if (type == "mc.partner.turn" && data.at("failed") == true)
         messages_.post(*address_,CompanionSide::game,CompanionMessageKind::failed,messages_.next(CompanionSide::game),revision,"游戏决策回合未完成");
-    if (type == "mc.partner.action" && data.at("skill") == "reply" && data.contains("result")) {
+    if (action && data.at("skill") == "reply" && data.contains("result")) {
         const auto& result = data.at("result");
         if (result.value("sent",false) && !result.value("reused",false))
             messages_.post(*address_,CompanionSide::game,CompanionMessageKind::report,messages_.next(CompanionSide::game),revision,result.at("text"));

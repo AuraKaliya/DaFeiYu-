@@ -639,7 +639,8 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
     // 仅当执行器仍开放时处理收件监听对角色控制权的登记或续期。
     claim(controller) { return !closed && lease.claim(controller); },
     detach: lease.detach,
-    // 同一控制实例内的原工作负责轮询、取消及失联收尾。
+    // 同一控制实例内的原工作负责轮询、取消和失联收尾，独立查证只读回执。
+    // 步骤：核对原工作身份 → 分流只读查证与在途控制 → 按资源条件接纳新工作。
     call(method, id, context, skill, args) {
       if (!Number.isSafeInteger(context?.order) || context.order <= 0 || typeof context.generation !== 'string' ||
           typeof context.controller !== 'string' || !/^[a-f0-9]{32}$/.test(context.controller) ||
@@ -652,6 +653,8 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         if (receipt.generation !== context.generation || receipt.order !== context.order || skill !== receipt.skill ||
           JSON.stringify(args) !== JSON.stringify(known.args))
           throw new Error('工作身份冲突');
+        // 票据收回后的查证只读原记录，游戏工作的失联期限继续计时。
+        if (method === 'partner.receipt') return receipt;
         if (known === active) {
           known.polled = performance.now();
           known.sampleProgress?.();

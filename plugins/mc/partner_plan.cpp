@@ -315,10 +315,10 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
             catch (...) { read = GameResult{false,GameEffect::unknown,{}}; }
             if (read) {
                 const auto result = read->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(read->payload);
-                const Json fact{{"generation",session_world_},{"order",plan.order},{"session",session_},{"request",plan.request},
+                Json fact{{"generation",session_world_},{"order",plan.order},{"session",session_},{"request",plan.request},
                     {"invocation",plan.id},{"bridgeWork",node.work},{"skill","observe"},{"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",result}};
+                publish_action(fact,node.reading);
                 if (!closing) task_.record(fact,!task_.id() || plan.revision == task_.revision());
-                publish("mc.partner.action",fact);
                 finish_plan_node(index,read->success && result.at("status") == "done",result);
                 node.reading.reset();
             }

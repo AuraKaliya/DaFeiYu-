@@ -59,6 +59,7 @@ test('a scoped detach waits for work and cannot release the next controller', as
     assert.equal((await listen(a)).inbox.execution.state, 'ready');
     assert.equal((await listen(b)).inbox.execution.state, 'busy');
     assert.equal((await action('partner.begin', a)).action.exited, false);
+    assert.equal(await action('partner.receipt', b), null);
     assert.equal(await action('partner.begin', b), null);
     assert.equal((await detach(b)).control.phase, 'released');
     assert.equal((await listen(a)).inbox.execution.state, 'ready');
@@ -72,6 +73,7 @@ test('a scoped detach waits for work and cannot release the next controller', as
     assert.equal((await listen(b)).inbox.execution.state, 'ready');
     assert.equal((await action('partner.begin', b)).action.controller, b);
     assert.deepEqual((await action('partner.read', a)).action, oldReceipt);
+    assert.deepEqual((await action('partner.receipt', a)).action, oldReceipt);
     assert.equal((await detach(a)).control.phase, 'released');
     assert.equal((await listen(a)).inbox.execution.state, 'busy');
     assert.equal((await listen(b)).inbox.execution.state, 'ready');

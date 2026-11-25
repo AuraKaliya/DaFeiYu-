@@ -548,7 +548,7 @@ dfy_v2_status DFY_V2_CALL release(dfy_v2_instance* raw, dfy_v2_tool_ticket ticke
     }
     if (job->partner_session && job->method != NativeJob::Method::local && !job->motion_transferred)
         raw->partner.record(job->partner_session,job->invocation,job->skill,job->effect,
-        std::move(job->id),std::move(job->output));
+            std::move(job->id),std::move(job->output),std::move(job->action));
     *job = {};
     return report(DFY_V2_OK, error);
 }

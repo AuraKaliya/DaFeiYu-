@@ -16,8 +16,12 @@ class GameWork {
     std::optional<GameResult> poll(bool cancelled, bool defer = false, bool allow_begin = true);
     // 有界地重查同一工作退出，沿用原编号和幂等停止操作。
     void recheck_exit() noexcept;
+    // 本地票据收回后只读原伙伴工作的回执，未能核实时等待下次读回。
+    std::optional<GameResult> read_exit();
     // 查询是否可能已有动作接纳，用于错误时保守标记效果。
     bool attempted() const noexcept { return attempted_; }
+    // 只有经过原工作身份和终态校验的桥接回执才能确认退出。
+    bool exited() const noexcept { return exited_; }
     // 借出首次下发之前要复核的原动作参数。
     const std::string& arguments() const noexcept { return arguments_; }
     // 读取最近一次已核验的在途进展。
@@ -27,8 +31,8 @@ class GameWork {
     GameAction action_;
     std::string id_, arguments_, skill_, progress_;
     std::unique_ptr<PipeExchange> pipe_;
-    enum class Phase { begin, read, stop } phase_ = Phase::begin;
-    bool attempted_ = false, stopping_ = false;
+    enum class Phase { begin, read, stop, verify_exit } phase_ = Phase::begin;
+    bool attempted_ = false, stopping_ = false, exited_ = false;
     unsigned transport_failures_ = 0;
     std::chrono::steady_clock::time_point next_{}, deadline_, stop_deadline_{};
 };

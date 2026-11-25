@@ -547,9 +547,9 @@ int main() {
         const auto envelope = Json{{"context",source},{"arguments",{{"block","dirt"},{"count",2}}}}.dump();
         auto action = source;
         action["controller"] = config.controller;
-        for (const auto method : {"partner.begin","partner.read","partner.stop"}) {
+        for (const auto method : {"partner.begin","partner.read","partner.stop","partner.receipt"}) {
             const auto frame = Json::parse(dfy::mc::partner_request(method,"work",config,"collect",envelope));
-            if (frame.at("context") != action || frame.at("arguments") != Json::parse(envelope).at("arguments")) return 1;
+            if (frame.at("method") != method || frame.at("context") != action || frame.at("arguments") != Json::parse(envelope).at("arguments")) return 1;
         }
         action.update(Json{{"skill","collect"},{"exited",true},{"result",{{"status","blocked"},{"broken",1}}}});
         Json receipt{{"version",1},{"id","work"},{"action",action}};

@@ -69,9 +69,9 @@ class PartnerLoop {
     bool requires_pointed_dig(std::uint64_t session) const;
     // 有后继动作的追问只能由保留原依赖的计划消费。
     bool has_pickup_continuation(std::uint64_t item) const noexcept;
-    // 在真实原生票据已经退出时归档原效果，收件 ACK 与游戏动作回执独立。
+    // 收回本地票据并保留原游戏工作，供报告实效及查证退出。
     void record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
-        std::string work, std::string output) noexcept;
+        std::string work, std::string output, std::unique_ptr<GameWork> action) noexcept;
     // 接纳已经由游戏启动且尚未退出的原工作，接管轮询和停止。
     void adopt_motion(std::uint64_t invocation, std::string_view skill, const std::string& work,
         std::string_view envelope, std::unique_ptr<GameWork>& action, bool wait, bool pointed);
@@ -126,6 +126,8 @@ class PartnerLoop {
     // 在有界窗口保存真人原话和已投递发言，后者可附原委托或提问来源。
     void remember_dialogue(std::string_view speaker, std::uint64_t order, const nlohmann::json& text,
         const nlohmann::json& origin = nullptr);
+    // 按原话归档桥接已核实的实际发言。
+    void remember_reply(const nlohmann::json& fact);
     // 给已绑定且无新输入的游戏返回准备好的自主唤醒。
     std::string_view autonomous_wake() const;
     // 结束旧游戏绑定对应的 Agent 上下文。
@@ -134,8 +136,12 @@ class PartnerLoop {
     void review(PartnerWork work, bool closing);
     // 按序尝试投递一份已准备的事实，容量拒收时保留同一发送编号。
     void flush();
-    // 把本轮已经退出的游戏动作转换为独立信箱事实。
+    // 把本轮收回的本地票据转换为独立信箱事实。
     void report_actions();
+    // 发布实效和桥接退出证据，接管本绑定仍需核实的原工作。
+    void publish_action(nlohmann::json& fact, std::unique_ptr<GameWork>& action);
+    // 只读同一绑定中尚未核实的原工作，补交迟到的回执。
+    void advance_exit_checks();
     // 同一种确定性参数失败达到两次后，让出本轮以等待新事实。
     void limit_repair(std::string code);
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
@@ -266,6 +272,8 @@ class PartnerLoop {
         std::string work;
         nlohmann::json receipt;
         bool rechecked = false;
+        // 原动作已退出或确定从未下发时，后继步骤可以接手。
+        bool ready() const { return receipt.is_object() && (receipt.at("status") == "exited" || receipt.at("status") == "not_started"); }
     };
     std::optional<Handoff> handoff_;
     bool awaiting_restarted_plan_ = false;
@@ -337,6 +345,12 @@ class PartnerLoop {
     std::bitset<partner_skills.size()> visible_skills_;
     const dfy_v2_agent_api* agent_ = nullptr;
     PartnerFacts fact_stream_;
+    struct ExitCheck {
+        nlohmann::json fact;
+        std::unique_ptr<GameWork> action;
+        std::chrono::steady_clock::time_point retry_at{};
+    };
+    std::deque<ExitCheck> exit_checks_;
     uint32_t thinking_flags_ = 0;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
@@ -347,7 +361,13 @@ class PartnerLoop {
     struct Delegation { std::uint64_t id; std::string world, text; };
     std::optional<Delegation> awaiting_delegation_, active_delegation_;
     std::uint64_t last_task_ = 0;
-    struct ActionReceipt { std::uint64_t id; std::string_view skill; uint32_t effect; std::string work, body; };
+    struct ActionReceipt {
+        std::uint64_t id;
+        std::string_view skill;
+        uint32_t effect;
+        std::string work, body;
+        std::unique_ptr<GameWork> action;
+    };
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     std::unique_ptr<GameWork> final_reply_;

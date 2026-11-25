@@ -4,6 +4,7 @@
 #include "../plugins/mc/partner_knowledge.hpp"
 #include "../plugins/mc/partner_task.hpp"
 #include <dafeiyu/companion_abi_v2.h>
+#include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -284,7 +285,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     const bool approval = variant.ends_with(L"-approval");
     const bool goal = variant == L"partner-revision-goal" || direct_place;
     const bool correction = variant.starts_with(L"partner-revision-correction");
-    const bool correction_lost = variant == L"partner-revision-correction-lost";
+    const bool late_exit = variant == L"partner-revision-correction-late";
+    const bool correction_lost = variant == L"partner-revision-correction-lost" || late_exit;
     const bool navigation = variant.starts_with(L"partner-revision-navigation");
     const bool restart_route = variant == L"partner-revision-navigation-restart";
     const bool mixed_route = variant == L"partner-revision-navigation-mixed";
@@ -328,6 +330,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     std::uint64_t second_item = 0;
     unsigned budget_plans = 0;
     std::string follow_id, old_work, plan_tool;
+    std::uint64_t original_admission = 0;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     Config model_config;
@@ -1151,6 +1154,10 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 const auto result = Json::parse(last.content.substr(last.content.find('{')));
                 if (result.at("status") != "old_work_exit_unconfirmed" || !result.at("work").get_ref<const std::string&>().starts_with("plan."))
                     throw std::runtime_error("unconfirmed work did not hold the new target");
+                if (late_exit) {
+                    std::ofstream(root/"awaiting-original-exit").put('1');
+                    return {{Role::assistant,R"({"internal":"等待原工作退出"})"}};
+                }
                 checked = true;
                 return {{Role::assistant,R"({"internal":"plan exit checked"})"}};
             }
@@ -1235,6 +1242,17 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return {{Role::assistant,R"({"internal":"receipt stored"})"}};
         }
         const auto input = Json::parse(last.content);
+        if (late_exit && input.at("trigger") == "task.ready") {
+            const auto& work = input.at("hostWorkReceipts").at(0);
+            const auto& handoff = input.at("taskHandoff");
+            if (work.at("work") != old_work || work.at("accepted") != original_admission || work.at("revision") != 4 ||
+                work.at("exited") >= work.at("effectReceipt") || work.at("effect").at("effect") != DFY_V2_TOOL_APPLIED ||
+                work.at("effect").at("result").at("inventoryDelta").at("dirt") != 1 ||
+                handoff.at("work") != old_work || handoff.at("action").at("bridgeExited") != true ||
+                input.at("task").at("pendingCorrection").contains("unconfirmedWork"))
+                throw std::runtime_error("late exit did not release the original correction with its verified effect");
+            return call("_observe","observe-correction",{{"sources",{"message","self"}},{"message",2},{"focus","openings"},{"verify",wall}});
+        }
         if (direct && input.at("trigger") == "skills.expanded") {
             if (direct_place)
                 return probe_placement("outside-append",outside);
@@ -1293,6 +1311,12 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             const auto& second = layers.at(1).at("nodes").at(0).at("result");
             const auto& result = first.at("result");
             if (correction_lost) {
+                const auto& work = input.at("hostWorkReceipts").at(0);
+                if (work.at("work") != first.at("work") || work.at("revision") != 2 || work.contains("exited") ||
+                    work.at("effect").at("effect") != DFY_V2_TOOL_UNKNOWN || work.at("effect").at("bridgeExited") != false)
+                    throw std::runtime_error("host reported a game exit while the original bridge work was unconfirmed");
+                original_admission = work.at("accepted");
+                old_work = first.at("work").get<std::string>();
                 if (plan.at("status") != "cancelled" || plan.at("revision") != 1 || second.at("status") != "skipped" ||
                     result.at("status") != "unconfirmed" || input.at("task").at("pendingCorrection").at("unconfirmedWork") != first.at("work"))
                     throw std::runtime_error("missing original unconfirmed work");
@@ -1415,7 +1439,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         return false;
     };
     bool stopping = false;
-    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(question_expiry ? 52 : 8);
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(question_expiry ? 52 : late_exit ? 15 : 8);
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("plan revision loop failed");
         if (stopping && host.companion_status()->closed) return 0;
@@ -1476,6 +1500,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     using namespace model;
     using Json = nlohmann::json;
     const bool finish = variant.ends_with(L"-finish");
+    const bool late = variant.ends_with(L"-late");
     const bool batch = variant.ends_with(L"-batch");
     const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
     const bool internal = variant.ends_with(L"-internal");
@@ -1499,6 +1524,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         }
         const auto input = Json::parse(message.content);
         if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
+        if (late) return {{Role::assistant,reply}};
         const auto tool = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_reply"); });
         if (batch) {
             const auto& events = input.at("events");
@@ -1537,6 +1563,17 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("reply loop failed");
         if (stopping && host.companion_status()->closed) return 0;
         const auto settled = host.companion_status()->settled_event;
+        if (late && settled == 2) {
+            const auto messages = host.companion_messages(id,0).messages;
+            const auto player = std::ranges::find(messages,app::CompanionMessageKind::utterance,&app::CompanionMessage::kind);
+            const auto reports = std::ranges::count(messages,app::CompanionMessageKind::report,&app::CompanionMessage::kind);
+            if (reports > 1) throw std::runtime_error("late delivery duplicated the original reply");
+            if (reports == 1 && player != messages.end()) {
+                const auto result = std::ranges::find(messages,app::CompanionMessageKind::report,&app::CompanionMessage::kind);
+                if (result->text != reply || result->reply_to != player->revision) throw std::runtime_error("late reply lost its source");
+                received = true;
+            }
+        }
         if (batch && settled > announced && (settled == 1 || settled == 3)) {
             announced = settled;
             std::ofstream(root/("settled-"+std::to_string(settled))).put('1');
