@@ -56,6 +56,7 @@ class DesktopTray final : public management::ResidentTray {
                 catch (...) {}
                 if (log) log->record(type, error ? app::SoftwareResult::failed : app::SoftwareResult::accepted,
                     {.system_error=error});
+                if (command == TrayCommand::open_panel && error) icon.show_panel_error(error);
             });
             if (icon.window()) {
                 owner = icon.window();

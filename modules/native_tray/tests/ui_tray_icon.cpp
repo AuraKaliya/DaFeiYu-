@@ -83,8 +83,15 @@ void commands() {
 
     Shell shell;
     std::vector<TrayCommand> chosen;
-    TrayIcon icon({}, [&](DWORD action, NOTIFYICONDATAW* data) { return shell.notify(action, *data); },
+    std::wstring notice;
+    TrayIcon icon({}, [&](DWORD action, NOTIFYICONDATAW* data) {
+        if (action == NIM_MODIFY && data->uFlags == NIF_INFO && data->dwInfoFlags == NIIF_WARNING)
+            notice = data->szInfo;
+        return shell.notify(action, *data);
+    },
         [&](TrayCommand command) { chosen.push_back(command); });
+    icon.show_panel_error(ERROR_FILE_NOT_FOUND);
+    expect(notice.find(L"桌面程序") != notice.npos && notice.find(L"Windows 错误 2") != notice.npos, "missing panel failure was silent");
     SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_SELECT, 2));
     SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_SELECT, 1));
     SendMessageW(icon.window(), dfy::ui::tray_callback, 0, MAKELPARAM(NIN_KEYSELECT, 1));

@@ -74,6 +74,19 @@ void TrayIcon::report(TrayEvent event, bool success) const {
     if (report_) report_(event, success);
 }
 
+// 将启动错误提交给当前图标，保留图标原来的回调、提示和菜单。
+void TrayIcon::show_panel_error(DWORD error) const {
+    if (!added_) return;
+    auto notice = icon_;
+    notice.uFlags = NIF_INFO;
+    notice.dwInfoFlags = NIIF_WARNING;
+    wcscpy_s(notice.szInfoTitle, L"无法打开大肥鱼管理中心");
+    const bool missing = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    swprintf_s(notice.szInfo, L"%ls（Windows 错误 %lu）", missing
+        ? L"未找到桌面程序，请检查安装目录是否包含桌面版。" : L"启动失败，详情见大肥鱼日志目录。", error);
+    notify_(NIM_MODIFY, &notice);
+}
+
 // 对仍存在的图标只更新属性，Explorer 丢失槽位后重新注册并声明回调协议。
 // 步骤：探测原槽位 → 注册应用图标 → 设置回调版本并报告结果。
 void TrayIcon::publish(TrayEvent event) {

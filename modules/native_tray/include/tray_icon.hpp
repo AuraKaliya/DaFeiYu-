@@ -27,6 +27,8 @@ class TrayIcon {
     TrayIcon& operator=(const TrayIcon&) = delete;
     // 返回接收原生消息的窗口，无可用桌面时为空。
     HWND window() const noexcept { return window_; }
+    // 在原通知图标上说明管理中心启动失败及可核对的 Windows 错误码。
+    void show_panel_error(DWORD error) const;
   private:
     // 分派原生广播，窗口只在对象存活期间借用其地址。
     static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
