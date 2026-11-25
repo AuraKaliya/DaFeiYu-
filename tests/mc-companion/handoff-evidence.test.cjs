@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { handoffEvidence } = require('../../plugins/mc/bridge/handoff-evidence.cjs');
+const { pendingHandoff, originalHandoffReceipt } = require('../../plugins/mc/bridge/give-item.cjs');
+const { makeReceiptRoom } = require('../../plugins/mc/bridge/partner-records.cjs');
 
 const id = n => '00000000-0000-0000-0000-' + String(n).padStart(12,'0');
 const actor = id(1), owner = id(2), stranger = id(3), mark = { stream: id(4), seq: 0 };
@@ -64,6 +66,44 @@ test('late readback seals original throws while allowing later pickups', () => {
   assert.deepEqual([result.thrown,result.recipientPicked,result.throughSeq], [66,66,14]);
   assert.deepEqual(result.stacks,open.stacks);
   assert.throws(() => handoffEvidence(rows,mark,actor,owner,'dirt',66), /无法分开/);
+});
+
+// 在原绑定退出后只查封存的观察流，重复查证共享取样，原动作结果保持可复核。
+test('retired work reads sealed pickup evidence once without another game command', async () => {
+  const rows = evidenceRows();
+  const initial = handoffEvidence(rows.slice(0,8),mark,actor,owner,'dirt',66);
+  const job = { id:'given', handoffEvidence:{ mark,actor,recipient:owner,item:'dirt',submitted:66,sourceThrough:8 },
+    receipt:{ skill:'give_item',exited:true,order:2,generation:'old',result:{ status:'blocked',handoff:{ dimension:'overworld' },
+      transfer:{ observation:'offer',recipient:owner,item:'dirt',requested:66,submitted:66 },receipt:initial } } };
+  let reads = 0;
+  const witness = { async read(original) { assert.deepEqual(original,mark); ++reads; return rows; } };
+  assert.equal(pendingHandoff(job),true);
+  assert.equal(originalHandoffReceipt(job,witness),job.receipt);
+  assert.equal(originalHandoffReceipt(job,witness),job.receipt);
+  await job.proofRead;
+  const sample = originalHandoffReceipt(job,witness).result.handoffReceipt;
+  assert.deepEqual([sample.id,sample.work,sample.generation,sample.order,sample.sourceThrough,sample.receipt.recipientPicked,reads],
+    ['given','given','old',2,8,66,1]);
+  assert.equal(job.receipt.result.receipt.pickupUnknown,66);
+  assert.equal(pendingHandoff(job),false);
+});
+
+// 让 64 个已投出但未证实收取的原工作占满桥接，验证查证槽及确认后的回收。
+test('full bridge retains all unsettled handoffs and reserves a single receipt lookup', () => {
+  const context = { generation:'old', controller:'controller', order:1 };
+  const jobs = new Map();
+  for (let n=0; n<64; ++n) jobs.set(n,{ receipt:{ ...context,skill:'give_item',exited:true,result:{
+    transfer:{ submitted:1 },receipt:{ source:'server_events',throwUnknown:0,pickupUnknown:1 } } } });
+  const next = { ...context, order:2 };
+  assert.throws(() => makeReceiptRoom(jobs,null,next),/已满/);
+  makeReceiptRoom(jobs,null,next,jobs.get(1));
+  jobs.set('read',{ receipt:{ ...next,skill:'observe',exited:false,result:{} } });
+  assert.throws(() => makeReceiptRoom(jobs,null,next,jobs.get(1)),/已满/);
+  jobs.get(1).returnedProof = { source:'server_events',throwUnknown:0,pickupUnknown:0 };
+  jobs.get('read').receipt.exited = true;
+  makeReceiptRoom(jobs,null,{ ...context,order:3 });
+  assert.equal(jobs.size,63);
+  assert.ok(jobs.has(0) && !jobs.has(1) && !jobs.has('read'));
 });
 
 // 投物与生成记录都缺运行号时，仅保留其他能独立核实的投物与收取。

@@ -195,6 +195,28 @@ inline void verify_handoff_recheck(const nlohmann::json& sample, const nlohmann:
     }
 }
 
+// 将原票据自带的迟到取样绑定到同一投物对象、数量及封存的事件流。
+// 步骤：验证样本及其源范围 → 逐项比对原交物与采样时间 → 拒绝换流或已核实数量倒退。
+inline void verify_original_handoff(const nlohmann::json& result, std::string_view work, const nlohmann::json& context) {
+    const auto& sample = result.at("handoffReceipt");
+    verify_handoff_recheck(sample,{{"work",work}},work,context);
+    const auto& transfer = result.at("transfer");
+    for (const auto* key : {"observation","recipient","item","requested","submitted"})
+        if (sample.at(key) != transfer.at(key)) throw std::invalid_argument("MC: changed original handoff");
+    if (sample.at("order") != context.at("order") || sample.at("originalStatus") != result.at("status") ||
+        sample.at("dimension") != result.at("handoff").at("dimension") || sample.at("sampledAtMs") < transfer.at("sampledAtMs"))
+        throw std::invalid_argument("MC: handoff receipt outside original scope");
+
+    const auto& initial = result.at("receipt");
+    const auto& proof = sample.at("receipt");
+    if (initial.at("source") == "server_events") {
+        if (proof.at("source") != "server_events" || proof.at("stream") != initial.at("stream") ||
+            proof.at("afterSeq") != initial.at("afterSeq") || sample.at("sourceThrough") != initial.at("throughSeq") ||
+            proof.at("thrown") < initial.at("thrown") || proof.at("recipientPicked") < initial.at("recipientPicked") ||
+            proof.at("otherPicked") < initial.at("otherPicked")) throw std::invalid_argument("MC: changed handoff evidence stream");
+    } else if (proof.at("thrown") != 0) throw std::invalid_argument("MC: throw outside original evidence");
+}
+
 // 对照交物原观察核对已经提交的丢物操作与退出库存，实际收件由独立来源确认。
 // 步骤：核对原工作及请求 → 区分已提交与调用返回 → 按同一角色的读数校验退出差量。
 inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& args, const nlohmann::json& generation, bool exited) {

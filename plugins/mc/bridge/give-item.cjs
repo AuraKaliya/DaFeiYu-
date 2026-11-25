@@ -94,6 +94,41 @@ async function readHandoffProof(witness, evidence, last) {
   }
 }
 
+// 判断已退出的交物是否仍需保留原票据，完整去向以已经返回的服务端证据为准。
+function pendingHandoff(job) {
+  const { skill, exited, result } = job.receipt;
+  if (skill !== 'give_item' || !exited || !result.transfer?.submitted) return false;
+  const proof = job.returnedProof ?? result.receipt;
+  return proof?.source !== 'server_events' || proof.throwUnknown !== 0 || proof.pickupUnknown !== 0;
+}
+
+// 同一原工作上的显式观察和后台查证共同等待一次只读取样。
+function refreshHandoff(job, witness) {
+  job.proofRead ??= readHandoffProof(witness,job.handoffEvidence,job.latestProof ?? job.receipt.result.receipt)
+    .then(proof => { job.latestProof = proof; job.proofAt = Math.floor(performance.now()); })
+    .finally(() => { delete job.proofRead; });
+  return job.proofRead;
+}
+
+// 从原工作封存的身份和采样结果构造回执，记录已经交给读者的证据。
+function handoffSample(job, id) {
+  const { generation, order, result } = job.receipt;
+  const { observation, recipient, item, requested, submitted } = result.transfer;
+  job.returnedProof = job.latestProof;
+  return { id, work:job.id, order, observation, generation, dimension:result.handoff.dimension, recipient, item, requested, submitted,
+    originalStatus:result.status, sampledAtMs:job.proofAt, sourceThrough:job.handoffEvidence?.sourceThrough ?? null, receipt:job.latestProof };
+}
+
+// 沿原号从封存的服务端流读取迟到收件，返回副本并保留动作退出时的原件。
+// 步骤：核对原始取证条件 → 附上已读样本 → 对未决去向发起共享只读采样。
+function originalHandoffReceipt(job, witness) {
+  const { receipt } = job;
+  if (receipt.skill !== 'give_item' || !receipt.exited || !job.handoffEvidence?.mark) return receipt;
+  const sample = job.latestProof && handoffSample(job,job.id);
+  if (pendingHandoff(job)) void refreshHandoff(job,witness);
+  return sample ? { ...receipt, result:{ ...receipt.result, handoffReceipt:sample } } : receipt;
+}
+
 // 用可选只读观察端结算实际投出和接收者，普通服务器仍可完成丢物并说明未证数量。
 // 步骤：固定取证窗口 → 执行原工作并保留中断 → 有界等待收件实效 → 封存投物来源上界。
 async function giveItem(bot, owner, args, source, check, claim, job, witness) {
@@ -127,4 +162,4 @@ async function giveItem(bot, owner, args, source, check, claim, job, witness) {
   }
 }
 
-module.exports = { tossHandoff, giveItem, readHandoffProof };
+module.exports = { tossHandoff, giveItem, readHandoffProof, pendingHandoff, refreshHandoff, handoffSample, originalHandoffReceipt };

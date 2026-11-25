@@ -9,7 +9,8 @@ const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
-const { giveItem, readHandoffProof } = require('./give-item.cjs');
+const { giveItem, refreshHandoff, handoffSample, originalHandoffReceipt } = require('./give-item.cjs');
+const { makeReceiptRoom } = require('./partner-records.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
 const { placeBlock, placeTarget } = require('./placement.cjs');
@@ -407,14 +408,9 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         if (!action || action.skill !== 'give_item' || action.generation !== r.generation || !inbox.inPresence(r.generation,action.order) ||
             action.result.handoff?.dimension !== bot.game.dimension || !transfer?.submitted || !action.result.receipt || !action.exited)
           throw Object.assign(new Error('当前世界找不到已经退出并提交过投物的原工作'), { code: 'handoff_work_unavailable' });
-        original.proofRead ??= readHandoffProof(witness,original.handoffEvidence,original.latestProof ?? action.result.receipt)
-          .then(proof => { original.latestProof = proof; return proof; }).finally(() => { delete original.proofRead; });
-        const proof = await original.proofRead;
+        await refreshHandoff(original,witness);
         check();
-        result.handoffReceipt = { id: job.id, work: args.work, order: action.order, observation: transfer.observation,
-          generation: action.generation, dimension: bot.game.dimension, recipient: transfer.recipient, item: transfer.item,
-          requested: transfer.requested, submitted: transfer.submitted, originalStatus: action.result.status,
-          sampledAtMs: Math.floor(performance.now()), sourceThrough: original.handoffEvidence?.sourceThrough ?? null, receipt: proof };
+        result.handoffReceipt = handoffSample(original,job.id);
       } else if (observation?.mode === 'drops') {
         result.dropObservation = observeDrops(bot, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'drop') {
@@ -654,7 +650,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
           JSON.stringify(args) !== JSON.stringify(known.args))
           throw new Error('工作身份冲突');
         // 票据收回后的查证只读原记录，游戏工作的失联期限继续计时。
-        if (method === 'partner.receipt') return receipt;
+        if (method === 'partner.receipt') return originalHandoffReceipt(known,witness);
         if (known === active) {
           known.polled = performance.now();
           known.sampleProgress?.();
@@ -671,14 +667,8 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
           (controlsBody && active && !active.receipt.exited))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
-      // 只回收已经退出且原消息不可能再次接纳的票据。
-      if (records.size >= 64) {
-        const reclaimable = [...records].find(([, entry]) => entry !== active && entry.receipt.exited &&
-          (entry.receipt.generation !== context.generation || entry.receipt.order !== context.order ||
-            entry.receipt.controller !== context.controller));
-        if (!reclaimable) throw new Error('游戏工作回执已满');
-        records.delete(reclaimable[0]);
-      }
+      const lookup = skill === 'observe' && args.mode === 'handoff_receipt' ? records.get(workKey(context.controller,args.work)) : undefined;
+      makeReceiptRoom(records,active,context,lookup);
       const job = { id, key, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(key, job);
       if (controlsBody) {

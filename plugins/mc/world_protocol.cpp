@@ -654,6 +654,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
     const bool thrown = skill == "give_item" && verify_transfer(result,args,context.at("generation"),exited);
+    if (skill == "give_item" && result.contains("handoffReceipt")) {
+        if (!exited) throw std::invalid_argument("MC: handoff recheck before exit");
+        verify_original_handoff(result,id,context);
+    }
     if (skill == "observe" && (result.contains("vitals") || (exited && result.at("status") == "done" && args.value("mode","") == "vitals"))) {
         if (args.value("mode","") != "vitals" || args.size() != 1) throw std::invalid_argument("MC: unexpected vitals observation");
         verify_vitals(result.at("vitals"),id,context.at("generation"));

@@ -365,6 +365,16 @@ void handoff_protocol() {
     proof["recipientPicked"] = 66;
     proof["pickupUnknown"] = 0;
     const Json late = proof;
+    result["status"] = "blocked";
+    proof["recipientPicked"] = 0; proof["pickupUnknown"] = 66; proof["collectors"] = Json::array(); proof["throughSeq"] = 16;
+    auto& bound = result["handoffReceipt"] = {{"id","give"},{"work","give"},{"order",frame.at("action").at("order")},{"observation","offer"},
+        {"generation",world},{"dimension","overworld"},{"recipient",owner},{"item","dirt"},{"requested",66},{"submitted",66},
+        {"originalStatus","blocked"},{"sampledAtMs",150},{"sourceThrough",16},{"receipt",late}};
+    if (!give().changed) throw std::runtime_error("original transfer lost its verified throws");
+    bound["item"] = "stone"; rejects(give); bound["item"] = "dirt";
+    bound["sourceThrough"] = 20; rejects(give); bound["sourceThrough"] = 16;
+    bound["receipt"]["stream"] = owner; rejects(give);
+    result.erase("handoffReceipt");
     auto stopped = frame;
     auto& stop_result = stopped["action"]["result"];
     stop_result["status"] = "blocked";
