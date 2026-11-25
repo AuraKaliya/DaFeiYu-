@@ -116,6 +116,7 @@ async function checkPlayer(fixture, mode) {
     const fish = await until(() => player.players.DfyCompanion?.entity && player.players.DfyCompanion, '同场可见的独立角色');
     assert.ok(fish.uuid && fish.uuid !== player.player.uuid);
     const actor = fish.uuid;
+    const owner = player.player.uuid;
     const doorProbe = mode === '--door-probe';
     const handoff = mode.startsWith('--handoff-');
     const combined = mode === '--follow-dig-fill-probe';
@@ -139,7 +140,7 @@ async function checkPlayer(fixture, mode) {
     } else if (['--handoff-gather-probe','--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode)) {
       await checkGatherHandoff(fixture, player, whispers, mode);
     } else if (mode.startsWith('--handoff-eight-')) {
-      await checkEightStones(fixture,player,whispers,mode === '--handoff-eight-full-probe');
+      await checkEightStones(fixture,player,whispers,mode);
     } else if (handoff) {
       const other = mode === '--handoff-other-probe' ? await connect('DfyCollector',fixture.port) : null;
       try { await checkHandoff(fixture, player, whispers, mode, other); }
@@ -216,7 +217,7 @@ async function checkPlayer(fixture, mode) {
       player.chat('采 16 块带回来');
       await until(() => chat.some(line => line.includes('我到河边了，这次带回了 16 块圆石')), '游戏内交付', 120000);
     }
-    writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner: player.player.uuid, digest, chat }, null, 2));
+    writeFileSync(join(fixture.evidence, 'player.json'), JSON.stringify({ actor, owner, digest, chat }, null, 2));
   } finally { player.quit(); }
 }
 
@@ -475,7 +476,7 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
 
 // 通过原版协议核对八块圆石的实际破坏、入包及只约束交付的选箱问题。
 // 步骤：下达原话并在开挖时插问 → 核对八个格和库存 → 按选箱或满包投物分流 → 验证原号实收。
-async function checkEightStones(fixture, player, whispers, full) {
+async function checkEightStones(fixture, player, whispers, mode) {
   const id = player.registry.itemsByName.cobblestone.id;
   const point = (x,y,z) => player.entity.position.clone().set(x,y,z);
   const cells = [-3,-2].flatMap(x => [-2,-1,0,1].map(z => point(x,-60,z)));
@@ -502,7 +503,7 @@ async function checkEightStones(fixture, player, whispers, full) {
   player.chat('可以先交了吗？');
   await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
   assert.ok(!actions().some(row => row.skill === 'give_item'));
-  if (!full) {
+  if (mode === '--handoff-eight-chest-probe') {
     player.chat('左箱');
     await until(() => whispers.includes('已记下左箱，圆石还在我这里。'),'原选箱问题实际完成');
     assert.deepEqual([fixture.materialCount('cobblestone'),player.inventory.count(id)],[8,0]);
@@ -518,6 +519,10 @@ async function checkEightStones(fixture, player, whispers, full) {
   const give = actions().filter(row => row.skill === 'give_item');
   const proof = give[0].result.receipt;
   assert.deepEqual([give.length,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.pickupUnknown,player.inventory.count(id)],[1,8,0,0,8,0]);
+  if (mode === '--handoff-eight-retired-probe') {
+    await checkRetiredPickup(fixture,player,give[0],id);
+    return;
+  }
   fixture.send('clear DfyGuestCheck minecraft:stone');
   await until(() => player.inventory.count(id) === 8,'腾包后玩家实际收到八块');
   player.chat('现在收到几块？');
@@ -533,6 +538,33 @@ async function checkEightStones(fixture, player, whispers, full) {
     ['give_item',player.player.uuid,8,proof.throughSeq]);
   assert.ok(original.exited && !trace().some(row => row.body?.factReceiptError));
   assert.equal(actions().filter(row => row.skill === 'give_item').length,1);
+}
+
+// 让原玩家在投物后离场，验证重新入场后的真实拾取只结算到原绑定。
+// 步骤：确认旧工作接纳及离场 → 用同一玩家重新连接并腾包 → 串查独立库存、原回执与新会话输入。
+async function checkRetiredPickup(fixture, player, give, item) {
+  const trace = () => readRows(fixture,'trace/events.jsonl');
+  const old = trace().find(row => row.kind === 'binding.work_settled' && row.work === give.work && row.phase === 'accepted');
+  assert.ok(old);
+  fixture.rejoining = true;
+  player.quit();
+  let joined;
+  try {
+    const left = await until(() => trace().find(row => row.category === 'mc.partner.event' && row.body.event.type === 'player.left'),
+      '原配对离场已处理');
+    joined = await connect('DfyGuestCheck',fixture.port);
+    const next = await until(() => trace().find(row => row.seq > left.seq && row.kind === 'model.prepared' &&
+      row.source === 'plugin' && row.session !== old.session),'重新入场后建立新会话');
+    assert.ok(!JSON.parse(next.input.messages.at(-1).content).hostWorkReceipts?.some(entry => entry.work === give.work));
+    fixture.send('clear DfyGuestCheck minecraft:stone');
+    await until(() => joined.inventory.count(item) === 8,'新连接独立读到八块圆石');
+    const settled = await until(() => trace().find(row => row.kind === 'binding.work_settled' && row.work === give.work &&
+      row.finalEffect && row.body.recipientPicked === 8),'旧绑定收到迟到实收',15000);
+    assert.deepEqual([settled.session,settled.epoch,settled.retired,settled.body.recipient,settled.body.sourceThrough],
+      [old.session,old.epoch,true,joined.player.uuid,give.result.receipt.throughSeq]);
+    assert.equal(readRows(fixture,'game-actions.jsonl').filter(row => row.skill === 'give_item').length,1);
+    assert.equal(trace().filter(row => row.kind === 'binding.work_settled' && row.work === give.work && row.finalEffect).length,1);
+  } finally { fixture.rejoining = false; joined?.quit(); }
 }
 
 // 在两个真实投物操作之间移开玩家，核对停投读数、现场掉落及原委托的实际发言。

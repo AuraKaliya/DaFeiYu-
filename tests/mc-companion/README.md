@@ -4,7 +4,7 @@
 
 ## 固定响应验收单个玩家绑定
 
-在已准备好的隔离 Paper 场地运行以下三局。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，使用当前仓库的服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。每次只运行一局。
+在已准备好的隔离 Paper 场地运行以下四局。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。每次只运行一局。
 
 ~~~powershell
 $probe = '.\build\windows-tests\tests\Debug\dfy_mc_playtest.exe'
@@ -12,9 +12,10 @@ $plugin = '.\build\windows-tests\plugins\mc\Debug\mc.companion'
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-facts-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-chest-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-full-probe
+node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-probe
 ~~~
 
-第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。后两局从“帮我挖 8 块圆石”开始。待选交付地点时可继续采掘、查库存，提前给物会被原待答拦下。选左箱的一局验证选择已送达、八块仍在伙伴包内。满包的一局分开核对投出、玩家腾包后的实收和原工作结算。每局证据目录中的 `host/trace/events.jsonl` 记录送模请求，`host/game-actions.jsonl` 记录桥接工作和服务端实效。八块场景的 `player-feedback.json` 和 `progress-feedback.json` 使用同一协议玩家的时钟记录首次追问和进度答复。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
+第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余三局从“帮我挖 8 块圆石”开始。待选交付地点时可继续采掘、查库存，提前给物会被原待答拦下。选左箱的一局验证选择已送达、八块仍在伙伴包内。满包的两局分别在原连接和玩家重新入场后腾包。重连用例核对新连接中的实际库存、唯一一次投物和退役绑定的 `binding.work_settled` 原号回执。每局证据目录中的 `host/trace/events.jsonl` 记录送模请求，`host/game-actions.jsonl` 记录桥接工作和服务端实效。八块场景的 `player-feedback.json` 和 `progress-feedback.json` 使用同一协议玩家的时钟记录首次追问和进度答复。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
 
 ## 首次真人体验
 

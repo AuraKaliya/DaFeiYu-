@@ -1345,7 +1345,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool ground_pickup = mode == L"--ground-pickup-probe";
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
-        const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-full-probe";
+        const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-full-probe" || mode == L"--handoff-eight-retired-probe";
         const bool handoff = eight || gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" ||
             mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-partial-probe" || mode == L"--handoff-other-probe";

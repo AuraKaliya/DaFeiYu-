@@ -40,7 +40,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const handoff = mode.startsWith('--handoff-');
   const movingHandoff = ['--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode);
   const gatherHandoff = movingHandoff || mode === '--handoff-gather-probe';
-  const eight = mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-full-probe';
+  const eight = mode.startsWith('--handoff-eight-');
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
   const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
@@ -247,7 +247,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       else {
         absentSince ??= performance.now();
         // 给真实离场事实留出本轮处理时间；失联、显式停服和模型超时仍可回收。
-        if (mode === '--probe' || departureSettled || performance.now() - absentSince > 120000) break;
+        if (mode === '--probe' || (departureSettled && !fixture.rejoining) || performance.now() - absentSince > 120000) break;
       }
       await sleep(100);
     }
@@ -325,10 +325,10 @@ async function main() {
   const [exe, pkg, requestedMode, config, liveThinking] = process.argv.slice(2);
   const factPilot = requestedMode === '--handoff-facts-probe';
   const mode = factPilot ? '--handoff-gather-probe' : requestedMode;
-  const eight = mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-full-probe';
+  const eight = mode?.startsWith('--handoff-eight-');
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
-  if (!['--handoff-eight-chest-probe', '--handoff-eight-full-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+  if (!['--handoff-eight-chest-probe', '--handoff-eight-full-probe', '--handoff-eight-retired-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
     '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
