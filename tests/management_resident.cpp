@@ -33,6 +33,16 @@ Json window_reply(management::Client& client, const Json& body) {
     return *result;
 }
 
+// 使用同号请求查回终端命令，业务尚未执行时管道仍可接纳其他客户端。
+Json terminal_reply(const std::filesystem::path& profile, const std::string& client, const Json& body) {
+    Json result;
+    wait_until([&] {
+        result = management::resident_request(profile,{{"op","terminal"},{"client",client},{"body",body}});
+        return !result.is_null();
+    });
+    return result;
+}
+
 // 在原实例接纳退出之后断开 IPC，并让同目录的新端点返回自己的等待对象。
 // 步骤：完成真实观察握手 → 置位并丢弃退出回包 → 核对独立意图 → 拒绝新实例的收尾数据。
 void lost_stop_reply(const std::filesystem::path& root) {
@@ -119,6 +129,52 @@ void verify_stop_log(const std::filesystem::path& data, const std::string& insta
     if (accepted!=1 || !drained) throw std::runtime_error("stop evidence did not match original work");
 }
 
+// 在正式管理客户端交错读取多个主题，核对恢复、换类和关窗各自结算原错误。
+// 步骤：启动隔离管道 → 连续注入两类错误及成功回包 → 从软件日志核对计数、时间和保密字段。
+void poll_errors(const std::filesystem::path& root) {
+    const auto profile = root/("poll-"+std::to_string(GetCurrentProcessId()));
+    management::LocalPipe pipe(profile);
+    const auto instance = std::to_string(GetCurrentProcessId())+"-3-4";
+    unsigned dialogue = 0, room = 0;
+    std::jthread server([&](std::stop_token stop) {
+        while (!stop.stop_requested()) pipe.serve_one(100ms,[&](const std::string& bytes) -> std::string {
+            const auto request = Json::parse(bytes);
+            Json reply{{"v",1},{"result",Json::object()}};
+            if (request.at("op")=="connect") reply["result"] = {{"instance",instance},{"client","client-1-2-3-4"}};
+            if (request.at("op")=="request") {
+                const auto& type = request.at("body").at("type");
+                if (type=="dialogue.read" && ++dialogue<=2) reply["error"] = "synthetic-private-error";
+                if (type=="room.read" && ++room>=2) {
+                    if (room==2) reply["error"] = "synthetic-private-room";
+                    else return "synthetic-private-malformed";
+                }
+            }
+            return reply.dump();
+        });
+    });
+    {
+        app::SoftwareLog software(profile,app::SoftwareRole::window);
+        management::Client client(profile,"fixture",[] { throw std::logic_error("unexpected launch"); },{},&software);
+        for (const auto type : {"dialogue.read","room.read","dialogue.read","dialogue.read","room.read","room.read","room.read"})
+            (void)window_reply(client,{{"type",type},{"version","1"},{"request","synthetic-private-id"}});
+    }
+    unsigned recovered = 0, ended = 0;
+    for (const auto& file : std::filesystem::directory_iterator(profile/"logs")) {
+        std::ifstream input(file.path(),std::ios::binary);
+        for (std::string line; std::getline(input,line); ) {
+            if (line.find("synthetic-private")!=line.npos) throw std::runtime_error("sensitive poll field logged");
+            const auto row = Json::parse(line);
+            if (!row.at("event").get<std::string>().starts_with("poll.")) continue;
+            if (row.at("firstUtcMs")>row.at("lastUtcMs") || row.at("instance")!=instance) throw std::runtime_error("invalid poll samples");
+            if (row.at("event")=="poll.dialogue" && row.at("result")=="recovered" && row.at("count")==2) ++recovered;
+            if (row.at("event")=="poll.room" && row.at("result")=="ended" &&
+                ((row.at("failureKind")=="protocol" && row.at("count")==2) ||
+                 (row.at("failureKind")=="management" && row.at("count")==1))) ++ended;
+        }
+    }
+    if (recovered!=1 || ended!=2) throw std::runtime_error("poll intervals not recovered or closed exactly once");
+}
+
 // 用析构回执核对业务收尾期间的托盘寿命。
 struct TestTray final : management::ResidentTray {
     std::atomic_uint& releases;
@@ -176,9 +232,16 @@ void reconnect(const std::filesystem::path& root) {
         try { (void)ask({{"op","connect"},{"definition","other"}}); throw std::logic_error("configuration mismatch accepted"); }
         catch (const std::runtime_error& error) { if (std::string(error.what()).find("differs")==std::string::npos) throw; }
         const auto first=ask({{"op","connect"},{"definition","fixture"}}).at("client");
+        const auto terminal = management::connect_resident(data,"fixture").client;
+        const auto opening = terminal_reply(data,terminal,{{"id",1},{"action","open"},{"interactive",false}});
         const Json message{{"type","dialogue.submit"},{"version","1"},{"request","a"},{"command","1"},{"text","材料"}};
         if (ask({{"op","request"},{"client",first},{"body",message}}).at("receipt").at("state")!="queued" ||
             !started.try_acquire_for(3s)) throw std::runtime_error("real turn not started");
+        unsigned line_id = 1;
+        for (const auto exit : {"/exit","/exit\r","/exit\r\r"}) {
+            const auto left = terminal_reply(data,terminal,{{"id",++line_id},{"action","line"},{"text",exit}});
+            if (left.at("busy")!=true) throw std::runtime_error("detaching terminal disturbed active window turn");
+        }
         (void)ask({{"op","disconnect"},{"client",first}});
         release.release();
 
@@ -194,6 +257,19 @@ void reconnect(const std::filesystem::path& root) {
             return turns.size()==1 && turns.at(0).at("answer")=="回复：材料" && turns.at(0).at("exit")=="succeeded" &&
                 state.at("latestCommand")=="0";
         });
+        const auto output = terminal_reply(data,terminal,{{"id",++line_id},{"action","read"},{"after",opening.at("cursor")}});
+        if (output.at("out")!="回复：材料\n" || output.at("err")!="") throw std::runtime_error("terminal did not see the desktop result");
+        const Json status_line{{"id",++line_id},{"action","line"},{"text","/status"}};
+        const auto status_reply = terminal_reply(data,terminal,status_line);
+        if (status_reply.at("out").get<std::string>().find("Question=succeeded")==std::string::npos ||
+            terminal_reply(data,terminal,status_line)!=status_reply) throw std::runtime_error("terminal lost original status or retry");
+        try {
+            (void)terminal_reply(data,terminal,{{"id",line_id},{"action","line"},{"text","/clear"}});
+            throw std::logic_error("conflicting terminal retry accepted");
+        } catch (const std::runtime_error& error) {
+            if (std::string(error.what()).find("conflict")==std::string::npos) throw;
+        }
+        (void)ask({{"op","disconnect"},{"client",terminal}});
         auto slow = message;
         slow["text"] = "synthetic-private-chat";
         (void)ask({{"op","request"},{"client",second},{"body",slow}});
@@ -239,6 +315,7 @@ int main(int argc, char** argv) {
         reconnect(argv[1]);
         headless(argv[1],false);
         headless(argv[1],true);
+        poll_errors(argv[1]);
         lost_stop_reply(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

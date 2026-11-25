@@ -1,5 +1,6 @@
 #include "host.hpp"
 #include "../software_log.hpp"
+#include "../message_store.hpp"
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
@@ -91,8 +92,18 @@ void Host::shutdown(app::Application& application) {
 }
 
 // 将创建和推进入口移交新业务线程，线程的寿命短于快照存储。
-Host::Host(Open open, Drive drive, app::SoftwareLog* software)
-    : software_(software), worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+Host::Host(Open open, Drive drive, app::SoftwareLog* software, std::shared_ptr<app::MessageStore> messages, std::string instance)
+    : messages_(std::move(messages)), instance_(std::move(instance)), software_(software),
+      worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+
+// 在同一窗口锁内登记订阅和采样水位，之后的提交可按客户端自己的游标续读。
+std::optional<std::int64_t> Host::message_watermark(const std::string& client, bool subscribe) const {
+    std::lock_guard lock(mutex_);
+    const auto owner = clients_.find(client);
+    if (!messages_ || owner==clients_.end()) return {};
+    if (subscribe) owner->second.subscribed = true;
+    return owner->second.subscribed ? std::optional(messages_->watermark()) : std::nullopt;
+}
 
 // 在通知业务线程前固定本次停止是否源自显式退出。
 void Host::close(bool explicit_request) noexcept {
@@ -147,7 +158,11 @@ std::string Host::open_client() {
     std::lock_guard lock(mutex_);
     if (clients_.size()>=33) {
         const auto stale = std::chrono::steady_clock::now()-std::chrono::minutes(5);
-        std::erase_if(clients_,[&](const auto& entry) { return !entry.first.empty() && entry.second.seen<stale; });
+        std::erase_if(clients_,[&](const auto& entry) {
+            if (entry.first.empty() || entry.second.seen>=stale) return false;
+            terminal_.disconnect(entry.first);
+            return true;
+        });
     }
     if (clients_.size()>=33 || !clients_.try_emplace(id).second) throw std::runtime_error("management: client unavailable");
     return id;
@@ -156,6 +171,7 @@ std::string Host::open_client() {
 // 关闭远端观察者身份，保留未完成命令的宿主责任。
 void Host::close_client(const std::string& client) {
     std::lock_guard lock(mutex_);
+    terminal_.disconnect(client);
     if (!client.empty()) clients_.erase(client);
 }
 
@@ -265,10 +281,11 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
         std::shared_ptr<const app::ConversationDisplay> display;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
+            terminal_.advance(*application);
             advance_dialogue(*application,stop_command_);
             advance_dialogue(*application,pending_);
             if (application->advance_plugins() == runtime::RunResult::failed) std::fputs("A plugin notification failed.\n",stderr);
-            conversation.advance();
+            if (auto result = conversation.advance()) terminal_.completed(*result);
 
             const auto snapshot = application->run_status();
             const auto self = application->room().self(layout.room);

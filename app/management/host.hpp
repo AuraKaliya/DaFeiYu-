@@ -2,6 +2,7 @@
 #include "application.hpp"
 #include "dialogue_channel.hpp"
 #include "room_location.hpp"
+#include "terminal_host.hpp"
 #include <atomic>
 #include <deque>
 #include <functional>
@@ -10,6 +11,7 @@
 #include <thread>
 
 namespace dfy::app { class SoftwareLog; }
+namespace dfy::app { class MessageStore; }
 namespace dfy::management {
 enum class StopPhase { requested, conversation, plugins, complete, failed };
 struct StopProgress {
@@ -23,7 +25,8 @@ class Host {
     using Open = std::function<std::unique_ptr<app::Application>()>;
     using Drive = std::function<void(app::Application&)>;
     // 在业务线程创建应用，按原顺序推进会话与插件。
-    explicit Host(Open open, Drive drive = {}, app::SoftwareLog* software = nullptr);
+    explicit Host(Open open, Drive drive = {}, app::SoftwareLog* software = nullptr,
+        std::shared_ptr<app::MessageStore> messages = {}, std::string instance = {});
     // 只复制最近发布的快照，锁内不调用应用服务。
     std::optional<app::RunStatusSnapshot> snapshot() const;
     // 复制业务线程已经核实的房间与身体位置，无需唤醒主会话。
@@ -34,6 +37,14 @@ class Host {
     bool visit_client(const std::string& client);
     // 撤销观察客户端的提交身份，已接纳的工作继续由宿主持有。
     void close_client(const std::string& client);
+    // 提供仅由原生终端协议使用的命令与输出通道。
+    TerminalHost& terminal() noexcept { return terminal_; }
+    // 返回本实例在独占目录中打开的消息库，旧内嵌宿主可为空。
+    app::MessageStore* messages() const noexcept { return messages_.get(); }
+    // 返回绑定当前运行时会话及回合的原实例身份。
+    const std::string& instance() const noexcept { return instance_; }
+    // 为指定窗口登记或读取其订阅，水位只采样已经写盘的提交。
+    std::optional<std::int64_t> message_watermark(const std::string& client, bool subscribe = false) const;
     // 读取共享对话与指定客户端自己的命令水位和回执。
     DialogueView dialogue(std::uint64_t command = 0, const std::string& client = {}) const;
     // 核对命令编号、种类、目标和原话，复用同一命令的回执。
@@ -47,9 +58,13 @@ class Host {
     // 查询初始化、推进或退出是否出现宿主错误。
     bool failed() const noexcept { return failed_; }
   private:
+    TerminalHost terminal_;
+    std::shared_ptr<app::MessageStore> messages_;
+    std::string instance_;
     struct CommandRecord { DialogueReceipt receipt; DialogueAction action; agent::RunId target; std::uint64_t message; std::string fingerprint; };
     struct Client {
         std::uint64_t latest = 0;
+        bool subscribed = false;
         std::chrono::steady_clock::time_point seen = std::chrono::steady_clock::now();
         std::deque<CommandRecord> commands;
     };

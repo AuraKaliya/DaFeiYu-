@@ -230,6 +230,18 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 消息库保存交互事实。主 Agent 的记忆系统、上下文压缩、跨重启送模历史的选择与装配另立议题，后续比较 Claude、Codex 和 DeepSeek Harness 再定。首版沿用可控的当轮上下文预算，打开聊天或读取历史均不会把整库正文送模。
 
+#### 常驻本体已提供的消息读协议
+
+已握手的客户端通过既有本地管道的 `op=request` 发送业务请求。`body` 共用 `version:"1"`、`type` 和窗口自定的 `request`。回复回显 `request`，包含逻辑会话号 `conversation`、原后台 `instance` 和采样时的 `watermark`。消息号、游标、水位和修订号均为十进制字符串。[管理分派](../app/management/message_protocol.cpp)
+
+| 业务请求 | 附加字段 | 成功结果 |
+|---|---|---|
+| `messages.subscribe` | 无 | `messages.subscribed`。为当前窗口登记订阅并取得已提交水位。后续 `dialogue.read` 的 `messageWatermark` 可提示补读，即使对话显示修订未变也会返回。重连须重新订阅。 |
+| `messages.read` | `conversation, direction, cursor, through, limit` | `messages.page`。固定订阅取得的 `through`，整数 `limit` 取 1～64。`history` 按消息号倒序，从 `cursor:"0"` 取最新一页，回执为该水位时的版本。`changes` 按修订正序，读取 `(cursor, through]`。有后页时用 `next` 续读，`more` 为假时结束。 |
+| `messages.receipt` | `conversation, source, submission` | `messages.receipt`。返回原提交的最新 `record`，未找到为 `null`。 |
+
+记录包含稳定的 `message`、本次 `revision`、宿主 UTC 毫秒时间 `utcMs`、`source`、`submission` 和该修订的 `receipt`。窗口按逻辑会话和消息号更新同一行，一页实际交付后再保存游标。多窗读取互不消费。数据库位于数据目录下的 `main-conversation.sqlite3`。[双窗口与断点验收](../tests/message_protocol.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

@@ -42,8 +42,8 @@ class PartnerLoop {
     void resolve_block_question(std::uint64_t item, std::string_view envelope);
     // 登记当前玩家指向的后台观察，额度用完后保留追问入口。
     bool admit_hit_observation(std::uint64_t session, const nlohmann::json& args);
-    // 给当前对话或回执分配唯一的玩家发言机会。
-    bool reserve_reply(std::uint64_t session, std::string_view work, bool finish);
+    // 按本轮原话登记发言，重复请求返回已登记的桥接工作号。
+    std::string reserve_reply(std::uint64_t session, const std::string& work, bool finish, const nlohmann::json& args);
     // 核对步骤的实际影响是否需要待答证据，或与已选目标冲突。
     nlohmann::json action_question(std::uint64_t session, std::string_view skill, const nlohmann::json& args,
         std::uint64_t resolves = 0) const;
@@ -324,8 +324,12 @@ class PartnerLoop {
     std::array<ActionReceipt,32> actions_{};
     std::size_t action_count_ = 0;
     std::unique_ptr<GameWork> final_reply_;
-    struct ReplyReservation { std::string work; bool unsent = false, finish = false, delivered = false; };
-    ReplyReservation reply_, rejection_reply_;
+    struct ReplyReservation { std::string work; std::uint64_t source; bool rejection, finish, delivered = false, unsent = false; };
+    std::vector<ReplyReservation> replies_;
+    // 查当前原话在普通阶段或计划退回阶段的原始投递。
+    const ReplyReservation* reserved_reply(std::uint64_t source) const noexcept;
+    // 读取已确认送出、且允许结束本轮的发言回执。
+    const ReplyReservation* closing_reply() const noexcept;
     bool question_requested_ = false;
     bool final_text_for_player_ = false;
     bool air_only_turn_ = false;

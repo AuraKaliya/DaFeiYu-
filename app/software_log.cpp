@@ -20,9 +20,10 @@ constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
     "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain",
-    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited","tray.start","tray.restored","tray.removed",
+    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited","tray.start",
+    "poll.dialogue","poll.room","poll.run","poll.stop","tray.restored","tray.removed","poll.messages","messages.storage",
     "tray.open_panel","tray.open_logs","tray.confirm_exit"};
-constexpr std::array results{"started","ok","failed","accepted","busy","pending"};
+constexpr std::array results{"started","ok","failed","accepted","busy","pending","recovered","ended"};
 constexpr std::size_t queue_limit = 128;
 
 struct Entry {
@@ -63,6 +64,10 @@ nlohmann::json diagnostic_fields(const SoftwareFields& fields) {
     if (fields.plugin_instance) row["pluginInstance"] = fields.plugin_instance;
     if (fields.plugin_code) row["pluginCode"] = *fields.plugin_code;
     if (fields.peer_pid) row["peerPid"] = fields.peer_pid;
+    constexpr std::array failures{"transport","protocol","management"};
+    if (fields.poll_failure) row["failureKind"] = failures.at(static_cast<std::size_t>(*fields.poll_failure));
+    if (fields.first_utc_ms) row["firstUtcMs"] = *fields.first_utc_ms;
+    if (fields.last_utc_ms) row["lastUtcMs"] = *fields.last_utc_ms;
     return row;
 }
 }
