@@ -1,4 +1,5 @@
 #include "subagents.hpp"
+#include "binding_facts.hpp"
 #include "run_log.hpp"
 #include "persona.hpp"
 #include <dafeiyu/digest.hpp>
@@ -23,6 +24,10 @@ struct Subagents::Slot {
     std::string answer;
     bool closing = false;
     bool compare_projection = false;
+    BindingFacts facts;
+    std::unique_ptr<BindingFacts> pending_facts;
+    BindingWorks works;
+    bool continuous_history = false;
 };
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
@@ -58,6 +63,10 @@ Subagents::Slot& Subagents::find(runtime::DomainId owner, runtime::DomainId id) 
 // 步骤：核对身份与空闲 → 校验正文和工具范围 → 发布排队状态。
 std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, SubagentInput input) {
     auto& slot = find(owner,id);
+    if (input.frame && !slot.closing && !stopping_) {
+        const auto& ledger = slot.pending_facts ? *slot.pending_facts : slot.facts;
+        if (const auto original = ledger.prior(input)) return original;
+    }
     if (stopping_ || slot.closing || slot.queued || slot.phase == SubagentPhase::running)
         throw std::logic_error("subagent: session busy or closing");
     const auto persona_size = input.player_facing ? persona_.instructions.size()+(!input.instructions.empty() ? 1 : 0) : 0;
@@ -65,10 +74,32 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         input.binding.size() > 8*1024 || input.tools.size() > 16 || slot.request == UINT64_MAX ||
         std::ranges::any_of(input.tools,[](const auto& id) { return id.empty() || id.size() > 128; }))
         throw std::invalid_argument("subagent: input outside limits");
+    std::unique_ptr<BindingFacts> pending;
+    if (input.frame) {
+        pending = std::make_unique<BindingFacts>(slot.facts);
+        const bool baseline = input.frame->baseline || !slot.continuous_history;
+        auto prompt = pending->apply(input,slot.request+1,baseline);
+        const auto works = slot.works.view(input.frame->epoch);
+        if (!works.empty()) {
+            auto data = nlohmann::json::parse(prompt);
+            data["hostWorkReceipts"] = works;
+            prompt = data.dump();
+        }
+        if (prompt.size() > 128*1024) throw std::length_error("subagent: projected input outside limit");
+        input.prompt = std::move(prompt);
+        input.replace_history = baseline;
+    }
     slot.queued.emplace(std::move(input));
+    slot.pending_facts = std::move(pending);
     slot.answer.clear();
     slot.phase = SubagentPhase::queued;
     return ++slot.request;
+}
+
+// 工作回执只能沿原所有者和作用域接纳，此入口不触发模型或工具。
+std::uint64_t Subagents::settle(runtime::DomainId owner, runtime::DomainId id, plugins::SubagentWorkFact fact) {
+    auto& slot = find(owner,id);
+    return slot.works.settle(slot.closing || stopping_ ? 0 : slot.facts.epoch(),fact);
 }
 
 // 投影原请求状态和本次结算正文。
@@ -84,6 +115,7 @@ bool Subagents::cancel(runtime::DomainId owner, runtime::DomainId id, std::uint6
     if (slot.active) return slot.active->request_cancel(runtime::CancelReason::owner_stop) != runtime::CancelDisposition::already_settled;
     if (!slot.queued) return false;
     slot.queued.reset();
+    slot.pending_facts.reset();
     slot.phase = SubagentPhase::cancelled;
     return true;
 }
@@ -140,6 +172,8 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     }
     options.replace_history = input.replace_history;
     slot.active = slot.session.begin(input.prompt,std::move(options));
+    slot.continuous_history = static_cast<bool>(slot.pending_facts);
+    if (slot.pending_facts) { slot.facts = std::move(*slot.pending_facts); slot.pending_facts.reset(); }
     if (log_) {
         try {
             const auto id = slot.active->run_id();
@@ -161,7 +195,7 @@ void Subagents::advance() {
             slot->closing = true;
         } else if (slot->queued) {
             try { begin(*slot,owner); }
-            catch (...) { slot->phase = SubagentPhase::failed; slot->registration.reset(); }
+            catch (...) { slot->phase = SubagentPhase::failed; slot->pending_facts.reset(); slot->registration.reset(); }
         }
         if (slot->active) {
             slot->session.advance();
@@ -173,6 +207,7 @@ void Subagents::advance() {
                     catch (...) { slot->answer.clear(); }
                 }
                 slot->active.reset();
+                if (slot->phase != SubagentPhase::succeeded) slot->continuous_history = false;
                 slot->registration.reset();
             }
         }

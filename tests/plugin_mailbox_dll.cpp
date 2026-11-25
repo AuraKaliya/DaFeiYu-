@@ -187,6 +187,73 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
     check(finish() == "done" && calls == 5,"reading a confirmed output repeated outside work");
 }
 
+// 固定玩家世界内验证幂等、断序及十次插话后的原工作；换世界只允许原工作结算。
+// 步骤：提交基线及工作 → 增量插话与重发 → 拒收错误新基线 → 换代并沿旧号补报实效。
+void fact_binding(const fs::path& root) {
+    using namespace dfy::app;
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    std::atomic<unsigned> calls = 0;
+    Application app({},root,root.parent_path()/"fact-data",Backend{[&](const auto&,const Request& request) {
+        const auto frame = Json::parse(request.messages.back().content);
+        const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
+        if (seq == 11) {
+            const auto& work = frame.at("hostWorkReceipts").at(0);
+            check(work.at("work") == "W17" && work.at("effect").at("inBag") == 3 &&
+                request.messages.front().content.find("eight cobblestones") != std::string::npos,
+                "ninth intervening utterance lost unfinished goal, work or inventory");
+        }
+        if (frame.at("factFrame").at("epoch") == 2)
+            check(!frame.contains("hostWorkReceipts") && request.messages.size() == 1,"rebound leaked old facts");
+        ++calls; return Response{{Role::assistant,"internal"}};
+    }});
+    check(!app.plugins().load("test.mail"),"fact test owner unavailable");
+    auto& agents = app.subagents();
+    const auto plugin = app.plugins().instance("test.mail");
+    const auto owner = plugin->generation(), id = agents.open(plugin);
+    const auto make = [](unsigned epoch,unsigned seq,bool baseline,Json fields) {
+        SubagentInput input{Json{{"set",std::move(fields)},{"closed",Json::array()}}.dump()};
+        input.frame = dfy::plugins::SubagentFrame{epoch,seq,epoch == 1 ? "player/world-A" : "player/world-B",baseline};
+        return input;
+    };
+    const auto settle = [&] {
+        const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while (agents.busy(owner) && std::chrono::steady_clock::now() < end) app.advance_plugins();
+        return agents.status(owner,id).phase;
+    };
+    auto base = make(1,1,true,{{"goal","eight cobblestones"},{"Q4","which chest"}});
+    check(agents.submit(owner,id,base) == 1 && agents.submit(owner,id,base) == 1 &&
+        settle() == SubagentPhase::succeeded,"duplicate queued baseline dispatched twice");
+    bool conflict = false;
+    try { agents.submit(owner,id,make(1,1,true,{{"goal","other"}})); } catch (const std::invalid_argument&) { conflict = true; }
+    check(conflict,"same source and revision accepted conflicting content");
+    bool gap = false;
+    try { agents.submit(owner,id,make(1,3,false,{})); } catch (const dfy::plugins::SubagentGap& err) { gap = err.expected == 2; }
+    check(gap,"missing fact sequence did not identify recoverable position");
+    const auto accepted = agents.settle(owner,id,{1,1,"W17",R"({"source":1})",DFY_V2_WORK_ACCEPTED});
+    const dfy::plugins::SubagentWorkFact effect{1,2,"W17",R"({"inBag":3})",DFY_V2_WORK_EFFECT};
+    const auto applied = agents.settle(owner,id,effect);
+    check(applied > accepted && agents.settle(owner,id,effect) == applied,"duplicate receipt advanced original work");
+    for (unsigned seq = 2; seq <= 11; ++seq) {
+        auto frame = make(1,seq,false,{{"utterance",seq}});
+        check(agents.submit(owner,id,frame) == seq && settle() == SubagentPhase::succeeded,"intervening fact failed");
+    }
+    auto invalid = make(2,1,true,{{"new","world"}});
+    invalid.tools = {"missing/tool"};
+    agents.submit(owner,id,invalid);
+    check(settle() == SubagentPhase::failed && calls == 11,"invalid baseline ran a model");
+    agents.submit(owner,id,make(1,12,false,{{"still","old world"}}));
+    check(settle() == SubagentPhase::succeeded && calls == 12,"failed replacement invalidated old session");
+    agents.submit(owner,id,make(2,1,true,{{"new","world"}}));
+    check(settle() == SubagentPhase::succeeded && calls == 13,"valid rebound failed");
+    const auto exited = agents.settle(owner,id,{1,3,"W17",R"({"exited":true})",DFY_V2_WORK_EXIT});
+    check(agents.settle(owner,id,{1,4,"W17",R"({"picked":3})",DFY_V2_WORK_EFFECT}) > exited,"late original receipt lost");
+    bool stale = false;
+    try { agents.settle(owner,id,{1,1,"new-old-work","{}",DFY_V2_WORK_ACCEPTED}); }
+    catch (const std::invalid_argument&) { stale = true; }
+    check(stale,"retired binding started a new work identity");
+}
+
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。
 // 步骤：建立两个会话及释放前取消 → 推进固定回答 → 分别核对历史与身份。
 void subagents(const fs::path& root) {
@@ -441,6 +508,7 @@ int wmain(int argc, wchar_t** argv) {
         main_inbox(root);
         text_hooks(root.parent_path(),argv[1]);
         run_text_hooks(root.parent_path(),argv[1],argv[3]);
+        fact_binding(root);
         transition_hooks(root.parent_path(),argv[1]);
         return 0;
     } catch (const std::exception& error) {

@@ -53,8 +53,10 @@ dfy_v2_status DFY_V2_CALL open(uint64_t* output, dfy_v2_error* error) {
 // 校验并复制本轮输入，在宿主回调边界后才会开始执行。
 // 步骤：清空输出及校验布局 → 核对服务 → 复制有界输入 → 接纳回合。
 template<uint32_t version>
-dfy_v2_status DFY_V2_CALL submit(uint64_t session, const dfy_v2_agent_input* input, uint64_t* request, dfy_v2_error* error) {
+dfy_v2_status submit_input(uint64_t session, const dfy_v2_agent_input* input, const dfy_v2_fact_frame* frame,
+    uint64_t* request, uint64_t* expected, dfy_v2_error* error) {
     if (request) *request = 0;
+    if (expected) *expected = 0;
     return boundary(error,[&](auto& host) {
         constexpr auto thinking = DFY_V2_AGENT_THINKING_OFF | DFY_V2_AGENT_THINKING_LOW;
         constexpr auto flags = DFY_V2_AGENT_ALLOW_CHANGES | DFY_V2_AGENT_REPLACE_HISTORY |
@@ -71,9 +73,48 @@ dfy_v2_status DFY_V2_CALL submit(uint64_t session, const dfy_v2_agent_input* inp
         if (input->flags & DFY_V2_AGENT_THINKING_LOW) copied.thinking = SubagentThinking::low;
         copied.tools.reserve(input->tool_count);
         for (uint32_t index = 0; index < input->tool_count; ++index) copied.tools.push_back(text(input->tools[index],128));
+        if (frame) {
+            if (!expected || !frame->epoch || !frame->sequence || frame->reserved || (frame->flags & ~DFY_V2_FACT_BASELINE))
+                return DFY_V2_INVALID_ARGUMENT;
+            copied.frame = SubagentFrame{frame->epoch,frame->sequence,text(frame->scope,256),(frame->flags & DFY_V2_FACT_BASELINE) != 0};
+        }
         try { *request = service->submit(host.agent_owner,session,std::move(copied)); }
+        catch (const SubagentGap& gap) { if (expected) *expected = gap.expected; return DFY_V2_NOT_FOUND; }
+        catch (const std::length_error&) { return DFY_V2_RESOURCE_EXHAUSTED; }
         catch (const std::invalid_argument&) { return DFY_V2_INVALID_ARGUMENT; }
         catch (const std::logic_error&) { return DFY_V2_BUSY; }
+        return DFY_V2_OK;
+    });
+}
+
+// 按协商的旧版布局接纳单轮输入，沿用原队列及工具授权。
+template<uint32_t version>
+dfy_v2_status DFY_V2_CALL submit(uint64_t session, const dfy_v2_agent_input* input, uint64_t* request, dfy_v2_error* error) {
+    return submit_input<version>(session,input,nullptr,request,nullptr,error);
+}
+// 以可选事实版本接纳同一原生子会话请求，断序时返回补查位置。
+dfy_v2_status DFY_V2_CALL submit_facts(uint64_t session, const dfy_v2_agent_input* input, const dfy_v2_fact_frame* frame,
+    uint64_t* request, uint64_t* expected, dfy_v2_error* error) {
+    if (!frame) {
+        if (request) *request = 0;
+        if (expected) *expected = 0;
+        return DFY_V2_INVALID_ARGUMENT;
+    }
+    return submit_input<DFY_V2_AGENT_THINKING_VERSION>(session,input,frame,request,expected,error);
+}
+// 按宿主所有者及原工作身份接纳实效，所有借用数据在 DLL 回调内复制。
+// 步骤：校验回执布局 → 核对服务 → 复制原身份与正文 → 返回接纳号或拒绝。
+dfy_v2_status DFY_V2_CALL settle_work(uint64_t session, const dfy_v2_work_fact* fact, uint64_t* receipt, dfy_v2_error* error) {
+    if (receipt) *receipt = 0;
+    return boundary(error,[&](auto& host) {
+        if (!session || !receipt || !fact || fact->reserved || !fact->epoch || !fact->revision ||
+            fact->phase < DFY_V2_WORK_ACCEPTED || fact->phase > DFY_V2_WORK_EXIT) return DFY_V2_INVALID_ARGUMENT;
+        const auto service = host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        try { *receipt = service->settle(host.agent_owner,session,{fact->epoch,fact->revision,text(fact->work,128),
+            text(fact->content,8192),fact->phase}); }
+        catch (const std::length_error&) { return DFY_V2_RESOURCE_EXHAUSTED; }
+        catch (const std::invalid_argument&) { return DFY_V2_INVALID_ARGUMENT; }
         return DFY_V2_OK;
     });
 }
@@ -125,5 +166,10 @@ const dfy_v2_agent_api& agent_api(uint32_t version) {
         submit<DFY_V2_AGENT_THINKING_VERSION>,status,cancel,close};
     if (version == DFY_V2_AGENT_THINKING_VERSION) return thinking;
     return version == DFY_V2_AGENT_PERSONA_VERSION ? persona : basic;
+}
+// 发布独立的小型事实表，原子会话服务的大小和字段位置保持 ABI 兼容。
+const dfy_v2_agent_facts_api& agent_facts_api() {
+    static const dfy_v2_agent_facts_api api{{sizeof(api),DFY_V2_AGENT_FACTS_VERSION},submit_facts,settle_work};
+    return api;
 }
 }

@@ -25,6 +25,8 @@ class Subagents final : public plugins::PluginAgents {
     runtime::DomainId open(const std::shared_ptr<plugins::PluginInstance>& instance) override;
     // 仅复制本轮输入，宿主在退出原 DLL 调用后发起模型请求。
     std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) override;
+    // 把回执写入原实例会话的工作记录，陈旧的授权不能发起新工作。
+    std::uint64_t settle(runtime::DomainId owner, runtime::DomainId session, plugins::SubagentWorkFact fact) override;
     // 按原所有者取得状态，答案视图保留至下次提交或关停。
     SubagentStatus status(runtime::DomainId owner, runtime::DomainId session) const override;
     // 按原请求取消，已完成的回执继续可查。

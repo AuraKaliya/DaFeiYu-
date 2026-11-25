@@ -5,6 +5,12 @@
 #define DFY_V2_AGENT_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_PERSONA_VERSION UINT32_C(2)
 #define DFY_V2_AGENT_THINKING_VERSION UINT32_C(3)
+#define DFY_V2_AGENT_FACTS_INTERFACE "dfy.agent.facts"
+#define DFY_V2_AGENT_FACTS_VERSION UINT32_C(1)
+#define DFY_V2_FACT_BASELINE UINT32_C(1)
+#define DFY_V2_WORK_ACCEPTED UINT32_C(1)
+#define DFY_V2_WORK_EFFECT UINT32_C(2)
+#define DFY_V2_WORK_EXIT UINT32_C(3)
 #define DFY_V2_AGENT_IDLE UINT32_C(1)
 #define DFY_V2_AGENT_QUEUED UINT32_C(2)
 #define DFY_V2_AGENT_RUNNING UINT32_C(3)
@@ -50,6 +56,26 @@ typedef struct dfy_v2_agent_api {
     // 请求关闭整个上下文，宿主推进退出；同实例忙碌时卸载返回 BUSY。
     dfy_v2_status (DFY_V2_CALL *close)(uint64_t session, dfy_v2_error* error);
 } dfy_v2_agent_api;
+// scope 标明插件侧玩家和世界，实际所有者及会话由宿主绑定。序号与代次均从非零值开始。
+typedef struct dfy_v2_fact_frame {
+    uint64_t epoch, sequence;
+    dfy_v2_string_view scope;
+    uint32_t flags, reserved;
+} dfy_v2_fact_frame;
+// 工作用原号和代次结算；阶段表示接纳、实效或退出，不从文本推断实收。
+typedef struct dfy_v2_work_fact {
+    uint64_t epoch, revision;
+    dfy_v2_string_view work, content;
+    uint32_t phase, reserved;
+} dfy_v2_work_fact;
+typedef struct dfy_v2_agent_facts_api {
+    dfy_v2_api_header header;
+    // 复制 input.prompt 内的 set／closed 字段补丁并排队。重复原件返回原请求号，断序返回 NOT_FOUND 和下一序号。
+    dfy_v2_status (DFY_V2_CALL *submit)(uint64_t session, const dfy_v2_agent_input* input,
+        const dfy_v2_fact_frame* frame, uint64_t* request, uint64_t* expected, dfy_v2_error* error);
+    // 同步复制原工作回执并返回接纳号，不分派动作。旧代次只可结算已经登记的原工作。
+    dfy_v2_status (DFY_V2_CALL *settle)(uint64_t session, const dfy_v2_work_fact* fact, uint64_t* receipt, dfy_v2_error* error);
+} dfy_v2_agent_facts_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

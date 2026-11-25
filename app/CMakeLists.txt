@@ -4,6 +4,7 @@ add_library(dfy_application STATIC application.cpp application.hpp conversation.
 target_include_directories(dfy_application PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_sources(dfy_application PRIVATE companion.cpp companion.hpp companion_state.cpp companion_state.hpp)
 target_sources(dfy_application PRIVATE subagents.cpp subagents.hpp)
+target_sources(dfy_application PRIVATE binding_facts.cpp binding_facts.hpp)
 target_sources(dfy_application PRIVATE persona.cpp persona.hpp)
 target_sources(dfy_application PRIVATE dialogue_queue.cpp)
 target_sources(dfy_application PRIVATE builtin_room.cpp builtin_room.hpp)

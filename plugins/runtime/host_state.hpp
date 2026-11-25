@@ -64,6 +64,8 @@ inline thread_local HostState* current_host = nullptr;
 const dfy_v2_mailbox_text_api& mailbox_text_api();
 // 返回宿主子会话能力版本 1。
 const dfy_v2_agent_api& agent_api(uint32_t version);
+// 返回独立协商的版本化事实及原工作结算服务。
+const dfy_v2_agent_facts_api& agent_facts_api();
 // 返回当前实例的原生事件路由登记及提交接口。
 const dfy_v2_routed_event_api& routed_event_api();
 // 返回插件主信箱策略声明能力。

@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include <dafeiyu/runtime_ids.hpp>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -8,6 +10,14 @@
 namespace dfy::plugins {
 class PluginInstance;
 enum class SubagentThinking { inherit, off, low };
+struct SubagentFrame { std::uint64_t epoch, sequence; std::string scope; bool baseline; };
+struct SubagentWorkFact { std::uint64_t epoch, revision; std::string work, content; std::uint32_t phase; };
+class SubagentGap : public std::runtime_error {
+  public:
+    // 携带原作用域下一序号供插件重送基线或补齐事实。
+    explicit SubagentGap(std::uint64_t next) : std::runtime_error("subagent: fact sequence gap"),expected(next) {}
+    std::uint64_t expected;
+};
 struct SubagentInput {
     std::string prompt, instructions, binding;
     std::vector<std::string> tools;
@@ -15,6 +25,7 @@ struct SubagentInput {
     bool replace_history = false;
     bool player_facing = false;
     SubagentThinking thinking = SubagentThinking::inherit;
+    std::optional<SubagentFrame> frame;
 };
 enum class SubagentPhase { idle, queued, running, succeeded, failed, cancelled };
 struct SubagentStatus {
@@ -32,6 +43,8 @@ class PluginAgents {
     virtual runtime::DomainId open(const std::shared_ptr<PluginInstance>& instance) = 0;
     // 接纳一个有界回合供后续宿主推进。
     virtual std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) = 0;
+    // 只接纳同一实例及原工作号的回执，重复版本返回原接纳号。
+    virtual std::uint64_t settle(runtime::DomainId owner, runtime::DomainId session, SubagentWorkFact fact) = 0;
     // 取得原会话最新请求；正文在下一次修改前有效。
     virtual SubagentStatus status(runtime::DomainId owner, runtime::DomainId session) const = 0;
     // 请求取消指定回合并保留其结果身份。
