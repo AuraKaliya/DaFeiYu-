@@ -5,6 +5,7 @@
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "paths.hpp"
+#include "software_log.hpp"
 #include "management/resident.hpp"
 #include "management/local_pipe.hpp"
 #include <nlohmann/json.hpp>
@@ -47,6 +48,7 @@ std::string read_prompt(const std::filesystem::path& path) {
 // 分派配置检查、单次调用与 Agent 会话，并统一报告启动错误。
 // 步骤：准备控制台编码 → 按参数启动检查或调用流程 → 返回退出状态。
 int run(const std::vector<std::filesystem::path>& args) {
+    std::optional<dfy::app::SoftwareLog> software;
     try {
 #ifdef _WIN32
         const dfy::app::Utf8Console console;
@@ -109,12 +111,15 @@ int run(const std::vector<std::filesystem::path>& args) {
             }
             if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
             if (user_data.empty()) user_data = dfy::app::default_user_data();
-            if (args.size()>=3 && args[1]=="--host") {
+            const bool host = args.size()>=3 && args[1]=="--host";
+            software.emplace(user_data,host ? dfy::app::SoftwareRole::host : dfy::app::SoftwareRole::terminal);
+            if (host) {
                 const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
-                return dfy::management::serve_resident(user_data,identity,[=] {
+                const int code = dfy::management::serve_resident(user_data,identity,[=] {
                     return std::make_unique<dfy::app::Application>(dfy::model::load_config(configuration),plugins,user_data,
                         dfy::model::Backend{dfy::model::complete_response},run);
                 });
+                return software->exiting(code);
             }
             dfy::management::ProfileLease lease(user_data);
             dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data,
@@ -133,15 +138,15 @@ int run(const std::vector<std::filesystem::path>& args) {
             auto shutdown = application.close_plugins();
             while (shutdown != dfy::plugins::ShutdownResult::closed) {
                 if (shutdown == dfy::plugins::ShutdownResult::failed || std::chrono::steady_clock::now() >= deadline) {
-                    std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return 1;
+                    std::cerr << "Some plugins could not finish stopping; their resources remain retained.\n"; return software->exiting(1);
                 }
                 if (application.advance_plugins() == dfy::runtime::RunResult::failed) {
-                    std::cerr << "Plugin stopping failed; its resources remain retained.\n"; return 1;
+                    std::cerr << "Plugin stopping failed; its resources remain retained.\n"; return software->exiting(1);
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 shutdown = application.close_plugins();
             }
-            return result;
+            return software->exiting(result);
         }
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
@@ -157,7 +162,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         return help ? 0 : 1;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
-        return 1;
+        return software ? software->exiting(1) : 1;
     }
 }
 }

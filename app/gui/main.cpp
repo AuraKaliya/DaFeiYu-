@@ -1,4 +1,5 @@
 #include "../paths.hpp"
+#include "../software_log.hpp"
 #include "local_content.hpp"
 #include "frame_channel.hpp"
 #include "interaction_probe.hpp"
@@ -377,7 +378,16 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     if (__argc > 1 && !automatic && !room_preview && !main_panel) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
+    std::optional<dfy::app::SoftwareLog> software;
     try {
+        const bool business = (!automatic && !room_preview) || observer_check;
+        std::filesystem::path data;
+        if (business) {
+            if (observer_check) data = __wargv[3];
+            else if (main_panel && __argc==5) data = __wargv[4];
+            else data = dfy::app::default_user_data();
+            software.emplace(data,dfy::app::SoftwareRole::window);
+        }
         const auto missing = dfy::app::executable_directory()/L"__u01_missing_runtime__";
         if (missing_runtime && std::filesystem::exists(missing)) throw std::runtime_error("U01: missing-runtime fixture must not exist");
         LPWSTR raw = nullptr; const auto status = GetAvailableCoreWebView2BrowserVersionString(missing_runtime ? missing.c_str() : nullptr,&raw);
@@ -385,7 +395,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         if (FAILED(status) || !version) {
             std::fputs("WebView2 Runtime unavailable\n",stderr);
             if (!automatic) MessageBoxW(nullptr,L"请安装 Microsoft Edge WebView2 Evergreen Runtime。",L"大肥鱼管理中心",MB_OK|MB_ICONERROR);
-            CoUninitialize(); return 4;
+            CoUninitialize(); return software ? software->exiting(4) : 4;
         }
         auto state = std::make_shared<Window>(); state->smoke = smoke; state->interaction_mode = interaction_mode || lifecycle_mode || run_status_mode; state->lifecycle_mode = lifecycle_mode; state->early = early;
         state->close_controller = close_controller;
@@ -397,10 +407,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->observer_check = observer_check;
         state->observer_stop = observer_check && __argc==5;
         if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
-        if (main_panel && __argc==5) state->user_data = __wargv[4];
-        if (observer_check) state->user_data = __wargv[3];
+        state->user_data = data;
         state->interaction_mode |= room_check || main_panel_check || observer_check;
-        state->business_mode = (!automatic && !room_preview) || observer_check;
+        state->business_mode = business;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
 #endif
@@ -439,5 +448,5 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         std::puts(report.dump().c_str());
     } catch (const std::exception& error) { std::fprintf(stderr,"%s\n",error.what()); result = 1; }
     catch (...) { result = 1; }
-    CoUninitialize(); return result;
+    CoUninitialize(); return software ? software->exiting(result) : result;
 }

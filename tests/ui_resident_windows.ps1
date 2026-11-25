@@ -51,6 +51,24 @@ function Assert-RuntimeRefused([string]$Mode) {
     }
 }
 
+# 从正式启动文件逐个核对进程、时钟、构建与退出结果。
+# 步骤：读取隔离目录的日志 → 检查每个进程自己的首尾 → 对照实际观察到的后台、窗口和终端。
+function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
+    $runs = foreach ($file in Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter 'software-*.jsonl' -File) {
+        $rows = @(Get-Content -Encoding UTF8 -LiteralPath $file.FullName | ForEach-Object { $_ | ConvertFrom-Json })
+        $first, $last = $rows[0], $rows[-1]
+        if ($first.event -ne 'process.started' -or $first.seq -ne 1 -or !$first.build -or $first.utcMs -le 0 -or
+            $first.level -ne 'info' -or $last.event -ne 'process.exiting' -or $last.pid -ne $first.pid -or
+            $last.seq -ne $rows.Count -or $last.elapsedNs -lt $first.elapsedNs) { throw "Incomplete software log: $file" }
+        $last
+    }
+    $windows = @($runs | Where-Object { $_.component -eq 'window' -and $_.exitCode -eq 0 })
+    if ($windows.Count -ne 3 -or !($runs | Where-Object { $_.component -eq 'host' -and $_.pid -eq $HostPid -and $_.exitCode -eq 0 }) -or
+        !($runs | Where-Object { $_.component -eq 'terminal' -and $_.pid -eq $TerminalPid -and $_.exitCode -eq 0 })) {
+        throw 'Missing process log for a resident, observer or terminal'
+    }
+}
+
 $owner = $null
 try {
     Invoke-Observer @()
@@ -71,6 +89,7 @@ try {
         $terminal.StandardInput.WriteLine('/exit')
         $terminal.StandardInput.Close()
         if (!$terminal.WaitForExit(5000) -or $terminal.ExitCode -ne 0) { throw 'Terminal failed to exit cleanly' }
+        Assert-SoftwareLogs $owner.Id $terminal.Id
     } finally {
         if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }
         $terminal.Dispose()
