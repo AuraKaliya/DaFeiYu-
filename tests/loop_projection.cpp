@@ -290,12 +290,52 @@ void mixed_dialogue() {
         input.messages[input.messages.size()-2].tool_call_id == "pending","mixed projection lost attribution, reasoning or pending work");
     validate_request(input);
 }
+
+// 分别以协议字节和配置窗口触发压缩，对照历史原话、长回答两端及原文读取。
+// 步骤：逐轮提交可识别的长回答 → 捕获受压后的实际请求 → 按原始位置核对保留和省略的正文。
+void long_answers(unsigned turns, unsigned blocks, std::uint32_t window) {
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Config config;
+    config.context_window_tokens = window; config.reserved_output_tokens = window ? 512 : 0;
+    std::string body;
+    for (unsigned n=0;n<blocks;++n) body += "长文";
+    body.insert(body.size()/2,"original-middle");
+    body.insert(0,"#");
+    unsigned calls = 0;
+    Request last;
+    Session session(config,channel,Backend{[&](const Config&,const Request& input) {
+        if (++calls == turns) last = input;
+        return Response{{Role::assistant,body+std::to_string(calls)}};
+    }});
+    for (unsigned n=1;n<=turns;++n) {
+        const auto turn = session.begin("原话"+std::to_string(n));
+        until(session,[&] { return !session.busy(); });
+        check(turn->answer() == body+std::to_string(n),"length pressure interrupted a completed dialogue");
+    }
+    std::size_t shortened = 0;
+    for (const auto& message : last.messages) {
+        const auto group = nlohmann::json::parse(message.content,nullptr,false);
+        if (!group.is_object() || group.value("source","")!="completed_dialogue") continue;
+        for (const auto& turn : group.at("turns")) if (turn.contains("assistant_preview")) {
+            const auto& ref = turn.at("assistant_preview");
+            const auto original = session.read_evidence(group.at("epoch"),ref.at("message").get<std::size_t>()-1,2);
+            check(turn.at("user")==original.front().content && original.back().content.size()==ref.at("bytes") &&
+                original.back().content.starts_with(ref.at("prefix").get<std::string>()) && original.back().content.ends_with(ref.at("suffix").get<std::string>()) &&
+                original.back().content.find("original-middle")!=std::string::npos && ref.dump().find("original-middle")==std::string::npos,
+                "old answer preview lost its source or failed to preserve the full original");
+            ++shortened;
+        }
+    }
+    check(shortened && calls==turns && last.messages.front().content=="原话1" && last.messages[1].content==body+"1" &&
+        last.messages.back().content=="原话"+std::to_string(turns),"long answer projection changed protected messages");
+}
 }
 
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
         replay(); status_versions(); compress_settled(); long_dialogue(); mixed_dialogue();
+        long_answers(26,7500,0); long_answers(12,300,14*1024);
         batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);
         return 0;
     }

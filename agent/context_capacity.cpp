@@ -49,21 +49,24 @@ std::size_t dialogue_span(const std::vector<model::Message>& messages, std::size
     return span;
 }
 
-// 按连续原始位置组合已完成的普通问答，每组保留逐字原话、模型回答和可回查范围。
+// 按连续原始位置组合已完成的普通问答，返回仍有长回答可缩短的组位置。
 // 步骤：跳过原始目标及保护消息 → 按完整轮次组成有界片段 → 写入有归属的历史视图。
-void pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals, ContextWindow window) {
+std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals, ContextWindow window) {
     const bool keep_reasoning = window.thinking && !input.tools.empty();
     const auto protected_end = input.messages.front().role == Role::system ? 3u : 2u;
     std::vector<model::Message> view;
+    std::vector<std::size_t> large_groups;
     for (std::size_t i = 0; i < input.messages.size();) {
         if (i < protected_end || !dialogue_span(input.messages,i,keep_reasoning)) {
             view.push_back(std::move(input.messages[i++]));
             continue;
         }
         const auto first = i;
+        bool large_answer = false;
         auto turns = nlohmann::json::array();
         while (const auto span = dialogue_span(input.messages,i,keep_reasoning)) {
             if (i-first+span > 64 || ordinals[i+span-1]-ordinals[first] != i-first+span-1) break;
+            large_answer |= input.messages[i+span-1].content.size() > 1024;
             nlohmann::json turn{{"user",input.messages[i+span-2].content},{"assistant",input.messages[i+span-1].content}};
             if (span == 3) turn["host_status"] = input.messages[i].content;
             turns.push_back(std::move(turn));
@@ -72,9 +75,30 @@ void pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordina
         if (i == first) { view.push_back(std::move(input.messages[i++])); continue; }
         nlohmann::json group{{"source","completed_dialogue"},{"epoch",window.evidence_epoch},{"first",ordinals[first]},
             {"count",i-first},{"turns",std::move(turns)}};
+        if (large_answer) large_groups.push_back(view.size());
         view.push_back({Role::user,group.dump()});
     }
     input.messages = std::move(view);
+    return large_groups;
+}
+
+// 只缩短宿主刚组成的旧问答组，保留原话、回答的两端和完整原件的位置。
+// 步骤：按原轮次推进消息号 → 选择较长回答的完整 UTF-8 首尾 → 写回带原始字节数的预览。
+void shorten_answers(model::Message& message) {
+    auto group = nlohmann::json::parse(message.content);
+    auto next = group.at("first").get<std::size_t>();
+    for (auto& turn : group.at("turns")) {
+        next += turn.contains("host_status") ? 3 : 2;
+        const auto& answer = turn.at("assistant").get_ref<const std::string&>();
+        if (answer.size() <= 1024) continue;
+        std::size_t front = 192, back = answer.size()-192;
+        while ((static_cast<unsigned char>(answer[front]) & 0xc0) == 0x80) --front;
+        while ((static_cast<unsigned char>(answer[back]) & 0xc0) == 0x80) ++back;
+        turn["assistant_preview"] = {{"prefix",answer.substr(0,front)},{"suffix",answer.substr(back)},
+            {"bytes",answer.size()},{"message",next-1}};
+        turn.erase("assistant");
+    }
+    message.content = group.dump();
 }
 }
 // 计算有界执行视图，按原始位置回查已结算工具批次和已完成的普通问答。
@@ -116,8 +140,12 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
     }
     request.messages = std::move(compact);
     if (compressed && fits(request,window)) return compressed;
-    pack_dialogue(request,ordinals,window);
-    if (!fits(request,window)) throw std::length_error("context: model capacity exhausted before dispatch");
-    return compressed;
+    const auto large_groups = pack_dialogue(request,ordinals,window);
+    if (fits(request,window)) return compressed;
+    for (auto index : large_groups) {
+        shorten_answers(request.messages[index]);
+        if (fits(request,window)) return compressed;
+    }
+    throw std::length_error("context: model capacity exhausted before dispatch");
 }
 }
