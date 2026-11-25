@@ -2,6 +2,7 @@
 #include "fixtures/query_v2/mailbox_fixture.h"
 #include "application.hpp"
 #include "management/terminal_host.hpp"
+#include "message_store.hpp"
 #include <fstream>
 #include <iostream>
 #include <atomic>
@@ -288,6 +289,8 @@ void transition_hooks(const fs::path& root, const fs::path& dll) {
     Application app({},packages,root/"transition-data",Backend{[](const auto&,const Request& input) {
         return Response{{Role::assistant,input.messages.back().content}};
     }});
+    auto messages = std::make_shared<MessageStore>(root/"transition-data");
+    app.bind_messages(messages,"transition-fixture",nullptr);
     check(!app.plugins().load("test.transition"),"system transition fixture failed to load");
     const auto instance = app.plugins().instance("test.transition");
     {
@@ -330,12 +333,15 @@ void transition_hooks(const fs::path& root, const fs::path& dll) {
         };
         (void)command("keyboard",{{"id",1u},{"action","open"},{"interactive",true}});
         (void)command("pipe",{{"id",1u},{"action","open"},{"interactive",false}});
+        terminals.completed(*result,true);
         check(instance->invoke(*api,[](const auto& api, auto* plugin) { return api.emit_notice(plugin,3,2); }) == DFY_V2_OK,
             "ASK event failed to reach the host");
         app.advance_plugins();
         const auto ask = app.console_ask();
         const auto keyboard = command("keyboard",{{"id",2u},{"action","read"},{"after",0u}});
         const auto pipe = command("pipe",{{"id",2u},{"action","read"},{"after",0u}});
+        check(!result->user_facing && messages->watermark()==0 && pipe.at("out")=="" && keyboard.at("out")=="",
+            "internal plugin settlement reached the chat or a terminal");
         check(ask && keyboard.at("ask").at("id")==ask->first && !pipe.contains("ask"),"ASK leaked to non-interactive pipe");
         try {
             (void)command("pipe",{{"id",3u},{"action","presented"},{"ask",ask->first}});

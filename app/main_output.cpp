@@ -8,6 +8,10 @@ namespace dfy::app {
 using Json = nlohmann::json;
 namespace {
 const std::string reply_id = "main/reply";
+// 保留实例、运行时会话与原回合的完整命名空间。
+std::string reply_prefix(const std::string& instance, agent::RunId run) {
+    return instance+"/"+std::to_string(run.session)+"/"+std::to_string(run.sequence)+"/";
+}
 }
 
 // 绑定原后台的持久消息库与诊断，支持结构化调用的后端可在对话回合显式发言。
@@ -33,13 +37,18 @@ void MainMessages::prepare_output(agent::RunOptions& options) {
 }
 
 // 将一次写入与真实渠道消息号关联，Trace 只记录可复查的投递身份。
-// 步骤：按原投递号写入 → 关联首次提交的消息与诊断 → 返回原消息号。
+// 步骤：按原投递号写入 → 发布首次提交到原窗口与终端 → 关联诊断并返回原消息号。
 std::int64_t MainMessages::commit_reply(const Json& envelope) {
     const auto& key = envelope.at("delivery").get_ref<const std::string&>();
     const auto saved = store_->put("main",key,envelope,{{"state","delivered"}});
-    if (saved.created && trace_) {
-        Json event{{"session",std::stoull(envelope.at("session").get<std::string>())},
-            {"run",std::stoull(envelope.at("turn").get<std::string>())},{"delivery",key},{"message",std::to_string(saved.message.id)}};
+    if (!saved.created) return saved.message.id;
+
+    const agent::RunId run{std::stoull(envelope.at("session").get<std::string>()),std::stoull(envelope.at("turn").get<std::string>())};
+    const auto& text = envelope.at("text").get_ref<const std::string&>();
+    app_.conversation().published_reply(run,text);
+    if (reply_sink_) reply_sink_(text);
+    if (trace_) {
+        Json event{{"session",run.session},{"run",run.sequence},{"delivery",key},{"message",std::to_string(saved.message.id)}};
         if (envelope.contains("replyTo")) event["replyTo"] = envelope.at("replyTo");
         trace_->append("dialogue.reply_delivered",std::move(event));
     }
@@ -49,7 +58,7 @@ std::int64_t MainMessages::commit_reply(const Json& envelope) {
 // 所有面向用户的主会话发言沿同一持久写口取得回执。
 // 步骤：绑定原回合与用户消息 → 提交一次渠道发言 → 失败时保留同号原件供补写。
 Json MainMessages::reply(agent::RunId run, const std::string& suffix, const std::string& text) {
-    const auto key = instance_+"/"+std::to_string(run.session)+"/"+std::to_string(run.sequence)+"/"+suffix;
+    const auto key = reply_prefix(instance_,run)+suffix;
     Json envelope{{"sender","assistant"},{"route","reply"},{"text",text},{"delivery",key},{"instance",instance_},
         {"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)}};
     if (parent_.first==run) envelope["replyTo"] = std::to_string(parent_.second);
@@ -62,6 +71,14 @@ Json MainMessages::reply(agent::RunId run, const std::string& suffix, const std:
         return {{"state","pending"},{"delivery",key}};
     }
     return {{"state","delivered"},{"delivery",key},{"message",std::to_string(message)}};
+}
+
+// 返回原回合的一项待写投递，后续重试沿该身份完成。
+std::string MainMessages::pending_reply(agent::RunId run) const {
+    if (replies_.empty()) return {};
+    const auto prefix = reply_prefix(instance_,run);
+    const auto found = replies_.lower_bound(prefix);
+    return found!=replies_.end() && found->first.starts_with(prefix) ? found->first : std::string{};
 }
 
 // 复用同一回合中同文显式发言的原投递，否则交付本轮独立的最终答复。

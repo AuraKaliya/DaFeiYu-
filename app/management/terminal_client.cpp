@@ -6,30 +6,32 @@
 #include <ostream>
 
 namespace dfy::management {
-namespace {
 using Json = nlohmann::json;
 using namespace std::chrono_literals;
 
 // 仅在原客户端与同一命令身份上重试短暂的管道断包。
-Json exchange(const std::filesystem::path& profile, const std::string& client, std::uint64_t id, Json body) {
+// 步骤：固定原命令与游标 → 轮询同号回包 → 有界重试临时断连或交付确切错误。
+Json terminal_exchange(const TerminalTransport& send, const std::string& client, std::uint64_t id, Json body) {
     body["id"] = id;
     const Json request{{"op","terminal"},{"client",client},{"body",std::move(body)}};
     unsigned failures = 0;
     for (;;) {
         try {
-            auto result = resident_request(profile,request);
+            auto result = send(request);
             if (!result.is_null()) {
                 if (result.contains("error")) throw std::runtime_error(result.at("error").get<std::string>());
                 return result;
             }
         } catch (const std::system_error& error) {
             const auto code = error.code().value();
-            if (++failures>2 || (code!=ERROR_BROKEN_PIPE && code!=ERROR_NO_DATA && code!=ERROR_SEM_TIMEOUT)) throw;
+            const bool disconnected = code==ERROR_BROKEN_PIPE || code==ERROR_NO_DATA || code==ERROR_PIPE_NOT_CONNECTED;
+            if (++failures>2 || error.code().category()!=std::system_category() || (!disconnected && code!=ERROR_SEM_TIMEOUT)) throw;
         }
         std::this_thread::sleep_for(5ms);
     }
 }
 
+namespace {
 // 涉及本地文件的两个已有命令按发起终端的目录解释相对路径。
 std::string terminal_paths(const std::string& line) {
     if (!line.starts_with("/diagnostic") && !line.starts_with("/plugins")) return line;
@@ -57,13 +59,15 @@ int resident_chat(const std::filesystem::path& profile, const ResidentConnection
         }
     } detach{profile,binding.client,log};
     std::uint64_t sequence = 0, own_turn = 0, printed_ask = 0;
-    const auto call = [&](Json request) { return exchange(profile,binding.client,++sequence,std::move(request)); };
+    const TerminalTransport send = [&](const Json& request) { return resident_request(profile,request); };
+    const auto call = [&](Json request) { return terminal_exchange(send,binding.client,++sequence,std::move(request)); };
     const bool interactive = input.interactive_console();
     const auto opening = call({{"action","open"},{"interactive",interactive}});
     auto cursor = opening.at("cursor").get<std::uint64_t>();
     errors << opening.at("err").get_ref<const std::string&>() << std::flush;
     output << "DaFeiYu\nEnter a message, /status, /clear, /cancel or /exit. Local commands remain available while waiting.\n" << std::flush;
     auto poll_at = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> storage_deadline;
     bool eof = false;
     while (output && errors) {
         if (std::chrono::steady_clock::now()>=poll_at) {
@@ -81,7 +85,15 @@ int resident_chat(const std::filesystem::path& profile, const ResidentConnection
                 if (output && call({{"action","presented"},{"ask",id}}).at("presented")==true) printed_ask = id;
             }
             const bool more = reply.at("more");
-            if (eof && !more && (!own_turn || reply.at("turn")!=own_turn || reply.at("busy")==false || reply.at("confirming")==true)) break;
+            if (eof && !more && (!own_turn || reply.at("turn")!=own_turn || reply.at("busy")==false || reply.at("confirming")==true)) {
+                if (!own_turn || reply.at("turn")!=own_turn || !reply.contains("pendingDelivery")) break;
+                const auto now = std::chrono::steady_clock::now();
+                if (!storage_deadline) storage_deadline = now+4s;
+                if (now>=*storage_deadline) {
+                    errors << "Reply is waiting for storage. Delivery " << reply.at("pendingDelivery").get<std::string>() << '\n';
+                    return 1;
+                }
+            }
             poll_at = std::chrono::steady_clock::now()+(more ? 0ms : 100ms);
         }
         if (!eof) {

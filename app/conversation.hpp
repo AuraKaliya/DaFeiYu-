@@ -13,6 +13,7 @@ struct CompletedTurn {
     agent::TurnDiagnostics status;
     std::string answer;
     std::exception_ptr error;
+    bool user_facing = false;
 };
 // 仅供受信界面读取的本进程对话，使用正式会话签发的回合身份。
 struct DisplayedTurn {
@@ -77,6 +78,9 @@ class Conversation {
     // 同线程应用宿主可读取原回合以裁定受控命令。
     friend class Application;
     friend class CompanionSession;
+    friend class MainMessages;
+    // 将已提交发言投影到仍保留的原回合，并更新显示字节数。
+    void published_reply(agent::RunId run, const std::string& text);
     // 构造当前会话命名空间并从原回合提取诊断。
     agent::DiagnosticSnapshot capture_diagnostic() const;
     // 用原回合的结算与退出更新最后一条受信对话。

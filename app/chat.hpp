@@ -12,7 +12,7 @@ enum class ChatExit { close_session, detach };
 // 返回去掉全部终端行尾回车的视图，保留其他正文原样。
 std::string_view terminal_line(std::string_view text) noexcept;
 // 按本轮真实结算分别写出终端正文、取消状态、模型失败与观察回执。
-void write_chat_result(const CompletedTurn& completed, std::ostream& output, std::ostream& errors);
+void write_chat_result(const CompletedTurn& completed, std::ostream& output, std::ostream& errors, bool include_answer = true);
 // 同宿主线程的终端交互状态，问答等待不阻挡取消或本地管理命令。
 class ChatController {
   public:

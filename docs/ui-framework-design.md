@@ -242,6 +242,8 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 记录包含稳定的 `message`、本次 `revision`、宿主 UTC 毫秒时间 `utcMs`、`source`、`submission` 和该修订的 `receipt`。窗口按逻辑会话和消息号更新同一行，一页实际交付后再保存游标。多窗读取互不消费。数据库位于数据目录下的 `main-conversation.sqlite3`。[双窗口与断点验收](../tests/message_protocol.cpp)
 
+新追加和待发项在入库前按已发布的原回合、条数和字节余量检查，分派时再核对当前条件。已结束回合的追加返回 `stale`，超出对应容量返回 `full`。这两种预先拒绝的提交没有 `storedMessage`。单页还受字节预算约束，即使记录数小于 `limit`，只要 `more` 为真，窗口就按 `next` 继续读取。
+
 提交正文沿用 `dialogue.submit`、`dialogue.append`、`dialogue.enqueue`。窗口在第一次发送前生成并保留 `submission`（1～128 个 UTF-8 字节），三种请求仍带原有的 `command` 和 `text`。追加、排队另带订阅返回的 `instance` 及原 `session`、`turn`，也可附来源时间 `sourceUtcMs`。同一 `submission` 重试时保持原字段值。新连接使用自己的 `command` 空间，可用 `messages.receipt` 按 `source:"desktop"` 与原 `submission` 复查。相同提交号改动原文、去向或目标会返回 `conflict`。
 
 成功入库后，命令回执附加 `storedMessage`。它是持久消息号，原 `message` 仍表示回合内补充号或待发项号。初始持久回执为 `pending`，开始交付前写为 `dispatching`。已接纳的新回合为 `accepted`，追加等待带入为 `waiting`，待发项为 `queued`。终端正文来源为 `terminal`，沿用同一持久库。[后台接纳与回执](../app/main_messages.cpp)
@@ -249,6 +251,8 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 原窗口以同一 `command` 再读 `dialogue.read` 或重发相同提交，都按已绑定的 `storedMessage` 返回最新命令结果。写锁解除后，原窗口和用同一 `submission` 重连的窗口可分别查到实际接纳。持久回执中的 `submitted` 附带实际的 `modelStep`，`removed` 保留已移除的待发项，`unknown` 表示原交付实效仍待核对。[写锁与重连验收](../tests/message_recovery.cpp)
 
 直接对话和原生书房点名产生的非空白最终文本进入主聊天。普通结构化对话还可调用 `main_reply({"text":"…"})` 提前发言或追问。成功回执的 `delivery` 和 `message` 分别标识本次投递和已写入的消息。同一回合末尾再次给出已显式发过的相同文字时复用原投递。独立回合、不同显式调用各有自己的投递号。内部入口的结算、工具回包和纯空白结算保持在原路径。[输出适配器](../app/main_output.cpp) · [送模记录与渠道回执验收](../tests/persistent_dialogue.cpp)
+
+发言首次写入后，在线终端即可读到正文，回合仍可继续运行。旧窗口的回合快照同步最近一条已写入的发言，持久历史保留每条发言。终端批处理读到 EOF 时，会等待自己发起的回合和待写答复。若持续无法写入，它以失败退出并显示原投递号，后台继续按该号补写。[正式终端验收](../tests/terminal_entry.ps1)
 
 ## 6 插件 UI 注册规范
 

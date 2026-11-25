@@ -1,5 +1,6 @@
 #include "management/resident.hpp"
 #include "management/client.hpp"
+#include "management/terminal_client.hpp"
 #include "management/local_pipe.hpp"
 #include <windows.h>
 #include <nlohmann/json.hpp>
@@ -269,7 +270,22 @@ void reconnect(const std::filesystem::path& root) {
             {"source","desktop"},{"submission","stable-first"}}).at("record");
         if (record.at("text")!="材料" || record.at("receipt").at("turn")!=original.at("turn")) throw std::runtime_error("original input not archived");
         (void)ask({{"op","disconnect"},{"client",durable}});
-        const auto output = terminal_reply(data,terminal,{{"id",++line_id},{"action","read"},{"after",opening.at("cursor")}});
+        const Json body{{"action","read"},{"after",opening.at("cursor")}};
+        const auto read_id = ++line_id;
+        const Json expected{{"op","terminal"},{"client",terminal},{"body",{{"id",read_id},{"action","read"},{"after",opening.at("cursor")}}}};
+        std::optional<Json> dropped;
+        // 丢弃真实后台给出的首个已就绪回包，重连只能取回同一份输出。
+        // 步骤：核对客户端、序号与游标 → 在接纳后注入系统断管 → 比对原编号回包。
+        const auto output = management::terminal_exchange([&](const Json& request) {
+            if (request!=expected) throw std::runtime_error("terminal retry changed client, command or cursor");
+            auto reply = management::resident_request(data,request);
+            if (!reply.is_null() && !dropped) {
+                dropped = reply;
+                throw std::system_error(ERROR_PIPE_NOT_CONNECTED,std::system_category(),"fixture reply lost");
+            }
+            return reply;
+        },terminal,read_id,body);
+        if (!dropped || *dropped!=output) throw std::runtime_error("terminal did not recover the original read receipt");
         if (output.at("out")!="回复：材料\n" || output.at("err")!="") throw std::runtime_error("terminal did not see the desktop result");
         const Json status_line{{"id",++line_id},{"action","line"},{"text","/status"}};
         const auto status_reply = terminal_reply(data,terminal,status_line);
@@ -310,6 +326,16 @@ void reconnect(const std::filesystem::path& root) {
         if (tray_starts!=1 || tray_releases!=0) throw std::runtime_error("tray lost while original work was draining");
         release.release();
         if (server.get()!=0 || tray_releases!=1) throw std::runtime_error("resident failed to release its tray on exit");
+        unsigned attempts = 0;
+        try {
+            (void)management::terminal_exchange([&](const Json& request) {
+                ++attempts;
+                return management::resident_request(data,request);
+            },terminal,line_id+1,body);
+            throw std::runtime_error("stopped resident returned a terminal receipt");
+        } catch (const std::system_error& error) {
+            if (error.code().value()!=ERROR_FILE_NOT_FOUND || attempts!=1) throw;
+        }
         if (!binding.watch->observe().requested) throw std::runtime_error("intent disappeared when the resident released its event");
         verify_stop_log(data,instance,turn);
     } catch (...) {

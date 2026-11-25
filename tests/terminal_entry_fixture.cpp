@@ -12,14 +12,18 @@ int wmain(int argc, wchar_t** argv) {
             return std::make_unique<dfy::app::Application>(dfy::model::Config{},packages,data,dfy::model::Backend{
                 [&](const auto&,const dfy::model::Request& input) {
                     const auto text = input.messages.back().content;
-                    if (text=="delayed") {
-                        std::ofstream(data/"entered") << "entered";
+                    if (text=="early-reply") return dfy::model::Response{{dfy::model::Role::assistant,"",
+                        {{"speak","main_reply",R"({"text":"early question"})"}}},dfy::model::FinishReason::tool_calls};
+                    const bool finishing = input.messages.back().role==dfy::model::Role::tool;
+                    if (text=="delayed" || finishing) {
+                        std::ofstream(data/(finishing ? "answer-entered" : "entered")) << "entered";
                         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(10);
-                        while (!std::filesystem::exists(data/"release")) {
+                        while (!std::filesystem::exists(data/(finishing ? "allow-final" : "release"))) {
                             if (std::chrono::steady_clock::now()>deadline) throw std::runtime_error("fixture gate expired");
                             std::this_thread::sleep_for(std::chrono::milliseconds(10));
                         }
                     }
+                    if (finishing) return dfy::model::Response{{dfy::model::Role::assistant,"early question"}};
                     if (text=="fail") throw std::runtime_error("fixed model failure");
                     return dfy::model::Response{{dfy::model::Role::assistant,"fixed:"+text}};
                 }});
