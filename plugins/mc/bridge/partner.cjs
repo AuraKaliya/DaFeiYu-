@@ -488,12 +488,12 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       } else if (r.skill === 'reply') {
         if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 220 || /[\r\n\x00]/.test(args.text))
           throw new Error('回复需要一行 1～220 字的文字');
-        const original = [...records.values()].find(e => e.receipt !== r && e.receipt.skill === 'reply' &&
-          e.receipt.generation === r.generation && e.receipt.order === r.order && e.args.text === args.text &&
-          ['sent', 'unknown'].includes(e.receipt.result.delivery));
-        result.delivery = original?.receipt.result.delivery ?? tellOwner(bot, owner, args.text);
+        if (Object.hasOwn(args, 'sourceMessage') && (!Number.isSafeInteger(args.sourceMessage) ||
+          args.sourceMessage > r.order || !inbox.inPresence(r.generation, args.sourceMessage) ||
+          !inbox.get(r.generation, args.sourceMessage)?.text)) throw new Error('回复缺少同场玩家原话');
+        result.delivery = tellOwner(bot, owner, args.text);
         result.sent = result.delivery === 'sent';
-        result.reused = Boolean(original);
+        result.reused = false;
         if (result.sent) result.text = args.text;
         if (!result.sent) throw new Error(result.delivery === 'not_sent' ? '原玩家不在场，回复未发出' : '回复的投递结果未知');
       } else if (r.skill === 'route') {

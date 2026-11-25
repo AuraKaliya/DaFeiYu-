@@ -239,7 +239,7 @@ void PartnerLoop::reset() noexcept {
     air_check_ = nullptr;
     next_air_wake_ = {};
     attention_turn_.reset();
-    reply_ = rejection_reply_ = {};
+    replies_.clear();
     question_requested_ = final_text_for_player_ = false;
     session_world_.clear();
     session_ = request_ = order_ = settled_ = 0;
@@ -299,8 +299,7 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
             turn["yieldRequestedBy"] = air_check_.at("yieldRequestedBy");
             air_check_["outcome"] = turn.at("outcome");
         }
-        const auto& reply = plan_repair_exhausted_ ? rejection_reply_ : reply_;
-        if (reply.finish && reply.delivered) turn["closingReply"] = reply.work;
+        if (const auto* reply = closing_reply()) turn["closingReply"] = reply->work;
         publish("mc.partner.turn",turn);
     }
     request_ = 0;
@@ -314,8 +313,8 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
 bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel) {
     const auto work = "reply."+std::to_string(instance)+"."+std::to_string(session_)+"."+std::to_string(request_);
     if (!final_reply_) {
-        const auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
-        if (cancel || (!reserved.work.empty() && !reserved.unsent) || question_requested_ || !final_text_for_player_ || active_delegation_) return true;
+        const auto* reserved = reserved_reply(order_);
+        if (cancel || (reserved && !reserved->unsent) || question_requested_ || !final_text_for_player_ || active_delegation_) return true;
         auto text = player_reply(answer);
         if (text.empty()) return true;
         if (feed_.recovering()) return false;
@@ -431,8 +430,7 @@ void PartnerLoop::submit(std::string_view wake) {
     bool actual_outcome = pickup_feedback || wake == "follow.attention" ||
         (wake == "plan.finished" && plan_ && !plan_->active && plan_->cancellation.empty());
     Json reply_origin;
-    if (!delegated && !facts.empty() && facts.back().at("type") == "player.message" &&
-        std::ranges::count_if(facts,[](const auto& fact) { return fact.at("type") == "player.message"; }) == 1) {
+    if (!delegated && !facts.empty() && facts.back().at("type") == "player.message") {
         reply_origin = {{"sourceMessage",facts.back().at("sequence")}};
     } else if (autonomous && wake == "plan.finished" && actual_outcome && !plan_->origin.is_null()) {
         reply_origin = {{"sourceMessage",plan_->origin.at("sequence")},{"planId",plan_->id},{"taskRevision",plan_->revision}};
@@ -590,7 +588,7 @@ void PartnerLoop::submit(std::string_view wake) {
     plan_reply_step_ = 0;
     repair_failures_.clear();
     if (!facts.empty()) hit_queries_.clear();
-    reply_ = rejection_reply_ = {};
+    replies_.clear();
     question_requested_ = false;
     final_text_for_player_ = !delegated && (actual_outcome || (!facts.empty() && facts.back().at("type") == "player.message"));
     reviewed_ = 0;
@@ -798,20 +796,40 @@ bool PartnerLoop::admit_hit_observation(std::uint64_t session, const Json& args)
     return false;
 }
 
-// 在原回合接纳发言时登记工作和可选的结束条件。
-bool PartnerLoop::reserve_reply(std::uint64_t session, std::string_view work, bool finish) {
-    if (session != session_ || active_delegation_) return true;
-    auto& reserved = plan_repair_exhausted_ ? rejection_reply_ : reply_;
-    if (!reserved.work.empty()) return false;
-    reserved.work = work;
-    reserved.finish = finish;
-    return true;
+// 查当前阶段已登记的原话投递，未知结果也占用原投递身份。
+const PartnerLoop::ReplyReservation* PartnerLoop::reserved_reply(std::uint64_t source) const noexcept {
+    for (const auto& reply : replies_)
+        if (reply.source == source && reply.rejection == plan_repair_exhausted_) return &reply;
+    return nullptr;
+}
+
+// 查已确认送达并且请求结束本轮的原投递。
+const PartnerLoop::ReplyReservation* PartnerLoop::closing_reply() const noexcept {
+    for (const auto& reply : replies_)
+        if (reply.rejection == plan_repair_exhausted_ && reply.finish && reply.delivered) return &reply;
+    return nullptr;
+}
+
+// 将显式回复绑定到本轮对应原话，默认与最终文本共用最后一条原话的投递机会。
+// 步骤：核对指定原话属于当前收件批次 → 返回重复投递的原号或登记新工作。
+std::string PartnerLoop::reserve_reply(std::uint64_t session, const std::string& work, bool finish, const Json& args) {
+    auto source = order_;
+    if (const auto it = args.find("sourceMessage"); it != args.end()) {
+        if (session != session_ || active_delegation_ || !it->is_number_unsigned() ||
+            !std::ranges::any_of(events_,[&](const auto& event) {
+                return event.at("type") == "player.message" && event.at("sequence") == *it;
+            })) throw std::invalid_argument("MC reply: source is outside the current player turn");
+        source = it->get<std::uint64_t>();
+    }
+    if (session != session_ || active_delegation_) return {};
+    if (const auto* original = reserved_reply(source)) return original->work;
+    replies_.push_back({work,source,plan_repair_exhausted_,finish});
+    return {};
 }
 
 // 结尾发言只有读回已发送才可以让出下一次送模，不影响正在归还的同批工具。
 bool PartnerLoop::should_yield_model(std::uint64_t session) const noexcept {
-    const auto& reply = plan_repair_exhausted_ ? rejection_reply_ : reply_;
-    return session == session_ && (wait_for_work_ || (reply.finish && reply.delivered));
+    return session == session_ && (wait_for_work_ || closing_reply());
 }
 
 // 对原会话的放置附上任务身份，后续确认继续使用同一份命令。
@@ -1011,9 +1029,12 @@ std::string_view PartnerLoop::front_barrier(std::uint64_t session) const noexcep
 void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::string_view skill, uint32_t effect,
     std::string work, std::string output) noexcept {
     if (!session_ || session != session_ || !request_) return;
-    if (skill == "reply" && effect == DFY_V2_TOOL_APPLIED) {
-        auto& reply = work == reply_.work ? reply_ : rejection_reply_;
-        if (work == reply.work) reply.delivered = true;
+    if (skill == "reply") {
+        const auto reply = std::ranges::find(replies_,work,&ReplyReservation::work);
+        if (reply != replies_.end()) {
+            reply->delivered = effect == DFY_V2_TOOL_APPLIED;
+            reply->unsent = effect == DFY_V2_TOOL_NOT_APPLIED;
+        }
     }
     if (action_count_ >= actions_.size()) return;
     actions_[action_count_++] = {invocation,skill,effect,std::move(work),std::move(output)};
@@ -1043,15 +1064,16 @@ void PartnerLoop::report_actions() {
             if (code.starts_with("observe_")) limit_repair(std::move(code));
         }
         if (action.skill == "reply") {
-            if (!reply_origin_.is_null()) fact["replyOrigin"] = reply_origin_;
+            const auto reply = std::ranges::find(replies_,action.work,&ReplyReservation::work);
+            const auto origin = reply != replies_.end() && reply->source != order_ ?
+                Json{{"sourceMessage",reply->source}} : reply_origin_;
+            if (!origin.is_null()) fact["replyOrigin"] = origin;
             const bool unsent = action.effect == DFY_V2_TOOL_NOT_APPLIED;
-            if (action.work == reply_.work) reply_.unsent = unsent;
-            if (action.work == rejection_reply_.work) rejection_reply_.unsent = unsent;
             if (action.body.empty()) fact["result"] = {{"status",unsent ? "blocked" : "unconfirmed"},
                 {"sent",false},{"delivery",unsent ? "not_sent" : "unknown"}};
             if (fact.contains("result") && fact["result"].value("sent",false) &&
                 !fact["result"].value("reused",false) && fact["result"].contains("text"))
-                remember_dialogue("companion",order_,fact["result"]["text"],reply_origin_);
+                remember_dialogue("companion",order_,fact["result"]["text"],origin);
         }
         if (!active_delegation_ && !air_only_turn_ && pickup_feedback_work_.empty()) task_.record(fact);
         publish("mc.partner.action",fact);

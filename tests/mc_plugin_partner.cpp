@@ -1366,13 +1366,14 @@ int verify_unavailable_partner(const std::filesystem::path& package, const std::
     throw std::runtime_error("readable bridge status did not advance");
 }
 
-// 用固定响应核对显式发言与最终文本在不同投递终态下的结算。
-// 步骤：只交付一条玩家原话 → 返回显式发言及最终文本 → 等原回复结算并关闭。
+// 用固定响应核对单条与同批原话的显式发言、最终文本及投递终态。
+// 步骤：接收真实插件输入 → 按原话返回固定发言 → 等原回复结算后关闭。
 int verify_reply_delivery(const std::filesystem::path& package, const std::filesystem::path& root, std::wstring_view variant) {
     using namespace dfy;
     using namespace model;
     using Json = nlohmann::json;
     const bool finish = variant.ends_with(L"-finish");
+    const bool batch = variant.ends_with(L"-batch");
     const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
     const bool internal = variant.ends_with(L"-internal");
     const std::string reply = "我在这儿。";
@@ -1382,6 +1383,12 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
         const auto& message = request.messages.back();
         if (message.role == Role::tool) {
+            if (batch) {
+                const auto result = Json::parse(message.content.substr(message.content.find('{')));
+                if (message.tool_call_id != "repeat-first" || result.at("status") != "already_requested" ||
+                    result.at("bridgeWork").get<std::string>().empty()) throw std::runtime_error("lost original reply work");
+                return {{Role::assistant,reply}};
+            }
             if (finish) throw std::runtime_error("confirmed closing reply submitted another model step");
             const auto result = Json::parse(message.content.substr(message.content.find('{')));
             if (result.at("delivery") != outcome || received.exchange(true)) throw std::runtime_error("lost actual reply delivery state");
@@ -1390,6 +1397,20 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         const auto input = Json::parse(message.content);
         if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
         const auto tool = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_reply"); });
+        if (batch) {
+            const auto& events = input.at("events");
+            if (events.size() != 2 || events.front().at("text") != events.back().at("text") ||
+                input.at("replyOrigin").at("sourceMessage") != events.back().at("sequence") || tool == request.tools.end())
+                throw std::runtime_error("expected both independent originals in one decision");
+            const Json first{{"text",reply},{"sourceMessage",events.front().at("sequence")}};
+            Response response{{Role::assistant,"",{{"first",tool->name,first.dump()}}},FinishReason::tool_calls};
+            if (events.back().at("sequence") == 5)
+                response.message.tool_calls.push_back({"last",tool->name,Json{{"text",reply}}.dump()});
+            auto repeated = first;
+            repeated["text"] = "这仍是给第一句的回复。";
+            response.message.tool_calls.push_back({"repeat-first",tool->name,repeated.dump()});
+            return response;
+        }
         if (received || tool == request.tools.end()) throw std::runtime_error("reply was unavailable or the turn repeated");
         Json args{{"text",std::string_view(outcome) == "not_sent" ? "第一行。\n第二行。" : reply}};
         if (finish || std::string_view(outcome) != "sent") args["finish"] = true;
@@ -1407,11 +1428,17 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     const auto id = host.open_companion("mc.companion");
     host.listen_companion(id);
     bool stopping = false;
-    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(6);
+    const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(batch ? 25 : 6);
+    std::uint64_t announced = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("reply loop failed");
         if (stopping && host.companion_status()->closed) return 0;
-        if (!stopping && received && host.companion_status()->settled_event == 2) {
+        const auto settled = host.companion_status()->settled_event;
+        if (batch && settled > announced && (settled == 1 || settled == 3)) {
+            announced = settled;
+            std::ofstream(root/("settled-"+std::to_string(settled))).put('1');
+        }
+        if (!stopping && (batch ? settled == 5 : received && settled == 2)) {
             host.stop_companion(id);
             stopping = true;
         }
