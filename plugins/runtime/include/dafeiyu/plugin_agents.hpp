@@ -11,7 +11,14 @@ namespace dfy::plugins {
 class PluginInstance;
 enum class SubagentThinking { inherit, off, low };
 struct SubagentFrame { std::uint64_t epoch, sequence; std::string scope; bool baseline; };
-struct SubagentWorkFact { std::uint64_t epoch, revision; std::string work, content; std::uint32_t phase; };
+struct SubagentWorkFact {
+    std::uint64_t epoch, revision;
+    std::string work, content;
+    std::uint32_t phase;
+    // 可选有序接纳只在第一版填写，最终实效由领域所有者明确确认。
+    std::uint64_t admission_sequence = 0;
+    bool final_effect = false;
+};
 class SubagentGap : public std::runtime_error {
   public:
     // 携带原作用域下一序号供插件重送基线或补齐事实。

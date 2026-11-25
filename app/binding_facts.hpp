@@ -34,9 +34,21 @@ class BindingWorks {
     // 返回最近一次真实接纳的工作回执水位，供冻结增量。
     std::uint64_t watermark() const noexcept { return next_; }
   private:
-    struct Record { std::uint32_t phase; std::string content; std::uint64_t receipt, revision; };
+    struct Record { std::uint32_t phase; std::string content; std::uint64_t receipt, revision; bool final_effect; };
     using Key = std::pair<std::uint64_t,std::string>;
-    std::map<Key,std::vector<Record>> records_;
+    struct Work {
+        std::vector<Record> revisions;
+        std::uint64_t sequence;
+        bool exited = false, final_effect = false;
+    };
+    // 有序原件在重传窗口内保留每版指纹和接纳号，窗口外由首次接纳水位拒绝旧号。
+    std::deque<std::pair<Key,Work>> archived_;
+    std::map<Key,Work> records_;
+    std::uint64_t admission_epoch_ = 0, admission_sequence_ = 0;
+    // 按修订和原件校验重传；归档记录使用规范正文指纹作比较。
+    static std::uint64_t prior(const Work& work, const plugins::SubagentWorkFact& fact, const std::string& content);
+    // 容量紧张时只归档已声明最终实效且实际退出的有序工作。
+    void admit(const Key& key, Record first, std::uint64_t sequence);
     std::uint64_t next_ = 0;
 };
 }

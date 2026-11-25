@@ -4,6 +4,7 @@
 #include <dafeiyu/utf8.hpp>
 #include <algorithm>
 #include <set>
+#include <tuple>
 
 namespace dfy::app {
 namespace {
@@ -89,35 +90,74 @@ std::string BindingFacts::apply(const plugins::SubagentInput& input, std::uint64
     return prompt;
 }
 
+// 同一修订须与留存的阶段、实效声明、原接纳序号及正文匹配。
+std::uint64_t BindingWorks::prior(const Work& work, const plugins::SubagentWorkFact& fact, const std::string& content) {
+    const auto old = std::ranges::find(work.revisions,fact.revision,&Record::revision);
+    if (old == work.revisions.end()) throw std::invalid_argument("binding: revision outside replay window");
+    if (old->phase != fact.phase || old->content != content || old->final_effect != fact.final_effect ||
+        (fact.revision == 1 && fact.admission_sequence != work.sequence))
+        throw std::invalid_argument("binding: conflicting work receipt");
+    return old->receipt;
+}
+
+// 在保留原号的前提下登记新工作，未决实效和未退出的工作始终占有原槽。
+// 步骤：核对有序接纳水位 → 需要时准备最早已结算工作的重传指纹 → 发布新槽和有界归档 → 推进水位。
+void BindingWorks::admit(const Key& key, Record first, std::uint64_t sequence) {
+    if (key.first == admission_epoch_ && sequence <= admission_sequence_)
+        throw std::invalid_argument("binding: admission outside replay window");
+    auto victim = records_.end();
+    if (records_.size() >= 128) {
+        for (auto it=records_.begin();it!=records_.end();++it) {
+            const auto& work = it->second;
+            if (work.sequence && work.exited && work.final_effect && (victim==records_.end() ||
+                work.revisions.back().receipt < victim->second.revisions.back().receipt)) victim = it;
+        }
+        if (victim==records_.end()) throw std::length_error("binding: work capacity exhausted");
+    }
+    auto inserted = records_.emplace(key,Work{{std::move(first)},sequence}).first;
+    if (victim!=records_.end()) {
+        try {
+            auto archive = victim->second;
+            for (auto& revision : archive.revisions) revision.content = platform::sha256(revision.content);
+            archived_.emplace_back(victim->first,std::move(archive));
+        } catch (...) { records_.erase(inserted); throw; }
+        records_.erase(victim);
+        if (archived_.size() > 128) archived_.pop_front();
+    }
+    if (sequence) { admission_epoch_ = key.first; admission_sequence_ = sequence; }
+}
+
 // 原工作每个版本只接纳一次，换代后拒绝旧来源的新工作，允许沿原号补报。
 // 步骤：校验身份和正文 → 查原修订及退出 → 核对代次与阶段顺序 → 有界保存并返回原接纳号。
 std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::SubagentWorkFact& fact) {
     if (!fact.epoch || !fact.revision || fact.work.empty() || fact.work.size() > 128 || fact.content.size() > 8192 ||
-        !runtime::valid_utf8(fact.work) || fact.phase < DFY_V2_WORK_ACCEPTED || fact.phase > DFY_V2_WORK_EXIT)
+        !runtime::valid_utf8(fact.work) || fact.phase < DFY_V2_WORK_ACCEPTED || fact.phase > DFY_V2_WORK_EXIT ||
+        (fact.admission_sequence && fact.phase != DFY_V2_WORK_ACCEPTED) || (fact.final_effect && fact.phase != DFY_V2_WORK_EFFECT))
         throw std::invalid_argument("binding: invalid work receipt");
     const auto body = object(fact.content).dump();
     const Key key{fact.epoch,fact.work};
     auto found = records_.find(key);
     if (found != records_.end()) {
-        const auto& record = found->second;
-        if (fact.revision <= record.back().revision) {
-            const auto old = std::ranges::find(record,fact.revision,&Record::revision);
-            if (old == record.end()) throw std::invalid_argument("binding: revision outside replay window");
-            if (old->phase != fact.phase || old->content != body) throw std::invalid_argument("binding: conflicting work receipt");
-            return old->receipt;
-        }
-        const bool exited = std::ranges::any_of(record,[](const Record& old) { return old.phase == DFY_V2_WORK_EXIT; });
-        if (fact.revision != record.back().revision+1 || fact.phase == DFY_V2_WORK_ACCEPTED || (exited && fact.phase != DFY_V2_WORK_EFFECT))
+        const auto& work = found->second;
+        if (fact.revision <= work.revisions.back().revision) return prior(work,fact,body);
+        if (fact.revision != work.revisions.back().revision+1 || fact.phase == DFY_V2_WORK_ACCEPTED ||
+            (work.exited && fact.phase == DFY_V2_WORK_EXIT) || (work.final_effect && fact.phase == DFY_V2_WORK_EFFECT))
             throw std::invalid_argument("binding: stale work transition");
-    } else if (fact.epoch != current_epoch || fact.revision != 1 || fact.phase != DFY_V2_WORK_ACCEPTED) {
-        throw std::invalid_argument("binding: original work required");
+    } else {
+        const auto archived = std::ranges::find_if(archived_,[&](const auto& entry) { return entry.first == key; });
+        if (archived != archived_.end()) return prior(archived->second,fact,platform::sha256(body));
+        if (fact.epoch != current_epoch || fact.revision != 1 || fact.phase != DFY_V2_WORK_ACCEPTED)
+            throw std::invalid_argument("binding: original work required");
     }
-    if (next_ == UINT64_MAX || (found == records_.end() && records_.size() >= 128)) throw std::length_error("binding: work capacity exhausted");
-    Record entry{fact.phase,body,next_+1,fact.revision};
-    if (found == records_.end()) records_.emplace(key,std::vector<Record>{std::move(entry)});
+    if (next_ == UINT64_MAX) throw std::length_error("binding: work receipt numbers exhausted");
+    Record entry{fact.phase,body,next_+1,fact.revision,fact.final_effect};
+    if (found == records_.end()) admit(key,std::move(entry),fact.admission_sequence);
     else {
-        auto& record = found->second;
+        auto& work = found->second;
+        auto& record = work.revisions;
         record.push_back(std::move(entry));
+        work.exited |= fact.phase == DFY_V2_WORK_EXIT;
+        work.final_effect |= fact.final_effect;
         // 接纳与退出各至多一份。窗口满时只移除已有更新取代的最早实效。
         if (record.size() > 16) record.erase(std::ranges::find(record,DFY_V2_WORK_EFFECT,&Record::phase));
     }
@@ -127,9 +167,11 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
 // 步骤：选择本代次以来的变化 → 组装原号及可见正文 → 按需从已退出和较早的记录收缩正文。
 Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit) const {
     auto result = Json::array();
-    for (const auto& [key,record] : records_) if (key.first == epoch && record.back().receipt > after) {
+    for (const auto& [key,work] : records_) if (key.first == epoch && work.revisions.back().receipt > after) {
+        const auto& record = work.revisions;
         const auto& last = record.back();
         Json item{{"work",key.second},{"accepted",record.front().receipt},{"revision",last.revision},{"receipt",last.receipt}};
+        if (work.final_effect) item["finalEffect"] = true;
         if (record.front().content.size() <= 256) item["source"] = Json::parse(record.front().content);
         for (const auto& stage : record) {
             if (stage.phase == DFY_V2_WORK_EXIT) item["exited"] = stage.receipt;
@@ -147,7 +189,8 @@ Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after, std::size_t by
     std::vector<Json*> oldest;
     for (auto& item : result) oldest.push_back(&item);
     std::ranges::sort(oldest,{},[](const Json* item) {
-        return std::pair{!item->contains("exited"),item->at("receipt").get<std::uint64_t>()};
+        const bool exited = item->contains("exited");
+        return std::tuple{!(exited && item->value("finalEffect",false)),!exited,item->at("receipt").get<std::uint64_t>()};
     });
     for (auto* item : oldest) {
         const auto before = item->dump().size();
