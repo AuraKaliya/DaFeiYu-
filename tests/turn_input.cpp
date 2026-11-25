@@ -57,6 +57,57 @@ void same_turn() {
         session.append_input(run,"晚到").state==InputAdmission::closed,"closed turn accepted input or exposed a partial answer");
 }
 
+enum class InputBoundary { model, admitted, confirmation };
+
+// 核对新原话送模前的旧变更、独立读取及原批准，随后允许模型依新指令再次选择。
+// 步骤：提出读写混合批次 → 在指定边界追加原话 → 检查旧回执和新请求 → 核对实际动作次数。
+void pending_changes(InputBoundary boundary) {
+    unsigned reads = 0;
+    std::vector<std::string> changes;
+    ToolCatalog catalog;
+    const std::string schema = R"({"type":"object","properties":{},"additionalProperties":false})";
+    catalog.add({"fixture/read",1,1,{"read","读取当前库存",schema}},[&](const auto&) {
+        ++reads; return completed_tool({true,ToolEffect::not_applied,"eight",ToolError::none});
+    });
+    catalog.add({"fixture/change",1,1,{"change","执行已授权的交付",schema},true,false},[&](const auto& call) {
+        changes.push_back(call.call.id); return completed_tool({true,ToolEffect::applied,"delivered",ToolError::none});
+    });
+    std::vector<Request> received;
+    Session session({},channel(),Backend{[&](const auto&,const Request& input) -> Response {
+        received.push_back(input);
+        if (received.size()==1) return {{Role::assistant,"",{{"stock","read","{}"},{"old","change","{}"}}},FinishReason::tool_calls};
+        if (received.size()==2 && boundary!=InputBoundary::confirmation)
+            return {{Role::assistant,"",{{"revised","change","{}"}}},FinishReason::tool_calls};
+        return {{Role::assistant,"已核对"}};
+    }});
+    ConfirmationCaller caller;
+    RunOptions options;
+    options.accept_user_input = true;
+    options.tools = catalog.snapshot(std::vector<std::string>{"fixture/read","fixture/change"},true);
+    options.confirmation_caller = caller;
+    options.policy.confirm_changes = boundary==InputBoundary::confirmation;
+    const auto request = session.begin("先查库存，交给甲",options);
+    if (boundary!=InputBoundary::model) until(session,[&] { return !request->tool_steps().empty(); });
+    check(session.append_input(request->run_id(),"改交给乙").state==InputAdmission::accepted,"correction not admitted");
+    if (boundary==InputBoundary::confirmation) {
+        const auto pending = request->confirmations().at(0);
+        bool refused = false;
+        try { session.decide(caller,{1,pending.id,pending.revision,pending.target,true}); }
+        catch (const std::invalid_argument&) { refused = true; }
+        check(refused && request->confirmations().front().state==ConfirmationState::invalidated,"stale approval survived correction");
+    }
+    until(session,[&] { return !session.busy(); });
+
+    check(request->operation()->state()==OperationState::succeeded && request->inputs().at(0).model_step==2 &&
+        received.size()==(boundary==InputBoundary::confirmation ? 2u : 3u),"correction lost before fresh decision");
+    const auto& context = received[1].messages;
+    check(context.size()==5 && context[2].tool_call_id=="stock" && context[2].content.find("eight")!=std::string::npos &&
+        context[3].tool_call_id=="old" && context[3].content.find("effect=not_applied")!=std::string::npos &&
+        context.back().role==Role::user && context.back().content=="改交给乙","next request lost evidence or accepted a stale effect");
+    check(reads==1 && changes==(boundary==InputBoundary::confirmation ? std::vector<std::string>{} : std::vector<std::string>{"revised"}),
+        "stale write started or fresh decision lost its grant");
+}
+
 // 在不同收尾条件下逐条核对未带入回执，不把未提交的上下文留给下一轮。
 // 步骤：设置原请求限制 → 接纳或拒绝补充 → 触发限制或取消 → 核对模型调用数和历史。
 void undelivered(InputState expected) {
@@ -98,7 +149,9 @@ void input_budget() {
 // 运行本轮追加入件和未带入结算的离线场景。
 int main() {
     try {
-        same_turn(); undelivered(InputState::limit); undelivered(InputState::deadline); undelivered(InputState::cancelled); input_budget();
+        same_turn();
+        for (auto boundary : {InputBoundary::model,InputBoundary::admitted,InputBoundary::confirmation}) pending_changes(boundary);
+        undelivered(InputState::limit); undelivered(InputState::deadline); undelivered(InputState::cancelled); input_budget();
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

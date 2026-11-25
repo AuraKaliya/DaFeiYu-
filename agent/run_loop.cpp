@@ -12,7 +12,11 @@ RunLoopState* retained_head = nullptr;
 std::size_t resident_count = 0, retained_count = 0;
 bool reaping = false;
 // 原运行共享的行动依据，工具只捕获此小型状态；更新不能重建执行器或清除旧回执。
-struct ActionBasis { std::optional<ActionObservations> observations; bool available = true; };
+struct ActionBasis {
+    std::optional<ActionObservations> observations;
+    bool available = true;
+    bool user_input_pending = false;
+};
 // 由原 RunLoop 拥有一个计划步骤的工作完成源；计划账本只借用读句柄，验证状态仍独立。
 struct PlanExecution {
     PlanStepKey key;
@@ -106,7 +110,8 @@ struct RunLoopState {
         const auto action_guard = [clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis] {
             const auto current = clock();
             if (run_state->state() != runtime::OperationState::pending || run_state->cancellation_reason() != runtime::CancelReason::none ||
-                current >= absolute || (basis->observations && (!basis->available || !basis->observations->current(current)))) return false;
+                current >= absolute || basis->user_input_pending ||
+                (basis->observations && (!basis->available || !basis->observations->current(current)))) return false;
             // 开始尝试变更后不再复用同一行动前依据；后续只读查询仍可继续。
             if (basis->observations) basis->available = false;
             return true;
@@ -125,6 +130,7 @@ struct RunLoopState {
         if (stopping && reason == runtime::CancelReason::none) reason = runtime::CancelReason::owner_stop;
         PolicyContext context{record->attempt_,options.goal_revision,options.policy.revision,options.origin,record->model_requests_,record->tool_requests_,
             stopping ? deadline : options.now(),deadline,reason};
+        context.user_input_pending = action_basis->user_input_pending;
         if (plan_step && !planning_request) { context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->index+1; }
         if (action_basis->observations) {
             context.observation_binding = action_basis->observations->binding();
@@ -224,6 +230,8 @@ struct RunLoopState {
                 const auto& scope = record->plan_ ? step_tools : options.tools;
                 if (!scope) throw std::invalid_argument("run: confirmation scope unavailable");
                 const auto selected = scope->resolve(original.name,original.arguments);
+                if (selected.description.changes_state && current.user_input_pending)
+                    throw std::invalid_argument("run: new user input awaits a model decision");
                 if (selected.description.changes_state && !current.observations_current)
                     throw std::invalid_argument("run: action observations changed before confirmation");
                 if (confirmation_target(current,selected,{original.call_id,original.name,original.arguments},original.candidate) != original)
@@ -477,6 +485,7 @@ struct RunLoopState {
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
         record->settle_inputs(InputState::submitted,current.attempt.step.sequence);
+        action_basis->user_input_pending = false;
         record->model_contexts_.push_back(std::move(context));
         TraceFact submitted; submitted.subject = {record->run_id(),TraceNodeKind::model,current.attempt.step.sequence,current.attempt.sequence,record->model_->diagnostics().request};
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
@@ -673,8 +682,8 @@ std::shared_ptr<TurnRequest> RunLoop::request() const noexcept { return state_->
 std::shared_ptr<const MessageHistory> RunLoop::history() const noexcept { return state_->record->context_->committed(); }
 // 推进当前运行的一个阶段。
 void RunLoop::advance() { state_->advance(); }
-// 只在获准的真人问答中签收补充，不改变已经发出的请求或本轮权限。
-// 步骤：核对来源和当前状态 → 检查条数、编码与正文预算 → 保存原话并签发回合内消息号。
+// 在获准的真人问答中签收补充，旧决定尚未开工的变更须等新原话送模后重新提出。
+// 步骤：核对来源和状态 → 检查条数及正文预算 → 登记原话并更新未开工变更的前置条件。
 InputReceipt RunLoop::append_input(std::string text) {
     auto& record = *state_->record;
     if (!state_->options.accept_user_input || state_->options.origin != RunOrigin::user_request || state_->options.planning)
@@ -690,6 +699,8 @@ InputReceipt RunLoop::append_input(std::string text) {
 
     const auto message = record.inputs_.size()+1;
     record.inputs_.push_back({message,std::move(text)});
+    state_->action_basis->user_input_pending = true;
+    state_->last_fingerprint.reset();
     ++record.input_revision_;
     return {InputAdmission::accepted,message};
 }

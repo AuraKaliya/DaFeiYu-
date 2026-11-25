@@ -176,6 +176,33 @@ void separate_reply_sources(const std::filesystem::path& data) {
         throw std::runtime_error("distinct reply sources shared a delivery");
 }
 
+// 真人补充已签收时，上一份请求提出的主聊天发言留在工具回执内。
+// 步骤：启动原请求后立即追加纠正 → 固定返回旧发言 → 核对新模型输入和最终渠道正文。
+void corrected_reply(const std::filesystem::path& data) {
+    using namespace model;
+    auto store = std::make_shared<app::MessageStore>(data);
+    std::vector<Request> received;
+    app::Application application({},data/"empty",data,Backend{[&](const auto&,const Request& request) -> Response {
+        received.push_back(request);
+        if (received.size()==1)
+            return {{Role::assistant,"",{{"old","main_reply",R"({"text":"发给甲。"})"}}},FinishReason::tool_calls};
+        return {{Role::assistant,"改发给乙。"}};
+    }});
+    application.bind_messages(store,"reply-test",nullptr);
+    auto& channel = *application.main_messages();
+    channel.terminal("original","发给甲。");
+    const auto status = application.conversation().status().value();
+    const auto correction = app::user_envelope("append","先改成乙。","reply-test",{status.session,status.turn});
+    const auto saved = store->put("desktop","correction",correction,{{"state","pending"}});
+    if (channel.deliver(saved.message.id,correction).at("state")!="waiting") throw std::runtime_error("correction not admitted");
+    until(application,[&] { return !application.conversation().busy(); });
+
+    const auto rows = store->page(true,0,store->watermark(),8).records;
+    if (received.size()!=2 || received.back().messages.back().content!="先改成乙。" ||
+        rows.size()!=3 || rows.front().envelope.at("text")!="改发给乙。" || rows.front().envelope.at("replyTo")!=std::to_string(saved.message.id))
+        throw std::runtime_error("stale main reply reached channel before a fresh decision");
+}
+
 // 重开原库时核对四种崩溃边界，之后阻塞真实写盘并核对最终投递次数。
 // 步骤：准备不同的已提交状态 → 验证重启归属与原队列 → 验证交付前失败 → 验证输出补写。
 void verify(const std::filesystem::path& data) {
@@ -247,6 +274,7 @@ int wmain(int argc, wchar_t** argv) {
         repeated_reply(root/"retry-pending",false);
         repeated_reply(root/"retry-delivered",true);
         separate_reply_sources(root/"reply-sources");
+        corrected_reply(root/"corrected-reply");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -25,6 +25,8 @@ struct PolicyContext {
     std::uint64_t plan_revision = 0, plan_step = 0, observation_binding = 0;
     bool observations_current = true;
     std::string_view tool_id{};
+    // 已接纳的真人补充尚未送模时，旧决定只能继续只读查询及在途结算。
+    bool user_input_pending = false;
 };
 struct PolicySettings {
     std::uint64_t revision = 1;
