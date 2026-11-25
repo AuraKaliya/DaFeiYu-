@@ -1124,8 +1124,12 @@ void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) 
         if (!action->progress().empty()) fact["result"]["progress"] = Json::parse(action->progress());
     }
     publish("mc.partner.action",fact);
-    if (exit_unknown && fact_stream_.needs_exit(session_,fact.at("bridgeWork").get_ref<const std::string&>()))
-        exit_checks_.push_back({fact,std::move(action)});
+    if (submitted) {
+        const auto& work = fact.at("bridgeWork").get_ref<const std::string&>();
+        const bool pickup = fact_stream_.needs_pickup(session_,work);
+        if (pickup || (exit_unknown && fact_stream_.needs_exit(session_,work)))
+            exit_checks_.push_back({fact,std::move(action),{},{},pickup});
+    }
 }
 
 // 在试点中登记玩家实际看到的呈现；原问题或审批依旧沿自己的回执流程推进。
@@ -1138,6 +1142,22 @@ void PartnerLoop::settle_presentation(std::unique_ptr<GameWork>& work, std::uint
     publish_action(fact,work);
 }
 
+// 活动绑定继续由显式观察确认去向，已撤销绑定通过原读口补齐同一投物的收件。
+// 步骤：核对原工作是否仍待查 → 只读已退出的原投物 → 将服务端样本交给原绑定。
+bool PartnerLoop::advance_pickup_check(ExitCheck& check, PartnerFacts& facts) {
+    const auto session = check.fact.at("session").get<std::uint64_t>();
+    const auto& work = check.fact.at("bridgeWork").get_ref<const std::string&>();
+    if (!facts.needs_pickup(session,work)) return true;
+    if (!check.retired) return false;
+    const auto result = check.action->read_exit();
+    if (!result) return false;
+
+    check.retry_at = std::chrono::steady_clock::now()+std::chrono::seconds(1);
+    const auto body = Json::parse(result->payload);
+    if (body.contains("handoffReceipt")) facts.settle_pickup(session,work,body.at("handoffReceipt"));
+    return !facts.needs_pickup(session,work);
+}
+
 // 沿原绑定只读未决动作，已离场的工作只补齐原回执。
 // 步骤：只读原游戏工作 → 按原会话补交退出与效果 → 对仍活动的绑定更新交接。
 void PartnerLoop::advance_exit_checks(bool active_ready) {
@@ -1145,37 +1165,47 @@ void PartnerLoop::advance_exit_checks(bool active_ready) {
     for (auto it = exit_checks_.begin(); it != exit_checks_.end();) {
         if (now < it->retry_at || (!it->retired && (!active_ready || outbound_.size() >= 55))) { ++it; continue; }
         auto& fact = it->fact;
-        if (it->action) {
+        auto& facts = it->retired ? *it->retired : fact_stream_;
+        if (it->waiting_pickup) {
+            if (advance_pickup_check(*it,facts)) it = exit_checks_.erase(it);
+            else ++it;
+            continue;
+        }
+        if (!fact.at("bridgeExited").get<bool>()) {
             auto result = it->action->read_exit();
             if (!result) { ++it; continue; }
             fact["bridgeExited"] = true;
             fact["effect"] = tool_effect(result->effect);
             fact.erase("bodyOmitted");
             fact.erase("result");
-            if (result->payload.size() <= 8*1024) fact["result"] = Json::parse(result->payload);
+            auto body = Json::parse(result->payload);
+            // 退出原件与后续拾取属于不同修订，重传退出时使用同一份正文。
+            body.erase("handoffReceipt");
+            if (body.dump().size() <= 8*1024) fact["result"] = std::move(body);
             else fact["bodyOmitted"] = true;
             if (fact.value("transition","") == "exit_unconfirmed") fact["transition"] = "exited";
-            it->action.reset();
         }
-        auto& facts = it->retired ? *it->retired : fact_stream_;
         if (facts.report(fact.at("session").get<std::uint64_t>(),"mc.partner.action",fact)) {
             it->retry_at = now + std::chrono::seconds(1);
             ++it;
             continue;
         }
-        if (it->retired) { it = exit_checks_.erase(it); continue; }
-        publish("mc.partner.motion",{{"status","exit_confirmed"},{"action",fact}});
-        remember_reply(fact);
         const auto& work = fact.at("bridgeWork").get_ref<const std::string&>();
-        if (task_.unconfirmed() == work) {
-            task_.hold_correction({});
-            if (!handoff_) handoff_ = Handoff{work};
+        if (!it->retired) {
+            publish("mc.partner.motion",{{"status","exit_confirmed"},{"action",fact}});
+            remember_reply(fact);
+            if (task_.unconfirmed() == work) {
+                task_.hold_correction({});
+                if (!handoff_) handoff_ = Handoff{work};
+            }
+            if (handoff_ && handoff_->work == work) {
+                task_.record(fact,false);
+                handoff_->receipt = {{"status","exited"},{"work",work},{"action",fact}};
+            }
         }
-        if (handoff_ && handoff_->work == work) {
-            task_.record(fact,false);
-            handoff_->receipt = {{"status","exited"},{"work",work},{"action",fact}};
-        }
-        it = exit_checks_.erase(it);
+        it->waiting_pickup = facts.needs_pickup(fact.at("session").get<std::uint64_t>(),work);
+        if (it->waiting_pickup) ++it;
+        else it = exit_checks_.erase(it);
     }
 }
 

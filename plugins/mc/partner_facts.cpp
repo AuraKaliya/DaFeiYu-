@@ -92,6 +92,20 @@ bool PartnerFacts::needs_exit(std::uint64_t session, const std::string& work) co
     return session == session_ && found != uncertain_.end() && !found->second.exited;
 }
 
+// 只保留已退出且有原投物可追踪的未决收件。
+bool PartnerFacts::needs_pickup(std::uint64_t session, const std::string& work) const noexcept {
+    const auto found = uncertain_.find(work);
+    return bound(session) && found != uncertain_.end() && found->second.pending_pickup;
+}
+
+// 确认查证回到同一工作和原绑定，再追加已经核实的去向。
+std::uint32_t PartnerFacts::settle_pickup(std::uint64_t session, const std::string& work, const Json& sample) {
+    const auto original = uncertain_.find(work);
+    if (!bound(session) || sample.at("work") != work || original == uncertain_.end() || !original->second.handoff)
+        return DFY_V2_INVALID_CONTEXT;
+    return report_handoff(sample);
+}
+
 // 只淘汰已完成查证的原工作，等待退出或等待拾取的条目继续留在原代次。
 void PartnerFacts::finish_late(const std::string& work) {
     if (std::ranges::find(finished_late_,work) != finished_late_.end()) return;
@@ -118,22 +132,26 @@ std::uint32_t PartnerFacts::reserve(std::string_view work, std::string_view skil
 }
 
 // 桥接只为已退出的原投物工作提供复查，拾取数量由独立的服务端事件确认。
-// 步骤：按原号登记退出 → 核对接收人与完整数量 → 登记晚到实收并保留重复查询的原版本。
+// 步骤：按原号登记退出 → 核对已提交物品的全部去向 → 登记晚到实收并保留重复查询的原版本。
 std::uint32_t PartnerFacts::report_handoff(const Json& handoff) {
     const auto& work = handoff.at("work").get_ref<const std::string&>();
     const auto late = uncertain_.find(work);
-    if (late != uncertain_.end() && !late->second.exited) {
+    if (late == uncertain_.end() || !late->second.handoff) return DFY_V2_OK;
+    if (!late->second.exited) {
         if (const auto result = put(work,3,DFY_V2_WORK_EXIT,{{"exited",true}})) return result;
         late->second.exited = true;
     }
 
     const auto& proof = handoff.at("receipt");
-    if (proof.at("source") != "server_events" || proof.at("recipientPicked") != handoff.at("requested") ||
-        proof.at("throwUnknown") != 0 || proof.at("pickupUnknown") != 0 || handoff.at("originalStatus") != "blocked") return DFY_V2_OK;
-    const auto revision = late != uncertain_.end() && late->second.final_effect ? 5u : 4u;
+    if (proof.at("source") != "server_events" || proof.at("throwUnknown") != 0 || proof.at("pickupUnknown") != 0) return DFY_V2_OK;
+    const auto revision = late->second.effect_after_exit ? 5u : 4u;
     const auto result = put(work,revision,DFY_V2_WORK_EFFECT,{{"recipient",handoff.at("recipient")},{"item",handoff.at("item")},
+        {"requested",handoff.at("requested")},{"submitted",handoff.at("submitted")},{"otherPicked",proof.at("otherPicked")},
         {"recipientPicked",proof.at("recipientPicked")},{"stream",proof.at("stream")},{"sourceThrough",handoff.at("sourceThrough")}},true);
-    if (!result && late != uncertain_.end()) { late->second.picked = true; finish_late(work); }
+    if (!result) {
+        late->second.pickup_settled = true; late->second.pending_pickup = false;
+        finish_late(work);
+    }
     return result;
 }
 
@@ -166,26 +184,34 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
     if (action.contains("result") && action.at("result").dump().size() <= 7000) effect["result"] = action.at("result");
     else effect["originalWork"] = work;
     const auto late = uncertain_.find(work);
-    if (!exited || late == uncertain_.end()) {
+    const bool exit_was_unknown = late != uncertain_.end() && late->second.exit_was_unknown;
+    if (!exited || !exit_was_unknown) {
         if (!exited) effect["bridgeExited"] = false;
         result = put(work,2,DFY_V2_WORK_EFFECT,effect,complete);
         if (result) return result;
         if (!exited) {
-            uncertain_.try_emplace(work);
+            auto& state = uncertain_[work];
+            state.exit_was_unknown = true; state.handoff = action.at("skill") == "give_item";
             return DFY_V2_OK;
         }
     }
     result = put(work,3,DFY_V2_WORK_EXIT,{{"exited",true}});
     if (result) return result;
-    if (late != uncertain_.end()) {
+    if (exit_was_unknown) {
         late->second.exited = true;
         // 已送达的拾取比原动作结束时的库存更新，迟到读回不能覆盖更晚的实收。
-        if (!late->second.picked) {
+        if (!late->second.pickup_settled) {
             result = put(work,4,DFY_V2_WORK_EFFECT,effect,complete);
             if (result) return result;
-            late->second.final_effect = true;
+            late->second.effect_after_exit = true;
             if (complete) finish_late(work);
         }
+    }
+    if (!complete && action.at("skill") == "give_item" && action.contains("result") && action.at("result").contains("receipt")) {
+        const auto& proof = action.at("result").at("receipt");
+        auto& state = uncertain_[work];
+        state.handoff = true; state.exited = true;
+        state.pending_pickup = !state.pickup_settled && proof.value("source","") == "server_events" && proof.value("pickupUnknown",0) > 0;
     }
     return handoff_status;
 }

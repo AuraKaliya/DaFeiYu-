@@ -49,8 +49,8 @@ void late_pickup(bool ordered, bool recyclable) {
     }
     const auto status = facts.reserve("later-read","observe",2);
     if (status != (recyclable ? DFY_V2_OK : DFY_V2_RESOURCE_EXHAUSTED)) throw std::runtime_error("wrong preflight result");
-    const Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"sourceThrough",12},
-        {"originalStatus","blocked"},{"receipt",{{"source","server_events"},{"recipientPicked",8},{"stream","s"},{"throwUnknown",0},{"pickupUnknown",0}}}};
+    const Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"submitted",8},{"sourceThrough",12},
+        {"originalStatus","blocked"},{"receipt",{{"source","server_events"},{"recipientPicked",8},{"otherPicked",0},{"stream","s"},{"throwUnknown",0},{"pickupUnknown",0}}}};
     const Json observed{{"session",1},{"order",2},{"skill","observe"},{"bridgeWork","later-read"},{"bridgeExited",true},
         {"factAdmission",status},{"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",{{"handoffReceipt",handoff}}}};
     if (facts.report(1,"mc.partner.action",observed)!=status) throw std::runtime_error("reader dropped its own recording status");
@@ -63,10 +63,40 @@ void late_pickup(bool ordered, bool recyclable) {
         throw std::runtime_error("full index lost original pickup, exit or finality");
     if (ordered && facts.reserve("next","reply",3)) throw std::runtime_error("final pickup did not release an eligible slot");
 }
+
+// 在原会话退役后核清同一投物的全部去向，分别覆盖正常退出和迟到退出。
+// 步骤：接纳原件并模拟离场 → 验证作用域及未核清收件 → 按原号登记实收与其他收取。
+void retired_pickup(bool unknown_exit) {
+    dfy::app::BindingWorks works; ledger = &works;
+    dfy_v2_agent_ordered_facts_api api{{{},submit,legacy},record,nullptr};
+    dfy::mc::PartnerFacts facts;
+    facts.configure(&api.base,"paired",&api);
+    std::uint64_t request = 0;
+    if (facts.submit(1,"paired/world",{},Json::object(),false,request) || facts.reserve("give","give_item",2))
+        throw std::runtime_error("original work not admitted");
+    Json action{{"session",1},{"order",2},{"skill","give_item"},{"bridgeWork","give"},{"bridgeExited",!unknown_exit},{"factAdmission",0},
+        {"effect",DFY_V2_TOOL_APPLIED},{"result",{{"status","interrupted"},{"receipt",{{"source","server_events"},{"throwUnknown",0},{"pickupUnknown",8}}}}}};
+    if (facts.report(1,"mc.partner.action",action)) throw std::runtime_error("original handoff missing");
+    auto old = facts.retire_settlements();
+    facts.clear();
+    action["bridgeExited"] = true;
+    if (old->report(1,"mc.partner.action",action) || !old->needs_pickup(1,"give")) throw std::runtime_error("retirement dropped original throws");
+    Json sample{{"work","give"},{"recipient","paired"},{"item","stone"},{"requested",10},{"submitted",8},{"originalStatus","interrupted"},
+        {"sourceThrough",12},{"receipt",{{"source","server_events"},{"recipientPicked",6},{"otherPicked",0},{"stream","s"},{"throwUnknown",0},{"pickupUnknown",2}}}};
+    if (old->settle_pickup(2,"give",sample)!=DFY_V2_INVALID_CONTEXT || old->settle_pickup(1,"wrong",sample)!=DFY_V2_INVALID_CONTEXT ||
+        old->settle_pickup(1,"give",sample) || !old->needs_pickup(1,"give")) throw std::runtime_error("scope or incomplete custody lost");
+    sample["receipt"]["pickupUnknown"] = 0; sample["receipt"]["otherPicked"] = 2;
+    if (old->settle_pickup(1,"give",sample) || old->needs_pickup(1,"give") || !works.finalized()) throw std::runtime_error("split custody unresolved");
+    const auto head = works.watermark();
+    const auto item = works.view(1,0).at(0);
+    if (old->settle_pickup(1,"give",sample) || head!=works.watermark() || item.at("revision")!=(unknown_exit ? 5 : 4) ||
+        item.at("effect").at("recipientPicked")!=6 || item.at("effect").at("otherPicked")!=2 || item.at("effect").at("submitted")!=8)
+        throw std::runtime_error("retired work overstated actual receipt or repeated a transfer");
+}
 }
 
-// 验证所有未决和存在可回收记录两种满额状态，覆盖旧事实接口。
+// 验证满额和退役时对原投物的查证，覆盖旧事实接口与迟到退出。
 int main() {
-    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); return 0; }
+    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); retired_pickup(false); retired_pickup(true); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

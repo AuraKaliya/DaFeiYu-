@@ -30,15 +30,22 @@ class PartnerFacts {
     std::uint32_t report(std::uint64_t session, std::string_view category, const nlohmann::json& payload);
     // 识别已在本绑定登记退出未知、仍需用原桥接工作查证的动作。
     bool needs_exit(std::uint64_t session, const std::string& work) const noexcept;
+    // 查询原交物是否已有可追踪的投物证据，仍需核清去向。
+    bool needs_pickup(std::uint64_t session, const std::string& work) const noexcept;
+    // 在原绑定内结算已通过协议核验的同号拾取样本。
+    std::uint32_t settle_pickup(std::uint64_t session, const std::string& work, const nlohmann::json& sample);
   private:
     // 向宿主提交本绑定原工作的一个确定版本，重复提交沿用原回执。
     std::uint32_t put(std::string_view work, std::uint64_t revision, std::uint32_t phase, const nlohmann::json& body,
         bool final = false, std::uint64_t sequence = 0) const;
-    // 依据原投物工作已退出的取证条件登记退出，完全核实实收后再更新效果。
+    // 依据原投物工作登记退出，所提交物品的去向核清后登记实际收取者。
     std::uint32_t report_handoff(const nlohmann::json& handoff);
     // 已无需继续复查的本地阶段只保留最近一窗，原宿主继续校验过期重传。
     void finish_late(const std::string& work);
-    struct LateReceipt { bool exited = false, final_effect = false, picked = false; };
+    struct LateReceipt {
+        bool exit_was_unknown = false, exited = false, effect_after_exit = false;
+        bool handoff = false, pending_pickup = false, pickup_settled = false;
+    };
     std::map<std::string,LateReceipt> uncertain_;
     std::deque<std::string> finished_late_;
     const dfy_v2_agent_facts_api* service_ = nullptr;

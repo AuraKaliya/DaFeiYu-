@@ -355,7 +355,10 @@ class PartnerLoop {
         std::unique_ptr<GameWork> action;
         std::chrono::steady_clock::time_point retry_at{};
         std::shared_ptr<PartnerFacts> retired;
+        bool waiting_pickup = false;
     };
+    // 在配对结束后沿原交物读口核实去向，返回是否已无需持有原票据。
+    bool advance_pickup_check(ExitCheck& check, PartnerFacts& facts);
     std::deque<ExitCheck> exit_checks_;
     uint32_t thinking_flags_ = 0;
     const dfy_v2_mailbox_api* mail_ = nullptr;
