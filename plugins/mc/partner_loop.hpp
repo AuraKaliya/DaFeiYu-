@@ -133,7 +133,7 @@ class PartnerLoop {
     void remember_reply(const nlohmann::json& fact);
     // 给已绑定且无新输入的游戏返回准备好的自主唤醒。
     std::string_view autonomous_wake() const;
-    // 结束旧游戏绑定对应的 Agent 上下文。
+    // 将未决读回移交原账本并结束旧游戏绑定对应的 Agent 上下文。
     void retire();
     // 单独判断新事实是否应中止原生在途动作，过期判断不得中止替代动作。
     void review(PartnerWork work, bool closing);
@@ -145,8 +145,8 @@ class PartnerLoop {
     void publish_action(nlohmann::json& fact, std::unique_ptr<GameWork>& action);
     // 将问题或审批呈现的游戏票据沿原号结算并保留尚未确认的退出。
     void settle_presentation(std::unique_ptr<GameWork>& work, std::uint64_t order, const GameResult& result);
-    // 只读同一绑定中尚未核实的原工作，补交迟到的回执。
-    void advance_exit_checks();
+    // 只读尚未核实的原工作，活动与已撤销绑定各自接收其迟到回执。
+    void advance_exit_checks(bool active_ready);
     // 同一种确定性参数失败达到两次后，让出本轮以等待新事实。
     void limit_repair(std::string code);
     // 读回脱离回合的在途动作，只有真实结果或失联才归还动作槽。
@@ -354,6 +354,7 @@ class PartnerLoop {
         nlohmann::json fact;
         std::unique_ptr<GameWork> action;
         std::chrono::steady_clock::time_point retry_at{};
+        std::shared_ptr<PartnerFacts> retired;
     };
     std::deque<ExitCheck> exit_checks_;
     uint32_t thinking_flags_ = 0;

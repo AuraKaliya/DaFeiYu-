@@ -352,11 +352,17 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
     return true;
 }
 
-// 原会话空闲后释放旧游戏上下文，等待新的世界或玩家在场周期。
+// 原会话空闲后移交仍需查证的旧工作，再释放该玩家在场周期的执行状态。
+// 步骤：移交同绑定的原回执 → 关闭原会话 → 清除活动现场和任务输入。
 void PartnerLoop::retire() {
+    std::shared_ptr<PartnerFacts> retired;
+    for (auto& check : exit_checks_) {
+        if (check.retired) continue;
+        if (!retired) retired = fact_stream_.retire_settlements();
+        check.retired = retired;
+    }
     if (session_) agent_->close(session_,nullptr);
     fact_stream_.clear();
-    exit_checks_.clear();
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
@@ -1132,12 +1138,12 @@ void PartnerLoop::settle_presentation(std::unique_ptr<GameWork>& work, std::uint
     publish_action(fact,work);
 }
 
-// 在原配对仍有效时读回未决动作，独立于当前回合补齐退出与实效。
-// 步骤：只读原工作 → 补交同号回执 → 解除与该工作匹配的交接等待。
-void PartnerLoop::advance_exit_checks() {
+// 沿原绑定只读未决动作，已离场的工作只补齐原回执。
+// 步骤：只读原游戏工作 → 按原会话补交退出与效果 → 对仍活动的绑定更新交接。
+void PartnerLoop::advance_exit_checks(bool active_ready) {
     const auto now = std::chrono::steady_clock::now();
-    for (auto it = exit_checks_.begin(); it != exit_checks_.end() && outbound_.size() < 55;) {
-        if (now < it->retry_at) { ++it; continue; }
+    for (auto it = exit_checks_.begin(); it != exit_checks_.end();) {
+        if (now < it->retry_at || (!it->retired && (!active_ready || outbound_.size() >= 55))) { ++it; continue; }
         auto& fact = it->fact;
         if (it->action) {
             auto result = it->action->read_exit();
@@ -1151,11 +1157,13 @@ void PartnerLoop::advance_exit_checks() {
             if (fact.value("transition","") == "exit_unconfirmed") fact["transition"] = "exited";
             it->action.reset();
         }
-        if (fact_stream_.report(session_,"mc.partner.action",fact)) {
+        auto& facts = it->retired ? *it->retired : fact_stream_;
+        if (facts.report(fact.at("session").get<std::uint64_t>(),"mc.partner.action",fact)) {
             it->retry_at = now + std::chrono::seconds(1);
             ++it;
             continue;
         }
+        if (it->retired) { it = exit_checks_.erase(it); continue; }
         publish("mc.partner.motion",{{"status","exit_confirmed"},{"action",fact}});
         remember_reply(fact);
         const auto& work = fact.at("bridgeWork").get_ref<const std::string&>();
@@ -1498,7 +1506,7 @@ void PartnerLoop::advance(const BridgeConfig& config, std::uint64_t instance, Pa
     const bool departed = feed_.departure() || feed_.departed();
     const bool replaced = session_ && (feed_.world() != session_world_ || feed_.binding_revision() != session_binding_);
     const bool unavailable = closing || replaced || departed || !feed_.execution_bound();
-    if (!unavailable && !feed_.recovering()) advance_exit_checks();
+    advance_exit_checks(!unavailable && !feed_.recovering());
     advance_confirmation_presentation(config,instance,unavailable);
     advance_question(config,instance,unavailable);
     if (awaiting_delegation_ && (unavailable || awaiting_delegation_->world != feed_.world())) {

@@ -1503,6 +1503,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     using Json = nlohmann::json;
     const bool finish = variant.ends_with(L"-finish");
     const bool late = variant.ends_with(L"-late");
+    const bool retired = variant.ends_with(L"-retired");
     const bool capacity = variant.ends_with(L"-capacity");
     const bool batch = variant.ends_with(L"-batch");
     const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
@@ -1510,6 +1511,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     const std::string reply = "我在这儿。";
     std::atomic_bool received = false;
     std::atomic_uint64_t fill_session = 0;
+    std::atomic_uint64_t original_session = 0, new_session = 0;
     std::binary_semaphore filled(0);
     app::ApplicationRunConfig run;
     run.trace_directory = root;
@@ -1535,6 +1537,15 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         }
         const auto input = Json::parse(message.content);
         if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
+        if (retired) {
+            const auto epoch = input.at("factFrame").at("epoch").get<std::uint64_t>();
+            if (input.at("events").back().at("sequence") == 2) { original_session = epoch; return {{Role::assistant,reply}}; }
+            if (epoch == original_session || std::ranges::any_of(request.messages,[&](const Message& value) {
+                return value.content.find(reply) != std::string::npos;
+            })) throw std::runtime_error("old delivery leaked into new binding");
+            new_session = epoch;
+            return {{Role::assistant,R"({"internal":"keep quiet"})"}};
+        }
         if (late) return {{Role::assistant,reply}};
         if (capacity) {
             fill_session = input.at("factFrame").at("epoch").get<std::uint64_t>();
@@ -1584,6 +1595,21 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         }
         if (stopping && host.companion_status()->closed) return 0;
         const auto settled = host.companion_status()->settled_event;
+        if (retired && settled >= 2 && !stopping) {
+            if (!announced) { std::ofstream(root/"old-settled").put('1'); announced = 2; }
+            if (new_session && settled == 5) {
+                if (announced != 5) { std::ofstream(root/"new-bound").put('1'); announced = 5; }
+                const auto owner = host.plugins().instance("mc.companion")->generation();
+                const auto receipt = host.subagents().read_receipt(owner,original_session,original_session,4);
+                if (receipt) {
+                    const auto late_fact = Json::parse(*receipt);
+                    if (!late_fact.at("finalEffect").get<bool>() || late_fact.at("body").at("result").at("delivery") != "sent" ||
+                        host.subagents().read_receipt(owner,new_session,new_session,4))
+                        throw std::runtime_error("late exit was not settled on its original binding");
+                    received = true;
+                }
+            }
+        }
         if (late && settled == 2) {
             const auto messages = host.companion_messages(id,0).messages;
             const auto player = std::ranges::find(messages,app::CompanionMessageKind::utterance,&app::CompanionMessage::kind);
@@ -1599,7 +1625,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
             announced = settled;
             std::ofstream(root/("settled-"+std::to_string(settled))).put('1');
         }
-        if (!stopping && (batch ? settled == 5 : received && settled == 2)) {
+        if (!stopping && (batch ? settled == 5 : received && settled == (retired ? 5u : 2u))) {
             host.stop_companion(id);
             stopping = true;
         }

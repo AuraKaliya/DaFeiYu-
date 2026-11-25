@@ -162,7 +162,7 @@ async function main() {
   const directRevision = controllerRestart || variant?.startsWith('partner-revision-direct-');
   const directPlace = variant?.startsWith('partner-revision-direct-place');
   const stalePlace = variant === 'partner-revision-direct-place-stale';
-  const rejoin = variant === 'partner-revision-direct-rejoin';
+  const rejoin = variant === 'partner-revision-direct-rejoin' || delivery === 'retired';
   const recoverInbox = variant === 'partner-revision-direct-recover-notes';
   const notes = revision && variant.endsWith('-notes');
   const correction = variant?.startsWith('partner-revision-correction');
@@ -213,7 +213,7 @@ async function main() {
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
-  const factPlayer = correctionLost || ['late','capacity'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
+  const factPlayer = correctionLost || ['late','retired','capacity'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking, factPlayer }));
   let reads = 0, airAttempts = 0, airTail = 0;
   const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
@@ -296,6 +296,7 @@ async function main() {
           repairPlanObserve ? (fs.existsSync(path.join(root, 'observe-plan-settled')) ? 4 :
             fs.existsSync(path.join(root, 'observe-plan-rejected')) ? 3 : 2) :
           responseTiming ? (timingFirstRead ? 3 : 2) :
+          delivery === 'retired' ? (fs.existsSync(path.join(root,'old-settled')) ? 5 : 2) :
           rejoin ? (planReading ? 5 : 2) :
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
@@ -503,13 +504,16 @@ async function main() {
         assert.equal(skill, 'reply');
         assert.ok(!Object.hasOwn(args, 'finish'));
         const text = '我在这儿。';
-        if (delivery === 'late') {
+        if (delivery === 'late' || delivery === 'retired') {
           assert.ok(id.startsWith('reply.'));
           assert.equal(args.text, text);
           if (method === 'partner.begin') { ++replies; explicitReply = { id, context, args }; }
           else assert.deepEqual({ id, context, args }, explicitReply);
           const result = { status: 'done', sent: true, delivery: 'sent', text };
-          if (method === 'partner.receipt') { ++replyReads; return { ...context, skill, exited: true, result }; }
+          if (method === 'partner.receipt') {
+            ++replyReads;
+            if (delivery === 'late' || fs.existsSync(path.join(root,'new-bound'))) return { ...context, skill, exited: true, result };
+          }
           if (method === 'partner.stop') ++stopped;
           return { ...context, order: context.order + 1, skill, exited: true, result };
         }
@@ -1235,7 +1239,13 @@ async function main() {
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (legacyAir) assert.equal(airAttempts,1);
     if (showGame) assert.ok(approvedId);
-    if (delivery === 'late') {
+    if (delivery === 'retired') {
+      assert.deepEqual([replies,stopped],[1,1]);
+      assert.ok(replyReads >= 1);
+      const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+      assert.ok(rows.some(row => row.category === 'mc.partner.event' && row.body.event.type === 'player.left'));
+      assert.ok(!rows.some(row => row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed'));
+    } else if (delivery === 'late') {
       assert.deepEqual([replies, stopped, replyReads], [1, 1, 1]);
       const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
       const receipts = rows.filter(row => row.category === 'mc.partner.action' ||

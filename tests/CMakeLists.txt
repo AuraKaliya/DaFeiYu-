@@ -199,7 +199,7 @@ if(DFY_MC_NODE)
       "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-execution-${mode})
     set_tests_properties(plugins.mc_partner_execution_${mode} PROPERTIES TIMEOUT 15)
   endforeach()
-  foreach(delivery fallback sent unknown internal finish late capacity)
+  foreach(delivery fallback sent unknown internal finish late retired capacity)
     add_test(NAME plugins.mc_partner_reply_${delivery} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
       "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-reply-${delivery})
     set_tests_properties(plugins.mc_partner_reply_${delivery} PROPERTIES TIMEOUT 15)

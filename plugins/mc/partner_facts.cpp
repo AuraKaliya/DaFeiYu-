@@ -47,6 +47,15 @@ void PartnerFacts::clear() noexcept {
     uncertain_.clear();
     finished_late_.clear();
 }
+// 把原绑定及未决工作交给迟到回执，活动场景和新的接纳序号留在各自会话。
+// 步骤：建立只含原会话地址的结算对象 → 移交原工作状态 → 交回共同所有权。
+std::shared_ptr<PartnerFacts> PartnerFacts::retire_settlements() {
+    auto retired = std::make_shared<PartnerFacts>();
+    retired->service_ = service_; retired->ordered_ = ordered_; retired->session_ = session_;
+    retired->uncertain_.swap(uncertain_);
+    retired->finished_late_.swap(finished_late_);
+    return retired;
+}
 // 对当前场景比较顶层字段，原始事件及工具授权随本次提交独立固定。
 // 步骤：判断作用域及用途边界 → 生成变化与关闭项 → 原序号补发所需基线 → 接纳后发布新镜像。
 std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope, const dfy_v2_agent_input& run,

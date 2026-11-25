@@ -2,6 +2,7 @@
 #include <dafeiyu/agent_abi_v2.h>
 #include <deque>
 #include <map>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 namespace dfy::mc {
@@ -20,6 +21,8 @@ class PartnerFacts {
     std::uint32_t reserve(std::string_view work, std::string_view skill, std::uint64_t order);
     // 只清空本绑定的投影和原工作记录，下个绑定从完整基线开始。
     void clear() noexcept;
+    // 分出旧绑定的原工作结算状态，供离场后只读核验的工作共同持有。
+    std::shared_ptr<PartnerFacts> retire_settlements();
     // 发送基线或同作用域补丁，断序时按原号发送一次完整快照。
     std::uint32_t submit(std::uint64_t session, std::string_view scope, const dfy_v2_agent_input& run,
         const nlohmann::json& scene, bool isolate, std::uint64_t& request);
