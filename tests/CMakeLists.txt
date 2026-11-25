@@ -254,6 +254,8 @@ set_tests_properties(ui.tray_resident PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
 # 只在 GUI 构建中验证来源与 Frame 代次，不启动浏览器。
 if(BUILD_GUI)
   add_executable(dfy_ui_scope_tests ui_frame_scope.cpp)
+  add_test(NAME ui.message_history_state COMMAND "${DFY_NPM_EXECUTABLE}" run test:history)
+  set_tests_properties(ui.message_history_state PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/ui/web" TIMEOUT 15)
   target_link_libraries(dfy_ui_scope_tests PRIVATE dfy_ui_scope dfy_build_options)
   set_target_properties(dfy_ui_scope_tests PROPERTIES FOLDER Tests)
   add_test(NAME ui.frame_scope COMMAND dfy_ui_scope_tests)

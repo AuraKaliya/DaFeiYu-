@@ -1,0 +1,64 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { useMessageHistory } from '../src/message-history.ts';
+import { messageTimeline } from '../src/message-timeline.ts';
+
+// 构造带相同原话的不同已提交消息，修订号独立于消息号。
+function sample(id, revision = id) {
+  return { message: String(id), revision: String(revision), utcMs: 1000 + id, sender: 'user', route: 'send',
+    text: '同一句', source: 'desktop', submission: 'test-' + id, receipt: { state: 'accepted' } };
+}
+
+// 固定前端桥的收发时序，真实数据协议另由原生集成覆盖。
+function fixture() {
+  const sent = [];
+  const storage = new Map();
+  globalThis.sessionStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  globalThis.window = { chrome: { webview: { postMessage: message => sent.push(message) } } };
+  return { sent, storage };
+}
+
+// 覆盖固定快照翻页与新回执交错、重新订阅、乱序回包以及刷新后恢复到首条。
+test('history resumes from applied pages and preserves independent equal messages', () => {
+  const { sent } = fixture();
+  let view = useMessageHistory();
+  const reply = (event, fields, request = sent.at(-1)) => view.receive({ version: '1', event, request: request.request,
+    conversation: 'logical', instance: 'resident', watermark: '5', ...fields });
+  view.pulse(undefined);
+  reply('messages.subscribed', { watermark: '3' });
+  reply('messages.page', { through: '3', next: '2', more: true, records: [sample(3), sample(2)] });
+  view.pulse('5');
+  reply('messages.page', { through: '5', next: '5', more: false, records: [sample(1, 4), sample(4, 5)] });
+  view.earlier();
+  assert.equal(sent.at(-1).through, '3');
+  assert.equal(sent.at(-1).cursor, '2');
+  const outdated = sent.at(-1);
+  view.disconnect(); view.pulse(undefined);
+  reply('messages.page', { through: '3', next: '1', more: false, records: [sample(1)] }, outdated);
+  reply('messages.subscribed', {});
+  reply('messages.page', { through: '3', next: '1', more: false, records: [sample(1)] });
+  assert.deepEqual(view.rows.value.map(row => [row.message, row.revision]), [['1','4'],['2','2'],['3','3'],['4','5']]);
+  view = useMessageHistory(); view.pulse(undefined);
+  reply('messages.subscribed', {});
+  reply('messages.page', { through: '5', next: '3', more: true, records: [sample(4,5),sample(3)] });
+  assert.equal(sent.at(-1).cursor, '3');
+  reply('messages.page', { through: '5', next: '1', more: false, records: [sample(2),sample(1,4)] });
+  assert.equal(view.rows.value.length, 4);
+  assert.equal(view.more.value, false);
+});
+
+// 同一原生回合的新实例和独立消息不会因正文相同而相互覆盖。
+test('timeline associates final deliveries with their original instance and turn', () => {
+  const a = sample(1), b = sample(2);
+  a.receipt = { state: 'accepted', instance:'old', session:'1', turn:'1', nativeMessage:'0' };
+  b.receipt = { ...a.receipt, instance: 'new' };
+  const current = { session:'1', turn:'1', queuedMessage:'0', inputs:[] };
+  const final = { ...sample(3), sender:'assistant', route:'reply', instance:'new', session:'1', turn:'1', delivery:'new/1/1/final' };
+  const separate = { ...final, message:'4', delivery:'another-notice' };
+  const blocks = messageTimeline([a,b,final,separate],[current],'new');
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].row.message,'1');
+  assert.equal(blocks[1].prompt.message,'2');
+  assert.equal(blocks[1].answer.message,'3');
+  assert.equal(blocks[2].row.message,'4');
+});

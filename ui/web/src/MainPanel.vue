@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { useMessageHistory } from './message-history';
+import { messageTimeline } from './message-timeline';
+import MessageTime from './MessageTime.vue';
 import ManagementShell from './ManagementShell.vue';
 import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
@@ -48,6 +51,8 @@ const pending = shallowRef<Pending>();
 const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
 const transcript = ref<HTMLOListElement>();
+const messages = useMessageHistory();
+const timeline = computed(() => messageTimeline(messages.rows.value, turns.value, messages.instance.value));
 const composer = ref<HTMLTextAreaElement>();
 const clearDialog = ref<HTMLDialogElement>();
 const clearTarget = shallowRef<Target>();
@@ -173,7 +178,7 @@ function read(): void {
     }
     return;
   }
-  if (now - dialogueConfirmed > freshnessMs) { ready.value = false; accepting.value = false; }
+  if (now - dialogueConfirmed > freshnessMs) { ready.value = false; accepting.value = false; messages.disconnect(); }
   if (now - roomConfirmed > freshnessMs) roomCurrent.value = false;
   post({ type: 'dialogue.read', revision, command: pending.value?.id ?? pendingStop.value });
   if (pending.value && pendingStop.value) post({ type: 'dialogue.read', revision, command: pendingStop.value });
@@ -288,6 +293,7 @@ function receiveLifecycle(value: Record<string, unknown>): void {
 // 步骤：核对页面请求 → 验证快照字段并更新正文 → 结算匹配的窗口命令。
 function receive(event: MessageEvent<unknown>): void {
   const value = event.data;
+  if (messages.receive(value)) return;
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
   const sequence = Number(value.request.slice(scope.length));
   if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
@@ -302,6 +308,7 @@ function receive(event: MessageEvent<unknown>): void {
     if (value.request === shutdownRequest) shutdown.value = 'unknown';
     if (sequence < latestSnapshot) return;
     ready.value = false;
+    messages.disconnect();
     accepting.value = false;
     roomCurrent.value = false;
     connectionNotice.value = typeof value.reason === 'string' && value.reason.includes('configuration differs')
@@ -335,6 +342,7 @@ function receive(event: MessageEvent<unknown>): void {
       queue.value = value.queue;
     }
     if (value.ready) publishConversation(value.accepting, value.revision);
+    if (value.ready) messages.pulse(value.messageWatermark);
     if (value.confirmStop === true) askStop();
     if (value.ready && reconnecting.size) {
       // 宿主水位尚未登记的原件才按原编号补投一次；其他原件继续只读查询。
@@ -436,7 +444,23 @@ function enter(event: KeyboardEvent): void {
   send();
 }
 
-watch(turns, () => { if (transcript.value) transcript.value.scrollTop = transcript.value.scrollHeight; }, { flush: 'post' });
+// 新消息只在读者位于末尾时自动跟随，补入旧页后固定屏幕中的原条目。
+// 步骤：更新前定位可见条目 → 等 Vue 完成排版 → 按原位置或列表末尾滚动。
+watch(timeline, async () => {
+  const list = transcript.value;
+  if (!list || !list.clientHeight) return;
+  const follow = list.scrollHeight - list.clientHeight - list.scrollTop < 24 && !readingEarlier;
+  const top = list.getBoundingClientRect().top;
+  const anchor = Array.from(list.querySelectorAll<HTMLElement>('[data-entry]')).find(el => el.getBoundingClientRect().bottom > top);
+  const offset = anchor?.getBoundingClientRect().top;
+  await nextTick();
+  if (follow) list.scrollTop = list.scrollHeight;
+  else if (anchor?.isConnected && offset !== undefined) list.scrollTop += anchor.getBoundingClientRect().top - offset;
+  readingEarlier = false;
+});
+let readingEarlier = false;
+// 用户申请旧页时保持当前阅读位置。
+function earlier(): void { readingEarlier = true; messages.earlier(); }
 watch(() => lastTurn.value?.turn, () => { destination.value = 'current'; });
 watch(draft, value => {
   try { rememberDraft(value); } catch { notice.value = '当前窗口无法保留刷新前的草稿。'; }
@@ -480,18 +504,29 @@ onUnmounted(() => {
     <h2 class="chat-title">和大肥鱼聊天</h2>
     <section class="conversation-space" aria-label="主会话">
       <ol ref="transcript" class="transcript" aria-label="对话" aria-live="polite">
-        <li v-for="turn in turns" :key="`${turn.session}/${turn.turn}`" class="turn" :data-turn="turn.turn" :data-result="turn.result" :data-exit="turn.exit" :data-queued-message="turn.queuedMessage">
-          <div class="message outgoing"><b>你<span v-if="turn.queuedMessage !== '0'" class="queue-origin">从待发队列发出</span></b><p>{{ turn.prompt }}</p></div>
-          <div v-for="input in turn.inputs" :key="input.message" class="message outgoing turn-input" :data-message="input.message" :data-state="input.state" :data-step="input.modelStep">
-            <b>本轮补充</b><p>{{ input.text }}</p>
+        <li v-if="messages.error.value || messages.more.value" class="history-control">
+          <template v-if="messages.error.value"><span role="status">{{ messages.error.value }}</span> <button type="button" @click="messages.retry">重试</button></template>
+          <button v-else id="history-earlier" type="button" :disabled="messages.loadingOlder.value" @click="earlier">{{ messages.loadingOlder.value ? '正在读取…' : '查看更早消息' }}</button>
+        </li>
+        <template v-for="entry in timeline" :key="entry.key">
+        <li v-if="'row' in entry" class="history-message" :data-entry="entry.key">
+          <div class="message" :class="entry.row.sender === 'assistant' ? 'incoming' : 'outgoing'" :data-stored-message="entry.row.message">
+            <b>{{ entry.row.sender === 'assistant' ? '大肥鱼' : '你' }} <MessageTime :record="entry.row" /></b><p>{{ entry.row.text }}</p>
+          </div>
+        </li>
+        <li v-else class="turn" :data-entry="entry.key" :data-turn="entry.turn.turn" :data-result="entry.turn.result" :data-exit="entry.turn.exit" :data-queued-message="entry.turn.queuedMessage">
+          <div class="message outgoing" :data-stored-message="entry.prompt?.message"><b>你<span v-if="entry.turn.queuedMessage !== '0'" class="queue-origin">从待发队列发出</span> <MessageTime :record="entry.prompt" /></b><p>{{ entry.prompt?.text ?? entry.turn.prompt }}</p></div>
+          <div v-for="input in entry.turn.inputs" :key="input.message" class="message outgoing turn-input" :data-stored-message="entry.inputs.get(input.message)?.message" :data-message="input.message" :data-state="input.state" :data-step="input.modelStep">
+            <b>本轮补充 <MessageTime :record="entry.inputs.get(input.message)" /></b><p>{{ entry.inputs.get(input.message)?.text ?? input.text }}</p>
             <div class="input-receipt"><span>{{ inputText[input.state] }}</span>
               <button v-if="input.state !== 'submitted' && input.state !== 'waiting'" type="button" @click="reuseInput(input)">加入草稿</button>
             </div>
           </div>
-          <div v-if="turn.answer" class="message incoming"><b>大肥鱼</b><p>{{ turn.answer }}</p></div>
-          <div v-else class="turn-status">{{ statusText[turn.result] }}</div>
-          <small v-if="turn.result !== 'pending' && turn.exit === 'pending'" class="turn-status">本轮仍在收尾</small>
+          <div v-if="entry.answer || entry.turn.answer" class="message incoming" :data-stored-message="entry.answer?.message"><b>大肥鱼 <MessageTime :record="entry.answer" /></b><p>{{ entry.answer?.text ?? entry.turn.answer }}</p></div>
+          <div v-else class="turn-status">{{ statusText[entry.turn.result] }}</div>
+          <small v-if="entry.turn.result !== 'pending' && entry.turn.exit === 'pending'" class="turn-status">本轮仍在收尾</small>
         </li>
+        </template>
       </ol>
     </section>
     <details v-if="queue.length" class="queue-panel" :data-paused="queuePaused" open>

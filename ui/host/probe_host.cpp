@@ -51,6 +51,10 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
             if (id.empty() || id.size()>64) return E_INVALIDARG;
             return management_reply(message,source,false);
         }
+        if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt") {
+            if (!panel) return E_ACCESSDENIED;
+            return management_reply(message,source,false);
+        }
         if (type == "state.read" || type == "room.read" || type.starts_with("dialogue."))
             return management_reply(message,source,type == "state.read");
         if (message.size() != 1 || type != "frame.open") return E_INVALIDARG;
@@ -94,7 +98,8 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
         if (request.contains("command") && request.at("type")!="dialogue.read")
             deliver({{"event","dialogue.receipt"},{"version","1"},{"request",request.at("request")},
                 {"receipt",{{"command",request.at("command")},{"state","busy"}}}});
-        else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read")
+        else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read" ||
+            request.value("type",std::string{}).starts_with("messages."))
             deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"reason","management client queue unavailable"}});
     }
     return S_OK;
