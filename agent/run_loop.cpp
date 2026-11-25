@@ -456,7 +456,10 @@ struct RunLoopState {
             model::Request{record->context_->messages(),scope ? scope->ordered_definitions() : std::vector<model::ToolDefinition>{}};
         if (planning_request) {
             const auto status = options.context_status ? project_context_status(nullptr,*options.context_status) : std::string{};
-            project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status);
+            std::vector<std::string> observations;
+            for (const auto& sample : options.observations) observations.push_back(plan_observation_input(*sample,current.now));
+            const auto basis_current = current.observation_binding ? std::optional(current.observations_current) : std::nullopt;
+            project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status,observations,basis_current);
         }
         if (!options.system_instructions.empty()) {
             if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");

@@ -1,6 +1,7 @@
 #include <dafeiyu/observation_input.hpp>
 #include <dafeiyu/map_value.hpp>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <stdexcept>
 
 namespace dfy::agent {
@@ -42,6 +43,16 @@ Json encode_value(const runtime::Value& value, std::size_t depth) {
     default: throw std::invalid_argument("observation input: unsupported value kind");
     }
 }
+// 以本次请求的时刻标记原来源、对象、修订和取样年龄。
+Json observation_metadata(const ObservationMetadata& data, ObservationTime now) {
+    using std::chrono::duration_cast;
+    using std::chrono::milliseconds;
+    return {{"kind","dafeiyu.observation"},{"schema_version",1},{"source",data.source},{"provider_instance",data.provider_instance},
+        {"object",{{"id",data.object.id},{"generation",data.object.generation}}},{"revision",data.revision},
+        {"trust",data.trust == ObservationTrust::host_verified ? "host_verified" : "external_data"},
+        {"age_ms",duration_cast<milliseconds>(now-data.sampled).count()},
+        {"valid_for_ms",duration_cast<milliseconds>(std::max(data.expires,now)-now).count()}};
+}
 }
 // 编码普通观察数据，来源标签不授予模型任何宿主权限。
 // 步骤：核对时效与完整基线 → 限制描述元数据 → 编码来源和载荷 → 核对最终文本大小。
@@ -51,13 +62,24 @@ std::string observation_input(const ObservationRecord& observation, ObservationT
     const auto& data = observation.metadata(); const auto descriptor = observation.payload().descriptor();
     if (descriptor->name().size() > 128 || descriptor->name_bytes() > 64*1024 || descriptor->total_fields() > 1024 || descriptor->depth() > 8)
         throw std::length_error("observation input: descriptor limit exceeded");
-    Json value{{"kind","dafeiyu.observation"},{"schema_version",1},{"source",data.source},{"provider_instance",data.provider_instance},
-        {"object",{{"id",data.object.id},{"generation",data.object.generation}}},{"revision",data.revision},
-        {"trust",data.trust == ObservationTrust::host_verified ? "host_verified" : "external_data"},
-        {"age_ms",std::chrono::duration_cast<std::chrono::milliseconds>(now-data.sampled).count()},
-        {"valid_for_ms",std::chrono::duration_cast<std::chrono::milliseconds>(data.expires-now).count()},
-        {"payload_schema",{{"name",descriptor->name()},{"version",descriptor->version()}}},{"payload",encode_structure(observation.payload(),1)}};
+    auto value = observation_metadata(data,now);
+    value["payload_schema"] = {{"name",descriptor->name()},{"version",descriptor->version()}};
+    value["payload"] = encode_structure(observation.payload(),1);
     auto text = value.dump(); if (text.size() > 64*1024) throw std::length_error("observation input: encoded payload exceeds 64 KiB");
     return text;
+}
+// 为规划复核原取样。在时效内使用普通封套，失效时保留原号与原因供补查。
+// 步骤：检查来源及时效 → 编码完整取样或标记缺口 → 返回原身份的数据封套。
+std::string plan_observation_input(const ObservationRecord& observation, ObservationTime now) {
+    const auto validity = observation.validity(now);
+    if (validity == ObservationValidity::fresh && !observation.revision_gap()) return observation_input(observation,now);
+    auto value = observation_metadata(observation.metadata(),now);
+    switch (validity) {
+    case ObservationValidity::expired: value["unavailable"] = "expired"; break;
+    case ObservationValidity::source_revoked: value["unavailable"] = "source_revoked"; break;
+    case ObservationValidity::future: value["unavailable"] = "future"; break;
+    case ObservationValidity::fresh: value["unavailable"] = "revision_gap"; break;
+    }
+    return value.dump();
 }
 }

@@ -1,4 +1,5 @@
 #include <dafeiyu/session.hpp>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <atomic>
 #include <iostream>
@@ -83,12 +84,26 @@ void replay() {
     until(session,[&] { return !session.busy(); });
 
     ConfirmationCaller caller;
+    ObservationTime now{};
+    ObservationSource source(17,ObservationTrust::external_data);
+    ObservationInbox inbox({source.id()});
+    const FieldDescriptor fields[] = {{"stock",ValueKind::uint64,0}};
+    auto descriptor = std::make_shared<const StructDescriptor>(StructDescriptor::create("fixture.stock",1,fields,{1,64}));
+    const NamedValue values[] = {{"stock",Value::from_uint64(8)}};
+    auto observed = std::make_shared<const StructValue>(StructValue::create(descriptor,values,64));
+    for (const std::string id : {"backpack","ground"}) {
+        const auto lifetime = std::chrono::milliseconds(id=="backpack" ? 1000 : 50);
+        inbox.accept(source.capture({id,2},1,now,now+lifetime,observed),now);
+        options.observations.push_back(inbox.latest(source.id(),id));
+    }
+    options.now = [&] { return now; };
     options.planning = PlanLimits{16,2,16*1024};
     options.confirmation_caller = caller;
     const auto planning = session.begin("deliver eight",options);
     until(session,[&] { return planning->plan()->definition && planning->plan()->steps[0].waiting == PlanWait::verification; });
     auto state = *planning->plan();
     session.confirm_plan_step(caller,state.steps[0].key,"eight in bag");
+    now += std::chrono::milliseconds(100);
     session.replan(caller,state.definition->binding(),"use a chest");
     until(session,[&] { return planning->plan()->steps[1].waiting == PlanWait::verification; });
     session.confirm_plan_step(caller,planning->plan()->steps[1].key,"received");
@@ -99,6 +114,13 @@ void replay() {
         projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
         projections[3].empty() && projections[5].empty(), "projection changed grants or followed caller order");
     check(prepared[3].tools.empty() && prepared[5].tools.empty() && contains(prepared[5],"use a chest"),"revision or planning authority changed");
+    const auto first_samples = nlohmann::json::parse(prepared[3].messages.back().content).at("host_evidence").at("observations");
+    const auto revised_samples = nlohmann::json::parse(prepared[5].messages.back().content).at("host_evidence").at("observations");
+    check(first_samples.size()==2 && first_samples[0].at("source")==source.id() && first_samples[0].at("object").at("generation")==2 &&
+        first_samples[1].at("payload").at("stock")==8 && first_samples[1].at("trust")=="external_data" &&
+        revised_samples.size()==2 && revised_samples[0].at("object").at("id")=="backpack" && revised_samples[0].at("age_ms")==100 &&
+        revised_samples[0].at("payload").at("stock")==8 && revised_samples[1].at("unavailable")=="expired" &&
+        !revised_samples[1].contains("payload"),"plan or revision lost observation attribution or reused an expired measurement");
     check(contains(prepared[2],"inventory-receipt-8") && contains(prepared[2],"raw-A"),"ordinary baseline lost the receipt or raw reply");
     const bool same = prepared[0].tools.front().name == prepared[2].tools.front().name;
     check(same && contains(prepared[3],"stock-W17") && contains(prepared[3],"inventory-receipt-8") &&

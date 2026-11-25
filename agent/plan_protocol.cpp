@@ -65,10 +65,10 @@ PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_re
     model::Request request{{{model::Role::system,instructions},{model::Role::user,data.dump()}}};
     model::validate_request(request); return {expected,std::move(request)};
 }
-// 投影原调用配对、结果及宿主已验证的前缀，较长原文仍可按消息序号回查。
-// 步骤：提取最近的原工具回执 → 保留消息序号与超长引用 → 附入已验证步骤 → 校验规划请求。
+// 投影原调用配对、步骤验证和本次取样，保持规划请求的声明式工具范围。
+// 步骤：归集有来源的工具回执 → 提取已验证前缀 → 合入状态及观察的有效性 → 校验完整请求。
 void project_plan_evidence(model::Request& plan, const std::vector<model::Message>& history, const PlanSnapshot& state,
-    std::string_view status) {
+    std::string_view status, std::span<const std::string> observations, std::optional<bool> action_basis_current) {
     if (!plan.tools.empty() || plan.messages.size() != 2 || plan.messages.back().role != model::Role::user)
         throw std::invalid_argument("plan evidence: expected a planning request");
     auto receipts = Json::array();
@@ -110,6 +110,12 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
     data["host_evidence"] = {{"through_message",history.size()},{"tool_receipts",std::move(receipts)},
         {"older_tool_receipts",omitted},{"verified_steps",std::move(verified)}};
     if (!status.empty()) data["host_evidence"]["context_status"] = Json::parse(status);
+    if (!observations.empty()) {
+        auto samples = Json::array();
+        for (const auto& sample : observations) samples.push_back(Json::parse(sample));
+        data["host_evidence"]["observations"] = std::move(samples);
+        if (action_basis_current) data["host_evidence"]["action_basis_current"] = *action_basis_current;
+    }
     plan.messages.back().content = data.dump();
     model::validate_request(plan);
 }

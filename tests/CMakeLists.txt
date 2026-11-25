@@ -510,7 +510,7 @@ add_test(NAME agent.replay_plan_revision COMMAND dfy_session_replanning_tests --
 set_tests_properties(agent.session_replanning agent.replay_plan_revision PROPERTIES TIMEOUT 15)
 
 add_executable(dfy_loop_projection_tests loop_projection.cpp)
-target_link_libraries(dfy_loop_projection_tests PRIVATE dfy_agent dfy_build_options)
+target_link_libraries(dfy_loop_projection_tests PRIVATE dfy_agent nlohmann_json::nlohmann_json dfy_build_options)
 set_target_properties(dfy_loop_projection_tests PROPERTIES FOLDER "Tests")
 add_test(NAME agent.loop_projection COMMAND dfy_loop_projection_tests)
 set_tests_properties(agent.loop_projection PROPERTIES TIMEOUT 15)
