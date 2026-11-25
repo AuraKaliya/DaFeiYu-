@@ -70,8 +70,21 @@ void lifecycle() {
 
 // 在有 Explorer 的桌面通过真实 Shell 独立探测图标的存在与移除。
 // 步骤：检查系统任务栏 → 核对真实图标身份 → 确认退出后的 Shell 回执。
-void desktop() {
-    if (!FindWindowW(L"Shell_TrayWnd", nullptr)) return;
+int desktop() {
+    if (!FindWindowW(L"Shell_TrayWnd", nullptr)) return 77;
+    // 用系统图标独立确认当前进程有桌面接入权，避免把权限不足误报为应用注册失败。
+    HWND control = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+    expect(control != nullptr, "could not create a control window");
+    NOTIFYICONDATAW baseline{};
+    baseline.cbSize = sizeof(baseline);
+    baseline.hWnd = control;
+    baseline.uID = 1;
+    baseline.uFlags = NIF_ICON;
+    baseline.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+    const auto available = Shell_NotifyIconW(NIM_ADD, &baseline);
+    if (available) Shell_NotifyIconW(NIM_DELETE, &baseline);
+    DestroyWindow(control);
+    if (!available) { std::cerr << "Explorer declined the independent system icon\n"; return 77; }
     NOTIFYICONDATAW probe{};
     bool added = false, removed = false;
     {
@@ -86,13 +99,18 @@ void desktop() {
         expect(Shell_NotifyIconW(NIM_MODIFY, &probe), "Explorer could not find the registered icon");
     }
     expect(removed && !Shell_NotifyIconW(NIM_MODIFY, &probe), "Explorer still owns the icon");
+    return 0;
 }
 
 // 在独立的非交互窗口站核对生产注册失败不会阻止本体继续。
 // 步骤：切换窗口站 → 创建并释放原生组件 → 恢复原窗口站。
-void headless() {
+int headless() {
     const auto original = GetProcessWindowStation();
     const auto station = CreateWindowStationW(nullptr, 0, WINSTA_ALL_ACCESS, nullptr);
+    if (!station && GetLastError() == ERROR_ACCESS_DENIED) {
+        std::cerr << "This process cannot create a private window station\n";
+        return 77;
+    }
     if (!station) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "create private window station");
     if (!SetProcessWindowStation(station))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "enter private window station");
@@ -102,6 +120,7 @@ void headless() {
     }
     expect(SetProcessWindowStation(original) && CloseWindowStation(station), "could not release private window station");
     expect(unavailable, "noninteractive station reported an icon");
+    return 0;
 }
 }
 
@@ -109,8 +128,9 @@ void headless() {
 // 步骤：选择隔离场景 → 运行原生断言 → 输出首个失败原因。
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string_view(argv[1]) == "--headless") headless();
-        else { lifecycle(); desktop(); }
+        if (argc == 2 && std::string_view(argv[1]) == "--headless") return headless();
+        if (argc == 2 && std::string_view(argv[1]) == "--explorer") return desktop();
+        lifecycle();
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
