@@ -55,14 +55,19 @@ DWORD PanelActivation::open(bool confirm) {
         return ERROR_SUCCESS;
     }
 
+    // 纯终端构建可能仍有旧版同名终端文件，只启动本次配置提供的桌面程序。
+    if (program_.empty()) return ERROR_FILE_NOT_FOUND;
     // 有效 Windows 目录名不含双引号，末尾的点确保根目录反斜杠不会转义闭引号。
-    auto command = L"dafeiyu-ui-probe.exe --resident-panel " + definition_ + L" " + instance_ +
+    auto command = L"\"" + program_.wstring() + L"\" --resident-panel " + definition_ + L" " + instance_ +
         (confirm ? L" confirm" : L" open") + L" --data \"" + (profile_ / L".").wstring() + L"\"";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_SHOWNORMAL;
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(program_.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
         return GetLastError();
+    AllowSetForegroundWindow(process.dwProcessId);
     CloseHandle(process.hThread);
     launching_.reset(process.hProcess);
     confirm_pending_ = false;

@@ -46,8 +46,8 @@ class Client {
     std::jthread thread_;
 };
 
-// 隐藏启动指定的后台程序，命令参数直接传递给 CreateProcessW。
-void launch_host(const std::filesystem::path& program, const std::filesystem::path& config,
+// 隐藏启动同目录的常驻本体，桌面和终端共用该入口。
+void launch_host(const std::filesystem::path& config,
     const std::filesystem::path& packages, const std::filesystem::path& profile, const std::filesystem::path& trace = {});
 struct ResidentConnection;
 // 初次连接缺少端点时启动一次后台，按原配置有界重试握手。

@@ -12,7 +12,7 @@ if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'native' }
 if (Test-Path -LiteralPath $BuildDirectory) { $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path }
 if ($Probe -and $PartnerProbe) { throw '请选择一种验收场景' }
 $exe = if ($Probe -or $PartnerProbe) { Join-Path $BuildDirectory "tests/$Configuration/dfy_mc_playtest.exe" } else {
-    Join-Path $BuildDirectory "bin/$Configuration/dafeiyu.exe"
+    Join-Path $BuildDirectory "bin/$Configuration/dafeiyu-cli.exe"
 }
 $package = Join-Path $BuildDirectory "plugins/mc/$Configuration/mc.companion"
 if (-not (Test-Path -LiteralPath $exe)) { throw "请先构建游戏宿主：$exe" }

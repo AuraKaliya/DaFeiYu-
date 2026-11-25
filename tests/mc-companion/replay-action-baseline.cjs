@@ -129,7 +129,7 @@ function checkFollowAndWall(off, on) {
 // 复核指定一对实机证据及固定回合，实时控制分支由原始事件顺序取证。
 function main() {
   const [exe, root, thinkingOn] = process.argv.slice(2);
-  if (!exe || !root) throw new Error('用法 node replay-action-baseline.cjs <dafeiyu.exe> <evidence 目录或 run-FX9QKV 目录> [run-rg8RdZ 目录]');
+  if (!exe || !root) throw new Error('用法 node replay-action-baseline.cjs <dafeiyu-cli.exe> <evidence 目录或 run-FX9QKV 目录> [run-rg8RdZ 目录]');
   const executable = resolve(exe);
   if (thinkingOn) {
     const off = loadRun(root, 'run-FX9QKV', false, 'DfyVisitor');

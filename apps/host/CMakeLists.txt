@@ -33,6 +33,14 @@ target_compile_definitions(dfy_application PRIVATE
   "DFY_APPLICATION_BUILD=\"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}-${CMAKE_GENERATOR_PLATFORM}-$<CONFIG>\"")
 dfy_group_target(dfy_application App)
 
+add_library(dfy_host_commands STATIC
+  src/commands/application_commands.cpp src/commands/application_commands.hpp
+  src/commands/chat.cpp src/commands/chat.hpp src/commands/diagnostics.cpp src/commands/diagnostics.hpp
+  src/commands/plugin_commands.cpp src/commands/plugin_commands.hpp)
+target_include_directories(dfy_host_commands PUBLIC src/commands)
+target_link_libraries(dfy_host_commands PUBLIC dfy_application PRIVATE dfy_build_options)
+dfy_group_target(dfy_host_commands App)
+
 add_library(dfy_management STATIC
   src/log_settings.cpp src/log_settings.hpp src/management/client.cpp src/management/client.hpp
   src/management/dialogue_channel.hpp src/management/host.cpp src/management/host.hpp
@@ -40,13 +48,25 @@ add_library(dfy_management STATIC
   src/management/message_protocol.hpp src/management/poll_log.cpp src/management/poll_log.hpp
   src/management/protocol.cpp src/management/protocol.hpp src/management/resident.cpp
   src/management/resident.hpp src/management/resident_watch.cpp src/management/resident_watch.hpp
-  src/management/room_location.hpp src/management/terminal_client.cpp
-  src/management/terminal_client.hpp src/management/terminal_host.cpp src/management/terminal_host.hpp
+  src/management/room_location.hpp src/management/terminal_host.cpp src/management/terminal_host.hpp
   src/paths.cpp src/paths.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json
-  PRIVATE dfy_terminal dfy_build_options dfy_digest advapi32 shell32 ole32)
+  PRIVATE dfy_host_commands dfy_build_options dfy_digest advapi32 shell32 ole32)
 dfy_group_target(dfy_management App)
+
+add_library(dfy_resident_entry STATIC src/resident_entry.cpp src/resident_entry.hpp src/resident_tray.cpp src/resident_tray.hpp)
+target_link_libraries(dfy_resident_entry PUBLIC dfy_management PRIVATE dfy_resident_tray dfy_build_options)
+if(BUILD_GUI)
+  target_compile_definitions(dfy_resident_entry PRIVATE DFY_DESKTOP_AVAILABLE)
+endif()
+dfy_group_target(dfy_resident_entry App)
+
+add_executable(dafeiyu-host src/main.cpp)
+target_link_libraries(dafeiyu-host PRIVATE dfy_resident_entry dfy_resident_tray dfy_build_options)
+set_target_properties(dafeiyu-host PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin/$<CONFIG>")
+dfy_group_target(dafeiyu-host App)
+install(TARGETS dafeiyu-host RUNTIME DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

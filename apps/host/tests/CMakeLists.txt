@@ -9,7 +9,7 @@ add_test(NAME app.management_pipe COMMAND dfy_management_pipe_tests "${CMAKE_CUR
 set_tests_properties(app.management_pipe PROPERTIES TIMEOUT 20)
 
 dfy_test_executable(dfy_management_resident_tests management_resident.cpp)
-target_link_libraries(dfy_management_resident_tests PRIVATE dfy_management dfy_build_options)
+target_link_libraries(dfy_management_resident_tests PRIVATE dfy_terminal dfy_build_options)
 add_test(NAME app.management_resident COMMAND dfy_management_resident_tests "${CMAKE_CURRENT_BINARY_DIR}/management-resident")
 set_tests_properties(app.management_resident PROPERTIES TIMEOUT 20)
 

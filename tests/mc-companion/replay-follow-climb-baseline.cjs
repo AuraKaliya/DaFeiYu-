@@ -89,7 +89,7 @@ function replay(exe, traceFile, trace) {
 // 步骤：加载证据 → 核对掉队与攀高 → 重放所有历史回合。
 function main() {
   const [exe, root] = process.argv.slice(2);
-  if (!exe || !root) throw new Error('用法 node replay-follow-climb-baseline.cjs <dafeiyu.exe> <run-CA2yMm 目录>');
+  if (!exe || !root) throw new Error('用法 node replay-follow-climb-baseline.cjs <dafeiyu-cli.exe> <run-CA2yMm 目录>');
   const traceFile = 'host/trace/events.jsonl';
   const trace = evidence(root, traceFile).map(JSON.parse);
   const actions = evidence(root, 'host/game-actions.jsonl').map(JSON.parse);

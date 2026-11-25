@@ -382,7 +382,7 @@ struct Window : std::enable_shared_from_this<Window> {
             resident_client = std::make_unique<dfy::management::Client>(data,definition,[=] {
                 if (fixture_only) throw std::runtime_error("history fixture resident unavailable");
                 if (pinned) throw std::runtime_error("original tray resident unavailable");
-                dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
+                dfy::management::launch_host(config,packages,data);
             },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); },software);
         }
     }
@@ -462,8 +462,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool tray_panel = __argc == 7 && std::wstring_view(__wargv[1]) == L"--resident-panel" &&
         (std::wstring_view(__wargv[4]) == L"open" || std::wstring_view(__wargv[4]) == L"confirm") &&
         std::wstring_view(__wargv[5]) == L"--data" && *__wargv[3];
-    const bool main_panel = tray_panel || ((__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
+    const bool default_panel = __argc == 1 || (__argc == 3 && std::wstring_view(__wargv[1]) == L"--data");
+    const bool container_probe = __argc == 2 && std::wstring_view(__wargv[1]) == L"--container-probe";
+    const bool configured_panel = ((__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
         std::wstring_view(__wargv[1]) == L"--main-panel");
+    const bool main_panel = default_panel || configured_panel || tray_panel;
 #ifdef DFY_UI_RUN_STATUS_TEST
     const bool tray_check = tray_panel && GetEnvironmentVariableW(L"DFY_UI_CHECK_TRAY_PANEL", nullptr, 0);
     const std::wstring_view observer_mode = __argc==5 ? __wargv[4] : L"";
@@ -483,7 +486,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool main_panel_check = false;
 #endif
     const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check || observer_check || tray_check;
-    if (__argc > 1 && !automatic && !room_preview && !main_panel) return 2;
+    if (!automatic && !room_preview && !main_panel && !container_probe) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     std::optional<dfy::app::SoftwareLog> software;
@@ -493,7 +496,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         if (business) {
             if (tray_panel) data = __wargv[6];
             else if (observer_check) data = __wargv[3];
-            else if (main_panel && __argc==5) data = __wargv[4];
+            else if (default_panel && __argc == 3) data = __wargv[2];
+            else if (configured_panel && __argc==5) data = __wargv[4];
             else data = dfy::app::default_user_data();
             software.emplace(data,dfy::app::SoftwareRole::window);
         }
@@ -528,7 +532,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
             state->tray_definition = dfy::ui::utf8(__wargv[2]);
             state->confirm_on_open = std::wstring_view(__wargv[4]) == L"confirm";
             if (!dfy::ui::tray_owner(state->tray_instance)) throw std::runtime_error("original tray unavailable");
-        } else if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
+        } else if ((configured_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
         state->user_data = data;
         if (software) state->software = &*software;
         state->interaction_mode |= room_check || main_panel_check || observer_check || tray_check;

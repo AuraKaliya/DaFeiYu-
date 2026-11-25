@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$App, [string]$Root)
+﻿param([string]$Panel, [string]$App, [string]$Cli, [string]$Root)
 $ErrorActionPreference = 'Stop'
 $rootPath = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $rootPath ('observer-' + [guid]::NewGuid().ToString('N'))
@@ -28,7 +28,7 @@ function Read-Resident([string]$ProfilePath = $data) {
 # 启动仅使用本测试目录与离线配置的终端，保留标准输入供有界关闭。
 function Start-TestRuntime([string]$Mode, [string]$ModelPath = $config) {
     $info = [Diagnostics.ProcessStartInfo]::new()
-    $info.FileName = $App
+    $info.FileName = if ($Mode -eq '--chat') { $Cli } else { $App }
     $info.Arguments = $Mode + ' "' + $ModelPath + '" --data "' + $data + '" --plugins "' + (Join-Path $data 'plugins') + '"'
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true

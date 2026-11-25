@@ -110,7 +110,7 @@ function replay(exe, traceFile, trace) {
 // 步骤：加载并核对原件 → 验证故障和游戏效果 → 重跑本局全部模型回合。
 function main() {
   const [exe, root] = process.argv.slice(2);
-  if (!exe || !root) throw new Error('用法 node replay-playtest-baseline.cjs <dafeiyu.exe> <run-4VDQ2M 目录>');
+  if (!exe || !root) throw new Error('用法 node replay-playtest-baseline.cjs <dafeiyu-cli.exe> <run-4VDQ2M 目录>');
   const traceFile = 'host/trace/events.jsonl';
   const trace = readEvidence(root, traceFile).map(JSON.parse);
   const actions = readEvidence(root, 'host/game-actions.jsonl').map(JSON.parse);

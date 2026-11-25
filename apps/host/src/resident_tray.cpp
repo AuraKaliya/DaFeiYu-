@@ -24,7 +24,11 @@ class DesktopTray final : public management::ResidentTray {
         const std::string& definition, app::SoftwareLog* log) noexcept {
         try {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-            PanelActivation panels(app::executable_directory() / L"dafeiyu-ui-probe.exe", profile, definition, instance);
+            std::filesystem::path desktop;
+#ifdef DFY_DESKTOP_AVAILABLE
+            desktop = app::executable_directory() / L"dafeiyu.exe";
+#endif
+            PanelActivation panels(std::move(desktop), profile, definition, instance);
             HWND owner = nullptr;
             ExitConfirmation confirmation([&] {
                 if (stop.stop_requested()) return;

@@ -5,13 +5,15 @@ target_link_libraries(dfy_software_log_tests PRIVATE dfy_application dfy_build_o
 add_test(NAME app.software_log COMMAND dfy_software_log_tests "${PROJECT_BINARY_DIR}/tests/software-log" "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(app.software_log PROPERTIES TIMEOUT 12)
 
-dfy_test_executable(dfy_terminal_entry_fixture terminal_entry_fixture.cpp)
-target_link_libraries(dfy_terminal_entry_fixture PRIVATE dfy_management dfy_build_options)
-add_dependencies(dfy_terminal_entry_fixture dafeiyu)
-add_test(NAME app.terminal_entry COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
-  -File "${CMAKE_CURRENT_SOURCE_DIR}/terminal_entry.ps1" -App "$<TARGET_FILE:dafeiyu>"
-  -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${PROJECT_BINARY_DIR}/tests/terminal-entry")
-set_tests_properties(app.terminal_entry PROPERTIES TIMEOUT 45)
+if(BUILD_CLI)
+  dfy_test_executable(dfy_terminal_entry_fixture terminal_entry_fixture.cpp)
+  target_link_libraries(dfy_terminal_entry_fixture PRIVATE dfy_management dfy_build_options)
+  add_dependencies(dfy_terminal_entry_fixture dafeiyu-cli)
+  add_test(NAME app.terminal_entry COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/terminal_entry.ps1" -App "$<TARGET_FILE:dafeiyu-cli>"
+    -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${PROJECT_BINARY_DIR}/tests/terminal-entry")
+  set_tests_properties(app.terminal_entry PROPERTIES TIMEOUT 45)
+endif()
 
 # 验证一个进程内从空插件问答到安装、观察、卸载及移除的完整链路。
 dfy_test_executable(dfy_application_lifecycle_tests application_lifecycle.cpp)

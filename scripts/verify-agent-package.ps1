@@ -12,7 +12,10 @@ if ($LASTEXITCODE) { throw "Release installation failed: $LASTEXITCODE" }
 
 $plugins = Join-Path $package 'plugins'
 $sample = Join-Path $package 'examples/plugins/example.status'
-$executable = Join-Path $package 'dafeiyu.exe'
+$executable = Join-Path $package 'dafeiyu-host.exe'
+$cli = Join-Path $package 'dafeiyu-cli.exe'
+$withCli = Select-String -Quiet -LiteralPath (Join-Path $buildPath 'CMakeCache.txt') -Pattern '^BUILD_CLI:BOOL=(ON|TRUE|YES|1)$'
+if ((Test-Path -LiteralPath $cli -PathType Leaf) -ne $withCli) { throw 'Installed CLI differs from the build configuration' }
 if (!(Test-Path -LiteralPath $plugins -PathType Container) -or @(Get-ChildItem -LiteralPath $plugins -Force).Count) {
     throw 'Release plugins directory must start empty'
 }
@@ -30,7 +33,7 @@ Set-Content -LiteralPath $settings -Value $settingsText -Encoding utf8NoBOM -NoN
 function New-PackagedProcess([string[]]$Arguments) {
     $process = [System.Diagnostics.Process]::new()
     $info = $process.StartInfo
-    $info.FileName = $executable
+    $info.FileName = if ($Arguments[0] -in @('--host','--stop-host')) { $executable } else { $cli }
     $info.WorkingDirectory = $check
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
@@ -68,10 +71,12 @@ function Invoke-PackagedAgent([string]$Name, [string[]]$Arguments, [string[]]$Co
     } finally { $process.Dispose() }
 }
 
-foreach ($provider in @('deepseek','qwen')) {
-    $configuration = Join-Path $package "config/$provider.example.json"
-    $output = Invoke-PackagedAgent $provider @('--check-config',$configuration)
-    if (!$output.Contains("Configuration valid: $provider /")) { throw "Unexpected configuration receipt: $provider" }
+if ($withCli) {
+    foreach ($provider in @('deepseek','qwen')) {
+        $configuration = Join-Path $package "config/$provider.example.json"
+        $output = Invoke-PackagedAgent $provider @('--check-config',$configuration)
+        if (!$output.Contains("Configuration valid: $provider /")) { throw "Unexpected configuration receipt: $provider" }
+    }
 }
 # 从独占测试目录核对刚启动的原进程，只有同一 PID 才能提供本次退出身份。
 # 步骤：轮询原进程和后台状态 → 比对进程号 → 返回就绪实例或报告超时。
@@ -102,17 +107,19 @@ try {
     $hostErrors = $owner.StandardError.ReadToEndAsync()
     $owner.StandardInput.Close()
     $instance = Get-PackagedInstance $owner
-    $output = Invoke-PackagedAgent 'status-panel' @('--chat',$configuration,'--data',$data) @(
-        '/plugins list',('/plugins install "' + $sample + '"'),'/plugins load example.status','/plugins list',
-        '/plugins unload example.status','/plugins remove example.status','/plugins list','/exit')
-    foreach ($line in @('Installed example.status.','Loaded example.status.','example.status [running]','Unloaded example.status.',
-        'Removed example.status. User settings kept.')) {
-        if (!$output.Contains($line)) { throw "Status panel receipt missing: $line" }
+    if ($withCli) {
+        $output = Invoke-PackagedAgent 'status-panel' @('--chat',$configuration,'--data',$data) @(
+            '/plugins list',('/plugins install "' + $sample + '"'),'/plugins load example.status','/plugins list',
+            '/plugins unload example.status','/plugins remove example.status','/plugins list','/exit')
+        foreach ($line in @('Installed example.status.','Loaded example.status.','example.status [running]','Unloaded example.status.',
+            'Removed example.status. User settings kept.')) {
+            if (!$output.Contains($line)) { throw "Status panel receipt missing: $line" }
+        }
+        if ([regex]::Matches($output,'No plugins installed or loaded\.').Count -ne 2 -or @(Get-ChildItem -LiteralPath $plugins -Force).Count) {
+            throw 'Installed package remains visible after removal'
+        }
+        if ((Get-Content -LiteralPath $settings -Raw) -cne $settingsText) { throw 'Removal changed existing settings' }
     }
-    if ([regex]::Matches($output,'No plugins installed or loaded\.').Count -ne 2 -or @(Get-ChildItem -LiteralPath $plugins -Force).Count) {
-        throw 'Installed package remains visible after removal'
-    }
-    if ((Get-Content -LiteralPath $settings -Raw) -cne $settingsText) { throw 'Removal changed existing settings' }
 } finally {
     try {
         if ($started) {

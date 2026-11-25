@@ -1,12 +1,10 @@
 ﻿#pragma once
 #include "conversation.hpp"
-#include <dafeiyu/line_input.hpp>
 #include <functional>
 #include <iosfwd>
 
 namespace dfy::app {
 using LocalCommand = std::function<bool(std::string_view)>;
-using HostPump = std::function<void()>;
 using ChatSubmit = std::function<agent::TurnDiagnostics(const std::string&)>;
 enum class ChatExit { close_session, detach };
 // 返回去掉全部终端行尾回车的视图，保留其他正文原样。
@@ -38,7 +36,4 @@ class ChatController {
     ChatSubmit submit_;
     bool ending_ = false;
 };
-// 轮询输入与会话，持续推进宿主事件；输入关闭和业务结果均不能提前退出资源回收。
-int async_chat(Conversation& conversation, platform::LineInput& input, std::ostream& output, std::ostream& errors,
-    HostPump pump = {}, LocalCommand command = {}, ChatSubmit submit = {});
 }

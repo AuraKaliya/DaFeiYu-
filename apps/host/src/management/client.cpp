@@ -2,6 +2,7 @@
 #include "protocol.hpp"
 #include "poll_log.hpp"
 #include "resident.hpp"
+#include "paths.hpp"
 #include <windows.h>
 #include <algorithm>
 
@@ -73,8 +74,9 @@ Json lifecycle(const std::filesystem::path& profile, const std::string& instance
 
 // 由 Windows 直接启动本体程序，子进程不继承窗口或管道句柄。
 // 步骤：准备已引用的本地参数 → 隐藏启动 → 归还创建句柄。
-void launch_host(const std::filesystem::path& program, const std::filesystem::path& config,
+void launch_host(const std::filesystem::path& config,
     const std::filesystem::path& packages, const std::filesystem::path& profile, const std::filesystem::path& trace) {
+    const auto program = app::executable_directory()/L"dafeiyu-host.exe";
     auto command = quote(program.native())+L" --host "+quote(config.native())+L" --plugins "+quote(packages.native())+
         L" --data "+quote(profile.native());
     if (!trace.empty()) command += L" --trace "+quote(trace.native());

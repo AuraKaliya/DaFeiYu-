@@ -1,5 +1,5 @@
 #pragma once
-#include "resident.hpp"
+#include "management/resident.hpp"
 #include <dafeiyu/line_input.hpp>
 #include <iosfwd>
 

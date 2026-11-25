@@ -12,5 +12,5 @@ target_link_libraries(dfy_webview2 INTERFACE
   "${dfy_webview2_sdk_SOURCE_DIR}/build/native/x64/WebView2LoaderStatic.lib" version shlwapi)
 
 # 保留 SDK 原始许可证及第三方声明，Evergreen Runtime 仍由系统独立安装。
-install(FILES "${dfy_webview2_sdk_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME WebView2-SDK-LICENSE.txt CONFIGURATIONS Release)
-install(FILES "${dfy_webview2_sdk_SOURCE_DIR}/NOTICE.txt" DESTINATION licenses RENAME WebView2-SDK-NOTICE.txt CONFIGURATIONS Release)
+install(FILES "${dfy_webview2_sdk_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME WebView2-SDK-LICENSE.txt CONFIGURATIONS Release COMPONENT Runtime)
+install(FILES "${dfy_webview2_sdk_SOURCE_DIR}/NOTICE.txt" DESTINATION licenses RENAME WebView2-SDK-NOTICE.txt CONFIGURATIONS Release COMPONENT Runtime)

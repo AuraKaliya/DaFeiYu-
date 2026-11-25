@@ -14,7 +14,8 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakePredefinedTargets")
 
 include(cmake/BuildOptions.cmake)
-option(BUILD_GUI "Build the native WebView2 validation window" OFF)
+option(BUILD_GUI "Build the DaFeiYu desktop application" ON)
+option(BUILD_CLI "Build the optional command-line client" OFF)
 option(BUILD_TESTING "Build project tests" OFF)
 if(BUILD_TESTING)
   enable_testing()
@@ -34,5 +35,11 @@ if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
-# 指定 VS 默认启动的应用目标。
-set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT dafeiyu)
+# VS 随当前配置启动桌面、可选终端或独立后台。
+if(BUILD_GUI)
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT dafeiyu)
+elseif(BUILD_CLI)
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT dafeiyu-cli)
+else()
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT dafeiyu-host)
+endif()

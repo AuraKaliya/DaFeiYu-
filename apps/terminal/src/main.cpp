@@ -2,14 +2,12 @@
 #include "companion_host.hpp"
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
-#include "paths.hpp"
+#include "resident_entry.hpp"
 #include "software_log.hpp"
 #include "management/resident.hpp"
 #include "management/client.hpp"
 #include "management/terminal_client.hpp"
-#include "resident_tray.hpp"
 #include "management/local_pipe.hpp"
-#include <nlohmann/json.hpp>
 #include "trace_commands.hpp"
 #ifdef _WIN32
 #include "console.hpp"
@@ -24,18 +22,6 @@
 #include <vector>
 
 namespace {
-// 在正式进程保留配置读取的结果，文件名、配置正文和异常文本不进入软件日志。
-dfy::model::Config runtime_config(const std::filesystem::path& file, dfy::app::SoftwareLog& log) {
-    try {
-        auto config = dfy::model::load_config(file);
-        log.record(dfy::app::SoftwareEvent::configuration_read,dfy::app::SoftwareResult::ok);
-        return config;
-    } catch (...) {
-        log.record(dfy::app::SoftwareEvent::configuration_read,dfy::app::SoftwareResult::failed);
-        throw;
-    }
-}
-
 // 读取有大小限制的提示词文件，兼容 UTF-8 BOM 并保留正文换行。
 // 步骤：打开文件 → 有界读取并检查错误 → 去除编码签名。
 std::string read_prompt(const std::filesystem::path& path) {
@@ -102,58 +88,28 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
-        const bool status_query = args.size()>=2 && args.size()<=3 && args[1]=="--host-status";
-        const bool stop_request = args.size()>=2 && args.size()<=4 && args[1]=="--stop-host";
-        if (status_query || stop_request) {
-            const auto data = args.size()>=3 ? args[2] : dfy::app::default_user_data();
-            nlohmann::json status;
-            if (stop_request) {
-                software = std::make_shared<dfy::app::SoftwareLog>(data,dfy::app::SoftwareRole::terminal);
-                const auto instance = args.size()==4 ? args[3].string() :
-                    dfy::management::resident_request(data,{{"op","status"}}).at("instance").get<std::string>();
-                status = dfy::management::request_stop(data,instance,{},software.get());
-            } else status = dfy::management::resident_request(data,{{"op","status"}});
-            std::cout << status.dump() << '\n';
-            return software ? software->exiting(0) : 0;
-        }
-        const bool default_chat = args.size()==1 || (args.size()>1 && (args[1]=="--data" || args[1]=="--plugins" || args[1]=="--trace"));
-        if (default_chat || (args.size() >= 3 && (args[1] == "--chat" || args[1] == "--host"))) {
-            const auto configuration = default_chat ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
-            std::filesystem::path plugins, user_data;
-            dfy::app::ApplicationRunConfig run;
-            for (std::size_t index = default_chat ? 1 : 3; index < args.size(); index += 2) {
-                if (index+1 >= args.size() || args[index+1].empty()) throw std::invalid_argument("app: option path required");
-                if (args[index] == "--plugins" && plugins.empty()) plugins = args[index+1];
-                else if (args[index] == "--data" && user_data.empty()) user_data = args[index+1];
-                else if (args[index] == "--trace" && run.trace_directory.empty()) run.trace_directory = args[index+1];
-                else throw std::invalid_argument("app: unknown or duplicate option");
-            }
-            if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
-            if (user_data.empty()) user_data = dfy::app::default_user_data();
-            const bool host = args.size()>=3 && args[1]=="--host";
-            software = std::make_shared<dfy::app::SoftwareLog>(user_data,host ? dfy::app::SoftwareRole::host : dfy::app::SoftwareRole::terminal);
-            run.software_log = software;
-            if (host) {
-                const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
-                const int code = dfy::management::serve_resident(user_data,identity,[=,log=&*software] {
-                    return std::make_unique<dfy::app::Application>(runtime_config(configuration,*log),plugins,user_data,
-                        dfy::model::Backend{dfy::model::complete_response},run);
-                },{},&*software,dfy::ui::resident_tray_factory(identity));
-                return software->exiting(code);
-            }
-            (void)runtime_config(configuration,*software);
-            const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
-            auto binding = dfy::management::connect_or_launch({},user_data,identity,[&] {
-                dfy::management::launch_host(dfy::app::executable_directory()/"dafeiyu.exe",configuration,plugins,user_data,run.trace_directory);
-            },software.get());
+        const auto options = std::span(args).subspan(1);
+        if (!options.empty() && (options[0] == "--host" || options[0] == "--host-status" || options[0] == "--stop-host"))
+            return dfy::management::resident_command(options);
+
+        const bool default_chat = options.empty() || options[0] == "--data" || options[0] == "--plugins" || options[0] == "--trace";
+        if (default_chat || (options.size() >= 2 && options[0] == "--chat")) {
+            const auto paths = default_chat ? dfy::management::resident_paths(std::nullopt, options) :
+                dfy::management::resident_paths(options[1], options.subspan(2));
+            software = std::make_shared<dfy::app::SoftwareLog>(paths.data, dfy::app::SoftwareRole::terminal);
+            (void)dfy::management::read_runtime_config(paths.model, *software);
+            const auto identity = dfy::management::startup_identity(paths.model, paths.plugins, paths.trace);
+            auto binding = dfy::management::connect_or_launch({}, paths.data, identity, [&] {
+                dfy::management::launch_host(paths.model, paths.plugins, paths.data, paths.trace);
+            }, software.get());
             software->bind(binding.instance,binding.client);
             software->record(dfy::app::SoftwareEvent::client_connected,dfy::app::SoftwareResult::ok);
             dfy::platform::LineInput input;
-            return software->exiting(dfy::management::resident_chat(user_data,binding,input,std::cout,std::cerr,software.get()));
+            return software->exiting(dfy::management::resident_chat(paths.data,binding,input,std::cout,std::cerr,software.get()));
         }
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
-        output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
+        output << "Usage: dafeiyu-cli [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
             << " | --host CONFIG [--plugins DIR] [--data DIR] [--trace DIR] | --host-status [DATA] | --stop-host [DATA [INSTANCE]]"
             << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --replay-trace FILE SESSION RUN | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "Default chat uses the bundled DeepSeek configuration and accepts --data, --plugins and --trace.\n"

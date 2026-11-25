@@ -13,15 +13,26 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "BUILD_GUI": "ON",
+        "BUILD_CLI": "OFF"
       }
+    },
+    {
+      "name": "windows-cli",
+      "inherits": "windows",
+      "displayName": "Desktop with optional CLI",
+      "binaryDir": "${sourceDir}/build/rebuild/windows-cli",
+      "cacheVariables": { "BUILD_CLI": "ON" }
     },
     {
       "name": "windows-tests",
       "inherits": "windows",
       "binaryDir": "${sourceDir}/build/rebuild/windows-tests",
       "cacheVariables": {
-        "BUILD_TESTING": "ON"
+        "BUILD_TESTING": "ON",
+        "BUILD_GUI": "OFF",
+        "BUILD_CLI": "ON"
       }
     },
     {
@@ -52,6 +63,16 @@
       "configuration": "Release"
     },
     {
+      "name": "windows-cli-debug",
+      "inherits": "windows-debug",
+      "configurePreset": "windows-cli"
+    },
+    {
+      "name": "windows-cli-release",
+      "inherits": "windows-release",
+      "configurePreset": "windows-cli"
+    },
+    {
       "name": "windows-tests",
       "inherits": "windows-build",
       "configurePreset": "windows-tests",
@@ -71,7 +92,7 @@
       "inherits": "windows-build",
       "configurePreset": "windows-ui",
       "configuration": "Debug",
-      "targets": ["dfy_ui_probe"]
+      "targets": ["dafeiyu"]
     },
     {
       "name": "windows-ui-release",
