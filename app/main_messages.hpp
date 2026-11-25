@@ -1,6 +1,7 @@
 #pragma once
 #include "message_store.hpp"
 #include <dafeiyu/run_identity.hpp>
+#include "conversation.hpp"
 #include <map>
 
 namespace dfy::app {
@@ -23,6 +24,14 @@ class MainMessages {
     void flush();
     // 将存储失败限定为软件事件，正文及 SQL 不进入诊断。
     void storage_failed() const noexcept;
+    // 在实际启动待发项前固定不可随意重放的交付边界。
+    void start_queue(std::uint64_t native);
+    // 关联从队首开始的新回合与原始用户消息号。
+    void started_queue(std::uint64_t native, agent::RunId run);
+    // 在移除等待项前将该消息的移除事实写盘。
+    void remove_queue(std::uint64_t native);
+    // 根据原运行收件与唯一结算登记实际送模步骤和面向用户的回答。
+    void observe(agent::RunId run, const std::vector<agent::TurnInput>& inputs, const CompletedTurn* completed);
   private:
     // 保存最新已核实的投递状态，暂时写盘失败时保留原消息号。
     void publish(std::int64_t id, const nlohmann::json& receipt);
@@ -31,6 +40,10 @@ class MainMessages {
     std::string instance_;
     SoftwareLog* log_;
     std::map<std::int64_t,nlohmann::json> retry_;
+    std::map<std::uint64_t,std::int64_t> queued_;
+    std::map<std::pair<std::uint64_t,std::uint64_t>,std::int64_t> appended_;
+    std::pair<agent::RunId,std::int64_t> parent_{};
+    std::map<std::string,nlohmann::json> replies_;
     std::chrono::steady_clock::time_point retry_at_{};
 };
 }

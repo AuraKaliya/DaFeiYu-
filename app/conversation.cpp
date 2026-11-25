@@ -1,5 +1,6 @@
 #include "conversation.hpp"
 #include "persona.hpp"
+#include "main_messages.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
 #include <random>
@@ -50,6 +51,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
         throw;
     }
     reported_ = false;
+    user_output_ = player_facing;
     const auto accepted = current_->diagnostics();
     if (display_prompt) {
         auto& turn = display_.turns.back();
@@ -158,6 +160,7 @@ std::optional<CompletedTurn> Conversation::advance() {
     }
 
     update_display(status,completed);
+    if (main_messages_) main_messages_->observe({status.session,status.turn},current_->inputs(),user_output_ && completed ? &*completed : nullptr);
     if (status.exit != OperationState::pending) {
         last_ = status;
         try { last_diagnostic_.emplace(capture_diagnostic()); diagnostic_error_ = {}; }
