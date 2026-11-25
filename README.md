@@ -34,8 +34,8 @@ cmake --build --preset windows-release
 不带参数使用程序目录下的 DeepSeek 配置；指定 Qwen 或独立目录：
 
 ```powershell
-.\build\bin\Release\dafeiyu.exe --chat .\config\qwen.example.json
-.\build\bin\Release\dafeiyu.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
+.\build\bin\Release\dafeiyu.exe --chat .\modules\model\resources\config\qwen.example.json
+.\build\bin\Release\dafeiyu.exe --chat .\modules\model\resources\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
 ```
 
 支持 `--check-config FILE`、`--complete CONFIG PROMPT_FILE`、`--review-diagnostic FILE` 和 `--help`。配置检查及诊断回顾可以离线执行。单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
@@ -100,11 +100,11 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | 职责 | 入口 |
 |---|---|
 | App：共享服务、终端及原生插件管理 | [Application](app/application.hpp)、[Conversation](app/conversation.hpp)、[终端命令](app/application_commands.cpp)、[插件命令](app/plugin_commands.cpp) |
-| Agent：会话、运行与历史提交 | [Session](agent/include/dafeiyu/session.hpp)、[实现](agent/session.cpp) |
-| Model：异步接纳及供应商协议 | [AsyncClient](model/include/dafeiyu/async_model.hpp)、[完整文本调用](model/client.cpp) |
+| Agent：会话、运行与历史提交 | [Session](modules/agent/include/dafeiyu/session.hpp)、[实现](modules/agent/src/session.cpp) |
+| Model：异步接纳及供应商协议 | [AsyncClient](modules/model/include/dafeiyu/async_model.hpp)、[完整文本调用](modules/model/src/client.cpp) |
 | Events：不可变交付与处理 | [广播](modules/events/include/dafeiyu/broadcast_channel.hpp)、[处理](modules/events/include/dafeiyu/processing.hpp)、[控制边界](modules/events/include/dafeiyu/hooks.hpp) |
-| Runtime：预算、调度、结果及重试 | [预算](runtime/include/dafeiyu/budget.hpp)、[调度](runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](runtime/include/dafeiyu/result_group.hpp)、[重试](runtime/include/dafeiyu/retry_controller.hpp) |
-| Platform：系统输入、HTTPS 与代码寿命 | [输入](platform/include/dafeiyu/line_input.hpp)、[传输](platform/winhttp.cpp)、[CodeModule](platform/include/dafeiyu/code_module.hpp) |
+| Runtime：预算、调度、结果及重试 | [预算](modules/runtime/include/dafeiyu/budget.hpp)、[调度](modules/runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](modules/runtime/include/dafeiyu/result_group.hpp)、[重试](modules/runtime/include/dafeiyu/retry_controller.hpp) |
+| Platform：系统输入、HTTPS 与代码寿命 | [输入](modules/platform/include/dafeiyu/line_input.hpp)、[传输](modules/platform/src/winhttp.cpp)、[CodeModule](modules/platform/include/dafeiyu/code_module.hpp) |
 | Plugins：目录、实例、包操作与依赖 | [管理器](plugins/runtime/include/dafeiyu/plugin_manager.hpp)、[实例](plugins/runtime/include/dafeiyu/plugin_instance.hpp)、[依赖](plugins/runtime/include/dafeiyu/plugin_dependencies.hpp)、[包操作](plugins/runtime/include/dafeiyu/plugin_package.hpp) |
 | SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
 | Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application_lifecycle.cpp) |

@@ -27,7 +27,7 @@
 | 包清单版本 1 拒绝未知字段 | UI 描述使用独立可选文件，保持现有 `plugin.json` 字段集合 |
 | C ABI 精确版本协商，忙碌拒绝卸载 | UI 能力独立协商，页面消失不构成 DLL 可卸载的证明 |
 
-对应实现入口：[会话与诊断](../agent/include/dafeiyu/session.hpp)、[包清单校验](../plugins/runtime/manifest.cpp)、[配置快照](../plugins/runtime/include/dafeiyu/plugin_config.hpp)、[SDK 线程和生命周期约定](../sdk/README.md)。
+对应实现入口：[会话与诊断](../modules/agent/include/dafeiyu/session.hpp)、[包清单校验](../plugins/runtime/manifest.cpp)、[配置快照](../plugins/runtime/include/dafeiyu/plugin_config.hpp)、[SDK 线程和生命周期约定](../sdk/README.md)。
 
 ## 2 管理中心的界面组织
 
@@ -113,7 +113,7 @@ Win32 窗口线程只管理窗口、WebView2、焦点和消息收发。后台宿
 
 后台图标随本体运行。用户从设置、托盘或终端请求退出当前本体时，原实例的退出结果应到达已连接的管理窗口。软件运行日志在默认启动时记录这些动作，并提供跨进程核对入口。[后台图标、退出与软件运行日志](#后台图标退出与软件运行日志)
 
-**Agent 循环与 SDK。** 开发先对照主会话与 MC 子会话的输入、上下文装配、模型输出、工具执行、取消、投递与实际退出。共同部分复用 Agent 层的 Session / RunLoop，提炼缺失的共用接口供主体和 SDK 适配层调用。DLL 沿现有版本化 C ABI 托管子会话，新增公共能力另行协商版本。主 Agent 的用户发言、插件的领域发言及给上级的内部结算各有输出路由。每个会话独立持有上下文、当轮工具和权限，MC 继续拥有局内事实及游戏回执。[主会话](../app/conversation.cpp) · [通用循环](../agent/run_loop.cpp) · [子会话宿主](../app/subagents.cpp) · [现有 Agent ABI](../sdk/include/dafeiyu/agent_abi_v2.h)
+**Agent 循环与 SDK。** 开发先对照主会话与 MC 子会话的输入、上下文装配、模型输出、工具执行、取消、投递与实际退出。共同部分复用 Agent 层的 Session / RunLoop，提炼缺失的共用接口供主体和 SDK 适配层调用。DLL 沿现有版本化 C ABI 托管子会话，新增公共能力另行协商版本。主 Agent 的用户发言、插件的领域发言及给上级的内部结算各有输出路由。每个会话独立持有上下文、当轮工具和权限，MC 继续拥有局内事实及游戏回执。[主会话](../app/conversation.cpp) · [通用循环](../modules/agent/src/run_loop.cpp) · [子会话宿主](../app/subagents.cpp) · [现有 Agent ABI](../sdk/include/dafeiyu/agent_abi_v2.h)
 
 ## 4 组件库
 
@@ -339,7 +339,7 @@ WebView2 支持本地内容映射到具备来源身份的虚拟主机，可用�
 
 **保存与生效。** `settings.read` 返回有效值、默认或用户覆盖来源、读写模式、已保存修订和运行中采用的修订。`settings.save` 按基准修订提交变更。宿主逐字段核对来源、写权限和类型，保留未编辑的原值，按配置所有者串行、原子写回相应文件。任一字段非法则整批拒绝，冲突返回最新修订并保留草稿。只有落盘成功才显示「已保存」。建议主体模型配置在下次本体启动采用，插件配置在下次成功加载实例时采用，中间显示「已保存，待生效」。忙碌拒绝重载时继续显示当前实例实际采用的值。
 
-**首版建议默认值。** 用现有主体配置中的 `provider` 作只读示例，`timeout_ms` 作可写示例，沿用模型层的取值校验。测试插件用一个只读配置项「来源类型」和可写配置项「显示名称」。重载后名称反映在该来源的状态摘要中。验收直接向宿主提交一次只读写入并核对拒绝，再核对两方文件互不改写，重启后保存值及应用值一致。[模型配置解析](../model/config.cpp) · [插件有效配置装配](../plugins/runtime/config.cpp)
+**首版建议默认值。** 用现有主体配置中的 `provider` 作只读示例，`timeout_ms` 作可写示例，沿用模型层的取值校验。测试插件用一个只读配置项「来源类型」和可写配置项「显示名称」。重载后名称反映在该来源的状态摘要中。验收直接向宿主提交一次只读写入并核对拒绝，再核对两方文件互不改写，重启后保存值及应用值一致。[模型配置解析](../modules/model/src/config.cpp) · [插件有效配置装配](../plugins/runtime/config.cpp)
 
 模型配置继续使用环境变量名称引用凭据，显示未配置、未验证、最近请求成功或失败等有依据的状态。新凭据保险库、跨插件密钥共享以及自动连接检测均不属于首版组件的隐含能力。
 

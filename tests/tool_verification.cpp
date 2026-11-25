@@ -2,7 +2,7 @@
 #include "application_commands.hpp"
 #include "chat.hpp"
 #include "diagnostic_files.hpp"
-#include "support/compiled_replay.hpp"
+#include "../modules/agent/tests/support/compiled_replay.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>

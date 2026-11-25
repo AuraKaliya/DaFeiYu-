@@ -33,7 +33,7 @@ function Save-Case([string]$Build, [string]$Config, [hashtable]$Group, [string]$
     $arguments = @('--capture',$Case)
     $label = "$Case-$Side"
     if ($Group.Material) {
-        $arguments = @('--capture',(Join-Path $root "tests/fixtures/scenarios/$($Group.Material)"))
+        $arguments = @('--capture',(Join-Path $root "modules/agent/tests/fixtures/scenarios/$($Group.Material)"))
     } elseif ($Group.Fixture) {
         $package = Join-Path $Build ($Group.Fixture -f $Config)
         $arguments = @($package,(Join-Path $results "$label-data")) + $arguments

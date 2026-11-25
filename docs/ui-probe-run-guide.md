@@ -4,7 +4,7 @@
 
 ## 桌面主面板
 
-在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。需要独立数据目录时，运行 `dafeiyu-ui-probe.exe --main-panel CONFIG --data DIR`。模型凭据沿用配置的环境变量。
+在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `modules/model/resources/config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。需要独立数据目录时，运行 `dafeiyu-ui-probe.exe --main-panel CONFIG --data DIR`。模型凭据沿用配置的环境变量。
 
 第一次打开会启动同目录的后台程序。相同用户数据目录和配置的窗口共用一个本体。可用 `dafeiyu.exe --host-status` 查看实例编号，在「设置 → 后台运行」选择「退出大肥鱼」并确认，或用 `dafeiyu.exe --stop-host` 请求本体退出。指定了独立数据目录时，终端查询和退出命令后面也要加上该目录。若已有实例使用另一份配置，面板会显示连接原因。
 

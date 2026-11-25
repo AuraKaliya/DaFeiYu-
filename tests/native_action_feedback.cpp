@@ -1,4 +1,4 @@
-#include "support/compiled_replay.hpp"
+#include "../modules/agent/tests/support/compiled_replay.hpp"
 #include <dafeiyu/observation_controller.hpp>
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>

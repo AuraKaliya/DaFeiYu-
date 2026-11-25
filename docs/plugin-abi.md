@@ -77,6 +77,6 @@ v1 布局固定，不按编译器枚举宽度传递状态，不传 `bool`、`siz
 
 `dfy_query_example` 只有查询能力：提供完整非空函数表，但 `create` 明确返回 `DFY_UNSUPPORTED` 且不产生实例。生命周期函数是查询样例的占位实现，不是可安装运行的 observer 插件；完整实例与事件桥接仍分别在第 08、10 步建设。
 
-`sdk.abi` 在 C/C++ 两侧检查布局和打包设置，实际通过固定导出名查询 DLL，验证版本拒绝、重复查询、失败输出和调用方错误缓冲。07a 提供 [平台模块引用封装](../platform/include/dafeiyu/dynamic_library.hpp)，07b 的 [PluginModule](../plugins/runtime/include/dafeiyu/plugin_module.hpp)复用它完成查询校验；`plugins.module` 使用可控真实 DLL 验证返回状态、畸形表和失败回收，查询过程不调用生命周期函数。平台搜索方式参见 [LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw)。
+`sdk.abi` 在 C/C++ 两侧检查布局和打包设置，实际通过固定导出名查询 DLL，验证版本拒绝、重复查询、失败输出和调用方错误缓冲。07a 提供 [平台模块引用封装](../modules/platform/include/dafeiyu/dynamic_library.hpp)，07b 的 [PluginModule](../plugins/runtime/include/dafeiyu/plugin_module.hpp)复用它完成查询校验；`plugins.module` 使用可控真实 DLL 验证返回状态、畸形表和失败回收，查询过程不调用生命周期函数。平台搜索方式参见 [LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw)。
 
 `PluginModule` 不读取或回显查询错误正文，只报告状态码及宿主识别的契约错误；错误长度越界和成功时携带错误均被拒绝。成功接口复制到宿主保存，但函数地址仍依赖 DLL 引用；关闭前必须结束所有借用和调用，接口关闭后不可访问。非法指针、越界写入和跨 ABI 异常不属于可恢复的状态失败，仍受同进程可信插件边界约束。

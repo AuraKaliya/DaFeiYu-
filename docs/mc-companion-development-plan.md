@@ -401,7 +401,7 @@ Agent 用 Skill 选择方法和处理新的不确定条件。已明确的后继�
 | 连续数值展示 | `run-z06KRW` | 1 | 2,759 字节 | 205.1 ms |
 | 按开口返回摘要 | `run-cW0XTD` | 1 | 1,351 字节 | 300.9 ms |
 
-**第五步已为 MC 玩家入口接入可选的低强度思考。** 插件的 `playerThinking` 默认 `inherit`，沿用当前模型配置。`off` 在玩家回合关闭思考，`low` 在 DeepSeek 玩家回合发送 `thinking.type=enabled` 和 `reasoning_effort=low`。主 Agent、委托和动作复核各自继承宿主配置。Trace 的 `model.prepared` 记录实际开关和显式强度。固定传输和工具续轮验证请求形状，真实模型的等待时间和决策质量按自然使用的 Trace 记录为「仅记录，不执行」。[模型层编码](../model/thinking.hpp) · [工具续轮协议用例](../tests/model_protocol.cpp) · [DeepSeek 思考档位](https://api-docs.deepseek.com/guides/thinking_mode/)
+**第五步已为 MC 玩家入口接入可选的低强度思考。** 插件的 `playerThinking` 默认 `inherit`，沿用当前模型配置。`off` 在玩家回合关闭思考，`low` 在 DeepSeek 玩家回合发送 `thinking.type=enabled` 和 `reasoning_effort=low`。主 Agent、委托和动作复核各自继承宿主配置。Trace 的 `model.prepared` 记录实际开关和显式强度。固定传输和工具续轮验证请求形状，真实模型的等待时间和决策质量按自然使用的 Trace 记录为「仅记录，不执行」。[模型层编码](../modules/model/src/thinking.hpp) · [工具续轮协议用例](../modules/model/tests/model_protocol.cpp) · [DeepSeek 思考档位](https://api-docs.deepseek.com/guides/thinking_mode/)
 
 ## 调整方向
 

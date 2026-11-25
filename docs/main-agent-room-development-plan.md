@@ -25,8 +25,8 @@
 |---|---|---|
 | [桌面容器](ui-probe-run-guide.md)、[主文档消息入口](../ui/host/probe_host.cpp)、[Vue 主面板](../ui/web/src/MainPanel.vue) | 可信面板可收发、追加本轮、排到下一轮、停止和空闲清空。读位置可得到当前房间与身体，刷新沿原命令核对。 | 用现有快照驱动文字详情。原生移动和物件效果可读回后，再逐项补入同一展示接口。 |
 | [应用服务](../app/application.hpp)、[会话服务](../app/conversation.cpp)、[桌面业务线程](../app/management/host.cpp) | 应用一次只推进一个活动主回合，按该轮实际退出调度待发队列，并发布补充的送模回执。 | 将角色感知按来源和采样条件接入获准的请求，将身体动作与原委托关联。 |
-| [工具目录](../agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。房间及其身体已有本体签发的实例身份。 | 为获准的回合绑定房间本地工具，沿用已有的调用校验和执行约束。 |
-| [原生书房](../app/builtin_room.cpp)、[观察收件](../agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../agent/include/dafeiyu/run_journal.hpp) | 书房能按角色采样筛选可知字段。通用收件已有来源、代次、修订、时效、重复、断档及重采样语义。 | 把发生时可感知的事件记入角色记录，主动查询用当前位置重采样，再按来源和水位带入获准回合。 |
+| [工具目录](../modules/agent/include/dafeiyu/tool_catalog.hpp)、[执行器](../modules/agent/include/dafeiyu/tool_executor.hpp)、[运行上下文](../modules/agent/include/dafeiyu/run_context.hpp) | 工具可按运行授予，支持调用校验、有界执行、取消及工具结果成批提交。房间及其身体已有本体签发的实例身份。 | 为获准的回合绑定房间本地工具，沿用已有的调用校验和执行约束。 |
+| [原生书房](../app/builtin_room.cpp)、[观察收件](../modules/agent/include/dafeiyu/observation_inbox.hpp)、[运行记录](../modules/agent/include/dafeiyu/run_journal.hpp) | 书房能按角色采样筛选可知字段。通用收件已有来源、代次、修订、时效、重复、断档及重采样语义。 | 把发生时可感知的事件记入角色记录，主动查询用当前位置重采样，再按来源和水位带入获准回合。 |
 
 本方案细化 UI 总体方案中 U02 的命令桥接、U04 的主会话与 U07 的内置房间。主体面板的里程碑可以用本地宿主和可控模型替身完成。游戏伙伴有自己的交互方案和评审顺序。[UI 总体方案](ui-framework-design.md) · [MC 伙伴交互方案](mc-companion-development-plan.md)
 
@@ -55,7 +55,7 @@ flowchart LR
     Host -->|核准的动作| Room
 ```
 
-实现时，房间模型及其本地工具工厂随应用服务装配。通用 Agent 层只扩展消息投递和步骤边界。桥接放在 `ui/host` 与 `app/gui`，Vue 展示放在 `ui/web`。使用[现有工具工作接口](../agent/include/dafeiyu/tool_work.hpp)分别交付结果与退出，首版可以先在同一应用目标内实现房间。
+实现时，房间模型及其本地工具工厂随应用服务装配。通用 Agent 层只扩展消息投递和步骤边界。桥接放在 `ui/host` 与 `app/gui`，Vue 展示放在 `ui/web`。使用[现有工具工作接口](../modules/agent/include/dafeiyu/tool_work.hpp)分别交付结果与退出，首版可以先在同一应用目标内实现房间。
 
 ## 4. 首间房与感知规则
 
@@ -113,7 +113,7 @@ flowchart LR
 
 步骤 05 的应用队列最多保留八条待发消息，单条上限 1 MiB，合计上限 2 MiB。前一轮成功结算并退出后，应用从原对话信箱逐条启动新轮，显示记录保留原排队消息号。取消或失败会暂停待发项，清空空闲对话后仍可恢复或移除。[应用队列](../app/dialogue_queue.cpp) · [生命周期验收](../tests/application_lifecycle.cpp)
 
-步骤 06 已在普通文本运行中验证。本轮可接收八条补充，合计最多 1 MiB。已发出的请求保持原样。宿主在提交最终答复前检查新收件，按顺序将阶段文本和补充带入同一回合的后续请求。成功分派后每条补充才获得模型步骤号，取消、期限和容量分别留下未带入回执。[原生回合验收](../tests/turn_input.cpp)
+步骤 06 已在普通文本运行中验证。本轮可接收八条补充，合计最多 1 MiB。已发出的请求保持原样。宿主在提交最终答复前检查新收件，按顺序将阶段文本和补充带入同一回合的后续请求。成功分派后每条补充才获得模型步骤号，取消、期限和容量分别留下未带入回执。[原生回合验收](../modules/agent/tests/turn_input.cpp)
 
 步骤 07 复用同一份回合收件记录。工具执行和收尾期间可以接收补充，下一次请求按顺序包含完整工具调用、每个结果及收到的用户消息。停止或预算耗尽时保留已经发生的工具效果，并记录补充的未带入原因。[工具批次验收](../tests/session_tool_loop.cpp)
 

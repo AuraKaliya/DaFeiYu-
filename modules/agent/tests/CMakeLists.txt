@@ -1,0 +1,141 @@
+dfy_add_unit_test(agent.run_loop dfy_run_loop_tests run_loop.cpp dfy_agent)
+
+dfy_add_unit_test(agent.observation dfy_observation_tests observation.cpp dfy_agent)
+
+dfy_add_unit_test(agent.observation_inbox dfy_observation_inbox_tests observation_inbox.cpp dfy_agent)
+
+dfy_add_unit_test(agent.observation_trigger dfy_observation_trigger_tests observation_trigger.cpp dfy_agent)
+
+dfy_add_unit_test(agent.observation_input dfy_observation_input_tests observation_input.cpp dfy_agent nlohmann_json::nlohmann_json)
+
+dfy_add_unit_test(agent.session_observation dfy_session_observation_tests session_observation.cpp dfy_agent nlohmann_json::nlohmann_json)
+
+dfy_test_executable(dfy_observation_controller_tests observation_controller.cpp)
+target_link_libraries(dfy_observation_controller_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_observation_controller_tests observation_controller.cpp support/scripted_model.hpp)
+add_test(NAME agent.observation_controller COMMAND dfy_observation_controller_tests)
+add_test(NAME agent.replay_observation_dispatch COMMAND dfy_observation_controller_tests --capture observation_dispatch_gap)
+set_tests_properties(agent.observation_controller PROPERTIES TIMEOUT 15)
+set_tests_properties(agent.replay_observation_dispatch PROPERTIES TIMEOUT 15)
+
+dfy_test_executable(dfy_observation_action_tests observation_action.cpp)
+target_link_libraries(dfy_observation_action_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_observation_action_tests observation_action.cpp support/scripted_model.hpp)
+add_test(NAME agent.observation_action COMMAND dfy_observation_action_tests)
+add_test(NAME agent.replay_observation_action COMMAND dfy_observation_action_tests --capture observation_action_unknown)
+set_tests_properties(agent.observation_action PROPERTIES TIMEOUT 15)
+set_tests_properties(agent.replay_observation_action PROPERTIES TIMEOUT 15)
+
+dfy_add_unit_test(agent.plan_definition dfy_plan_definition_tests plan_definition.cpp dfy_agent)
+
+dfy_add_unit_test(agent.plan_book dfy_plan_book_tests plan_book.cpp dfy_agent)
+
+dfy_add_unit_test(agent.plan_protocol dfy_plan_protocol_tests plan_protocol.cpp dfy_agent)
+
+dfy_add_unit_test(agent.session_planning dfy_session_planning_tests session_planning.cpp dfy_agent)
+
+dfy_test_executable(dfy_session_replanning_tests session_replanning.cpp)
+target_link_libraries(dfy_session_replanning_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_session_replanning_tests session_replanning.cpp support/scripted_model.hpp)
+add_test(NAME agent.session_replanning COMMAND dfy_session_replanning_tests)
+add_test(NAME agent.replay_plan_revision COMMAND dfy_session_replanning_tests --capture plan_tail_revision)
+set_tests_properties(agent.session_replanning PROPERTIES TIMEOUT 15)
+set_tests_properties(agent.replay_plan_revision PROPERTIES TIMEOUT 15)
+
+dfy_add_unit_test(agent.loop_projection dfy_loop_projection_tests loop_projection.cpp dfy_agent nlohmann_json::nlohmann_json)
+
+dfy_test_executable(dfy_session_goal_revision_tests session_goal_revision.cpp)
+target_link_libraries(dfy_session_goal_revision_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_session_goal_revision_tests session_goal_revision.cpp support/scripted_model.hpp)
+add_test(NAME agent.session_goal_revision COMMAND dfy_session_goal_revision_tests)
+add_test(NAME agent.replay_goal_revision COMMAND dfy_session_goal_revision_tests --capture goal_revision)
+set_tests_properties(agent.session_goal_revision PROPERTIES TIMEOUT 15)
+set_tests_properties(agent.replay_goal_revision PROPERTIES TIMEOUT 15)
+
+dfy_add_unit_test(agent.session_action_guard dfy_session_action_guard_tests session_action_guard.cpp dfy_agent)
+
+dfy_add_unit_test(agent.goal_effect_guard dfy_goal_effect_guard_tests goal_effect_guard.cpp dfy_agent)
+
+dfy_add_unit_test(agent.observation_verification dfy_observation_verification_tests observation_verification.cpp dfy_agent)
+
+dfy_add_unit_test(agent.plan_feedback dfy_plan_feedback_tests plan_feedback.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_batch dfy_tool_batch_tests tool_batch.cpp dfy_agent)
+
+dfy_test_executable(dfy_offline_scenario_tests offline_scenario.cpp support/scripted_model.hpp)
+target_link_libraries(dfy_offline_scenario_tests PRIVATE dfy_agent dfy_build_options)
+add_test(NAME agent.offline_scenario COMMAND dfy_offline_scenario_tests)
+set_tests_properties(agent.offline_scenario PROPERTIES TIMEOUT 15)
+
+dfy_test_executable(dfy_scenario_replay_tests scenario_replay.cpp support/scenario_replay.hpp)
+target_link_libraries(dfy_scenario_replay_tests PRIVATE dfy_agent dfy_build_options)
+add_test(NAME agent.scenario_replay COMMAND dfy_scenario_replay_tests)
+set_tests_properties(agent.scenario_replay PROPERTIES TIMEOUT 20)
+
+dfy_test_executable(dfy_timeline_review_tests timeline_review.cpp)
+target_link_libraries(dfy_timeline_review_tests PRIVATE dfy_agent dfy_build_options)
+add_test(NAME agent.timeline_review COMMAND dfy_timeline_review_tests)
+set_tests_properties(agent.timeline_review PROPERTIES TIMEOUT 20)
+
+dfy_test_executable(dfy_replay_material_tests replay_material.cpp support/replay_material.hpp support/replay_comparison.hpp
+  support/replay_evidence.hpp fixtures/scenarios/confirmed-counter.json)
+target_link_libraries(dfy_replay_material_tests PRIVATE dfy_agent dfy_digest dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME agent.replay_material COMMAND dfy_replay_material_tests "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
+set_tests_properties(agent.replay_material PROPERTIES TIMEOUT 20)
+
+# 固定材料评测命令随测试构建，不进入产品分发。
+dfy_test_executable(dfy_replay_evaluation replay_evaluation.cpp)
+target_link_libraries(dfy_replay_evaluation PRIVATE dfy_agent dfy_digest dfy_build_options nlohmann_json::nlohmann_json)
+dfy_replay_labels(dfy_replay_evaluation)
+add_test(NAME agent.replay_evaluation COMMAND dfy_replay_evaluation --capture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scenarios/confirmed-counter.json")
+set_tests_properties(agent.replay_evaluation PROPERTIES TIMEOUT 20)
+
+dfy_add_unit_test(agent.run_trace dfy_run_trace_tests run_trace.cpp dfy_agent)
+
+# 验证有界多步事实的修订、保留缺口和只读分页。
+dfy_add_unit_test(agent.run_journal dfy_run_journal_tests run_journal.cpp dfy_agent)
+
+dfy_add_unit_test(agent.session_journal dfy_session_journal_tests session_journal.cpp dfy_agent)
+
+dfy_add_unit_test(agent.multi_run_trace dfy_multi_run_trace_tests multi_run_trace.cpp dfy_agent)
+
+dfy_add_unit_test(agent.trace_identity dfy_trace_identity_tests trace_identity.cpp dfy_agent)
+
+dfy_add_unit_test(agent.execution_policy dfy_execution_policy_tests execution_policy.cpp dfy_agent)
+
+dfy_add_unit_test(agent.version_fingerprint dfy_version_fingerprint_tests version_fingerprint.cpp dfy_agent dfy_digest)
+
+dfy_add_unit_test(agent.diagnostic_json dfy_diagnostic_json_tests diagnostic_json.cpp dfy_agent nlohmann_json::nlohmann_json)
+
+dfy_test_executable(dfy_session_observation_rebind_tests session_observation_rebind.cpp)
+target_link_libraries(dfy_session_observation_rebind_tests PRIVATE dfy_agent dfy_build_options)
+dfy_compiled_replay(dfy_session_observation_rebind_tests session_observation_rebind.cpp support/scripted_model.hpp)
+add_test(NAME agent.session_observation_rebind COMMAND dfy_session_observation_rebind_tests)
+add_test(NAME agent.replay_observation_rebind COMMAND dfy_session_observation_rebind_tests --capture observation_rebind)
+set_tests_properties(agent.session_observation_rebind PROPERTIES TIMEOUT 15)
+set_tests_properties(agent.replay_observation_rebind PROPERTIES TIMEOUT 15)
+
+dfy_add_unit_test(agent.action_observation_refresh dfy_action_observation_refresh_tests action_observation_refresh.cpp dfy_agent)
+
+dfy_add_unit_test(agent.run_context dfy_run_context_tests run_context.cpp dfy_agent)
+
+dfy_add_unit_test(agent.turn_input dfy_turn_input_tests turn_input.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_executor dfy_tool_executor_tests tool_executor.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_invocation dfy_tool_invocation_tests tool_invocation.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_work dfy_tool_work_tests tool_work.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_catalog dfy_tool_catalog_tests tool_catalog.cpp dfy_agent)
+
+dfy_add_unit_test(agent.tool_schema dfy_tool_schema_tests tool_schema.cpp dfy_agent nlohmann_json::nlohmann_json)
+
+# 验证异步会话的历史提交、事件快照及实际退出。
+dfy_add_unit_test(agent.async_session dfy_async_session_tests async_session.cpp dfy_agent)
+
+# 验证进程内确认的宿主身份、幂等回执及停止边界。
+dfy_add_unit_test(agent.confirmation dfy_confirmation_tests confirmation.cpp dfy_agent)
+
+# 验证工具批次等待不执行，批准后仍遵守原授权和实际退出边界。
+dfy_add_unit_test(agent.tool_confirmation dfy_tool_confirmation_tests tool_confirmation.cpp dfy_agent)

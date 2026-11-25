@@ -31,7 +31,7 @@ set(DFY_UI_WEB "${PROJECT_SOURCE_DIR}/ui/web")
 add_custom_target(dfy_ui_assets
   COMMAND "${DFY_NPM_EXECUTABLE}" run build -- --outDir "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/ui" --emptyOutDir
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/config"
-  COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PROJECT_SOURCE_DIR}/config/deepseek.example.json" "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/config"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PROJECT_SOURCE_DIR}/modules/model/resources/config/deepseek.example.json" "${PROJECT_BINARY_DIR}/bin/$<CONFIG>/config"
   WORKING_DIRECTORY "${DFY_UI_WEB}" VERBATIM)
 set_target_properties(dfy_ui_assets PROPERTIES FOLDER App)
 add_dependencies(dfy_ui_probe dfy_ui_assets dafeiyu)

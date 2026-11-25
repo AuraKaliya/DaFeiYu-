@@ -1,1 +1,5 @@
+add_subdirectory(platform)
+add_subdirectory(runtime)
 add_subdirectory(events)
+add_subdirectory(model)
+add_subdirectory(agent)

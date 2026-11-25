@@ -93,7 +93,7 @@ target_compile_definitions(dafeiyu PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_custom_command(TARGET dafeiyu POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:dafeiyu>/config"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-    "${PROJECT_SOURCE_DIR}/config/deepseek.example.json" "${PROJECT_SOURCE_DIR}/config/qwen.example.json"
+    "${PROJECT_SOURCE_DIR}/modules/model/resources/config/deepseek.example.json" "${PROJECT_SOURCE_DIR}/modules/model/resources/config/qwen.example.json"
     "$<TARGET_FILE_DIR:dafeiyu>/config"
   VERBATIM)
 
