@@ -1,6 +1,7 @@
 #include <dafeiyu/plugin_manager.hpp>
 #include "fixtures/query_v2/mailbox_fixture.h"
 #include "application.hpp"
+#include "management/terminal_host.hpp"
 #include <fstream>
 #include <iostream>
 #include <atomic>
@@ -321,13 +322,28 @@ void transition_hooks(const fs::path& root, const fs::path& dll) {
                 api.transition_count(plugin,DFY_V2_TRANSITION_EVENT_DISPATCHED) == 2 &&
                 api.transition_count(plugin,DFY_V2_TRANSITION_RUN_EXITED) == 1;
         }),"observers did not see the actual application boundaries without Trace");
-        app.set_console_ask_available(true);
+        dfy::management::TerminalHost terminals;
+        const auto command = [&](const std::string& client, nlohmann::json body) {
+            (void)terminals.exchange(client,body);
+            terminals.advance(app);
+            return terminals.exchange(client,body);
+        };
+        (void)command("keyboard",{{"id",1u},{"action","open"},{"interactive",true}});
+        (void)command("pipe",{{"id",1u},{"action","open"},{"interactive",false}});
         check(instance->invoke(*api,[](const auto& api, auto* plugin) { return api.emit_notice(plugin,3,2); }) == DFY_V2_OK,
             "ASK event failed to reach the host");
         app.advance_plugins();
         const auto ask = app.console_ask();
-        check(ask && app.answer_console_ask(ask->first,{}) &&
-            app.answer_console_ask(ask->first,"yes") && app.answer_console_ask(ask->first,"yes"),
+        const auto keyboard = command("keyboard",{{"id",2u},{"action","read"},{"after",0u}});
+        const auto pipe = command("pipe",{{"id",2u},{"action","read"},{"after",0u}});
+        check(ask && keyboard.at("ask").at("id")==ask->first && !pipe.contains("ask"),"ASK leaked to non-interactive pipe");
+        try {
+            (void)command("pipe",{{"id",3u},{"action","presented"},{"ask",ask->first}});
+            throw std::runtime_error("pipe acknowledged another terminal's ASK");
+        } catch (const std::invalid_argument&) {}
+        check(command("keyboard",{{"id",3u},{"action","presented"},{"ask",ask->first}}).at("presented")==true &&
+            command("keyboard",{{"id",4u},{"action","line"},{"text","/ask answer "+std::to_string(ask->first)+" yes"}}).at("err")=="" &&
+            app.answer_console_ask(ask->first,"yes"),
             "read-only observation interrupted a presented question or its answer");
         app.advance_plugins();
         check(instance->invoke(*api,[](const auto& api, auto* plugin) {

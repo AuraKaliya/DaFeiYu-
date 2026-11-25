@@ -147,7 +147,11 @@ std::string Host::open_client() {
     std::lock_guard lock(mutex_);
     if (clients_.size()>=33) {
         const auto stale = std::chrono::steady_clock::now()-std::chrono::minutes(5);
-        std::erase_if(clients_,[&](const auto& entry) { return !entry.first.empty() && entry.second.seen<stale; });
+        std::erase_if(clients_,[&](const auto& entry) {
+            if (entry.first.empty() || entry.second.seen>=stale) return false;
+            terminal_.disconnect(entry.first);
+            return true;
+        });
     }
     if (clients_.size()>=33 || !clients_.try_emplace(id).second) throw std::runtime_error("management: client unavailable");
     return id;
@@ -156,6 +160,7 @@ std::string Host::open_client() {
 // 关闭远端观察者身份，保留未完成命令的宿主责任。
 void Host::close_client(const std::string& client) {
     std::lock_guard lock(mutex_);
+    terminal_.disconnect(client);
     if (!client.empty()) clients_.erase(client);
 }
 
@@ -265,10 +270,11 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
         std::shared_ptr<const app::ConversationDisplay> display;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
+            terminal_.advance(*application);
             advance_dialogue(*application,stop_command_);
             advance_dialogue(*application,pending_);
             if (application->advance_plugins() == runtime::RunResult::failed) std::fputs("A plugin notification failed.\n",stderr);
-            conversation.advance();
+            if (auto result = conversation.advance()) terminal_.completed(*result);
 
             const auto snapshot = application->run_status();
             const auto self = application->room().self(layout.room);

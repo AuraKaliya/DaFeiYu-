@@ -2,6 +2,7 @@
 #include "application.hpp"
 #include "dialogue_channel.hpp"
 #include "room_location.hpp"
+#include "terminal_host.hpp"
 #include <atomic>
 #include <deque>
 #include <functional>
@@ -34,6 +35,8 @@ class Host {
     bool visit_client(const std::string& client);
     // 撤销观察客户端的提交身份，已接纳的工作继续由宿主持有。
     void close_client(const std::string& client);
+    // 提供仅由原生终端协议使用的命令与输出通道。
+    TerminalHost& terminal() noexcept { return terminal_; }
     // 读取共享对话与指定客户端自己的命令水位和回执。
     DialogueView dialogue(std::uint64_t command = 0, const std::string& client = {}) const;
     // 核对命令编号、种类、目标和原话，复用同一命令的回执。
@@ -47,6 +50,7 @@ class Host {
     // 查询初始化、推进或退出是否出现宿主错误。
     bool failed() const noexcept { return failed_; }
   private:
+    TerminalHost terminal_;
     struct CommandRecord { DialogueReceipt receipt; DialogueAction action; agent::RunId target; std::uint64_t message; std::string fingerprint; };
     struct Client {
         std::uint64_t latest = 0;

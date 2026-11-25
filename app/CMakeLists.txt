@@ -55,6 +55,7 @@ target_sources(dfy_management PRIVATE management/resident.cpp management/residen
 target_sources(dfy_management PRIVATE management/resident_watch.cpp management/resident_watch.hpp)
 target_sources(dfy_management PRIVATE management/client.cpp management/client.hpp)
 target_sources(dfy_management PRIVATE management/poll_log.cpp management/poll_log.hpp)
+target_sources(dfy_management PRIVATE management/terminal_host.cpp management/terminal_host.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PRIVATE advapi32)
 target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json PRIVATE dfy_build_options dfy_digest)
@@ -69,6 +70,7 @@ target_sources(dfy_terminal PRIVATE plugin_commands.cpp plugin_commands.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_commands.hpp")
 target_include_directories(dfy_terminal PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(dfy_terminal PUBLIC dfy_application dfy_input PRIVATE dfy_build_options)
+target_link_libraries(dfy_management PRIVATE dfy_terminal)
 set_target_properties(dfy_terminal PROPERTIES FOLDER "App")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/application_commands.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/application_commands.hpp"
