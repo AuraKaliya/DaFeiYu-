@@ -145,7 +145,10 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value,
     if (!value.reasoning_effort.empty()) item["reasoningEffort"] = value.reasoning_effort;
     if (!value.persona_profile.empty()) item["personaProfile"] = value.persona_profile;
     if (!value.prompt_template.empty()) item["promptTemplate"] = value.prompt_template;
-    if (value.input) item["input"] = encode_request(*value.input);
+    if (value.input) {
+        item["input"] = encode_request(*value.input);
+        item["compressedBatches"] = value.compressed_batches;
+    }
     if (value.input && value.projected_tools) {
         try { item["projection"] = compare_input(value,previous[std::string(value.purpose)]); }
         catch (...) { item["projectionUnavailable"] = true; }

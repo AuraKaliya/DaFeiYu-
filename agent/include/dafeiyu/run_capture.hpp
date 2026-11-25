@@ -20,6 +20,7 @@ struct ModelCapture {
     const std::vector<model::ToolDefinition>* projected_tools = nullptr;
     std::uint64_t evidence_revision = 0;
     std::string_view purpose;
+    std::size_t compressed_batches = 0;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;

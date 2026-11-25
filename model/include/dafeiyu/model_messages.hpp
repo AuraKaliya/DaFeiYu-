@@ -13,6 +13,9 @@ struct Message {
     std::vector<ToolCall> tool_calls;
     std::string tool_call_id;
     std::optional<std::string> reasoning_content;
+    // 由宿主在工具结果提交时填写，仅影响本地投影，不进入供应商协议。
+    std::uint32_t receipt_view_bytes = 0;
+    bool settled_evidence = false;
 };
 // 参数描述保留为 JSON 文本，供应商与 JSON 库类型不进入 Agent 公共接口。
 struct ToolDefinition { std::string name, description, parameters; };
@@ -22,7 +25,10 @@ struct Request {
     std::optional<std::uint32_t> max_output_tokens;
 };
 enum class FinishReason { stop, tool_calls, length, content_filter };
-struct Usage { std::uint64_t input_tokens = 0, output_tokens = 0; };
+struct Usage {
+    std::uint64_t input_tokens = 0, output_tokens = 0;
+    std::optional<std::uint64_t> cache_hit_tokens, cache_miss_tokens;
+};
 struct Response {
     Message message{Role::assistant,{}};
     FinishReason finish = FinishReason::stop;

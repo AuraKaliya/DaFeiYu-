@@ -24,7 +24,7 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",
         "向当前主聊天发送一条发言或追问。text 为用户将看到的原文。回执给出投递号和写入状态。",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})"},
-        true,true},[this](const agent::ToolInvocation& call) { return speak(call); });
+        true,true,{},{},0,1024,true},[this](const agent::ToolInvocation& call) { return speak(call); });
 }
 
 // 为新对话重置防重范围，已有专用工具与原调用的参数授权仍由该入口持有。

@@ -183,10 +183,13 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
         for (auto& slot : records_) if (!slot) {
             const bool replace = options.replace_history;
             auto base = replace ? std::make_shared<const MessageHistory>() : history_;
+            const auto epoch = replace ? next_domain() : evidence_epoch_;
+            options.evidence_epoch = epoch;
             options.previous_status = replace ? nullptr : status_;
             auto next_status = options.context_status;
             auto loop = std::make_unique<RunLoop>(RunId{id_,turn_+1},config_,backend_,base,prompt,std::move(options));
             history_ = std::move(base);
+            evidence_epoch_ = epoch;
             if (replace) status_.reset();
             active_status_ = std::move(next_status);
             auto record = loop->request(); active_ = std::move(loop); slot = record; ++turn_;
@@ -332,10 +335,19 @@ void Session::advance() {
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。
 events::ObservationReceipt Session::clear() {
     if (!*accepting_ || active_ || working_) throw std::logic_error("session: busy or closed");
+    const auto epoch = next_domain();
     history_ = std::make_shared<const MessageHistory>();
+    evidence_epoch_ = epoch;
     status_.reset();
     active_status_.reset();
     return notify("session_cleared",0);
+}
+// 从本会话当前代次读取有限的原历史片段，过期代次、越界和未提交占位均不可见。
+MessageHistory Session::read_evidence(std::uint64_t epoch, std::size_t first, std::size_t count) const {
+    if (epoch != evidence_epoch_ || !first || !count || count > 65 || first-1 > history_->size() || count > history_->size()-(first-1))
+        throw std::invalid_argument("session: invalid evidence reference");
+    const auto begin = history_->begin()+(first-1);
+    return {begin,begin+count};
 }
 // 停止新运行并请求当前工作退出，回调内关闭只登记取消而不重入推进。
 // 步骤：关闭接纳 → 登记当前取消 → 非重入时推进收尾。

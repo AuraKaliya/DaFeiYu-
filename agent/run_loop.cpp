@@ -38,6 +38,7 @@ struct RunLoopState {
     std::unique_ptr<PlanExecution> plan_step;
     std::shared_ptr<ActionBasis> action_basis = std::make_shared<ActionBasis>();
     std::size_t repeated = 0;
+    std::size_t compressed_batches = 0;
     std::optional<std::uint64_t> last_fingerprint;
     TurnFailure stage = TurnFailure::model_request;
     RunLoopState* next = nullptr;
@@ -93,7 +94,9 @@ struct RunLoopState {
             planning_goal = prompt;
         }
         const auto status = options.context_status ? project_context_status(options.previous_status.get(),*options.context_status) : std::string{};
-        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status);
+        const ContextWindow window{config.context_window_tokens,config.reserved_output_tokens,
+            options.evidence_epoch ? options.evidence_epoch : run.session,config.thinking_enabled()};
+        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window);
         record->versions_ = public_run_versions(config,options,deadline > now ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline-now) : std::chrono::milliseconds::zero());
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
@@ -164,6 +167,7 @@ struct RunLoopState {
             sample.purpose = planning_request ? (planning_request->expected.plan_revision ? "plan_revision" : "plan_generation") :
                 (plan_step ? "plan_step" : "direct");
             sample.evidence_revision = record->journal_.revision();
+            sample.compressed_batches = compressed_batches;
             std::vector<model::ToolDefinition> ordered;
             if (phase == ModelCapturePhase::prepared && options.compare_projection) {
                 const auto& scope = record->plan_ ? step_tools : options.tools;
@@ -465,6 +469,9 @@ struct RunLoopState {
         if (planning_request) { context.purpose = ModelPurpose::plan_generation; context.plan_revision = planning_request->expected.plan_revision+1; }
         else if (plan_step) { context.purpose = ModelPurpose::plan_step; context.plan_revision = plan_step->key.plan.plan_revision; context.plan_step = plan_step->key.step; }
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
+        const int head_delta = planning_request ? 0 : int(input.messages.front().role == model::Role::system) -
+            int(record->context_->messages().front().role == model::Role::system);
+        compressed_batches = record->context_->project(input,head_delta);
         capture(ModelCapturePhase::prepared,current.attempt,&input);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;

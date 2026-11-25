@@ -33,8 +33,11 @@ model::Message decode_message(const Json& value) {
 // 还原原响应正文、结束标签与可选用量。
 model::Response decode_response(const Json& value) {
     model::Response response{decode_message(value.at("message")),tagged<model::FinishReason>(value.at("finish"),finishes)};
-    if (const auto& usage = value.at("usage"); !usage.is_null())
+    if (const auto& usage = value.at("usage"); !usage.is_null()) {
         response.usage = model::Usage{usage.at("inputTokens"),usage.at("outputTokens")};
+        if (usage.contains("cacheHitTokens")) response.usage->cache_hit_tokens = usage.at("cacheHitTokens").get<std::uint64_t>();
+        if (usage.contains("cacheMissTokens")) response.usage->cache_miss_tokens = usage.at("cacheMissTokens").get<std::uint64_t>();
+    }
     return response;
 }
 

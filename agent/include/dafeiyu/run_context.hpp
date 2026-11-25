@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <dafeiyu/tool_work.hpp>
 #include <dafeiyu/turn_input.hpp>
+#include <dafeiyu/context_capacity.hpp>
 #include <span>
 
 namespace dfy::agent {
@@ -11,7 +12,7 @@ class RunContext {
     static constexpr std::size_t maximum_reply_bytes = 64*1024+256;
     // 从历史创建目标及最多四份观察数据，观察仅按数据消息附加，不授予角色或工具权限。
     RunContext(std::shared_ptr<const MessageHistory> history, std::string prompt, std::vector<std::string> observations = {},
-        std::string status = {});
+        std::string status = {}, ContextWindow window = {});
     // 禁止复制未提交事务，避免两个写入者共享同一待填上下文。
     RunContext(const RunContext&) = delete;
     // 禁止赋值或移动覆盖事务责任，历史快照另行按值持有。
@@ -21,7 +22,10 @@ class RunContext {
     // 返回不可变的已提交消息持有，不包含未完成的工具占位。
     std::shared_ptr<const MessageHistory> committed() const noexcept { return committed_; }
     // 在动作前预留整批结果正文并核对完整请求预算，失败不发布半个批次。
-    void prepare_tools(const model::Message& assistant, const std::vector<model::ToolDefinition>& definitions);
+    void prepare_tools(const model::Message& assistant, const std::vector<model::ToolDefinition>& definitions,
+        std::span<const std::uint32_t> receipt_views = {}, std::span<const std::uint8_t> archive_on_exit = {});
+    // 保存当前有效系统段并在实际请求副本上核算模型窗口，返回整批压缩数。
+    std::size_t project(model::Request& input, int head_delta);
     // 在预留空间内格式化终态及真实效果，不再分配结果正文；拒绝状态与实际执行分开。
     void set_tool_result(std::size_t index, const ToolResult& outcome, runtime::OperationState state,
         ToolError fault = ToolError::none, bool accepted = true);
@@ -42,6 +46,11 @@ class RunContext {
     // 丢弃未提交的纯文本输入并封闭事务；不允许丢弃尚待结果的工具批次。
     void seal();
   private:
+    // 先在副本检查本地协议硬限，保持未裁剪的可回查历史。
+    void check_history(model::Request input) const;
+    ContextWindow window_;
+    std::optional<model::Message> effective_head_;
+    bool head_known_ = false;
     std::shared_ptr<const MessageHistory> committed_;
     std::shared_ptr<MessageHistory> pending_;
     std::vector<bool> replies_;

@@ -43,6 +43,8 @@ ToolCatalog::~ToolCatalog() { for (const auto& entry : entries_) if (entry) entr
 runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory factory) {
     if (description.id.empty() || description.id.size() > 128 || !description.instance || !description.version)
         throw std::invalid_argument("tools: identity, instance and version required");
+    if (description.receipt_view_bytes && (description.receipt_view_bytes < 256 || description.receipt_view_bytes > 64*1024))
+        throw std::invalid_argument("tools: receipt view must fit 256..65536 bytes");
     for (const auto c : description.id) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == '/'))
         throw std::invalid_argument("tools: invalid canonical ID");

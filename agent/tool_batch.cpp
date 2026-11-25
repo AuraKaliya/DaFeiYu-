@@ -21,6 +21,8 @@ ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::M
     const auto count = assistant.tool_calls.size(), limit = policy_.settings().tool_limit;
     if (!count || control.tool_requests > limit || count > limit-control.tool_requests) throw std::length_error("batch: tool limit exhausted");
     entries_.resize(count);
+    std::vector<std::uint32_t> views(count);
+    std::vector<std::uint8_t> archivable(count);
     for (std::size_t index = 0; index < count; ++index) {
         entries_[index].metadata.call_id = assistant.tool_calls[index].id; entries_[index].metadata.name = assistant.tool_calls[index].name;
         entries_[index].call = assistant.tool_calls[index];
@@ -29,12 +31,14 @@ ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::M
         add_fingerprint(fingerprint_,assistant.tool_calls[index].name);
         // 仅规范化已经通过有界 schema 的候选；未知或非法候选仍按原文本比较，不扩大解析深度。
         try {
-            tools.resolve(assistant.tool_calls[index].name,assistant.tool_calls[index].arguments);
+            const auto selected = tools.resolve(assistant.tool_calls[index].name,assistant.tool_calls[index].arguments);
+            views[index] = selected.description.receipt_view_bytes;
+            archivable[index] = selected.description.archive_on_exit;
             add_fingerprint(fingerprint_,nlohmann::json::parse(assistant.tool_calls[index].arguments).dump());
         } catch (const std::invalid_argument&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
         catch (const std::length_error&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
     }
-    context_.prepare_tools(assistant,tools.definitions());
+    context_.prepare_tools(assistant,tools.definitions(),views,archivable);
     for (std::size_t index = 0; index < count; ++index) {
         publish(index,TraceFactKind::tool_candidate);
         this->capture(entries_[index],ToolCapturePhase::candidate);

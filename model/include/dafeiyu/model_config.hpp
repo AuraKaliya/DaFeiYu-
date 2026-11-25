@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -13,6 +14,8 @@ struct Config {
     int timeout_ms = 0;
     bool thinking = false;
     ThinkingPreference session_thinking = ThinkingPreference::inherit;
+    // 显式声明的上下文窗口及输出预留，均为零时只使用本地协议硬限。
+    std::uint32_t context_window_tokens = 0, reserved_output_tokens = 0;
 
     // 按供应商能力和本轮选择解析实际思考开关。
     bool thinking_enabled() const noexcept {

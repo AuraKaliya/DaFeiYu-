@@ -16,6 +16,10 @@ struct ToolDescription {
     bool idempotent = false;
     std::optional<std::string> plugin_version, schema_digest;
     std::uint32_t display_order = 0;
+    // 已注册工具可声明模型回执字节上限；零保留原完整回执，原始证据独立保存。
+    std::uint32_t receipt_view_bytes = 0;
+    // 仅声明结束后不会留下领域工作的工具，成功实效才允许整批归档。
+    bool archive_on_exit = false;
 };
 struct ToolSelection { ToolDescription description; runtime::DomainId registration = 0; };
 struct ToolEntry;

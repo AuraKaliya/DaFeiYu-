@@ -202,6 +202,8 @@ flowchart TD
 
 ### 主线实施记录
 
+阶段 4 支持在模型配置中同时声明 `context_window_tokens` 和 `reserved_output_tokens`。未配置时沿用统一协议硬限。宿主用协议字段的 UTF-8 字节数加封套余量保守估算输入，真实 token 数取供应商实际返回。运行持有的原证据最多 8 MiB、8192 条，模型视图仍受 1 MiB、1024 条等原协议限制。只允许明确声明可在退出后归档的工具压缩已确认的完整旧批次，未知效果、取消和未决事项保留。原文按会话、代次和一基消息号读取，清空或换基线会使旧代次失效。十六调用回放覆盖足额执行 16 次、默认整批预留超限执行 0 次及小模型窗口执行 0 次。缓存命中和未命中用量按字段分别保存，缺失保持未知。入口为[容量计算](../agent/context_capacity.cpp)、[正式批次](../agent/tool_batch.cpp)与[固定回放](../tests/loop_projection.cpp)。[供应商用量字段](https://api-docs.deepseek.com/api/create-chat-completion/)
+
 阶段 3 可在 MC 的独立配置内指定 `factPlayer` 为一个配对玩家的 UUID。插件查询 `dfy.agent.facts` 版本 1；原接口的调用者继续使用既有协议。隔离服 `--handoff-facts-probe` 的 `run-bGaAXr` 连续产生 1 份基线和 5 份增量，工作回执水位依次为 7、16、18、21。各增量只含上个水位之后更新的原工作。伙伴实际采集、会合、投物各 1 次，发言 4 次，玩家实收 2 块，两次反馈耗时 286 ms 和 116 ms。可从[插件绑定流](../plugins/mc/partner_facts.cpp)和[宿主索引](../app/binding_facts.cpp)核对源序号及回执。跨 10 条插话、原号重传、旧代次迟到实效及拒收新基线由固定响应覆盖。
 
 阶段 2 的正式请求已采用有序工具。固定回放的规划、修订均看见 `stock-W17` 的库存结果，修订同时看见已核实的首步、原目标和新指引，两份请求可执行工具数均为 0。状态以可独立解释的基线开始，字段关闭只进入一次增量，同版引用只指向已随历史提交的状态。主聊天固定 DLL 把模型原文 `raw` 改为 `model text`，再改为 `visible reply`。SQLite 渠道确认写入后，下一轮可按原投递号引用 `visible reply`。清空会话隔离旧回合的投影。入口为[状态投影](../agent/context_status.cpp)、[主聊天渠道](../app/main_output.cpp)与[真实 DLL 回归](../tests/plugin_mailbox_dll.cpp)。

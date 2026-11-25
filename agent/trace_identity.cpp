@@ -86,6 +86,10 @@ TraceVersions public_run_versions(const model::Config& config, const RunOptions&
     if (result.provider && result.model && config.timeout_ms > 0) {
         Json profile{{"provider",config.provider},{"model",config.model},{"timeout_ms",config.timeout_ms}};
         if (config.thinking_enabled()) profile["thinking"] = true;
+        if (config.context_window_tokens) {
+            profile["context_window_tokens"] = config.context_window_tokens;
+            profile["reserved_output_tokens"] = config.reserved_output_tokens;
+        }
         if (!config.reasoning_effort().empty()) profile["reasoning_effort"] = config.reasoning_effort();
         result.public_model_config = "sha256:"+platform::sha256(profile.dump());
     }

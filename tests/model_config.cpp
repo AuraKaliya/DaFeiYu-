@@ -61,6 +61,15 @@ int main(int argc, char** argv) {
         check(
             loaded.model == "future-model" && loaded.api_key_env == "DFY_CONFIG_TEST_KEY", "settings were overwritten");
         auto thinking = valid;
+        auto window = valid;
+        window["context_window_tokens"] = 8192;
+        rejects(path,window.dump(),"reserved_output_tokens");
+        window["reserved_output_tokens"] = 8192;
+        rejects(path,window.dump(),"reserved_output_tokens");
+        window["reserved_output_tokens"] = 512;
+        { std::ofstream file(path,std::ios::binary); file << window.dump(); }
+        auto bounded = dfy::model::load_config(path);
+        check(bounded.context_window_tokens == 8192 && bounded.reserved_output_tokens == 512,"declared model window lost");
         thinking["thinking"] = "true";
         rejects(path,thinking.dump(),"thinking");
         thinking["thinking"] = true;

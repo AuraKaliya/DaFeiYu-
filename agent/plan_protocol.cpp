@@ -72,7 +72,7 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
     if (!plan.tools.empty() || plan.messages.size() != 2 || plan.messages.back().role != model::Role::user)
         throw std::invalid_argument("plan evidence: expected a planning request");
     auto receipts = Json::array();
-    std::size_t total = 0;
+    std::size_t omitted = 0;
     for (std::size_t end = history.size(); end > 0;) {
         if (history[end-1].role != model::Role::tool) { --end; continue; }
         auto begin = end-1;
@@ -80,15 +80,16 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
         if (!begin) throw std::logic_error("plan evidence: missing tool batch");
         const auto& calls = history[begin-1].tool_calls;
         for (auto i = end; i-- > begin;) {
-            ++total;
-            if (receipts.size() == 12) continue;
             const auto& message = history[i];
+            const bool recent = receipts.size() < 12;
+            if (!recent && message.settled_evidence) { ++omitted; continue; }
             const auto found = std::ranges::find(calls,message.tool_call_id,&model::ToolCall::id);
             if (found == calls.end()) throw std::logic_error("plan evidence: unmatched tool result");
             Json fact{{"call_id",found->id},{"tool",found->name},{"message",i+1},{"batch_message",begin}};
-            if (message.content.size() <= 2048) fact["receipt"] = message.content;
+            const auto preview = recent ? std::size_t{1536} : std::size_t{256};
+            if (message.content.size() <= preview+128) fact["receipt"] = message.content;
             else {
-                auto bytes = std::size_t{1536};
+                auto bytes = preview;
                 while ((static_cast<unsigned char>(message.content[bytes]) & 0xc0) == 0x80) --bytes;
                 fact["receipt_prefix"] = message.content.substr(0,bytes);
                 fact["original_bytes"] = message.content.size();
@@ -107,7 +108,7 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
     }
     auto data = Json::parse(plan.messages.back().content);
     data["host_evidence"] = {{"through_message",history.size()},{"tool_receipts",std::move(receipts)},
-        {"older_tool_receipts",total-std::min<std::size_t>(total,12)},{"verified_steps",std::move(verified)}};
+        {"older_tool_receipts",omitted},{"verified_steps",std::move(verified)}};
     if (!status.empty()) data["host_evidence"]["context_status"] = Json::parse(status);
     plan.messages.back().content = data.dump();
     model::validate_request(plan);

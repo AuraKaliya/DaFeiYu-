@@ -70,7 +70,8 @@ Config load_config(const std::filesystem::path& path) {
         throw std::runtime_error("config: cannot read file");
     }
 
-    const std::set<std::string> allowed{"provider", "base_url", "model", "api_key_env", "timeout_ms", "thinking"};
+    const std::set<std::string> allowed{"provider", "base_url", "model", "api_key_env", "timeout_ms", "thinking",
+        "context_window_tokens","reserved_output_tokens"};
     if (!object.is_object()) {
         throw std::runtime_error("config: expected an object");
     }
@@ -100,6 +101,14 @@ Config load_config(const std::filesystem::path& path) {
         if (!object.at("thinking").is_boolean()) throw std::runtime_error("thinking: expected a boolean");
         config.thinking = object.at("thinking").get<bool>();
         if (config.thinking && config.provider != "deepseek") throw std::runtime_error("thinking: enabled only for deepseek");
+    }
+    if (object.contains("context_window_tokens") || object.contains("reserved_output_tokens")) {
+        const auto window = object.value("context_window_tokens",Json(nullptr));
+        const auto output = object.value("reserved_output_tokens",Json(nullptr));
+        if (!window.is_number_unsigned() || !output.is_number_unsigned() || window > 16*1024*1024 || output < 1 || output >= window)
+            throw std::runtime_error("config: require 0 < reserved_output_tokens < context_window_tokens <= 16777216");
+        config.context_window_tokens = window.get<std::uint32_t>();
+        config.reserved_output_tokens = output.get<std::uint32_t>();
     }
     return config;
 }

@@ -42,6 +42,12 @@ void protocol() {
         response.usage && response.usage->input_tokens == 12 && response.usage->output_tokens == 4,"response lost calls or usage");
     auto document = fixture(); document.erase("usage");
     check(!decode_response(document.dump()).usage,"missing usage invented token counts");
+    document = fixture();
+    check(!decode_response(document.dump()).usage->cache_hit_tokens,"missing cache hit count became zero");
+    document["usage"]["prompt_cache_hit_tokens"] = 0;
+    document["usage"]["prompt_cache_miss_tokens"] = 12;
+    const auto cache = decode_response(document.dump()).usage;
+    check(cache->cache_hit_tokens == 0 && cache->cache_miss_tokens == 12,"provider cache counters lost");
     document = fixture(); document["choices"][0]["finish_reason"] = "length"; rejects(document);
     document = fixture(); document["usage"]["prompt_tokens"] = -1; rejects(document);
     document = fixture(); document["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "private-response"; rejects(document);

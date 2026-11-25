@@ -94,6 +94,13 @@ Response decode_response(const std::string& body) {
             if (!usage.at("prompt_tokens").is_number_unsigned() || !usage.at("completion_tokens").is_number_unsigned())
                 throw std::runtime_error("model: invalid token usage");
             result.usage = Usage{usage.at("prompt_tokens").get<std::uint64_t>(),usage.at("completion_tokens").get<std::uint64_t>()};
+            const auto count = [&](const char* name) -> std::optional<std::uint64_t> {
+                if (!usage.contains(name) || usage.at(name).is_null()) return {};
+                if (!usage.at(name).is_number_unsigned()) throw std::runtime_error("model: invalid cache usage");
+                return usage.at(name).get<std::uint64_t>();
+            };
+            result.usage->cache_hit_tokens = count("prompt_cache_hit_tokens");
+            result.usage->cache_miss_tokens = count("prompt_cache_miss_tokens");
         }
         validate_response(result); return result;
     } catch (const Json::exception&) { throw std::runtime_error("model: invalid structured response"); }

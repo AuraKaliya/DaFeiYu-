@@ -256,6 +256,10 @@ class Session {
     runtime::DomainId id() const noexcept { return id_; }
     // 返回已提交消息数；文本失败保留原历史，工具事实可在最终回答前独立提交。
     std::size_t message_count() const noexcept { return history_->size(); }
+    // 返回当前会话历史的读取代次，清空和更换基线后重新签发。
+    std::uint64_t evidence_epoch() const noexcept { return evidence_epoch_; }
+    // 按当前会话、代次及一基消息位置读取已提交的原始证据，拒绝跨绑定读取。
+    MessageHistory read_evidence(std::uint64_t epoch, std::size_t first, std::size_t count) const;
     // 返回失去局部协调器但仍在真实收尾的运行数量。
     static std::size_t retained() noexcept;
     // 在原宿主线程重试保留运行，实际退出前不释放工作责任。
@@ -269,6 +273,7 @@ class Session {
     std::shared_ptr<events::BroadcastChannel> events_;
     std::shared_ptr<const runtime::StructDescriptor> descriptor_;
     const runtime::DomainId id_;
+    std::uint64_t evidence_epoch_ = runtime::next_domain();
     std::uint64_t turn_ = 0;
     std::vector<std::shared_ptr<TurnRequest>> records_;
     std::unique_ptr<RunLoop> active_;

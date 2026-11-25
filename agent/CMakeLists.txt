@@ -5,6 +5,7 @@ add_library(dfy_agent STATIC session.cpp include/dafeiyu/session.hpp include/daf
 target_include_directories(dfy_agent PUBLIC include)
 target_link_libraries(dfy_agent PRIVATE dfy_digest)
 target_sources(dfy_agent PRIVATE context_status.cpp include/dafeiyu/context_status.hpp)
+target_sources(dfy_agent PRIVATE context_capacity.cpp include/dafeiyu/context_capacity.hpp)
 target_sources(dfy_agent PRIVATE diagnostic_json.cpp diagnostic_fields.hpp include/dafeiyu/diagnostic_json.hpp
   include/dafeiyu/run_capture.hpp)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/diagnostic_json.cpp"

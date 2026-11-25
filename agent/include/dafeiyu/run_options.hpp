@@ -66,5 +66,6 @@ struct RunOptions {
     // 状态基线由会话从已提交历史取得，新输入只能贡献当前绑定的事实。
     std::shared_ptr<const ContextStatus> context_status, previous_status;
     bool replace_history = false;
+    std::uint64_t evidence_epoch = 0;
 };
 }

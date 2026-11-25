@@ -145,10 +145,77 @@ void status_versions() {
         tail[tail.size()-2].content.find(R"("mode":"reference")") != std::string::npos &&
         contains(prepared.back(),"original"),"replacement failure lost history or status version");
 }
+
+// 建立十六个真实候选，分别验证整批拒绝、有界回执可执行和模型窗口不足。
+// 步骤：声明可见回执上限 → 提交十六个固定工具调用 → 核对分派数、返回配对及原号证据。
+void batch_capacity(std::uint32_t view, std::uint32_t window, bool succeeds) {
+    std::atomic<unsigned> calls = 0;
+    unsigned actions = 0;
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Config config;
+    config.context_window_tokens = window;
+    config.reserved_output_tokens = window ? 512 : 0;
+    Session session(config,channel,Backend{[&](const Config&,const Request& input) -> Response {
+        if (++calls == 1) {
+            std::vector<ToolCall> batch;
+            for (unsigned n = 0; n < 16; ++n) batch.push_back({"r"+std::to_string(n),"read","{}"});
+            return {{Role::assistant,"",std::move(batch)},FinishReason::tool_calls};
+        }
+        check(input.messages.size() == 18 && input.messages.back().tool_call_id == "r15" &&
+            input.messages.back().content.find("host_evidence") != std::string::npos,"result preview lost original pair");
+        return {{Role::assistant,"finished"}};
+    }});
+    ToolCatalog catalog;
+    ToolDescription desc{"test/read",1,1,{"read","read",R"({"type":"object","properties":{},"additionalProperties":false})"}};
+    desc.receipt_view_bytes = view;
+    catalog.add(desc,[&](const auto&) {
+        ++actions;
+        return completed_tool({true,ToolEffect::not_applied,std::string(5000,'r'),ToolError::none});
+    });
+    RunOptions options;
+    const std::vector<std::string> ids{desc.id};
+    options.tools = catalog.snapshot(ids);
+    const auto turn = session.begin("all or none",options);
+    until(session,[&] { return !session.busy(); });
+    if (!succeeds) {
+        check(actions == 0 && calls == 1 && turn->operation()->state() == OperationState::failed,"capacity check allowed a partial dispatch");
+        return;
+    }
+    check(turn->answer() == "finished" && actions == 16 && calls == 2,"bounded batch did not execute once");
+    const auto epoch = session.evidence_epoch();
+    const auto full = session.read_evidence(epoch,18,1);
+    check(full.front().tool_call_id == "r15" && full.front().content.ends_with(std::string(5000,'r')),"original receipt not recoverable");
+    session.clear();
+    bool stale = false;
+    try { session.read_evidence(epoch,18,1); } catch (const std::invalid_argument&) { stale = true; }
+    check(stale,"old evidence survived a scope change");
+}
+
+// 验证容量压力只压缩已结算的整批，并保留原话、未知效果、取消及其工具配对。
+void compress_settled() {
+    Request input{{{Role::user,"U37 original goal"}}};
+    for (unsigned i = 0; i < 6; ++i) {
+        const auto id = "work"+std::to_string(i);
+        input.messages.push_back({Role::assistant,"",{{id,"read","{}"}}});
+        Message result{Role::tool,std::string(1500,'v'),{},id};
+        result.settled_evidence = i != 2;
+        if (i == 2) result.content = "cancelled; pickup unknown for W17";
+        input.messages.push_back(std::move(result));
+    }
+    input.messages.push_back({Role::user,"Q4 waiting"});
+    const auto compressed = fit_context_request(input,{6200,512,73,false});
+    check(compressed && input.max_output_tokens == 512 && contains(input,"U37 original goal") && contains(input,"Q4 waiting") &&
+        contains(input,"pickup unknown for W17") && contains(input,"settled_tool_batch"),"compaction lost protected work or original reference");
+    validate_request(input);
+}
 }
 
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
-    try { replay(); status_versions(); return 0; }
+    try {
+        replay(); status_versions(); compress_settled();
+        batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);
+        return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

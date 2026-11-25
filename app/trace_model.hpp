@@ -36,7 +36,13 @@ inline Json encode_request(const model::Request& input) {
 
 // 保存模型正文和用量，原始响应与后续有效响应由事件类型区分。
 inline Json encode_response(const model::Response& output) {
+    Json usage = nullptr;
+    if (output.usage) {
+        usage = {{"inputTokens",output.usage->input_tokens},{"outputTokens",output.usage->output_tokens}};
+        if (output.usage->cache_hit_tokens) usage["cacheHitTokens"] = *output.usage->cache_hit_tokens;
+        if (output.usage->cache_miss_tokens) usage["cacheMissTokens"] = *output.usage->cache_miss_tokens;
+    }
     return {{"message",encode_message(output.message)},{"finish",finishes.at(static_cast<std::size_t>(output.finish))},
-        {"usage",output.usage ? Json{{"inputTokens",output.usage->input_tokens},{"outputTokens",output.usage->output_tokens}} : Json(nullptr)}};
+        {"usage",std::move(usage)}};
 }
 }
