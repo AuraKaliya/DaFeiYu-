@@ -188,13 +188,20 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
 }
 
 // 固定玩家世界内验证幂等、断序及十次插话后的原工作；换世界只允许原工作结算。
-// 步骤：提交基线及工作 → 增量插话与重发 → 拒收错误新基线 → 换代并沿旧号补报实效。
+// 步骤：提交基线及工作 → 增量插话与重发 → 换代并沿旧号结算 → 在回合边界切换新旧入口。
 void fact_binding(const fs::path& root) {
     using namespace dfy::app;
     using namespace dfy::model;
     using Json = nlohmann::json;
     std::atomic<unsigned> calls = 0;
+    // 从每次实际请求核对同一绑定的连续性以及切换入口后的可见边界。
+    // 步骤：识别旧入口快照 → 核对长工作和原话 → 核对换代或回退后的基线。
     Application app({},root,root.parent_path()/"fact-data",Backend{[&](const auto&,const Request& request) {
+        if (request.messages.back().content == "legacy snapshot") {
+            check(request.messages.size() == 1,"legacy fallback retained the previous projection");
+            ++calls;
+            return Response{{Role::assistant,"internal"}};
+        }
         const auto frame = Json::parse(request.messages.back().content);
         const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
         if (seq == 11) {
@@ -208,8 +215,11 @@ void fact_binding(const fs::path& root) {
                 request.messages.front().content.find("eight cobblestones") != std::string::npos,
                 "ninth intervening utterance lost unfinished goal, work or inventory");
         }
-        if (frame.at("factFrame").at("epoch") == 2)
+        if (frame.at("factFrame").at("epoch") == 2) {
             check(!frame.contains("hostWorkReceipts") && request.messages.size() == 1,"rebound leaked old facts");
+            if (seq == 2) check(frame.at("factFrame").at("mode") == "baseline" && frame.at("new") == "world" &&
+                frame.at("again") == true,"return from legacy omitted the current baseline");
+        }
         ++calls; return Response{{Role::assistant,"internal"}};
     }});
     check(!app.plugins().load("test.mail"),"fact test owner unavailable");
@@ -249,7 +259,13 @@ void fact_binding(const fs::path& root) {
     check(settle() == SubagentPhase::failed && calls == 11,"invalid baseline ran a model");
     agents.submit(owner,id,make(1,12,false,{{"still","old world"}}));
     check(settle() == SubagentPhase::succeeded && calls == 12,"failed replacement invalidated old session");
-    agents.submit(owner,id,make(2,1,true,{{"new","world"}}));
+    auto rebound = make(2,1,true,{{"new","world"}});
+    const auto original = agents.submit(owner,id,rebound);
+    SubagentInput legacy{"legacy snapshot"};
+    legacy.replace_history = true;
+    bool busy = false;
+    try { agents.submit(owner,id,legacy); } catch (const std::logic_error&) { busy = true; }
+    check(busy,"legacy request replaced an admitted turn");
     check(settle() == SubagentPhase::succeeded && calls == 13,"valid rebound failed");
     const auto exited = agents.settle(owner,id,{1,3,"W17",R"({"exited":true})",DFY_V2_WORK_EXIT});
     check(agents.settle(owner,id,{1,4,"W17",R"({"picked":3})",DFY_V2_WORK_EFFECT}) > exited,"late original receipt lost");
@@ -257,6 +273,11 @@ void fact_binding(const fs::path& root) {
     try { agents.settle(owner,id,{1,1,"new-old-work","{}",DFY_V2_WORK_ACCEPTED}); }
     catch (const std::invalid_argument&) { stale = true; }
     check(stale,"retired binding started a new work identity");
+    agents.submit(owner,id,legacy);
+    check(settle() == SubagentPhase::succeeded && calls == 14,"legacy fallback missed its independent turn");
+    agents.submit(owner,id,make(2,2,false,{{"again",true}}));
+    check(settle() == SubagentPhase::succeeded && calls == 15 && agents.submit(owner,id,rebound) == original &&
+        !agents.busy(owner),"return to fact mode lost prior admission or dispatched twice");
 }
 
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。
