@@ -78,8 +78,6 @@ uint32_t PartnerLoop::register_questions(dfy_v2_query_interface_fn host) {
 // 步骤：验证渠道及问题 → 核对影响范围、后继能力或放置选项 → 按原话和任务修订登记。
 nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!id) throw std::invalid_argument("MC question: unavailable");
-    if (question_) return {{"status","waiting"},{"item",question_->item}};
-    if (question_work_) return {{"status","busy"}};
     const auto text = args.at("question").get<std::string>(), path = args.value("path",std::string("local"));
     auto options = args.value("options",Json::array());
     if (text.empty() || text.size() > 400 || !options.is_array() || options.size() > 4 ||
@@ -87,6 +85,8 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         throw std::invalid_argument("MC question: invalid request");
     for (const auto& option : options) if (!option.is_string() || option.get_ref<const std::string&>().empty() ||
         option.get_ref<const std::string&>().size() > 160) throw std::invalid_argument("MC question: invalid option");
+    if (path == "local" && (chat_line_bytes(text) != text.size() || text.find_first_of("\r\n\0",0,3) != text.npos))
+        return {{"status","unpresentable"},{"reason","question_requires_one_chat_line"}};
     const auto& source = events_.empty() ? recent_events_ : events_;
     const Json* original = nullptr;
     if (const auto ref = args.find("sourceMessage"); ref != args.end()) {
@@ -120,7 +120,17 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         !after_pickup.at("count").is_number_integer() || after_pickup.at("count") < 1 || after_pickup.at("count") > 32 ||
         (after_pickup.contains("pickup") && item_name(after_pickup.at("pickup").get_ref<const std::string&>()).empty())))
         throw std::invalid_argument("MC question: invalid pickup continuation");
+    for (const auto& [item,q] : questions_) {
+        if ((path != "local" && q.path != "local") || (q.text == text && q.path == path && q.scope == scope &&
+            q.source_order() == (original ? original->at("sequence").get<std::uint64_t>() : order_) &&
+            q.task_revision == task_.revision() && q.after_pickup == after_pickup &&
+            (args.contains("placementOptions") ? placement_choice_.item == item && args.at("placementOptions") == placement_choice_.options :
+                q.options == options))) return {{"status","waiting"},{"item",item}};
+    }
+    if (questions_.size() >= 8) return {{"status","busy"}};
     if (const auto choices = args.find("placementOptions"); choices != args.end()) {
+        if (placement_choice_pending() && questions_.contains(placement_choice_.item))
+            return {{"status","waiting"},{"item",placement_choice_.item}};
         const bool current = placement_choice_.revision == task_.revision();
         if (path != "local" || !after_pickup.is_null() || args.contains("options") || !task_.target_ready() ||
             !choices->is_array() || choices->size() < 2 || choices->size() > 4 ||
@@ -150,14 +160,16 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
         placement_choice_.options = *choices;
     }
 
-    question_ = Question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
-    question_->options = options;
-    question_->after_pickup = after_pickup;
-    question_->scope = std::move(scope);
-    question_->task_revision = task_.revision();
-    if (original) question_->origin = *original;
-    if (!question_->scope.is_null() && question_->scope.at("skill") == "place") task_.pin_opening_observation(question_->source_order());
-    question_result_.clear();
+    Question question{id,order_,0,session_world_,feed_.owner(),text,path,std::chrono::steady_clock::now()+std::chrono::seconds(40)};
+    question.options = std::move(options);
+    question.after_pickup = after_pickup;
+    question.scope = std::move(scope);
+    question.task_revision = task_.revision();
+    if (original) question.origin = *original;
+    if (!question.scope.is_null() && question.scope.at("skill") == "place") task_.pin_opening_observation(question.source_order());
+    if (path == "local") for (auto& [item,q] : questions_)
+        if (q.path == "local") q.numbered = question.numbered = true;
+    questions_.emplace(id,std::move(question));
     return {{"status","recorded"},{"item",id}};
 }
 
@@ -169,31 +181,33 @@ void PartnerLoop::intake_question(std::string_view category, const Json& body, c
     const auto domain = body.value("eventDomain",std::uint64_t{}), event = body.value("event",std::uint64_t{});
     if (!item || !domain || !event || body.value("revision",0) != 1) return;
     const auto id = body.value("ask",std::uint64_t{});
-    const bool matched = question_ && item == question_->item && domain == question_->event_domain && event == question_->event_sequence &&
-        (!question_->ask || question_->ask == id) && body.value("recipient",std::string{}) == question_->player &&
-        question_->world == feed_.world() && question_->player == feed_.owner() && !feed_.departed() && !feed_.departure();
+    auto* question = questions_.contains(item) ? &questions_.at(item) : nullptr;
+    const bool matched = question && domain == question->event_domain && event == question->event_sequence &&
+        (!question->ask || question->ask == id) && body.value("recipient",std::string{}) == question->player &&
+        question->world == feed_.world() && question->player == feed_.owner() && !feed_.departed() && !feed_.departure();
     if (category == "interaction.ask.present") {
-        if (matched && id && !question_->ask && !question_work_ && body.value("question",std::string{}) == question_->text) {
-            question_->ask = id;
-            question_->presented = false;
+        if (matched && id && !question->ask && body.value("question",std::string{}) == question->text) {
+            question->ask = id;
+            question->presented = false;
         }
         return;
     }
-    const bool current = matched && (!question_->approval || (confirmation_ && confirmation_->request == item &&
+    const bool current = matched && (!question->approval || (confirmation_ && confirmation_->request == item &&
         confirmation_->decision.is_null() && std::chrono::steady_clock::now() < confirmation_->deadline &&
-        confirmation_context_current(body.at("channel") == "game" ? question_->answer_order : question_->order)));
+        confirmation_context_current(body.at("channel") == "game" ? question->answer_order : question->order)));
     if (matched)
-        complete_question(body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
+        complete_question(item,body.at("status").get<std::string>(),body.at("answer").get<std::string>(),body.at("channel").get<std::string>());
     question_outbound_.emplace_back(receipt_type,Json{{"ask",id},{"item",item},{"revision",1},{"eventDomain",domain},
         {"event",event},{"disposition",current ? "matched" : "stale"},{"mailbox",message.mailbox},{"message",message.sequence}});
 }
 
 // 结算原问题并将答复及获选方格交给后续回合。
 // 步骤：分流原审批 → 记录匹配答复及被排除的方格 → 释放问题并安排续行。
-void PartnerLoop::complete_question(std::string_view status, std::string answer, std::string_view channel) {
-    if (question_->approval) {
-        if (confirmation_ && confirmation_->request == question_->item) {
-            const auto order = channel == "game" ? question_->answer_order : question_->order;
+void PartnerLoop::complete_question(std::uint64_t item, std::string_view status, std::string answer, std::string_view channel) {
+    const auto& question = questions_.at(item);
+    if (question.approval) {
+        if (confirmation_ && confirmation_->request == question.item) {
+            const auto order = channel == "game" ? question.answer_order : question.order;
             const auto source = channel == "game" ? "game" : "main";
             if (std::chrono::steady_clock::now() >= confirmation_->deadline) confirm_once("expired","host");
             else if (status == "answered" && answer == "approve" && confirmation_context_current(order)) confirm_once("approved",source,order);
@@ -201,29 +215,42 @@ void PartnerLoop::complete_question(std::string_view status, std::string answer,
             else if (status == "expired") confirm_once("expired","host");
             else confirm_once("withdrawn","host");
         }
-        question_.reset();
+        questions_.erase(item);
         return;
     }
-    question_result_ = {{"item",question_->item},{"question",question_->text},{"status",status},{"answer",std::move(answer)}};
-    if (question_->answer_order) question_result_["answerMessage"] = question_->answer_order;
-    if (!question_->scope.is_null()) question_result_["scope"] = question_->scope;
-    if (!question_->scope.is_null() || !question_->origin.is_null()) question_result_["sourceMessage"] = question_->source_order();
-    if (status == "answered" && placement_choice_pending() && placement_choice_.item == question_->item) {
+    auto& result = question_results_.emplace_back(Json{{"item",item},{"question",question.text},{"status",status},
+        {"answer",std::move(answer)},{"player",question.player},{"taskRevision",question.task_revision}});
+    if (!question.origin.is_null()) result["originalText"] = question.origin.at("text");
+    if (question.answer_order) result["answerMessage"] = question.answer_order;
+    if (!question.scope.is_null()) result["scope"] = question.scope;
+    if (!question.scope.is_null() || !question.origin.is_null()) result["sourceMessage"] = question.source_order();
+    if (status == "answered" && placement_choice_pending() && placement_choice_.item == question.item) {
         for (const auto& option : placement_choice_.options) {
-            if (option.at("answer") == question_result_.at("answer")) question_result_["placementCells"] = option.at("cells");
+            if (option.at("answer") == result.at("answer")) result["placementCells"] = option.at("cells");
             else for (const auto& cell : option.at("cells"))
-                placement_choice_.rejected.push_back({{"cell",cell},{"item",question_->item}});
+                placement_choice_.rejected.push_back({{"cell",cell},{"item",question.item}});
         }
         placement_choice_.options.clear();
     }
-    question_.reset();
-    question_wake_ = status != "resolved" && status != "superseded";
+    questions_.erase(item);
+    question_wake_ |= status != "resolved" && status != "superseded";
 }
 
-// 将局内追问限制在原任务，已核实的显式答复可解除对应动作的等待。
-bool PartnerLoop::waits_for_player(std::uint64_t session, std::uint64_t resolves) const noexcept {
-    return session == session_ && !active_delegation_ && question_ && question_->path == "local" &&
-        !question_->approval && question_->task_revision == task_.revision() && resolves != question_->item;
+// 切换任务撤销旧问题，纠正只撤销早于本条原话的局内事项。
+void PartnerLoop::supersede_questions(bool correcting) {
+    for (auto it = questions_.begin(); it != questions_.end();) {
+        const auto& q = (it++)->second;
+        if (!q.approval && (!correcting || (q.path == "local" && q.order < order_))) complete_question(q.item,"superseded",{});
+    }
+}
+
+// 核对事项仍属于当前世界、玩家和原任务修订。
+const PartnerLoop::Question* PartnerLoop::waiting_question(std::uint64_t session, std::uint64_t item) const noexcept {
+    const auto it = questions_.find(item);
+    if (session != session_ || active_delegation_ || it == questions_.end()) return nullptr;
+    const auto& q = it->second;
+    return q.path == "local" && !q.approval && q.world == feed_.world() && q.player == feed_.owner() &&
+        q.task_revision == task_.revision() ? &q : nullptr;
 }
 
 // 判断候选是否依赖该问题，材料未固定时保留可能的重叠。
@@ -250,9 +277,10 @@ Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill,
         return Json{{"status","blocked"},{"reason",reason},{"item",item}};
     };
     const bool pending = placement_choice_pending();
-    if (waits_for_player(session,resolves) && (!pending || question_->item != placement_choice_.item) &&
-        question_covers(question_->scope,skill,args))
-        return blocked(question_->item,"waiting_for_player");
+    for (const auto& [item,q] : questions_) {
+        if (item != resolves && waiting_question(session,item) && (!pending || item != placement_choice_.item) &&
+            question_covers(q.scope,skill,args)) return blocked(item,"waiting_for_player");
+    }
     if (skill == "craft" || placement_choice_.revision != task_.revision()) return {};
     const bool fixed_cell = valid_action_cell(args);
     // 无固定格的地面取材由已绑定的保护格及实际地形筛选。
@@ -279,17 +307,17 @@ Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill,
 // 只有当前玩家提供了新指向且同轮观察支持原动作时才注销追问。
 // 步骤：核对事项和玩家原话 → 用可信观察匹配动作 → 记录无需唤醒的结算。
 void PartnerLoop::resolve_block_question(std::uint64_t item, std::string_view envelope) {
-    if (!item || !question_ || question_->item != item || question_->path != "local" || question_->approval ||
-        order_ <= question_->order || events_.empty() || events_.back().at("type") != "player.message") return;
+    const auto* q = waiting_question(session_,item);
+    if (!q || order_ <= q->order || events_.empty() || events_.back().at("type") != "player.message") return;
     auto args = Json::parse(envelope).at("arguments");
     if (!pointed_dig(session_,order_,item,args).value_or(false)) return;
-    complete_pointed_question();
+    complete_pointed_question(item);
 }
 
 // 把解开的自然追问与提供新指向的原话绑定。
-void PartnerLoop::complete_pointed_question() {
-    question_->answer_order = order_;
-    complete_question("resolved",events_.back().at("text").get<std::string>());
+void PartnerLoop::complete_pointed_question(std::uint64_t item) {
+    questions_.at(item).answer_order = order_;
+    complete_question(item,"resolved",events_.back().at("text").get<std::string>());
 }
 
 // 按原话和动作引用判定是否需要校验玩家指向。
@@ -301,18 +329,20 @@ std::optional<bool> PartnerLoop::pointed_dig(std::uint64_t session, std::uint64_
     auto intent = player_event ? read_dig_intent(events_.back().at("text").get_ref<const std::string&>()) : DigIntent{};
     if (!message && !item && !intent.pointed) return false;
     if (!message) message = order_;
+    const auto* question = waiting_question(session,item);
     if (message != order_ || !player_event ||
-        (item && (!question_ || question_->item != item || (placement_choice_pending() && placement_choice_.item == item) ||
-            question_->approval || question_->path != "local" ||
-            question_->order >= order_ || question_->task_revision != task_.revision() ||
-            !question_covers(question_->scope,"collect",args)))) return std::nullopt;
+        (item && (!question || (placement_choice_pending() && placement_choice_.item == item) ||
+            !question->presented || question->expired || std::chrono::steady_clock::now() >= question->local_answer_deadline ||
+            question->presentation_order >= order_ || (question->shown_with_number &&
+                !events_.back().at("text").get_ref<const std::string&>().starts_with(question->answer_prefix())) ||
+            !question_covers(question->scope,"collect",args)))) return std::nullopt;
     if (item) {
         const auto& text = events_.back().at("text").get_ref<const std::string&>();
         if (has_pickup_continuation(item) && std::ranges::none_of(
             std::array{"这个","这块","这根","那个","那块","那根","原木","左边","右边","this","that","left","right","log"},
             [&](std::string_view word) { return text.find(word) != text.npos; })) return std::nullopt;
-        if (!question_->origin.is_null()) {
-            const auto original = read_dig_intent(question_->origin.at("text").get_ref<const std::string&>());
+        if (!question->origin.is_null()) {
+            const auto original = read_dig_intent(question->origin.at("text").get_ref<const std::string&>());
             if (!original.material.empty()) intent = original;
         }
     }
@@ -336,14 +366,15 @@ bool PartnerLoop::requires_pointed_dig(std::uint64_t session) const {
 
 // 只为原局内事项保留已经登记的拾取后继。
 bool PartnerLoop::has_pickup_continuation(std::uint64_t item) const noexcept {
-    return item && question_ && item == question_->item && !question_->after_pickup.is_null();
+    const auto* q = waiting_question(session_,item);
+    return q && !q->after_pickup.is_null();
 }
 
 // 跳过已退役的原求助，宿主容量暂满时保留原事件及发送序号。
 // 步骤：核对队首求助 → 提交并保留暂满项 → 记录接纳身份并出队。
 void PartnerLoop::flush_question_events() {
     while (!question_outbound_.empty() && question_outbound_.front().first == help_type &&
-        (!question_ || question_outbound_.front().second.at("item") != question_->item)) question_outbound_.pop_front();
+        !questions_.contains(question_outbound_.front().second.at("item").get<std::uint64_t>())) question_outbound_.pop_front();
     if (question_outbound_.empty()) return;
     const auto& [type,body] = question_outbound_.front();
     const auto wire = body.dump();
@@ -352,8 +383,9 @@ void PartnerLoop::flush_question_events() {
     if (status == DFY_V2_RESOURCE_EXHAUSTED) return;
     if (status || receipt.sequence != question_sequence_+1) throw std::runtime_error("MC question: event rejected");
     if (type == help_type) {
-        question_->event_domain = receipt.domain;
-        question_->event_sequence = receipt.sequence;
+        auto& q = questions_.at(body.at("item").get<std::uint64_t>());
+        q.event_domain = receipt.domain;
+        q.event_sequence = receipt.sequence;
     }
     ++question_sequence_;
     question_outbound_.pop_front();
@@ -362,60 +394,96 @@ void PartnerLoop::flush_question_events() {
 // 用选定的唯一路径推进实际呈现及可信玩家答复。
 // 步骤：结算原发言 → 核对世界与本地时限 → 消费答复或推进既定路径。
 void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing) {
-    const bool live = !closing && question_ && question_->world == feed_.world() && question_->player == feed_.owner() &&
-        !feed_.departed() && (question_->path != "local" || question_->task_revision == task_.revision());
+    const auto live = [&](const Question& q) {
+        return !closing && q.world == feed_.world() && q.player == feed_.owner() && !feed_.departed() && !feed_.departure() &&
+            (q.path != "local" || q.task_revision == task_.revision());
+    };
     if (question_work_) {
+        const auto found = questions_.find(question_work_item_);
+        const bool current = found != questions_.end() && live(found->second);
         std::optional<GameResult> result;
-        try { result = question_work_->poll(!live,false,!feed_.recovering()); }
+        try { result = question_work_->poll(!current,false,!feed_.recovering()); }
         catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
         question_work_.reset();
-        if (live) {
-            auto& question = *question_;
+        if (current) {
+            auto& question = found->second;
             const auto receipt = Json::parse(result->payload,nullptr,false);
-            question.presented = result->success && receipt.is_object() && receipt.value("sent",false);
-            if (question.path == "local" && !question.presented) { complete_question("unavailable",{}); return; }
+            const bool sent = result->success && receipt.is_object() && receipt.value("sent",false);
+            if (question.path == "local" && !sent) {
+                complete_question(question.item,"unavailable",{});
+                auto& failed = question_results_.back();
+                failed["bridgeWork"] = question_delivery_;
+                failed["delivery"] = result->effect == GameEffect::none ? "not_sent" : "unknown";
+                return;
+            }
+            if (sent) for (const auto item : question_delivery_numbers_)
+                if (auto q = questions_.find(item); q != questions_.end()) q->second.shown_with_number = true;
+            question.presented = sent && !question_delivery_hint_;
             if (question.path == "local") {
                 const Json origin{{"sourceMessage",question.source_order()},{"questionItem",question.item}};
-                remember_dialogue("companion",question.order,question.text,origin);
-                publish("mc.partner.question",{{"status","presented"},{"generation",question.world},
-                    {"order",question.order},{"sourceMessage",question.source_order()},{"item",question.item},{"text",question.text},
-                    {"bridgeWork","ask."+std::to_string(instance)+".l."+std::to_string(question.item)}});
+                remember_dialogue("companion",question.order,receipt.at("text"),origin);
+                publish("mc.partner.question",{{"status",question_delivery_hint_ ? "number_presented" : "presented"},{"generation",question.world},
+                    {"order",question.order},{"sourceMessage",question.source_order()},{"item",question.item},{"text",receipt.at("text")},
+                    {"bridgeWork",question_delivery_}});
+                if (question_delivery_hint_) { question.hint_sent = true; question.started = false; }
             }
             if (question.ask) question_outbound_.emplace_back(feedback_type,Json{{"ask",question.ask},{"channel","game"},
                 {"action","presented"},{"delivered",question.presented},{"recipient",question.player},{"answer",""},
                 {"bridgeWork","ask."+std::to_string(instance)+".r."+std::to_string(question.ask)}});
         }
     }
-    if (!live) { question_.reset(); flush_question_events(); return; }
-    if (feed_.recovering()) { flush_question_events(); return; }
-    auto& q = *question_;
+    for (auto it = questions_.begin(); it != questions_.end();) {
+        auto current = it++;
+        if (!live(current->second)) { questions_.erase(current); continue; }
+        if (!feed_.recovering()) advance_question_item(current->second,config,instance);
+    }
+    if (!feed_.recovering()) for (const auto& event : feed_.pending()) {
+        if (event.at("type") != "player.message") continue;
+        for (auto it = questions_.begin(); it != questions_.end(); ++it)
+            if (accept_question_answer(it->second,event)) break;
+    }
+    flush_question_events();
+}
+
+// 按玩家协议原话的顺序匹配事项，带编号的答复只可消费一次。
+// 步骤：核对呈现水位与目标编号 → 校验选项或审批词 → 结算局内事项或投递原 ASK 回执。
+bool PartnerLoop::accept_question_answer(Question& q, const Json& event) {
+    if (!q.presented || q.forwarded || event.at("sequence") <= std::max(q.order,q.presentation_order)) return false;
+    const auto& text = event.at("text").get_ref<const std::string&>();
+    const auto prefix = q.answer_prefix();
+    std::string answer;
+    if (q.path == "local") {
+        if (!q.after_pickup.is_null() || q.expired) return false;
+        const bool addressed = text.starts_with(prefix);
+        if (!addressed && q.shown_with_number) return false;
+        answer = addressed ? text.substr(prefix.size()) : text;
+        if (answer.empty() || ((!addressed || !q.options.empty()) && std::ranges::find(q.options,Json(answer)) == q.options.end()))
+            return false;
+        q.answer_order = event.at("sequence");
+        complete_question(q.item,"answered",std::move(answer));
+        return true;
+    }
+    const auto token = std::to_string(q.ask);
+    if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
+    else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
+    else if (text.starts_with(prefix)) answer = text.substr(prefix.size());
+    if (answer.empty() || (q.approval && answer != "approve" && answer != "deny")) return false;
+    q.answer_order = event.at("sequence");
+    question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
+        {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}});
+    q.forwarded = true;
+    return true;
+}
+
+// 推进单个事项的期限及呈现，共用发言读口保留原事项身份。
+// 步骤：标记超时 → 投递路由请求 → 按既定渠道发出问题。
+void PartnerLoop::advance_question_item(Question& q, const BridgeConfig& config, std::uint64_t instance) {
     const bool local = q.path == "local";
     if (local && !q.expired && std::chrono::steady_clock::now() >= q.local_answer_deadline) {
         q.expired = true;
         if (q.scope.is_null() && (!placement_choice_pending() || placement_choice_.item != q.item)) task_.disarm();
         publish("mc.partner.question",{{"status","expired"},{"generation",q.world},{"order",q.order},{"item",q.item}});
-    }
-    if (q.presented && !q.forwarded) {
-        const auto prefix = "答复 "+std::to_string(q.ask ? q.ask : q.item)+" ";
-        const auto token = std::to_string(q.ask);
-        for (const auto& event : feed_.pending()) {
-            const auto text = event.value("text",std::string{});
-            if (event.at("sequence") <= q.order) continue;
-            std::string answer;
-            if (local && q.after_pickup.is_null() && !q.expired && std::ranges::find(q.options,Json(text)) != q.options.end())
-                answer = text;
-            else if (q.approval && (text == "确认 "+token || text == "approve "+token)) answer = "approve";
-            else if (q.approval && (text == "拒绝 "+token || text == "deny "+token)) answer = "deny";
-            else if (!local && text.starts_with(prefix)) answer = text.substr(prefix.size());
-            if (answer.empty() || (q.approval && answer != "approve" && answer != "deny")) continue;
-            q.answer_order = event.at("sequence");
-            if (local) { complete_question("answered",answer); return; }
-            question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},{"action","answer"},
-                {"delivered",false},{"recipient",q.player},{"answer",answer},{"bridgeWork",""}});
-            q.forwarded = true;
-            break;
-        }
     }
     if (!local && !q.dispatched) {
         Json context = Json::object();
@@ -426,24 +494,39 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
             {"path",q.path},{"recipient",q.player},{"channel","game"},{"waitMs",24000}});
         q.dispatched = true;
     }
-    const bool start = !q.started && (local || q.ask) && feed_.ready();
+    const bool start = !q.started && !question_work_ && (local || q.ask) && feed_.ready();
     if (start) {
         if (q.approval && confirmation_ && !confirmation_->work && feed_.cursor() != q.order) {
             question_outbound_.emplace_back(feedback_type,Json{{"ask",q.ask},{"channel","game"},
                 {"action","presented"},{"delivered",false},{"recipient",q.player},{"answer",""},{"bridgeWork",""}});
             q.started = true;
-            flush_question_events();
             return;
         }
         const auto token = std::to_string(q.ask ? q.ask : q.item);
-        const auto prompt = local ? q.text : q.text+
-            (q.approval ? " 回复 确认 "+token+" 或 拒绝 "+token : " 回复 答复 "+token+" <回答>");
+        auto prompt = q.text;
+        std::vector<std::uint64_t> numbers;
+        bool separate_hint = false;
+        if (!local || (q.numbered && !q.hint_sent)) {
+            auto hint = q.approval ? "回复 确认 "+token+" 或 拒绝 "+token : "回复 "+q.answer_prefix()+"<回答>";
+            if (local) numbers.push_back(q.item);
+            if (local) for (const auto& [item,other] : questions_)
+                if (item != q.item && other.path == "local" && other.presented && !other.shown_with_number) {
+                    hint += "（上一问编号 "+std::to_string(item)+"）";
+                    numbers.push_back(item);
+                }
+            prompt += " "+hint;
+            separate_hint = local && chat_line_bytes(prompt) != prompt.size();
+            if (separate_hint) prompt = "下一问请"+hint;
+        }
         const auto arguments = Json{{"context",{{"generation",q.world},{"order",feed_.cursor()}}},
             {"arguments",{{"text",prompt}}}}.dump();
-        question_work_ = std::make_unique<GameWork>(GameAction::partner,config,
-            "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token,arguments,"reply");
+        question_delivery_ = "ask."+std::to_string(instance)+"."+(q.ask ? "r." : "l.")+token+(separate_hint ? ".number" : "");
+        question_work_ = std::make_unique<GameWork>(GameAction::partner,config,question_delivery_,arguments,"reply");
+        question_delivery_hint_ = separate_hint;
+        question_delivery_numbers_ = std::move(numbers);
+        question_work_item_ = q.item;
+        q.presentation_order = feed_.cursor();
         q.started = true;
     }
-    flush_question_events();
 }
 }

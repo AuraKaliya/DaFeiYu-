@@ -25,7 +25,9 @@ function readPartnerContext(row) {
     assert.ok(Object.values(entries).every(value => typeof value === 'string' && value.length));
   }
   for (const field of ['taskHandoff', 'pendingQuestion', 'questionResult', 'planRejection']) {
-    assert.equal(Object.hasOwn(flow, field === 'taskHandoff' ? 'handoff' : field), Object.hasOwn(input, field));
+    const plural = field === 'pendingQuestion' || field === 'questionResult';
+    assert.equal(Object.hasOwn(flow, field === 'taskHandoff' ? 'handoff' : field), Object.hasOwn(input,field) ||
+      (plural && Object.hasOwn(input,field+'s')));
   }
   assert.doesNotMatch(JSON.stringify(guidance), /wallSurvey|route\.id|afterPickup|placementOptions/);
   return { input, system: system.content, guidance, tools: row.input.tools };

@@ -79,6 +79,8 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         input.contains("queuedActions") || input.contains("workSettlement") || input.contains("planSettlements");
     const auto motion = input.find("activeMotion");
     const bool reading_collection = player_message && motion != input.end() && motion->at("skill") == "collect" && motion->contains("progress");
+    const bool scoped_question = (input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")) ||
+        (input.contains("pendingQuestions") && std::ranges::any_of(input.at("pendingQuestions"),[](const auto& q) { return q.contains("scope"); }));
     const bool settling_handoff = input.contains("planSettlements") && input.contains("taskPlan") &&
         std::ranges::any_of(input.at("taskPlan").at("nodes"),[](const auto& node) { return node.at("skill") == "give_item"; });
     const std::array entries{
@@ -90,11 +92,11 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         Guidance{"flowGuidance","correction","按当前纠正重核目标和证据，沿用仍有效的原话引用。",correcting},
         Guidance{"flowGuidance","handoff","先核对旧工作实际退出与当前修订，再推进有冲突的步骤。",input.contains("taskHandoff")},
         Guidance{"flowGuidance","pendingQuestion","保留原待答事项与已知后继，依赖答复的步骤等待，获准的独立步骤可以推进。",
-            input.contains("pendingQuestion")},
+            input.contains("pendingQuestion") || input.contains("pendingQuestions")},
         Guidance{"flowGuidance","questionResult","根据事项的结算状态、所选目标和当前证据判断原步骤能否继续。",
-            input.contains("questionResult")},
+            input.contains("questionResult") || input.contains("questionResults")},
         Guidance{"flowGuidance","clarification","局内疑问用本地追问及动作范围。玩家用自然语言补足线索时，先核对原消息和候选，再用 task_update 的 resolves 结算该事项。仍有不确定的步骤维持等待。",
-            player_message && input.contains("pendingQuestion") && input.at("pendingQuestion").contains("scope")},
+            player_message && scoped_question},
         Guidance{"flowGuidance","planRejection","根据实际拒绝原因调整候选。修订机会耗尽时说明受阻。",input.contains("planRejection")},
         Guidance{"flowGuidance","previousPlanRejection","较早消息的计划退回原因只供修订原计划时查阅。先处理当前原话与最新实效。",
             input.contains("previousPlanRejection")},
@@ -138,13 +140,7 @@ std::string player_reply(std::string_view answer) {
     const auto start = text.find_first_not_of(' ');
     if (start == text.npos) return {};
     text.erase(0,start);
-    unsigned units = 0;
-    for (std::size_t index = 0; index < text.size(); ++index) {
-        const auto byte = static_cast<unsigned char>(text[index]);
-        if ((byte & 0xc0) == 0x80) continue;
-        units += byte >= 0xf0 ? 2 : 1;
-        if (units > 220) { text.resize(index); break; }
-    }
+    text.resize(chat_line_bytes(text));
     text.erase(text.find_last_not_of(' ')+1);
     return text;
 }
@@ -250,7 +246,7 @@ void PartnerLoop::reset() noexcept {
     previous_.clear();
     reviewed_ = 0;
     stopped_work_ = false;
-    question_.reset(); question_work_.reset(); question_result_.clear(); question_wake_ = false; question_outbound_.clear();
+    questions_.clear(); question_work_.reset(); question_results_.clear(); question_wake_ = false; question_outbound_.clear();
     placement_choice_ = {};
 }
 
@@ -363,7 +359,7 @@ void PartnerLoop::retire() {
     recent_events_.clear();
     dialogue_.clear();
     previous_.clear();
-    question_.reset(); question_result_.clear(); question_wake_ = false;
+    questions_.clear(); question_results_.clear(); question_wake_ = false;
     placement_choice_ = {};
     approval_result_ = nullptr;
 }
@@ -462,22 +458,19 @@ void PartnerLoop::submit(std::string_view wake) {
             return receipt.at("bridgeWork") == latest->at("bridgeWork");
         })) task.erase(latest);
     }
-    if (!question_result_.is_null() && !question_result_.empty()) input["questionResult"] = question_result_;
-    if (question_) {
-        input["pendingQuestion"] = {{"item",question_->item},{"question",question_->text},{"path",question_->path},
-            {"sourceMessage",question_->source_order()},{"originalText",question_->origin.is_null() ? Json("") : question_->origin.at("text")},
-            {"options",question_->options},{"status",question_->expired ? "expired" : "waiting"}};
-        if (const auto* opening = task_.opening_observation(question_->source_order()))
-            input["pendingQuestion"]["openingObservation"] = *opening;
+    if (question_results_.size() == 1) input["questionResult"] = question_results_.front();
+    else if (!question_results_.empty()) input["questionResults"] = question_results_;
+    for (const auto& [item,q] : questions_) {
+        Json pending{{"item",item},{"question",q.text},{"path",q.path},{"player",q.player},{"taskRevision",q.task_revision},
+            {"sourceMessage",q.source_order()},{"originalText",q.origin.is_null() ? Json("") : q.origin.at("text")},
+            {"options",q.options},{"status",q.expired ? "expired" : "waiting"}};
+        if (const auto* opening = task_.opening_observation(q.source_order())) pending["openingObservation"] = *opening;
+        if (!q.after_pickup.is_null()) pending["afterPickup"] = q.after_pickup;
+        if (!q.scope.is_null()) pending["scope"] = q.scope;
+        if (placement_choice_pending() && item == placement_choice_.item) pending["placementOptions"] = placement_choice_.options;
+        if (questions_.size() == 1) input["pendingQuestion"] = std::move(pending);
+        else input["pendingQuestions"].push_back(std::move(pending));
     }
-    if (question_ && !question_->after_pickup.is_null()) {
-        input["pendingQuestion"]["afterPickup"] = question_->after_pickup;
-    }
-    if (question_ && !question_->scope.is_null()) {
-        input["pendingQuestion"]["scope"] = question_->scope;
-    }
-    if (question_ && placement_choice_pending() && question_->item == placement_choice_.item)
-        input["pendingQuestion"]["placementOptions"] = placement_choice_.options;
     if (placement_choice_.revision == task_.revision() && !placement_choice_.rejected.empty())
         input["placementExcluded"] = placement_choice_.rejected;
     if (confirmation_ && confirmation_->work && !delegated) {
@@ -575,7 +568,7 @@ void PartnerLoop::submit(std::string_view wake) {
             handoff_.reset();
         task_.submitted(!facts.empty() || answer,autonomous);
         question_wake_ = false;
-        question_result_.clear();
+        question_results_.clear();
         expansion_pending_ = false;
         if (completed != settlements_.cend()) settlements_.erase(completed);
         plan_receipts_.clear();
@@ -646,8 +639,9 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (skill == "ask_player") {
         auto question = open_question(invocation,args);
         if (question.at("status") == "recorded" || question.at("status") == "waiting") {
-            question_requested_ = true;
-            wait_for_work_ |= question_->scope.is_null();
+            const auto& q = questions_.at(question.at("item").get<std::uint64_t>());
+            question_requested_ |= q.source_order() == order_;
+            wait_for_work_ |= q.scope.is_null();
         }
         return question;
     }
@@ -685,7 +679,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
             return {{"status","stale_correction"}};
         auto result = task_.begin_correction(events_.back(),feed_.observation());
         if (result.at("status") == "correction_recorded") {
-            if (waits_for_player(session_) && question_->order < order_) complete_question("superseded",{});
+            supersede_questions(true);
             cancel_plan("task_changed");
             clear_queue("task_changed");
             if (motion_ && !motion_->plan_node) hold_task_motion();
@@ -702,45 +696,50 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     const auto prior_scope = scope();
     const auto player_order = !events_.empty() && events_.back().at("type") == "player.message" ? order_ : 0;
     const auto resolves = args.value("resolves",std::uint64_t{});
-    const bool waiting = waits_for_player(session_);
-    const bool supports_placement = waiting && (question_->scope.is_null() || question_->scope.at("skill") == "place");
-    const bool scoped_answer = resolves && waiting && resolves == question_->item && player_order > question_->order &&
-        question_->presented && !question_->expired && std::chrono::steady_clock::now() < question_->local_answer_deadline &&
-        !question_->scope.is_null() && question_->after_pickup.is_null() && !placement_choice_pending() &&
-        (target == args.end() || (question_->scope.at("skill") == "place" && target->value("message",std::uint64_t{}) == question_->source_order())) &&
-        (!args.contains("collection") || question_->scope.at("skill") == "collect");
-    const bool correction_answer = committing && supports_placement && question_->scope.is_null() &&
-        resolves == question_->item && player_order > question_->order;
+    const auto* question = waiting_question(session_,resolves);
+    const bool answer_current = question && player_order > question->presentation_order && question->presented && !question->expired &&
+        std::chrono::steady_clock::now() < question->local_answer_deadline && (!question->shown_with_number ||
+            events_.back().at("text").get_ref<const std::string&>().starts_with(question->answer_prefix()));
+    const bool scoped_answer = answer_current && !question->scope.is_null() && question->after_pickup.is_null() &&
+        (!placement_choice_pending() || placement_choice_.item != resolves) &&
+        (target == args.end() || (question->scope.at("skill") == "place" && target->value("message",std::uint64_t{}) == question->source_order())) &&
+        (!args.contains("collection") || question->scope.at("skill") == "collect");
+    const bool correction_answer = committing && answer_current && question->scope.is_null();
     if (resolves && !scoped_answer && !correction_answer)
         return {{"status","invalid_target"},{"reason","question_resolution_mismatch"}};
     const bool answers_question = scoped_answer || correction_answer;
-    const bool independent_target = waiting && !supports_placement && !committing && !args.contains("collection") &&
-        args.at("goal").get_ref<const std::string&>() == task_.goal();
+    const bool same_goal = args.at("goal").get_ref<const std::string&>() == task_.goal();
     if (placement_choice_pending() && !task_.correcting() &&
         (committing || target != args.end() || args.value("collection",std::string(task_.collection())) != task_.collection() ||
             args.at("goal").get_ref<const std::string&>() != task_.goal()))
         return {{"status","waiting_for_player"},{"item",placement_choice_.item}};
-    if (waiting && !independent_target && (committing || target != args.end() || args.contains("collection") ||
-        args.at("goal").get_ref<const std::string&>() != task_.goal()) &&
-        (player_order <= question_->order || (committing && !answers_question)))
-        return {{"status","waiting_for_player"},{"item",question_->item}};
+    std::vector<std::uint64_t> independent;
+    for (const auto& [item,q] : questions_) {
+        if (item == resolves || !waiting_question(session_,item)) continue;
+        if (same_goal && !committing && !q.scope.is_null() &&
+            (!args.contains("collection") || q.scope.at("skill") != "collect") &&
+            (target == args.end() || q.scope.at("skill") != "place")) independent.push_back(item);
+        else if ((committing || target != args.end() || args.contains("collection") || !same_goal) &&
+            (q.shown_with_number || player_order <= q.order || committing)) return {{"status","waiting_for_player"},{"item",item}};
+    }
     const auto prior_revision = task_.revision();
     auto result = task_.update(args,feed_.observation(),feed_.scene_revision(),anchor,player_order);
     if (answers_question && result.at("status") == "updated") {
-        question_->answer_order = player_order;
-        auto origin = std::move(question_->origin);
-        complete_question("resolved",events_.back().at("text").get<std::string>());
+        questions_.at(resolves).answer_order = player_order;
+        auto origin = question->origin;
+        complete_question(resolves,"resolved",events_.back().at("text").get<std::string>());
         if (scoped_answer) {
-            task_.record_clarification(std::move(origin),question_result_);
-            result["resolvedQuestion"] = question_result_;
-            auto fact = question_result_;
+            const auto& answer = question_results_.back();
+            task_.record_clarification(std::move(origin),answer);
+            result["resolvedQuestion"] = answer;
+            auto fact = answer;
             fact["generation"] = session_world_;
             fact["order"] = player_order;
             publish("mc.partner.question",fact);
         }
     }
     if (task_.revision() != prior_revision) {
-        if (independent_target) question_->task_revision = task_.revision();
+        for (const auto item : independent) questions_.at(item).task_revision = task_.revision();
         cancel_plan("task_changed");
         clear_queue("task_changed");
         settlements_.clear();
@@ -768,7 +767,7 @@ Json PartnerLoop::switch_task(const Json& args) {
     const auto result = task_.switch_task(args,events_.back());
     if (result.at("status") != "updated") return result;
 
-    if (question_ && !question_->approval) complete_question("superseded",{});
+    supersede_questions(false);
     if (confirmation_ && confirmation_->work) confirm_once("withdrawn","task");
     cancel_plan("task_changed");
     clear_queue("task_changed");
@@ -1005,8 +1004,8 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
     if (wait_for_work_) return {};
-    if (waits_for_player(session_) && question_->scope.is_null() &&
-        (!placement_choice_pending() || question_->item != placement_choice_.item)) return {};
+    for (const auto& [item,q] : questions_)
+        if (waiting_question(session_,item) && q.scope.is_null() && (!placement_choice_pending() || item != placement_choice_.item)) return {};
     if (expansion_pending_ && task_.can_continue()) return "skills.expanded";
     if (motion_) return {};
     return task_.correcting() ? std::string_view{} : task_.trigger(feed_.observation(),feed_.scene_revision());
@@ -1324,7 +1323,7 @@ void PartnerLoop::review(PartnerWork work, bool closing) {
     // 与当前在途动作完全对应的唯一批准仍留在收件记录，已由确认状态机处理。
     if (confirmation_ && confirmation_->request == work.invocation && confirmation_->approved_order == feed_.cursor() &&
         feed_.pending().size() == 1 && confirmation_->approved_order > confirmation_->order) return;
-    if (question_ && question_->approval && question_->item == work.invocation && question_->answer_order == feed_.cursor() &&
+    if (const auto q = questions_.find(work.invocation); q != questions_.end() && q->second.approval && q->second.answer_order == feed_.cursor() &&
         feed_.pending().size() == 1) return;
     const auto input = model_scene_text(Json{{"currentEvents",events_.empty() ? recent_events_ : events_},{"newEvents",feed_.pending()},
         {"work",{{"skill",work.skill},{"candidate",work.invocation},{"state","running"}}},

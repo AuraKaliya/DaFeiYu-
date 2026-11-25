@@ -74,9 +74,10 @@ Json PartnerLoop::report_plan_attempt(std::uint64_t invocation, Json result) {
         return result;
     }
     const auto reason = result.value("reason","");
+    const auto* waiting = waiting_question(session_,result.value("item",std::uint64_t{}));
     if (reason == "answer_target_mismatch" || (reason == "waiting_for_player" &&
         ((placement_choice_pending() && result.at("item") == placement_choice_.item) ||
-            (question_ && !question_->scope.is_null() && result.at("item") == question_->item)))) {
+            (waiting && !waiting->scope.is_null())))) {
         result["attempt"] = invocation;
         result["retryAllowed"] = false;
         publish("mc.partner.plan",{{"status","step_blocked"},{"revision",task_.revision()},{"order",order_},{"result",result}});
@@ -112,7 +113,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (steps.size() != 1 || steps.front().at("skill") != "dig_block")
             return {{"status","invalid_plan"},{"reason","expected_one_pointed_dig"}};
         if (has_pickup_continuation(resolves)) {
-            const auto& next = question_->after_pickup;
+            const auto& next = questions_.at(resolves).after_pickup;
             const auto block = steps.front().at("arguments").value("block",std::string{});
             const auto item = craft_item(next.at("item").get_ref<const std::string&>(),block);
             const auto pickup = next.value("pickup",block);
@@ -216,7 +217,7 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
     if (!ready) return waiting;
 
     plan_ = std::move(plan);
-    if (resolves) complete_pointed_question();
+    if (resolves) complete_pointed_question(resolves);
     wait_for_work_ = true;
     publish("mc.partner.plan",{{"status","queued"},{"plan",plan_context()}});
     return {{"status","queued"},{"plan",plan_->id}};

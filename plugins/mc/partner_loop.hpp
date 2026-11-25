@@ -14,6 +14,18 @@
 #include <map>
 
 namespace dfy::mc {
+// 返回游戏单条私聊能容纳的完整 UTF-8 前缀，桥接按 UTF-16 单元计数。
+inline std::size_t chat_line_bytes(std::string_view text) noexcept {
+    unsigned units = 0;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const auto byte = static_cast<unsigned char>(text[index]);
+        if ((byte & 0xc0) == 0x80) continue;
+        units += byte >= 0xf0 ? 2 : 1;
+        if (units > 220) return index;
+    }
+    return text.size();
+}
+
 struct PartnerWork { std::uint64_t invocation = 0; std::string_view skill; };
 // Minecraft 插件拥有事件处理、角色规则与游戏技能，模型工具循环借用宿主子会话。
 class PartnerLoop {
@@ -178,15 +190,15 @@ class PartnerLoop {
     // 推进选定渠道的实际呈现与玩家答复。
     void advance_question(const BridgeConfig& config, std::uint64_t instance, bool closing);
     // 接纳原问题的结果，并准备下一轮上下文。
-    void complete_question(std::string_view status, std::string answer, std::string_view channel = {});
+    void complete_question(std::uint64_t item, std::string_view status, std::string answer, std::string_view channel = {});
+    // 在切换任务或接纳纠正时结算旧修订关联的原事项。
+    void supersede_questions(bool correcting);
     // 判断当前任务修订是否仍在等待已绑定格的选择。
     bool placement_choice_pending() const noexcept;
-    // 核对是否有同一任务的普通局内追问。
-    bool waits_for_player(std::uint64_t session, std::uint64_t resolves = 0) const noexcept;
     // 判断普通局内追问是否覆盖该执行器及其材料。
     static bool question_covers(const nlohmann::json& scope, std::string_view skill, const nlohmann::json& arguments);
     // 关闭已由当前原话和动作证据共同确认的局内追问。
-    void complete_pointed_question();
+    void complete_pointed_question(std::uint64_t item);
     // 检查原候选在执行时使用的世界、玩家及游标。
     bool confirmation_context_current(std::uint64_t order) const;
     // 保留并按序提交原生渠道事件。
@@ -198,24 +210,37 @@ class PartnerLoop {
         std::chrono::steady_clock::time_point local_answer_deadline;
         bool started = false, presented = false, dispatched = false, forwarded = false;
         bool approval = false;
-        bool expired = false;
+        bool expired = false, numbered = false, shown_with_number = false, hint_sent = false;
+        std::uint64_t presentation_order = 0;
         std::uint64_t event_domain = 0, event_sequence = 0, answer_order = 0;
         std::uint64_t task_revision = 0;
         nlohmann::json options, after_pickup, scope, origin;
         // 返回追问所指的原话，登记时的收件水位继续用于筛选后来的答复。
         std::uint64_t source_order() const { return origin.is_object() ? origin.value("sequence",order) : order; }
+        // 生成玩家在原渠道答复本事项所用的编号前缀。
+        std::string answer_prefix() const { return "答复 "+std::to_string(ask ? ask : item)+" "; }
     };
+    // 查当前玩家、世界与任务修订下指定的局内待答。
+    const Question* waiting_question(std::uint64_t session, std::uint64_t item) const noexcept;
+    // 验证并消费属于本事项的玩家原话。
+    bool accept_question_answer(Question& question, const nlohmann::json& event);
+    // 检查单一事项的期限并申请呈现。
+    void advance_question_item(Question& question, const BridgeConfig& config, std::uint64_t instance);
     const dfy_v2_routed_event_api* question_events_ = nullptr;
     std::uint64_t question_sequence_ = 0;
     std::deque<std::pair<std::string_view,nlohmann::json>> question_outbound_;
-    std::optional<Question> question_;
+    std::map<std::uint64_t,Question> questions_;
     struct PlacementChoice {
         std::uint64_t revision = 0, item = 0;
         nlohmann::json options, rejected;
     };
     PlacementChoice placement_choice_;
     std::unique_ptr<GameWork> question_work_;
-    nlohmann::json question_result_;
+    std::uint64_t question_work_item_ = 0;
+    std::string question_delivery_;
+    std::vector<std::uint64_t> question_delivery_numbers_;
+    bool question_delivery_hint_ = false;
+    nlohmann::json question_results_ = nlohmann::json::array();
     bool question_wake_ = false;
 
     PartnerFeed feed_;
