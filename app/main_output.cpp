@@ -31,6 +31,7 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
 // 步骤：归还上轮发言记录 → 核对入口与后端能力 → 固定工具及当轮说明。
 void MainMessages::prepare_output(agent::RunOptions& options) {
     explicit_deliveries_.clear();
+    output_input_ = 0;
     auto state = std::make_shared<agent::ContextStatus>();
     state->binding = "main/"+instance_;
     if (delivered_) {
@@ -68,9 +69,12 @@ std::int64_t MainMessages::commit_reply(const Json& envelope) {
     const auto message_id = saved.message.id;
     const agent::RunId run{std::stoull(envelope.at("session").get<std::string>()),std::stoull(envelope.at("turn").get<std::string>())};
     if (run.sequence > context_floor_ && (!delivered_ || message_id > delivered_->id)) delivered_ = std::move(saved.message);
+    const auto& text = envelope.at("text").get_ref<const std::string&>();
+    const auto spoken = explicit_deliveries_.find(text);
+    if (spoken != explicit_deliveries_.end() && spoken->second.at("delivery") == key)
+        spoken->second = {{"state","delivered"},{"delivery",key},{"message",std::to_string(message_id)}};
     if (!saved.created) return message_id;
 
-    const auto& text = envelope.at("text").get_ref<const std::string&>();
     app_.conversation().published_reply(run,text);
     if (reply_sink_) reply_sink_(text);
     if (trace_) {
@@ -111,18 +115,22 @@ std::string MainMessages::pending_reply(agent::RunId run) const {
 void MainMessages::final_reply(agent::RunId run, const std::string& text) {
     const auto spoken = explicit_deliveries_.find(text);
     if (spoken==explicit_deliveries_.end()) reply(run,"final",text);
-    else if (trace_) trace_->append("dialogue.reply_reused",{{"session",run.session},{"run",run.sequence},{"delivery",spoken->second}});
+    else if (trace_) trace_->append("dialogue.reply_reused",{{"session",run.session},{"run",run.sequence},{"delivery",spoken->second.at("delivery")}});
 }
 
-// 在工具执行时按原调用登记发言，重复的最终文本复用该投递。
-// 步骤：核对实际正文 → 由回合、步骤和调用号固定身份 → 返回原写入状态。
+// 同一来源下重复提出的发言沿第一次投递查回执。
+// 步骤：核对实际正文 → 复用原回执或按首次调用投递 → 返回真实写入状态。
 std::unique_ptr<agent::ToolWork> MainMessages::speak(const agent::ToolInvocation& invocation) {
     const auto text = Json::parse(invocation.call.arguments).at("text").get<std::string>();
     if (text.size()>dialogue_text_limit || text.find_first_not_of(" \t\r\n")==text.npos || !runtime::valid_utf8(text))
         return agent::completed_tool({false,agent::ToolEffect::not_applied,"invalid reply text",agent::ToolError::failed});
-    const auto step = invocation.attempt.step;
-    const auto receipt = reply(step.run,"tool-"+platform::sha256(std::to_string(step.sequence)+"/"+invocation.call.id),text);
-    explicit_deliveries_.insert_or_assign(text,receipt.at("delivery").get<std::string>());
+    auto spoken = explicit_deliveries_.find(text);
+    if (spoken == explicit_deliveries_.end()) {
+        const auto step = invocation.attempt.step;
+        auto receipt = reply(step.run,"tool-"+platform::sha256(std::to_string(step.sequence)+"/"+invocation.call.id),text);
+        spoken = explicit_deliveries_.emplace(text,std::move(receipt)).first;
+    }
+    const auto& receipt = spoken->second;
     const bool delivered = receipt.at("state")=="delivered";
     return agent::completed_tool({delivered,delivered ? agent::ToolEffect::applied : agent::ToolEffect::unknown,
         receipt.dump(),delivered ? agent::ToolError::none : agent::ToolError::unavailable});

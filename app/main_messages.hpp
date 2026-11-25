@@ -63,7 +63,8 @@ class MainMessages {
     RunLog* trace_;
     std::function<void(const std::string&)> reply_sink_;
     std::unique_ptr<agent::ToolCatalog> reply_tools_;
-    std::map<std::string,std::string> explicit_deliveries_;
+    std::map<std::string,nlohmann::json> explicit_deliveries_;
+    std::uint64_t output_input_ = 0;
     std::optional<StoredMessage> delivered_;
     std::uint64_t context_floor_ = 0;
     std::map<std::int64_t,nlohmann::json> retry_;

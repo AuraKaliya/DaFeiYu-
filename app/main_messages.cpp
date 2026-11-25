@@ -169,13 +169,19 @@ void MainMessages::remove_queue(std::uint64_t native) {
     }
 }
 // 从会话的原始收件状态读取实际提交步骤，显示窗口裁剪不影响该事实。
-// 步骤：写入已确定的补充结算 → 核对面向用户的成功结果 → 按本次回合身份交付回答。
+// 步骤：按已送模的补充更新回复来源 → 写入已确定的收件结算 → 按原回合交付最终文本。
 void MainMessages::observe(agent::RunId run, const std::vector<agent::TurnInput>& inputs, const CompletedTurn* completed) {
     for (const auto& input : inputs) {
         if (input.state==agent::InputState::waiting) continue;
-        if (auto item = appended_.extract(std::pair{run.sequence,input.message}); !item.empty())
+        if (input.state == agent::InputState::submitted && input.message > output_input_) {
+            output_input_ = input.message;
+            explicit_deliveries_.clear();
+        }
+        if (auto item = appended_.extract(std::pair{run.sequence,input.message}); !item.empty()) {
+            if (input.state == agent::InputState::submitted) parent_ = {run,item.mapped()};
             publish(item.mapped(),{{"state",agent::input_state_name(input.state)},{"instance",instance_},{"session",std::to_string(run.session)},
                 {"turn",std::to_string(run.sequence)},{"nativeMessage",std::to_string(input.message)},{"modelStep",std::to_string(input.model_step)}});
+        }
     }
     if (!completed || completed->error || completed->status.result!=runtime::OperationState::succeeded ||
         completed->answer.find_first_not_of(" \t\r\n")==std::string::npos) return;

@@ -95,6 +95,87 @@ void command_recovery(const std::filesystem::path& data) {
     }
 }
 
+// 工具收到待写回执后换调用号重提同文，核实等待中和补写后的查询都沿原投递。
+// 步骤：持有数据库写锁 → 在首份回执处控制补写时机 → 核对两次工具回执、最终文本和渠道行数。
+void repeated_reply(const std::filesystem::path& data, bool recover_before_retry) {
+    using namespace model;
+    auto store = std::make_shared<app::MessageStore>(data);
+    std::vector<Json> receipts;
+    std::atomic_bool first_received = false;
+    std::binary_semaphore resume(0);
+    const std::string answer = "材料已经收到。";
+    app::Application application({},data/"empty",data,Backend{[&](const auto&,const Request& request) -> Response {
+        const auto& last = request.messages.back();
+        if (last.role == Role::tool) {
+            receipts.push_back(Json::parse(last.content.substr(last.content.find('{'))));
+            if (receipts.size() == 2) return {{Role::assistant,answer}};
+            first_received = true;
+            if (!resume.try_acquire_for(std::chrono::seconds(8))) throw std::runtime_error("reply fixture gate expired");
+        }
+        return {{Role::assistant,"",{{receipts.empty() ? "first" : "retry","main_reply",Json{{"text",answer}}.dump()}}},FinishReason::tool_calls};
+    }});
+    application.bind_messages(store,"reply-test",nullptr);
+    auto& channel = *application.main_messages();
+    unsigned notifications = 0;
+    channel.on_reply([&](const std::string&) { ++notifications; });
+    channel.terminal("original","收到材料了吗？");
+    {
+        WriteLock lock(data);
+        until(application,[&] { return first_received.load(); });
+        if (!recover_before_retry) {
+            resume.release();
+            until(application,[&] { return !application.conversation().busy(); });
+        }
+    }
+    channel.finish();
+    if (recover_before_retry) {
+        resume.release();
+        until(application,[&] { return !application.conversation().busy(); });
+    }
+    const auto rows = store->page(true,0,store->watermark(),8).records;
+    if (rows.size()!=2 || notifications!=1 || rows.front().envelope.at("text")!=answer || receipts.size()!=2 ||
+        receipts[0].at("state")!="pending" || receipts[1].at("state")!=(recover_before_retry ? "delivered" : "pending") ||
+        receipts[0].at("delivery")!=rows.front().submission || receipts[1].at("delivery")!=rows.front().submission ||
+        (recover_before_retry && receipts[1].at("message")!=std::to_string(rows.front().id)))
+        throw std::runtime_error("same original reply received different delivery IDs or channel messages");
+}
+
+// 同一运行中，两条已分别送模的原话可以各收到一条相同的答复。
+// 步骤：送达首次发言 → 在原回合补充新问题 → 核对两条渠道发言各自的来源与投递号。
+void separate_reply_sources(const std::filesystem::path& data) {
+    using namespace model;
+    const std::string answer = "收到了。";
+    auto store = std::make_shared<app::MessageStore>(data);
+    std::atomic_bool first_delivered = false;
+    std::binary_semaphore resume(0);
+    app::Application application({},data/"empty",data,Backend{[&](const auto&,const Request& request) -> Response {
+        const auto& last = request.messages.back();
+        if (last.role == Role::tool) {
+            if (!first_delivered.exchange(true) && !resume.try_acquire_for(std::chrono::seconds(8)))
+                throw std::runtime_error("supplement gate expired");
+            return {{Role::assistant,answer}};
+        }
+        const auto call = first_delivered.load() ? "answer-second" : "answer-first";
+        return {{Role::assistant,"",{{call,"main_reply",Json{{"text",answer}}.dump()}}},FinishReason::tool_calls};
+    }});
+    application.bind_messages(store,"reply-test",nullptr);
+    auto& channel = *application.main_messages();
+    channel.terminal("original","第一批收到没？");
+    until(application,[&] { return first_delivered.load(); });
+    const auto status = application.conversation().status().value();
+    const auto second = app::user_envelope("append","第二批呢？","reply-test",{status.session,status.turn});
+    const auto saved = store->put("desktop","second",second,{{"state","pending"}});
+    if (channel.deliver(saved.message.id,second).at("state") != "waiting") throw std::runtime_error("supplement not admitted");
+    resume.release();
+    until(application,[&] { return !application.conversation().busy(); });
+
+    const auto rows = store->page(true,0,store->watermark(),8).records;
+    if (rows.size()!=4 || rows[0].envelope.at("text")!=answer || rows[2].envelope.at("text")!=answer ||
+        rows[0].submission==rows[2].submission || rows[0].envelope.at("replyTo")!=std::to_string(saved.message.id) ||
+        rows[2].envelope.at("replyTo")!=std::to_string(rows[3].id))
+        throw std::runtime_error("distinct reply sources shared a delivery");
+}
+
 // 重开原库时核对四种崩溃边界，之后阻塞真实写盘并核对最终投递次数。
 // 步骤：准备不同的已提交状态 → 验证重启归属与原队列 → 验证交付前失败 → 验证输出补写。
 void verify(const std::filesystem::path& data) {
@@ -163,6 +244,9 @@ int wmain(int argc, wchar_t** argv) {
         const auto root = std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         verify(root/"restart");
         command_recovery(root/"window");
+        repeated_reply(root/"retry-pending",false);
+        repeated_reply(root/"retry-delivered",true);
+        separate_reply_sources(root/"reply-sources");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
