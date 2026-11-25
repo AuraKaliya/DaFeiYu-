@@ -119,6 +119,52 @@ void verify_stop_log(const std::filesystem::path& data, const std::string& insta
     if (accepted!=1 || !drained) throw std::runtime_error("stop evidence did not match original work");
 }
 
+// 在正式管理客户端交错读取多个主题，核对恢复、换类和关窗各自结算原错误。
+// 步骤：启动隔离管道 → 连续注入两类错误及成功回包 → 从软件日志核对计数、时间和保密字段。
+void poll_errors(const std::filesystem::path& root) {
+    const auto profile = root/("poll-"+std::to_string(GetCurrentProcessId()));
+    management::LocalPipe pipe(profile);
+    const auto instance = std::to_string(GetCurrentProcessId())+"-3-4";
+    unsigned dialogue = 0, room = 0;
+    std::jthread server([&](std::stop_token stop) {
+        while (!stop.stop_requested()) pipe.serve_one(100ms,[&](const std::string& bytes) -> std::string {
+            const auto request = Json::parse(bytes);
+            Json reply{{"v",1},{"result",Json::object()}};
+            if (request.at("op")=="connect") reply["result"] = {{"instance",instance},{"client","client-1-2-3-4"}};
+            if (request.at("op")=="request") {
+                const auto& type = request.at("body").at("type");
+                if (type=="dialogue.read" && ++dialogue<=2) reply["error"] = "synthetic-private-error";
+                if (type=="room.read" && ++room>=2) {
+                    if (room==2) reply["error"] = "synthetic-private-room";
+                    else return "synthetic-private-malformed";
+                }
+            }
+            return reply.dump();
+        });
+    });
+    {
+        app::SoftwareLog software(profile,app::SoftwareRole::window);
+        management::Client client(profile,"fixture",[] { throw std::logic_error("unexpected launch"); },{},&software);
+        for (const auto type : {"dialogue.read","room.read","dialogue.read","dialogue.read","room.read","room.read","room.read"})
+            (void)window_reply(client,{{"type",type},{"version","1"},{"request","synthetic-private-id"}});
+    }
+    unsigned recovered = 0, ended = 0;
+    for (const auto& file : std::filesystem::directory_iterator(profile/"logs")) {
+        std::ifstream input(file.path(),std::ios::binary);
+        for (std::string line; std::getline(input,line); ) {
+            if (line.find("synthetic-private")!=line.npos) throw std::runtime_error("sensitive poll field logged");
+            const auto row = Json::parse(line);
+            if (!row.at("event").get<std::string>().starts_with("poll.")) continue;
+            if (row.at("firstUtcMs")>row.at("lastUtcMs") || row.at("instance")!=instance) throw std::runtime_error("invalid poll samples");
+            if (row.at("event")=="poll.dialogue" && row.at("result")=="recovered" && row.at("count")==2) ++recovered;
+            if (row.at("event")=="poll.room" && row.at("result")=="ended" &&
+                ((row.at("failureKind")=="protocol" && row.at("count")==2) ||
+                 (row.at("failureKind")=="management" && row.at("count")==1))) ++ended;
+        }
+    }
+    if (recovered!=1 || ended!=2) throw std::runtime_error("poll intervals not recovered or closed exactly once");
+}
+
 // 用析构回执核对业务收尾期间的托盘寿命。
 struct TestTray final : management::ResidentTray {
     std::atomic_uint& releases;
@@ -239,6 +285,7 @@ int main(int argc, char** argv) {
         reconnect(argv[1]);
         headless(argv[1],false);
         headless(argv[1],true);
+        poll_errors(argv[1]);
         lost_stop_reply(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
