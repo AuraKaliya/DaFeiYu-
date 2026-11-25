@@ -1,7 +1,9 @@
 add_executable(dfy_software_log_tests software_log.cpp)
+add_dependencies(dfy_software_log_tests dfy_query_v2_fixture)
+target_compile_definitions(dfy_software_log_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_software_log_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
 set_target_properties(dfy_software_log_tests PROPERTIES FOLDER Tests)
-add_test(NAME app.software_log COMMAND dfy_software_log_tests "${CMAKE_CURRENT_BINARY_DIR}/software-log")
+add_test(NAME app.software_log COMMAND dfy_software_log_tests "${CMAKE_CURRENT_BINARY_DIR}/software-log" "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(app.software_log PROPERTIES TIMEOUT 12)
 
 add_executable(dfy_management_host_tests management_host.cpp)

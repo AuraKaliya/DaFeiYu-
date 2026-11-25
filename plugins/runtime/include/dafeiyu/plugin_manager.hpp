@@ -5,6 +5,14 @@
 
 namespace dfy::plugins {
 struct LoadedPlugin { std::string id; InstancePhase phase; std::uint32_t error; };
+enum class LifecycleStage { load, stop, unloaded };
+struct LifecycleNotice {
+    LifecycleStage stage;
+    runtime::DomainId instance;
+    std::uint32_t load_status = 0;
+    ShutdownResult stop_status = ShutdownResult::closed;
+    std::chrono::milliseconds wait{};
+};
 struct ManagedRemoval { ShutdownResult status; RemovalReceipt files; };
 struct PluginMailboxHost {
     std::shared_ptr<events::Mailboxes> network;
@@ -36,6 +44,8 @@ class PluginManager {
     PluginManager& operator=(const PluginManager&) = delete;
     // 只刷新磁盘描述，不替换已经运行的实例。
     void refresh();
+    // 在管理线程观察后续实例阶段，回调只读通知且不得重入管理器，观察失败与业务结果独立。
+    void observe_lifecycle(std::function<void(const LifecycleNotice&)> observer);
     // 在首次加载前把应用子会话服务交给运行时借用。
     void enable_agents(const std::shared_ptr<PluginAgents>& service);
     // 在加载任何实例前登记统一的事件接纳记录器。

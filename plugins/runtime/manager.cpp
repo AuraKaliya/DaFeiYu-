@@ -55,6 +55,8 @@ struct PluginManager::State {
         DependencyStop stop_mode = DependencyStop::refuse_dependents;
         std::chrono::steady_clock::time_point next_activity{};
         bool activity_queued = false;
+        std::optional<ShutdownResult> last_stop;
+        std::optional<std::chrono::steady_clock::time_point> pending_since;
     };
     struct Hook {
         std::shared_ptr<PluginInstance> instance;
@@ -163,6 +165,18 @@ struct PluginManager::State {
         if (!hook_order || hooks_dirty || hook_revision != dependencies.revision()) publish_hooks();
         return hook_order;
     }
+    // 隔离生命周期观察者的异常，记录结果不能反向改变实例状态。
+    void notify(const LifecycleNotice& notice) const noexcept {
+        if (lifecycle) { try { lifecycle(notice); } catch (...) {} }
+    }
+    // 只在停止结果变化时报告，已接纳的等待保存起点供实际卸载结算。
+    void observe_stop(Entry& entry, ShutdownResult result) {
+        if (!lifecycle || result==ShutdownResult::closed || entry.last_stop==result) return;
+        entry.last_stop = result;
+        if (result==ShutdownResult::pending) entry.pending_since = std::chrono::steady_clock::now();
+        else entry.pending_since.reset();
+        notify({LifecycleStage::stop,entry.instance->generation(),0,result});
+    }
     // 仅回收已卸载实例及其已排空调度名额，排队宿主包装仍保留到实际执行或撤销后。
     // 步骤：筛选已卸载实例 → 停止其调度接纳 → 等待包装排空 → 归还名额与实例持有。
     void collect() {
@@ -171,7 +185,12 @@ struct PluginManager::State {
             if (entry.instance->phase() != InstancePhase::unloaded) { ++item; continue; }
             if (!entry.owner_stopped) { scheduler.stop(entry.owner); entry.owner_stopped = true; }
             if (scheduler.size(entry.owner)) { ++item; continue; }
-            scheduler.remove(entry.owner); item = instances.erase(item); hooks_dirty = true;
+            scheduler.remove(entry.owner);
+            const auto wait = entry.pending_since ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-*entry.pending_since) : std::chrono::milliseconds::zero();
+            notify({LifecycleStage::unloaded,entry.instance->generation(),0,ShutdownResult::closed,wait});
+            item = instances.erase(item);
+            hooks_dirty = true;
         }
     }
     // 每实例至多排队一步，复用插件通知的所有者公平通路。
@@ -197,6 +216,7 @@ struct PluginManager::State {
             try {
                 if (entry.stopping) {
                     const auto result = dependencies.shutdown(entry.instance,entry.stop_mode).result;
+                    observe_stop(entry,result);
                     entry.stopping = result == ShutdownResult::pending;
                     if (result == ShutdownResult::failed) { failed = true; if (!accepting) close_result = result; }
                 }
@@ -219,6 +239,7 @@ struct PluginManager::State {
                 if (stopped.result == ShutdownResult::failed || (stopped.result != ShutdownResult::closed && close_result == ShutdownResult::closed))
                     close_result = stopped.result;
                 for (auto& [id,entry] : instances) if (entry.instance == stopped.instance) {
+                    observe_stop(entry,stopped.result);
                     entry.stopping = stopped.result == ShutdownResult::pending;
                     entry.stop_mode = DependencyStop::refuse_dependents;
                 }
@@ -241,6 +262,7 @@ struct PluginManager::State {
     std::uint64_t registration = 0, hook_revision = 0;
     std::string directory_error;
     EventCapture event_capture;
+    std::function<void(const LifecycleNotice&)> lifecycle;
     bool accepting = true, hooks_dirty = false;
     ShutdownResult close_result = ShutdownResult::closed;
     State* next = nullptr;
@@ -250,6 +272,8 @@ PluginManager::State* PluginManager::retained_ = nullptr;
 PluginManager::PluginManager(const std::filesystem::path& root, const std::filesystem::path& user_data,
     std::shared_ptr<events::BroadcastChannel> channel, std::size_t capacity, PluginMailboxHost mailboxes)
     : state_(std::make_unique<State>(root,user_data,std::move(channel),capacity,std::move(mailboxes))) {}
+// 替换本管理器后续阶段的观察回调，保留状态中的观察者应自行弱引用其接收者。
+void PluginManager::observe_lifecycle(std::function<void(const LifecycleNotice&)> observer) { state_->lifecycle = std::move(observer); }
 // 失败保留链节点已在状态内预留，不在退出时申请新内存。
 // 步骤：保留已报告失败或尝试停止 → 将未完成状态转交保留链，不隐式重试已知失败。
 PluginManager::~PluginManager() {
@@ -325,6 +349,7 @@ std::uint32_t PluginManager::load(const std::string& id) {
             status = DFY_V2_FAILED;
         }
     }
+    state_->notify({LifecycleStage::load,item->second.instance->generation(),status});
     if (status) (void)unload(id);
     return status;
 }
@@ -359,6 +384,7 @@ ShutdownResult PluginManager::unload(const std::string& id, DependencyStop mode)
     const auto item = state_->instances.find(id);
     if (item == state_->instances.end()) throw std::invalid_argument("plugins: id is not loaded");
     const auto result = state_->dependencies.shutdown(item->second.instance,mode).result;
+    state_->observe_stop(item->second,result);
     item->second.stopping = result == ShutdownResult::pending; item->second.stop_mode = mode; state_->collect();
     if (result == ShutdownResult::pending) state_->hooks_dirty = true;
     return result;

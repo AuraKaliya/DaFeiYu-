@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "run_log.hpp"
+#include "software_log.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
@@ -59,6 +60,30 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,persona_,run_log_)) {
     if (!tool_clock_) throw std::invalid_argument("application: tool clock required");
     plugins_.enable_agents(subagents_);
+    if (const auto log = run.software_log.lock()) {
+        if (!plugins_.directory_error().empty()) log->record(SoftwareEvent::plugin_catalog,SoftwareResult::failed);
+        // 把本进程的插件加载、停止受阻和实际卸载写入软件日志。
+        // 步骤：核对可能晚于 Application 收尾的弱引用 → 按实例阶段映射真实结果和耗时。
+        plugins_.observe_lifecycle([weak=run.software_log](const plugins::LifecycleNotice& notice) {
+            const auto log = weak.lock();
+            if (!log) return;
+            using Stage = plugins::LifecycleStage;
+            using Stop = plugins::ShutdownResult;
+            SoftwareFields fields{.plugin_instance=notice.instance};
+            if (notice.stage==Stage::load) {
+                fields.plugin_code = notice.load_status;
+                log->record(SoftwareEvent::plugin_load,notice.load_status ? SoftwareResult::failed : SoftwareResult::ok,fields);
+            } else if (notice.stage==Stage::unloaded) {
+                fields.duration_ms = notice.wait.count();
+                log->record(SoftwareEvent::plugin_unloaded,SoftwareResult::ok,fields);
+            } else {
+                fields.plugin_code = static_cast<std::uint32_t>(notice.stop_status);
+                const auto result = notice.stop_status==Stop::pending ? SoftwareResult::pending :
+                    notice.stop_status==Stop::failed ? SoftwareResult::failed : SoftwareResult::busy;
+                log->record(SoftwareEvent::plugin_stop,result,fields);
+            }
+        });
+    }
     // 接纳发生在原 DLL 调用内，原生观察者在宿主下一次推进时调用。
     plugins_.capture_events([log = std::weak_ptr(run_log_), queue = std::weak_ptr(captured_)](const auto& event) {
         if (const auto trace = log.lock()) trace->append("event.captured",{{"eventDomain",event.id.domain},{"event",event.id.sequence},

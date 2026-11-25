@@ -9,8 +9,9 @@ namespace dfy::app {
 enum class SoftwareRole { host, window, terminal };
 enum class SoftwareEvent { process_started, process_exiting, host_listening, host_launch, client_connected,
     client_disconnected, stop_submitted, stop_accepted, stop_reply, profile_claim, configuration_read,
-    window_closing, webview_released, profile_cleaned, window_destroyed, conversation_drain, plugins_drain };
-enum class SoftwareResult { started, ok, failed, accepted, busy };
+    window_closing, webview_released, profile_cleaned, window_destroyed, conversation_drain, plugins_drain,
+    plugin_load, plugin_stop, plugin_unloaded, plugin_catalog };
+enum class SoftwareResult { started, ok, failed, accepted, busy, pending };
 struct SoftwareFields {
     std::string_view instance{}, client{};
     bool shutdown = false;
@@ -19,6 +20,8 @@ struct SoftwareFields {
     std::optional<std::int64_t> duration_ms{};
     std::optional<std::uint64_t> count{};
     std::uint64_t session = 0, turn = 0;
+    std::uint64_t plugin_instance = 0;
+    std::optional<std::uint32_t> plugin_code{};
 };
 
 // 每次产品进程启动独立记录软件生命周期，写盘失败与业务结算分别报告。

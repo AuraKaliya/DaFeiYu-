@@ -19,8 +19,9 @@ using namespace std::chrono;
 constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
-    "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain"};
-constexpr std::array results{"started","ok","failed","accepted","busy"};
+    "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain",
+    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog"};
+constexpr std::array results{"started","ok","failed","accepted","busy","pending"};
 constexpr std::size_t queue_limit = 128;
 
 struct Entry {
@@ -58,6 +59,8 @@ nlohmann::json diagnostic_fields(const SoftwareFields& fields) {
     if (fields.count) row["count"] = *fields.count;
     if (fields.session) row["session"] = fields.session;
     if (fields.turn) row["turn"] = fields.turn;
+    if (fields.plugin_instance) row["pluginInstance"] = fields.plugin_instance;
+    if (fields.plugin_code) row["pluginCode"] = *fields.plugin_code;
     return row;
 }
 }
@@ -70,6 +73,7 @@ struct SoftwareLog::State {
     std::condition_variable_any ready;
     std::deque<Entry> pending;
     std::string instance, client;
+    bool shutting_down = false;
     std::uint64_t sequence = 0, lost = 0;
     std::jthread worker;
 
@@ -136,6 +140,7 @@ void SoftwareLog::bind(std::string_view instance, std::string_view client) noexc
         !(client.starts_with("client-") && numeric_groups(client.substr(7),4)))) return;
     try {
         std::lock_guard lock(state_->mutex);
+        if (instance!=state_->instance) state_->shutting_down = false;
         state_->instance = instance;
         state_->client = client;
     } catch (...) { state_->fail(ERROR_NOT_ENOUGH_MEMORY); }
@@ -151,6 +156,11 @@ void SoftwareLog::record(SoftwareEvent event, SoftwareResult result, SoftwareFie
         if (state_->pending.size() >= limit) { ++state_->lost; return; }
         if (fields.instance.empty()) fields.instance = state_->instance;
         if (fields.client.empty() && fields.instance==state_->instance) fields.client = state_->client;
+        if (!state_->instance.empty() && fields.instance==state_->instance) {
+            if (fields.shutdown && result==SoftwareResult::accepted && (event==SoftwareEvent::stop_accepted || event==SoftwareEvent::stop_reply))
+                state_->shutting_down = true;
+            fields.shutdown |= state_->shutting_down;
+        }
         state_->pending.push_back({event,result,diagnostic_fields(fields),duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(),
             duration_cast<nanoseconds>(steady_clock::now()-state_->origin).count(),++state_->sequence,state_->lost});
         state_->lost = 0;

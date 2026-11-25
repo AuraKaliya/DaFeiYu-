@@ -23,6 +23,7 @@ struct DialogueQueueReceipt {
     std::uint64_t message = 0;
 };
 class RunLog;
+class SoftwareLog;
 struct VerificationReport {
     agent::RunId run;
     std::optional<agent::ObservationMatch> match;
@@ -42,6 +43,7 @@ struct ApplicationRunConfig {
     bool wake_for_room_address = true;
     bool wake_for_plugin_mail = true;
     std::filesystem::path trace_directory;
+    std::weak_ptr<SoftwareLog> software_log;
 };
 enum class RoomEvent { presence_changed, addressed };
 

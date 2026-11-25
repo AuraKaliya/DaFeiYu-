@@ -60,7 +60,7 @@ std::string read_prompt(const std::filesystem::path& path) {
 // 分派配置检查、单次调用与 Agent 会话，并统一报告启动错误。
 // 步骤：准备控制台编码 → 按参数启动检查或调用流程 → 返回退出状态。
 int run(const std::vector<std::filesystem::path>& args) {
-    std::optional<dfy::app::SoftwareLog> software;
+    std::shared_ptr<dfy::app::SoftwareLog> software;
     try {
 #ifdef _WIN32
         const dfy::app::Utf8Console console;
@@ -104,7 +104,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         if ((args.size()==2 || args.size()==3) && (args[1]=="--host-status" || args[1]=="--stop-host")) {
             const auto data = args.size()==3 ? args[2] : dfy::app::default_user_data();
-            if (args[1]=="--stop-host") software.emplace(data,dfy::app::SoftwareRole::terminal);
+            if (args[1]=="--stop-host") software = std::make_shared<dfy::app::SoftwareLog>(data,dfy::app::SoftwareRole::terminal);
             auto status = dfy::management::resident_request(data,{{"op","status"}});
             if (software)
                 status = dfy::management::request_stop(data,status.at("instance").get<std::string>(),{},&*software);
@@ -125,7 +125,8 @@ int run(const std::vector<std::filesystem::path>& args) {
             if (plugins.empty()) plugins = dfy::app::executable_directory()/"plugins";
             if (user_data.empty()) user_data = dfy::app::default_user_data();
             const bool host = args.size()>=3 && args[1]=="--host";
-            software.emplace(user_data,host ? dfy::app::SoftwareRole::host : dfy::app::SoftwareRole::terminal);
+            software = std::make_shared<dfy::app::SoftwareLog>(user_data,host ? dfy::app::SoftwareRole::host : dfy::app::SoftwareRole::terminal);
+            run.software_log = software;
             if (host) {
                 const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
                 const int code = dfy::management::serve_resident(user_data,identity,[=,log=&*software] {
