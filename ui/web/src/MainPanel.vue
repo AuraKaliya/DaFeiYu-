@@ -6,7 +6,7 @@ import MessageTime from './MessageTime.vue';
 import ManagementShell from './ManagementShell.vue';
 import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
-import { recoverDialogue, rememberDialogue, rememberDraft, type IntentAction, type WireCommand } from './dialogue-recovery';
+import { originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 type CommandState = 'unavailable' | 'queued' | 'accepted' | 'busy' | 'rejected' | 'conflict' | 'expired' | 'stale' | 'full';
@@ -73,7 +73,8 @@ const lastTurn = computed(() => turns.value.at(-1));
 const queueMode = computed(() => lastTurn.value?.exit === 'pending');
 const canChoose = computed(() => queueMode.value && lastTurn.value?.result === 'pending' && lastTurn.value.acceptsInput);
 const appendMode = computed(() => canChoose.value && destination.value === 'current');
-const canSend = computed(() => ready.value && (accepting.value || queueMode.value) && !pending.value && !!draft.value.trim() && !tooLong.value);
+const canSend = computed(() => ready.value && messages.subscribed.value && (accepting.value || queueMode.value) &&
+  !pending.value && !!draft.value.trim() && !tooLong.value);
 const stoppedCurrent = computed(() => !!stopTarget.value && stopTarget.value.session === lastTurn.value?.session && stopTarget.value.turn === lastTurn.value?.turn);
 const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurrent.value && lastTurn.value?.result === 'pending');
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
@@ -84,9 +85,10 @@ const panelStatus = computed(() => {
   if (shutdown.value === 'requested') return '正在请求退出';
   if (connectionNotice.value) return '本体连接中断';
   if (!ready.value) return conversation.value ? '连接中断' : '正在连接';
+  if (!messages.subscribed.value) return '正在连接聊天记录';
   if (lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending') return '正在收尾';
   if (stoppedCurrent.value && lastTurn.value?.result === 'pending') return '已请求停止';
-  if (pending.value) return { send: '正在提交', enqueue: '正在排队', append: '正在提交补充', clear: '正在清空', resume: '正在恢复', remove: '正在移除' }[pending.value.action];
+  if (pending.value) return { send: '正在提交', enqueue: '正在排队', append: '正在提交补充', clear: '正在重置上下文', resume: '正在恢复', remove: '正在移除' }[pending.value.action];
   if (accepting.value) return '可以聊天';
   return '正在处理对话';
 });
@@ -96,10 +98,11 @@ let revision = '';
 let refresh = 0;
 const outstanding = new Map<string, WireCommand>();
 const reconnecting = new Set<string>();
+let originalConversation = '', nextLookup = 0;
 
 // 在提交、结算及离开页面时固定草稿和未决原件。
 function remember(): void {
-  try { rememberDialogue(draft.value, outstanding.values()); }
+  try { rememberDialogue(draft.value, outstanding.values(), originalConversation); }
   catch { notice.value = '当前窗口无法保留刷新前的草稿，请先等待操作回执。'; }
 }
 
@@ -108,17 +111,19 @@ function remember(): void {
 function recover(): void {
   const saved = recoverDialogue();
   draft.value = saved.draft;
+  originalConversation = saved.conversation;
   for (const fields of saved.commands) {
     const id = fields.command;
     outstanding.set(id, fields);
     reconnecting.add(id);
     if (BigInt(id) > command) command = BigInt(id);
-    const action = (fields.type === 'dialogue.submit' ? 'send' : fields.type.slice(9)) as IntentAction;
-    if (action === 'cancel') {
+    if (fields.type === 'dialogue.cancel') {
       pendingStop.value = id;
       stopTarget.value = { session: fields.session, turn: fields.turn };
-    } else if (action === 'send' || action === 'append' || action === 'enqueue') pending.value = { id, action, text: fields.text };
-    else pending.value = { id, action };
+    } else if ('text' in fields) {
+      const action = fields.type === 'dialogue.submit' ? 'send' : fields.type === 'dialogue.append' ? 'append' : 'enqueue';
+      pending.value = { id, action, text: fields.text };
+    } else pending.value = { id, action: fields.type === 'dialogue.clear' ? 'clear' : fields.type === 'dialogue.resume' ? 'resume' : 'remove' };
   }
 }
 
@@ -157,8 +162,8 @@ function isReceipt(value: unknown): value is Receipt {
 }
 
 // 给当前页面的所有命令使用独立请求身份，便于拒绝其他文档的回包。
-function post(fields: Readonly<Record<string, string>>): void {
-  if (fields.command && fields.type !== 'dialogue.read') {
+function post(fields: WireCommand | { type: 'dialogue.read'; revision: string; command: string } | { type: 'room.read' }): void {
+  if ('command' in fields && fields.type !== 'dialogue.read') {
     outstanding.set(fields.command, fields);
     remember();
   }
@@ -178,7 +183,10 @@ function read(): void {
     }
     return;
   }
-  if (now - dialogueConfirmed > freshnessMs) { ready.value = false; accepting.value = false; messages.disconnect(); }
+  if (now - dialogueConfirmed > freshnessMs) {
+    if (ready.value) for (const id of outstanding.keys()) reconnecting.add(id);
+    ready.value = false; accepting.value = false; messages.disconnect();
+  }
   if (now - roomConfirmed > freshnessMs) roomCurrent.value = false;
   post({ type: 'dialogue.read', revision, command: pending.value?.id ?? pendingStop.value });
   if (pending.value && pendingStop.value) post({ type: 'dialogue.read', revision, command: pendingStop.value });
@@ -253,6 +261,34 @@ function settle(receipt: Receipt): void {
   else if (current.action === 'append' && receipt.state === 'stale') notice.value = '原回合已结束，草稿已保留，可以另发。';
   else notice.value = rejection[receipt.state];
   remember();
+}
+
+// 恢复时先查同一逻辑会话的持久回执，只有确认无记录才补投原件。
+// 步骤：核对连接与提交身份 → 查询原记录 → 结算草稿或沿原号重投。
+function recoverOutstanding(latestCommand: bigint): void {
+  for (const [id, fields] of outstanding) {
+    if (!reconnecting.has(id)) continue;
+    if (!('submission' in fields) || !fields.submission || !('text' in fields)) {
+      reconnecting.delete(id);
+      if (BigInt(id) > latestCommand) post(fields);
+      continue;
+    }
+    if (!messages.subscribed.value || performance.now() < nextLookup) continue;
+    if (originalConversation !== messages.conversation.value) { settle({ command: id, state: 'stale' }); continue; }
+    nextLookup = performance.now() + 600;
+    messages.receipt('desktop', fields.submission, row => {
+      if (outstanding.get(id) !== fields || !reconnecting.has(id)) return;
+      if (!row) {
+        reconnecting.delete(id);
+        post(fields);
+        return;
+      }
+      const state = originalReceipt(fields, row);
+      if (state === 'pending') return;
+      settle({ command: id, state: state === 'unknown' ? 'unavailable' : state });
+      if (state === 'unknown') notice.value = '投递结果待核对，草稿已保留。';
+    });
+  }
 }
 
 // 开始观察后台收尾，同时冻结已失去时效的房间与会话状态。
@@ -344,14 +380,9 @@ function receive(event: MessageEvent<unknown>): void {
     if (value.ready) publishConversation(value.accepting, value.revision);
     if (value.ready) messages.pulse(value.messageWatermark);
     if (value.confirmStop === true) askStop();
-    if (value.ready && reconnecting.size) {
-      // 宿主水位尚未登记的原件才按原编号补投一次；其他原件继续只读查询。
-      for (const [id, fields] of outstanding) {
-        if (reconnecting.delete(id) && BigInt(id) > latestCommand) post(fields);
-      }
-    }
+    if (value.ready && reconnecting.size) recoverOutstanding(latestCommand);
   } else if (value.event !== 'dialogue.receipt') return;
-  if (isReceipt(value.receipt)) settle(value.receipt);
+  if (isReceipt(value.receipt) && !reconnecting.has(value.receipt.command)) settle(value.receipt);
 }
 
 // 设置按钮与托盘只打开同一确认框，重复请求保持当前焦点。
@@ -374,15 +405,17 @@ function send(): void {
   if (!canSend.value) return;
   const id = String(++command), target = lastTurn.value;
   const text = draft.value;
+  const original = { command: id, submission: crypto.randomUUID(), sourceUtcMs: Date.now(), text };
+  originalConversation = messages.conversation.value;
   notice.value = '';
   if (target && queueMode.value) {
     const action = appendMode.value ? 'append' : 'enqueue';
     pending.value = { id, action, text };
-    post({ type: 'dialogue.' + action, command: id, session: target.session, turn: target.turn, text });
+    post({ type: `dialogue.${action}`, ...original, instance: messages.instance.value, session: target.session, turn: target.turn });
   } else {
     pending.value = { id, action: 'send', text };
     accepting.value = false;
-    post({ type: 'dialogue.submit', command: id, text });
+    post({ type: 'dialogue.submit', ...original });
   }
 }
 
@@ -403,7 +436,7 @@ function editQueue(action: 'resume' | 'remove', item: QueuedMessage): void {
   const id = String(++command);
   pending.value = { id, action };
   notice.value = '';
-  post({ type: 'dialogue.' + action, command: id, session: item.session, message: item.message });
+  post({ type: `dialogue.${action}`, command: id, session: item.session, message: item.message });
 }
 
 // 使用独立控制槽位停止当前回合，正在接纳的待发项继续沿原编号核对。
@@ -428,7 +461,7 @@ function confirmClear(): void {
   const target = clearTarget.value;
   clearDialog.value?.close();
   if (!target || !canClear.value || lastTurn.value?.session !== target.session || lastTurn.value.turn !== target.turn) {
-    notice.value = '对话已更新，请重新选择要清空的会话。';
+    notice.value = '对话已更新，请重新选择要重置的上下文。';
     return;
   }
   const id = String(++command);
@@ -482,7 +515,7 @@ onUnmounted(() => {
 <template>
   <ManagementShell>
     <template #status>
-      <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && !pending">{{ panelStatus }}</span>
+      <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && messages.subscribed.value && !pending">{{ panelStatus }}</span>
     </template>
     <template #room>
       <RoomStateView :room="room" :conversation="conversation" :room-current="roomCurrent" :conversation-current="ready" />

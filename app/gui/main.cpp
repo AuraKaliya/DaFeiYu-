@@ -309,6 +309,7 @@ struct Window : std::enable_shared_from_this<Window> {
         if (interaction) interaction->advance();
         if (smoke && loaded && (offline ? offline_enabled : content->blocked_requests() != 0) && checks->verified()) PostMessageW(handle,WM_CLOSE,0,0);
         else if (std::chrono::steady_clock::now() >= deadline) {
+            if (interaction) std::fprintf(stderr,"Pending interaction: %s\n",interaction->current_step());
             std::fprintf(stderr,"Frame checks: loaded=%d active=%u allowed=%u inactive=%u stale=%u forbidden=%u navigation=%u malformed=%u\n",
                 loaded,checks->active,checks->decisions[0],checks->decisions[1],checks->decisions[3],checks->decisions[4],checks->blocked_navigation,checks->malformed);
             fail("U01: Frame verification timed out");
