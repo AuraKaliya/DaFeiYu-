@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import ManagementShell from './ManagementShell.vue';
+import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
 import { recoverDialogue, rememberDialogue, rememberDraft, type IntentAction, type WireCommand } from './dialogue-recovery';
 
@@ -411,7 +412,7 @@ onUnmounted(() => {
     <template #room>
       <RoomStateView :room="room" :conversation="conversation" :room-current="roomCurrent" :conversation-current="ready" />
     </template>
-    <template #settings>
+    <template #settings="{ active }">
       <h3 class="group-title">插件管理</h3>
       <p class="source-note">插件目录尚未接入此视图。</p>
       <h3 class="group-title">后台运行</h3>
@@ -424,6 +425,7 @@ onUnmounted(() => {
         <div class="dialog-actions"><button id="host-stay" type="button" class="quiet-action" autofocus @click="shutdownDialog?.close()">继续运行</button>
           <button id="host-confirm-stop" type="button" class="primary-action" @click="stopHost">确认退出</button></div>
       </dialog>
+      <LogSettings v-if="active" />
     </template>
     <h2 class="chat-title">和大肥鱼聊天</h2>
     <section class="conversation-space" aria-label="主会话">

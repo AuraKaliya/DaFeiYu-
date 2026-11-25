@@ -33,7 +33,7 @@ const narrowPane = ref<'state' | 'chat'>('chat');
     </section>
     <section v-show="board === 'settings'" class="settings-view" aria-labelledby="settings-title">
       <h2 id="settings-title">设置</h2>
-      <slot name="settings" />
+      <slot name="settings" :active="board === 'settings'" />
     </section>
   </main>
 </template>

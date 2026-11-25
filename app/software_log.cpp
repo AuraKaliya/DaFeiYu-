@@ -34,6 +34,7 @@ struct Entry {
 struct SoftwareLog::State {
     const steady_clock::time_point origin = steady_clock::now();
     std::atomic<DWORD> fault{0};
+    std::atomic_bool recorded{false};
     std::mutex mutex;
     std::condition_variable_any ready;
     std::deque<Entry> pending;
@@ -70,6 +71,7 @@ struct SoftwareLog::State {
                 if (std::string_view(DFY_APPLICATION_COMMIT).size()) row["commit"] = DFY_APPLICATION_COMMIT;
             }
             files.append(row.dump()+"\n");
+            recorded = true;
         }
         files.close();
     }
@@ -119,4 +121,7 @@ int SoftwareLog::exiting(int code) noexcept {
 
 // 不接触文件系统即可取得当前日志错误状态。
 unsigned long SoftwareLog::error() const noexcept { return state_ ? state_->fault.load() : ERROR_NOT_ENOUGH_MEMORY; }
+
+// 只按写入线程已经刷新的实效报告日志可用。
+bool SoftwareLog::recorded() const noexcept { return state_ && state_->recorded.load(); }
 }

@@ -58,9 +58,9 @@ void launch_host(const std::filesystem::path& program, const std::filesystem::pa
 }
 
 // 在独立线程握手，构造调用方可以继续推进原生窗口。
-Client::Client(std::filesystem::path profile, std::string definition, Launch start)
-    : thread_([this,profile=std::move(profile),definition=std::move(definition),start=std::move(start)](std::stop_token stop) {
-        run(stop,profile,definition,start);
+Client::Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs)
+    : thread_([this,profile=std::move(profile),definition=std::move(definition),start=std::move(start),logs=std::move(logs)](std::stop_token stop) {
+        run(stop,profile,definition,start,logs);
     }) {}
 
 // 唤醒工作线程，jthread 在其他成员销毁之前等待其离开。
@@ -105,8 +105,8 @@ void Client::close() noexcept {
 }
 
 // 在同一观察身份下顺序交付请求，未知的写入结果留给原命令核对。
-// 步骤：取得观察身份 → 有界收发并缓存回包 → 停止后解绑定本客户端。
-void Client::run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start) {
+// 步骤：取得观察身份 → 分派本窗诊断或后台请求 → 缓存回包并在停止后解除绑定。
+void Client::run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs) {
     std::string client, instance, error;
     try {
         const auto connection = connect(stop,profile,definition,start);
@@ -124,8 +124,14 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
             queued_bytes_ -= item.bytes;
         }
         try {
-            if (client.empty()) throw std::runtime_error(error);
-            if (item.message.at("type")=="host.stop") {
+            const auto& type = item.message.at("type");
+            if (type=="logs.read" || type=="logs.open") {
+                if (!logs) throw std::runtime_error("window diagnostics unavailable");
+                auto response = logs(type=="logs.open");
+                response.update(Json{{"event","logs.status"},{"version","1"},{"request",item.message.at("request")}});
+                item.message = std::move(response);
+            } else if (client.empty()) throw std::runtime_error(error);
+            else if (type=="host.stop") {
                 const auto reply = resident_request(profile,{{"op","stop"},{"instance",instance}});
                 item.message = {{"event","host.stopping"},{"version","1"},{"request",item.message.at("request")},{"state",reply.at("state")}};
             } else item.message = resident_request(profile,{{"op","request"},{"client",client},{"body",item.message}});

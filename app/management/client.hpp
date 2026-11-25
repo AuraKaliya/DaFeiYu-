@@ -14,8 +14,9 @@ class Client {
   public:
     using Reply = std::function<void(const nlohmann::json&)>;
     using Launch = std::function<void()>;
+    using Logs = std::function<nlohmann::json(bool open)>;
     // 连接原宿主，只有端点缺失时才调用启动入口一次。
-    Client(std::filesystem::path profile, std::string definition, Launch start);
+    Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs = {});
     // 在销毁前唤醒等待线程并回收本客户端。
     ~Client();
     // 在有界队列中登记一项请求，交付结果由后续推进处理。
@@ -29,7 +30,7 @@ class Client {
   private:
     struct Entry { nlohmann::json message; Reply deliver; std::size_t bytes; };
     // 握手后按顺序交换请求，关闭时释放自己的客户端身份。
-    void run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start);
+    void run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs);
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<Entry> pending_, completed_;

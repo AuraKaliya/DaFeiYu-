@@ -22,7 +22,7 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     // 从真实主文档核对对话、原回合控制回执和文档权限。
     void start_main_panel(std::shared_ptr<const FrameChecks> checks, std::shared_ptr<tests::UiDialogueGate> gate);
     // 在独立桌面进程核对后台读数，按场景验证继续运行或确认全局退出。
-    void start_observer(bool stop);
+    void start_observer(bool stop, bool log_error);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif

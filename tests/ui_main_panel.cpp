@@ -35,10 +35,16 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
 
 namespace dfy::ui {
 // 通过正式页面读取原生房间，并验证取消或确认后台退出的实际界面回执。
-// 步骤：等待真实后台数据 → 进入设置并取消退出 → 按场景确认退出 → 交回观察窗口。
-void InteractionProbe::start_observer(bool stop) {
+// 步骤：等待真实后台数据 → 核对本窗日志和目录操作回执 → 取消或确认后台退出。
+void InteractionProbe::start_observer(bool stop, bool log_error) {
     expect("resident observer ready","document.querySelector('#dialogue-state')?.dataset.accepting==='true' && document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
-    evaluate("inspect resident settings","document.querySelector('#board-settings').click(); document.querySelector('#host-stop').click(); true");
+    evaluate("inspect resident settings","document.querySelector('#board-settings').click(); true");
+    expect("window log status",log_error ? "document.querySelector('#log-status')?.textContent.includes('写入日志失败，系统错误码')" :
+        "document.querySelector('#log-status')?.textContent.includes('已写入运行日志')");
+    evaluate("open configured log folder","document.querySelector('#open-logs').click(); true");
+    expect("log folder result",log_error ? "document.querySelector('#log-status')?.textContent.includes('无法打开日志目录，系统错误码 267')" :
+        "document.querySelector('#log-status')?.textContent.includes('系统已接收打开目录请求')");
+    evaluate("inspect stop confirmation","document.querySelector('#host-stop').click(); true");
     expect("confirmation visible","document.querySelector('#host-stop-title').closest('dialog').open");
     evaluate("leave resident running","document.querySelector('#host-stay').click(); !document.querySelector('#host-stop-title').closest('dialog').open");
     if (stop) {

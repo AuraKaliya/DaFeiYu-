@@ -1,5 +1,6 @@
 #include "../paths.hpp"
 #include "../software_log.hpp"
+#include "log_settings.hpp"
 #include "local_content.hpp"
 #include "frame_channel.hpp"
 #include "interaction_probe.hpp"
@@ -37,6 +38,7 @@ struct Window : std::enable_shared_from_this<Window> {
     std::filesystem::path assets;
     std::filesystem::path model_config;
     std::filesystem::path user_data;
+    dfy::app::SoftwareLog* software = nullptr;
     dfy::ui::ProbeProfile profile;
     dfy::ui::BrowserProcesses processes;
     ComPtr<ICoreWebView2Environment> environment;
@@ -67,7 +69,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
     bool main_panel = false, main_panel_check = false;
-    bool observer_check = false, observer_stop = false;
+    bool observer_check = false, observer_stop = false, observer_log_error = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -225,7 +227,7 @@ struct Window : std::enable_shared_from_this<Window> {
 #ifdef DFY_UI_RUN_STATUS_TEST
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
-                if (observer_check) { interaction->start_observer(observer_stop); return; }
+                if (observer_check) { interaction->start_observer(observer_stop,observer_log_error); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -298,9 +300,15 @@ struct Window : std::enable_shared_from_this<Window> {
             const auto config = model_config.empty() ? root/"config"/"deepseek.example.json" : model_config;
             const auto data = user_data.empty() ? dfy::app::default_user_data() : user_data;
             const auto packages = observer_check ? data/"plugins" : root/"plugins";
+            dfy::ui::FolderOpener opener = dfy::ui::open_directory;
+#ifdef DFY_UI_RUN_STATUS_TEST
+            if (observer_check) opener = [data](const auto& folder) -> DWORD {
+                return std::filesystem::equivalent(folder,data/"logs") ? ERROR_SUCCESS : ERROR_INVALID_DATA;
+            };
+#endif
             resident_client = std::make_unique<dfy::management::Client>(data,dfy::management::startup_identity(config,packages),[=] {
                 dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
-            });
+            },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); });
         }
     }
     // 创建独立环境，配置路径与回调寿命由当前窗口拥有。
@@ -363,7 +371,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool main_panel = (__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
         std::wstring_view(__wargv[1]) == L"--main-panel";
 #ifdef DFY_UI_RUN_STATUS_TEST
-    const bool observer_check = (__argc==4 || (__argc==5 && std::wstring_view(__wargv[4])==L"stop")) &&
+    const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" || std::wstring_view(__wargv[4])==L"log-error"))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
@@ -405,9 +413,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->main_panel = main_panel || main_panel_check || observer_check;
         state->main_panel_check = main_panel_check;
         state->observer_check = observer_check;
-        state->observer_stop = observer_check && __argc==5;
+        state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";
+        state->observer_log_error = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"log-error";
         if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
         state->user_data = data;
+        if (software) state->software = &*software;
         state->interaction_mode |= room_check || main_panel_check || observer_check;
         state->business_mode = business;
 #ifdef DFY_UI_RUN_STATUS_TEST

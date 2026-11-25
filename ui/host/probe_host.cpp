@@ -45,7 +45,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         const auto message = nlohmann::json::parse(utf8(body,limit));
         if (!message.is_object()) return E_INVALIDARG;
         const auto type = message.value("type",std::string());
-        if (type=="host.stop") {
+        if (type=="host.stop" || type=="logs.read" || type=="logs.open") {
             if (!panel || message.size()!=3 || message.at("version")!="1") return E_ACCESSDENIED;
             const auto& id = message.at("request").get_ref<const std::string&>();
             if (id.empty() || id.size()>64) return E_INVALIDARG;
@@ -87,7 +87,7 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
         if (request.contains("command") && request.at("type")!="dialogue.read")
             deliver({{"event","dialogue.receipt"},{"version","1"},{"request",request.at("request")},
                 {"receipt",{{"command",request.at("command")},{"state","busy"}}}});
-        else if (request.at("type")=="host.stop")
+        else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read")
             deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"reason","management client queue unavailable"}});
     }
     return S_OK;

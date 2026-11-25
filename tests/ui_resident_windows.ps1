@@ -9,16 +9,16 @@ $json = '{"provider":"deepseek","base_url":"https://offline.invalid","model":"of
 [IO.File]::WriteAllText($config,$json,[Text.UTF8Encoding]::new($false))
 
 # 在隔离目录打开隐藏的正式面板，核对原生协议验收及浏览器的实际回收。
-function Invoke-Observer([string[]]$ModeArgs) {
-    $report = & $Panel --check-observer $config $data @ModeArgs | Out-String
+function Invoke-Observer([string[]]$ModeArgs, [string]$ProfilePath = $data) {
+    $report = & $Panel --check-observer $config $ProfilePath @ModeArgs | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Observer failed: $report" }
     $view = $report | ConvertFrom-Json
     if (!$view.profile_cleaned -or !$view.processes_exited -or $view.result -ne 0) { throw "Observer release failed: $report" }
 }
 
 # 在同一测试目录核对后台状态，保留进程和实例两个身份。
-function Read-Resident {
-    $reply = & $App --host-status $data | Out-String
+function Read-Resident([string]$ProfilePath = $data) {
+    $reply = & $App --host-status $ProfilePath | Out-String
     if ($LASTEXITCODE -ne 0) { throw 'No resident after closing an observer' }
     $state = $reply | ConvertFrom-Json
     if ($state.state -ne 'running') { throw "Unexpected resident state: $reply" }
@@ -70,6 +70,8 @@ function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
 }
 
 $owner = $null
+$blocked = Join-Path $folder 'blocked user'
+$blockedStopped = $false
 try {
     Invoke-Observer @()
     $first = Read-Resident
@@ -94,7 +96,19 @@ try {
         if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }
         $terminal.Dispose()
     }
+    $null = New-Item -ItemType Directory -Path $blocked
+    [IO.File]::WriteAllText((Join-Path $blocked 'logs'),'keep')
+    Invoke-Observer @('log-error') $blocked
+    $blockedState = Read-Resident $blocked
+    $blockedOwner = [Diagnostics.Process]::GetProcessById([int]$blockedState.pid)
+    try {
+        $null = $blockedOwner.Handle
+        & $App --stop-host $blocked | Out-Null
+        if (!$blockedOwner.WaitForExit(6000) -or $blockedOwner.ExitCode -ne 0) { throw 'Log failure blocked shutdown' }
+        $blockedStopped = $true
+    } finally { $blockedOwner.Dispose() }
 } finally {
+    if (!$blockedStopped -and (Test-Path -LiteralPath $blocked)) { & $App --stop-host $blocked 2>$null | Out-Null }
     if (!$owner -or !$owner.HasExited) {
         & $App --stop-host $data 2>$null | Out-Null
         if ($owner) { $null = $owner.WaitForExit(6000) }

@@ -22,6 +22,8 @@ class SoftwareLog {
     int exiting(int code) noexcept;
     // 返回首次写入或初始化失败的错误码，零表示尚未发现错误。
     unsigned long error() const noexcept;
+    // 至少一条完整记录已经写入且刷新后返回真。
+    bool recorded() const noexcept;
   private:
     struct State;
     std::unique_ptr<State> state_;
