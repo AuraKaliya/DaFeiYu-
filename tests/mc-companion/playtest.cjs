@@ -204,6 +204,17 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         return result;
       };
     }
+    if (mode === '--vitals-probe' || mode === '--air-episode-probe') {
+      fixture.vitalsCommands = [];
+      for (const [object, name] of [[game.bot,'dig'],[game.bot,'placeBlock'],[game.bot,'setControlState'],
+        [game.bot.pathfinder,'setGoal'],[game.bot.pathfinder,'goto']]) {
+        const original = object[name];
+        object[name] = function (...args) {
+          fixture.vitalsCommands.push(name);
+          return original.apply(this,args);
+        };
+      }
+    }
     const args = mode === '--live' ? ['--mc-partner', config, pkg, root] : mode === '--probe' ? [pkg, root] : [pkg, root, mode];
     const review = mode === '--ask-main-manual-probe';
     child = spawn(exe, args, { windowsHide: true, stdio: [review ? 'pipe' : 'ignore', 'pipe', 'inherit'] });

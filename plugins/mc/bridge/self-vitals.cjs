@@ -1,3 +1,8 @@
+// 从已加载方块识别水体，含水方块也保留其实际水属性。
+function waterBlock(block) {
+  return block?.name === 'water' || block?.name === 'bubble_column' || block?.getProperties?.().waterlogged === true;
+}
+
 // 归并同一次本人空气耗尽，两个连续递增的正读数证实开始恢复。
 // 步骤：首个非正读数建档 → 累计同次采样和最低值 → 短时回落归入原档，恢复后重新耗尽另开号。
 function advanceAirEpisode(prior, reading, nextId) {
@@ -57,6 +62,9 @@ function trackSelfVitals(bot, currentGeneration) {
     const current = Number.isInteger(field.value) && field.value >= -2147483648 && field.value <= 2147483647
       ? capture({ source: 'entity_metadata.air_supply', ticks: field.value }) : undefined;
     if (current) {
+      const feet = bot.entity.position?.floored?.();
+      if (feet && [feet.x,feet.y,feet.z].every(Number.isSafeInteger) && (bot.entity.isInWater || waterBlock(bot.blockAt?.(feet))))
+        current.reading.waterCell = { x:feet.x, y:feet.y, z:feet.z };
       const prior = belongs(air,current.generation) ? air.episode : undefined;
       current.episode = advanceAirEpisode(prior,current.reading,() => ++episode);
       const next = current.episode;
@@ -96,4 +104,4 @@ function trackSelfVitals(bot, currentGeneration) {
   };
 }
 
-module.exports = { trackSelfVitals };
+module.exports = { trackSelfVitals, waterBlock };

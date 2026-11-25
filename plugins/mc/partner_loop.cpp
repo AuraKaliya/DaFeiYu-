@@ -106,7 +106,7 @@ Json companion_guidance(const Json& input, bool player_message, bool actual_outc
         Guidance{"domainExperience","collectionProgress","回答采掘进展时，按原工作最近采样的目标格、破坏数和实际库存说明。掉落离开视野且没有拾取回执时，拾取人未知。",reading_collection},
         Guidance{"domainExperience","followAttention","用实际距离、高差和可见性判断能否恢复跟随，或需要玩家协助。",
             input.at("trigger") == "follow.attention"},
-        Guidance{"domainExperience","airEvidence","空气记录标明本人何时耗尽或开始回升。要判断此刻余气时，用 observe(mode=vitals) 复核最新样本。",
+        Guidance{"domainExperience","airEvidence","用 observe(mode=vitals) 复核本人余气。shore 给出当次覆盖内的干岸站位、受阻证据或未确认原因。是否已上岸要查实际位置。",
             input.contains("airNotices")},
         Guidance{"outputConstraints","handoffProgress","原工作仍在等收件。可用当前已核实的投出和实收数量先答复原委托。玩家已得到这份进展时可静默。",
             input.at("trigger") == "handoff.progress"},
