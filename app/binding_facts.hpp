@@ -31,6 +31,8 @@ class BindingWorks {
     std::uint64_t settle(std::uint64_t current_epoch, const plugins::SubagentWorkFact& fact);
     // 按本帧剩余字节投影本代次的工作身份、实效和退出，优先展示较新及在途的正文。
     nlohmann::json view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit = 128*1024) const;
+    // 展开当前留存修订的原文，已归档工作返回原阶段和指纹，窗口外返回空。
+    std::optional<std::string> read(std::uint64_t epoch, std::uint64_t receipt) const;
     // 返回最近一次真实接纳的工作回执水位，供冻结增量。
     std::uint64_t watermark() const noexcept { return next_; }
   private:

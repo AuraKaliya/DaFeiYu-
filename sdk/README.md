@@ -48,7 +48,7 @@ cmake --build .\build-status --config Release
 | [信箱](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox@1`：启用后可接入本体，按独立地址交付、去重及读取 |
 | [信箱文本](include/dafeiyu/mailbox_abi_v2.h) | `dfy.mailbox.text@1`：从已收信件读取分类、版本和单文本正文 |
 | [事件解析与主信箱策略](include/dafeiyu/routed_event_abi_v2.h) | `dfy.event.routes@1` 登记事件契约和解析器，`dfy.mailbox.rules@1` 声明主信箱的分类、优先级及唤醒 |
-| [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1` 提供独立会话、排队提交与退出读回。第 2 版支持标记面向玩家的回合以装配本体人格，第 3 版支持为单次请求指定低强度或关闭思考。可选的 `dfy.agent.facts@1` 接纳同一绑定的事实增量和原工作回执。 |
+| [子会话](include/dafeiyu/agent_abi_v2.h) | `dfy.agent@1` 提供独立会话、排队提交与退出读回。第 2 版支持标记面向玩家的回合以装配本体人格，第 3 版支持为单次请求指定低强度或关闭思考。`dfy.agent.facts@1` 接纳绑定事实和原工作回执，版本 2 增加有序接纳、最终实效与原号读回。 |
 | [后台推进](include/dafeiyu/activity_abi_v2.h) | 插件可公开 `dfy.activity@1`，宿主公平调度非阻塞步骤，每个实例最多排队一步 |
 | [Hook](include/dafeiyu/hook_abi_v2.h) | 插件可公开 `dfy.hooks@1` 控制模型请求、工具启动、工具结果，以及 `dfy.hook.text@1` 改写指定阶段的文本字段 |
 | `dfy.groups` | 1：宿主明确授予组时加入、退出和查看本成员状态 |
@@ -71,6 +71,10 @@ cmake --build .\build-status --config Release
 在 `dfy.activity@1` 的 `step` 中推进收件、原生工作或子会话。`dfy.agent@1` 的 `submit` 复制有界输入并排队，宿主在离开原插件调用后派发相同执行器。每个子会话独立保存上下文，工具范围限本实例当前注册。插件通过 `status` 查询原回合，发出 `cancel` 或 `close` 后仍由宿主推进实际退出。忙碌实例拒绝直接卸载。[子会话契约](include/dafeiyu/agent_abi_v2.h) · [活动契约](include/dafeiyu/activity_abi_v2.h)
 
 插件可另行查询 `dfy.agent.facts@1`。首次用 `DFY_V2_FACT_BASELINE` 并在 `input.prompt` 提交 `{"set":{"goal":"取材"},"closed":[]}`。后续沿同一作用域递增序号，重复提交原帧可取回原请求号。断序返回 `DFY_V2_NOT_FOUND` 和所需序号，可补齐缺口或提交新基线。工作用原代次、原工作号和连续修订分别登记接纳、实效和退出，后到的实收可在退出后追加。切回原提交入口须等当前回合退出。再次提交增量时，宿主使用当前镜像重建基线。[C ABI](include/dafeiyu/agent_abi_v2.h) · [回退回归](../tests/plugin_mailbox_dll.cpp)
+
+协商 `dfy.agent.facts@2` 后，插件可在实际派发前调用 `settle_ordered` 登记原工作与本代次递增的首次接纳序号。容量不足时先结算已有工作，同一原件重试用原序号。采用有序接纳的代次，后续新工作继续使用有序入口。实效仍待查时可沿原号多次更新。领域方核实最后一份实效后，在该版实效上设置 `DFY_V2_WORK_FINAL_EFFECT`，实际退出单独登记。宿主至多保留 128 个活动工作，每个保留 16 版，满额时归档已退出且实效最终的工作。最近 128 个归档支持原号重传，窗口外旧序号会被拒绝。
+
+`read_receipt` 按原会话、代次和阶段接纳号读回数据。调用方传入缓冲区，可先以零容量取得所需字节数。活动记录带原正文，归档记录带阶段和正文 SHA-256，超过保留窗口返回 `DFY_V2_NOT_FOUND`。读取沿用原实例权限，期间不触发模型、工具或游戏工作。[宿主索引](../app/binding_facts.cpp) · [跨 DLL 用例](../tests/fixtures/query_v2/mailbox_fixture.c)
 
 ## Hook 注册与改写规则
 

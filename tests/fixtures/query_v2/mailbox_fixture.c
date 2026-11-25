@@ -13,6 +13,7 @@ _Static_assert(sizeof(dfy_v2_text_hook_api) == 24 && sizeof(dfy_v2_text_hook_inp
 _Static_assert(sizeof(dfy_v2_transition_hook_api) == 24 && sizeof(dfy_v2_transition_hook_input) == 96,"transition hook ABI");
 _Static_assert(sizeof(dfy_v2_agent_api) == 48 && sizeof(dfy_v2_agent_input) == 64 && sizeof(dfy_v2_agent_status) == 32,"agent ABI");
 _Static_assert(sizeof(dfy_v2_agent_facts_api) == 24 && sizeof(dfy_v2_fact_frame) == 40 && sizeof(dfy_v2_work_fact) == 56,"optional agent facts ABI");
+_Static_assert(sizeof(dfy_v2_agent_ordered_facts_api) == 40,"ordered agent facts ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
     const dfy_v2_mailbox_api* mail;
@@ -168,7 +169,36 @@ static dfy_v2_status DFY_V2_CALL emit_notice(dfy_v2_instance* instance, uint64_t
 static uint32_t DFY_V2_CALL transition_count(dfy_v2_instance* instance, uint32_t point) {
     return instance->observed[point-1];
 }
-static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply,ask,agent_result,emit_notice,transition_count};
+// 以同一原生实例读回实际回执，缓冲不足和旧代次查询都不改变工作。
+// 步骤：协商第二版 → 提交原件及最终实效 → 核对原号重传 → 检查输出边界及实收正文。
+static dfy_v2_status DFY_V2_CALL work_receipts(dfy_v2_instance* instance, uint64_t session, uint64_t epoch) {
+    const void* table = NULL;
+    const dfy_v2_string_view name = {DFY_V2_AGENT_FACTS_INTERFACE,sizeof(DFY_V2_AGENT_FACTS_INTERFACE)-1};
+    if (instance->host(name,DFY_V2_AGENT_ORDERED_FACTS_VERSION,&table,NULL) || !table) return DFY_V2_UNSUPPORTED;
+    const dfy_v2_agent_ordered_facts_api* service = table;
+    if (service->base.header.struct_size != sizeof(*service) ||
+        service->base.header.interface_version != DFY_V2_AGENT_ORDERED_FACTS_VERSION) return DFY_V2_ABI_MISMATCH;
+
+    dfy_v2_work_fact fact = {epoch,1,{"c-fixture",9},{"{}",2},DFY_V2_WORK_ACCEPTED,0};
+    uint64_t accepted = 0, effect = 0, retry = 0;
+    if (service->settle_ordered(session,&fact,0,0,&accepted,NULL)!=DFY_V2_INVALID_ARGUMENT || accepted) return DFY_V2_FAILED;
+    if (service->settle_ordered(session,&fact,1,0,&accepted,NULL) || !accepted) return DFY_V2_FAILED;
+    fact.revision = 2; fact.phase = DFY_V2_WORK_EFFECT;
+    fact.content = (dfy_v2_string_view){"{\"picked\":8}",12};
+    if (service->settle_ordered(session,&fact,0,DFY_V2_WORK_FINAL_EFFECT,&effect,NULL) || effect <= accepted ||
+        service->settle_ordered(session,&fact,0,DFY_V2_WORK_FINAL_EFFECT,&retry,NULL) || retry != effect) return DFY_V2_FAILED;
+
+    uint32_t needed = 0, written = 0;
+    char output[512] = {'?'};
+    if (service->read_receipt(session,epoch,effect,output,1,&needed,NULL) != DFY_V2_RESOURCE_EXHAUSTED ||
+        output[0] != '?' || !needed || needed >= sizeof(output) ||
+        service->read_receipt(session,epoch+1,effect,output,sizeof(output),&written,NULL) != DFY_V2_NOT_FOUND || written ||
+        service->read_receipt(session,epoch,effect,output,needed,&written,NULL) || written != needed) return DFY_V2_FAILED;
+    output[written] = 0;
+    return strstr(output,"\"body\":{\"picked\":8}") && strstr(output,"\"finalEffect\":true") ? DFY_V2_OK : DFY_V2_FAILED;
+}
+
+static const dfy_test_mailbox_api exercise = {{sizeof(dfy_test_mailbox_api),1},reply,ask,agent_result,emit_notice,transition_count,work_receipts};
 
 // 依次注册主会话模型前检查及工具确认。
 static dfy_v2_status DFY_V2_CALL describe_hook(dfy_v2_instance* instance, uint32_t index,

@@ -163,6 +163,25 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
     }
     return ++next_;
 }
+// 沿数字接纳号查回原工作及修订，读取不更新任何水位。
+// 步骤：限定原代次 → 查活动原文或归档指纹 → 以同一身份返回有界结果。
+std::optional<std::string> BindingWorks::read(std::uint64_t epoch, std::uint64_t receipt) const {
+    const auto lookup = [&](const auto& entries, bool archived) -> std::optional<std::string> {
+        for (const auto& [key,work] : entries) if (key.first == epoch) {
+            const auto stage = std::ranges::find(work.revisions,receipt,&Record::receipt);
+            if (stage == work.revisions.end()) continue;
+            Json result{{"epoch",epoch},{"work",key.second},{"revision",stage->revision},{"receipt",receipt},
+                {"phase",stage->phase},{"finalEffect",stage->final_effect},{"archived",archived}};
+            if (archived) result["sha256"] = stage->content;
+            else result["body"] = Json::parse(stage->content);
+            return result.dump();
+        }
+        return {};
+    };
+    if (auto active = lookup(records_,false)) return active;
+    return lookup(archived_,true);
+}
+
 // 在本帧的真实字节预算内保留原工作的接纳、最近实效和实际退出。
 // 步骤：选择本代次以来的变化 → 组装原号及可见正文 → 按需从已退出和较早的记录收缩正文。
 Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit) const {

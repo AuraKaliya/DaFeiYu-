@@ -66,6 +66,8 @@ const dfy_v2_mailbox_text_api& mailbox_text_api();
 const dfy_v2_agent_api& agent_api(uint32_t version);
 // 返回独立协商的版本化事实及原工作结算服务。
 const dfy_v2_agent_facts_api& agent_facts_api();
+// 返回支持有序工作结算及回执读回的第二版不可变服务表。
+const dfy_v2_agent_ordered_facts_api& ordered_agent_facts_api();
 // 返回当前实例的原生事件路由登记及提交接口。
 const dfy_v2_routed_event_api& routed_event_api();
 // 返回插件主信箱策略声明能力。

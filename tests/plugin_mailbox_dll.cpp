@@ -300,6 +300,9 @@ void fact_binding(const fs::path& root) {
     }
     agents.submit(owner,id,make(2,3,true,{{"goal","follow up"},{"largeField",std::string(32*1024,'a')}}));
     check(settle()==SubagentPhase::succeeded && calls==16,"long work baseline prevented next decision");
+    const auto fixture = plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+    check(fixture && plugin->invoke(*fixture,[&](const auto& api,auto* instance) { return api.work_receipts(instance,id,2); })==DFY_V2_OK &&
+        calls==16 && !agents.busy(owner),"ordered C ABI did not read the original receipt without dispatch");
 }
 
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。

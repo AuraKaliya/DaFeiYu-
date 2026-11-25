@@ -109,6 +109,12 @@ std::uint64_t Subagents::settle(runtime::DomainId owner, runtime::DomainId id, p
     return slot.works.settle(slot.closing || stopping_ ? 0 : slot.facts.epoch(),fact);
 }
 
+// 先核对原实例和会话，再返回已留存的回执内容。
+std::optional<std::string> Subagents::read_receipt(runtime::DomainId owner, runtime::DomainId id,
+    std::uint64_t epoch, std::uint64_t receipt) const {
+    return find(owner,id).works.read(epoch,receipt);
+}
+
 // 投影原请求状态和本次结算正文。
 SubagentStatus Subagents::status(runtime::DomainId owner, runtime::DomainId id) const {
     const auto& slot = find(owner,id);

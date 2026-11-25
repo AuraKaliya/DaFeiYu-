@@ -27,6 +27,9 @@ class Subagents final : public plugins::PluginAgents {
     std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) override;
     // 把回执写入原实例会话的工作记录，陈旧的授权不能发起新工作。
     std::uint64_t settle(runtime::DomainId owner, runtime::DomainId session, plugins::SubagentWorkFact fact) override;
+    // 仅从原实例会话的指定代次读取已接纳的工作阶段。
+    std::optional<std::string> read_receipt(runtime::DomainId owner, runtime::DomainId session,
+        std::uint64_t epoch, std::uint64_t receipt) const override;
     // 按原所有者取得状态，答案视图保留至下次提交或关停。
     SubagentStatus status(runtime::DomainId owner, runtime::DomainId session) const override;
     // 按原请求取消，已完成的回执继续可查。

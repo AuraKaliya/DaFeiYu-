@@ -1,5 +1,6 @@
 #include "host_state.hpp"
 #include <dafeiyu/utf8.hpp>
+#include <cstring>
 
 namespace dfy::plugins {
 // 固定宿主签发的所有者与服务寿命，C 调用无法另选身份。
@@ -104,17 +105,46 @@ dfy_v2_status DFY_V2_CALL submit_facts(uint64_t session, const dfy_v2_agent_inpu
 }
 // 按宿主所有者及原工作身份接纳实效，所有借用数据在 DLL 回调内复制。
 // 步骤：校验回执布局 → 核对服务 → 复制原身份与正文 → 返回接纳号或拒绝。
-dfy_v2_status DFY_V2_CALL settle_work(uint64_t session, const dfy_v2_work_fact* fact, uint64_t* receipt, dfy_v2_error* error) {
+dfy_v2_status record_work(uint64_t session, const dfy_v2_work_fact* fact, uint64_t sequence,
+    uint32_t flags, uint64_t* receipt, dfy_v2_error* error, bool ordered) {
     if (receipt) *receipt = 0;
     return boundary(error,[&](auto& host) {
-        if (!session || !receipt || !fact || fact->reserved || !fact->epoch || !fact->revision ||
+        if (!session || !receipt || !fact || fact->reserved || !fact->epoch || !fact->revision || (flags & ~DFY_V2_WORK_FINAL_EFFECT) ||
+            (ordered && ((fact->phase == DFY_V2_WORK_ACCEPTED) != (sequence != 0))) ||
             fact->phase < DFY_V2_WORK_ACCEPTED || fact->phase > DFY_V2_WORK_EXIT) return DFY_V2_INVALID_ARGUMENT;
         const auto service = host.agents.lock();
         if (!service) return DFY_V2_UNSUPPORTED;
         try { *receipt = service->settle(host.agent_owner,session,{fact->epoch,fact->revision,text(fact->work,128),
-            text(fact->content,8192),fact->phase}); }
+            text(fact->content,8192),fact->phase,sequence,(flags & DFY_V2_WORK_FINAL_EFFECT)!=0}); }
         catch (const std::length_error&) { return DFY_V2_RESOURCE_EXHAUSTED; }
         catch (const std::invalid_argument&) { return DFY_V2_INVALID_ARGUMENT; }
+        return DFY_V2_OK;
+    });
+}
+// 第二版把首次接纳序号绑定到原件，最终实效只能由原插件在实效阶段声明。
+dfy_v2_status DFY_V2_CALL settle_ordered(uint64_t session, const dfy_v2_work_fact* fact, uint64_t sequence,
+    uint32_t flags, uint64_t* receipt, dfy_v2_error* error) {
+    return record_work(session,fact,sequence,flags,receipt,error,true);
+}
+// 第一版保持无序接纳，沿用共同的所有者、字段和容量校验。
+dfy_v2_status DFY_V2_CALL settle_work(uint64_t session, const dfy_v2_work_fact* fact, uint64_t* receipt, dfy_v2_error* error) {
+    return record_work(session,fact,0,0,receipt,error,false);
+}
+
+// 将指定回执复制到调用方缓冲，尺寸查询及重试均无外部动作。
+// 步骤：校验原会话及输出 → 读取该代次的原件 → 报所需容量或完整复制。
+dfy_v2_status DFY_V2_CALL read_receipt(uint64_t session, uint64_t epoch, uint64_t receipt, char* output,
+    uint32_t capacity, uint32_t* written, dfy_v2_error* error) {
+    if (written) *written = 0;
+    return boundary(error,[&](auto& host) {
+        if (!session || !epoch || !receipt || !written || (capacity && !output)) return DFY_V2_INVALID_ARGUMENT;
+        const auto service = host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        const auto value = service->read_receipt(host.agent_owner,session,epoch,receipt);
+        if (!value) return DFY_V2_NOT_FOUND;
+        *written = static_cast<uint32_t>(value->size());
+        if (capacity < *written) return DFY_V2_RESOURCE_EXHAUSTED;
+        std::memcpy(output,value->data(),*written);
         return DFY_V2_OK;
     });
 }
@@ -170,6 +200,12 @@ const dfy_v2_agent_api& agent_api(uint32_t version) {
 // 发布独立的小型事实表，原子会话服务的大小和字段位置保持 ABI 兼容。
 const dfy_v2_agent_facts_api& agent_facts_api() {
     static const dfy_v2_agent_facts_api api{{sizeof(api),DFY_V2_AGENT_FACTS_VERSION},submit_facts,settle_work};
+    return api;
+}
+// 发布第二版事实服务，第一版前缀仍固定由原结算入口解释。
+const dfy_v2_agent_ordered_facts_api& ordered_agent_facts_api() {
+    static const dfy_v2_agent_ordered_facts_api api{{{sizeof(api),DFY_V2_AGENT_ORDERED_FACTS_VERSION},submit_facts,settle_work},
+        settle_ordered,read_receipt};
     return api;
 }
 }

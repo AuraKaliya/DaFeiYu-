@@ -16,5 +16,7 @@ typedef struct dfy_test_mailbox_api {
     dfy_v2_status (DFY_V2_CALL *emit_notice)(dfy_v2_instance*,uint64_t,int);
     // 读取处于有效范围内的阶段计数。
     uint32_t (DFY_V2_CALL *transition_count)(dfy_v2_instance*,uint32_t);
+    // 用原生调用者验证有序工作提交、缓冲区复制和原代次读回。
+    dfy_v2_status (DFY_V2_CALL *work_receipts)(dfy_v2_instance*,uint64_t,uint64_t);
 } dfy_test_mailbox_api;
 #pragma pack(pop)

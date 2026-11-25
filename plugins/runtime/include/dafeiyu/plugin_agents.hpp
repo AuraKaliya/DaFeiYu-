@@ -52,6 +52,9 @@ class PluginAgents {
     virtual std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) = 0;
     // 只接纳同一实例及原工作号的回执，重复版本返回原接纳号。
     virtual std::uint64_t settle(runtime::DomainId owner, runtime::DomainId session, SubagentWorkFact fact) = 0;
+    // 按调用者的原会话、代次和接纳号查询已保留的回执，读取不推进工作。
+    virtual std::optional<std::string> read_receipt(runtime::DomainId owner, runtime::DomainId session,
+        std::uint64_t epoch, std::uint64_t receipt) const = 0;
     // 取得原会话最新请求；正文在下一次修改前有效。
     virtual SubagentStatus status(runtime::DomainId owner, runtime::DomainId session) const = 0;
     // 请求取消指定回合并保留其结果身份。

@@ -7,6 +7,8 @@
 #define DFY_V2_AGENT_THINKING_VERSION UINT32_C(3)
 #define DFY_V2_AGENT_FACTS_INTERFACE "dfy.agent.facts"
 #define DFY_V2_AGENT_FACTS_VERSION UINT32_C(1)
+#define DFY_V2_AGENT_ORDERED_FACTS_VERSION UINT32_C(2)
+#define DFY_V2_WORK_FINAL_EFFECT UINT32_C(1)
 #define DFY_V2_FACT_BASELINE UINT32_C(1)
 #define DFY_V2_WORK_ACCEPTED UINT32_C(1)
 #define DFY_V2_WORK_EFFECT UINT32_C(2)
@@ -76,6 +78,16 @@ typedef struct dfy_v2_agent_facts_api {
     // 同步复制原工作回执并返回接纳号，不分派动作。旧代次只可结算已经登记的原工作。
     dfy_v2_status (DFY_V2_CALL *settle)(uint64_t session, const dfy_v2_work_fact* fact, uint64_t* receipt, dfy_v2_error* error);
 } dfy_v2_agent_facts_api;
+// 第二版沿用事实提交和旧工作接口，按需启用有序接纳及指定接纳号的只读查询。
+typedef struct dfy_v2_agent_ordered_facts_api {
+    dfy_v2_agent_facts_api base;
+    // 首次接纳使用本代次递增序号，重传须保持原号。后续阶段序号为零，最终实效可标记 FINAL_EFFECT。
+    dfy_v2_status (DFY_V2_CALL *settle_ordered)(uint64_t session, const dfy_v2_work_fact* fact,
+        uint64_t admission_sequence, uint32_t flags, uint64_t* receipt, dfy_v2_error* error);
+    // 只读原代次接纳号的 JSON，written 返回所需字节数。缓冲不足时不写入，归档项返回正文指纹。
+    dfy_v2_status (DFY_V2_CALL *read_receipt)(uint64_t session, uint64_t epoch, uint64_t receipt,
+        char* output, uint32_t capacity, uint32_t* written, dfy_v2_error* error);
+} dfy_v2_agent_ordered_facts_api;
 #pragma pack(pop)
 #ifdef __cplusplus
 }

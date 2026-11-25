@@ -87,9 +87,13 @@ void archive_completed() {
             rejects([&] { works.settle(1,changed); });
             rejects([&] { works.settle(1,{1,4,"work-3","{}",DFY_V2_WORK_EFFECT}); });
             check(works.watermark()==before,"archived read advanced the live index");
+            const auto archived = Json::parse(works.read(1,effect_receipt).value());
+            check(archived.at("archived")==true && archived.at("work")=="work-3" && archived.contains("sha256") &&
+                !archived.contains("body") && !works.read(2,effect_receipt),"archived reference lost its scope or invented a body");
         }
     }
     rejects([&] { works.settle(1,admission(3)); });
+    check(!works.read(1,effect_receipt),"evicted archive still exposed a body or a new identity");
     auto unordered = admission(3); unordered.admission_sequence = 0;
     rejects([&] { works.settle(1,unordered); });
     works.settle(0,{1,4,"work-1",R"({"received":8})",DFY_V2_WORK_EFFECT,0,true});
