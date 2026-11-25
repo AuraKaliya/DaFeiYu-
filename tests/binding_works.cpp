@@ -42,10 +42,29 @@ void late_revisions() {
         item.at("accepted")==accepted && item.at("effect").at("picked")==45 && works.view(8,0).empty(),
         "revision window changed identity, erased exit or leaked across epochs");
 }
+
+// 预算受限时保持在途工作的正文，外部名字大量转义也能用数字接纳号定位。
+// 步骤：登记同规模在途和退出工作 → 用较小预算投影 → 核对剩余正文、原接纳号及过滤水位。
+void bounded_view() {
+    BindingWorks works;
+    const auto body = Json{{"value",std::string(700,'v')}}.dump();
+    const auto long_id = std::string(120,'\x01');
+    const auto first = works.settle(1,{1,1,long_id,"{}",DFY_V2_WORK_ACCEPTED});
+    works.settle(1,{1,2,long_id,body,DFY_V2_WORK_EFFECT});
+    const auto exit = works.settle(1,{1,3,long_id,"{}",DFY_V2_WORK_EXIT});
+    works.settle(1,{1,1,"pending","{}",DFY_V2_WORK_ACCEPTED});
+    works.settle(1,{1,2,"pending",body,DFY_V2_WORK_EFFECT});
+
+    const auto view = works.view(1,0,1200);
+    check(view.size()==2 && view.dump().size()<=1200 && view[0].at("accepted")==first && view[0].at("exited")==exit &&
+        view[0].contains("workSha256") && view[0].at("effect").at("bytes")==body.size() &&
+        view[1].at("effect").at("value")==std::string(700,'v') && works.view(1,exit,1200).size()==1,
+        "bounded work view lost an original reference or prioritized a settled body over a pending one");
+}
 }
 
 // 以真实宿主索引回放工作数量及修订边界。
 int main() {
-    try { late_revisions(); return 0; }
+    try { late_revisions(); bounded_view(); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

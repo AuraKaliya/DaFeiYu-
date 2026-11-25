@@ -215,7 +215,19 @@ void fact_binding(const fs::path& root) {
                 request.messages.front().content.find("eight cobblestones") != std::string::npos,
                 "ninth intervening utterance lost unfinished goal, work or inventory");
         }
-        if (frame.at("factFrame").at("epoch") == 2) {
+        if (frame.at("factFrame").at("epoch") == 2 && seq == 3) {
+            const auto& works = frame.at("hostWorkReceipts");
+            unsigned previews = 0, bodies = 0;
+            for (const auto& work : works) {
+                check(work.contains("work") && work.contains("accepted") && work.contains("exited") && work.contains("effectReceipt"),
+                    "large baseline dropped a work identity or phase");
+                const auto& effect = work.at("effect");
+                if (effect.contains("sample")) ++bodies;
+                else if (effect.at("bytes")==993 && effect.at("sha256").get_ref<const std::string&>().size()==64) ++previews;
+            }
+            check(request.messages.size()==1 && request.messages.back().content.size()<=128*1024 && works.size()==120 &&
+                bodies>0 && previews>0 && bodies+previews==120 && frame.at("goal")=="follow up","large baseline lost facts or did not fit");
+        } else if (frame.at("factFrame").at("epoch") == 2) {
             check(!frame.contains("hostWorkReceipts") && request.messages.size() == 1,"rebound leaked old facts");
             if (seq == 2) check(frame.at("factFrame").at("mode") == "baseline" && frame.at("new") == "world" &&
                 frame.at("again") == true,"return from legacy omitted the current baseline");
@@ -278,6 +290,16 @@ void fact_binding(const fs::path& root) {
     agents.submit(owner,id,make(2,2,false,{{"again",true}}));
     check(settle() == SubagentPhase::succeeded && calls == 15 && agents.submit(owner,id,rebound) == original &&
         !agents.busy(owner),"return to fact mode lost prior admission or dispatched twice");
+
+    const auto body = Json{{"sample",std::string(980,'x')}}.dump();
+    for (unsigned index=0;index<120;++index) {
+        const auto work = "read-"+std::to_string(index);
+        agents.settle(owner,id,{2,1,work,R"({"skill":"observe","sourceMessage":1})",DFY_V2_WORK_ACCEPTED});
+        agents.settle(owner,id,{2,2,work,body,DFY_V2_WORK_EFFECT});
+        agents.settle(owner,id,{2,3,work,R"({"exited":true})",DFY_V2_WORK_EXIT});
+    }
+    agents.submit(owner,id,make(2,3,true,{{"goal","follow up"},{"largeField",std::string(32*1024,'a')}}));
+    check(settle()==SubagentPhase::succeeded && calls==16,"long work baseline prevented next decision");
 }
 
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。

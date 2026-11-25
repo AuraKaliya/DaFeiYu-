@@ -29,8 +29,8 @@ class BindingWorks {
   public:
     // 幂等接纳工作阶段，过期代次只可推进原先已登记的工作。
     std::uint64_t settle(std::uint64_t current_epoch, const plugins::SubagentWorkFact& fact);
-    // 新绑定的模型只能看到本代次的在途工作、未确认实效和最近结算。
-    nlohmann::json view(std::uint64_t epoch, std::uint64_t after) const;
+    // 按本帧剩余字节投影本代次的工作身份、实效和退出，优先展示较新及在途的正文。
+    nlohmann::json view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit = 128*1024) const;
     // 返回最近一次真实接纳的工作回执水位，供冻结增量。
     std::uint64_t watermark() const noexcept { return next_; }
   private:

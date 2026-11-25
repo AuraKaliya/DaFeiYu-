@@ -81,7 +81,9 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         const bool baseline = input.frame->baseline || !slot.continuous_history;
         auto prompt = pending->apply(input,slot.request+1,baseline);
         const auto after = baseline ? 0 : slot.projected_receipt;
-        const auto works = slot.works.view(input.frame->epoch,after);
+        // 原事实帧最多约 64 KiB，另给两个水位及数组字段名留出空间。
+        constexpr std::size_t projected_limit = 128*1024;
+        const auto works = slot.works.view(input.frame->epoch,after,projected_limit-prompt.size()-128);
         if (!works.empty()) {
             auto data = nlohmann::json::parse(prompt);
             data["factFrame"]["workAfter"] = after;
@@ -89,7 +91,7 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
             data["hostWorkReceipts"] = works;
             prompt = data.dump();
         }
-        if (prompt.size() > 128*1024) throw std::length_error("subagent: projected input outside limit");
+        if (prompt.size() > projected_limit) throw std::length_error("subagent: projected input outside limit");
         input.prompt = std::move(prompt);
         input.replace_history = baseline;
         slot.pending_receipt = slot.works.watermark();

@@ -36,6 +36,10 @@ void field(std::string_view name) {
     if (name.empty() || name.size() > 80 || name == "factFrame" || name == "hostWorkReceipts")
         throw std::invalid_argument("binding: invalid fact field");
 }
+// 为省略的原回执正文保留完整字节数和指纹，同项的接纳号定位原记录。
+Json body_reference(const std::string& body) {
+    return {{"bytes",body.size()},{"sha256",platform::sha256(body)}};
+}
 }
 
 // 查找已经发布的同号原件。窗口外旧号和同号异参都不能作为新工作派发。
@@ -119,9 +123,9 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
     }
     return ++next_;
 }
-// 返回原工作的接纳、最近实效和实际退出，跨代迟到结算不进入当前模型范围。
-// 步骤：限定当前代次 → 分别归集实效与退出 → 长正文改用原接纳号和指纹引用。
-Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after) const {
+// 在本帧的真实字节预算内保留原工作的接纳、最近实效和实际退出。
+// 步骤：选择本代次以来的变化 → 组装原号及可见正文 → 按需从已退出和较早的记录收缩正文。
+Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit) const {
     auto result = Json::array();
     for (const auto& [key,record] : records_) if (key.first == epoch && record.back().receipt > after) {
         const auto& last = record.back();
@@ -132,11 +136,34 @@ Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after) const {
             if (stage.phase == DFY_V2_WORK_EFFECT) {
                 item["effectReceipt"] = stage.receipt;
                 if (stage.content.size() <= 1024) item["effect"] = Json::parse(stage.content);
-                else item["effect"] = {{"bytes",stage.content.size()},{"sha256",platform::sha256(stage.content)}};
+                else item["effect"] = body_reference(stage.content);
             }
         }
         result.push_back(std::move(item));
     }
-    return result;
+    auto size = result.dump().size();
+    if (size <= byte_limit) return result;
+
+    std::vector<Json*> oldest;
+    for (auto& item : result) oldest.push_back(&item);
+    std::ranges::sort(oldest,{},[](const Json* item) {
+        return std::pair{!item->contains("exited"),item->at("receipt").get<std::uint64_t>()};
+    });
+    for (auto* item : oldest) {
+        const auto before = item->dump().size();
+        if (item->contains("effect")) {
+            const auto body = item->at("effect").dump();
+            if (body.size() > 128) (*item)["effect"] = body_reference(body);
+        }
+        item->erase("source");
+        // 极端转义的外部工作名仍可凭接纳号定位，避免名字本身挤掉其他未决工作的身份。
+        if (item->at("work").dump().size() > 128) {
+            (*item)["workSha256"] = platform::sha256(item->at("work").get_ref<const std::string&>());
+            item->erase("work");
+        }
+        size -= before-item->dump().size();
+        if (size <= byte_limit) return result;
+    }
+    throw std::length_error("binding: work references exceed frame budget");
 }
 }
