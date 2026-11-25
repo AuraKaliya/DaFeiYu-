@@ -20,7 +20,7 @@ constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
     "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain",
-    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog"};
+    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited"};
 constexpr std::array results{"started","ok","failed","accepted","busy","pending"};
 constexpr std::size_t queue_limit = 128;
 
@@ -61,6 +61,7 @@ nlohmann::json diagnostic_fields(const SoftwareFields& fields) {
     if (fields.turn) row["turn"] = fields.turn;
     if (fields.plugin_instance) row["pluginInstance"] = fields.plugin_instance;
     if (fields.plugin_code) row["pluginCode"] = *fields.plugin_code;
+    if (fields.peer_pid) row["peerPid"] = fields.peer_pid;
     return row;
 }
 }
@@ -157,7 +158,8 @@ void SoftwareLog::record(SoftwareEvent event, SoftwareResult result, SoftwareFie
         if (fields.instance.empty()) fields.instance = state_->instance;
         if (fields.client.empty() && fields.instance==state_->instance) fields.client = state_->client;
         if (!state_->instance.empty() && fields.instance==state_->instance) {
-            if (fields.shutdown && result==SoftwareResult::accepted && (event==SoftwareEvent::stop_accepted || event==SoftwareEvent::stop_reply))
+            if (fields.shutdown && ((result==SoftwareResult::accepted && (event==SoftwareEvent::stop_accepted || event==SoftwareEvent::stop_reply)) ||
+                event==SoftwareEvent::host_exited))
                 state_->shutting_down = true;
             fields.shutdown |= state_->shutting_down;
         }

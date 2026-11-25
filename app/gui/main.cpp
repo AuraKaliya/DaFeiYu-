@@ -70,7 +70,8 @@ struct Window : std::enable_shared_from_this<Window> {
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
     bool main_panel = false, main_panel_check = false;
-    bool observer_check = false, observer_stop = false, observer_log_error = false;
+    bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
+    bool resident_exit_seen = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
     // 步骤：输出本地容器错误 → 固定失败结果 → 提交关闭消息。
@@ -226,7 +227,18 @@ struct Window : std::enable_shared_from_this<Window> {
     // 步骤：分流收尾状态 → 启动或推进协议 → 核对完成条件与期限。
     void tick() noexcept {
         if (closing) { finish_close(); return; }
-        if (resident_client) resident_client->advance();
+        if (resident_client) {
+            resident_client->advance();
+            const auto peer = resident_client->observe();
+            if (peer.exit_code && !peer.error && !resident_exit_seen) {
+                resident_exit_seen = true;
+                const bool expected = peer.requested && *peer.exit_code==0;
+                if (software) software->record(dfy::app::SoftwareEvent::host_exited,
+                    expected ? dfy::app::SoftwareResult::ok : dfy::app::SoftwareResult::failed,
+                    {.shutdown=peer.requested,.exit_code=*peer.exit_code,.peer_pid=peer.pid});
+                if (expected) { close(); return; }
+            }
+        }
         if (run_status_host && run_status_host->exited()) { fail("UI application host stopped"); return; }
         if (!smoke && !interaction_mode) return;
         if (loaded && interaction_mode && !interaction) {
@@ -241,6 +253,10 @@ struct Window : std::enable_shared_from_this<Window> {
                     if (const auto self = weak.lock()) {
                         if (!passed) self->result = 1;
                         else std::fprintf(stderr,"Interaction protocol checks passed: %zu\n",self->interaction->passed());
+                        if (passed && (self->observer_stop || self->observer_wait)) {
+                            self->interaction_mode = false;
+                            return;
+                        }
                         PostMessageW(self->handle,WM_CLOSE,0,0);
                     }
                 });
@@ -395,7 +411,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool main_panel = (__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
         std::wstring_view(__wargv[1]) == L"--main-panel";
 #ifdef DFY_UI_RUN_STATUS_TEST
-    const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" || std::wstring_view(__wargv[4])==L"log-error"))) &&
+    const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
+        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"log-error"))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
@@ -439,6 +456,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->observer_check = observer_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";
         state->observer_log_error = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"log-error";
+        state->observer_wait = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"wait";
         if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
         state->user_data = data;
         if (software) state->software = &*software;

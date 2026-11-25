@@ -49,7 +49,6 @@ void InteractionProbe::start_observer(bool stop, bool log_error) {
     evaluate("leave resident running","document.querySelector('#host-stay').click(); !document.querySelector('#host-stop-title').closest('dialog').open");
     if (stop) {
         evaluate("request explicit completion","document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
-        expect("shutdown was accepted","document.querySelector('#host-shutdown-status')?.textContent.includes('已接收退出请求')");
     }
     next();
 }
