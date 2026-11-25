@@ -77,6 +77,8 @@ class Application {
     bool resume_dialogue_queue(std::uint64_t first);
     // 只移除仍在等待的原消息，已经启动的回合继续沿原身份结算。
     bool remove_queued_dialogue(std::uint64_t message);
+    // 重建上一实例已接纳的待发原话，按原顺序暂停至用户恢复。
+    std::uint64_t restore_queued_dialogue(const std::string& text);
     // 受信房间服务把已知事实投递到单独地址，接纳回执独立于主回合。
     events::DeliveryReceipt post_room_event(RoomEvent event, const std::string& room, const std::string& text);
     // 在当前主会话允许时主动审查一封房间来信。

@@ -29,6 +29,21 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
     return {QueueAdmission::accepted,message};
 }
 
+// 上一实例的前驱结果需要重新核对，恢复待发投影时先暂停自动启动。
+std::uint64_t Application::restore_queued_dialogue(const std::string& text) {
+    auto& display = conversation_.display_;
+    std::size_t bytes = text.size();
+    for (const auto& entry : display.queue) bytes += entry.text.size();
+    if (display.queue.size()>=dialogue_queue_limit || bytes>dialogue_queue_byte_limit || queued_message_sequence_==UINT64_MAX)
+        throw std::length_error("dialogue: restored queue exceeds capacity");
+    const auto native = queued_message_sequence_+1;
+    display.queue.push_back({native,conversation_.id(),text});
+    queued_message_sequence_ = native;
+    display.queue_paused = true;
+    ++display.revision;
+    return native;
+}
+
 // 经用户确认恢复原队首，已经核对过的失败或取消无需再次暂停。
 bool Application::resume_dialogue_queue(std::uint64_t first) {
     auto& display = conversation_.display_;

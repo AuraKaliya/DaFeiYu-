@@ -41,6 +41,10 @@ add_executable(dfy_persistent_dialogue_tests persistent_dialogue.cpp)
 target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
 set_target_properties(dfy_persistent_dialogue_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
+add_executable(dfy_message_recovery_tests message_recovery.cpp)
+target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
+set_target_properties(dfy_message_recovery_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.message_recovery COMMAND dfy_message_recovery_tests "${CMAKE_CURRENT_BINARY_DIR}/message-recovery")
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)

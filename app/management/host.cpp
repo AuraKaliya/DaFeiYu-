@@ -113,6 +113,7 @@ void Host::shutdown(app::Application& application) {
         std::this_thread::sleep_for(interval);
         result = application.close_plugins();
     }
+    if (application.main_messages()) application.main_messages()->finish();
     set_stop_phase(StopPhase::complete);
 }
 

@@ -1,6 +1,7 @@
 #include "main_messages.hpp"
 #include "application.hpp"
 #include "software_log.hpp"
+#include <thread>
 
 namespace dfy::app {
 using Json = nlohmann::json;
@@ -28,6 +29,13 @@ void MainMessages::publish(std::int64_t id, const Json& receipt) {
 // 在有限频率下补写积压的业务结果。
 void MainMessages::flush() {
     if (std::chrono::steady_clock::now()<retry_at_) return;
+    if (!pending_.empty() && app_.conversation().accepting()) {
+        const auto& display = app_.conversation().display();
+        if (pending_.begin()->second.at("route")!="send" || (!app_.conversation().busy() && (display.queue.empty() || display.queue_paused))) {
+            auto item = pending_.extract(pending_.begin());
+            deliver(item.key(),item.mapped());
+        }
+    }
     if (!replies_.empty()) {
         const auto first = replies_.begin();
         try { store_->put("main",first->first,first->second,{{"state","delivered"}}); replies_.erase(first); }
@@ -43,7 +51,13 @@ void MainMessages::flush() {
 // 步骤：固定交付边界 → 核对原实例 → 调用对应入口 → 以同一消息号记录实际结果。
 Json MainMessages::deliver(std::int64_t id, const Json& envelope) {
     Json result{{"state","dispatching"},{"instance",instance_}};
-    store_->update(id,result);
+    try { store_->update(id,result); }
+    catch (const std::runtime_error&) {
+        if (!pending_.contains(id)) storage_failed();
+        pending_[id] = envelope;
+        retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+        return {{"state","pending"}};
+    }
     auto& text = envelope.at("text").get_ref<const std::string&>();
     agent::RunId run{};
     std::uint64_t native = 0;
@@ -81,10 +95,54 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope) {
 // 原始命令身份在超时重查时保持不变，旧投递结果不启动新回合。
 void MainMessages::terminal(const std::string& submission, const std::string& text) {
     const auto envelope = user_envelope("send",text,{}, {});
+    if (const auto previous = store_->find("terminal",submission)) {
+        if (previous->envelope!=envelope) throw std::invalid_argument("messages: submission conflict");
+        if (previous->receipt.at("state")=="accepted") return;
+        throw std::runtime_error("dialogue: "+previous->receipt.at("state").get<std::string>());
+    }
     if (!app_.conversation().accepting() || app_.conversation().busy()) throw std::logic_error("session: wait for the current request to finish");
+    const auto& queue = app_.conversation().display();
+    if (!queue.queue.empty() && !queue.queue_paused) throw std::logic_error("dialogue: next message already queued");
     const auto accepted = store_->put("terminal",submission,envelope,{{"state","pending"}});
     const auto receipt = accepted.created ? deliver(accepted.message.id,envelope) : accepted.message.receipt;
     if (receipt.at("state")!="accepted") throw std::runtime_error("dialogue: "+receipt.at("state").get<std::string>());
+}
+
+// 只对可证明尚未开始的发送继续投递，原回合的未知实效留给原身份查证。
+// 步骤：分批读取待办 → 重建原队列并暂停 → 恢复未交付普通输入 → 结算旧目标或标记待核对。
+void MainMessages::restore() {
+    std::int64_t after = 0;
+    for (;;) {
+        const auto rows = store_->unfinished(after);
+        if (rows.empty()) return;
+        for (const auto& row : rows) {
+            after = row.id;
+            if (row.envelope.value("sender",std::string{})!="user") continue;
+            const auto& state = row.receipt.at("state");
+            if (state=="pending" && row.envelope.at("route")=="send") {
+                pending_.emplace(row.id,row.envelope);
+                continue;
+            }
+            auto receipt = row.receipt;
+            if (state=="queued") {
+                const auto native = app_.restore_queued_dialogue(row.envelope.at("text").get_ref<const std::string&>());
+                queued_[native] = row.id;
+                receipt.update(Json{{"instance",instance_},{"session",std::to_string(app_.conversation().id())},
+                    {"turn","0"},{"nativeMessage",std::to_string(native)},{"paused",true}});
+            } else receipt["state"] = state=="pending" ? "stale" : "unknown";
+            store_->update(row.id,receipt);
+        }
+    }
+}
+
+// 只等待已经发生的写盘责任，尚未执行的原话已在待办表中。
+void MainMessages::finish() {
+    const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(4);
+    while (!retry_.empty() || !replies_.empty()) {
+        flush();
+        if (std::chrono::steady_clock::now()>=end) throw std::runtime_error("messages: verified results could not be saved");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
 // 队首的下一轮可能已经发生外部效果，必须在启动前提交这个边界。

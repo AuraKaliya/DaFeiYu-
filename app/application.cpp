@@ -108,6 +108,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log) {
     main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log);
     conversation_.main_messages_ = main_messages_.get();
+    main_messages_->restore();
 }
 
 // 只读取本次记录位置，不打开原始会话或推进工作。
