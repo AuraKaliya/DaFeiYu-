@@ -40,6 +40,11 @@ void protocol() {
     request = fixture(); request.max_output_tokens = 0; rejects(request);
     request = fixture(); request.messages[1].content = std::string(1,static_cast<char>(0xff)); rejects(request);
     request = fixture(); request.messages[2].tool_calls[0].id = std::string(1,static_cast<char>(0xff)); rejects(request);
+
+    Request local{{{Role::assistant,"answer",{},{},std::string(1,static_cast<char>(0xff))}}};
+    rejects(local);
+    local.messages.front().reasoning_content = std::string(8*1024*1024+1,'r'); rejects(local);
+    local.messages.front() = {Role::user,"prompt",{},{},"wrong role"}; rejects(local);
 }
 // 拒绝不能交给执行层的模型响应，不执行其中的任何工具。
 void rejects_response(const Response& response) {

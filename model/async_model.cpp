@@ -78,7 +78,7 @@ std::shared_ptr<ModelRequest> AsyncClient::submit(Config config, std::vector<Mes
 std::shared_ptr<ModelRequest> AsyncClient::submit_request(Config config, Request input, bool capture_discarded) {
     collect();
     if (!accepting_) throw std::logic_error("model: async admission closed");
-    validate_request(input);
+    validate_request(input,config.thinking_enabled());
     if (!structured_) {
         if (!input.tools.empty() || input.max_output_tokens) throw std::invalid_argument("model: text backend does not support request options");
         for (const auto& message : input.messages) if ((message.role != Role::user && message.role != Role::assistant) ||

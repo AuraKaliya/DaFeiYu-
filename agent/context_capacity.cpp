@@ -19,7 +19,7 @@ std::size_t history_bytes(const model::Request& input) {
 // 检查完整编码的硬限及已配置的保守窗口，输出预留按实际配置扣减一次。
 bool fits(const model::Request& input, ContextWindow window) {
     if (input.messages.size() > 1024) return false;
-    try { model::validate_request(input); }
+    try { model::validate_request(input,window.thinking); }
     catch (const std::length_error&) { return false; }
     if (!window.tokens) return true;
     // 用编码字节保守估算输入 token，另留消息封套和供应商模板余量。
@@ -52,7 +52,7 @@ std::size_t dialogue_span(const std::vector<model::Message>& messages, std::size
 // 按连续原始位置组合已完成的普通问答，返回仍有长回答可缩短的组位置。
 // 步骤：跳过原始目标及保护消息 → 按完整轮次组成有界片段 → 写入有归属的历史视图。
 std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals, ContextWindow window) {
-    const bool keep_reasoning = window.thinking && !input.tools.empty();
+    const bool keep_reasoning = input.sends_reasoning(window.thinking);
     const auto protected_end = input.messages.front().role == Role::system ? 3u : 2u;
     std::vector<model::Message> view;
     std::vector<std::size_t> large_groups;

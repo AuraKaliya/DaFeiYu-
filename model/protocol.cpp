@@ -27,7 +27,7 @@ FinishReason finish_reason(const std::string& reason) {
 // 构造统一请求的兼容协议字段，对照记录与实际供应商请求共用同一编码。
 // 步骤：校验请求 → 编码原序消息与配对 → 加入工具定义及输出限额。
 Json wire_fields(const Request& request, bool thinking) {
-    validate_request(request);
+    validate_request(request,thinking);
     auto messages = Json::array();
     for (const auto& message : request.messages) {
         Json item{{"role",role_name(message.role)},{"content",message.content}};
@@ -37,7 +37,7 @@ Json wire_fields(const Request& request, bool thinking) {
                 {"function",{{"name",call.name},{"arguments",call.arguments}}}});
         }
         if (message.role == Role::tool) item["tool_call_id"] = message.tool_call_id;
-        if (thinking && !request.tools.empty() && message.reasoning_content)
+        if (request.sends_reasoning(thinking) && message.reasoning_content)
             item["reasoning_content"] = *message.reasoning_content;
         messages.push_back(std::move(item));
     }

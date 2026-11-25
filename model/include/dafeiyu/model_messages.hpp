@@ -25,6 +25,8 @@ struct Request {
     std::vector<Message> messages;
     std::vector<ToolDefinition> tools;
     std::optional<std::uint32_t> max_output_tokens;
+    // 只有启用思考且本次提供工具时，协议才随助手消息发送原推理续行。
+    bool sends_reasoning(bool thinking) const noexcept { return thinking && !tools.empty(); }
 };
 enum class FinishReason { stop, tool_calls, length, content_filter };
 struct Usage {
@@ -36,8 +38,8 @@ struct Response {
     FinishReason finish = FinishReason::stop;
     std::optional<Usage> usage;
 };
-// 校验统一请求的角色、工具配对、定义和容量，失败时不接触凭据或网络。
-void validate_request(const Request& request);
+// 校验角色、工具配对和定义，按本次协议计入推理续行，另行限制未发送的原文。
+void validate_request(const Request& request, bool thinking = true);
 // 校验完整模型响应及工具参数，截断调用和不一致结束原因均明确拒绝。
 void validate_response(const Response& response);
 }

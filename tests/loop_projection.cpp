@@ -1,4 +1,5 @@
 #include <dafeiyu/session.hpp>
+#include <dafeiyu/model_protocol.hpp>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <atomic>
@@ -329,6 +330,46 @@ void long_answers(unsigned turns, unsigned blocks, std::uint32_t window) {
     check(shortened && calls==turns && last.messages.front().content=="原话1" && last.messages[1].content==body+"1" &&
         last.messages.back().content=="原话"+std::to_string(turns),"long answer projection changed protected messages");
 }
+
+// 按实际协议检查私有续行的预算，切换工具或思考模式后仍可读取原始响应。
+// 步骤：保存带长续行的短回答 → 对照无工具和关闭思考的下一次请求 → 核对需要完整续行时的派发边界。
+void reasoning_budget() {
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Config config; config.provider = "deepseek"; config.thinking = true;
+    const std::string original(1024*1024+1,'r');
+    unsigned calls = 0;
+    Session session(config,channel,Backend{[&](const Config& actual, const Request& request) {
+        if (++calls == 1) return Response{{Role::assistant,"第一条回执",{},{},original}};
+        const auto wire = encode_request_fields(request,actual.thinking_enabled());
+        check(wire.size()<4096 && wire.find("reasoning_content")==std::string::npos && contains(request,"第一条回执"),
+            "unused private continuation entered provider input");
+        return Response{{Role::assistant,"已答复"}};
+    }});
+    auto first = session.begin("首次提问");
+    until(session,[&] { return !session.busy(); });
+    check(first->operation()->state()==OperationState::succeeded && first->answer()=="第一条回执",
+        "unsent private continuation blocked delivery of the visible answer");
+    auto without_tools = session.begin("接着问");
+    until(session,[&] { return !session.busy(); });
+    check(without_tools->answer()=="已答复","unused private continuation blocked tool-free request");
+
+    const std::string id = "test/read";
+    ToolCatalog catalog;
+    catalog.add({id,1,1,{"read","read",R"({"type":"object","properties":{},"additionalProperties":false})"}},[](const auto&) {
+        return completed_tool({true,ToolEffect::not_applied,"fixed",ToolError::none});
+    });
+    RunOptions options; options.tools = catalog.snapshot(std::span(&id,1)); options.thinking = ThinkingPreference::off;
+    const auto thinking_off = session.begin("本轮关闭思考",options);
+    until(session,[&] { return !session.busy(); });
+    check(thinking_off->answer()=="已答复","unused private continuation blocked request with tools");
+    options.thinking = ThinkingPreference::inherit;
+    bool blocked = false;
+    try { (void)session.begin("本轮需要原续行",options); }
+    catch (const std::length_error&) { blocked = true; }
+    check(blocked && !session.busy() && calls==3 &&
+        session.read_evidence(session.evidence_epoch(),2,1).front().reasoning_content==original,
+        "required private continuation bypassed input budget or lost its original");
+}
 }
 
 // 运行固定响应场景并把实际边界差异交给离线测试。
@@ -336,6 +377,7 @@ int main() {
     try {
         replay(); status_versions(); compress_settled(); long_dialogue(); mixed_dialogue();
         long_answers(26,7500,0); long_answers(12,300,14*1024);
+        reasoning_budget();
         batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);
         return 0;
     }

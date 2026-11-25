@@ -26,13 +26,15 @@ void object_json(const std::string& text) {
     if (!value.is_object()) throw std::invalid_argument("model: expected JSON object");
 }
 }
-// 在模型提交前验证完整工具对话，保持调用和结果一一配对。
-// 步骤：校验容量和工具定义 → 按角色检查有序消息 → 关联调用结果 → 拒绝未闭合调用。
-void validate_request(const Request& request) {
+// 在模型提交前验证工具对话，发送字段与仅本地留存的推理原文分别核算容量。
+// 步骤：校验限额和工具定义 → 按角色与协议计入消息 → 关联调用结果 → 拒绝未闭合调用。
+void validate_request(const Request& request, bool thinking) {
     if (request.messages.empty() || request.messages.size() > 1024 || request.tools.size() > 64 ||
         (request.max_output_tokens && !*request.max_output_tokens))
         throw std::invalid_argument("model: invalid request limits");
     std::size_t bytes = 0;
+    std::size_t omitted_reasoning_bytes = 0;
+    const bool sends_reasoning = request.sends_reasoning(thinking);
     std::set<std::string> names, calls, pending;
     for (const auto& tool : request.tools) {
         account(bytes,tool.name); account(bytes,tool.description); account(bytes,tool.parameters);
@@ -46,7 +48,8 @@ void validate_request(const Request& request) {
         account(bytes,message.content); account(bytes,message.tool_call_id);
         if (message.reasoning_content) {
             if (message.role != Role::assistant) throw std::invalid_argument("model: misplaced reasoning");
-            account(bytes,*message.reasoning_content);
+            if (sends_reasoning) account(bytes,*message.reasoning_content);
+            else account(omitted_reasoning_bytes,*message.reasoning_content,8*max_bytes);
         }
         if (message.role != Role::user && message.role != Role::assistant && message.role != Role::system && message.role != Role::tool)
             throw std::invalid_argument("model: unsupported role");
