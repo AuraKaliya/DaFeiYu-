@@ -1,4 +1,5 @@
 #include "local_pipe.hpp"
+#include "../software_log.hpp"
 #include "protocol.hpp"
 #include <windows.h>
 #include <sddl.h>
@@ -135,18 +136,26 @@ struct ProfileLease::State { Handle file; };
 
 // 用独占文件句柄协调所有会创建本体的产品入口和目录别名。
 // 步骤：准备数据目录 → 请求独占写入资格 → 区分已被占用和其他系统错误。
-ProfileLease::ProfileLease(const std::filesystem::path& profile) : state_(std::make_unique<State>()) {
-    std::filesystem::create_directories(profile);
+ProfileLease::ProfileLease(const std::filesystem::path& profile, app::SoftwareLog* log) : state_(std::make_unique<State>()) {
+    std::error_code ec;
+    std::filesystem::create_directories(profile,ec);
+    if (ec) {
+        if (log) log->record(app::SoftwareEvent::profile_claim,app::SoftwareResult::failed,{.system_error=ec.value()});
+        throw std::filesystem::filesystem_error("management profile",profile,ec);
+    }
     const auto path = profile/L".dafeiyu-runtime.lock";
     const auto file = CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
     if (file==INVALID_HANDLE_VALUE) {
         const auto code = GetLastError();
-        if (code==ERROR_SHARING_VIOLATION || code==ERROR_LOCK_VIOLATION)
+        const bool busy = code==ERROR_SHARING_VIOLATION || code==ERROR_LOCK_VIOLATION;
+        if (log) log->record(app::SoftwareEvent::profile_claim,busy ? app::SoftwareResult::busy : app::SoftwareResult::failed,{.system_error=code});
+        if (busy)
             throw std::runtime_error("DaFeiYu: this data directory is already in use by a host or terminal.");
         fail(code,"management profile lease");
     }
     state_->file.reset(file);
+    if (log) log->record(app::SoftwareEvent::profile_claim,app::SoftwareResult::ok);
 }
 
 // 关闭独占句柄，之后其他进程可直接取得同一目录。

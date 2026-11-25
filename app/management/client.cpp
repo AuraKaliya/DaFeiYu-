@@ -116,7 +116,10 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
         const auto connection = connect(stop,profile,definition,start,software_);
         client = connection.at("client");
         instance = connection.at("instance");
-        if (software_) software_->record(app::SoftwareEvent::client_connected,app::SoftwareResult::ok,{.instance=instance,.client=client});
+        if (software_) {
+            software_->bind(instance,client);
+            software_->record(app::SoftwareEvent::client_connected,app::SoftwareResult::ok);
+        }
     } catch (const std::exception& ex) {
         error = ex.what();
         app::SoftwareFields fields;

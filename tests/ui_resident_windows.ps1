@@ -26,10 +26,10 @@ function Read-Resident([string]$ProfilePath = $data) {
 }
 
 # 启动仅使用本测试目录与离线配置的终端，保留标准输入供有界关闭。
-function Start-TestRuntime([string]$Mode) {
+function Start-TestRuntime([string]$Mode, [string]$ModelPath = $config) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $App
-    $info.Arguments = $Mode + ' "' + $config + '" --data "' + $data + '" --plugins "' + (Join-Path $data 'plugins') + '"'
+    $info.Arguments = $Mode + ' "' + $ModelPath + '" --data "' + $data + '" --plugins "' + (Join-Path $data 'plugins') + '"'
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardInput = $true
@@ -62,6 +62,13 @@ function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
         if ($first.event -ne 'process.started' -or $first.seq -ne 1 -or !$first.build -or $first.utcMs -le 0 -or
             $first.level -ne 'info' -or $last.event -ne 'process.exiting' -or $last.pid -ne $first.pid -or
             $last.seq -ne $rows.Count -or $last.elapsedNs -lt $first.elapsedNs) { throw "Incomplete software log: $file" }
+        if ($first.component -eq 'window') {
+            $joined = ($rows.event -join ',')
+            if ($joined -notmatch 'window\.closing,.*webview\.released,profile\.cleaned,window\.destroyed,process\.exiting' -or
+                !($rows | Where-Object { $_.event -eq 'webview.released' -and $_.count -gt 0 -and $_.client -eq $last.client })) {
+                throw "Window cleanup not verified: $file"
+            }
+        }
         $last
     }
     $windows = @($runs | Where-Object { $_.component -eq 'window' -and $_.exitCode -eq 0 })
@@ -83,6 +90,9 @@ function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
         if (!($records | Where-Object { $_.pid -eq $HostPid -and $_.event -eq 'client.connected' -and
             $_.instance -eq $view.instance -and $_.client -eq $view.client })) { throw 'Handshake identities differ' }
     }
+    if (@($records | Where-Object { $_.event -eq 'profile.claim' -and $_.result -eq 'busy' -and $_.systemError -in @(32,33) }).Count -ne 2 -or
+        !($records | Where-Object { $_.event -eq 'configuration.read' -and $_.result -eq 'failed' }) -or
+        (($records | ConvertTo-Json -Depth 3) -match 'synthetic-private-config')) { throw 'Startup errors lack bounded evidence' }
 }
 
 $owner = $null
@@ -107,6 +117,11 @@ try {
         $terminal.StandardInput.WriteLine('/exit')
         $terminal.StandardInput.Close()
         if (!$terminal.WaitForExit(5000) -or $terminal.ExitCode -ne 0) { throw 'Terminal failed to exit cleanly' }
+        $invalid = Start-TestRuntime '--chat' (Join-Path $folder 'synthetic-private-config.json')
+        try {
+            $invalid.StandardInput.Close()
+            if (!$invalid.WaitForExit(5000) -or $invalid.ExitCode -eq 0) { throw 'Missing configuration accepted' }
+        } finally { $invalid.Dispose() }
         Assert-SoftwareLogs $owner.Id $terminal.Id
     } finally {
         if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }

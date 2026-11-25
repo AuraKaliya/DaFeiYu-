@@ -58,13 +58,14 @@ struct Window : std::enable_shared_from_this<Window> {
 #endif
     std::chrono::steady_clock::time_point deadline;
     std::chrono::steady_clock::time_point close_deadline;
+    std::chrono::steady_clock::time_point close_started;
     const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
     bool loaded = false;
     long long navigation_ms = -1;
     EventRegistrationToken navigation{};
     unsigned pending = 0, pending_at_close = 0;
     bool closing = false, smoke = false, interaction_mode = false, lifecycle_mode = false, early = false, close_controller = false, navigation_bound = false;
-    bool finish_posted = false, process_check_failed = false, close_warned = false;
+    bool finish_posted = false, process_check_failed = false, close_warned = false, browser_released = false;
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
@@ -86,7 +87,13 @@ struct Window : std::enable_shared_from_this<Window> {
     // 关闭入口和控制器后继续推进消息，直到创建回调及浏览器进程实际结束。
     // 步骤：停止接纳 → 记录所属进程 → 关闭浏览器接口 → 延后确认退出。
     void close() noexcept {
-        if (!closing) { closing = true; pending_at_close = pending; close_deadline = std::chrono::steady_clock::now()+std::chrono::seconds(10); }
+        if (!closing) {
+            closing = true;
+            pending_at_close = pending;
+            close_started = std::chrono::steady_clock::now();
+            close_deadline = close_started+std::chrono::seconds(10);
+            if (software) software->record(dfy::app::SoftwareEvent::window_closing,dfy::app::SoftwareResult::started);
+        }
         ShowWindow(handle,SW_HIDE);
         KillTimer(handle,1); if (host) host->close();
         if (interaction) interaction->close();
@@ -118,12 +125,25 @@ struct Window : std::enable_shared_from_this<Window> {
         }
 #endif
         if (business_done && run_status_host && run_status_host->failed()) result = 1;
-        if (callbacks_done && frames_done && business_done && processes.exited() && !process_check_failed && profile.cleanup()) {
-            if (!finish_posted) { finish_posted = true; PostMessageW(handle,WM_APP+1,0,0); }
+        const bool released = callbacks_done && frames_done && business_done && processes.exited() && !process_check_failed;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-close_started).count();
+        if (released && !browser_released) {
+            browser_released = true;
+            if (software) software->record(dfy::app::SoftwareEvent::webview_released,dfy::app::SoftwareResult::ok,
+                {.duration_ms=elapsed,.count=processes.count()});
+        }
+        if (released && profile.cleanup()) {
+            if (!finish_posted) {
+                if (software) software->record(dfy::app::SoftwareEvent::profile_cleaned,dfy::app::SoftwareResult::ok,{.duration_ms=elapsed});
+                finish_posted = true;
+                PostMessageW(handle,WM_APP+1,0,0);
+            }
         } else if (std::chrono::steady_clock::now() >= close_deadline) {
             result = 1;
             if (!close_warned) {
                 close_warned = true;
+                if (software) software->record(released ? dfy::app::SoftwareEvent::profile_cleaned : dfy::app::SoftwareEvent::webview_released,
+                    dfy::app::SoftwareResult::failed,{.duration_ms=elapsed});
                 std::fprintf(stderr,"UI: shutdown incomplete; profile retained (callbacks=%d frames=%d application=%d browsers=%d)\n",
                     callbacks_done,frames_done,business_done,processes.exited());
             }
@@ -351,7 +371,11 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
         if (message == WM_TIMER) { state->tick(); return 0; }
         if (message == WM_CLOSE) { state->close(); return 0; }
         if (message == WM_APP+1) { KillTimer(window,2); DestroyWindow(window); return 0; }
-        if (message == WM_DESTROY) { PostQuitMessage(state->result); return 0; }
+        if (message == WM_DESTROY) {
+            if (state->software) state->software->record(dfy::app::SoftwareEvent::window_destroyed,dfy::app::SoftwareResult::ok);
+            PostQuitMessage(state->result);
+            return 0;
+        }
     }
     return DefWindowProcW(window,message,wparam,lparam);
 }

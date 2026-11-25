@@ -24,6 +24,18 @@
 #include <thread>
 
 namespace {
+// 在正式进程保留配置读取的结果，文件名、配置正文和异常文本不进入软件日志。
+dfy::model::Config runtime_config(const std::filesystem::path& file, dfy::app::SoftwareLog& log) {
+    try {
+        auto config = dfy::model::load_config(file);
+        log.record(dfy::app::SoftwareEvent::configuration_read,dfy::app::SoftwareResult::ok);
+        return config;
+    } catch (...) {
+        log.record(dfy::app::SoftwareEvent::configuration_read,dfy::app::SoftwareResult::failed);
+        throw;
+    }
+}
+
 // 读取有大小限制的提示词文件，兼容 UTF-8 BOM 并保留正文换行。
 // 步骤：打开文件 → 有界读取并检查错误 → 去除编码签名。
 std::string read_prompt(const std::filesystem::path& path) {
@@ -116,14 +128,14 @@ int run(const std::vector<std::filesystem::path>& args) {
             software.emplace(user_data,host ? dfy::app::SoftwareRole::host : dfy::app::SoftwareRole::terminal);
             if (host) {
                 const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
-                const int code = dfy::management::serve_resident(user_data,identity,[=] {
-                    return std::make_unique<dfy::app::Application>(dfy::model::load_config(configuration),plugins,user_data,
+                const int code = dfy::management::serve_resident(user_data,identity,[=,log=&*software] {
+                    return std::make_unique<dfy::app::Application>(runtime_config(configuration,*log),plugins,user_data,
                         dfy::model::Backend{dfy::model::complete_response},run);
                 },{},&*software);
                 return software->exiting(code);
             }
-            dfy::management::ProfileLease lease(user_data);
-            dfy::app::Application application(dfy::model::load_config(configuration),plugins,user_data,
+            dfy::management::ProfileLease lease(user_data,&*software);
+            dfy::app::Application application(runtime_config(configuration,*software),plugins,user_data,
                 dfy::model::Backend{dfy::model::complete_response},std::move(run));
             auto& manager = application.plugins();
             dfy::platform::LineInput input;

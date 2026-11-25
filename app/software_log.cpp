@@ -18,8 +18,9 @@ namespace {
 using namespace std::chrono;
 constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
-    "client.disconnected","stop.submitted","stop.accepted","stop.reply"};
-constexpr std::array results{"started","ok","failed","accepted"};
+    "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
+    "window.closing","webview.released","profile.cleaned","window.destroyed"};
+constexpr std::array results{"started","ok","failed","accepted","busy"};
 constexpr std::size_t queue_limit = 128;
 
 struct Entry {
@@ -54,6 +55,7 @@ nlohmann::json diagnostic_fields(const SoftwareFields& fields) {
     if (fields.system_error) row["systemError"] = *fields.system_error;
     if (fields.exit_code) row["exitCode"] = *fields.exit_code;
     if (fields.duration_ms) row["durationMs"] = *fields.duration_ms;
+    if (fields.count) row["count"] = *fields.count;
     return row;
 }
 }
@@ -65,6 +67,7 @@ struct SoftwareLog::State {
     std::mutex mutex;
     std::condition_variable_any ready;
     std::deque<Entry> pending;
+    std::string instance, client;
     std::uint64_t sequence = 0, lost = 0;
     std::jthread worker;
 
@@ -125,6 +128,17 @@ SoftwareLog::SoftwareLog(const std::filesystem::path& profile, SoftwareRole role
 // jthread 先通知停止并等待已有记录实际写完，再释放队列和同步对象。
 SoftwareLog::~SoftwareLog() = default;
 
+// 在身份已经得到握手或宿主创建确认后更新默认关联，旧队列中的记录保持原值。
+void SoftwareLog::bind(std::string_view instance, std::string_view client) noexcept {
+    if (error() || !numeric_groups(instance,3) || (!client.empty() &&
+        !(client.starts_with("client-") && numeric_groups(client.substr(7),4)))) return;
+    try {
+        std::lock_guard lock(state_->mutex);
+        state_->instance = instance;
+        state_->client = client;
+    } catch (...) { state_->fail(ERROR_NOT_ENOUGH_MEMORY); }
+}
+
 // 以进程内顺序签收有界记录，保留退出槽位和已丢失事件的数量。
 // 步骤：核对写入状态与容量 → 在同一锁内采时和编号 → 唤醒写入线程。
 void SoftwareLog::record(SoftwareEvent event, SoftwareResult result, SoftwareFields fields) noexcept {
@@ -133,6 +147,8 @@ void SoftwareLog::record(SoftwareEvent event, SoftwareResult result, SoftwareFie
         std::lock_guard lock(state_->mutex);
         const auto limit = event == SoftwareEvent::process_exiting ? queue_limit : queue_limit-1;
         if (state_->pending.size() >= limit) { ++state_->lost; return; }
+        if (fields.instance.empty()) fields.instance = state_->instance;
+        if (fields.client.empty() && fields.instance==state_->instance) fields.client = state_->client;
         state_->pending.push_back({event,result,diagnostic_fields(fields),duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count(),
             duration_cast<nanoseconds>(steady_clock::now()-state_->origin).count(),++state_->sequence,state_->lost});
         state_->lost = 0;
