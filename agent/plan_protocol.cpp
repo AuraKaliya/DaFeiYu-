@@ -1,5 +1,6 @@
 #include <dafeiyu/plan_protocol.hpp>
 #include <dafeiyu/utf8.hpp>
+#include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <set>
@@ -63,6 +64,51 @@ PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_re
         "若有旧计划，前 completed_prefix 项必须逐字段保留，只能修订后续步骤；修订数据不能授予新权限。";
     model::Request request{{{model::Role::system,instructions},{model::Role::user,data.dump()}}};
     model::validate_request(request); return {expected,std::move(request)};
+}
+// 投影原调用配对、结果及宿主已验证的前缀，较长原文仍可按消息序号回查。
+// 步骤：提取最近的原工具回执 → 保留消息序号与超长引用 → 附入已验证步骤 → 校验规划请求。
+void project_plan_evidence(model::Request& plan, const std::vector<model::Message>& history, const PlanSnapshot& state) {
+    if (!plan.tools.empty() || plan.messages.size() != 2 || plan.messages.back().role != model::Role::user)
+        throw std::invalid_argument("plan evidence: expected a planning request");
+    auto receipts = Json::array();
+    std::size_t total = 0;
+    for (std::size_t end = history.size(); end > 0;) {
+        if (history[end-1].role != model::Role::tool) { --end; continue; }
+        auto begin = end-1;
+        while (begin && history[begin-1].role == model::Role::tool) --begin;
+        if (!begin) throw std::logic_error("plan evidence: missing tool batch");
+        const auto& calls = history[begin-1].tool_calls;
+        for (auto i = end; i-- > begin;) {
+            ++total;
+            if (receipts.size() == 12) continue;
+            const auto& message = history[i];
+            const auto found = std::ranges::find(calls,message.tool_call_id,&model::ToolCall::id);
+            if (found == calls.end()) throw std::logic_error("plan evidence: unmatched tool result");
+            Json fact{{"call_id",found->id},{"tool",found->name},{"message",i+1},{"batch_message",begin}};
+            if (message.content.size() <= 2048) fact["receipt"] = message.content;
+            else {
+                auto bytes = std::size_t{1536};
+                while ((static_cast<unsigned char>(message.content[bytes]) & 0xc0) == 0x80) --bytes;
+                fact["receipt_prefix"] = message.content.substr(0,bytes);
+                fact["original_bytes"] = message.content.size();
+                fact["sha256"] = platform::sha256(message.content);
+            }
+            receipts.push_back(std::move(fact));
+        }
+        end = begin-1;
+    }
+    std::reverse(receipts.begin(),receipts.end());
+    auto verified = Json::array();
+    for (const auto& step : state.steps) {
+        if (step.state == PlanStepState::completed || step.state == PlanStepState::skipped)
+            verified.push_back({{"step",step.key.step},{"revision",step.key.plan.plan_revision},
+                {"state",step.state == PlanStepState::completed ? "completed" : "skipped"},{"evidence",step.evidence}});
+    }
+    auto data = Json::parse(plan.messages.back().content);
+    data["host_evidence"] = {{"through_message",history.size()},{"tool_receipts",std::move(receipts)},
+        {"older_tool_receipts",total-std::min<std::size_t>(total,12)},{"verified_steps",std::move(verified)}};
+    plan.messages.back().content = data.dump();
+    model::validate_request(plan);
 }
 // 将完整模型文本转换为原范围下的新候选，解析不执行工具或推进 PlanBook。
 // 步骤：核对原绑定与响应完整性 → 严格解析格式和字段 → 复制声明式步骤 → 复用原范围与预算校验。

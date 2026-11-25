@@ -440,7 +440,8 @@ struct RunLoopState {
         const auto pending = std::span<const TurnInput>(record->inputs_).subspan(record->settled_inputs_);
         if (!pending.empty()) record->context_->append_user_inputs(pending,prior_answer);
         model::Request input = planning_request ? planning_request->request :
-            model::Request{record->context_->messages(),scope ? scope->definitions() : std::vector<model::ToolDefinition>{}};
+            model::Request{record->context_->messages(),scope ? scope->ordered_definitions() : std::vector<model::ToolDefinition>{}};
+        if (planning_request) project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot());
         if (!options.system_instructions.empty()) {
             if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
             if (input.messages.front().role == model::Role::system) input.messages.front().content =

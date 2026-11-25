@@ -96,17 +96,17 @@ std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
 // 步骤：读取有效成员 → 按展示序与规范 ID 排序 → 返回有序模型契约。
 std::vector<model::ToolDefinition> ToolSnapshot::ordered_definitions() const {
     auto descriptions = this->descriptions();
-    std::ranges::sort(descriptions, [](const ToolDescription& left, const ToolDescription& right) {
-        return std::tie(left.display_order,left.id) < std::tie(right.display_order,right.id);
-    });
     std::vector<model::ToolDefinition> result;
     for (auto& item : descriptions) result.push_back(std::move(item.model));
     return result;
 }
-// 按请求复制当前可用或原固定成员描述，读取不改变模型可见性或执行授权。
+// 按注册展示序和规范 ID 返回有效或原固定成员，供模型、规划和诊断复用。
 std::vector<ToolDescription> ToolSnapshot::descriptions(bool available_only) const {
     std::vector<ToolDescription> result;
     for (const auto& entry : entries_) if (!available_only || (entry->registered && entry->enabled && entry->factory)) result.push_back(entry->description);
+    std::ranges::sort(result, [](const ToolDescription& left, const ToolDescription& right) {
+        return std::tie(left.display_order,left.id) < std::tie(right.display_order,right.id);
+    });
     return result;
 }
 // 按固定成员描述判断授予范围，不因暂时禁用而允许观察入口绕过变更限制。

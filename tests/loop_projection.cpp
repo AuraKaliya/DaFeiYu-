@@ -101,6 +101,9 @@ void replay() {
     check(prepared[3].tools.empty() && prepared[5].tools.empty() && contains(prepared[5],"use a chest"),"revision or planning authority changed");
     check(contains(prepared[2],"inventory-receipt-8") && contains(prepared[2],"raw-A"),"ordinary baseline lost the receipt or raw reply");
     const bool same = prepared[0].tools.front().name == prepared[2].tools.front().name;
+    check(same && contains(prepared[3],"stock-W17") && contains(prepared[3],"inventory-receipt-8") &&
+        contains(prepared[5],"inventory-receipt-8") && contains(prepared[5],"eight in bag") &&
+        contains(prepared[5],"deliver eight"),"plan projection lost original receipts, new guidance or verified prefix");
     std::cout << "stable_tool_order=" << same << " ordinary_has_raw_A=" << contains(prepared[2],"raw-A")
               << " ordinary_has_effective_B=" << contains(prepared[2],"effective-B")
               << " plan_has_inventory=" << contains(prepared[3],"inventory-receipt-8")
