@@ -2,6 +2,7 @@
 #include "../application.hpp"
 #include "../application_commands.hpp"
 #include "../chat.hpp"
+#include "../plugin_commands.hpp"
 #include <algorithm>
 #include <sstream>
 
@@ -16,7 +17,7 @@ Json TerminalHost::exchange(const std::string& client, const Json& request) {
     const bool valid = (action=="open" && request.at("interactive").is_boolean()) ||
         (action=="read" && request.at("after").is_number_unsigned()) ||
         (action=="presented" && request.at("ask").is_number_unsigned()) ||
-        (action=="line" && request.at("text").get_ref<const std::string&>().size()<=app::dialogue_text_limit && request.at("text")!="/exit");
+        (action=="line" && request.at("text").get_ref<const std::string&>().size()<=app::dialogue_text_limit);
     if (!id.is_number_unsigned() || id==0 || !valid || request.size()!=3) throw std::invalid_argument("invalid terminal command");
 
     std::lock_guard lock(mutex_);
@@ -24,13 +25,19 @@ Json TerminalHost::exchange(const std::string& client, const Json& request) {
     owner.seen = std::chrono::steady_clock::now();
     if (owner.last && id<=owner.last->request.at("id")) {
         if (request!=owner.last->request) throw std::invalid_argument("terminal command identity conflict");
+        if (owner.last->reply.contains("ask")) owner.offered_ask = owner.last->reply.at("ask").at("id");
         return owner.last->reply;
     }
     if ((owner.last && owner.last->reply.is_null()) || pending_.size()>=32) throw std::invalid_argument("terminal command busy");
-    auto job = std::make_shared<Job>(Job{request,nullptr,client});
+    if (action=="presented" && (!owner.interactive || !owner.offered_ask || request.at("ask")!=owner.offered_ask))
+        throw std::invalid_argument("terminal question was not offered to this client");
+    if (action=="open") {
+        owner.interactive = request.at("interactive");
+        owner.offered_ask = 0;
+    }
+    auto job = std::make_shared<Job>(Job{request,nullptr,client,owner.interactive,owner.offered_ask});
     pending_.push_back(job);
     owner.last = std::move(job);
-    if (action=="open") owner.interactive = request.at("interactive");
     return nullptr;
 }
 
@@ -62,12 +69,16 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
     Json reply{{"cursor",cursor_},{"more",false},{"started",false}};
     if (action=="line") {
         const auto before = conversation.status();
-        app::ChatController controller(conversation,out,err,[&](auto command) { return app::application_command(application,command,out,err); },
+        app::ChatController controller(conversation,out,err,[&](std::string_view command) {
+            if (command.substr(0,command.find_first_of(" \t"))=="/ask") {
+                const auto args = app::command_words(command);
+                if (args.size()==4 && (!job.interactive || !job.offered_ask || args[2]!=std::to_string(job.offered_ask)))
+                    throw std::invalid_argument("ASK was not presented on this terminal");
+            }
+            return app::application_command(application,command,out,err);
+        },
             [&](const std::string& text) { return application.submit_dialogue(text); });
-        auto text = request.at("text").get<std::string>();
-        if (text.ends_with('\r')) text.pop_back();
-        if (text=="/exit") throw std::invalid_argument("terminal exit is local");
-        controller.line(std::move(text));
+        controller.line(request.at("text").get<std::string>(),app::ChatExit::detach);
         const auto after = conversation.status();
         reply["started"] = after && (!before || before->turn!=after->turn);
     } else if (action=="open") {
@@ -89,7 +100,7 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
     const auto status = conversation.status();
     reply.update(Json{{"out",std::move(out).str()},{"err",std::move(err).str()},{"turn",status ? status->turn : 0},
         {"busy",conversation.busy()},{"confirming",status && status->waiting_confirmations}});
-    if (const auto ask = application.console_ask())
+    if (const auto ask = application.console_ask(); job.interactive && ask)
         reply["ask"] = {{"id",ask->first},{"text",ask->second.question},{"choices",ask->second.choices}};
     return reply;
 }

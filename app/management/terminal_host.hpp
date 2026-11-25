@@ -19,10 +19,11 @@ class TerminalHost {
     // 在业务线程保留最近终端结果及错误，用游标支持并行读取。
     void completed(const app::CompletedTurn& turn);
   private:
-    struct Job { nlohmann::json request, reply; std::string client; };
+    struct Job { nlohmann::json request, reply; std::string client; bool interactive; std::uint64_t offered_ask; };
     struct Client {
         std::shared_ptr<Job> last;
         bool interactive = false;
+        std::uint64_t offered_ask = 0;
         std::chrono::steady_clock::time_point seen;
     };
     struct Output { std::uint64_t cursor; std::string out, err; };

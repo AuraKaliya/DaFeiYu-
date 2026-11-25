@@ -237,6 +237,11 @@ void reconnect(const std::filesystem::path& root) {
         const Json message{{"type","dialogue.submit"},{"version","1"},{"request","a"},{"command","1"},{"text","材料"}};
         if (ask({{"op","request"},{"client",first},{"body",message}}).at("receipt").at("state")!="queued" ||
             !started.try_acquire_for(3s)) throw std::runtime_error("real turn not started");
+        unsigned line_id = 1;
+        for (const auto exit : {"/exit","/exit\r","/exit\r\r"}) {
+            const auto left = terminal_reply(data,terminal,{{"id",++line_id},{"action","line"},{"text",exit}});
+            if (left.at("busy")!=true) throw std::runtime_error("detaching terminal disturbed active window turn");
+        }
         (void)ask({{"op","disconnect"},{"client",first}});
         release.release();
 
@@ -252,14 +257,14 @@ void reconnect(const std::filesystem::path& root) {
             return turns.size()==1 && turns.at(0).at("answer")=="回复：材料" && turns.at(0).at("exit")=="succeeded" &&
                 state.at("latestCommand")=="0";
         });
-        const auto output = terminal_reply(data,terminal,{{"id",2},{"action","read"},{"after",opening.at("cursor")}});
+        const auto output = terminal_reply(data,terminal,{{"id",++line_id},{"action","read"},{"after",opening.at("cursor")}});
         if (output.at("out")!="回复：材料\n" || output.at("err")!="") throw std::runtime_error("terminal did not see the desktop result");
-        const Json status_line{{"id",3},{"action","line"},{"text","/status"}};
+        const Json status_line{{"id",++line_id},{"action","line"},{"text","/status"}};
         const auto status_reply = terminal_reply(data,terminal,status_line);
         if (status_reply.at("out").get<std::string>().find("Question=succeeded")==std::string::npos ||
             terminal_reply(data,terminal,status_line)!=status_reply) throw std::runtime_error("terminal lost original status or retry");
         try {
-            (void)terminal_reply(data,terminal,{{"id",3},{"action","line"},{"text","/clear"}});
+            (void)terminal_reply(data,terminal,{{"id",line_id},{"action","line"},{"text","/clear"}});
             throw std::logic_error("conflicting terminal retry accepted");
         } catch (const std::runtime_error& error) {
             if (std::string(error.what()).find("conflict")==std::string::npos) throw;

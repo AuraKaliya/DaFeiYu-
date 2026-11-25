@@ -7,14 +7,22 @@ namespace dfy::app {
 // 固定宿主会话与输出责任，不在构造阶段发起请求。
 ChatController::ChatController(Conversation& conversation, std::ostream& output, std::ostream& errors, LocalCommand command, ChatSubmit submit)
     : conversation_(conversation), output_(output), errors_(errors), command_(std::move(command)), submit_(std::move(submit)) {}
+// 统一解释控制台和管道输入的 Windows 行尾。
+std::string_view terminal_line(std::string_view text) noexcept {
+    return text.substr(0,text.find_last_not_of('\r')+1);
+}
 // 管理命令不发送给模型，普通输入只在会话实际空闲时接纳。
 // 步骤：忽略结束和空白 → 处理退出、取消、清空及诊断 → 转交本地管理 → 接受问答或独立报告拒绝。
-void ChatController::line(std::string text) {
+void ChatController::line(std::string text, ChatExit on_exit) {
     if (ending_) return;
-    if (text.ends_with('\r')) text.pop_back();
+    text.resize(terminal_line(text).size());
     if (text.find_first_not_of(" \t\r\n") == std::string::npos) return;
     try {
-        if (text == "/exit") { request_exit(); return; }
+        if (text == "/exit") {
+            if (on_exit==ChatExit::close_session) request_exit();
+            else ending_ = true;
+            return;
+        }
         if (text == "/status") {
             if (const auto status = conversation_.status()) write_turn_status(output_,*status);
             else output_ << "No accepted question in this session.\n";
