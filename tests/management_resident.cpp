@@ -75,6 +75,30 @@ void lost_stop_reply(const std::filesystem::path& root) {
     }
 }
 
+// 托盘不可用时真实后台仍接受握手与显式退出。
+// 步骤：模拟无桌面或原生启动失败 → 等待业务就绪 → 通过原管道退出并核对一次启动。
+void headless(const std::filesystem::path& root, bool fail) {
+    const auto data = root/(fail ? "tray-failed" : "no-desktop");
+    std::atomic_uint starts{0};
+    std::stop_source stop;
+    auto server = std::async(std::launch::async,[&] {
+        return management::serve_resident(data,"headless",[&] {
+            return std::make_unique<app::Application>(model::Config{},root/"plugins",data,model::Backend{
+                [](const auto&,const auto&) { return model::Response{{model::Role::assistant,"fixture"}}; }});
+        },stop.get_token(),nullptr,[&](const auto&,const auto&,auto*) -> std::unique_ptr<management::ResidentTray> {
+            ++starts;
+            if (fail) throw std::system_error(ERROR_NOT_READY,std::system_category());
+            return {};
+        });
+    });
+    try {
+        wait_until([&] { return starts==1; });
+        const auto binding = management::connect_resident(data,"headless");
+        const auto reply = management::request_stop(data,binding.instance,binding.client,nullptr);
+        if (reply.at("state")!="stopping" || server.get()!=0 || starts!=1) throw std::runtime_error("headless host failed");
+    } catch (...) { stop.request_stop(); throw; }
+}
+
 // 复查只有一次退出接纳，而且收尾实效包含被阻塞的原回合及实际等待。
 // 步骤：按原实例筛选日志 → 核对回合与耗时 → 检查接纳次数及隐私字段。
 void verify_stop_log(const std::filesystem::path& data, const std::string& instance, const Json& turn) {
@@ -95,28 +119,60 @@ void verify_stop_log(const std::filesystem::path& data, const std::string& insta
     if (accepted!=1 || !drained) throw std::runtime_error("stop evidence did not match original work");
 }
 
+// 用析构回执核对业务收尾期间的托盘寿命。
+struct TestTray final : management::ResidentTray {
+    std::atomic_uint& releases;
+    // 绑定独立于后台线程的释放计数。
+    explicit TestTray(std::atomic_uint& count) : releases(count) {}
+    // 记录原实例实际归还的托盘。
+    ~TestTray() override { ++releases; }
+};
+
 // 让独立观察者先补读原委托，再在下一回合仍在工作时显式退出。
 // 步骤：启动隔离宿主 → 接纳后断开与重连 → 在实际调用退出前核对收尾 → 按原实例复查持久回执。
 void reconnect(const std::filesystem::path& root) {
     const auto data = root/"user", plugins = root/"plugins";
     std::filesystem::create_directories(plugins);
     std::binary_semaphore started(0), release(0);
+    std::binary_semaphore allow_open(0);
+    std::atomic_uint tray_starts{0}, tray_releases{0};
+    std::string tray_instance;
     auto server = std::async(std::launch::async,[&] {
         app::SoftwareLog software(data,app::SoftwareRole::host);
         const int code = management::serve_resident(data,"fixture",[&] {
+            if (!allow_open.try_acquire_for(5s)) throw std::runtime_error("application startup gate timed out");
             return std::make_unique<app::Application>(model::Config{},plugins,data,model::Backend{
                 [&](const auto&,const auto& input) {
                     started.release();
                     if (!release.try_acquire_for(5s)) throw std::runtime_error("gate timed out");
                     return model::Response{{model::Role::assistant,"回复："+input.messages.back().content}};
                 }});
-        },{},&software);
+        },{},&software,[&](const auto& profile,const std::string& original,app::SoftwareLog* log) {
+            if (profile!=data || log!=&software) throw std::runtime_error("wrong tray context");
+            tray_instance = original;
+            ++tray_starts;
+            return std::make_unique<TestTray>(tray_releases);
+        });
         return software.exiting(code);
     });
     const auto ask = [&](Json request) { return management::resident_request(data,std::move(request)); };
     std::string instance;
     try {
+        wait_until([&] { return ask({{"op","status"}}).at("state")=="starting"; });
+        if (tray_starts!=0) throw std::runtime_error("tray started before application readiness");
+        allow_open.release();
         wait_until([&] { const auto status=ask({{"op","status"}}); instance=status.at("instance"); return status.at("state")=="running"; });
+        wait_until([&] { return tray_starts==1; });
+        if (tray_instance!=instance) throw std::runtime_error("tray is bound to a different instance");
+        try {
+            (void)management::serve_resident(data,"duplicate",{}, {},nullptr,[&](const auto&,const auto&,auto*) {
+                ++tray_starts;
+                return std::make_unique<TestTray>(tray_releases);
+            });
+            throw std::logic_error("duplicate owner admitted");
+        } catch (const std::runtime_error& error) {
+            if (std::string(error.what()).find("already in use")==std::string::npos) throw;
+        }
         try { (void)ask({{"op","connect"},{"definition","other"}}); throw std::logic_error("configuration mismatch accepted"); }
         catch (const std::runtime_error& error) { if (std::string(error.what()).find("differs")==std::string::npos) throw; }
         const auto first=ask({{"op","connect"},{"definition","fixture"}}).at("client");
@@ -162,8 +218,9 @@ void reconnect(const std::filesystem::path& root) {
             return status.at("operation")==accepted.at("operation") && progress.at("stage")=="conversation" &&
                 progress.at("session")==turn.at("session") && progress.at("turn")==turn.at("turn") && progress.at("elapsedMs")>=80;
         });
+        if (tray_starts!=1 || tray_releases!=0) throw std::runtime_error("tray lost while original work was draining");
         release.release();
-        if (server.get()!=0) throw std::runtime_error("resident failed to exit");
+        if (server.get()!=0 || tray_releases!=1) throw std::runtime_error("resident failed to release its tray on exit");
         if (!binding.watch->observe().requested) throw std::runtime_error("intent disappeared when the resident released its event");
         verify_stop_log(data,instance,turn);
     } catch (...) {
@@ -180,6 +237,8 @@ int main(int argc, char** argv) {
     try {
         if (argc!=2) return 2;
         reconnect(argv[1]);
+        headless(argv[1],false);
+        headless(argv[1],true);
         lost_stop_reply(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
