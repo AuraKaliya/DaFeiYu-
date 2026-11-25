@@ -11,7 +11,8 @@ enum class SoftwareEvent { process_started, process_exiting, host_listening, hos
     client_disconnected, stop_submitted, stop_accepted, stop_reply, profile_claim, configuration_read,
     window_closing, webview_released, profile_cleaned, window_destroyed, conversation_drain, plugins_drain,
     plugin_load, plugin_stop, plugin_unloaded, plugin_catalog, host_exited, tray_start,
-    poll_dialogue, poll_room, poll_run, poll_stop, tray_restored, tray_removed, poll_messages, message_storage };
+    poll_dialogue, poll_room, poll_run, poll_stop, tray_restored, tray_removed, poll_messages, message_storage,
+    tray_open_panel, tray_open_logs, tray_confirm_exit };
 enum class SoftwareResult { started, ok, failed, accepted, busy, pending, recovered, ended };
 enum class PollFailureKind { transport, protocol, management };
 struct SoftwareFields {

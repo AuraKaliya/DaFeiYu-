@@ -243,6 +243,13 @@ add_test(NAME ui.tray_explorer COMMAND dfy_ui_tray_tests --explorer)
 add_test(NAME ui.tray_headless COMMAND dfy_ui_tray_tests --headless)
 set_tests_properties(ui.tray_icon ui.tray_explorer ui.tray_headless PROPERTIES TIMEOUT 15)
 set_tests_properties(ui.tray_explorer ui.tray_headless PROPERTIES SKIP_RETURN_CODE 77)
+if(BUILD_GUI)
+  set(tray_panel_option -WithPanel)
+endif()
+add_test(NAME ui.tray_resident COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_tray_resident.ps1" -App "$<TARGET_FILE:dafeiyu>"
+  -Root "${CMAKE_CURRENT_BINARY_DIR}/tray-resident" ${tray_panel_option})
+set_tests_properties(ui.tray_resident PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
 
 # 只在 GUI 构建中验证来源与 Frame 代次，不启动浏览器。
 if(BUILD_GUI)

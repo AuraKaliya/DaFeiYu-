@@ -21,7 +21,8 @@ constexpr std::array events{"process.started","process.exiting","host.listening"
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
     "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain",
     "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited","tray.start",
-    "poll.dialogue","poll.room","poll.run","poll.stop","tray.restored","tray.removed","poll.messages","messages.storage"};
+    "poll.dialogue","poll.room","poll.run","poll.stop","tray.restored","tray.removed","poll.messages","messages.storage",
+    "tray.open_panel","tray.open_logs","tray.confirm_exit"};
 constexpr std::array results{"started","ok","failed","accepted","busy","pending","recovered","ended"};
 constexpr std::size_t queue_limit = 128;
 

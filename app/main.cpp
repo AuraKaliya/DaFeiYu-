@@ -7,9 +7,7 @@
 #include "management/resident.hpp"
 #include "management/client.hpp"
 #include "management/terminal_client.hpp"
-#ifdef DFY_DESKTOP_TRAY
 #include "resident_tray.hpp"
-#endif
 #include "management/local_pipe.hpp"
 #include <nlohmann/json.hpp>
 #include "trace_commands.hpp"
@@ -132,14 +130,10 @@ int run(const std::vector<std::filesystem::path>& args) {
             run.software_log = software;
             if (host) {
                 const auto identity = dfy::management::startup_identity(configuration,plugins,run.trace_directory);
-                dfy::management::StartResidentTray start_tray;
-#ifdef DFY_DESKTOP_TRAY
-                start_tray = dfy::ui::start_resident_tray;
-#endif
                 const int code = dfy::management::serve_resident(user_data,identity,[=,log=&*software] {
                     return std::make_unique<dfy::app::Application>(runtime_config(configuration,*log),plugins,user_data,
                         dfy::model::Backend{dfy::model::complete_response},run);
-                },{},&*software,std::move(start_tray));
+                },{},&*software,dfy::ui::resident_tray_factory(identity));
                 return software->exiting(code);
             }
             (void)runtime_config(configuration,*software);

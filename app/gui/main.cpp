@@ -6,6 +6,7 @@
 #include "interaction_probe.hpp"
 #include "probe_host.hpp"
 #include "browser_lifetime.hpp"
+#include "panel_activation.hpp"
 #include "management/host.hpp"
 #include "management/client.hpp"
 #include "management/resident.hpp"
@@ -38,6 +39,9 @@ struct Window : std::enable_shared_from_this<Window> {
     std::filesystem::path assets;
     std::filesystem::path model_config;
     std::filesystem::path user_data;
+    std::wstring tray_instance;
+    std::string tray_definition;
+    bool published_panel = false, tray_verified = false, confirm_on_open = false;
     dfy::app::SoftwareLog* software = nullptr;
     dfy::ui::ProbeProfile profile;
     dfy::ui::BrowserProcesses processes;
@@ -72,6 +76,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool main_panel = false, main_panel_check = false, panel_shutdown_check = false;
     bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
     bool observer_unexpected = false;
+    bool tray_check = false;
     bool resident_exit_seen = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
@@ -91,6 +96,7 @@ struct Window : std::enable_shared_from_this<Window> {
     void close() noexcept {
         if (!closing) {
             closing = true;
+            RemovePropW(handle, dfy::ui::panel_owner);
             pending_at_close = pending;
             close_started = std::chrono::steady_clock::now();
             close_deadline = close_started+std::chrono::seconds(10);
@@ -164,10 +170,18 @@ struct Window : std::enable_shared_from_this<Window> {
             main_panel,[weak](const nlohmann::json& request,dfy::ui::ProbeHost::Reply reply) {
                 const auto self = weak.lock();
                 if (!self || self->closing) return false;
+                if (!self->tray_instance.empty() && !self->tray_verified) {
+                    if (request.at("type") != "dialogue.read") return false;
+                    return self->resident_client->post(request, [weak, reply=std::move(reply)](const auto& value) {
+                        const auto window = weak.lock();
+                        if (window && (window->tray_verified || value.value("event", "") == "management.error")) reply(value);
+                    });
+                }
                 if (self->resident_client) return self->resident_client->post(request,std::move(reply));
                 reply(dfy::management::dispatch(self->run_status_host.get(),request));
                 return true;
             });
+        if (confirm_on_open) host->confirm_exit();
         checks = host->checks();
         require(view->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
         // 处理主文档导航回执，自动验收由计时器另行推进。
@@ -184,7 +198,7 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get(),&navigation));
         navigation_bound = true; resize();
-        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(main_panel_check ? 35 : 20);
+        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(tray_check ? 60 : main_panel_check ? 35 : 20);
         if (smoke || interaction_mode || run_status_host || resident_client) SetTimer(handle,1,20,nullptr);
         if (offline) prepare_offline(); else navigate();
     }
@@ -231,6 +245,17 @@ struct Window : std::enable_shared_from_this<Window> {
         if (resident_client) {
             resident_client->advance();
             const auto peer = resident_client->observe();
+            if (main_panel && !published_panel && peer.pid && !peer.exit_code && !peer.requested) {
+                if (!tray_instance.empty() && dfy::ui::tray_owner(tray_instance) != peer.pid) {
+                    fail("The original tray resident has exited"); return;
+                }
+                tray_verified = true;
+                published_panel = dfy::ui::publish_panel(handle, peer.pid, tray_instance);
+            }
+            if (published_panel && (peer.exit_code || peer.requested)) {
+                RemovePropW(handle, dfy::ui::panel_owner);
+                published_panel = false;
+            }
             if (peer.exit_code && !peer.error && !resident_exit_seen) {
                 resident_exit_seen = true;
                 const bool expected = peer.requested && *peer.exit_code==0;
@@ -254,7 +279,7 @@ struct Window : std::enable_shared_from_this<Window> {
                     if (const auto self = weak.lock()) {
                         if (!passed) self->result = 1;
                         else std::fprintf(stderr,"Interaction protocol checks passed: %zu\n",self->interaction->passed());
-                        if (passed && (self->observer_stop || self->observer_wait)) {
+                        if (passed && (self->observer_stop || self->observer_wait || self->tray_check)) {
                             self->interaction_mode = false;
                             return;
                         }
@@ -262,6 +287,7 @@ struct Window : std::enable_shared_from_this<Window> {
                     }
                 });
 #ifdef DFY_UI_RUN_STATUS_TEST
+                if (tray_check) { interaction->start_tray_panel(user_data); return; }
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
@@ -347,7 +373,10 @@ struct Window : std::enable_shared_from_this<Window> {
                 return std::filesystem::equivalent(folder,data/"logs") ? ERROR_SUCCESS : ERROR_INVALID_DATA;
             };
 #endif
-            resident_client = std::make_unique<dfy::management::Client>(data,dfy::management::startup_identity(config,packages),[=] {
+            const bool pinned = !tray_instance.empty();
+            const auto definition = pinned ? tray_definition : dfy::management::startup_identity(config,packages);
+            resident_client = std::make_unique<dfy::management::Client>(data,definition,[=] {
+                if (pinned) throw std::runtime_error("original tray resident unavailable");
                 dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
             },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); },software);
         }
@@ -387,6 +416,18 @@ LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
     if (message == WM_NCCREATE) SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
     auto* state = reinterpret_cast<Window*>(GetWindowLongPtrW(window,GWLP_USERDATA));
     if (state) {
+        if (message == dfy::ui::activate_panel && state->published_panel && !state->closing) {
+            if (!state->observer_check && !state->tray_check) {
+                ShowWindow(window, IsIconic(window) ? SW_RESTORE : SW_SHOW);
+                SetForegroundWindow(window);
+                state->focus();
+            }
+            if (wparam) {
+                state->confirm_on_open = true;
+                if (state->host) state->host->confirm_exit();
+            }
+            return 0;
+        }
         if (message == WM_SIZE) { state->resize(); return 0; }
         if (message == WM_SETFOCUS) { state->focus(); return 0; }
         if (message == WM_TIMER) { state->tick(); return 0; }
@@ -413,9 +454,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool missing_runtime = __argc == 2 && std::wstring_view(__wargv[1]) == L"--missing-runtime";
     const bool sample = __argc == 3 && (std::wstring_view(__wargv[2]) == L"idle" || std::wstring_view(__wargv[2]) == L"busy");
     const bool room_preview = sample && std::wstring_view(__wargv[1]) == L"--room-preview";
-    const bool main_panel = (__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
-        std::wstring_view(__wargv[1]) == L"--main-panel";
+    const bool tray_panel = __argc == 7 && std::wstring_view(__wargv[1]) == L"--resident-panel" &&
+        (std::wstring_view(__wargv[4]) == L"open" || std::wstring_view(__wargv[4]) == L"confirm") &&
+        std::wstring_view(__wargv[5]) == L"--data" && *__wargv[3];
+    const bool main_panel = tray_panel || ((__argc == 2 || __argc == 3 || (__argc==5 && std::wstring_view(__wargv[3])==L"--data")) &&
+        std::wstring_view(__wargv[1]) == L"--main-panel");
 #ifdef DFY_UI_RUN_STATUS_TEST
+    const bool tray_check = tray_panel && GetEnvironmentVariableW(L"DFY_UI_CHECK_TRAY_PANEL", nullptr, 0);
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
         std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error"))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
@@ -423,21 +468,23 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
     const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" || std::wstring_view(__wargv[1]) == L"--check-panel-shutdown");
 #else
+    const bool tray_check = false;
     const bool observer_check = false;
     const bool room_check = false;
     const bool run_status_mode = false;
     const bool main_panel_check = false;
 #endif
-    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check || observer_check;
+    const bool automatic = smoke || interaction_mode || lifecycle_mode || early || close_controller || missing_runtime || run_status_mode || room_check || main_panel_check || observer_check || tray_check;
     if (__argc > 1 && !automatic && !room_preview && !main_panel) return 2;
     if (FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED))) return 3;
     int result = 1;
     std::optional<dfy::app::SoftwareLog> software;
     try {
-        const bool business = (!automatic && !room_preview) || observer_check;
+        const bool business = (!automatic && !room_preview) || observer_check || tray_check;
         std::filesystem::path data;
         if (business) {
-            if (observer_check) data = __wargv[3];
+            if (tray_panel) data = __wargv[6];
+            else if (observer_check) data = __wargv[3];
             else if (main_panel && __argc==5) data = __wargv[4];
             else data = dfy::app::default_user_data();
             software.emplace(data,dfy::app::SoftwareRole::window);
@@ -460,20 +507,26 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->main_panel_check = main_panel_check;
         state->panel_shutdown_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-panel-shutdown";
         state->observer_check = observer_check;
+        state->tray_check = tray_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";
         state->observer_log_error = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"log-error";
         state->observer_wait = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"wait";
         state->observer_unexpected = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"unexpected";
-        if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
+        if (tray_panel) {
+            state->tray_instance = __wargv[3];
+            state->tray_definition = dfy::ui::utf8(__wargv[2]);
+            state->confirm_on_open = std::wstring_view(__wargv[4]) == L"confirm";
+            if (!dfy::ui::tray_owner(state->tray_instance)) throw std::runtime_error("original tray unavailable");
+        } else if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
         state->user_data = data;
         if (software) state->software = &*software;
-        state->interaction_mode |= room_check || main_panel_check || observer_check;
+        state->interaction_mode |= room_check || main_panel_check || observer_check || tray_check;
         state->business_mode = business;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (run_status_mode) state->run_status_probe = std::make_shared<dfy::tests::UiRunStatusProbe>(__wargv[2]);
 #endif
         state->assets = dfy::app::executable_directory()/L"ui";
-        WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = L"DaFeiYuU01";
+        WNDCLASSW kind{}; kind.lpfnWndProc = procedure; kind.hInstance = instance; kind.lpszClassName = dfy::ui::panel_window_class;
         kind.hCursor = LoadCursorW(nullptr,IDC_ARROW); if (!RegisterClassW(&kind)) throw std::runtime_error("window class failed");
         const DWORD extended = automatic ? WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW : 0;
         const auto title = state->main_panel ? L"大肥鱼管理中心" : state->room_preview ? L"大肥鱼管理中心 · 首屏预览" : L"大肥鱼管理中心 · U01 验证";

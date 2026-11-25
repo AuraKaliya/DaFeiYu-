@@ -21,20 +21,22 @@ unsigned long open_directory(const std::filesystem::path& folder) {
     return error;
 }
 
+// 只打开本次配置下实际存在的日志目录，保留系统的真实回执。
+unsigned long open_log_folder(const std::filesystem::path& profile, const FolderOpener& opener) {
+    const auto folder = std::filesystem::absolute(profile/"logs").lexically_normal();
+    const auto attrs = GetFileAttributesW(folder.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) return GetLastError();
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return ERROR_DIRECTORY;
+    return opener(folder);
+}
+
 // 向受信设置页提供本进程写入证据和固定目录的打开回执。
 // 步骤：从启动配置计算目录 → 读取日志线程状态 → 按显式请求核对目录并提交给 Shell。
 nlohmann::json log_settings(const std::filesystem::path& profile, const app::SoftwareLog& log, bool open, const FolderOpener& opener) {
     const auto folder = std::filesystem::absolute(profile/"logs").lexically_normal();
     const auto name = folder.u8string();
     nlohmann::json result{{"folder",std::string(name.begin(),name.end())},{"writeError",log.error()},{"written",log.recorded()}};
-    if (open) {
-        const auto attrs = GetFileAttributesW(folder.c_str());
-        DWORD error = ERROR_SUCCESS;
-        if (attrs==INVALID_FILE_ATTRIBUTES) error = GetLastError();
-        else if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) error = ERROR_DIRECTORY;
-        else error = opener(folder);
-        result["openError"] = error;
-    }
+    if (open) result["openError"] = open_log_folder(profile, opener);
     return result;
 }
 }

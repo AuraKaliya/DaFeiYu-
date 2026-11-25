@@ -80,7 +80,14 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
         try {
             const auto url = read_text([&](auto** out) { return self->view_->get_Source(out); });
             if (!(from_panel ? main_panel_document(url) : center_document(url))) return;
-            require_hresult(self->view_->PostWebMessageAsJson(utf16(reply.dump(),public_read ? probe_text_limit : management::response_limit).c_str()));
+            if (from_panel && self->confirm_exit_ && reply.value("event", "") == "dialogue.snapshot" && reply.value("ready", false)) {
+                auto confirmation = reply;
+                confirmation["confirmStop"] = true;
+                require_hresult(self->view_->PostWebMessageAsJson(utf16(confirmation.dump(),management::response_limit).c_str()));
+                self->confirm_exit_ = false;
+            } else {
+                require_hresult(self->view_->PostWebMessageAsJson(utf16(reply.dump(),public_read ? probe_text_limit : management::response_limit).c_str()));
+            }
         } catch (...) { self->failure_(); }
     };
     if (!request_(request,deliver) && request.contains("request") && request.at("request").is_string()) {

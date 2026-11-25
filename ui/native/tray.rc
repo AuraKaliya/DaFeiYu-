@@ -1,2 +1,13 @@
+#pragma code_page(65001)
+#include <windows.h>
 #include "tray_resource.h"
 IDI_DAFEIYU ICON "dafeiyu.ico"
+IDD_TRAY_EXIT DIALOGEX 0, 0, 218, 72
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "退出大肥鱼？"
+FONT 9, "Microsoft YaHei UI"
+BEGIN
+    LTEXT "所有管理窗口都会断开，正在进行的任务将开始收尾。", -1, 10, 10, 198, 30
+    DEFPUSHBUTTON "继续运行", IDCANCEL, 69, 48, 66, 16
+    PUSHBUTTON "确认退出", IDYES, 142, 48, 66, 16
+END
