@@ -21,6 +21,14 @@ target_link_libraries(dfy_management_resident_tests PRIVATE dfy_management dfy_b
 set_target_properties(dfy_management_resident_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.management_resident COMMAND dfy_management_resident_tests "${CMAKE_CURRENT_BINARY_DIR}/management-resident")
 set_tests_properties(app.management_resident PROPERTIES TIMEOUT 20)
+add_executable(dfy_terminal_entry_fixture terminal_entry_fixture.cpp)
+target_link_libraries(dfy_terminal_entry_fixture PRIVATE dfy_management dfy_build_options)
+add_dependencies(dfy_terminal_entry_fixture dafeiyu)
+set_target_properties(dfy_terminal_entry_fixture PROPERTIES FOLDER Tests)
+add_test(NAME app.terminal_entry COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/terminal_entry.ps1" -App "$<TARGET_FILE:dafeiyu>"
+  -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${CMAKE_CURRENT_BINARY_DIR}/terminal-entry")
+set_tests_properties(app.terminal_entry PROPERTIES TIMEOUT 45)
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)

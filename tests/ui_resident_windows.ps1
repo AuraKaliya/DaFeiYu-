@@ -103,7 +103,15 @@ try {
     $first = Read-Resident
     $owner = [Diagnostics.Process]::GetProcessById([int]$first.pid)
     $null = $owner.Handle
-    Assert-RuntimeRefused '--chat'
+    $joining = Start-TestRuntime '--chat'
+    try {
+        $joining.StandardInput.WriteLine('/status')
+        $joining.StandardInput.WriteLine('/exit')
+        $joining.StandardInput.Close()
+        if (!$joining.WaitForExit(6000) -or $joining.ExitCode -ne 0 -or
+            !$joining.StandardOutput.ReadToEnd().Contains('No accepted question')) { throw 'Terminal did not join the first resident' }
+    } finally { $joining.Dispose() }
+    Assert-RuntimeRefused '--host'
     Invoke-Observer @()
     $second = Read-Resident
     if ($second.instance -ne $first.instance -or $second.pid -ne $first.pid) { throw 'Reopening replaced the resident' }
@@ -112,7 +120,8 @@ try {
     $terminal = Start-TestRuntime '--chat'
     try {
         $banner = $terminal.StandardOutput.ReadLineAsync()
-        if (!$banner.Wait(5000) -or $banner.Result -ne 'DaFeiYu') { throw 'Terminal could not reclaim the profile' }
+        if (!$banner.Wait(5000) -or $banner.Result -ne 'DaFeiYu') { throw 'Terminal could not cold-start the resident' }
+        $cold = Read-Resident
         Assert-RuntimeRefused '--host'
         $terminal.StandardInput.WriteLine('/exit')
         $terminal.StandardInput.Close()
@@ -122,6 +131,14 @@ try {
             $invalid.StandardInput.Close()
             if (!$invalid.WaitForExit(5000) -or $invalid.ExitCode -eq 0) { throw 'Missing configuration accepted' }
         } finally { $invalid.Dispose() }
+        $stillRunning = Read-Resident
+        if ($cold.instance -ne $stillRunning.instance) { throw 'Leaving terminal lost the original resident' }
+        $coldOwner = [Diagnostics.Process]::GetProcessById([int]$cold.pid)
+        try {
+            $null = $coldOwner.Handle
+            & $App --stop-host $data | Out-Null
+            if (!$coldOwner.WaitForExit(6000) -or $coldOwner.ExitCode -ne 0) { throw 'Cold resident failed to drain' }
+        } finally { $coldOwner.Dispose() }
         Assert-SoftwareLogs $owner.Id $terminal.Id
     } finally {
         if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }
