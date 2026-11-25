@@ -62,10 +62,12 @@ struct SyncedBuffer : std::stringbuf {
     int sync() override { command_visible |= str().find("local result") != std::string::npos; return std::stringbuf::sync(); }
 };
 // 验证命令回执在下一次输入之前刷新，不依赖后续问答或进程退出。
-// 步骤：管道只提交一个本地命令 → 等待输出同步 → 再发送退出 → 核对无需模型调用。
+// 步骤：用带 UTF-8 签名的管道提交本地命令 → 等待输出同步 → 再发送退出 → 核对无需模型调用。
 void command_flush() {
     HANDLE read = nullptr, write = nullptr; check(CreatePipe(&read,&write,nullptr,0),"flush pipe failed");
-    DWORD count = 0; check(WriteFile(write,"/local\n",7,&count,nullptr) && count == 7,"flush command write failed");
+    constexpr char signed_line[] = "\xEF\xBB\xBF/local\n";
+    DWORD count = 0;
+    check(WriteFile(write,signed_line,sizeof(signed_line)-1,&count,nullptr) && count == sizeof(signed_line)-1,"flush command write failed");
     try {
         dfy::platform::LineInput input(read,1,64);
         dfy::agent::AsyncSession session({},channel(),1,[](const auto&,const auto&) -> std::string { throw std::runtime_error("local command reached model"); });

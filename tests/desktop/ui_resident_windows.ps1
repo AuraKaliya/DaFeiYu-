@@ -114,7 +114,8 @@ function Stop-FailedResident([string]$ProfilePath) {
             $original = [Diagnostics.Process]::GetProcessById([int]$state.pid)
             try {
                 $null = $original.Handle
-                if ($original.Path -ne (Resolve-Path -LiteralPath $App).Path) { throw 'Unexpected fixture executable' }
+                $image = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $original.Id)
+                if ($image.ExecutablePath -ne (Resolve-Path -LiteralPath $App).Path) { throw 'Unexpected fixture executable' }
                 $null = & $App --stop-host $ProfilePath $state.instance
                 if (!$original.WaitForExit(6000) -or $original.ExitCode -ne 0) { throw 'Fixture resident did not drain' }
                 return

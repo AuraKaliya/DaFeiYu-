@@ -36,6 +36,20 @@ void lines() {
     const auto error = next(limited);
     check(error.state == InputState::failed && error.error == ERROR_BUFFER_OVERFLOW && next(limited).state == InputState::end,"overlong line was truncated or error repeated");
 }
+// 只识别重定向输入的首个完整签名，并按原正文核算行容量。
+// 步骤：写入带签名的命令和含签名正文 → 核对残缺前缀及行长边界。
+void redirected_signature() {
+    Pipe pipe; LineInput input(pipe.read,2,7);
+    pipe.send("\xEF"); pipe.send("\xBB"); pipe.send("\xBF/status\r\n\xEF\xBB\xBFtext\n"); pipe.finish();
+    check(next(input).line == "/status" && next(input).line == "\xEF\xBB\xBFtext", "signature changed command or later text");
+    check(next(input).state == InputState::end, "signature broke EOF");
+
+    Pipe partial; LineInput ending(partial.read,1,2); partial.send("\xEF\xBB"); partial.finish();
+    check(next(ending).line == "\xEF\xBB" && next(ending).state == InputState::end, "incomplete prefix lost at EOF");
+    Pipe other; LineInput limited(other.read,1,1); other.send("\xEFx\n"); other.finish();
+    check(next(limited).error == ERROR_BUFFER_OVERFLOW, "unmatched prefix escaped the line budget");
+}
+
 // 验证在读调用前后的取消竞争，以及满队列条件等待可以退出。
 // 步骤：反复即时停止空管道 → 逐次确认线程回收 → 填满队列后停止并检查结束。
 void cancellation() {
@@ -52,6 +66,6 @@ void cancellation() {
 // 验收真实 Windows 管道上的有界后台读取及可重复推进的取消。
 // 步骤：验证行边界和错误 → 验证取消竞争与回收 → 报告结果。
 int main() {
-    try { lines(); cancellation(); std::cout << "Line input checks passed\n"; return 0; }
+    try { lines(); redirected_signature(); cancellation(); std::cout << "Line input checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

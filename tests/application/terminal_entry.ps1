@@ -14,6 +14,8 @@ function Start-Cli([string]$Program, [string[]]$Arguments) {
     $info.Arguments = ($Arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
+    $info.EnvironmentVariables.Remove('DEEPSEEK_API_KEY')
+    $info.EnvironmentVariables.Remove('DASHSCOPE_API_KEY')
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true

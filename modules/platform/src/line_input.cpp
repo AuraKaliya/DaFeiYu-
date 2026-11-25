@@ -49,10 +49,13 @@ struct LineInput::State {
         return result;
     }
     // 专用线程只读取和组装输入，不触碰会话、插件或宿主操作对象。
-    // 步骤：选择终端或字节输入 → 按停止状态读取有界块 → 组装行或记录 EOF／错误 → 标记可回收。
+    // 步骤：选择输入源 → 识别重定向输入开头的 UTF-8 签名 → 组装行并结算 EOF 或错误 → 标记可回收。
     void run() noexcept {
         try {
             DWORD mode = 0; const bool console = GetConsoleMode(input,&mode) != 0; std::string pending; wchar_t high = 0;
+            constexpr std::string_view bom = "\xEF\xBB\xBF";
+            bool at_start = !console;
+            std::string signature_prefix;
             while (!stopping.load()) {
                 DWORD count = 0; bool success, end; std::string bytes;
                 if (console) {
@@ -74,11 +77,22 @@ struct LineInput::State {
                     const auto failure = success ? ERROR_HANDLE_EOF : GetLastError();
                     if (failure != ERROR_BROKEN_PIPE && failure != ERROR_HANDLE_EOF) error = failure;
                     else if (high) error = ERROR_NO_UNICODE_TRANSLATION;
-                    else if (!pending.empty()) {
+                    else if (append(signature_prefix,pending) && !pending.empty()) {
                         if (pending.back() == '\r') pending.pop_back();
                         (void)publish(std::move(pending));
                     }
                     break;
+                }
+                // 签名可横跨读取块。首部不完整或不匹配时，原字节仍计入正文和长度限制。
+                if (at_start) {
+                    bytes.insert(0,signature_prefix);
+                    if (bytes.size()<bom.size() && bom.starts_with(bytes)) {
+                        signature_prefix = std::move(bytes);
+                        continue;
+                    }
+                    at_start = false;
+                    signature_prefix.clear();
+                    if (bytes.starts_with(bom)) bytes.erase(0,bom.size());
                 }
                 if (!append(bytes,pending)) break;
             }
