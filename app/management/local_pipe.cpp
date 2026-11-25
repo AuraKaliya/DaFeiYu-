@@ -211,7 +211,7 @@ bool LocalPipe::serve_one(std::chrono::milliseconds wait, const Handler& handle)
 
 // 连接同一用户的管道服务，核对实际服务进程后再发送请求。
 // 步骤：定位目录并等待可用实例 → 核对服务进程用户 → 交换有界帧并确认已读。
-std::string local_request(const std::filesystem::path& profile, const std::string& request, std::chrono::milliseconds timeout) {
+std::string local_request(const std::filesystem::path& profile, const std::string& request, std::chrono::milliseconds timeout, const PeerReply& before_ack) {
     const auto end = Clock::now()+timeout;
     const auto sid = user_sid(GetCurrentProcess());
     const auto name = pipe_name(profile,sid);
@@ -229,10 +229,12 @@ std::string local_request(const std::filesystem::path& profile, const std::strin
 
     ULONG pid = 0;
     if (!GetNamedPipeServerProcessId(pipe.get(),&pid)) fail(GetLastError(),"management server identity");
-    auto process = own(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid),"management server process");
+    const DWORD access = PROCESS_QUERY_LIMITED_INFORMATION | (before_ack ? SYNCHRONIZE : 0);
+    auto process = own(OpenProcess(access,FALSE,pid),"management server process");
     if (user_sid(process.get()) != sid) fail(ERROR_ACCESS_DENIED,"management server user");
     send_frame(pipe.get(),request,request_limit,end);
     auto reply = receive_frame(pipe.get(),response_limit,end);
+    if (before_ack) before_ack(process.get(),pid,reply);
     const char ack = 1;
     write_all(pipe.get(),&ack,1,end);
     return reply;

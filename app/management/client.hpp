@@ -1,4 +1,5 @@
 #pragma once
+#include "resident_watch.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -24,6 +25,8 @@ class Client {
     bool post(const nlohmann::json& request, Reply reply);
     // 在调用方线程交付已经完成的值副本。
     void advance();
+    // 非阻塞读取原进程的实际退出码与已核实的显式退出意图。
+    ResidentObservation observe() const noexcept;
     // 停止新接纳，跳过尚未执行的读取并交付已排队的写命令。
     void close() noexcept;
     // 查询连接线程是否已完成分离。
@@ -32,12 +35,14 @@ class Client {
     struct Entry { nlohmann::json message; Reply deliver; std::size_t bytes; };
     // 握手后按顺序交换请求，关闭时释放自己的客户端身份。
     void run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs);
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<Entry> pending_, completed_;
     std::size_t queued_bytes_ = 0;
     std::atomic_bool exited_ = false;
     app::SoftwareLog* software_;
+    std::shared_ptr<ResidentWatch> watch_;
+    std::atomic_bool stop_accepted_ = false;
     std::jthread thread_;
 };
 

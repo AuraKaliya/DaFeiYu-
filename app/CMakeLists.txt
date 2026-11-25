@@ -52,6 +52,7 @@ add_library(dfy_management STATIC management/host.cpp management/host.hpp manage
 target_sources(dfy_management PRIVATE management/protocol.cpp management/protocol.hpp)
 target_sources(dfy_management PRIVATE management/local_pipe.cpp management/local_pipe.hpp)
 target_sources(dfy_management PRIVATE management/resident.cpp management/resident.hpp)
+target_sources(dfy_management PRIVATE management/resident_watch.cpp management/resident_watch.hpp)
 target_sources(dfy_management PRIVATE management/client.cpp management/client.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PRIVATE advapi32)

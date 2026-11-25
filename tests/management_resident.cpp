@@ -72,7 +72,11 @@ void reconnect(const std::filesystem::path& root) {
         (void)ask({{"op","disconnect"},{"client",first}});
         release.release();
 
-        const auto second=ask({{"op","connect"},{"definition","fixture"}}).at("client");
+        const auto binding = management::connect_resident(data,"fixture");
+        const auto second = binding.client;
+        const auto initial = binding.watch->observe();
+        if (!initial.pid || initial.error || initial.requested || initial.exit_code || binding.instance!=instance)
+            throw std::runtime_error("initial peer witness differs");
         const Json read{{"type","dialogue.read"},{"version","1"},{"request","b"},{"command",""},{"revision",""}};
         wait_until([&] {
             const auto state=ask({{"op","request"},{"client",second},{"body",read}});
@@ -92,6 +96,9 @@ void reconnect(const std::filesystem::path& root) {
             return turn.at("exit")=="pending";
         });
         const auto accepted = ask({{"op","stop"},{"instance",instance}});
+        const auto stopping = binding.watch->observe();
+        if (!stopping.requested || stopping.exit_code || stopping.error || stopping.pid!=initial.pid)
+            throw std::runtime_error("exit intent was confused with process exit");
         if (ask({{"op","stop"},{"instance",instance}})!=accepted) throw std::runtime_error("repeated stop changed identity");
         wait_until([&] {
             const auto status = ask({{"op","status"}});
@@ -101,6 +108,7 @@ void reconnect(const std::filesystem::path& root) {
         });
         release.release();
         if (server.get()!=0) throw std::runtime_error("resident failed to exit");
+        if (!binding.watch->observe().requested) throw std::runtime_error("intent disappeared when the resident released its event");
         verify_stop_log(data,instance,turn);
     } catch (...) {
         if (server.valid() && !instance.empty()) {

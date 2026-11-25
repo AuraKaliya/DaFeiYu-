@@ -13,9 +13,17 @@ using Json = nlohmann::json;
 using app::SoftwareEvent;
 using app::SoftwareResult;
 
+// 校验管道回包的版本与业务结果，只有正式结果进入调用方。
+Json decode(std::string_view bytes) {
+    auto response = Json::parse(bytes);
+    if (response.at("v")!=1) throw std::runtime_error("management: incompatible reply");
+    if (response.contains("error")) throw std::runtime_error("management: "+response.at("error").get<std::string>());
+    return std::move(response.at("result"));
+}
+
 // 在相同的用户管道内区分管理命令与业务消息，失效的客户端须重新建立观察身份。
 // 步骤：核对版本与操作 → 处理连接、查询或退出 → 将有效客户端的业务请求交给统一协议。
-Json handle(Host& host, const std::string& identity, const std::string& instance, bool& stopping, const Json& request, app::SoftwareLog* log) {
+Json handle(Host& host, const std::string& identity, const std::string& instance, StopSignal& intent, bool& stopping, const Json& request, app::SoftwareLog* log) {
     if (!request.is_object() || request.at("v")!=1) throw std::invalid_argument("invalid protocol");
     const auto& op = request.at("op").get_ref<const std::string&>();
     if (op=="status" && request.size()==2) {
@@ -33,7 +41,7 @@ Json handle(Host& host, const std::string& identity, const std::string& instance
         return status;
     }
     if (op=="stop" && request.size()==3 && request.at("instance")==instance) {
-        if (!stopping) {
+        if (intent.accept()) {
             stopping = true;
             if (log) log->record(SoftwareEvent::stop_accepted,SoftwareResult::accepted,{.instance=instance,.shutdown=true});
             host.close(true);
@@ -45,7 +53,7 @@ Json handle(Host& host, const std::string& identity, const std::string& instance
         if (request.at("definition")!=identity) throw std::invalid_argument("host configuration differs");
         const auto client = host.open_client();
         if (log) log->record(SoftwareEvent::client_connected,SoftwareResult::ok,{.instance=instance,.client=client});
-        return {{"client",client},{"instance",instance}};
+        return {{"client",client},{"instance",instance},{"pid",GetCurrentProcessId()},{"stopWatch",true}};
     }
 
     const auto& client = request.at("client").get_ref<const std::string&>();
@@ -78,6 +86,7 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
     LocalPipe pipe(profile);
     std::random_device random;
     const auto instance = std::to_string(random())+"-"+std::to_string(random())+"-"+std::to_string(random());
+    StopSignal intent(instance);
     if (log) {
         log->bind(instance);
         log->record(SoftwareEvent::host_listening,SoftwareResult::ok);
@@ -87,7 +96,7 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
     while (!host.exited()) {
         if (stop.stop_requested() && !stopping) { stopping = true; host.close(); }
         pipe.serve_one(std::chrono::milliseconds(100),[&](const std::string& input) {
-            try { return Json{{"v",1},{"result",handle(host,identity,instance,stopping,Json::parse(input),log)}}.dump(); }
+            try { return Json{{"v",1},{"result",handle(host,identity,instance,intent,stopping,Json::parse(input),log)}}.dump(); }
             catch (const Json::exception&) { return Json{{"v",1},{"error","invalid management message"}}.dump(); }
             catch (const std::invalid_argument& error) { return Json{{"v",1},{"error",error.what()}}.dump(); }
             catch (const std::runtime_error&) { return Json{{"v",1},{"error","management operation unavailable"}}.dump(); }
@@ -99,10 +108,26 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
 // 在独立连接内交换一条请求，显式校验回包版本和业务拒绝。
 nlohmann::json resident_request(const std::filesystem::path& profile, Json request) {
     request["v"] = 1;
-    auto response = Json::parse(local_request(profile,request.dump()));
-    if (response.at("v")!=1) throw std::runtime_error("management: incompatible reply");
-    if (response.contains("error")) throw std::runtime_error("management: "+response.at("error").get<std::string>());
-    return std::move(response.at("result"));
+    return decode(local_request(profile,request.dump()));
+}
+
+// 在管道确认前取得原进程和显式退出事件的观察权，兼容只返回身份的旧后台。
+// 步骤：提交配置握手 → 从管道对端绑定原内核对象 → 完成传输确认并发布连接。
+ResidentConnection connect_resident(const std::filesystem::path& profile, const std::string& definition) {
+    const Json request{{"v",1},{"op","connect"},{"definition",definition}};
+    ResidentConnection result;
+    std::exception_ptr failure;
+    (void)local_request(profile,request.dump(),std::chrono::seconds(5),[&](void* process, std::uint32_t pid, std::string_view reply) {
+        try {
+            const auto value = decode(reply);
+            if (value.contains("pid") && value.at("pid")!=pid) throw std::runtime_error("management: handshake process differs");
+            result.instance = value.at("instance");
+            result.client = value.at("client");
+            result.watch = std::make_shared<ResidentWatch>(process,pid,result.instance,value.value("stopWatch",false));
+        } catch (...) { failure = std::current_exception(); }
+    });
+    if (failure) std::rethrow_exception(failure);
+    return result;
 }
 
 // 只向握手或查询所得的原实例申请退出，分别记录提交和已核对的回执。

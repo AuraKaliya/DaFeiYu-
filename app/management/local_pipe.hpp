@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <cstdint>
 
 namespace dfy::app { class SoftwareLog; }
 namespace dfy::management {
@@ -34,7 +36,8 @@ class LocalPipe {
     std::unique_ptr<State> state_;
 };
 
-// 连接当前用户拥有的端点，以单次有界交换读回一项操作的原始回复。
+using PeerReply = std::function<void(void* process, std::uint32_t pid, std::string_view reply)>;
+// 核对当前用户的管道对端，回执确认前可借用原进程对象保存退出观察权。
 std::string local_request(const std::filesystem::path& profile, const std::string& request,
-    std::chrono::milliseconds timeout = std::chrono::seconds(5));
+    std::chrono::milliseconds timeout = std::chrono::seconds(5), const PeerReply& before_ack = {});
 }

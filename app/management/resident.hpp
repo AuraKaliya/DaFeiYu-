@@ -1,9 +1,13 @@
 #pragma once
 #include "host.hpp"
+#include "resident_watch.hpp"
 #include "../software_log.hpp"
 #include <nlohmann/json_fwd.hpp>
 
 namespace dfy::management {
+struct ResidentConnection { std::string instance, client; std::shared_ptr<ResidentWatch> watch; };
+// 在原管道交换仍存活时绑定实例、客户端与可跨越后台退出的观察句柄。
+ResidentConnection connect_resident(const std::filesystem::path& profile, const std::string& definition);
 // 将有效启动目录和配置路径编码为连接双方可核对的启动标识。
 std::string startup_identity(const std::filesystem::path& model, const std::filesystem::path& packages,
     const std::filesystem::path& trace = {});

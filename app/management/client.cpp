@@ -26,11 +26,11 @@ std::wstring quote(const std::wstring& value) {
 
 // 在初次缺少端点时启动本体，只有尚未完成的启动才允许继续等候握手。
 // 步骤：尝试原配置握手 → 按系统错误决定启动或报告 → 有界等候端点。
-Json connect(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Client::Launch& start, app::SoftwareLog* log) {
+ResidentConnection connect(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Client::Launch& start, app::SoftwareLog* log) {
     const auto end = std::chrono::steady_clock::now()+6s;
     bool launched = false;
     while (!stop.stop_requested()) {
-        try { return resident_request(profile,{{"op","connect"},{"definition",definition}}); }
+        try { return connect_resident(profile,definition); }
         catch (const std::system_error& error) {
             if (error.code().value()!=ERROR_FILE_NOT_FOUND && error.code().value()!=ERROR_PATH_NOT_FOUND) throw;
             if (!launched) {
@@ -95,6 +95,15 @@ void Client::advance() {
     for (auto& entry : completed) entry.deliver(entry.message);
 }
 
+// 核对活动观察句柄，旧协议实例还可用本客户端已核实的退出接纳回执。
+ResidentObservation Client::observe() const noexcept {
+    std::lock_guard lock(mutex_);
+    if (!watch_) return {};
+    auto observation = watch_->observe();
+    observation.requested |= stop_accepted_.load();
+    return observation;
+}
+
 // 撤销尚未交付的观察读取，已经排队的写命令由工作线程处理。
 void Client::close() noexcept {
     std::lock_guard lock(mutex_);
@@ -113,13 +122,15 @@ void Client::close() noexcept {
 void Client::run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs) {
     std::string client, instance, error;
     try {
-        const auto connection = connect(stop,profile,definition,start,software_);
-        client = connection.at("client");
-        instance = connection.at("instance");
+        auto connection = connect(stop,profile,definition,start,software_);
+        client = std::move(connection.client);
+        instance = std::move(connection.instance);
         if (software_) {
             software_->bind(instance,client);
             software_->record(app::SoftwareEvent::client_connected,app::SoftwareResult::ok);
         }
+        std::lock_guard lock(mutex_);
+        watch_ = std::move(connection.watch);
     } catch (const std::exception& ex) {
         error = ex.what();
         app::SoftwareFields fields;
@@ -146,6 +157,7 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
             } else if (client.empty()) throw std::runtime_error(error);
             else if (type=="host.stop") {
                 const auto reply = request_stop(profile,instance,client,software_);
+                stop_accepted_ = true;
                 item.message = {{"event","host.stopping"},{"version","1"},{"request",item.message.at("request")},{"state",reply.at("state")}};
             } else item.message = resident_request(profile,{{"op","request"},{"client",client},{"body",item.message}});
         } catch (const std::exception& ex) {
