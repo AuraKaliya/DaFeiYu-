@@ -1,6 +1,7 @@
 #include "host.hpp"
 #include "../software_log.hpp"
 #include "../message_store.hpp"
+#include "../main_messages.hpp"
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
@@ -12,10 +13,34 @@ namespace {
 constexpr auto interval = std::chrono::milliseconds(5);
 constexpr std::size_t command_limit = 16;
 
+// 以稳定的原实例和用户原话建立跨连接可比较的载荷。
+nlohmann::json envelope(const DialogueCommand& command) {
+    const auto route = command.action==DialogueAction::send ? "send" : command.action==DialogueAction::append ? "append" : "enqueue";
+    return app::user_envelope(route,command.text,command.instance,command.target,command.source_utc_ms);
+}
+
+// 将持久投递回执映射回旧窗口的命令语义，待发号与持久消息号各自保留。
+DialogueReceipt stored_receipt(const DialogueCommand& command, const nlohmann::json& result, std::int64_t stored) {
+    using State = DialogueCommandState;
+    const auto& label = result.at("state");
+    auto state = State::accepted;
+    if (label=="pending" || label=="dispatching") state = State::queued;
+    else if (label=="full") state = State::full;
+    else if (label=="stale") state = State::stale;
+    else if (label=="unknown" || label=="unavailable") state = State::unavailable;
+    else if (label=="rejected" || label=="failed") state = State::rejected;
+    agent::RunId run = command.target;
+    if (result.contains("session")) run = {std::stoull(result.at("session").get<std::string>()),std::stoull(result.at("turn").get<std::string>())};
+    if (command.action==DialogueAction::enqueue) run.sequence = 0;
+    return {command.id,state,run,std::stoull(result.value("nativeMessage",std::string("0"))),stored};
+}
+
 // 依受信页面提供的回合或消息身份，在业务线程执行一次对话操作。
 // 步骤：发送或排队交给应用 → 按原待发消息恢复或移除 → 对原回合提交停止或清空。
 DialogueReceipt apply_dialogue(app::Application& application, const DialogueCommand& command) {
     using State = DialogueCommandState;
+    if (command.stored)
+        return stored_receipt(command,application.main_messages()->deliver(command.stored,envelope(command)),command.stored);
     if (command.action == DialogueAction::send) {
         const auto result = application.submit_dialogue(command.text);
         return {command.id,State::accepted,{result.session,result.turn}};
@@ -212,6 +237,11 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
         (with_text ? command.text.size() > app::dialogue_text_limit || command.text.find_first_not_of(" \t\r\n") == std::string::npos : !command.text.empty()))
         return {command.id,State::rejected,{}};
     auto fingerprint = with_text ? platform::sha256(command.text) : std::string{};
+    if (!command.submission.empty()) {
+        nlohmann::json identity{fingerprint,command.submission,command.instance};
+        if (command.source_utc_ms) identity.push_back(*command.source_utc_ms);
+        fingerprint = platform::sha256(identity.dump());
+    }
 
     std::lock_guard lock(mutex_);
     const auto owner = clients_.find(command.client);
@@ -230,8 +260,28 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
 
     auto& slot = command.action == DialogueAction::cancel ? stop_command_ : pending_;
     const bool needs_idle = command.action == DialogueAction::send || command.action == DialogueAction::clear;
-    const bool available = !slot && (!needs_idle || can_submit_);
-    const DialogueReceipt receipt{command.id,available ? State::queued : State::busy,command.target};
+    bool available = !slot && (!needs_idle || can_submit_);
+    DialogueReceipt receipt{command.id,available ? State::queued : State::busy,command.target};
+    if (messages_ && with_text) {
+        if (command.submission.empty()) command.submission = (command.client.empty() ? instance_ : command.client)+"/"+std::to_string(command.id);
+        if (command.instance.empty()) command.instance = instance_;
+        const auto original = envelope(command);
+        try {
+            if (const auto prior = messages_->find("desktop",command.submission)) {
+                if (prior->envelope!=original) return {command.id,State::conflict,{}};
+                receipt = stored_receipt(command,prior->receipt,prior->id);
+                available = false;
+            } else if (available) {
+                if (command.target.session && (command.instance!=instance_ || display_->turns.empty() || display_->turns.back().run!=command.target))
+                    return {command.id,State::stale,command.target};
+                const auto accepted = messages_->put("desktop",command.submission,original,{{"state","pending"}});
+                command.stored = receipt.stored = accepted.message.id;
+            }
+        } catch (const std::runtime_error&) {
+            if (software_) software_->record(app::SoftwareEvent::message_storage,app::SoftwareResult::failed);
+            return {command.id,State::unavailable,command.target};
+        }
+    }
     commands.push_back({receipt,command.action,command.target,command.message,std::move(fingerprint)});
     owner->second.latest = command.id;
     if (available) {
@@ -241,7 +291,7 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     if (commands.size() > command_limit) {
         // 暂未交付的命令必须能在同一身份写回确认。
         const auto oldest = std::ranges::find_if(commands,[](const auto& item) { return item.receipt.state != State::queued; });
-        commands.erase(oldest);
+        commands.erase(oldest==commands.end() ? commands.begin() : oldest);
     }
     return receipt;
 }
@@ -260,6 +310,10 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
     try {
         receipt = apply_dialogue(application,*command);
     } catch (const std::exception&) {
+        if (command->stored) {
+            receipt = {command->id,DialogueCommandState::unavailable,command->target,0,command->stored};
+            application.main_messages()->storage_failed();
+        }
         // 拒绝回执只交付类别，异常正文可能包括宿主内部数据。
     }
     std::lock_guard lock(mutex_);
@@ -276,6 +330,7 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
 void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
     try {
         const auto application = open();
+        if (messages_) application->bind_messages(messages_,instance_,software_);
         auto& conversation = application->conversation();
         const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;

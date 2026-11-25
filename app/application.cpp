@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "run_log.hpp"
 #include "software_log.hpp"
+#include "main_messages.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_client.hpp>
 #include <algorithm>
@@ -100,6 +101,11 @@ Application::Application(model::Config config, const std::filesystem::path& pack
             if (item.event.payload->descriptor()->name() != "room.addressed") return {};
             return MailboxProjection{std::string(item.event.payload->find("text")->as_string())};
         },MailboxPriority::normal,{},{},{},true);
+}
+
+// 数据目录所有者在开始处理命令前绑定唯一的持久消息入口。
+void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log) {
+    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log);
 }
 
 // 只读取本次记录位置，不打开原始会话或推进工作。
@@ -455,6 +461,7 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 // 在宿主线程上推进子会话和插件，主会话的调用方仍拥有其结算回执。
 // 步骤：复核原工具范围 → 推进子会话与插件 → 处理排队对话和信箱。
 runtime::RunResult Application::advance_plugins() {
+    if (main_messages_) main_messages_->flush();
     collect_tool_registration();
     advance_verification();
     if (!conversation_.busy()) companion_exchange_tools_.reset();

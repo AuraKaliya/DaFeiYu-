@@ -234,7 +234,7 @@ void reconnect(const std::filesystem::path& root) {
         const auto first=ask({{"op","connect"},{"definition","fixture"}}).at("client");
         const auto terminal = management::connect_resident(data,"fixture").client;
         const auto opening = terminal_reply(data,terminal,{{"id",1},{"action","open"},{"interactive",false}});
-        const Json message{{"type","dialogue.submit"},{"version","1"},{"request","a"},{"command","1"},{"text","材料"}};
+        const Json message{{"type","dialogue.submit"},{"version","1"},{"request","a"},{"command","1"},{"text","材料"},{"submission","stable-first"}};
         if (ask({{"op","request"},{"client",first},{"body",message}}).at("receipt").at("state")!="queued" ||
             !started.try_acquire_for(3s)) throw std::runtime_error("real turn not started");
         unsigned line_id = 1;
@@ -257,6 +257,18 @@ void reconnect(const std::filesystem::path& root) {
             return turns.size()==1 && turns.at(0).at("answer")=="回复：材料" && turns.at(0).at("exit")=="succeeded" &&
                 state.at("latestCommand")=="0";
         });
+        const auto durable = management::connect_resident(data,"fixture").client;
+        const auto remote = [&](Json body) { return ask({{"op","request"},{"client",durable},{"body",std::move(body)}}); };
+        const auto sub = remote({{"type","messages.subscribe"},{"version","1"},{"request","sub"}});
+        auto original = remote(message).at("receipt");
+        if (original.at("storedMessage")!="1" || original.at("state")!="accepted") throw std::runtime_error("reconnect lost stable input");
+        auto different = message;
+        different.update(Json{{"command","2"},{"text","new contents"}});
+        if (remote(different).at("receipt").at("state")!="conflict") throw std::runtime_error("stable identity accepted different text");
+        const auto record = remote({{"type","messages.receipt"},{"version","1"},{"request","receipt"},{"conversation",sub.at("conversation")},
+            {"source","desktop"},{"submission","stable-first"}}).at("record");
+        if (record.at("text")!="材料" || record.at("receipt").at("turn")!=original.at("turn")) throw std::runtime_error("original input not archived");
+        (void)ask({{"op","disconnect"},{"client",durable}});
         const auto output = terminal_reply(data,terminal,{{"id",++line_id},{"action","read"},{"after",opening.at("cursor")}});
         if (output.at("out")!="回复：材料\n" || output.at("err")!="") throw std::runtime_error("terminal did not see the desktop result");
         const Json status_line{{"id",++line_id},{"action","line"},{"text","/status"}};
@@ -272,6 +284,7 @@ void reconnect(const std::filesystem::path& root) {
         (void)ask({{"op","disconnect"},{"client",terminal}});
         auto slow = message;
         slow["text"] = "synthetic-private-chat";
+        slow["submission"] = "stable-second";
         (void)ask({{"op","request"},{"client",second},{"body",slow}});
         if (!started.try_acquire_for(2s)) throw std::runtime_error("second model did not start");
         Json turn;
@@ -312,11 +325,12 @@ void reconnect(const std::filesystem::path& root) {
 int main(int argc, char** argv) {
     try {
         if (argc!=2) return 2;
-        reconnect(argv[1]);
-        headless(argv[1],false);
-        headless(argv[1],true);
-        poll_errors(argv[1]);
-        lost_stop_reply(argv[1]);
+        const auto root = std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
+        reconnect(root);
+        headless(root,false);
+        headless(root,true);
+        poll_errors(root);
+        lost_stop_reply(root);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

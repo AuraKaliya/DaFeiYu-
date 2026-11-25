@@ -46,8 +46,10 @@ std::string_view dialogue_state(DialogueCommandState state) noexcept {
 
 // 以十进制字符串返回原命令、正式回合和待发消息身份。
 nlohmann::json dialogue_receipt(const DialogueReceipt& receipt) {
-    return {{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
+    nlohmann::json result{{"command",std::to_string(receipt.command)},{"state",dialogue_state(receipt.state)},
         {"session",std::to_string(receipt.run.session)},{"turn",std::to_string(receipt.run.sequence)},{"message",std::to_string(receipt.message)}};
+    if (receipt.stored) result["storedMessage"] = std::to_string(receipt.stored);
+    return result;
 }
 
 // 按固定命令名逐项核对字段，只从对应入口读取正文、原回合或待发消息。
@@ -106,7 +108,28 @@ nlohmann::json dialogue_response(Host& host, const nlohmann::json& request, cons
     nlohmann::json reply{{"version","1"},{"request",id}};
     if (type != "dialogue.read") {
         reply["event"] = "dialogue.receipt";
-        auto command = dialogue_command(request,type);
+        auto base = request;
+        const bool stable = request.contains("submission");
+        if (stable) {
+            base.erase("submission");
+            base.erase("instance");
+            base.erase("sourceUtcMs");
+        }
+        auto command = dialogue_command(base,type);
+        if (stable) {
+            if (type!="dialogue.submit" && type!="dialogue.append" && type!="dialogue.enqueue")
+                throw std::invalid_argument("messages: expected a text operation");
+            command.submission = request.at("submission").get<std::string>();
+            if (command.submission.empty() || command.submission.size()>128) throw std::invalid_argument("messages: invalid submission");
+            if (type!="dialogue.submit") command.instance = request.at("instance").get<std::string>();
+            if ((type=="dialogue.submit" && request.contains("instance")) || (type!="dialogue.submit" && command.instance.empty()) ||
+                command.instance.size()>64) throw std::invalid_argument("messages: invalid instance");
+            if (request.contains("sourceUtcMs")) {
+                const auto& utc = request.at("sourceUtcMs");
+                if (!utc.is_number_integer() || utc<0 || utc>INT64_MAX) throw std::invalid_argument("messages: invalid source timestamp");
+                command.source_utc_ms = utc.get<std::int64_t>();
+            }
+        }
         command.client = client;
         reply["receipt"] = dialogue_receipt(host.submit_dialogue(std::move(command)));
     } else {
