@@ -1,4 +1,5 @@
 #include "software_log.hpp"
+#include "software_log_files.hpp"
 #include <windows.h>
 #include <nlohmann/json.hpp>
 #include <array>
@@ -19,7 +20,6 @@ constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting"};
 constexpr std::array results{"started","ok","failed"};
 constexpr std::size_t queue_limit = 128;
-std::atomic_uint64_t serial{0};
 
 struct Entry {
     SoftwareEvent event;
@@ -29,8 +29,6 @@ struct Entry {
     std::uint64_t sequence, lost;
 };
 
-// 将 Windows I/O 失败转为只携带系统错误码的写入故障。
-void io_failure(DWORD error) { throw std::system_error(static_cast<int>(error),std::system_category()); }
 }
 
 struct SoftwareLog::State {
@@ -51,20 +49,13 @@ struct SoftwareLog::State {
     // 在专用线程独占新的日志文件，逐条写入并在退出前排空队列。
     // 步骤：创建进程专属文件 → 等待事件或停止 → 编码允许字段并写出。
     void write(std::stop_token stop, const std::filesystem::path& profile, SoftwareRole role) {
-        const auto folder = profile/"logs";
-        std::filesystem::create_directories(folder);
+        SoftwareLogFiles files(profile/"logs");
         const auto pid = GetCurrentProcessId();
-        const auto stamp = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-        const auto stem = "software-"+std::to_string(stamp)+"-"+std::to_string(pid)+"-"+std::to_string(++serial);
-        const auto raw = CreateFileW((folder/(stem+"-1.jsonl")).c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,
-            CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
-        if (raw == INVALID_HANDLE_VALUE) io_failure(GetLastError());
-        const std::unique_ptr<void,decltype(&CloseHandle)> file(raw,&CloseHandle);
 
         for (;;) {
             std::unique_lock lock(mutex);
             ready.wait(lock,stop,[this] { return !pending.empty(); });
-            if (pending.empty()) return;
+            if (pending.empty()) break;
             const auto entry = pending.front();
             pending.pop_front();
             lock.unlock();
@@ -78,12 +69,9 @@ struct SoftwareLog::State {
                 row["build"] = DFY_APPLICATION_BUILD;
                 if (std::string_view(DFY_APPLICATION_COMMIT).size()) row["commit"] = DFY_APPLICATION_COMMIT;
             }
-            const auto line = row.dump()+"\n";
-            DWORD written = 0;
-            if (!WriteFile(file.get(),line.data(),static_cast<DWORD>(line.size()),&written,nullptr)) io_failure(GetLastError());
-            if (written != line.size()) io_failure(ERROR_WRITE_FAULT);
-            if (!FlushFileBuffers(file.get())) io_failure(GetLastError());
+            files.append(row.dump()+"\n");
         }
+        files.close();
     }
 };
 

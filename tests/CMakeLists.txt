@@ -1,3 +1,9 @@
+add_executable(dfy_software_log_tests software_log.cpp)
+target_link_libraries(dfy_software_log_tests PRIVATE dfy_application dfy_build_options)
+set_target_properties(dfy_software_log_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.software_log COMMAND dfy_software_log_tests "${CMAKE_CURRENT_BINARY_DIR}/software-log")
+set_tests_properties(app.software_log PROPERTIES TIMEOUT 12)
+
 add_executable(dfy_management_host_tests management_host.cpp)
 target_link_libraries(dfy_management_host_tests PRIVATE dfy_management dfy_build_options)
 set_target_properties(dfy_management_host_tests PROPERTIES FOLDER Tests)
