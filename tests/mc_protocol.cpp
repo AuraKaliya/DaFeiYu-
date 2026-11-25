@@ -223,6 +223,28 @@ void vitals_protocol() {
     sample["health"] = {{"state","sampled"},{"source","update_health"},{"points",19.5},{"food",12},{"sampledAtMs",42}};
     sample["air"] = {{"state","sampled"},{"source","entity_metadata.air_supply"},{"ticks",-8},{"sampledAtMs",39}};
     if (!read().arrived) throw std::runtime_error("signed air or fractional health lost");
+    sample["air"]["waterCell"] = {{"x",0},{"y",-1},{"z",0}};
+    auto& shore = sample["shore"] = {{"entityId",4},{"sampledAtMs",43},{"airSampledAtMs",39},{"status","reachable"},
+        {"reason","path_verified"},{"stand",{{"x",1},{"y",0},{"z",0}}},{"coverage",{{"origin",{{"x",0},{"y",-1},{"z",0}}},
+        {"radius",4},{"below",1},{"above",3},{"inspected",40},{"unknown",0},{"candidates",1},{"boundaryReached",true}}}};
+    if (!read().arrived || read().changed) throw std::runtime_error("shoreline observation became an action");
+    shore["entityId"] = 5;
+    rejects(read);
+    shore["entityId"] = 4;
+    sample["air"]["waterCell"]["x"] = 9;
+    rejects(read);
+    sample["air"]["waterCell"]["x"] = 0;
+    shore["airSampledAtMs"] = 40;
+    rejects(read);
+    shore["airSampledAtMs"] = 39;
+    shore["stand"]["x"] = 5;
+    rejects(read);
+    shore.erase("stand");
+    shore.update(Json{{"status","blocked"},{"reason","no_path_in_range"}});
+    if (!read().arrived) throw std::runtime_error("bounded no-path evidence lost");
+    shore["coverage"]["unknown"] = 1;
+    rejects(read);
+    sample.erase("shore");
     auto& event = sample["airEpisode"] = {{"episode",1},{"phase","depleted"},{"samples",2},{"firstAtMs",33},{"lastAtMs",39},
         {"firstTicks",0},{"lastTicks",-8},{"minimumTicks",-8}};
     if (!read().arrived) throw std::runtime_error("depletion evidence lost");

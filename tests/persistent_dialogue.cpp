@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "main_messages.hpp"
 #include <windows.h>
+#include <fstream>
 #include <iostream>
 #include <thread>
 
@@ -65,12 +66,80 @@ void verify(const std::filesystem::path& data) {
     if (proactive.source!="main" || proactive.envelope.contains("replyTo") || proactive.id==page.records.front().id)
         throw std::runtime_error("addressed room could not reply without a window");
 }
+
+// 校验真实送模契约、显式发言回执和重复最终文本都绑定同一原回合。
+// 步骤：按回合读取实际准备记录 → 定位工具配对和原投递 → 核对内部回合的范围。
+void check_output_trace(const std::filesystem::path& path, const app::StoredMessage& explicit_reply) {
+    std::ifstream input(path,std::ios::binary);
+    bool offered = false, paired = false, delivered = false, reused = false, internal = false;
+    for (std::string line; std::getline(input,line);) {
+        const auto row = Json::parse(line);
+        const auto& kind = row.at("kind");
+        if (kind=="model.prepared") {
+            const auto& request = row.at("input");
+            const auto& last = request.at("messages").back();
+            if (last.at("content")=="提前追问") {
+                const auto& tools = request.at("tools");
+                offered = tools.size()==1 && tools[0].at("name")=="main_reply" &&
+                    Json::parse(tools[0].at("parameters").get<std::string>()).at("required")==Json::array({"text"}) &&
+                    request.at("messages")[0].at("content").get<std::string>().find("main_reply")!=std::string::npos;
+            }
+            if (last.at("role")=="tool" && last.at("toolCallId")=="speak") {
+                const auto& body = last.at("content").get_ref<const std::string&>();
+                const auto receipt = Json::parse(body.substr(body.find('{')));
+                paired = receipt.at("state")=="delivered" && receipt.at("message")==std::to_string(explicit_reply.id) &&
+                    receipt.at("delivery")==explicit_reply.submission;
+            }
+            if (last.at("content")=="内部结算") internal = request.at("tools").empty();
+        }
+        if (row.value("delivery",std::string{})!=explicit_reply.submission) continue;
+        if (kind=="dialogue.reply_delivered") delivered = row.at("message")==std::to_string(explicit_reply.id) &&
+            explicit_reply.envelope.at("turn")==std::to_string(row.at("run").get<std::uint64_t>());
+        if (kind=="dialogue.reply_reused") reused = true;
+    }
+    if (!offered || !paired || !delivered || !reused || !internal) throw std::runtime_error("missing main output trace evidence");
+}
+
+// 通过共用循环核对提前追问、独立同文答复及内部结算的真实渠道效果。
+// 步骤：显式发言后返回相同最终文本 → 发起独立问答及静默回合 → 比对消息库与 Trace。
+void verify_output(const std::filesystem::path& data) {
+    auto db = std::make_shared<app::MessageStore>(data);
+    const std::string question = "这批材料要交给谁？";
+    app::ApplicationRunConfig run;
+    run.trace_directory = data/"trace-evidence";
+    // 按实际请求给出固定问答与工具材料，让真实宿主决定每条输出的去向。
+    // 步骤：识别首次发言或静默场景 → 返回内部回执或应交付用户的最终文本。
+    app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& request) {
+        const auto& last = request.messages.back();
+        if (last.content=="提前追问") return model::Response{{model::Role::assistant,"",{{"speak","main_reply",Json{{"text",question}}.dump()}}},
+            model::FinishReason::tool_calls};
+        if (last.content=="静默") return model::Response{{model::Role::assistant," \t "}};
+        if (last.content=="内部结算") return model::Response{{model::Role::assistant,"只交给上级的结果"}};
+        return model::Response{{model::Role::assistant,question}};
+    }},run);
+    application.bind_messages(db,"fixed-instance",nullptr);
+    auto& channel = *application.main_messages();
+    for (const auto& prompt : {"提前追问","独立原话","静默"}) {
+        channel.terminal(prompt,prompt);
+        drain(application);
+    }
+    application.conversation().submit("内部结算");
+    drain(application);
+    const auto rows = db->page(true,0,db->watermark(),16).records;
+    if (rows.size()!=5 || rows[1].source!="main" || rows[3].source!="main" || rows[1].envelope.at("text")!=question ||
+        rows[3].envelope.at("text")!=question || rows[1].submission==rows[3].submission ||
+        rows[1].envelope.at("replyTo")!=std::to_string(rows[2].id) || rows[3].envelope.at("replyTo")!=std::to_string(rows[4].id))
+        throw std::runtime_error("explicit reply, independent final or internal result routed incorrectly");
+    check_output_trace(application.trace_file(),rows[3]);
+}
 }
 // 使用独立目录与固定模型响应验收应用的消息实效。
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc!=2) return 2;
-        verify(std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64()));
+        const auto root = std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
+        verify(root/"long-history");
+        verify_output(root/"output");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

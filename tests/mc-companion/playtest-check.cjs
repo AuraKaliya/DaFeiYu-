@@ -268,6 +268,9 @@ async function checkVitals(fixture, player, whispers, followDepletion) {
     assert.equal(under.generation,shore.generation);
     assert.ok(under.air.ticks < 240 && under.health.points < 20 && seen.air.has(under.air.ticks) && seen.health.has(under.health.points));
     assert.ok(shore.air.ticks === 300 && seen.air.has(300) && shore.air.sampledAtMs > under.air.sampledAtMs);
+    assert.deepEqual([under.shore.status,under.shore.reason,under.shore.airSampledAtMs],
+      ['blocked','sealed_volume',under.air.sampledAtMs]);
+    assert.deepEqual([shore.shore.status,shore.shore.reason],['unconfirmed','not_in_water']);
     if (followDepletion) {
       const low = reads[2].result.vitals.airEpisode, recovered = shore.airEpisode;
       assert.ok(low.samples >= 2 && low.minimumTicks < 0 && seen.air.has(low.minimumTicks));
@@ -284,6 +287,35 @@ async function checkVitals(fixture, player, whispers, followDepletion) {
       assert.equal(noticed[1].input.events.at(-1).text,'上岸后空气恢复了吗？');
     }
     assert.deepEqual(whispers,followDepletion ? [wet,exhausted,dry] : [wet,dry]);
+    fixture.send('fill 4 -58 9 6 -57 11 minecraft:air');
+    fixture.send('setblock 6 -59 10 minecraft:water');
+    fixture.send('tp DfyCompanion 5.5 -60 10.5');
+    const center = actor.position.clone().set(5,-60,10);
+    await until(() => actor.position.floored().equals(center) && player.blockAt(center.offset(0,1,0))?.name === 'water' &&
+      player.blockAt(center.offset(1,1,0))?.name === 'water' && actor.metadata[air] > 0 && actor.metadata[air] < 240,
+      '独立玩家核对水中正在耗气的伙伴和岸面',15000);
+    const before = new Map();
+    for (let x=-4; x<=4; ++x) for (let z=-4; z<=4; ++z) for (let y=-2; y<=4; ++y) {
+      const p = center.offset(x,y,z);
+      before.set(p.toString(),player.blockAt(p)?.stateId);
+    }
+    player.chat('从水里能上哪边的岸？');
+    await until(() => whispers.includes('旁边有能站稳的干岸，我还在水里。'),'收到只读岸边回执');
+    const read = readRows(fixture,'game-actions.jsonl').filter(r => r.result.vitals).at(-1).result.vitals;
+    const bank = read.shore, stand = center.clone().set(bank.stand.x,bank.stand.y,bank.stand.z);
+    assert.deepEqual([read.actor,bank.entityId,bank.airSampledAtMs,bank.reason],[actor.uuid,actor.id,read.air.sampledAtMs,'path_verified']);
+    assert.ok(seen.air.has(read.air.ticks) && read.air.ticks < 240 && read.air.sampledAtMs > shore.air.sampledAtMs);
+    assert.equal(player.blockAt(stand)?.name,'air');
+    assert.equal(player.blockAt(stand.offset(0,-1,0))?.boundingBox,'block');
+    assert.ok(actor.position.floored().equals(center));
+    assert.deepEqual(fixture.vitalsCommands,[]);
+    const cells = [-1,0,1].map(y => {
+      const p = stand.offset(0,y,0);
+      return { y:p.y, before:before.get(p.toString()), after:player.blockAt(p)?.stateId };
+    });
+    assert.ok(cells.every(cell => cell.before !== undefined && cell.before === cell.after));
+    writeFileSync(join(fixture.evidence,'shore-evidence.json'),JSON.stringify({ actor:actor.uuid, entityId:actor.id,
+      air:read.air, shore:bank, cells, blocked:under.shore, dry:shore.shore, commands:fixture.vitalsCommands },null,2));
   } finally {
     player._client.removeListener('entity_metadata',metadata);
     fixture.send('tp DfyCompanion 0.5 -60 0.5');

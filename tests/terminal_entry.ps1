@@ -52,6 +52,8 @@ $default = @('--data',$data,'--plugins',$plugins)
 try {
     Invoke-Lines $default @('/status','/exit') 'No accepted question'
     $owner = (& $App --host-status $data | Out-String) | ConvertFrom-Json
+    try { $null = & $App --stop-host $data 'previous-instance' 2>$null } catch {}
+    if ($LASTEXITCODE -eq 0) { throw 'A stale shutdown target was accepted' }
     $bundled = Join-Path (Split-Path -Parent $App) 'config/deepseek.example.json'
     Invoke-Lines (@('--chat',$bundled) + $default) @('/plugins list','/exit') 'No plugins installed'
     $same = (& $App --host-status $data | Out-String) | ConvertFrom-Json

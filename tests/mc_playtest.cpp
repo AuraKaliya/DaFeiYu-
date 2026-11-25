@@ -903,10 +903,12 @@ dfy::model::Response vitals_sample(const dfy::model::Request& request) {
         }
         if (!input.at("events").empty()) {
             const auto question = input.at("events").back().value("text","");
-            if (question == "你现在还有多少血和空气？" || question == "上岸后空气恢复了吗？" || question == "刚才真的耗尽空气了吗？") {
+            if (question == "你现在还有多少血和空气？" || question == "上岸后空气恢复了吗？" ||
+                question == "刚才真的耗尽空气了吗？" || question == "从水里能上哪边的岸？") {
                 const auto tool = std::ranges::find_if(request.tools,[](const auto& def) { return def.name.ends_with("_observe"); });
                 if (tool == request.tools.end()) throw std::runtime_error("vitals: observation tool missing");
-                const auto id = question == "上岸后空气恢复了吗？" ? "shore" : question == "刚才真的耗尽空气了吗？" ? "depleted" : "under";
+                const auto id = question == "从水里能上哪边的岸？" ? "bank" : question == "上岸后空气恢复了吗？" ? "shore" :
+                    question == "刚才真的耗尽空气了吗？" ? "depleted" : "under";
                 return {{Role::assistant,"",{{id,tool->name,R"({"mode":"vitals"})"}}},FinishReason::tool_calls};
             }
         }
@@ -915,6 +917,8 @@ dfy::model::Response vitals_sample(const dfy::model::Request& request) {
         const auto& sample = result.at("vitals");
         if (sample.at("health").at("state") != "sampled" || sample.at("air").at("state") != "sampled")
             throw std::runtime_error("vitals: actor packets unavailable");
+        if (last.tool_call_id == "bank" && sample.at("shore").at("status") == "reachable")
+            return {{Role::assistant,"旁边有能站稳的干岸，我还在水里。"}};
         if (last.tool_call_id == "air-read" && sample.at("airEpisode").at("phase") == "depleted")
             return {{Role::assistant,"已经在原角色上复核了耗尽记录。"}};
         if (last.tool_call_id == "under" && sample.at("air").at("ticks") < 240 && sample.at("health").at("points") < 20)

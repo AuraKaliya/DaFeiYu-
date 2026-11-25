@@ -41,6 +41,10 @@ add_executable(dfy_persistent_dialogue_tests persistent_dialogue.cpp)
 target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
 set_target_properties(dfy_persistent_dialogue_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
+add_executable(dfy_message_recovery_tests message_recovery.cpp)
+target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_management dfy_build_options winsqlite3)
+set_target_properties(dfy_message_recovery_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.message_recovery COMMAND dfy_message_recovery_tests "${CMAKE_CURRENT_BINARY_DIR}/message-recovery")
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)
@@ -168,7 +172,7 @@ if(DFY_MC_NODE)
   add_test(NAME plugins.mc_partner_task COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
     "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-task)
   set_tests_properties(plugins.mc_partner_task PROPERTIES TIMEOUT 25)
-  foreach(change notes goal scope approval direct-notes direct-recover-notes direct-scope direct-place direct-place-stale direct-approval direct-rejoin correction correction-lost navigation navigation-restart navigation-mixed repair-observe repair-plan repair-plan-observe observation-batch response-timing layered layered-blocked layered-stock attention question-scope question-batch opening-answer continuation-budget air-budget air-priority question-expiry pointed-support pointed-craft pointed-craft-no-pickup observe-dig-scope observe-dig-scope-plan observe-dig-scope-evidence observe-dig-scope-evidence-plan)
+  foreach(change notes goal scope approval direct-notes direct-recover-notes direct-scope direct-place direct-place-stale direct-approval direct-rejoin correction correction-lost navigation navigation-restart navigation-mixed repair-observe repair-plan repair-plan-observe observation-batch response-timing layered layered-blocked layered-stock attention question-scope question-batch question-pair question-pair-failed question-pair-body-failed opening-answer continuation-budget air-budget air-priority question-expiry pointed-support pointed-craft pointed-craft-no-pickup observe-dig-scope observe-dig-scope-plan observe-dig-scope-evidence observe-dig-scope-evidence-plan)
     add_test(NAME plugins.mc_partner_revision_${change} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/mc-companion/native-world.cjs"
       "$<TARGET_FILE:dfy_mc_plugin_partner_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${CMAKE_CURRENT_BINARY_DIR}/mc-partner" partner-revision-${change})
     set_tests_properties(plugins.mc_partner_revision_${change} PROPERTIES TIMEOUT 25)

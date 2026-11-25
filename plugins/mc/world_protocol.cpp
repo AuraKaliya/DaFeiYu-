@@ -1,5 +1,6 @@
 #include "world_protocol.hpp"
 #include "partner_effect.hpp"
+#include "partner_skills.hpp"
 #include "handoff_receipt.hpp"
 #include "pipe_exchange.hpp"
 #include <nlohmann/json.hpp>
@@ -67,6 +68,48 @@ void verify_air_episode(const Json& event, const Json& air) {
         throw std::invalid_argument("MC: unconfirmed air recovery");
 }
 
+// 核对岸边结论对应本人空气包、地形覆盖及可达脚格，保留缺证和明确受阻的区别。
+// 步骤：校验对象、时刻和范围 → 按采样完整性核对结论 → 对成功路径复核目标格。
+void verify_shore(const Json& sample) {
+    const auto& shore = sample.at("shore");
+    const auto& area = shore.at("coverage");
+    const auto& origin = area.at("origin");
+    const auto& air = sample.at("air");
+    const bool sampled = air.at("state") == "sampled";
+    const auto& visited = area.at("inspected");
+    const auto& unknown = area.at("unknown");
+    const auto& banks = area.at("candidates");
+    if (shore.at("entityId") != sample.at("entityId") || !shore.at("sampledAtMs").is_number_unsigned() ||
+        shore.at("sampledAtMs") < sample.at("readAtMs") || shore.contains("airSampledAtMs") != sampled ||
+        (sampled && shore.at("airSampledAtMs") != air.at("sampledAtMs")) ||
+        (!origin.is_null() && !valid_action_cell(origin)) || area.at("radius") != 4 || area.at("below") != 1 || area.at("above") != 3 ||
+        !visited.is_number_unsigned() || visited > 405 || !unknown.is_number_unsigned() || !banks.is_number_unsigned() ||
+        unknown > visited || banks > visited || !area.at("boundaryReached").is_boolean())
+        throw std::invalid_argument("MC: invalid shoreline sample");
+    const auto& state = shore.at("status");
+    const auto& reason = shore.at("reason");
+    const bool edge = area.at("boundaryReached");
+    const auto inside = [&](const Json& cell) {
+        if (origin.is_null() || !valid_action_cell(cell)) return false;
+        const auto delta = [&](const char* axis) { return cell.at(axis).get<int>()-origin.at(axis).get<int>(); };
+        return std::abs(delta("x")) <= 4 && std::abs(delta("z")) <= 4 && delta("y") >= -1 && delta("y") <= 3;
+    };
+    if ((state == "reachable") != shore.contains("stand")) throw std::invalid_argument("MC: unexpected shoreline stand");
+    if (reason == "air_unsampled" && !sampled && state == "unconfirmed" && visited == 0) return;
+    if (!sampled) throw std::invalid_argument("MC: shoreline missing self air sample");
+    if (state == "unconfirmed" && visited == 0 &&
+        (origin.is_null() ? reason == "position_unknown" : reason == "not_in_water" || reason == "actor_cell_conflict" ||
+            reason == "terrain_unknown" || (reason == "air_location_unconfirmed" && (!air.contains("waterCell") || !inside(air.at("waterCell")))))) return;
+    if (!air.contains("waterCell") || !inside(air.at("waterCell")) || visited == 0)
+        throw std::invalid_argument("MC: shoreline outside sampled water");
+    if (state == "reachable" && reason == "path_verified" && banks > 0 && inside(shore.at("stand"))) return;
+    if (state == "blocked" && unknown == 0 && ((reason == "sealed_volume" && !edge && banks == 0) ||
+        (reason == "no_path_in_range" && banks > 0))) return;
+    if (state == "unconfirmed" && ((reason == "terrain_unknown" && unknown > 0) || (reason == "path_unconfirmed" && banks > 0) ||
+        (reason == "no_bank_in_range" && banks == 0 && edge))) return;
+    throw std::invalid_argument("MC: unsupported shoreline conclusion");
+}
+
 // 核对本人生命与空气样本的游戏来源、时间和量纲，未采样的字段只能报告未知。
 // 步骤：绑定工作与现场 → 分别核对源包和采样时刻 → 验证生命、饥饿或有符号空气刻数。
 void verify_vitals(const Json& sample, std::string_view id, const Json& generation) {
@@ -83,10 +126,12 @@ void verify_vitals(const Json& sample, std::string_view id, const Json& generati
             if (reading.at("source") != "update_health" || !reading.at("points").is_number() || reading.at("points") < 0 ||
                 !reading.at("food").is_number_unsigned() || reading.at("food") > 20)
                 throw std::invalid_argument("MC: invalid health sample");
-        } else if (reading.at("source") != "entity_metadata.air_supply" || !air_ticks(reading.at("ticks")))
+        } else if (reading.at("source") != "entity_metadata.air_supply" || !air_ticks(reading.at("ticks")) ||
+            (reading.contains("waterCell") && !valid_action_cell(reading.at("waterCell"))))
             throw std::invalid_argument("MC: invalid air sample");
     }
     if (sample.contains("airEpisode")) verify_air_episode(sample.at("airEpisode"),sample.at("air"));
+    if (sample.contains("shore")) verify_shore(sample);
 }
 
 // 验证主背包与快捷栏的容量覆盖，只接受与已读槽位一致的可用量。

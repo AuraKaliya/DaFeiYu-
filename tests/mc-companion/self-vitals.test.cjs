@@ -2,6 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { trackSelfVitals } = require('../../plugins/mc/bridge/self-vitals.cjs');
+const { observeShore } = require('../../plugins/mc/bridge/shore.cjs');
+const { Position } = require('./test-position.cjs');
 const { observationInput } = require('../../plugins/mc/bridge/partner-observe.cjs');
 
 // 使用可控的出生代次和协议包核对来源，保留公共氧气属性作为旁人污染的对照。
@@ -32,6 +34,37 @@ test('self vitals only use packets for the current body and named air field', ()
   assert.deepEqual(f.read().health,sample.health);
   assert.equal(observationInput({ mode:'vitals' }).mode,'vitals');
   assert.throws(() => observationInput({ mode:'vitals', around:'player' }),{ code:'observe_vitals_parameters' });
+});
+
+// 让同一本人的余气包分别遇到干岸、封闭水体和缺失地形，核对纯观察的证据边界。
+test('shore evidence separates a dry route, known obstruction and incomplete coverage', () => {
+  const f = fixture();
+  f.bot.entity.position = new Position(-0.01,-60.000041,0.5);
+  const origin = f.bot.entity.position.floored();
+  const solid = { name:'stone',boundingBox:'block',shapes:[[0,0,0,1,1,1]] };
+  const water = {name:'water',boundingBox:'empty'}, air = {name:'air',boundingBox:'empty'};
+  f.bot.blockAt = p => p.equals(origin) ? water : solid;
+  const probe = () => assert.fail('sealed or unsampled water requested a route');
+  assert.equal(observeShore(f.bot,f.read(),probe).reason,'air_unsampled');
+  f.air(17,12);
+  const sample = f.read();
+  let shore = observeShore(f.bot,sample,probe);
+  assert.deepEqual([shore.status,shore.reason,shore.coverage.origin.y,shore.airSampledAtMs],['blocked','sealed_volume',-61,sample.air.sampledAtMs]);
+  f.bot.blockAt = p => p.equals(origin) ? water : p.y <= origin.y ? solid : air;
+  const route = (from,stands,inside) => {
+    assert.equal(from,f.bot.entity.position);
+    const target = stands.find(p => p.equals(origin.offset(1,1,0)));
+    assert.ok(target && inside(target));
+    return {status:'success',path:[target]};
+  };
+  shore = observeShore(f.bot,sample,route);
+  assert.deepEqual([shore.status,shore.stand],['reachable',{x:0,y:-60,z:0}]);
+  assert.equal(observeShore(f.bot,{...sample,air:{...sample.air,waterCell:origin.offset(9,0,0)}},probe).reason,'air_location_unconfirmed');
+  assert.equal(observeShore(f.bot,sample,() => ({status:'noPath'})).reason,'no_path_in_range');
+  assert.equal(observeShore(f.bot,sample,() => ({status:'partial'})).status,'unconfirmed');
+  const terrain = f.bot.blockAt;
+  f.bot.blockAt = p => p.equals(origin.offset(0,1,1)) ? null : terrain(p);
+  assert.equal(observeShore(f.bot,sample,() => ({status:'noPath'})).reason,'terrain_unknown');
 });
 
 // 角色替换、出生及维度变化分别隔离历史数据，坏包只撤下对应指标，关闭后释放监听。

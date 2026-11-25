@@ -181,6 +181,10 @@ async function main() {
   const layeredStepCount = layeredStock ? 3 : layeredBlocked ? 2 : 4;
   const attention = variant === 'partner-revision-attention';
   const questionBatch = variant === 'partner-revision-question-batch';
+  const questionPair = variant?.startsWith('partner-revision-question-pair');
+  const failedQuestion = questionPair && variant.endsWith('-failed');
+  const failedBody = failedQuestion && variant.endsWith('-body-failed');
+  const pairItems = [], pairPrompts = [], pairBlocks = [];
   const questionScope = questionBatch || variant === 'partner-revision-question-scope';
   const openingAnswer = variant === 'partner-revision-opening-answer';
   const airPriority = variant === 'partner-revision-air-priority';
@@ -293,6 +297,9 @@ async function main() {
           restartRoute ? (oldCheckpoint >= 5 ? 5 : oldCheckpoint >= 2 ? 4 : followIsRunning ? 3 : 2) :
           layered ? (followIsRunning ? 3 : 2) :
           openingAnswer ? (questionPresented ? 3 : 2) :
+          failedQuestion ? (fs.existsSync(path.join(root,'pair-failed')) ? 4 : pairItems.length ? 3 : 2) :
+          questionPair ? ([['pair-revised',12],['pair-answered',11],['pair-repeat',10],['pair-released',9],['pair-invalid',7],['pair-initial',6]]
+            .find(([file]) => fs.existsSync(path.join(root,file)))?.[1] ?? 3) :
           questionScope ? (questionBatch ? 3 : 2) + Number(questionPresented && fs.existsSync(path.join(root,'scoped-question-checked'))) :
           pointedCraft ? (heardAt !== undefined && performance.now() - heardAt > 300 ? 4 : questionPresented ? 3 : 2) :
           attention ? (replies === 2 ? 4 : recoveredReads >= 8 ? 3 : 2) :
@@ -384,6 +391,13 @@ async function main() {
             messages[3].text = '要不要计时';
             messages[4].text = '中途重新绕';
           }
+        }
+        if (questionPair) {
+          const [first, second] = pairItems;
+          const texts = ['帮我备点草方块','砂土也备点','答复 999999 可以','可以',`答复 ${second} 没说过的选项`,
+            `答复 ${second} 可以`,`答复 ${second} 可以`,'可以',`答复 ${first} 可以`,'改为等我回来',`答复 ${first} 可以`];
+          if (failedQuestion) texts[2] = failedBody ? `答复 ${first} 可以` : '可以';
+          messages.splice(1, messages.length - 1, ...texts.map((text, index) => ({ sequence: index + 2, text })));
         }
         if (rejoin) {
           messages[2] = left;
@@ -666,6 +680,27 @@ async function main() {
           return { ...context, skill, exited: true, result: { status: 'done', sourceMessage: 2, taskRevision: 1, placementAttempted: true,
             cells: cells.map(cell => ({ ...cell, before: 'air', block: 'dirt', status: 'placed' })),
             changes: cells.map(cell => ({ ...cell, before: 'air', after: 'dirt' })) } };
+        }
+        if (questionPair) {
+          if (skill === 'reply') {
+            assert.equal(method, 'partner.begin');
+            const [,item,hint] = /\.l\.(\d+)(\.number)?$/.exec(id);
+            assert.ok(args.text.length <= 220);
+            pairPrompts.push(args.text);
+            if (failedQuestion && pairItems.length && Boolean(hint) !== failedBody)
+              return { ...context, skill, exited:true, result:{status:'blocked',sent:false,delivery:'not_sent'} };
+            if (!hint) {
+              assert.equal(args.text,(pairItems.length ? 'B' : 'A').repeat(215));
+              pairItems.push(Number(item));
+            }
+            return { ...context, skill, exited:true, result:{status:'done',sent:true,text:args.text} };
+          }
+          assert.equal(skill, 'collect');
+          assert.equal(method, 'partner.begin');
+          pairBlocks.push(args.block);
+          assert.deepEqual([context.order,args.block],pairBlocks.length === 1 ? [3,'dirt'] : [7,'coarse_dirt']);
+          return { ...context, skill, exited:true, result:{status:'done',broken:1,inventoryDelta:{[args.block]:1},
+            changes:[{x:args.x,y:args.y,z:args.z,before:args.block,after:'air'}]} };
         }
         if (questionScope) {
           assert.equal(context.order,questionBatch ? 3 : 2);
@@ -1136,7 +1171,7 @@ async function main() {
   // 原世界释放第一次仍在途，第二次返回经过游戏核验的结束。
   releaseControl(generation) {
     assert.equal(generation, state.generation);
-    return { generation, order: airBudget ? 3 : refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
+    return { generation, order: failedQuestion ? 4 : questionPair ? 12 : airBudget ? 3 : refusedCollection ? 6 : restartRoute || rejoin || (directPlace && !stalePlace) ? 5 :
       first || motion || confirm || pointedCraft || attention || repairPlanObserve || stalePlace || questionBatch ? 4 :
       interrupt || showGame || delayed || departure || (revision && !repairObserve && !repairPlan && !pointedSupport && !observationBatch && !observeDigScope && !continuationBudget) ? 3 : 2,
       phase: ++releases === 1 ? 'requested' : 'released' };
@@ -1260,6 +1295,18 @@ async function main() {
     } else if (openingAnswer) {
       assert.ok(questionPresented && wallFilled);
       assert.equal(stopped, 0);
+    } else if (failedQuestion) {
+      assert.equal(pairItems.length,1);
+      assert.equal(pairPrompts.length,failedBody ? 3 : 2);
+      assert.ok(pairPrompts[1].includes(String(pairItems[0])));
+    } else if (questionPair) {
+      assert.deepEqual(pairBlocks,['dirt','coarse_dirt']);
+      assert.equal(new Set(pairItems).size,2);
+      assert.ok(pairItems.every(item => pairPrompts.some(prompt => prompt.includes(String(item)))));
+      const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+      const prepared = rows.filter(r => r.kind === 'model.prepared' && r.step === 1).map(readPartnerContext);
+      assert.ok(prepared.some(t => t.input.pendingQuestions?.length === 2 && t.guidance.flowGuidance.clarification));
+      console.log(path.join(root,'trace','events.jsonl'));
     } else if (questionScope) {
       assert.ok(questionPresented && collectExited);
       assert.equal(stopped, 0);

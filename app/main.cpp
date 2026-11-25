@@ -102,12 +102,17 @@ int run(const std::vector<std::filesystem::path>& args) {
             std::cout << dfy::model::complete(config, prompt) << '\n';
             return 0;
         }
-        if ((args.size()==2 || args.size()==3) && (args[1]=="--host-status" || args[1]=="--stop-host")) {
-            const auto data = args.size()==3 ? args[2] : dfy::app::default_user_data();
-            if (args[1]=="--stop-host") software = std::make_shared<dfy::app::SoftwareLog>(data,dfy::app::SoftwareRole::terminal);
-            auto status = dfy::management::resident_request(data,{{"op","status"}});
-            if (software)
-                status = dfy::management::request_stop(data,status.at("instance").get<std::string>(),{},&*software);
+        const bool status_query = args.size()>=2 && args.size()<=3 && args[1]=="--host-status";
+        const bool stop_request = args.size()>=2 && args.size()<=4 && args[1]=="--stop-host";
+        if (status_query || stop_request) {
+            const auto data = args.size()>=3 ? args[2] : dfy::app::default_user_data();
+            nlohmann::json status;
+            if (stop_request) {
+                software = std::make_shared<dfy::app::SoftwareLog>(data,dfy::app::SoftwareRole::terminal);
+                const auto instance = args.size()==4 ? args[3].string() :
+                    dfy::management::resident_request(data,{{"op","status"}}).at("instance").get<std::string>();
+                status = dfy::management::request_stop(data,instance,{},software.get());
+            } else status = dfy::management::resident_request(data,{{"op","status"}});
             std::cout << status.dump() << '\n';
             return software ? software->exiting(0) : 0;
         }
@@ -149,7 +154,7 @@ int run(const std::vector<std::filesystem::path>& args) {
         const bool help = args.size() == 2 && args[1] == "--help";
         auto& output = help ? std::cout : std::cerr;
         output << "Usage: dafeiyu [--check-config FILE | --complete CONFIG PROMPT_FILE | --chat CONFIG [--plugins DIR] [--data DIR] [--trace DIR]"
-            << " | --host CONFIG [--plugins DIR] [--data DIR] [--trace DIR] | --host-status [DATA] | --stop-host [DATA]"
+            << " | --host CONFIG [--plugins DIR] [--data DIR] [--trace DIR] | --host-status [DATA] | --stop-host [DATA [INSTANCE]]"
             << " | --review-diagnostic FILE | --review-trace FILE [SESSION RUN] | --replay-trace FILE SESSION RUN | --mc-partner CONFIG PACKAGE RUN_DIR]\n"
             << "Default chat uses the bundled DeepSeek configuration and accepts --data, --plugins and --trace.\n"
             << "Chat connects to the resident for this data directory. Use /exit to leave the terminal or --stop-host to stop the resident.\n"

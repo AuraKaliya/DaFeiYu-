@@ -68,7 +68,9 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
     if (legacy) skill = "collect";
     const auto route = args.value(legacy ? "route" : "approval","main");
     if (route != "main" && route != "game") return false;
-    if (route == "main" && (!question_events_ || question_ || question_work_)) return false;
+    if (route == "main" && (!question_events_ || std::ranges::any_of(questions_,[](const auto& entry) {
+        return entry.second.path != "local";
+    }))) return false;
     args.erase("route");
     args.erase("approval");
     auto question = confirmation_question(skill,args);
@@ -81,8 +83,10 @@ bool PartnerLoop::confirm_action(std::uint64_t session, std::uint64_t request, s
         now+std::chrono::seconds(25),route == "game"};
     if (!work.empty()) item.work = ApprovalWork{session,request_,task_.revision(),std::move(work)};
     if (!item.ask_game) {
-        question_ = Question{request,item.order,0,item.world,item.player,item.question,"main",item.deadline};
-        question_->approval = true;
+        Question routed{request,item.order,0,item.world,item.player,item.question,"main",item.deadline};
+        routed.approval = true;
+        routed.task_revision = task_.revision();
+        questions_.emplace(request,std::move(routed));
     }
     if (!recorded) guarded_actions_.emplace_back(skill,item.arguments);
     confirmation_ = std::move(item);
@@ -164,7 +168,8 @@ void PartnerLoop::confirm_once(std::string_view status, std::string_view source,
 void PartnerLoop::confirm_exited(std::uint64_t request) noexcept {
     if (!confirmation_ || confirmation_->request != request) return;
     try { confirm_once("withdrawn","host"); } catch (...) {}
-    if (question_ && question_->approval && question_->item == request) question_.reset();
+    const auto q = questions_.find(request);
+    if (q != questions_.end() && q->second.approval) questions_.erase(q);
     confirmation_.reset();
 }
 
