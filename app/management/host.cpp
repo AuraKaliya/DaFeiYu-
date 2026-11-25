@@ -1,5 +1,6 @@
 #include "host.hpp"
 #include "../software_log.hpp"
+#include "../message_store.hpp"
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
@@ -91,8 +92,18 @@ void Host::shutdown(app::Application& application) {
 }
 
 // 将创建和推进入口移交新业务线程，线程的寿命短于快照存储。
-Host::Host(Open open, Drive drive, app::SoftwareLog* software)
-    : software_(software), worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+Host::Host(Open open, Drive drive, app::SoftwareLog* software, std::shared_ptr<app::MessageStore> messages, std::string instance)
+    : messages_(std::move(messages)), instance_(std::move(instance)), software_(software),
+      worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+
+// 在同一窗口锁内登记订阅和采样水位，之后的提交可按客户端自己的游标续读。
+std::optional<std::int64_t> Host::message_watermark(const std::string& client, bool subscribe) const {
+    std::lock_guard lock(mutex_);
+    const auto owner = clients_.find(client);
+    if (!messages_ || owner==clients_.end()) return {};
+    if (subscribe) owner->second.subscribed = true;
+    return owner->second.subscribed ? std::optional(messages_->watermark()) : std::nullopt;
+}
 
 // 在通知业务线程前固定本次停止是否源自显式退出。
 void Host::close(bool explicit_request) noexcept {

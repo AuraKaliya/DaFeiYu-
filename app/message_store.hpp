@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace dfy::app {
@@ -11,6 +12,7 @@ struct StoredMessage {
     nlohmann::json envelope, receipt;
 };
 struct MessageAdmission { StoredMessage message; bool created; };
+struct MessagePage { std::vector<StoredMessage> records; bool more = false; };
 
 // 每个数据目录拥有一个跨启动的主会话，原文与有序投递回执在同一库内提交。
 class MessageStore {
@@ -30,6 +32,8 @@ class MessageStore {
     void update(std::int64_t message, const nlohmann::json& receipt);
     // 读取最后一份已提交回执的序号。
     std::int64_t watermark() const;
+    // 在固定水位向前补读回执，或以消息号倒序读取当时的历史投影。
+    MessagePage page(bool history, std::int64_t cursor, std::int64_t through, unsigned limit) const;
   private:
     struct State;
     std::unique_ptr<State> state_;

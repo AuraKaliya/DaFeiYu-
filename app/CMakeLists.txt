@@ -52,6 +52,7 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
 # 管理宿主独立持有业务线程，桌面和无窗口消费者共用同一套快照与命令处理。
 add_library(dfy_management STATIC management/host.cpp management/host.hpp management/dialogue_channel.hpp management/room_location.hpp)
 target_sources(dfy_management PRIVATE management/protocol.cpp management/protocol.hpp)
+target_sources(dfy_management PRIVATE management/message_protocol.cpp management/message_protocol.hpp)
 target_sources(dfy_management PRIVATE management/local_pipe.cpp management/local_pipe.hpp)
 target_sources(dfy_management PRIVATE management/resident.cpp management/resident.hpp)
 target_sources(dfy_management PRIVATE management/resident_watch.cpp management/resident_watch.hpp)

@@ -1,5 +1,6 @@
 #include "protocol.hpp"
 #include "host.hpp"
+#include "message_protocol.hpp"
 #include <nlohmann/json.hpp>
 #include <charconv>
 
@@ -135,6 +136,7 @@ nlohmann::json dialogue_response(Host& host, const nlohmann::json& request, cons
             {"latestCommand",std::to_string(view.latest_command)},{"revision",revision},{"turns",std::move(turns)},
             {"queue",std::move(queue)},{"queuePaused",view.display && view.display->queue_paused},
             {"receipt",view.receipt ? dialogue_receipt(*view.receipt) : nlohmann::json(nullptr)}});
+        if (const auto high = host.message_watermark(client)) reply["messageWatermark"] = std::to_string(*high);
     }
     return reply;
 }
@@ -168,6 +170,7 @@ nlohmann::json dispatch(Host* host, const nlohmann::json& request, const std::st
         return {{"event","state.snapshot"},{"version","1"},{"topic","run"},{"request",id},
             {"available",host != nullptr},{"run",run_snapshot(host,request)}};
     if (!host) throw std::runtime_error("management: host unavailable");
+    if (type.starts_with("messages.")) return message_request(*host,request,client);
     if (type == "room.read" && request.size()==3)
         return {{"event","room.snapshot"},{"version","1"},{"request",id},{"room",room_snapshot(*host)}};
     if (type.starts_with("dialogue.")) return dialogue_response(*host,request,type,id,client);

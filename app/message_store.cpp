@@ -165,4 +165,31 @@ std::int64_t MessageStore::watermark() const {
     query.next();
     return query.number(0);
 }
+
+// 分页时同时约束记录数与正文大小，历史行使用指定水位以内的最后一份回执。
+// 步骤：固定查询边界 → 按方向选择索引和修订 → 在预算内拷贝并探测下一页。
+MessagePage MessageStore::page(bool history, std::int64_t cursor, std::int64_t through, unsigned limit) const {
+    if (limit==0 || limit>64 || cursor<0 || through<0 || (!history && cursor>through) || through>watermark())
+        throw std::invalid_argument("messages: invalid page bounds");
+    std::lock_guard lock(state_->mutex);
+    Statement query(state_->db,history ?
+        "SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM messages m JOIN receipts r "
+        "ON r.rev=(SELECT max(rev) FROM receipts WHERE message=m.id AND rev<=?2) WHERE m.id<=?1 ORDER BY m.id DESC LIMIT ?3" :
+        "SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM receipts r JOIN messages m ON m.id=r.message "
+        "WHERE r.rev>?1 AND r.rev<=?2 ORDER BY r.rev LIMIT ?3");
+    query.bind(1,history ? (cursor ? cursor-1 : INT64_MAX) : cursor);
+    query.bind(2,through);
+    query.bind(3,limit+1);
+    MessagePage result;
+    std::size_t bytes = 0;
+    while (query.next()) {
+        bytes += sqlite3_column_bytes(query.stmt,5)+sqlite3_column_bytes(query.stmt,6);
+        if (result.records.size()==limit || (!result.records.empty() && bytes>2*1024*1024)) {
+            result.more = true;
+            break;
+        }
+        result.records.push_back(row(query));
+    }
+    return result;
+}
 }

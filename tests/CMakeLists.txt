@@ -33,6 +33,10 @@ add_executable(dfy_message_store_tests message_store.cpp)
 target_link_libraries(dfy_message_store_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 set_target_properties(dfy_message_store_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.message_store COMMAND dfy_message_store_tests "${CMAKE_CURRENT_BINARY_DIR}/message-store")
+add_executable(dfy_message_protocol_tests message_protocol.cpp)
+target_link_libraries(dfy_message_protocol_tests PRIVATE dfy_management dfy_build_options)
+set_target_properties(dfy_message_protocol_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.message_protocol COMMAND dfy_message_protocol_tests "${CMAKE_CURRENT_BINARY_DIR}/message-protocol")
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)

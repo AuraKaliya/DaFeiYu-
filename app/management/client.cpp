@@ -179,6 +179,7 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
         if (type=="dialogue.read") poll = app::SoftwareEvent::poll_dialogue;
         else if (type=="room.read") poll = app::SoftwareEvent::poll_room;
         else if (type=="state.read") poll = app::SoftwareEvent::poll_run;
+        else if (type=="messages.read") poll = app::SoftwareEvent::poll_messages;
         try {
             const auto peer = type=="dialogue.read" ? observe() : ResidentObservation{};
             if (type=="logs.read" || type=="logs.open") {

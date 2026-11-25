@@ -1,6 +1,7 @@
 #include "resident.hpp"
 #include "local_pipe.hpp"
 #include "protocol.hpp"
+#include "../message_store.hpp"
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <random>
@@ -97,7 +98,13 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
     }
     // 即使管道异常离开，逆序析构也先等待业务线程，再释放托盘与目录所有权。
     std::unique_ptr<ResidentTray> tray;
-    Host host(std::move(open),{},log);
+    std::shared_ptr<app::MessageStore> messages;
+    try { messages = std::make_shared<app::MessageStore>(profile); }
+    catch (...) {
+        if (log) log->record(SoftwareEvent::message_storage,SoftwareResult::failed);
+        throw;
+    }
+    Host host(std::move(open),{},log,std::move(messages),instance);
     bool stopping = false;
     while (!host.exited()) {
         if (stop.stop_requested() && !stopping) { stopping = true; host.close(); }
