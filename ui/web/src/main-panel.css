@@ -39,6 +39,10 @@ button:disabled { cursor: default }
   padding: 24px 4px;
 }
 .turn { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-bottom: 24px }
+.history-message { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 12px }
+.history-control { text-align: center; padding-bottom: 14px; color: var(--muted); font-size: 12px }
+.history-control button { background: transparent; border: 0; color: var(--accent); text-decoration: underline; cursor: pointer }
+.message time { color: var(--muted); font-weight: 400; margin-inline-start: 4px }
 .message { position: relative; max-width: calc(100% - 42px); padding: 9px 12px; line-height: 1.6 }
 .message::before { position: absolute; top: 0; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600 }
 .incoming::before { content: "鱼"; right: calc(100% + 6px); color: #286451; background: #d8ece3 }

@@ -29,7 +29,7 @@ void InteractionProbe::check_dialogue_recovery() {
         expect("only one restored command reaches its own final turn",
             "location.origin==='https://panel.dafeiyu.invalid' && history.state?.dialogue?.commands.length===0 && "
             "[...document.querySelectorAll('.outgoing p')].filter(p=>p.textContent==="+text+").length===1 && "
-            "document.querySelector('.turn:last-child .incoming p')?.textContent==="+Json(std::string("固定回复：")+prompt).dump()+
+            "document.querySelector(':nth-last-child(1 of .turn) .incoming p')?.textContent==="+Json(std::string("固定回复：")+prompt).dump()+
             " && document.querySelector('#dialogue-draft').value==="+Json(delivered?"另一个草稿":"").dump());
         evaluate("recovered receipt matches original command",R"JS((async()=>{
             const bridge=window.chrome.webview, id=sessionStorage.getItem('fixture-original');
@@ -42,7 +42,7 @@ void InteractionProbe::check_dialogue_recovery() {
             });
             bridge.postMessage({type:'dialogue.read',version:'1',request:'recovery-original',command:id,revision:''});
             const receipt=await Promise.race([found,new Promise(resolve=>setTimeout(()=>resolve(null),1200))]);
-            return receipt?.command===id && receipt.state==='accepted' && receipt.turn===document.querySelector('.turn:last-child').dataset.turn;
+            return receipt?.command===id && receipt.state==='accepted' && receipt.turn===document.querySelector(':nth-last-child(1 of .turn)').dataset.turn;
         })())JS");
     }
 }
