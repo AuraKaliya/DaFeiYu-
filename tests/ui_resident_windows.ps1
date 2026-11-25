@@ -95,9 +95,39 @@ function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
         (($records | ConvertTo-Json -Depth 3) -match 'synthetic-private-config')) { throw 'Startup errors lack bounded evidence' }
 }
 
+# 异常收尾时按本次隔离目录查找仍持有租约的原后台，包括终端冷启动的后继实例。
+# 步骤：核对目录租约 → 取得原实例及进程句柄 → 按同号请求停止并等待实际退出。
+function Stop-FailedResident([string]$ProfilePath) {
+    $lease = Join-Path $ProfilePath '.dafeiyu-runtime.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds(6)
+    while (Test-Path -LiteralPath $lease) {
+        try {
+            $probe = [IO.File]::Open($lease,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+            $probe.Dispose()
+            return
+        } catch {
+            if (($_.Exception.GetBaseException().HResult -band 0xffff) -notin @(32,33)) { throw }
+        }
+        $state = $null
+        try { $state = (& $App --host-status $ProfilePath 2>$null | Out-String) | ConvertFrom-Json } catch {}
+        if ($state.instance) {
+            $original = [Diagnostics.Process]::GetProcessById([int]$state.pid)
+            try {
+                $null = $original.Handle
+                if ($original.Path -ne (Resolve-Path -LiteralPath $App).Path) { throw 'Unexpected fixture executable' }
+                $null = & $App --stop-host $ProfilePath $state.instance
+                if (!$original.WaitForExit(6000) -or $original.ExitCode -ne 0) { throw 'Fixture resident did not drain' }
+                return
+            } finally { $original.Dispose() }
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { throw "Could not identify resident holding $ProfilePath" }
+        Start-Sleep -Milliseconds 40
+    }
+}
+
 $owner = $null
 $blocked = Join-Path $folder 'blocked user'
-$blockedStopped = $false
+$complete = $false
 try {
     Invoke-Observer @()
     $first = Read-Resident
@@ -136,7 +166,7 @@ try {
         $coldOwner = [Diagnostics.Process]::GetProcessById([int]$cold.pid)
         try {
             $null = $coldOwner.Handle
-            & $App --stop-host $data | Out-Null
+            & $App --stop-host $data $cold.instance | Out-Null
             if (!$coldOwner.WaitForExit(6000) -or $coldOwner.ExitCode -ne 0) { throw 'Cold resident failed to drain' }
         } finally { $coldOwner.Dispose() }
         Assert-SoftwareLogs $owner.Id $terminal.Id
@@ -150,7 +180,7 @@ try {
     $restartedOwner = [Diagnostics.Process]::GetProcessById([int]$restarted.pid)
     try {
         $null = $restartedOwner.Handle
-        $reply = (& $App --stop-host $data | Out-String) | ConvertFrom-Json
+        $reply = (& $App --stop-host $data $restarted.instance | Out-String) | ConvertFrom-Json
         if ($reply.operation -ne ('stop-' + $restarted.instance) -or !$restartedOwner.WaitForExit(6000) -or
             $restartedOwner.ExitCode -ne 0) { throw 'Terminal stop did not finish on the new instance' }
         $history = @(Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
@@ -160,7 +190,7 @@ try {
             throw 'Restart lost the original shutdown evidence or the terminal receipt'
         }
     } finally {
-        if (!$restartedOwner.HasExited) { & $App --stop-host $data | Out-Null; $null = $restartedOwner.WaitForExit(6000) }
+        if (!$restartedOwner.HasExited) { & $App --stop-host $data $restarted.instance | Out-Null; $null = $restartedOwner.WaitForExit(6000) }
         $restartedOwner.Dispose()
     }
     $null = New-Item -ItemType Directory -Path $blocked
@@ -170,19 +200,18 @@ try {
     $blockedOwner = [Diagnostics.Process]::GetProcessById([int]$blockedState.pid)
     try {
         $null = $blockedOwner.Handle
-        & $App --stop-host $blocked | Out-Null
+        & $App --stop-host $blocked $blockedState.instance | Out-Null
         if (!$blockedOwner.WaitForExit(6000) -or $blockedOwner.ExitCode -ne 0) { throw 'Log failure blocked shutdown' }
-        $blockedStopped = $true
     } finally { $blockedOwner.Dispose() }
+    $complete = $true
 } finally {
-    if (!$blockedStopped -and (Test-Path -LiteralPath $blocked)) { & $App --stop-host $blocked 2>$null | Out-Null }
-    if (!$owner -or !$owner.HasExited) {
-        & $App --stop-host $data 2>$null | Out-Null
-        if ($owner) { $null = $owner.WaitForExit(6000) }
+    if (!$complete) {
+        Write-Host "Observer failure evidence: $folder"
+        try { Stop-FailedResident $data } finally { Stop-FailedResident $blocked }
     }
     if ($owner) { $owner.Dispose() }
     $created = Get-Item -LiteralPath $folder
-    if ($created.Parent.FullName -eq $rootPath -and $created.Name -match '^observer-[0-9a-f]{32}$' -and
+    if ($complete -and $created.Parent.FullName -eq $rootPath -and $created.Name -match '^observer-[0-9a-f]{32}$' -and
         !($created.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         Remove-Item -LiteralPath $created.FullName -Recurse -Force
     }
