@@ -17,6 +17,8 @@ class PartnerFacts {
     bool enabled(std::string_view player) const noexcept { return service_ && player == player_; }
     // 查询当前工具是否属于已经提交事实基线的原会话。
     bool bound(std::uint64_t session) const noexcept { return service_ && session && session == session_; }
+    // 查询宿主是否提供原账本读取能力。
+    bool can_read_receipts() const noexcept { return ordered_ && ordered_->read_receipt; }
     // 在游戏派发前为原工作登记宿主责任，失败不消费新的接纳序号。
     std::uint32_t reserve(std::string_view work, std::string_view skill, std::uint64_t order);
     // 只清空本绑定的投影和原工作记录，下个绑定从完整基线开始。
@@ -32,6 +34,8 @@ class PartnerFacts {
     bool needs_exit(std::uint64_t session, const std::string& work) const noexcept;
     // 查询原交物是否已有可追踪的投物证据，仍需核清去向。
     bool needs_pickup(std::uint64_t session, const std::string& work) const noexcept;
+    // 按当前绑定的代次和回执号只读宿主原件，归档记录沿用宿主返回的指纹。
+    nlohmann::json read_work_receipt(std::uint64_t session, const nlohmann::json& args) const;
     // 在原绑定内结算已通过协议核验的同号拾取样本。
     std::uint32_t settle_pickup(std::uint64_t session, const std::string& work, const nlohmann::json& sample);
   private:

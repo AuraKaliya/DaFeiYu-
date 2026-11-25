@@ -213,7 +213,7 @@ async function main() {
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
-  const factPlayer = correctionLost || ['late','retired','capacity'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
+  const factPlayer = correctionLost || ['late','retired','capacity','lookup'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking, factPlayer }));
   let reads = 0, airAttempts = 0, airTail = 0;
   const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
@@ -494,6 +494,7 @@ async function main() {
         else assert.deepEqual({ id, context, args }, hostWork.at(-1));
       }
       if (delivery) {
+        if (delivery === 'lookup') { ++lateCommands; throw new Error('receipt lookup reached the game'); }
         assert.notEqual(delivery, 'capacity', 'a full work index dispatched a new game action');
         assert.equal(context.order, 2);
         if (delivery === 'finish' && skill === 'observe') {
@@ -1239,7 +1240,11 @@ async function main() {
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
     if (legacyAir) assert.equal(airAttempts,1);
     if (showGame) assert.ok(approvedId);
-    if (delivery === 'retired') {
+    if (delivery === 'lookup') {
+      assert.equal(lateCommands,0);
+      const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+      assert.equal(rows.filter(row => row.kind === 'binding.work_settled').length,3);
+    } else if (delivery === 'retired') {
       assert.deepEqual([replies,stopped],[1,1]);
       assert.ok(replyReads >= 1);
       const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);

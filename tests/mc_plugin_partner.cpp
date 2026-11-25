@@ -1505,6 +1505,7 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     const bool late = variant.ends_with(L"-late");
     const bool retired = variant.ends_with(L"-retired");
     const bool capacity = variant.ends_with(L"-capacity");
+    const bool lookup = variant.ends_with(L"-lookup");
     const bool batch = variant.ends_with(L"-batch");
     const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
     const bool internal = variant.ends_with(L"-internal");
@@ -1518,6 +1519,22 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
         const auto& message = request.messages.back();
         if (message.role == Role::tool) {
+            if (lookup) {
+                std::size_t checked = 0;
+                for (const auto& value : request.messages) if (value.role == Role::tool) {
+                    const auto body = Json::parse(value.content.substr(value.content.find('{')));
+                    if (value.tool_call_id == "original") {
+                        if (body.at("workReceipt").at("work") != "long-work" ||
+                            !body.at("workReceipt").at("body").at("sample").get<std::string>().ends_with("尾部原文"))
+                            throw std::runtime_error("wrong expanded work receipt");
+                    } else if (body.at("status") != "unavailable" || body.contains("workReceipt"))
+                        throw std::runtime_error("foreign or missing work receipt exposed");
+                    ++checked;
+                }
+                if (checked != 3) throw std::runtime_error("lookup did not settle all reads");
+                received = true;
+                return {{Role::assistant,R"({"internal":"checked"})"}};
+            }
             if (batch) {
                 const auto result = Json::parse(message.content.substr(message.content.find('{')));
                 if (message.tool_call_id != "repeat-first" || result.at("status") != "already_requested" ||
@@ -1536,7 +1553,27 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
             return {{Role::assistant,internal ? R"({"internal":"keep quiet"})" : reply}};
         }
         const auto input = Json::parse(message.content);
-        if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
+        if (input.at("events").back().at("sequence") == 1) {
+            if (lookup) {
+                fill_session = input.at("factFrame").at("epoch").get<std::uint64_t>();
+                if (!filled.try_acquire_for(std::chrono::seconds(4))) throw std::runtime_error("missing receipt fixture");
+            }
+            return {{Role::assistant,""}};
+        }
+        if (lookup) {
+            const auto& fact = input.at("hostWorkReceipts").at(0);
+            const auto epoch = input.at("factFrame").at("epoch").get<std::uint64_t>();
+            const auto receipt = fact.at("effectReceipt").get<std::uint64_t>();
+            const auto observe = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_observe"); });
+            if (!fact.at("effect").contains("sha256") || message.content.find("尾部原文") != std::string::npos || observe == request.tools.end() ||
+                request.messages.front().role != Role::system || request.messages.front().content.find("work_receipt") == std::string::npos ||
+                observe->parameters.find("work_receipt") == std::string::npos)
+                throw std::runtime_error("model did not receive a compact reference");
+            const auto read = [&](std::string id, std::uint64_t epoch_value, std::uint64_t number) {
+                return ToolCall{std::move(id),observe->name,Json{{"mode","work_receipt"},{"epoch",epoch_value},{"receipt",number}}.dump()};
+            };
+            return {{Role::assistant,"",{read("original",epoch,receipt),read("foreign",epoch+1,receipt),read("missing",epoch,receipt+100)}},FinishReason::tool_calls};
+        }
         if (retired) {
             const auto epoch = input.at("factFrame").at("epoch").get<std::uint64_t>();
             if (input.at("events").back().at("sequence") == 2) { original_session = epoch; return {{Role::assistant,reply}}; }
@@ -1589,7 +1626,11 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("reply loop failed");
         if (const auto session = fill_session.exchange(0)) {
             const auto owner = host.plugins().instance("mc.companion")->generation();
-            for (unsigned n=0;n<128;++n)
+            if (lookup) {
+                host.subagents().settle(owner,session,{session,1,"long-work",R"({"skill":"observe"})",DFY_V2_WORK_ACCEPTED,1});
+                host.subagents().settle(owner,session,{session,2,"long-work",Json{{"sample",std::string(4096,'x')+"尾部原文"}}.dump(),DFY_V2_WORK_EFFECT,0,true});
+                host.subagents().settle(owner,session,{session,3,"long-work","{}",DFY_V2_WORK_EXIT});
+            } else for (unsigned n=0;n<128;++n)
                 host.subagents().settle(owner,session,{session,1,"pending-"+std::to_string(n),"{}",DFY_V2_WORK_ACCEPTED});
             filled.release();
         }

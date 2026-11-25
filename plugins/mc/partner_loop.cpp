@@ -567,6 +567,8 @@ void PartnerLoop::submit(std::string_view wake) {
     auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);
     if (incremental) instructions += "\n宿主 factFrame 的 baseline 为本绑定的完整场景。delta 只更新所列字段，closed 内的旧字段已关闭。hostWorkReceipts 按 work 合入，只根据原工作和投递回执判断实效。";
+    if (incremental && observe_visible && fact_stream_.can_read_receipts())
+        instructions += "\n工作实效只有指纹且需要原文时，用 observe 的 work_receipt 模式，传 factFrame.epoch 和该工作的 effectReceipt。归档回执提供原件指纹。";
     const auto player_flags = !delegated && !air_only && agent_->header.interface_version >= DFY_V2_AGENT_PERSONA_VERSION ?
         DFY_V2_AGENT_PLAYER_FACING | thinking_flags_ : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
@@ -660,6 +662,7 @@ Json PartnerLoop::local_skill(std::uint64_t session, std::uint64_t invocation, s
     if (source.at("generation") != session_world_ || source.at("order") != order_)
         throw std::invalid_argument("MC partner: stale task context");
     const auto& args = input.at("arguments");
+    if (skill == "observe") return fact_stream_.read_work_receipt(session,args);
     if (skill == "queue_actions") {
         if (args.at("operation") == "plan") {
             if (plan_repair_exhausted_) return plan_rejection_.at("result");

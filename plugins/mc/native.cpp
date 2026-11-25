@@ -234,7 +234,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto game_skill = action ? action->executor : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
     const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target" || game_skill == "pickup_drop" || game_skill == "give_item";
-    const bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
+    bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
         skill->kind == SkillKind::action_queue);
     if (!inbox && !inspect && !ask && !admit && !receipt && !mine && !home && !survey && !control && !partner && text(name) != "world") return report(DFY_V2_NOT_FOUND, error);
@@ -268,7 +268,8 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         std::string_view dig_observation_issue;
         if (game_skill == "observe") {
             const auto input = nlohmann::json::parse(job.arguments);
-            if (reuse_scene) {
+            local = input.at("arguments").value("mode","") == "work_receipt";
+            if (!local && reuse_scene) {
                 job.arguments = input.dump();
                 if (const auto original = raw->scene_readings.find(job.arguments); original != raw->scene_readings.end()) {
                     job.output = nlohmann::json{{"status","done"},{"observationWork",original->second}}.dump();
@@ -279,7 +280,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
                 }
                 job.scene_batch = batch;
             }
-            observation_blocked = !raw->partner.admit_hit_observation(call->session,input.at("arguments"));
+            observation_blocked = !local && !raw->partner.admit_hit_observation(call->session,input.at("arguments"));
         }
         if (game_skill == "collect") {
             auto input = nlohmann::json::parse(job.arguments);
@@ -416,7 +417,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 result.at("status") == "recorded" || result.at("status") == "stopping" || result.at("status") == "withdrawn" ||
                 result.at("status") == "queued" || result.at("status") == "cleared" || result.at("status") == "stopped" ?
                 DFY_V2_TOOL_APPLIED : DFY_V2_TOOL_NOT_APPLIED;
-            job->output = dfy::mc::model_scene_text(result);
+            job->output = result.contains("workReceipt") ? result.dump() : dfy::mc::model_scene_text(result);
         } catch (...) {}
         job->ready = true;
     } else if (job->waiting) {

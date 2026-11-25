@@ -98,6 +98,23 @@ bool PartnerFacts::needs_pickup(std::uint64_t session, const std::string& work) 
     return bound(session) && found != uncertain_.end() && found->second.pending_pickup;
 }
 
+// 沿投影给出的回执号读取本绑定的原件或归档指纹，独立于游戏执行通道。
+// 步骤：核对当前代次和非零回执号 → 借用有界缓冲读回 → 返回实际命中或不可用状态。
+Json PartnerFacts::read_work_receipt(std::uint64_t session, const Json& args) const {
+    if (args.size()!=3 || args.at("mode")!="work_receipt" || !args.at("epoch").is_number_unsigned() ||
+        !args.at("receipt").is_number_unsigned() || args.at("receipt")==0) throw std::invalid_argument("MC: invalid work receipt reference");
+    if (!can_read_receipts() || !bound(session) || args.at("epoch")!=session)
+        return {{"status","unavailable"},{"reasonCode","work_receipt_scope"}};
+
+    std::string buffer(16*1024,'\0');
+    std::uint32_t size = 0;
+    const auto receipt = args.at("receipt").get<std::uint64_t>();
+    const auto status = ordered_->read_receipt(session,session,receipt,buffer.data(),static_cast<std::uint32_t>(buffer.size()),&size,nullptr);
+    if (status || !size || size>buffer.size()) return {{"status","unavailable"},{"reasonCode","work_receipt_unavailable"},{"factStatus",status}};
+    buffer.resize(size);
+    return {{"status","done"},{"workReceipt",Json::parse(buffer)}};
+}
+
 // 确认查证回到同一工作和原绑定，再追加已经核实的去向。
 std::uint32_t PartnerFacts::settle_pickup(std::uint64_t session, const std::string& work, const Json& sample) {
     const auto original = uncertain_.find(work);
