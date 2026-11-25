@@ -12,7 +12,8 @@
 - 根工程统一配置，使用 CMake 3.28 及以上、VS2022 x64 和 C++20，以 C11 验证公开 C ABI。新增或迁移模块时，每层 `CMakeLists.txt` 只登记直接子目录。一个模块可定义多个 target，按实际实现建立。
 - 源文件、公开头文件和 target 依赖在所属模块显式声明，按接口需要选择 `PUBLIC`、`PRIVATE` 或 `INTERFACE`。共享编译选项和可复用的构建规则放在 `cmake/`。IDE 目标沿用 App、Agent、Model、Platform、SDK、Plugins、Tests、ThirdParty 职责分组。
 - 新增或迁移测试时，验证模块自身契约的用例和夹具归模块的 `tests/`，跨模块场景归顶层 `tests/`，统一交给 CTest。资源随模块维护，每个生成文件由一个目标负责，资源修改须能触发增量更新，按配置生成的产物分目录放置。
-- [项目预设](CMakePresets.json)随仓库提交。默认在根 `CMakeLists.txt` 同级的 `build/` 配置一次，主程序分别生成在 `build/bin/Debug/` 和 `build/bin/Release/`。测试、GUI 和个人工具链配置使用独立构建目录。
+- [项目预设](CMakePresets.json)随仓库提交。默认在根目录 `build/` 配置一次，`build/bin/Debug/` 和 `build/bin/Release/` 各自包含桌面入口 `dafeiyu.exe`、常驻本体 `dafeiyu-host.exe` 与前端资源。双击和 IDE 默认启动管理中心，托盘从本体所在目录打开同一主面板。
+- `BUILD_GUI` 默认开启，`BUILD_CLI` 默认关闭。选用 `windows-cli` 预设可同时生成 `dafeiyu-cli.exe`。纯终端配置显式选择 `BUILD_GUI=OFF`、`BUILD_CLI=ON`。可选组合、测试和个人工具链配置各用独立构建目录。
 - 一键脚本和[个人预设模板](build-scirpt/CMakeUserPresets.json)放在 `build-scirpt/`。根目录的 `CMakeUserPresets.json` 由个人维护并由 Git 忽略。个人构建预设继承项目预设，并显式绑定自己的配置预设。
 - 构建预设的 `jobs` 控制并行构建任务，单次 `-Jobs` 优先。`DFY_MSVC_COMPILE_JOBS` 单独限制每个 MSVC C++ 目标的编译进程。脚本从自身位置定位根工程，并返回配置或编译的退出码。[构建命令](README.md#运行与构建)
 

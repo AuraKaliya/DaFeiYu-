@@ -1,25 +1,31 @@
 # 大肥鱼运行说明
 
-支持 Windows 10／11 x64。保留解压目录中的程序、运行库 DLL、配置和示例目录，直接运行 `dafeiyu.exe` 即可使用内置 DeepSeek 配置。程序无需安装插件即可问答。
+支持 Windows 10／11 x64。保留解压目录中的程序、运行库 DLL、配置和示例目录，双击 `dafeiyu.exe` 打开桌面管理中心，默认使用同目录的 DeepSeek 配置。打开时会连接或启动 `dafeiyu-host.exe`。程序无需安装插件即可问答。
 
 ## 模型与启动
 
 在 Windows 用户或系统环境变量中配置对应服务的凭据，更新后新开终端：DeepSeek 使用 `DEEPSEEK_API_KEY`，Qwen 使用 `DASHSCOPE_API_KEY`。配置文件只保存环境变量名称，不保存密钥。运行期间不自动读取其他进程刚修改的环境。
 
-在运行目录中执行：
+在运行目录打开桌面或为它选择 Qwen 配置。
 
 ```powershell
 .\dafeiyu.exe
-.\dafeiyu.exe --chat .\config\qwen.example.json
-.\dafeiyu.exe --check-config .\config\deepseek.example.json
-.\dafeiyu.exe --complete .\config\qwen.example.json .\prompt.txt
+.\dafeiyu.exe --main-panel .\config\qwen.example.json
+```
+
+需要命令行时，选择带 CLI 的构建。终端支持交互、配置检查和单次调用。从 PowerShell 或文件重定向输入时，首行可以带 UTF-8 编码签名，`/status` 等本地命令仍由宿主处理。
+
+```powershell
+.\dafeiyu-cli.exe --chat .\config\qwen.example.json
+.\dafeiyu-cli.exe --check-config .\config\deepseek.example.json
+.\dafeiyu-cli.exe --complete .\config\qwen.example.json .\prompt.txt
 ```
 
 `prompt.txt` 使用 UTF-8。配置检查只检查文件格式，真实服务可用性由实际请求验证。可以复制示例配置，修改服务地址、模型、凭据环境变量名称或超时，再用 `--chat` 指定副本。
 
 不带参数时，程序从自身所在目录寻找默认配置；从其他工作目录启动也不影响默认资源定位。明确给出的相对配置、包或数据路径以当前工作目录为准。
 
-普通终端与桌面管理中心按用户数据目录连接同一个后台主会话。默认启动使用随程序发布的模型配置，也可用 `--chat CONFIG` 指定配置。两种方式都接受 `--data DIR`、`--plugins DIR` 与 `--trace DIR`。没有后台时会启动一个，已有后台会核对这三个位置及模型配置路径。在终端输入 `/exit` 或关闭终端后，后台继续处理在途工作。通过管道提交问题并关闭输入时，终端仍可收取本次回答。专用游戏宿主继续独占其数据目录。显式退出后台可用 `--stop-host DATA`。[桌面运行说明](ui-probe-run-guide.md#桌面主面板)
+普通终端与桌面管理中心按用户数据目录连接同一个后台主会话。桌面可用 `--main-panel CONFIG --data DIR` 指定模型和数据目录。终端可用 `--chat CONFIG` 指定配置，并支持 `--data DIR`、`--plugins DIR` 与 `--trace DIR`。没有后台时会启动一个，已有后台会核对这三个位置及模型配置路径。在终端输入 `/exit` 或关闭终端后，后台继续处理在途工作。通过管道提交问题并关闭输入时，终端仍可收取本次回答。专用游戏宿主继续独占其数据目录。可以从托盘选择「退出大肥鱼」，或运行 `dafeiyu-host.exe --stop-host DATA`。[桌面运行说明](ui-probe-run-guide.md#桌面主面板)
 
 后台、管理窗口和普通聊天终端默认在数据目录的 `logs/` 写入软件运行日志。默认目录为 `%LOCALAPPDATA%\DaFeiYu\logs`，指定 `--data` 时随数据目录切换。每次启动有独立的 JSONL 文件，可按组件、PID、UTC 毫秒和进程内序号核对启动、构建和准备退出的返回码。此日志独立于按需开启的 Agent Trace。
 
@@ -37,7 +43,7 @@
 }
 ```
 
-使用 MC 独立角色时，正式入口为 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
+使用 MC 独立角色时，正式入口为 `dafeiyu-cli --mc-partner CONFIG PACKAGE RUN_DIR`。需要已准备的 MC 包、游戏连接和本局运行目录。源码仓库中的[插件说明](../plugins/mc/README.md)和[本机试玩说明](../tests/mc-companion/README.md#首次真人体验)提供完整步骤。
 
 ### Trace 审阅与回放
 
@@ -57,9 +63,9 @@ Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回�
 
 主 Agent 路径中的 `mail.dispatched` 记录真正收取信件的 `session` 和 `run`。该回合的 `model.prepared` 显示本轮工具及实参范围。`reply.intent` 将 `mail_reply` 的 `callId` 与原事项身份、信件序号和运行身份关联。回合退出时没有意图会记录 `reply.review_required`，可用 `/mail review` 主动取回待复审结果。
 
-使用 `dafeiyu --review-trace FILE` 列出运行及关联的玩家消息，附加 `SESSION RUN` 查看原始记录和同一子请求的游戏回执。读取时校验文件版本和连续序号。未正常关停时仍可读取已落完整的行，并提示记录缺尾。
+使用 `dafeiyu-cli --review-trace FILE` 列出运行及关联的玩家消息，附加 `SESSION RUN` 查看原始记录和同一子请求的游戏回执。读取时校验文件版本和连续序号。未正常关停时仍可读取已落完整的行，并提示记录缺尾。
 
-使用 `dafeiyu --replay-trace FILE SESSION RUN` 离线重跑一轮已退出的直接运行。正式 Agent 协调器读取起始上下文，用固定模型响应、已记录的响应和参数改写以及工具结果重跑，逐次核对送模消息、工具定义、调用、回执和最终结果。工具回执可包含 MC 业务确认后的游戏实效。若新游戏消息导致原回合的下一次送模被拒，回放会按原记录重现停止。执行只读取本地文件和内存替身。取消、Agent 宿主审批、规划、观察绑定和最终答复 Hook 改写仍通过原日志审阅。
+使用 `dafeiyu-cli --replay-trace FILE SESSION RUN` 离线重跑一轮已退出的直接运行。正式 Agent 协调器读取起始上下文，用固定模型响应、已记录的响应和参数改写以及工具结果重跑，逐次核对送模消息、工具定义、调用、回执和最终结果。工具回执可包含 MC 业务确认后的游戏实效。若新游戏消息导致原回合的下一次送模被拒，回放会按原记录重现停止。执行只读取本地文件和内存替身。取消、Agent 宿主审批、规划、观察绑定和最终答复 Hook 改写仍通过原日志审阅。
 
 ### 交互命令
 
@@ -92,7 +98,7 @@ Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回�
 
 通知中的 `accepted (queued only)` 只表示通道接纳，不能证明插件已经处理。开始、终态或清空通知未接纳会独立提示一次，不改变问答或清空结果，也不会自动补发。`/status` 保留开始和终态回执及成功接纳的事件身份，便于关联会话／回合／模型请求。终端只保留最近一轮的固定大小快照，`/clear` 不清除该诊断；进程结束后丢弃。诊断不包含提示词、回答、凭据或异常正文。
 
-导出需要明确的新文件路径，并拒绝覆盖。使用 `dafeiyu.exe --review-diagnostic "文件"` 离线查看历史缺口、实际退出、效果计数及公开版本。只读回顾无需启动模型或加载插件。
+导出需要明确的新文件路径，并拒绝覆盖。使用 `dafeiyu-cli.exe --review-diagnostic "文件"` 离线查看历史缺口、实际退出、效果计数及公开版本。只读回顾无需启动模型或加载插件。
 
 构建标签随二进制记录编译器、平台和配置。构建者核对源状态后可在配置 CMake 时用 `-DDFY_APPLICATION_COMMIT=完整提交号` 声明源码版本。未提供时显示未知，运行时从二进制读取标签。
 
@@ -134,7 +140,7 @@ Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回�
 需要独立运行环境时指定目录：
 
 ```powershell
-.\dafeiyu.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
+.\dafeiyu-cli.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
 ```
 
 本地安装只接受普通本地目录，拒绝链接、重解析点、已有 ID 和覆盖更新；默认上限为 4096 个子项、512 MiB 文件数据及 32 层目录。完整检查和暂存复核后才发布，坏包单独报告，不阻止本体问答。
@@ -147,7 +153,9 @@ Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回�
 
 | 位置 | 内容 |
 |---|---|
-| `dafeiyu.exe`、同目录运行库 DLL | Release 程序及编译器提供的运行库 |
+| `dafeiyu.exe`、`ui/` | 桌面管理中心及前端资源 |
+| `dafeiyu-host.exe`、同目录运行库 DLL | 常驻本体、托盘与 Release 运行库 |
+| `dafeiyu-cli.exe` | 启用 CLI 时附带的终端客户端 |
 | `config` | 不含密钥的 DeepSeek／Qwen 示例 |
 | `plugins` | 用户明确安装的包，初始为空 |
 | `examples/plugins/example.observer` | 可安装的观察示例包 |

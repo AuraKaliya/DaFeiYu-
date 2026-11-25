@@ -3,7 +3,7 @@
 | 依赖 | 固定版本 | 许可证 | 用途 |
 |---|---|---|---|
 | [nlohmann/json](https://github.com/nlohmann/json/tree/v3.12.0) | 3.12.0 | [MIT](https://github.com/nlohmann/json/blob/v3.12.0/LICENSE.MIT) | 模型配置、请求与响应、插件清单及插件配置的 JSON 处理 |
-| [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4314.35) | 1.0.4314.35 | 包内 LICENSE.txt 与 NOTICE.txt | 可选 GUI 的 C++ SDK 与静态加载器；Evergreen Runtime 单独安装 |
+| [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4314.35) | 1.0.4314.35 | 包内 LICENSE.txt 与 NOTICE.txt | 桌面程序使用的 C++ SDK 与静态加载器，Evergreen Runtime 单独安装 |
 | [Vue](https://vuejs.org/) | 3.5.45 | MIT | 本地管理中心验证页面 |
 | [Reka UI](https://reka-ui.com/) | 2.11.0 | MIT | 对话框、焦点及可访问性交互基础 |
 

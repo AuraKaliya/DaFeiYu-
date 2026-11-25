@@ -19,7 +19,7 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 
 ## 首次真人体验
 
-准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`。在项目根目录通过 Windows PowerShell 5.1 或 PowerShell 7 启动，`-BuildDirectory` 指向实际的构建目录。
+准备好 G02 运行目录和观察端后，用 `windows-tests` 预设构建 Debug 目标 `dafeiyu-cli`、`dfy_mc_companion`。在项目根目录通过 Windows PowerShell 5.1 或 PowerShell 7 启动，`-BuildDirectory` 指向实际的构建目录。
 
 ```powershell
 .\tests\mc-companion\start-playtest.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\rebuild\windows-tests'
@@ -38,7 +38,7 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
 
 ```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe D:\DaFeiYu-MC-Test\evidence
 ```
 
 脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
@@ -46,7 +46,7 @@ node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tes
 「跟随中挖一格」与「取材后补四格」的后续基线可传入两局证据目录：
 
 ```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe <run-FX9QKV目录> <run-rg8RdZ目录>
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe <run-FX9QKV目录> <run-rg8RdZ目录>
 ```
 
 分别核对原跟随工作号、挖掘后的实际入包、取材确认过期或观察被新事件中断，以及两局均无放置回执。可独立重跑的六轮使用录制模型响应。外部事件导致的回合退出以原 Trace 与游戏回执为准。

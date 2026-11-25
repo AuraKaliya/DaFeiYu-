@@ -35,13 +35,13 @@ MC 单玩家试点在游戏动作前向宿主预留原工作号。游戏桥接�
 | 目录 | 维护的构建单元 |
 | --- | --- |
 | [modules/](../modules/CMakeLists.txt) | 平台、运行时、事件、模型、Agent、插件宿主、插件工具和原生托盘。一个模块可提供多个目标，例如 Events 提供 `dfy_events` 和 `dfy_event_streams`，共用模块内的测试。 |
-| [apps/](../apps/CMakeLists.txt) | `host` 提供应用和后台管理服务，`terminal` 构建终端库与 `dafeiyu`，`desktop` 拥有可选的 WebView2 程序、前端资源和原生探针。 |
+| [apps/](../apps/CMakeLists.txt) | `desktop` 构建默认管理中心 `dafeiyu` 并维护前端资源，`host` 提供常驻本体 `dafeiyu-host` 和命令执行，`terminal` 提供可选客户端 `dafeiyu-cli`。 |
 | [sdk/](../sdk/CMakeLists.txt) 与 [plugins/](../plugins/CMakeLists.txt) | SDK 维护公开 C ABI 和验证夹具。发布插件维护自身实现、包资源与测试。观察、状态面板两个示例同时随 SDK 提供独立构建入口。 |
 | [tests/](../tests/CMakeLists.txt) | 按应用、Agent 与原生工具、插件、桌面、MC 陪伴组织跨模块场景。测试程序统一输出到构建树的 `tests/<配置>/`，供 CTest、回放和试玩脚本定位。 |
 
 ## 架构图
 
-箭头表示调用或数据方向。普通终端和桌面窗口通过同目录的后台程序访问本体。专用游戏宿主创建自己的应用实例。桌面的 `--room-preview` 直接显示固定样本。
+箭头表示调用或数据方向。桌面管理中心和可选终端通过同目录的后台程序访问本体。专用游戏宿主创建自己的应用实例。桌面的 `--room-preview` 直接显示固定样本。
 
 ```mermaid
 ---
@@ -51,9 +51,9 @@ config:
     nodeSpacing: 24
 ---
 flowchart TB
-    Terminal["终端 dafeiyu"]
-    GameHost["游戏宿主<br/>dafeiyu --mc-partner"]
-    Gui["桌面 dafeiyu-ui-probe<br/>WebView2 / Vue"]
+    Terminal["可选终端 dafeiyu-cli"]
+    GameHost["游戏宿主<br/>dafeiyu-cli --mc-partner"]
+    Gui["桌面 dafeiyu<br/>WebView2 / Vue"]
 
     subgraph Host["宿主进程 · C++20"]
         App["Application<br/>人格、信箱、ASK 与 Trace"]
@@ -77,7 +77,7 @@ flowchart TB
 
     Terminal <-->|本地管道 · 终端命令与回执| Resident
     GameHost --> App
-    Gui <-->|本地管道 · 命令、快照与回执| Resident["后台本体 dafeiyu --host"]
+    Gui <-->|本地管道 · 命令、快照与回执| Resident["后台本体 dafeiyu-host --host"]
     Resident --> App
     Main <--> Messages[(SQLite 主会话消息)]
     App -->|本地 Trace 文件| Viewer["浏览器 MC Trace 查看器"]
@@ -99,7 +99,7 @@ flowchart TB
 | **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../apps/host/src/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
 | **Desktop** | Vue 主面板经 WebView2 和异步命名管道向后台本体提交用户意图。窗口关闭后已接纳回合继续运行。应用管理主会话和下一轮队列，Agent 记录本轮补充实际进入的模型步骤。刷新按原命令查回执。受信页面通过 `room.read` 读取身体位置，公开 `state.read` 返回无正文运行摘要。[后台服务](../apps/host/src/management/resident.cpp) · [窗口客户端](../apps/host/src/management/client.cpp) · [应用队列](../apps/host/src/dialogue_queue.cpp) · [面板运行说明](ui-probe-run-guide.md) |
 
-构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。终端是默认启动目标，`BUILD_GUI` 和 `BUILD_TESTING` 控制探针和测试目标。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
+构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。默认启动目标是桌面管理中心。后台按用户数据目录持有主会话及托盘，托盘可恢复现有管理窗或在关窗后重新启动。`BUILD_CLI=ON` 加入终端，`BUILD_TESTING=ON` 启用离线测试。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
 
 ## 桌面主面板的回执和位置
 

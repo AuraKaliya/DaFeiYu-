@@ -1,6 +1,6 @@
 # 大肥鱼
 
-大肥鱼采用 C++20、CMake、VS2022 和 Windows x64。终端与桌面主面板共用主 Agent 的普通对话入口，空插件目录也能问答。终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。桌面另有只读运行摘要和固定样本房间预览。
+大肥鱼默认打开 Windows 桌面管理中心。主面板与可选终端连接同一个后台主 Agent，空插件目录也能问答。桌面提供运行摘要和房间预览，终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。项目使用 C++20、CMake 和 VS2022 x64。
 
 - **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
 - **想审当前设计**，见[管理中心首版开发方案](docs/ui-framework-design.md)、[主面板与内置房间](docs/main-agent-room-development-plan.md)、[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)与[MC 能力清单](docs/mc-partner-capability-review.md)。
@@ -10,7 +10,7 @@
 
 内置 DeepSeek、Qwen 返回一次完整文本，空插件目录也能问答。凭据分别来自 `DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`，示例配置只包含环境变量名称。更新环境后请新开终端。
 
-安装 VS2022 的 x64 C++ 工具和 CMake 3.28 或更高版本。双击 [Debug 构建](build-scirpt/build-debug.cmd) 或 [Release 构建](build-scirpt/build-release.cmd) 即可编译。脚本从 PATH 或 Visual Studio 安装中找到 CMake，使用项目根目录的 `build/` 做增量构建。两种模式共享配置，各自产出 `build/bin/Debug/dafeiyu.exe` 和 `build/bin/Release/dafeiyu.exe`。
+安装 VS2022 的 x64 C++ 工具、CMake 3.28 或更高版本和前端所需的 Node.js 24.13 及以上 24.x 版本（含 npm）。双击 [Debug 构建](build-scirpt/build-debug.cmd) 或 [Release 构建](build-scirpt/build-release.cmd) 即可编译。首次构建会按锁文件安装前端依赖。双击 `build/bin/Debug/dafeiyu.exe` 或 `build/bin/Release/dafeiyu.exe` 打开桌面管理中心。窗口会连接或启动同目录的 `dafeiyu-host.exe`。
 
 ```powershell
 .\build-scirpt\build-debug.cmd -Target dfy_model -Jobs 8
@@ -22,7 +22,7 @@
 
 本机需要单独设置时，将[个人预设模板](build-scirpt/CMakeUserPresets.json)复制到项目根目录作为 `CMakeUserPresets.json`。已有个人预设时可合并模板条目。编辑 `jobs`、`DFY_MSVC_COMPILE_JOBS` 或本机工具链路径后，运行 `.\build-scirpt\build-debug.cmd -Profile local-windows`（Release 同理）。模板使用单独的 `build/local-windows/`，本机文件由 Git 忽略。
 
-脚本用 `-Profile <名称>` 选择同名配置预设，再运行 `<名称>-debug` 或 `<名称>-release` 构建预设。选择 `windows-tests` 可构建测试，选择 `windows-ui` 可构建桌面目标 `dfy_ui_probe`。首次构建桌面前，按[前端声明](apps/desktop/web/package.json)安装 Node.js，在根目录运行 `npm --prefix apps/desktop/web ci`。
+脚本用 `-Profile <名称>` 选择配置预设。默认 `windows` 构建桌面与后台。需要终端时运行 `.\build-scirpt\build-debug.cmd -Profile windows-cli`，然后启动 `build/rebuild/windows-cli/bin/Debug/dafeiyu-cli.exe`。测试配置 `windows-tests` 构建 CLI，包含本体和原生托盘测试。`windows-ui` 增加 WebView2 集成测试，其一键入口定向构建桌面。运行全量测试前按下文「验证方式」构建全部目标。[构建预设](CMakePresets.json)
 
 从根目录直接使用 CMake 也能构建相同的程序。
 
@@ -31,14 +31,14 @@ cmake --preset windows
 cmake --build --preset windows-release
 ```
 
-不带参数使用程序目录下的 DeepSeek 配置；指定 Qwen 或独立目录：
+桌面默认使用程序目录下的 DeepSeek 配置。可以指定模型，也可以为本次启动选择独立的数据目录。
 
 ```powershell
-.\build\bin\Release\dafeiyu.exe --chat .\modules\model\resources\config\qwen.example.json
-.\build\bin\Release\dafeiyu.exe --chat .\modules\model\resources\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
+.\build\bin\Release\dafeiyu.exe --main-panel .\modules\model\resources\config\qwen.example.json
+.\build\bin\Release\dafeiyu.exe --data "D:\应用数据\用户设置"
 ```
 
-支持 `--check-config FILE`、`--complete CONFIG PROMPT_FILE`、`--review-diagnostic FILE` 和 `--help`。配置检查及诊断回顾可以离线执行。单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
+可选的 `dafeiyu-cli.exe` 提供终端聊天、`--check-config FILE`、`--complete CONFIG PROMPT_FILE`、`--review-diagnostic FILE` 和 `--help`。配置检查及诊断回顾可以离线执行。单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
 
 生成独立运行目录：
 
@@ -99,7 +99,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 
 | 职责 | 入口 |
 |---|---|
-| App：共享服务、终端及原生插件管理 | [Application](apps/host/src/application.hpp)、[Conversation](apps/host/src/conversation.hpp)、[终端命令](apps/terminal/src/application_commands.cpp)、[插件命令](apps/terminal/src/plugin_commands.cpp) |
+| App：共享服务、终端及原生插件管理 | [Application](apps/host/src/application.hpp)、[Conversation](apps/host/src/conversation.hpp)、[管理命令](apps/host/src/commands/application_commands.cpp)、[插件命令](apps/host/src/commands/plugin_commands.cpp) |
 | Agent：会话、运行与历史提交 | [Session](modules/agent/include/dafeiyu/session.hpp)、[实现](modules/agent/src/session.cpp) |
 | Model：异步接纳及供应商协议 | [AsyncClient](modules/model/include/dafeiyu/async_model.hpp)、[完整文本调用](modules/model/src/client.cpp) |
 | Events：不可变交付与处理 | [广播](modules/events/include/dafeiyu/broadcast_channel.hpp)、[处理](modules/events/include/dafeiyu/processing.hpp)、[控制边界](modules/events/include/dafeiyu/hooks.hpp) |

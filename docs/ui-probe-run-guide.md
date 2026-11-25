@@ -1,18 +1,20 @@
-# 大肥鱼 U01 验证窗口运行说明
+# 大肥鱼桌面管理中心运行说明
 
-`dafeiyu-ui-probe.exe` 提供桌面主面板、房间预览和原生容器探针。终端问答使用 `dafeiyu.exe`。
+双击 `dafeiyu.exe` 打开正式桌面主面板。房间预览和原生容器探针使用显式参数。选装的终端程序为 `dafeiyu-cli.exe`。
 
 ## 桌面主面板
 
-在 GUI 构建的可执行文件旁打开 PowerShell，运行 `.\dafeiyu-ui-probe.exe --main-panel`。默认使用同目录 `modules/model/resources/config/deepseek.example.json`；也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。需要独立数据目录时，运行 `dafeiyu-ui-probe.exe --main-panel CONFIG --data DIR`。模型凭据沿用配置的环境变量。
+双击或在 PowerShell 中运行 `.\dafeiyu.exe`。默认使用同目录的 `config/deepseek.example.json`。也可通过 `--main-panel` 后的 JSON 文件路径指定已有配置。需要独立数据目录时，运行 `dafeiyu.exe --main-panel CONFIG --data DIR`。模型凭据沿用配置的环境变量。
 
-第一次打开会启动同目录的后台程序。相同用户数据目录和配置的窗口共用一个本体。可用 `dafeiyu.exe --host-status` 查看实例编号，在「设置 → 后台运行」选择「退出大肥鱼」并确认，或用 `dafeiyu.exe --stop-host` 请求本体退出。指定了独立数据目录时，终端查询和退出命令后面也要加上该目录。若已有实例使用另一份配置，面板会显示连接原因。
+第一次打开会启动同目录的 `dafeiyu-host.exe`。相同用户数据目录和配置的窗口共用一个本体。可用 `dafeiyu-host.exe --host-status` 查看实例编号，在「设置 → 后台运行」选择「退出大肥鱼」并确认，或用 `dafeiyu-host.exe --stop-host` 请求本体退出。指定了独立数据目录时，终端查询和退出命令后面也要加上该目录。若已有实例使用另一份配置，面板会显示连接原因。
 
 确认退出后，连接当前版本后台的窗口会等待原进程正常结束，再自行关闭并回收各自的 WebView2 进程和临时目录。普通关闭窗口只离开该观察视图。
 
-交互桌面上的每个后台实例在 Windows 通知区域显示一个鱼形图标。左键唤回该实例的管理中心，全部关窗后再次点击会重新打开。右键可打开该实例的日志目录或确认退出。只安装终端程序时，退出使用 Windows 确认框。图标的注册、恢复、菜单操作和注销可在该数据目录的 `logs` 中核对。
+交互桌面上的每个后台实例在 Windows 通知区域显示一个鱼形图标。左键唤回该实例的管理中心，全部关窗后再次点击会重新打开。右键可打开该实例的日志目录或确认退出。在纯终端构建中，打开管理中心会收到桌面程序缺失的通知，退出使用 Windows 确认框。图标的注册、恢复、菜单操作和注销可在该数据目录的 `logs` 中核对。
 
-非交互窗口站中的后台仍可通过本地管道查询状态并正常退出。`ui.tray_headless_host` 在独立桌面启动正式的 `dafeiyu --host`，核对托盘注册失败、后台进程身份和退出码。[无交互桌面验收](../tests/desktop/ui_tray_headless_host.cpp)
+升级前的后台仍会沿用启动时的程序目录。如果点击「打开管理中心」没有弹窗，可从同一托盘打开日志目录。最近的 `tray.open_panel` 若显示 `failed` 且 `systemError` 为 `2`，表示后台找不到桌面程序。从旧托盘选择「退出大肥鱼」，再打开新版桌面目录中的 `dafeiyu.exe`。
+
+非交互窗口站中的后台仍可通过本地管道查询状态并正常退出。`ui.tray_headless_host` 在独立桌面启动正式的 `dafeiyu-host --host`，核对托盘注册失败、后台进程身份和退出码。[无交互桌面验收](../tests/desktop/ui_tray_headless_host.cpp)
 
 收尾较慢时，「设置 → 后台运行」会显示最近核实的会话与回合或插件卸载阶段。等待超过 10 秒即可看到查看日志或关窗的提示。若后台意外终止，窗口会保留原进程号、退出码和诊断入口，刷新后仍可查阅。
 
@@ -40,7 +42,7 @@
 
 ## 房间首屏预览
 
-在同一 GUI 构建的可执行文件旁运行 `dafeiyu-ui-probe.exe --room-preview idle` 或 `dafeiyu-ui-probe.exe --room-preview busy`。右上角可以切换两份固定样本。空闲时可直接输入；忙时可选择追加本轮或排到下一轮，独立停止入口保留排队消息。对话旁展开待决定事项可查看依据。输入、决定和停止只改变当前预览样本，切换样本会复位。预览不开启 Application，宿主关闭该页面的 Web 消息入口。
+在同一 GUI 构建的可执行文件旁运行 `dafeiyu.exe --room-preview idle` 或 `dafeiyu.exe --room-preview busy`。右上角可以切换两份固定样本。空闲时可直接输入；忙时可选择追加本轮或排到下一轮，独立停止入口保留排队消息。对话旁展开待决定事项可查看依据。输入、决定和停止只改变当前预览样本，切换样本会复位。预览不开启 Application，宿主关闭该页面的 Web 消息入口。
 
 定向 CTest 为 `ui.room_preview_idle` 和 `ui.room_preview_busy`，均使用隐藏 WebView2 和固定浏览器协议检查真实页面。
 
@@ -50,9 +52,9 @@
 
 若提示 WebView2 Runtime 不可用，从 [微软官方下载页](https://developer.microsoft.com/en-us/microsoft-edge/webview2#download-section) 获取 x64 Evergreen Standalone Installer；提前下载该完整安装器后可离线安装。Edge 浏览器与 WebView2 Runtime 是不同组件。本验证包不自动安装或修改系统运行库。
 
-## 打开界面
+## 打开容器验证页
 
-直接运行 `dafeiyu-ui-probe.exe`。主窗口通过本地管道连接使用默认模型配置的后台本体，可刷新查看当前或最近退出的运行状态。输入区和独立来源页面用于验证组合输入、对话框和 Frame 消息。组合结束次数与浏览器可信标记分开显示。
+运行 `dafeiyu.exe --container-probe`。验证窗口通过本地管道连接使用默认模型配置的后台本体，可刷新查看当前或最近退出的运行状态。输入区和独立来源页面用于验证组合输入、对话框和 Frame 消息。组合结束次数与浏览器可信标记分开显示。
 
 关闭窗口会继续回收创建回调、Frame 和浏览器进程，然后清理本次独立临时配置。临时配置位于系统临时目录的 `DaFeiYu-U01` 下，不复用用户浏览器配置。
 
@@ -75,7 +77,7 @@
 例如，在 PowerShell 中等待离线检查并保存回执：
 
 ```powershell
-$probe = Start-Process .\dafeiyu-ui-probe.exe -ArgumentList '--offline' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput result.json -RedirectStandardError errors.log
+$probe = Start-Process .\dafeiyu.exe -ArgumentList '--offline' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput result.json -RedirectStandardError errors.log
 $probe.ExitCode
 ```
 

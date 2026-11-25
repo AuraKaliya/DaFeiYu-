@@ -20,9 +20,9 @@
 
 构建目标 `dfy_mc_companion` 会在对应配置下生成 `mc.companion` 包目录。使用原终端的 `/plugins install "<包目录>"`、`/plugins load mc.companion` 显式装载，或由共享应用服务接入。普通模型问答保持独立。定向验收见 [MC 探针](../../tests/mc-companion/README.md)。
 
-在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。用 `/companion status` 查看执行入口，`partner ready` 表示当前实例已取得角色控制权。每次技能调用绑定原世界和事件号。玩家回合可以通过 `reply` 或可交付的最终文本发言，两者共用游戏投递和回执。委托回合的最终文本返回委托方，内部结算保持静默。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。[控制权](bridge/controller.cjs) · [回合结算](src/partner_loop.cpp)
+在用户数据目录的 `plugins/mc.companion/settings.json` 保存与适配器相同的 `channel` 和 `bridgeKey`。用 `dafeiyu-cli --chat <模型配置>` 打开终端，加载插件后输入 `/companion open mc.companion`。用 `/companion status` 查看执行入口，`partner ready` 表示当前实例已取得角色控制权。每次技能调用绑定原世界和事件号。玩家回合可以通过 `reply` 或可交付的最终文本发言，两者共用游戏投递和回执。委托回合的最终文本返回委托方，内部结算保持静默。本机离线服请用普通聊天，`/tell` 的协议数据缺少可验证的玩家 UUID。[控制权](bridge/controller.cjs) · [回合结算](src/partner_loop.cpp)
 
-真人体验启动器为每局创建运行目录，调用 `dafeiyu --mc-partner CONFIG PACKAGE RUN_DIR`。该目录保存 `board.txt`、`game-actions.jsonl` 与 `DFY_TRACE` 指定的模型和工具日志。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。 [启动与验收](../../tests/mc-companion/README.md#首次真人体验) · [MC Trace 查看器](../../docs/mc-trace-viewer.md) · [日志审阅与回放](../../docs/run-guide.md)
+真人体验启动器为每局创建运行目录，调用 `dafeiyu-cli --mc-partner CONFIG PACKAGE RUN_DIR`。该目录保存 `board.txt`、`game-actions.jsonl` 与 `DFY_TRACE` 指定的模型和工具日志。终端可用 `/companion board 会话号 [任务号]` 查阅伙伴对话。模型回合故障显示为计划板上的系统状态。凭据由现有模型层从配置中的环境变量读取。 [启动与验收](../../tests/mc-companion/README.md#首次真人体验) · [MC Trace 查看器](../../docs/mc-trace-viewer.md) · [日志审阅与回放](../../docs/run-guide.md)
 
 ## 本体委托与确认
 
