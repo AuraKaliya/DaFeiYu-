@@ -38,7 +38,7 @@ void MainMessages::flush() {
     }
     if (!replies_.empty()) {
         const auto first = replies_.begin();
-        try { store_->put("main",first->first,first->second,{{"state","delivered"}}); replies_.erase(first); }
+        try { commit_reply(first->second); replies_.erase(first); }
         catch (const std::runtime_error&) { retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250); }
     }
     if (retry_.empty()) return;
@@ -179,11 +179,6 @@ void MainMessages::observe(agent::RunId run, const std::vector<agent::TurnInput>
     }
     if (!completed || completed->error || completed->status.result!=runtime::OperationState::succeeded ||
         completed->answer.find_first_not_of(" \t\r\n")==std::string::npos) return;
-    const auto key = instance_+"/"+std::to_string(run.session)+"/"+std::to_string(run.sequence)+"/final";
-    Json envelope{{"sender","assistant"},{"route","reply"},{"text",completed->answer},{"delivery",key},{"instance",instance_},
-        {"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)}};
-    if (parent_.first==run) envelope["replyTo"] = std::to_string(parent_.second);
-    try { store_->put("main",key,envelope,{{"state","delivered"}}); }
-    catch (const std::runtime_error&) { storage_failed(); replies_[key] = std::move(envelope); }
+    final_reply(run,completed->answer);
 }
 }

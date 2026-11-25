@@ -246,6 +246,10 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 成功入库后，命令回执附加 `storedMessage`。它是持久消息号，原 `message` 仍表示回合内补充号或待发项号。初始持久回执为 `pending`，开始交付前写为 `dispatching`。已接纳的新回合为 `accepted`，追加等待带入为 `waiting`，待发项为 `queued`。终端正文来源为 `terminal`，沿用同一持久库。[后台接纳与回执](../app/main_messages.cpp)
 
+原窗口以同一 `command` 再读 `dialogue.read` 或重发相同提交，都按已绑定的 `storedMessage` 返回最新命令结果。写锁解除后，原窗口和用同一 `submission` 重连的窗口可分别查到实际接纳。持久回执中的 `submitted` 附带实际的 `modelStep`，`removed` 保留已移除的待发项，`unknown` 表示原交付实效仍待核对。[写锁与重连验收](../tests/message_recovery.cpp)
+
+直接对话和原生书房点名产生的非空白最终文本进入主聊天。普通结构化对话还可调用 `main_reply({"text":"…"})` 提前发言或追问。成功回执的 `delivery` 和 `message` 分别标识本次投递和已写入的消息。同一回合末尾再次给出已显式发过的相同文字时复用原投递。独立回合、不同显式调用各有自己的投递号。内部入口的结算、工具回包和纯空白结算保持在原路径。[输出适配器](../app/main_output.cpp) · [送模记录与渠道回执验收](../tests/persistent_dialogue.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型
