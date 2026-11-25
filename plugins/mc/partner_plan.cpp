@@ -311,7 +311,7 @@ void PartnerLoop::advance_plan(const BridgeConfig& config, bool closing) {
         }
         if (node.reading) {
             std::optional<GameResult> read;
-            try { read = node.reading->poll(!plan.cancellation.empty(),false,!feed_.recovering()); }
+            try { read = poll_game(*node.reading,session_,!plan.cancellation.empty(),false,!feed_.recovering(),plan.order); }
             catch (...) { read = GameResult{false,GameEffect::unknown,{}}; }
             if (read) {
                 const auto result = read->payload.empty() ? Json{{"status","unconfirmed"}} : Json::parse(read->payload);

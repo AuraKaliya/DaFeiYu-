@@ -43,6 +43,9 @@ class PartnerLoop {
     void advance(const BridgeConfig& config, std::uint64_t instance, PartnerWork work, bool body_busy);
     // 新事实或世界变化时拦住旧会话尚未开始的步骤，保留已接纳动作的收尾。
     bool permits(std::uint64_t session) const noexcept;
+    // 试点绑定的游戏工作在首次桥接调用前沿原号登记，已有工作继续原轮询。
+    std::optional<GameResult> poll_game(GameWork& work, std::uint64_t session, bool cancel, bool defer, bool allow_begin,
+        std::optional<std::uint64_t> order = {});
     // 新游戏动作等待原收件恢复，在途工作仍按原号读回。
     bool waiting_for_feed(std::uint64_t session) const noexcept { return session == session_ && feed_.recovering(); }
     // 在本轮已交出一次性工作或完成明确的结尾发言后让出模型请求。
@@ -140,6 +143,8 @@ class PartnerLoop {
     void report_actions();
     // 发布实效和桥接退出证据，接管本绑定仍需核实的原工作。
     void publish_action(nlohmann::json& fact, std::unique_ptr<GameWork>& action);
+    // 将问题或审批呈现的游戏票据沿原号结算并保留尚未确认的退出。
+    void settle_presentation(std::unique_ptr<GameWork>& work, std::uint64_t order, const GameResult& result);
     // 只读同一绑定中尚未核实的原工作，补交迟到的回执。
     void advance_exit_checks();
     // 同一种确定性参数失败达到两次后，让出本轮以等待新事实。

@@ -213,7 +213,7 @@ async function main() {
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
-  const factPlayer = correctionLost || delivery === 'late' ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
+  const factPlayer = correctionLost || ['late','capacity'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking, factPlayer }));
   let reads = 0, airAttempts = 0, airTail = 0;
   const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
@@ -493,6 +493,7 @@ async function main() {
         else assert.deepEqual({ id, context, args }, hostWork.at(-1));
       }
       if (delivery) {
+        assert.notEqual(delivery, 'capacity', 'a full work index dispatched a new game action');
         assert.equal(context.order, 2);
         if (delivery === 'finish' && skill === 'observe') {
           assert.equal(method, 'partner.begin');
@@ -1241,6 +1242,13 @@ async function main() {
         (row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed')).map(row => row.body.action ?? row.body);
       assert.deepEqual(receipts.map(fact => [fact.bridgeWork, fact.bridgeExited, fact.result.delivery]),
         [[explicitReply.id, false, 'unknown'], [explicitReply.id, true, 'sent']]);
+    } else if (delivery === 'capacity') {
+      const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+      const actions = rows.filter(row => row.category === 'mc.partner.action').map(row => row.body);
+      assert.equal(actions.length,1);
+      assert.deepEqual([actions[0].factAdmission,actions[0].bridgeSubmitted,actions[0].result.reasonCode],
+        [7,false,'work_receipt_capacity']);
+      assert.equal(replies,0);
     } else if (delivery) {
       assert.equal(replies, ['fallback', 'sent', 'finish'].includes(delivery) ? 1 : 0);
       assert.equal(replyReads, delivery === 'unknown' ? 1 : 0);

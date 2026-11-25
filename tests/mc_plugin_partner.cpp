@@ -4,12 +4,14 @@
 #include "../plugins/mc/partner_knowledge.hpp"
 #include "../plugins/mc/partner_task.hpp"
 #include <dafeiyu/companion_abi_v2.h>
+#include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <semaphore>
 #include <thread>
 
 namespace {
@@ -1501,11 +1503,14 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     using Json = nlohmann::json;
     const bool finish = variant.ends_with(L"-finish");
     const bool late = variant.ends_with(L"-late");
+    const bool capacity = variant.ends_with(L"-capacity");
     const bool batch = variant.ends_with(L"-batch");
     const auto outcome = finish || variant.ends_with(L"-sent") ? "sent" : variant.ends_with(L"-unknown") ? "unknown" : "not_sent";
     const bool internal = variant.ends_with(L"-internal");
     const std::string reply = "我在这儿。";
     std::atomic_bool received = false;
+    std::atomic_uint64_t fill_session = 0;
+    std::binary_semaphore filled(0);
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
@@ -1519,12 +1524,22 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
             }
             if (finish) throw std::runtime_error("confirmed closing reply submitted another model step");
             const auto result = Json::parse(message.content.substr(message.content.find('{')));
+            if (capacity) {
+                if (message.tool_call_id!="explicit-reply" || result.at("reasonCode")!="work_receipt_capacity" ||
+                    message.content.find("effect=not_applied")==std::string::npos || received.exchange(true))
+                    throw std::runtime_error("full ledger did not stop the original game write");
+                return {{Role::assistant,R"({"internal":"keep quiet"})"}};
+            }
             if (result.at("delivery") != outcome || received.exchange(true)) throw std::runtime_error("lost actual reply delivery state");
             return {{Role::assistant,internal ? R"({"internal":"keep quiet"})" : reply}};
         }
         const auto input = Json::parse(message.content);
         if (input.at("events").back().at("sequence") == 1) return {{Role::assistant,""}};
         if (late) return {{Role::assistant,reply}};
+        if (capacity) {
+            fill_session = input.at("factFrame").at("epoch").get<std::uint64_t>();
+            if (!filled.try_acquire_for(std::chrono::seconds(4))) throw std::runtime_error("work index fixture did not fill");
+        }
         const auto tool = std::ranges::find_if(request.tools,[](const auto& entry) { return entry.name.ends_with("_reply"); });
         if (batch) {
             const auto& events = input.at("events");
@@ -1561,6 +1576,12 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     std::uint64_t announced = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         if (host.advance_plugins() == runtime::RunResult::failed) throw std::runtime_error("reply loop failed");
+        if (const auto session = fill_session.exchange(0)) {
+            const auto owner = host.plugins().instance("mc.companion")->generation();
+            for (unsigned n=0;n<128;++n)
+                host.subagents().settle(owner,session,{session,1,"pending-"+std::to_string(n),"{}",DFY_V2_WORK_ACCEPTED});
+            filled.release();
+        }
         if (stopping && host.companion_status()->closed) return 0;
         const auto settled = host.companion_status()->settled_event;
         if (late && settled == 2) {

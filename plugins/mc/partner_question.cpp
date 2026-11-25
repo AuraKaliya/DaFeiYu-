@@ -402,9 +402,11 @@ void PartnerLoop::advance_question(const BridgeConfig& config, std::uint64_t ins
         const auto found = questions_.find(question_work_item_);
         const bool current = found != questions_.end() && live(found->second);
         std::optional<GameResult> result;
-        try { result = question_work_->poll(!current,false,!feed_.recovering()); }
+        const auto order = found == questions_.end() ? order_ : found->second.source_order();
+        try { result = poll_game(*question_work_,session_,!current,false,!feed_.recovering(),order); }
         catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
+        settle_presentation(question_work_,order,*result);
         question_work_.reset();
         if (current) {
             auto& question = found->second;

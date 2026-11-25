@@ -65,8 +65,9 @@ std::optional<GameResult> GameWork::read_exit() {
 }
 
 // 每轮最多处理一次非等待本机收发，桥接异常后尝试停止同一动作。
-// 步骤：处理取消、期限和接纳条件 → 提交或查询原命令 → 校验退出或安排下一次读回。
-std::optional<GameResult> GameWork::poll(bool cancelled, bool defer, bool allow_begin) {
+// 步骤：处理取消和期限 → 开工前登记宿主责任 → 提交或查询原命令 → 核对实际退出。
+std::optional<GameResult> GameWork::poll(bool cancelled, bool defer, bool allow_begin,
+    const std::function<GameAdmission()>& before_begin) {
     const auto now = std::chrono::steady_clock::now();
     stopping_ = stopping_ || cancelled || now >= deadline_;
     if (stopping_) {
@@ -84,6 +85,10 @@ std::optional<GameResult> GameWork::poll(bool cancelled, bool defer, bool allow_
                 : action_ == GameAction::inspect ? inspect_request(std::string("inspect") + verb, id_, config_.key, arguments_)
                 : action_ == GameAction::mine ? mine_request(std::string("mine") + verb, id_, config_.key, arguments_)
                 : return_request(std::string("return") + verb, id_, config_.key, arguments_);
+            if (phase_ == Phase::begin && before_begin) {
+                if (!admission_) admission_ = before_begin();
+                if (admission_->blocked) return admission_->blocked;
+            }
             pipe_ = std::make_unique<PipeExchange>(config_.channel, frame);
         }
         if (phase_ == Phase::begin) attempted_ = true;

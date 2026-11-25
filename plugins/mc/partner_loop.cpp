@@ -190,17 +190,7 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, BridgeConfig& confi
     refs_ = static_cast<const dfy_v2_reference_api*>(reference_api);
     if (mail_text_->header.struct_size != sizeof(*mail_text_) || refs_->header.struct_size != sizeof(*refs_) ||
         !mail_text_->inspect || !refs_->release) return DFY_V2_ABI_MISMATCH;
-    const dfy_v2_agent_facts_api* facts = nullptr;
-    if (!config.fact_player.empty()) {
-        const void* table = nullptr;
-        const auto queried = host(view(DFY_V2_AGENT_FACTS_INTERFACE),DFY_V2_AGENT_FACTS_VERSION,&table,nullptr);
-        if (!queried) {
-            facts = static_cast<const dfy_v2_agent_facts_api*>(table);
-            if (!facts || facts->header.struct_size != sizeof(*facts) || facts->header.interface_version != DFY_V2_AGENT_FACTS_VERSION ||
-                !facts->submit || !facts->settle) return DFY_V2_ABI_MISMATCH;
-        } else if (queried != DFY_V2_UNSUPPORTED) return queried;
-    }
-    fact_stream_.configure(facts,config.fact_player);
+    if (const auto status = fact_stream_.connect(host,config.fact_player)) return status;
     agent_ = &agent;
     thinking_flags_ = config.player_thinking == PlayerThinking::low ? DFY_V2_AGENT_THINKING_LOW :
         config.player_thinking == PlayerThinking::off ? DFY_V2_AGENT_THINKING_OFF : 0;
@@ -323,6 +313,19 @@ bool PartnerLoop::settle(const BridgeConfig& config, std::uint64_t instance, boo
     return true;
 }
 
+// 在原绑定中为首次游戏派发准备回执位置，重查和停止沿用原工作。
+std::optional<GameResult> PartnerLoop::poll_game(GameWork& work, std::uint64_t session, bool cancel, bool defer,
+    bool allow_begin, std::optional<std::uint64_t> order) {
+    if (!fact_stream_.bound(session)) return work.poll(cancel,defer,allow_begin);
+    return work.poll(cancel,defer,allow_begin,[&]() -> GameAdmission {
+        const auto status = fact_stream_.reserve(work.id(),work.skill(),order.value_or(order_));
+        // 满额时仍允许观察沿原工作取回实收，此读取没有游戏变更。
+        if (!status || (work.skill()=="observe" && status==DFY_V2_RESOURCE_EXHAUSTED)) return {status,{}};
+        return {status,GameResult{false,GameEffect::none,Json{{"status","blocked"},
+            {"reasonCode",status==DFY_V2_RESOURCE_EXHAUSTED ? "work_receipt_capacity" : "work_receipt_unavailable"},{"factStatus",status}}.dump()}};
+    });
+}
+
 // 把玩家原话和实际任务结算的纯文本交给同一游戏回复通道。
 // 步骤：核对发言归属与绑定 → 推进原回复票据 → 发布已验证的实际结果。
 bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instance, std::string_view answer, bool cancel) {
@@ -340,7 +343,7 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
     }
 
     std::optional<GameResult> result;
-    try { result = final_reply_->poll(cancel || feed_.departed(),false,!feed_.recovering()); }
+    try { result = poll_game(*final_reply_,session_,cancel || feed_.departed(),false,!feed_.recovering()); }
     catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
     if (!result) return false;
 
@@ -1105,6 +1108,10 @@ void PartnerLoop::publish(std::string_view category, const Json& payload) {
 void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) {
     const bool submitted = action && action->attempted();
     const bool exit_unknown = submitted && !action->exited();
+    if (action && action->fact_admission()) {
+        fact["factAdmission"] = *action->fact_admission();
+        if (!submitted) fact["bridgeSubmitted"] = false;
+    }
     if (submitted) fact["bridgeExited"] = action->exited();
     if (exit_unknown) {
         if (!fact.contains("result")) fact["result"] = {{"status","unconfirmed"}};
@@ -1113,6 +1120,16 @@ void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) 
     publish("mc.partner.action",fact);
     if (exit_unknown && fact_stream_.needs_exit(session_,fact.at("bridgeWork").get_ref<const std::string&>()))
         exit_checks_.push_back({fact,std::move(action)});
+}
+
+// 在试点中登记玩家实际看到的呈现；原问题或审批依旧沿自己的回执流程推进。
+// 步骤：核对派发接纳 → 组合实际发言及退出 → 发布原回执并移交未退出工作。
+void PartnerLoop::settle_presentation(std::unique_ptr<GameWork>& work, std::uint64_t order, const GameResult& result) {
+    if (!work || !work->fact_admission()) return;
+    Json fact{{"session",session_},{"order",order},{"generation",session_world_},{"skill","reply"},{"bridgeWork",work->id()},
+        {"effect",tool_effect(result.effect)},{"source","presentation"}};
+    if (!result.payload.empty() && result.payload.size()<=8*1024) fact["result"] = Json::parse(result.payload);
+    publish_action(fact,work);
 }
 
 // 在原配对仍有效时读回未决动作，独立于当前回合补齐退出与实效。
@@ -1266,12 +1283,13 @@ void PartnerLoop::advance_motion(bool stopping) {
             const auto question = action_question(motion.session,motion.skill,Json::parse(motion.action->arguments()).at("arguments"));
             if (!question.is_null()) result = GameResult{false,GameEffect::none,question.dump()};
         }
-        if (!result) result = motion.action->poll(motion.stopping,!motion.accepted,!feed_.recovering());
+        if (!result) result = poll_game(*motion.action,motion.session,motion.stopping,!motion.accepted,!feed_.recovering(),motion.order);
     }
     catch (...) { result = GameResult{false,GameEffect::unknown,{}}; }
 
     if (result && result->accepted) { motion.accepted = true; result.reset(); }
     if (motion.accepted && !motion.announced) {
+        if (motion.action->fact_admission()) fact["factAdmission"] = *motion.action->fact_admission();
         publish("mc.partner.motion",{{"action",fact},{"status","accepted"}});
         motion.announced = true;
     }

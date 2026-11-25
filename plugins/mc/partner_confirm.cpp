@@ -229,9 +229,10 @@ void PartnerLoop::advance_confirmation_presentation(const BridgeConfig& config, 
     if (presentation_) {
         auto& pending = *presentation_;
         std::optional<GameResult> result;
-        try { result = pending.work->poll(closing || feed_.world() != pending.world,false,!feed_.recovering()); }
+        try { result = poll_game(*pending.work,session_,closing || feed_.world() != pending.world,false,!feed_.recovering(),pending.order); }
         catch (const std::exception&) { result = GameResult{false,GameEffect::unknown,{}}; }
         if (!result) return;
+        settle_presentation(pending.work,pending.order,*result);
         const auto receipt = Json::parse(result->payload,nullptr,false);
         const bool sent = receipt.is_object() && receipt.value("sent",false);
         if (confirmation_ && confirmation_->request == pending.request) confirmation_->presented = sent;

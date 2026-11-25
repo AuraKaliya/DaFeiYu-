@@ -440,7 +440,8 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
                 if (!question.is_null()) value = dfy::mc::GameResult{true,dfy::mc::GameEffect::none,question.dump()};
             }
             if (!value)
-                value = job->action->poll(job->cancelled,job->defer_motion,!raw->partner.waiting_for_feed(job->partner_session));
+                value = raw->partner.poll_game(*job->action,job->partner_session,job->cancelled,job->defer_motion,
+                    !raw->partner.waiting_for_feed(job->partner_session));
             if (value) {
                 job->output = std::move(value->payload);
                 if (value->accepted) {
