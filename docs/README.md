@@ -8,6 +8,7 @@
 | 核对各模块做到哪一步，查看架构图和流程图 | [当前开发进度](architecture.md#当前开发进度) · [架构图与模块职责](architecture.md#架构图) |
 | 核对主 Agent、插件子 Agent、信箱与 Hook 的运行边界 | [当前边界](architecture.md#当前边界) |
 | 比较 Agent 回合提示词与上下文设计，评审大肥鱼的首步应用 | [Agent 循环的提示词设计与大肥鱼的应用](agent-loop-prompt-design.md) |
+| 开发逐决策状态栏、事件关注与可定位的工具回执 | [上下文装配开发计划与验收](agent-loop-core-design.md#上下文装配的实施顺序与验收) · [状态栏注册契约](agent-loop-core-design.md#agent-status-bar-的字段与更新时机) · [规则段顺序](agent-loop-prompt-design.md#规则段顺序与来源) |
 | 查阅基础 Agent 循环设计、已修复的运行问题及后续分工 | [基础 Agent 循环核心设计方案](agent-loop-core-design.md) · [主线实施记录](agent-loop-core-design.md#主线实施记录) · [长会话与回执复查](agent-loop-core-design.md#长会话与回执复查) · [下一轮开发计划](agent-loop-core-design.md#九下一轮开发计划) |
 | 运行大肥鱼、选择模型、查询终端命令 | [运行说明](run-guide.md) |
 | 运行桌面主面板、只读探针和房间预览 | [桌面运行说明](ui-probe-run-guide.md) |
