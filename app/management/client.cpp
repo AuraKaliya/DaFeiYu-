@@ -44,6 +44,23 @@ ResidentConnection connect(std::stop_token stop, const std::filesystem::path& pr
     }
     throw std::runtime_error("client closed");
 }
+
+// 用已绑定的进程描述退出事实，收尾中的等待对象只从同一实例读回。
+// 步骤：固定内核采样 → 在原进程仍运行时补读收尾阶段 → 管道不可用时保留已核实的事实。
+Json lifecycle(const std::filesystem::path& profile, const std::string& instance, const ResidentObservation& peer, const Json& request) {
+    Json result{{"event","host.lifecycle"},{"version","1"},{"request",request.at("request")},
+        {"requested",peer.requested},{"pid",peer.pid},{"exitCode",nullptr}};
+    if (peer.exit_code) result["exitCode"] = *peer.exit_code;
+    else {
+        try {
+            const auto state = resident_request(profile,{{"op","status"},{"instance",instance}});
+            if (state.at("instance")==instance && state.at("pid")==peer.pid && state.contains("progress")) result["progress"] = state.at("progress");
+        } catch (const std::exception&) {
+            // 管道可能先于进程关闭，保留本次内核采样。
+        }
+    }
+    return result;
+}
 }
 
 // 由 Windows 直接启动本体程序，子进程不继承窗口或管道句柄。
@@ -149,12 +166,14 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
         }
         try {
             const auto& type = item.message.at("type");
+            const auto peer = type=="dialogue.read" ? observe() : ResidentObservation{};
             if (type=="logs.read" || type=="logs.open") {
                 if (!logs) throw std::runtime_error("window diagnostics unavailable");
                 auto response = logs(type=="logs.open");
                 response.update(Json{{"event","logs.status"},{"version","1"},{"request",item.message.at("request")}});
                 item.message = std::move(response);
             } else if (client.empty()) throw std::runtime_error(error);
+            else if (!peer.error && (peer.requested || peer.exit_code)) item.message = lifecycle(profile,instance,peer,item.message);
             else if (type=="host.stop") {
                 const auto reply = request_stop(profile,instance,client,software_);
                 stop_accepted_ = true;

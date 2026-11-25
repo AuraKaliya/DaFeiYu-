@@ -1,6 +1,7 @@
 #include "../app/gui/interaction_probe.hpp"
 #include "ui_main_panel_fixture.hpp"
 #include <algorithm>
+#include <cstdio>
 
 namespace dfy::tests {
 // 构造空插件应用，固定模型可阻塞至原生验收放行并检查清空后的真实请求。
@@ -34,9 +35,9 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
 }
 
 namespace dfy::ui {
-// 通过正式页面读取原生房间，并验证取消或确认后台退出的实际界面回执。
-// 步骤：等待真实后台数据 → 核对本窗日志和目录操作回执 → 取消或确认后台退出。
-void InteractionProbe::start_observer(bool stop, bool log_error) {
+// 通过正式页面读取原生房间，核对显式退出和意外退出的不同回执。
+// 步骤：等待真实后台数据 → 核对本窗日志和目录操作 → 按场景提交退出或观察原进程丢失。
+void InteractionProbe::start_observer(bool stop, bool log_error, bool unexpected) {
     expect("resident observer ready","document.querySelector('#dialogue-state')?.dataset.accepting==='true' && document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
     evaluate("inspect resident settings","document.querySelector('#board-settings').click(); true");
     expect("window log status",log_error ? "document.querySelector('#log-status')?.textContent.includes('写入日志失败，系统错误码')" :
@@ -49,6 +50,16 @@ void InteractionProbe::start_observer(bool stop, bool log_error) {
     evaluate("leave resident running","document.querySelector('#host-stay').click(); !document.querySelector('#host-stop-title').closest('dialog').open");
     if (stop) {
         evaluate("request explicit completion","document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
+    }
+    if (unexpected) {
+        wait_for("fixture may end its own resident",[] { std::fputs("Observer ready for unexpected exit\n",stderr); std::fflush(stderr); return true; });
+        expect("unexpected exit is visible with diagnostics","document.querySelector('#dialogue-state').textContent==='本体意外退出' && "
+            "document.querySelector('#host-shutdown-status').textContent.includes('退出码') && document.querySelector('#host-stop').disabled");
+        call("reload after original process exit",L"Page.reload",Json::object());
+        expect("retained peer after reload","document.querySelector('#dialogue-state')?.textContent==='本体意外退出'");
+        evaluate("inspect settings after loss","document.querySelector('#board-settings').click(); true");
+        evaluate("open local log after loss","document.querySelector('#open-logs').click(); true");
+        expect("local log is still available","document.querySelector('#log-status')?.textContent.includes('系统已接收打开目录请求')");
     }
     next();
 }
@@ -306,6 +317,31 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
             return false;
         } finally { bridge.removeEventListener('message',collect); }
     })())JS");
+    next();
+}
+
+// 让原回合实际保持在途，核对设置中的退出进度与等待提示。
+// 步骤：启动并确认原回合 → 通过设置退出 → 核对等待对象和持续时间 → 放行原工作。
+void InteractionProbe::start_panel_shutdown(std::shared_ptr<tests::UiDialogueGate> gate) {
+    expect("ready to start shutdown fixture","document.querySelector('#dialogue-state')?.dataset.accepting==='true'");
+    evaluate("start blocked turn for host shutdown",R"JS((async()=>{
+        const draft=document.querySelector('#dialogue-draft'); draft.value='等待桌面停止'; draft.dispatchEvent(new Event('input'));
+        await Promise.resolve(); document.querySelector('#dialogue-send').click(); return true;
+    })())JS");
+    wait_for("fixed model is processing original turn",[gate] { return gate->entered.load()==1; });
+    expect("record original active turn","document.querySelector('.turn:last-child')?.dataset.exit==='pending' && "
+        "(window.fixtureStopTurn=document.querySelector('.turn:last-child').dataset.turn)");
+    evaluate("confirm shutdown during active turn","document.querySelector('#board-settings').click(); document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
+    expect("show verified original turn during shutdown","document.querySelector('#host-shutdown-status')?.textContent.includes('的回合 '+window.fixtureStopTurn+' 退出')");
+    evaluate("show long wait while the worker is still in flight",R"JS((async()=>{
+        const end=performance.now()+12000;
+        while(performance.now()<end) {
+            if(document.querySelector('#host-shutdown-status').textContent.includes('已等待 10 秒以上')) return true;
+            await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        return false;
+    })())JS");
+    wait_for("release original turn after progress is visible",[gate] { gate->release.release(); return true; });
     next();
 }
 }

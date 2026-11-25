@@ -100,8 +100,10 @@ void reconnect(const std::filesystem::path& root) {
         if (!stopping.requested || stopping.exit_code || stopping.error || stopping.pid!=initial.pid)
             throw std::runtime_error("exit intent was confused with process exit");
         if (ask({{"op","stop"},{"instance",instance}})!=accepted) throw std::runtime_error("repeated stop changed identity");
+        try { (void)ask({{"op","status"},{"instance","previous-instance"}}); throw std::logic_error("stale instance progress accepted"); }
+        catch (const std::runtime_error& error) { if (std::string(error.what()).find("instance differs")==std::string::npos) throw; }
         wait_until([&] {
-            const auto status = ask({{"op","status"}});
+            const auto status = ask({{"op","status"},{"instance",instance}});
             const auto& progress = status.at("progress");
             return status.at("operation")==accepted.at("operation") && progress.at("stage")=="conversation" &&
                 progress.at("session")==turn.at("session") && progress.at("turn")==turn.at("turn") && progress.at("elapsedMs")>=80;

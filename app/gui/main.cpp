@@ -69,8 +69,9 @@ struct Window : std::enable_shared_from_this<Window> {
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
-    bool main_panel = false, main_panel_check = false;
+    bool main_panel = false, main_panel_check = false, panel_shutdown_check = false;
     bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
+    bool observer_unexpected = false;
     bool resident_exit_seen = false;
     int result = 0;
     // 在窗口线程报告初始化失败，并延后关闭，避免嵌套浏览器回调。
@@ -262,8 +263,9 @@ struct Window : std::enable_shared_from_this<Window> {
                 });
 #ifdef DFY_UI_RUN_STATUS_TEST
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
+                if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
-                if (observer_check) { interaction->start_observer(observer_stop,observer_log_error); return; }
+                if (observer_check) { interaction->start_observer(observer_stop,observer_log_error,observer_unexpected); return; }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
@@ -412,11 +414,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         std::wstring_view(__wargv[1]) == L"--main-panel";
 #ifdef DFY_UI_RUN_STATUS_TEST
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
-        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"log-error"))) &&
+        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error"))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
-    const bool main_panel_check = __argc == 2 && std::wstring_view(__wargv[1]) == L"--check-main-panel";
+    const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" || std::wstring_view(__wargv[1]) == L"--check-panel-shutdown");
 #else
     const bool observer_check = false;
     const bool room_check = false;
@@ -453,10 +455,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->room_busy = state->room_preview && std::wstring_view(__wargv[2]) == L"busy";
         state->main_panel = main_panel || main_panel_check || observer_check;
         state->main_panel_check = main_panel_check;
+        state->panel_shutdown_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-panel-shutdown";
         state->observer_check = observer_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";
         state->observer_log_error = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"log-error";
         state->observer_wait = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"wait";
+        state->observer_unexpected = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"unexpected";
         if ((main_panel && __argc>=3) || observer_check) state->model_config = __wargv[2];
         state->user_data = data;
         if (software) state->software = &*software;

@@ -56,7 +56,10 @@ const destination = ref<'current' | 'next'>('current');
 const notice = ref('');
 const connectionNotice = ref('');
 const shutdownDialog = ref<HTMLDialogElement>();
-const shutdown = ref<'idle' | 'requested' | 'stopping' | 'unknown'>('idle');
+const shutdown = ref<'idle' | 'requested' | 'stopping' | 'unknown' | 'exited'>('idle');
+const lastWait = ref('');
+const longWait = ref(false);
+let firstStopObservation = 0, nextStopRead = 0;
 let shutdownRequest = '';
 const ready = ref(false);
 const accepting = ref(false);
@@ -71,6 +74,7 @@ const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurr
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
 // 区分页面提交、后端收尾与可接纳下一轮，上一轮的结果留在原条目。
 const panelStatus = computed(() => {
+  if (shutdown.value === 'exited') return '本体意外退出';
   if (shutdown.value === 'stopping') return '本体正在收尾';
   if (shutdown.value === 'requested') return '正在请求退出';
   if (connectionNotice.value) return '本体连接中断';
@@ -156,11 +160,19 @@ function post(fields: Readonly<Record<string, string>>): void {
   bridge.postMessage({ ...fields, version: '1', request: `${scope}${++request}` });
 }
 
-// 查询两类快照与原命令回执，失联时保留最后可信的可见值。
-// 步骤：检查接收时效 → 查询对话与未决回执 → 按房间频率补读。
+// 查询当前实例的快照与原命令回执，收尾时只观察已绑定的后台。
+// 步骤：按退出状态分流 → 检查快照时效 → 查询对话及房间。
 function read(): void {
-  if (shutdown.value === 'stopping') return;
   const now = performance.now();
+  if (shutdown.value === 'exited') return;
+  if (shutdown.value === 'stopping') {
+    longWait.value = now - firstStopObservation >= 10000;
+    if (now >= nextStopRead) {
+      nextStopRead = now + 1000;
+      post({ type: 'dialogue.read', revision, command: '' });
+    }
+    return;
+  }
   if (now - dialogueConfirmed > freshnessMs) { ready.value = false; accepting.value = false; }
   if (now - roomConfirmed > freshnessMs) roomCurrent.value = false;
   post({ type: 'dialogue.read', revision, command: pending.value?.id ?? pendingStop.value });
@@ -238,6 +250,40 @@ function settle(receipt: Receipt): void {
   remember();
 }
 
+// 开始观察后台收尾，同时冻结已失去时效的房间与会话状态。
+function observeStop(): void {
+  if (shutdown.value !== 'stopping') firstStopObservation = performance.now();
+  shutdown.value = 'stopping';
+  ready.value = false;
+  accepting.value = false;
+  roomCurrent.value = false;
+  connectionNotice.value = '';
+}
+
+// 依据原生进程事实展示退出码或最近一次核实的等待对象。
+// 步骤：验证内核状态 → 展示实际退出或进入收尾 → 核对阶段与原回合标识。
+function receiveLifecycle(value: Record<string, unknown>): void {
+  if (typeof value.requested !== 'boolean' || typeof value.pid !== 'number' || !Number.isSafeInteger(value.pid) || value.pid <= 0) return;
+  const code = value.exitCode;
+  if (typeof code === 'number' && Number.isSafeInteger(code) && code >= 0 && code <= 0xffffffff) {
+    if (value.requested && code === 0) return;
+    shutdown.value = 'exited';
+    ready.value = accepting.value = roomCurrent.value = false;
+    connectionNotice.value = `原后台进程 ${value.pid} 已结束，退出码 ${code}。可在设置中查看日志或关闭此窗口。`;
+    return;
+  }
+  if (code !== null || !value.requested) return;
+  observeStop();
+  const progress = value.progress;
+  if (!isRecord(progress)) return;
+  if (progress.stage === 'conversation' && isDecimal(progress.session) && isDecimal(progress.turn) && progress.turn !== '0')
+    lastWait.value = `最近确认正在等待会话 ${progress.session} 的回合 ${progress.turn} 退出。`;
+  else if (progress.stage === 'conversation') lastWait.value = '最近确认正在等待会话退出。';
+  else if (progress.stage === 'plugins') lastWait.value = '最近确认正在等待插件卸载。';
+  else if (progress.stage === 'complete') lastWait.value = '后台工作已收尾，正在等待进程退出。';
+  else if (progress.stage === 'failed') lastWait.value = '后台报告收尾失败，正在等待进程退出。';
+}
+
 // 将原生快照投影为当前页面的对话，过滤协议不符及迟到的旧快照。
 // 步骤：核对页面请求 → 验证快照字段并更新正文 → 结算匹配的窗口命令。
 function receive(event: MessageEvent<unknown>): void {
@@ -245,11 +291,10 @@ function receive(event: MessageEvent<unknown>): void {
   if (!isRecord(value) || value.version !== '1' || typeof value.request !== 'string' || !value.request.startsWith(scope)) return;
   const sequence = Number(value.request.slice(scope.length));
   if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
+  if (shutdown.value === 'exited') return;
+  if (value.event === 'host.lifecycle') { receiveLifecycle(value); return; }
   if (value.request === shutdownRequest && value.event === 'host.stopping' && value.state === 'stopping') {
-    shutdown.value = 'stopping';
-    ready.value = false;
-    accepting.value = false;
-    roomCurrent.value = false;
+    observeStop();
     return;
   }
   if (shutdown.value === 'stopping') return;
@@ -418,7 +463,12 @@ onUnmounted(() => {
       <h3 class="group-title">后台运行</h3>
       <p class="source-note">关闭管理中心后，大肥鱼会继续工作。</p>
       <button id="host-stop" type="button" class="quiet-action" :disabled="!ready || shutdown !== 'idle'" @click="shutdownDialog?.showModal()">退出大肥鱼</button>
-      <p v-if="shutdown !== 'idle'" id="host-shutdown-status" role="status" class="source-note">{{ shutdown === 'stopping' ? '后台已接收退出请求，正在收尾。' : shutdown === 'unknown' ? '退出回执未确认，可用终端查询本体状态。' : '正在提交退出请求…' }}</p>
+      <p v-if="shutdown !== 'idle'" id="host-shutdown-status" role="status" class="source-note">
+        <template v-if="shutdown === 'stopping'">后台已接收退出请求，正在收尾。{{ lastWait }}<template v-if="longWait">已等待 10 秒以上，可查看下方日志或关闭此窗口。</template></template>
+        <template v-else-if="shutdown === 'exited'">{{ connectionNotice }}</template>
+        <template v-else-if="shutdown === 'unknown'">退出回执未确认，可用终端查询本体状态。</template>
+        <template v-else>正在提交退出请求…</template>
+      </p>
       <dialog ref="shutdownDialog" class="clear-dialog" aria-labelledby="host-stop-title">
         <h2 id="host-stop-title">退出大肥鱼？</h2>
         <p>所有管理窗口都会断开，正在进行的任务将开始收尾。当前版本的聊天记录只保存在后台进程内。</p>

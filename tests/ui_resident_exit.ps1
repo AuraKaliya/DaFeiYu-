@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$App, [string]$Root)
+﻿param([string]$Panel, [string]$App, [string]$Root, [switch]$Unexpected)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('exit-' + [guid]::NewGuid().ToString('N'))
@@ -21,13 +21,13 @@ function Start-Panel([string]$Mode) {
 
 # 等待独立窗口实际通过设置页检查，再由测试观察进程退出。
 # 步骤：按剩余期限读取诊断行 → 匹配已通过的页面检查或报告超时。
-function Wait-Ready([Diagnostics.Process]$Process) {
+function Wait-Ready([Diagnostics.Process]$Process, [string]$Marker = 'Interaction protocol checks passed') {
     $until = [Diagnostics.Stopwatch]::StartNew()
     while ($until.ElapsedMilliseconds -lt 15000) {
         $read = $Process.StandardError.ReadLineAsync()
         $remaining = [Math]::Max(1, [int](15000 - $until.ElapsedMilliseconds))
         if (!$read.Wait($remaining) -or $null -eq $read.Result) { break }
-        if ($read.Result -match 'Interaction protocol checks passed') { return }
+        if ($read.Result.Contains($Marker)) { return }
     }
     throw 'Passive window did not reach the real settings page'
 }
@@ -45,6 +45,29 @@ $observer = $null
 $initiator = $null
 $owner = $null
 try {
+    if ($Unexpected) {
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $App
+        $info.Arguments = '--host "' + $config + '" --data "' + $data + '" --plugins "' + (Join-Path $data 'plugins') + '"'
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $owner = [Diagnostics.Process]::Start($info)
+        $null = $owner.Handle
+        $observer = Start-Panel 'unexpected'
+        Wait-Ready $observer 'Observer ready for unexpected exit'
+        $state = (& $App --host-status $data | Out-String) | ConvertFrom-Json
+        if ($state.pid -ne $owner.Id) { throw 'Window did not attach to the fixture-owned process' }
+        $owner.Kill()
+        if (!$owner.WaitForExit(5000)) { throw 'Original fixture process did not exit' }
+        Wait-Ready $observer
+        Assert-Closed $observer
+        $rows = @(Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
+            ForEach-Object { Get-Content -Encoding UTF8 -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json } })
+        $witness = @($rows | Where-Object { $_.pid -eq $observer.Id -and $_.event -eq 'host.exited' })
+        if ($witness.Count -ne 1 -or $witness[0].peerPid -ne $owner.Id -or $witness[0].result -ne 'failed' -or
+            $witness[0].operation -or $witness[0].exitCode -ne ([long]$owner.ExitCode -band 4294967295L)) { throw 'Incorrect unexpected-exit witness' }
+        return
+    }
     $observer = Start-Panel 'wait'
     Wait-Ready $observer
     $state = (& $App --host-status $data | Out-String) | ConvertFrom-Json

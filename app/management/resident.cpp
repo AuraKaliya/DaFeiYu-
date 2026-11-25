@@ -26,7 +26,8 @@ Json decode(std::string_view bytes) {
 Json handle(Host& host, const std::string& identity, const std::string& instance, StopSignal& intent, bool& stopping, const Json& request, app::SoftwareLog* log) {
     if (!request.is_object() || request.at("v")!=1) throw std::invalid_argument("invalid protocol");
     const auto& op = request.at("op").get_ref<const std::string&>();
-    if (op=="status" && request.size()==2) {
+    if (op=="status" && (request.size()==2 || (request.size()==3 && request.contains("instance")))) {
+        if (request.contains("instance") && request.at("instance")!=instance) throw std::invalid_argument("host instance differs");
         Json status{{"state",stopping ? "stopping" : host.dialogue().display ? "running" : "starting"},
             {"instance",instance},{"pid",GetCurrentProcessId()},{"definition",identity}};
         if (stopping) {

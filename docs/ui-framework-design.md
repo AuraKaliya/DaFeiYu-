@@ -406,6 +406,8 @@ sequenceDiagram
 
 正式窗口已在握手回执确认前保留管道对端的进程同步句柄和原实例的退出事件。显式退出后，各窗口从内核读到原进程退出码 0，再进入原有 WebView2 与临时目录回收流程。退出验收点击正式设置按钮后只观察，分别检查原后台、发起窗口及旁观窗口的进程退出和磁盘回执。[原实例观察](../app/management/resident_watch.cpp) · [双窗口验收](../tests/ui_resident_exit.ps1)
 
+窗口在正常对话读取中发现退出意图后改为每秒观察一次。收尾状态按原实例号查询，设置显示最近核实的回合或插件卸载阶段。等待超过 10 秒时可从该页查看日志或自行关窗。原进程意外终止时，页面显示原进程号和实际退出码，刷新仍能查看日志。[管理客户端](../app/management/client.cpp) · [界面验收](../tests/ui_main_panel.cpp)
+
 **2d · 由常驻本体持有通知区域图标。** 交互桌面上的本体使用隐藏的 Win32 顶层窗口和适配小尺寸、高 DPI 的应用图标，通过 `Shell_NotifyIconW` 注册。收到 `TaskbarCreated` 后恢复图标，退出收尾结束时注销。建议左键打开或唤回绑定原数据目录的管理中心，右键提供「打开管理中心」「打开日志目录」「退出大肥鱼」。退出沿用同一确认和收尾流程。[Windows 通知区域](https://learn.microsoft.com/en-us/windows/win32/shell/notification-area) · [任务栏重建通知](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar#taskbar-creation-notification)
 
 验收覆盖冷启动、多开窗口和关闭全部管理窗口。同一个本体都只有一个图标，从托盘能回到原会话。通过 Win32 原生集成核对注册与菜单，在隔离环境模拟任务栏重建并核对图标只恢复一次，显式退出后图标移除。图标的固定或折叠位置遵从用户的 Windows 设置。无交互桌面时后台可继续运行，注册失败可查软件日志。
