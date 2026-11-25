@@ -4,6 +4,7 @@ const { tellOwner } = require('./chat.cjs');
 const { blockSurvey, surveyCoverage, observedDoors } = require('./block-survey.cjs');
 const { playerFocus } = require('./player-focus.cjs');
 const { observationInput, observeWindow } = require('./partner-observe.cjs');
+const { observeShore } = require('./shore.cjs');
 const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
@@ -394,6 +395,10 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       const observation = r.skill === 'observe' ? observationInput(args) : null;
       if (observation?.mode === 'vitals') {
         result.vitals = world.vitals(job.id,r.generation);
+        result.vitals.shore = observeShore(bot,result.vitals,(from,stands,inside) => {
+          const goal = new goals.GoalCompositeAny(stands.map(p => new goals.GoalBlock(p.x,p.y,p.z)));
+          return probePath(bot,from,goal,inside);
+        });
       } else if (observation?.mode === 'handoff') {
         result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'handoff_receipt') {
