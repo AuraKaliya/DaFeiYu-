@@ -274,6 +274,13 @@ if(BUILD_GUI)
   # 只读桥接验收使用构建目录内可写的临时配置根。
   set(run_status_temp "${PROJECT_BINARY_DIR}/ui-run-temp")
   file(MAKE_DIRECTORY "${run_status_temp}")
+  add_executable(dfy_ui_history_host ui_history_host.cpp)
+  target_link_libraries(dfy_ui_history_host PRIVATE dfy_management dfy_build_options)
+  set_target_properties(dfy_ui_history_host PROPERTIES FOLDER Tests)
+  add_test(NAME ui.history_windows COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dfy_ui_probe>"
+    -Fixture "$<TARGET_FILE:dfy_ui_history_host>" -App "$<TARGET_FILE:dafeiyu>" -Root "${run_status_temp}")
+  set_tests_properties(ui.history_windows PROPERTIES TIMEOUT 130 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
   foreach(sample IN ITEMS idle busy)
     add_test(NAME ui.room_preview_${sample} COMMAND dfy_ui_probe --check-room-preview ${sample})
     set_tests_properties(ui.room_preview_${sample} PROPERTIES TIMEOUT 45 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")

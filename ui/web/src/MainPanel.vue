@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { useMessageHistory } from './message-history';
 import { messageTimeline } from './message-timeline';
+import { readPosition, savePosition } from './history-viewport';
 import MessageTime from './MessageTime.vue';
 import MessageReceipt from './MessageReceipt.vue';
 import ManagementShell from './ManagementShell.vue';
@@ -488,11 +489,28 @@ watch(timeline, async () => {
   const anchor = Array.from(list.querySelectorAll<HTMLElement>('[data-entry]')).find(el => el.getBoundingClientRect().bottom > top);
   const offset = anchor?.getBoundingClientRect().top;
   await nextTick();
+  if (restorePosition && messages.conversation.value) {
+    if (restorePosition.conversation !== messages.conversation.value) restorePosition = undefined;
+    else {
+      const original = list.querySelector<HTMLElement>(`[data-stored-message="${restorePosition.message}"]`);
+      if (original) {
+        list.scrollTop += original.getBoundingClientRect().top - list.getBoundingClientRect().top - restorePosition.offset;
+        restorePosition = undefined;
+        return;
+      }
+    }
+  }
   if (follow) list.scrollTop = list.scrollHeight;
   else if (anchor?.isConnected && offset !== undefined) list.scrollTop += anchor.getBoundingClientRect().top - offset;
   readingEarlier = false;
 });
 let readingEarlier = false;
+let restorePosition: ReturnType<typeof readPosition>;
+// 离开主文档时固定独立窗口中的草稿、未决命令和阅读位置。
+function leaving(): void {
+  remember();
+  savePosition(transcript.value, messages.conversation.value);
+}
 // 用户申请旧页时保持当前阅读位置。
 function earlier(): void { readingEarlier = true; messages.earlier(); }
 watch(() => lastTurn.value?.turn, () => { destination.value = 'current'; });
@@ -501,13 +519,14 @@ watch(draft, value => {
 }, { flush: 'sync' });
 onMounted(() => {
   recover();
-  window.addEventListener('pagehide', remember);
+  restorePosition = readPosition();
+  window.addEventListener('pagehide', leaving);
   bridge.addEventListener('message', receive);
   read();
   refresh = window.setInterval(read, 250);
 });
 onUnmounted(() => {
-  window.removeEventListener('pagehide', remember);
+  window.removeEventListener('pagehide', leaving);
   window.clearInterval(refresh);
   bridge.removeEventListener('message', receive);
 });
