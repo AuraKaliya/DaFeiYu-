@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { carriedAt } = require('../../plugins/mc/bridge/returning.cjs');
+const { carriedAt } = require('../bridge/returning.cjs');
 const destination = { x: 0, y: -60, z: 0 };
 const position = { x: 0.5, y: -60, z: 0.5 };
 const departure = { stream: 'test-stream', seq: 40 };

@@ -1,10 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { trackSelfVitals } = require('../../plugins/mc/bridge/self-vitals.cjs');
-const { observeShore } = require('../../plugins/mc/bridge/shore.cjs');
+const { trackSelfVitals } = require('../bridge/self-vitals.cjs');
+const { observeShore } = require('../bridge/shore.cjs');
 const { Position } = require('./test-position.cjs');
-const { observationInput } = require('../../plugins/mc/bridge/partner-observe.cjs');
+const { observationInput } = require('../bridge/partner-observe.cjs');
 
 // 使用可控的出生代次和协议包核对来源，保留公共氧气属性作为旁人污染的对照。
 function fixture() {

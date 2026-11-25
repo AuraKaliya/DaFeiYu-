@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const fixture = JSON.parse(readFileSync(new URL('../fixtures/mc-companion/hillside.json', import.meta.url), 'utf8'));
+const fixture = JSON.parse(readFileSync(new URL('./fixtures/hillside.json', import.meta.url), 'utf8'));
 
 // 解释已归一化的固定采石样本，仅验证口径；真实游戏来源由后续双端探针采集。
 // 步骤：区分查看与采集委托 → 按来源累计已确认材料与范围 → 对照到达时读数。

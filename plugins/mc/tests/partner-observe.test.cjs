@@ -1,14 +1,14 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { observationInput, observeWindow } = require('../../plugins/mc/bridge/partner-observe.cjs');
-const { observeWall, validateRoute, runRoute } = require('../../plugins/mc/bridge/partner-route.cjs');
-const { visibleBlocks, matchesDigReference, collectionProgress, digAndReadback } = require('../../plugins/mc/bridge/collection.cjs');
-const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
-const { monitorMove } = require('../../plugins/mc/bridge/move-progress.cjs');
-const { observeDrops, readDropTarget } = require('../../plugins/mc/bridge/dropped-items.cjs');
-const { trackBreakDrop, pickupShortfall } = require('../../plugins/mc/bridge/collect-drops.cjs');
-const { trackDrop } = require('../../plugins/mc/bridge/drop-tracker.cjs');
-const { inventoryCapacity } = require('../../plugins/mc/bridge/inventory-capacity.cjs');
+const { observationInput, observeWindow } = require('../bridge/partner-observe.cjs');
+const { observeWall, validateRoute, runRoute } = require('../bridge/partner-route.cjs');
+const { visibleBlocks, matchesDigReference, collectionProgress, digAndReadback } = require('../bridge/collection.cjs');
+const { playerFocus } = require('../bridge/player-focus.cjs');
+const { monitorMove } = require('../bridge/move-progress.cjs');
+const { observeDrops, readDropTarget } = require('../bridge/dropped-items.cjs');
+const { trackBreakDrop, pickupShortfall } = require('../bridge/collect-drops.cjs');
+const { trackDrop } = require('../bridge/drop-tracker.cjs');
+const { inventoryCapacity } = require('../bridge/inventory-capacity.cjs');
 const { EventEmitter } = require('node:events');
 
 const { Position } = require('./test-position.cjs');

@@ -5,7 +5,7 @@ const { randomUUID, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
-const { returns } = require('./exploration.test.cjs');
+const { returns } = require('../../plugins/mc/tests/exploration.test.cjs');
 
 // 用同一条移动轨迹驱动实际 DLL 与子 Session；夹具只决定看见的区域、采样断档和动作退出时刻。
 // 步骤：发布固定游戏来源 → 交付一条新玩家委托 → 按原生验收信号推进轨迹 → 关闭管道。

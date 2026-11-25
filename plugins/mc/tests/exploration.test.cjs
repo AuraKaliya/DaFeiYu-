@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { exploration } = require('../../plugins/mc/bridge/exploration.cjs');
+const { exploration } = require('../bridge/exploration.cjs');
 
 // 产生三次独立离开和重返，可选择每趟确实看到不同区域。
 function returns(fresh) {

@@ -1,8 +1,8 @@
 #include "application.hpp"
-#include "../plugins/mc/follow_attention.hpp"
-#include "../plugins/mc/partner_effect.hpp"
-#include "../plugins/mc/partner_knowledge.hpp"
-#include "../plugins/mc/partner_task.hpp"
+#include "../plugins/mc/src/follow_attention.hpp"
+#include "../plugins/mc/src/partner_effect.hpp"
+#include "../plugins/mc/src/partner_knowledge.hpp"
+#include "../plugins/mc/src/partner_task.hpp"
 #include <dafeiyu/companion_abi_v2.h>
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/tool_abi_v2.h>

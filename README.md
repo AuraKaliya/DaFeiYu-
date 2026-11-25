@@ -105,7 +105,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | Events：不可变交付与处理 | [广播](modules/events/include/dafeiyu/broadcast_channel.hpp)、[处理](modules/events/include/dafeiyu/processing.hpp)、[控制边界](modules/events/include/dafeiyu/hooks.hpp) |
 | Runtime：预算、调度、结果及重试 | [预算](modules/runtime/include/dafeiyu/budget.hpp)、[调度](modules/runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](modules/runtime/include/dafeiyu/result_group.hpp)、[重试](modules/runtime/include/dafeiyu/retry_controller.hpp) |
 | Platform：系统输入、HTTPS 与代码寿命 | [输入](modules/platform/include/dafeiyu/line_input.hpp)、[传输](modules/platform/src/winhttp.cpp)、[CodeModule](modules/platform/include/dafeiyu/code_module.hpp) |
-| Plugins：目录、实例、包操作与依赖 | [管理器](plugins/runtime/include/dafeiyu/plugin_manager.hpp)、[实例](plugins/runtime/include/dafeiyu/plugin_instance.hpp)、[依赖](plugins/runtime/include/dafeiyu/plugin_dependencies.hpp)、[包操作](plugins/runtime/include/dafeiyu/plugin_package.hpp) |
+| Plugins：目录、实例、包操作与依赖 | [管理器](modules/plugin_host/include/dafeiyu/plugin_manager.hpp)、[实例](modules/plugin_host/include/dafeiyu/plugin_instance.hpp)、[依赖](modules/plugin_host/include/dafeiyu/plugin_dependencies.hpp)、[包操作](modules/plugin_host/include/dafeiyu/plugin_package.hpp) |
 | SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
 | Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application_lifecycle.cpp) |
 

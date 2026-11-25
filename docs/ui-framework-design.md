@@ -15,7 +15,7 @@
 | 主体已有模型配置读取，插件在实例创建时合并包内默认值和独立的用户覆盖文件。 | 主体和插件分别持有配置文件，通过同一设置界面契约登记只读、可写字段，并由宿主执行保存与校验。 |
 | 主会话与插件子会话已使用 `Session / RunLoop`，SDK 已能托管插件子会话。 | 核对两条实际入口的共用循环和输出归属，补齐通用 SDK 能力。用一个独立测试插件验证 UI 注册、双窗口和卸载。 |
 
-宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../app/application.cpp) · [会话显示记录](../app/conversation.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [桌面业务线程](../app/management/host.cpp) · [插件配置读取](../plugins/runtime/config.cpp) · [现有 SDK](../sdk/README.md)
+宿主继续采用 C++20、CMake、VS2022 x64 和可信同进程原生 DLL。内置 Provider 支持空插件目录。模块、现有命令和插件 ABI 的实现可从以下位置核对。[应用装配](../app/application.cpp) · [会话显示记录](../app/conversation.cpp) · [下一轮队列](../app/dialogue_queue.cpp) · [桌面业务线程](../app/management/host.cpp) · [插件配置读取](../modules/plugin_host/src/config.cpp) · [现有 SDK](../sdk/README.md)
 
 | 当前事实 | 对设计的约束 |
 |---|---|
@@ -27,7 +27,7 @@
 | 包清单版本 1 拒绝未知字段 | UI 描述使用独立可选文件，保持现有 `plugin.json` 字段集合 |
 | C ABI 精确版本协商，忙碌拒绝卸载 | UI 能力独立协商，页面消失不构成 DLL 可卸载的证明 |
 
-对应实现入口：[会话与诊断](../modules/agent/include/dafeiyu/session.hpp)、[包清单校验](../plugins/runtime/manifest.cpp)、[配置快照](../plugins/runtime/include/dafeiyu/plugin_config.hpp)、[SDK 线程和生命周期约定](../sdk/README.md)。
+对应实现入口：[会话与诊断](../modules/agent/include/dafeiyu/session.hpp)、[包清单校验](../modules/plugin_host/src/manifest.cpp)、[配置快照](../modules/plugin_host/include/dafeiyu/plugin_config.hpp)、[SDK 线程和生命周期约定](../sdk/README.md)。
 
 ## 2 管理中心的界面组织
 
@@ -339,7 +339,7 @@ WebView2 支持本地内容映射到具备来源身份的虚拟主机，可用�
 
 **保存与生效。** `settings.read` 返回有效值、默认或用户覆盖来源、读写模式、已保存修订和运行中采用的修订。`settings.save` 按基准修订提交变更。宿主逐字段核对来源、写权限和类型，保留未编辑的原值，按配置所有者串行、原子写回相应文件。任一字段非法则整批拒绝，冲突返回最新修订并保留草稿。只有落盘成功才显示「已保存」。建议主体模型配置在下次本体启动采用，插件配置在下次成功加载实例时采用，中间显示「已保存，待生效」。忙碌拒绝重载时继续显示当前实例实际采用的值。
 
-**首版建议默认值。** 用现有主体配置中的 `provider` 作只读示例，`timeout_ms` 作可写示例，沿用模型层的取值校验。测试插件用一个只读配置项「来源类型」和可写配置项「显示名称」。重载后名称反映在该来源的状态摘要中。验收直接向宿主提交一次只读写入并核对拒绝，再核对两方文件互不改写，重启后保存值及应用值一致。[模型配置解析](../modules/model/src/config.cpp) · [插件有效配置装配](../plugins/runtime/config.cpp)
+**首版建议默认值。** 用现有主体配置中的 `provider` 作只读示例，`timeout_ms` 作可写示例，沿用模型层的取值校验。测试插件用一个只读配置项「来源类型」和可写配置项「显示名称」。重载后名称反映在该来源的状态摘要中。验收直接向宿主提交一次只读写入并核对拒绝，再核对两方文件互不改写，重启后保存值及应用值一致。[模型配置解析](../modules/model/src/config.cpp) · [插件有效配置装配](../modules/plugin_host/src/config.cpp)
 
 模型配置继续使用环境变量名称引用凭据，显示未配置、未验证、最近请求成功或失败等有依据的状态。新凭据保险库、跨插件密钥共享以及自动连接检测均不属于首版组件的隐含能力。
 
@@ -394,7 +394,7 @@ sequenceDiagram
 | 8 · 注册与视图，依赖 6、7 | 用同一个独立测试包逐项接入 UI 注册、追加组件、替换组件、整页板块、内嵌窗体、独立原生窗体。分别验证声明式组件与包内自定义页。 | 正式 SDK 与真实 DLL 走完第 9 节四项。双窗同时更新，关一窗另一窗继续。错误版本、争用替换位、卸载忙碌、成功卸载和重载后的旧回调分别有可核对的结果。 |
 | 9 · 联合验收，依赖 1～8 | 在正式管理中心用空插件安装与显式安装测试插件各走一遍，再作 Debug／Release 全量离线测试与分发核对。 | 从用户原话或环境触发到实际发言、消息落盘、窗口补读均可按身份对应。中文输入、缩放、键盘焦点、窄窗和正常退出通过原生容器验收。 |
 
-实现时分别从[前端主面板](../ui/web/src/MainPanel.vue)、[原生命令桥](../ui/host/probe_host.cpp)、[桌面生命周期](../app/gui/main.cpp)、[本体信箱](../app/mailbox_intake.cpp)、[事件信箱](../modules/events/src/mailboxes.cpp)、[插件管理器](../plugins/runtime/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
+实现时分别从[前端主面板](../ui/web/src/MainPanel.vue)、[原生命令桥](../ui/host/probe_host.cpp)、[桌面生命周期](../app/gui/main.cpp)、[本体信箱](../app/mailbox_intake.cpp)、[事件信箱](../modules/events/src/mailboxes.cpp)、[插件管理器](../modules/plugin_host/src/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
 
 ### 后台图标、退出与软件运行日志
 
@@ -424,7 +424,7 @@ sequenceDiagram
 
 显式退出期间，`--host-status` 可查当前收尾阶段、阶段耗时及仍在退出的原会话与回合。后台在原会话和插件分别收尾后才记录该阶段的结果。固定响应验收阻塞原模型调用，重复退出仍得到同一操作，释放后从磁盘核对等待对象和耗时。[业务线程收尾](../app/management/host.cpp) · [管道验收](../tests/management_resident.cpp)
 
-插件管理器已按实例代次报告加载、停止受阻与实际卸载。代码租约占用、已接纳但需继续轮询、原生模块已经释放在日志中各有证据，显式退出后的记录带同一操作号。受控 DLL 验收核对了上述三个边界和实际等待时长。[实例管理](../plugins/runtime/manager.cpp) · [软件日志验收](../tests/software_log.cpp)
+插件管理器已按实例代次报告加载、停止受阻与实际卸载。代码租约占用、已接纳但需继续轮询、原生模块已经释放在日志中各有证据，显式退出后的记录带同一操作号。受控 DLL 验收核对了上述三个边界和实际等待时长。[实例管理](../modules/plugin_host/src/manager.cpp) · [软件日志验收](../tests/software_log.cpp)
 
 **2c · 将原本体的退出结果交给所有关联窗口。** 设置与终端共用针对原实例的退出操作，后续托盘入口也沿用这条路径。每个管理窗口在握手时核对管道对端并保留该进程的同步句柄。本体按实例创建 Windows 事件，接纳显式退出后持续置位，观察者持有只可等待的句柄。这样即使发起窗口丢失回执、另一窗口错过通知，后台退出后仍能核对原意图。原生窗口异步等待，确认该实例收到退出请求且以正常退出码结束后，各窗口进入已有的原生关闭流程。
 

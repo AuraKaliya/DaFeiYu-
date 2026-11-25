@@ -1,6 +1,6 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/processing_abi_v2.h>
-#include "fixtures/query_v2/api.h"
+#include "../sdk/tests/fixtures/query_v2/api.h"
 #include <iostream>
 namespace {
 using namespace dfy::runtime;

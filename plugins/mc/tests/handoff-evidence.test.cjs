@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { handoffEvidence } = require('../../plugins/mc/bridge/handoff-evidence.cjs');
-const { pendingHandoff, originalHandoffReceipt } = require('../../plugins/mc/bridge/give-item.cjs');
-const { makeReceiptRoom } = require('../../plugins/mc/bridge/partner-records.cjs');
+const { handoffEvidence } = require('../bridge/handoff-evidence.cjs');
+const { pendingHandoff, originalHandoffReceipt } = require('../bridge/give-item.cjs');
+const { makeReceiptRoom } = require('../bridge/partner-records.cjs');
 
 const id = n => '00000000-0000-0000-0000-' + String(n).padStart(12,'0');
 const actor = id(1), owner = id(2), stranger = id(3), mark = { stream: id(4), seq: 0 };

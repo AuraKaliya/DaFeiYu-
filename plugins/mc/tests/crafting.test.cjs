@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { craftPlanks } = require('../../plugins/mc/bridge/crafting.cjs');
+const { craftPlanks } = require('../bridge/crafting.cjs');
 
 // 生成固定配方，允许改变配方表中的单批产量和工作台要求。
 function recipe(id, yieldCount, requiresTable = false) {

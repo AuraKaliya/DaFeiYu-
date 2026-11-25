@@ -1,7 +1,7 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/routed_event_abi_v2.h>
 #include <dafeiyu/dynamic_library.hpp>
-#include "fixtures/query_v2/api.h"
+#include "../sdk/tests/fixtures/query_v2/api.h"
 #include <algorithm>
 #include <iostream>
 #include <thread>

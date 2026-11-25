@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
-const { observeHandoff } = require('../../plugins/mc/bridge/handoff.cjs');
-const { tossHandoff } = require('../../plugins/mc/bridge/give-item.cjs');
-const { observationInput } = require('../../plugins/mc/bridge/partner-observe.cjs');
+const { observeHandoff } = require('../bridge/handoff.cjs');
+const { tossHandoff } = require('../bridge/give-item.cjs');
+const { observationInput } = require('../bridge/partner-observe.cjs');
 const { Position } = require('./test-position.cjs');
 
 // 构造含装备格、普通栈与同名特殊栈的当前窗口，并绑定独立的配对玩家实体。

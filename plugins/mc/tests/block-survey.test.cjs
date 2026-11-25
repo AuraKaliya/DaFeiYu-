@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
-const { blockSurvey, observedDoors } = require('../../plugins/mc/bridge/block-survey.cjs');
-const { playerFocus } = require('../../plugins/mc/bridge/player-focus.cjs');
-const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
-const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
-const { observeWorld } = require('../../plugins/mc/bridge/world.cjs');
+const { blockSurvey, observedDoors } = require('../bridge/block-survey.cjs');
+const { playerFocus } = require('../bridge/player-focus.cjs');
+const { fromGround, requiresCollectionApproval } = require('../bridge/collection.cjs');
+const { BuiltObjects } = require('../bridge/built-objects.cjs');
+const { observeWorld } = require('../bridge/world.cjs');
 
 // 用最少的坐标运算模拟真实客户端给出的观测中心和样本格。
 class Position {

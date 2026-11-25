@@ -2,9 +2,9 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
 const { Position } = require('./test-position.cjs');
-const { observeDrops } = require('../../plugins/mc/bridge/dropped-items.cjs');
-const { pickupDrop } = require('../../plugins/mc/bridge/pickup-drop.cjs');
-const { pickupEvidence } = require('../../plugins/mc/bridge/stone-evidence.cjs');
+const { observeDrops } = require('../bridge/dropped-items.cjs');
+const { pickupDrop } = require('../bridge/pickup-drop.cjs');
+const { pickupEvidence } = require('../bridge/stone-evidence.cjs');
 
 // 用同一块自采圆石对照有效合堆、倒序合堆和倒序拾取的归属证据。
 // 步骤：核对正常入包 → 分别提前两种读回 → 确认倒序时归属未知。

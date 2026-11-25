@@ -2,7 +2,7 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const net = require('node:net');
-const { pipeName } = require('../../plugins/mc/bridge/pipe.cjs');
+const { pipeName } = require('../bridge/pipe.cjs');
 
 // 用真实本机管道产生分片、断线、超限和不回包四种行为。
 async function main() {

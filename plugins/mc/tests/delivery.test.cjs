@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { collectionDesk } = require('../../plugins/mc/bridge/delivery.cjs');
+const { collectionDesk } = require('../bridge/delivery.cjs');
 
 // 固定两个来源和真实问题语义，单独验证接单去重与只读查询。
 function fixture() {

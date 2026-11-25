@@ -3,8 +3,8 @@ const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const { createConnection } = require('node:net');
 const { test } = require('node:test');
-const { controllerLease } = require('../../plugins/mc/bridge/controller.cjs');
-const { openBridge, pipeName } = require('../../plugins/mc/bridge/pipe.cjs');
+const { controllerLease } = require('../bridge/controller.cjs');
+const { openBridge, pipeName } = require('../bridge/pipe.cjs');
 
 // 用同一个私有读口竞争角色，原工作完成前保留旧实例及回执。
 // 步骤：读取和登记 → 退出时等待原工作 → 新实例接管并重试旧释放。

@@ -1,4 +1,4 @@
-#include "../plugins/runtime/package_files.hpp"
+#include "../src/package_files.hpp"
 #include "support/filesystem_links.hpp"
 #include <fstream>
 #include <iostream>

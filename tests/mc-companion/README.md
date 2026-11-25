@@ -232,7 +232,7 @@ node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_
 
 进入后按真人验收清单操作。体验目录的 `mwc/*-paper.log` 记录本局证据目录和 `DFY_TRACE`；同一宿主目录下用 `trace/events.jsonl` 核对消息和工具，使用 `game-actions.jsonl` 核对游戏实际退出和效果。代理状态可从本机健康页查看。[真人验收清单](#本轮真人验收) · [代理健康页](http://127.0.0.1:25582/health)
 
-G01 直接运行 `node --test tests/mc-companion/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
+G01 直接运行 `node --test plugins/mc/tests/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
 
 ## G02 双角色只读探针
 
@@ -281,7 +281,7 @@ G02 使用两个独立的本机协议身份，没有接触个人账号。它证�
 
 另运行 `node tests/mc-companion/inspect.cjs mine` 检查游戏侧的一块授权，验收未经接单、超量、旧世界、真实工具装备、实际采掘和重复回执。客户端动作返回后，独立观察端读到原玩家破坏及候选产出。运行 `node tests/mc-companion/inspect.cjs revoke` 验证开始前撤销保持零采掘。以上与入包或返程判定分别取证。
 
-同一正式入口的 `pickup-one` 检查一块自采与 5 块旧库存，`collect-16` 检查 16 个独立来源。`return-16` 在河边读到库存 21、自采实带 16；`return-14` 从零旧库存开始，在返程途中通过**独立夹具**实际扣掉 2 块，应显示实带 14、数量不足。实际移动触发只读观察端在下一 tick 读取位置和库存。固定异常样本可用 `node --test tests/mc-companion/custody.test.cjs` 验证旧位置、错角色、错世界及混合库存范围。
+同一正式入口的 `pickup-one` 检查一块自采与 5 块旧库存，`collect-16` 检查 16 个独立来源。`return-16` 在河边读到库存 21、自采实带 16；`return-14` 从零旧库存开始，在返程途中通过**独立夹具**实际扣掉 2 块，应显示实带 14、数量不足。实际移动触发只读观察端在下一 tick 读取位置和库存。固定异常样本可用 `node --test plugins/mc/tests/custody.test.cjs` 验证旧位置、错角色、错世界及混合库存范围。
 
 ## G14 探索受阻分析
 

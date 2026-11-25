@@ -19,3 +19,11 @@ set_target_properties(dfy_status_example PROPERTIES FOLDER "Plugins"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/example.status")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/status.c" "${CMAKE_CURRENT_SOURCE_DIR}/plugin.json")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/example.status/plugin.json" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/plugin.json")
+
+# 源码与包资源由示例维护，同时供运行包和独立 SDK 消费者使用。
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  install(TARGETS dfy_status_example RUNTIME DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
+  install(FILES plugin.json DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
+  install(FILES CMakeLists.txt status.c plugin.json
+    DESTINATION sdk/examples/status CONFIGURATIONS Release COMPONENT SDK)
+endif()

@@ -6,7 +6,7 @@
 
 ## 一、实施前的请求装配
 
-`Session` 持有已提交的消息。一次 `Run` 可以有多次模型请求及工具批次。一个 MC 游戏任务或投递工作又可以跨越多个 `Run`。下面的“新决策”是插件向子会话提交一次新请求，工具批次回传仍在原运行内进行。 [普通运行上下文](../modules/agent/src/run_context.cpp#L40) · [插件子会话](../app/subagents.cpp#L114) · [MC 决策入口](../plugins/mc/partner_loop.cpp#L374)
+`Session` 持有已提交的消息。一次 `Run` 可以有多次模型请求及工具批次。一个 MC 游戏任务或投递工作又可以跨越多个 `Run`。下面的“新决策”是插件向子会话提交一次新请求，工具批次回传仍在原运行内进行。 [普通运行上下文](../modules/agent/src/run_context.cpp#L40) · [插件子会话](../app/subagents.cpp#L114) · [MC 决策入口](../plugins/mc/src/partner_loop.cpp#L374)
 
 ```mermaid
 flowchart TD
@@ -34,9 +34,9 @@ flowchart TD
 | 待查问题 | 主仓库里的实际行为 | 对设计的影响 |
 | --- | --- | --- |
 | 动态系统提示词 | 人格和场景在入口叠加。求助路由将当轮 `ask` 提醒写入系统段，请求 Hook 每一步都能改写系统段。`promptTemplate` 可以早于人格叠加生成。 | 存在前缀漂移入口。以 Hook 后的 `model.prepared` 检查哪段真的变了。固定输入重复组装本身不足以证明缓存失效。 [人格装配](../app/conversation.cpp#L21) · [求助路由](../app/interaction_routes.cpp#L315) · [最终组装](../modules/agent/src/run_loop.cpp#L427) |
-| 工具定义动态排序 | `ToolSnapshot` 保留授权方给出的 ID 顺序，计划子集沿用 `step.tools` 顺序。MC 通常按固定技能表筛选，空气观察或结算会主动收窄成员。 | 同一集合的两种排列可产生两份不同的工具列表。应规范定义的展示顺序，并保留权限变化引起的成员差异。 [授权与子集](../modules/agent/src/tool_catalog.cpp#L75) · [计划工具校验](../modules/agent/src/plan_definition.cpp#L34) · [MC 筛选](../plugins/mc/partner_loop.cpp#L505) |
-| 滑动上下文窗口 | 普通运行复制已提交历史，追加原生消息，受 1,024 条消息、64 个工具定义和 1 MiB 计入载荷限制，未见自动滑窗或按 token 压缩。主会话的 16 轮限制用于显示。MC 每次新决策替换子会话历史，并自行保留最近 8 条对话记录。 | 普通会话面对硬上限，MC 长任务则依赖每次快照能否重述旧证据。`clear()` 早于 `begin()`，新运行准入失败也可能丢失旧历史。 [消息限制](../modules/model/src/messages.cpp#L31) · [显示窗口](../app/conversation.cpp#L82) · [MC 对话窗口](../plugins/mc/partner_loop.cpp#L967) · [替换时序](../app/subagents.cpp#L137) |
-| 文本格式化 | 模型适配器保留角色、工具调用和 `tool_call_id`。核心把工具状态与输出编码在工具消息内。MC 将旧对话、采样、任务、提醒和回执放进一个 `user` 场景 JSON，模型视图还会缩短部分数据和舍入坐标。 | 保留原生对话和调用关系，另存有来源的结构化结果。展示坐标可舍入，格位判定和工具参数需用原值。 [协议编码](../modules/model/src/protocol.cpp#L30) · [工具结果](../modules/agent/src/run_context.cpp#L70) · [MC 模型视图](../plugins/mc/partner_model_view.cpp#L48) |
+| 工具定义动态排序 | `ToolSnapshot` 保留授权方给出的 ID 顺序，计划子集沿用 `step.tools` 顺序。MC 通常按固定技能表筛选，空气观察或结算会主动收窄成员。 | 同一集合的两种排列可产生两份不同的工具列表。应规范定义的展示顺序，并保留权限变化引起的成员差异。 [授权与子集](../modules/agent/src/tool_catalog.cpp#L75) · [计划工具校验](../modules/agent/src/plan_definition.cpp#L34) · [MC 筛选](../plugins/mc/src/partner_loop.cpp#L505) |
+| 滑动上下文窗口 | 普通运行复制已提交历史，追加原生消息，受 1,024 条消息、64 个工具定义和 1 MiB 计入载荷限制，未见自动滑窗或按 token 压缩。主会话的 16 轮限制用于显示。MC 每次新决策替换子会话历史，并自行保留最近 8 条对话记录。 | 普通会话面对硬上限，MC 长任务则依赖每次快照能否重述旧证据。`clear()` 早于 `begin()`，新运行准入失败也可能丢失旧历史。 [消息限制](../modules/model/src/messages.cpp#L31) · [显示窗口](../app/conversation.cpp#L82) · [MC 对话窗口](../plugins/mc/src/partner_loop.cpp#L967) · [替换时序](../app/subagents.cpp#L137) |
+| 文本格式化 | 模型适配器保留角色、工具调用和 `tool_call_id`。核心把工具状态与输出编码在工具消息内。MC 将旧对话、采样、任务、提醒和回执放进一个 `user` 场景 JSON，模型视图还会缩短部分数据和舍入坐标。 | 保留原生对话和调用关系，另存有来源的结构化结果。展示坐标可舍入，格位判定和工具参数需用原值。 [协议编码](../modules/model/src/protocol.cpp#L30) · [工具结果](../modules/agent/src/run_context.cpp#L70) · [MC 模型视图](../plugins/mc/src/partner_model_view.cpp#L48) |
 | 计划、等待和对外回复 | 计划请求自行组装两条消息，没有自动选入普通历史中的工作回执。普通运行在特定 `work_pending` 分支可结束。回复 Hook 可以改变交付文本，历史仍写入模型原文。 | 计划也要读相关证据。工作等待应跨回合存续。后续谈话要能引用玩家实际收到的版本。 [计划请求](../modules/agent/src/plan_protocol.cpp#L48) · [等待分支](../modules/agent/src/run_loop.cpp#L418) · [答复提交](../modules/agent/src/run_loop.cpp#L593) |
 
 固定响应核查中，一次普通会话的 4 条已提交消息含库存回执，随后的规划请求只有 2 条消息、0 个可调用工具，库存回执没有进入规划。另一次核查中，回复 Hook 对外返回 B，下一次普通请求仍出现模型原文 A。对工具批次，小历史中 16 个空参数调用就能因预留结果超过 1 MiB 而在执行前拒收。三者分别对应计划证据、送达版本和预算的缺口。 [计划契约](../modules/agent/src/plan_protocol.cpp#L56) · [历史提交](../modules/agent/src/run_loop.cpp#L597) · [结果预留](../modules/agent/src/run_context.cpp#L57)
@@ -218,7 +218,7 @@ flowchart TD
 
 **阶段 3　单绑定事实与工作回执　`dfe0dce`、`0baea64`**
 
-可在 MC 的独立配置内指定 `factPlayer` 为一个配对玩家的 UUID。插件查询 `dfy.agent.facts` 版本 1。原接口的调用者继续使用既有协议。隔离服 `--handoff-facts-probe` 的 `run-bGaAXr` 连续产生 1 份基线和 5 份增量，工作回执水位依次为 7、16、18、21。各增量只含上个水位之后更新的原工作。伙伴实际采集、会合、投物各 1 次，发言 4 次，玩家实收 2 块，两次反馈耗时 286 ms 和 116 ms。可从[插件绑定流](../plugins/mc/partner_facts.cpp)和[宿主索引](../app/binding_facts.cpp)核对源序号及回执。跨 10 条插话、原号重传、旧代次迟到实效及拒收新基线由固定响应覆盖。
+可在 MC 的独立配置内指定 `factPlayer` 为一个配对玩家的 UUID。插件查询 `dfy.agent.facts` 版本 1。原接口的调用者继续使用既有协议。隔离服 `--handoff-facts-probe` 的 `run-bGaAXr` 连续产生 1 份基线和 5 份增量，工作回执水位依次为 7、16、18、21。各增量只含上个水位之后更新的原工作。伙伴实际采集、会合、投物各 1 次，发言 4 次，玩家实收 2 块，两次反馈耗时 286 ms 和 116 ms。可从[插件绑定流](../plugins/mc/src/partner_facts.cpp)和[宿主索引](../app/binding_facts.cpp)核对源序号及回执。跨 10 条插话、原号重传、旧代次迟到实效及拒收新基线由固定响应覆盖。
 
 **阶段 4　容量与批次准入　`e1e8f4a`**
 
@@ -228,7 +228,7 @@ flowchart TD
 
 增量入口以一个配对玩家为单位启用。其他玩家、未配置 `factPlayer` 或宿主未提供可选接口时，MC 继续走已有提交入口。宿主在原回合退出后允许切换入口。一次完整快照之后再次接收增量，会用当前代次已提交的事实重建基线。同号重发仍返回原接纳号。绑定事实及可读原文保留在进程内。这一阶段的初版索引在第 129 个工作或同一工作的第 17 次修订处拒收，后续修复见[长会话与回执复查](#长会话与回执复查)。[宿主回退回归](../tests/plugin_mailbox_dll.cpp) · [可选 SDK](../sdk/README.md) · [工作索引](../app/binding_facts.cpp)
 
-试点绑定内，MC 收回本地工具票据时会单独核对游戏退出。停止超时后，宿主保留原工作号、最近实效和已核实的进展。插件用 `partner.receipt` 只读同一桥接工作的回执，原动作的失联期限继续计时。旧桥接缺少此接口时，退出保持未确认。原工作、控制器、世界和消息号均匹配的终态才产生退出记录，实效仍可为未知。玩家纠正依赖该工作时，迟到退出会唤醒原纠正。[桥接读回](../plugins/mc/game_work.cpp) · [工作事实](../plugins/mc/partner_facts.cpp) · [纠正回放](../tests/mc_plugin_partner.cpp)
+试点绑定内，MC 收回本地工具票据时会单独核对游戏退出。停止超时后，宿主保留原工作号、最近实效和已核实的进展。插件用 `partner.receipt` 只读同一桥接工作的回执，原动作的失联期限继续计时。旧桥接缺少此接口时，退出保持未确认。原工作、控制器、世界和消息号均匹配的终态才产生退出记录，实效仍可为未知。玩家纠正依赖该工作时，迟到退出会唤醒原纠正。[桥接读回](../plugins/mc/src/game_work.cpp) · [工作事实](../plugins/mc/src/partner_facts.cpp) · [纠正回放](../tests/mc_plugin_partner.cpp)
 
 两局隔离 Paper 都从“帮我挖 8 块圆石”开始。玩家的交付选择仍待答时，固定模型实际提出了一次给物，宿主用原待答拦截。伙伴在此期间完成一次采掘，游戏端逐格读到八格变为空气，伙伴背包净增八块。玩家途中询问进度时，两局现场读数都是已入包 0 块。表中时间来自各局同一协议玩家，从发原话计至收到对应私聊。[固定响应](../tests/mc_playtest.cpp) · [协议玩家断言](../tests/mc-companion/playtest-check.cjs)
 
@@ -254,7 +254,7 @@ VS2022 x64 的 Debug、Release 各通过 281 项离线 CTest，其中运行时 2
 | 第 17 次修订或第 129 个工作被拒，已有动作可能丢失退出或实效。 | 有序接口保留 128 个工作原件和最近 128 个已归档工作的指纹。每个工作保留至多 16 版，首次接纳和实际退出各自保留。仅归档已退出且实效最终的工作，淘汰指纹后用接纳水位拒绝旧号。回归推进到第 45 次修订和第 390 个工作。128 个槽全为未决时，试点的新变更在游戏派发前受阻，已有原件仍能结算。[工作索引](../app/binding_facts.cpp) · [索引回归](../tests/binding_works.cpp) · [插件回归](../tests/mc_work_receipts.cpp) |
 | 多份长回执可挤掉绑定基线。玩家换绑后，旧投物的迟到收件无法核实。 | 宿主按整帧预算保留工作号、回执号、最近实效和退出，必要时用指纹代替正文。试点的只读 `observe(mode="work_receipt")` 可用实际收到的代次和回执号查原件，已归档时只返回指纹。宿主在进程内共保留至多 16 份活动和退役工作索引。换绑后沿旧会话号补结算，新绑定的模型看不到旧回执。[宿主路由](../app/subagents.cpp) · [真实 DLL 回归](../tests/mc_plugin_partner.cpp) · [可选 SDK](../sdk/README.md) |
 
-隔离 Paper 使用固定响应驱动实际游戏。选箱局 `run-rhYi0v` 确认了玩家所选的左箱，截止确认时给物次数为零。满包的玩家在原绑定内腾包（`run-2MswvF`），以及用同一 UUID 重新登录后腾包（`run-lyuy2p`），独立游戏客户端均数到 8 块圆石。后一局只有一次实际投物，最终实收只追加在旧绑定原工作 `1.28` 的第 4 版。桥接失联时，原工作先保持退出未知，只读查询核实同一工作、控制器、世界和原消息后才登记退出。`binding.work_settled` 可按插件实例、会话、代次、原工作及修订串查。[桥接回执](../plugins/mc/game_work.cpp) · [结算 Trace](../app/run_log.cpp) · [隔离服验收入口](../tests/mc-companion/README.md#固定响应验收单个玩家绑定)
+隔离 Paper 使用固定响应驱动实际游戏。选箱局 `run-rhYi0v` 确认了玩家所选的左箱，截止确认时给物次数为零。满包的玩家在原绑定内腾包（`run-2MswvF`），以及用同一 UUID 重新登录后腾包（`run-lyuy2p`），独立游戏客户端均数到 8 块圆石。后一局只有一次实际投物，最终实收只追加在旧绑定原工作 `1.28` 的第 4 版。桥接失联时，原工作先保持退出未知，只读查询核实同一工作、控制器、世界和原消息后才登记退出。`binding.work_settled` 可按插件实例、会话、代次、原工作及修订串查。[桥接回执](../plugins/mc/src/game_work.cpp) · [结算 Trace](../app/run_log.cpp) · [隔离服验收入口](../tests/mc-companion/README.md#固定响应验收单个玩家绑定)
 
 通用会话原件仍以 8 MiB 和 8192 条消息为保留上限。插件实例卸载时，宿主撤销该实例的回执路由。跨进程恢复属于单独的设计议题。[会话原件与预算](../modules/agent/src/context_capacity.cpp) · [绑定生命周期](../app/subagents.cpp)
 

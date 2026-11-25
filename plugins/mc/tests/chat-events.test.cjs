@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { ownerInbox, tellOwner } = require('../../plugins/mc/bridge/chat.cjs');
+const { ownerInbox, tellOwner } = require('../bridge/chat.cjs');
 
 // 用真实收件器核对名单快照、身份过滤、重复通知、重入世界及监听释放。
 test('伙伴名单变化和绑定玩家原话按代次只记录一次', () => {

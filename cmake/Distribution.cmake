@@ -3,12 +3,6 @@ install(TARGETS dafeiyu RUNTIME DESTINATION . CONFIGURATIONS Release COMPONENT R
 install(FILES "${PROJECT_SOURCE_DIR}/modules/model/resources/config/deepseek.example.json" "${PROJECT_SOURCE_DIR}/modules/model/resources/config/qwen.example.json"
   DESTINATION config CONFIGURATIONS Release COMPONENT Runtime)
 install(DIRECTORY DESTINATION plugins CONFIGURATIONS Release COMPONENT Runtime)
-install(TARGETS dfy_observer RUNTIME DESTINATION examples/plugins/example.observer CONFIGURATIONS Release COMPONENT Runtime)
-install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/observer/plugin.json" "${PROJECT_SOURCE_DIR}/plugins/examples/observer/defaults.json"
-  DESTINATION examples/plugins/example.observer CONFIGURATIONS Release COMPONENT Runtime)
-install(TARGETS dfy_status_example RUNTIME DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
-install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/status/plugin.json"
-  DESTINATION examples/plugins/example.status CONFIGURATIONS Release COMPONENT Runtime)
 install(FILES "${PROJECT_SOURCE_DIR}/docs/run-guide.md" DESTINATION . RENAME "运行说明.md" CONFIGURATIONS Release COMPONENT Runtime)
 
 # 只复制编译器提供的 Release 运行库，系统 UCRT 由 Windows 10／11 提供。
@@ -24,17 +18,6 @@ foreach(runtime_file IN LISTS CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
   endif()
 endforeach()
 install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)
-
-# SDK 仅发布 C ABI 头和独立可构建示例，不依赖宿主源码树、Old 或测试目录。
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/sdk/include/" DESTINATION sdk/include CONFIGURATIONS Release COMPONENT SDK)
-install(FILES "${PROJECT_SOURCE_DIR}/sdk/README.md" DESTINATION sdk CONFIGURATIONS Release COMPONENT SDK)
-install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/observer/observer.c" "${PROJECT_SOURCE_DIR}/plugins/examples/observer/observer_api.h"
-  "${PROJECT_SOURCE_DIR}/plugins/examples/observer/plugin.json" "${PROJECT_SOURCE_DIR}/plugins/examples/observer/defaults.json"
-  DESTINATION sdk/examples/observer CONFIGURATIONS Release COMPONENT SDK)
-install(FILES "${PROJECT_SOURCE_DIR}/cmake/ObserverSdkExample.cmake" DESTINATION sdk/examples/observer RENAME CMakeLists.txt CONFIGURATIONS Release COMPONENT SDK)
-install(FILES "${PROJECT_SOURCE_DIR}/plugins/examples/status/status.c" "${PROJECT_SOURCE_DIR}/plugins/examples/status/plugin.json"
-  "${PROJECT_SOURCE_DIR}/plugins/examples/status/CMakeLists.txt"
-  DESTINATION sdk/examples/status CONFIGURATIONS Release COMPONENT SDK)
 
 # 保留实际引入的第三方说明及原始 MIT 许可证。
 install(FILES "${PROJECT_SOURCE_DIR}/THIRD_PARTY.md" DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)

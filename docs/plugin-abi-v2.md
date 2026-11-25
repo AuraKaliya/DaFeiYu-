@@ -22,7 +22,7 @@
 
 宿主显式启用有界处理队列并提交真实事件后才提供处理引用；普通观察读取不自动进入业务参与者集合。控制引用不可复制，释放它不结束宿主工作。`start` 未获顺序资格返回 BUSY，成功只确认实际开始；`complete` 固定唯一业务终态，仍保留顺序占用；消费者确认实际不会再执行本项后，才调用 `finish`。取消仅登记意图，运行中处理仍阻止卸载。
 
-快照的 result 和 exit 使用各自的操作状态，退出成功不表达业务成功。载荷引用保持整个处理记录及其预算，数据可在处理退出后保留。错误上下文、外部实例、过期身份和非法终态均明确拒绝，失败清空输出。验证见 [宿主控制测试](../tests/plugin_processing.cpp)、[真实 C 消费者](../tests/fixtures/query_v2/processing.c) 和 [跨 DLL 验收](../tests/plugin_processing_dll.cpp)。
+快照的 result 和 exit 使用各自的操作状态，退出成功不表达业务成功。载荷引用保持整个处理记录及其预算，数据可在处理退出后保留。错误上下文、外部实例、过期身份和非法终态均明确拒绝，失败清空输出。验证见 [宿主控制测试](../modules/plugin_host/tests/plugin_processing.cpp)、[真实 C 消费者](../sdk/tests/fixtures/query_v2/processing.c) 和 [跨 DLL 验收](../tests/plugin_processing_dll.cpp)。
 
 既有 `dfy.operation.state`、`dfy.operation.cancel`、`dfy.operation.notify` 的生产对象当前为完整读请求；不能将处理控制引用或任意值当作通用操作句柄。新能力使用独立版本化表，未向冻结表追加字段。
 

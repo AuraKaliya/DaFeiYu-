@@ -3,7 +3,7 @@
 #include <windows.h>
 #include <fstream>
 #include <iostream>
-#include "fixtures/query_v2/api.h"
+#include "../sdk/tests/fixtures/query_v2/api.h"
 
 namespace {
 namespace fs = std::filesystem;

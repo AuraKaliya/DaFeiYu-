@@ -1,5 +1,5 @@
 #include <dafeiyu/plugin_manager.hpp>
-#include "fixtures/query_v2/mailbox_fixture.h"
+#include "../sdk/tests/fixtures/query_v2/mailbox_fixture.h"
 #include "application.hpp"
 #include "management/terminal_host.hpp"
 #include "message_store.hpp"

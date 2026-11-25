@@ -4,7 +4,7 @@
 #include <dafeiyu/enum_value.hpp>
 #include <dafeiyu/map_value.hpp>
 #include <dafeiyu/dynamic_library.hpp>
-#include "fixtures/query_v2/api.h"
+#include "../sdk/tests/fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_union_info) == 32 && offsetof(dfy_v2_union_info,branch_count) == 24);
