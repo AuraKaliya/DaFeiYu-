@@ -163,6 +163,11 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
     }
     return ++next_;
 }
+// 归档项均已最终结算，未归档项逐一核对实效与退出。
+bool BindingWorks::finalized() const noexcept {
+    return std::ranges::all_of(records_,[](const auto& item) { return item.second.exited && item.second.final_effect; });
+}
+
 // 沿数字接纳号查回原工作及修订，读取不更新任何水位。
 // 步骤：限定原代次 → 查活动原文或归档指纹 → 以同一身份返回有界结果。
 std::optional<std::string> BindingWorks::read(std::uint64_t epoch, std::uint64_t receipt) const {

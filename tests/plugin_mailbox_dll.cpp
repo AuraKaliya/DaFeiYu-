@@ -204,6 +204,8 @@ void fact_binding(const fs::path& root) {
         }
         const auto frame = Json::parse(request.messages.back().content);
         const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
+        if (frame.at("factFrame").at("epoch")==3)
+            check(request.messages.size()==1 && !frame.contains("hostWorkReceipts"),"retired work leaked into a new actor's model");
         if (seq == 11) {
             unsigned seen = 0;
             for (const auto& message : request.messages) if (message.role == Role::user) {
@@ -303,6 +305,66 @@ void fact_binding(const fs::path& root) {
     const auto fixture = plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
     check(fixture && plugin->invoke(*fixture,[&](const auto& api,auto* instance) { return api.work_receipts(instance,id,2); })==DFY_V2_OK &&
         calls==16 && !agents.busy(owner),"ordered C ABI did not read the original receipt without dispatch");
+
+    agents.close(owner,id);
+    app.advance_plugins();
+    bool closed = false;
+    try { agents.status(owner,id); } catch (const std::invalid_argument&) { closed = true; }
+    check(closed && !agents.busy(owner),"retired session retained an executable entry");
+    const auto new_session = agents.open(plugin);
+    const SubagentWorkFact late{2,4,"read-1",R"({"recipientPicked":8})",DFY_V2_WORK_EFFECT,0,true};
+    const auto late_receipt = agents.settle(owner,id,late);
+    check(agents.settle(owner,id,late)==late_receipt && Json::parse(agents.read_receipt(owner,id,2,late_receipt).value()).at("body").at("recipientPicked")==8 &&
+        !agents.read_receipt(owner,new_session,2,late_receipt) && !agents.read_receipt(owner+1,id,2,late_receipt) && calls==16,
+        "late receipt did not remain in the original retired owner and session");
+    const auto refuses = [&](auto target,const SubagentWorkFact& fact) {
+        try { agents.settle(owner,target,fact); } catch (const std::invalid_argument&) { return true; }
+        return false;
+    };
+    check(refuses(new_session,late) && refuses(id,{2,1,"old-new","{}",DFY_V2_WORK_ACCEPTED}) &&
+        agents.submit(owner,new_session,make(3,1,true,{{"world","next"}}))==1,"retired binding allowed a new work or crossed sessions");
+    const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while (agents.busy(owner) && std::chrono::steady_clock::now()<end) { app.advance_plugins(); std::this_thread::yield(); }
+    check(calls==17 && agents.status(owner,new_session).phase==SubagentPhase::succeeded,"late settlement interfered with new session");
+}
+
+// 老绑定持续等回执时限制数据占用，新绑定仍能问答；补齐一项后按原准入再试。
+// 步骤：连续退役十六个有未决工作的会话 → 打开新会话并核对工作满额 → 沿旧身份结算 → 核对重试和卸载。
+void retired_capacity(const fs::path& root) {
+    using namespace dfy::app;
+    using namespace dfy::model;
+    Application app({},root,root.parent_path()/"retired-facts",Backend{[](const auto&,const Request&) { return Response{{Role::assistant,"ok"}}; }});
+    check(!app.plugins().load("test.mail"),"retired work owner unavailable");
+    const auto plugin = app.plugins().instance("test.mail");
+    const auto owner = plugin->generation();
+    auto& agents = app.subagents();
+    std::vector<std::uint64_t> sessions;
+    for (unsigned n=0;n<=16;++n) {
+        const auto id = agents.open(plugin);
+        sessions.push_back(id);
+        SubagentInput baseline{R"({"set":{"world":"fresh"},"closed":[]})"};
+        baseline.frame = SubagentFrame{id,1,"isolated",true};
+        agents.submit(owner,id,std::move(baseline));
+        const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while (agents.busy(owner) && std::chrono::steady_clock::now()<end) { app.advance_plugins(); std::this_thread::yield(); }
+        check(agents.status(owner,id).phase==SubagentPhase::succeeded,"retired data consumed an executable session slot");
+        if (n<16) {
+            agents.settle(owner,id,{id,1,"same-work","{}",DFY_V2_WORK_ACCEPTED,1});
+            agents.close(owner,id);
+            app.advance_plugins();
+        }
+    }
+    const auto old = sessions.front(), fresh = sessions.back();
+    const SubagentWorkFact next{fresh,1,"same-work","{}",DFY_V2_WORK_ACCEPTED,1};
+    bool full = false;
+    try { agents.settle(owner,fresh,next); } catch (const std::length_error&) { full = true; }
+    check(full && agents.read_receipt(owner,old,old,1),"new admission silently evicted unsettled work");
+    agents.settle(owner,old,{old,2,"same-work","{}",DFY_V2_WORK_EFFECT,0,true});
+    agents.settle(owner,old,{old,3,"same-work","{}",DFY_V2_WORK_EXIT});
+    check(agents.settle(owner,fresh,next)==1 && !agents.read_receipt(owner,old,old,1) &&
+        agents.read_receipt(owner,sessions[1],sessions[1],1),"reclaiming final work affected another original binding");
+    check(app.plugins().unload("test.mail")==ShutdownResult::closed && !agents.read_receipt(owner,fresh,fresh,1),
+        "unload retained a revoked receipt route");
 }
 
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。
@@ -560,6 +622,7 @@ int wmain(int argc, wchar_t** argv) {
         text_hooks(root.parent_path(),argv[1]);
         run_text_hooks(root.parent_path(),argv[1],argv[3]);
         fact_binding(root);
+        retired_capacity(root);
         transition_hooks(root.parent_path(),argv[1]);
         return 0;
     } catch (const std::exception& error) {

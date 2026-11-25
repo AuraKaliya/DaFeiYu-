@@ -26,9 +26,13 @@ struct Subagents::Slot {
     bool compare_projection = false;
     BindingFacts facts;
     std::unique_ptr<BindingFacts> pending_facts;
-    BindingWorks works;
     bool continuous_history = false;
     std::uint64_t projected_receipt = 0, pending_receipt = 0;
+};
+struct Subagents::WorkSlot {
+    runtime::DomainId owner, session;
+    BindingWorks works;
+    bool retired = false;
 };
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
@@ -60,6 +64,12 @@ Subagents::Slot& Subagents::find(runtime::DomainId owner, runtime::DomainId id) 
     throw std::invalid_argument("subagent: session unavailable");
 }
 
+// 工作索引独立于模型资源，旧会话退役后仍须匹配原实例和原会话。
+Subagents::WorkSlot* Subagents::work_slot(runtime::DomainId owner, runtime::DomainId id) const noexcept {
+    for (const auto& work : work_slots_) if (work && work->owner==owner && work->session==id) return work.get();
+    return nullptr;
+}
+
 // 接纳一条有界输入，保留唯一递增请求号。
 // 步骤：核对身份与空闲 → 校验正文和工具范围 → 发布排队状态。
 std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, SubagentInput input) {
@@ -83,18 +93,20 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         const auto after = baseline ? 0 : slot.projected_receipt;
         // 原事实帧最多约 64 KiB，另给两个水位及数组字段名留出空间。
         constexpr std::size_t projected_limit = 128*1024;
-        const auto works = slot.works.view(input.frame->epoch,after,projected_limit-prompt.size()-128);
+        const auto* ledger = work_slot(owner,id);
+        const auto through = ledger ? ledger->works.watermark() : 0;
+        const auto works = ledger ? ledger->works.view(input.frame->epoch,after,projected_limit-prompt.size()-128) : nlohmann::json::array();
         if (!works.empty()) {
             auto data = nlohmann::json::parse(prompt);
             data["factFrame"]["workAfter"] = after;
-            data["factFrame"]["workThrough"] = slot.works.watermark();
+            data["factFrame"]["workThrough"] = through;
             data["hostWorkReceipts"] = works;
             prompt = data.dump();
         }
         if (prompt.size() > projected_limit) throw std::length_error("subagent: projected input outside limit");
         input.prompt = std::move(prompt);
         input.replace_history = baseline;
-        slot.pending_receipt = slot.works.watermark();
+        slot.pending_receipt = through;
     }
     slot.queued.emplace(std::move(input));
     slot.pending_facts = std::move(pending);
@@ -103,16 +115,33 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
     return ++slot.request;
 }
 
-// 工作回执只能沿原所有者和作用域接纳，此入口不触发模型或工具。
+// 工作回执只能沿原所有者和作用域接纳，退役索引不持有模型或工具。
+// 步骤：沿原身份查活动或退役记录 → 核对新工作的有效绑定 → 在有界索引中为首次接纳预留位置。
 std::uint64_t Subagents::settle(runtime::DomainId owner, runtime::DomainId id, plugins::SubagentWorkFact fact) {
+    auto* ledger = work_slot(owner,id);
+    if (ledger && ledger->retired) return ledger->works.settle(0,fact);
     auto& slot = find(owner,id);
-    return slot.works.settle(slot.closing || stopping_ ? 0 : slot.facts.epoch(),fact);
+    const auto epoch = slot.closing || stopping_ ? 0 : slot.facts.epoch();
+    if (ledger) return ledger->works.settle(epoch,fact);
+
+    auto free = std::ranges::find_if(work_slots_,[](const auto& item) { return !item; });
+    if (free==work_slots_.end()) {
+        for (auto it=work_slots_.begin();it!=work_slots_.end();++it) if ((*it)->retired && (*it)->works.finalized() &&
+            (free==work_slots_.end() || (*it)->session < (*free)->session)) free = it;
+    }
+    if (free==work_slots_.end()) throw std::length_error("subagent: unsettled binding capacity exhausted");
+    auto next = std::make_unique<WorkSlot>();
+    next->owner = owner; next->session = id;
+    const auto receipt = next->works.settle(epoch,fact);
+    *free = std::move(next);
+    return receipt;
 }
 
 // 先核对原实例和会话，再返回已留存的回执内容。
 std::optional<std::string> Subagents::read_receipt(runtime::DomainId owner, runtime::DomainId id,
     std::uint64_t epoch, std::uint64_t receipt) const {
-    return find(owner,id).works.read(epoch,receipt);
+    const auto* ledger = work_slot(owner,id);
+    return ledger ? ledger->works.read(epoch,receipt) : std::nullopt;
 }
 
 // 投影原请求状态和本次结算正文。
@@ -138,6 +167,7 @@ void Subagents::close(runtime::DomainId owner, runtime::DomainId id) { find(owne
 
 // 回收原实例尚未发出的提交并标记全部会话停止。
 void Subagents::close_owner(runtime::DomainId owner) noexcept {
+    for (auto& ledger : work_slots_) if (ledger && ledger->owner == owner) ledger.reset();
     for (auto& slot : slots_) if (slot && slot->owner == owner) {
         if (slot->phase != SubagentPhase::running) { slot.reset(); continue; }
         slot->closing = true;
@@ -228,7 +258,10 @@ void Subagents::advance() {
                 slot->registration.reset();
             }
         }
-        if (slot->closing && slot->session.closed()) slot.reset();
+        if (slot->closing && slot->session.closed()) {
+            if (auto* ledger = work_slot(slot->owner,slot->session.id())) ledger->retired = true;
+            slot.reset();
+        }
     }
 }
 }

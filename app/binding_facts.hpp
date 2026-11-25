@@ -33,6 +33,8 @@ class BindingWorks {
     nlohmann::json view(std::uint64_t epoch, std::uint64_t after, std::size_t byte_limit = 128*1024) const;
     // 展开当前留存修订的原文，已归档工作返回原阶段和指纹，窗口外返回空。
     std::optional<std::string> read(std::uint64_t epoch, std::uint64_t receipt) const;
+    // 所有保留工作均已退出且领域最终确认实效时，可回收退役绑定的只读窗口。
+    bool finalized() const noexcept;
     // 返回最近一次真实接纳的工作回执水位，供冻结增量。
     std::uint64_t watermark() const noexcept { return next_; }
   private:

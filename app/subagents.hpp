@@ -48,6 +48,9 @@ class Subagents final : public plugins::PluginAgents {
     void advance();
   private:
     struct Slot;
+    struct WorkSlot;
+    // 从原所有者和会话号查工作索引，退役索引只持有数据。
+    WorkSlot* work_slot(runtime::DomainId owner, runtime::DomainId id) const noexcept;
     // 绑定原所有者及会话，拒绝过期或其他实例提交。
     Slot& find(runtime::DomainId owner, runtime::DomainId id) const;
     // 从原实例构造本轮工具权限、控制快照及独立运行。
@@ -62,6 +65,7 @@ class Subagents final : public plugins::PluginAgents {
     const PersonaProfile& persona_;
     std::shared_ptr<RunLog> log_;
     std::array<std::unique_ptr<Slot>,16> slots_;
+    std::array<std::unique_ptr<WorkSlot>,16> work_slots_;
     bool stopping_ = false;
 };
 }
