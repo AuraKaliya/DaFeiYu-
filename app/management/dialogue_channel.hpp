@@ -13,6 +13,9 @@ struct DialogueCommand {
     std::string text;
     std::uint64_t message = 0;
     std::string client;
+    std::string submission, instance;
+    std::optional<std::int64_t> source_utc_ms{};
+    std::int64_t stored = 0;
 };
 
 // 从业务线程接纳前的排队到正式 Session 回合，复用原窗口命令身份。
@@ -21,6 +24,7 @@ struct DialogueReceipt {
     DialogueCommandState state;
     agent::RunId run;
     std::uint64_t message = 0;
+    std::int64_t stored = 0;
 };
 
 // 借用已发布的不可变正文，浏览器线程可以在应用锁外编码 JSON。
