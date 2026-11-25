@@ -86,7 +86,7 @@ std::string BindingFacts::apply(const plugins::SubagentInput& input, std::uint64
 }
 
 // 原工作每个版本只接纳一次，换代后拒绝旧来源的新工作，允许沿原号补报。
-// 步骤：校验身份和正文 → 查原版本及终态 → 核对代次和阶段顺序 → 保存并返回原接纳号。
+// 步骤：校验身份和正文 → 查原修订及退出 → 核对代次与阶段顺序 → 有界保存并返回原接纳号。
 std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::SubagentWorkFact& fact) {
     if (!fact.epoch || !fact.revision || fact.work.empty() || fact.work.size() > 128 || fact.content.size() > 8192 ||
         !runtime::valid_utf8(fact.work) || fact.phase < DFY_V2_WORK_ACCEPTED || fact.phase > DFY_V2_WORK_EXIT)
@@ -96,22 +96,27 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
     auto found = records_.find(key);
     if (found != records_.end()) {
         const auto& record = found->second;
-        if (fact.revision <= record.size()) {
-            const auto& old = record[static_cast<std::size_t>(fact.revision-1)];
-            if (old.phase != fact.phase || old.content != body) throw std::invalid_argument("binding: conflicting work receipt");
-            return old.receipt;
+        if (fact.revision <= record.back().revision) {
+            const auto old = std::ranges::find(record,fact.revision,&Record::revision);
+            if (old == record.end()) throw std::invalid_argument("binding: revision outside replay window");
+            if (old->phase != fact.phase || old->content != body) throw std::invalid_argument("binding: conflicting work receipt");
+            return old->receipt;
         }
         const bool exited = std::ranges::any_of(record,[](const Record& old) { return old.phase == DFY_V2_WORK_EXIT; });
-        if (fact.revision != record.size()+1 || fact.phase == DFY_V2_WORK_ACCEPTED || (exited && fact.phase != DFY_V2_WORK_EFFECT))
+        if (fact.revision != record.back().revision+1 || fact.phase == DFY_V2_WORK_ACCEPTED || (exited && fact.phase != DFY_V2_WORK_EFFECT))
             throw std::invalid_argument("binding: stale work transition");
-        if (record.size() >= 16) throw std::length_error("binding: work revisions exhausted");
     } else if (fact.epoch != current_epoch || fact.revision != 1 || fact.phase != DFY_V2_WORK_ACCEPTED) {
         throw std::invalid_argument("binding: original work required");
     }
     if (next_ == UINT64_MAX || (found == records_.end() && records_.size() >= 128)) throw std::length_error("binding: work capacity exhausted");
-    Record entry{fact.phase,body,next_+1};
+    Record entry{fact.phase,body,next_+1,fact.revision};
     if (found == records_.end()) records_.emplace(key,std::vector<Record>{std::move(entry)});
-    else found->second.push_back(std::move(entry));
+    else {
+        auto& record = found->second;
+        record.push_back(std::move(entry));
+        // 接纳与退出各至多一份。窗口满时只移除已有更新取代的最早实效。
+        if (record.size() > 16) record.erase(std::ranges::find(record,DFY_V2_WORK_EFFECT,&Record::phase));
+    }
     return ++next_;
 }
 // 返回原工作的接纳、最近实效和实际退出，跨代迟到结算不进入当前模型范围。
@@ -120,7 +125,7 @@ Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after) const {
     auto result = Json::array();
     for (const auto& [key,record] : records_) if (key.first == epoch && record.back().receipt > after) {
         const auto& last = record.back();
-        Json item{{"work",key.second},{"accepted",record.front().receipt},{"revision",record.size()},{"receipt",last.receipt}};
+        Json item{{"work",key.second},{"accepted",record.front().receipt},{"revision",last.revision},{"receipt",last.receipt}};
         if (record.front().content.size() <= 256) item["source"] = Json::parse(record.front().content);
         for (const auto& stage : record) {
             if (stage.phase == DFY_V2_WORK_EXIT) item["exited"] = stage.receipt;

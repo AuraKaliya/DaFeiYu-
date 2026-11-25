@@ -34,7 +34,7 @@ class BindingWorks {
     // 返回最近一次真实接纳的工作回执水位，供冻结增量。
     std::uint64_t watermark() const noexcept { return next_; }
   private:
-    struct Record { std::uint32_t phase; std::string content; std::uint64_t receipt; };
+    struct Record { std::uint32_t phase; std::string content; std::uint64_t receipt, revision; };
     using Key = std::pair<std::uint64_t,std::string>;
     std::map<Key,std::vector<Record>> records_;
     std::uint64_t next_ = 0;
