@@ -75,6 +75,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
 
 # 定义终端应用目标，显式列出实现与内部头文件。
 add_executable(dafeiyu main.cpp console.hpp paths.cpp paths.hpp)
+target_sources(dafeiyu PRIVATE ../ui/native/resident_tray.cpp gui/log_settings.cpp)
+target_link_libraries(dafeiyu PRIVATE dfy_resident_tray)
 
 # 配置依赖与编译环境：通过 Agent 使用模型能力，并限制 Windows 头文件的宏污染。
 target_link_libraries(dafeiyu PRIVATE dfy_terminal dfy_management dfy_build_options shell32 ole32)

@@ -13,6 +13,8 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     static std::shared_ptr<ProbeHost> attach(ICoreWebView2* view, std::function<void()> failure, bool panel, Request request);
     // 关闭全部 UI 入口及当前 Frame 持有，后台浏览器退出由窗口独立确认。
     void close() noexcept;
+    // 将托盘确认意图附到可信页面的下一份就绪快照，页面负责显示现有对话框。
+    void confirm_exit() noexcept { confirm_exit_ = true; }
     // 提供原生事实的只读统计，统计不持有浏览器或页面。
     std::shared_ptr<const FrameChecks> checks() const noexcept { return checks_; }
     // 兜底归还事件，禁止留下浏览器到宿主的强引用环。
@@ -40,5 +42,6 @@ class ProbeHost : public std::enable_shared_from_this<ProbeHost> {
     std::uint64_t next_ = 0, ticket_ = 0;
     std::uint64_t generation_ = 0;
     bool closed_ = false;
+    bool confirm_exit_ = false;
 };
 }

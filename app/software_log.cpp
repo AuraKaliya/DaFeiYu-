@@ -20,7 +20,8 @@ constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
     "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain",
-    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited","tray.start","tray.restored","tray.removed"};
+    "plugin.load","plugin.stop","plugin.unloaded","plugin.catalog","host.exited","tray.start","tray.restored","tray.removed",
+    "tray.open_panel","tray.open_logs","tray.confirm_exit"};
 constexpr std::array results{"started","ok","failed","accepted","busy","pending"};
 constexpr std::size_t queue_limit = 128;
 

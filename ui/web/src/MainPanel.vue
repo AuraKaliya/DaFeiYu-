@@ -335,6 +335,7 @@ function receive(event: MessageEvent<unknown>): void {
       queue.value = value.queue;
     }
     if (value.ready) publishConversation(value.accepting, value.revision);
+    if (value.confirmStop === true) askStop();
     if (value.ready && reconnecting.size) {
       // 宿主水位尚未登记的原件才按原编号补投一次；其他原件继续只读查询。
       for (const [id, fields] of outstanding) {
@@ -343,6 +344,11 @@ function receive(event: MessageEvent<unknown>): void {
     }
   } else if (value.event !== 'dialogue.receipt') return;
   if (isReceipt(value.receipt)) settle(value.receipt);
+}
+
+// 设置按钮与托盘只打开同一确认框，重复请求保持当前焦点。
+function askStop(): void {
+  if (ready.value && shutdown.value === 'idle' && !shutdownDialog.value?.open) shutdownDialog.value?.showModal();
 }
 
 // 用户确认后向当前已绑定的本体提交退出，并用原请求号核对收尾回执。
@@ -462,19 +468,13 @@ onUnmounted(() => {
       <p class="source-note">插件目录尚未接入此视图。</p>
       <h3 class="group-title">后台运行</h3>
       <p class="source-note">关闭管理中心后，大肥鱼会继续工作。</p>
-      <button id="host-stop" type="button" class="quiet-action" :disabled="!ready || shutdown !== 'idle'" @click="shutdownDialog?.showModal()">退出大肥鱼</button>
+      <button id="host-stop" type="button" class="quiet-action" :disabled="!ready || shutdown !== 'idle'" @click="askStop">退出大肥鱼</button>
       <p v-if="shutdown !== 'idle'" id="host-shutdown-status" role="status" class="source-note">
         <template v-if="shutdown === 'stopping'">后台已接收退出请求，正在收尾。{{ lastWait }}<template v-if="longWait">已等待 10 秒以上，可查看下方日志或关闭此窗口。</template></template>
         <template v-else-if="shutdown === 'exited'">{{ connectionNotice }}</template>
         <template v-else-if="shutdown === 'unknown'">退出回执未确认，可用终端查询本体状态。</template>
         <template v-else>正在提交退出请求…</template>
       </p>
-      <dialog ref="shutdownDialog" class="clear-dialog" aria-labelledby="host-stop-title">
-        <h2 id="host-stop-title">退出大肥鱼？</h2>
-        <p>所有管理窗口都会断开，正在进行的任务将开始收尾。当前版本的聊天记录只保存在后台进程内。</p>
-        <div class="dialog-actions"><button id="host-stay" type="button" class="quiet-action" autofocus @click="shutdownDialog?.close()">继续运行</button>
-          <button id="host-confirm-stop" type="button" class="primary-action" @click="stopHost">确认退出</button></div>
-      </dialog>
       <LogSettings v-if="active" />
     </template>
     <h2 class="chat-title">和大肥鱼聊天</h2>
@@ -527,6 +527,12 @@ onUnmounted(() => {
       </div>
     </dialog>
   </ManagementShell>
+  <dialog ref="shutdownDialog" class="clear-dialog" aria-labelledby="host-stop-title">
+    <h2 id="host-stop-title">退出大肥鱼？</h2>
+    <p>所有管理窗口都会断开，正在进行的任务将开始收尾。</p>
+    <div class="dialog-actions"><button id="host-stay" type="button" class="quiet-action" autofocus @click="shutdownDialog?.close()">继续运行</button>
+      <button id="host-confirm-stop" type="button" class="primary-action" @click="stopHost">确认退出</button></div>
+  </dialog>
 </template>
 
 <style src="./main-panel.css"></style>
