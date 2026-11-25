@@ -51,8 +51,8 @@ std::size_t dialogue_span(const std::vector<model::Message>& messages, std::size
 
 // 按连续原始位置组合已完成的普通问答，返回仍有长回答可缩短的组位置。
 // 步骤：跳过原始目标及保护消息 → 按完整轮次组成有界片段 → 写入有归属的历史视图。
-std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals, ContextWindow window) {
-    const bool keep_reasoning = input.sends_reasoning(window.thinking);
+std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals,
+    std::uint64_t evidence_epoch, bool keep_reasoning) {
     const auto protected_end = input.messages.front().role == Role::system ? 3u : 2u;
     std::vector<model::Message> view;
     std::vector<std::size_t> large_groups;
@@ -73,7 +73,7 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
             i += span;
         }
         if (i == first) { view.push_back(std::move(input.messages[i++])); continue; }
-        nlohmann::json group{{"source","completed_dialogue"},{"epoch",window.evidence_epoch},{"first",ordinals[first]},
+        nlohmann::json group{{"source","completed_dialogue"},{"epoch",evidence_epoch},{"first",ordinals[first]},
             {"count",i-first},{"turns",std::move(turns)}};
         if (large_answer) large_groups.push_back(view.size());
         view.push_back({Role::user,group.dump()});
@@ -99,6 +99,18 @@ void shorten_answers(model::Message& message) {
         turn.erase("assistant");
     }
     message.content = group.dump();
+}
+
+// 为已结束的普通问答生成有原件引用的视图，在仍超限时逐组缩短旧长回答。
+// 步骤：合并允许归档的整轮 → 检查逐字视图 → 从较旧回答起缩短到可送模。
+bool fit_dialogue(model::Request& request, const std::vector<std::size_t>& ordinals, ContextWindow window, bool keep_reasoning) {
+    const auto large_groups = pack_dialogue(request,ordinals,window.evidence_epoch,keep_reasoning);
+    if (fits(request,window)) return true;
+    for (auto index : large_groups) {
+        shorten_answers(request.messages[index]);
+        if (fits(request,window)) return true;
+    }
+    return false;
 }
 }
 // 计算有界执行视图，按原始位置回查已结算工具批次和已完成的普通问答。
@@ -140,12 +152,17 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
     }
     request.messages = std::move(compact);
     if (compressed && fits(request,window)) return compressed;
-    const auto large_groups = pack_dialogue(request,ordinals,window);
-    if (fits(request,window)) return compressed;
-    for (auto index : large_groups) {
-        shorten_answers(request.messages[index]);
-        if (fits(request,window)) return compressed;
+    if (request.sends_reasoning(window.thinking) && std::ranges::any_of(request.messages,[](const auto& message) {
+        return message.completed_dialogue_span && message.reasoning_content.has_value();
+    })) {
+        auto native = request;
+        if (fit_dialogue(native,ordinals,window,true)) {
+            request = std::move(native);
+            return compressed;
+        }
     }
+    // 能独立归档的只有宿主标记的完整普通问答。工具续行和近期消息继续使用原生角色及推理字段。
+    if (fit_dialogue(request,ordinals,window,false)) return compressed;
     throw std::length_error("context: model capacity exhausted before dispatch");
 }
 }
