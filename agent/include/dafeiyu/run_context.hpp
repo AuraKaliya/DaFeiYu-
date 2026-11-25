@@ -48,6 +48,8 @@ class RunContext {
   private:
     // 先在副本检查本地协议硬限，保持未裁剪的可回查历史。
     void check_history(model::Request input) const;
+    // 发布步骤或最终文本，并按原轮边界标记可组合的普通问答。
+    void commit_text(std::string answer, std::optional<std::string> reasoning, std::uint8_t dialogue_span);
     ContextWindow window_;
     std::optional<model::Message> effective_head_;
     bool head_known_ = false;
@@ -55,6 +57,7 @@ class RunContext {
     std::shared_ptr<MessageHistory> pending_;
     std::vector<bool> replies_;
     std::size_t tool_begin_ = 0;
+    std::size_t plain_prompt_end_ = 0;
     bool finished_ = false;
 };
 }

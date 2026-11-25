@@ -230,12 +230,72 @@ void compress_settled() {
         contains(input,"pickup unknown for W17") && contains(input,"settled_tool_batch"),"compaction lost protected work or original reference");
     validate_request(input);
 }
+
+// 在真实会话入口越过 512 轮，核对实际送模的历史归属和按位置读回的原件。
+// 步骤：连续提交固定问答 → 冻结最后一轮请求 → 对照每组原话、回答、角色及保护边界。
+void long_dialogue() {
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    unsigned calls = 0;
+    Request last;
+    Session session({},channel,Backend{[&](const Config&,const Request& input) {
+        ++calls;
+        if (calls == 515) last = input;
+        return Response{{Role::assistant,"reply-"+std::to_string(calls),{},{},"private-reasoning"}};
+    }});
+    for (unsigned i = 1; i <= 515; ++i) {
+        const auto turn = session.begin("prompt-"+std::to_string(i),{});
+        until(session,[&] { return !session.busy(); });
+        check(turn->answer() == "reply-"+std::to_string(i),"long dialogue lost its current answer");
+    }
+    check(calls == 515 && session.message_count() == 1030 && last.messages.size() <= 1024 && last.tools.empty() &&
+        last.messages.front().content == "prompt-1" && last.messages.back().content == "prompt-515",
+        "long dialogue lost the first or current request");
+    unsigned packed = 0;
+    for (const auto& message : last.messages) {
+        if (message.content.find("completed_dialogue") == std::string::npos) continue;
+        const auto ref = nlohmann::json::parse(message.content);
+        const auto original = session.read_evidence(ref.at("epoch"),ref.at("first"),ref.at("count"));
+        check(message.role == Role::user && message.content.find("private-reasoning") == std::string::npos &&
+            original.size() == 2*ref.at("turns").size(),"packed dialogue lost source or exposed private reasoning");
+        std::size_t index = 0;
+        for (const auto& turn : ref.at("turns")) {
+            check(turn.at("user") == original[index].content && turn.at("assistant") == original[index+1].content &&
+                original[index+1].reasoning_content == "private-reasoning","packed dialogue differs from the original");
+            index += 2; ++packed;
+        }
+    }
+    check(packed > 0,"long dialogue did not use attributed history");
+}
+
+// 核对带状态的问答位置，保护未决工具和需要由思考协议独立传递的消息。
+// 步骤：加入实际系统段与已结算问答 → 触发消息数投影 → 查验角色、原始位置及未决结果。
+void mixed_dialogue() {
+    Request input{{{Role::system,"injected head"},{Role::user,"original goal"},{Role::assistant,"original answer"}}};
+    input.tools.push_back({"read","read",R"({"type":"object"})"});
+    for (unsigned i = 0; i < 344; ++i) {
+        input.messages.push_back({Role::user,"status reference"});
+        input.messages.push_back({Role::user,"follow-up"});
+        Message answer{Role::assistant,"answer"};
+        answer.completed_dialogue_span = 3;
+        if (i == 1) answer.reasoning_content = "protocol-only";
+        input.messages.push_back(std::move(answer));
+    }
+    input.messages.push_back({Role::assistant,"",{{"pending","read","{}"}}});
+    input.messages.push_back({Role::tool,"effect unknown",{},"pending"});
+    input.messages.push_back({Role::user,"current revision"});
+    fit_context_request(input,{0,0,73,true},1);
+    const auto group = nlohmann::json::parse(input.messages[3].content);
+    check(group.at("first") == 3 && group.at("count") == 3 && group.at("turns").at(0).at("host_status") == "status reference" &&
+        input.messages[6].reasoning_content == "protocol-only" && input.messages.back().content == "current revision" &&
+        input.messages[input.messages.size()-2].tool_call_id == "pending","mixed projection lost attribution, reasoning or pending work");
+    validate_request(input);
+}
 }
 
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        replay(); status_versions(); compress_settled();
+        replay(); status_versions(); compress_settled(); long_dialogue(); mixed_dialogue();
         batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);
         return 0;
     }

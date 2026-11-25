@@ -37,9 +37,48 @@ void limit_receipt(model::Message& message, std::uint64_t epoch, std::size_t ord
     while ((static_cast<unsigned char>(message.content[bytes]) & 0xc0) == 0x80) --bytes;
     message.content.resize(bytes); message.content += ref;
 }
+
+// 核对宿主标记的普通问答边界，保留近期原件及供应商仍需要的独立推理消息。
+std::size_t dialogue_span(const std::vector<model::Message>& messages, std::size_t i, bool keep_reasoning) {
+    if (i+2+4 > messages.size() || messages[i].role != Role::user) return 0;
+    const std::size_t span = messages[i+1].role == Role::user ? 3 : 2;
+    if (i+span+4 > messages.size()) return 0;
+    const auto& end = messages[i+span-1];
+    if (end.role != Role::assistant || end.completed_dialogue_span != span || !end.tool_calls.empty() ||
+        (keep_reasoning && end.reasoning_content)) return 0;
+    return span;
 }
-// 计算有界执行视图，只有宿主已经确认的完整旧批次可以变成可回查的证据引用。
-// 步骤：校验原始容量和输出预留 → 缩短有明确上限的回执 → 按需整批归档 → 核验最终请求。
+
+// 按连续原始位置组合已完成的普通问答，每组保留逐字原话、模型回答和可回查范围。
+// 步骤：跳过原始目标及保护消息 → 按完整轮次组成有界片段 → 写入有归属的历史视图。
+void pack_dialogue(model::Request& input, const std::vector<std::size_t>& ordinals, ContextWindow window) {
+    const bool keep_reasoning = window.thinking && !input.tools.empty();
+    const auto protected_end = input.messages.front().role == Role::system ? 3u : 2u;
+    std::vector<model::Message> view;
+    for (std::size_t i = 0; i < input.messages.size();) {
+        if (i < protected_end || !dialogue_span(input.messages,i,keep_reasoning)) {
+            view.push_back(std::move(input.messages[i++]));
+            continue;
+        }
+        const auto first = i;
+        auto turns = nlohmann::json::array();
+        while (const auto span = dialogue_span(input.messages,i,keep_reasoning)) {
+            if (i-first+span > 64 || ordinals[i+span-1]-ordinals[first] != i-first+span-1) break;
+            nlohmann::json turn{{"user",input.messages[i+span-2].content},{"assistant",input.messages[i+span-1].content}};
+            if (span == 3) turn["host_status"] = input.messages[i].content;
+            turns.push_back(std::move(turn));
+            i += span;
+        }
+        if (i == first) { view.push_back(std::move(input.messages[i++])); continue; }
+        nlohmann::json group{{"source","completed_dialogue"},{"epoch",window.evidence_epoch},{"first",ordinals[first]},
+            {"count",i-first},{"turns",std::move(turns)}};
+        view.push_back({Role::user,group.dump()});
+    }
+    input.messages = std::move(view);
+}
+}
+// 计算有界执行视图，按原始位置回查已结算工具批次和已完成的普通问答。
+// 步骤：校验原始容量和输出预留 → 限制回执预览 → 按需归档整批工具及组合问答 → 核验最终请求。
 std::size_t fit_context_request(model::Request& request, ContextWindow window, int head_delta) {
     if ((window.tokens || window.output) && (!window.output || window.output >= window.tokens || window.tokens > 16*1024*1024))
         throw std::invalid_argument("context: invalid configured model window");
@@ -52,8 +91,10 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
     if (fits(request,window)) return 0;
 
     std::vector<model::Message> compact;
+    std::vector<std::size_t> ordinals;
     std::size_t compressed = 0;
     for (std::size_t i = 0; i < request.messages.size();) {
+        ordinals.push_back(ordinal(i));
         const auto& assistant = request.messages[i];
         const auto count = assistant.tool_calls.size();
         const auto end = i+1+count;
@@ -74,6 +115,8 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
         i = end; ++compressed;
     }
     request.messages = std::move(compact);
+    if (compressed && fits(request,window)) return compressed;
+    pack_dialogue(request,ordinals,window);
     if (!fits(request,window)) throw std::length_error("context: model capacity exhausted before dispatch");
     return compressed;
 }

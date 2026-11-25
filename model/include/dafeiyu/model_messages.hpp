@@ -16,6 +16,8 @@ struct Message {
     // 由宿主在工具结果提交时填写，仅影响本地投影，不进入供应商协议。
     std::uint32_t receipt_view_bytes = 0;
     bool settled_evidence = false;
+    // 仅宿主最终提交的普通问答记录其原始消息数，供应商和模型无法指定该标记。
+    std::uint8_t completed_dialogue_span = 0;
 };
 // 参数描述保留为 JSON 文本，供应商与 JSON 库类型不进入 Agent 公共接口。
 struct ToolDefinition { std::string name, description, parameters; };
