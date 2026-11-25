@@ -3,10 +3,11 @@ import { ref, shallowRef } from 'vue';
 type Wire = Record<string, unknown>;
 export interface StoredMessage {
   message: string; revision: string; utcMs: number; sender: string; route: string; text: string;
-  source: string; submission: string; receipt: Wire; target?: Wire;
+  source: string; submission: string; receipt: Wire; target?: Wire; sourceUtcMs?: number;
   instance?: string; session?: string; turn?: string; delivery?: string;
 }
 type Read = { kind: 'subscribe' | 'recent' | 'older' | 'changes'; id: string; cursor: string; through: string; sent: number };
+type ReceiptConsumer = (row: StoredMessage | null | undefined) => void;
 const pageSize = 24;
 const storageKey = 'dafeiyu.panel.history';
 
@@ -30,10 +31,12 @@ function stored(value: unknown): value is StoredMessage {
 export function useMessageHistory() {
   const rows = shallowRef<readonly StoredMessage[]>([]);
   const instance = ref(''), conversation = ref(''), more = ref(false), loadingOlder = ref(false), error = ref('');
+  const subscribed = ref(false);
   const records = new Map<string, StoredMessage>();
+  const lookups = new Map<string, { source: string; submission: string; sent: number; consumers: ReceiptConsumer[] }>();
   const prefix = 'history-' + crypto.randomUUID() + '-';
   let serial = 0, pending: Read | undefined, retryAt = 0;
-  let subscribed = false, loaded = false, wantOlder = false;
+  let loaded = false, wantOlder = false;
   let fixed = '0', oldest = '0', applied = '0', latest = '0', changingThrough = '0', restoreOldest = '0';
 
   // 读取上次成功展示的最早位置，同目录的其他逻辑会话不复用它。
@@ -56,7 +59,7 @@ export function useMessageHistory() {
   // 手动翻页优先于后台补读，同一批变化续页时保持其上界。
   function drive(): void {
     if (pending || performance.now() < retryAt) return;
-    if (!subscribed) request('subscribe');
+    if (!subscribed.value) request('subscribe');
     else if (!loaded) request('recent', '0', fixed);
     else if (more.value && (wantOlder || (restoreOldest !== '0' && BigInt(oldest) > BigInt(restoreOldest)))) request('older', oldest, fixed);
     else if (BigInt(latest) > BigInt(applied)) {
@@ -65,7 +68,11 @@ export function useMessageHistory() {
     }
   }
   // 原连接失联时保留已读消息，下次先核验实例与提交水位。
-  function disconnect(): void { pending = undefined; subscribed = false; loadingOlder.value = false; }
+  function disconnect(): void {
+    pending = undefined; subscribed.value = false; loadingOlder.value = false;
+    for (const query of lookups.values()) for (const consume of query.consumers) consume(undefined);
+    lookups.clear();
+  }
   // 失败与超时从实际已应用的游标重试，保留用户正在翻阅的位置。
   function failed(): void {
     disconnect();
@@ -75,13 +82,48 @@ export function useMessageHistory() {
   // 正式对话轮询提示新提交，同一水位不会反复读取正文。
   function pulse(watermark: unknown): void {
     if (pending && performance.now() - pending.sent >= 3500) failed();
-    if (subscribed && cursor(watermark) && BigInt(watermark) > BigInt(latest)) latest = watermark;
+    for (const [id, query] of lookups) if (performance.now() - query.sent >= 3500) {
+      lookups.delete(id);
+      for (const consume of query.consumers) consume(undefined);
+    }
+    if (subscribed.value && cursor(watermark) && BigInt(watermark) > BigInt(latest)) latest = watermark;
     drive();
+  }
+  // 同一来源和提交号同时只发一次查询，补投与手动复查均使用原消息身份。
+  function receipt(source: string, submission: string, consume: ReceiptConsumer): void {
+    if (!subscribed.value) { consume(undefined); return; }
+    const active = Array.from(lookups.values()).find(item => item.source === source && item.submission === submission);
+    if (active) { active.consumers.push(consume); return; }
+    const id = prefix + ++serial;
+    lookups.set(id, { source, submission, sent: performance.now(), consumers: [consume] });
+    window.chrome.webview.postMessage({ type: 'messages.receipt', version: '1', request: id, conversation: conversation.value, source, submission });
+  }
+  // 按持久号排序，只展示已经加载到的历史范围。
+  function publishRows(): void {
+    rows.value = Array.from(records.values()).filter(row => oldest === '0' || BigInt(row.message) >= BigInt(oldest))
+      .sort((a, b) => BigInt(a.message) < BigInt(b.message) ? -1 : 1);
   }
   // 验证订阅与整页的固定上界、方向和顺序，再按消息号合并最新修订。
   // 步骤：核对原请求 → 绑定或复核逻辑会话 → 合并有效页并推进对应游标。
   function receive(value: unknown): boolean {
     if (!record(value) || typeof value.request !== 'string' || !value.request.startsWith(prefix)) return false;
+    const lookup = lookups.get(value.request);
+    if (lookup) {
+      lookups.delete(value.request);
+      let result: StoredMessage | null | undefined;
+      if (value.version === '1' && value.event === 'messages.receipt' && value.instance === instance.value &&
+          value.conversation === conversation.value) {
+        const row = value.record;
+        if (row === null) result = null;
+        else if (stored(row) && row.source === lookup.source && row.submission === lookup.submission) {
+          const previous = records.get(row.message);
+          if (!previous || BigInt(previous.revision) < BigInt(row.revision)) { records.set(row.message, row); publishRows(); }
+          result = records.get(row.message);
+        }
+      }
+      for (const consume of lookup.consumers) consume(result);
+      return true;
+    }
     const read = pending;
     if (!read || read.id !== value.request) return true;
     pending = undefined;
@@ -94,7 +136,7 @@ export function useMessageHistory() {
         oldest = applied = '0';
         restoreOldest = restoredBoundary(value.conversation);
       }
-      instance.value = value.instance; conversation.value = value.conversation; subscribed = true;
+      instance.value = value.instance; conversation.value = value.conversation; subscribed.value = true;
       latest = value.watermark; changingThrough = '0';
       if (!loaded) fixed = latest;
     } else {
@@ -126,8 +168,7 @@ export function useMessageHistory() {
           try { sessionStorage.setItem(storageKey, JSON.stringify({ conversation: conversation.value, oldest })); } catch { /* 正文仍可从原水位读取。 */ }
         }
       }
-      rows.value = Array.from(records.values()).filter(row => oldest === '0' || BigInt(row.message) >= BigInt(oldest))
-        .sort((a, b) => BigInt(a.message) < BigInt(b.message) ? -1 : 1);
+      publishRows();
     }
     error.value = '';
     drive();
@@ -137,5 +178,5 @@ export function useMessageHistory() {
   function earlier(): void { wantOlder = true; drive(); }
   // 用户重试可以直接恢复订阅读取。
   function retry(): void { retryAt = 0; drive(); }
-  return { rows, instance, conversation, more, loadingOlder, error, earlier, retry, disconnect, receive, pulse };
+  return { rows, instance, conversation, subscribed, more, loadingOlder, error, earlier, retry, disconnect, receive, pulse, receipt };
 }

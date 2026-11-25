@@ -144,14 +144,19 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     call("compose Chinese",L"Input.imeSetComposition",{{"text","你好"},{"selectionStart",2},{"selectionEnd",2}});
     evaluate("composition not submitted","!document.querySelector('.turn') && document.querySelector('#dialogue-send').disabled");
     call("commit entered prompt",L"Input.insertText",{{"text",prompt}});
-    evaluate("send once on rapid double click","const button=document.querySelector('#dialogue-send'); button.click(); button.click(); true");
+    evaluate("send once on rapid double click","const button=document.querySelector('#dialogue-send'); button.click(); "
+        "window.original=history.state.dialogue.commands[0]; button.click(); !!original.submission && Number.isSafeInteger(original.sourceUtcMs)");
     expect("one text answer with real exit","document.querySelectorAll('.turn').length === 1 && "
         "document.querySelector('.turn').dataset.exit === 'succeeded' && document.querySelector('.outgoing p').textContent === "+text+
         " && document.querySelector('.incoming p').textContent === "+Json("固定回复："+prompt).dump()+
         " && !document.querySelector('.incoming p b') && !document.querySelector('#dialogue-draft').value");
-    evaluate("same command reuses real turn", "(async()=>{const receipt=(await window.dialogueAsk('probe-repeat',"
-        "{type:'dialogue.submit',command:'1',text:"+text+"})).receipt; return receipt.state==='accepted' && "
-        "receipt.turn===document.querySelector('.turn').dataset.turn;})()");
+    evaluate("same command reuses real turn and durable message", R"JS((async()=>{
+        const receipt=(await dialogueAsk('probe-repeat',original)).receipt;
+        const {conversation}=await dialogueAsk('probe-subscription',{type:'messages.subscribe'});
+        const {record}=await dialogueAsk('probe-stored',{type:'messages.receipt',conversation,source:'desktop',submission:original.submission});
+        return receipt.state==='accepted' && receipt.turn===document.querySelector('.turn').dataset.turn &&
+            receipt.storedMessage===record.message && record.text===original.text && record.sourceUtcMs===original.sourceUtcMs;
+    })())JS");
     expect("changes are attributed to the observed conversation","[...document.querySelectorAll('.changes li')].some(item=>"
         "item.textContent.includes('最近回合：尚无回合 → ') && item.textContent.includes('主会话 · 修订'))");
     evaluate("different text conflicts",R"JS((async()=>{
@@ -187,6 +192,9 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.postMessage({type:'dialogue.submit',version:'1',request:'other-write',command:'3',text:'wrong document'});
         bridge.postMessage({type:'dialogue.read',version:'1',request:'other-read',command:'',revision:''});
         bridge.postMessage({type:'room.read',version:'1',request:'other-room'});
+        bridge.postMessage({type:'messages.subscribe',version:'1',request:'other-subscription'});
+        bridge.postMessage({type:'messages.read',version:'1',request:'other-history',conversation:'main',direction:'history',cursor:'0',through:'0',limit:24});
+        bridge.postMessage({type:'messages.receipt',version:'1',request:'other-receipt',conversation:'main',source:'desktop',submission:'previous'});
         for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
         for (const kind of ['append','enqueue']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1',text:'wrong document'});
         for (const kind of ['remove','resume']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',message:'1'});
@@ -194,7 +202,8 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         const end=performance.now()+1800;
         while (!replies.has('other-barrier') && performance.now()<end) await new Promise(r=>setTimeout(r,20));
         return location.origin==='https://center.dafeiyu.invalid' && !history.state?.dialogue &&
-            replies.get('other-barrier')?.run?.result === 'failed' && ['write','read','room','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
+            replies.get('other-barrier')?.run?.result === 'failed' &&
+            ['write','read','room','subscription','history','receipt','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
     })())JS");
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");
@@ -259,7 +268,8 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
     })())JS");
     expect("new dialogue remains visible","document.querySelectorAll('.turn').length===1 && !!document.querySelector('.incoming p')");
     call("reopen functional controls",L"Page.reload",Json::object());
-    expect("history offers clear","document.querySelector('#dialogue-clear')?.disabled===false");
+    expect("reloaded composer and reset are available","document.querySelector('#dialogue-state')?.dataset.accepting==='true' && "
+        "document.querySelector('#dialogue-clear')?.disabled===false");
     evaluate("open real clear confirmation","document.querySelector('#dialogue-clear').click(); document.querySelector('dialog').open");
     key("dismiss clear with escape","Escape",27);
     expect("dismissal leaves history","!document.querySelector('dialog').open && document.querySelectorAll('.turn').length===1");
