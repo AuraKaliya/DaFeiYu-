@@ -383,36 +383,6 @@ target_link_libraries(dfy_runtime_resources_tests PRIVATE dfy_runtime dfy_build_
 set_target_properties(dfy_runtime_resources_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime_resources.cpp")
 
-# 验证新事件链路的顺序接纳、有界引用及不可变载荷寿命。
-add_executable(dfy_event_store_tests event_store.cpp)
-target_link_libraries(dfy_event_store_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_event_store_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/event_store.cpp")
-
-# 验证独立订阅队列、两种关闭及读出事件的持有责任。
-add_executable(dfy_subscription_queue_tests subscription_queue.cpp)
-target_link_libraries(dfy_subscription_queue_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_subscription_queue_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/subscription_queue.cpp")
-
-# 验证广播接纳的原子性、接收方隔离及事件引用预算。
-add_executable(dfy_broadcast_channel_tests broadcast_channel.cpp)
-target_link_libraries(dfy_broadcast_channel_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_broadcast_channel_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/broadcast_channel.cpp")
-
-# 验证信箱的定向投递、地址撤销和数据持有预算。
-add_executable(dfy_mailboxes_tests mailboxes.cpp)
-target_link_libraries(dfy_mailboxes_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_mailboxes_tests PROPERTIES FOLDER "Tests")
-add_test(NAME events.mailboxes COMMAND dfy_mailboxes_tests)
-
-# 验证有界读取请求、取消与流结束区分及生产 FIFO 完成通知。
-add_executable(dfy_subscription_reader_tests subscription_reader.cpp)
-target_link_libraries(dfy_subscription_reader_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_subscription_reader_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/subscription_reader.cpp")
-
 # 配置测试直接复用正式模型库的读取逻辑。
 add_executable(dfy_model_config_tests model_config.cpp)
 add_executable(dfy_session_tool_loop_tests session_tool_loop.cpp)
@@ -797,11 +767,6 @@ target_include_directories(dfy_model_client_tests PRIVATE
 target_link_libraries(dfy_model_client_tests PRIVATE dfy_runtime dfy_build_options nlohmann_json::nlohmann_json)
 target_compile_definitions(dfy_model_client_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-
-# 事件测试直接链接独立总线，不引入模型或平台传输。
-add_executable(dfy_events_tests events.cpp)
-target_link_libraries(dfy_events_tests PRIVATE dfy_events dfy_build_options)
-
 # 清单测试使用真实目录和链接，只解析文件，不执行任何插件代码。
 add_executable(dfy_plugin_manifest_tests plugin_manifest.cpp)
 target_link_libraries(dfy_plugin_manifest_tests PRIVATE dfy_plugins dfy_build_options nlohmann_json::nlohmann_json)
@@ -1076,22 +1041,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.targets COMMAND dfy_plugin_targets_tests "$<TARGET_FILE:dfy_query_v2_fixture>")
 set_tests_properties(plugins.targets PROPERTIES TIMEOUT 15)
 
-# 验证消费者组的有界成员、共享领取和独立关闭语义。
-add_executable(dfy_consumer_group_tests consumer_group.cpp)
-target_link_libraries(dfy_consumer_group_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_consumer_group_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/consumer_group.cpp")
-add_test(NAME events.consumer_group COMMAND dfy_consumer_group_tests)
-set_tests_properties(events.consumer_group PROPERTIES TIMEOUT 15)
-
-# 验证组成员等待、取消、退出和保留结果的独立预算。
-add_executable(dfy_group_reader_tests group_reader.cpp)
-target_link_libraries(dfy_group_reader_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_group_reader_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/group_reader.cpp")
-add_test(NAME events.group_reader COMMAND dfy_group_reader_tests)
-set_tests_properties(events.group_reader PROPERTIES TIMEOUT 15)
-
 # 通过真实 C 读取服务验证组成员控制器和跨宿主独立停止。
 add_executable(dfy_plugin_group_reads_tests plugin_group_reads.cpp)
 target_link_libraries(dfy_plugin_group_reads_tests PRIVATE dfy_plugins dfy_build_options)
@@ -1243,14 +1192,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.dependencies COMMAND dfy_plugin_dependency_tests "$<TARGET_FILE_DIR:dfy_observer>" "${CMAKE_CURRENT_BINARY_DIR}/dependency-data/$<CONFIG>")
 set_tests_properties(plugins.dependencies PROPERTIES TIMEOUT 15)
 
-# 验证原事件处理跨重试保持顺序、身份及实际退出边界。
-add_executable(dfy_retry_processing_tests retry_processing.cpp)
-target_link_libraries(dfy_retry_processing_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_retry_processing_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/retry_processing.cpp")
-add_test(NAME events.retry_processing COMMAND dfy_retry_processing_tests)
-set_tests_properties(events.retry_processing PROPERTIES TIMEOUT 15)
-
 # 验证有界重试的安全条件、退避、调度及实际退出。
 add_executable(dfy_retry_controller_tests retry_controller.cpp)
 target_link_libraries(dfy_retry_controller_tests PRIVATE dfy_runtime dfy_build_options)
@@ -1258,14 +1199,6 @@ set_target_properties(dfy_retry_controller_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/retry_controller.cpp")
 add_test(NAME runtime.retry COMMAND dfy_retry_controller_tests)
 set_tests_properties(runtime.retry PROPERTIES TIMEOUT 15)
-
-# 验证观察失败隔离和控制边界的许可、期限及实际退出。
-add_executable(dfy_hooks_tests hooks.cpp)
-target_link_libraries(dfy_hooks_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_hooks_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/hooks.cpp")
-add_test(NAME events.hooks COMMAND dfy_hooks_tests)
-set_tests_properties(events.hooks PROPERTIES TIMEOUT 15)
 
 # 验证显式业务参与者的结果策略、取消和结果预算寿命。
 add_executable(dfy_result_group_tests result_group.cpp)
@@ -1291,14 +1224,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME runtime.owner_scheduler COMMAND dfy_owner_scheduler_tests)
 set_tests_properties(runtime.owner_scheduler PROPERTIES TIMEOUT 15)
 
-# 验证真实事件共享存储及跨处理队列的所有者预算。
-add_executable(dfy_event_budget_tests event_budget.cpp)
-target_link_libraries(dfy_event_budget_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_event_budget_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/event_budget.cpp")
-add_test(NAME events.budget COMMAND dfy_event_budget_tests)
-set_tests_properties(events.budget PROPERTIES TIMEOUT 15)
-
 # 验证分层条目与字节预算的原子计费、移动归还及极限。
 add_executable(dfy_budget_tests budget.cpp)
 target_link_libraries(dfy_budget_tests PRIVATE dfy_runtime dfy_build_options)
@@ -1323,14 +1248,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DI
 add_test(NAME plugins.processing COMMAND dfy_plugin_processing_tests)
 set_tests_properties(plugins.processing PROPERTIES TIMEOUT 15)
 
-# 验证真实事件处理的业务结果、实际退出和独立数据寿命。
-add_executable(dfy_processing_tests processing.cpp)
-target_link_libraries(dfy_processing_tests PRIVATE dfy_event_streams dfy_build_options)
-set_target_properties(dfy_processing_tests PROPERTIES FOLDER "Tests")
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES "${CMAKE_CURRENT_SOURCE_DIR}/processing.cpp")
-add_test(NAME events.processing COMMAND dfy_processing_tests)
-set_tests_properties(events.processing PROPERTIES TIMEOUT 15)
-
 # 验证顺序域的 FIFO 授予、跨等待占用及独立取消关闭。
 add_executable(dfy_serial_domain_tests serial_domain.cpp)
 target_link_libraries(dfy_serial_domain_tests PRIVATE dfy_runtime dfy_build_options)
@@ -1348,17 +1265,9 @@ add_test(NAME runtime.serial_wait_graph COMMAND dfy_serial_wait_graph_tests)
 set_tests_properties(runtime.serial_wait_graph PROPERTIES TIMEOUT 15)
 
 # 组织 IDE 展示：测试自身源码按本目录排列，借用的业务源码保留来源模块路径。
-set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_events_tests dfy_plugin_manifest_tests
-  dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests
-  dfy_sdk_operations_v2_tests dfy_sdk_notifications_v2_tests dfy_library_tests dfy_plugin_module_tests PROPERTIES FOLDER "Tests")
+set_target_properties(dfy_model_config_tests dfy_model_client_tests dfy_plugin_manifest_tests dfy_plugin_registry_tests dfy_plugin_config_tests dfy_sdk_tests dfy_sdk_v2_tests dfy_sdk_handles_v2_tests dfy_sdk_operations_v2_tests dfy_sdk_notifications_v2_tests dfy_library_tests dfy_plugin_module_tests PROPERTIES FOLDER "Tests")
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/model_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/events.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_registry.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/dynamic_library.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_module.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi_v2.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_handles_v2.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/sdk_operations_v2.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_notifications_v2.cpp")
+"${CMAKE_CURRENT_SOURCE_DIR}/model_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/model_client.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_manifest.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_registry.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_config.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/dynamic_library.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/plugin_module.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_abi_v2.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_handles_v2.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_operations_v2.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk_notifications_v2.cpp")
 source_group(TREE "${PROJECT_SOURCE_DIR}" FILES
   "${PROJECT_SOURCE_DIR}/model/client.cpp")
 
@@ -1399,18 +1308,9 @@ add_test(NAME runtime.notifications COMMAND dfy_runtime_notifications_tests)
 set_tests_properties(runtime.notifications PROPERTIES TIMEOUT 15)
 add_test(NAME runtime.resources COMMAND dfy_runtime_resources_tests)
 set_tests_properties(runtime.resources PROPERTIES TIMEOUT 15)
-add_test(NAME events.store COMMAND dfy_event_store_tests)
-set_tests_properties(events.store PROPERTIES TIMEOUT 15)
-add_test(NAME events.subscription_queue COMMAND dfy_subscription_queue_tests)
-set_tests_properties(events.subscription_queue PROPERTIES TIMEOUT 15)
-add_test(NAME events.broadcast COMMAND dfy_broadcast_channel_tests)
-set_tests_properties(events.broadcast PROPERTIES TIMEOUT 15)
-add_test(NAME events.subscription_reader COMMAND dfy_subscription_reader_tests)
-set_tests_properties(events.subscription_reader PROPERTIES TIMEOUT 15)
 add_test(NAME model.config COMMAND dfy_model_config_tests
   "${PROJECT_SOURCE_DIR}/config" "${CMAKE_CURRENT_BINARY_DIR}/work/$<CONFIG>")
 add_test(NAME model.complete COMMAND dfy_model_client_tests)
-add_test(NAME events.bus COMMAND dfy_events_tests)
 add_test(NAME plugins.manifest COMMAND dfy_plugin_manifest_tests "${CMAKE_CURRENT_BINARY_DIR}/manifest/$<CONFIG>")
 add_test(NAME plugins.registry COMMAND dfy_plugin_registry_tests "${CMAKE_CURRENT_BINARY_DIR}/registry/$<CONFIG>")
 add_test(NAME plugins.config COMMAND dfy_plugin_config_tests "${CMAKE_CURRENT_BINARY_DIR}/plugin-config/$<CONFIG>")
@@ -1425,5 +1325,4 @@ add_test(NAME platform.code_module COMMAND dfy_code_module_tests "$<TARGET_FILE:
 set_tests_properties(platform.code_module PROPERTIES TIMEOUT 15)
 add_test(NAME plugins.module COMMAND dfy_plugin_module_tests "$<TARGET_FILE:dfy_query_fixture>"
   "$<TARGET_FILE:dfy_query_example>" "$<TARGET_FILE:dfy_loader_dependency>" "${CMAKE_CURRENT_BINARY_DIR}/module/$<CONFIG>")
-set_tests_properties(model.config model.complete events.bus plugins.manifest plugins.registry plugins.config sdk.abi
-  sdk.query_v2 sdk.handles_v2 sdk.operations_v2 sdk.notifications_v2 platform.library plugins.module PROPERTIES TIMEOUT 15)
+set_tests_properties(model.config model.complete plugins.manifest plugins.registry plugins.config sdk.abi sdk.query_v2 sdk.handles_v2 sdk.operations_v2 sdk.notifications_v2 platform.library plugins.module PROPERTIES TIMEOUT 15)

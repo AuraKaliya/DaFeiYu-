@@ -394,7 +394,7 @@ sequenceDiagram
 | 8 · 注册与视图，依赖 6、7 | 用同一个独立测试包逐项接入 UI 注册、追加组件、替换组件、整页板块、内嵌窗体、独立原生窗体。分别验证声明式组件与包内自定义页。 | 正式 SDK 与真实 DLL 走完第 9 节四项。双窗同时更新，关一窗另一窗继续。错误版本、争用替换位、卸载忙碌、成功卸载和重载后的旧回调分别有可核对的结果。 |
 | 9 · 联合验收，依赖 1～8 | 在正式管理中心用空插件安装与显式安装测试插件各走一遍，再作 Debug／Release 全量离线测试与分发核对。 | 从用户原话或环境触发到实际发言、消息落盘、窗口补读均可按身份对应。中文输入、缩放、键盘焦点、窄窗和正常退出通过原生容器验收。 |
 
-实现时分别从[前端主面板](../ui/web/src/MainPanel.vue)、[原生命令桥](../ui/host/probe_host.cpp)、[桌面生命周期](../app/gui/main.cpp)、[本体信箱](../app/mailbox_intake.cpp)、[事件信箱](../events/mailboxes.cpp)、[插件管理器](../plugins/runtime/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
+实现时分别从[前端主面板](../ui/web/src/MainPanel.vue)、[原生命令桥](../ui/host/probe_host.cpp)、[桌面生命周期](../app/gui/main.cpp)、[本体信箱](../app/mailbox_intake.cpp)、[事件信箱](../modules/events/src/mailboxes.cpp)、[插件管理器](../plugins/runtime/manager.cpp)进入。房间感知与后续动作沿用[内置房间计划](main-agent-room-development-plan.md#7-分步开发顺序)。
 
 ### 后台图标、退出与软件运行日志
 

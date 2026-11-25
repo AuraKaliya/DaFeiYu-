@@ -14,13 +14,18 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakePredefinedTargets")
 
 include(cmake/BuildOptions.cmake)
+option(BUILD_TESTING "Build project tests" OFF)
+if(BUILD_TESTING)
+  enable_testing()
+  include(cmake/Testing.cmake)
+endif()
 
 # 装配工程：准备第三方依赖，再加入 SDK、已实现的运行模块和最小查询示例。
 include(cmake/Dependencies.cmake)
 add_subdirectory(sdk)
 add_subdirectory(platform)
 add_subdirectory(runtime)
-add_subdirectory(events)
+add_subdirectory(modules)
 add_subdirectory(model)
 add_subdirectory(agent)
 add_subdirectory(plugins/runtime)
@@ -39,9 +44,7 @@ endif()
 include(cmake/Distribution.cmake)
 
 # 按需启用离线测试，普通构建不生成测试目标。
-option(BUILD_TESTING "Build project tests" OFF)
 if(BUILD_TESTING)
-  enable_testing()
   add_subdirectory(tests)
 endif()
 

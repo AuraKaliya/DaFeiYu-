@@ -102,7 +102,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | App：共享服务、终端及原生插件管理 | [Application](app/application.hpp)、[Conversation](app/conversation.hpp)、[终端命令](app/application_commands.cpp)、[插件命令](app/plugin_commands.cpp) |
 | Agent：会话、运行与历史提交 | [Session](agent/include/dafeiyu/session.hpp)、[实现](agent/session.cpp) |
 | Model：异步接纳及供应商协议 | [AsyncClient](model/include/dafeiyu/async_model.hpp)、[完整文本调用](model/client.cpp) |
-| Events：不可变交付与处理 | [广播](events/include/dafeiyu/broadcast_channel.hpp)、[处理](events/include/dafeiyu/processing.hpp)、[控制边界](events/include/dafeiyu/hooks.hpp) |
+| Events：不可变交付与处理 | [广播](modules/events/include/dafeiyu/broadcast_channel.hpp)、[处理](modules/events/include/dafeiyu/processing.hpp)、[控制边界](modules/events/include/dafeiyu/hooks.hpp) |
 | Runtime：预算、调度、结果及重试 | [预算](runtime/include/dafeiyu/budget.hpp)、[调度](runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](runtime/include/dafeiyu/result_group.hpp)、[重试](runtime/include/dafeiyu/retry_controller.hpp) |
 | Platform：系统输入、HTTPS 与代码寿命 | [输入](platform/include/dafeiyu/line_input.hpp)、[传输](platform/winhttp.cpp)、[CodeModule](platform/include/dafeiyu/code_module.hpp) |
 | Plugins：目录、实例、包操作与依赖 | [管理器](plugins/runtime/include/dafeiyu/plugin_manager.hpp)、[实例](plugins/runtime/include/dafeiyu/plugin_instance.hpp)、[依赖](plugins/runtime/include/dafeiyu/plugin_dependencies.hpp)、[包操作](plugins/runtime/include/dafeiyu/plugin_package.hpp) |

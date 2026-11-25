@@ -17,3 +17,10 @@ if(MSVC)
   target_compile_options(dfy_build_options INTERFACE
     "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/MP${DFY_MSVC_COMPILE_JOBS}>")
 endif()
+
+# 按目标所属职责设置 IDE 分组，以模块内声明的文件树展示源码。
+function(dfy_group_target target folder)
+  set_property(TARGET ${target} PROPERTY FOLDER "${folder}")
+  get_target_property(sources ${target} SOURCES)
+  source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${sources})
+endfunction()

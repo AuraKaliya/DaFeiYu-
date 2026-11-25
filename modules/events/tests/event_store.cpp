@@ -1,5 +1,5 @@
 #include <dafeiyu/event_store.hpp>
-#include "../events/sequence.hpp"
+#include "../src/sequence.hpp"
 #include <iostream>
 
 namespace {
