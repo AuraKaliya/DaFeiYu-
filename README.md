@@ -10,17 +10,32 @@
 
 内置 DeepSeek、Qwen 返回一次完整文本，空插件目录也能问答。凭据分别来自 `DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`，示例配置只包含环境变量名称。更新环境后请新开终端。
 
+安装 VS2022 的 x64 C++ 工具和 CMake 3.28 或更高版本。双击 [Debug 构建](build-scirpt/build-debug.cmd) 或 [Release 构建](build-scirpt/build-release.cmd) 即可编译。脚本从 PATH 或 Visual Studio 安装中找到 CMake，使用项目根目录的 `build/` 做增量构建。两种模式共享配置，各自产出 `build/bin/Debug/dafeiyu.exe` 和 `build/bin/Release/dafeiyu.exe`。
+
+```powershell
+.\build-scirpt\build-debug.cmd -Target dfy_model -Jobs 8
+.\build-scirpt\build-release.cmd
+.\build\bin\Release\dafeiyu.exe
+```
+
+根目录的 [CMakePresets.json](CMakePresets.json) 随项目提交。项目预设默认并行调度 4 个构建任务，自有 MSVC C++ 目标各用至多 2 个编译进程。单次运行的 `-Jobs` 优先于所选构建预设的 `jobs`。
+
+本机需要单独设置时，将[个人预设模板](build-scirpt/CMakeUserPresets.json)复制到项目根目录作为 `CMakeUserPresets.json`。已有个人预设时可合并模板条目。编辑 `jobs`、`DFY_MSVC_COMPILE_JOBS` 或本机工具链路径后，运行 `.\build-scirpt\build-debug.cmd -Profile local-windows`（Release 同理）。模板使用单独的 `build/local-windows/`，本机文件由 Git 忽略。
+
+脚本用 `-Profile <名称>` 选择同名配置预设，再运行 `<名称>-debug` 或 `<名称>-release` 构建预设。选择 `windows-tests` 可构建测试，选择 `windows-ui` 可构建桌面目标 `dfy_ui_probe`。首次构建桌面前，按[前端声明](ui/web/package.json)安装 Node.js，在根目录运行 `npm --prefix ui/web ci`。
+
+从根目录直接使用 CMake 也能构建相同的程序。
+
 ```powershell
 cmake --preset windows
 cmake --build --preset windows-release
-.\build\rebuild\windows\bin\Release\dafeiyu.exe
 ```
 
 不带参数使用程序目录下的 DeepSeek 配置；指定 Qwen 或独立目录：
 
 ```powershell
-.\build\rebuild\windows\bin\Release\dafeiyu.exe --chat .\config\qwen.example.json
-.\build\rebuild\windows\bin\Release\dafeiyu.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
+.\build\bin\Release\dafeiyu.exe --chat .\config\qwen.example.json
+.\build\bin\Release\dafeiyu.exe --chat .\config\deepseek.example.json --plugins "D:\应用数据\插件" --data "D:\应用数据\用户设置"
 ```
 
 支持 `--check-config FILE`、`--complete CONFIG PROMPT_FILE`、`--review-diagnostic FILE` 和 `--help`。配置检查及诊断回顾可以离线执行。单次提示词文件使用 UTF-8。默认资源按程序所在位置定位，明确指定的相对路径以工作目录为准。
@@ -28,7 +43,7 @@ cmake --build --preset windows-release
 生成独立运行目录：
 
 ```powershell
-cmake --install build/rebuild/windows --config Release --prefix "$PWD/build/package/DaFeiYu"
+cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 ```
 
 分发包含程序、Release 运行库、无密钥配置、初始空插件目录、独立示例包、SDK 和第三方许可，安装目录可以独立运行。[运行说明](docs/run-guide.md) · [SDK 开发说明](sdk/README.md)

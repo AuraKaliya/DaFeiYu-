@@ -223,7 +223,7 @@ node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_
 ### 用浏览器进服
 
 ```powershell
-.\tests\mc-companion\browser-player\start.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\rebuild\windows' -Configuration Release
+.\tests\mc-companion\browser-player\start.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build' -Configuration Release
 ```
 
 命令用指定构建启动 Paper 与本机连接服务，以独立浏览器资料打开 WebMC 2.4.0。加 `-PrepareOnly` 可以只准备服务。当前体验服的构建和配置吻合时可直接复用。服务已启动时，打开入口并点击“进入河边体验”。[浏览器玩家入口](http://127.0.0.1:25582/) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)

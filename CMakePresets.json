@@ -11,7 +11,7 @@
       "displayName": "VS2022 x64",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build/rebuild/windows",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
       }
@@ -35,25 +35,48 @@
   ],
   "buildPresets": [
     {
+      "name": "windows-build",
+      "hidden": true,
+      "jobs": 4
+    },
+    {
       "name": "windows-debug",
+      "inherits": "windows-build",
       "configurePreset": "windows",
       "configuration": "Debug"
     },
     {
       "name": "windows-release",
+      "inherits": "windows-build",
       "configurePreset": "windows",
       "configuration": "Release"
     },
     {
       "name": "windows-tests",
+      "inherits": "windows-build",
       "configurePreset": "windows-tests",
       "configuration": "Debug"
     },
     {
+      "name": "windows-tests-debug",
+      "inherits": "windows-tests"
+    },
+    {
+      "name": "windows-tests-release",
+      "inherits": "windows-tests",
+      "configuration": "Release"
+    },
+    {
       "name": "windows-ui-debug",
+      "inherits": "windows-build",
       "configurePreset": "windows-ui",
       "configuration": "Debug",
       "targets": ["dfy_ui_probe"]
+    },
+    {
+      "name": "windows-ui-release",
+      "inherits": "windows-ui-debug",
+      "configuration": "Release"
     }
   ],
   "testPresets": [

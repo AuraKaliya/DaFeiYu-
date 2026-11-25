@@ -13,11 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakePredefinedTargets")
 
-# 定义共享编译要求：统一警告级别，并让 MSVC 按 UTF-8 读取自有源码。
-add_library(dfy_build_options INTERFACE)
-target_compile_options(dfy_build_options INTERFACE
-  "$<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive-;/utf-8>"
-  "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall;-Wextra;-Wpedantic>")
+include(cmake/BuildOptions.cmake)
 
 # 装配工程：准备第三方依赖，再加入 SDK、已实现的运行模块和最小查询示例。
 include(cmake/Dependencies.cmake)

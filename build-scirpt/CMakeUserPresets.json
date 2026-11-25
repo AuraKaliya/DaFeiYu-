@@ -1,0 +1,28 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "local-windows",
+      "displayName": "Local VS2022 x64",
+      "inherits": "windows",
+      "binaryDir": "${sourceDir}/build/local-windows",
+      "cacheVariables": {
+        "DFY_MSVC_COMPILE_JOBS": "2"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "local-windows-debug",
+      "inherits": "windows-debug",
+      "configurePreset": "local-windows",
+      "jobs": 8
+    },
+    {
+      "name": "local-windows-release",
+      "inherits": "windows-release",
+      "configurePreset": "local-windows",
+      "jobs": 8
+    }
+  ]
+}
