@@ -62,6 +62,8 @@ class Host {
     std::shared_ptr<app::MessageStore> messages_;
     std::string instance_;
     struct CommandRecord { DialogueReceipt receipt; DialogueAction action; agent::RunId target; std::uint64_t message; std::string fingerprint; };
+    // 用原命令关联的持久号投影最新结果，普通控制命令沿用内存回执。
+    DialogueReceipt current_receipt(const CommandRecord& record) const;
     struct Client {
         std::uint64_t latest = 0;
         bool subscribed = false;

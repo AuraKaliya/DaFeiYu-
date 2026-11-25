@@ -63,6 +63,14 @@ std::optional<StoredMessage> lookup(sqlite3* db, std::string_view source, std::s
     query.bind(2,submission);
     return query.next() ? std::optional(row(query)) : std::nullopt;
 }
+// 同步维护待办索引，崩溃恢复只扫描未能确定终态的少量消息。
+void index_delivery(sqlite3* db, std::int64_t id, const Json& receipt) {
+    const auto state = receipt.value("state",std::string{});
+    const bool active = state=="pending" || state=="dispatching" || state=="waiting" || state=="queued";
+    Statement update(db,active ? "INSERT OR IGNORE INTO outbox VALUES(?)" : "DELETE FROM outbox WHERE message=?");
+    update.bind(1,id);
+    update.next();
+}
 // 将新回执和消息的最新修订指针放入同一调用方事务。
 std::int64_t append_receipt(sqlite3* db, std::int64_t id, const Json& receipt) {
     Statement add(db,"INSERT INTO receipts(message,body) VALUES(?,?)");
@@ -74,6 +82,7 @@ std::int64_t append_receipt(sqlite3* db, std::int64_t id, const Json& receipt) {
     publish.bind(1,revision);
     publish.bind(2,id);
     publish.next();
+    index_delivery(db,id,receipt);
     return revision;
 }
 }
@@ -98,13 +107,20 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>1) throw std::runtime_error("messages: unsupported database version");
-        if (version.number(0)==0) {
+        if (!version.next() || version.number(0)>2) throw std::runtime_error("messages: unsupported database version");
+        const auto previous = version.number(0);
+        if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
                 "CREATE TABLE messages(id INTEGER PRIMARY KEY,source TEXT NOT NULL,submission TEXT NOT NULL,envelope TEXT NOT NULL,"
                 "utc INTEGER NOT NULL,latest INTEGER NOT NULL DEFAULT 0,UNIQUE(source,submission));"
                 "CREATE TABLE receipts(rev INTEGER PRIMARY KEY,message INTEGER NOT NULL,body TEXT NOT NULL);"
                 "CREATE INDEX receipt_history ON receipts(message,rev); PRAGMA user_version=1");
+        }
+        if (previous<2) {
+            sql(db,"CREATE TABLE outbox(message INTEGER PRIMARY KEY)");
+            Statement existing(db,"SELECT m.id,r.body FROM messages m JOIN receipts r ON r.rev=m.latest");
+            while (existing.next()) index_delivery(db,existing.number(0),Json::parse(existing.text(1)));
+            sql(db,"PRAGMA user_version=2");
         }
     }
     Statement identity(db,"SELECT id FROM conversation");
@@ -120,6 +136,14 @@ const std::string& MessageStore::conversation() const noexcept { return state_->
 std::optional<StoredMessage> MessageStore::find(std::string_view source, std::string_view submission) const {
     std::lock_guard lock(state_->mutex);
     return lookup(state_->db,source,submission);
+}
+// 按已经入库的消息号读取唯一有效的最新回执。
+Json MessageStore::receipt(std::int64_t message) const {
+    std::lock_guard lock(state_->mutex);
+    Statement current(state_->db,"SELECT body FROM receipts WHERE rev=(SELECT latest FROM messages WHERE id=?)");
+    current.bind(1,message);
+    if (!current.next()) throw std::invalid_argument("messages: unknown message");
+    return Json::parse(current.text(0));
 }
 // 写入用户原话或模型发言时把初始投递状态与原文一起提交。
 // 步骤：核对原身份和载荷 → 插入首次消息 → 追加回执 → 写盘后交还身份。
@@ -177,7 +201,7 @@ MessagePage MessageStore::page(bool history, std::int64_t cursor, std::int64_t t
         "ON r.rev=(SELECT max(rev) FROM receipts WHERE message=m.id AND rev<=?2) WHERE m.id<=?1 ORDER BY m.id DESC LIMIT ?3" :
         "SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM receipts r JOIN messages m ON m.id=r.message "
         "WHERE r.rev>?1 AND r.rev<=?2 ORDER BY r.rev LIMIT ?3");
-    query.bind(1,history ? (cursor ? cursor-1 : INT64_MAX) : cursor);
+    query.bind(1,history ? (cursor ? std::min(through,cursor-1) : through) : cursor);
     query.bind(2,through);
     query.bind(3,limit+1);
     MessagePage result;
@@ -190,6 +214,17 @@ MessagePage MessageStore::page(bool history, std::int64_t cursor, std::int64_t t
         }
         result.records.push_back(row(query));
     }
+    return result;
+}
+
+// 只按重启待办的主键前进，查询不会领走或重置任何消息。
+std::vector<StoredMessage> MessageStore::unfinished(std::int64_t after) const {
+    std::lock_guard lock(state_->mutex);
+    Statement query(state_->db,"SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM outbox o "
+        "JOIN messages m ON m.id=o.message JOIN receipts r ON r.rev=m.latest WHERE o.message>? ORDER BY o.message LIMIT 8");
+    query.bind(1,after);
+    std::vector<StoredMessage> result;
+    while (query.next()) result.push_back(row(query));
     return result;
 }
 }

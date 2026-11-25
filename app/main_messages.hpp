@@ -22,6 +22,10 @@ class MainMessages {
     void terminal(const std::string& submission, const std::string& text);
     // 重试已知结果的写盘，不重发已执行的动作。
     void flush();
+    // 启动时区分未交付、可恢复队列和实效未知的旧运行。
+    void restore();
+    // 业务收尾时完成已核实结果的写盘，无法持久化则报告收尾失败。
+    void finish();
     // 将存储失败限定为软件事件，正文及 SQL 不进入诊断。
     void storage_failed() const noexcept;
     // 在实际启动待发项前固定不可随意重放的交付边界。
@@ -44,6 +48,7 @@ class MainMessages {
     std::map<std::pair<std::uint64_t,std::uint64_t>,std::int64_t> appended_;
     std::pair<agent::RunId,std::int64_t> parent_{};
     std::map<std::string,nlohmann::json> replies_;
+    std::map<std::int64_t,nlohmann::json> pending_;
     std::chrono::steady_clock::time_point retry_at_{};
 };
 }
