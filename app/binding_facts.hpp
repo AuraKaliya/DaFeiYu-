@@ -30,7 +30,9 @@ class BindingWorks {
     // 幂等接纳工作阶段，过期代次只可推进原先已登记的工作。
     std::uint64_t settle(std::uint64_t current_epoch, const plugins::SubagentWorkFact& fact);
     // 新绑定的模型只能看到本代次的在途工作、未确认实效和最近结算。
-    nlohmann::json view(std::uint64_t epoch) const;
+    nlohmann::json view(std::uint64_t epoch, std::uint64_t after) const;
+    // 返回最近一次真实接纳的工作回执水位，供冻结增量。
+    std::uint64_t watermark() const noexcept { return next_; }
   private:
     struct Record { std::uint32_t phase; std::string content; std::uint64_t receipt; };
     using Key = std::pair<std::uint64_t,std::string>;

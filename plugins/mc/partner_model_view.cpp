@@ -16,7 +16,7 @@ double displayed_number(double value) {
 
 // 精简位置读数，在舍入跨过格界时附上按原始读数确定的格坐标。
 // 步骤：校验三个坐标轴 → 对照展示前后的格坐标 → 按需补充原始所在格。
-void display_position(Json& owner, const std::string& name, Json& position) {
+void display_position(Json& owner, const std::string& name, Json& position, bool retain_boundary_samples) {
     for (const auto axis : {"x","y","z"})
         if (!position.contains(axis) || !position.at(axis).is_number()) return;
 
@@ -28,6 +28,7 @@ void display_position(Json& owner, const std::string& name, Json& position) {
         crossed |= std::floor(raw) != std::floor(displayed_number(raw));
     }
     if (crossed) {
+        if (retain_boundary_samples) owner.emplace(name+"Source",position);
         Json cell = Json::object();
         for (const auto axis : {"x","y","z"}) {
             const auto& coordinate = position.at(axis);
@@ -45,9 +46,9 @@ void display_position(Json& owner, const std::string& name, Json& position) {
 
 // 只处理现场定义的量值，保留命令参数、方块格和采样身份。
 // 步骤：遍历事件和采样数组 → 分别处理位置与连续标量 → 展开内层现场。
-void display_scene(Json& node) {
+void display_scene(Json& node, bool retain_boundary_samples) {
     if (node.is_array()) {
-        for (auto& item : node) display_scene(item);
+        for (auto& item : node) display_scene(item,retain_boundary_samples);
         return;
     }
     if (!node.is_object()) return;
@@ -59,18 +60,18 @@ void display_scene(Json& node) {
     for (auto& [name,value] : node.items()) {
         if (name == "arguments" || name == "args") continue;
         if ((name == "position" || name == "player" || name == "eye" || name == "approachPosition") && value.contains("x"))
-            display_position(node,name,value);
+            display_position(node,name,value,retain_boundary_samples);
         else if ((name == "distance" || name == "startDistance" || name == "vertical" || name == "yaw" || name == "pitch" || name == "angle") &&
                  value.is_number_float())
             value = displayed_number(value.get<double>());
-        else display_scene(value);
+        else display_scene(value,retain_boundary_samples);
     }
 }
 }
 
 // 在写出送模文本前精简副本，调用方持有的游戏事实保持全精度。
-std::string model_scene_text(nlohmann::json snapshot) {
-    display_scene(snapshot);
+std::string model_scene_text(nlohmann::json snapshot, bool retain_boundary_samples) {
+    display_scene(snapshot,retain_boundary_samples);
     return snapshot.dump();
 }
 }

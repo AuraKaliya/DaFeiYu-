@@ -116,9 +116,9 @@ std::uint64_t BindingWorks::settle(std::uint64_t current_epoch, const plugins::S
 }
 // 返回原工作的接纳、最近实效和实际退出，跨代迟到结算不进入当前模型范围。
 // 步骤：限定当前代次 → 分别归集实效与退出 → 长正文改用原接纳号和指纹引用。
-Json BindingWorks::view(std::uint64_t epoch) const {
+Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after) const {
     auto result = Json::array();
-    for (const auto& [key,record] : records_) if (key.first == epoch) {
+    for (const auto& [key,record] : records_) if (key.first == epoch && record.back().receipt > after) {
         const auto& last = record.back();
         Json item{{"work",key.second},{"accepted",record.front().receipt},{"revision",record.size()},{"receipt",last.receipt}};
         for (const auto& stage : record) {

@@ -815,7 +815,7 @@ std::string control_reply(std::string_view wire, std::string_view id, std::strin
 BridgeConfig configured_bridge(std::string_view config) {
     const auto value = parse(config);
     const auto channel = value.at("channel").get<std::string>();
-    if (!valid_channel(channel) || value.size() != 1 + value.count("bridgeKey") + value.count("playerThinking"))
+    if (!valid_channel(channel) || value.size() != 1 + value.count("bridgeKey") + value.count("playerThinking") + value.count("factPlayer"))
         throw std::invalid_argument("MC protocol: channel");
     std::string key;
     if (value.contains("bridgeKey")) {
@@ -824,9 +824,11 @@ BridgeConfig configured_bridge(std::string_view config) {
             throw std::invalid_argument("MC protocol: invalid private configuration");
     }
     const auto mode = value.value("playerThinking",std::string("inherit"));
+    const auto player = value.value("factPlayer",std::string{});
+    if (value.contains("factPlayer") && !game_uuid(value.at("factPlayer"))) throw std::invalid_argument("MC protocol: factPlayer");
     if (mode != "inherit" && mode != "off" && mode != "low") throw std::invalid_argument("MC protocol: playerThinking");
     return {channel,std::move(key),new_controller(),
-        mode == "low" ? PlayerThinking::low : mode == "off" ? PlayerThinking::off : PlayerThinking::inherit};
+        mode == "low" ? PlayerThinking::low : mode == "off" ? PlayerThinking::off : PlayerThinking::inherit,player};
 }
 // 生成独立于工作序号的控制周期身份。
 std::string new_controller() {

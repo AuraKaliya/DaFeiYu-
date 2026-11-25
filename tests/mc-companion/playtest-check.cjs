@@ -460,6 +460,15 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
   assert.ok(replies[0].invocation > 0);
   player.chat('刚才交的是我哪次要的？');
   await until(() => whispers.includes('是你让我就地备两块泥土的那次。'),'下轮可沿完工发言找到原委托');
+  if (fixture.factPilot) {
+    const frames = trace().filter(r => r.kind === 'model.prepared' && r.input.messages.at(-1).role === 'user')
+      .map(r => JSON.parse(r.input.messages.at(-1).content));
+    assert.ok(frames.some(f => f.factFrame?.mode === 'baseline') && frames.some(f => f.factFrame?.mode === 'delta'));
+    assert.ok(frames.some(f => f.hostWorkReceipts?.some(w => w.work === give.work && w.exited)));
+    for (const frame of frames.filter(f => f.hostWorkReceipts?.length))
+      assert.ok(frame.hostWorkReceipts.every(w => w.receipt > frame.factFrame.workAfter && w.receipt <= frame.factFrame.workThrough));
+    assert.ok(!trace().some(r => r.kind === 'mail.received' && r.body?.factReceiptError));
+  }
 }
 
 // 在两个真实投物操作之间移开玩家，核对停投读数、现场掉落及原委托的实际发言。

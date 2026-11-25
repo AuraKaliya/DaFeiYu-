@@ -11,6 +11,7 @@ add_library(dfy_mc_companion SHARED native.cpp partner_loop.cpp partner_loop.hpp
 target_sources(dfy_mc_companion PRIVATE partner_task.cpp partner_task.hpp partner_queue.cpp partner_plan.cpp)
 target_sources(dfy_mc_companion PRIVATE partner_question.cpp follow_attention.hpp)
 target_sources(dfy_mc_companion PRIVATE partner_model_view.cpp partner_model_view.hpp)
+target_sources(dfy_mc_companion PRIVATE partner_facts.cpp partner_facts.hpp)
 target_link_libraries(dfy_mc_companion PRIVATE dfy_mc_bridge dfy_sdk dfy_build_options nlohmann_json::nlohmann_json)
 target_compile_definitions(dfy_mc_companion PRIVATE DFY_PLUGIN_BUILD)
 set_target_properties(dfy_mc_companion PROPERTIES FOLDER "Plugins"

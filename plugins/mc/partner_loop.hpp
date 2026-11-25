@@ -4,6 +4,7 @@
 #include "game_work.hpp"
 #include "partner_task.hpp"
 #include "partner_skills.hpp"
+#include "partner_facts.hpp"
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/companion_abi_v2.h>
 #include <dafeiyu/mailbox_abi_v2.h>
@@ -335,6 +336,7 @@ class PartnerLoop {
     bool expansion_pending_ = false;
     std::bitset<partner_skills.size()> visible_skills_;
     const dfy_v2_agent_api* agent_ = nullptr;
+    PartnerFacts fact_stream_;
     uint32_t thinking_flags_ = 0;
     const dfy_v2_mailbox_api* mail_ = nullptr;
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
@@ -398,6 +400,11 @@ class PartnerLoop {
     } review_;
     nlohmann::json events_, recent_events_, previous_;
     std::deque<nlohmann::json> dialogue_;
+    std::map<std::uint64_t,nlohmann::json> work_origins_;
+    // 检查原话是否被当前任务、计划、动作或待答持有。
+    bool needs_origin(std::uint64_t order) const;
+    // 在最近对话及未完工作持有的来源中核对玩家原话。
+    bool has_player_origin(std::uint64_t order) const;
     std::uint64_t reviewed_ = 0;
     bool stopped_work_ = false;
     uint32_t phase_ = DFY_V2_PARTNER_CLOSED;

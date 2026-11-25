@@ -185,6 +185,17 @@ uint32_t PartnerLoop::listen(dfy_v2_query_interface_fn host, BridgeConfig& confi
     refs_ = static_cast<const dfy_v2_reference_api*>(reference_api);
     if (mail_text_->header.struct_size != sizeof(*mail_text_) || refs_->header.struct_size != sizeof(*refs_) ||
         !mail_text_->inspect || !refs_->release) return DFY_V2_ABI_MISMATCH;
+    const dfy_v2_agent_facts_api* facts = nullptr;
+    if (!config.fact_player.empty()) {
+        const void* table = nullptr;
+        const auto queried = host(view(DFY_V2_AGENT_FACTS_INTERFACE),DFY_V2_AGENT_FACTS_VERSION,&table,nullptr);
+        if (!queried) {
+            facts = static_cast<const dfy_v2_agent_facts_api*>(table);
+            if (!facts || facts->header.struct_size != sizeof(*facts) || facts->header.interface_version != DFY_V2_AGENT_FACTS_VERSION ||
+                !facts->submit || !facts->settle) return DFY_V2_ABI_MISMATCH;
+        } else if (queried != DFY_V2_UNSUPPORTED) return queried;
+    }
+    fact_stream_.configure(facts,config.fact_player);
     agent_ = &agent;
     thinking_flags_ = config.player_thinking == PlayerThinking::low ? DFY_V2_AGENT_THINKING_LOW :
         config.player_thinking == PlayerThinking::off ? DFY_V2_AGENT_THINKING_OFF : 0;
@@ -216,6 +227,7 @@ void PartnerLoop::reset() noexcept {
     expansion_pending_ = false;
     phase_ = DFY_V2_PARTNER_CLOSED;
     agent_ = nullptr;
+    fact_stream_.configure(nullptr,{});
     mail_ = nullptr;
     mail_text_ = nullptr;
     refs_ = nullptr;
@@ -243,6 +255,7 @@ void PartnerLoop::reset() noexcept {
     events_.clear();
     recent_events_.clear();
     dialogue_.clear();
+    work_origins_.clear();
     previous_.clear();
     reviewed_ = 0;
     stopped_work_ = false;
@@ -336,6 +349,7 @@ bool PartnerLoop::settle_reply(const BridgeConfig& config, std::uint64_t instanc
 // 原会话空闲后释放旧游戏上下文，等待新的世界或玩家在场周期。
 void PartnerLoop::retire() {
     if (session_) agent_->close(session_,nullptr);
+    fact_stream_.clear();
     session_world_.clear();
     session_ = order_ = settled_ = 0;
     task_ = {};
@@ -358,6 +372,7 @@ void PartnerLoop::retire() {
     next_air_wake_ = {};
     recent_events_.clear();
     dialogue_.clear();
+    work_origins_.clear();
     previous_.clear();
     questions_.clear(); question_results_.clear(); question_wake_ = false;
     placement_choice_ = {};
@@ -385,6 +400,12 @@ void PartnerLoop::submit(std::string_view wake) {
     Json input{{"player",feed_.owner()},{"generation",session_world_},{"events",facts},{"lastObservation",feed_.observation()},
         {"task",task_.context()},{"trigger",wake}};
     if (!dialogue_.empty() && !delegated) input["recentDialogue"] = dialogue_;
+    const bool incremental = fact_stream_.enabled(feed_.owner());
+    std::erase_if(work_origins_,[&](const auto& item) { return !needs_origin(item.first); });
+    if (incremental && !delegated && !work_origins_.empty()) {
+        input["workOrigins"] = Json::array();
+        for (const auto& [order,line] : work_origins_) input["workOrigins"].push_back(line);
+    }
     if (feed_.scene_revision()) input["sceneRevision"] = feed_.scene_revision();
     if (motion_) {
         auto& active = input["activeMotion"];
@@ -446,9 +467,7 @@ void PartnerLoop::submit(std::string_view wake) {
         actual_outcome |= wake == "motion.finished" && (status == "done" || status == "blocked") && receipt.at("skill") != "follow";
         if (autonomous && wake == "motion.finished" && actual_outcome) {
             reply_origin = {{"bridgeWork",receipt.at("bridgeWork")}};
-            if (std::ranges::any_of(dialogue_,[&](const auto& line) {
-                return line.at("speaker") == "player" && line.at("order") == receipt.at("order");
-            })) reply_origin["sourceMessage"] = receipt.at("order");
+            if (has_player_origin(receipt.at("order"))) reply_origin["sourceMessage"] = receipt.at("order");
         }
         completed_dig = facts.empty() && !task_.correcting() && receipt.value("pointedDig",false) &&
             verified_action(receipt.at("result"),"collect",{});
@@ -531,16 +550,19 @@ void PartnerLoop::submit(std::string_view wake) {
             if (auto origin = plan->find("origin"); origin != plan->end() && origin->is_object()) origin->erase("sceneAtMessage");
         }
     }
-    const auto prompt = model_scene_text(std::move(input));
-    const auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
+    const auto prompt = model_scene_text(std::move(input),incremental);
+    auto instructions = delegated ? render_guidance("Minecraft 委托规则",delegation_guidance) :
         render_guidance("Minecraft 同场规则",player_guidance);
+    if (incremental) instructions += "\n宿主 factFrame 的 baseline 为本绑定的完整场景。delta 只更新所列字段，closed 内的旧字段已关闭。hostWorkReceipts 按 work 合入，只根据原工作和投递回执判断实效。";
     const auto player_flags = !delegated && !air_only && agent_->header.interface_version >= DFY_V2_AGENT_PERSONA_VERSION ?
         DFY_V2_AGENT_PLAYER_FACING | thinking_flags_ : 0;
     const dfy_v2_agent_input run{view(prompt),view(instructions),view(binding),
         delegated ? delegated_skills.data() : visible.data(),
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_REPLACE_HISTORY | player_flags |
             (air_only ? 0u : DFY_V2_AGENT_ALLOW_CHANGES)};
-    if (agent_->submit(session_,&run,&request_,nullptr)) throw std::runtime_error("MC partner: cannot queue child turn");
+    const auto submitted = incremental ? fact_stream_.submit(session_,feed_.owner()+"/"+session_world_+"/"+std::to_string(session_binding_),
+        run,Json::parse(prompt),delegated || air_only || settlement_only,request_) : agent_->submit(session_,&run,&request_,nullptr);
+    if (submitted) throw std::runtime_error("MC partner: cannot queue child turn");
     reply_origin_ = std::move(reply_origin);
     air_only_turn_ = air_only;
     if (pickup_feedback) {
@@ -984,7 +1006,29 @@ std::bitset<categories.size()> PartnerLoop::scope() const noexcept {
 void PartnerLoop::remember_dialogue(std::string_view speaker, std::uint64_t order, const Json& text, const Json& origin) {
     dialogue_.push_back({{"speaker",speaker},{"order",order},{"text",text}});
     if (!origin.is_null()) dialogue_.back()["replyOrigin"] = origin;
-    if (dialogue_.size() > 8) dialogue_.pop_front();
+    if (dialogue_.size() > 8) {
+        const auto& oldest = dialogue_.front();
+        const auto source = oldest.at("order").get<std::uint64_t>();
+        if (oldest.at("speaker") == "player" && needs_origin(source)) work_origins_.insert_or_assign(source,oldest);
+        dialogue_.pop_front();
+    }
+}
+
+// 在有界的任务和待答集合核对真实依赖，已无依赖的旧原话可以回收。
+bool PartnerLoop::needs_origin(std::uint64_t order) const {
+    return order && (task_.id() == order || task_.instruction() == order || (motion_ && motion_->order == order) ||
+        (follow_ && follow_->order == order) || (plan_ && plan_->order == order) ||
+        std::ranges::any_of(queued_,[&](const auto& action) { return action.order == order; }) ||
+        std::ranges::any_of(questions_,[&](const auto& question) { return question.second.source_order() == order; }) ||
+        std::ranges::any_of(settlements_,[&](const auto& group) {
+            return std::ranges::any_of(group.receipts,[&](const Json& receipt) { return receipt.value("order",std::uint64_t{}) == order; });
+        }));
+}
+// 核对尚有归属的原话或最近的玩家对话，伙伴自身的发言不能充当来源。
+bool PartnerLoop::has_player_origin(std::uint64_t order) const {
+    return work_origins_.contains(order) || std::ranges::any_of(dialogue_,[&](const auto& line) {
+        return line.at("speaker") == "player" && line.at("order") == order;
+    });
 }
 
 // 新输入优先，断线、缺口和自主预算均可阻止调度下一决策。
@@ -997,9 +1041,7 @@ std::string_view PartnerLoop::autonomous_wake() const {
     if (motion_ && motion_->awaiting_pickup && !motion_->feedback_offered && !motion_->stopping && !handoff_ &&
         !task_.correcting() && motion_->revision == task_.revision() &&
         (!motion_->plan_node || (plan_ && plan_->active && plan_->cancellation.empty() && !plan_->origin.is_null())) &&
-        std::ranges::any_of(dialogue_,[&](const auto& line) {
-            return line.at("speaker") == "player" && line.at("order") == motion_->order;
-        })) return "handoff.progress";
+        has_player_origin(motion_->order)) return "handoff.progress";
     if (plan_ && plan_->active) return {};
     if (handoff_ && !handoff_->receipt.is_null() && handoff_->receipt.at("status") == "exited") return "task.ready";
     if (follow_ && follow_->attention_pending && (!motion_ || motion_->skill == "follow")) return "follow.attention";
@@ -1042,7 +1084,9 @@ void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::s
 // 用固定分类封装已校验事实，消息正文大小保持在信箱上限内。
 void PartnerLoop::publish(std::string_view category, const Json& payload) {
     if (outbound_.size() >= 128) throw std::logic_error("MC partner: outbox capacity exhausted");
-    outbound_.push_back({category,payload.dump()});
+    auto framed = payload;
+    if (const auto result = fact_stream_.report(session_,category,payload)) framed["factReceiptError"] = result;
+    outbound_.push_back({category,framed.dump()});
 }
 
 // 交付实际退出的动作，每份回执保留原游戏、动作编号和效果类别。

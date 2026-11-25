@@ -818,6 +818,25 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
     return {{Role::assistant,R"({"internal":"waiting for the original stack"})"}};
 }
 
+// 固定响应从实际消息中重建绑定补丁，普通旧接口仍使用最后一份完整场景。
+// 步骤：识别当前接口 → 读取同一绑定的基线 → 按原序合入变化与关闭项。
+nlohmann::json gather_scene(const dfy::model::Request& request) {
+    using Json = nlohmann::json;
+    auto last = Json::parse(request.messages.back().content);
+    if (!last.contains("factFrame")) return last;
+    auto scene = Json::object();
+    for (const auto& message : request.messages) {
+        if (message.role != dfy::model::Role::user) continue;
+        auto data = Json::parse(message.content,nullptr,false);
+        if (!data.is_object() || !data.contains("factFrame")) continue;
+        const auto& frame = data.at("factFrame");
+        if (frame.at("scope") != last.at("factFrame").at("scope")) continue;
+        if (frame.at("mode") == "baseline") scene = Json::object();
+        for (const auto& key : frame.at("closed")) scene.erase(key.get<std::string>());
+        scene.update(data);
+    }
+    return scene;
+}
 // 用原玩家的备料委托连接实际采掘、会合和交物，插话只读取当前采掘工作。
 // 步骤：核对零库存并先回话 → 排列取得材料、与原玩家会合及交付 → 依原工作答进度和实收。
 dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
@@ -830,7 +849,7 @@ dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
     };
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
-        const auto input = Json::parse(last.content);
+        const auto input = gather_scene(request);
         if (input.at("trigger") == "plan.finished") {
             const auto& nodes = input.at("taskPlan").at("nodes");
             const auto& layers = input.at("planSettlements");

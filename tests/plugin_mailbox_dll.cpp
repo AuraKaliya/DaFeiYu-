@@ -198,8 +198,13 @@ void fact_binding(const fs::path& root) {
         const auto frame = Json::parse(request.messages.back().content);
         const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
         if (seq == 11) {
-            const auto& work = frame.at("hostWorkReceipts").at(0);
-            check(work.at("work") == "W17" && work.at("effect").at("inBag") == 3 &&
+            unsigned seen = 0;
+            for (const auto& message : request.messages) if (message.role == Role::user) {
+                const auto data = Json::parse(message.content);
+                for (const auto& work : data.value("hostWorkReceipts",Json::array()))
+                    if (work.at("work") == "W17" && work.at("effect").at("inBag") == 3) ++seen;
+            }
+            check(seen == 1 &&
                 request.messages.front().content.find("eight cobblestones") != std::string::npos,
                 "ninth intervening utterance lost unfinished goal, work or inventory");
         }

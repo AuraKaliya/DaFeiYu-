@@ -59,7 +59,8 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
   if (owner.toLowerCase() === 'dfycompanion') throw new Error('DfyCompanion 是陪伴账号，请使用自己的玩家名');
   const channel = randomUUID(), bridgeKey = randomBytes(32).toString('hex');
   const file = path.join(evidence, 'adapter.json');
-  fs.writeFileSync(path.join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey, playerThinking }));
+  fs.writeFileSync(path.join(settings, 'settings.json'), JSON.stringify({ channel, bridgeKey, playerThinking,
+    ...(fixture.factPilot ? { factPlayer: offlineId(owner) } : {}) }));
   fs.writeFileSync(file, JSON.stringify({ host: '127.0.0.1', port, username: 'DfyCompanion', auth: 'offline',
     mode: mode === '--probe' ? 'scenario' : 'partner', owner: offlineId(owner), channel, bridgeKey, places: {
       hillside: { label: '山脚', dimension: 'overworld', x: 12, y: -60, z: 0 },
@@ -313,7 +314,9 @@ async function rehearse(fixture, exe, pkg, mode, playerThinking) {
 
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
-  const [exe, pkg, mode, config, liveThinking] = process.argv.slice(2);
+  const [exe, pkg, requestedMode, config, liveThinking] = process.argv.slice(2);
+  const factPilot = requestedMode === '--handoff-facts-probe';
+  const mode = factPilot ? '--handoff-gather-probe' : requestedMode;
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
   if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
@@ -333,8 +336,11 @@ async function main() {
   httpd.listen(25581, '127.0.0.1');
   await once(httpd, 'listening');
   try {
-    await withPaper(fixture => mode === '--live' ? play(fixture, exe, pkg, mode, config, playerThinking) :
-      rehearse(fixture, exe, pkg, mode, playerThinking), true);
+    await withPaper(fixture => {
+      fixture.factPilot = factPilot;
+      return mode === '--live' ? play(fixture, exe, pkg, mode, config, playerThinking) :
+        rehearse(fixture, exe, pkg, mode, playerThinking);
+    }, true);
   }
   finally { httpd.close(); }
 }

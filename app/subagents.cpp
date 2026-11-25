@@ -28,6 +28,7 @@ struct Subagents::Slot {
     std::unique_ptr<BindingFacts> pending_facts;
     BindingWorks works;
     bool continuous_history = false;
+    std::uint64_t projected_receipt = 0, pending_receipt = 0;
 };
 
 // 固定正式宿主的服务来源，各槽单独创建上下文。
@@ -79,15 +80,19 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         pending = std::make_unique<BindingFacts>(slot.facts);
         const bool baseline = input.frame->baseline || !slot.continuous_history;
         auto prompt = pending->apply(input,slot.request+1,baseline);
-        const auto works = slot.works.view(input.frame->epoch);
+        const auto after = baseline ? 0 : slot.projected_receipt;
+        const auto works = slot.works.view(input.frame->epoch,after);
         if (!works.empty()) {
             auto data = nlohmann::json::parse(prompt);
+            data["factFrame"]["workAfter"] = after;
+            data["factFrame"]["workThrough"] = slot.works.watermark();
             data["hostWorkReceipts"] = works;
             prompt = data.dump();
         }
         if (prompt.size() > 128*1024) throw std::length_error("subagent: projected input outside limit");
         input.prompt = std::move(prompt);
         input.replace_history = baseline;
+        slot.pending_receipt = slot.works.watermark();
     }
     slot.queued.emplace(std::move(input));
     slot.pending_facts = std::move(pending);
@@ -173,7 +178,11 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     options.replace_history = input.replace_history;
     slot.active = slot.session.begin(input.prompt,std::move(options));
     slot.continuous_history = static_cast<bool>(slot.pending_facts);
-    if (slot.pending_facts) { slot.facts = std::move(*slot.pending_facts); slot.pending_facts.reset(); }
+    if (slot.pending_facts) {
+        slot.facts = std::move(*slot.pending_facts);
+        slot.pending_facts.reset();
+        slot.projected_receipt = slot.pending_receipt;
+    }
     if (log_) {
         try {
             const auto id = slot.active->run_id();

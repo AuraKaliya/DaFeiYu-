@@ -7,6 +7,7 @@ enum class PlayerThinking { inherit, off, low };
 struct BridgeConfig {
     std::string channel, key, controller;
     PlayerThinking player_thinking = PlayerThinking::inherit;
+    std::string fact_player;
 };
 // 为配对的角色生成幂等接管请求，或按控制实例释放原监听。
 std::string control_request(std::string_view id, std::string_view key, std::string_view arguments);
