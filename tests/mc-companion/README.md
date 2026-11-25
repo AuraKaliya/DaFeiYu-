@@ -7,8 +7,8 @@
 在已准备好的隔离 Paper 场地运行以下四局。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。每次只运行一局。
 
 ~~~powershell
-$probe = '.\build\windows-tests\tests\Debug\dfy_mc_playtest.exe'
-$plugin = '.\build\windows-tests\plugins\mc\Debug\mc.companion'
+$probe = '.\build\rebuild\windows-tests\tests\Debug\dfy_mc_playtest.exe'
+$plugin = '.\build\rebuild\windows-tests\plugins\mc\Debug\mc.companion'
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-facts-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-chest-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-full-probe
@@ -22,7 +22,7 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 准备好 G02 运行目录和观察端后，构建 Debug 目标 `dafeiyu`、`dfy_mc_companion`。在项目根目录通过 Windows PowerShell 5.1 或 PowerShell 7 启动，`-BuildDirectory` 指向实际的构建目录。
 
 ```powershell
-.\tests\mc-companion\start-playtest.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\windows-tests'
+.\tests\mc-companion\start-playtest.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\rebuild\windows-tests'
 ```
 
 正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
@@ -38,7 +38,7 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
 
 ```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence
 ```
 
 脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
@@ -46,7 +46,7 @@ node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\D
 「跟随中挖一格」与「取材后补四格」的后续基线可传入两局证据目录：
 
 ```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\windows-tests\bin\Debug\dafeiyu.exe <run-FX9QKV目录> <run-rg8RdZ目录>
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe <run-FX9QKV目录> <run-rg8RdZ目录>
 ```
 
 分别核对原跟随工作号、挖掘后的实际入包、取材确认过期或观察被新事件中断，以及两局均无放置回执。可独立重跑的六轮使用录制模型响应。外部事件导致的回合退出以原 Trace 与游戏回执为准。
@@ -89,7 +89,7 @@ DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同�
 使用 `19f070c` 构建的 `dafeiyu`，将本局原始证据目录交给下列命令。仓库记录校验指纹与复现断言，原始模型请求、回复和游戏记录保存在体验目录。
 
 ```powershell
-node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence\run-4VDQ2M
+node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence\run-4VDQ2M
 ```
 
 工具核对 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log` 的原件。正式离线回放器用录制的模型响应和工具回执重跑 14 轮，逐次比较送模上下文、工具目录、调用及结果。游戏侧效果由原动作回执与控制台交叉核对。
@@ -207,7 +207,7 @@ ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^p
 工程回归可在准备好的**独立 Paper 夹具**中运行模式 `--wall-probe`。沿用探针的 Java、Paper、Node 与素材设置，把 `DFY_MC_TEST_ROOT` 指向隔离目录，加载固定模型的 `dfy_mc_playtest` 和当前插件包。协议玩家离开原缺口后，核对错误候选被拦下、原缺口补齐、门洞在批准前保持两格为空、批准后读回门的上下两格。输出中的 `DFY_TRACE` 和同目录的 `game-actions.jsonl` 提供复盘材料。
 
 ```powershell
-node .\tests\mc-companion\playtest.cjs .\build\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
+node .\tests\mc-companion\playtest.cjs .\build\rebuild\windows-tests\tests\Debug\dfy_mc_playtest.exe .\build\rebuild\windows-tests\plugins\mc\Debug\mc.companion --wall-probe
 ```
 
 同一墙体夹具支持三种 ASK 验证，替换命令末尾的模式即可。每次单独启动一个本地 Paper 实例。协议玩家收到一次实际询问，按呈现的编号答复“靠河那段，留木门”，再确认原门洞候选。

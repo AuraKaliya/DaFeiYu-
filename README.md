@@ -109,24 +109,24 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
 | Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application/application_lifecycle.cpp) |
 
-VS 按 App、Agent、Model、Platform、SDK、Plugins、可选 Tests 分组，只建立已实现目标。正式会话使用有界事件通道，独立同步 `Bus` 有自己的测试。
+源码按模块组织，VS 目标按职责分组。修改事件存储时，可在 Events 模块内找到实现和单模块测试，从根目录按目标构建。涉及宿主加载插件或跨进程投递的场景在顶层测试树中。[CMake 构建树](docs/architecture.md#cmake-构建树) · [Events 测试](modules/events/tests/CMakeLists.txt) · [跨模块测试](tests/CMakeLists.txt)
 
 ## 验证方式
 
-开发中按影响范围构建目标、运行相关测试；全量只在最终验收提交时执行。完整验收可复现为：
+开发中按影响范围构建并运行相关测试。例如，使用 `windows-tests` 构建预设可定向构建 `dfy_event_store_tests`，再用 `ctest --preset windows-tests -R '^events\.store$'` 运行。完整离线验收使用包含桌面目标的 `windows-ui` 配置，分别构建两种模式的全部目标。
 
 ```powershell
-cmake --preset windows-tests
-cmake --build build/rebuild/windows-tests --config Debug
-ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure
-cmake --build build/rebuild/windows-tests --config Release
-ctest --test-dir build/rebuild/windows-tests -C Release --output-on-failure
+cmake --preset windows-ui
+cmake --build build/rebuild/windows-ui --config Debug --parallel 4
+ctest --test-dir build/rebuild/windows-ui -C Debug --output-on-failure
+cmake --build build/rebuild/windows-ui --config Release --parallel 4
+ctest --test-dir build/rebuild/windows-ui -C Release --output-on-failure
 ```
 
 构建 Release 程序及示例后，可在 PowerShell 7 中运行独立安装目录检查。
 
 ```powershell
-.\scripts\verify-agent-package.ps1 -Build .\build\rebuild\windows-tests
+.\scripts\verify-agent-package.ps1 -Build .\build\rebuild\windows-ui
 ```
 
 开发、回归和最终验收使用固定模型响应或传输替身，按功能使用真实线程、Windows 管道、符号链接、DLL 和隔离 Paper。真实模型选工具、理解现场等表现按「仅记录，不执行」处理。游戏试玩和固定响应场地分别有独立入口。旧真实服务脚本及结果可从 Git 历史回查。[玩家试玩](tests/mc-companion/README.md#首次真人体验) · [固定响应场地](tests/mc-companion/README.md#固定响应验收场地)

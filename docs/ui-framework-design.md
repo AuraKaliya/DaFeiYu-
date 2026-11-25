@@ -95,7 +95,7 @@ flowchart TB
 
 | 拟定位置 | 职责 |
 |---|---|
-| `app/` | 本体常驻、主会话、消息持久化、配置、只读投影及实例的 UI 注册目录。复用现有 Application、Conversation、MailboxIntake |
+| `apps/host/` | 本体常驻、主会话、消息持久化、配置、只读投影及实例的 UI 注册目录。复用现有 Application、Conversation、MailboxIntake |
 | `apps/desktop/` | 原生窗口、UI 线程、客户端连接与视图回收 |
 | `apps/desktop/src/host/` | WebView2 消息来源校验、授权绑定、视图及资源回收，经本地连接读取注册目录 |
 | `apps/desktop/web/` | 主界面、组件库、声明式渲染器和自定义页面客户端接口 |

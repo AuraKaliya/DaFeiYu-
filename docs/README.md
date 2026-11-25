@@ -4,6 +4,7 @@
 
 | 想做什么 | 阅读入口 |
 | --- | --- |
+| 定位 CMake 目标、模块测试与集成场景 | [工程构建树](architecture.md#cmake-构建树) · [一键构建与个人预设](../README.md#运行与构建) |
 | 核对各模块做到哪一步，查看架构图和流程图 | [当前开发进度](architecture.md#当前开发进度) · [架构图与模块职责](architecture.md#架构图) |
 | 核对主 Agent、插件子 Agent、信箱与 Hook 的运行边界 | [当前边界](architecture.md#当前边界) |
 | 比较 Agent 回合提示词与上下文设计，评审大肥鱼的首步应用 | [Agent 循环的提示词设计与大肥鱼的应用](agent-loop-prompt-design.md) |

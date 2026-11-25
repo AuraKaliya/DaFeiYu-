@@ -28,6 +28,17 @@ MC 单玩家试点在游戏动作前向宿主预留原工作号。游戏桥接�
 
 此前的隔离 Paper 实服验收记录位于 `0588db3`，当时以固定模型响应和独立协议玩家核对局内收件与发言。真实模型选工具、理解现场和思考耗时按约定「仅记录，不执行」。[MC 验收记录](mc-companion-development-plan.md#最近一次验收) · [测试原则](../AGENTS.md#测试原则)
 
+## CMake 构建树
+
+根工程先准备第三方依赖，再装配 SDK、本体模块、发布插件和应用。启用测试时，各模块在自己的目录注册 CTest，最后接入跨模块场景。[根工程](../CMakeLists.txt) · [构建命令与预设](../README.md#运行与构建)
+
+| 目录 | 维护的构建单元 |
+| --- | --- |
+| [modules/](../modules/CMakeLists.txt) | 平台、运行时、事件、模型、Agent、插件宿主、插件工具和原生托盘。一个模块可提供多个目标，例如 Events 提供 `dfy_events` 和 `dfy_event_streams`，共用模块内的测试。 |
+| [apps/](../apps/CMakeLists.txt) | `host` 提供应用和后台管理服务，`terminal` 构建终端库与 `dafeiyu`，`desktop` 拥有可选的 WebView2 程序、前端资源和原生探针。 |
+| [sdk/](../sdk/CMakeLists.txt) 与 [plugins/](../plugins/CMakeLists.txt) | SDK 维护公开 C ABI 和验证夹具。发布插件维护自身实现、包资源与测试。观察、状态面板两个示例同时随 SDK 提供独立构建入口。 |
+| [tests/](../tests/CMakeLists.txt) | 按应用、Agent 与原生工具、插件、桌面、MC 陪伴组织跨模块场景。测试程序统一输出到构建树的 `tests/<配置>/`，供 CTest、回放和试玩脚本定位。 |
+
 ## 架构图
 
 箭头表示调用或数据方向。普通终端和桌面窗口通过同目录的后台程序访问本体。专用游戏宿主创建自己的应用实例。桌面的 `--room-preview` 直接显示固定样本。
