@@ -1,0 +1,87 @@
+#include "main_messages.hpp"
+#include "application.hpp"
+#include "run_log.hpp"
+#include <dafeiyu/digest.hpp>
+#include <dafeiyu/utf8.hpp>
+
+namespace dfy::app {
+using Json = nlohmann::json;
+namespace {
+const std::string reply_id = "main/reply";
+}
+
+// 绑定原后台的持久消息库与诊断，支持结构化调用的后端可在对话回合显式发言。
+// 步骤：固定渠道所有者 → 注册面向当前主聊天的发言契约 → 绑定业务线程执行入口。
+MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance,
+    SoftwareLog* log, RunLog* trace, bool structured)
+    : app_(application),store_(std::move(store)),instance_(std::move(instance)),log_(log),trace_(trace) {
+    if (!structured) return;
+    reply_tools_ = std::make_unique<agent::ToolCatalog>(1);
+    reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",
+        "向当前主聊天发送一条发言或追问。text 为用户将看到的原文。回执给出投递号和写入状态。",
+        R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})"},
+        true,true},[this](const agent::ToolInvocation& call) { return speak(call); });
+}
+
+// 为新对话重置防重范围，已有专用工具与原调用的参数授权仍由该入口持有。
+// 步骤：归还上轮发言记录 → 核对入口与后端能力 → 固定工具及当轮说明。
+void MainMessages::prepare_output(agent::RunOptions& options) {
+    explicit_deliveries_.clear();
+    if (!reply_tools_ || options.tools || options.planning) return;
+    options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
+    options.system_instructions += " 普通最终文本会交给主聊天用户。需要提前发言或追问时可调用 main_reply。";
+}
+
+// 将一次写入与真实渠道消息号关联，Trace 只记录可复查的投递身份。
+// 步骤：按原投递号写入 → 关联首次提交的消息与诊断 → 返回原消息号。
+std::int64_t MainMessages::commit_reply(const Json& envelope) {
+    const auto& key = envelope.at("delivery").get_ref<const std::string&>();
+    const auto saved = store_->put("main",key,envelope,{{"state","delivered"}});
+    if (saved.created && trace_) {
+        Json event{{"session",std::stoull(envelope.at("session").get<std::string>())},
+            {"run",std::stoull(envelope.at("turn").get<std::string>())},{"delivery",key},{"message",std::to_string(saved.message.id)}};
+        if (envelope.contains("replyTo")) event["replyTo"] = envelope.at("replyTo");
+        trace_->append("dialogue.reply_delivered",std::move(event));
+    }
+    return saved.message.id;
+}
+
+// 所有面向用户的主会话发言沿同一持久写口取得回执。
+// 步骤：绑定原回合与用户消息 → 提交一次渠道发言 → 失败时保留同号原件供补写。
+Json MainMessages::reply(agent::RunId run, const std::string& suffix, const std::string& text) {
+    const auto key = instance_+"/"+std::to_string(run.session)+"/"+std::to_string(run.sequence)+"/"+suffix;
+    Json envelope{{"sender","assistant"},{"route","reply"},{"text",text},{"delivery",key},{"instance",instance_},
+        {"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)}};
+    if (parent_.first==run) envelope["replyTo"] = std::to_string(parent_.second);
+
+    std::int64_t message;
+    try { message = commit_reply(envelope); }
+    catch (const std::runtime_error&) {
+        if (replies_.try_emplace(key,std::move(envelope)).second) storage_failed();
+        retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+        return {{"state","pending"},{"delivery",key}};
+    }
+    return {{"state","delivered"},{"delivery",key},{"message",std::to_string(message)}};
+}
+
+// 复用同一回合中同文显式发言的原投递，否则交付本轮独立的最终答复。
+void MainMessages::final_reply(agent::RunId run, const std::string& text) {
+    const auto spoken = explicit_deliveries_.find(text);
+    if (spoken==explicit_deliveries_.end()) reply(run,"final",text);
+    else if (trace_) trace_->append("dialogue.reply_reused",{{"session",run.session},{"run",run.sequence},{"delivery",spoken->second}});
+}
+
+// 在工具执行时按原调用登记发言，重复的最终文本复用该投递。
+// 步骤：核对实际正文 → 由回合、步骤和调用号固定身份 → 返回原写入状态。
+std::unique_ptr<agent::ToolWork> MainMessages::speak(const agent::ToolInvocation& invocation) {
+    const auto text = Json::parse(invocation.call.arguments).at("text").get<std::string>();
+    if (text.size()>dialogue_text_limit || text.find_first_not_of(" \t\r\n")==text.npos || !runtime::valid_utf8(text))
+        return agent::completed_tool({false,agent::ToolEffect::not_applied,"invalid reply text",agent::ToolError::failed});
+    const auto step = invocation.attempt.step;
+    const auto receipt = reply(step.run,"tool-"+platform::sha256(std::to_string(step.sequence)+"/"+invocation.call.id),text);
+    explicit_deliveries_.insert_or_assign(text,receipt.at("delivery").get<std::string>());
+    const bool delivered = receipt.at("state")=="delivered";
+    return agent::completed_tool({delivered,delivered ? agent::ToolEffect::applied : agent::ToolEffect::unknown,
+        receipt.dump(),delivered ? agent::ToolError::none : agent::ToolError::unavailable});
+}
+}

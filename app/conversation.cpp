@@ -19,6 +19,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
+    if (player_facing && main_messages_) main_messages_->prepare_output(options);
     if (!options.version_labels.prompt_template && !options.system_instructions.empty())
         options.version_labels.prompt_template = "sha256:"+platform::sha256(options.system_instructions);
     if (player_facing && persona_) persona_->apply(options);

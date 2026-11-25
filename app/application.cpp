@@ -106,7 +106,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 
 // 数据目录所有者在开始处理命令前绑定唯一的持久消息入口。
 void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log) {
-    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log);
+    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log,run_log_.get(),model_backend_.structured);
     conversation_.main_messages_ = main_messages_.get();
     main_messages_->restore();
 }

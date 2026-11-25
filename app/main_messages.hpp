@@ -7,6 +7,7 @@
 namespace dfy::app {
 class Application;
 class SoftwareLog;
+class RunLog;
 // 固定原文与目的地，普通发送跨启动有效，追加与队列绑定原实例和回合。
 nlohmann::json user_envelope(std::string_view route, const std::string& text, const std::string& instance,
     agent::RunId target, std::optional<std::int64_t> source_utc_ms = {});
@@ -14,8 +15,10 @@ nlohmann::json user_envelope(std::string_view route, const std::string& text, co
 class MainMessages {
   public:
     // 绑定独占目录的当前实例和原业务线程。
-    MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log)
-        : app_(application), store_(std::move(store)), instance_(std::move(instance)), log_(log) {}
+    MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
+        RunLog* trace, bool structured);
+    // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
+    void prepare_output(agent::RunOptions& options);
     // 将已经入库且尚未投递的原文交付给其指定入口，保留独立的实际回执。
     nlohmann::json deliver(std::int64_t id, const nlohmann::json& envelope);
     // 在终端命令空间按原号入库并交付普通输入。
@@ -39,10 +42,21 @@ class MainMessages {
   private:
     // 保存最新已核实的投递状态，暂时写盘失败时保留原消息号。
     void publish(std::int64_t id, const nlohmann::json& receipt);
+    // 校验一次显式发言，将实际写入状态交还原工具调用。
+    std::unique_ptr<agent::ToolWork> speak(const agent::ToolInvocation& invocation);
+    // 使用原回合及渠道投递号保存发言，写盘失败时保留原件。
+    nlohmann::json reply(agent::RunId run, const std::string& suffix, const std::string& text);
+    // 按本轮的实际发言裁定是否需要另行交付最终文本。
+    void final_reply(agent::RunId run, const std::string& text);
+    // 提交原投递并以数据库消息号记录渠道实效。
+    std::int64_t commit_reply(const nlohmann::json& envelope);
     Application& app_;
     std::shared_ptr<MessageStore> store_;
     std::string instance_;
     SoftwareLog* log_;
+    RunLog* trace_;
+    std::unique_ptr<agent::ToolCatalog> reply_tools_;
+    std::map<std::string,std::string> explicit_deliveries_;
     std::map<std::int64_t,nlohmann::json> retry_;
     std::map<std::uint64_t,std::int64_t> queued_;
     std::map<std::pair<std::uint64_t,std::uint64_t>,std::int64_t> appended_;
