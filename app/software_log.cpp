@@ -19,7 +19,7 @@ using namespace std::chrono;
 constexpr std::array roles{"host","window","terminal"};
 constexpr std::array events{"process.started","process.exiting","host.listening","host.launch","client.connected",
     "client.disconnected","stop.submitted","stop.accepted","stop.reply","profile.claim","configuration.read",
-    "window.closing","webview.released","profile.cleaned","window.destroyed"};
+    "window.closing","webview.released","profile.cleaned","window.destroyed","conversation.drain","plugins.drain"};
 constexpr std::array results{"started","ok","failed","accepted","busy"};
 constexpr std::size_t queue_limit = 128;
 
@@ -56,6 +56,8 @@ nlohmann::json diagnostic_fields(const SoftwareFields& fields) {
     if (fields.exit_code) row["exitCode"] = *fields.exit_code;
     if (fields.duration_ms) row["durationMs"] = *fields.duration_ms;
     if (fields.count) row["count"] = *fields.count;
+    if (fields.session) row["session"] = fields.session;
+    if (fields.turn) row["turn"] = fields.turn;
     return row;
 }
 }

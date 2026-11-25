@@ -1,6 +1,7 @@
 #include "management/resident.hpp"
 #include <nlohmann/json.hpp>
 #include <future>
+#include <fstream>
 #include <iostream>
 #include <semaphore>
 
@@ -20,21 +21,43 @@ void wait_until(Predicate ready) {
     throw std::runtime_error("resident state timed out");
 }
 
-// 通过本地连接验证所有观察者离开期间，原委托仍能在同一本体上完成。
-// 步骤：启动隔离宿主 → 受控接纳后断开 → 新观察者读回原消息 → 按所属实例关闭并核对退出。
+// 复查只有一次退出接纳，而且收尾实效包含被阻塞的原回合及实际等待。
+// 步骤：按原实例筛选日志 → 核对回合与耗时 → 检查接纳次数及隐私字段。
+void verify_stop_log(const std::filesystem::path& data, const std::string& instance, const Json& turn) {
+    int accepted = 0;
+    bool drained = false;
+    for (const auto& file : std::filesystem::directory_iterator(data/"logs")) {
+        std::ifstream input(file.path(),std::ios::binary);
+        for (std::string line; std::getline(input,line); ) {
+            if (line.find("synthetic-private")!=std::string::npos) throw std::runtime_error("private dialogue in process log");
+            const auto row = Json::parse(line);
+            if (row.value("instance",std::string{})!=instance || row.value("operation",std::string{})!="stop-"+instance) continue;
+            if (row.at("event")=="stop.accepted") ++accepted;
+            if (row.at("event")=="conversation.drain" && row.at("result")=="ok")
+                drained = row.at("durationMs").get<int>()>=80 && row.at("session").dump()==turn.at("session").get<std::string>() &&
+                    row.at("turn").dump()==turn.at("turn").get<std::string>();
+        }
+    }
+    if (accepted!=1 || !drained) throw std::runtime_error("stop evidence did not match original work");
+}
+
+// 让独立观察者先补读原委托，再在下一回合仍在工作时显式退出。
+// 步骤：启动隔离宿主 → 接纳后断开与重连 → 在实际调用退出前核对收尾 → 按原实例复查持久回执。
 void reconnect(const std::filesystem::path& root) {
     const auto data = root/"user", plugins = root/"plugins";
     std::filesystem::create_directories(plugins);
     std::binary_semaphore started(0), release(0);
     auto server = std::async(std::launch::async,[&] {
-        return management::serve_resident(data,"fixture",[&] {
+        app::SoftwareLog software(data,app::SoftwareRole::host);
+        const int code = management::serve_resident(data,"fixture",[&] {
             return std::make_unique<app::Application>(model::Config{},plugins,data,model::Backend{
                 [&](const auto&,const auto& input) {
                     started.release();
                     if (!release.try_acquire_for(5s)) throw std::runtime_error("gate timed out");
                     return model::Response{{model::Role::assistant,"回复："+input.messages.back().content}};
                 }});
-        });
+        },{},&software);
+        return software.exiting(code);
     });
     const auto ask = [&](Json request) { return management::resident_request(data,std::move(request)); };
     std::string instance;
@@ -57,8 +80,28 @@ void reconnect(const std::filesystem::path& root) {
             return turns.size()==1 && turns.at(0).at("answer")=="回复：材料" && turns.at(0).at("exit")=="succeeded" &&
                 state.at("latestCommand")=="0";
         });
-        (void)ask({{"op","stop"},{"instance",instance}});
+        auto slow = message;
+        slow["text"] = "synthetic-private-chat";
+        (void)ask({{"op","request"},{"client",second},{"body",slow}});
+        if (!started.try_acquire_for(2s)) throw std::runtime_error("second model did not start");
+        Json turn;
+        wait_until([&] {
+            const auto state = ask({{"op","request"},{"client",second},{"body",read}});
+            if (state.at("turns").size()!=2) return false;
+            turn = state.at("turns").back();
+            return turn.at("exit")=="pending";
+        });
+        const auto accepted = ask({{"op","stop"},{"instance",instance}});
+        if (ask({{"op","stop"},{"instance",instance}})!=accepted) throw std::runtime_error("repeated stop changed identity");
+        wait_until([&] {
+            const auto status = ask({{"op","status"}});
+            const auto& progress = status.at("progress");
+            return status.at("operation")==accepted.at("operation") && progress.at("stage")=="conversation" &&
+                progress.at("session")==turn.at("session") && progress.at("turn")==turn.at("turn") && progress.at("elapsedMs")>=80;
+        });
+        release.release();
         if (server.get()!=0) throw std::runtime_error("resident failed to exit");
+        verify_stop_log(data,instance,turn);
     } catch (...) {
         if (server.valid() && !instance.empty()) {
             try { (void)ask({{"op","stop"},{"instance",instance}}); } catch (...) {}

@@ -4,6 +4,7 @@
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <random>
+#include <array>
 #include <windows.h>
 
 namespace dfy::management {
@@ -17,14 +18,25 @@ using app::SoftwareResult;
 Json handle(Host& host, const std::string& identity, const std::string& instance, bool& stopping, const Json& request, app::SoftwareLog* log) {
     if (!request.is_object() || request.at("v")!=1) throw std::invalid_argument("invalid protocol");
     const auto& op = request.at("op").get_ref<const std::string&>();
-    if (op=="status" && request.size()==2)
-        return {{"state",stopping ? "stopping" : host.dialogue().display ? "running" : "starting"},
+    if (op=="status" && request.size()==2) {
+        Json status{{"state",stopping ? "stopping" : host.dialogue().display ? "running" : "starting"},
             {"instance",instance},{"pid",GetCurrentProcessId()},{"definition",identity}};
+        if (stopping) {
+            constexpr std::array phases{"requested","conversation","plugins","complete","failed"};
+            const auto progress = host.stop_progress();
+            const auto elapsed = progress.phase==StopPhase::requested ? 0 : std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-progress.since).count();
+            status["progress"] = {{"stage",phases.at(static_cast<std::size_t>(progress.phase))},{"elapsedMs",elapsed},
+                {"session",std::to_string(progress.run.session)},{"turn",std::to_string(progress.run.sequence)}};
+            status["operation"] = "stop-"+instance;
+        }
+        return status;
+    }
     if (op=="stop" && request.size()==3 && request.at("instance")==instance) {
         if (!stopping) {
             stopping = true;
             if (log) log->record(SoftwareEvent::stop_accepted,SoftwareResult::accepted,{.instance=instance,.shutdown=true});
-            host.close();
+            host.close(true);
         }
         return {{"state","stopping"},{"instance",instance},{"operation","stop-"+instance}};
     }
@@ -70,7 +82,7 @@ int serve_resident(const std::filesystem::path& profile, const std::string& iden
         log->bind(instance);
         log->record(SoftwareEvent::host_listening,SoftwareResult::ok);
     }
-    Host host(std::move(open));
+    Host host(std::move(open),{},log);
     bool stopping = false;
     while (!host.exited()) {
         if (stop.stop_requested() && !stopping) { stopping = true; host.close(); }

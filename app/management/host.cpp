@@ -1,4 +1,5 @@
 #include "host.hpp"
+#include "../software_log.hpp"
 #include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <cstdio>
@@ -60,10 +61,15 @@ DialogueReceipt apply_dialogue(app::Application& application, const DialogueComm
     return {command.id,State::accepted,command.target};
 }
 
+}
+
 // 先等待会话退出，再推进原插件停止及回收边界。
 // 步骤：关闭会话接纳 → 等待实际退出 → 有界推进插件关闭并检查结果。
-void shutdown(app::Application& application) {
+void Host::shutdown(app::Application& application) {
     auto& conversation = application.conversation();
+    const auto current = conversation.status();
+    const auto run = current && current->exit==runtime::OperationState::pending ? agent::RunId{current->session,current->turn} : agent::RunId{};
+    set_stop_phase(StopPhase::conversation,run);
     conversation.close();
     while (!conversation.closed()) {
         application.advance_plugins();
@@ -71,6 +77,7 @@ void shutdown(app::Application& application) {
         std::this_thread::sleep_for(interval);
     }
 
+    set_stop_phase(StopPhase::plugins);
     const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(5);
     auto result = application.close_plugins();
     while (result != plugins::ShutdownResult::closed) {
@@ -80,12 +87,44 @@ void shutdown(app::Application& application) {
         std::this_thread::sleep_for(interval);
         result = application.close_plugins();
     }
-}
+    set_stop_phase(StopPhase::complete);
 }
 
 // 将创建和推进入口移交新业务线程，线程的寿命短于快照存储。
-Host::Host(Open open, Drive drive)
-    : worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+Host::Host(Open open, Drive drive, app::SoftwareLog* software)
+    : software_(software), worker_([this,open = std::move(open),drive = std::move(drive)](std::stop_token stop) { run(stop,open,drive); }) {}
+
+// 在通知业务线程前固定本次停止是否源自显式退出。
+void Host::close(bool explicit_request) noexcept {
+    if (explicit_request) explicit_stop_ = true;
+    worker_.request_stop();
+}
+
+// 复制最近发布的阶段、开始点和等待对象。
+StopProgress Host::stop_progress() const {
+    std::lock_guard lock(mutex_);
+    return progress_;
+}
+
+// 按实际业务边界发布等待对象，并记录上一个阶段结束时的原回合和耗时。
+// 步骤：原子替换阶段快照 → 结算原阶段 → 登记新的等待对象。
+void Host::set_stop_phase(StopPhase phase, agent::RunId run) {
+    const auto now = std::chrono::steady_clock::now();
+    StopProgress previous;
+    {
+        std::lock_guard lock(mutex_);
+        previous = std::exchange(progress_,StopProgress{phase,run,now});
+    }
+    if (!software_) return;
+    const auto event = [](StopPhase item) { return item==StopPhase::conversation ? app::SoftwareEvent::conversation_drain : app::SoftwareEvent::plugins_drain; };
+    if (previous.phase==StopPhase::conversation || previous.phase==StopPhase::plugins) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now-previous.since).count();
+        software_->record(event(previous.phase),phase==StopPhase::failed ? app::SoftwareResult::failed : app::SoftwareResult::ok,
+            {.shutdown=explicit_stop_.load(),.duration_ms=elapsed,.session=previous.run.session,.turn=previous.run.sequence});
+    }
+    if (phase==StopPhase::conversation || phase==StopPhase::plugins)
+        software_->record(event(phase),app::SoftwareResult::started,{.shutdown=explicit_stop_.load(),.session=run.session,.turn=run.sequence});
+}
 
 // 返回脱离业务对象寿命的当前值。
 std::optional<app::RunStatusSnapshot> Host::snapshot() const {
@@ -251,8 +290,8 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             std::this_thread::sleep_for(interval);
         }
         shutdown(*application);
-    } catch (const std::exception& error) { failed_ = true; std::fprintf(stderr,"UI application host: %s\n",error.what()); }
-    catch (...) { failed_ = true; }
+    } catch (const std::exception& error) { failed_ = true; set_stop_phase(StopPhase::failed); std::fprintf(stderr,"UI application host: %s\n",error.what()); }
+    catch (...) { failed_ = true; set_stop_phase(StopPhase::failed); }
     exited_ = true;
 }
 }

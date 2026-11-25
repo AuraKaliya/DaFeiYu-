@@ -9,14 +9,21 @@
 #include <map>
 #include <thread>
 
+namespace dfy::app { class SoftwareLog; }
 namespace dfy::management {
+enum class StopPhase { requested, conversation, plugins, complete, failed };
+struct StopProgress {
+    StopPhase phase = StopPhase::requested;
+    agent::RunId run{};
+    std::chrono::steady_clock::time_point since{};
+};
 // 业务线程独占应用服务，观察端可独立读取快照或离开。
 class Host {
   public:
     using Open = std::function<std::unique_ptr<app::Application>()>;
     using Drive = std::function<void(app::Application&)>;
     // 在业务线程创建应用，按原顺序推进会话与插件。
-    explicit Host(Open open, Drive drive = {});
+    explicit Host(Open open, Drive drive = {}, app::SoftwareLog* software = nullptr);
     // 只复制最近发布的快照，锁内不调用应用服务。
     std::optional<app::RunStatusSnapshot> snapshot() const;
     // 复制业务线程已经核实的房间与身体位置，无需唤醒主会话。
@@ -32,7 +39,9 @@ class Host {
     // 核对命令编号、种类、目标和原话，复用同一命令的回执。
     DialogueReceipt submit_dialogue(DialogueCommand command);
     // 请求业务线程开始有序停止，实际退出由调用方后续查询。
-    void close() noexcept { worker_.request_stop(); }
+    void close(bool explicit_request = false) noexcept;
+    // 在关闭期间复制最近由业务线程核实的等待阶段和原回合。
+    StopProgress stop_progress() const;
     // 查询业务线程是否已经离开应用的推进和收尾阶段。
     bool exited() const noexcept { return exited_; }
     // 查询初始化、推进或退出是否出现宿主错误。
@@ -48,6 +57,10 @@ class Host {
     void advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot);
     // 推进原应用服务、发布值快照并在拥有线程上完成关闭。
     void run(std::stop_token stop, const Open& open, const Drive& drive) noexcept;
+    // 在原拥有线程等待会话与插件实际退出，按边界发布收尾进展。
+    void shutdown(app::Application& application);
+    // 发布新阶段，结算原阶段的耗时与实效。
+    void set_stop_phase(StopPhase phase, agent::RunId run = {});
 
     mutable std::mutex mutex_;
     std::optional<app::RunStatusSnapshot> snapshot_;
@@ -56,6 +69,9 @@ class Host {
     std::optional<DialogueCommand> pending_, stop_command_;
     mutable std::map<std::string,Client> clients_{{"",{}}};
     bool can_submit_ = false;
+    StopProgress progress_;
+    app::SoftwareLog* software_;
+    std::atomic_bool explicit_stop_ = false;
     std::atomic_bool exited_ = false, failed_ = false;
     std::jthread worker_;
 };
