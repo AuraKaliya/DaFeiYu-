@@ -43,7 +43,8 @@ Json handle(Host& host, const std::string& identity, const std::string& instance
         }
         return status;
     }
-    if (op=="stop" && request.size()==3 && request.at("instance")==instance) {
+    if (op=="stop" && request.size()==3) {
+        if (request.at("instance")!=instance) throw std::invalid_argument("host instance differs");
         if (intent.accept()) {
             stopping = true;
             if (log) log->record(SoftwareEvent::stop_accepted,SoftwareResult::accepted,{.instance=instance,.shutdown=true});
