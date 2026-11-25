@@ -8,6 +8,7 @@ namespace dfy::plugins { class PluginManager; }
 namespace dfy::app {
 inline constexpr std::size_t dialogue_display_byte_limit = 2*1024*1024;
 struct PersonaProfile;
+class MainMessages;
 struct CompletedTurn {
     agent::TurnDiagnostics status;
     std::string answer;
@@ -27,6 +28,7 @@ struct QueuedDialogue {
     std::uint64_t message;
     runtime::DomainId session;
     std::string text;
+    events::EventId mail{};
 };
 struct ConversationDisplay {
     std::uint64_t revision = 0;
@@ -94,5 +96,7 @@ class Conversation {
     ConversationDisplay display_;
     std::size_t display_bytes_ = 0;
     bool reported_ = false;
+    MainMessages* main_messages_ = nullptr;
+    bool user_output_ = false;
 };
 }

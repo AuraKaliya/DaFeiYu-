@@ -37,6 +37,10 @@ add_executable(dfy_message_protocol_tests message_protocol.cpp)
 target_link_libraries(dfy_message_protocol_tests PRIVATE dfy_management dfy_build_options)
 set_target_properties(dfy_message_protocol_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.message_protocol COMMAND dfy_message_protocol_tests "${CMAKE_CURRENT_BINARY_DIR}/message-protocol")
+add_executable(dfy_persistent_dialogue_tests persistent_dialogue.cpp)
+target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+set_target_properties(dfy_persistent_dialogue_tests PROPERTIES FOLDER Tests)
+add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
 
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 add_executable(dfy_mc_playtest mc_playtest.cpp)

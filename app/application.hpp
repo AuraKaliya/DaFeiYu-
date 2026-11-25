@@ -200,8 +200,10 @@ class Application {
     void collect_tool_registration() noexcept;
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。
     void advance_verification();
-    // 从同一个直接对话信箱启动普通或排队的用户原话。
-    agent::TurnDiagnostics begin_dialogue(const std::string& text);
+    // 经过同一直接对话信箱接纳并取出原话与真实信封号。
+    std::pair<std::string,events::EventId> receive_dialogue(const std::string& text, const char* category);
+    // 从新收件或已经接收的队首原信启动主回合。
+    agent::TurnDiagnostics begin_dialogue(const std::string& text, events::EventId mail = {});
     // 在应用推进点核对前驱结果及实际退出，再从队首启动一个新回合。
     void advance_dialogue_queue();
 

@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "run_log.hpp"
+#include "main_messages.hpp"
 #include <dafeiyu/utf8.hpp>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -19,7 +20,8 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
     if (display.queue.size() >= dialogue_queue_limit || bytes > dialogue_queue_byte_limit) return {QueueAdmission::full};
 
     const auto message = queued_message_sequence_+1;
-    display.queue.push_back({message,after.session,std::move(text)});
+    auto received = receive_dialogue(text,"dialogue.enqueue");
+    display.queue.push_back({message,after.session,std::move(received.first),received.second});
     queued_message_sequence_ = message;
     if (display.queue.size() == 1) queued_after_ = after;
     ++display.revision;
@@ -43,6 +45,7 @@ bool Application::remove_queued_dialogue(std::uint64_t message) {
     auto& display = conversation_.display_;
     const auto item = std::ranges::find(display.queue,message,&QueuedDialogue::message);
     if (item == display.queue.end()) return false;
+    if (main_messages_) main_messages_->remove_queue(message);
     display.queue.erase(item);
     if (display.queue.empty()) {
         display.queue_paused = false;
@@ -72,7 +75,8 @@ void Application::advance_dialogue_queue() {
 
     const auto message = display.queue.front().message;
     try {
-        const auto started = begin_dialogue(display.queue.front().text);
+        if (main_messages_) main_messages_->start_queue(message);
+        const auto started = begin_dialogue(display.queue.front().text,display.queue.front().mail);
         queued_after_ = agent::RunId{started.session,started.turn};
     } catch (const std::exception&) {
         // 接纳失败保留原文，只有用户显式恢复才会再次尝试。
@@ -81,6 +85,7 @@ void Application::advance_dialogue_queue() {
         return;
     }
     display.turns.back().queued_message = message;
+    if (main_messages_) main_messages_->started_queue(message,*queued_after_);
     display.queue.erase(display.queue.begin());
     ++display.revision;
     if (run_log_) run_log_->append("dialogue.queue_started",{{"message",message},{"session",queued_after_->session},{"run",queued_after_->sequence}});
