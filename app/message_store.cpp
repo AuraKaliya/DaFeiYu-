@@ -137,6 +137,14 @@ std::optional<StoredMessage> MessageStore::find(std::string_view source, std::st
     std::lock_guard lock(state_->mutex);
     return lookup(state_->db,source,submission);
 }
+// 按已经入库的消息号读取唯一有效的最新回执。
+Json MessageStore::receipt(std::int64_t message) const {
+    std::lock_guard lock(state_->mutex);
+    Statement current(state_->db,"SELECT body FROM receipts WHERE rev=(SELECT latest FROM messages WHERE id=?)");
+    current.bind(1,message);
+    if (!current.next()) throw std::invalid_argument("messages: unknown message");
+    return Json::parse(current.text(0));
+}
 // 写入用户原话或模型发言时把初始投递状态与原文一起提交。
 // 步骤：核对原身份和载荷 → 插入首次消息 → 追加回执 → 写盘后交还身份。
 MessageAdmission MessageStore::put(std::string_view source, std::string_view submission, const Json& envelope, const Json& receipt) {

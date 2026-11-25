@@ -1,9 +1,13 @@
 #include "application.hpp"
 #include "main_messages.hpp"
+#include "management/resident.hpp"
+#include "management/protocol.hpp"
+#include "management/local_pipe.hpp"
 #include <winsqlite/winsqlite3.h>
 #include <windows.h>
 #include <iostream>
 #include <thread>
+#include <semaphore>
 
 namespace {
 using namespace dfy;
@@ -31,6 +35,65 @@ struct WriteLock {
     // 退出未提交的测试事务。
     ~WriteLock() { sqlite3_close(db); }
 };
+
+// 管道已确认原文后阻塞业务写盘，同一窗口和重连窗口都必须能查回最终接纳。
+// 步骤：暂停真实业务线程 → 从管道提交并加写锁 → 同号查回等待 → 解锁后复查两窗及调用数。
+void command_recovery(const std::filesystem::path& data) {
+    auto db = std::make_shared<app::MessageStore>(data);
+    std::atomic_uint calls{0}, ticks{0};
+    std::atomic_bool pause{false};
+    std::binary_semaphore parked(0), resume(0);
+    management::Host host([&] {
+        return std::make_unique<app::Application>(model::Config{},data/"empty",data,model::Backend{[&](const auto&,const auto&) {
+            ++calls;
+            return model::Response{{model::Role::assistant,"fixed"}};
+        }});
+    },[&](auto&) {
+        if (pause.exchange(false)) { parked.release(); if (!resume.try_acquire_for(std::chrono::seconds(8))) throw std::runtime_error("gate expired"); }
+        ++ticks;
+    },nullptr,db,"fixture");
+    const auto first = host.open_client(), second = host.open_client();
+    management::LocalPipe pipe(data);
+    std::jthread server([&](std::stop_token stop) {
+        while (!stop.stop_requested()) pipe.serve_one(std::chrono::milliseconds(50),[&](const std::string& body) {
+            const auto request = Json::parse(body);
+            return Json{{"v",1},{"result",management::dispatch(&host,request.at("body"),request.at("client"))}}.dump();
+        });
+    });
+    const auto call = [&](const std::string& client, Json body) {
+        body.update(Json{{"request","native"},{"version","1"}});
+        return management::resident_request(data,{{"op","request"},{"client",client},{"body",body}}).at("receipt").get<Json>();
+    };
+    const Json submit{{"type","dialogue.submit"},{"command","1"},{"text","locked original"},{"submission","original"}};
+    const Json read{{"type","dialogue.read"},{"command","1"},{"revision",""}};
+    const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(15);
+    while (!host.dialogue().display && std::chrono::steady_clock::now()<end) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    pause = true;
+    if (!parked.try_acquire_for(std::chrono::seconds(3))) throw std::runtime_error("worker did not reach admission gate");
+    const auto admitted = call(first,submit);
+    {
+        WriteLock lock(data);
+        const auto before = ticks.load();
+        resume.release();
+        while (ticks<=before+1 && std::chrono::steady_clock::now()<end) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (admitted.at("state")!="queued" || call(first,read).at("state")!="queued" || call(second,submit).at("state")!="queued" || calls)
+            throw std::runtime_error("locked command lost its pending identity");
+    }
+    while (calls==0 && std::chrono::steady_clock::now()<end) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Json receipt;
+    do {
+        receipt = call(first,read);
+        if (receipt.at("state")=="accepted") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now()<end);
+    if (receipt.at("state")!="accepted" || receipt.at("storedMessage")!=admitted.at("storedMessage") ||
+        call(first,submit)!=receipt || call(second,read)!=receipt || calls!=1)
+        throw std::runtime_error("original command remained queued after durable acceptance");
+    for (const auto state : {"cancelled","closed","unknown"}) {
+        db->update(std::stoll(admitted.at("storedMessage").get<std::string>()),{{"state",state}});
+        if (call(first,read).at("state")=="accepted") throw std::runtime_error("terminal receipt misreported as accepted");
+    }
+}
 
 // 重开原库时核对四种崩溃边界，之后阻塞真实写盘并核对最终投递次数。
 // 步骤：准备不同的已提交状态 → 验证重启归属与原队列 → 验证交付前失败 → 验证输出补写。
@@ -95,7 +158,9 @@ void verify(const std::filesystem::path& data) {
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc!=2) return 2;
-        verify(std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64()));
+        const auto root = std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
+        verify(root/"restart");
+        command_recovery(root/"window");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

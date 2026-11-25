@@ -42,7 +42,7 @@ target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_
 set_target_properties(dfy_persistent_dialogue_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
 add_executable(dfy_message_recovery_tests message_recovery.cpp)
-target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
+target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_management dfy_build_options winsqlite3)
 set_target_properties(dfy_message_recovery_tests PROPERTIES FOLDER Tests)
 add_test(NAME app.message_recovery COMMAND dfy_message_recovery_tests "${CMAKE_CURRENT_BINARY_DIR}/message-recovery")
 

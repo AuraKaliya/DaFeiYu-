@@ -20,19 +20,20 @@ nlohmann::json envelope(const DialogueCommand& command) {
 }
 
 // 将持久投递回执映射回旧窗口的命令语义，待发号与持久消息号各自保留。
-DialogueReceipt stored_receipt(const DialogueCommand& command, const nlohmann::json& result, std::int64_t stored) {
+DialogueReceipt stored_receipt(DialogueReceipt original, DialogueAction action, const nlohmann::json& result) {
     using State = DialogueCommandState;
     const auto& label = result.at("state");
-    auto state = State::accepted;
-    if (label=="pending" || label=="dispatching") state = State::queued;
-    else if (label=="full") state = State::full;
-    else if (label=="stale") state = State::stale;
-    else if (label=="unknown" || label=="unavailable") state = State::unavailable;
-    else if (label=="rejected" || label=="failed") state = State::rejected;
-    agent::RunId run = command.target;
-    if (result.contains("session")) run = {std::stoull(result.at("session").get<std::string>()),std::stoull(result.at("turn").get<std::string>())};
-    if (command.action==DialogueAction::enqueue) run.sequence = 0;
-    return {command.id,state,run,std::stoull(result.value("nativeMessage",std::string("0"))),stored};
+    if (label=="accepted" || label=="queued" || label=="waiting" || label=="submitted") original.state = State::accepted;
+    else if (label=="pending" || label=="dispatching") original.state = State::queued;
+    else if (label=="full" || label=="limit") original.state = State::full;
+    else if (label=="stale" || label=="closed" || label=="removed") original.state = State::stale;
+    else if (label=="unknown" || label=="unavailable") original.state = State::unavailable;
+    else original.state = State::rejected;
+    if (result.contains("session"))
+        original.run = {std::stoull(result.at("session").get<std::string>()),std::stoull(result.at("turn").get<std::string>())};
+    if (action==DialogueAction::enqueue) original.run.sequence = 0;
+    if (result.contains("nativeMessage")) original.message = std::stoull(result.at("nativeMessage").get<std::string>());
+    return original;
 }
 
 // 依受信页面提供的回合或消息身份，在业务线程执行一次对话操作。
@@ -40,7 +41,8 @@ DialogueReceipt stored_receipt(const DialogueCommand& command, const nlohmann::j
 DialogueReceipt apply_dialogue(app::Application& application, const DialogueCommand& command) {
     using State = DialogueCommandState;
     if (command.stored)
-        return stored_receipt(command,application.main_messages()->deliver(command.stored,envelope(command)),command.stored);
+        return stored_receipt({command.id,State::queued,command.target,0,command.stored},command.action,
+            application.main_messages()->deliver(command.stored,envelope(command)));
     if (command.action == DialogueAction::send) {
         const auto result = application.submit_dialogue(command.text);
         return {command.id,State::accepted,{result.session,result.turn}};
@@ -210,6 +212,12 @@ bool Host::visit_client(const std::string& client) {
     return true;
 }
 
+// 窗口命令只固定与持久消息的关联，每次查询读取已经提交的实际状态。
+DialogueReceipt Host::current_receipt(const CommandRecord& record) const {
+    if (!record.receipt.stored) return record.receipt;
+    return stored_receipt(record.receipt,record.action,messages_->receipt(record.receipt.stored));
+}
+
 // 返回共享快照，原回执受客户端身份与独立水位约束。
 // 步骤：核对客户端 → 复制已发布快照 → 查找该客户端原命令或过期状态。
 DialogueView Host::dialogue(std::uint64_t command, const std::string& client) const {
@@ -221,7 +229,7 @@ DialogueView Host::dialogue(std::uint64_t command, const std::string& client) co
     if (command && command <= owner->second.latest) {
         const auto& commands = owner->second.commands;
         const auto record = std::ranges::find_if(commands,[&](const auto& item) { return item.receipt.command==command; });
-        view.receipt = record != commands.end() ? record->receipt : DialogueReceipt{command,DialogueCommandState::expired,{}};
+        view.receipt = record != commands.end() ? current_receipt(*record) : DialogueReceipt{command,DialogueCommandState::expired,{}};
     }
     return view;
 }
@@ -255,7 +263,7 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
         if (record->action != command.action || record->target != command.target || record->message != command.message ||
             record->fingerprint != fingerprint)
             return {command.id,State::conflict,{}};
-        return record->receipt;
+        return current_receipt(*record);
     }
     if (!display_ || exited_ || worker_.get_stop_token().stop_requested()) return {command.id,State::unavailable,{}};
 
@@ -270,7 +278,8 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
         try {
             if (const auto prior = messages_->find("desktop",command.submission)) {
                 if (prior->envelope!=original) return {command.id,State::conflict,{}};
-                receipt = stored_receipt(command,prior->receipt,prior->id);
+                receipt.stored = prior->id;
+                receipt = stored_receipt(receipt,command.action,prior->receipt);
                 available = false;
             } else if (available) {
                 if (command.target.session && (command.instance!=instance_ || display_->turns.empty() || display_->turns.back().run!=command.target))

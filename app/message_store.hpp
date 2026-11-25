@@ -25,6 +25,8 @@ class MessageStore {
     const std::string& conversation() const noexcept;
     // 按来源和稳定提交身份读取原文与最新回执。
     std::optional<StoredMessage> find(std::string_view source, std::string_view submission) const;
+    // 原命令轮询只读取小份最新回执，不提取消息正文。
+    nlohmann::json receipt(std::int64_t message) const;
     // 原子提交原文与首份回执，同号同参返回原结果，同号异参报告冲突。
     MessageAdmission put(std::string_view source, std::string_view submission,
         const nlohmann::json& envelope, const nlohmann::json& receipt);
