@@ -6,6 +6,7 @@
 #include <dafeiyu/plan_definition.hpp>
 #include <dafeiyu/action_observations.hpp>
 #include <dafeiyu/run_capture.hpp>
+#include <dafeiyu/context_status.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -62,5 +63,8 @@ struct RunOptions {
     bool accept_user_input = false;
     // 仅在同步采集回调中比较同一截止号的只读投影。
     bool compare_projection = false;
+    // 状态基线由会话从已提交历史取得，新输入只能贡献当前绑定的事实。
+    std::shared_ptr<const ContextStatus> context_status, previous_status;
+    bool replace_history = false;
 };
 }

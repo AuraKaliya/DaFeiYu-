@@ -181,7 +181,14 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
     working_ = true;
     try {
         for (auto& slot : records_) if (!slot) {
-            auto loop = std::make_unique<RunLoop>(RunId{id_,turn_+1},config_,backend_,history_,prompt,std::move(options));
+            const bool replace = options.replace_history;
+            auto base = replace ? std::make_shared<const MessageHistory>() : history_;
+            options.previous_status = replace ? nullptr : status_;
+            auto next_status = options.context_status;
+            auto loop = std::make_unique<RunLoop>(RunId{id_,turn_+1},config_,backend_,base,prompt,std::move(options));
+            history_ = std::move(base);
+            if (replace) status_.reset();
+            active_status_ = std::move(next_status);
             auto record = loop->request(); active_ = std::move(loop); slot = record; ++turn_;
             record->notifications_.started = notify("turn_started",turn_); working_ = false; return record;
         }
@@ -309,7 +316,11 @@ void Session::advance() {
     if (!active_) return;
     working_ = true;
     try {
-        active_->advance(); history_ = active_->history(); const auto record = active_->request();
+        active_->advance();
+        const auto committed = active_->history();
+        if (active_status_ && committed != history_) status_ = active_status_;
+        history_ = committed;
+        const auto record = active_->request();
         const auto state = record->operation()->state();
         if (state != OperationState::pending && !record->notifications_.finished)
             record->notifications_.finished = notify(state == OperationState::succeeded ? "turn_completed" :
@@ -321,7 +332,10 @@ void Session::advance() {
 // 清空只允许在实际空闲时执行，不改变回合序号，也不调用模型。
 events::ObservationReceipt Session::clear() {
     if (!*accepting_ || active_ || working_) throw std::logic_error("session: busy or closed");
-    history_ = std::make_shared<const MessageHistory>(); return notify("session_cleared",0);
+    history_ = std::make_shared<const MessageHistory>();
+    status_.reset();
+    active_status_.reset();
+    return notify("session_cleared",0);
 }
 // 停止新运行并请求当前工作退出，回调内关闭只登记取消而不重入推进。
 // 步骤：关闭接纳 → 登记当前取消 → 非重入时推进收尾。

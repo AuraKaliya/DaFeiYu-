@@ -19,6 +19,8 @@ class MainMessages {
         RunLog* trace, bool structured);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
     void prepare_output(agent::RunOptions& options);
+    // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。
+    void clear_context(std::uint64_t through) noexcept { context_floor_ = through; delivered_.reset(); }
     // 绑定业务线程的实时终端输出，只有首次写盘成功才通知。
     void on_reply(std::function<void(const std::string&)> sink) { reply_sink_ = std::move(sink); }
     // 查询原回合仍在等待写入的一项投递号，供发起终端等待或说明结果。
@@ -62,6 +64,8 @@ class MainMessages {
     std::function<void(const std::string&)> reply_sink_;
     std::unique_ptr<agent::ToolCatalog> reply_tools_;
     std::map<std::string,std::string> explicit_deliveries_;
+    std::optional<StoredMessage> delivered_;
+    std::uint64_t context_floor_ = 0;
     std::map<std::int64_t,nlohmann::json> retry_;
     std::map<std::uint64_t,std::int64_t> queued_;
     std::map<std::pair<std::uint64_t,std::uint64_t>,std::int64_t> appended_;

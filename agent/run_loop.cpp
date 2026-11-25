@@ -92,7 +92,8 @@ struct RunLoopState {
             record->plan_feedback_.reserve(64);
             planning_goal = prompt;
         }
-        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs));
+        const auto status = options.context_status ? project_context_status(options.previous_status.get(),*options.context_status) : std::string{};
+        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status);
         record->versions_ = public_run_versions(config,options,deadline > now ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline-now) : std::chrono::milliseconds::zero());
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
@@ -441,7 +442,10 @@ struct RunLoopState {
         if (!pending.empty()) record->context_->append_user_inputs(pending,prior_answer);
         model::Request input = planning_request ? planning_request->request :
             model::Request{record->context_->messages(),scope ? scope->ordered_definitions() : std::vector<model::ToolDefinition>{}};
-        if (planning_request) project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot());
+        if (planning_request) {
+            const auto status = options.context_status ? project_context_status(nullptr,*options.context_status) : std::string{};
+            project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status);
+        }
         if (!options.system_instructions.empty()) {
             if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
             if (input.messages.front().role == model::Role::system) input.messages.front().content =

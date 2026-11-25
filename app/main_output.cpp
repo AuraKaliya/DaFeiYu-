@@ -31,6 +31,30 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
 // 步骤：归还上轮发言记录 → 核对入口与后端能力 → 固定工具及当轮说明。
 void MainMessages::prepare_output(agent::RunOptions& options) {
     explicit_deliveries_.clear();
+    auto state = std::make_shared<agent::ContextStatus>();
+    state->binding = "main/"+instance_;
+    if (delivered_) {
+        const auto& saved = *delivered_;
+        const auto& text = saved.envelope.at("text").get_ref<const std::string&>();
+        state->fields = {{"delivery",saved.submission},{"channelMessage",std::to_string(saved.id)},
+            {"turn",saved.envelope.at("turn").get<std::string>()},{"state","delivered"}};
+        if (saved.envelope.contains("replyTo")) state->fields["replyTo"] = saved.envelope.at("replyTo").get<std::string>();
+        if (text.size() <= 4096) state->fields["deliveredText"] = text;
+        else {
+            auto bytes = std::size_t{2048};
+            while ((static_cast<unsigned char>(text[bytes]) & 0xc0) == 0x80) --bytes;
+            state->fields["deliveredPrefix"] = text.substr(0,bytes);
+            state->fields["originalBytes"] = std::to_string(text.size());
+            state->fields["textSha256"] = platform::sha256(text);
+        }
+    }
+    for (const auto& [key,envelope] : replies_) {
+        if (std::stoull(envelope.at("turn").get<std::string>()) > context_floor_) {
+            state->fields["pendingDelivery"] = key;
+            break;
+        }
+    }
+    if (!state->fields.empty()) options.context_status = std::move(state);
     if (!reply_tools_ || options.tools || options.planning) return;
     options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
     options.system_instructions += " 普通最终文本会交给主聊天用户。需要提前发言或追问时可调用 main_reply。";
@@ -40,19 +64,21 @@ void MainMessages::prepare_output(agent::RunOptions& options) {
 // 步骤：按原投递号写入 → 发布首次提交到原窗口与终端 → 关联诊断并返回原消息号。
 std::int64_t MainMessages::commit_reply(const Json& envelope) {
     const auto& key = envelope.at("delivery").get_ref<const std::string&>();
-    const auto saved = store_->put("main",key,envelope,{{"state","delivered"}});
-    if (!saved.created) return saved.message.id;
-
+    auto saved = store_->put("main",key,envelope,{{"state","delivered"}});
+    const auto message_id = saved.message.id;
     const agent::RunId run{std::stoull(envelope.at("session").get<std::string>()),std::stoull(envelope.at("turn").get<std::string>())};
+    if (run.sequence > context_floor_ && (!delivered_ || message_id > delivered_->id)) delivered_ = std::move(saved.message);
+    if (!saved.created) return message_id;
+
     const auto& text = envelope.at("text").get_ref<const std::string&>();
     app_.conversation().published_reply(run,text);
     if (reply_sink_) reply_sink_(text);
     if (trace_) {
-        Json event{{"session",run.session},{"run",run.sequence},{"delivery",key},{"message",std::to_string(saved.message.id)}};
+        Json event{{"session",run.session},{"run",run.sequence},{"delivery",key},{"message",std::to_string(message_id)}};
         if (envelope.contains("replyTo")) event["replyTo"] = envelope.at("replyTo");
         trace_->append("dialogue.reply_delivered",std::move(event));
     }
-    return saved.message.id;
+    return message_id;
 }
 
 // 所有面向用户的主会话发言沿同一持久写口取得回执。

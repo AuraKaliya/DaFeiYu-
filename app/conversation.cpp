@@ -75,6 +75,7 @@ bool Conversation::cancel() {
 // 原会话确认清空后收回本进程可见正文，同时保留原通知回执。
 events::ObservationReceipt Conversation::clear() {
     const auto receipt = session_.clear();
+    if (main_messages_) main_messages_->clear_context(last_ ? last_->turn : 0);
     if (!display_.turns.empty()) {
         display_.turns.clear();
         display_bytes_ = 0;

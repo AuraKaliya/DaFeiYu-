@@ -110,10 +110,45 @@ void replay() {
               << " revision_has_inventory=" << contains(prepared[5],"inventory-receipt-8")
               << " prepared=" << prepared.size() << " dispatches=" << dispatches << '\n';
 }
+
+// 连续提交问题基线、关闭增量与同版引用，拒收替换及活动中断都不提前消费状态。
+// 步骤：冻结同版投影 → 在会话内关闭问题 → 拒绝非法替换 → 从原历史继续并检查单次关闭。
+void status_versions() {
+    ContextStatus open{"player/world",{{"Q4","waiting for chest"},{"W17","mining"}}};
+    ContextStatus closed{"player/world",{{"W17","mining"}}};
+    auto delta = project_context_status(&open,closed);
+    check(delta == project_context_status(&open,closed) && delta.find(R"("closed":["Q4"])") != delta.npos,
+        "status projection consumed a change during comparison");
+    std::vector<Request> prepared;
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session({},channel,Backend{[](const Config&,const Request&) { return Response{{Role::assistant,"ok"}}; }});
+    RunOptions options;
+    options.model_capture = [&](const ModelCapture& capture) {
+        if (capture.phase == ModelCapturePhase::prepared) prepared.push_back(*capture.input);
+    };
+    options.context_status = std::make_shared<const ContextStatus>(open);
+    (void)session.begin("original",options);
+    until(session,[&] { return !session.busy(); });
+    options.context_status = std::make_shared<const ContextStatus>(closed);
+    (void)session.begin("close Q4",options);
+    until(session,[&] { return !session.busy(); });
+    RunOptions invalid = options;
+    invalid.replace_history = true;
+    invalid.context_status = std::make_shared<const ContextStatus>(ContextStatus{});
+    bool rejected = false;
+    try { (void)session.begin("new baseline",invalid); } catch (const std::invalid_argument&) { rejected = true; }
+    check(rejected && !session.busy() && prepared.size() == 2,"invalid baseline modified admission");
+    (void)session.begin("continue",options);
+    until(session,[&] { return !session.busy(); });
+    const auto& tail = prepared.back().messages;
+    check(contains(prepared[0],R"("mode":"baseline")") && contains(prepared[1],delta) &&
+        tail[tail.size()-2].content.find(R"("mode":"reference")") != std::string::npos &&
+        contains(prepared.back(),"original"),"replacement failure lost history or status version");
+}
 }
 
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
-    try { replay(); return 0; }
+    try { replay(); status_versions(); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

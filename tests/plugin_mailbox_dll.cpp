@@ -118,13 +118,14 @@ void main_hook(const fs::path& root, const fs::path& status_package) {
     check(app.close_plugins() == ShutdownResult::closed,"Hook application did not release resources");
 }
 
-// 在正式主会话验证各字段实际进入模型、审批与输出，下一轮仍读取原上下文文字。
+// 在正式主会话核对改写、内部结算和已送达的有效文本均保留各自身份。
 // 步骤：载入转换插件与业务工具 → 核对改写参数的批准和退出 → 检查回复投递与历史边界。
 void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& status_package) {
     using namespace dfy::app;
     using namespace dfy::model;
     const auto packages = root/"text-hook-app";
     converter(packages,dll,"test.e",'e');
+    std::string delivered_key;
     std::atomic<unsigned> calls{0};
     Application app({},packages,root/"text-hook-data",Backend{[&](const auto&,const Request& input) {
         if (++calls == 1) {
@@ -137,9 +138,17 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
                 "transformed tool did not deliver its original effect");
             return Response{{Role::assistant,"raw"}};
         }
-        check(input.messages.at(input.messages.size()-2).content == "model text","delivery Hook rewrote authoritative history");
+        if (calls == 3) check(input.messages.at(input.messages.size()-2).content == "model text","internal output lost its original history");
+        if (calls == 4) return Response{{Role::assistant,"raw"}};
+        if (calls == 5) {
+            const auto& status = input.messages.at(input.messages.size()-2).content;
+            check(status.find("visible reply") != status.npos && status.find(delivered_key) != status.npos,
+                "next turn did not see confirmed delivery text and original ID");
+        }
         return Response{{Role::assistant,"done"}};
     }});
+    auto channel = std::make_shared<MessageStore>(root/"text-hook-data");
+    app.bind_messages(channel,"text-hook-host",nullptr);
     app.plugins().install(status_package);
     check(!app.plugins().load("test.e") && !app.plugins().load("example.status"),"could not start text Hook fixture");
     // 推进原 Agent 到业务结算和实际退出，保留导致失败的精确异常。
@@ -167,6 +176,15 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
     check(app.plugins().unload("test.e") == ShutdownResult::closed,"idle Hook fixture did not unload");
     app.submit_dialogue("another turn");
     check(finish() == "done" && calls == 3,"unload changed conversation history or retained Hook");
+    check(!app.plugins().load("test.e"),"could not reattach delivery hook");
+    app.submit_dialogue("speak to user");
+    check(finish() == "visible reply","channel-facing answer missed final hook");
+    const auto rows = channel->page(true,0,channel->watermark(),1);
+    check(rows.records.size() == 1 && rows.records[0].envelope.at("text") == "visible reply" &&
+        rows.records[0].receipt.at("state") == "delivered","channel did not commit the effective text");
+    delivered_key = rows.records[0].submission;
+    app.submit_dialogue("what did you just say");
+    check(finish() == "done" && calls == 5,"reading a confirmed output repeated outside work");
 }
 
 // 验证同一插件的子会话没有共享历史，且提交与模型派发分离。

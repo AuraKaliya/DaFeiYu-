@@ -67,7 +67,8 @@ PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_re
 }
 // 投影原调用配对、结果及宿主已验证的前缀，较长原文仍可按消息序号回查。
 // 步骤：提取最近的原工具回执 → 保留消息序号与超长引用 → 附入已验证步骤 → 校验规划请求。
-void project_plan_evidence(model::Request& plan, const std::vector<model::Message>& history, const PlanSnapshot& state) {
+void project_plan_evidence(model::Request& plan, const std::vector<model::Message>& history, const PlanSnapshot& state,
+    std::string_view status) {
     if (!plan.tools.empty() || plan.messages.size() != 2 || plan.messages.back().role != model::Role::user)
         throw std::invalid_argument("plan evidence: expected a planning request");
     auto receipts = Json::array();
@@ -107,6 +108,7 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
     auto data = Json::parse(plan.messages.back().content);
     data["host_evidence"] = {{"through_message",history.size()},{"tool_receipts",std::move(receipts)},
         {"older_tool_receipts",total-std::min<std::size_t>(total,12)},{"verified_steps",std::move(verified)}};
+    if (!status.empty()) data["host_evidence"]["context_status"] = Json::parse(status);
     plan.messages.back().content = data.dump();
     model::validate_request(plan);
 }

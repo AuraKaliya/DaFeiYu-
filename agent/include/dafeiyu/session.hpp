@@ -273,6 +273,7 @@ class Session {
     std::vector<std::shared_ptr<TurnRequest>> records_;
     std::unique_ptr<RunLoop> active_;
     std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
+    std::shared_ptr<const ContextStatus> status_, active_status_;
     const model::Backend backend_;
     const RunCaptureSinks capture_;
     std::shared_ptr<bool> accepting_ = std::make_shared<bool>(true);
