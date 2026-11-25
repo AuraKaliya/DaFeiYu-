@@ -62,8 +62,11 @@ function Test-EarlyReply([string[]]$Options, [string]$ProfilePath) {
             if (!$line.Wait(5000) -or $null -eq $line.Result -or [DateTime]::UtcNow -gt $deadline) { throw 'Explicit question missing before final answer' }
         } while ($line.Result -ne 'early question')
         [IO.File]::WriteAllText($gate,'release')
-        if (!$process.WaitForExit(6000) -or $process.ExitCode -ne 0 -or $process.StandardOutput.ReadToEnd().Contains('early question')) {
-            throw 'Final answer was delivered twice or terminal did not exit'
+        if (!$process.WaitForExit(6000)) { throw 'Terminal did not exit after the final answer' }
+        $remaining = $process.StandardOutput.ReadToEnd()
+        $errors = $process.StandardError.ReadToEnd()
+        if ($process.ExitCode -ne 0 -or $remaining.Contains('early question') -or $errors) {
+            throw "Early reply failed with exit $($process.ExitCode). Remaining stdout [$remaining]. Stderr [$errors]"
         }
     } finally {
         [IO.File]::WriteAllText($gate,'release')
