@@ -349,17 +349,22 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
                 job.arguments = input.dump();
             }
             bool finish = false;
+            nlohmann::json reply_args;
             if (game_skill == "reply") {
                 auto input = nlohmann::json::parse(job.arguments);
                 auto& args = input.at("arguments");
                 finish = args.value("finish",false);
                 if (args.erase("finish")) job.arguments = input.dump();
+                reply_args = std::move(args);
             }
             auto work = std::make_unique<dfy::mc::GameWork>(dfy::mc::GameAction::partner,raw->config,job.id,job.arguments,std::string(game_skill));
-            if (game_skill == "reply" && !raw->partner.reserve_reply(call->session,job.id,finish)) {
-                job.output = R"({"status":"already_requested","sent":false})";
+            const auto original = game_skill == "reply" ? raw->partner.reserve_reply(call->session,job.id,finish,reply_args) : std::string{};
+            if (original.empty()) job.action = std::move(work);
+            else {
+                job.output = nlohmann::json{{"status","already_requested"},{"sent",false},{"bridgeWork",original}}.dump();
                 job.ready = job.success = true;
-            } else job.action = std::move(work);
+                job.method = NativeJob::Method::local;
+            }
         } else if (inspect || mine || home) job.action = std::make_unique<dfy::mc::GameWork>(
             mine ? dfy::mc::GameAction::mine : home ? dfy::mc::GameAction::home : dfy::mc::GameAction::inspect, raw->config, job.id, job.arguments);
         else if (control) job.wire = dfy::mc::control_request(job.id, raw->config.key, job.arguments);
