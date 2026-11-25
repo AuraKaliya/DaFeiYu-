@@ -3,6 +3,7 @@
 #include "main_messages.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
+#include <algorithm>
 #include <random>
 
 namespace dfy::app {
@@ -108,12 +109,24 @@ void Conversation::update_display(const agent::TurnDiagnostics& status, const st
     }
     if (completed) {
         turn.result = status.result;
-        if (status.result == OperationState::succeeded && !completed->error) {
+        if ((!main_messages_ || !user_output_) && status.result == OperationState::succeeded && !completed->error) {
             turn.answer = completed->answer;
             display_bytes_ += turn.answer.size();
         }
     }
     turn.exit = status.exit;
+    trim_display();
+    ++display_.revision;
+}
+
+// 将已经入库的发言交给原回合的有界显示记录。
+// 步骤：定位仍保留的回合 → 替换该回合的最近发言 → 刷新显示容量与修订。
+void Conversation::published_reply(agent::RunId run, const std::string& text) {
+    const auto turn = std::ranges::find(display_.turns,run,&DisplayedTurn::run);
+    if (turn==display_.turns.end() || turn->answer==text) return;
+    display_bytes_ -= turn->answer.size();
+    turn->answer = text;
+    display_bytes_ += text.size();
     trim_display();
     ++display_.revision;
 }
@@ -152,7 +165,7 @@ std::optional<CompletedTurn> Conversation::advance() {
     const auto status = current_->diagnostics();
     std::optional<CompletedTurn> completed;
     if (!reported_ && status.result != OperationState::pending) {
-        completed.emplace(CompletedTurn{status,{},{}});
+        completed.emplace(CompletedTurn{status,{},{},user_output_});
         if (status.result != OperationState::cancelled) {
             try { completed->answer = current_->answer(); }
             catch (...) { completed->error = std::current_exception(); }

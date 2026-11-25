@@ -48,6 +48,30 @@ function Stop-TestHost([string]$ProfilePath) {
     } finally { $process.Dispose() }
 }
 
+# 真实终端应在最终模型调用仍等待时看到显式发言，随后只收到一次同文回答。
+# 步骤：提交后关闭管道输入 → 在最终文本放行前读到追问 → 允许结算并核对剩余输出。
+function Test-EarlyReply([string[]]$Options, [string]$ProfilePath) {
+    $process = Start-Cli $App $Options
+    $gate = Join-Path $ProfilePath 'allow-final'
+    try {
+        $process.StandardInput.WriteLine('early-reply')
+        $process.StandardInput.Close()
+        $deadline = [DateTime]::UtcNow.AddSeconds(6)
+        do {
+            $line = $process.StandardOutput.ReadLineAsync()
+            if (!$line.Wait(5000) -or $null -eq $line.Result -or [DateTime]::UtcNow -gt $deadline) { throw 'Explicit question missing before final answer' }
+        } while ($line.Result -ne 'early question')
+        [IO.File]::WriteAllText($gate,'release')
+        if (!$process.WaitForExit(6000) -or $process.ExitCode -ne 0 -or $process.StandardOutput.ReadToEnd().Contains('early question')) {
+            throw 'Final answer was delivered twice or terminal did not exit'
+        }
+    } finally {
+        [IO.File]::WriteAllText($gate,'release')
+        if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
+        $process.Dispose()
+    }
+}
+
 $default = @('--data',$data,'--plugins',$plugins)
 try {
     Invoke-Lines $default @('/status','/exit') 'No accepted question'
@@ -81,6 +105,7 @@ try {
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Detached work did not succeed' }
     } while ($true)
     Invoke-Lines $options @('again') 'fixed:again'
+    Test-EarlyReply $options $data
     Invoke-Lines $options @('fail') 'fixed model failure' $true
     Invoke-Lines $options @('/status','/unknown','/status') 'Unknown command' $true
 } finally {

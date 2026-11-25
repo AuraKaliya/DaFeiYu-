@@ -16,8 +16,10 @@ class TerminalHost {
     void disconnect(const std::string& client);
     // 更新可呈现提问的终端并在应用线程交付一项命令。
     void advance(app::Application& application);
-    // 在业务线程保留最近终端结果及错误，用游标支持并行读取。
-    void completed(const app::CompletedTurn& turn);
+    // 在业务线程把已写盘的用户发言交给在线终端。
+    void published(const std::string& text);
+    // 交付终端命令的结算和诊断，主聊天正文由其渠道回执发布。
+    void completed(const app::CompletedTurn& turn, bool persistent);
   private:
     struct Job { nlohmann::json request, reply; std::string client; bool interactive; std::uint64_t offered_ask; };
     struct Client {
@@ -26,7 +28,9 @@ class TerminalHost {
         std::uint64_t offered_ask = 0;
         std::chrono::steady_clock::time_point seen;
     };
-    struct Output { std::uint64_t cursor; std::string out, err; };
+    struct Output { std::uint64_t cursor; std::string out, err, client; };
+    // 将一条实际输出追加到有界窗口，可按原终端限定接收方。
+    void append_output(std::string out, std::string err, std::string client = {});
     // 在原应用上执行终端命令、采样状态或确认已经打印的问题。
     nlohmann::json execute(app::Application& application, const Job& job);
     std::mutex mutex_;
@@ -35,5 +39,7 @@ class TerminalHost {
     std::deque<Output> outputs_;
     std::size_t output_bytes_ = 0;
     std::uint64_t cursor_ = 0;
+    agent::RunId command_run_{};
+    std::string command_client_;
 };
 }

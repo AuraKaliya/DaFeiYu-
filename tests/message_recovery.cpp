@@ -147,11 +147,13 @@ void verify(const std::filesystem::path& data) {
     {
         WriteLock lock(data);
         until(application,[&] { return calls==4 && !application.conversation().busy(); });
-        if (db->page(true,0,db->watermark(),1).records.front().source!="terminal") throw std::runtime_error("failed output write published");
+        if (db->page(true,0,db->watermark(),1).records.front().source!="terminal" ||
+            !application.conversation().display().turns.back().answer.empty()) throw std::runtime_error("failed output write published");
     }
     application.main_messages()->finish();
     if (db->watermark()<=prior || db->page(true,0,db->watermark(),1).records.front().source!="main" || calls!=4 ||
-        !db->unfinished(0).empty()) throw std::runtime_error("verified output did not finish writing exactly once");
+        !db->unfinished(0).empty() || application.conversation().display().turns.back().answer!="fixed answer")
+        throw std::runtime_error("verified output did not finish writing exactly once");
 }
 }
 // 用独立数据目录验证重开和失败恢复，不连接真实模型。

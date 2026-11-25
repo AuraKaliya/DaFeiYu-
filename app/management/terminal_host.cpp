@@ -48,16 +48,28 @@ void TerminalHost::disconnect(const std::string& client) {
     clients_.erase(client);
 }
 
-// 将已结算的文字按单调游标保存在有界输出窗口。
-void TerminalHost::completed(const app::CompletedTurn& turn) {
-    std::ostringstream out, err;
-    app::write_chat_result(turn,out,err);
-    outputs_.push_back({++cursor_,std::move(out).str(),std::move(err).str()});
+// 为实际输出分配游标，保留有界的近期正文与原接收方。
+void TerminalHost::append_output(std::string out, std::string err, std::string client) {
+    if (out.empty() && err.empty()) return;
+    outputs_.push_back({++cursor_,std::move(out),std::move(err),std::move(client)});
     output_bytes_ += outputs_.back().out.size()+outputs_.back().err.size();
     while (outputs_.size()>16 || (outputs_.size()>1 && output_bytes_>app::dialogue_display_byte_limit)) {
         output_bytes_ -= outputs_.front().out.size()+outputs_.front().err.size();
         outputs_.pop_front();
     }
+}
+
+// 将持久渠道已经确认的发言发布给当前主聊天的各终端。
+void TerminalHost::published(const std::string& text) { append_output(text+"\n",{}); }
+
+// 只将命令型回合的内部结果交给发起终端，共享聊天沿原投递显示。
+// 步骤：核对原回合与受众 → 格式化终态诊断或命令输出 → 发布给对应终端。
+void TerminalHost::completed(const app::CompletedTurn& turn, bool persistent) {
+    const bool private_result = persistent && !turn.user_facing;
+    if (private_result && command_run_!=agent::RunId{turn.status.session,turn.status.turn}) return;
+    std::ostringstream out,err;
+    app::write_chat_result(turn,out,err,!persistent || private_result);
+    append_output(std::move(out).str(),std::move(err).str(),private_result ? command_client_ : std::string{});
 }
 
 // 在同一主会话处理终端输入，回包中的 ASK 仍要等终端实际打印后确认。
@@ -85,7 +97,11 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
             });
         controller.line(request.at("text").get<std::string>(),app::ChatExit::detach);
         const auto after = conversation.status();
-        reply["started"] = after && (!before || before->turn!=after->turn);
+        if (after && (!before || before->turn!=after->turn)) {
+            command_run_ = {after->session,after->turn};
+            command_client_ = job.client;
+            reply["started"] = true;
+        }
     } else if (action=="open") {
         const auto& error = application.plugins().directory_error();
         if (!error.empty()) err << "Plugin directory unavailable; chat remains available: " << error << '\n';
@@ -94,7 +110,9 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
     } else {
         const auto after = request.at("after").get<std::uint64_t>();
         if (!outputs_.empty() && after<outputs_.front().cursor-1) err << "Some earlier terminal output is no longer retained.\n";
-        const auto next = std::ranges::find_if(outputs_,[&](const auto& row) { return row.cursor>after; });
+        const auto next = std::ranges::find_if(outputs_,[&](const auto& row) {
+            return row.cursor>after && (row.client.empty() || row.client==job.client);
+        });
         if (next!=outputs_.end()) {
             out << next->out;
             err << next->err;
@@ -103,6 +121,10 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
         }
     }
     const auto status = conversation.status();
+    if (action=="read" && status && application.main_messages()) {
+        const auto delivery = application.main_messages()->pending_reply({status->session,status->turn});
+        if (!delivery.empty()) reply["pendingDelivery"] = delivery;
+    }
     reply.update(Json{{"out",std::move(out).str()},{"err",std::move(err).str()},{"turn",status ? status->turn : 0},
         {"busy",conversation.busy()},{"confirming",status && status->waiting_confirmations}});
     if (const auto ask = application.console_ask(); job.interactive && ask)

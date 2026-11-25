@@ -64,6 +64,7 @@ int resident_chat(const std::filesystem::path& profile, const ResidentConnection
     errors << opening.at("err").get_ref<const std::string&>() << std::flush;
     output << "DaFeiYu\nEnter a message, /status, /clear, /cancel or /exit. Local commands remain available while waiting.\n" << std::flush;
     auto poll_at = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> storage_deadline;
     bool eof = false;
     while (output && errors) {
         if (std::chrono::steady_clock::now()>=poll_at) {
@@ -81,7 +82,15 @@ int resident_chat(const std::filesystem::path& profile, const ResidentConnection
                 if (output && call({{"action","presented"},{"ask",id}}).at("presented")==true) printed_ask = id;
             }
             const bool more = reply.at("more");
-            if (eof && !more && (!own_turn || reply.at("turn")!=own_turn || reply.at("busy")==false || reply.at("confirming")==true)) break;
+            if (eof && !more && (!own_turn || reply.at("turn")!=own_turn || reply.at("busy")==false || reply.at("confirming")==true)) {
+                if (!own_turn || reply.at("turn")!=own_turn || !reply.contains("pendingDelivery")) break;
+                const auto now = std::chrono::steady_clock::now();
+                if (!storage_deadline) storage_deadline = now+4s;
+                if (now>=*storage_deadline) {
+                    errors << "Reply is waiting for storage. Delivery " << reply.at("pendingDelivery").get<std::string>() << '\n';
+                    return 1;
+                }
+            }
             poll_at = std::chrono::steady_clock::now()+(more ? 0ms : 100ms);
         }
         if (!eof) {

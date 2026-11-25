@@ -47,7 +47,7 @@ void ChatController::line(std::string text, ChatExit on_exit) {
 }
 // 由原回合生成可交付到本地或连接终端的相同输出。
 // 步骤：核对终态通知 → 按取消、回答或错误输出 → 刷新两个输出通道。
-void write_chat_result(const CompletedTurn& completed, std::ostream& output, std::ostream& errors) {
+void write_chat_result(const CompletedTurn& completed, std::ostream& output, std::ostream& errors, bool include_answer) {
     const auto& status = completed.status;
     if (status.notifications.finished) {
         const auto kind = status.result == runtime::OperationState::succeeded ? "turn_completed" :
@@ -62,7 +62,7 @@ void write_chat_result(const CompletedTurn& completed, std::ostream& output, std
     else {
         try {
             if (completed.error) std::rethrow_exception(completed.error);
-            output << completed.answer << '\n';
+            if (include_answer) output << completed.answer << '\n';
         }
         catch (const std::exception& error) { errors << error.what() << '\n'; }
         catch (...) { errors << "Model request failed.\n"; }

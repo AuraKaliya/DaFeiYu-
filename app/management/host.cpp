@@ -340,7 +340,10 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
 void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
     try {
         const auto application = open();
-        if (messages_) application->bind_messages(messages_,instance_,software_);
+        if (messages_) {
+            application->bind_messages(messages_,instance_,software_);
+            application->main_messages()->on_reply([this](const std::string& text) { terminal_.published(text); });
+        }
         auto& conversation = application->conversation();
         const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;
@@ -350,7 +353,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             advance_dialogue(*application,stop_command_);
             advance_dialogue(*application,pending_);
             if (application->advance_plugins() == runtime::RunResult::failed) std::fputs("A plugin notification failed.\n",stderr);
-            if (auto result = conversation.advance()) terminal_.completed(*result);
+            if (auto result = conversation.advance()) terminal_.completed(*result,bool(messages_));
 
             const auto snapshot = application->run_status();
             const auto self = application->room().self(layout.room);

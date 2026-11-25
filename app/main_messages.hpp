@@ -19,6 +19,10 @@ class MainMessages {
         RunLog* trace, bool structured);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
     void prepare_output(agent::RunOptions& options);
+    // 绑定业务线程的实时终端输出，只有首次写盘成功才通知。
+    void on_reply(std::function<void(const std::string&)> sink) { reply_sink_ = std::move(sink); }
+    // 查询原回合仍在等待写入的一项投递号，供发起终端等待或说明结果。
+    std::string pending_reply(agent::RunId run) const;
     // 将已经入库且尚未投递的原文交付给其指定入口，保留独立的实际回执。
     nlohmann::json deliver(std::int64_t id, const nlohmann::json& envelope);
     // 在终端命令空间按原号入库并交付普通输入。
@@ -55,6 +59,7 @@ class MainMessages {
     std::string instance_;
     SoftwareLog* log_;
     RunLog* trace_;
+    std::function<void(const std::string&)> reply_sink_;
     std::unique_ptr<agent::ToolCatalog> reply_tools_;
     std::map<std::string,std::string> explicit_deliveries_;
     std::map<std::int64_t,nlohmann::json> retry_;
