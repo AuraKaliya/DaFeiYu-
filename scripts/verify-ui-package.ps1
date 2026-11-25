@@ -8,6 +8,8 @@ if (-not (Test-Path -LiteralPath $executable)) { throw 'UI verification executab
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $logs = Join-Path $repoRoot ('build/ui-package-check/' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $logs | Out-Null
+$profileTemp = Join-Path $logs 'webview-temp'
+New-Item -ItemType Directory -Path $profileTemp | Out-Null
 $results = @()
 
 foreach ($mode in @('--smoke','--offline','--interaction','--lifecycle','--close-early','--close-controller','--missing-runtime')) {
@@ -22,6 +24,8 @@ foreach ($mode in @('--smoke','--offline','--interaction','--lifecycle','--close
     $process.StartInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $process.StartInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
     $process.StartInfo.Environment['PATH'] = Join-Path $env:SystemRoot 'System32'
+    $process.StartInfo.Environment['TEMP'] = $profileTemp
+    $process.StartInfo.Environment['TMP'] = $profileTemp
     $process.StartInfo.ArgumentList.Add($mode)
     try {
         if (-not $process.Start()) { throw "Cannot start $mode" }
