@@ -3,7 +3,7 @@
 #include "run_log.hpp"
 #include "ask.hpp"
 #include "trace_commands.hpp"
-#include "../plugins/examples/observer/observer_api.h"
+#include "../../plugins/examples/observer/observer_api.h"
 #include <dafeiyu/diagnostic_json.hpp>
 #include <dafeiyu/run_loop.hpp>
 #include <nlohmann/json.hpp>

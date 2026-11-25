@@ -107,7 +107,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | Platform：系统输入、HTTPS 与代码寿命 | [输入](modules/platform/include/dafeiyu/line_input.hpp)、[传输](modules/platform/src/winhttp.cpp)、[CodeModule](modules/platform/include/dafeiyu/code_module.hpp) |
 | Plugins：目录、实例、包操作与依赖 | [管理器](modules/plugin_host/include/dafeiyu/plugin_manager.hpp)、[实例](modules/plugin_host/include/dafeiyu/plugin_instance.hpp)、[依赖](modules/plugin_host/include/dafeiyu/plugin_dependencies.hpp)、[包操作](modules/plugin_host/include/dafeiyu/plugin_package.hpp) |
 | SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
-| Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application_lifecycle.cpp) |
+| Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application/application_lifecycle.cpp) |
 
 VS 按 App、Agent、Model、Platform、SDK、Plugins、可选 Tests 分组，只建立已实现目标。正式会话使用有界事件通道，独立同步 `Bus` 有自己的测试。
 

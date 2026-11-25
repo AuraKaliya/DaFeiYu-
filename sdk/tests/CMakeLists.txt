@@ -1,3 +1,7 @@
+# 跨模块场景通过测试接口使用本模块的夹具头文件。
+add_library(dfy_sdk_test_headers INTERFACE)
+target_include_directories(dfy_sdk_test_headers INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 add_subdirectory(fixtures)
 
 dfy_test_executable(dfy_tool_abi_tests tool_abi_layout.cpp tool_abi_layout.c)

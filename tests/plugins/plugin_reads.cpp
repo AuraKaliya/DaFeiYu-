@@ -1,6 +1,6 @@
 #include <dafeiyu/host_services.hpp>
 #include <dafeiyu/dynamic_library.hpp>
-#include "../sdk/tests/fixtures/query_v2/api.h"
+#include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_read_result) == 24 && offsetof(dfy_v2_read_result, event_sequence) == 16);

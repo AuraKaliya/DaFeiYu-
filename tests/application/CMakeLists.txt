@@ -1,0 +1,49 @@
+dfy_test_executable(dfy_software_log_tests software_log.cpp)
+add_dependencies(dfy_software_log_tests dfy_query_v2_fixture)
+target_compile_definitions(dfy_software_log_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(dfy_software_log_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.software_log COMMAND dfy_software_log_tests "${PROJECT_BINARY_DIR}/tests/software-log" "$<TARGET_FILE:dfy_query_v2_fixture>")
+set_tests_properties(app.software_log PROPERTIES TIMEOUT 12)
+
+dfy_test_executable(dfy_terminal_entry_fixture terminal_entry_fixture.cpp)
+target_link_libraries(dfy_terminal_entry_fixture PRIVATE dfy_management dfy_build_options)
+add_dependencies(dfy_terminal_entry_fixture dafeiyu)
+add_test(NAME app.terminal_entry COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/terminal_entry.ps1" -App "$<TARGET_FILE:dafeiyu>"
+  -Fixture "$<TARGET_FILE:dfy_terminal_entry_fixture>" -Root "${PROJECT_BINARY_DIR}/tests/terminal-entry")
+set_tests_properties(app.terminal_entry PROPERTIES TIMEOUT 45)
+
+# 验证一个进程内从空插件问答到安装、观察、卸载及移除的完整链路。
+dfy_test_executable(dfy_application_lifecycle_tests application_lifecycle.cpp)
+add_dependencies(dfy_application_lifecycle_tests dfy_observer)
+target_link_libraries(dfy_application_lifecycle_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.lifecycle COMMAND dfy_application_lifecycle_tests "$<TARGET_FILE_DIR:dfy_observer>" "${PROJECT_BINARY_DIR}/tests/application-data/$<CONFIG>")
+
+dfy_test_executable(dfy_application_tools_tests application_tools.cpp)
+add_dependencies(dfy_application_tools_tests dfy_tools_fixture)
+target_link_libraries(dfy_application_tools_tests PRIVATE dfy_terminal dfy_build_options)
+add_test(NAME app.tools COMMAND dfy_application_tools_tests "$<TARGET_FILE_DIR:dfy_tools_fixture>" "${PROJECT_BINARY_DIR}/tests/application-tools/$<CONFIG>")
+set_tests_properties(app.tools PROPERTIES TIMEOUT 20)
+
+dfy_test_executable(dfy_status_example_tests status_example.cpp)
+add_dependencies(dfy_status_example_tests dfy_status_example)
+target_link_libraries(dfy_status_example_tests PRIVATE dfy_plugin_tools dfy_build_options)
+add_test(NAME plugins.status_example COMMAND dfy_status_example_tests "$<TARGET_FILE_DIR:dfy_status_example>" "${PROJECT_BINARY_DIR}/tests/status-example/$<CONFIG>")
+set_tests_properties(plugins.status_example PROPERTIES TIMEOUT 15)
+
+dfy_test_executable(dfy_tool_verification_tests tool_verification.cpp)
+add_dependencies(dfy_tool_verification_tests dfy_status_example)
+target_link_libraries(dfy_tool_verification_tests PRIVATE dfy_agent_test_support dfy_terminal dfy_build_options)
+dfy_compiled_replay(dfy_tool_verification_tests tool_verification.cpp)
+add_test(NAME app.tool_verification COMMAND dfy_tool_verification_tests "$<TARGET_FILE_DIR:dfy_status_example>" "${PROJECT_BINARY_DIR}/tests/tool-verification/$<CONFIG>")
+add_test(NAME app.replay_task COMMAND dfy_tool_verification_tests "$<TARGET_FILE_DIR:dfy_status_example>"
+  "${PROJECT_BINARY_DIR}/tests/tool-verification-replay/$<CONFIG>" --capture app_task_reconnect)
+set_tests_properties(app.tool_verification app.replay_task PROPERTIES TIMEOUT 15)
+set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
+
+# 验证插件本地命令、中文路径解析及真实加载卸载。
+dfy_test_executable(dfy_plugin_command_tests plugin_commands.cpp)
+add_dependencies(dfy_plugin_command_tests dfy_observer)
+target_link_libraries(dfy_plugin_command_tests PRIVATE dfy_terminal dfy_build_options)
+add_test(NAME app.plugin_commands COMMAND dfy_plugin_command_tests "$<TARGET_FILE_DIR:dfy_observer>" "${PROJECT_BINARY_DIR}/tests/command-data/$<CONFIG>")
+set_tests_properties(app.plugin_commands PROPERTIES TIMEOUT 15)

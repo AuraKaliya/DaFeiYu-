@@ -1,4 +1,4 @@
-#include "../modules/agent/tests/support/scripted_model.hpp"
+#include "support/scripted_model.hpp"
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/run_trace.hpp>
 #include <iostream>

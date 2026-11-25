@@ -70,7 +70,7 @@ cmake --build .\build-status --config Release
 
 在 `dfy.activity@1` 的 `step` 中推进收件、原生工作或子会话。`dfy.agent@1` 的 `submit` 复制有界输入并排队，宿主在离开原插件调用后派发相同执行器。每个子会话独立保存上下文，工具范围限本实例当前注册。插件通过 `status` 查询原回合，发出 `cancel` 或 `close` 后仍由宿主推进实际退出。忙碌实例拒绝直接卸载。[子会话契约](include/dafeiyu/agent_abi_v2.h) · [活动契约](include/dafeiyu/activity_abi_v2.h)
 
-插件可另行查询 `dfy.agent.facts@1`。首次用 `DFY_V2_FACT_BASELINE` 并在 `input.prompt` 提交 `{"set":{"goal":"取材"},"closed":[]}`。后续沿同一作用域递增序号，重复提交原帧可取回原请求号。断序返回 `DFY_V2_NOT_FOUND` 和所需序号，可补齐缺口或提交新基线。工作用原代次、原工作号和连续修订分别登记接纳、实效和退出，后到的实收可在退出后追加。切回原提交入口须等当前回合退出。再次提交增量时，宿主使用当前镜像重建基线。[C ABI](include/dafeiyu/agent_abi_v2.h) · [回退回归](../tests/plugin_mailbox_dll.cpp)
+插件可另行查询 `dfy.agent.facts@1`。首次用 `DFY_V2_FACT_BASELINE` 并在 `input.prompt` 提交 `{"set":{"goal":"取材"},"closed":[]}`。后续沿同一作用域递增序号，重复提交原帧可取回原请求号。断序返回 `DFY_V2_NOT_FOUND` 和所需序号，可补齐缺口或提交新基线。工作用原代次、原工作号和连续修订分别登记接纳、实效和退出，后到的实收可在退出后追加。切回原提交入口须等当前回合退出。再次提交增量时，宿主使用当前镜像重建基线。[C ABI](include/dafeiyu/agent_abi_v2.h) · [回退回归](../tests/plugins/plugin_mailbox_dll.cpp)
 
 协商 `dfy.agent.facts@2` 后，插件可在实际派发前调用 `settle_ordered` 登记原工作与本代次递增的首次接纳序号。容量不足时先结算已有工作，同一原件重试用原序号。采用有序接纳的代次，后续新工作继续使用有序入口。实效仍待查时可沿原号多次更新。领域方核实最后一份实效后，在该版实效上设置 `DFY_V2_WORK_FINAL_EFFECT`，实际退出单独登记。宿主至多保留 128 个活动工作，每个保留 16 版，满额时归档已退出且实效最终的工作。最近 128 个归档支持原号重传，窗口外旧序号会被拒绝。
 

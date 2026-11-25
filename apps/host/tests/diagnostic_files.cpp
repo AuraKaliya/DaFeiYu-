@@ -1,5 +1,5 @@
 #include "diagnostic_files.hpp"
-#include "../../../modules/agent/tests/support/scenario_replay.hpp"
+#include "support/scenario_replay.hpp"
 #include <fstream>
 #include <iostream>
 

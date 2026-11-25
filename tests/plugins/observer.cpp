@@ -1,7 +1,7 @@
 #include <dafeiyu/plugin_instance.hpp>
 #include <windows.h>
 #pragma pack(push, 1)
-#include "../plugins/examples/observer/observer_api.h"
+#include "../../plugins/examples/observer/observer_api.h"
 struct PackingProbe { char tag; uint64_t value; };
 #pragma pack(pop)
 #include <cmath>

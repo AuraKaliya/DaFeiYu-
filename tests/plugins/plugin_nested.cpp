@@ -2,7 +2,7 @@
 #include <dafeiyu/dynamic_library.hpp>
 #include <dafeiyu/array_value.hpp>
 #include <dafeiyu/map_value.hpp>
-#include "../sdk/tests/fixtures/query_v2/api.h"
+#include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_type_api_v2) == 32 && offsetof(dfy_v2_type_api_v2, nested) == 24);

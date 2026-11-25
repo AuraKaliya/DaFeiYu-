@@ -1,3 +1,7 @@
+# 跨模块场景通过测试接口使用本模块的夹具头文件。
+add_library(dfy_agent_test_support INTERFACE)
+target_include_directories(dfy_agent_test_support INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 dfy_add_unit_test(agent.run_loop dfy_run_loop_tests run_loop.cpp dfy_agent)
 
 dfy_add_unit_test(agent.observation dfy_observation_tests observation.cpp dfy_agent)

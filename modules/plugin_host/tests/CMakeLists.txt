@@ -1,3 +1,7 @@
+# 跨模块场景通过测试接口使用本模块的夹具头文件。
+add_library(dfy_plugin_host_test_support INTERFACE)
+target_include_directories(dfy_plugin_host_test_support INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 # 清单测试使用真实目录和链接，只解析文件，不执行任何插件代码。
 dfy_test_executable(dfy_plugin_manifest_tests plugin_manifest.cpp)
 target_link_libraries(dfy_plugin_manifest_tests PRIVATE dfy_plugins dfy_build_options nlohmann_json::nlohmann_json)

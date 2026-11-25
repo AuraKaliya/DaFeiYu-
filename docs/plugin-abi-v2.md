@@ -22,7 +22,7 @@
 
 宿主显式启用有界处理队列并提交真实事件后才提供处理引用；普通观察读取不自动进入业务参与者集合。控制引用不可复制，释放它不结束宿主工作。`start` 未获顺序资格返回 BUSY，成功只确认实际开始；`complete` 固定唯一业务终态，仍保留顺序占用；消费者确认实际不会再执行本项后，才调用 `finish`。取消仅登记意图，运行中处理仍阻止卸载。
 
-快照的 result 和 exit 使用各自的操作状态，退出成功不表达业务成功。载荷引用保持整个处理记录及其预算，数据可在处理退出后保留。错误上下文、外部实例、过期身份和非法终态均明确拒绝，失败清空输出。验证见 [宿主控制测试](../modules/plugin_host/tests/plugin_processing.cpp)、[真实 C 消费者](../sdk/tests/fixtures/query_v2/processing.c) 和 [跨 DLL 验收](../tests/plugin_processing_dll.cpp)。
+快照的 result 和 exit 使用各自的操作状态，退出成功不表达业务成功。载荷引用保持整个处理记录及其预算，数据可在处理退出后保留。错误上下文、外部实例、过期身份和非法终态均明确拒绝，失败清空输出。验证见 [宿主控制测试](../modules/plugin_host/tests/plugin_processing.cpp)、[真实 C 消费者](../sdk/tests/fixtures/query_v2/processing.c) 和 [跨 DLL 验收](../tests/plugins/plugin_processing_dll.cpp)。
 
 既有 `dfy.operation.state`、`dfy.operation.cancel`、`dfy.operation.notify` 的生产对象当前为完整读请求；不能将处理控制引用或任意值当作通用操作句柄。新能力使用独立版本化表，未向冻结表追加字段。
 
@@ -69,7 +69,7 @@
 
 联合是非空闭合分支集，显式 UInt64 标签唯一，零及最大值均合法，未知标签在值构造时拒绝。`branch` 按声明顺序返回标签与独立约束引用，分配失败时两个输出均清零；`read` 返回索引及稳定标签；`content` 保持实际内容及原事件预算。分支可空与外层字段可空独立，带标签 null 不是外层 null。描述信息／选择分别为 32／16 字节，分支数偏移 24、标签偏移 8。联合根占 1 节点、标签占 8 字节，再加实际内容；全部分支均参与描述预算。
 
-真实 C 验收入口：[嵌套与标量容器](../tests/plugin_nested.cpp)、[枚举](../tests/plugin_enums.cpp)、[联合](../tests/plugin_unions.cpp)、[组合数组](../tests/plugin_arrays.cpp)、[组合映射](../tests/plugin_maps.cpp)、[定向读取](../tests/plugin_targets.cpp)、[组读取](../tests/plugin_group_reads.cpp)、[组通知](../tests/plugin_group_notifications.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/observer.cpp)。当前 Debug、Release 完整测试为 58／58；组读取、组通知、定向读取、枚举、联合、组合数组、组合映射和观察包八组跨配置 DLL 检查均通过。顺序域当前为宿主基础，没有新增 C 工作完成协议；App／Agent 正式异步迁移仍属 R15。
+真实 C 验收入口：[嵌套与标量容器](../tests/plugins/plugin_nested.cpp)、[枚举](../tests/plugins/plugin_enums.cpp)、[联合](../tests/plugins/plugin_unions.cpp)、[组合数组](../tests/plugins/plugin_arrays.cpp)、[组合映射](../tests/plugins/plugin_maps.cpp)、[定向读取](../tests/plugins/plugin_targets.cpp)、[组读取](../tests/plugins/plugin_group_reads.cpp)、[组通知](../tests/plugins/plugin_group_notifications.cpp)、[观察包](../plugins/examples/observer/observer.c)、[完整观察链路](../tests/plugins/observer.cpp)。当前 Debug、Release 完整测试为 58／58；组读取、组通知、定向读取、枚举、联合、组合数组、组合映射和观察包八组跨配置 DLL 检查均通过。顺序域当前为宿主基础，没有新增 C 工作完成协议；App／Agent 正式异步迁移仍属 R15。
 
 ## 组成员接入能力
 

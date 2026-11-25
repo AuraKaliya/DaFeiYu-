@@ -4,7 +4,7 @@
 #include <dafeiyu/enum_value.hpp>
 #include <dafeiyu/union_value.hpp>
 #include <dafeiyu/dynamic_library.hpp>
-#include "../sdk/tests/fixtures/query_v2/api.h"
+#include "fixtures/query_v2/api.h"
 #include <iostream>
 #include <cstddef>
 static_assert(sizeof(dfy_v2_map_api_v2) == 48 && offsetof(dfy_v2_map_api_v2,value_type) == 40);

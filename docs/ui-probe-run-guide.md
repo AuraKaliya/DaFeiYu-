@@ -12,7 +12,7 @@
 
 交互桌面上的每个后台实例在 Windows 通知区域显示一个鱼形图标。左键唤回该实例的管理中心，全部关窗后再次点击会重新打开。右键可打开该实例的日志目录或确认退出。只安装终端程序时，退出使用 Windows 确认框。图标的注册、恢复、菜单操作和注销可在该数据目录的 `logs` 中核对。
 
-非交互窗口站中的后台仍可通过本地管道查询状态并正常退出。`ui.tray_headless_host` 在独立桌面启动正式的 `dafeiyu --host`，核对托盘注册失败、后台进程身份和退出码。[无交互桌面验收](../tests/ui_tray_headless_host.cpp)
+非交互窗口站中的后台仍可通过本地管道查询状态并正常退出。`ui.tray_headless_host` 在独立桌面启动正式的 `dafeiyu --host`，核对托盘注册失败、后台进程身份和退出码。[无交互桌面验收](../tests/desktop/ui_tray_headless_host.cpp)
 
 收尾较慢时，「设置 → 后台运行」会显示最近核实的会话与回合或插件卸载阶段。等待超过 10 秒即可看到查看日志或关窗的提示。若后台意外终止，窗口会保留原进程号、退出码和诊断入口，刷新后仍可查阅。
 
@@ -32,11 +32,11 @@
 
 `ui.main_panel` 用空插件目录和固定响应，经真实本地命名管道，在隐藏 WebView2 中核对来源、原消息号、独立停止、实际退出与清空后的模型输入。窄窗口验收覆盖排队、移除、刷新、暂停和继续发送。[主面板验收](../apps/desktop/tests/ui_main_panel.cpp) · [待发队列验收](../apps/desktop/tests/ui_dialogue_queue.cpp) · [刷新边界验收](../apps/desktop/tests/ui_dialogue_recovery.cpp)
 
-`ui.resident_windows` 依次打开三个独立桌面进程，在前两次关窗后核对后台进程号和实例号，在第三个窗口确认退出后等待原后台进程实际结束。[跨进程验收](../tests/ui_resident_windows.ps1)
+`ui.resident_windows` 依次打开三个独立桌面进程，在前两次关窗后核对后台进程号和实例号，在第三个窗口确认退出后等待原后台进程实际结束。[跨进程验收](../tests/desktop/ui_resident_windows.ps1)
 
-`ui.history_windows` 由两个独立的正式面板观察 19 轮固定问答，覆盖断连续读、同文投递、全部关窗后答复入库、翻到首条、刷新和重启后按原号复查。[窗口验收](../apps/desktop/tests/ui_history_panel.cpp) · [关闭与重启顺序](../tests/ui_history_windows.ps1)
+`ui.history_windows` 由两个独立的正式面板观察 19 轮固定问答，覆盖断连续读、同文投递、全部关窗后答复入库、翻到首条、刷新和重启后按原号复查。[窗口验收](../apps/desktop/tests/ui_history_panel.cpp) · [关闭与重启顺序](../tests/desktop/ui_history_windows.ps1)
 
-`ui.resident_exit` 核对确认退出后两个窗口的自行关闭和资源回收。`ui.resident_progress` 用保持在途的固定响应核对页面显示的原回合与长等待提示。`ui.resident_unexpected` 结束测试自己启动的后台，核对真实退出码、刷新后的页面反馈和日志目录操作。[跨进程用例](../tests/ui_resident_exit.ps1) · [固定页面用例](../apps/desktop/tests/ui_main_panel.cpp)
+`ui.resident_exit` 核对确认退出后两个窗口的自行关闭和资源回收。`ui.resident_progress` 用保持在途的固定响应核对页面显示的原回合与长等待提示。`ui.resident_unexpected` 结束测试自己启动的后台，核对真实退出码、刷新后的页面反馈和日志目录操作。[跨进程用例](../tests/desktop/ui_resident_exit.ps1) · [固定页面用例](../apps/desktop/tests/ui_main_panel.cpp)
 
 ## 房间首屏预览
 

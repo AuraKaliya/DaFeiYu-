@@ -38,6 +38,6 @@ target_link_libraries(dfy_companion_messages_tests PRIVATE dfy_application dfy_b
 add_test(NAME app.companion_messages COMMAND dfy_companion_messages_tests)
 
 dfy_test_executable(dfy_diagnostic_files_tests diagnostic_files.cpp)
-target_link_libraries(dfy_diagnostic_files_tests PRIVATE dfy_application dfy_build_options)
+target_link_libraries(dfy_diagnostic_files_tests PRIVATE dfy_agent_test_support dfy_application dfy_build_options)
 add_test(NAME app.diagnostic_files COMMAND dfy_diagnostic_files_tests "${CMAKE_CURRENT_BINARY_DIR}/diagnostic-files/$<CONFIG>")
 set_tests_properties(app.diagnostic_files PROPERTIES TIMEOUT 20)

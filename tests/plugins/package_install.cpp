@@ -1,6 +1,6 @@
 #include <dafeiyu/plugin_package.hpp>
 #include <dafeiyu/plugin_manager.hpp>
-#include "../modules/plugin_host/tests/support/filesystem_links.hpp"
+#include "support/filesystem_links.hpp"
 #include <windows.h>
 #include <fstream>
 #include <iostream>

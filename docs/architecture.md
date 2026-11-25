@@ -18,11 +18,11 @@ MC 单玩家试点在游戏动作前向宿主预留原工作号。游戏桥接�
 
 在三线集成后，`6e2705c` 完成了主 Agent 和 MC 单个玩家绑定的循环迁移。该版的 Debug 和 Release 各通过 281 项离线测试，正式安装包另通过宿主与桌面检查。[主线分阶段记录](agent-loop-core-design.md#主线实施记录)
 
-2026-11-25 的三线集成点 `52af378` 在 VS2022 x64 的 Debug 和 Release 各通过 280 项离线 CTest（运行时 258 项、桌面 22 项）。真实 WebView2 双窗覆盖 19 轮、38 条记录和全部关窗后入库；真实 SQLite 写锁及命名管道断包覆盖原号重取。固定响应的隔离 Paper 实测按原话分别发言并只读核对岸边站位。关闭测试入口的 Release 安装包另验示例插件及后台实退、七种 UI 模式、缺资源和 CLI。[双窗回归](../tests/ui_history_windows.ps1) · [消息恢复回归](../apps/host/tests/message_recovery.cpp) · [MC 最近一次验收](mc-companion-development-plan.md#最近一次验收)
+2026-11-25 的三线集成点 `52af378` 在 VS2022 x64 的 Debug 和 Release 各通过 280 项离线 CTest（运行时 258 项、桌面 22 项）。真实 WebView2 双窗覆盖 19 轮、38 条记录和全部关窗后入库；真实 SQLite 写锁及命名管道断包覆盖原号重取。固定响应的隔离 Paper 实测按原话分别发言并只读核对岸边站位。关闭测试入口的 Release 安装包另验示例插件及后台实退、七种 UI 模式、缺资源和 CLI。[双窗回归](../tests/desktop/ui_history_windows.ps1) · [消息恢复回归](../apps/host/tests/message_recovery.cpp) · [MC 最近一次验收](mc-companion-development-plan.md#最近一次验收)
 
-2026-11-25 的功能提交 `2750514` 在 Debug 和 Release 各通过 15 项管理中心定向离线验收。独立桌面进程重开后读回同一后台实例。固定响应验证了在途回合关窗后完成、不同窗口的命令水位与回执独立。Release 另通过三轮双窗口同时冷启动。[跨进程验收](../tests/ui_resident_windows.ps1) · [宿主回归](../apps/host/tests/management_host.cpp)
+2026-11-25 的功能提交 `2750514` 在 Debug 和 Release 各通过 15 项管理中心定向离线验收。独立桌面进程重开后读回同一后台实例。固定响应验证了在途回合关窗后完成、不同窗口的命令水位与回执独立。Release 另通过三轮双窗口同时冷启动。[跨进程验收](../tests/desktop/ui_resident_windows.ps1) · [宿主回归](../apps/host/tests/management_host.cpp)
 
-同一 Release 版本的单窗、双窗复现记录在 `f26e8df`。原后台正常结束约 8 秒后，发起窗口仍显示「本体正在收尾」。当时的测试回调在收到接纳回执后关窗。现在观察者在握手时持有原进程和显式退出事件，读到正常退出码后启动本窗回收。双窗口验收在提交设置确认后只观察，分别核对三个进程、WebView2 回收和同一操作号的日志。[退出复现及修订](ui-framework-design.md#后台图标退出与软件运行日志) · [跨进程实退](../tests/ui_resident_exit.ps1)
+同一 Release 版本的单窗、双窗复现记录在 `f26e8df`。原后台正常结束约 8 秒后，发起窗口仍显示「本体正在收尾」。当时的测试回调在收到接纳回执后关窗。现在观察者在握手时持有原进程和显式退出事件，读到正常退出码后启动本窗回收。双窗口验收在提交设置确认后只观察，分别核对三个进程、WebView2 回收和同一操作号的日志。[退出复现及修订](ui-framework-design.md#后台图标退出与软件运行日志) · [跨进程实退](../tests/desktop/ui_resident_exit.ps1)
 
 2026-11-24 的功能提交 `6c4afe0` 已完成含 GUI 的 Debug 和 Release 全量构建，两种配置各通过 257 项离线 CTest。正式面板通过固定响应和隐藏 WebView2 验证。独立 Release 安装包关闭测试入口，已核对离线加载、键盘输入、正常回收及默认空插件目录。[桌面验收用例](../apps/desktop/tests/ui_main_panel.cpp) · [安装包检查](ui-probe-run-guide.md#自动验证)
 
