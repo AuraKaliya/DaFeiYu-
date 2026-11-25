@@ -66,6 +66,7 @@ Json handle(Host& host, const std::string& identity, const std::string& instance
         return {{"state","disconnected"}};
     }
     if (op=="request" && request.size()==4) return dispatch(&host,request.at("body"),client);
+    if (op=="terminal" && request.size()==4) return host.terminal().exchange(client,request.at("body"));
     throw std::invalid_argument("unknown operation");
 }
 }
