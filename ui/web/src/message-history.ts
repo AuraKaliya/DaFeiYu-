@@ -7,6 +7,7 @@ export interface StoredMessage {
   instance?: string; session?: string; turn?: string; delivery?: string;
 }
 type Read = { kind: 'subscribe' | 'recent' | 'older' | 'changes'; id: string; cursor: string; through: string; sent: number };
+type ReceiptConsumer = (row: StoredMessage | null | undefined) => void;
 const pageSize = 24;
 const storageKey = 'dafeiyu.panel.history';
 
@@ -32,7 +33,7 @@ export function useMessageHistory() {
   const instance = ref(''), conversation = ref(''), more = ref(false), loadingOlder = ref(false), error = ref('');
   const subscribed = ref(false);
   const records = new Map<string, StoredMessage>();
-  const lookups = new Map<string, { source: string; submission: string; sent: number; consume?: (row: StoredMessage | null) => void }>();
+  const lookups = new Map<string, { source: string; submission: string; sent: number; consumers: ReceiptConsumer[] }>();
   const prefix = 'history-' + crypto.randomUUID() + '-';
   let serial = 0, pending: Read | undefined, retryAt = 0;
   let loaded = false, wantOlder = false;
@@ -67,7 +68,11 @@ export function useMessageHistory() {
     }
   }
   // 原连接失联时保留已读消息，下次先核验实例与提交水位。
-  function disconnect(): void { pending = undefined; subscribed.value = false; lookups.clear(); loadingOlder.value = false; }
+  function disconnect(): void {
+    pending = undefined; subscribed.value = false; loadingOlder.value = false;
+    for (const query of lookups.values()) for (const consume of query.consumers) consume(undefined);
+    lookups.clear();
+  }
   // 失败与超时从实际已应用的游标重试，保留用户正在翻阅的位置。
   function failed(): void {
     disconnect();
@@ -77,15 +82,20 @@ export function useMessageHistory() {
   // 正式对话轮询提示新提交，同一水位不会反复读取正文。
   function pulse(watermark: unknown): void {
     if (pending && performance.now() - pending.sent >= 3500) failed();
-    for (const [id, lookup] of lookups) if (performance.now() - lookup.sent >= 3500) lookups.delete(id);
+    for (const [id, query] of lookups) if (performance.now() - query.sent >= 3500) {
+      lookups.delete(id);
+      for (const consume of query.consumers) consume(undefined);
+    }
     if (subscribed.value && cursor(watermark) && BigInt(watermark) > BigInt(latest)) latest = watermark;
     drive();
   }
   // 同一来源和提交号同时只发一次查询，补投与手动复查均使用原消息身份。
-  function receipt(source: string, submission: string, consume?: (row: StoredMessage | null) => void): void {
-    if (!subscribed.value || Array.from(lookups.values()).some(item => item.source === source && item.submission === submission)) return;
+  function receipt(source: string, submission: string, consume: ReceiptConsumer): void {
+    if (!subscribed.value) { consume(undefined); return; }
+    const active = Array.from(lookups.values()).find(item => item.source === source && item.submission === submission);
+    if (active) { active.consumers.push(consume); return; }
     const id = prefix + ++serial;
-    lookups.set(id, { source, submission, sent: performance.now(), consume });
+    lookups.set(id, { source, submission, sent: performance.now(), consumers: [consume] });
     window.chrome.webview.postMessage({ type: 'messages.receipt', version: '1', request: id, conversation: conversation.value, source, submission });
   }
   // 按持久号排序，只展示已经加载到的历史范围。
@@ -100,15 +110,18 @@ export function useMessageHistory() {
     const lookup = lookups.get(value.request);
     if (lookup) {
       lookups.delete(value.request);
-      if (value.version !== '1' || value.event !== 'messages.receipt' || value.instance !== instance.value ||
-          value.conversation !== conversation.value) return true;
-      const row = value.record;
-      if (row === null) lookup.consume?.(null);
-      else if (stored(row) && row.source === lookup.source && row.submission === lookup.submission) {
-        const previous = records.get(row.message);
-        if (!previous || BigInt(previous.revision) < BigInt(row.revision)) { records.set(row.message, row); publishRows(); }
-        lookup.consume?.(row);
+      let result: StoredMessage | null | undefined;
+      if (value.version === '1' && value.event === 'messages.receipt' && value.instance === instance.value &&
+          value.conversation === conversation.value) {
+        const row = value.record;
+        if (row === null) result = null;
+        else if (stored(row) && row.source === lookup.source && row.submission === lookup.submission) {
+          const previous = records.get(row.message);
+          if (!previous || BigInt(previous.revision) < BigInt(row.revision)) { records.set(row.message, row); publishRows(); }
+          result = records.get(row.message);
+        }
       }
+      for (const consume of lookup.consumers) consume(result);
       return true;
     }
     const read = pending;

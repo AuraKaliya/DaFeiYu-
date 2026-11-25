@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { useMessageHistory } from '../src/message-history.ts';
 import { messageTimeline } from '../src/message-timeline.ts';
+import { originalReceipt } from '../src/dialogue-recovery.ts';
 
 // 构造带相同原话的不同已提交消息，修订号独立于消息号。
 function sample(id, revision = id) {
@@ -61,4 +62,40 @@ test('timeline associates final deliveries with their original instance and turn
   assert.equal(blocks[1].prompt.message,'2');
   assert.equal(blocks[1].answer.message,'3');
   assert.equal(blocks[2].row.message,'4');
+});
+
+// 刷新后的每种持久回执沿用原窗口命令语义，仅肯定接纳才清除未改草稿。
+test('recovered submissions agree with native command receipts', () => {
+  const fields = { type:'dialogue.append', command:'9', text:'旧补充', submission:'original', sourceUtcMs:80,
+    instance:'original-host', session:'3', turn:'8' };
+  const row = { ...sample(1), submission:fields.submission, text:fields.text, sourceUtcMs:80, route:'append',
+    target:{instance:fields.instance, session:fields.session, turn:fields.turn} };
+  for (const [expected, states] of Object.entries({ pending:['pending','dispatching'], accepted:['accepted','waiting','queued','submitted'],
+    full:['full','limit'], stale:['stale','closed','removed'], unavailable:['unknown','unavailable'],
+    rejected:['cancelled','deadline','failed','rejected','future-unrecognized-state'] })) {
+    for (const state of states) assert.equal(originalReceipt(fields,{ ...row, receipt:{state} }),expected,state);
+  }
+  assert.equal(originalReceipt(fields,{ ...row, sourceUtcMs:81 }), 'conflict');
+  assert.equal(originalReceipt(fields,{ ...row, target:{ ...row.target, instance:'replacement' } }), 'conflict');
+});
+
+// 手动核对与恢复只读同一原号；断连及迟到的旧文档回复不能表示记录不存在。
+test('receipt lookups share a read and preserve the distinction between missing and disconnected', () => {
+  const { sent } = fixture();
+  const view = useMessageHistory(), results = [];
+  view.pulse(undefined);
+  const reply = { version:'1', conversation:'logical', instance:'resident', watermark:'1' };
+  view.receive({ ...reply, event:'messages.subscribed', request:sent.at(-1).request });
+  view.receipt('desktop','test-1', r=>results.push(r));
+  const original = sent.at(-1);
+  view.receipt('desktop','test-1', r=>results.push(r));
+  assert.equal(sent.at(-1),original);
+  view.disconnect();
+  view.receive({ ...reply,event:'messages.receipt',request:original.request,record:null });
+  assert.deepEqual(results,[undefined,undefined]);
+  view.pulse(undefined);
+  view.receive({ ...reply,event:'messages.subscribed',request:sent.at(-1).request });
+  view.receipt('desktop','test-1', r=>results.push(r));
+  view.receive({ ...reply,event:'messages.receipt',request:sent.at(-1).request,record:null });
+  assert.equal(results.at(-1),null);
 });

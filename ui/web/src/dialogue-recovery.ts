@@ -60,13 +60,11 @@ export function originalReceipt(fields: TextCommand, row: StoredMessage) {
         row.target.instance !== fields.instance || row.target.session !== fields.session || row.target.turn !== fields.turn)) return 'conflict';
   switch (row.receipt.state) {
     case 'pending': case 'dispatching': return 'pending';
-    case 'accepted': case 'waiting': case 'queued': case 'submitted': case 'removed':
-    case 'cancelled': case 'deadline': case 'limit': case 'closed': return 'accepted';
-    case 'full': return 'full';
-    case 'stale': return 'stale';
-    case 'unavailable': return 'unavailable';
-    case 'failed': case 'rejected': return 'rejected';
-    default: return 'unknown';
+    case 'accepted': case 'waiting': case 'queued': case 'submitted': return 'accepted';
+    case 'full': case 'limit': return 'full';
+    case 'stale': case 'closed': case 'removed': return 'stale';
+    case 'unknown': case 'unavailable': return 'unavailable';
+    default: return 'rejected';
   }
 }
 

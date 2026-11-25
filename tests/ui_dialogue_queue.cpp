@@ -133,6 +133,11 @@ void InteractionProbe::check_dialogue_queue(std::shared_ptr<tests::UiDialogueGat
         document.querySelector('#dialogue-confirm-clear').click(); return true;
     })())JS");
     expect("clear retains queue and original text","!document.querySelector('.turn') && document.querySelector('.queue-list li span')?.textContent==='稍后聊窗边的书'");
+    expect("removed and cancelled originals retain distinct durable outcomes",R"JS((()=>{
+        const states=[...document.querySelectorAll('.history-message [data-receipt]')];
+        return states.some(s=>s.dataset.receipt==='removed' && s.parentElement.querySelector('p').textContent==='可移除的消息' && s.textContent.includes('已从待发队列移除')) &&
+            states.some(s=>s.dataset.receipt==='cancelled' && s.parentElement.querySelector('p').textContent==='留在本轮的补充' && s.textContent.includes('补充未带入'));
+    })())JS");
     evaluate("resume visible head","window.resumedMessage=document.querySelector('.queue-list li').dataset.message; document.querySelector('#dialogue-resume').click(); true");
     expect("resumed text appears in its own finished turn","!document.querySelector('.queue-list') && document.querySelectorAll('.turn').length===1 && "
         "document.querySelector('.turn').dataset.queuedMessage===window.resumedMessage && document.querySelector('.turn').dataset.exit==='succeeded' && "

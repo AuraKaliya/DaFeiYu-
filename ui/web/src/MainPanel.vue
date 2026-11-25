@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } fr
 import { useMessageHistory } from './message-history';
 import { messageTimeline } from './message-timeline';
 import MessageTime from './MessageTime.vue';
+import MessageReceipt from './MessageReceipt.vue';
 import ManagementShell from './ManagementShell.vue';
 import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
@@ -277,7 +278,7 @@ function recoverOutstanding(latestCommand: bigint): void {
     if (originalConversation !== messages.conversation.value) { settle({ command: id, state: 'stale' }); continue; }
     nextLookup = performance.now() + 600;
     messages.receipt('desktop', fields.submission, row => {
-      if (outstanding.get(id) !== fields || !reconnecting.has(id)) return;
+      if (row === undefined || outstanding.get(id) !== fields || !reconnecting.has(id)) return;
       if (!row) {
         reconnecting.delete(id);
         post(fields);
@@ -285,8 +286,8 @@ function recoverOutstanding(latestCommand: bigint): void {
       }
       const state = originalReceipt(fields, row);
       if (state === 'pending') return;
-      settle({ command: id, state: state === 'unknown' ? 'unavailable' : state });
-      if (state === 'unknown') notice.value = '投递结果待核对，草稿已保留。';
+      settle({ command: id, state });
+      if (state === 'unavailable' && row.receipt.state === 'unknown') notice.value = '投递结果待核对，草稿已保留。';
     });
   }
 }
@@ -545,6 +546,7 @@ onUnmounted(() => {
         <li v-if="'row' in entry" class="history-message" :data-entry="entry.key">
           <div class="message" :class="entry.row.sender === 'assistant' ? 'incoming' : 'outgoing'" :data-stored-message="entry.row.message">
             <b>{{ entry.row.sender === 'assistant' ? '大肥鱼' : '你' }} <MessageTime :record="entry.row" /></b><p>{{ entry.row.text }}</p>
+            <MessageReceipt v-if="entry.row.sender === 'user'" :record="entry.row" :lookup="messages.receipt" />
           </div>
         </li>
         <li v-else class="turn" :data-entry="entry.key" :data-turn="entry.turn.turn" :data-result="entry.turn.result" :data-exit="entry.turn.exit" :data-queued-message="entry.turn.queuedMessage">
