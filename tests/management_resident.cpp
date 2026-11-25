@@ -1,4 +1,7 @@
 #include "management/resident.hpp"
+#include "management/client.hpp"
+#include "management/local_pipe.hpp"
+#include <windows.h>
 #include <nlohmann/json.hpp>
 #include <future>
 #include <fstream>
@@ -19,6 +22,57 @@ void wait_until(Predicate ready) {
         std::this_thread::sleep_for(15ms);
     } while (std::chrono::steady_clock::now()<end);
     throw std::runtime_error("resident state timed out");
+}
+
+// 从实际客户端提交一项读取或退出，并在有界时间内收取窗口回调。
+// 步骤：登记请求与回包位置 → 推进客户端直到回包 → 返回实际数据。
+Json window_reply(management::Client& client, const Json& body) {
+    auto result = std::make_shared<Json>();
+    if (!client.post(body,[result](const Json& value) { *result = value; })) throw std::runtime_error("window request rejected");
+    wait_until([&] { client.advance(); return !result->is_null(); });
+    return *result;
+}
+
+// 在原实例接纳退出之后断开 IPC，并让同目录的新端点返回自己的等待对象。
+// 步骤：完成真实观察握手 → 置位并丢弃退出回包 → 核对独立意图 → 拒绝新实例的收尾数据。
+void lost_stop_reply(const std::filesystem::path& root) {
+    const auto profile = root/"lost-stop";
+    const auto pid = GetCurrentProcessId();
+    const auto instance = std::to_string(pid)+"-1-1";
+    management::StopSignal signal(instance);
+    auto owner = std::make_unique<management::LocalPipe>(profile);
+    auto original = std::async(std::launch::async,[&] {
+        const bool connected = owner->serve_one(3s,[&](const std::string& bytes) {
+            if (Json::parse(bytes).at("op")!="connect") throw std::runtime_error("unexpected initial operation");
+            return Json{{"v",1},{"result",{{"client","first"},{"instance",instance},{"pid",pid},{"stopWatch",true}}}}.dump();
+        });
+        if (!connected) throw std::runtime_error("handshake not acknowledged");
+        return owner->serve_one(3s,[&](const std::string& bytes) -> std::string {
+            const auto request = Json::parse(bytes);
+            if (request.at("op")!="stop" || request.at("instance")!=instance || !signal.accept()) throw std::runtime_error("wrong stop target");
+            throw std::system_error(ERROR_BROKEN_PIPE,std::system_category(),"fixture dropped response");
+        });
+    });
+    management::Client client(profile,"fixture",[] { throw std::runtime_error("unexpected launch"); });
+    const auto stop = window_reply(client,{{"type","host.stop"},{"version","1"},{"request","original-stop"}});
+    const auto observed = client.observe();
+    if (original.get() || stop.at("event")!="management.error" || stop.at("request")!="original-stop" ||
+        !observed.requested || observed.pid!=pid || observed.exit_code || observed.error) throw std::runtime_error("lost reply lost the original intent");
+    owner.reset();
+
+    {
+        management::LocalPipe replacement(profile);
+        auto exchange = std::async(std::launch::async,[&] {
+            return replacement.serve_one(3s,[&](const std::string& bytes) {
+                const auto request = Json::parse(bytes);
+                if (request.at("op")!="status" || request.at("instance")!=instance) throw std::runtime_error("unbound follow-up");
+                return Json{{"v",1},{"result",{{"instance","new-instance"},{"pid",pid},{"progress",{{"stage","plugins"}}}}}}.dump();
+            });
+        });
+        const auto reply = window_reply(client,{{"type","dialogue.read"},{"version","1"},{"request","after-restart"},{"command",""},{"revision",""}});
+        if (!exchange.get() || reply.at("event")!="host.lifecycle" || !reply.at("requested").get<bool>() || reply.at("pid")!=pid ||
+            !reply.at("exitCode").is_null() || reply.contains("progress")) throw std::runtime_error("replacement progress reached old window");
+    }
 }
 
 // 复查只有一次退出接纳，而且收尾实效包含被阻塞的原回合及实际等待。
@@ -126,6 +180,7 @@ int main(int argc, char** argv) {
     try {
         if (argc!=2) return 2;
         reconnect(argv[1]);
+        lost_stop_reply(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

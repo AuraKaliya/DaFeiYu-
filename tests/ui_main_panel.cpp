@@ -37,7 +37,7 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
 namespace dfy::ui {
 // 通过正式页面读取原生房间，核对显式退出和意外退出的不同回执。
 // 步骤：等待真实后台数据 → 核对本窗日志和目录操作 → 按场景提交退出或观察原进程丢失。
-void InteractionProbe::start_observer(bool stop, bool log_error, bool unexpected) {
+void InteractionProbe::start_observer(bool stop, bool log_error, const std::filesystem::path& replacement_ready) {
     expect("resident observer ready","document.querySelector('#dialogue-state')?.dataset.accepting==='true' && document.querySelector('#room-location')?.textContent==='书房 · 书桌旁'");
     evaluate("inspect resident settings","document.querySelector('#board-settings').click(); true");
     expect("window log status",log_error ? "document.querySelector('#log-status')?.textContent.includes('写入日志失败，系统错误码')" :
@@ -51,12 +51,15 @@ void InteractionProbe::start_observer(bool stop, bool log_error, bool unexpected
     if (stop) {
         evaluate("request explicit completion","document.querySelector('#host-stop').click(); document.querySelector('#host-confirm-stop').click(); true");
     }
-    if (unexpected) {
+    if (!replacement_ready.empty()) {
         wait_for("fixture may end its own resident",[] { std::fputs("Observer ready for unexpected exit\n",stderr); std::fflush(stderr); return true; });
         expect("unexpected exit is visible with diagnostics","document.querySelector('#dialogue-state').textContent==='本体意外退出' && "
             "document.querySelector('#host-shutdown-status').textContent.includes('退出码') && document.querySelector('#host-stop').disabled");
-        call("reload after original process exit",L"Page.reload",Json::object());
-        expect("retained peer after reload","document.querySelector('#dialogue-state')?.textContent==='本体意外退出'");
+        evaluate("retain original process evidence","sessionStorage.setItem('fixture-original-exit',document.querySelector('#host-shutdown-status').textContent.trim()); true");
+        wait_for("replacement has acquired the old directory",[replacement_ready] { return std::filesystem::is_regular_file(replacement_ready); });
+        call("reload with replacement resident online",L"Page.reload",Json::object());
+        expect("retained original peer after replacement and reload","document.querySelector('#dialogue-state')?.textContent==='本体意外退出' && "
+            "document.querySelector('#host-shutdown-status').textContent.trim()===sessionStorage.getItem('fixture-original-exit') && document.querySelector('#host-stop').disabled");
         evaluate("inspect settings after loss","document.querySelector('#board-settings').click(); true");
         evaluate("open local log after loss","document.querySelector('#open-logs').click(); true");
         expect("local log is still available","document.querySelector('#log-status')?.textContent.includes('系统已接收打开目录请求')");

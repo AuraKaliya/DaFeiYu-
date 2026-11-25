@@ -41,9 +41,16 @@ function Assert-Closed([Diagnostics.Process]$Process) {
         $report.browser_processes -lt 1) { throw "Incomplete native window cleanup: $($Process.Id)" }
 }
 
+# 从本次隔离目录的各进程日志读出完整事件行。
+function Read-SoftwareLog {
+    Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
+        ForEach-Object { Get-Content -Encoding UTF8 -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json } }
+}
+
 $observer = $null
 $initiator = $null
 $owner = $null
+$replacement = $null
 try {
     if ($Unexpected) {
         $info = [Diagnostics.ProcessStartInfo]::new()
@@ -59,11 +66,20 @@ try {
         if ($state.pid -ne $owner.Id) { throw 'Window did not attach to the fixture-owned process' }
         $owner.Kill()
         if (!$owner.WaitForExit(5000)) { throw 'Original fixture process did not exit' }
+        $replacement = [Diagnostics.Process]::Start($info)
+        $until = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            Start-Sleep -Milliseconds 70
+            try { $current = (& $App --host-status $data 2>$null | Out-String) | ConvertFrom-Json }
+            catch { $current = $null }
+        } while ((!$current -or $current.state -ne 'running') -and !$replacement.HasExited -and $until.ElapsedMilliseconds -lt 5000)
+        if ($current.pid -ne $replacement.Id -or $current.instance -eq $state.instance) { throw 'Replacement did not take the old directory' }
+        [IO.File]::WriteAllText((Join-Path $data 'replacement.ready'),'ready')
         Wait-Ready $observer
         Assert-Closed $observer
-        $rows = @(Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
-            ForEach-Object { Get-Content -Encoding UTF8 -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json } })
-        $witness = @($rows | Where-Object { $_.pid -eq $observer.Id -and $_.event -eq 'host.exited' })
+        $still = (& $App --host-status $data | Out-String) | ConvertFrom-Json
+        if ($still.instance -ne $current.instance -or $still.state -ne 'running') { throw 'Old window changed the replacement resident' }
+        $witness = @(Read-SoftwareLog | Where-Object { $_.pid -eq $observer.Id -and $_.event -eq 'host.exited' })
         if ($witness.Count -ne 1 -or $witness[0].peerPid -ne $owner.Id -or $witness[0].result -ne 'failed' -or
             $witness[0].operation -or $witness[0].exitCode -ne ([long]$owner.ExitCode -band 4294967295L)) { throw 'Incorrect unexpected-exit witness' }
         return
@@ -77,8 +93,7 @@ try {
     if (!$owner.WaitForExit(15000) -or $owner.ExitCode -ne 0) { throw 'Original host did not exit normally' }
     Assert-Closed $observer
     Assert-Closed $initiator
-    $rows = @(Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
-        ForEach-Object { Get-Content -Encoding UTF8 -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json } })
+    $rows = @(Read-SoftwareLog)
     foreach ($window in @($observer,$initiator)) {
         $witness = @($rows | Where-Object { $_.pid -eq $window.Id -and $_.event -eq 'host.exited' })
         if ($witness.Count -ne 1 -or $witness[0].peerPid -ne $owner.Id -or $witness[0].exitCode -ne 0 -or
@@ -93,6 +108,10 @@ try {
     }
     if ($owner -and !$owner.HasExited) { & $App --stop-host $data | Out-Null; $null = $owner.WaitForExit(6000) }
     if ($owner) { $owner.Dispose() }
+    if ($replacement) {
+        if (!$replacement.HasExited) { & $App --stop-host $data | Out-Null; if (!$replacement.WaitForExit(6000)) { $replacement.Kill(); $replacement.WaitForExit() } }
+        $replacement.Dispose()
+    }
     $created = Get-Item -LiteralPath $folder
     if ($created.Parent.FullName -eq $base -and $created.Name -match '^exit-[0-9a-f]{32}$' -and
         !($created.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Remove-Item -LiteralPath $created.FullName -Force -Recurse }

@@ -2,6 +2,7 @@
 #include "webview_support.hpp"
 #include "frame_channel.hpp"
 #include <nlohmann/json.hpp>
+#include <filesystem>
 #include <functional>
 #include <vector>
 
@@ -24,7 +25,7 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     // 以受控回合验证后台收尾时正式面板显示的等待对象及超时提示。
     void start_panel_shutdown(std::shared_ptr<tests::UiDialogueGate> gate);
     // 在独立桌面进程核对后台读数、显式退出或意外终止的界面反馈。
-    void start_observer(bool stop, bool log_error, bool unexpected);
+    void start_observer(bool stop, bool log_error, const std::filesystem::path& replacement_ready);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif

@@ -265,7 +265,10 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
-                if (observer_check) { interaction->start_observer(observer_stop,observer_log_error,observer_unexpected); return; }
+                if (observer_check) {
+                    interaction->start_observer(observer_stop,observer_log_error,observer_unexpected ? user_data/"replacement.ready" : std::filesystem::path{});
+                    return;
+                }
                 if (run_status_probe) {
                     const auto probe = run_status_probe;
                     interaction->start_run_status([probe] { probe->submit(); },[probe] { probe->approve(); });
