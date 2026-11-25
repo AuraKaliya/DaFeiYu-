@@ -138,6 +138,8 @@ async function checkPlayer(fixture, mode) {
       await checkGroundPickup(fixture, player, whispers);
     } else if (['--handoff-gather-probe','--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode)) {
       await checkGatherHandoff(fixture, player, whispers, mode);
+    } else if (mode.startsWith('--handoff-eight-')) {
+      await checkEightStones(fixture,player,whispers,mode === '--handoff-eight-full-probe');
     } else if (handoff) {
       const other = mode === '--handoff-other-probe' ? await connect('DfyCollector',fixture.port) : null;
       try { await checkHandoff(fixture, player, whispers, mode, other); }
@@ -469,6 +471,68 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
       assert.ok(frame.hostWorkReceipts.every(w => w.receipt > frame.factFrame.workAfter && w.receipt <= frame.factFrame.workThrough));
     assert.ok(!trace().some(r => r.kind === 'mail.received' && r.body?.factReceiptError));
   }
+}
+
+// 通过原版协议核对八块圆石的实际破坏、入包及只约束交付的选箱问题。
+// 步骤：下达原话并在开挖时插问 → 核对八个格和库存 → 按选箱或满包投物分流 → 验证原号实收。
+async function checkEightStones(fixture, player, whispers, full) {
+  const id = player.registry.itemsByName.cobblestone.id;
+  const point = (x,y,z) => player.entity.position.clone().set(x,y,z);
+  const cells = [-3,-2].flatMap(x => [-2,-1,0,1].map(z => point(x,-60,z)));
+  const actions = () => readRows(fixture,'game-actions.jsonl');
+  const trace = () => readRows(fixture,'trace/events.jsonl');
+  await until(() => cells.every(p => player.blockAt(p)?.name === 'cobblestone') &&
+    [point(2,-60,-2),point(2,-60,2)].every(p => player.blockAt(p)?.name === 'chest') &&
+    fixture.materialCount('cobblestone') === 0,'八格目标、两个箱子与伙伴零库存');
+  const question = '八块圆石交到哪个箱子？';
+  await measurePlayerFeedback(player,'帮我挖 8 块圆石',question,() => until(() => whispers.includes(question),'玩家实际收到交付追问'),
+    sample => writeFileSync(join(fixture.evidence,'player-feedback.json'),JSON.stringify(sample,null,2)));
+  await until(() => trace().some(r => r.category === 'mc.partner.motion' && r.body.status === 'digging'),'选箱待答时采掘已开始',20000);
+  let progress;
+  await measurePlayerFeedback(player,'挖进背包几块了？',() => progress,async () => {
+    const answer = await until(() => whispers.find(line => /这次查到我背包里有 \d+ 块圆石/.test(line)),'采掘中的实测库存答复');
+    const stock = actions().find(row => row.result.handoff)?.result.handoff.stock.available;
+    assert.ok(Number.isInteger(stock) && stock <= 8 && answer === '这次查到我背包里有 '+stock+' 块圆石。');
+    progress = answer;
+  },sample => writeFileSync(join(fixture.evidence,'progress-feedback.json'),JSON.stringify(sample,null,2)));
+  await until(() => whispers.includes('八块圆石都进了我的背包，等你选交付位置。'),'原采掘工作核实入包并结算',60000);
+  const dig = actions().filter(row => row.skill === 'collect');
+  assert.deepEqual([dig.length,dig[0].result.broken,dig[0].result.inventoryDelta.cobblestone,fixture.materialCount('cobblestone')],[1,8,8,8]);
+  assert.ok(cells.every(p => player.blockAt(p)?.name === 'air') && !actions().some(row => row.skill === 'give_item'));
+  player.chat('可以先交了吗？');
+  await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
+  assert.ok(!actions().some(row => row.skill === 'give_item'));
+  if (!full) {
+    player.chat('左箱');
+    await until(() => whispers.includes('已记下左箱，圆石还在我这里。'),'原选箱问题实际完成');
+    assert.deepEqual([fixture.materialCount('cobblestone'),player.inventory.count(id)],[8,0]);
+    return;
+  }
+  fixture.send('tp DfyCompanion 0.5 -60 0.5');
+  fixture.send('tp DfyGuestCheck 2.5 -60 0.5');
+  fixture.send('give DfyGuestCheck minecraft:stone 2304');
+  await until(() => player.inventory.emptySlotCount() === 0 && player.entity.position.distanceTo(point(2.5,-60,0.5)) < 0.05 &&
+    player.players.DfyCompanion.entity.position.distanceTo(point(0.5,-60,0.5)) < 0.05,'收件玩家在平坦落点前两格且背包已满');
+  player.chat('扔给我');
+  await until(() => whispers.includes('八块都已投出，你的拾取还没有确认。'),'满包阶段只报告原投物实效',20000);
+  const give = actions().filter(row => row.skill === 'give_item');
+  const proof = give[0].result.receipt;
+  assert.deepEqual([give.length,proof.thrown,proof.recipientPicked,proof.otherPicked,proof.pickupUnknown,player.inventory.count(id)],[1,8,0,0,8,0]);
+  fixture.send('clear DfyGuestCheck minecraft:stone');
+  await until(() => player.inventory.count(id) === 8,'腾包后玩家实际收到八块');
+  player.chat('现在收到几块？');
+  await until(() => whispers.includes('查回原交付，你实收了八块圆石。'),'原工作迟到实收答复');
+  const check = actions().find(row => row.result.handoffReceipt)?.result.handoffReceipt;
+  assert.deepEqual([check.work,check.receipt.recipientPicked,actions().filter(row => row.skill === 'give_item').length],[give[0].work,8,1]);
+  player.chat('再核对一次原投递号');
+  await until(() => whispers.includes('原投递号已核对，实收仍是八块。'),'已退出的原工作获得迟到实效');
+  const frames = trace().filter(row => row.kind === 'model.prepared' && row.input.messages.at(-1).role === 'user')
+    .map(row => JSON.parse(row.input.messages.at(-1).content));
+  const original = frames.flatMap(frame => frame.hostWorkReceipts ?? []).find(work => work.work === give[0].work && work.revision === 4);
+  assert.deepEqual([original.source.skill,original.effect.recipient,original.effect.recipientPicked,original.effect.sourceThrough],
+    ['give_item',player.player.uuid,8,proof.throughSeq]);
+  assert.ok(original.exited && !trace().some(row => row.body?.factReceiptError));
+  assert.equal(actions().filter(row => row.skill === 'give_item').length,1);
 }
 
 // 在两个真实投物操作之间移开玩家，核对停投读数、现场掉落及原委托的实际发言。

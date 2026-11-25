@@ -837,6 +837,96 @@ nlohmann::json gather_scene(const dfy::model::Request& request) {
     }
     return scene;
 }
+// 依据原玩家和原工作回执演练八块圆石、只阻塞交付的选箱问题及满包后的迟到拾取。
+// 步骤：登记交付问题并启用采掘 → 读真实库存回答插问 → 按选择等待或投物 → 沿原号复核实收。
+dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
+    using namespace dfy::model;
+    using Json = nlohmann::json;
+    const auto tool = [&](std::string_view suffix, std::string id, const Json& arguments) -> ToolCall {
+        const auto found = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(suffix); });
+        if (found == request.tools.end()) throw std::runtime_error("eight stone: missing "+std::string(suffix));
+        return {std::move(id),found->name,arguments.dump()};
+    };
+    const auto invoke = [&](std::string_view name, std::string id, const Json& data) -> Response {
+        return {{Role::assistant,"",{tool(name,std::move(id),data)}},FinishReason::tool_calls};
+    };
+    const auto& last = request.messages.back();
+    if (last.role == Role::user) {
+        const auto scene = gather_scene(request);
+        const auto trigger = scene.at("trigger").get<std::string>();
+        const auto& events = scene.at("events");
+        const auto line = events.empty() ? std::string{} : events.back().value("text","");
+        if (line == "帮我挖 8 块圆石") {
+            const Json q{{"question","八块圆石交到哪个箱子？"},{"options",{"左箱","扔给我"}},
+                {"scope",{{"skill","give_item"},{"item","cobblestone"}}}};
+            return {{Role::assistant,"",{tool("_ask_player","Q4",q),tool("_skills","capabilities",{{"categories",{"dig_break","inventory"}}})}},FinishReason::tool_calls};
+        }
+        if (trigger == "skills.expanded" && scene.contains("pendingQuestion"))
+            return invoke("_collect","W17",{{"block","cobblestone"},{"count",8}});
+        const Json query{{"mode","handoff"},{"recipient",scene.at("player")},{"item","cobblestone"},{"count",8}};
+        if (line == "挖进背包几块了？" && scene.contains("activeMotion") && scene.contains("pendingQuestion"))
+            return invoke("_observe","progress",query);
+        if (line == "可以先交了吗？" && scene.contains("pendingQuestion"))
+            return invoke("_observe","before-choice",query);
+        if (scene.contains("questionResult")) {
+            const auto choice = scene.at("questionResult").value("answer","");
+            if (choice == "左箱") return {{Role::assistant,"已记下左箱，圆石还在我这里。"}};
+            if (choice == "扔给我" && (trigger == "question.result" || line == "扔给我"))
+                return invoke("_observe","give-ready",query);
+        }
+        if (trigger == "motion.finished" && scene.contains("workSettlement")) {
+            const auto& completed = primary_receipt(scene);
+            const auto& result = completed.at("result");
+            if (completed.at("skill") == "collect" && result.value("broken",0) == 8 &&
+                result.at("inventoryDelta").value("cobblestone",0) == 8)
+                return {{Role::assistant,"八块圆石都进了我的背包，等你选交付位置。"}};
+            if (completed.at("skill") == "give_item" && result.at("receipt").at("thrown") == 8 &&
+                result.at("receipt").at("pickupUnknown") == 8)
+                return {{Role::assistant,"八块都已投出，你的拾取还没有确认。"}};
+        }
+        if (line == "再核对一次原投递号") {
+            for (const auto& fact : scene.value("hostWorkReceipts",Json::array()))
+                if (fact.value("revision",0) == 4 && fact.contains("exited") && fact.at("source").value("skill","") == "give_item" &&
+                    fact.at("effect").value("recipientPicked",0) == 8 && fact.at("effect").at("recipient") == scene.at("player"))
+                    return {{Role::assistant,"原投递号已核对，实收仍是八块。"}};
+        }
+        if (line == "现在收到几块？") {
+            for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
+                if (it->role != Role::user) continue;
+                const auto frame = Json::parse(it->content,nullptr,false);
+                if (!frame.is_object()) continue;
+                for (const auto& fact : frame.value("hostWorkReceipts",Json::array()))
+                    if (fact.contains("effect") && fact.at("effect").contains("result") &&
+                        fact.at("effect").at("result").contains("transfer"))
+                        return invoke("_observe","recheck",{{"mode","handoff_receipt"},{"work",fact.at("work")}});
+                if (frame.contains("workSettlement")) {
+                    const auto& fact = primary_receipt(frame);
+                    if (fact.at("skill") == "give_item") return invoke("_observe","recheck",{{"mode","handoff_receipt"},{"work",fact.at("bridgeWork")}});
+                }
+            }
+        }
+    } else if (last.role == Role::tool) {
+        if (last.tool_call_id == "progress" || last.tool_call_id == "give-ready" || last.tool_call_id == "before-choice") {
+            const auto sample = Json::parse(last.content.substr(last.content.find('{'))).at("handoff");
+            const auto count = sample.at("stock").at("available").get<int>();
+            if (last.tool_call_id == "progress") return {{Role::assistant,"这次查到我背包里有 "+std::to_string(count)+" 块圆石。"}};
+            if (count != 8) throw std::runtime_error("eight stone: delivery stock has not been verified");
+            return invoke("_give_item",last.tool_call_id == "before-choice" ? "premature-give" : "original-give",
+                {{"observation",sample.at("id")},{"recipient",sample.at("recipient")},{"item","cobblestone"},{"count",8}});
+        }
+        if (last.tool_call_id == "premature-give") {
+            const auto blocked = Json::parse(last.content.substr(last.content.find('{')));
+            if (blocked.at("reason") == "waiting_for_player" && blocked.contains("item"))
+                return {{Role::assistant,"还在等你选交付位置，八块都在我这里。"}};
+        }
+        if (last.tool_call_id == "recheck") {
+            const auto receipt = Json::parse(last.content.substr(last.content.find('{'))).at("handoffReceipt");
+            if (receipt.at("receipt").at("recipientPicked") == 8) return {{Role::assistant,"查回原交付，你实收了八块圆石。"}};
+        }
+    }
+    return {{Role::assistant,R"({"internal":"awaiting original work or source reply"})"}};
+}
+
 // 用原玩家的备料委托连接实际采掘、会合和交物，插话只读取当前采掘工作。
 // 步骤：核对零库存并先回话 → 排列取得材料、与原玩家会合及交付 → 依原工作答进度和实收。
 dfy::model::Response gather_handoff_sample(const dfy::model::Request& request) {
@@ -1255,7 +1345,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool ground_pickup = mode == L"--ground-pickup-probe";
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
-        const bool handoff = gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
+        const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-full-probe";
+        const bool handoff = eight || gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" ||
             mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-partial-probe" || mode == L"--handoff-other-probe";
         const bool vitals = mode == L"--vitals-probe" || mode == L"--air-episode-probe";
@@ -1276,7 +1367,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,eight,ask,gap,root,mode](const auto&, const auto& request) {
+                if (eight) return eight_stone_sample(request);
                 if (mode == L"--vitals-probe" || mode == L"--air-episode-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
                 if (handoff) return handoff_sample(request,mode,root);

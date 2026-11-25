@@ -302,7 +302,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         const bool alters_world = controls_body && (game_skill == "collect" || placing);
         const auto front_block = partner_turn && controls_body ? raw->partner.front_barrier(call->session) : std::string_view{};
         auto action_block = placing && front_block.empty() ? raw->partner.bind_placement(call->session,game_skill,job.arguments) : std::string_view{};
-        const auto question = alters_world && action_block.empty() ? raw->partner.action_question(call->session,game_skill,
+        const auto question = (alters_world || (controls_body && game_skill == "give_item")) && action_block.empty() ? raw->partner.action_question(call->session,game_skill,
             nlohmann::json::parse(job.arguments).at("arguments"),pointed.value_or(false) ? resolves : 0) : nlohmann::json{};
         const bool needs_plan = exact_dig && pointed.value_or(false) && raw->partner.has_pickup_continuation(resolves);
         const bool input_blocked = !front_block.empty() || !question.is_null() || needs_plan || !pointed.has_value() ||
@@ -434,7 +434,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         try {
             std::optional<dfy::mc::GameResult> value;
             if (!job->cancelled && job->partner_session && !job->action->attempted() &&
-                (job->skill == "collect" || job->skill == "place" || job->skill == "fill_target")) {
+                (job->skill == "collect" || job->skill == "place" || job->skill == "fill_target" || job->skill == "give_item")) {
                 const auto question = raw->partner.action_question(job->partner_session,job->skill,
                     nlohmann::json::parse(job->action->arguments()).at("arguments"),job->resolves);
                 if (!question.is_null()) value = dfy::mc::GameResult{true,dfy::mc::GameEffect::none,question.dump()};

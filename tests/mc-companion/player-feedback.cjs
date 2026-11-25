@@ -16,9 +16,9 @@ function firstUsefulFeedback(sample, usefulText) {
 }
 
 // 由同一协议玩家记录一次发话及其后的伙伴私聊，在断线或等待退出时结束采样。
-// 步骤：订阅实际收件和断线 → 发出原话并等待场景回执 → 保存本次观察窗口及判定。
+// 步骤：订阅实际收件和断线 → 发出原话并等待场景回执 → 核对约定文本或现场读数对应的答复 → 保存窗口和判定。
 async function measurePlayerFeedback(player, message, usefulText, wait, save, now = () => performance.now()) {
-  const sample = { message, usefulText, clock: 'protocol_player_monotonic_ms', replies: [] };
+  const sample = { message, clock: 'protocol_player_monotonic_ms', replies: [] };
   const heard = (sender, text) => {
     if (sender === 'DfyCompanion' && sample.observedThroughMs === undefined)
       sample.replies.push({ text, atMs: now() });
@@ -35,7 +35,8 @@ async function measurePlayerFeedback(player, message, usefulText, wait, save, no
     ended();
     player.removeListener('whisper', heard);
     player.removeListener('end', ended);
-    save({ ...sample, ...firstUsefulFeedback(sample, usefulText) });
+    sample.usefulText = typeof usefulText === 'function' ? usefulText() : usefulText;
+    save({ ...sample, ...firstUsefulFeedback(sample, sample.usefulText) });
   }
 }
 

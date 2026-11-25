@@ -53,19 +53,30 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
     const auto& action = accepted ? payload.at("action") : payload;
     const auto work = action.value("bridgeWork",std::string{});
     if (work.empty() || action.value("session",std::uint64_t{}) != session) return DFY_V2_OK;
-    const auto put = [&](uint64_t revision, uint32_t phase, const Json& body) {
+    const auto put = [&](std::string_view origin, uint64_t revision, uint32_t phase, const Json& body) {
         const auto text = body.dump();
-        const dfy_v2_work_fact fact{session,revision,bytes(work),bytes(text),phase,0};
+        const dfy_v2_work_fact fact{session,revision,bytes(origin),bytes(text),phase,0};
         std::uint64_t receipt = 0;
         return service_->settle(session,&fact,&receipt,nullptr);
     };
     const Json source{{"skill",action.at("skill")},{"sourceMessage",action.at("order")}};
-    auto result = put(1,DFY_V2_WORK_ACCEPTED,source);
+    auto result = put(work,1,DFY_V2_WORK_ACCEPTED,source);
     if (accepted || result) return result;
     Json effect{{"effect",action.at("effect")}};
     if (action.contains("result") && action.at("result").dump().size() <= 7000) effect["result"] = action.at("result");
     else effect["originalWork"] = work;
-    result = put(2,DFY_V2_WORK_EFFECT,effect);
-    return result ? result : put(3,DFY_V2_WORK_EXIT,{{"exited",true}});
+    result = put(work,2,DFY_V2_WORK_EFFECT,effect);
+    if (!result) result = put(work,3,DFY_V2_WORK_EXIT,{{"exited",true}});
+    if (result || action.at("skill") != "observe" || !action.contains("result") ||
+        !action.at("result").contains("handoffReceipt")) return result;
+
+    const auto& handoff = action.at("result").at("handoffReceipt");
+    const auto& proof = handoff.at("receipt");
+    if (proof.at("source") != "server_events" || proof.at("recipientPicked") != handoff.at("requested") ||
+        proof.at("throwUnknown") != 0 || proof.at("pickupUnknown") != 0 || handoff.at("originalStatus") != "blocked") return DFY_V2_OK;
+    // 原回执窗口与收件人固定此次交付，后续观察的采样时间不能产生第二份完成实效。
+    return put(handoff.at("work").get_ref<const std::string&>(),4,DFY_V2_WORK_EFFECT,{{"recipient",handoff.at("recipient")},
+        {"item",handoff.at("item")},{"recipientPicked",proof.at("recipientPicked")},{"stream",proof.at("stream")},
+        {"sourceThrough",handoff.at("sourceThrough")}});
 }
 }

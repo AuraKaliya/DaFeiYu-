@@ -121,6 +121,7 @@ Json BindingWorks::view(std::uint64_t epoch, std::uint64_t after) const {
     for (const auto& [key,record] : records_) if (key.first == epoch && record.back().receipt > after) {
         const auto& last = record.back();
         Json item{{"work",key.second},{"accepted",record.front().receipt},{"revision",record.size()},{"receipt",last.receipt}};
+        if (record.front().content.size() <= 256) item["source"] = Json::parse(record.front().content);
         for (const auto& stage : record) {
             if (stage.phase == DFY_V2_WORK_EXIT) item["exited"] = stage.receipt;
             if (stage.phase == DFY_V2_WORK_EFFECT) {

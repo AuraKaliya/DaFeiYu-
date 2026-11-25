@@ -40,6 +40,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
   const handoff = mode.startsWith('--handoff-');
   const movingHandoff = ['--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode);
   const gatherHandoff = movingHandoff || mode === '--handoff-gather-probe';
+  const eight = mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-full-probe';
   const combined = mode === '--follow-dig-fill-probe';
   const fillFour = combined || mode === '--fill-four-probe';
   const explicitOpenings = mode === '--gap-left-probe' || mode === '--gap-both-probe';
@@ -105,7 +106,14 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       send('kill @e[type=minecraft:item,x=-3,y=-61,z=-3,dx=10,dy=5,dz=6]');
       send('tp DfyGuestCheck 2.5 -60 0.5');
       send('clear DfyGuestCheck');
-      if (gatherHandoff) {
+      if (eight) {
+        send('fill -5 -61 -4 5 -61 4 minecraft:dirt');
+        send('fill -5 -60 -4 5 -58 4 minecraft:air');
+        send('fill -3 -60 -2 -2 -60 1 minecraft:cobblestone');
+        send('setblock 2 -60 -2 minecraft:chest');
+        send('setblock 2 -60 2 minecraft:chest');
+        send('effect give DfyCompanion minecraft:mining_fatigue 12 0 true');
+      } else if (gatherHandoff) {
         if (movingHandoff) {
           send('fill 3 -61 -2 13 -61 10 minecraft:dirt');
           send('fill 3 -60 -2 13 -57 10 minecraft:air');
@@ -168,7 +176,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       }
     }
     if (owner === 'DfyVisitor') send('tp DfyVisitor -3.5 -60 0.5 facing 0.5 -59 0.5');
-    const readyBlock = gatherHandoff ? [-2,-60,0,'grass_block'] :
+    const readyBlock = eight ? [-2,-60,0,'cobblestone'] : gatherHandoff ? [-2,-60,0,'grass_block'] :
       mode === '--pickup-probe' ? [73,-60,0,'grass_block'] : [15,-60,0,'cobblestone'];
     await until(() => game.bot.inventory.items().some(item => item.name === 'iron_pickaxe') &&
       game.bot.blockAt(game.bot.entity.position.clone().set(...readyBlock.slice(0, 3)))?.name === readyBlock[3], '场地与工具就绪');
@@ -247,7 +255,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
     const [code] = await exit;
     if (code !== 0) throw new Error('体验宿主退出码 ' + code);
   } finally {
-    if (mode === '--pickup-probe' || gatherHandoff) send('effect clear DfyCompanion minecraft:mining_fatigue');
+    if (mode === '--pickup-probe' || gatherHandoff || eight) send('effect clear DfyCompanion minecraft:mining_fatigue');
     fs.closeSync(fs.openSync(stop, 'a'));
     try { if (exit) await exit; }
     finally { game.stop(); await gameDone; }
@@ -317,9 +325,10 @@ async function main() {
   const [exe, pkg, requestedMode, config, liveThinking] = process.argv.slice(2);
   const factPilot = requestedMode === '--handoff-facts-probe';
   const mode = factPilot ? '--handoff-gather-probe' : requestedMode;
+  const eight = mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-full-probe';
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
-  if (!['--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+  if (!['--handoff-eight-chest-probe', '--handoff-eight-full-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
     '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
@@ -337,7 +346,7 @@ async function main() {
   await once(httpd, 'listening');
   try {
     await withPaper(fixture => {
-      fixture.factPilot = factPilot;
+      fixture.factPilot = factPilot || eight;
       return mode === '--live' ? play(fixture, exe, pkg, mode, config, playerThinking) :
         rehearse(fixture, exe, pkg, mode, playerThinking);
     }, true);
