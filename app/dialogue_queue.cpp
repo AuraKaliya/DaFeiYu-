@@ -6,6 +6,13 @@
 #include <algorithm>
 
 namespace dfy::app {
+// 以同一组队列限额核对后台接纳、实际入队与重开恢复。
+bool dialogue_queue_fits(const std::vector<QueuedDialogue>& items, std::size_t bytes) noexcept {
+    if (items.size()>=dialogue_queue_limit || bytes>dialogue_queue_byte_limit) return false;
+    for (const auto& item : items) bytes += item.text.size();
+    return bytes<=dialogue_queue_byte_limit;
+}
+
 // 只把用户原话排在所见回合之后，条数和全部待发正文分别受限。
 // 步骤：复核会话与前驱 → 核对消息及剩余容量 → 分配身份并发布队列。
 DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::string text) {
@@ -15,9 +22,7 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
         display.turns.empty() || display.turns.back().run != after) return {QueueAdmission::stale};
     if (text.size() > dialogue_text_limit || text.find_first_not_of(" \t\r\n") == std::string::npos ||
         !runtime::valid_utf8(text) || queued_message_sequence_ == UINT64_MAX) return {QueueAdmission::rejected};
-    std::size_t bytes = text.size();
-    for (const auto& item : display.queue) bytes += item.text.size();
-    if (display.queue.size() >= dialogue_queue_limit || bytes > dialogue_queue_byte_limit) return {QueueAdmission::full};
+    if (!dialogue_queue_fits(display.queue,text.size())) return {QueueAdmission::full};
 
     const auto message = queued_message_sequence_+1;
     auto received = receive_dialogue(text,"dialogue.enqueue");
@@ -32,9 +37,7 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
 // 上一实例的前驱结果需要重新核对，恢复待发投影时先暂停自动启动。
 std::uint64_t Application::restore_queued_dialogue(const std::string& text) {
     auto& display = conversation_.display_;
-    std::size_t bytes = text.size();
-    for (const auto& entry : display.queue) bytes += entry.text.size();
-    if (display.queue.size()>=dialogue_queue_limit || bytes>dialogue_queue_byte_limit || queued_message_sequence_==UINT64_MAX)
+    if (!dialogue_queue_fits(display.queue,text.size()) || queued_message_sequence_==UINT64_MAX)
         throw std::length_error("dialogue: restored queue exceeds capacity");
     const auto native = queued_message_sequence_+1;
     display.queue.push_back({native,conversation_.id(),text});

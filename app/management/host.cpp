@@ -3,6 +3,7 @@
 #include "../message_store.hpp"
 #include "../main_messages.hpp"
 #include <dafeiyu/digest.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <algorithm>
 #include <cstdio>
 #include <random>
@@ -17,6 +18,27 @@ constexpr std::size_t command_limit = 16;
 nlohmann::json envelope(const DialogueCommand& command) {
     const auto route = command.action==DialogueAction::send ? "send" : command.action==DialogueAction::append ? "append" : "enqueue";
     return app::user_envelope(route,command.text,command.instance,command.target,command.source_utc_ms);
+}
+
+// 入库前按后台已发布的目标和容量核验新文字，实际交付仍复核原运行。
+// 步骤：核对原实例与回合 → 按去向核对当前状态 → 检查条数及剩余字节。
+std::optional<DialogueCommandState> input_refusal(const DialogueCommand& command, const std::string& instance,
+    const app::ConversationDisplay& display) {
+    using State = DialogueCommandState;
+    if (command.action==DialogueAction::send) return {};
+    if (command.instance!=instance || display.turns.empty() || display.turns.back().run!=command.target) return State::stale;
+    if (command.action==DialogueAction::enqueue) {
+        if (!app::dialogue_queue_fits(display.queue,command.text.size())) return State::full;
+        return {};
+    }
+
+    const auto& turn = display.turns.back();
+    if (turn.result!=runtime::OperationState::pending || turn.exit!=runtime::OperationState::pending) return State::stale;
+    if (!turn.accepts_input) return State::unavailable;
+    std::size_t bytes = command.text.size();
+    for (const auto& input : turn.inputs) bytes += input.text.size();
+    if (turn.inputs.size()>=agent::turn_input_count_limit || bytes>agent::turn_input_byte_limit) return State::full;
+    return {};
 }
 
 // 将持久投递回执映射回旧窗口的命令语义，待发号与持久消息号各自保留。
@@ -243,7 +265,8 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     const bool target_valid = command.action == DialogueAction::send ? command.target == agent::RunId{} :
         command.target.session && (by_message ? !command.target.sequence : command.target.sequence != 0);
     if (!command.id || !target_valid || by_message != (command.message != 0) ||
-        (with_text ? command.text.size() > app::dialogue_text_limit || command.text.find_first_not_of(" \t\r\n") == std::string::npos : !command.text.empty()))
+        (with_text ? command.text.size() > app::dialogue_text_limit || command.text.find_first_not_of(" \t\r\n") == std::string::npos ||
+            !runtime::valid_utf8(command.text) : !command.text.empty()))
         return {command.id,State::rejected,{}};
     auto fingerprint = with_text ? platform::sha256(command.text) : std::string{};
     if (!command.submission.empty()) {
@@ -282,10 +305,13 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
                 receipt = stored_receipt(receipt,command.action,prior->receipt);
                 available = false;
             } else if (available) {
-                if (command.target.session && (command.instance!=instance_ || display_->turns.empty() || display_->turns.back().run!=command.target))
-                    return {command.id,State::stale,command.target};
-                const auto accepted = messages_->put("desktop",command.submission,original,{{"state","pending"}});
-                command.stored = receipt.stored = accepted.message.id;
+                if (const auto refused = input_refusal(command,instance_,*display_)) {
+                    receipt.state = *refused;
+                    available = false;
+                } else {
+                    const auto accepted = messages_->put("desktop",command.submission,original,{{"state","pending"}});
+                    command.stored = receipt.stored = accepted.message.id;
+                }
             }
         } catch (const std::runtime_error&) {
             if (software_) software_->record(app::SoftwareEvent::message_storage,app::SoftwareResult::failed);
