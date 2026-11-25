@@ -308,7 +308,7 @@ struct Window : std::enable_shared_from_this<Window> {
 #endif
             resident_client = std::make_unique<dfy::management::Client>(data,dfy::management::startup_identity(config,packages),[=] {
                 dfy::management::launch_host(root/"dafeiyu.exe",config,packages,data);
-            },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); });
+            },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); },software);
         }
     }
     // 创建独立环境，配置路径与回调寿命由当前窗口拥有。

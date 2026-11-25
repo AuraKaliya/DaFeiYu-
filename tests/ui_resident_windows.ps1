@@ -54,8 +54,10 @@ function Assert-RuntimeRefused([string]$Mode) {
 # 从正式启动文件逐个核对进程、时钟、构建与退出结果。
 # 步骤：读取隔离目录的日志 → 检查每个进程自己的首尾 → 对照实际观察到的后台、窗口和终端。
 function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
+    $records = @()
     $runs = foreach ($file in Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter 'software-*.jsonl' -File) {
         $rows = @(Get-Content -Encoding UTF8 -LiteralPath $file.FullName | ForEach-Object { $_ | ConvertFrom-Json })
+        $records += $rows
         $first, $last = $rows[0], $rows[-1]
         if ($first.event -ne 'process.started' -or $first.seq -ne 1 -or !$first.build -or $first.utcMs -le 0 -or
             $first.level -ne 'info' -or $last.event -ne 'process.exiting' -or $last.pid -ne $first.pid -or
@@ -66,6 +68,20 @@ function Assert-SoftwareLogs([int]$HostPid, [int]$TerminalPid) {
     if ($windows.Count -ne 3 -or !($runs | Where-Object { $_.component -eq 'host' -and $_.pid -eq $HostPid -and $_.exitCode -eq 0 }) -or
         !($runs | Where-Object { $_.component -eq 'terminal' -and $_.pid -eq $TerminalPid -and $_.exitCode -eq 0 })) {
         throw 'Missing process log for a resident, observer or terminal'
+    }
+    $accepted = @($records | Where-Object { $_.pid -eq $HostPid -and $_.event -eq 'stop.accepted' })
+    $sent = @($records | Where-Object { $_.component -eq 'window' -and $_.event -eq 'stop.submitted' })
+    $reply = @($records | Where-Object { $_.component -eq 'window' -and $_.event -eq 'stop.reply' })
+    if ($accepted.Count -ne 1 -or $sent.Count -ne 1 -or $reply.Count -ne 1 -or !$sent[0].client -or
+        $sent[0].operation -ne ('stop-' + $accepted[0].instance) -or $accepted[0].operation -ne $sent[0].operation -or
+        $reply[0].operation -ne $accepted[0].operation -or $reply[0].result -ne 'accepted' -or $null -eq $reply[0].durationMs) {
+        throw 'Could not link settings confirmation, host acceptance and window reply'
+    }
+    $connected = @($records | Where-Object { $_.component -eq 'window' -and $_.event -eq 'client.connected' })
+    if (@($connected.client | Sort-Object -Unique).Count -ne 3) { throw 'Missing independent window identities' }
+    foreach ($view in $connected) {
+        if (!($records | Where-Object { $_.pid -eq $HostPid -and $_.event -eq 'client.connected' -and
+            $_.instance -eq $view.instance -and $_.client -eq $view.client })) { throw 'Handshake identities differ' }
     }
 }
 
@@ -95,6 +111,25 @@ try {
     } finally {
         if (!$terminal.HasExited) { $terminal.Kill(); $terminal.WaitForExit() }
         $terminal.Dispose()
+    }
+    Invoke-Observer @()
+    $restarted = Read-Resident
+    if ($restarted.instance -eq $first.instance) { throw 'Restart reused the previous instance identity' }
+    $restartedOwner = [Diagnostics.Process]::GetProcessById([int]$restarted.pid)
+    try {
+        $null = $restartedOwner.Handle
+        $reply = (& $App --stop-host $data | Out-String) | ConvertFrom-Json
+        if ($reply.operation -ne ('stop-' + $restarted.instance) -or !$restartedOwner.WaitForExit(6000) -or
+            $restartedOwner.ExitCode -ne 0) { throw 'Terminal stop did not finish on the new instance' }
+        $history = @(Get-ChildItem -LiteralPath (Join-Path $data 'logs') -Filter '*.jsonl' -File |
+            ForEach-Object { Get-Content -Encoding UTF8 -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json } })
+        if (!($history | Where-Object { $_.component -eq 'terminal' -and $_.event -eq 'stop.reply' -and $_.operation -eq $reply.operation }) -or
+            !($history | Where-Object { $_.event -eq 'stop.accepted' -and $_.instance -eq $first.instance })) {
+            throw 'Restart lost the original shutdown evidence or the terminal receipt'
+        }
+    } finally {
+        if (!$restartedOwner.HasExited) { & $App --stop-host $data | Out-Null; $null = $restartedOwner.WaitForExit(6000) }
+        $restartedOwner.Dispose()
     }
     $null = New-Item -ItemType Directory -Path $blocked
     [IO.File]::WriteAllText((Join-Path $blocked 'logs'),'keep')

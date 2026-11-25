@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <nlohmann/json.hpp>
 
 namespace {
 namespace fs = std::filesystem;
@@ -56,6 +57,28 @@ void unavailable(const fs::path& profile) {
     if (!log.error() || log.exiting(7)!=7 || fs::file_size(profile/"logs")!=8)
         throw std::runtime_error("log failure changed application outcome");
 }
+
+// 将合成正文和凭据送入允许的身份字段，检查磁盘只保留格式合规的身份。
+// 步骤：提交异常字段和正常退出操作 → 等待写完 → 检查磁盘字段及原始字节。
+void private_fields(const fs::path& profile) {
+    {
+        SoftwareLog log(profile,SoftwareRole::window);
+        log.record(SoftwareEvent::client_connected,SoftwareResult::failed,
+            {.instance="secret-prompt-marker",.client="client-1-2-3-secret-chat-marker",.shutdown=true});
+        log.record(SoftwareEvent::stop_reply,SoftwareResult::accepted,{.instance="1-2-3",.client="client-4-5-6-7",.shutdown=true});
+        log.exiting(0);
+    }
+    std::ifstream input(fs::directory_iterator(profile/"logs")->path(),std::ios::binary);
+    bool matched = false;
+    for (std::string line; std::getline(input,line); ) {
+        if (line.find("secret-")!=std::string::npos) throw std::runtime_error("private text in software log");
+        const auto row = nlohmann::json::parse(line);
+        if (row.at("event")=="stop.reply") matched = row.at("operation")=="stop-1-2-3" && row.at("client")=="client-4-5-6-7";
+        if (row.at("event")=="client.connected" && (row.contains("operation") || row.contains("client") || row.contains("instance")))
+            throw std::runtime_error("invalid log identity");
+    }
+    if (!matched) throw std::runtime_error("missing original stop operation");
+}
 }
 
 // 在本次独立测试目录对照按数量、按大小轮转和写入失败。
@@ -69,6 +92,7 @@ int main(int argc, char** argv) {
         retention(root/"count",{32,4096,2});
         retention(root/"bytes",{32,62,64});
         unavailable(root/"failure");
+        private_fields(root/"privacy");
         fs::remove_all(root);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -26,14 +26,18 @@ std::wstring quote(const std::wstring& value) {
 
 // 在初次缺少端点时启动本体，只有尚未完成的启动才允许继续等候握手。
 // 步骤：尝试原配置握手 → 按系统错误决定启动或报告 → 有界等候端点。
-Json connect(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Client::Launch& start) {
+Json connect(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Client::Launch& start, app::SoftwareLog* log) {
     const auto end = std::chrono::steady_clock::now()+6s;
     bool launched = false;
     while (!stop.stop_requested()) {
         try { return resident_request(profile,{{"op","connect"},{"definition",definition}}); }
         catch (const std::system_error& error) {
             if (error.code().value()!=ERROR_FILE_NOT_FOUND && error.code().value()!=ERROR_PATH_NOT_FOUND) throw;
-            if (!launched) { start(); launched = true; }
+            if (!launched) {
+                start();
+                launched = true;
+                if (log) log->record(app::SoftwareEvent::host_launch,app::SoftwareResult::accepted);
+            }
             if (std::chrono::steady_clock::now()>=end) throw;
             std::this_thread::sleep_for(50ms);
         }
@@ -58,8 +62,8 @@ void launch_host(const std::filesystem::path& program, const std::filesystem::pa
 }
 
 // 在独立线程握手，构造调用方可以继续推进原生窗口。
-Client::Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs)
-    : thread_([this,profile=std::move(profile),definition=std::move(definition),start=std::move(start),logs=std::move(logs)](std::stop_token stop) {
+Client::Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs, app::SoftwareLog* software)
+    : software_(software), thread_([this,profile=std::move(profile),definition=std::move(definition),start=std::move(start),logs=std::move(logs)](std::stop_token stop) {
         run(stop,profile,definition,start,logs);
     }) {}
 
@@ -109,10 +113,16 @@ void Client::close() noexcept {
 void Client::run(std::stop_token stop, const std::filesystem::path& profile, const std::string& definition, const Launch& start, const Logs& logs) {
     std::string client, instance, error;
     try {
-        const auto connection = connect(stop,profile,definition,start);
+        const auto connection = connect(stop,profile,definition,start,software_);
         client = connection.at("client");
         instance = connection.at("instance");
-    } catch (const std::exception& ex) { error = ex.what(); }
+        if (software_) software_->record(app::SoftwareEvent::client_connected,app::SoftwareResult::ok,{.instance=instance,.client=client});
+    } catch (const std::exception& ex) {
+        error = ex.what();
+        app::SoftwareFields fields;
+        if (const auto* system = dynamic_cast<const std::system_error*>(&ex)) fields.system_error = system->code().value();
+        if (software_) software_->record(app::SoftwareEvent::client_connected,app::SoftwareResult::failed,fields);
+    }
     for (;;) {
         Entry item;
         {
@@ -132,7 +142,7 @@ void Client::run(std::stop_token stop, const std::filesystem::path& profile, con
                 item.message = std::move(response);
             } else if (client.empty()) throw std::runtime_error(error);
             else if (type=="host.stop") {
-                const auto reply = resident_request(profile,{{"op","stop"},{"instance",instance}});
+                const auto reply = request_stop(profile,instance,client,software_);
                 item.message = {{"event","host.stopping"},{"version","1"},{"request",item.message.at("request")},{"state",reply.at("state")}};
             } else item.message = resident_request(profile,{{"op","request"},{"client",client},{"body",item.message}});
         } catch (const std::exception& ex) {

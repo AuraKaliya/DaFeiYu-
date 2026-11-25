@@ -8,6 +8,7 @@
 #include <thread>
 #include <nlohmann/json.hpp>
 
+namespace dfy::app { class SoftwareLog; }
 namespace dfy::management {
 // 在工作线程连接本体，回调只在观察者自己的推进线程执行。
 class Client {
@@ -16,7 +17,7 @@ class Client {
     using Launch = std::function<void()>;
     using Logs = std::function<nlohmann::json(bool open)>;
     // 连接原宿主，只有端点缺失时才调用启动入口一次。
-    Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs = {});
+    Client(std::filesystem::path profile, std::string definition, Launch start, Logs logs = {}, app::SoftwareLog* software = nullptr);
     // 在销毁前唤醒等待线程并回收本客户端。
     ~Client();
     // 在有界队列中登记一项请求，交付结果由后续推进处理。
@@ -36,6 +37,7 @@ class Client {
     std::deque<Entry> pending_, completed_;
     std::size_t queued_bytes_ = 0;
     std::atomic_bool exited_ = false;
+    app::SoftwareLog* software_;
     std::jthread thread_;
 };
 

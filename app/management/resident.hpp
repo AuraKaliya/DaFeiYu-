@@ -1,5 +1,6 @@
 #pragma once
 #include "host.hpp"
+#include "../software_log.hpp"
 #include <nlohmann/json_fwd.hpp>
 
 namespace dfy::management {
@@ -7,7 +8,10 @@ namespace dfy::management {
 std::string startup_identity(const std::filesystem::path& model, const std::filesystem::path& packages,
     const std::filesystem::path& trace = {});
 // 独占目录端点并运行本体，客户端离开后继续推进，显式关闭后返回实际退出结果。
-int serve_resident(const std::filesystem::path& profile, const std::string& identity, Host::Open open, std::stop_token stop = {});
+int serve_resident(const std::filesystem::path& profile, const std::string& identity, Host::Open open, std::stop_token stop = {}, app::SoftwareLog* log = nullptr);
 // 通过本地通道发送受版本约束的请求，拒绝、断连及超时以异常返回。
 nlohmann::json resident_request(const std::filesystem::path& profile, nlohmann::json request);
+// 按原实例申请退出，将提交和实际 IPC 回执分别关联到同一个退出操作。
+nlohmann::json request_stop(const std::filesystem::path& profile, const std::string& instance,
+    std::string_view client, app::SoftwareLog* log);
 }

@@ -92,11 +92,12 @@ int run(const std::vector<std::filesystem::path>& args) {
         }
         if ((args.size()==2 || args.size()==3) && (args[1]=="--host-status" || args[1]=="--stop-host")) {
             const auto data = args.size()==3 ? args[2] : dfy::app::default_user_data();
+            if (args[1]=="--stop-host") software.emplace(data,dfy::app::SoftwareRole::terminal);
             auto status = dfy::management::resident_request(data,{{"op","status"}});
-            if (args[1]=="--stop-host")
-                status = dfy::management::resident_request(data,{{"op","stop"},{"instance",status.at("instance")}});
+            if (software)
+                status = dfy::management::request_stop(data,status.at("instance").get<std::string>(),{},&*software);
             std::cout << status.dump() << '\n';
-            return 0;
+            return software ? software->exiting(0) : 0;
         }
         if (args.size() == 1 || (args.size() >= 3 && (args[1] == "--chat" || args[1] == "--host"))) {
             const auto configuration = args.size() == 1 ? dfy::app::executable_directory()/"config"/"deepseek.example.json" : args[2];
@@ -118,7 +119,7 @@ int run(const std::vector<std::filesystem::path>& args) {
                 const int code = dfy::management::serve_resident(user_data,identity,[=] {
                     return std::make_unique<dfy::app::Application>(dfy::model::load_config(configuration),plugins,user_data,
                         dfy::model::Backend{dfy::model::complete_response},run);
-                });
+                },{},&*software);
                 return software->exiting(code);
             }
             dfy::management::ProfileLease lease(user_data);
