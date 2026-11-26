@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <windows.h>
 #include <atomic>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 
@@ -32,6 +33,80 @@ void package(const fs::path& dir, const fs::path& dll) {
     fs::copy_file(dll,dir/"entry.dll");
     std::ofstream(dir/"plugin.json") << R"({"manifest_version":1,"id":"test.mail","name":"测试信箱","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"})";
     std::ofstream(dir/"defaults.json") << R"({"mode":"t"})";
+}
+
+// 在业务线程加载真实测试 DLL，并向其原地址投递一封能由夹具消费的请求。
+// 步骤：确认加载成功 → 取得该代次的入站地址 → 从已绑定的本体投递。
+void prepare_request(app::Application& app) {
+    check(app.plugins().load("test.mail")==DFY_V2_OK,"receipt plugin failed to load");
+    const auto address = app.plugins().instance("test.mail")->mailbox_addresses().inbound;
+    const auto& mail = app.mailbox_host();
+    mail.network->deliver_next(mail.identity,{address},events::mailbox_text("test.request",1,"source",32));
+}
+
+// 让原插件通过 C ABI 取走请求并按原序号发回一封信。
+void reply_to_request(plugins::PluginInstance& plugin) {
+    const auto api = plugin.query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+    check(api && plugin.invoke(*api,[](const auto& service,auto* target) { return service.reply(target,nullptr); })==DFY_V2_OK,
+        "original DLL failed to receive and reply");
+}
+
+// 在原数据目录重启后台，由真实 DLL 在窗口连接前回信，两个管道客户端均从同一原件查回执。
+// 步骤：建立待收回信 → 用旧实例查内置和插件来源 → 双客户端复查 → 单窗断开再连。
+void restart_with_mail(const fs::path& data, const fs::path& packages, const std::string& previous, const std::string& old_source) {
+    std::atomic_uint replies{0}, model_calls{0};
+    int outcome = -1;
+    // 在同目录再次持有正式服务端，退出时归还管道和数据库。
+    std::jthread server([&](std::stop_token stop) {
+        // 在业务线程准备真实收发，观察端只能等待后台发布完成的样本。
+        // 步骤：加载有信箱的插件 → 投递夹具请求 → 通过 C ABI 生成一封待收回信。
+        outcome = management::serve_resident(data,"offline",[&] {
+            auto app = std::make_unique<app::Application>(model::Config{},packages,data,model::Backend{
+                [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
+            prepare_request(*app);
+            const auto plugin = app->plugins().instance("test.mail");
+            reply_to_request(*plugin);
+            const auto& mail = app->mailbox_host();
+            check(mail.network->front(mail.identity,{plugin->mailbox_addresses().outbound}),"DLL did not leave a pending reply");
+            ++replies;
+            return app;
+        },stop);
+    });
+    until([&] {
+        try { return management::resident_request(data,{{"op","status"}}).at("state")=="running"; }
+        catch (const std::system_error&) { return false; }
+    },"replacement resident startup");
+    const auto first = management::connect_resident(data,"offline"), second = management::connect_resident(data,"offline");
+    const auto call = [&](const std::string& client, Json body) {
+        body.update(Json{{"version","1"},{"request","reopen"}});
+        return management::resident_request(data,{{"op","request"},{"client",client},{"body",std::move(body)}});
+    };
+    const auto listing = call(first.client,{{"type","mailbox.list"}});
+    check(first.instance!=previous && listing.at("instance")==first.instance,"restarted resident reused its previous instance");
+    for (const auto& source : {old_source,std::string("builtin/room")}) {
+        const auto stale = call(second.client,{{"type","mailbox.read"},{"instance",previous},{"source",source}});
+        check(stale.at("state")=="stale" && stale.at("messages").empty() && stale.at("mailboxes").empty(),"old resident disclosed new mail");
+    }
+    const Json snapshot{{"type","mailbox.read"},{"instance",first.instance},{"source",listing.at("sources").back().at("id")}};
+    const auto before = call(first.client,snapshot);
+    const auto& answer = before.at("messages").at(0);
+    check(before.at("messages").size()==2 && answer.at("category")=="test.reply" && answer.at("state")=="pending" &&
+        before.at("messages").at(1).at("state")=="received","named pipe did not expose the pending DLL reply");
+    const auto address = answer.at("receipt").at("mailbox");
+    const auto found = std::ranges::find_if(before.at("mailboxes"),[&](const auto& box) { return box.at("id")==address; });
+    check(found!=before.at("mailboxes").end() && found->at("accepted")=="1" && found->at("received")=="0","wrong original consumer cursor");
+
+    auto detail = snapshot;
+    detail.update(Json{{"message",answer.at("id")},{"revision",before.at("revision")}});
+    const auto original = call(second.client,detail);
+    check(original.at("messages")==Json::array({answer}) && call(first.client,detail)==original,"two pipe clients saw different receipts");
+    check(management::resident_request(data,{{"op","disconnect"},{"client",first.client}}).at("state")=="disconnected","observer failed to disconnect");
+    const auto reopened = management::connect_resident(data,"offline");
+    check(call(second.client,snapshot)==before && call(reopened.client,detail)==original && replies==1 && model_calls==0,
+        "opening, disconnecting or reconnecting a viewer consumed or duplicated the DLL reply");
+    server.request_stop();
+    server.join();
+    check(outcome==0,"replacement resident failed to drain");
 }
 
 // 使用正式管道、两个客户端和真实 DLL 核对目录修订与实例代次。
@@ -115,6 +190,7 @@ void directory(const fs::path& root, const fs::path& dll) {
     server.request_stop();
     server.join();
     check(outcome==0,"resident failed to drain");
+    restart_with_mail(data,packages,first.instance,original.at("id").get<std::string>());
 }
 
 // 让原系统持有收件和回信权，用真实 C DLL 在两端之间交付一封待处理的回信。
@@ -126,10 +202,7 @@ void receipts(const fs::path& root) {
     management::Host host([&] {
         auto app = std::make_unique<app::Application>(model::Config{},root/"plugins",root/"receipts",model::Backend{
             [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
-        check(app->plugins().load("test.mail")==DFY_V2_OK,"receipt plugin failed to load");
-        const auto address = app->plugins().instance("test.mail")->mailbox_addresses().inbound;
-        const auto& mail = app->mailbox_host();
-        mail.network->deliver_next(mail.identity,{address},events::mailbox_text("test.request",1,"source",32));
+        prepare_request(*app);
         app->post_room_event(app::RoomEvent::presence_changed,"书房","private-room-mailbox-marker");
         return app;
     },
@@ -144,9 +217,7 @@ void receipts(const fs::path& root) {
         if (action==1) {
             const auto* pending = mail.network->front(plugin->generation(),{inbound});
             check(pending && pending->id.sequence==1 && !mail.network->front(mail.identity,{outbound}),"view consumed mail or generated a reply");
-            const auto api = plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
-            check(api && plugin->invoke(*api,[](const auto& service,auto* target) { return service.reply(target,nullptr); })==DFY_V2_OK,
-                "original DLL failed to receive and reply");
+            reply_to_request(*plugin);
             ++replies;
         } else {
             check(!mail.network->front(plugin->generation(),{inbound}),"DLL left its consumed request queued");
