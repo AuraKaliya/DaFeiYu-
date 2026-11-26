@@ -1,5 +1,8 @@
 #include "../../plugins/mc/src/partner_facts.hpp"
 #include "../../plugins/mc/src/partner_task.hpp"
+#include "binding_facts.hpp"
+#include <dafeiyu/decision_status.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,7 +15,8 @@ bool request_baseline = false;
 // 记录试点发出的原补丁和帧身份，可要求一次同号基线补发。
 dfy_v2_status DFY_V2_CALL capture(uint64_t, const dfy_v2_agent_input* input, const dfy_v2_fact_frame* frame,
     uint64_t* request, uint64_t* expected, dfy_v2_error*) {
-    frames.push_back({{"sequence",frame->sequence},{"flags",frame->flags},{"patch",Json::parse(input->prompt.data,input->prompt.data+input->prompt.length)}});
+    frames.push_back({{"epoch",frame->epoch},{"scope",std::string(frame->scope.data,frame->scope.length)},{"sequence",frame->sequence},
+        {"flags",frame->flags},{"patch",Json::parse(input->prompt.data,input->prompt.data+input->prompt.length)}});
     if (request_baseline) {
         request_baseline = false;
         *expected = frame->sequence;
@@ -20,6 +24,88 @@ dfy_v2_status DFY_V2_CALL capture(uint64_t, const dfy_v2_agent_input* input, con
     }
     *request = frame->sequence;
     return DFY_V2_OK;
+}
+
+// 在同一玩家绑定内撤去来源并重新接纳任务，用真实宿主镜像和冻结快照核对结果。
+// 步骤：发布首个任务 → 分别删除任务、清空目标或失去玩家 → 重传基线并接纳新修订 → 查回旧版原件。
+void verify_withdrawal(const Json& definitions) {
+    constexpr std::uint64_t session = 7;
+    const std::string player = "fff01234-1234-1234-1234-123456789abc";
+    dfy_v2_agent_facts_api api{{},capture,nullptr};
+    dfy::mc::PartnerFacts facts;
+    facts.configure(&api,player);
+    dfy::app::BindingFacts mirror;
+    dfy::agent::DecisionStatusStore snapshots;
+    // 沿原 ABI 提交并只合入接纳的帧，保留每次实际发布的状态供按版查询。
+    // 步骤：取得原补丁 → 合并宿主镜像 → 冻结并发布本步快照。
+    const auto send = [&](const Json& scene) {
+        std::uint64_t request = 0;
+        if (facts.submit(session,player+"/world",{},scene,false,request)) throw std::runtime_error("goal frame rejected");
+        const auto& frame = frames.back();
+        dfy::plugins::SubagentInput input;
+        input.prompt = frame.at("patch").dump();
+        input.frame = dfy::plugins::SubagentFrame{frame.at("epoch"),frame.at("sequence"),frame.at("scope"),frame.at("flags") == DFY_V2_FACT_BASELINE};
+        mirror.apply(input,request,false);
+        auto frozen = snapshots.prepare(session,mirror.epoch(),request,1,100,{{"mc.companion",definitions.dump(),mirror.status_samples()}});
+        auto tail = Json::parse(frozen.tail);
+        snapshots.publish(std::move(frozen));
+        return tail;
+    };
+    dfy::mc::PartnerTask task;
+    Json scene{{"player",player},{"task",task.context()}};
+    if (!send(scene).at("items").empty()) throw std::runtime_error("initial binding fabricated a goal");
+    task.update({{"goal","清理门边"},{"next","player"}},scene,0,nullptr,2);
+    scene["task"] = task.context();
+    const auto first = send(scene);
+    const auto snapshot = first.at("snapshot").get<std::string>();
+    const auto original = snapshots.read(session,session,snapshot);
+    const auto& items = first.at("items");
+    if (items.size() != 1 || items.at(0).at("fact") != 1 || items.at(0).at("subject") != player ||
+        items.at(0).at("value").at("goal") != "清理门边" || Json::parse(original).at("status").at("items") != items)
+        throw std::runtime_error("first snapshot lost the accepted goal");
+
+    // 核对同一绑定的撤样帧和恢复帧，已发布的空快照仍可按原号读回。
+    // 步骤：检查当帧关闭或清空 → 重复缺样不重发 → 恢复原修订 → 读回撤样快照。
+    const auto withdraw_and_restore = [&](const Json& absent, const char* reason) {
+        const auto withdrawn = send(absent);
+        const auto& patch = frames.back().at("patch");
+        const auto& closed = patch.at("closed");
+        const bool closes_samples = std::ranges::find(closed,"decisionStatusSamples") != closed.end();
+        const auto samples = patch.at("set").find("decisionStatusSamples");
+        const bool clears_samples = samples != patch.at("set").end() && *samples == Json::array();
+        if ((!closes_samples && !clears_samples) || !withdrawn.at("items").empty() || frames.back().at("flags") != 0)
+            throw std::runtime_error(std::string("same-binding delta did not withdraw goal: ")+reason);
+        if (!send(absent).at("items").empty() || frames.back().at("patch").at("set").contains("decisionStatusSamples") ||
+            !frames.back().at("patch").at("closed").empty()) throw std::runtime_error("repeated absence produced another status patch");
+        if (send(scene).at("items") != items) throw std::runtime_error("restored source lost its original goal fact");
+        const auto empty_id = withdrawn.at("snapshot").get<std::string>();
+        if (!Json::parse(snapshots.read(session,session,empty_id)).at("status").at("items").empty())
+            throw std::runtime_error("restoring the goal rewrote a withdrawn snapshot");
+    };
+    for (const auto field : {"task","player"}) {
+        auto absent = scene;
+        absent.erase(field);
+        withdraw_and_restore(absent,field);
+    }
+    auto absent = scene;
+    absent["player"] = "bbb01234-1234-1234-1234-123456789abc";
+    withdraw_and_restore(absent,"other player");
+    absent["player"] = nullptr;
+    withdraw_and_restore(absent,"null player");
+    absent = scene;
+    absent["task"]["goal"] = "";
+    withdraw_and_restore(absent,"cleared goal");
+
+    request_baseline = true;
+    if (!send(absent).at("items").empty() || frames.back().at("flags") != DFY_V2_FACT_BASELINE ||
+        frames.back().at("sequence") != frames.at(frames.size()-2).at("sequence") ||
+        frames.back().at("patch").at("set").contains("decisionStatusSamples"))
+        throw std::runtime_error("baseline retry retained a withdrawn sample");
+    task.update({{"goal","转去修墙"},{"next","player"}},scene,0,nullptr,3);
+    scene["task"] = task.context();
+    const auto next = send(scene).at("items");
+    if (next.size() != 1 || next.at(0).at("fact") != 2 || next.at(0).at("value").at("goal") != "转去修墙" ||
+        snapshots.read(session,session,snapshot) != original) throw std::runtime_error("new admission changed a frozen goal");
 }
 
 // 核对包声明与真实任务修订，并验证缺样、备注更新、强制基线和重绑。
@@ -68,6 +154,7 @@ void verify(const std::filesystem::path& package) {
     task = {};
     scene["player"] = player;
     if (send(3).contains("decisionStatusSamples")) throw std::runtime_error("new binding inherited old goal");
+    verify_withdrawal(catalog.at("definitions"));
 }
 }
 

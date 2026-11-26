@@ -11,8 +11,8 @@ dfy_v2_string_view bytes(std::string_view value) { return {value.data(),static_c
 
 // 从配对玩家的已接纳任务提取原执行修订和目标，缺少来源时保留缺样。
 Json task_goal_sample(const Json& scene, const std::string& player) {
-    const auto task = scene.find("task");
-    if (task == scene.end() || player.empty() || scene.value("player",std::string{}) != player) return nullptr;
+    const auto task = scene.find("task"), subject = scene.find("player");
+    if (task == scene.end() || player.empty() || subject == scene.end() || *subject != player) return nullptr;
     const auto revision = task->find("revision"), goal = task->find("goal");
     if (revision == task->end() || !revision->is_number_unsigned() || *revision == 0 ||
         goal == task->end() || !goal->is_string() || goal->get_ref<const std::string&>().empty()) return nullptr;
@@ -72,27 +72,24 @@ std::shared_ptr<PartnerFacts> PartnerFacts::retire_settlements() {
     retired->finished_late_.swap(finished_late_);
     return retired;
 }
-// 对当前场景比较顶层字段，原始事件及工具授权随本次提交独立固定。
-// 步骤：判断作用域及用途边界 → 生成变化与关闭项 → 原序号补发所需基线 → 接纳后发布新镜像。
+// 以本绑定已接纳的完整场景和目标采样为基准，来源消失时在原帧关闭旧样本。
+// 步骤：生成本次场景与采样 → 比较变化和关闭项 → 原序号补发所需基线 → 接纳后发布新镜像。
 std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope, const dfy_v2_agent_input& run,
     const Json& scene, bool isolate, std::uint64_t& request) {
     if (!service_ || sequence_ == UINT64_MAX) return DFY_V2_INVALID_CONTEXT;
     bool baseline = session != session_ || scope != scope_ || isolated_ || isolate;
     const auto sequence = session == session_ ? sequence_+1 : 1;
     auto candidate = scene;
+    if (auto sample = task_goal_sample(scene,player_); !sample.is_null())
+        candidate["decisionStatusSamples"] = Json::array({std::move(sample)});
     std::string candidate_scope(scope);
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         Json changed = Json::object(), closed = Json::array();
-        for (const auto& [key,value] : scene.items()) {
+        for (const auto& [key,value] : candidate.items()) {
             if (baseline || key == "trigger" || key == "events" || !previous_.contains(key) || previous_.at(key) != value)
                 changed[key] = value;
         }
-        if (!baseline) for (const auto& [key,value] : previous_.items()) if (!scene.contains(key)) closed.push_back(key);
-        if (changed.contains("task") || changed.contains("player")) {
-            auto sample = task_goal_sample(scene,player_);
-            if (!sample.is_null() && (baseline || sample != task_goal_sample(previous_,player_)))
-                changed["decisionStatusSamples"] = Json::array({std::move(sample)});
-        }
+        if (!baseline) for (const auto& [key,value] : previous_.items()) if (!candidate.contains(key)) closed.push_back(key);
         const auto patch = Json{{"set",std::move(changed)},{"closed",std::move(closed)}}.dump();
         auto input = run; input.prompt = bytes(patch); input.flags &= ~DFY_V2_AGENT_REPLACE_HISTORY;
         const dfy_v2_fact_frame frame{session,sequence,bytes(scope),baseline ? DFY_V2_FACT_BASELINE : 0u,0};
