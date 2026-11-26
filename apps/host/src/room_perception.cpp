@@ -70,12 +70,34 @@ std::optional<agent::ObservationSnapshot> BuiltinRoom::capture_switch(LampSwitch
     return last_switch_ = result;
 }
 
-// 仅已接纳的本角色事件占用被动记录游标，重报与被拒采样不占槽。
+// 原生设备只有向本房间指定角色报告读数的权限，重新签发同号不能改变原值。
+// 步骤：核对收件身体与原设备水位 → 制作仅含报告读数的载荷 → 以独立设备来源签发。
+std::optional<agent::ObservationSnapshot> BuiltinRoom::capture_lamp_report(RoomBinding room, runtime::DomainId body,
+    bool reported_on, std::uint64_t revision, agent::ObservationTime sampled) {
+    using namespace runtime;
+    if (room!=resident_.room || body!=resident_.body || !revision || sampled>agent::ObservationTime::max()-sense_lifetime) return {};
+    if (last_report_) {
+        const auto& previous = last_report_->metadata();
+        if (revision==previous.revision)
+            return sampled==previous.sampled && last_report_->payload()->find("on")->as_bool()==reported_on ? last_report_ : std::nullopt;
+        if (revision<previous.revision || sampled<previous.sampled) return {};
+    }
+    static const auto type = [] {
+        const std::array fields{FieldDescriptor{"body",ValueKind::uint64,0},FieldDescriptor{"on",ValueKind::boolean,0}};
+        return std::make_shared<const StructDescriptor>(StructDescriptor::create("room.lamp_monitor",1,fields,{2,64}));
+    }();
+    const std::array fields{NamedValue{"body",Value::from_uint64(body)},NamedValue{"on",Value::from_bool(reported_on)}};
+    auto payload = std::make_shared<const StructValue>(StructValue::create(type,fields,64));
+    return last_report_ = monitor_.capture({"room.lamp_monitor",room.generation},revision,sampled,sampled+sense_lifetime,std::move(payload));
+}
+
+// 仅已接纳的本角色事件占用被动记录游标，个人感知与设备报告各有原来源水位。
 // 步骤：接纳原快照 → 核对实际结果 → 在固定环形记录中保存原证据。
 agent::ObservationReceipt BuiltinRoom::receive(const agent::ObservationSnapshot& sample, agent::ObservationTime now) {
-    const auto receipt = inbox_.accept(sample,now);
+    auto& inbox = sample.metadata().source==monitor_.id() ? monitor_inbox_ : inbox_;
+    const auto receipt = inbox.accept(sample,now);
     if (receipt.status==agent::ObservationAdmission::inserted || receipt.status==agent::ObservationAdmission::replaced) {
-        history_[received_%history_.size()] = inbox_.latest(source_.id(),senses_id);
+        history_[received_%history_.size()] = inbox.latest(sample.metadata().source,sample.metadata().object.id);
         ++received_;
     }
     return receipt;

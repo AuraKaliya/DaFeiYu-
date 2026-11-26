@@ -21,11 +21,14 @@ agent::DecisionObservationFeed room_decision_feed(const BuiltinRoom& room) {
         auto records = Json::array();
         for (std::size_t i=0;i<count;++i) {
             auto record = Json::parse(agent::historical_observation_input(*page->records[i],now));
+            const bool device = page->records[i]->metadata().object.id=="room.lamp_monitor";
+            record["origin"] = device ? "device_report" : "personal_perception";
+            if (device) record["reporter"] = "desk_lamp_monitor";
             record["cursor"] = first+i;
             records.push_back(std::move(record));
         }
         const auto last = first+count-1;
-        Json envelope{{"schema","dafeiyu.room_perceptions/1"},{"origin","personal_perception"},
+        Json envelope{{"schema","dafeiyu.room_perceptions/2"},{"origin","bound_room"},
             {"session",attempt.step.run.session},{"turn",attempt.step.run.sequence},{"step",attempt.step.sequence},
             {"room",binding.instance},{"generation",binding.generation},{"body",body},{"after",cursor},{"through",last},
             {"historyGap",page->history_gap},{"records",std::move(records)}};

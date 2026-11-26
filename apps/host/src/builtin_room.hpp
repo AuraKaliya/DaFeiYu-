@@ -76,6 +76,9 @@ class BuiltinRoom {
     bool accept_pose(const RoomSelf& sample, agent::ObservationTime sampled) noexcept;
     // 在事件发生时签发角色实际可感知的快照，迟到投递仍携带原来筛出的字段。
     std::optional<agent::ObservationSnapshot> capture_switch(LampSwitch change, std::uint64_t revision, agent::ObservationTime sampled);
+    // 由原生台灯监测设备向绑定角色签发具名报告，报告的数值不写回房间灯态。
+    std::optional<agent::ObservationSnapshot> capture_lamp_report(RoomBinding room, runtime::DomainId body, bool reported_on,
+        std::uint64_t revision, agent::ObservationTime sampled);
     // 将原生已筛选的感知送入本角色有界记录，重复、过期和迟到沿用观察收件裁定。
     agent::ObservationReceipt receive(const agent::ObservationSnapshot& sample, agent::ObservationTime now);
     // 按当前姿态完整读取周围，一次主动读取不会生成新的被动事件或唤醒。
@@ -88,6 +91,9 @@ class BuiltinRoom {
     RoomSelf resident_;
     agent::ObservationSource source_;
     agent::ObservationInbox inbox_;
+    agent::ObservationSource monitor_;
+    agent::ObservationInbox monitor_inbox_;
+    std::optional<agent::ObservationSnapshot> last_report_;
     agent::ObservationTime scene_time_ = agent::ObservationTime::min(), pose_time_ = agent::ObservationTime::min();
     agent::ObservationTime switch_time_ = agent::ObservationTime::min();
     std::uint64_t switch_revision_ = 0, sense_revision_ = 0, received_ = 0;

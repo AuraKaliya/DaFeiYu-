@@ -61,15 +61,24 @@ void dialogue(const std::filesystem::path& data) {
     app::BuiltinRoom foreign;
     const auto foreign_signal=foreign.capture_switch({foreign.layout().room,true},1,past+1s).value();
     check(room.receive(foreign_signal,past+1s).status==agent::ObservationAdmission::not_allowed,"cross-room observation received");
+    const auto foreign_body=foreign.self(foreign.layout().room)->body;
+    const auto foreign_report=foreign.capture_lamp_report(foreign.layout().room,foreign_body,false,1,past+2s).value();
+    const auto report=room.capture_lamp_report(binding,resident.body,false,1,past+2s).value();
+    const auto report_again=room.capture_lamp_report(binding,resident.body,false,1,past+2s).value();
+    check(!room.capture_lamp_report(binding,foreign_body,false,1,past+2s) && !room.capture_lamp_report(binding,resident.body,true,1,past+2s) &&
+        room.receive(foreign_report,past+2s).status==agent::ObservationAdmission::not_allowed &&
+        room.receive(report,past+2s).status==agent::ObservationAdmission::inserted &&
+        room.receive(report_again,past+2s).status==agent::ObservationAdmission::duplicate,"device scope or original report changed");
     application.advance_plugins(); application.conversation().advance();
     check(inputs.empty(),"idle observation woke the model");
     application.conversation().submit("内部结算");
     drain(application);
-    const std::string human=R"({"schema":"dafeiyu.room_perceptions/1","origin":"personal_perception","on":true})";
+    const std::string human=R"({"schema":"dafeiyu.room_perceptions/2","origin":"bound_room","on":true})";
     const auto run=application.submit_dialogue(human,128);
     const auto at_desk=std::chrono::steady_clock::now();
     ++resident.revision; resident.place=app::RoomPlace::desk; resident.position={4,0};
     check(room.accept_pose(resident,at_desk),"desk pose rejected");
+    check(room.observe_current(binding,resident.body,at_desk)->payload().find("on")->as_bool(),"device report overwrote physical light");
     const auto seen=room.capture_switch({binding,false},2,at_desk).value();
     check(room.receive(seen,at_desk).status==agent::ObservationAdmission::replaced,"fresh view not received");
     drain(application);
@@ -79,12 +88,17 @@ void dialogue(const std::filesystem::path& data) {
         "internal or later run consumed or repeated the role batch");
     const auto first=perceptions(inputs[1]), next=perceptions(inputs[2]);
     const auto& sound=first.at("records").at(0);
+    const auto& device=first.at("records").at(1);
     const auto& sight=next.at("records").at(0);
-    check(first.at("after")==0 && first.at("through")==1 && first.at("room")==binding.instance && first.at("body")==resident.body &&
+    check(first.at("after")==0 && first.at("through")==2 && first.at("room")==binding.instance && first.at("body")==resident.body &&
+        sound.at("origin")=="personal_perception" && !sound.contains("reporter") &&
         sound.at("use")=="historical_event" && sound.at("validity")=="expired" && sound.at("valid_for_ms")==0 &&
         sound.at("payload").at("kind")=="heard_switch" && sound.at("payload").at("place")=="desk" &&
         !sound.at("payload").contains("on") && !sound.at("payload").contains("operator"),"historical sound leaked private state");
-    check(next.at("after")==1 && next.at("through")==2 && next.at("step")==2 && sight.at("validity")=="fresh" &&
+    check(device.at("origin")=="device_report" && device.at("reporter")=="desk_lamp_monitor" && device.at("source")!=sound.at("source") &&
+        device.at("payload").at("on")==false && device.at("validity")=="expired" && device.at("payload").size()==2,
+        "native report became personal sight, asserted a current state or exposed extra fields");
+    check(next.at("after")==2 && next.at("through")==3 && next.at("step")==2 && sight.at("validity")=="fresh" &&
         sight.at("payload").at("kind")=="seen_switch" && sight.at("payload").at("on")==false &&
         std::ranges::any_of(inputs[1].messages,[&](const auto& m) {
             return m.source==model::MessageSource::human && m.content==human && m.event_utc_ms==128;

@@ -98,17 +98,22 @@ std::optional<model::Message> external_room_observation(const RecordedModel& ent
     if (entry.evidence.at(index).at("source")!="observation") return {};
     const auto& row = messages.at(index);
     const auto value = Json::parse(row.at("content").get_ref<const std::string&>(),nullptr,false);
-    if (!value.is_object() || value.value("schema",std::string{})!="dafeiyu.room_perceptions/1") return {};
+    if (!value.is_object()) return {};
+    const auto schema = value.value("schema",std::string{});
+    const bool legacy = schema=="dafeiyu.room_perceptions/1";
+    if (!legacy && schema!="dafeiyu.room_perceptions/2") return {};
     const auto& records = value.at("records");
-    if (row.at("role")!="user" || value.at("origin")!="personal_perception" || value.at("session")!=run.session ||
+    if (row.at("role")!="user" || value.at("origin")!=(legacy ? "personal_perception" : "bound_room") || value.at("session")!=run.session ||
         value.at("turn")!=run.sequence || value.at("step")!=step || !records.is_array() || records.empty() || records.size()>4)
         throw std::invalid_argument("replay: invalid room perception scope");
     auto cursor = value.at("after").get<std::uint64_t>();
     for (const auto& record : records) {
         const auto next = record.at("cursor").get<std::uint64_t>();
+        const bool device = !legacy && record.at("origin")=="device_report";
+        const bool valid_origin = legacy || (device ? record.at("reporter")=="desk_lamp_monitor" : record.at("origin")=="personal_perception");
         if (next<=cursor || (next-cursor!=1 && (&record!=&records.front() || !value.at("historyGap").get<bool>())) ||
             record.at("provider_instance")!=value.at("room") || record.at("object").at("generation")!=value.at("generation") ||
-            record.at("object").at("id")!="room.senses" || record.at("trust")!="host_verified" ||
+            !valid_origin || record.at("object").at("id")!=(device ? "room.lamp_monitor" : "room.senses") || record.at("trust")!="host_verified" ||
             (record.contains("payload") && record.at("payload").at("body")!=value.at("body")))
             throw std::invalid_argument("replay: room perception record differs");
         cursor = next;
