@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -77,6 +77,36 @@ try {
         Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
         [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
         [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
+        if ($PluginSettings) {
+            $second = Join-Path $data 'plugins/second'
+            $null = New-Item -ItemType Directory -Path $second
+            Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $second 'entry.dll')
+            [IO.File]::WriteAllText((Join-Path $second 'plugin.json'),'{"manifest_version":1,"id":"test.second","name":"Second fixture","version":"2","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
+            [IO.File]::WriteAllText((Join-Path $second 'defaults.json'),'{"mode":"t"}')
+            $resident = Start-Resident
+            $watcher = Start-Panel 'plugins-watch'
+            $manager = Start-Panel 'plugins-manage'
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            foreach ($name in 'plugins-watch.json','plugins-manage.json') {
+                while (!(Test-Path -LiteralPath (Join-Path $data $name))) {
+                    foreach ($window in $watcher,$manager) {
+                        if ($window.HasExited) { throw ('Directory window exited before sampling: '+$window.StandardError.ReadToEnd()) }
+                    }
+                    if ($timer.ElapsedMilliseconds -ge 20000) { throw ('Missing directory sample: '+$name) }
+                    Start-Sleep -Milliseconds 40
+                }
+            }
+            if ([IO.File]::ReadAllText((Join-Path $data 'plugins-watch.json')) -ne [IO.File]::ReadAllText((Join-Path $data 'plugins-manage.json'))) {
+                throw 'The two windows did not observe the same resident, revision and generation'
+            }
+            & $Fixture reload $config $data
+            if ($LASTEXITCODE -ne 0) { throw 'Independent reload did not finish' }
+            [IO.File]::WriteAllText((Join-Path $data 'plugin-reloaded'),'ready')
+            Wait-Panels @($manager,$watcher)
+            if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading package settings started the model' }
+            Stop-Resident $resident
+            return
+        }
         $resident = Start-Resident
         $watcher = Start-Panel 'mailbox-follow'
         $first = Start-Panel 'mailbox-first'

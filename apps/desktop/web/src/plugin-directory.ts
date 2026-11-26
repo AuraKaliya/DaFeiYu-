@@ -2,8 +2,12 @@ import { shallowRef } from 'vue';
 
 type Wire = Record<string, unknown>;
 export type PluginPost = (request: Readonly<Record<string, string>>) => void;
-export interface PluginPackage { id: string; name: string; version: string; state: string; generation?: string }
-export interface PluginReading { instance: string; revision: string; packages: readonly PluginPackage[] }
+export interface PluginPackage {
+  id: string; name: string; version: string; state: 'installed' | 'active' | 'stopping' | 'failed';
+  installed: boolean; loaded: boolean; generation: string; canLoad: boolean; canUnload: boolean;
+  loadedName?: string; loadedVersion?: string; errorCode?: number;
+}
+export interface PluginReading { instance: string; revision: string; packages: readonly PluginPackage[]; unavailableCount: number }
 export interface PluginDirectoryView {
   status: 'loading' | 'ready' | 'stale' | 'unavailable';
   reading?: PluginReading; selected: string; notice: string;
@@ -12,7 +16,12 @@ export interface PluginDirectoryView {
 // 管理回包只接受具名字段的对象。
 function record(value: unknown): value is Wire { return !!value && typeof value === 'object' && !Array.isArray(value); }
 // 保留后台签发的完整十进制字符串，修订和实例代次不经过浮点转换。
-function decimal(value: unknown): value is string { return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value); }
+export function pluginNumber(value: unknown): value is string {
+  return typeof value === 'string' && /^(0|[1-9]\d{0,19})$/.test(value) &&
+    (value.length < 20 || value <= '18446744073709551615');
+}
+// 管理计数和原生错误码只接受可完整表示的非负整数。
+function count(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
 
 // 投影整份包目录，重复身份或缺项会使本次读数失效。
 // 步骤：校验各行必需字段 → 按包号去重 → 只保留公开属性。
@@ -21,11 +30,22 @@ function packages(raw: unknown): PluginPackage[] | undefined {
   const rows: PluginPackage[] = [], ids = new Set<string>();
   for (const item of raw) {
     if (!record(item) || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
-        typeof item.name !== 'string' || typeof item.version !== 'string' || typeof item.state !== 'string' || !item.state ||
-        (item.generation != null && !decimal(item.generation))) return;
+        typeof item.name !== 'string' || typeof item.version !== 'string' || !pluginNumber(item.generation) ||
+        typeof item.installed !== 'boolean' || typeof item.loaded !== 'boolean' ||
+        typeof item.canLoad !== 'boolean' || typeof item.canUnload !== 'boolean') return;
+    const state = item.state;
+    if (state !== 'installed' && state !== 'active' && state !== 'stopping' && state !== 'failed') return;
+    if (item.loaded !== (item.generation !== '0') || item.loaded !== (state !== 'installed') ||
+        (!item.loaded && !item.installed) || (item.canLoad && (!item.installed || item.loaded)) ||
+        (item.canUnload && !item.loaded)) return;
+    const row: PluginPackage = { id: item.id, name: item.name, version: item.version, state,
+      generation: item.generation, loaded: item.loaded, installed: item.installed, canLoad: item.canLoad, canUnload: item.canUnload };
+    if (row.loaded) {
+      if (typeof item.loadedName !== 'string' || typeof item.loadedVersion !== 'string' || !count(item.errorCode)) return;
+      row.loadedName = item.loadedName; row.loadedVersion = item.loadedVersion; row.errorCode = item.errorCode;
+    }
     ids.add(item.id);
-    rows.push({ id: item.id, name: item.name, version: item.version, state: item.state,
-      generation: decimal(item.generation) ? item.generation : undefined });
+    rows.push(row);
   }
   return rows;
 }
@@ -78,7 +98,7 @@ export function usePluginDirectory(post: PluginPost, clock = () => performance.n
     const bound = pending.instance;
     pending = undefined; due = clock() + 1500;
     if (value.version !== '1' || value.event !== 'plugins.directory' || typeof value.instance !== 'string' ||
-        !value.instance || !decimal(value.revision)) { fail(); return; }
+        !value.instance || !pluginNumber(value.revision)) { fail(); return; }
     const old = view.value;
     const replaced = !!old.reading && old.reading.instance !== value.instance;
     if (value.state === 'stale') {
@@ -88,10 +108,10 @@ export function usePluginDirectory(post: PluginPost, clock = () => performance.n
       return;
     }
     const rows = packages(value.packages);
-    if (value.state !== 'ready' || !rows || (bound && bound !== value.instance)) { fail(); return; }
+    if (value.state !== 'ready' || !rows || !count(value.unavailableCount) || (bound && bound !== value.instance)) { fail(); return; }
     const lost = !!old.selected && !rows.some(row => row.id === old.selected);
     discover = false;
-    view.value = { reading: { instance: value.instance, revision: value.revision, packages: rows }, status: 'ready',
+    view.value = { reading: { instance: value.instance, revision: value.revision, packages: rows, unavailableCount: value.unavailableCount }, status: 'ready',
       selected: replaced || lost ? '' : old.selected,
       notice: replaced && old.selected ? '后台实例已更换，请重新选择插件。' : lost ? '原先选择的插件已移出目录。' : old.notice };
   }

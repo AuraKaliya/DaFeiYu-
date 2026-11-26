@@ -293,6 +293,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (plugin_settings_check) { interaction->start_plugin_settings(); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
+                if (observer_scenario.starts_with(L"plugins-")) { interaction->start_plugin_windows(observer_scenario,user_data); return; }
                 if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
                 if (observer_check) {
@@ -475,8 +476,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
         observer_mode==L"history-reopen" || observer_mode==L"history-restart";
     const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
+    const bool plugins_check = observer_mode==L"plugins-manage" || observer_mode==L"plugins-watch";
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
-        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check))) &&
+        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check || plugins_check))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
@@ -525,7 +527,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->plugin_settings_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-plugin-settings";
         state->observer_check = observer_check;
 #ifdef DFY_UI_RUN_STATUS_TEST
-        if (observer_check && (history_check || mailbox_check)) state->observer_scenario = observer_mode;
+        if (observer_check && (history_check || mailbox_check || plugins_check)) state->observer_scenario = observer_mode;
 #endif
         state->tray_check = tray_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";

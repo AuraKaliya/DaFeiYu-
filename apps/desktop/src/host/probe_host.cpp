@@ -52,7 +52,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
             return management_reply(message,source,false);
         }
         if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt" ||
-            type == "mailbox.list" || type == "mailbox.read") {
+            type == "mailbox.list" || type == "mailbox.read" || type == "plugins.list") {
             if (!panel) return E_ACCESSDENIED;
             return management_reply(message,source,false);
         }
@@ -101,7 +101,7 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
                 {"receipt",{{"command",request.at("command")},{"state","busy"}}}});
         else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read" ||
             request.value("type",std::string{}).starts_with("messages.") ||
-            request.at("type")=="mailbox.list" || request.at("type")=="mailbox.read")
+            request.at("type")=="mailbox.list" || request.at("type")=="mailbox.read" || request.at("type")=="plugins.list")
             deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"reason","management client queue unavailable"}});
     }
     return S_OK;

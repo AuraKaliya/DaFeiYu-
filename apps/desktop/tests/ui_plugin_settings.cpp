@@ -7,7 +7,7 @@ void InteractionProbe::start_plugin_settings() {
     const Json rows=Json::array({{{"id","test.one"},{"name","一号插件"},{"version","1.2"},{"state","installed"},
         {"installed",true},{"loaded",false},{"generation","0"},{"canLoad",true},{"canUnload",false}},
         {{"id","test.two"},{"name","二号插件"},{"version","2"},{"state","active"},{"generation","97"},
-        {"installed",true},{"loaded",true},{"canLoad",false},{"canUnload",true},{"loadedName","二号插件"},{"loadedVersion","2"},{"errorCode",0}}});
+        {"installed",true},{"loaded",true},{"canLoad",false},{"canUnload",true},{"loadedName","旧实例"},{"loadedVersion","1.7"},{"errorCode",0}}});
     // 从页面实际发出的目录请求取身份，由原生 WebView2 消息口投递固定信封。
     // 步骤：等候当前请求 → 核对操作类型 → 回显原号并交还固定结果。
     const auto reply = [&](Json body) {
@@ -42,7 +42,8 @@ void InteractionProbe::start_plugin_settings() {
     evaluate("focus the first package","const r=document.querySelector('[data-package=\"test.one\"] input'); r.click(); r.focus(); true");
     expect("first radio selection and focus agree","document.querySelector('[data-selected-package=\"test.one\"]') && document.activeElement?.value==='test.one'");
     evaluate("choose through the second visible label","document.querySelector('[data-package=\"test.two\"]').click(); true");
-    expect("selection names the actual generation","document.querySelector('[data-package=\"test.two\"] input').checked && document.querySelector('[data-selected-package=\"test.two\"]')?.textContent.includes('97')");
+    expect("selection names the actual generation and original running version","document.querySelector('[data-package=\"test.two\"] input').checked && "
+        "document.querySelector('[data-selected-package=\"test.two\"]')?.dataset.selectedGeneration==='97' && document.querySelector('.package-details').textContent.includes('旧实例 1.7')");
     call("narrow settings window",L"Emulation.setDeviceMetricsOverride",{{"width",360},{"height",690},{"deviceScaleFactor",1},{"mobile",false}});
     expect("narrow directory fits the settings area","document.documentElement.scrollWidth<=innerWidth && document.querySelector('[data-package]').getBoundingClientRect().right<=innerWidth");
     refresh(); reply({{"event","management.error"},{"reason","private diagnostic"}});
@@ -55,7 +56,10 @@ void InteractionProbe::start_plugin_settings() {
     refresh(); reply(sample);
     expect("new resident does not inherit a selected package","document.querySelector('.plugin-settings').dataset.directoryStatus==='ready' && "
         "document.querySelectorAll('.plugin-settings input[type=radio]').length===2 && !document.querySelector('[data-selected-package]')");
-    sample.update(Json{{"revision","2"},{"packages",Json::array()}});
+    sample.update(Json{{"revision","2"},{"packages",Json::array()},{"unavailableCount",2}});
+    refresh(); reply(sample);
+    expect("partial discovery is distinct from empty","document.querySelector('#plugin-directory-status').textContent.includes('2 个目录项无法读取') && !document.querySelector('#plugin-directory-status').textContent.includes('目录为空')");
+    sample.update(Json{{"revision","3"},{"unavailableCount",0}});
     refresh(); reply(sample);
     expect("only confirmed empty samples show the empty state","document.querySelector('#plugin-directory-status').textContent.includes('当前插件目录为空') && !document.querySelector('[data-package]')");
     next();

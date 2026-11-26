@@ -138,7 +138,7 @@ void Client::close() noexcept {
     thread_.request_stop();
     std::erase_if(pending_,[&](const auto& entry) {
         const auto& type = entry.message.at("type").template get_ref<const std::string&>();
-        if (!type.ends_with(".read") && type!="mailbox.list") return false;
+        if (!type.ends_with(".read") && type!="mailbox.list" && type!="plugins.list") return false;
         queued_bytes_ -= entry.bytes;
         return true;
     });

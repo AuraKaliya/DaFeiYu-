@@ -148,6 +148,10 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         const result=await dialogueAsk('probe-incomplete-mail',{type:'mailbox.read'});
         return result?.event==='management.error' && result.version==='1' && result.request==='probe-incomplete-mail';
     })())JS");
+    evaluate("the formal plugin directory returns native request errors",R"JS((async()=>{
+        const result=await dialogueAsk('probe-invalid-plugins',{type:'plugins.list',revision:'1'});
+        return result?.event==='management.error' && result.request==='probe-invalid-plugins';
+    })())JS");
     evaluate("opening room does not start a model turn","(async()=>{const s=await dialogueAsk('probe-idle',{type:'state.read',topic:'run'});return s.run===null;})()");
     const auto text = Json(prompt).dump();
     call("focus emulation",L"Emulation.setFocusEmulationEnabled",{{"enabled",true}});
@@ -210,6 +214,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.postMessage({type:'messages.read',version:'1',request:'other-history',conversation:'main',direction:'history',cursor:'0',through:'0',limit:24});
         bridge.postMessage({type:'messages.receipt',version:'1',request:'other-receipt',conversation:'main',source:'desktop',submission:'previous'});
         bridge.postMessage({type:'mailbox.list',version:'1',request:'other-mail-directory'});
+        bridge.postMessage({type:'plugins.list',version:'1',request:'other-plugin-directory'});
         bridge.postMessage({type:'mailbox.read',version:'1',request:'other-mail-source',instance:'original',source:'room'});
         for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
         for (const kind of ['append','enqueue']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1',text:'wrong document'});

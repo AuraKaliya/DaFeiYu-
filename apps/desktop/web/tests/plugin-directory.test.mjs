@@ -2,15 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { usePluginDirectory } from '../src/plugin-directory.ts';
 
-const installed = {id:'test.one',name:'一号插件',version:'1.2',state:'installed'};
-const loaded = {id:'test.two',name:'二号插件',version:'2',state:'loaded',generation:'97'};
+const installed = {id:'test.one',name:'一号插件',version:'1.2',state:'installed',generation:'0',
+  installed:true,loaded:false,canLoad:true,canUnload:false};
+const loaded = {id:'test.two',name:'二号插件',version:'2',state:'active',generation:'97',installed:true,
+  loaded:true,canLoad:false,canUnload:true,loadedName:'旧二号',loadedVersion:'1',errorCode:0};
 
 // 以可控时钟应答当窗的请求号，不需要操作本机插件。
 function fixture() {
   let now = 0;
   const out = [], directory = usePluginDirectory(fields => out.push(fields), () => now);
   const reply = (rows, fields = {}, request = out.at(-1)) => directory.receive({version:'1',request:request.request,
-    event:'plugins.directory',instance:'host-a',revision:'90071992547409931',state:'ready',packages:rows,...fields});
+    event:'plugins.directory',instance:'host-a',revision:'90071992547409931',state:'ready',packages:rows,unavailableCount:0,...fields});
   const advance = ms => { now += ms; directory.tick(); };
   directory.context(true,true);
   return { out, directory, reply, advance };
@@ -64,4 +66,22 @@ test('empty, unavailable, expired and reconnected readings stay distinct', () =>
   directory.refresh(); assert.equal(f.out.at(-1).instance,undefined);
   f.reply([loaded],{instance:'host-b',revision:'2'}); assert.match(directory.view.value.notice,/后台实例已更换/);
   assert.equal(directory.view.value.selected,'');
+});
+
+// 部分发现保留未读数量，运行中的旧清单与已安装版本分别呈现。
+// 步骤：读取不完整目录 → 保留真实实例元数据 → 拒绝矛盾的授权及超宽修订。
+test('partial scans and installed versus running identities are preserved', () => {
+  const f = fixture(), current = () => f.directory.view.value;
+  f.reply([],{unavailableCount:2});
+  assert.equal(current().reading.unavailableCount,2);
+  f.directory.refresh(); f.reply([loaded,{...loaded,id:'disk.removed',installed:false}]);
+  assert.equal(current().reading.packages[0].loadedVersion,'1');
+  assert.equal(current().reading.packages[0].version,'2');
+  assert.equal(current().reading.packages[1].installed,false);
+  for (const [rows, fields] of [[[{...loaded,canLoad:true}],{}],[[{...loaded,generation:'0'}],{}],
+      [[installed],{unavailableCount:-1}],[[installed],{revision:'18446744073709551616'}]]) {
+    f.directory.refresh(); f.reply(rows,fields);
+    assert.equal(current().status,'unavailable');
+    assert.equal(current().reading.packages.length,2);
+  }
 });

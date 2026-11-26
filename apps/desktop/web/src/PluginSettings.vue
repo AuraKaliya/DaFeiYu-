@@ -14,7 +14,10 @@ let timer = 0;
 // 用当前读数解释列表范围，只有已核实的空目录显示空状态。
 const feedback = computed(() => {
   const { status, reading } = view.value;
-  if (status === 'ready' && reading) return reading.packages.length ? `共 ${reading.packages.length} 个插件包。` : '当前插件目录为空。';
+  if (status === 'ready' && reading) {
+    if (reading.unavailableCount) return `已读到 ${reading.packages.length} 个插件包，另有 ${reading.unavailableCount} 个目录项无法读取。`;
+    return reading.packages.length ? `共 ${reading.packages.length} 个插件包。` : '当前插件目录为空。';
+  }
   if (status === 'stale') return reading ? '目录已过期，显示上次核实的列表。' : '目录已过期，请重新读取。';
   if (status === 'unavailable') return reading ? '暂时无法读取插件目录，显示上次核实的列表。' : '暂时无法读取插件目录。';
   return reading ? '正在重新读取插件目录，显示上次核实的列表。' : '正在读取插件目录…';
@@ -40,7 +43,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="plugin-settings" :data-directory-status="view.status" aria-labelledby="settings-plugins-title">
+  <section class="plugin-settings" :data-directory-status="view.status" :data-directory-instance="view.reading?.instance"
+    :data-directory-revision="view.reading?.revision" aria-labelledby="settings-plugins-title">
     <div class="plugin-heading">
       <h3 id="settings-plugins-title" class="group-title">插件管理</h3>
       <button id="refresh-plugins" type="button" class="quiet-action" :disabled="!connected" @click="directory.refresh">刷新目录</button>
@@ -52,12 +56,17 @@ onUnmounted(() => {
         <input type="radio" name="managed-package" :value="item.id" :checked="view.selected === item.id" @change="directory.select(item.id)">
         <span class="package-name">{{ item.name || item.id }}</span>
         <span class="package-version">{{ item.version }}</span>
-        <span class="package-state">{{ labels[item.state] ?? item.state }}</span>
+        <span class="package-state">{{ labels[item.state] }}</span>
       </Label>
     </fieldset>
-    <dl v-if="selected" class="package-details" :data-selected-package="selected.id">
+    <dl v-if="selected" class="package-details" :data-selected-package="selected.id" :data-selected-generation="selected.generation">
       <dt>插件 ID</dt><dd>{{ selected.id }}</dd>
-      <template v-if="selected.generation"><dt>加载代次</dt><dd>{{ selected.generation }}</dd></template>
+      <dt>安装包</dt><dd>{{ selected.installed ? selected.version : '目录中已移除' }}</dd>
+      <template v-if="selected.loaded">
+        <dt>运行实例</dt><dd>{{ selected.loadedName }} {{ selected.loadedVersion }}</dd>
+        <dt>加载代次</dt><dd>{{ selected.generation }}</dd>
+        <template v-if="selected.errorCode"><dt>实例错误码</dt><dd>{{ selected.errorCode }}</dd></template>
+      </template>
     </dl>
     <p v-if="view.reading" class="plugin-revision">目录修订 {{ view.reading.revision }}</p>
   </section>
