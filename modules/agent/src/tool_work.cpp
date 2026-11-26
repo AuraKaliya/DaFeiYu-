@@ -30,7 +30,7 @@ bool reaping = false;
 std::unique_ptr<ToolWork> completed_tool(ToolResult result) { return std::make_unique<CompletedWork>(std::move(result)); }
 struct ToolWorkState {
     std::shared_ptr<ToolRequest> record;
-    ToolFactory factory;
+    ToolDriver::CheckedFactory factory;
     std::unique_ptr<ToolWork> work;
     std::shared_ptr<runtime::SerialDomain> domain;
     std::shared_ptr<const runtime::SerialRequest> ordering;
@@ -41,7 +41,7 @@ struct ToolWorkState {
     bool started = false, advancing = false, reported = false;
     // 完整准备记录和调用对象，计入进程内最多 256 个活动或保留驱动状态。
     // 步骤：创建请求与资源责任 → 绑定原顺序资格 → 登记驱动计数。
-    ToolWorkState(ToolInvocation invocation, ToolFactory callback, ToolResources resources)
+    ToolWorkState(ToolInvocation invocation, ToolDriver::CheckedFactory callback, ToolResources resources)
         : record(new ToolRequest(std::move(invocation),std::move(resources.charge))), factory(std::move(callback)),
           domain(std::move(resources.domain)), ordering(std::move(resources.ordering)),
           deadline(resources.deadline), now(std::move(resources.now)),before_start(std::move(resources.before_start)) {
@@ -114,7 +114,7 @@ struct ToolWorkState {
                 try { domain->begin(ordering); } catch (...) { advancing = false; throw; }
             }
             started = true; record->outcome_.effect = ToolEffect::unknown;
-            try { work = factory(record->invocation_); }
+            try { work = factory(record->invocation_,record->dispatched_); }
             catch (...) { cancel(); fail(ToolError::failed); finish(); advancing = false; return; }
             if (!work) { cancel(); fail(ToolError::invalid_result); finish(); advancing = false; return; }
         }
@@ -147,9 +147,15 @@ struct ToolWorkState {
         advancing = false;
     }
 };
+// 直接工厂已确定实现，实际调用前固定一次派发事实。
+ToolDriver::ToolDriver(ToolInvocation invocation, ToolFactory factory, ToolResources resources)
+    : ToolDriver(factory ? CheckedFactory([implementation=std::move(factory)](const ToolInvocation& input,bool& dispatched) {
+        dispatched = true;
+        return implementation(input);
+    }) : CheckedFactory{},std::move(invocation),std::move(resources)) {}
 // 在任何工具代码执行之前验证调用身份、工厂和有界驱动容量。
 // 步骤：校验调用及资源归属 → 检查驱动容量 → 准备状态并绑定顺序责任。
-ToolDriver::ToolDriver(ToolInvocation invocation, ToolFactory factory, ToolResources resources) {
+ToolDriver::ToolDriver(CheckedFactory factory, ToolInvocation invocation, ToolResources resources) {
     if (!factory || !invocation.invocation || !invocation.attempt.step.run.session || !invocation.attempt.step.run.sequence ||
         !invocation.attempt.step.sequence || !invocation.attempt.sequence || invocation.call.id.empty() || invocation.call.name.empty())
         throw std::invalid_argument("tool work: identity and factory required");

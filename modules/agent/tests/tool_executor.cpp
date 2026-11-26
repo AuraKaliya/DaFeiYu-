@@ -62,7 +62,7 @@ void limits() {
     auto clock = std::make_shared<ToolTime>(ToolTime{});
     ToolExecutor executor({1,1},catalog.snapshot(ids,true),{2,std::chrono::milliseconds(1)},{},[clock] { return *clock; });
     auto first = executor.submit(attempt,{"one","action","{}"}); *clock += std::chrono::milliseconds(1); executor.advance();
-    check(!calls && first->exit()->cancellation_reason() == CancelReason::deadline,"expired work executed");
+    check(!calls && !first->dispatched() && first->exit()->cancellation_reason() == CancelReason::deadline,"expired work executed");
     auto parent = std::make_shared<Budget>(BudgetAmount{1,1});
     ToolExecutor denied({1,1},catalog.snapshot(ids,true),{},parent);
     rejects([&] { denied.submit(attempt,{"one","action","{}"}); });
@@ -77,9 +77,11 @@ void action_guard() {
     catalog.add(description(),[&](const auto&) { ++changes; return completed_tool({true,ToolEffect::applied,"",ToolError::none}); });
     const std::vector<std::string> ids{"fixture/read","fixture/action"};
     ToolExecutor executor({1,1},catalog.snapshot(ids,true),{}, {},std::chrono::steady_clock::now,[&] { ++checks; return allowed; });
-    const AttemptId attempt{{{1,1},1},1}; executor.submit(attempt,{"read","read","{}"});
+    const AttemptId attempt{{{1,1},1},1}; const auto reading = executor.submit(attempt,{"read","read","{}"});
+    check(!reading->dispatched(),"queued read counted as dispatched");
     const auto denied = executor.submit(attempt,{"change","action","{}"}); executor.advance(); executor.advance();
-    check(reads == 1 && !changes && checks == 1 && denied->outcome().effect == ToolEffect::not_applied && denied->operation()->state() == OperationState::failed,
+    check(reads == 1 && !changes && checks == 1 && reading->dispatched() && !denied->dispatched() &&
+        denied->outcome().effect == ToolEffect::not_applied && denied->operation()->state() == OperationState::failed,
         "action guard affected read or admitted change");
     allowed = true; check(executor.submit(attempt,{"change","action","{}"}) == denied,"guard recovery replaced original receipt");
     executor.advance(); check(!changes && checks == 1,"old command repeated after guard recovered");

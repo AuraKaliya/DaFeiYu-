@@ -72,7 +72,7 @@ void subsets() {
     check(subset.definitions().size() == 1 && subset.resolve("read","{}").registration == read &&
         !subset.permits_state_changes() && original.permits_state_changes(),"subset changed original scope");
     auto work = subset.prepare({{{1,1},1},1},{"call","read","{}"}); work->advance();
-    check(reads == 1 && !writes && work->request()->exit()->state() == OperationState::succeeded,"subset executed wrong tool");
+    check(reads == 1 && !writes && work->request()->dispatched() && work->request()->exit()->state() == OperationState::succeeded,"subset executed wrong tool");
     rejects([&] { subset.prepare({{{1,1},2},1},{"call","write","{}"}); });
     rejects([&] { subset.restrict_to(write_ids); });
     rejects([&] { original.restrict_to(std::vector<std::string>{"fixture/read","missing"}); });
@@ -85,7 +85,8 @@ void subsets() {
     const auto& blocked = pending_write->request()->outcome();
     check(!writes && blocked.error == ToolError::unavailable && blocked.effect == ToolEffect::not_applied &&
         blocked.output.find("before_start") != std::string::npos && blocked.output.find("disabled") != std::string::npos,"disabled work lost its last authorization check");
-    check(disabled.permits_state_changes() && disabled.definitions().empty(),"subset hid disabled change permission");
+    check(disabled.permits_state_changes() && disabled.definitions().empty() && !pending_write->request()->dispatched(),
+        "subset hid disabled permission or counted a dispatch");
     rejects([&] { disabled.resolve("write","{}"); }); catalog.enable(write,true);
     check(disabled.resolve("write","{}").registration == write,"reenable rebound subset");
     auto delayed = subset.prepare({{{1,1},3},1},{"late","read","{}"});
@@ -93,7 +94,7 @@ void subsets() {
         ++reads; return completed_tool({true,ToolEffect::not_applied,"replacement",ToolError::none});
     });
     delayed->advance(); rejects([&] { original.restrict_to(read_ids).resolve("read","{}"); });
-    check(reads == 1 && !writes && delayed->request()->outcome().error == ToolError::unavailable && subset.definitions().empty(),
+    check(reads == 1 && !writes && !delayed->request()->dispatched() && delayed->request()->outcome().error == ToolError::unavailable && subset.definitions().empty(),
         "revoked subset invoked replacement or old tool");
     check(delayed->request()->outcome().output.find("before_start") != std::string::npos &&
         delayed->request()->outcome().output.find("revoked") != std::string::npos,

@@ -224,18 +224,23 @@ std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::Tool
         if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
         // 首次实际调用时复核本工具及其前置原注册，拒绝时回报动作未发生。
         // 步骤：核对撤销和禁用 → 附加已绑定的宿主上下文 → 调用已选工厂。
-        ToolFactory guarded = [entry, context = context_](const ToolInvocation& input) {
+        ToolDriver::CheckedFactory guarded = [entry, context = context_](const ToolInvocation& input,bool& dispatched) {
             const auto grant = entry->effective_grant();
             if (grant == ToolEntry::Grant::revoked)
                 return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"revoked"})",ToolError::unavailable});
             if (grant == ToolEntry::Grant::disabled)
                 return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"disabled"})",ToolError::unavailable});
-            if (!context) return entry->factory(input);
+            if (!context) {
+                dispatched = true;
+                return entry->factory(input);
+            }
             auto native = input;
             native.call.arguments = "{\"context\":" + *context + ",\"arguments\":" + input.call.arguments + "}";
+            dispatched = true;
             return entry->factory(native);
         };
-        return std::make_unique<ToolDriver>(ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(guarded),std::move(resources));
+        return std::unique_ptr<ToolDriver>(new ToolDriver(std::move(guarded),
+            ToolInvocation{attempt,runtime::next_domain(),std::move(call)},std::move(resources)));
     }
     throw std::logic_error("tools: missing selected registration");
 }

@@ -73,6 +73,8 @@ class ToolRequest {
     runtime::CancelDisposition request_cancel(runtime::CancelReason reason) { return exit_.request_cancel(reason); }
     // 借用调用身份和原始参数，借用期由本请求持有保证。
     const ToolInvocation& invocation() const noexcept { return invocation_; }
+    // 只有实际进入注册工具的实现才为真，接纳、排队或启动前拒绝均可独立查证。
+    bool dispatched() const noexcept { return dispatched_; }
     // 借用最近报告的效果事实；未开始为未发生，开始后未知直至工作报告。
     const ToolResult& outcome() const noexcept { return outcome_; }
     // 返回宿主观察到的工作协议或收尾故障，独立于已经结算的业务结果。
@@ -86,6 +88,7 @@ class ToolRequest {
     runtime::OperationSource result_, exit_{true};
     ToolResult outcome_{false,ToolEffect::not_applied,{},ToolError::none};
     ToolError fault_ = ToolError::none;
+    bool dispatched_ = false;
 };
 // 已授权且已预留资源的单个工作驱动器；目录授权与调度由上层负责。
 class ToolDriver {
@@ -107,6 +110,11 @@ class ToolDriver {
     // 在原宿主线程重试保留工作，只释放已经确认实际退出的驱动状态。
     static std::size_t retry_retained();
   private:
+    friend class ToolSnapshot;
+    friend struct ToolWorkState;
+    using CheckedFactory = std::function<std::unique_ptr<ToolWork>(const ToolInvocation&,bool&)>;
+    // 目录工厂在最终授权和参数准备完成后签认派发，驱动保留同一份只读回执。
+    ToolDriver(CheckedFactory factory, ToolInvocation invocation, ToolResources resources);
     std::unique_ptr<ToolWorkState> state_;
 };
 }
