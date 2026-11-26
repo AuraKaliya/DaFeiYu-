@@ -48,8 +48,11 @@ void execute_plugin(plugins::PluginManager& manager, const PluginDirectory& view
         using Result = plugins::ShutdownResult;
         const auto result = manager.unload(cmd.id);
         switch (result) {
-        case Result::closed: op.native_result="closed"; op.state="succeeded"; op.effect="unloaded"; break;
-        case Result::pending: op.native_result=op.state="pending"; op.effect="stopping"; break;
+        case Result::closed:
+        case Result::pending:
+            op.native_result=result==Result::closed ? "closed" : "pending";
+            op.state="pending"; op.effect="stopping";
+            break;
         case Result::busy: op.native_result=op.state="busy"; op.effect="retained"; break;
         case Result::in_use: op.native_result=op.state="inUse"; op.effect="retained"; break;
         case Result::failed: op.native_result=op.state="failed"; op.effect="retained"; break;

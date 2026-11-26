@@ -1,4 +1,5 @@
 #include "management/resident.hpp"
+#include "management/protocol.hpp"
 #include "fixtures/query_v2/mailbox_fixture.h"
 #include <dafeiyu/dynamic_library.hpp>
 #include <nlohmann/json.hpp>
@@ -274,6 +275,52 @@ void busy_unload(const fs::path& root, const fs::path& dll) {
     server.join();
     check(!outcome,"busy resident did not exit normally");
 }
+
+// 固定宿主推进节拍，核对 DLL 已关闭但原代次尚有一项调度包装时的目录和原回执。
+// 步骤：加载三个实际活动插件 → 在第三方仍排队时停止 → 冻结现场核对原代次 → 推进排空并复查。
+void queued_activity(const fs::path& root,const fs::path& dll) {
+    const auto data=root/"activity-user", packages=root/"activity-packages";
+    fs::create_directories(data);
+    for (const std::string id : {"activity.a","activity.b","activity.c"}) package(packages/id,dll,id);
+    std::atomic_uint permit{1},entered{0},model_calls{0};
+    std::atomic_bool release{false};
+    management::Host host([&] {
+        auto app=std::make_unique<app::Application>(model::Config{},packages,data,model::Backend{
+            [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
+        for (const auto id : {"activity.a","activity.b","activity.c"}) check(app->plugins().load(id)==DFY_V2_OK,"activity fixture failed to load");
+        return app;
+    },[&](auto&) {
+        const auto current=++entered;
+        until([&] { return release.load() || permit.load()>=current; },"activity fixture tick gate");
+    },nullptr,{},"activity-host");
+    struct Unlock {
+        std::atomic_bool& flag;
+        // 断言失败也先放行业务线程，保证宿主能够正常收尾。
+        ~Unlock() { flag=true; }
+    } unlock{release};
+    const auto a=host.open_client(), b=host.open_client();
+    const auto request=[&](const std::string& client, Json input) {
+        input.update(Json{{"version","1"},{"request","frozen"}});
+        return management::dispatch(&host,input,client);
+    };
+    until([&] { return entered>=2; },"initial activity sample");
+    const Json list{{"type","plugins.list"}};
+    const auto original=request(a,list), target=original.at("packages").at(2);
+    check(target.at("id")=="activity.c" && target.at("state")=="active","third activity was not running");
+    const auto accepted=request(a,intent(original,target,"unload",1));
+    const Json lookup{{"type","plugins.receipt"},{"instance",original.at("instance")},{"operation",accepted.at("operation")}};
+    permit=2;
+    until([&] { return entered>=3; },"stop before queued activity drains");
+    const auto interim=request(b,lookup), retained=request(b,list).at("packages").at(2);
+    check(interim.at("nativeResult")=="closed" && retained.at("state")=="stopping" && retained.at("generation")==target.at("generation"),
+        "fixture did not retain the original scheduling owner after native close");
+    check(interim.at("state")=="pending" && interim.at("effect")=="stopping","native close claimed exit before the retained owner drained");
+    permit=3;
+    until([&] { return entered>=4; },"activity wrapper exit");
+    const auto complete=request(b,lookup);
+    check(complete.at("state")=="succeeded" && complete.at("nativeResult")=="closed" && complete.at("effect")=="unloaded" &&
+        request(a,list).at("packages").at(2).at("generation")=="0" && !model_calls,"drained owner did not settle the original stop");
+}
 }
 
 // 为每次运行隔离插件包、命名管道和用户设置，以固定模型验证管理入口。
@@ -283,6 +330,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto root=fs::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         directory(root,argv[1]);
         busy_unload(root,argv[3]);
+        queued_activity(root,argv[3]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

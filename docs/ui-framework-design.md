@@ -282,7 +282,7 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 操作回执带有原 `command`、`action`、`id`、`revision`、`targetGeneration` 和核实的 `generation`。实际成功加载为 `succeeded/loaded`，有底层返回码时提供 `nativeCode`。同一窗口重发原命令可读回原结果，改目标或参数返回 `conflict`，跳号返回 `outOfOrder` 和 `expectedCommand`。旧修订或代次返回 `stale/notApplied`。同一后台有界保留 64 项，进行中的记录受保护，已退休的命令号返回 `expired`。原操作号已不可查时返回 `unknown`。[业务线程与原操作回执](../apps/host/src/management/plugin_actions.cpp)
 
-`plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
+`plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。DLL 已关闭而该代次仍有排队的宿主工作时，也保持该等待状态。同一操作号确认原代次实际回收后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending` 或 `closed`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
 
 加载时若依赖尚未激活，或系统未能打开清单指定的 DLL，宿主按实际持有的代次结算。确认未创建实例时回执为 `failed/notLoaded` 和 `generation="0"`。生命周期已经返回状态码时附 `nativeCode`。卸载因依赖占用或停止失败而保留的原回执，在后来显式重试成功后仍可按原号读取。[依赖、停止失败和模块打开验证](../tests/plugins/management_plugins.cpp)
 
