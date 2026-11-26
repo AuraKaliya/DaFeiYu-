@@ -27,8 +27,8 @@ class RunContext {
     // 在动作前预留整批结果正文并核对完整请求预算，失败不发布半个批次。
     void prepare_tools(const model::Message& assistant, const std::vector<model::ToolDefinition>& definitions,
         std::span<const std::uint32_t> receipt_views = {}, std::span<const std::uint8_t> archive_on_exit = {});
-    // 保存当前有效系统段并在实际请求副本上核算模型窗口，返回整批压缩数。
-    std::size_t project(model::Request& input, int head_delta);
+    // 在实际请求副本末尾冻结宿主状态并核算容量，工具执行前沿用该尾部预留。
+    std::size_t project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail = {});
     // 在预留空间内格式化终态及真实效果，不再分配结果正文；拒绝状态与实际执行分开。
     void set_tool_result(std::size_t index, const ToolResult& outcome, runtime::OperationState state,
         ToolError fault = ToolError::none, bool accepted = true);
@@ -57,7 +57,7 @@ class RunContext {
     void commit_text(std::string answer, std::optional<std::string> reasoning, std::uint8_t dialogue_span);
     ContextWindow window_;
     MessageClock message_clock_;
-    std::optional<model::Message> effective_head_;
+    std::optional<model::Message> effective_head_, effective_tail_;
     bool head_known_ = false;
     std::shared_ptr<const MessageHistory> committed_;
     std::shared_ptr<MessageHistory> pending_;

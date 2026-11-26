@@ -73,12 +73,18 @@ RunContext::RunContext(std::shared_ptr<const MessageHistory> history, std::strin
 void RunContext::check_history(model::Request input) const {
     fit_context_request(input,{0,0,window_.evidence_epoch,window_.thinking});
 }
-// 记住经 Hook 处理的正式系统段，供同轮工具分派前再次核算。
-std::size_t RunContext::project(model::Request& input, int head_delta) {
+// 将本步状态放在已闭合的消息之后，并记住工具分派预留使用的实际首尾。
+// 步骤：核实尾注来源 → 在请求副本核算完整窗口 → 保存本步头尾供动作前校验。
+std::size_t RunContext::project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail) {
+    if (decision_tail && (decision_tail->role!=model::Role::user || decision_tail->source!=MessageSource::host_status))
+        throw std::invalid_argument("context: expected host decision status");
+    if (decision_tail) input.messages.push_back(*decision_tail);
+    const auto compressed = fit_context_request(input,window_,head_delta);
+    effective_tail_ = std::move(decision_tail);
     head_known_ = true;
     if (!input.messages.empty() && input.messages.front().role == model::Role::system) effective_head_ = input.messages.front();
     else effective_head_.reset();
-    return fit_context_request(input,window_,head_delta);
+    return compressed;
 }
 // 未完成工具批次不能作为真实模型输入，避免占位文本冒充工具结果。
 const MessageHistory& RunContext::messages() const {
@@ -120,6 +126,7 @@ void RunContext::prepare_tools(const model::Message& assistant, const std::vecto
         forecast.messages[i].settled_evidence = false;
         forecast.messages[i].event_utc_ms = (std::numeric_limits<std::int64_t>::min)();
     }
+    if (effective_tail_) forecast.messages.push_back(*effective_tail_);
     fit_context_request(forecast,window_,head);
     auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages));
     pending_ = std::move(pending); tool_begin_ = start; replies_.swap(replies);

@@ -113,8 +113,28 @@ void revised_goal() {
     context.seal(); check(context.committed() == facts && facts->back().content.find("effect=applied") != std::string::npos,"goal cancellation erased action");
 }
 }
+// 核对决策尾注只进入本次实际请求，工具结果完整配对后才有下一份状态。
+void decision_tail_projection() {
+    const auto history = std::make_shared<const MessageHistory>();
+    RunContext context(history,"original");
+    dfy::model::Request first{context.messages()};
+    auto status = dfy::model::sourced_message(dfy::model::MessageSource::host_status,"snapshot one",7);
+    context.project(first,0,status);
+    check(first.messages.size()==2 && first.messages.back().content=="snapshot one" && context.messages().size()==1,
+        "projected state polluted original evidence");
+    context.prepare_tools({Role::assistant,"",{{"a","read","{}"},{"b","read","{}"}}},{});
+    context.set_tool_result(0,{true,ToolEffect::not_applied,"ok",ToolError::none},OperationState::succeeded);
+    rejects([&] { (void)context.messages(); });
+    context.set_tool_result(1,{true,ToolEffect::not_applied,"ok",ToolError::none},OperationState::succeeded);
+    context.commit_tools();
+    dfy::model::Request next{context.messages()};
+    status.content = "snapshot two";
+    context.project(next,0,status);
+    check(next.messages.size()==5 && next.messages.at(2).tool_call_id=="a" && next.messages.at(3).tool_call_id=="b" &&
+        next.messages.back().content=="snapshot two" && context.committed()->size()==4,"state split a pair or displaced evidence");
+}
 // 只验证固定消息和工具结果投影，不调用模型或执行工具。
 int main() {
-    try { facts(); boundaries(); plan_steps(); revised_goal(); std::cout << "Run context checks passed\n"; return 0; }
+    try { facts(); boundaries(); plan_steps(); revised_goal(); decision_tail_projection(); std::cout << "Run context checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
