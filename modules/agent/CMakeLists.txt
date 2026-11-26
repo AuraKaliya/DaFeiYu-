@@ -4,7 +4,7 @@ add_library(dfy_agent STATIC
   src/diagnostic_fields.hpp src/diagnostic_json.cpp src/diagnostic_snapshot.cpp
   src/execution_policy.cpp src/observation.cpp src/observation_controller.cpp src/observation_inbox.cpp
   src/observation_input.cpp src/observation_trigger.cpp src/observation_verification.cpp
-  src/plan_book.cpp src/plan_definition.cpp src/plan_protocol.cpp src/run_context.cpp
+  src/plan_book.cpp src/plan_definition.cpp src/plan_protocol.cpp src/plan_status.cpp src/run_context.cpp
   src/prompt_rules.cpp src/run_journal.cpp src/run_loop.cpp src/run_trace.cpp src/session.cpp src/timeline_review.cpp
   src/tool_batch.cpp src/tool_catalog.cpp src/tool_counts.cpp src/tool_executor.cpp src/tool_schema.cpp src/tool_work.cpp
   src/trace_identity.cpp

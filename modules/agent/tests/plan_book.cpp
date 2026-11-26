@@ -57,6 +57,29 @@ void failure_and_stop() {
     check(book.snapshot().stopped && book.snapshot().steps[1].waiting == PlanWait::stopped && driver.request()->outcome().effect == ToolEffect::unknown,
         "stop erased original failure or effect");
 }
+// 检查 TODO 的原创建和最近写入时间，原样重排、重复决定及只读快照不刷新时钟。
+// 步骤：安装两个待办 → 改写一项并新增一项 → 跳过及停止 → 核对缺失时钟。
+void timestamps() {
+    std::int64_t utc = 10;
+    PlanBook book(PlanScope({8,1},1),[&] { return utc; });
+    book.install(book.binding(),steps());
+    auto revised = steps(); revised[1].objective = "汇总新证据"; revised.push_back({"later","稍后","宿主核对",{}});
+    utc = 20; book.install(book.binding(),revised);
+    const auto change = book.snapshot();
+    check(change.steps[0].updated_utc_ms==10 && change.steps[1].created_utc_ms==10 && change.steps[1].updated_utc_ms==20 &&
+        change.steps[2].created_utc_ms==20,"unchanged, edited and new TODO lost their timestamps");
+    const PlanStepKey first{book.binding(),"read"};
+    utc = 30; book.skip(first,"host-receipt");
+    utc = 40; book.skip(first,"host-receipt"); book.stop();
+    utc = 50; book.stop();
+    const auto stopped = book.snapshot();
+    check(stopped.steps[0].updated_utc_ms==30 && stopped.steps[1].updated_utc_ms==40 &&
+        stopped.steps[2].created_utc_ms==20,"repeated or read-only actions refreshed the TODO");
+    PlanBook missing(PlanScope({9,1},1),[]() -> std::int64_t { throw std::runtime_error("offline clock"); });
+    missing.install(missing.binding(),steps());
+    check(!missing.snapshot().steps[0].created_utc_ms,"unavailable time was invented");
+}
+
 // 验证停止不会伪造实际退出，取消与成功等待宿主验证仍分别显示。
 // 步骤：停止已完成结果但未退出的工作 → 确认原退出 → 验证停止后不能推进 → 保留原取消状态。
 void stopped_work() {
@@ -76,6 +99,6 @@ void stopped_work() {
 }
 // 使用真实工具操作与可控退出验证计划记录，不调用模型。
 int main() {
-    try { sequential(); failure_and_stop(); stopped_work(); std::cout << "Plan book checks passed\n"; return 0; }
+    try { sequential(); failure_and_stop(); stopped_work(); timestamps(); std::cout << "Plan book checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

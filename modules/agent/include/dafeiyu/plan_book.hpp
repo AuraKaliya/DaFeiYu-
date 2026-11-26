@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/plan_definition.hpp>
+#include <dafeiyu/turn_input.hpp>
 #include <dafeiyu/operation.hpp>
 
 namespace dfy::agent {
@@ -23,6 +24,7 @@ struct PlanStepView {
     std::optional<AttemptId> execution;
     std::optional<runtime::OperationState> result, exit;
     std::string evidence;
+    std::optional<std::int64_t> created_utc_ms, updated_utc_ms;
 };
 struct PlanSnapshot {
     std::shared_ptr<const PlanDefinition> definition;
@@ -33,7 +35,7 @@ struct PlanSnapshot {
 class PlanBook {
   public:
     // 固定规划范围，尚无候选时计划修订为零。
-    explicit PlanBook(PlanScope scope) : scope_(std::move(scope)) {}
+    explicit PlanBook(PlanScope scope, MessageClock clock = {}) : scope_(std::move(scope)),clock_(std::move(clock)) {}
     // 禁止复制计划推进及验证责任。
     PlanBook(const PlanBook&) = delete;
     // 禁止赋值或移动覆盖正在使用的计划。
@@ -49,7 +51,7 @@ class PlanBook {
     // 宿主明确跳过下一未开始步骤，模型候选中没有这个控制入口。
     void skip(const PlanStepKey& key, std::string_view reason);
     // 阻止新计划和步骤，原工作仍由其原运行所有者取消及收尾。
-    void stop() noexcept { stopped_ = true; }
+    void stop() noexcept;
     // 读取原操作状态及计划验证事实，查询不推进任何工作。
     PlanSnapshot snapshot() const;
   private:
@@ -58,6 +60,7 @@ class PlanBook {
         std::optional<PlanBinding> started;
         std::optional<PlanWork> work;
         std::string evidence;
+        std::optional<std::int64_t> created_utc_ms, updated_utc_ms;
     };
     // 按当前定义中的精确步骤 ID 查找，不按标题或相似内容回退。
     std::size_t find(std::string_view id) const;
@@ -65,7 +68,10 @@ class PlanBook {
     std::size_t next() const noexcept;
     // 核对宿主证据或跳过原因的有界文本，不把文本本身解释为代码。
     static void validate_evidence(std::string_view evidence);
+    // 只在宿主写入计划事实时取 UTC 毫秒，时钟失败保留未知。
+    std::optional<std::int64_t> timestamp() const noexcept;
     const PlanScope scope_;
+    const MessageClock clock_;
     std::shared_ptr<const PlanDefinition> definition_;
     std::vector<Entry> entries_;
     bool stopped_ = false;

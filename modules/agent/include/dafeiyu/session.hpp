@@ -152,6 +152,8 @@ class TurnRequest {
     friend struct RunLoopState;
     // 冻结本步可知的三个统计范围，沿原步骤和尝试号关联上一份响应。
     DecisionStatusSource tool_count_status(ToolCallCounts previous, std::uint64_t step) const;
+    // 已安装计划按稳定步骤 ID 提供待办、等待和验证证据，当前顺序步骤在尾注显式展示。
+    std::optional<DecisionStatusSource> plan_status(std::uint64_t step, std::int64_t utc) const;
     // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
     explicit TurnRequest(RunId run, std::size_t trace_capacity) : attempt_{{run,1},1},journal_(run,trace_capacity) {}
     AttemptId attempt_;

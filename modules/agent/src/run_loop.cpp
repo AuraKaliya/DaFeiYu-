@@ -98,7 +98,7 @@ struct RunLoopState {
         if (options.planning) {
             planning_scope.emplace(run,options.goal_revision,options.tools,*options.planning);
             planning_request = prepare_plan_prompt(*planning_scope,0,prompt);
-            record->plan_ = std::make_unique<PlanBook>(*planning_scope);
+            record->plan_ = std::make_unique<PlanBook>(*planning_scope,options.message_clock);
             record->plan_caller_ = options.confirmation_caller;
             record->plan_outputs_.reserve(options.policy.model_limit);
             record->plan_revisions_.reserve(options.planning->maximum_revisions);
@@ -324,7 +324,7 @@ struct RunLoopState {
                 throw std::invalid_argument("run: goal revision boundary unavailable");
             const auto revision = expected.goal_revision+1;
             PlanScope scope(record->run_id(),revision,options.tools,*options.planning);
-            auto input = prepare_plan_prompt(scope,0,goal); auto book = std::make_unique<PlanBook>(scope);
+            auto input = prepare_plan_prompt(scope,0,goal); auto book = std::make_unique<PlanBook>(scope,options.message_clock);
             auto next_policy = std::make_unique<ExecutionPolicy>(record->run_id(),revision,options.policy);
             std::string next_goal(goal); TurnRequest::GoalRevisionRecord receipt{expected,next_goal};
             record->context_->revise_goal(revision,next_goal);
@@ -517,6 +517,7 @@ struct RunLoopState {
             auto sources = options.decision_status->sample ? options.decision_status->sample() : std::vector<DecisionStatusSource>{};
             if (options.decision_status->include_tool_counts)
                 sources.push_back(record->tool_count_status(options.previous_tool_counts,current.attempt.step.sequence));
+            if (auto todos = record->plan_status(current.attempt.step.sequence,*utc)) sources.push_back(std::move(*todos));
             const auto run = record->run_id();
             const auto task = record->plan_ ? "plan/"+std::to_string(run.session)+"/"+std::to_string(run.sequence) : std::string{};
             const auto freeze = [&](bool rebuild) {

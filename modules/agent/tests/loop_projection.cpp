@@ -142,14 +142,16 @@ void replay() {
         options.observations.push_back(inbox.latest(source.id(),id));
     }
     options.now = [&] { return now; };
+    options.message_clock = [&] { return 1250+std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count(); };
     options.planning = PlanLimits{16,2,16*1024};
     options.prompt_utc_ms = 1250;
     options.confirmation_caller = caller;
     const auto planning = session.begin("deliver eight",options);
     until(session,[&] { return planning->plan()->definition && planning->plan()->steps[0].waiting == PlanWait::verification; });
     auto state = *planning->plan();
+    now += std::chrono::milliseconds(20);
     session.confirm_plan_step(caller,state.steps[0].key,"eight in bag");
-    now += std::chrono::milliseconds(100);
+    now += std::chrono::milliseconds(80);
     session.replan(caller,state.definition->binding(),"use a chest");
     until(session,[&] { return planning->plan()->steps[1].waiting == PlanWait::verification; });
     session.confirm_plan_step(caller,planning->plan()->steps[1].key,"received");
@@ -166,13 +168,28 @@ void replay() {
         const auto tail = nlohmann::json::parse(messages.back().content);
         check(messages.back().role==Role::user && messages.back().source==MessageSource::host_status &&
             std::ranges::count(messages,MessageSource::host_status,&Message::source)==1 &&
-            tail.at("schema")=="dafeiyu.agent_status/1" && tail.at("items").empty() &&
+            tail.at("schema")=="dafeiyu.agent_status/1" && tail.at("items").size()==(i>=4 ? 1u : 0u) &&
             tail.at("step")==std::array{1,2,1,1,2,3,4}[i], "unexpected or accumulated decision tail");
         const auto& scope = tail.at("scope");
         if (i>=3) check(scope.at("task")=="plan/"+scope.at("session").get<std::string>()+"/"+
             std::to_string(tail.at("turn").get<std::uint64_t>()),"replanning lost its original task");
         else check(!scope.contains("task"),"ordinary conversation acquired an unrelated plan");
         if (i==1) check(messages[messages.size()-2].tool_call_id=="stock-W17","tail split tool continuation");
+        if (i>=4) {
+            const auto& todo = tail.at("items").at(0);
+            const auto& value = todo.at("value");
+            check(todo.at("key")=="host.plan_todo" && todo.at("attention").at("tasks").at(0)==scope.at("task") &&
+                value.at("id")==(i==4 ? "count" : "deliver") && value.at("state")==(i==5 ? "pending" : "running") &&
+                value.at("createdUtcMs")==1250 && value.at("planRevision")==(i==6 ? 2 : 1),"wrong active TODO or original creation");
+            if (i==6) {
+                const auto original = nlohmann::json::parse(session.read_status(std::stoull(scope.at("epoch").get<std::string>()),
+                    tail.at("snapshot").get<std::string>())).at("status").at("items");
+                const auto& prefix = original.at(0).at("value");
+                check(original.size()==2 && prefix.at("id")=="count" && prefix.at("state")=="completed" && prefix.at("evidence")=="eight in bag" &&
+                    prefix.at("originPlanRevision")==1 && prefix.at("updatedUtcMs")==1270 && value.at("updatedUtcMs")==1350,
+                    "replan lost the verified prefix or refreshed its timestamp");
+            }
+        }
     }
     check(projections[0].size() == 2 && projections[2].size() == 2 &&
         projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
