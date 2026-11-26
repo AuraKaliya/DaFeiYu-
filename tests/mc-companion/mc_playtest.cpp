@@ -408,14 +408,17 @@ dfy::model::Response wall_sample(const dfy::model::Request& request, const std::
                 throw std::runtime_error("wall probe: place granted before selecting a target");
             return internal("原位置已知，等玩家指定目标");
         }
-        const auto& observation = task.at("lastAction").at("result");
-        if (gap_only && !ambiguous && (observation.contains("anchor") ||
-            task.at("targetObservation").at("message") != 3 ||
-            task.at("targetObservation").at("playerFocus").at("choice") != "3,-59,-3:x"))
-            throw std::runtime_error("gap probe: the live observation replaced the original pointing evidence");
+        // 绑定开口会更新执行修订并清理旧动作，原话的候选及采样仍可按目标读取。
+        const auto& observation = task.at("targetObservation");
+        const auto& focus = observation.at("playerFocus");
+        if (observation.at("message") != 3 || !observation.at("sampledAtMs").is_number() ||
+            (ambiguous ? !focus.at("choice").is_null() : focus.at("choice") != "3,-59,-3:x") ||
+            !std::ranges::any_of(focus.at("candidates"),[&](const auto& cell) {
+                return cell.at("id") == task.at("target").at("candidate");
+            })) throw std::runtime_error("wall probe: target lost the original pointing evidence");
         if (task.at("goal") != "continue existing two-layer dirt wall and door" || task.at("target").at("message") != 3 ||
             task.at("detail") != "Find the player's original wall and leave the intended doorway" ||
-            !observation.value("surveyAvailable",false) || observation.contains("survey") || !observation.contains("sampledAtMs") ||
+            observation.contains("survey") ||
             !input.at("events").empty() || input.at("recentDialogue").front().at("order") != 2)
             throw std::runtime_error("wall probe: expansion lost prior goal or environment");
         if (ambiguous) {
