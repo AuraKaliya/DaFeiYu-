@@ -52,7 +52,8 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
             return management_reply(message,source,false);
         }
         if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt" ||
-            type == "mailbox.list" || type == "mailbox.read") {
+            type == "mailbox.list" || type == "mailbox.read" || type == "plugins.list" || type == "plugins.receipt" ||
+            type == "plugins.load" || type == "plugins.unload" || type == "settings.read" || type == "settings.save" || type == "settings.receipt") {
             if (!panel) return E_ACCESSDENIED;
             return management_reply(message,source,false);
         }
@@ -96,12 +97,15 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
         } catch (...) { self->failure_(); }
     };
     if (!request_(request,deliver) && request.contains("request") && request.at("request").is_string()) {
-        if (request.contains("command") && request.at("type")!="dialogue.read")
+        if (request.at("type")=="plugins.load" || request.at("type")=="plugins.unload" || request.at("type")=="settings.save")
+            deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"dispatched",false}});
+        else if (request.contains("command") && request.at("type")!="dialogue.read")
             deliver({{"event","dialogue.receipt"},{"version","1"},{"request",request.at("request")},
                 {"receipt",{{"command",request.at("command")},{"state","busy"}}}});
         else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read" ||
             request.value("type",std::string{}).starts_with("messages.") ||
-            request.at("type")=="mailbox.list" || request.at("type")=="mailbox.read")
+            request.at("type")=="mailbox.list" || request.at("type")=="mailbox.read" ||
+            request.at("type")=="plugins.list" || request.at("type")=="plugins.receipt" || request.at("type")=="settings.read" || request.at("type")=="settings.receipt")
             deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"reason","management client queue unavailable"}});
     }
     return S_OK;

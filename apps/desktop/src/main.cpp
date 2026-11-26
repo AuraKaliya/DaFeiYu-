@@ -14,6 +14,7 @@
 #ifdef DFY_UI_RUN_STATUS_TEST
 #include "ui_main_panel_fixture.hpp"
 #include "ui_run_status_probe.hpp"
+#include <fstream>
 #endif
 #include <windows.h>
 #include <dwmapi.h>
@@ -73,7 +74,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
-    bool main_panel = false, main_panel_check = false, panel_shutdown_check = false;
+    bool main_panel = false, main_panel_check = false, panel_shutdown_check = false, plugin_settings_check = false;
     bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
     bool observer_unexpected = false;
     std::wstring observer_scenario;
@@ -178,6 +179,13 @@ struct Window : std::enable_shared_from_this<Window> {
                         if (window && (window->tray_verified || value.value("event", "") == "management.error")) reply(value);
                     });
                 }
+#ifdef DFY_UI_RUN_STATUS_TEST
+                // 真实后台已处理首笔写入，验收主动丢弃原生应答，页面只能从自己预存的工作号恢复。
+                if (self->observer_scenario==L"action-write" && request.at("type")=="plugins.load" && request.at("command")=="1")
+                    return self->resident_client->post(request,[file=self->user_data/"dropped-plugin-ack.json"](const auto& value) {
+                        std::ofstream(file) << value.dump();
+                    });
+#endif
                 if (self->resident_client) return self->resident_client->post(request,std::move(reply));
                 reply(dfy::management::dispatch(self->run_status_host.get(),request));
                 return true;
@@ -291,7 +299,13 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (tray_check) { interaction->start_tray_panel(user_data); return; }
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
+                if (plugin_settings_check) { interaction->start_plugin_settings(); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
+                if (observer_scenario==L"settings-read") { interaction->start_host_settings(); return; }
+                if (observer_scenario.starts_with(L"settings-")) { interaction->start_host_save(observer_scenario,user_data); return; }
+                if (observer_scenario.starts_with(L"action-")) { interaction->start_plugin_actions(observer_scenario,user_data); return; }
+                if (observer_scenario==L"plugins-fields") { interaction->start_plugin_fields(user_data); return; }
+                if (observer_scenario.starts_with(L"plugins-")) { interaction->start_plugin_windows(observer_scenario,user_data); return; }
                 if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
                 if (observer_check) {
@@ -474,12 +488,16 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
         observer_mode==L"history-reopen" || observer_mode==L"history-restart";
     const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
+    const bool settings_check = observer_mode==L"plugins-manage" || observer_mode==L"plugins-watch" || observer_mode==L"plugins-fields" || observer_mode==L"action-write" ||
+        observer_mode==L"action-observe" || observer_mode==L"action-reopen" || observer_mode==L"settings-read" ||
+        observer_mode==L"settings-write" || observer_mode==L"settings-conflict" || observer_mode==L"settings-restart";
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
-        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check))) &&
+        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check || settings_check))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
-    const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" || std::wstring_view(__wargv[1]) == L"--check-panel-shutdown");
+    const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" ||
+        std::wstring_view(__wargv[1]) == L"--check-panel-shutdown" || std::wstring_view(__wargv[1]) == L"--check-plugin-settings");
 #else
     const bool tray_check = false;
     const bool observer_check = false;
@@ -520,9 +538,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->main_panel = main_panel || main_panel_check || observer_check;
         state->main_panel_check = main_panel_check;
         state->panel_shutdown_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-panel-shutdown";
+        state->plugin_settings_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-plugin-settings";
         state->observer_check = observer_check;
 #ifdef DFY_UI_RUN_STATUS_TEST
-        if (observer_check && (history_check || mailbox_check)) state->observer_scenario = observer_mode;
+        if (observer_check && (history_check || mailbox_check || settings_check)) state->observer_scenario = observer_mode;
 #endif
         state->tray_check = tray_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";

@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings, [switch]$HostSave, [switch]$PluginFields)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -23,8 +23,8 @@ function Start-FixtureProcess([string]$Program, [string]$Arguments) {
 }
 
 # 等待原数据目录确认刚启动的固定响应本体，再让面板走正式管道。
-function Start-Resident {
-    $resident = Start-FixtureProcess $Fixture ('serve "'+$config+'" "'+$data+'"')
+function Start-Resident([string]$Mode='serve') {
+    $resident = Start-FixtureProcess $Fixture ($Mode+' "'+$config+'" "'+$data+'"')
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     do {
         try { $status = (& $App --host-status $data 2>$null | Out-String) | ConvertFrom-Json }
@@ -77,6 +77,88 @@ try {
         Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
         [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
         [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
+        if ($HostSettings -or $HostSave) {
+            [IO.File]::WriteAllText($config,'{"provider":"deepseek","base_url":"https://offline.invalid","model":"fixture","api_key_env":"DFY_UNUSED_HISTORY_FIXTURE","timeout_ms":17000}')
+            if ($HostSave) {
+                $resident = Start-Resident 'serve-settings-write'
+                $writer = Start-Panel 'settings-write'
+                $editor = Start-Panel 'settings-conflict'
+                Wait-Panels @($writer,$editor)
+                Stop-Resident $resident
+                $resident = Start-Resident 'serve-settings-write'
+                Wait-Panels @((Start-Panel 'settings-restart'))
+            } else {
+                $resident = Start-Resident 'serve-settings'
+                Wait-Panels @((Start-Panel 'settings-read'))
+            }
+            if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading host settings called the model' }
+            Stop-Resident $resident
+            return
+        }
+        if ($PluginSettings -or $PluginActions -or $PluginFields) {
+            $second = Join-Path $data 'plugins/second'
+            $null = New-Item -ItemType Directory -Path $second
+            Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $second 'entry.dll')
+            [IO.File]::WriteAllText((Join-Path $second 'plugin.json'),'{"manifest_version":1,"id":"test.second","name":"Second fixture","version":"2","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
+            [IO.File]::WriteAllText((Join-Path $second 'defaults.json'),'{"mode":"t"}')
+            $resident = Start-Resident
+            if ($PluginFields) {
+                $reader = Start-Panel 'plugins-fields'
+                $timer = [Diagnostics.Stopwatch]::StartNew()
+                while (!(Test-Path -LiteralPath (Join-Path $data 'public-before'))) {
+                    if ($reader.HasExited) { throw ('Public fields observer failed: '+$reader.StandardError.ReadToEnd()) }
+                    if ($timer.ElapsedMilliseconds -ge 15000) { throw 'The undeclared generation was not observed' }
+                    Start-Sleep -Milliseconds 35
+                }
+                $uiFolder = Join-Path $package 'ui'
+                $overrideFolder = Join-Path $data 'plugins/test.mail'
+                $null = New-Item -ItemType Directory -Force -Path $uiFolder,$overrideFolder
+                [IO.File]::WriteAllText((Join-Path $uiFolder 'manifest.json'),'{"ui_schema_version":1,"plugin_id":"test.mail","contributions":[{"kind":"settings","id":"public","fields":[{"id":"label","type":"string","access_mode":"read_only"},{"id":"mode","type":"string","access_mode":"read_only"}]}]}')
+                [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"label":"package label","mode":"t","private_note":"private-fixture-sentinel"}')
+                [IO.File]::WriteAllText((Join-Path $overrideFolder 'settings.json'),'{"label":"user label"}')
+                & $Fixture reload $config $data
+                if ($LASTEXITCODE -ne 0) { throw 'Public fields reload failed' }
+                [IO.File]::WriteAllText((Join-Path $data 'public-reloaded'),'ready')
+                Wait-Panels @($reader)
+                if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading plugin fields called the model' }
+                Stop-Resident $resident
+                return
+            }
+            if ($PluginActions) {
+                $watcher = Start-Panel 'action-observe'
+                $manager = Start-Panel 'action-write'
+                Wait-Panels @($watcher,$manager)
+                Wait-Panels @((Start-Panel 'action-reopen'))
+                $original = (& $App --host-status $data | Out-String) | ConvertFrom-Json
+                if ($original.pid -ne $resident.Id -or (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls'))) {
+                    throw 'Package operations changed the resident or called the model'
+                }
+                Stop-Resident $resident
+                return
+            }
+            $watcher = Start-Panel 'plugins-watch'
+            $manager = Start-Panel 'plugins-manage'
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            foreach ($name in 'plugins-watch.json','plugins-manage.json') {
+                while (!(Test-Path -LiteralPath (Join-Path $data $name))) {
+                    foreach ($window in $watcher,$manager) {
+                        if ($window.HasExited) { throw ('Directory window exited before sampling: '+$window.StandardError.ReadToEnd()) }
+                    }
+                    if ($timer.ElapsedMilliseconds -ge 20000) { throw ('Missing directory sample: '+$name) }
+                    Start-Sleep -Milliseconds 40
+                }
+            }
+            if ([IO.File]::ReadAllText((Join-Path $data 'plugins-watch.json')) -ne [IO.File]::ReadAllText((Join-Path $data 'plugins-manage.json'))) {
+                throw 'The two windows did not observe the same resident, revision and generation'
+            }
+            & $Fixture reload $config $data
+            if ($LASTEXITCODE -ne 0) { throw 'Independent reload did not finish' }
+            [IO.File]::WriteAllText((Join-Path $data 'plugin-reloaded'),'ready')
+            Wait-Panels @($manager,$watcher)
+            if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading package settings started the model' }
+            Stop-Resident $resident
+            return
+        }
         $resident = Start-Resident
         $watcher = Start-Panel 'mailbox-follow'
         $first = Start-Panel 'mailbox-first'

@@ -11,14 +11,23 @@ using Json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
+// 写入场景显式启用与正式本体相同的用户配置；旧版只读配对仍可运行观察。
+template<typename Run = app::ApplicationRunConfig>
+Run fixture_runtime(bool writable) {
+    Run run;
+    if constexpr (requires { run.manage_host_settings; }) run.manage_host_settings = writable;
+    else if (writable) throw std::runtime_error("writable settings unavailable in this fixture host");
+    return run;
+}
+
 // 用真实测试插件发一封待收信件，记录固定模型的每次实际调用。
 // 步骤：创建隔离应用 → 手动收件并加载插件 → 由原插件代次发送测试来信。
-std::unique_ptr<app::Application> open_fixture(const fs::path& data) {
-    auto app = std::make_unique<app::Application>(model::Config{},data/"plugins",data,model::Backend{
+std::unique_ptr<app::Application> open_fixture(const fs::path& data, const model::Config& config, bool writable) {
+    auto app = std::make_unique<app::Application>(config,data/"plugins",data,model::Backend{
         [data](const auto&,const auto&) -> model::Response {
             std::ofstream(data/"fixed-model-calls",std::ios::app) << "called\n";
             return {{model::Role::assistant,"固定收件答复"}};
-        }});
+        }},fixture_runtime(writable));
     app->wake_for_plugin_mail(false);
     if (app->plugins().load("test.mail")) throw std::runtime_error("fixture plugin could not load");
     const auto plugin = app->plugins().instance("test.mail");
@@ -64,7 +73,12 @@ int wmain(int argc,wchar_t** argv) {
         const std::wstring_view mode=argv[1];
         const fs::path config=argv[2], data=argv[3];
         const auto definition=management::startup_identity(config,data/"plugins");
-        if (mode==L"serve") return management::serve_resident(data,definition,[data] { return open_fixture(data); });
+        if (mode==L"serve" || mode==L"serve-settings" || mode==L"serve-settings-write") {
+            const auto options = mode==L"serve" ? model::Config{} : model::load_config(config);
+            return management::serve_resident(data,definition,[data,options,writable=mode==L"serve-settings-write"] {
+                return open_fixture(data,options,writable);
+            });
+        }
         if (mode!=L"review" && mode!=L"reload") return 2;
         control(data,definition,mode==L"reload");
         return 0;

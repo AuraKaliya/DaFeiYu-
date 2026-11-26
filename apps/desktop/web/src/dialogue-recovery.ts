@@ -73,5 +73,5 @@ export function rememberDraft(draft: string): void { sessionStorage.setItem(draf
 
 // 保存本窗口当前历史项，页面重载后沿同一命令核对，窗口关闭后随独立配置回收。
 export function rememberDialogue(draft: string, commands: Iterable<WireCommand>, conversation: string): void {
-  history.replaceState({ dialogue: { draft, conversation, commands: Array.from(commands) } }, '');
+  history.replaceState({ ...history.state, dialogue: { draft, conversation, commands: Array.from(commands) } }, '');
 }

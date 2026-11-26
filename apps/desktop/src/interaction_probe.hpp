@@ -32,6 +32,18 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_history(std::wstring_view mode, const std::filesystem::path& profile);
     // 在两个独立正式面板核对同一来源的公开信件、断连恢复及原代次失效。
     void start_mailbox(std::wstring_view mode, const std::filesystem::path& profile);
+    // 从正式设置入口，用可控的原生协议回包核对目录和本窗选择。
+    void start_plugin_settings();
+    // 在两个独立设置窗口核对同一后台的目录、选中项及重载后的新代次。
+    void start_plugin_windows(std::wstring_view mode, const std::filesystem::path& profile);
+    // 通过真实插件重载核对未声明、过期及新代次明确发布的只读字段。
+    void start_plugin_fields(const std::filesystem::path& profile);
+    // 从真实设置页核对受控写入、跨文档恢复、同伴的旧目录和原后台回执。
+    void start_plugin_actions(std::wstring_view mode, const std::filesystem::path& profile);
+    // 从真实设置入口核对本体采用的供应商、超时和修订。
+    void start_host_settings();
+    // 用独立设置窗口复核保存、冲突保留、旧回执和原配置重启采用。
+    void start_host_save(std::wstring_view mode, const std::filesystem::path& profile);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif

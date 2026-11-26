@@ -48,3 +48,21 @@ test('已知系统段可拆解，工具范围与 MC 事实按原快照对照', (
     messages: [{ position: 1, role: 'user', change: 'added' }],
   });
 });
+
+// 同一规则可出现在旧布局或新版职责段，只有第五段正文是新布局的人格。
+// 步骤：还原双换行格式和尾随协议 → 检查跨段隔离 → 保持残缺记录走原文展示。
+test('五段规则的 MC 指引来自职责段，人格只取末段，旧日志仍可读', () => {
+  const headers = ['【职责与信息来源 v1】','【授权与行动边界 v1】','【判断与结算 v1】','【输出与投递 v1】','【人格与风格 v1】'];
+  const guidance = {flowGuidance:{x:'观察'},quoted:'行内【人格与风格 v1】'};
+  for (const title of ['Minecraft 同场规则','Minecraft 委托规则','Minecraft 动作复核']) {
+    const source = [headers[0],'原场景事实来自插件。',title,JSON.stringify(guidance),'本步宿主附加协议',
+      headers[1],'按本次授权',headers[2],'核对实效',headers[3],'投递给玩家',headers[4],'按角色说话。','保留第二行。'];
+    for (const eol of ['\n','\r\n']) {
+      assert.deepEqual(systemParts(source.join(eol)),{title,persona:['按角色说话。','保留第二行。'].join(eol),guidance});
+      assert.deepEqual(systemParts(['旧人格',title,JSON.stringify(guidance,null,2)].join(eol)),{title,persona:'旧人格',guidance});
+    }
+    assert.equal(systemParts(source.filter(line=>line!==headers[2]).join('\n')),undefined);
+    assert.equal(systemParts(source.filter(line=>line!==title).concat(title,JSON.stringify(guidance)).join('\n')),undefined);
+    assert.equal(systemParts(source.map(line=>line===headers[1]?headers[3]:line).join('\n')),undefined);
+  }
+});

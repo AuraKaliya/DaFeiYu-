@@ -96,14 +96,28 @@ export interface SystemParts {
 }
 
 const guidanceHeading = /^Minecraft (?:同场规则|动作复核|委托规则)\r?$/m;
+const ruleHeadings = ['【职责与信息来源 v1】', '【授权与行动边界 v1】', '【判断与结算 v1】', '【输出与投递 v1】', '【人格与风格 v1】'];
 
 // 对可证实的 MC 系统段拆出人格和领域指引，原文仍可直接查看。
+// 步骤：核对新版五个独占行或保留旧布局 → 只从原领域段读 JSON → 对应同版人格正文。
 export function systemParts(value: unknown): SystemParts | undefined {
   const content = text(value);
-  const heading = content?.match(guidanceHeading);
-  if (!content || !heading || heading.index === undefined) return undefined;
-  const guidance = decodedObject(content.slice(heading.index + heading[0].length).trim());
-  if (guidance) return { title: heading[0].trim(), persona: content.slice(0, heading.index).trimEnd(), guidance };
+  if (!content) return;
+  let scene = content, persona: string | undefined;
+  if (content.startsWith('【职责与信息来源 ')) {
+    const headers = [...content.matchAll(/^【(?:职责与信息来源|授权与行动边界|判断与结算|输出与投递|人格与风格) v1】\r?$/gm)];
+    if (headers.length !== ruleHeadings.length || headers[0].index !== 0 ||
+        !headers.every((header, i) => header[0].trimEnd() === ruleHeadings[i])) return;
+    scene = content.slice(headers[0].index + headers[0][0].length, headers[1].index);
+    const last = headers[4];
+    persona = content.slice(last.index + last[0].length).replace(/^\n/, '');
+  }
+  const heading = scene.match(guidanceHeading);
+  if (!heading || heading.index === undefined) return;
+  const body = scene.slice(heading.index + heading[0].length).trim();
+  // 新版领域 JSON 由插件独占一行发布，宿主可在其后追加本步协议。
+  const guidance = decodedObject(body) ?? (persona !== undefined ? decodedObject(body.split('\n', 1)[0]) : undefined);
+  if (guidance) return { title: heading[0].trim(), persona: persona ?? scene.slice(0, heading.index).trimEnd(), guidance };
 }
 
 export interface PromptDifference {
