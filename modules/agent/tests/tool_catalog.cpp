@@ -134,8 +134,25 @@ void context_scope() {
     work->advance();
     check(received == R"({"context":{"order":7},"arguments":{}})", "native context lost");
 }
+// 核对宿主额外授予的读取仍然能撤销，固定单一参数的委托不能扩权。
+void reader_grant() {
+    const ToolFactory done = [](const auto&) { return completed_tool({true,ToolEffect::not_applied,"{}",ToolError::none}); };
+    ToolCatalog tools, readers;
+    tools.add(tool("fixture/write","write",2,true),done);
+    const auto registration = readers.add(tool("host/read","read",3),done);
+    const std::vector<std::string> action_ids{"fixture/write"}, read_ids{"host/read"};
+    const auto action = tools.snapshot(action_ids,true), read = readers.snapshot(read_ids);
+    const auto both = action.include_reader(read);
+    check(both.resolve("read","{}").registration==registration && both.descriptions().size()==2,"reader grant lost original capability");
+    rejects([&] { both.include_reader(read); });
+    rejects([&] { read.include_reader(action); });
+    rejects([&] { action.bind_arguments("fixture/write","{}").include_reader(read); });
+    readers.enable(registration,false);
+    rejects([&] { both.resolve("read","{}"); });
+    check(both.resolve("write","{}").description.id=="fixture/write","reader revocation changed another capability");
+}
 // 运行工具描述与授权检查，本单元不执行模型或原生工具。
 int main() {
-    try { catalog(); lifetime(); subsets(); exact_scope(); context_scope(); std::cout << "Tool catalog checks passed\n"; return 0; }
+    try { catalog(); lifetime(); subsets(); exact_scope(); context_scope(); reader_grant(); std::cout << "Tool catalog checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

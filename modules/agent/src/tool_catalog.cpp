@@ -137,6 +137,22 @@ ToolSnapshot ToolSnapshot::restrict_to(std::span<const std::string> ids) const {
     return result;
 }
 
+// 将宿主单独签发的只读能力加入本轮范围，原注册和撤权仍由各自目录持有。
+// 步骤：拒绝扩大固定参数委托 → 检查只读属性及命名冲突 → 保留原上下文绑定和新能力。
+ToolSnapshot ToolSnapshot::include_reader(const ToolSnapshot& reader) const {
+    if (fixed_arguments_ || reader.fixed_arguments_ || reader.context_ || reader.entries_.size()!=1 || entries_.size()>=64)
+        throw std::invalid_argument("tools: invalid reader grant");
+    const auto& extra = reader.entries_.front();
+    if (extra->description.changes_state || !extra->registered || !extra->enabled || !extra->factory)
+        throw std::invalid_argument("tools: unavailable read-only capability");
+    for (const auto& existing : entries_)
+        if (existing->description.id==extra->description.id || existing->description.model.name==extra->description.model.name)
+            throw std::invalid_argument("tools: duplicate reader grant");
+    auto result = *this;
+    result.entries_.push_back(extra);
+    return result;
+}
+
 // 固定由宿主签发的来源，子范围不得替换该来源。
 ToolSnapshot ToolSnapshot::bind_context(const std::string& context) const {
     if (context.size() > 4096) throw std::invalid_argument("tools: oversized context");

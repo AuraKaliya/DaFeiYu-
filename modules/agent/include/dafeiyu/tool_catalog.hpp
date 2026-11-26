@@ -37,6 +37,8 @@ class ToolSnapshot {
     bool permits_state_changes() const noexcept;
     // 从固定成员收紧步骤范围，保留原注册及撤销关系；不能补回外部工具或重绑新实例。
     ToolSnapshot restrict_to(std::span<const std::string> ids) const;
+    // 向宿主明确允许的范围并入一个只读工具，保留原许可与撤权；固定参数的委托不能扩展。
+    ToolSnapshot include_reader(const ToolSnapshot& reader) const;
     // 收紧到一个工具及一份已授权参数，后续缩小范围仍保留原值约束。
     ToolSnapshot bind_arguments(const std::string& id, const std::string& arguments) const;
     // 为支持信封的工具附加宿主上下文，模型仍只能填写原工具契约中的参数。
