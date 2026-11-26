@@ -64,7 +64,7 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | `/plugins load <id>` | 明确创建并启动实例 |
 | `/plugins unload <id> [--linked]` | 卸载，或明确选择先停止依赖方 |
 | `/plugins remove <id>` | 实际卸载后移除，保留用户设置，可重试清理残留 |
-| `/run`、`/run-confirmed` | 为本轮明确授予一个已加载工具，变更候选需要确认 |
+| `/run`、`/run-confirmed` | 为本轮明确授予一个已加载工具，变更候选需要确认。开发委托可在目标后追加 `--workspace "目录"`，按发起终端的位置解析路径。本轮决策可见已核实的项目目录、Windows 系统、采样时间和可读时区。 |
 | `/task`、`/task-status` | 接纳读、改、读任务，或按进程内请求号查原运行 |
 | `/confirmations`、`/approve`、`/deny` | 查看原候选并提交决定 |
 | `/verification`、`/diagnostic export` | 查看宿主读回判定，或导出有界无正文诊断 |

@@ -48,15 +48,32 @@ agent::TurnDiagnostics finish(app::Application& application, app::ChatController
 
 // 使用正式应用、真实只读 DLL 和固定结构化响应验证一次工具运行。
 // 步骤：拒绝未加载及写入授予 → 给模型一个只读定义 → 验证配对结果 → 卸载后继续普通问答。
-void read_only(const fs::path& package, const fs::path& root) {
+void read_only(const fs::path& package, const fs::path& root, bool scoped) {
     using namespace model;
     const auto run = workspace(root);
+    const auto directory = run/u8"项目 路径";
+    fs::create_directory(directory);
+    const auto utf8 = fs::canonical(directory).u8string();
+    const std::string project(utf8.begin(),utf8.end());
+    nlohmann::json original;
     unsigned calls = 0;
     app::Application application({},run/"plugins",run/"user",Backend{
         // 仅提供本轮读调用、配对回复和后续普通问答三个结果。
         // 步骤：核对唯一工具范围 → 验证原工具结果及身份 → 验证后续问答只保留历史。
         [&](const Config&, const Request& request) {
             const auto& last = dfy::test::business_messages(request).back();
+            const auto status = nlohmann::json::parse(request.messages.back().content);
+            const auto& items = status.at("items");
+            const bool has_workspace = scoped && calls<2;
+            check(items.size()==(has_workspace ? 1u : 0u),"workspace environment leaked or was not offered");
+            if (has_workspace) {
+                const auto& sample = items.at(0);
+                check(sample.at("key")=="host.development_environment" && sample.at("value").at("workspaceDirectory")==project &&
+                    sample.at("value").at("operatingSystem")=="Windows" && sample.at("sampledUtcMs").is_number_integer() &&
+                    !sample.at("value").contains("dimension"),"workspace sample lost its original path or mixed in game data");
+                if (calls==0) original=sample;
+                else check(sample==original,"tool continuation resampled its admitted workspace");
+            }
             switch (++calls) {
             case 1:
                 check(last.content == "read the value" && request.tools.size() == 1 && request.tools[0].name.ends_with("_read"),
@@ -85,12 +102,13 @@ void read_only(const fs::path& package, const fs::path& root) {
     app::ChatController chat(application.conversation(),output,errors,
         [&](std::string_view line) { return app::application_command(application,line,output,errors); });
     chat.line("/run test.tools/read");
+    chat.line("/run test.tools/read \"read the value\" --workspace \""+project+"-missing\"");
     chat.line("/run test.tools/increment \"read the value\"");
     check(!application.conversation().status() && calls == 0 && errors.str().find("Usage: /run") != std::string::npos &&
         errors.str().find("not authorized") != std::string::npos,"rejected terminal grant admitted a run or hid its error");
 
     errors.str("");
-    chat.line("/run test.tools/read \"read the value\"");
+    chat.line(scoped ? "/run test.tools/read \"read the value\" --workspace \""+project+"\"" : "/run test.tools/read \"read the value\"");
     const auto admitted = application.conversation().status();
     const auto result = finish(application,chat);
     check(admitted && result.turn == admitted->turn && result.tool_requests == 1 && errors.str().empty() &&
@@ -185,7 +203,8 @@ void confirmation(const fs::path& package, const fs::path& root, std::optional<b
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 3,"tool fixture and test workspace required");
-        read_only(argv[1],argv[2]);
+        read_only(argv[1],argv[2],false);
+        read_only(argv[1],argv[2],true);
         confirmation(argv[1],argv[2],true);
         confirmation(argv[1],argv[2],false);
         confirmation(argv[1],argv[2],std::nullopt);

@@ -32,10 +32,14 @@ Json terminal_exchange(const TerminalTransport& send, const std::string& client,
 }
 
 namespace {
-// 涉及本地文件的两个已有命令按发起终端的目录解释相对路径。
+// 安装、诊断和显式工具委托按发起终端的位置解析本地路径，再交给常驻宿主。
 std::string terminal_paths(const std::string& line) {
-    if (!line.starts_with("/diagnostic") && !line.starts_with("/plugins")) return line;
+    if (!line.starts_with("/diagnostic") && !line.starts_with("/plugins") && !line.starts_with("/run")) return line;
     const auto words = app::command_words(line);
+    if (words.size()==5 && (words[0]=="/run" || words[0]=="/run-confirmed") && words[3]=="--workspace" && !words[4].empty()) {
+        const auto path = std::filesystem::absolute(std::u8string(words[4].begin(),words[4].end())).u8string();
+        return words[0]+" "+words[1]+" \""+words[2]+"\" --workspace \""+std::string(path.begin(),path.end())+"\"";
+    }
     if (words.size()!=3 || !((words[0]=="/diagnostic" && words[1]=="export") || (words[0]=="/plugins" && words[1]=="install"))) return line;
     const auto path = std::filesystem::absolute(std::u8string(words[2].begin(),words[2].end())).u8string();
     return words[0]+" "+words[1]+" \""+std::string(path.begin(),path.end())+"\"";

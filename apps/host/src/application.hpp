@@ -158,9 +158,9 @@ class Application {
     // 设置插件信箱的自动唤醒模式，主动收件继续可用。
     void wake_for_plugin_mail(bool enabled) noexcept { interactions_.set_auto_wake(enabled); }
     // 显式授予一个已加载实例的只读工具并提交用户目标。
-    agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt);
+    agent::TurnDiagnostics submit_read_only(const std::string& tool_id, const std::string& prompt, const std::filesystem::path& workspace = {});
     // 提交有明确工具范围的用户目标，状态变更进入原会话的人工确认。
-    agent::TurnDiagnostics submit_confirmed(const std::string& tool_id, const std::string& prompt);
+    agent::TurnDiagnostics submit_confirmed(const std::string& tool_id, const std::string& prompt, const std::filesystem::path& workspace = {});
     // 提交同一实例的无参读取及变更工具，由宿主比对变更后的实际文本状态。
     agent::TurnDiagnostics submit_verified(const std::string& reader, const std::string& change, const std::string& expected,
         const std::string& prompt);
@@ -206,7 +206,7 @@ class Application {
     // 针对用户明确选择的包，临时登记活动实例的工具。
     PreparedTools prepare_tools(std::string_view package);
     // 准备并接纳一个工具范围，按入口的授权意图固定人工确认。
-    agent::TurnDiagnostics submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes);
+    agent::TurnDiagnostics submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes, const std::filesystem::path& workspace);
     // 撤销不属于当前运行或已失效实例的注册。
     void collect_tool_registration() noexcept;
     // 推进本轮实际证据判断，失败后停止原任务并等待真实退出。

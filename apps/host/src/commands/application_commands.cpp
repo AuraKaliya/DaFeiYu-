@@ -28,8 +28,11 @@ std::uint64_t positive_id(const std::string& text) {
 // 步骤：核对参数 → 选择本轮授权模式 → 提交目标并展示接纳回执。
 void submit(Application& application, std::string_view command, bool confirm, std::ostream& output, std::ostream& errors) {
     const auto words = command_words(command);
-    if (words.size() != 3) throw std::invalid_argument(confirm ? "Usage: /run-confirmed PACKAGE/TOOL \"GOAL\"" : "Usage: /run PACKAGE/TOOL \"GOAL\"");
-    const auto status = confirm ? application.submit_confirmed(words[1],words[2]) : application.submit_read_only(words[1],words[2]);
+    const bool scoped = words.size()==5 && words[3]=="--workspace" && !words[4].empty();
+    if (words.size()!=3 && !scoped) throw std::invalid_argument(std::string("Usage: ")+(confirm ? "/run-confirmed" : "/run")+
+        " PACKAGE/TOOL \"GOAL\" [--workspace \"DIRECTORY\"]");
+    const auto directory = scoped ? std::filesystem::path(std::u8string(words[4].begin(),words[4].end())) : std::filesystem::path{};
+    const auto status = confirm ? application.submit_confirmed(words[1],words[2],directory) : application.submit_read_only(words[1],words[2],directory);
     write_accepted(status,confirm ? "Use /confirmations to inspect pending actions." : "Use /status to inspect it.",output,errors);
 }
 

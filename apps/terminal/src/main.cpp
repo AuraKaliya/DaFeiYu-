@@ -116,6 +116,7 @@ int run(const std::vector<std::filesystem::path>& args) {
             << "Chat connects to the resident for this data directory. Use /exit to leave the terminal or --stop-host to stop the resident.\n"
             << "In chat, use /run PACKAGE/TOOL \"GOAL\" to grant one read-only tool.\n"
             << "Use /run-confirmed for state changes, then /confirmations and /approve or /deny REQUEST REVISION.\n"
+            << "Add --workspace \"DIRECTORY\" to /run or /run-confirmed to include that project's local environment.\n"
             << "Use /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" [--request ID] for a verified state change.\n"
             << "Use /verification or /task-status REQUEST to inspect evidence and retained status.\n"
             << "Use /diagnostic export \"FILE\" to save a local diagnostic.\n";

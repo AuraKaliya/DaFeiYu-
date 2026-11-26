@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "workspace_environment.hpp"
 #include "host_settings.hpp"
 #include "run_log.hpp"
 #include "software_log.hpp"
@@ -170,13 +171,13 @@ agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, even
 }
 
 // 为用户指明的一个只读工具接纳运行。
-agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id, const std::string& prompt) {
-    return submit_tool(tool_id,prompt,false);
+agent::TurnDiagnostics Application::submit_read_only(const std::string& tool_id, const std::string& prompt, const std::filesystem::path& workspace) {
+    return submit_tool(tool_id,prompt,false,workspace);
 }
 
 // 由用户指明一个工具，写入必须经过具体调用的确认。
-agent::TurnDiagnostics Application::submit_confirmed(const std::string& tool_id, const std::string& prompt) {
-    return submit_tool(tool_id,prompt,true);
+agent::TurnDiagnostics Application::submit_confirmed(const std::string& tool_id, const std::string& prompt, const std::filesystem::path& workspace) {
+    return submit_tool(tool_id,prompt,true,workspace);
 }
 
 // 从活动实例准备本轮的工具注册。
@@ -192,7 +193,7 @@ Application::PreparedTools Application::prepare_tools(std::string_view package) 
 
 // 从用户指定的已加载实例授予一个工具。
 // 步骤：准备原实例注册 → 固定确认策略和范围 → 接纳并保留原注册。
-agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes) {
+agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes, const std::filesystem::path& workspace) {
     auto prepared = prepare_tools(package_of(tool_id));
     agent::RunOptions options;
     options.now = tool_clock_;
@@ -200,6 +201,8 @@ agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, cons
     options.policy.confirm_changes = confirm_changes;
     options.confirmation_caller = caller_;
 
+    if (!workspace.empty())
+        options.decision_status = agent::DecisionStatusOptions{"main",[source=workspace_environment(workspace)] { return std::vector{source}; }};
     const auto accepted = conversation_.submit(prompt,std::move(options));
     tool_registration_.emplace(ToolRegistration{accepted.turn,prepared.instance,std::move(prepared.registration)});
     return accepted;
