@@ -44,6 +44,8 @@ class PartnerFeed {
     void settle_departure();
     // 借用本次原生读取的世界和位置事实。
     const nlohmann::json& observation() const noexcept { return observation_; }
+    // 返回最近一次已验收世界读回的原查询号、客户端覆盖范围与接收时间。
+    const nlohmann::json& world_sample() const noexcept { return world_sample_; }
     // 当前世界收到的最新私有现场修订，零表示来源暂未提供。
     std::uint64_t scene_revision() const noexcept { return scene_revision_; }
     // 借用由原游戏主动提出的当前接管回执。
@@ -69,7 +71,7 @@ class PartnerFeed {
     void reset_binding() noexcept;
 
     std::string generation_, owner_, id_, arguments_, mode_, execution_;
-    nlohmann::json observation_, control_;
+    nlohmann::json observation_, control_, world_sample_;
     nlohmann::json pending_ = nlohmann::json::array();
     nlohmann::json air_notices_ = nlohmann::json::array();
     std::deque<nlohmann::json> anchored_messages_;

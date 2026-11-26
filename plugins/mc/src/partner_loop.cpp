@@ -577,7 +577,7 @@ void PartnerLoop::submit(std::string_view wake) {
         static_cast<uint32_t>(delegated ? delegated_skills.size() : count),DFY_V2_AGENT_REPLACE_HISTORY | player_flags |
             (air_only ? 0u : DFY_V2_AGENT_ALLOW_CHANGES)};
     const auto submitted = incremental ? fact_stream_.submit(session_,feed_.owner()+"/"+session_world_+"/"+std::to_string(session_binding_),
-        run,Json::parse(prompt),delegated || air_only || settlement_only,request_) : agent_->submit(session_,&run,&request_,nullptr);
+        run,Json::parse(prompt),delegated || air_only || settlement_only,request_,feed_.world_sample()) : agent_->submit(session_,&run,&request_,nullptr);
     if (submitted) throw std::runtime_error("MC partner: cannot queue child turn");
     reply_origin_ = std::move(reply_origin);
     air_only_turn_ = air_only;

@@ -1260,6 +1260,12 @@ async function main() {
       const later = requests.find(row => row.seq > wakes[0].seq && row.run === wakes[0].run);
       assert.ok(later && scenarioInput(later).messages.at(-1).toolCallId === 'approval-snapshot');
       assert.deepEqual(scenarioInput(later).status.wakeEvents,[]);
+      const read = rows.find(row => row.kind === 'tool.exited' && row.callId === 'approval-snapshot');
+      const world = JSON.parse(read.output).status.items.find(item => item.key === 'mc.companion.world_environment');
+      assert.deepEqual([world.subject,world.value.dimension,world.value.cobblestone,world.value.signalAgeMs],
+        [state.actor,state.dimension,state.cobblestone,state.signalAgeMs]);
+      assert.equal(world.value.read.split('.').at(-1),String(world.fact));
+      assert.equal(world.validUntilUtcMs-world.sampledUtcMs,1000);
       assert.ok(!collecting,'withdrawn candidate reached the game');
     }
     if (legacyAir) assert.equal(airAttempts,1);

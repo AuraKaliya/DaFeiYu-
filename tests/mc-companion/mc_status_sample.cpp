@@ -205,6 +205,45 @@ void verify_pickup(const std::filesystem::path& package) {
     if (!send().at("items").empty()) throw std::runtime_error("finished task kept pickup explicit");
 }
 
+// 用同一次世界读回区分零库存、过期和撤样，玩家更换目标后该环境只可按版本读回。
+// 步骤：接纳玩家取材场景 → 跨过复查时点 → 更换任务 → 撤回旧世界并复查原版。
+void verify_world(const Json& definitions) {
+    dfy_v2_agent_facts_api api{{},capture,nullptr};
+    dfy::mc::PartnerFacts facts; facts.configure(&api,"paired");
+    dfy::app::BindingFacts mirror;
+    dfy::agent::DecisionStatusStore store;
+    Json scene{{"player","paired"},{"generation","world-a"},{"task",{{"revision",3},{"collection","ground"},{"next","continue"}}}};
+    const Json world{{"key","mc.companion.world_environment"},{"version",1},{"subject","actor-a"},{"fact",12},{"sampledUtcMs",1000},
+        {"validUntilUtcMs",2000},{"value",{{"read","feed.3.12"},{"generation","world-a"},{"dimension","overworld"},
+            {"cobblestone",0},{"signalAgeMs",40},{"coverage","partner_client_inventory"}}}};
+    // 只对当前玩家接纳原读回，用固定决策时刻冻结宿主实际视图。
+    const auto send = [&](std::int64_t utc,const Json& sample) {
+        std::uint64_t request = 0;
+        if (facts.submit(7,"paired/world-a",{},scene,false,request,sample)) throw std::runtime_error("world frame rejected");
+        const auto& frame = frames.back();
+        dfy::plugins::SubagentInput input;
+        input.prompt = frame.at("patch").dump();
+        input.frame = dfy::plugins::SubagentFrame{7,frame.at("sequence"),frame.at("scope"),frame.at("flags")==DFY_V2_FACT_BASELINE};
+        mirror.apply(input,request,false);
+        auto frozen = store.prepare(7,7,request,1,utc,{{"mc.companion",definitions.dump(),mirror.status_samples(),mirror.status_attention()}});
+        auto tail = Json::parse(frozen.tail); store.publish(std::move(frozen)); return tail;
+    };
+    if (!send(700,nullptr).at("items").empty()) throw std::runtime_error("unobserved inventory counted as zero");
+    const auto current = send(1500,world);
+    const auto& item = current.at("items").at(0);
+    if (item.at("validity")!="current" || item.at("value").at("cobblestone")!=0 || item.at("fact")!=12 ||
+        item.at("attention").at("tasks")!=Json::array({"task/3"}) || send(2000,world).at("items").at(0).at("validity")!="expired")
+        throw std::runtime_error("zero inventory or refresh boundary lost");
+    scene["task"]["next"]="done";
+    const auto done = send(2001,world);
+    const auto full = Json::parse(store.read(7,7,done.at("snapshot").get<std::string>())).at("status");
+    scene["generation"]="world-b";
+    const auto withdrawn = send(2002,world);
+    if (!done.at("items").empty() || full.at("items").size()!=1 || full.at("items")[0].at("attention").at("mode")!="implicit" ||
+        !Json::parse(store.read(7,7,withdrawn.at("snapshot").get<std::string>())).at("status").at("items").empty())
+        throw std::runtime_error("finished task or replaced world retained an explicit sample");
+}
+
 // 核对包声明与真实任务修订，并验证缺样、备注更新、强制基线和重绑。
 // 步骤：读取实际包定义 → 接纳目标并核对原件 → 比对备注与同号补发 → 切换绑定。
 void verify(const std::filesystem::path& package) {
@@ -253,6 +292,7 @@ void verify(const std::filesystem::path& package) {
     if (send(3).contains("decisionStatusSamples")) throw std::runtime_error("new binding inherited old goal");
     verify_withdrawal(catalog.at("definitions"));
     verify_approval();
+    verify_world(catalog.at("definitions"));
 }
 }
 

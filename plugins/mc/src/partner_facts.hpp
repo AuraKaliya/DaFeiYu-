@@ -30,7 +30,7 @@ class PartnerFacts {
     std::shared_ptr<PartnerFacts> retire_settlements();
     // 发送基线或同作用域补丁，断序时按原号发送一次完整快照。
     std::uint32_t submit(std::uint64_t session, std::string_view scope, const dfy_v2_agent_input& run,
-        const nlohmann::json& scene, bool isolate, std::uint64_t& request);
+        const nlohmann::json& scene, bool isolate, std::uint64_t& request, const nlohmann::json& world_sample = nullptr);
     // 把已核实的动作接纳及原工作结果写入同一绑定，不触发额外游戏动作。
     std::uint32_t report(std::uint64_t session, std::string_view category, const nlohmann::json& payload);
     // 识别已在本绑定登记退出未知、仍需用原桥接工作查证的动作。

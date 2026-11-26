@@ -54,5 +54,19 @@
       "required": ["observation", "entity", "item", "dimension", "target", "acquired", "other", "remainingState"],
       "additionalProperties": false
     }
+  }, {
+    "key": "mc.companion.world_environment",
+    "version": 1,
+    "description": "伙伴客户端一次世界查询读到的维度及背包圆石数量，主体是角色 UUID。sampledUtcMs 是插件收到原读回的时间，validUntilUtcMs 是下一次应复查时间，服务端最近信号年龄独立记录。",
+    "defaultAttention": {"mode": "implicit"},
+    "valueSchema": {
+      "type": "object",
+      "properties": {
+        "read": {"type": "string"}, "generation": {"type": "string"}, "dimension": {"type": "string"},
+        "cobblestone": {"type": "integer"}, "signalAgeMs": {"type": "integer"}, "coverage": {"type": "string"}
+      },
+      "required": ["read", "generation", "dimension", "cobblestone", "signalAgeMs", "coverage"],
+      "additionalProperties": false
+    }
   }]
 }

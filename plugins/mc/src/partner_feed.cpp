@@ -3,6 +3,9 @@
 
 namespace dfy::mc {
 using Json = nlohmann::json;
+namespace {
+constexpr auto world_refresh = std::chrono::seconds(1);
+}
 
 // 归还旧玩家事件，保留原请求编号不会重用的约束。
 void PartnerFeed::reset_binding() noexcept {
@@ -27,6 +30,7 @@ void PartnerFeed::clear() noexcept {
     pipe_.reset();
     generation_.clear();
     observation_.clear();
+    world_sample_ = nullptr;
     next_ = world_due_ = {};
     reset_binding();
 }
@@ -52,13 +56,24 @@ const Json* PartnerFeed::message_scene(std::uint64_t sequence) const noexcept {
     return nullptr;
 }
 
-// 核对原世界阶段并更新本轮可用观察。
+// 核对原世界读回并记录客户端维度和库存，接收时刻与服务端信号年龄分别保存。
+// 步骤：验证原管道请求及世界 → 隔离换代 → 按原读号固定采样和下一次应复查时间。
 void PartnerFeed::accept_world(std::string_view wire) {
     auto world = Json::parse(world_reply(wire,id_));
     auto generation = world.is_null() ? std::string{} : world.at("generation").get<std::string>();
     if (generation != generation_) reset_binding();
     generation_ = std::move(generation);
     observation_ = std::move(world);
+    world_sample_ = nullptr;
+    if (observation_.is_object()) {
+        const auto now = std::chrono::system_clock::now();
+        const auto received = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        const auto due = std::chrono::duration_cast<std::chrono::milliseconds>((now+world_refresh).time_since_epoch()).count();
+        world_sample_ = {{"key","mc.companion.world_environment"},{"version",1},{"subject",observation_.at("actor")},{"fact",sequence_},
+            {"sampledUtcMs",received},{"validUntilUtcMs",due},{"value",{{"read",id_},{"generation",generation_},
+                {"dimension",observation_.at("dimension")},{"cobblestone",observation_.at("cobblestone")},
+                {"signalAgeMs",observation_.at("signalAgeMs")},{"coverage","partner_client_inventory"}}}};
+    }
 }
 
 // 只交付经过协议校验的在场事实与原话，持续推进原玩家水位。
@@ -169,7 +184,7 @@ void PartnerFeed::advance(const BridgeConfig& config, std::uint64_t owner) {
         pipe_.reset();
         if (reading_world_) {
             accept_world(*reply);
-            world_due_ = now+seconds(1);
+            world_due_ = now+world_refresh;
             next_ = generation_.empty() ? world_due_ : now;
         } else {
             accept_inbox(*reply);

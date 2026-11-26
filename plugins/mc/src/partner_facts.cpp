@@ -130,13 +130,23 @@ std::shared_ptr<PartnerFacts> PartnerFacts::retire_settlements() {
 // 以本绑定已接纳的完整场景和目标采样为基准，来源消失时在原帧关闭旧样本。
 // 步骤：生成本次场景与采样 → 比较变化和关闭项 → 原序号补发所需基线 → 接纳后发布新镜像。
 std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope, const dfy_v2_agent_input& run,
-    const Json& scene, bool isolate, std::uint64_t& request) {
+    const Json& scene, bool isolate, std::uint64_t& request, const Json& world_sample) {
     if (!service_ || sequence_ == UINT64_MAX) return DFY_V2_INVALID_CONTEXT;
     bool baseline = session != session_ || scope != scope_ || isolated_ || isolate;
     const auto sequence = session == session_ ? sequence_+1 : 1;
     auto candidate = scene;
     const bool same_scope = session == session_ && scope == scope_;
     decision_facts(candidate,player_,approvals_,same_scope,!isolate);
+    if (!isolate && scene.contains("player") && scene.at("player")==player_ && scene.contains("generation") &&
+        world_sample.is_object() && world_sample.at("value").at("generation")==scene.at("generation")) {
+        candidate["decisionStatusSamples"].push_back(world_sample);
+        const auto task = scene.find("task");
+        if (task != scene.end() && task->value("revision",std::uint64_t{}) && task->value("next","")!="done" &&
+            task->value("collection","")=="ground") {
+            candidate["decisionStatusAttention"].push_back({{"key","mc.companion.world_environment"},{"version",1},
+                {"subject",world_sample.at("subject")},{"mode","continuous"},{"task","task/"+task->at("revision").dump()}});
+        }
+    }
     if (same_scope && !isolate && !pickup_sample_.is_null() && scene.contains("player") && scene.at("player") == player_) {
         candidate["decisionStatusSamples"].push_back(pickup_sample_);
         const auto task = scene.find("task");
