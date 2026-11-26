@@ -1,6 +1,8 @@
 #include "trace_commands.hpp"
 #include "trace_model.hpp"
 #include "trace_read.hpp"
+#include <dafeiyu/digest.hpp>
+#include <dafeiyu/model_protocol.hpp>
 #include <dafeiyu/run_loop.hpp>
 #include <dafeiyu/session.hpp>
 #include <algorithm>
@@ -52,7 +54,34 @@ struct RecordedModel {
     std::optional<model::Response> response, rewritten;
     std::size_t rewritten_arguments = 0;
     bool rewrite_observed = false;
+    Json evidence;
+    std::optional<std::string> wire_digest;
+    bool thinking = false;
 };
+
+// 读取原件随附的时间，缺失保持未知，在重放期间不依赖本机当前时钟。
+std::optional<std::int64_t> original_time(const Json& evidence) {
+    if (!evidence.contains("eventUtcMs")) return {};
+    const auto& time = evidence.at("eventUtcMs");
+    if (!time.is_number_integer() || (time.is_number_unsigned() && time.get<std::uint64_t>()>INT64_MAX))
+        throw std::invalid_argument("replay: invalid event time");
+    return time.get<std::int64_t>();
+}
+
+// 核对程序产生的来源，再以原事件时间重建供应商字段，早期轨迹仍能核对统一请求。
+// 步骤：比对原文与配对 → 核对来源并还原原时间 → 重新编码与比较指纹。
+bool matches_request(const model::Request& actual, const RecordedModel& entry) {
+    if (encode_request(actual)!=entry.input) return false;
+    if (entry.evidence.is_null()) return !entry.wire_digest;
+    auto request = actual;
+    for (std::size_t i=0; i<request.messages.size(); ++i) {
+        auto& message = request.messages[i];
+        const auto& evidence = entry.evidence.at(i);
+        if (model::source_name(message.source)!=evidence.at("source").get_ref<const std::string&>()) return false;
+        message.event_utc_ms = original_time(evidence);
+    }
+    return !entry.wire_digest || platform::sha256(model::encode_request_fields(request,entry.thinking))==*entry.wire_digest;
+}
 struct RecordedTool { Json exit; bool invoked = false, observed = false; };
 struct RecordedInput {
     std::string text;
@@ -111,7 +140,18 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
             if (result.models.size() == 64 || row.at("step") != result.models.size()+1 || row.at("attempt") != 1 ||
                 (!result.models.empty() && result.models.back().exit.is_null()))
                 throw std::invalid_argument("replay: unsupported model schedule");
-            result.models.push_back({row.at("input"),{}});
+            auto& entry = result.models.emplace_back();
+            entry.input = row.at("input");
+            if (row.contains("messageEvidence")) {
+                entry.evidence = row.at("messageEvidence");
+                if (!entry.evidence.is_array() || entry.evidence.size()!=entry.input.at("messages").size())
+                    throw std::invalid_argument("replay: message evidence count differs");
+            }
+            if (row.contains("wireSha256")) {
+                if (entry.evidence.is_null()) throw std::invalid_argument("replay: missing message evidence");
+                entry.wire_digest = row.at("wireSha256").get<std::string>();
+                entry.thinking = row.at("thinking").get<bool>();
+            }
         } else if (kind == "model.exited") {
             if (result.models.empty() || row.at("step") != result.models.size() || row.at("attempt") != 1 ||
                 !result.models.back().exit.is_null() ||
@@ -219,16 +259,31 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     auto original = recorded_run(file,run);
     const auto& first = original.models.front().input;
     auto history = std::make_shared<agent::MessageHistory>();
-    for (const auto& item : first.at("messages")) history->push_back(decode_message(item));
+    const auto& evidence = original.models.front().evidence;
+    for (const auto& item : first.at("messages")) {
+        auto message = decode_message(item);
+        if (!evidence.is_null()) {
+            const auto& origin = evidence.at(history->size());
+            const auto source = model::parse_source(origin.at("source").get_ref<const std::string&>());
+            if (!source) throw std::invalid_argument("replay: unknown message source");
+            message.source = *source;
+            message.event_utc_ms = original_time(origin);
+        }
+        history->push_back(std::move(message));
+    }
     if (history->empty() || history->back().role != model::Role::user)
         throw std::invalid_argument("replay: final initial user message required");
+    agent::RunOptions options;
+    if (!evidence.is_null()) {
+        options.prompt_source = history->back().source;
+        options.prompt_utc_ms = history->back().event_utc_ms;
+    }
     auto prompt = std::move(history->back().content);
     history->pop_back();
 
     std::string tool_difference, model_difference, rewrite_difference;
     std::size_t model_index = 0;
     agent::ToolCatalog catalog;
-    agent::RunOptions options;
     options.accept_user_input = !original.inputs.empty();
     constexpr std::array origins{"user_request","observation_rule","mailbox"};
     options.origin = tagged<agent::RunOrigin>(original.terminal.at("diagnostic").at("data").at("timeline").at("source"),origins);
@@ -273,7 +328,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
             const auto* request = capture.request;
             const auto status = request ? request->operation()->state() : capture.candidate.result;
             const auto outcome = request ? request->outcome() :
-                ToolResult{false,capture.candidate.effect,{},capture.candidate.error};
+                ToolResult{false,capture.candidate.effect,capture.candidate.rejection,capture.candidate.error};
             if (row.at("result") != states.at(static_cast<std::size_t>(status)) || row.at("succeeded") != outcome.succeeded ||
                 row.at("effect") != effects.at(static_cast<std::size_t>(outcome.effect)) ||
                 row.at("error") != faults.at(static_cast<std::size_t>(outcome.error)) || row.at("output") != outcome.output) break;
@@ -287,7 +342,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
         // 后台仅对照完整请求和取回原结果。主线程等模型退出后才访问比对状态。
         model::Backend{[&](const model::Config&,const model::Request& input) {
             const auto index = model_index++;
-            if (index >= original.models.size() || encode_request(input) != original.models[index].input) {
+            if (index >= original.models.size() || !matches_request(input,original.models[index])) {
                 model_difference = "model request "+std::to_string(index+1)+" differs";
                 throw std::runtime_error("replay: input differs");
             }

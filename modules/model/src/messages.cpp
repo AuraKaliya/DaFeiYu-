@@ -66,6 +66,12 @@ void object_json(const std::string& text) {
 }
 // 返回固定来源名，不读取消息正文。
 std::string_view source_name(MessageSource source) { return source_info.at(static_cast<std::size_t>(source)).name; }
+// 按同一张协议表还原保存在旧轨迹中的来源，不依据正文推测。
+std::optional<MessageSource> parse_source(std::string_view name) noexcept {
+    for (std::size_t i=0; i<source_info.size(); ++i)
+        if (source_info[i].name==name) return static_cast<MessageSource>(i);
+    return {};
+}
 // 从已知来源构造使用供应商原生角色的统一消息。
 Message sourced_message(MessageSource source, std::string content, std::optional<std::int64_t> event_utc_ms) {
     Message message{source_info.at(static_cast<std::size_t>(source)).role,std::move(content)};

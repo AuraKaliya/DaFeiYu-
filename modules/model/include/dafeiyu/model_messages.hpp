@@ -11,6 +11,8 @@ enum class Role { user, assistant, system, tool };
 enum class MessageSource { unknown, human, host_status, observation, plugin, mailbox, host_plan, host_control, host_summary, model, tool, rules };
 // 返回可用于离线轨迹和供应商数据封套的稳定来源名。
 std::string_view source_name(MessageSource source);
+// 还原公开来源标签，未知名称由读取方明确处置。
+std::optional<MessageSource> parse_source(std::string_view name) noexcept;
 struct ToolCall { std::string id, name, arguments; };
 struct Message {
     Role role = Role::user;

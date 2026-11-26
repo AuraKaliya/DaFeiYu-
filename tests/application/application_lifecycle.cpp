@@ -279,6 +279,26 @@ void dialogue_inputs(const fs::path& run) {
     try { dfy::app::replay_trace(altered,id,replay); }
     catch (const std::runtime_error& error) { rejected = std::string_view(error.what())=="replay: dialogue input settlement differs"; }
     check(rejected,"replay accepted a supplement assigned to the wrong model step");
+    for (const std::string mode : {"source","eventUtcMs","legacy"}) {
+        const auto path = run/("replay-"+mode+".jsonl");
+        std::ifstream source(application.trace_file(),std::ios::binary);
+        std::ofstream changed(path,std::ios::binary);
+        std::string line;
+        while (std::getline(source,line)) {
+            auto row = nlohmann::json::parse(line);
+            if (row.at("kind")=="model.prepared") {
+                if (mode=="legacy") { row.erase("messageEvidence"); row.erase("wireSha256"); }
+                else if (row.at("step")==2) row.at("messageEvidence").back()[mode] =
+                    mode=="source" ? nlohmann::json("host_status") : nlohmann::json(0);
+            }
+            changed << row.dump() << '\n';
+        }
+        changed.close();
+        bool differs = false;
+        try { dfy::app::replay_trace(path,id,replay); }
+        catch (const std::runtime_error& error) { differs = std::string_view(error.what()).find("model request 2 differs")!=std::string_view::npos; }
+        check(differs==(mode!="legacy"),"replay missed changed source/time or rejected legacy trace");
+    }
 }
 
 // 以同一台灯和受控的身体采样核对距离、屏风边缘、可知字段与实例隔离。

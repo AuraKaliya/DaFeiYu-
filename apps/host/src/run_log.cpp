@@ -18,10 +18,9 @@ constexpr std::array tool_phases{"tool.candidate","tool.admitted","tool.exited"}
 
 // 对比同一截止号下的工具序列，并按会话与用途记录连续两次投影的消息前缀。
 // 步骤：共享供应商字段编码 → 找出首个工具差异 → 比较消息指纹和配对身份 → 保存本次有限指纹。
-Json compare_input(const agent::ModelCapture& value, std::vector<std::string>& previous) {
+Json compare_input(const agent::ModelCapture& value, const std::string& before, std::vector<std::string>& previous) {
     auto projected = *value.input;
     projected.tools = *value.projected_tools;
-    const auto before = model::encode_request_fields(*value.input,value.thinking);
     const auto after = model::encode_request_fields(projected,value.thinking);
     const auto original = Json::parse(before);
     const auto next = Json::parse(after);
@@ -159,7 +158,10 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value,
     if (!value.reasoning_effort.empty()) item["reasoningEffort"] = value.reasoning_effort;
     if (!value.persona_profile.empty()) item["personaProfile"] = value.persona_profile;
     if (!value.prompt_template.empty()) item["promptTemplate"] = value.prompt_template;
+    std::string fields;
     if (value.input) {
+        fields = model::encode_request_fields(*value.input,value.thinking);
+        item["wireSha256"] = platform::sha256(fields);
         item["input"] = encode_request(*value.input);
         auto evidence = Json::array();
         for (const auto& message : value.input->messages) {
@@ -171,7 +173,7 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value,
         item["compressedBatches"] = value.compressed_batches;
     }
     if (value.input && value.projected_tools) {
-        try { item["projection"] = compare_input(value,previous[std::string(value.purpose)]); }
+        try { item["projection"] = compare_input(value,fields,previous[std::string(value.purpose)]); }
         catch (...) { item["projectionUnavailable"] = true; }
     }
     if (value.output) item["output"] = encode_response(*value.output);
