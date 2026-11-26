@@ -112,6 +112,21 @@ int main(int argc, char** argv) {
         }
         const auto root = run / u8"中文 包";
         public_registration(run);
+        const auto status_package = package(run/"status-pkg","sample.status");
+        const auto declarations = status_package.directory/"agent";
+        fs::create_directory(declarations);
+        const auto field = Json{{"key","sample.status.work"},{"version",1},{"description","stage"},
+            {"defaultAttention",{{"mode","implicit"}}},{"valueSchema",{{"type","object"}}}};
+        Json registry{{"schema","dafeiyu.status_definitions/1"},{"definitions",Json::array({field})}};
+        write(declarations/"status.json",registry.dump());
+        const auto original = load_config(status_package,run/"status-user");
+        check(Json::parse(original->status_definitions)==registry.at("definitions"),"package status definition lost");
+        registry["definitions"][0]["key"]="host.activity";
+        write(declarations/"status.json",registry.dump());
+        rejects(status_package,run/"status-user","foreign agent status owner");
+        check(Json::parse(original->status_definitions)[0]==field,"original status declaration changed");
+        fs::remove(declarations/"status.json");
+        check(load_config(status_package,run/"status-user")->status_definitions=="[]","optional status declaration required");
         const auto users = run / u8"用户 数据";
         auto manifest = package(root, "sample.one");
         const auto empty = load_config(manifest, users);

@@ -58,6 +58,28 @@ Json read_object(const fs::path& path, const char* source) {
     return object;
 }
 
+// 只从原包 agent/status.json 读取注册表，实例内沿用加载时的原件。
+// 步骤：检查固定目录和文件 → 有界读取注册表 → 核对包拥有的键并保存定义。
+std::string status_definitions(const Manifest& manifest) {
+    const auto agent = manifest.directory / "agent";
+    if (files::is_reparse_point(agent)) throw std::runtime_error("plugin config: linked agent directory");
+    if (!fs::exists(fs::symlink_status(agent))) return "[]";
+    const auto path = files::directory(agent) / "status.json";
+    if (!fs::exists(fs::symlink_status(path))) return "[]";
+    const auto doc = read_object(path,"agent status definitions");
+    if (doc.size()!=2 || doc.value("schema",std::string{})!="dafeiyu.status_definitions/1" ||
+        !doc.contains("definitions") || !doc.at("definitions").is_array() || doc.at("definitions").size()>32)
+        throw std::runtime_error("plugin config: invalid agent status registration");
+    const auto& definitions = doc.at("definitions");
+    if (!definitions.empty() && (manifest.id=="host" || manifest.id.starts_with("host.")))
+        throw std::runtime_error("plugin config: reserved agent status owner");
+    for (const auto& field : definitions)
+        if (!field.is_object() || !field.contains("key") || !field.at("key").is_string() ||
+            !field.at("key").get_ref<const std::string&>().starts_with(manifest.id+"."))
+            throw std::runtime_error("plugin config: foreign agent status owner");
+    return definitions.dump();
+}
+
 // 从与包身份匹配的可选 UI 描述登记只读文本，只投影已合并到本代次的同名顶层字段。
 // 步骤：定位包内普通描述文件 → 核对版本与身份 → 逐项复核声明和值 → 整批发布或隔离登记错误。
 PublicSettings public_settings(const Manifest& manifest, const Json& effective, const Json& overrides) {
@@ -158,7 +180,7 @@ std::shared_ptr<const EffectiveConfig> load_config(const Manifest& manifest, con
         for (const auto& [key, value] : overrides.items()) {
             effective[key] = value;
         }
-        return std::make_shared<const EffectiveConfig>(EffectiveConfig{current.id,effective.dump(),public_settings(current,effective,overrides)});
+        return std::make_shared<const EffectiveConfig>(EffectiveConfig{current.id,effective.dump(),public_settings(current,effective,overrides),status_definitions(current)});
     } catch (const fs::filesystem_error&) {
         throw std::runtime_error("plugin config: filesystem error");
     }
