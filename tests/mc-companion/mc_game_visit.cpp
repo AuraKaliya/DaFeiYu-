@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include "application_commands.hpp"
 #include <fstream>
@@ -57,7 +58,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool center_answer = argc == 4 && std::wstring_view(argv[3]) == L"approve-center";
         const std::filesystem::path root = argv[2];
         app::Application application({}, root / "packages", root / "user", model::Backend{
-            [=](const auto&, const auto& request) { return fixture_model(request, skip, tamper); }});
+            [=](const auto&, const auto& request) { return fixture_model(dfy::mc_test::scenario_request(request), skip, tamper); }});
         application.plugins().install(argv[1]);
         check(application.plugins().load("mc.companion") == 0, "plugin load");
         std::ostringstream terminal;

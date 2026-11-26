@@ -7,7 +7,7 @@ const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
-const { readPartnerContext } = require('./partner-context.cjs');
+const { checkTaskGoalTrace, readPartnerContext, scenarioInput } = require('./partner-context.cjs');
 
 // 为原坐标提供固定拾取包，用于独立验证计划对拾取人及实际库存的要求。
 function pickedStack(targetCell, item, self = true) {
@@ -1341,7 +1341,7 @@ async function main() {
           assert.deepEqual([turn.body.outcome,turn.body.yieldRequestedBy],['yielded_to_player',3]);
           const prepared = rows.find(row => row.kind === 'model.prepared' && row.step === 1 &&
             row.session === notices[1].body.session && row.run === notices[1].body.request);
-          const input = JSON.parse(prepared.input.messages.at(-1).content);
+          const input = JSON.parse(scenarioInput(prepared).messages.at(-1).content);
           assert.equal(input.interruptedAirCheck.lastObservation.work,slowAir.work);
           fs.writeFileSync(path.join(root,'air-priority-timing.json'),JSON.stringify({ ...slowAir,
             clock:'private_bridge_fixture_monotonic_ms', elapsedMs:slowAir.repliedAt-slowAir.messageAt },null,2));
@@ -1469,6 +1469,10 @@ async function main() {
       assert.equal(wallFilled, !!correction && (!correctionLost || lateExit));
       if (correctionLost) {
         const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+        const catalog = JSON.parse(fs.readFileSync(path.join(root,'packages','mc.companion','agent','status.json'),'utf8'));
+        const definition = catalog.definitions.find(entry => entry.key === 'mc.companion.task_goal');
+        assert.equal(definition.version,1);
+        checkTaskGoalTrace(rows,definition,factPlayer,process.env.DFY_MC_REQUIRE_STATUS_PROJECTION === '1');
         const original = rows.filter(row => row.category === 'mc.partner.action' && row.body.bridgeWork === collecting);
         const confirmed = rows.filter(row => row.category === 'mc.partner.motion' && row.body.status === 'exit_confirmed');
         assert.equal(original.length, 1);

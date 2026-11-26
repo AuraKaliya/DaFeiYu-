@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include "../../plugins/mc/src/follow_attention.hpp"
 #include "../../plugins/mc/src/partner_effect.hpp"
@@ -16,6 +17,38 @@
 #include <thread>
 
 namespace {
+// 用旧请求与宿主新尾注核对固定响应读取的原话、工具配对和特殊用途授权。
+// 步骤：依次构造原话及工具后续 → 添加有来源的状态 → 核对实际请求和场景读口 → 拒绝同文冒充。
+void verify_status_request() {
+    using namespace dfy::model;
+    Request original;
+    original.messages = {sourced_message(MessageSource::rules,"rules"),sourced_message(MessageSource::plugin,"原玩家消息",400)};
+    original.tools = {{"p_fixture_observe","read only","{}"}};
+    const auto tail = sourced_message(MessageSource::host_status,R"({"schema":"dafeiyu.agent_status/1","snapshot":"S1/2","items":[]})",900);
+    for (bool tool_step : {false,true}) {
+        if (tool_step) {
+            original.messages.push_back({Role::assistant,"",{{"read-7","p_fixture_observe","{}"}}});
+            auto receipt = sourced_message(MessageSource::tool,R"({"work":"1.4"})",700);
+            receipt.tool_call_id = "read-7";
+            original.messages.push_back(std::move(receipt));
+        }
+        auto formal = original;
+        formal.messages.push_back(tail);
+        formal.tools.insert(formal.tools.begin(),{"status_read","read only","{}"});
+        const auto base = dfy::mc_test::scenario_request(original), current = dfy::mc_test::scenario_request(formal);
+        const auto& expected = original.messages.back(), &actual = current.messages.back();
+        if (base.messages.size() != current.messages.size() || actual.content != expected.content || actual.source != expected.source ||
+            actual.tool_call_id != expected.tool_call_id || actual.event_utc_ms != expected.event_utc_ms ||
+            current.tools.size() != 1 || current.tools.front().name != "p_fixture_observe" ||
+            formal.messages.back().source != MessageSource::host_status || formal.tools.size() != 2)
+            throw std::runtime_error("decision tail changed original message, tool identity or formal request");
+        formal.messages[1].source = MessageSource::host_plan;
+        if (dfy::mc_test::scenario_request(formal).tools.size() != 2) throw std::runtime_error("hidden planning tool authorization");
+        formal.messages.back().source = MessageSource::human;
+        if (dfy::mc_test::scenario_request(formal).messages.back().content != tail.content) throw std::runtime_error("human text impersonated host status");
+    }
+}
+
 // 取出本次结算的实际主回执。
 const nlohmann::json& primary_receipt(const nlohmann::json& context) {
     const auto& work = context.at("workSettlement");
@@ -343,7 +376,8 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
         model_config.model = "fixed-context";
         model_config.thinking = response_timing;
     }
-    app::Application host(model_config,root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+    app::Application host(model_config,root/"packages",root/"user",Backend{[&](const auto&, const Request& formal) -> Response {
+        const auto request = dfy::mc_test::scenario_request(formal);
         // 固定响应仅使用本轮实际开放的工具名。
         const auto call = [&](std::string_view name, std::string id, const Json& args) -> Response {
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& item) { return item.name.ends_with(name); });
@@ -1559,7 +1593,8 @@ int verify_reply_delivery(const std::filesystem::path& package, const std::files
     std::binary_semaphore filled(0);
     app::ApplicationRunConfig run;
     run.trace_directory = root;
-    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& formal) -> Response {
+        const auto request = dfy::mc_test::scenario_request(formal);
         const auto& message = request.messages.back();
         if (message.role == Role::tool) {
             if (lookup) {
@@ -1731,7 +1766,8 @@ int verify_refused_collection(const std::filesystem::path& package, const std::f
     std::uint64_t pending_item = 0;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
-    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
+    app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& formal) -> Response {
+        const auto request = dfy::mc_test::scenario_request(formal);
         const Response silent{{Role::assistant,R"({"internal":"fixed fixture settled"})"}};
         const auto call = [&](std::string_view name, std::string call_id, Json args) -> Response {
             const auto tool = std::ranges::find_if(request.tools,[&](const auto& entry) { return entry.name.ends_with(name); });
@@ -1823,6 +1859,7 @@ int wmain(int argc, wchar_t** argv) {
     using namespace dfy;
     using namespace model;
     try {
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--status-request") { verify_status_request(); return 0; }
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-revision-"))
             return verify_plan_revision(argv[1],argv[2],argv[3]);
         if (argc == 4 && std::wstring_view(argv[3]).starts_with(L"partner-execution-"))
@@ -1855,7 +1892,8 @@ int wmain(int argc, wchar_t** argv) {
         std::atomic_bool actual_reply = false, interruption_seen = false;
         std::atomic_bool left_observed = false, late_model = false;
         std::string follow_work, resumed_work;
-        app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
+        app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& formal) -> Response {
+            const auto request = dfy::mc_test::scenario_request(formal);
             if (request.messages.front().role != Role::system ||
                 !request.messages.front().content.starts_with("【职责与信息来源 v1】") ||
                 request.messages.front().content.find("【人格与风格 v1】\n你叫大肥鱼。") == std::string::npos ||

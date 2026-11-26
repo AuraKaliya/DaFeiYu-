@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include <algorithm>
 #include <atomic>
@@ -77,7 +78,8 @@ int wmain(int argc, wchar_t** argv) {
         run.tool_clock = [&] { return host_start+std::chrono::seconds(host_seconds.load()); };
         run.trace_directory = root;
         // 分别提供子 Agent 的原候选和主 Agent 的固定渠道选择。
-        app::Application host({},root/"packages",root/"user",Backend{[&](const auto&,const Request& input) -> Response {
+        app::Application host({},root/"packages",root/"user",Backend{[&](const auto&,const Request& formal) -> Response {
+            const auto input = dfy::mc_test::scenario_request(formal);
             const auto& last = input.messages.back();
             const auto routed = std::ranges::find_if(input.tools,[](const auto& tool) {
                 return tool.name == "ask" || tool.name == "mail_reply";

@@ -5,7 +5,7 @@ const { join } = require('node:path');
 const mineflayer = require('mineflayer');
 const { connect, until } = require('./players.cjs');
 const { wall, waterCourse, fourCells, layeredStands, readArena } = require('./playtest-arena.cjs');
-const { readPartnerContext } = require('./partner-context.cjs');
+const { readPartnerContext, scenarioInput } = require('./partner-context.cjs');
 const { measurePlayerFeedback } = require('./player-feedback.cjs');
 
 // 读取已经完整写出的证据行，保留仍在写入的末行供下一次轮询。
@@ -179,8 +179,8 @@ async function checkPlayer(fixture, mode) {
       await until(() => {
         const trace = readRows(fixture, 'trace/events.jsonl');
         const followup = trace.find(row => {
-          if (row.kind !== 'model.prepared' || row.input.messages.at(-1).role !== 'user') return false;
-          const work = JSON.parse(row.input.messages.at(-1).content).workSettlement;
+          if (row.kind !== 'model.prepared' || scenarioInput(row).messages.at(-1).role !== 'user') return false;
+          const work = JSON.parse(scenarioInput(row).messages.at(-1).content).workSettlement;
           return work?.receipts[work.primary]?.skill === 'collect';
         });
         return followup && trace.some(row => row.kind === 'run.exited' && row.session === followup.session && row.run === followup.run);
@@ -281,7 +281,7 @@ async function checkVitals(fixture, player, whispers, followDepletion) {
       assert.ok(recovered.samples > low.samples && recovered.lastTicks > recovered.recoveryTicks && recovered.recoveryTicks > 0);
       const trace = readRows(fixture,'trace/events.jsonl');
       const prepared = trace.filter(r => r.kind === 'model.prepared' && r.source === 'plugin' && r.step === 1)
-        .map(r => ({ input:JSON.parse(r.input.messages.at(-1).content), tools:r.input.tools }));
+        .map(r => ({ input:JSON.parse(scenarioInput(r).messages.at(-1).content), tools:scenarioInput(r).tools }));
       const noticed = prepared.filter(turn => turn.input.airNotices);
       assert.deepEqual(noticed.map(turn => [turn.input.trigger,turn.input.airNotices.map(n => n.airEpisode.phase)]),
         [['vitals.attention',['depleted']],['game.event',['recovered']]]);
@@ -519,8 +519,8 @@ async function checkGatherHandoff(fixture, player, whispers, mode) {
   player.chat('刚才交的是我哪次要的？');
   await until(() => whispers.includes('是你让我就地备两块泥土的那次。'),'下轮可沿完工发言找到原委托');
   if (fixture.factPilot) {
-    const frames = trace().filter(r => r.kind === 'model.prepared' && r.input.messages.at(-1).role === 'user')
-      .map(r => JSON.parse(r.input.messages.at(-1).content));
+    const frames = trace().filter(r => r.kind === 'model.prepared' && scenarioInput(r).messages.at(-1).role === 'user')
+      .map(r => JSON.parse(scenarioInput(r).messages.at(-1).content));
     assert.ok(frames.some(f => f.factFrame?.mode === 'baseline') && frames.some(f => f.factFrame?.mode === 'delta'));
     assert.ok(frames.some(f => f.hostWorkReceipts?.some(w => w.work === give.work && w.exited)));
     for (const frame of frames.filter(f => f.hostWorkReceipts?.length))
@@ -608,8 +608,8 @@ async function checkEightStones(fixture, player, whispers, mode) {
   assert.deepEqual([check.work,check.receipt.recipientPicked,actions().filter(row => row.skill === 'give_item').length],[give[0].work,8,1]);
   player.chat('再核对一次原投递号');
   await until(() => whispers.includes('原投递号已核对，实收仍是八块。'),'已退出的原工作获得迟到实效');
-  const frames = trace().filter(row => row.kind === 'model.prepared' && row.input.messages.at(-1).role === 'user')
-    .map(row => JSON.parse(row.input.messages.at(-1).content));
+  const frames = trace().filter(row => row.kind === 'model.prepared' && scenarioInput(row).messages.at(-1).role === 'user')
+    .map(row => JSON.parse(scenarioInput(row).messages.at(-1).content));
   const original = frames.flatMap(frame => frame.hostWorkReceipts ?? []).find(work => work.work === give[0].work && work.revision === 4);
   assert.deepEqual([original.source.skill,original.effect.recipient,original.effect.recipientPicked,original.effect.sourceThrough],
     ['give_item',player.player.uuid,8,proof.throughSeq]);
@@ -698,7 +698,7 @@ async function checkRetiredPickup(fixture, player, give, item) {
     joined = await connect('DfyGuestCheck',fixture.port);
     const next = await until(() => trace().find(row => row.seq > left.seq && row.kind === 'model.prepared' &&
       row.source === 'plugin' && row.session !== old.session),'重新入场后建立新会话');
-    assert.ok(!JSON.parse(next.input.messages.at(-1).content).hostWorkReceipts?.some(entry => entry.work === give.work));
+    assert.ok(!JSON.parse(scenarioInput(next).messages.at(-1).content).hostWorkReceipts?.some(entry => entry.work === give.work));
     fixture.send('clear DfyGuestCheck minecraft:stone');
     await until(() => joined.inventory.count(item) === 8,'新连接独立读到八块圆石');
     const settled = await until(() => trace().find(row => row.kind === 'binding.work_settled' && row.work === give.work &&
@@ -1019,7 +1019,7 @@ async function checkLayeredFollow(fixture, player, whispers, resupply) {
   assert.deepEqual(layers.map(row => row.body.nodes[0].skill), ['place', 'move', 'place', 'move']);
   const queue = trace().find(row => row.kind === 'tool.exited' && row.callId === 'steps');
   const next = trace().find(row => row.kind === 'model.prepared' && row.seq > queue.seq);
-  const settlement = JSON.parse(next.input.messages.at(-1).content);
+  const settlement = JSON.parse(scenarioInput(next).messages.at(-1).content);
   assert.equal(settlement.trigger, 'plan.finished');
   assert.deepEqual(settlement.planSettlements, layers.map(row => row.body));
   for (const [i, row] of layers.entries()) {
@@ -1412,9 +1412,9 @@ async function checkFillFour(fixture, player, whispers, combined) {
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0].questionResult.answer, '我面前的这个');
     assert.ok(!resolved[0].pendingQuestion && resolved[0].workSettlement);
-    const digExit = prepared.find(row => row.step === 1 && JSON.parse(row.input.messages.at(-1).content).questionResult?.status === 'resolved');
+    const digExit = prepared.find(row => row.step === 1 && JSON.parse(scenarioInput(row).messages.at(-1).content).questionResult?.status === 'resolved');
     assert.equal(prepared.filter(row => row.run === digExit.run && row.session === digExit.session).length, 1);
-    assert.deepEqual(digExit.input.tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
+    assert.deepEqual(scenarioInput(digExit).tools.map(tool => tool.name.split('_').at(-1)), ['reply']);
     for (const [id, reason] of [['third-hit','hit_observation_limit'],['guessed-dig','pointed_block_unverified']]) {
       const rejected = trace.find(row => row.kind === 'tool.exited' && row.callId === id);
       assert.equal(JSON.parse(rejected.output).reasonCode, reason);
@@ -1525,7 +1525,7 @@ async function checkWall(fixture, player, whispers, mode) {
   assert.ok(presentation && work.some(row => row.work === presentation.body.bridgeWork && row.result.sent));
   assert.ok(trace.some(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.decision' &&
     row.body.id === presentation.body.id && row.body.status === 'approved'));
-  assert.ok(trace.every(row => row.kind !== 'model.prepared' || row.input.tools.length > 0));
+  assert.ok(trace.every(row => row.kind !== 'model.prepared' || scenarioInput(row).tools.length > 0));
   if (askPath) {
     assert.equal(whispers.filter(text => /回复 答复 \d+ <回答>$/.test(text)).length, 1);
     const ask = trace.filter(row => row.kind === 'ask.opened');
@@ -1548,7 +1548,7 @@ async function checkWall(fixture, player, whispers, mode) {
     assert.ok(ack && ack.seq > delivery.seq && ack.disposition === 'matched' && !ack.legacyReceipt);
     assert.deepEqual([ack.mailbox, ack.message], [delivery.mailbox, delivery.message]);
     assert.ok(trace.some(row => row.kind === 'model.prepared' && row.source === 'plugin' &&
-      row.input.messages.at(-1).content.includes('靠河那段，留木门')));
+      scenarioInput(row).messages.at(-1).content.includes('靠河那段，留木门')));
     const main = trace.filter(row => row.kind === 'model.prepared' && row.source === 'main');
     const intents = trace.filter(row => row.kind === 'reply.intent' && sameEvent(row));
     if (askPath === 'direct') {

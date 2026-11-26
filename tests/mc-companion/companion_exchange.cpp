@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include <iostream>
 #include <thread>
@@ -25,7 +26,8 @@ int wmain(int argc, wchar_t** argv) {
         const std::filesystem::path root = argv[2];
         std::atomic_uint calls{0};
         app::Application application({}, root / "packages", root / "user", model::Backend{
-            [&](const auto&, const model::Request& request) {
+            [&](const auto&, const model::Request& formal) {
+                const auto request = dfy::mc_test::scenario_request(formal);
                 ++calls;
                 const auto& prompt = request.messages.back().content;
                 if (prompt == "请查看") return model::Response{{model::Role::assistant, "已到山脚"}};

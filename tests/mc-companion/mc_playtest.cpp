@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "companion_host.hpp"
 #include "application.hpp"
 #include <algorithm>
@@ -1483,7 +1484,8 @@ int wmain(int argc, wchar_t** argv) {
             config.thinking = true;
         }
         app::Application host(std::move(config), root / "packages", root / "user", model::Backend{
-            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,eight,ask,gap,root,mode](const auto&, const auto& request) {
+            [partner,wall,gap_group,follow,door,materials,fill_four,combined,water,layered,resupply,craft,pickup,ground_pickup,handoff,gather_handoff,eight,ask,gap,root,mode](const auto&, const auto& formal) {
+                const auto request = dfy::mc_test::scenario_request(formal);
                 if (eight) return eight_stone_sample(request);
                 if (mode == L"--vitals-probe" || mode == L"--air-episode-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
