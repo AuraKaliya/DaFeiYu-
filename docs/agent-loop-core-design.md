@@ -330,7 +330,7 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 
 ## 九、下一轮开发计划
 
-上下文装配按下面的交付推进。领域和界面另有玩家指定箱子的实物验收及管理中心信箱的只读验收，分工见本节末。
+**2026-11-26 接续基线　`963969b`。** 自 `5fc4079` 起共 37 个提交。`961e312` 记录了普通会话和带工具的思考会话分别完成 515 轮，以及 MC 玩家重连后在原投物号下确认实收 8 块。模块迁移后，`a11473e` 记录了默认桌面和可选终端的安装包验收，以及 Debug、Release 各 289 项离线测试通过。最近的 `88d09c2` 更新了逐决策上下文装配计划，`963969b` 将相关取舍写入设计 Skill。[长会话与回执复查](#长会话与回执复查) · [当前构建入口](../README.md#运行与构建)
 
 ### 上下文装配的实施顺序与验收
 
@@ -353,6 +353,8 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 | 5 | 接入任务期关注与按次数关注，首个 MC 试点选审批结果或工作完成事件。 | 固定事件建任务、触发决策、解除关注。核对一次唤醒、一份事实、一次展示，下一相关步隐去一次性项，原件可查。再测预览、预算不足、提交失败、重试、重复回调、多任务同时关注、任务取消及终态回执。 |
 | 6 | 接入 TODO、环境、工具计数和最近核实实效。 | 一个回复提出三个候选，只接纳两个，核对三个计数范围与实际分派。把“目标 8、已入包 3、另有 2 待拾取”同原回执逐项核对。开发任务和 MC 任务分别收到与环境有关的字段，过期、无样本及已核实为零可区分。 |
 
+**`master` 首个可审查交付。** 从 `plugins.mc_partner_revision_pointed-craft` 的两个原调用号开始。`plan-focus-denied` 应指出 `steps[0].arguments.focus` 的值 `objects` 超出计划入口枚举，`restricted-plan` 应指出该步已无 `queue_actions` 权限。再用 `plugins.mc_partner_refused_collection` 验证等待审批时可查原审批号，实际采掘数为零。各场景在下一份 `model.prepared` 中按原调用号核对模型收到的原因。用 `agent.run_loop` 检查同因失败只换尝试号时仍按原上限停止。[MC 固定回放](../tests/mc-companion/mc_plugin_partner.cpp) · [CTest 入口](../tests/mc-companion/CMakeLists.txt) · [无进展回归](../modules/agent/tests/run_loop.cpp#L49)
+
 每步对照 `model.prepared` 和适配器编码，沿原事件、调用、工作、审批或投递号核对实际结果。计次、去重和状态读口用程序断言验收。字段预算与快照保留窗口留待固定回放校准。风格对完成率、来源标签对模型判断和实际选工具的影响列为“仅记录，不执行”，按项目约定使用离线替身做功能验收。[装配回放](../modules/agent/tests/loop_projection.cpp) · [工具批次](../modules/agent/tests/tool_batch.cpp) · [审批回放](../modules/agent/tests/tool_confirmation.cpp) · [项目测试原则](../AGENTS.md#测试原则)
 
 ### 三个固定工作树的交付
@@ -363,6 +365,6 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 | `core` · 信箱只读接口 | 在管理 IPC 提供按后台实例、来源和修订查询的目录，再交付可公开的信件摘要、详情和回执。系统保有消费游标和回信权。 | 用现有测试插件产生一封待处理信件。连续查询前后，消费游标、回信数和模型调用数均相同。卸载再加载后，旧来源能被识别为失效，新来源可查。[信箱实现](../modules/events/src/mailboxes.cpp) · [管理协议](../apps/host/src/management/protocol.cpp) · [管理中心步骤 6](ui-framework-design.md#10-分步实施与验收) |
 | `ui` · 管理中心信箱 | 按 `core` 约定的响应，用固定样本在房间内的同一信箱入口呈现来源、收件状态和公开回执，分别显示空、过期和读取失败。 | 接入已合并的后台读口。用两个真实 WebView2 窗口反复打开同一封信，断开再连接后读到当前修订。关掉一个窗口，另一窗和后台收信照常工作。[房间与信箱设计](ui-framework-design.md#2-管理中心的界面组织) · [主面板](../apps/desktop/web/src/MainPanel.vue) |
 
-**开工与合并顺序。** `plugins` 的容器只读观察和 `core` 的信箱读口可以同时开始。`ui` 在读口字段约定后即可做样本验收，正式联调依赖 `core` 的接口提交先合入主线。MC 的容器写入依赖该插件自己的读口，与管理中心独立。每个行为单独提交和定向验证，三个开发分支由主 Session 按交付 SHA 保留历史合并。联验时在隔离 Paper 核对箱内实物，在真实窗口核对信箱读取无副作用，最后运行 Debug、Release 全量离线测试及安装包检查。[工作树流程](../.agents/skills/dafeiyu-worktree/SKILL.md) · [项目测试原则](../AGENTS.md#测试原则)
+**开工与合并顺序。** 各固定工作树开工时同步已集成的 `master`。主线处理工具回执时，`plugins` 的容器只读观察和 `core` 的信箱读口可并行推进。`ui` 在读口字段约定后即可做样本验收，正式联调依赖 `core` 的接口提交先合入主线。MC 的容器写入依赖该插件自己的读口。每个行为单独提交和定向验证，三个开发分支由主 Session 按交付 SHA 保留历史合并。联验时在隔离 Paper 核对箱内实物，在真实窗口核对信箱读取无副作用，最后运行 Debug、Release 全量离线测试及安装包检查。[工作树流程](../.agents/skills/dafeiyu-worktree/SKILL.md) · [项目测试原则](../AGENTS.md#测试原则)
 
 **接续边界。** MC 已在单绑定试点验证模型从摘要查回长工作实效，覆盖错代次和无效回执号。通用会话原文由宿主 C++ 接口 `Session::read_evidence` 按本会话代次和消息区间读取。若其他领域向模型开放原文读取，需在其工具授权里另行限定可读对象。房间步骤 11、12 分别核对事件发生时的感知、当前位置的取样及实际送模字段。管理中心在信箱之后接步骤 7 的设置与插件管理。[证据读口](../modules/agent/src/session.cpp) · [容量回放](../modules/agent/tests/loop_projection.cpp) · [房间实施次序](main-agent-room-development-plan.md#7-分步开发顺序) · [管理中心实施次序](ui-framework-design.md#10-分步实施与验收)
