@@ -15,8 +15,11 @@ std::int64_t sampled_now() noexcept {
 MailboxDirectory Application::mailbox_directory() const {
     const auto& network = *mailbox_host_.network;
     MailboxDirectory result{network.directory_revision(),sampled_now()};
-    std::map<runtime::DomainId,std::string> active;
-    for (const auto& package : plugins_.loaded()) active.emplace(plugins_.instance(package.id)->generation(),package.id);
+    std::map<runtime::DomainId,std::shared_ptr<plugins::PluginInstance>> active;
+    for (const auto& package : plugins_.loaded()) {
+        const auto instance = plugins_.instance(package.id);
+        active.emplace(instance->generation(),instance);
+    }
 
     for (const auto& binding : network.bindings(mailbox_host_.identity)) {
         const auto peer = binding.sender==mailbox_host_.identity ? binding.receiver : binding.sender;
@@ -24,9 +27,9 @@ MailboxDirectory Application::mailbox_directory() const {
         if (binding.mailbox==dialogue_mailbox_) { id = "builtin/dialogue"; label = "主聊天"; }
         else if (binding.mailbox==room_mailbox_) { id = "builtin/room"; label = "书房"; }
         else if (const auto owner=active.find(peer); owner!=active.end()) {
-            plugin = owner->second;
+            plugin = owner->second->plugin_id();
             id = "plugin/"+plugin+"/"+std::to_string(peer);
-            label = plugin;
+            label = owner->second->plugin_name();
         } else continue;
         auto row = result.sources.try_emplace(id,MailboxSource{label,plugin,peer,{}}).first;
         row->second.bindings.push_back(binding);

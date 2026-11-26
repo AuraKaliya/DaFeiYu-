@@ -1,4 +1,5 @@
 #include "management/resident.hpp"
+#include "mailbox_view.hpp"
 #include "management/protocol.hpp"
 #include "management/client.hpp"
 #include "fixtures/query_v2/mailbox_fixture.h"
@@ -27,11 +28,17 @@ template<class Ready> void until(Ready ready, const char* stage) {
     }
 }
 
+// 在测试包原位写入指定的清单显示名，用于区分磁盘版本和实际运行代次。
+void write_manifest(const fs::path& dir, std::string_view name) {
+    std::ofstream(dir/"plugin.json") << Json{{"manifest_version",1},{"id","test.mail"},{"name",name},
+        {"version","1"},{"abi_version",2},{"entry","entry.dll"},{"default_config","defaults.json"}}.dump();
+}
+
 // 建立可通过正式插件命令加载的 C DLL 包。
 void package(const fs::path& dir, const fs::path& dll) {
     fs::create_directories(dir);
     fs::copy_file(dll,dir/"entry.dll");
-    std::ofstream(dir/"plugin.json") << R"({"manifest_version":1,"id":"test.mail","name":"测试信箱","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"})";
+    write_manifest(dir,"测试信箱");
     std::ofstream(dir/"defaults.json") << R"({"mode":"t"})";
 }
 
@@ -152,6 +159,7 @@ void directory(const fs::path& root, const fs::path& dll) {
     Json loaded;
     until([&] { loaded=call(first.client,list); return loaded.at("sources").size()==3; },"directory after load");
     const auto original=loaded.at("sources").back();
+    check(original.at("label")=="测试信箱","source label did not come from its loaded manifest");
     auto pinned_list=list;
     pinned_list.update(Json{{"instance",first.instance},{"revision",loaded.at("revision")}});
     check(call(second.client,pinned_list)==loaded,"matching directory revision was unavailable");
@@ -173,6 +181,9 @@ void directory(const fs::path& root, const fs::path& dll) {
     check(call(first.client,wrong).at("state")=="stale","source escaped its original resident");
     check(original.at("kind")=="plugin" && original.at("plugin")=="test.mail" && original.at("generation").is_string() &&
         loaded.at("revision")!=initial.at("revision") && loaded==call(second.client,list),"plugin not bound to its original generation");
+    write_manifest(packages/"mail","新一代信箱");
+    command("/plugins refresh");
+    check(call(second.client,list)==loaded,"catalog refresh relabeled a live generation");
     command("/plugins unload test.mail");
     until([&] { return call(first.client,list).at("sources").size()==2; },"directory after unload");
     check(call(second.client,read).at("state")=="stale" && call(first.client,pinned_list).at("state")=="stale",
@@ -181,6 +192,8 @@ void directory(const fs::path& root, const fs::path& dll) {
     Json reloaded;
     until([&] { reloaded=call(second.client,list); return reloaded.at("sources").size()==3; },"directory after reload");
     const auto replacement=reloaded.at("sources").back();
+    check(replacement.at("label")=="新一代信箱" && replacement.at("plugin")==original.at("plugin"),
+        "reloaded source did not acquire its new manifest label");
     auto fresh=read;
     fresh["source"]=replacement.at("id");
     check(call(first.client,read).at("messages").empty() && call(first.client,read).at("state")=="stale" &&
@@ -203,6 +216,13 @@ void receipts(const fs::path& root) {
         auto app = std::make_unique<app::Application>(model::Config{},root/"plugins",root/"receipts",model::Backend{
             [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
         prepare_request(*app);
+        write_manifest(root/"plugins"/"mail","尚未加载的名称");
+        app->plugins().refresh();
+        const auto latest = app->plugins().catalog();
+        const auto view = app->mailbox_directory();
+        const auto active = std::ranges::find_if(view.sources,[](const auto& row) { return row.second.plugin=="test.mail"; });
+        check(latest->packages.at("test.mail").name=="尚未加载的名称" && active!=view.sources.end() && active->second.label=="新一代信箱",
+            "a fresh business sample borrowed the replacement manifest name");
         app->post_room_event(app::RoomEvent::presence_changed,"书房","private-room-mailbox-marker");
         return app;
     },

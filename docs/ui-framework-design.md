@@ -258,13 +258,13 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 已握手的管理窗口沿用本地管道的 `op=request`。首次可发送 `{"version":"1","request":"dir-1","type":"mailbox.list"}`。回包的 `event` 为 `mailbox.directory`，回显 `request`，并带有后台 `instance`、目录 `revision`、采样时刻 `sampledUtcMs`、`state` 和 `sources`。绑定后的请求可附 `instance`，与当前后台不符时返回 `stale` 和空来源表。
 
-每个来源有 `id`、`label`、`kind`（`builtin` 或 `plugin`）和字符串 `generation`。插件来源另带包标识 `plugin`。主聊天、书房和实际接入信箱的各插件分别占一个来源。插件双向地址和它登记的主 Agent 业务地址归同一代次。窗口应保存服务端给出的来源 `id`，卸载后重新加载同包会签发新的来源。目录修订随地址绑定及撤销改变。读取已发布的目录不会触发收件或模型调用。[宿主投影](../apps/host/src/mailbox_view.cpp) · [管理分派](../apps/host/src/management/mailbox_protocol.cpp)
+每个来源有 `id`、`label`、`kind`（`builtin` 或 `plugin`）和字符串 `generation`。插件来源另带包标识 `plugin`，`label` 取自该运行代次加载的清单显示名。刷新磁盘包目录后，当前代次仍显示原名，重载才使用新名。主聊天、书房和实际接入信箱的各插件分别占一个来源。插件双向地址和它登记的主 Agent 业务地址归同一代次。窗口应保存服务端给出的来源 `id`，卸载后重新加载同包会签发新的来源。目录修订随地址绑定及撤销改变。读取已发布的目录不会触发收件或模型调用。[宿主投影](../apps/host/src/mailbox_view.cpp) · [管理分派](../apps/host/src/management/mailbox_protocol.cpp)
 
 目录请求在绑定 `instance` 后也可加 `revision`。该目录修订仍有效时返回原样本，地址已经改变则返回 `stale` 和空来源表。
 
 `{"version":"1","request":"box-1","type":"mailbox.read","instance":"原后台","source":"目录给出的 id"}` 返回 `mailbox.snapshot`，回显原请求、后台及来源，并给出来源自己的 `revision`、`sampledUtcMs`、`state`、`mailboxes` 和 `messages`。同一份采样可由多个窗口重复读取。该来源入箱、实际取件或地址绑定改变才更新来源修订，其他来源可继续沿用原采样。编号、修订及累计水位使用十进制字符串，UTC 毫秒和分类版本使用 JSON 整数。
 
-每封信的 `id` 由原信箱与序号组成，作为不透明字符串保存。`category`、`categoryVersion` 给出分类，`direction` 为 `toHost` 或 `toPlugin`，`state` 为 `pending` 或 `received`。嵌套的 `receipt` 带有原 `mailbox`、`sequence`、`acceptedUtcMs` 和 `acceptedRevision`。回执最初为 `state=accepted`，原接收方实际取走后才出现 `state=received`、`receivedUtcMs` 与 `receivedRevision`。业务正文留在原系统。回信在自己的目标信箱中有独立编号，可分别观察入箱与实收。
+每封信的 `id` 由原信箱与序号组成，作为不透明字符串保存。`category`、`categoryVersion` 给出分类，`direction` 为 `toHost` 或 `toPlugin`，`state` 为 `pending` 或 `received`。嵌套的 `receipt` 带有原 `mailbox`、`sequence`、`acceptedUtcMs` 和 `acceptedRevision`。回执最初为 `state=accepted`，原接收方实际取走后才出现 `state=received`、`receivedUtcMs` 与 `receivedRevision`。原生载荷缺少可公开的分类名时，`category` 为空字符串。业务正文留在原系统。回信在自己的目标信箱中有独立编号，可分别观察入箱与实收。
 
 消息按最近入箱顺序返回。每个地址另列 `id`、`direction`、累计 `accepted`、累计 `received` 和最早保留序号 `firstRetained`（无记录为 `"0"`）。后台保留全部待收信及有界的近期回执。窗口可在原请求加 `message` 查一封详情，加 `revision` 核对所见版本。当前有效的空来源返回 `ready` 和空信件表。后台或来源失效、指定修订已变、选中信件已离开保留区间时返回 `stale` 和空信件表。读取失败沿用 `management.error`。取得新目录及当前来源快照后可重新选择原件。[原生收发回执](../modules/events/src/mailboxes.cpp) · [管理信箱验收](../tests/plugins/management_mailboxes.cpp)
 
