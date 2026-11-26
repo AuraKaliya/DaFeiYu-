@@ -38,12 +38,13 @@ void InteractionProbe::start_plugin_settings() {
             [this,fixed_operation,body=std::move(body)](const Json& result) mutable {
                 const auto& request=result.at("result").at("value");
                 if (request.at("version")!="1") throw std::runtime_error("unexpected plugin version");
-                if (request.at("type")=="plugins.load") *fixed_operation = "plugin/request/"+request.at("submission").get<std::string>();
+                const bool write = request.at("type")=="plugins.load" || request.at("type")=="plugins.unload";
+                if (write) *fixed_operation = "plugin/request/"+request.at("submission").get<std::string>();
                 if (request.at("type")=="plugins.receipt" && request.at("operation")!=*fixed_operation) throw std::runtime_error("wrong receipt");
                 if (body.at("event")=="plugins.operation") body["operation"] = *fixed_operation;
-                if (request.at("type")=="plugins.load" && (request.at("id")!=body.at("id") || request.at("revision")!=body.at("revision") ||
+                if (write && (request.at("id")!=body.at("id") || request.at("revision")!=body.at("revision") ||
                     request.at("generation")!=body.at("targetGeneration") || request.at("command")!=body.at("command") ||
-                    request.at("instance")!=body.at("instance"))) throw std::runtime_error("wrong loading intent");
+                    request.at("instance")!=body.at("instance"))) throw std::runtime_error("wrong package intent");
                 body.update(Json{{"version","1"},{"request",request.at("request")}});
                 require_hresult(view_->PostWebMessageAsJson(utf16(body.dump()).c_str()));
             });
@@ -100,10 +101,43 @@ void InteractionProbe::start_plugin_settings() {
     reply(receipt,"plugins.load");
     expect("admission is shown separately","document.querySelector('[data-work-state=queued]')?.textContent.includes('已接纳') && document.querySelector('#plugin-load').disabled");
     evaluate("change selection while work is active","document.querySelector('[data-package=\"test.two\"]').click(); true");
-    receipt.update(Json{{"state","succeeded"},{"effect","loaded"},{"generation","98"}});
+    receipt.update(Json{{"state","succeeded"},{"effect","loaded"},{"generation","98"},{"nativeCode",0}});
     reply(receipt,"plugins.receipt");
     expect("settlement still names the original package","document.querySelector('[data-work-target=\"test.one\"][data-work-effect=loaded]')?.textContent.includes('运行代次 98') && "
-        "document.querySelector('[data-selected-package=\"test.two\"]') && !window.fixturePluginReads.some(q=>q.type==='plugins.unload' || q.type==='plugins.load')");
+        "document.querySelector('[data-selected-package=\"test.two\"]') && document.querySelector('.plugin-operation details').textContent.includes('插件返回码0') && "
+        "!window.fixturePluginReads.some(q=>q.type==='plugins.unload' || q.type==='plugins.load')");
+    auto active_rows = rows;
+    active_rows[0].update(Json{{"state","active"},{"loaded",true},{"canLoad",false},{"canUnload",true},{"generation","98"},
+        {"loadedName","一号插件"},{"loadedVersion","1.2"},{"errorCode",0}});
+    sample.update(Json{{"revision","5"},{"packages",active_rows}});
+    reply(sample);
+    expect("unload is enabled only from the new directory","document.querySelector('#plugin-unload')?.disabled===false");
+    evaluate("request an unload of the selected running package","document.querySelector('#plugin-unload').click(); true");
+    Json stop{{"event","plugins.operation"},{"instance","host-b"},{"action","unload"},{"command","2"},{"id","test.two"},{"revision","5"},
+        {"targetGeneration","97"},{"generation","97"},{"state","queued"},{"effect","unconfirmed"}};
+    reply(stop,"plugins.unload");
+    stop.update(Json{{"state","busy"},{"effect","retained"},{"nativeResult","busy"}});
+    reply(stop,"plugins.receipt");
+    expect("busy unload keeps the original generation and native return","document.querySelector('[data-work-effect=retained]')?.textContent.includes('原实例已保留') && "
+        "document.querySelector('.plugin-operation details').textContent.includes('busy') && document.querySelector('.package-details').dataset.selectedGeneration==='97'");
+    reply(sample);
+    expect("explicit retry can target the retained instance","document.querySelector('#plugin-unload')?.disabled===false");
+    evaluate("retry from the same generation","document.querySelector('#plugin-unload').click(); true");
+    stop.update(Json{{"command","3"},{"state","queued"},{"effect","unconfirmed"}}); stop.erase("nativeResult");
+    reply(stop,"plugins.unload");
+    stop.update(Json{{"state","pending"},{"effect","stopping"},{"nativeResult","pending"}});
+    reply(stop,"plugins.receipt");
+    expect("stopping does not report an actual exit","document.querySelector('[data-work-state=pending]')?.textContent.includes('等待原实例退出') && document.querySelector('#plugin-unload').disabled");
+    stop.update(Json{{"state","succeeded"},{"effect","unloaded"}});
+    reply(stop,"plugins.receipt");
+    active_rows[1] = rows[0]; active_rows[1].update(Json{{"id","test.two"},{"name","二号插件"},{"version","2"}});
+    sample.update(Json{{"revision","6"},{"packages",active_rows}});
+    reply(sample);
+    expect("confirmed exit keeps the original pending return separately","document.querySelector('[data-work-effect=unloaded]')?.textContent.includes('已卸载') && "
+        "document.querySelector('.plugin-operation details').textContent.includes('pending') && document.querySelector('[data-selected-package=\"test.two\"]')?.dataset.selectedGeneration==='0'");
+    evaluate("read the completed operation after retirement","document.querySelector('.plugin-operation summary').click(); document.querySelector('#check-plugin-receipt').click(); true");
+    reply({{"event","plugins.operation"},{"instance","host-b"},{"state","expired"},{"effect","unknown"}},"plugins.receipt");
+    expect("retired receipt preserves the last confirmed exit","document.querySelector('[data-work-effect=unloaded]')?.textContent.includes('回执已过期')");
     next();
 }
 }

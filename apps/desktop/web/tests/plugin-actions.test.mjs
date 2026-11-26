@@ -92,6 +92,23 @@ test('a fresh document recovers without any write reply and keeps legacy operati
   assert.equal(older.sent.some(q=>q.type==='plugins.load'),false);
 });
 
+// 原回执退休后继续保留已证实的效果，从未取得终态则按原号显示过期。
+test('retired operation records preserve previously confirmed effects and native return codes',()=>{
+  const f=fixture(); f.actions.start('load'); const original=f.sent.at(-1);
+  f.answer(original,{state:'succeeded',effect:'loaded',generation:live.generation,nativeCode:0});
+  f.sample([live]);f.actions.check();
+  const absent=(item,state)=>({version:'1',event:'plugins.operation',instance:'original',operation:item.operation,request:item.request,state,effect:'unknown'});
+  f.actions.receive(absent(f.sent.at(-1),'expired'));
+  assert.equal(f.actions.work.value.effect,'loaded'); assert.equal(f.actions.work.value.nativeCode,0);assert.match(f.actions.lookupNotice.value,/过期/);
+  const g=fixture();g.actions.start('load');g.advance(3600);g.actions.check();
+  g.actions.receive(absent(g.sent.at(-1),'expired'));assert.equal(g.actions.work.value.state,'expired');
+  assert.equal(g.actions.work.value.effect,'unknown');
+  const other=fixture();other.actions.start('load');other.advance(3600);other.actions.check();
+  other.actions.receive({...absent(other.sent.at(-1),'stale'),instance:'replacement'});
+  assert.equal(other.actions.work.value.instance,'original');assert.equal(other.actions.work.value.state,'stale');
+  assert.equal(other.actions.work.value.effect,'unknown');
+});
+
 // 提交结果未知与明确未分派分开处理，次序错误只修正下一次显式命令。
 // 步骤：丢弃首次回包 → 核对无重发 → 归还未分派号 → 由真实期望号校正。
 test('loss, local rejection and ordering never trigger an automatic write', () => {

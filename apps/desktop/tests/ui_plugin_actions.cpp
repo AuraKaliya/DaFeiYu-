@@ -26,7 +26,10 @@ void InteractionProbe::start_plugin_actions(std::wstring_view mode, const std::f
             window.row=()=>window.currentDirectory?.packages.find(p=>p.id==='test.second');
             Object.defineProperty(bridge,'postMessage',{configurable:true,value:q=>{
                 if(q.type===window.holdReads){window.held.push(q);return;}
-                if(q.type==='plugins.load'||q.type==='plugins.unload')sessionStorage.setItem('observed-writes',String(Number(sessionStorage.getItem('observed-writes'))+1));
+                if(q.type==='plugins.load'||q.type==='plugins.unload'){
+                    sessionStorage.setItem('observed-writes',String(Number(sessionStorage.getItem('observed-writes'))+1));
+                    if(q.type==='plugins.load' && q.command==='1')sessionStorage.setItem('original-operation','plugin/request/'+q.submission);
+                }
                 post(q);
             }});
             bridge.addEventListener('message',({data:q})=>{
@@ -84,9 +87,16 @@ void InteractionProbe::start_plugin_actions(std::wstring_view mode, const std::f
     save("writer-ready","currentDirectory.instance");
     wait("observer-pinned");
     evaluate("one double click on an installed fixture","window.holdReads='plugins.receipt'; const b=button('plugin-load'); b.click(); b.click(); sessionStorage.getItem('observed-writes')==='1'");
-    expect("plugin command one has its own actual acceptance","work()?.dataset.workState==='queued' && opReplies.some(q=>q.state==='queued' && q.command==='1' && q.id==='test.second' && q.targetGeneration==='0')");
-    evaluate("remember original host-issued identity","sessionStorage.setItem('original-operation',opReplies.find(q=>q.state==='queued').operation); true");
-    call("reload after real admission",L"Page.reload",Json::object());
+    wait("dropped-plugin-ack.json");
+    call("original operation was accepted but no write reply reached the page",L"Runtime.evaluate",
+        {{"expression","[sessionStorage.getItem('original-operation'),work().dataset.workState,opReplies.length]"},{"returnByValue",true}},
+        [file=data/"dropped-plugin-ack.json"](const Json& reply) {
+            Json actual; std::ifstream(file) >> actual;
+            const auto& seen=reply.at("result").at("value");
+            if (actual.at("state")!="queued" || actual.at("command")!="1" || actual.at("operation")!=seen.at(0) ||
+                (seen.at(1)!="sending" && seen.at(1)!="uncertain") || seen.at(2)!=0) throw std::runtime_error("first write acknowledgement was exposed or lost its identity");
+        });
+    call("reload with no write acknowledgement",L"Page.reload",Json::object());
     expect("new main document loaded","performance.getEntriesByType('navigation')[0]?.type==='reload' && !window.lastPacket && !!document.querySelector('#board-settings')");
     open();
     expect("reloaded document only queried the actual load","work()?.dataset.workEffect==='loaded' && row()?.loaded && !choice() && sessionStorage.getItem('observed-writes')==='1' && "

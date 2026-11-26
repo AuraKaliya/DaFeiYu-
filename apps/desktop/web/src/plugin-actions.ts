@@ -7,12 +7,16 @@ type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
 export type PluginAction = 'load' | 'unload';
 export interface PluginWork {
   instance: string; command: string; action: PluginAction; id: string; revision: string; targetGeneration: string;
-  operation: string; submission?: string; state: string; effect: string; generation: string;
+  operation: string; submission?: string; state: string; effect: string; generation: string; nativeCode?: number; nativeResult?: string;
 }
 const unfinished = new Set(['sending', 'queued', 'running', 'pending']);
 const states = new Set(['queued', 'running', 'pending', 'succeeded', 'failed', 'busy', 'inUse', 'stale', 'conflict',
   'outOfOrder', 'expired', 'unknown', 'unavailable', 'full', 'invalid']);
 const effects = new Set(['unconfirmed', 'loaded', 'unloaded', 'stopping', 'retained', 'notApplied', 'notLoaded', 'unknown']);
+const nativeResults = new Set(['closed','pending','busy','inUse','failed']);
+
+// 只保留插件管理器公布的无符号原生返回码。
+function nativeCode(value: unknown): value is number { return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff; }
 
 // 只有宿主已确认的生命周期结果才可作为成功，受理和停止中保留各自的阶段。
 function validOutcome(state: string, effect: string, original: PluginWork, generation: unknown): boolean {
@@ -20,6 +24,7 @@ function validOutcome(state: string, effect: string, original: PluginWork, gener
   if (state === 'succeeded') return original.action === 'load' ? effect === 'loaded' && generation !== '0' : effect === 'unloaded';
   if (state === 'pending') return original.action === 'unload' && effect === 'stopping';
   if (state === 'unknown' || state === 'expired') return effect === 'unknown';
+  if (state === 'stale' && effect === 'unknown') return true;
   return effect === 'notApplied' || effect === 'retained' || effect === 'notLoaded' || effect === 'unconfirmed';
 }
 
@@ -29,7 +34,9 @@ function savedWork(value: unknown, instance: string): value is PluginWork {
     typeof value.id === 'string' && !!value.id && pluginNumber(value.command) && value.command !== '0' &&
     pluginNumber(value.revision) && pluginNumber(value.targetGeneration) && pluginNumber(value.generation) &&
     typeof value.operation === 'string' && value.operation.length <= 160 &&
-    (value.submission === undefined || (typeof value.submission === 'string' && /^[0-9a-f-]{36}$/i.test(value.submission) &&
+    (value.nativeCode === undefined || nativeCode(value.nativeCode)) &&
+    (value.nativeResult === undefined || (typeof value.nativeResult === 'string' && nativeResults.has(value.nativeResult))) &&
+    (value.submission === undefined || (typeof value.submission === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.submission) &&
       value.operation === 'plugin/request/' + value.submission)) && typeof value.state === 'string' &&
     (states.has(value.state) || value.state === 'sending' || value.state === 'uncertain') &&
     typeof value.effect === 'string' && effects.has(value.effect);
@@ -38,7 +45,7 @@ function savedWork(value: unknown, instance: string): value is PluginWork {
 // 对已选择的插件只提交一次明确写入，之后沿原操作读取，所有数字身份按原值传递。
 // 步骤：核对当前目录与授权 → 固定用户意图 → 匹配原回执 → 刷新实效所在目录。
 export function usePluginActions(directory: Directory, post: PluginPost, storage?: StoragePort, clock = () => performance.now()) {
-  const work = shallowRef<PluginWork>(), readFailed = shallowRef(false);
+  const work = shallowRef<PluginWork>(), readFailed = shallowRef(false), lookupNotice = shallowRef('');
   const prefix = 'op-' + crypto.randomUUID() + '-';
   let bound = '', nextCommand = '1', sequence = 0, due = Infinity;
   let blockedReading: PluginReading | undefined;
@@ -53,10 +60,11 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
   // 步骤：取消旧查询 → 校验当窗的恢复记录 → 安排按原号补读。
   function bind(instance: string): void {
     if (bound === instance) return;
-    bound = instance; nextCommand = '1'; pending = undefined; due = Infinity; blockedReading = undefined; readFailed.value = false;
+    bound = instance; nextCommand = '1'; pending = undefined; due = Infinity; blockedReading = undefined; readFailed.value = false; lookupNotice.value = '';
     try {
       const saved: unknown = JSON.parse(storage?.getItem('dfy.plugin.work.' + bound) ?? 'null');
-      if (!object(saved) || !pluginNumber(saved.nextCommand) || saved.nextCommand === '0' || !savedWork(saved.work, bound)) return;
+      if (!object(saved) || (!pluginNumber(saved.nextCommand) && saved.nextCommand !== '18446744073709551616') ||
+          saved.nextCommand === '0' || !savedWork(saved.work, bound)) return;
       nextCommand = saved.nextCommand;
       work.value = saved.work.state === 'sending' ? { ...saved.work, state: 'uncertain' } : saved.work;
       if (work.value.operation) due = 0;
@@ -82,7 +90,7 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
     nextCommand = (BigInt(command) + 1n).toString();
     work.value = { instance: bound, command, action, id: row.id, revision: reading.revision, targetGeneration: row.generation,
       submission, operation: 'plugin/request/' + submission, state: 'sending', effect: 'unconfirmed', generation: row.generation };
-    pending = { request, write: true, deadline: clock() + 3500 }; due = Infinity; readFailed.value = false;
+    pending = { request, write: true, deadline: clock() + 3500 }; due = Infinity; readFailed.value = false; lookupNotice.value = '';
     save();
     try { post({ type: 'plugins.' + action, version: '1', request, instance: bound, command, submission, id: row.id, revision: reading.revision, generation: row.generation }); }
     catch { undelivered(); }
@@ -131,21 +139,35 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
       if (pending.write && value.dispatched === false) undelivered(); else unavailable();
       return;
     }
-    if (value.event !== 'plugins.operation' || value.instance !== original.instance || typeof value.operation !== 'string' ||
+    if (value.event !== 'plugins.operation' || typeof value.instance !== 'string' || !value.instance || typeof value.operation !== 'string' ||
         !value.operation || value.operation.length > 160 || (original.operation && value.operation !== original.operation) ||
         (original.submission && value.submission !== undefined && value.submission !== original.submission) ||
         typeof value.state !== 'string' || !states.has(value.state) || typeof value.effect !== 'string' || !effects.has(value.effect)) return;
-    const missing = !pending.write && value.state === 'unknown' && value.effect === 'unknown' && value.command === undefined;
+    const replaced = value.instance !== original.instance;
+    if (replaced && (value.state !== 'stale' || value.effect !== (pending.write ? 'notApplied' : 'unknown'))) return;
+    const missing = !pending.write && (value.state === 'unknown' || value.state === 'expired' || (replaced && value.state === 'stale')) &&
+      value.effect === 'unknown' && value.command === undefined;
     if (!missing && (value.command !== original.command || value.action !== original.action || value.id !== original.id ||
         value.revision !== original.revision || value.targetGeneration !== original.targetGeneration || !pluginNumber(value.generation))) return;
     if (!validOutcome(value.state, value.effect, original, value.generation)) return;
+    if ((value.nativeCode !== undefined && !nativeCode(value.nativeCode)) ||
+        (value.nativeResult !== undefined && (typeof value.nativeResult !== 'string' || !nativeResults.has(value.nativeResult)))) return;
     if (value.state === 'outOfOrder' && pluginNumber(value.expectedCommand) && value.expectedCommand !== '0') nextCommand = value.expectedCommand;
     pending = undefined; readFailed.value = false;
+    if (missing && !unfinished.has(original.state) && ['loaded','unloaded','retained','notLoaded','notApplied'].includes(original.effect)) {
+      lookupNotice.value = replaced ? '后台已更换，保留原后台上次核实的结果。' :
+        value.state === 'expired' ? '后台的原回执已过期，保留上次核实的结果。' : '后台未找到原回执，保留上次核实的结果。';
+      if (replaced) directory.refresh();
+      due = Infinity; return;
+    }
+    lookupNotice.value = '';
     work.value = { ...original, operation: value.operation, state: value.state, effect: value.effect,
-      generation: pluginNumber(value.generation) ? value.generation : original.generation };
+      generation: pluginNumber(value.generation) ? value.generation : original.generation,
+      nativeCode: nativeCode(value.nativeCode) ? value.nativeCode : undefined,
+      nativeResult: typeof value.nativeResult === 'string' ? value.nativeResult : undefined };
     due = unfinished.has(value.state) ? clock() + 350 : Infinity;
     save();
     if (!unfinished.has(value.state)) { blockedReading = directory.view.value.reading; directory.refresh(); }
   }
-  return { work, readFailed, start, canStart, receive, check, tick };
+  return { work, readFailed, lookupNotice, start, canStart, receive, check, tick };
 }

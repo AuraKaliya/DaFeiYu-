@@ -14,6 +14,7 @@
 #ifdef DFY_UI_RUN_STATUS_TEST
 #include "ui_main_panel_fixture.hpp"
 #include "ui_run_status_probe.hpp"
+#include <fstream>
 #endif
 #include <windows.h>
 #include <dwmapi.h>
@@ -178,6 +179,13 @@ struct Window : std::enable_shared_from_this<Window> {
                         if (window && (window->tray_verified || value.value("event", "") == "management.error")) reply(value);
                     });
                 }
+#ifdef DFY_UI_RUN_STATUS_TEST
+                // 真实后台已处理首笔写入，验收主动丢弃原生应答，页面只能从自己预存的工作号恢复。
+                if (self->observer_scenario==L"action-write" && request.at("type")=="plugins.load" && request.at("command")=="1")
+                    return self->resident_client->post(request,[file=self->user_data/"dropped-plugin-ack.json"](const auto& value) {
+                        std::ofstream(file) << value.dump();
+                    });
+#endif
                 if (self->resident_client) return self->resident_client->post(request,std::move(reply));
                 reply(dfy::management::dispatch(self->run_status_host.get(),request));
                 return true;

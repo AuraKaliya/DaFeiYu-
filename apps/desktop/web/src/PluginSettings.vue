@@ -9,7 +9,7 @@ const bridge = window.chrome.webview;
 const directory = usePluginDirectory(fields => bridge.postMessage(fields));
 const actions = usePluginActions(directory, fields => bridge.postMessage(fields), window.sessionStorage);
 const { view } = directory;
-const { work, readFailed } = actions;
+const { work, readFailed, lookupNotice } = actions;
 const selected = computed(() => view.value.reading?.packages.find(item => item.id === view.value.selected));
 const labels: Readonly<Record<string, string>> = { installed: '已安装', active: '已加载', stopping: '正在卸载', failed: '实例异常' };
 let timer = 0;
@@ -41,7 +41,7 @@ const result = computed(() => {
     if (item.state === 'inUse') return '仍有插件依赖这个实例，原实例已保留。';
     return item.state === 'busy' ? '插件正忙，原实例已保留。' : '操作失败，原实例已保留。';
   }
-  if (item.state === 'stale') return '目录修订或目标代次已变化，后台未执行。';
+  if (item.state === 'stale') return item.effect === 'unknown' ? '原后台已更换，原操作实效待确认。' : '后台、目录修订或目标代次已变化，本次操作未执行。';
   if (item.state === 'outOfOrder' || item.state === 'conflict') return '后台拒绝了该命令号，本次操作未执行。';
   if (item.state === 'expired' || item.state === 'unknown') return '后台无法确认原操作记录，实效待确认。';
   if (item.effect === 'notLoaded') return '加载失败，插件未加载。';
@@ -86,8 +86,8 @@ onUnmounted(() => {
     <p id="plugin-directory-status" class="source-note" role="status">{{ feedback }} {{ view.notice }}</p>
     <fieldset v-if="view.reading?.packages.length" class="packages" :disabled="view.status !== 'ready'">
       <legend>选择插件</legend>
-      <Label v-for="item in view.reading.packages" :key="item.id" :data-package="item.id" class="package" :data-selected="view.selected === item.id">
-        <input type="radio" name="managed-package" :value="item.id" :checked="view.selected === item.id" @change="directory.select(item.id)">
+      <Label v-for="(item, index) in view.reading.packages" :key="item.id" :for="'managed-plugin-' + index" :data-package="item.id" class="package" :data-selected="view.selected === item.id">
+        <input :id="'managed-plugin-' + index" type="radio" name="managed-package" :value="item.id" :checked="view.selected === item.id" @change="directory.select(item.id)">
         <span class="package-name">{{ item.name || item.id }}</span>
         <span class="package-version">{{ item.version }}</span>
         <span class="package-state">{{ labels[item.state] }}</span>
@@ -108,10 +108,16 @@ onUnmounted(() => {
     </div>
     <div v-if="work" class="plugin-operation" :data-work-state="work.state" :data-work-effect="work.effect" :data-work-target="work.id">
       <p role="status"><strong>{{ work.action === 'load' ? '加载' : '卸载' }} {{ work.id }}</strong> · {{ result }}
-        <span v-if="readFailed && work.operation && work.instance === view.reading?.instance">原回执暂时无法读取。</span></p>
+        <span v-if="readFailed && work.operation && work.instance === view.reading?.instance">原回执暂时无法读取。</span>
+        <span v-else-if="lookupNotice">{{ lookupNotice }}</span></p>
       <details v-if="work.operation">
         <summary>操作回执</summary>
-        <dl class="package-details"><dt>操作号</dt><dd>{{ work.operation }}</dd><dt>提交时目录修订</dt><dd>{{ work.revision }}</dd></dl>
+        <dl class="package-details">
+          <dt>操作号</dt><dd>{{ work.operation }}</dd><dt>提交时目录修订</dt><dd>{{ work.revision }}</dd>
+          <template v-if="work.targetGeneration !== '0'"><dt>目标代次</dt><dd>{{ work.targetGeneration }}</dd></template>
+          <template v-if="work.nativeCode !== undefined"><dt>插件返回码</dt><dd>{{ work.nativeCode }}</dd></template>
+          <template v-if="work.nativeResult"><dt>卸载返回值</dt><dd>{{ work.nativeResult }}</dd></template>
+        </dl>
         <button id="check-plugin-receipt" type="button" class="quiet-action"
           :disabled="view.status !== 'ready' || work.instance !== view.reading?.instance" @click="actions.check">重新查询回执</button>
       </details>
