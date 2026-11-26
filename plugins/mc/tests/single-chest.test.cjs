@@ -5,7 +5,7 @@ const { Position } = require('./test-position.cjs');
 const { ownerInbox } = require('../bridge/chat.cjs');
 const { chestWindows, chestSample } = require('../bridge/single-chest.cjs');
 const { observationInput } = require('../bridge/partner-observe.cjs');
-const { depositOrder, depositItem, reconcileDeposit } = require('../bridge/chest-transfer.cjs');
+const { chestOrder, transferItem, reconcileTransfer } = require('../bridge/chest-transfer.cjs');
 
 // 提供位于两个普通箱子之间的玩家、同步窗口及独立的伙伴库存槽。
 function chestFixture() {
@@ -43,10 +43,10 @@ test('指箱回执只接受原消息命中的普通单箱', () => {
   bot.players.owner.entity.yaw = Math.PI;
   tell();
   assert.deepEqual(inbox.pointedChest(generation,2).cell,target.cell);
-  assert.equal(inbox.depositWork(generation,2),null);
+  assert.equal(inbox.chestWork(generation,2),null);
   const first = {controller:'first',work:'same'};
-  assert.deepEqual(inbox.depositWork(generation,2,first),first);
-  assert.deepEqual(inbox.depositWork(generation,2,{controller:'second',work:'same'}),first);
+  assert.deepEqual(inbox.chestWork(generation,2,first),first);
+  assert.deepEqual(inbox.chestWork(generation,2,{controller:'second',work:'same'}),first);
   assert.equal(inbox.pointedChest(generation,3).cell.z,2);
   const blockAt = bot.blockAt;
   bot.blockAt = p => ({...blockAt(p),getProperties:() => ({type:'left'})});
@@ -121,12 +121,24 @@ function transferFixture(initial, stock, interrupt = false) {
     const window = bot.currentWindow;
     ++clicks;
     if (mode === 1) {
-      const units = Math.min(window.slots[i].count,64-(window.slots[0]?.count ?? 0));
-      window.slots[0] = stone((window.slots[0]?.count ?? 0)+units);
-      window.slots[i] = stone(window.slots[i].count-units);
+      const start = i < 27 ? 27 : 0, end = i < 27 ? 63 : 27;
+      for (let dest = start; dest < end && window.slots[i]; ++dest) {
+        const entry = window.slots[dest];
+        if (entry && entry.name !== 'cobblestone') continue;
+        const units = Math.min(window.slots[i].count,64-(entry?.count ?? 0));
+        window.slots[dest] = stone((entry?.count ?? 0)+units);
+        window.slots[i] = stone(window.slots[i].count-units);
+      }
+    } else if (button === 1 && !window.selectedItem) {
+      const held = Math.ceil(window.slots[i].count/2);
+      window.selectedItem = stone(held);
+      window.slots[i] = stone(window.slots[i].count-held);
     } else if (button === 1) {
       window.slots[i] = stone((window.slots[i]?.count ?? 0)+1);
       window.selectedItem = stone(window.selectedItem.count-1);
+    } else if (window.selectedItem && window.slots[i]?.name === window.selectedItem.name) {
+      window.slots[i] = stone(window.slots[i].count+window.selectedItem.count);
+      window.selectedItem = null;
     } else [window.slots[i],window.selectedItem] = [window.selectedItem ?? null,window.slots[i]];
     slots.splice(0,slots.length,...structuredClone(window.slots));
     if (interrupt) window.close();
@@ -134,7 +146,7 @@ function transferFixture(initial, stock, interrupt = false) {
   const source = {...target,id:'observed',generation:'world',owner:'player',actor:'bot',item:'cobblestone',message:2};
   const job = {id:'work',receipt:{result:{}},abort:new AbortController()};
   const open = chestWindows(bot);
-  const run = () => depositItem(bot,open,source,{count:8,sourceMessage:3},job,() => {},() => {});
+  const run = () => transferItem(bot,open,source,{count:8,sourceMessage:3},job,() => {},() => {});
   return { bot,source,job,open,run,slots,clicks:() => clicks };
 }
 
@@ -159,9 +171,9 @@ test('关闭窗口后原号查回两侧数量，复查不转移物品', async ()
   assert.equal(proof.state,'pending');
   assert.equal(proof.stored,undefined);
   const after = await f.open(f.source,f.job.abort.signal,window => chestSample(f.bot,window,proof.item));
-  assert.equal(reconcileDeposit(proof,{...after,stock:proof.before.stock}).state,'pending');
+  assert.equal(reconcileTransfer(proof,{...after,stock:proof.before.stock}).state,'pending');
   for (let i = 0; i < 2; ++i) {
-    const checked = reconcileDeposit(proof,after);
+    const checked = reconcileTransfer(proof,after);
     assert.deepEqual([checked.work,checked.state,checked.stored,checked.remaining,f.clicks()],['work','verified',8,0,1]);
   }
 });
@@ -169,10 +181,39 @@ test('关闭窗口后原号查回两侧数量，复查不转移物品', async ()
 // 授权须同时匹配数量、材料和箱子，玩家单独选箱、询问或撤销均不会搬运。
 test('存箱只接受匹配原指向和数量的明确委托', () => {
   const { bot,source } = transferFixture(0,8), args = {observation:'observed',item:'cobblestone',count:8,sourceMessage:3};
-  for (const line of ['把这八块存进左箱','请把8块圆石放入左边的箱子']) depositOrder(bot,source,'左箱',line,null,args);
+  for (const line of ['把这八块存进左箱','请把8块圆石放入左边的箱子']) chestOrder(bot,source,'左箱',line,null,args);
   for (const line of ['左箱','别把这八块存进左箱','把这八块存进左箱？','把这八块存进右箱','把这九块存进左箱','把8块泥土存进左箱'])
-    assert.throws(() => depositOrder(bot,source,'左箱',line,null,args));
-  assert.throws(() => depositOrder(bot,source,'左箱','把这八块存进左箱',{...source,cell:{x:0,y:0,z:2}},args));
-  assert.throws(() => depositOrder(bot,{...source,message:3},'把这八块存进左箱','把这八块存进左箱',source,args));
-  depositOrder(bot,{...source,message:3},'把这八块放进这个箱子','把这八块放进这个箱子',source,args);
+    assert.throws(() => chestOrder(bot,source,'左箱',line,null,args));
+  assert.throws(() => chestOrder(bot,source,'左箱','把这八块存进左箱',{...source,cell:{x:0,y:0,z:2}},args));
+  assert.throws(() => chestOrder(bot,{...source,message:3},'把这八块存进左箱','把这八块存进左箱',source,args));
+  chestOrder(bot,{...source,message:3},'把这八块放进这个箱子','把这八块放进这个箱子',source,args);
+});
+
+// 从同一普通箱取到伙伴背包，比较独立槽位的实际差额和零量时的点击次数。
+test('取出八块覆盖箱内不足、背包部分容量及满包', async () => {
+  for (const [box,stock,expected,code] of [[8,0,8],[12,0,8],[15,0,8],[3,0,3,'chest_item_short'],
+      [0,0,0,'chest_item_short'],[8,61,3,'chest_inventory_partial'],[8,64,0,'chest_inventory_full'],
+      [64,0,0,'chest_split_unavailable']]) {
+    const f = transferFixture(box,stock);
+    f.slots.fill({name:'dirt',count:64},28,63);
+    const run = transferItem(f.bot,f.open,f.source,{count:8,sourceMessage:3,destination:'companion_inventory'},f.job,() => {},() => {},true);
+    if (code) await assert.rejects(run,{code}); else await run;
+    const proof = f.job.receipt.result.withdrawal;
+    assert.deepEqual([proof.state,proof.withdrawn,proof.remaining,f.slots[0]?.count ?? 0,f.slots[27]?.count ?? 0],
+      ['verified',expected,8-expected,box-expected,stock+expected]);
+    assert.equal(f.clicks() === 0,expected === 0);
+  }
+});
+
+// 只认当前委托明确指定伙伴背包的取出，反向、改箱、代收、否定和问句均不提交。
+test('取出绑定原指箱、材料、数量及伙伴自己的背包', () => {
+  const {bot,source} = transferFixture(8,0);
+  const args = {observation:'observed',sourceMessage:3,count:8,item:'cobblestone',destination:'companion_inventory'};
+  const check = (line,options=args) => chestOrder(bot,source,'左箱',line,null,options,true);
+  const order = '从左箱取出八块圆石，放进你的背包';
+  check(order);
+  check('请把左边的箱子里的8块圆石取到伙伴背包里');
+  for (const line of ['左箱','把八块圆石存进左箱',order.replace('左箱','右箱'),order.replace('圆石','泥土'),
+      order.replace('八','九'),order.replace('你的','我的'),'别'+order,order+'？','从左箱取出八块圆石']) assert.throws(() => check(line));
+  assert.throws(() => check(order,{...args,destination:'player_inventory'}));
 });
