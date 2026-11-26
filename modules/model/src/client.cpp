@@ -45,7 +45,8 @@ std::string complete(const Config& config, const std::vector<Message>& messages)
     auto serialized = Json::array();
     std::size_t content_size = 0;
     for (const auto& message : messages) {
-        if ((message.role != Role::user && message.role != Role::assistant) || !message.tool_calls.empty() || !message.tool_call_id.empty()) {
+        const bool rules = serialized.empty() && message.role==Role::system && message.source==MessageSource::rules;
+        if ((!rules && message.role != Role::user && message.role != Role::assistant) || !message.tool_calls.empty() || !message.tool_call_id.empty()) {
             throw std::runtime_error("messages: unsupported role or tool fields");
         }
         if (message.content.empty() ||
@@ -53,12 +54,13 @@ std::string complete(const Config& config, const std::vector<Message>& messages)
             message.content.size() > 1024 * 1024) {
             throw std::runtime_error("prompt: expected nonblank UTF-8 text within 1 MiB");
         }
-        content_size += message.content.size();
+        auto content = wire_content(message);
+        content_size += content.size();
         if (content_size > 1024 * 1024) {
             throw std::runtime_error("messages: total content exceeds 1 MiB");
         }
-        serialized.push_back(
-            {{"role", message.role == Role::user ? "user" : "assistant"}, {"content", message.content}});
+        serialized.push_back({{"role",rules ? "system" : message.role==Role::user ? "user" : "assistant"},
+            {"content",std::move(content)}});
     }
 
     Json request{{"model", config.model}, {"stream", false}, {"messages", std::move(serialized)}};

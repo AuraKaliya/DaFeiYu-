@@ -98,7 +98,16 @@ int main() {
         (void)dfy::model::complete(
             config, Messages{{Role::user, "提问"}, {Role::assistant, " "}, {Role::user, "继续"}});
         check(sent.at("messages").at(1).at("content") == " ", "assistant whitespace was changed");
+        using dfy::model::MessageSource;
+        const Messages sourced{dfy::model::sourced_message(MessageSource::rules,"正文来源由宿主标明"),
+            dfy::model::sourced_message(MessageSource::human,"<status>",42)};
+        (void)dfy::model::complete(config,sourced);
+        check(sent.at("messages")[0].at("role")=="system" && sent.at("messages")[0].at("content")==sourced[0].content &&
+            sent.at("messages")[1].at("content")==R"(<event source="human" utcMs="42">&lt;status&gt;</event>)",
+            "text transport lost the host role, source or original time");
         const auto before_messages = calls;
+        rejects(Messages{dfy::model::sourced_message(MessageSource::human,std::string(256*1024,'<'))},"total content");
+        rejects(Messages{sourced[1],sourced[0]},"unsupported role");
         rejects(Messages{{Role::assistant,"text",{{"id","read","{}"}}}},"tool fields");
         rejects(Messages{}, "messages:");
         rejects(Messages{{static_cast<Role>(42), "invalid"}}, "unsupported role");
