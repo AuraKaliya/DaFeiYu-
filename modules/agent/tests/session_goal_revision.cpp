@@ -40,13 +40,16 @@ void revised(const GoalCase& example, std::ostream* evidence = nullptr) {
     if (!limited) { spec.steps.push_back(generation); spec.steps.push_back(last); spec.expected_model_requests = 4; }
     ScriptedModel model(std::move(spec)); const auto fixed = model.backend(); std::atomic<bool> saw_goal = false, saw_facts = false;
     Backend backend{[&](const Config& config,const Request& input) {
-        if (input.messages.front().role == Role::system && input.messages.back().content.find("\"goal\":\"new goal\"") != std::string::npos) saw_goal = true;
+        if (input.messages.front().role == Role::system && input.messages.back().content.find("\"goal\":\"new goal\"") != std::string::npos)
+            saw_goal = input.messages.back().content.find(R"("goal_message":{"eventUtcMs":4567,"message":4,"source":"host_control"})")!=std::string::npos;
         if (input.messages.front().role == Role::user && input.messages.size() > 4)
             saw_facts = input.messages[2].content == "old output" && input.messages[3].content.ends_with("new goal");
         return fixed.complete(config,input);
     }};
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
     Session session(fixed_replay_model(),channel,backend); ConfirmationCaller caller, stranger; RunOptions options;
+    options.prompt_utc_ms = 1234;
+    options.message_clock = [] { return 4567; };
     options.version_labels = compiled_replay_labels("agent.plan-request-v1");
     options.planning = PlanLimits{}; options.now = model.clock(); options.confirmation_caller = caller; options.goal_update_limit = 1;
     if (limited) options.policy.model_limit = 2;

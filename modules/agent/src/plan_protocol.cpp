@@ -69,7 +69,7 @@ PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_re
 // 投影原调用配对、步骤验证和本次取样，保持规划请求的声明式工具范围。
 // 步骤：归集有来源的工具回执 → 提取已验证前缀 → 合入状态及观察的有效性 → 校验完整请求。
 void project_plan_evidence(model::Request& plan, const std::vector<model::Message>& history, const PlanSnapshot& state,
-    std::string_view status, std::span<const std::string> observations, std::optional<bool> action_basis_current) {
+    std::string_view status, std::span<const std::string> observations, std::optional<bool> action_basis_current, std::size_t goal_message) {
     if (!plan.tools.empty() || plan.messages.size() != 2 || plan.messages.back().role != model::Role::user)
         throw std::invalid_argument("plan evidence: expected a planning request");
     auto receipts = Json::array();
@@ -111,6 +111,13 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
     auto data = Json::parse(plan.messages.back().content);
     data["host_evidence"] = {{"through_message",history.size()},{"tool_receipts",std::move(receipts)},
         {"older_tool_receipts",omitted},{"verified_steps",std::move(verified)}};
+    if (goal_message) {
+        const auto& original = history.at(goal_message-1);
+        if (original.role!=model::Role::user) throw std::invalid_argument("plan evidence: expected original goal input");
+        Json goal{{"message",goal_message},{"source",model::source_name(original.source)}};
+        if (original.event_utc_ms) goal["eventUtcMs"] = *original.event_utc_ms;
+        data["host_evidence"]["goal_message"] = std::move(goal);
+    }
     if (!status.empty()) data["host_evidence"]["context_status"] = Json::parse(status);
     if (!observations.empty()) {
         auto samples = Json::array();

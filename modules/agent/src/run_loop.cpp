@@ -468,7 +468,8 @@ struct RunLoopState {
             std::vector<std::string> observations;
             for (const auto& sample : options.observations) observations.push_back(plan_observation_input(*sample,current.now));
             const auto basis_current = current.observation_binding ? std::optional(current.observations_current) : std::nullopt;
-            project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status,observations,basis_current);
+            project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status,observations,basis_current,
+                record->context_->goal_message());
         }
         if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
         if (options.prompt_rules) {

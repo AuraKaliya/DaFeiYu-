@@ -142,6 +142,7 @@ void replay() {
     }
     options.now = [&] { return now; };
     options.planning = PlanLimits{16,2,16*1024};
+    options.prompt_utc_ms = 1250;
     options.confirmation_caller = caller;
     const auto planning = session.begin("deliver eight",options);
     until(session,[&] { return planning->plan()->definition && planning->plan()->steps[0].waiting == PlanWait::verification; });
@@ -163,6 +164,11 @@ void replay() {
         projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
         projections[3].empty() && projections[5].empty(), "projection changed grants or followed caller order");
     check(prepared[3].tools.empty() && prepared[5].tools.empty() && contains(prepared[5],"use a chest"),"revision or planning authority changed");
+    const auto first_goal = nlohmann::json::parse(prepared[3].messages.back().content).at("host_evidence").at("goal_message");
+    const auto revised_goal = nlohmann::json::parse(prepared[5].messages.back().content).at("host_evidence").at("goal_message");
+    check(first_goal==revised_goal && first_goal.at("eventUtcMs")==1250 && first_goal.at("source")=="human" &&
+        session.read_evidence(session.evidence_epoch(),first_goal.at("message").get<std::size_t>(),1).front().content=="deliver eight",
+        "replanning lost the original goal event in retained dialogue");
     const auto first_samples = nlohmann::json::parse(prepared[3].messages.back().content).at("host_evidence").at("observations");
     const auto revised_samples = nlohmann::json::parse(prepared[5].messages.back().content).at("host_evidence").at("observations");
     check(first_samples.size()==2 && first_samples[0].at("source")==source.id() && first_samples[0].at("object").at("generation")==2 &&

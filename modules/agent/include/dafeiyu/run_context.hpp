@@ -34,6 +34,8 @@ class RunContext {
         ToolError fault = ToolError::none, bool accepted = true);
     // 仅在全部结果已准备时发布本批历史，提交不分配内存。
     void commit_tools();
+    // 返回当前目标在本会话原件中的一基位置，修订在成功纳入上下文后生效。
+    std::size_t goal_message() const noexcept { return goal_message_; }
     // 在完整步骤后准备用户补充和可选阶段答复，保持已提交历史独立。
     void append_user_inputs(std::span<const TurnInput> inputs, const model::Message* prior_answer);
     // 在无未完成工具时追加有界步骤数据，准备失败不改变已提交历史或当前输入。
@@ -61,7 +63,7 @@ class RunContext {
     std::shared_ptr<MessageHistory> pending_;
     std::vector<bool> replies_;
     std::size_t tool_begin_ = 0;
-    std::size_t plain_prompt_end_ = 0;
+    std::size_t plain_prompt_end_ = 0, goal_message_ = 0;
     bool finished_ = false;
 };
 }
