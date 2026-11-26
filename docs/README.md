@@ -16,7 +16,7 @@
 | 在本机浏览器复盘 MC 伙伴 | [MC Trace 查看器](mc-trace-viewer.md) |
 | 评审 MC 陪玩的功能范围、实施顺序和通用交互 | [按方向的功能开发列表](mc-companion-development-plan.md#按方向的功能开发列表) · [实施顺序与跨方向验收](mc-companion-development-plan.md#实施顺序与跨方向验收) · [参考项目复核](mc-partner-capability-review.md) |
 | 审核管理中心首版的界面、后台本体、消息、配置与插件扩展 | [完整开发方案](ui-framework-design.md) · [实施顺序与验收](ui-framework-design.md#10-分步实施与验收) · [UI 技术选型](ui-technology-decisions.md) |
-| 核对原生书房、身体、感知与动作的开发进度 | [主面板与内置房间](main-agent-room-development-plan.md) |
+| 核对书房感知如何进入主聊天、身体如何移动及抵达 | [房间知情范围](main-agent-room-development-plan.md#4-首间房与感知规则) · [步骤 01～13 和后续计划](main-agent-room-development-plan.md#7-分步开发顺序) |
 | 开发插件或核对接口 | [SDK 指南](../sdk/README.md) · [v2 契约](plugin-abi-v2.md) · [冻结的 v1 契约](plugin-abi.md) |
 
 通过 `git log -- docs` 查看变更。清理前的阶段索引可用 `git show 343d5ed:docs/archive/README.md` 读取。

@@ -235,6 +235,8 @@ Release 全量构建通过，244 项离线 CTest 全部通过。另用八组隔�
 
 ### 最近一次验收
 
+11 月 26 日晚的隔离 Paper 用普通绑定和选定玩家各重跑指定物品堆续取。选定玩家的 Debug 局 `run-vDSO8j`、Release 局 `run-1swolI` 都在原物品堆两次受阻和最终入包后，通过实际提供的 `status_read` 读回当步冻结快照。三份事实号分别为 14、23、32，对应的「本次已收／仍待拾取」为 0／2、0／2、2／0。独立客户端记录了一次向伙伴收取 2 块泥土的通知，伙伴库存由 3 到 5，另一堆仍有 2 块。宿主快照另核对原工作号、实体 UUID 和游戏采样时间。[可复现实验](../tests/mc-companion/README.md#固定响应验收单个玩家绑定) · [游戏与快照断言](../tests/mc-companion/playtest-check.cjs)
+
 11 月 26 日的集成点为 `dcac5ffe`。两条 MC 任务纠正轨迹分别有 13 和 8 次模型请求，21 份宿主快照均可定位，其中 10 份紧随工具回执。同一绑定撤下任务目标后，仍可按原号查到撤样前的版本。隔离 Paper 的 `run-fgqiZC` 另按原工作复验了取箱。目标 8 块，正常、库存受限和满包三种情况下的取箱实效分别为 8、3、0 块。[任务状态与撤样回归](../tests/mc-companion/mc_status_sample.cpp) · [取箱断言](../tests/mc-companion/chest-withdrawal-check.cjs) · [集成验收记录](agent-loop-core-design.md#第-4-项逐决策状态与按版本查询)
 
 #### 此前的游戏与消息回归
