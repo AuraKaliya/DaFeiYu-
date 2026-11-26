@@ -101,39 +101,72 @@ async function moveIntoChest(window, proof, click) {
   }
 }
 
+// 从原箱槽位选下一步，先拆出凑足总数所需的余量，确保关窗时光标也在本次额度内。
+function withdrawalStep(slots, item, left, authorized) {
+  let first, split, halfStep, total = 0;
+  for (let src = 0; src < 27; ++src) {
+    const stack = slots[src];
+    if (stack?.name !== item) continue;
+    const count = stack.count, half = Math.ceil(count/2);
+    if (count >= left && count <= authorized) return {src};
+    if (count > authorized && half <= left) {
+      // 先取一部分，使剩余源栈下一次右键取半仍落在余下额度内。
+      halfStep ??= {src,button:1,take:half === left ? left : Math.min(half,2*left-count)};
+    }
+    if (count >= left || total >= left) continue;
+    first ??= {src};
+    if (total+count > left) {
+      const take = left-total;
+      split = {src,button:take <= half ? 1 : 0,take};
+    }
+    total += count;
+  }
+  return total >= left ? split ?? first : halfStep ?? first;
+}
+
 // 从指定箱取入伙伴背包，每一次可能随关窗归入背包的光标数量都受剩余授权约束。
-// 步骤：优先选择可整栈转移的源槽 → 必要时取半栈分配 → 核对本次实际槽差并扣减预算。
+// 步骤：按当前额度选择整栈或拆分 → 核对每个接收槽与剩余光标 → 用实际变化扣减预算。
 async function moveOutOfChest(window, proof, click) {
   let moved = 0;
   while (moved < proof.limit) {
     const left = proof.limit-moved, authorized = proof.requested-moved;
-    const slots = window.slots.slice(0,27);
-    const full = slots.findIndex(stack => stack?.name === proof.item && stack.count <= authorized);
-    if (full >= 0) {
-      const count = slots[full].count;
-      await click(full,0,1);
-      const delta = count-(window.slots[full]?.count ?? 0);
+    const step = withdrawalStep(window.slots,proof.item,left,authorized);
+    if (!step) return 'chest_split_unavailable';
+    const {src,button,take} = step, count = window.slots[src].count;
+    if (take === undefined) {
+      await click(src,0,1);
+      const delta = count-(window.slots[src]?.count ?? 0);
       if (delta <= 0 || delta > left) throw chestError('chest_slots_changed','取出时伙伴背包的可用空间已变化');
       moved += delta;
       continue;
     }
-    const src = slots.findIndex(stack => stack?.name === proof.item && Math.ceil(stack.count/2) <= left);
-    if (src < 0) return 'chest_split_unavailable';
-    const count = slots[src].count, half = Math.ceil(count/2);
-    const take = half === left ? left : Math.min(half,2*left-count);
-    await click(src,1,0);
-    if (window.selectedItem?.name !== proof.item || window.selectedItem.count !== half)
+    const held = button ? Math.ceil(count/2) : count;
+    await click(src,button,0);
+    if (window.selectedItem?.name !== proof.item || window.selectedItem.count !== held)
       throw chestError('chest_slots_changed','取出时原箱槽位已变化');
     let units = take;
     for (let dest = 27; dest < 63 && units; ++dest) {
-      const entry = window.slots[dest];
-      if (entry && entry.name !== proof.item) continue;
-      const pieces = Math.min(units,proof.before.stock.stackSize-(entry?.count ?? 0));
-      for (let i = 0; i < pieces; ++i) await click(dest,1,0);
-      units -= pieces;
+      while (units) {
+        const entry = window.slots[dest], cursor = window.selectedItem;
+        if ((entry && entry.name !== proof.item) || entry?.count === proof.before.stock.stackSize) break;
+        if (cursor?.name !== proof.item || cursor.count !== held-(take-units))
+          throw chestError('chest_slots_changed','取出时光标物品或数量已变化');
+        const all = cursor.count <= units && cursor.count <= proof.before.stock.stackSize-(entry?.count ?? 0);
+        const amount = all ? cursor.count : 1;
+        await click(dest,all ? 0 : 1,0);
+        units -= amount;
+      }
     }
     if (units) throw chestError('chest_slots_changed','取出时伙伴背包的槽位已变化');
-    if (window.selectedItem) await click(src,0,0);
+    if ((window.selectedItem?.count ?? 0) !== held-take) throw chestError('chest_slots_changed','拆栈后光标余量与本次转移不符');
+    if (window.selectedItem) {
+      const entry = window.slots[src];
+      if (window.selectedItem.name !== proof.item || (entry && entry.name !== proof.item) ||
+          window.selectedItem.count+(entry?.count ?? 0) > proof.before.container.stackSize)
+        throw chestError('chest_slots_changed','归还拆栈余量时原箱槽位已变化');
+      await click(src,0,0);
+      if (window.selectedItem) throw chestError('chest_slots_changed','拆栈余量尚未归回原箱槽');
+    }
     moved += take;
   }
 }

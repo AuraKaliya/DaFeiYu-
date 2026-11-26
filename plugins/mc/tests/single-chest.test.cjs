@@ -205,6 +205,19 @@ test('取出八块覆盖箱内不足、背包部分容量及满包', async () =>
   }
 });
 
+// 对照两栈各七和前置大栈两种排列，跨槽取八不能因先移走整栈而失去可用拆分。
+test('普通小栈合计足量时先完成所需拆分，再取整栈', async () => {
+  for (const counts of [[7,7],[64,7,7],[3,3,3]]) {
+    const f = transferFixture(0,0);
+    counts.forEach((count,slot) => { f.slots[slot] = {name:'cobblestone',count}; });
+    await transferItem(f.bot,f.open,f.source,{count:8,sourceMessage:3,destination:'companion_inventory'},f.job,() => {},() => {},true);
+    const proof = f.job.receipt.result.withdrawal;
+    assert.deepEqual([proof.state,proof.withdrawn,proof.remaining,proof.after.stock.stored],['verified',8,0,8]);
+    assert.equal(proof.before.container.stored-proof.after.container.stored,8);
+    if (counts[0] === 64) assert.equal(f.slots[0].count,64);
+  }
+});
+
 // 只认当前委托明确指定伙伴背包的取出，反向、改箱、代收、否定和问句均不提交。
 test('取出绑定原指箱、材料、数量及伙伴自己的背包', () => {
   const {bot,source} = transferFixture(8,0);

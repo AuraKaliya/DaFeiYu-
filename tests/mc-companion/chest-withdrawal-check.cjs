@@ -20,7 +20,7 @@ async function serverStock(fixture, player, sequence) {
 
 // 使用同一玩家原指箱现场验收取出，每次委托由独立玩家分别清点两个箱子及伙伴背包。
 // 步骤：备好双箱和伙伴容量 → 从原指箱发起定量取出 → 核对双边实效 → 中断及重提回到原号。
-async function checkChestWithdrawals(fixture, player, whispers, contents, actions, trace) {
+async function checkChestWithdrawals(fixture, player, whispers, contents, actions, trace, boundary = false) {
   const rows = () => actions().filter(row => row.skill === 'withdraw_item' && row.result.withdrawal);
   const selected = actions().find(row => row.result.chest);
   const evidence = [], id = player.registry.itemsByName.cobblestone.id;
@@ -32,7 +32,11 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
     const [left,right] = await contents();
     return {left,right,companion,player:player.inventory.count(id),sampledAtMs:Math.floor(performance.now())};
   };
-  const cases = [
+  const cases = boundary ? [
+    {name:'mixed-stacks',stock:78,stacks:[64,7,7],taken:8},
+    {name:'oversized',stock:64,taken:0,reason:'chest_split_unavailable'},
+    {name:'cursor-interrupted',stock:12,taken:6,reason:'chest_window_closed'}
+  ] : [
     {name:'normal',stock:12,taken:8},
     {name:'short',stock:3,taken:3,reason:'chest_item_short'},
     {name:'partial',stock:8,bag:61,taken:3,reason:'chest_inventory_partial'},
@@ -41,7 +45,9 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
   ];
   for (const [index,scenario] of cases.entries()) {
     const {stock,bag = 0,taken,name,reason} = scenario;
-    fixture.send('data modify block 2 -60 -2 Items set value [{Slot:0b,id:"minecraft:cobblestone",count:'+stock+'}]');
+    const stacks = scenario.stacks ?? [stock];
+    const items = stacks.map((count,slot) => '{Slot:'+slot+'b,id:"minecraft:cobblestone",count:'+count+'}');
+    fixture.send('data modify block 2 -60 -2 Items set value ['+items.join(',')+']');
     fixture.send('clear DfyCompanion');
     if (bag) {
       fixture.send('give DfyCompanion minecraft:stone 2304');
@@ -51,7 +57,7 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
     assert.deepEqual([before.left,before.right,before.companion,before.player],[stock,5,bag,0]);
     await player.lookAt(player.entity.position.offset(0,6,0),true);
     await until(() => fixture.ownerEntity()?.pitch > 1,'玩家从原指箱转向上方');
-    const interrupted = name === 'interrupted', start = whispers.length;
+    const interrupted = reason === 'chest_window_closed', start = whispers.length;
     if (interrupted) fixture.interruptChest();
     player.chat(index % 2 ? '请把左边的箱子里的8块圆石取到伙伴背包里' : '从左箱取出八块圆石，放进你的背包');
     const row = await until(() => rows()[index],'取出原工作实际退出',20000);
@@ -90,11 +96,17 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
       recheck = {query:read.work,work:settled.work,revision:settled.revision,withdrawn:taken,remaining:8-taken};
     }
     const final = await sample();
+    let finalSlots;
+    if (scenario.stacks) {
+      const chest = await player.openContainer(player.blockAt(player.entity.position.clone().set(2,-60,-2)));
+      try { finalSlots = stacks.map((_,slot) => chest.slots[slot]?.count ?? 0); } finally { chest.close(); }
+      assert.deepEqual(finalSlots,[64,0,6]);
+    }
     assert.deepEqual([rows().length,final.left,final.right,final.companion,final.player],[index+1,after.left,after.right,after.companion,after.player]);
     evidence.push({scenario:name,generation:proof.generation,dimension:proof.dimension,selected:proof.cell,other:{x:2,y:-60,z:2},
       observation:proof.observation,pointedMessage:proof.pointedMessage,sourceMessage:proof.sourceMessage,work:row.work,
       direction:proof.direction,destination:proof.destination,status:proof.state,withdrawn:proof.withdrawn,remaining:proof.remaining,
-      reason,attempted:proof.attempted,rejectedDuplicate:duplicate.result.originalWork,before,after,final,recheck});
+      reason,attempted:proof.attempted,rejectedDuplicate:duplicate.result.originalWork,initialSlots:scenario.stacks,finalSlots,before,after,final,recheck});
     writeFileSync(join(fixture.evidence,'withdraw-evidence.json'),JSON.stringify(evidence,null,2));
   }
 }
