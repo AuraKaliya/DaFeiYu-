@@ -214,9 +214,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     const auto snapshot = plugins_.capture_hooks(slot.owner);
     options.version_labels.control_extension = snapshot.version;
     options.system_instructions = std::move(input.instructions);
-    if (!options.system_instructions.empty())
-        options.version_labels.prompt_template = "sha256:"+platform::sha256(options.system_instructions);
-    if (input.player_facing) persona_.apply(options);
+    persona_.apply(options,input.player_facing ? agent::OutputRoute::plugin_player : agent::OutputRoute::plugin_internal);
     options.extension = plugins::plugin_controls(snapshot,slot.owner);
     options.text_hook = plugins::plugin_text_hooks(snapshot,slot.owner);
     options.exit_observer = plugins::plugin_exit_hook(snapshot);

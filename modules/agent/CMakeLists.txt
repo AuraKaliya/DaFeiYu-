@@ -4,7 +4,7 @@ add_library(dfy_agent STATIC
   src/execution_policy.cpp src/observation.cpp src/observation_controller.cpp src/observation_inbox.cpp
   src/observation_input.cpp src/observation_trigger.cpp src/observation_verification.cpp
   src/plan_book.cpp src/plan_definition.cpp src/plan_protocol.cpp src/run_context.cpp
-  src/run_journal.cpp src/run_loop.cpp src/run_trace.cpp src/session.cpp src/timeline_review.cpp
+  src/prompt_rules.cpp src/run_journal.cpp src/run_loop.cpp src/run_trace.cpp src/session.cpp src/timeline_review.cpp
   src/tool_batch.cpp src/tool_catalog.cpp src/tool_executor.cpp src/tool_schema.cpp src/tool_work.cpp
   src/trace_identity.cpp
   include/dafeiyu/action_observations.hpp include/dafeiyu/async_session.hpp
@@ -16,7 +16,7 @@ add_library(dfy_agent STATIC
   include/dafeiyu/observation_rebind.hpp include/dafeiyu/observation_trigger.hpp
   include/dafeiyu/observation_verification.hpp include/dafeiyu/plan_book.hpp
   include/dafeiyu/plan_definition.hpp include/dafeiyu/plan_feedback.hpp
-  include/dafeiyu/plan_protocol.hpp include/dafeiyu/run_capture.hpp include/dafeiyu/run_context.hpp
+  include/dafeiyu/plan_protocol.hpp include/dafeiyu/prompt_rules.hpp include/dafeiyu/run_capture.hpp include/dafeiyu/run_context.hpp
   include/dafeiyu/run_identity.hpp include/dafeiyu/run_journal.hpp include/dafeiyu/run_loop.hpp
   include/dafeiyu/run_options.hpp include/dafeiyu/run_trace.hpp include/dafeiyu/session.hpp
   include/dafeiyu/tool_batch.hpp include/dafeiyu/tool_catalog.hpp include/dafeiyu/tool_executor.hpp

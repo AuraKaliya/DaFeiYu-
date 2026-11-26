@@ -137,6 +137,40 @@ void verify_output(const std::filesystem::path& data) {
         throw std::runtime_error("explicit reply, independent final or internal result routed incorrectly");
     check_output_trace(application.trace_file(),rows[3]);
 }
+
+// 用两个真实人格文件驱动相同的主聊天输入，逐段比较职责、授权、判断和输出契约。
+// 步骤：分别加载两份风格 → 捕获正式请求及当轮工具 → 核对规则顺序及实际送达。
+void verify_styles(const std::filesystem::path& root) {
+    std::vector<std::string> headers;
+    for (const std::string style : {"brief","warm"}) {
+        const auto data = root/style;
+        std::filesystem::create_directories(data);
+        std::ofstream(data/"persona.json") << Json{{"id","style"},{"revision",1},{"instructions",style}}.dump();
+        auto db = std::make_shared<app::MessageStore>(data);
+        app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& input) {
+            headers.push_back(input.messages.front().content);
+            if (input.messages.front().source!=model::MessageSource::rules || input.tools.size()!=1 || input.tools[0].name!="main_reply")
+                throw std::runtime_error("style changed granted tools");
+            return model::Response{{model::Role::assistant,"相同的回执"}};
+        }});
+        application.bind_messages(db,"style-test",nullptr);
+        application.main_messages()->terminal("greeting","问候");
+        drain(application);
+        const auto rows = db->page(true,0,db->watermark(),4).records;
+        if (rows.size()!=2 || rows.front().receipt.at("state")!="delivered" || rows.front().envelope.at("text")!="相同的回执")
+            throw std::runtime_error("style changed actual delivery");
+        auto& head = headers.back();
+        std::size_t offset = 0;
+        for (const auto label : {"【职责与信息来源 v1】","【授权与行动边界 v1】","【判断与结算 v1】","【输出与投递 v1】","【人格与风格 v1】"}) {
+            const auto begin = head.find(label,offset);
+            if (begin==head.npos) throw std::runtime_error("rule sections lost their stable order");
+            offset = begin+std::string_view(label).size();
+        }
+        if (head.substr(offset)!="\n"+style) throw std::runtime_error("persona was not confined to the style section");
+        head.resize(offset);
+    }
+    if (headers[0]!=headers[1]) throw std::runtime_error("persona altered non-style rules");
+}
 }
 // 使用独立目录与固定模型响应验收应用的消息实效。
 int wmain(int argc, wchar_t** argv) {
@@ -145,6 +179,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto root = std::filesystem::path(argv[1])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         verify(root/"long-history");
         verify_output(root/"output");
+        verify_styles(root/"styles");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

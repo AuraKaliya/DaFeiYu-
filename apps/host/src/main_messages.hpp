@@ -18,7 +18,7 @@ class MainMessages {
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
         RunLog* trace, bool structured);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
-    void prepare_output(agent::RunOptions& options);
+    bool prepare_output(agent::RunOptions& options);
     // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。
     void clear_context(std::uint64_t through) noexcept { context_floor_ = through; delivered_.reset(); }
     // 绑定业务线程的实时终端输出，只有首次写盘成功才通知。

@@ -58,7 +58,6 @@ struct ModelStepSnapshot {
     std::optional<model::Usage> usage;
     TurnDiagnostics::TimePoint observed_exit;
 };
-enum class ModelPurpose { direct, plan_generation, plan_step };
 // 模型前控制检查时固定的目标、计划与行动观察关联，无正文或可执行凭证。
 struct ModelContextSnapshot {
     AttemptId attempt;

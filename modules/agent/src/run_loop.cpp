@@ -466,8 +466,15 @@ struct RunLoopState {
             const auto basis_current = current.observation_binding ? std::optional(current.observations_current) : std::nullopt;
             project_plan_evidence(input,record->context_->messages(),record->plan_->snapshot(),status,observations,basis_current);
         }
-        if (!options.system_instructions.empty()) {
-            if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
+        if (options.system_instructions.size() > 8192) throw std::length_error("run: oversized system instructions");
+        if (options.prompt_rules) {
+            const bool existing = input.messages.front().role==model::Role::system;
+            const auto purpose = planning_request ? ModelPurpose::plan_generation : plan_step ? ModelPurpose::plan_step : ModelPurpose::direct;
+            auto head = render_prompt_rules(*options.prompt_rules,options.system_instructions,
+                existing ? std::string_view(input.messages.front().content) : std::string_view{},purpose);
+            if (existing) input.messages.front().content = std::move(head);
+            else input.messages.insert(input.messages.begin(),model::sourced_message(model::MessageSource::rules,std::move(head)));
+        } else if (!options.system_instructions.empty()) {
             if (input.messages.front().role == model::Role::system) input.messages.front().content =
                 options.system_instructions + "\n" + input.messages.front().content;
             else input.messages.insert(input.messages.begin(), {model::Role::system, options.system_instructions});

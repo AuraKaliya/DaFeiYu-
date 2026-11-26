@@ -8,6 +8,7 @@
 #include <dafeiyu/run_capture.hpp>
 #include <dafeiyu/context_status.hpp>
 #include <dafeiyu/turn_input.hpp>
+#include <dafeiyu/prompt_rules.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -73,5 +74,7 @@ struct RunOptions {
     // 原话的渠道时间可随准入传入，后续事件的 UTC 时钟独立于期限和预算。
     std::optional<std::int64_t> prompt_utc_ms;
     MessageClock message_clock = message_utc_now;
+    // 宿主固定的输出去向及人格表达，按当前用途装配到正式系统段。
+    std::optional<PromptRules> prompt_rules;
 };
 }

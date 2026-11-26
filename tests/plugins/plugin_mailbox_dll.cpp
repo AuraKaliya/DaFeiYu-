@@ -197,15 +197,17 @@ void fact_binding(const fs::path& root) {
     // 从每次实际请求核对同一绑定的连续性以及切换入口后的可见边界。
     // 步骤：识别旧入口快照 → 核对长工作和原话 → 核对换代或回退后的基线。
     Application app({},root,root.parent_path()/"fact-data",Backend{[&](const auto&,const Request& request) {
+        check(request.messages.front().source==MessageSource::rules &&
+            request.messages.front().content.find("交回发起任务的插件")!=std::string::npos,"internal plugin route missing");
         if (request.messages.back().content == "legacy snapshot") {
-            check(request.messages.size() == 1,"legacy fallback retained the previous projection");
+            check(request.messages.size() == 2,"legacy fallback retained the previous projection");
             ++calls;
             return Response{{Role::assistant,"internal"}};
         }
         const auto frame = Json::parse(request.messages.back().content);
         const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
         if (frame.at("factFrame").at("epoch")==3)
-            check(request.messages.size()==1 && !frame.contains("hostWorkReceipts"),"retired work leaked into a new actor's model");
+            check(request.messages.size()==2 && !frame.contains("hostWorkReceipts"),"retired work leaked into a new actor's model");
         if (seq == 11) {
             unsigned seen = 0;
             for (const auto& message : request.messages) if (message.role == Role::user) {
@@ -214,7 +216,7 @@ void fact_binding(const fs::path& root) {
                     if (work.at("work") == "W17" && work.at("effect").at("inBag") == 3) ++seen;
             }
             check(seen == 1 &&
-                request.messages.front().content.find("eight cobblestones") != std::string::npos,
+                request.messages.at(1).content.find("eight cobblestones") != std::string::npos,
                 "ninth intervening utterance lost unfinished goal, work or inventory");
         }
         if (frame.at("factFrame").at("epoch") == 2 && seq == 3) {
@@ -227,10 +229,10 @@ void fact_binding(const fs::path& root) {
                 if (effect.contains("sample")) ++bodies;
                 else if (effect.at("bytes")==993 && effect.at("sha256").get_ref<const std::string&>().size()==64) ++previews;
             }
-            check(request.messages.size()==1 && request.messages.back().content.size()<=128*1024 && works.size()==120 &&
+            check(request.messages.size()==2 && request.messages.back().content.size()<=128*1024 && works.size()==120 &&
                 bodies>0 && previews>0 && bodies+previews==120 && frame.at("goal")=="follow up","large baseline lost facts or did not fit");
         } else if (frame.at("factFrame").at("epoch") == 2) {
-            check(!frame.contains("hostWorkReceipts") && request.messages.size() == 1,"rebound leaked old facts");
+            check(!frame.contains("hostWorkReceipts") && request.messages.size() == 2,"rebound leaked old facts");
             if (seq == 2) check(frame.at("factFrame").at("mode") == "baseline" && frame.at("new") == "world" &&
                 frame.at("again") == true,"return from legacy omitted the current baseline");
         }
@@ -380,7 +382,8 @@ void subagents(const fs::path& root) {
             check(wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
                 "plugin snapshot exposed external markup");
         ++calls;
-        return Response{{Role::assistant,std::to_string(request.messages.size())}};
+        check(request.messages.front().source==MessageSource::rules,"plugin model input lost the host rule header");
+        return Response{{Role::assistant,std::to_string(request.messages.size()-1)}};
     }});
     check(!app.plugins().load("test.mail"),"could not start subagent owner");
     const auto instance = app.plugins().instance("test.mail");

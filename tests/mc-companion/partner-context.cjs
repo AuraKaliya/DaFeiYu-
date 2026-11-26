@@ -8,10 +8,13 @@ function readPartnerContext(row) {
   const start = system.content.indexOf(header);
   assert.equal(system.role, 'system');
   assert.equal(message.role, 'user');
-  assert.equal(row.personaProfile, 'dafeiyu/default/1');
+  assert.equal(row.personaProfile, 'dafeiyu/default/2');
   assert.match(row.promptTemplate, /^sha256:/);
-  assert.ok(system.content.startsWith('你叫大肥鱼。') && start > 0);
-  const fixed = JSON.parse(system.content.slice(start + header.length));
+  assert.ok(system.content.startsWith('【职责与信息来源 v1】') && start > 0);
+  assert.match(system.content, /【人格与风格 v1】\n你叫大肥鱼。/);
+  const end = system.content.indexOf('\n【授权与行动边界 v1】', start);
+  assert.ok(end > start + header.length);
+  const fixed = JSON.parse(system.content.slice(start + header.length, end));
   assert.deepEqual(Object.keys(fixed), ['flowGuidance']);
   assert.deepEqual(Object.keys(fixed.flowGuidance), ['scene']);
   assert.match(fixed.flowGuidance.scene, /mcGuidance/);

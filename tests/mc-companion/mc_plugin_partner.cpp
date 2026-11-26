@@ -1821,7 +1821,8 @@ int wmain(int argc, wchar_t** argv) {
         std::string follow_work, resumed_work;
         app::Application app({},root/"packages",root/"user",Backend{[&](const auto&,const Request& request) -> Response {
             if (request.messages.front().role != Role::system ||
-                !request.messages.front().content.starts_with("你叫大肥鱼。") ||
+                !request.messages.front().content.starts_with("【职责与信息来源 v1】") ||
+                request.messages.front().content.find("【人格与风格 v1】\n你叫大肥鱼。") == std::string::npos ||
                 request.messages.front().content.find("\nMinecraft 同场规则\n") == std::string::npos)
                 throw std::runtime_error("partner lost the host persona or its scene rules");
             const auto& last = request.messages.back();

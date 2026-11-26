@@ -29,7 +29,7 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
 
 // 为新对话重置防重范围，已有专用工具与原调用的参数授权仍由该入口持有。
 // 步骤：归还上轮发言记录 → 核对入口与后端能力 → 固定工具及当轮说明。
-void MainMessages::prepare_output(agent::RunOptions& options) {
+bool MainMessages::prepare_output(agent::RunOptions& options) {
     explicit_deliveries_.clear();
     output_input_ = 0;
     auto state = std::make_shared<agent::ContextStatus>();
@@ -56,9 +56,9 @@ void MainMessages::prepare_output(agent::RunOptions& options) {
         }
     }
     if (!state->fields.empty()) options.context_status = std::move(state);
-    if (!reply_tools_ || options.tools || options.planning) return;
+    if (!reply_tools_ || options.tools || options.planning) return false;
     options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
-    options.system_instructions += " 普通最终文本会交给主聊天用户。需要提前发言或追问时可调用 main_reply。";
+    return true;
 }
 
 // 将一次写入与真实渠道消息号关联，Trace 只记录可复查的投递身份。

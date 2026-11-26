@@ -243,7 +243,8 @@ static dfy_v2_status DFY_V2_CALL describe_text(dfy_v2_instance* instance, uint32
 static dfy_v2_status rewrite_turn(uint32_t index, dfy_v2_string_view value, char* output, uint64_t capacity, uint64_t* written) {
     const char* target = NULL;
     if (index == 0 && value.length == 10 && !memcmp(value.data,"hook input",10)) target = "rewritten prompt";
-    if (index == 1 && !value.length) target = "hook system";
+    // 该夹具明确接管系统段，同时覆盖空系统段和宿主渲染后的系统段。
+    if (index == 1) target = "hook system";
     if (index == 2 && value.length == 3 && !memcmp(value.data,"raw",3)) target = "model text";
     if (index == 3 && value.length == 9 && !memcmp(value.data,"{\"bad\":1}",9)) target = "{}";
     if (index == 4 && value.length == 10 && !memcmp(value.data,"model text",10)) target = "visible reply";

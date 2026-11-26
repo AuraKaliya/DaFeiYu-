@@ -57,7 +57,8 @@ void shared_application(const fs::path& run) {
     dfy::app::Application application({},run/"shared-plugins",run/"shared-user",dfy::model::Backend{
         [](const auto&, const auto& request) {
             check(request.messages.front().role == dfy::model::Role::system &&
-                request.messages.front().content.starts_with("你叫大肥鱼。"),"default persona was not composed for direct dialogue");
+                request.messages.front().content.starts_with("【职责与信息来源 v1】") &&
+                request.messages.front().content.find("【人格与风格 v1】\n你叫大肥鱼。")!=std::string::npos,"default persona was not composed for direct dialogue");
             const auto& last = request.messages.back();
             check(last.source==dfy::model::MessageSource::human &&
                 dfy::model::wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
@@ -96,8 +97,8 @@ void shared_application(const fs::path& run) {
     dfy::app::replay_trace(application.trace_file(),id,replay);
     check(observed.str().find("\"kind\":\"mail.dispatched\"") != std::string::npos &&
         observed.str().find("\"category\":\"dialogue.text\"") != std::string::npos &&
-        observed.str().find("\"personaProfile\":\"dafeiyu/default/1\"") != std::string::npos &&
-        conversation.diagnostic()->timeline.versions.persona_profile == "dafeiyu/default/1" &&
+        observed.str().find("\"personaProfile\":\"dafeiyu/default/2\"") != std::string::npos &&
+        conversation.diagnostic()->timeline.versions.persona_profile == "dafeiyu/default/2" &&
         replay.str().find("1 model requests, 0 tool exits, succeeded") != std::string::npos,
         "direct mailbox was not linked to its replayed model run");
 
@@ -514,7 +515,8 @@ void room_mailbox(const fs::path& run, bool automatic) {
     std::ofstream(user/"persona.json") << R"({"id":"room-test","revision":2,"instructions":"Speak like a teammate."})";
     Application application({},run/"room-plugins",user,Backend{[](const auto&,const Request& request) {
         check(request.messages.front().role == Role::system &&
-            request.messages.front().content.starts_with("Speak like a teammate.\n邮件正文"),"room persona overwrote mailbox rules");
+            request.messages.front().content.find("邮件正文")!=std::string::npos &&
+            request.messages.front().content.ends_with("【人格与风格 v1】\nSpeak like a teammate."),"room persona overwrote mailbox rules");
         return Response{{Role::assistant,request.messages.back().content}};
     }},ApplicationRunConfig{.wake_for_room_address = automatic,.trace_directory = run/"room-trace"});
     check(application.post_room_event(RoomEvent::presence_changed,"room-1","joined").state == dfy::events::DeliveryState::accepted,

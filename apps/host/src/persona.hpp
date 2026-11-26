@@ -6,8 +6,8 @@ namespace dfy::app {
 // 本体持有的身份和说话方式，与场景、工具和玩家上下文独立。
 struct PersonaProfile {
     std::string version, instructions;
-    // 将本体档案附在场景规则之前，并固定本轮公开版本。
-    void apply(agent::RunOptions& options) const;
+    // 为实际输出渠道固定规则模板，面向用户的入口单独绑定人格版本。
+    void apply(agent::RunOptions& options, agent::OutputRoute route) const;
 };
 
 // 从本体数据目录读取可选人格档案，缺省使用内置版本。

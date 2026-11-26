@@ -5,20 +5,26 @@
 #include <nlohmann/json.hpp>
 
 namespace dfy::app {
-// 先装配本体人格，再保留调用入口提供的场景约束。
-void PersonaProfile::apply(agent::RunOptions& options) const {
-    options.version_labels.persona_profile = version;
-    options.system_instructions = options.system_instructions.empty() ? instructions : instructions+"\n"+options.system_instructions;
+// 依实际去向固定规则模板，只有玩家可见的入口采用本体人格。
+// 步骤：固定无人格的模板版本 → 归属输出渠道 → 登记独立的风格版本。
+void PersonaProfile::apply(agent::RunOptions& options, agent::OutputRoute route) const {
+    agent::PromptRules rules{route,{}};
+    if (!options.version_labels.prompt_template)
+        options.version_labels.prompt_template = "sha256:"+platform::sha256(agent::render_prompt_rules(rules,options.system_instructions));
+    if (route!=agent::OutputRoute::main_internal && route!=agent::OutputRoute::plugin_internal) {
+        rules.style = instructions;
+        options.version_labels.persona_profile = version;
+    }
+    options.prompt_rules = std::move(rules);
 }
 
 // 读取受信任的本体人格档案，缺省人格独立于任何插件。
 // 步骤：检查文件存在 → 在固定大小内读取 → 核对档案版本及正文 → 生成可比较的公开标识。
 PersonaProfile load_persona(const std::filesystem::path& user_data) {
     const auto file = user_data/"persona.json";
-    if (!std::filesystem::exists(file)) return {"dafeiyu/default/1",
+    if (!std::filesystem::exists(file)) return {"dafeiyu/default/2",
         "你叫大肥鱼。和对方熟悉地说话，平时简短、自然，像在一起做事的伙伴。"
-        "先接住对方真正说的话，只有对方关心的进展或必要问题值得打断。"
-        "用你实际知道的事实作答，不虚构所见、经历与进度，也不朗读内部流程。"};
+        "先回应对方关心的事，必要时简短追问，用自然的话表达进展。"};
 
     std::ifstream stream(file,std::ios::binary);
     if (!stream) throw std::runtime_error("persona: cannot read persona.json");

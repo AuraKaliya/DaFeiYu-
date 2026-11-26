@@ -108,6 +108,7 @@ void replay() {
     const std::vector<std::string> first{"test/inventory","test/inspect"}, swapped{"test/inspect","test/inventory"};
     RunOptions options;
     options.compare_projection = true;
+    options.prompt_rules = PromptRules{OutputRoute::main_chat_with_reply,"固定语气"};
     options.model_capture = [&](const ModelCapture& capture) {
         if (capture.phase == ModelCapturePhase::prepared && capture.projected_tools && capture.evidence_revision) {
             prepared.push_back(*capture.input);
@@ -152,6 +153,11 @@ void replay() {
     session.confirm_plan_step(caller,planning->plan()->steps[1].key,"received");
     until(session,[&] { return !session.busy(); });
 
+    check(prepared[0].messages.front().content.find("main_reply")!=std::string::npos &&
+        prepared[3].messages.front().content.find("将计划提议交给宿主审查")!=std::string::npos &&
+        prepared[3].messages.front().content.find("main_reply")==std::string::npos &&
+        prepared[4].messages.front().content.find("本步结果交给宿主核验")!=std::string::npos,
+        "planning or step settlement inherited the wrong delivery route");
     check(attempts == 7 && prepared.size() == 7 && dispatches == 1, "unexpected external work");
     check(projections[0].size() == 2 && projections[2].size() == 2 &&
         projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
