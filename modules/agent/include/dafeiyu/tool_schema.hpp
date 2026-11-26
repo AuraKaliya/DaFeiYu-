@@ -1,8 +1,21 @@
 ﻿#pragma once
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace dfy::agent {
+// 只携带宿主构造的有界 JSON 拒绝详情，供调用回执与 Trace 原样核对。
+class ToolRejection : public std::invalid_argument {
+  public:
+    // 保存已经按字段过滤的裁定详情，不转发任意底层异常。
+    explicit ToolRejection(const std::string& detail) : std::invalid_argument(detail) {}
+};
+// 保留容量越界的标准异常类别，同时携带可定位的宿主回执。
+class ToolArgumentLimit : public std::length_error {
+  public:
+    // 保存有界的字段位置和容量规则。
+    explicit ToolArgumentLimit(const std::string& detail) : std::length_error(detail) {}
+};
 // 不可变工具参数契约；仅支持显式子集，未知关键字拒绝而不是忽略。
 class ToolSchema {
   public:

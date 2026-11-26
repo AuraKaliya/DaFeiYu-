@@ -314,9 +314,9 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         }
         pending_approval = confirmed && partner_turn && !raw->partner.delegated(call->session);
         if (pending_approval && body_job(*raw)) return report(DFY_V2_BUSY,error);
-        if (!input_blocked && partner_turn && !confirmed && alters_world &&
-            raw->partner.requires_approval(game_skill,nlohmann::json::parse(job.arguments).at("arguments"))) action_block = "approval_required";
-        const bool target_blocked = input_blocked || !action_block.empty();
+        const auto approval = !input_blocked && partner_turn && !confirmed && alters_world ?
+            raw->partner.approval_block(game_skill,nlohmann::json::parse(job.arguments).at("arguments")) : nlohmann::json{};
+        const bool target_blocked = input_blocked || !approval.is_null();
         const bool busy = controls_body && !target_blocked && !pending_approval &&
             (raw->partner.has_motion() || raw->partner.has_queued_action() || body_job(*raw));
         if (busy) {
@@ -334,6 +334,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
             else if (!pointed) job.output = R"({"status":"blocked","reasonCode":"pointed_block_unverified"})";
             else if (!dig_observation_issue.empty()) job.output = nlohmann::json{{"status","blocked"},{"reasonCode",dig_observation_issue}}.dump();
             else if (observation_blocked) job.output = R"({"status":"blocked","reasonCode":"hit_observation_limit","next":"ask_player"})";
+            else if (!approval.is_null()) job.output = approval.dump();
             else if (placing) job.output = nlohmann::json{{"status","blocked"},{"reason",action_block},{"placementAttempted",false},{"placed",false}}.dump();
             else job.output = nlohmann::json{{"status","blocked"},{"reason",action_block},{"broken",0}}.dump();
             job.ready = job.success = true;

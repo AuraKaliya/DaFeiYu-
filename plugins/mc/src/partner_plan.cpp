@@ -163,7 +163,10 @@ Json PartnerLoop::submit_plan(std::uint64_t invocation, const Json& arguments) {
         if (skill == "gather_ground" && requires_pointed_dig(session_)) return invalid("pointed_block_unverified");
         if (action->executor == "collect") bind_collection(skill,args);
         if (const auto reason = bind_placement_target(action->executor,args); !reason.empty()) return invalid(reason);
-        if (requires_approval(action->executor,args)) return {{"status","blocked"},{"reason","approval_required"},{"node",id}};
+        if (auto blocked = approval_block(action->executor,args); !blocked.is_null()) {
+            blocked["node"] = id;
+            return blocked;
+        }
         auto work = "plan."+std::to_string(invocation)+"."+std::to_string(plan.nodes.size()+1);
         plan.nodes.push_back({std::move(id),std::move(work),action->name,
             std::move(args),{},std::string(required)});

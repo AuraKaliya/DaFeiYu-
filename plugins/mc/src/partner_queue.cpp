@@ -76,7 +76,7 @@ nlohmann::json PartnerLoop::queue_actions(std::uint64_t invocation, const Json& 
         }
         if (const auto reason = bind_placement_target(action->executor,parameters); !reason.empty())
             return {{"status","blocked"},{"reason",reason}};
-        if (requires_approval(action->executor,parameters)) return {{"status","blocked"},{"reason","approval_required"}};
+        if (auto blocked = approval_block(action->executor,parameters); !blocked.is_null()) return blocked;
         if (pending.empty()) {
             const auto question = action_question(session_,action->executor,parameters);
             if (!question.is_null()) return question;
@@ -176,7 +176,7 @@ void PartnerLoop::advance_queue(const BridgeConfig& config, bool closing, bool b
     if (step.skill == "collect") bind_collection(step.skill,args);
     const auto reason = bind_placement_target(step.skill,args);
     auto blocked = reason.empty() ? action_question(session_,step.skill,args) : Json{{"status","blocked"},{"reason",reason}};
-    if (blocked.is_null() && requires_approval(step.skill,args)) blocked = {{"status","blocked"},{"reason","approval_required"}};
+    if (blocked.is_null()) blocked = approval_block(step.skill,args);
     if (!blocked.is_null()) {
         if (step.plan_node) {
             finish_plan_node(*step.plan_node,false,blocked);

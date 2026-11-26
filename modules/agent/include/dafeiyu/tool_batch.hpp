@@ -21,6 +21,7 @@ struct BatchToolSnapshot {
     ToolError error = ToolError::unavailable, fault = ToolError::none;
     runtime::DomainId confirmation = 0;
     std::optional<ConfirmationState> confirmation_state;
+    std::string rejection;
 };
 // 一次助手工具批次的协调器；宿主须保持上下文、执行器及本对象到结果提交完成。
 class ToolBatch {
@@ -60,7 +61,8 @@ class ToolBatch {
     // 确认全部就绪后消费批准并接纳，仍不在该边界执行工具工厂。
     void admit(const PolicyContext& current);
     // 为未执行候选填入拒绝事实，并使尚未消费的确认失效。
-    void reject(std::size_t index, ConfirmationState reason = ConfirmationState::invalidated);
+    void reject(std::size_t index, ConfirmationState reason = ConfirmationState::invalidated,
+        std::string detail = R"({"stage":"admission","reason":"unavailable"})");
     RunContext& context_;
     ToolExecutor& executor_;
     const ToolSnapshot tools_;

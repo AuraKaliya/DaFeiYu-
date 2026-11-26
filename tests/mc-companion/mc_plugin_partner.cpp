@@ -548,6 +548,13 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                 if (last.tool_call_id == "plan-focus-denied" || last.tool_call_id == "restricted-plan") {
                     if (!last.content.starts_with("status=rejected; effect=not_applied"))
                         throw std::runtime_error("plan-only focus or restricted plan was accepted");
+                    const auto detail = Json::parse(last.content.substr(last.content.find('{')));
+                    if (last.tool_call_id == "plan-focus-denied" && (detail.at("reason") != "outside_enum" ||
+                        detail.at("path") != "/steps/0/arguments/focus" || detail.at("actual") != "objects" ||
+                        !detail.at("expected").is_array() || std::ranges::find(detail.at("expected"),"objects") != detail.at("expected").end()))
+                        throw std::runtime_error("invalid plan focus lost its field or allowed values");
+                    if (last.tool_call_id == "restricted-plan" && (detail.at("stage") != "scope" || detail.at("reason") != "not_granted"))
+                        throw std::runtime_error("out-of-scope tool reported an argument failure");
                     if (last.tool_call_id == "restricted-plan") return call("_reply","final-line",{{"text",final}});
                     return call("_observe","first-focus",{{"mode","pointed"},{"message",2},{"focus","objects"}});
                 }
@@ -1685,6 +1692,7 @@ int verify_refused_collection(const std::filesystem::path& package, const std::f
     using Json = nlohmann::json;
     const bool sequence = variant.ends_with(L"-queue"), plan = variant.ends_with(L"-plan");
     std::atomic_uint receipts = 0;
+    std::uint64_t pending_item = 0;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
     app::Application host({},root/"packages",root/"user",Backend{[&](const auto&, const Request& request) -> Response {
@@ -1726,7 +1734,8 @@ int verify_refused_collection(const std::filesystem::path& package, const std::f
                 return call("_gather_ground","ask",{{"item","dirt"},{"block","dirt"},{"requiredStock",1},{"approval","game"}});
             if (message.tool_call_id == "pending") {
                 const auto result = Json::parse(message.content.substr(message.content.find('{')));
-                if (result.at("status") != "blocked" || result.at("reason") != "approval_required")
+                if (result.at("status") != "blocked" || result.at("reason") != "approval_required" ||
+                    !pending_item || result.at("item") != pending_item || result.at("broken") != 0)
                     throw std::runtime_error("collection entered while confirmation was pending: "+result.dump());
                 std::ofstream(root/"collection-pending-checked").put('1');
             } else if (message.tool_call_id == "collect") {
@@ -1738,7 +1747,10 @@ int verify_refused_collection(const std::filesystem::path& package, const std::f
         const auto input = Json::parse(message.content);
         if (input.contains("planSettlements")) { verify(input.at("planSettlements").front().at("nodes").front().at("result")); return silent; }
         if (input.contains("workSettlement")) { verify(primary_receipt(input).at("result")); return silent; }
-        if (input.at("trigger") == "skills.expanded" && input.contains("pendingApproval")) return collect(false,false,"pending");
+        if (input.at("trigger") == "skills.expanded" && input.contains("pendingApproval")) {
+            pending_item = input.at("pendingApproval").at("item").get<std::uint64_t>();
+            return collect(false,false,"pending");
+        }
         if (input.at("events").empty()) return silent;
         const auto& event = input.at("events").back();
         if (event.at("sequence") == 2)

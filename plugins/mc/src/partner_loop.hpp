@@ -101,6 +101,8 @@ class PartnerLoop {
     bool awaiting_approval(std::string_view skill) const noexcept;
     // 对仍待确认或历史上受确认约束的同一动作保持约束。
     bool requires_approval(std::string_view skill, const nlohmann::json& arguments) const;
+    // 返回当前受阻的原审批和零动作回执，只有实际待办才带原事项号。
+    nlohmann::json approval_block(std::string_view skill, const nlohmann::json& arguments) const;
     // 为未经确认的采掘附上原候选范围，供执行器检查实际方块。
     void bind_collection_guards(nlohmann::json& arguments) const;
     // 查询原候选的批准与重新核验结果，空字符串表示确定不执行，空可选值表示等待玩家。

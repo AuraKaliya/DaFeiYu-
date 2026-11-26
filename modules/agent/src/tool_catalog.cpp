@@ -161,13 +161,14 @@ ToolSnapshot ToolSnapshot::bind_arguments(const std::string& id, const std::stri
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {
     for (const auto& entry : entries_) if (entry->description.model.name == name) {
-        if (!entry->registered || !entry->enabled) throw std::invalid_argument("tools: revoked or disabled");
+        if (!entry->registered) throw ToolRejection(R"({"stage":"scope","reason":"revoked"})");
+        if (!entry->enabled) throw ToolRejection(R"({"stage":"scope","reason":"disabled"})");
         entry->schema.validate(arguments);
         if (fixed_arguments_ && exact_arguments(arguments) != *fixed_arguments_)
-            throw std::invalid_argument("tools: outside fixed arguments");
+            throw ToolRejection(R"({"stage":"scope","reason":"outside_fixed_arguments"})");
         return {entry->description,entry->registration};
     }
-    throw std::invalid_argument("tools: not granted");
+    throw ToolRejection(R"({"stage":"scope","reason":"not_granted"})");
 }
 // 先验证选择和参数，再准备不立即执行的驱动，授权撤销仍能阻止首次实际调用。
 // 步骤：解析原实例 → 核对实现 → 捕获原注册并设置调用前校验 → 签发工作身份。

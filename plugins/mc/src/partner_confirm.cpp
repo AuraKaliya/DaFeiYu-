@@ -112,6 +112,21 @@ bool PartnerLoop::requires_approval(std::string_view skill, const Json& args) co
     });
 }
 
+// 为受审批约束的动作给出零实效并关联仍有效的原事项。
+// 步骤：按原规则核对候选 → 记录本次未动的对象 → 填入可查的原审批号。
+Json PartnerLoop::approval_block(std::string_view skill, const Json& args) const {
+    if (!requires_approval(skill,args)) return {};
+    Json blocked{{"status","blocked"},{"reason","approval_required"}};
+    if (skill == "collect") blocked["broken"] = 0;
+    if (skill == "place" || skill == "fill_target") {
+        blocked["placementAttempted"] = false;
+        blocked["placed"] = false;
+    }
+    if (awaiting_approval(skill) || (skill == "fill_target" && awaiting_approval("place")))
+        blocked["item"] = confirmation_->request;
+    return blocked;
+}
+
 // 将原采掘候选的材料和取材约束交给游戏侧逐格核验。
 // 步骤：提取仍受确认保护的采掘范围 → 携带最终执行器需要的字段。
 void PartnerLoop::bind_collection_guards(Json& args) const {

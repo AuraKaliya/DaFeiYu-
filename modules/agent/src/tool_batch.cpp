@@ -1,4 +1,5 @@
 #include <dafeiyu/tool_batch.hpp>
+#include <dafeiyu/tool_schema.hpp>
 #include <algorithm>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
@@ -72,10 +73,12 @@ void ToolBatch::publish_policy(std::size_t index, ControlPoint point, PolicyDeci
     fact.control_point = point; fact.decision = decision; fact.source_revision = ++data.revision; journal_->append(fact);
 }
 // 为拒绝候选记录零动作，不改写已经消费或发生效果的确认。
-void ToolBatch::reject(std::size_t index, ConfirmationState reason) {
+void ToolBatch::reject(std::size_t index, ConfirmationState reason, std::string detail) {
     auto& entry = entries_[index];
     if (entry.metadata.confirmation) confirmations_->invalidate(entry.metadata.confirmation,reason);
-    context_.set_tool_result(index,{false,ToolEffect::not_applied,{},ToolError::unavailable},runtime::OperationState::failed,ToolError::none,false);
+    entry.metadata.rejection = std::move(detail);
+    context_.set_tool_result(index,{false,ToolEffect::not_applied,entry.metadata.rejection,ToolError::unavailable},
+        runtime::OperationState::failed,ToolError::none,false);
     entry.metadata.result = runtime::OperationState::failed; entry.metadata.exit = runtime::OperationState::succeeded; entry.filled = true;
     publish(index);
     capture(entry,ToolCapturePhase::exited);
@@ -106,7 +109,9 @@ bool ToolBatch::review(const PolicyContext& current) {
             }
             if (entry.metadata.confirmation && confirmations_->state(entry.metadata.confirmation) == ConfirmationState::waiting) ready = false;
             entry.metadata.result = entry.metadata.exit = runtime::OperationState::pending;
-        } catch (...) { reject(index); }
+        } catch (const ToolRejection& error) { reject(index,ConfirmationState::invalidated,error.what()); }
+        catch (const ToolArgumentLimit& error) { reject(index,ConfirmationState::invalidated,error.what()); }
+        catch (...) { reject(index); }
     }
     return ready;
 }
@@ -122,7 +127,9 @@ void ToolBatch::admit(const PolicyContext& current) {
             entry.metadata.invocation = entry.request->invocation().invocation;
             publish(index);
             capture(entry,ToolCapturePhase::admitted);
-        } catch (...) { reject(index); }
+        } catch (const ToolRejection& error) { reject(index,ConfirmationState::invalidated,error.what()); }
+        catch (const ToolArgumentLimit& error) { reject(index,ConfirmationState::invalidated,error.what()); }
+        catch (...) { reject(index); }
     }
     admitted_ = true;
 }

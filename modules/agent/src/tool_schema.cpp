@@ -66,23 +66,42 @@ void definition(const Json& schema, std::size_t depth) {
             throw std::invalid_argument("tool schema: invalid enumeration value");
     }
 }
-// 依据已校验 schema 验证参数，不执行代码、转换字符串类型或补默认值。
+// 给失败字段附上 JSON Pointer 和有界的实际标量，大对象只标类型。
+// 步骤：固定拒绝原因和字段位置 → 选择可展示的值 → 返回配对回执所需的详情。
+template<class Error = ToolRejection>
+[[noreturn]] void reject_argument(const Json::json_pointer& path, const char* reason, const Json* actual, const Json& expected) {
+    Json detail{{"stage","arguments"},{"reason",reason},{"path",path.to_string()}};
+    if (actual) {
+        detail["actualType"] = actual->type_name();
+        if (actual->is_primitive() && (!actual->is_string() || actual->get_ref<const std::string&>().size() <= 128))
+            detail["actual"] = *actual;
+    }
+    if (!expected.is_null()) {
+        if (expected.dump().size() <= 2048) detail["expected"] = expected;
+        else detail["enumCount"] = expected.size();
+    }
+    throw Error(detail.dump());
+}
+// 依据已校验 schema 验证参数，保留拒绝的字段及规则。
 // 步骤：检查类型和枚举 → 校验对象必需及额外字段 → 递归子值或有界数组。
-void arguments(const Json& schema, const Json& value) {
+void arguments(const Json& schema, const Json& value, const Json::json_pointer& path) {
     const auto type = schema["type"].get<std::string>();
-    if (!matches(type,value)) throw std::invalid_argument("tool arguments: type mismatch");
+    if (!matches(type,value)) reject_argument(path,"type_mismatch",&value,type);
     if (schema.contains("enum") && std::find(schema["enum"].begin(),schema["enum"].end(),value) == schema["enum"].end())
-        throw std::invalid_argument("tool arguments: value outside enumeration");
+        reject_argument(path,"outside_enum",&value,schema["enum"]);
     if (type == "object") {
-        if (schema.contains("required")) for (const auto& key : schema["required"]) if (!value.contains(key.get<std::string>()))
-            throw std::invalid_argument("tool arguments: missing required field");
+        if (schema.contains("required")) for (const auto& key : schema["required"]) {
+            const auto& name = key.get_ref<const std::string&>();
+            if (!value.contains(name)) reject_argument(path/name,"required_field",nullptr,schema["properties"][name]["type"]);
+        }
         for (const auto& [name,child] : value.items()) {
-            if (!schema["properties"].contains(name)) throw std::invalid_argument("tool arguments: extra field");
-            arguments(schema["properties"][name],child);
+            if (!schema["properties"].contains(name))
+                reject_argument(name.size() <= 64 ? path/name : path,"unexpected_field",nullptr,nullptr);
+            arguments(schema["properties"][name],child,path/name);
         }
     } else if (type == "array") {
-        if (value.size() > 64) throw std::length_error("tool arguments: array exceeds 64 items");
-        for (const auto& child : value) arguments(schema["items"],child);
+        if (value.size() > 64) reject_argument<ToolArgumentLimit>(path,"array_limit",nullptr,64);
+        for (std::size_t i = 0; i < value.size(); ++i) arguments(schema["items"],value[i],path/i);
     }
 }
 }
@@ -94,8 +113,15 @@ ToolSchema::ToolSchema(std::string json) {
     if (schema["type"] != "object") throw std::invalid_argument("tool schema: object root required");
     storage_ = std::make_shared<const Storage>(std::move(json),std::move(schema));
 }
-// 校验本次有界参数，实例共享的定义始终保持不变。
-void ToolSchema::validate(const std::string& input) const { arguments(storage_->definition,parse(input)); }
+// 校验本次有界参数并标明错误位置，实例共享的定义始终保持不变。
+// 步骤：核对大小及 JSON 编码 → 从根位置按契约验证字段。
+void ToolSchema::validate(const std::string& input) const {
+    const Json::json_pointer root;
+    if (input.size() > 64*1024) reject_argument<ToolArgumentLimit>(root,"input_limit",nullptr,64*1024);
+    const auto value = Json::parse(input,nullptr,false);
+    if (value.is_discarded()) reject_argument(root,"invalid_json",nullptr,nullptr);
+    arguments(storage_->definition,value,root);
+}
 // 返回契约原文供模型描述投影，不暴露内部 JSON 库类型。
 const std::string& ToolSchema::json() const noexcept { return storage_->source; }
 }

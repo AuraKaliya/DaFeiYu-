@@ -95,7 +95,7 @@ void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
     if (entry.confirmation) item["confirmation"] = entry.confirmation;
     if (value.phase == agent::ToolCapturePhase::exited) {
         const auto* request = value.request;
-        const auto& outcome = request ? request->outcome() : agent::ToolResult{false,entry.effect,{},entry.error};
+        const auto& outcome = request ? request->outcome() : agent::ToolResult{false,entry.effect,entry.rejection,entry.error};
         item["result"] = states.at(static_cast<std::size_t>(state));
         item["effect"] = effects.at(static_cast<std::size_t>(outcome.effect));
         item["succeeded"] = outcome.succeeded;
