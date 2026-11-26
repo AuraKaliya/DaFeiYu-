@@ -165,7 +165,7 @@ void separate_reply_sources(const std::filesystem::path& data) {
     const auto status = application.conversation().status().value();
     const auto second = app::user_envelope("append","第二批呢？","reply-test",{status.session,status.turn});
     const auto saved = store->put("desktop","second",second,{{"state","pending"}});
-    if (channel.deliver(saved.message.id,second).at("state") != "waiting") throw std::runtime_error("supplement not admitted");
+    if (channel.deliver(saved.message.id,second,saved.message.utc_ms).at("state") != "waiting") throw std::runtime_error("supplement not admitted");
     resume.release();
     until(application,[&] { return !application.conversation().busy(); });
 
@@ -194,7 +194,7 @@ void corrected_reply(const std::filesystem::path& data) {
     const auto status = application.conversation().status().value();
     const auto correction = app::user_envelope("append","先改成乙。","reply-test",{status.session,status.turn});
     const auto saved = store->put("desktop","correction",correction,{{"state","pending"}});
-    if (channel.deliver(saved.message.id,correction).at("state")!="waiting") throw std::runtime_error("correction not admitted");
+    if (channel.deliver(saved.message.id,correction,saved.message.utc_ms).at("state")!="waiting") throw std::runtime_error("correction not admitted");
     until(application,[&] { return !application.conversation().busy(); });
 
     const auto rows = store->page(true,0,store->watermark(),8).records;
@@ -211,7 +211,8 @@ void verify(const std::filesystem::path& data) {
         app::MessageStore old(data);
         for (const auto& [id,route,state] : {std::tuple{"safe","send","pending"},{"uncertain","send","dispatching"},
             {"stale","append","pending"},{"queued","enqueue","queued"},{"maybe-in-model","append","waiting"}}) {
-            const auto envelope = app::user_envelope(route,id,"old",std::string_view(route)=="send" ? agent::RunId{} : old_run);
+            const auto envelope = app::user_envelope(route,id,"old",std::string_view(route)=="send" ? agent::RunId{} : old_run,
+                std::string_view(id)=="queued" ? std::optional<std::int64_t>{1234} : std::nullopt);
             old.put("desktop",id,envelope,{{"state",state},{"instance","old"},{"session","3"},{"turn","9"},{"nativeMessage","1"}});
         }
     }
@@ -226,7 +227,10 @@ void verify(const std::filesystem::path& data) {
     }
     auto db = std::make_shared<app::MessageStore>(data);
     std::atomic_uint calls{0};
-    app::Application application({},data/"plugins",data,model::Backend{[&](const auto&,const auto&) {
+    const auto stored = db->find("desktop","safe")->utc_ms;
+    std::vector<std::optional<std::int64_t>> times;
+    app::Application application({},data/"plugins",data,model::Backend{[&](const auto&,const model::Request& request) {
+        times.push_back(request.messages.back().event_utc_ms);
         ++calls;
         return model::Response{{model::Role::assistant,"fixed answer"}};
     }});
@@ -239,6 +243,7 @@ void verify(const std::filesystem::path& data) {
     if (db->find("desktop","safe")->receipt.at("state")!="accepted" || !application.resume_dialogue_queue(queue.queue.front().message))
         throw std::runtime_error("safe pending send or paused queue was lost");
     until(application,[&] { return calls==2 && !application.conversation().busy(); });
+    if (times.size()!=2 || times[0]!=stored || times[1]!=1234) throw std::runtime_error("restart changed the original input times");
     if (db->find("desktop","queued")->receipt.at("state")!="accepted") throw std::runtime_error("resumed queue did not start once");
 
     const auto envelope = app::user_envelope("send","locked",{}, {});
@@ -246,7 +251,7 @@ void verify(const std::filesystem::path& data) {
     {
         WriteLock lock(data);
         auto& channel = *application.main_messages();
-        if (channel.deliver(original.message.id,envelope).at("state")!="pending" || calls!=2 ||
+        if (channel.deliver(original.message.id,envelope,original.message.utc_ms).at("state")!="pending" || calls!=2 ||
             db->watermark()!=original.message.revision) throw std::runtime_error("write failure started a model call");
     }
     until(application,[&] { return calls==3 && !application.conversation().busy(); });

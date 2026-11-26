@@ -15,7 +15,7 @@ struct DialogueCommand {
     std::string client;
     std::string submission, instance;
     std::optional<std::int64_t> source_utc_ms{};
-    std::int64_t stored = 0;
+    std::int64_t stored = 0, stored_utc_ms = 0;
 };
 
 // 从业务线程接纳前的排队到正式 Session 回合，复用原窗口命令身份。

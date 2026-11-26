@@ -65,7 +65,7 @@ DialogueReceipt apply_dialogue(app::Application& application, const DialogueComm
     using State = DialogueCommandState;
     if (command.stored)
         return stored_receipt({command.id,State::queued,command.target,0,command.stored},command.action,
-            application.main_messages()->deliver(command.stored,envelope(command)));
+            application.main_messages()->deliver(command.stored,envelope(command),command.stored_utc_ms));
     if (command.action == DialogueAction::send) {
         const auto result = application.submit_dialogue(command.text);
         return {command.id,State::accepted,{result.session,result.turn}};
@@ -312,6 +312,7 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
                 } else {
                     const auto accepted = messages_->put("desktop",command.submission,original,{{"state","pending"}});
                     command.stored = receipt.stored = accepted.message.id;
+                    command.stored_utc_ms = accepted.message.utc_ms;
                 }
             }
         } catch (const std::runtime_error&) {

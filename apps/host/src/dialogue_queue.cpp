@@ -15,7 +15,7 @@ bool dialogue_queue_fits(const std::vector<QueuedDialogue>& items, std::size_t b
 
 // 只把用户原话排在所见回合之后，条数和全部待发正文分别受限。
 // 步骤：复核会话与前驱 → 核对消息及剩余容量 → 分配身份并发布队列。
-DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::string text) {
+DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::string text, std::optional<std::int64_t> event_utc_ms) {
     auto& display = conversation_.display_;
     const auto current = conversation_.status();
     if (!conversation_.accepting() || !current || after != agent::RunId{current->session,current->turn} ||
@@ -26,7 +26,8 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
 
     const auto message = queued_message_sequence_+1;
     auto received = receive_dialogue(text,"dialogue.enqueue");
-    display.queue.push_back({message,after.session,std::move(received.first),received.second});
+    display.queue.push_back({message,after.session,std::move(received.first),received.second,
+        event_utc_ms ? event_utc_ms : std::optional{agent::message_utc_now()}});
     queued_message_sequence_ = message;
     if (display.queue.size() == 1) queued_after_ = after;
     ++display.revision;
@@ -35,12 +36,12 @@ DialogueQueueReceipt Application::enqueue_dialogue(agent::RunId after, std::stri
 }
 
 // 上一实例的前驱结果需要重新核对，恢复待发投影时先暂停自动启动。
-std::uint64_t Application::restore_queued_dialogue(const std::string& text) {
+std::uint64_t Application::restore_queued_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms) {
     auto& display = conversation_.display_;
     if (!dialogue_queue_fits(display.queue,text.size()) || queued_message_sequence_==UINT64_MAX)
         throw std::length_error("dialogue: restored queue exceeds capacity");
     const auto native = queued_message_sequence_+1;
-    display.queue.push_back({native,conversation_.id(),text});
+    display.queue.push_back({native,conversation_.id(),text,{},event_utc_ms});
     queued_message_sequence_ = native;
     display.queue_paused = true;
     ++display.revision;
@@ -94,7 +95,7 @@ void Application::advance_dialogue_queue() {
     const auto message = display.queue.front().message;
     try {
         if (main_messages_) main_messages_->start_queue(message);
-        const auto started = begin_dialogue(display.queue.front().text,display.queue.front().mail);
+        const auto started = begin_dialogue(display.queue.front().text,display.queue.front().mail,display.queue.front().event_utc_ms);
         queued_after_ = agent::RunId{started.session,started.turn};
     } catch (const std::exception&) {
         // 接纳失败保留原文，只有用户显式恢复才会再次尝试。

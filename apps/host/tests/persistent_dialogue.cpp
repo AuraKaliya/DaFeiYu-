@@ -23,7 +23,9 @@ void drain(app::Application& application) {
 void verify(const std::filesystem::path& data) {
     const std::string instance = "1-2-3";
     auto db = std::make_shared<app::MessageStore>(data);
-    app::Application application({},data/"empty",data,model::Backend{[](const auto&,const auto&) {
+    std::vector<std::pair<std::string,std::optional<std::int64_t>>> seen;
+    app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& input) {
+        seen.emplace_back(input.messages.back().content,input.messages.back().event_utc_ms);
         return model::Response{{model::Role::assistant,"相同的回答"}};
     }});
     application.bind_messages(db,instance,nullptr);
@@ -32,15 +34,18 @@ void verify(const std::filesystem::path& data) {
     const auto status = application.conversation().status().value();
     const agent::RunId run{status.session,status.turn};
     const auto send = [&](const std::string& key, const char* route) {
-        const auto envelope = app::user_envelope(route,key,instance,run);
+        const auto envelope = app::user_envelope(route,key,instance,run,key=="本轮补充" ? 123 : 456);
         const auto original = db->put("desktop",key,envelope,{{"state","pending"}});
-        return channel.deliver(original.message.id,envelope);
+        return channel.deliver(original.message.id,envelope,original.message.utc_ms);
     };
     if (send("本轮补充","append").at("state")!="waiting" || send("下一轮","enqueue").at("state")!="queued")
         throw std::runtime_error("incorrect input admission");
     const auto removed = send("移除","enqueue");
     if (!application.remove_queued_dialogue(std::stoull(removed.at("nativeMessage").get<std::string>()))) throw std::runtime_error("remove failed");
     drain(application);
+    if (seen.size()!=3 || seen[0].second!=db->find("terminal","first")->utc_ms ||
+        seen[1].first!="本轮补充" || seen[1].second!=123 || seen[2].first!="下一轮" || seen[2].second!=456)
+        throw std::runtime_error("persistent dialogue changed source time before model input");
     const auto supplement = db->find("desktop","本轮补充").value(), queued = db->find("desktop","下一轮").value();
     if (supplement.receipt.at("state")!="submitted" || supplement.receipt.at("modelStep")!="2" || queued.receipt.at("state")!="accepted" ||
         queued.receipt.at("turn")==std::to_string(status.turn) || db->find("desktop","移除")->receipt.at("state")!="removed")

@@ -115,21 +115,21 @@ void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
 // 保持已获准自动启动的队首优先，再从直接对话信箱接纳新轮。
-agent::TurnDiagnostics Application::submit_dialogue(const std::string& text) {
+agent::TurnDiagnostics Application::submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms) {
     const auto& display = conversation_.display();
     if (!display.queue.empty() && !display.queue_paused) throw std::logic_error("dialogue: next message already queued");
-    return begin_dialogue(text);
+    return begin_dialogue(text,{},event_utc_ms);
 }
 
 // 将收到的真人补充绑定原会话，收件和实际送模分别记录。
 // 步骤：核对可见回合 → 交给正式 Session → 把接纳身份与原话关联到本机 Trace。
-agent::InputReceipt Application::append_dialogue(agent::RunId expected, std::string text) {
+agent::InputReceipt Application::append_dialogue(agent::RunId expected, std::string text, std::optional<std::int64_t> event_utc_ms) {
     const auto& turns = conversation_.display().turns;
     if (turns.empty() || turns.back().run != expected) return {agent::InputAdmission::closed};
     if (text.size()>dialogue_text_limit || text.find_first_not_of(" \t\r\n")==std::string::npos || !runtime::valid_utf8(text))
         return {agent::InputAdmission::rejected};
     auto received = receive_dialogue(text,"dialogue.append");
-    const auto receipt = session_.append_input(expected,std::move(received.first));
+    const auto receipt = session_.append_input(expected,std::move(received.first),event_utc_ms);
     if (run_log_ && receipt.state == agent::InputAdmission::accepted) {
         const auto& input = conversation_.current_->inputs().back();
         run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,"dialogue.append",input.text,expected);
@@ -156,10 +156,10 @@ std::pair<std::string,events::EventId> Application::receive_dialogue(const std::
 }
 
 // 在原工作退出后用已收原文启动新轮，排队项只在入队时投递一次。
-agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail) {
+agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail, std::optional<std::int64_t> event_utc_ms) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
     const auto received = mail.sequence ? std::pair{text,mail} : receive_dialogue(text,"dialogue.text");
-    const auto result = mailbox_intake_.submit_dialogue(received.first);
+    const auto result = mailbox_intake_.submit_dialogue(received.first,event_utc_ms);
     if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,
         mail.sequence ? "dialogue.enqueue" : "dialogue.text",received.first,
         agent::RunId{result.session,result.turn});

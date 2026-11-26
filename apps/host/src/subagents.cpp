@@ -18,6 +18,7 @@ struct Subagents::Slot {
     std::unique_ptr<plugins::PluginTools> registration;
     agent::Session session;
     std::optional<SubagentInput> queued;
+    std::int64_t queued_utc_ms = 0;
     std::shared_ptr<agent::TurnRequest> active;
     std::uint64_t request = 0;
     SubagentPhase phase = SubagentPhase::idle;
@@ -117,6 +118,7 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         slot.pending_receipt = through;
     }
     slot.queued.emplace(std::move(input));
+    slot.queued_utc_ms = agent::message_utc_now();
     slot.pending_facts = std::move(pending);
     slot.answer.clear();
     slot.phase = SubagentPhase::queued;
@@ -206,6 +208,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     if (input.thinking == plugins::SubagentThinking::off) options.thinking = model::ThinkingPreference::off;
     if (input.thinking == plugins::SubagentThinking::low) options.thinking = model::ThinkingPreference::low;
     options.prompt_source = model::MessageSource::plugin;
+    options.prompt_utc_ms = slot.queued_utc_ms;
     options.now = clock_;
     options.version_labels = labels_;
     const auto snapshot = plugins_.capture_hooks(slot.owner);

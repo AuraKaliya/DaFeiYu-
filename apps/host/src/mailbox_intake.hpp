@@ -37,7 +37,7 @@ class MailboxIntake {
     // 在有待处理到件信号时推进一个信箱，保持箱内 FIFO。
     MailboxIntakeResult advance(bool only_wake = true);
     // 在真人打开主回合时带入一封审核通过的待收信件。
-    agent::TurnDiagnostics submit_dialogue(const std::string& text);
+    agent::TurnDiagnostics submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {});
     // 判断主回合的工具快照是否仍被在途工作使用。
     bool busy() const noexcept { return conversation_.busy(); }
   private:
@@ -52,7 +52,8 @@ class MailboxIntake {
         bool host_source;
     };
     // 交付一封已绑定地址的原件，并在审查通过时提交带来源信息的主回合。
-    MailboxIntakeResult dispatch(const Route& route, const std::string* dialogue = nullptr, agent::TurnDiagnostics* accepted = nullptr);
+    MailboxIntakeResult dispatch(const Route& route, const std::string* dialogue = nullptr, agent::TurnDiagnostics* accepted = nullptr,
+        std::optional<std::int64_t> event_utc_ms = {});
     // 按原信箱顺序选择一个符合当前唤醒模式的待收地址。
     const Route* select(bool only_wake);
 

@@ -30,6 +30,7 @@ struct QueuedDialogue {
     runtime::DomainId session;
     std::string text;
     events::EventId mail{};
+    std::optional<std::int64_t> event_utc_ms;
 };
 struct ConversationDisplay {
     std::uint64_t revision = 0;

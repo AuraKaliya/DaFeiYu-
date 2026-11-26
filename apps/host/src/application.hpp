@@ -71,17 +71,17 @@ class Application {
     // 读取本体的房间布局和绑定身体，不依赖窗口或加载的插件。
     const BuiltinRoom& room() const noexcept { return room_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
-    agent::TurnDiagnostics submit_dialogue(const std::string& text);
+    agent::TurnDiagnostics submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {});
     // 向用户所见的原回合投递补充，保留有来源的收件回执。
-    agent::InputReceipt append_dialogue(agent::RunId expected, std::string text);
+    agent::InputReceipt append_dialogue(agent::RunId expected, std::string text, std::optional<std::int64_t> event_utc_ms = {});
     // 接纳排在指定可见回合之后的原话，返回独立消息身份。
-    DialogueQueueReceipt enqueue_dialogue(agent::RunId after, std::string text);
+    DialogueQueueReceipt enqueue_dialogue(agent::RunId after, std::string text, std::optional<std::int64_t> event_utc_ms = {});
     // 仅恢复用户见到的原队首，实际启动仍需等待在途回合退出。
     bool resume_dialogue_queue(std::uint64_t first);
     // 只移除仍在等待的原消息，已经启动的回合继续沿原身份结算。
     bool remove_queued_dialogue(std::uint64_t message);
     // 重建上一实例已接纳的待发原话，按原顺序暂停至用户恢复。
-    std::uint64_t restore_queued_dialogue(const std::string& text);
+    std::uint64_t restore_queued_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {});
     // 受信房间服务把已知事实投递到单独地址，接纳回执独立于主回合。
     events::DeliveryReceipt post_room_event(RoomEvent event, const std::string& room, const std::string& text);
     // 在当前主会话允许时主动审查一封房间来信。
@@ -210,7 +210,7 @@ class Application {
     // 经过同一直接对话信箱接纳并取出原话与真实信封号。
     std::pair<std::string,events::EventId> receive_dialogue(const std::string& text, const char* category);
     // 从新收件或已经接收的队首原信启动主回合。
-    agent::TurnDiagnostics begin_dialogue(const std::string& text, events::EventId mail = {});
+    agent::TurnDiagnostics begin_dialogue(const std::string& text, events::EventId mail = {}, std::optional<std::int64_t> event_utc_ms = {});
     // 在应用推进点核对前驱结果及实际退出，再从队首启动一个新回合。
     void advance_dialogue_queue();
 

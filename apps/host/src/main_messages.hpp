@@ -26,7 +26,7 @@ class MainMessages {
     // 查询原回合仍在等待写入的一项投递号，供发起终端等待或说明结果。
     std::string pending_reply(agent::RunId run) const;
     // 将已经入库且尚未投递的原文交付给其指定入口，保留独立的实际回执。
-    nlohmann::json deliver(std::int64_t id, const nlohmann::json& envelope);
+    nlohmann::json deliver(std::int64_t id, const nlohmann::json& envelope, std::int64_t stored_utc_ms);
     // 在终端命令空间按原号入库并交付普通输入。
     void terminal(const std::string& submission, const std::string& text);
     // 重试已知结果的写盘，不重发已执行的动作。
@@ -72,7 +72,8 @@ class MainMessages {
     std::map<std::pair<std::uint64_t,std::uint64_t>,std::int64_t> appended_;
     std::pair<agent::RunId,std::int64_t> parent_{};
     std::map<std::string,nlohmann::json> replies_;
-    std::map<std::int64_t,nlohmann::json> pending_;
+    struct PendingInput { nlohmann::json envelope; std::int64_t stored_utc_ms; };
+    std::map<std::int64_t,PendingInput> pending_;
     std::chrono::steady_clock::time_point retry_at_{};
 };
 }

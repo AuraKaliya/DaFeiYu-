@@ -31,9 +31,9 @@ void MainMessages::flush() {
     if (std::chrono::steady_clock::now()<retry_at_) return;
     if (!pending_.empty() && app_.conversation().accepting()) {
         const auto& display = app_.conversation().display();
-        if (pending_.begin()->second.at("route")!="send" || (!app_.conversation().busy() && (display.queue.empty() || display.queue_paused))) {
+        if (pending_.begin()->second.envelope.at("route")!="send" || (!app_.conversation().busy() && (display.queue.empty() || display.queue_paused))) {
             auto item = pending_.extract(pending_.begin());
-            deliver(item.key(),item.mapped());
+            deliver(item.key(),item.mapped().envelope,item.mapped().stored_utc_ms);
         }
     }
     if (!replies_.empty()) {
@@ -49,21 +49,22 @@ void MainMessages::flush() {
 }
 // 先提交正在交付标记，再依据实际应用回执记录接纳、排队或原回合收件。
 // 步骤：固定交付边界 → 核对原实例 → 调用对应入口 → 以同一消息号记录实际结果。
-Json MainMessages::deliver(std::int64_t id, const Json& envelope) {
+Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t stored_utc_ms) {
     Json result{{"state","dispatching"},{"instance",instance_}};
     try { store_->update(id,result); }
     catch (const std::runtime_error&) {
         if (!pending_.contains(id)) storage_failed();
-        pending_[id] = envelope;
+        pending_[id] = {envelope,stored_utc_ms};
         retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
         return {{"state","pending"}};
     }
+    const auto utc = envelope.value("sourceUtcMs",stored_utc_ms);
     auto& text = envelope.at("text").get_ref<const std::string&>();
     agent::RunId run{};
     std::uint64_t native = 0;
     try {
         if (envelope.at("route")=="send") {
-            const auto start = app_.submit_dialogue(text);
+            const auto start = app_.submit_dialogue(text,utc);
             run = {start.session,start.turn};
             parent_ = {run,id};
             result["state"] = "accepted";
@@ -72,14 +73,14 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope) {
             run = {std::stoull(target.at("session").get<std::string>()),std::stoull(target.at("turn").get<std::string>())};
             if (target.at("instance")!=instance_) result["state"] = "stale";
             else if (envelope.at("route")=="append") {
-                const auto received = app_.append_dialogue(run,text);
+                const auto received = app_.append_dialogue(run,text,utc);
                 native = received.message;
                 if (received.state==agent::InputAdmission::accepted) appended_[{run.sequence,native}] = id;
                 using State = agent::InputAdmission;
                 result["state"] = received.state==State::accepted ? "waiting" : received.state==State::closed ? "stale" :
                     received.state==State::full ? "full" : received.state==State::unavailable ? "unavailable" : "rejected";
             } else {
-                const auto queued = app_.enqueue_dialogue(run,text);
+                const auto queued = app_.enqueue_dialogue(run,text,utc);
                 native = queued.message;
                 if (queued.state==QueueAdmission::accepted) queued_[native] = id;
                 result["state"] = queued.state==QueueAdmission::accepted ? "queued" : queued.state==QueueAdmission::stale ? "stale" :
@@ -104,7 +105,7 @@ void MainMessages::terminal(const std::string& submission, const std::string& te
     const auto& queue = app_.conversation().display();
     if (!queue.queue.empty() && !queue.queue_paused) throw std::logic_error("dialogue: next message already queued");
     const auto accepted = store_->put("terminal",submission,envelope,{{"state","pending"}});
-    const auto receipt = accepted.created ? deliver(accepted.message.id,envelope) : accepted.message.receipt;
+    const auto receipt = accepted.created ? deliver(accepted.message.id,envelope,accepted.message.utc_ms) : accepted.message.receipt;
     if (receipt.at("state")!="accepted") throw std::runtime_error("dialogue: "+receipt.at("state").get<std::string>());
 }
 
@@ -120,12 +121,13 @@ void MainMessages::restore() {
             if (row.envelope.value("sender",std::string{})!="user") continue;
             const auto& state = row.receipt.at("state");
             if (state=="pending" && row.envelope.at("route")=="send") {
-                pending_.emplace(row.id,row.envelope);
+                pending_.emplace(row.id,PendingInput{row.envelope,row.utc_ms});
                 continue;
             }
             auto receipt = row.receipt;
             if (state=="queued") {
-                const auto native = app_.restore_queued_dialogue(row.envelope.at("text").get_ref<const std::string&>());
+                const auto native = app_.restore_queued_dialogue(row.envelope.at("text").get_ref<const std::string&>(),
+                    row.envelope.value("sourceUtcMs",row.utc_ms));
                 queued_[native] = row.id;
                 receipt.update(Json{{"instance",instance_},{"session",std::to_string(app_.conversation().id())},
                     {"turn","0"},{"nativeMessage",std::to_string(native)},{"paused",true}});
