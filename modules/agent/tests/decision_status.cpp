@@ -23,6 +23,11 @@ using Json = nlohmann::json;
 constexpr std::uint64_t session = UINT64_MAX, epoch = UINT64_MAX-1;
 // 报告首个不符合冻结或按版读口契约的结果。
 void check(bool value, const char* error) { if (!value) throw std::runtime_error(error); }
+// 验证非法准备在签发候选前被拒绝。
+void rejects(const auto& call, const char* error) {
+    try { call(); } catch (const std::logic_error&) { return; }
+    throw std::runtime_error(error);
+}
 // 准备固定来源的状态声明和一个有原采样号、对象及有效期的样本。
 DecisionStatusSource source(std::string owner, std::string mode, std::uint64_t fact = 42, std::size_t padding = 0) {
     const auto key = owner + ".view";
@@ -86,11 +91,14 @@ void frozen_steps() {
 // 步骤：交叉尝试会话与代次 → 丢弃或错投候选 → 填满索引并验证淘汰边界。
 void retention() {
     DecisionStatusStore store, other;
-    auto first = store.prepare(1,2,1,1,0,{});
+    auto first = store.prepare(1,2,1,1,100,{source("host","explicit")});
     const auto id = Json::parse(first.full).at("snapshot").get<std::string>();
     publish(store,std::move(first));
     for (auto reply : {store.read(3,2,id),store.read(1,3,id),other.read(1,2,id)})
         check(Json::parse(reply).at("reason") == "scope_mismatch","foreign scope readable");
+    publish(other,other.prepare(1,3,1,1,100,{source("host","explicit")}));
+    check(Json::parse(other.read(1,3,id)).at("reason") == "scope_mismatch","new epoch exposed original");
+    rejects([&] { store.prepare(1,3,1,2,100,{}); },"old store rebound to a new epoch");
     for (int i = 0; i < 40; ++i) { auto preview = store.prepare(1,2,1,2,0,{}); }
     auto foreign = store.prepare(1,2,1,2,0,{});
     const auto abandoned = Json::parse(foreign.full).at("snapshot").get<std::string>();
@@ -121,9 +129,66 @@ void result_limit() {
     }
     throw std::runtime_error("oversize ToolResult accepted");
 }
+// 同一事实号的原值和采样期不可覆盖，候选丢弃后释放其未发布的事实预留。
+// 步骤：复用原事实并修改其期限 → 检查在途及已发布原件 → 放弃新候选并重新准备。
+void original_facts() {
+    DecisionStatusStore store;
+    auto data = source("host","explicit",7);
+    auto first = store.prepare(1,2,1,1,100,{data});
+    const auto id = Json::parse(first.full).at("snapshot").get<std::string>();
+    auto altered = data;
+    auto samples = Json::parse(data.samples);
+    samples[0]["validUntilUtcMs"] = 250;
+    altered.samples = samples.dump();
+    rejects([&] { store.prepare(1,2,1,2,112,{altered}); },"pending fact accepted a new deadline");
+    auto shadowed = altered; auto newer = samples[0]; newer["fact"] = 8;
+    shadowed.samples = Json::array({newer,samples[0]}).dump();
+    rejects([&] { store.prepare(1,2,1,2,112,{shadowed}); },"newer observation hid a rewritten original");
+    publish(store,std::move(first));
+    auto same = store.prepare(1,2,1,2,112,{data});
+    publish(store,std::move(same));
+    rejects([&] { store.prepare(1,2,1,3,112,{altered}); },"committed fact accepted a new deadline");
+    check(Json::parse(store.read(1,2,id)).at("status").at("items")[0].at("validUntilUtcMs") == 110,"original deadline drifted");
+    samples[0]["fact"] = 8; altered.samples = samples.dump();
+    { auto preview = store.prepare(1,2,1,3,112,{altered}); }
+    samples[0]["validUntilUtcMs"] = 300; altered.samples = samples.dump();
+    publish(store,store.prepare(1,2,1,3,112,{altered}));
+}
+// 核对显式项数量上限、同键多对象顺序和压缩恢复时的声明筛选。
+void attention_limit() {
+    DecisionStatusStore store;
+    auto data = source("host","explicit");
+    const auto sample = Json::parse(data.samples)[0];
+    auto samples = Json::array();
+    for (int i = 8; i >= 0; --i) { auto row = sample; row["subject"] = std::to_string(i); samples.push_back(std::move(row)); }
+    data.samples = samples.dump();
+    const auto result = store.prepare(1,2,1,1,100,{data,source("mc.companion","implicit")},true);
+    const auto tail = Json::parse(result.tail), full = Json::parse(result.full);
+    check(tail.at("items").size() == 8 && tail.at("items")[0].at("subject") == "0" &&
+        tail.at("items")[7].at("subject") == "7" && tail.at("omittedExplicit") == 1 &&
+        tail.at("definitions").size() == 1 && full.at("items").size() == 10 && full.at("definitions").size() == 2,
+        "attention count, order or rebuild scope");
+}
+// 核对宿主任务引用按 UTF-8 字节计数，空任务不占字段，失败不会改写已发布的作用域。
+// 步骤：准备空任务 → 发布最长合法引用 → 拒绝超长和非法编码 → 核对原版读回。
+void task_scope() {
+    DecisionStatusStore store;
+    const auto empty = store.prepare(1,2,1,1,-1,{});
+    check(!Json::parse(empty.tail).at("scope").contains("task") && !Json::parse(empty.full).at("scope").contains("task") &&
+        Json::parse(empty.full).at("asOf").at("time") == "1969-12-31T23:59:59.999Z","absent task or pre-epoch time");
+    const auto task = std::string(125,'x')+"鱼";
+    auto scoped = store.prepare(1,2,1,2,0,{},true,task);
+    const auto tail = Json::parse(scoped.tail), full = Json::parse(scoped.full);
+    const auto id = full.at("snapshot").get<std::string>();
+    check(task.size() == 128 && tail.at("scope") == full.at("scope") && full.at("scope").at("task") == task,"task scope mismatch");
+    publish(store,std::move(scoped));
+    rejects([&] { store.prepare(1,2,1,3,0,{},false,task+"x"); },"129-byte task accepted");
+    rejects([&] { store.prepare(1,2,1,3,0,{},false,std::string(1,static_cast<char>(0xff))); },"invalid UTF-8 task accepted");
+    check(Json::parse(store.read(1,2,id)).at("status") == full,"read lost task scope");
+}
 }
 // 从公共 C++ 接口离线验收版本、作用域和内存边界。
 int main() {
-    try { frozen_steps(); retention(); result_limit(); }
+    try { frozen_steps(); retention(); result_limit(); original_facts(); attention_limit(); task_scope(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
