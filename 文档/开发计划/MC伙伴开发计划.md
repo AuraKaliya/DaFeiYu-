@@ -10,7 +10,7 @@
 
 ## 待办
 
-游戏能力可分查[现场与移动](#现场与移动)、[物品与生产](#物品与生产)和[建设与生活](#建设与生活)。其余方向见[事件与动作调度](#事件与动作调度)及[消息、目标、工具、连接与验收](#消息目标工具连接与验收)。截至审阅基线，以下剩余范围在已核定的主线记录中均列为待开发。基础能力如单箱、岸边只读采样和玩家审批试点，按已验范围另列在[已完成](#已完成)。
+游戏能力可分查[现场与移动](#现场与移动)、[物品与生产](#物品与生产)和[建设与生活](#建设与生活)。其余方向见[事件与动作调度](#事件与动作调度)及[消息、目标、工具、连接与验收](#消息目标工具连接与验收)。下表结合主线实现与 11 月 26 日的权限决定，列出已确定、尚待开发的范围。基础能力如单箱、岸边只读采样和玩家审批试点，按已验范围另列在[已完成](#已完成)。
 
 ### 现场与移动
 
@@ -80,7 +80,7 @@
 
 | 编号 | 状态 | 独立交付项 | 依赖、剩余与通过条件 |
 | --- | --- | --- | --- |
-| MC-消息-03 | 待开发 | <a id="mc-消息-03"></a>区分主人原话与其他玩家发言，扩展可信入站频道 | 在已有配对玩家私聊及回执的基础上，接入其他可验证的游戏频道和管理中心转交的普通原话，核对原文、发件身份、频道可见性、世界及游标。定向 ASK 沿原票据独立收件。主人消息可修订共同分工。其余玩家的对话作为环境事件供理解和回应，不授权、改约或解除待答。用不同身份说出同一句话验证两条路径。[身份绑定](../设计/项目架构设计.md#主人身份与游戏绑定) |
+| MC-消息-03 | 待开发 | <a id="mc-消息-03"></a>区分主人原话与其他玩家发言，扩展可信入站频道 | 在已有配对玩家私聊及回执的基础上，接入其他可验证的游戏频道和管理中心转交的普通原话，核对原文、发件身份、频道可见性、世界及游标。定向 ASK 沿原票据独立收件。主人消息可修订共同分工。来自游戏或其他入口的非主人发言均作为环境事件，不授权、改约或解除待答。用不同身份经游戏和管理中心说出同一句话验证分流。[身份绑定](../设计/项目架构设计.md#主人身份与游戏绑定) |
 | MC-消息-04 | 待开发 | <a id="mc-消息-04"></a>扩展投递回执及原号补发 | 区分更正、进展、追问和最终答复。断线、跨渠道或答复迟到时，仅确认原票据未发才重试，判为未知时沿原号复查。 |
 | MC-目标-02 | 待开发 | <a id="mc-目标-02"></a>扩展共同分工与目标绑定 | 将单玩家已有的原话、允许物品和任务修订推广到设施、实体和多种活动。明确对象和范围、自选或替换、数量、完成及等候条件。 |
 | MC-权限-01 | 待开发 | <a id="mc-权限-01"></a>核实并落实生存工具的权限边界 | 创造取物、特权世界编辑及可代行两者的透传，从接口、能力目录、按需披露、送模说明到桥接执行均不提供。复查角色被外部设为创造模式时的普通放置，分别核对执行前拦截、真实材料消耗与游戏回执。[现有放置判定](../../plugins/mc/bridge/placement.cjs#L116) |
@@ -168,7 +168,7 @@
 | 来源与版本 | 保留的参考与采用范围 |
 | --- | --- |
 | Mineflayer 4.39.0、Pathfinder 2.4.5 | 按锁文件核对事件、寻路、窗口和实体能力。库发出回调只是采样起点，实效需有与当前目标有关的读回。[本项目依赖](../../plugins/mc/bridge/package.json) · [游戏事件](https://github.com/PrismarineJS/mineflayer/blob/4.39.0/docs/api.md#events) · [寻路接口](https://github.com/PrismarineJS/mineflayer-pathfinder/blob/2.4.5/readme.md#events) |
-| dsh-mc-agent，`af7ea21` | 原复核记录 41 个静态注册名。借鉴常驻目标、事件退避与危险预算、动作资源和实物检查点。投物、容器和熔炉提供操作粒度的参考。参考项目中的服务器特权不进入本项目伙伴能力目录。[自主与预算](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/extensions/mc_auto.mjs) · [调度](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/src/action-scheduler.mjs) · [生存投物](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/src/inventory.mjs#L593) |
+| dsh-mc-agent，`af7ea21` | 原复核记录 41 个静态注册名。借鉴常驻目标、事件退避与危险预算、动作资源和实物检查点。投物、容器和熔炉提供操作粒度的参考。通关类目标按本局分工建立。能够代行创造取物或特权世界编辑的服务器命令同样排除在伙伴能力目录之外。[自主与预算](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/extensions/mc_auto.mjs) · [调度](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/src/action-scheduler.mjs) · [生存投物](https://github.com/blueziii/dsh-mc-agent/blob/af7ea21d203e3d975b3e7a99152a35561e813e1a/src/inventory.mjs#L593) |
 | DeepClef，`253f14a` | 原复核记录 20 个模型工具，组合任务还能调底层任务库。借鉴在途聊天检查点、运动进展和找指定玩家交付。MC 插件通过独立角色实现，缺货能否补采由有效授权决定。[聊天与工具](https://github.com/Cymew/DeepClef/blob/253f14aa83801ec3b2c6e1332da8e048e33e5790/src/main/java/adris/altoclef/util/DeepSeekAgent.java#L200) · [指定收件人](https://github.com/Cymew/DeepClef/blob/253f14aa83801ec3b2c6e1332da8e048e33e5790/src/main/java/adris/altoclef/tasks/entity/GiveItemToPlayerTask.java) |
 | dsh-sts2，`3a29541` | 借鉴带序号和发送者的待答、忙时输入、按原话回信、等待变化与交还控制。查进度期间，原游戏动作继续遵守原约定。[消息注入](https://github.com/YuWan886/dsh-sts2/blob/3a2954127ddf7e49cdbb24952c7b6d41b468ece6/index.js#L466) · [工具注册](https://github.com/YuWan886/dsh-sts2/blob/3a2954127ddf7e49cdbb24952c7b6d41b468ece6/index.js#L752) |
 | STS2-AiTeammate，`d598ac6` | 借鉴游戏端记录待答、已答、合法选项与执行回执，区分桥接在线和角色执行权。同一原话已有最终答复后，迟到同义答复归档，需要修正时显式更正。[游戏端协议](https://github.com/YuWan886/STS2-AiTeammate/blob/d598ac63d4ac21cf8ba82b478a1307eb9c923053/docs/dsh-agent-bridge.md) · [聊天结算](https://github.com/YuWan886/STS2-AiTeammate/blob/d598ac63d4ac21cf8ba82b478a1307eb9c923053/AiTeammateCode/Agent/AgentChatRelay.cs#L295) |
