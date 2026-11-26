@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "management/resident.hpp"
 #include "message_store.hpp"
+#include "ui_fixture_messages.hpp"
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -15,7 +16,7 @@ constexpr char held[] = "两个窗口关闭后再回答";
 std::unique_ptr<app::Application> open_fixture(const fs::path& data) {
     return std::make_unique<app::Application>(model::Config{},data/"plugins",data,model::Backend{
         [data](const auto&, const auto& request) -> model::Response {
-            const auto& last = request.messages.back();
+            const auto& last = tests::fixture_business_messages(request.messages).back();
             const auto& text = last.content;
             if (last.role==model::Role::user && text=="两次独立的同一句")
                 return {{model::Role::assistant,"",{{"speak","main_reply",R"({"text":"固定回复：两次独立的同一句"})"}}},model::FinishReason::tool_calls};

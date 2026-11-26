@@ -20,7 +20,8 @@ if(BUILD_GUI)
     -File "${CMAKE_CURRENT_SOURCE_DIR}/desktop_entry.ps1" -Panel "$<TARGET_FILE:dafeiyu>" -Root "${run_status_temp}")
   set_tests_properties(ui.desktop_entry PROPERTIES TIMEOUT 75 SKIP_RETURN_CODE 77)
   dfy_test_executable(dfy_ui_history_host ui_history_host.cpp)
-  target_link_libraries(dfy_ui_history_host PRIVATE dfy_management dfy_build_options)
+  target_include_directories(dfy_ui_history_host PRIVATE "${PROJECT_SOURCE_DIR}/apps/desktop/tests")
+  target_link_libraries(dfy_ui_history_host PRIVATE dfy_management nlohmann_json::nlohmann_json dfy_build_options)
   add_dependencies(dfy_ui_history_host dafeiyu)
   add_test(NAME ui.history_windows COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dafeiyu>"
