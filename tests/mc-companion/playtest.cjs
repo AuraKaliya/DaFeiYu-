@@ -346,8 +346,10 @@ async function rehearse(fixture, exe, pkg, mode, playerThinking) {
 // 只向本机提供固定角色包，与游戏服务器共享一次体验寿命。
 async function main() {
   const [exe, pkg, requestedMode, config, liveThinking] = process.argv.slice(2);
-  const factPilot = requestedMode === '--handoff-facts-probe';
-  const mode = factPilot ? '--handoff-gather-probe' : requestedMode;
+  const factModes = new Map([['--handoff-facts-probe','--handoff-gather-probe'],
+    ['--ground-pickup-facts-probe','--ground-pickup-resume-probe']]);
+  const factPilot = factModes.has(requestedMode);
+  const mode = factModes.get(requestedMode) ?? requestedMode;
   const eight = mode?.startsWith('--handoff-eight-');
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');

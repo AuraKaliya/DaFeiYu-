@@ -770,7 +770,7 @@ dfy::model::Response pickup_sample(const dfy::model::Request& request) {
 
 // 通过普通玩家消息选择原观察中的整堆物品，并在计划读回后回答实际入包量。
 // 步骤：读取周围掉落 → 将指定堆的稳定身份送入计划 → 按收取人与库存共同核对。
-dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
+dfy::model::Response ground_pickup_sample(const dfy::model::Request& request, const dfy::model::Request& formal) {
     using namespace dfy::model;
     using Json = nlohmann::json;
     const auto call = [&](std::string name, const Json& args, std::string id = {}) -> Response {
@@ -792,6 +792,21 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         }
         throw std::runtime_error("ground pickup: missing original settled work");
     };
+    if (last.role==Role::tool && last.tool_call_id=="read-ground-effect") {
+        const auto work=previous_pickup();
+        const auto read=Json::parse(last.content.substr(last.content.find('{')));
+        const auto& items=read.at("status").at("items");
+        auto expected=work.at("result").at("pickup").at("effect");
+        const auto sampled=expected.at("sampledUtcMs");
+        expected.erase("sampledUtcMs");
+        const auto found=std::ranges::find_if(items,[](const auto& row) { return row.at("key")=="mc.companion.pickup_effect"; });
+        if (found==items.end() || found->at("value")!=expected || found->at("sampledUtcMs")!=sampled)
+            throw std::runtime_error("ground pickup: frozen effect differs from original game receipt");
+        const auto& result=work.at("result");
+        if (result.at("status")=="done") return {{Role::assistant,"原来那堆剩下的两块已进背包。"}};
+        if (result.at("nearbyDrop").at("stack").at("item")=="dirt") return {{Role::assistant,"原堆旁边还有另一堆泥土，我先停在原地。"}};
+        return {{Role::assistant,"那两块泥土紧挨着石头，一起捡起的风险太大，我停在原地了。"}};
+    }
     if (last.role == Role::tool && (last.tool_call_id == "resume-target" || last.tool_call_id == "read-final-target")) {
         const auto target = Json::parse(last.content.substr(last.content.find('{'))).at("dropTarget");
         if (last.tool_call_id == "read-final-target") {
@@ -824,6 +839,10 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "motion.finished") {
             const auto& work = primary_receipt(input);
             const auto& result = work.at("result");
+            if (result.contains("pickup") && std::ranges::any_of(formal.tools,[](const auto& t) { return t.name=="status_read"; })) {
+                const auto tail=Json::parse(formal.messages.back().content);
+                return {{Role::assistant,"",{{"read-ground-effect","status_read",Json{{"snapshot",tail.at("snapshot")}}.dump()}}},FinishReason::tool_calls};
+            }
             if (result.contains("pickup") && result.at("pickup").contains("continuation")) {
                 if (result.at("status") == "done" && result.at("pickup").at("verifiedCount") == 2)
                     return {{Role::assistant,"原来那堆剩下的两块已进背包。"}};
@@ -1490,7 +1509,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (mode == L"--vitals-probe" || mode == L"--air-episode-probe") return vitals_sample(request);
                 if (gather_handoff) return gather_handoff_sample(request);
                 if (handoff) return handoff_sample(request,mode,root);
-                if (ground_pickup) return ground_pickup_sample(request);
+                if (ground_pickup) return ground_pickup_sample(request,formal);
                 if (pickup) return pickup_sample(request);
                 if (craft) return craft_sample(request);
                 if (gap_group) return opening_group_sample(request,mode);

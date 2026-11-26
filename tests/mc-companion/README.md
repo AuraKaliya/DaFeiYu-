@@ -38,7 +38,7 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 
 取箱交给本人局在同一双箱场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](chest-delivery-check.cjs)
 
-指定掉落续取局使用 `node .\tests\mc-companion\playtest.cjs $probe $plugin --ground-pickup-resume-probe`。两块泥土先被石头阻挡，石头移开时另一堆同物同数仍会阻止接近。两侧都看见旁堆移开后，仅原 UUID 被伙伴拾取。`ground-resume-evidence.json` 记录阻挡、续取、原号回查、旁堆余量和实际库存。部分收取、退出未知及取消另有固定游戏包测试。[拾取固定用例](../../plugins/mc/tests/ground-pickup.test.cjs)
+指定掉落续取局使用 `node .\tests\mc-companion\playtest.cjs $probe $plugin --ground-pickup-resume-probe`。两块泥土先被石头阻挡，石头移开时另一堆同物同数仍会阻止接近。两侧都看见旁堆移开后，仅原 UUID 被伙伴拾取。`ground-resume-evidence.json` 记录阻挡、续取、原号回查、旁堆余量和实际库存。将末项换为 `--ground-pickup-facts-probe` 会把独立玩家设为事实试点，并在三次现场结算后分别用正式 `status_read` 查询当步快照。证据文件的 `decisions` 保存原工作、事实号、已收与待拾数量。部分收取、退出未知及取消另有固定游戏包测试。[拾取固定用例](../../plugins/mc/tests/ground-pickup.test.cjs)
 
 ## 首次真人体验
 

@@ -433,10 +433,33 @@ async function checkGroundResume(fixture, player, whispers, actor, target, stone
   assert.deepEqual(reads.slice(-2).map(row => row.result.dropTarget.state),['not_tracked','not_tracked']);
   assert.deepEqual([decoy.getDroppedItem().count,fixture.materialCount('dirt'),actions().filter(row =>
     row.skill === 'pickup_drop' && row.result.pickup && row.arguments.entity === target.uuid).length],[2,before+2,3]);
+  const decisions = [];
+  if (fixture.factPilot) {
+    const trace = readRows(fixture,'trace/events.jsonl');
+    for (const row of trace.filter(entry => entry.kind === 'tool.exited' && entry.callId === 'read-ground-effect')) {
+      const read = JSON.parse(row.output);
+      const item = read.status.items.find(sample => sample.key === 'mc.companion.pickup_effect');
+      const requested = JSON.parse(row.arguments).snapshot;
+      const prepared = trace.find(entry => entry.kind === 'model.prepared' && entry.session === row.session &&
+        entry.run === row.run && entry.step === row.step);
+      assert.equal(read.state,'ready');
+      assert.equal(read.status.snapshot,requested);
+      assert.equal(JSON.parse(prepared.input.messages.at(-1).content).snapshot,requested);
+      assert.ok(item.fact > 0 && item.subject && item.value.entity === target.uuid);
+      decisions.push({snapshot:requested,work:item.subject,fact:item.fact,acquired:item.value.acquired,
+        pending:item.value.pendingPickup,remainingState:item.value.remainingState});
+    }
+    assert.deepEqual(decisions.map(row => [row.acquired,row.pending,row.remainingState]),
+      [[0,2,'observed'],[0,2,'observed'],[2,0,'accounted']]);
+    assert.deepEqual(decisions.map(row => row.work),[blocked.work,guarded.work,completed.work]);
+    assert.equal(new Set(decisions.map(row => row.snapshot)).size,3);
+    assert.equal(new Set(decisions.map(row => row.fact)).size,3);
+  }
   writeFileSync(join(fixture.evidence,'ground-resume-evidence.json'),JSON.stringify({entity:target.uuid,neighbor:decoy.uuid,
     observation:blocked.arguments.observation,sourceMessage:blocked.order,blocked:blocked.work,guarded:guarded.work,completed:completed.work,
     continuation:proof.continuation,before,after:fixture.materialCount('dirt'),received:proof.verifiedCount,neighborRemaining:decoy.getDroppedItem().count,
-    duplicate:refused.result.originalWork,reads:reads.map(row => ({work:row.work,state:row.result.dropTarget.state}))},null,2));
+    duplicate:refused.result.originalWork,reads:reads.map(row => ({work:row.work,state:row.result.dropTarget.state})),
+    ...(fixture.factPilot ? {decisions} : {})},null,2));
 }
 
 // 从零库存核验原任务的两次破坏、入包、会合和玩家实收，并在采集中询问实际进度。
