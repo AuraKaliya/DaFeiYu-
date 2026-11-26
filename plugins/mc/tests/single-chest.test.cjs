@@ -65,3 +65,39 @@ test('单箱只读报告容量和覆盖并释放原窗口', async () => {
   await assert.rejects(open(target,signal,() => {}),{code:'chest_window_busy'});
   assert.equal(bot.currentWindow.type,'minecraft:hopper');
 });
+
+// 模拟开箱请求失联、第一次排序回执丢失，下一次请求重查后可用同一连接。
+test('开窗中断且首次服务端边界失败后可重试，并归还自己的错误类型窗口', async () => {
+  const {bot,target} = chestFixture(), open = chestWindows(bot), originalOpen = bot.activateBlock;
+  const stop = new AbortController();
+  let fences = 0;
+  bot.activateBlock = () => { stop.abort(); };
+  bot.tabComplete = async () => { if (++fences === 1) throw new Error('服务端未答'); };
+  await assert.rejects(open(target,stop.signal,() => {}),{code:'chest_window_unconfirmed'});
+  await new Promise(resolve => setImmediate(resolve));
+  let returned = false;
+  bot.activateBlock = () => {
+    bot.currentWindow = {type:'minecraft:hopper',close:() => { returned = true; bot.currentWindow = null; }};
+    bot.emit('windowOpen',bot.currentWindow);
+  };
+  await assert.rejects(open(target,new AbortController().signal,() => {}),{code:'chest_window_changed'});
+  assert.deepEqual([fences,returned,bot.currentWindow],[2,true,null]);
+  bot.activateBlock = originalOpen;
+  await open(target,new AbortController().signal,() => {});
+  assert.equal(bot.listenerCount('windowOpen'),0);
+});
+
+// 控制器移交后晚到的外来窗口由新持有者处理，原监听不会关闭它。
+test('迟到的窗口不可跨控制器关闭',async () => {
+  const {bot,target} = chestFixture(), open = chestWindows(bot), stop = new AbortController();
+  let owned = true, closed = false;
+  bot.activateBlock = () => { stop.abort(); };
+  bot.tabComplete = async () => { throw new Error('未取得排序回执'); };
+  await assert.rejects(open(target,stop.signal,() => {},() => owned),{code:'chest_window_unconfirmed'});
+  owned = false;
+  bot.currentWindow = {close:() => { closed = true; }};
+  bot.emit('windowOpen',bot.currentWindow);
+  assert.equal(closed,false);
+  bot.emit('end');
+  assert.equal(bot.listenerCount('windowOpen'),0);
+});

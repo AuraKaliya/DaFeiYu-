@@ -379,6 +379,8 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
+    const ownsWindow = () => !closed && lease.owns(r.controller) && inbox.inPresence(r.generation,r.order);
+    const openChest = (target,signal,use) => withChest(target,signal,use,ownsWindow);
     let builtSpace;
     if (r.skill === 'reply') Object.assign(result, { sent: false, delivery: 'not_sent' });
     if (r.skill === 'place') result.placementAttempted = result.placed = false;
@@ -389,6 +391,10 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
     };
     try {
       check();
+      if (['craft','collect','give_item','place','fill_target','pickup_drop'].includes(r.skill)) {
+        await withChest.recover();
+        check();
+      }
       if (['collect', 'place', 'fill_target'].includes(r.skill)) {
         builtSpace = world.space();
         if (!builtSpace) throw new Error('游戏地图空间不可用');
@@ -405,7 +411,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       } else if (observation?.mode === 'chest') {
         const { message, item } = observation.options;
         const target = inbox.pointedChest(r.generation,message);
-        result.chest = await withChest(target,job.abort.signal,window => ({
+        result.chest = await openChest(target,job.abort.signal,window => ({
           id: job.id, generation: r.generation, owner, actor: bot.entity.uuid ?? bot.player.uuid, message, item,
           ...target, ...chestSample(bot,window,item) }));
       } else if (observation?.mode === 'handoff') {
