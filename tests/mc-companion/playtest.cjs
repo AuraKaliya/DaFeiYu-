@@ -75,7 +75,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       skill: 'give_item', arguments: job.arguments });
   }
   fixture.ownerEntity = () => game.bot.players[owner]?.entity;
-  if (mode === '--handoff-eight-store-probe') {
+  if (['--handoff-eight-store-probe','--handoff-eight-withdraw-probe','--handoff-eight-withdraw-boundary-probe','--handoff-eight-chest-delivery-probe'].includes(mode)) {
     // 在伙伴入场并装好库存插件后，截取下一次实际点击并关闭原窗口。
     fixture.interruptChest = () => {
       const click = game.bot.clickWindow;
@@ -89,8 +89,13 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         return value;
       };
     };
-    fixture.repeatStore = (job,id) => require('./bridge-world.cjs').query(channel,{version:1,method:'partner.begin',
-      key:bridgeKey,id,context:{generation:job.generation,order:job.order,controller:job.controller},skill:'store_item',arguments:job.arguments});
+    fixture.repeatChest = (job,id,skill=job.skill,args=job.arguments) => require('./bridge-world.cjs').query(channel,{version:1,method:'partner.begin',
+      key:bridgeKey,id,context:{generation:job.generation,order:job.order,controller:job.controller},skill:skill === 'give_item' && args.withdrawalWork ? 'give_withdrawn_item' : skill,arguments:args});
+  }
+  if (mode === '--ground-pickup-resume-probe') {
+    fixture.groundEntity = uuid => Object.values(game.bot.entities).find(entity => entity.uuid === uuid);
+    fixture.pickupCall = (method,row,id,args=row.arguments) => require('./bridge-world.cjs').query(channel,{version:1,method,id,key:bridgeKey,
+      context:{generation:row.generation,order:row.order,controller:row.controller},skill:args.resumeWork ? 'resume_pickup_drop' : 'pickup_drop',arguments:args});
   }
   fixture.materialCount = material => game.bot.inventory.items().filter(item => item.name === material)
     .reduce((count, item) => count + item.count, 0);
@@ -149,7 +154,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         send('effect give DfyCompanion minecraft:mining_fatigue 45 1 true');
       } else send('give DfyCompanion minecraft:dirt 70');
     }
-    if (mode === '--ground-pickup-probe') {
+    if (mode === '--ground-pickup-probe' || mode === '--ground-pickup-resume-probe') {
       send('tp DfyGuestCheck 2.5 -60 -3.5');
       send('fill -8 -61 -7 2 -61 1 minecraft:dirt');
       send('fill -8 -60 -7 2 -58 1 minecraft:air');
@@ -346,9 +351,9 @@ async function main() {
   const eight = mode?.startsWith('--handoff-eight-');
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
-  if (!['--handoff-eight-chest-probe', '--handoff-eight-store-probe', '--handoff-eight-full-probe', '--handoff-eight-retired-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+  if (!['--handoff-eight-chest-probe', '--handoff-eight-store-probe', '--handoff-eight-withdraw-probe', '--handoff-eight-withdraw-boundary-probe', '--handoff-eight-chest-delivery-probe', '--handoff-eight-full-probe', '--handoff-eight-retired-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
-    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
+    '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--ground-pickup-resume-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))
     throw new Error('需要指定正式模型配置或固定验收模式');
   if (!exe || !pkg || !fs.existsSync(exe) || !fs.existsSync(path.join(pkg, 'dfy_mc_companion.dll')))

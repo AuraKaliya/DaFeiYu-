@@ -55,9 +55,13 @@ function readReply(input, world, inbox, key, actions) {
   if (actions?.partner) {
     const guarded = request.skill === 'guarded_collect' && Array.isArray(request.arguments?.collectionGuards) &&
       request.arguments.collectionGuards.length > 0 && request.arguments.collectionGuards.length <= 128;
-    const skill = guarded ? 'collect' : request.skill;
+    const linked = request.skill === 'give_withdrawn_item' && typeof request.arguments?.withdrawalWork === 'string' &&
+      request.arguments.withdrawalWork.length > 0 && request.arguments.withdrawalWork.length <= 128;
+    const resume = request.skill === 'resume_pickup_drop' && typeof request.arguments?.resumeWork === 'string' &&
+      request.arguments.resumeWork.length > 0 && request.arguments.resumeWork.length <= 128;
+    const skill = guarded ? 'collect' : linked ? 'give_item' : resume ? 'pickup_drop' : request.skill;
     if (!['partner.begin', 'partner.read', 'partner.stop', 'partner.receipt'].includes(request.method) ||
-      !['observe', 'move', 'route', 'follow', 'collect', 'pickup_drop', 'give_item', 'store_item', 'place', 'fill_target', 'craft', 'reply'].includes(skill)) throw new Error('不是伙伴会话的能力');
+      !['observe', 'move', 'route', 'follow', 'collect', 'pickup_drop', 'give_item', 'store_item', 'withdraw_item', 'place', 'fill_target', 'craft', 'reply'].includes(skill)) throw new Error('不是伙伴会话的能力');
     const receipt = actions.partner.call(request.method, request.id, request.context, skill, request.arguments);
     return { version: 1, id: request.id, action: receipt };
   }

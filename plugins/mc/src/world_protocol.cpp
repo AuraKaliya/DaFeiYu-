@@ -52,11 +52,19 @@ void verify_chest_slots(const Json& range, unsigned slots) {
         throw std::invalid_argument("MC: inconsistent chest coverage");
 }
 
-// 核对存箱的原委托、双边基线和重新开窗后的净变化，缺证时保留未决。
+// 按原存取方向核对委托、双边基线和重新开窗后的净变化，缺证时保留未决。
 // 步骤：核对来源及提交上界 → 验证基线覆盖 → 仅在一致的双边读数下结算。
-void verify_deposit(const Json& proof, const Json& args, const Json& context, std::string_view work, bool recheck) {
+void verify_chest_transfer(const Json& proof, const Json& args, const Json& context, std::string_view work, bool recheck, bool withdraw) {
     const auto& before = proof.at("before");
     const auto& requested = proof.at("requested");
+    const auto amount_key = withdraw ? "withdrawn" : "stored";
+    const auto source = withdraw ? "container" : "stock", destination = withdraw ? "stock" : "container";
+    if (proof.contains("deliverTo") && (!withdraw || proof.at("deliverTo") != proof.at("owner")))
+        throw std::invalid_argument("MC: chest handoff recipient mismatch");
+    if (withdraw ? (proof.at("direction") != "withdraw" || proof.at("destination") != "companion_inventory" ||
+                    (!recheck && args.at("destination") != proof.at("destination")) || proof.contains("stored"))
+                 : (proof.contains("direction") || proof.contains("destination") || proof.contains("withdrawn")))
+        throw std::invalid_argument("MC: chest transfer direction or destination mismatch");
     if (proof.at("work").get_ref<const std::string&>() != work || proof.at("generation") != context.at("generation") ||
         !dimension(proof.at("dimension")) || !game_uuid(proof.at("owner")) || !game_uuid(proof.at("actor")) ||
         !valid_action_cell(proof.at("cell")) || !proof.at("sourceMessage").is_number_unsigned() ||
@@ -77,18 +85,18 @@ void verify_deposit(const Json& proof, const Json& args, const Json& context, st
             throw std::invalid_argument("MC: incomplete inventory sample");
     };
     complete_sample(before);
-    if (proof.at("limit") != std::min({requested.get<int>(),before.at("stock").at("stored").get<int>(),
-        before.at("container").at("knownSpace").get<int>()}) || (proof.at("limit") == 0 && proof.at("attempted") == true))
+    if (proof.at("limit") != std::min({requested.get<int>(),before.at(source).at("stored").get<int>(),
+        before.at(destination).at("knownSpace").get<int>()}) || (proof.at("limit") == 0 && proof.at("attempted") == true))
         throw std::invalid_argument("MC: invalid transfer limit");
-    if (proof.at("state") == "pending" && !proof.contains("stored") && !proof.contains("remaining") && !proof.contains("after")) return;
+    if (proof.at("state") == "pending" && !proof.contains(amount_key) && !proof.contains("remaining") && !proof.contains("after")) return;
     const auto& after = proof.at("after");
     complete_sample(after);
-    const auto stored = after.at("container").at("stored").get<int>() - before.at("container").at("stored").get<int>();
+    const auto moved = after.at(destination).at("stored").get<int>() - before.at(destination).at("stored").get<int>();
     if (proof.at("state") != "verified" || !after.at("sampledAtMs").is_number_unsigned() || before.at("sampledAtMs") > after.at("sampledAtMs") ||
-        before.at("container").at("stackSize") != after.at("container").at("stackSize") || stored < 0 || stored > proof.at("limit").get<int>() ||
-        (stored && proof.at("attempted") == false) || stored != before.at("stock").at("stored").get<int>() - after.at("stock").at("stored").get<int>() ||
-        !proof.at("stored").is_number_unsigned() || !proof.at("remaining").is_number_unsigned() ||
-        proof.at("stored") != stored || proof.at("remaining") != requested.get<int>()-stored)
+        before.at("container").at("stackSize") != after.at("container").at("stackSize") || moved < 0 || moved > proof.at("limit").get<int>() ||
+        (moved && proof.at("attempted") == false) || moved != before.at(source).at("stored").get<int>() - after.at(source).at("stored").get<int>() ||
+        !proof.at(amount_key).is_number_unsigned() || !proof.at("remaining").is_number_unsigned() ||
+        proof.at(amount_key) != moved || proof.at("remaining") != requested.get<int>()-moved)
         throw std::invalid_argument("MC: chest transfer not corroborated on both sides");
 }
 
@@ -274,18 +282,34 @@ void verify_drop_target(const Json& sample, const Json& args, const Json& genera
 
 // 将独立拾取的选定实体、收取数量和库存增减同原命令核对。
 // 步骤：绑定原观察与目标 → 校验拾取人和原堆 → 对照进展、库存差量与成功条件。
-bool verify_ground_pickup(const Json& result, const Json& args, const Json& generation, bool exited) {
+bool verify_ground_pickup(const Json& result, const Json& args, const Json& context, bool exited) {
     if (!result.contains("pickup")) {
         if (result.contains("progress") || (exited && result.at("status") == "done"))
             throw std::invalid_argument("MC: missing pickup evidence");
         return false;
     }
     const auto& target = result.at("dropTarget");
-    verify_drop_target(target,args,generation);
+    verify_drop_target(target,args,context.at("generation"));
     const auto& pickup = result.at("pickup");
     const auto& entry = pickup.at("observed");
     const auto& name = pickup.at("item").get_ref<const std::string&>();
     const auto requested = args.at("count").get<std::int64_t>();
+    std::int64_t original_count = requested;
+    if (args.contains("resumeWork") != pickup.contains("continuation")) throw std::invalid_argument("MC: missing original pickup work");
+    if (pickup.contains("continuation")) {
+        const auto& basis = pickup.at("continuation");
+        if (basis.at("work") != args.at("resumeWork") || basis.at("root").get_ref<const std::string&>().empty() ||
+            basis.at("root").get_ref<const std::string&>().size() > 128 || !basis.at("sourceMessage").is_number_unsigned() ||
+            basis.at("sourceMessage") == 0 || basis.at("sourceMessage") > context.at("order") ||
+            !basis.at("originalCount").is_number_unsigned() || basis.at("originalCount") > INT32_MAX ||
+            !basis.at("verifiedBefore").is_number_unsigned() || basis.at("verifiedBefore") > INT32_MAX ||
+            !basis.at("otherBefore").is_number_unsigned() || basis.at("otherBefore") > INT32_MAX)
+            throw std::invalid_argument("MC: invalid pickup continuation basis");
+        original_count = basis.at("originalCount").get<std::int64_t>();
+        if (original_count != target.at("original").at("count") ||
+            original_count-basis.at("verifiedBefore").get<std::int64_t>()-basis.at("otherBefore").get<std::int64_t>() != requested)
+            throw std::invalid_argument("MC: pickup continuation exceeds verified remainder");
+    }
     if (name.empty() || name != item_name(args.at("item").get_ref<const std::string&>()) || requested < 1 || requested > 0x7fffffff ||
         pickup.at("requested") != requested || !pickup.at("approachAttempted").is_boolean() || !pickup.at("stockCurrent").is_boolean() ||
         !pickup.at("stockSampledAtMs").is_number_unsigned()) throw std::invalid_argument("MC: invalid pickup request binding");
@@ -312,7 +336,7 @@ bool verify_ground_pickup(const Json& result, const Json& args, const Json& gene
         if (!pickup.at(key).is_number_unsigned() || pickup.at(key) > 0x7fffffff) throw std::invalid_argument("MC: invalid pickup stock");
     const bool seen = entry.at("state") != "unseen";
     if ((seen || pickup.at("approachAttempted") == true) && (target.at("state") != "tracked" || target.at("withinOriginalRadius") != true ||
-        target.at("original").at("item") != name || target.at("original").at("count") != requested ||
+        target.at("original").at("item") != name || target.at("original").at("count") != original_count ||
         target.at("item") != name || target.at("count") != requested)) throw std::invalid_argument("MC: pickup target changed");
     int own = 0, other = 0;
     if (seen) {
@@ -685,7 +709,9 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         !args.at("message").is_number_unsigned() || args.at("message") == 0 || args.at("message") > context.at("order") ||
         item_name(args.at("item").get_ref<const std::string&>()).empty()))
         throw std::invalid_argument("MC: invalid chest observation arguments");
-    if (skill == "store_item" && (args.size() != 4 || !args.at("sourceMessage").is_number_unsigned() || args.at("sourceMessage") != context.at("order") ||
+    const bool withdraw = skill == "withdraw_item";
+    if ((skill == "store_item" || withdraw) && (args.size() != (withdraw ? 5 : 4) || (withdraw && args.at("destination") != "companion_inventory") ||
+        !args.at("sourceMessage").is_number_unsigned() || args.at("sourceMessage") != context.at("order") ||
         !args.at("count").is_number_unsigned() || args.at("count") == 0 || args.at("count") > 2304 ||
         args.at("observation").get_ref<const std::string&>().empty() || args.at("observation").get_ref<const std::string&>().size() > 128 ||
         item_name(args.at("item").get_ref<const std::string&>()).empty())) throw std::invalid_argument("MC: invalid chest transfer arguments");
@@ -696,15 +722,18 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         !args.at("work").is_string() || args.at("work").get_ref<const std::string&>().empty() || args.at("work").get_ref<const std::string&>().size() > 128))
         throw std::invalid_argument("MC: invalid handoff work reference");
     context["controller"] = config.controller;
-    // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
-    const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
+    // 旧桥接会拒绝带新约束的技能名，防止忽略采掘审批、原取出工作或拾取余量。
+    const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" :
+        skill == "give_item" && args.contains("withdrawalWork") ? "give_withdrawn_item" :
+        skill == "pickup_drop" && args.contains("resumeWork") ? "resume_pickup_drop" : skill;
     return Json{{"version",1},{"id",id},{"key",config.key},{"method",method},{"context",std::move(context)},
         {"skill",wire_skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
 }
 // 对照原技能和宿主来源读取实际结算，业务受阻也作为信息返回给模型。
 PartnerReply partner_reply(std::string_view wire, std::string_view id, std::string_view controller,
     std::string_view skill, std::string_view arguments) {
-    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" || skill == "pickup_drop" || skill == "give_item" || skill == "store_item" ? 12 : 6), envelope = parse(arguments);
+    const bool withdraw = skill == "withdraw_item", chest_transfer = withdraw || skill == "store_item";
+    const auto frame = parse(wire,skill == "observe" || skill == "route" || skill == "collect" || skill == "pickup_drop" || skill == "give_item" || chest_transfer ? 12 : 6), envelope = parse(arguments);
     const auto& context = envelope.at("context");
     const auto& args = envelope.at("arguments");
     const auto& action = frame.at("action");
@@ -715,15 +744,18 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
-    if (skill == "store_item" && (result.contains("deposit") || (exited && result.at("status") == "done"))) {
-        const auto& proof = result.at("deposit");
-        verify_deposit(proof,args,context,id,false);
+    const auto field = withdraw ? "withdrawal" : "deposit";
+    if (chest_transfer && result.contains(withdraw ? "deposit" : "withdrawal")) throw std::invalid_argument("MC: wrong chest transfer result");
+    if (chest_transfer && (result.contains(field) || (exited && result.at("status") == "done"))) {
+        const auto& proof = result.at(field);
+        verify_chest_transfer(proof,args,context,id,false,withdraw);
         if (exited && result.at("status") == "done" && (proof.at("state") != "verified" || proof.at("remaining") != 0))
             throw std::invalid_argument("MC: unverified completed chest transfer");
     }
     if (skill == "observe" && (result.contains("chestReceipt") || (exited && result.at("status") == "done" && args.value("mode","") == "chest_receipt"))) {
         if (args.value("mode","") != "chest_receipt") throw std::invalid_argument("MC: unexpected chest receipt");
-        verify_deposit(result.at("chestReceipt"),args,context,args.at("work").get_ref<const std::string&>(),true);
+        const auto& proof = result.at("chestReceipt");
+        verify_chest_transfer(proof,args,context,args.at("work").get_ref<const std::string&>(),true,proof.contains("direction"));
     }
     if (skill == "observe" && (result.contains("chest") || (exited && result.at("status") == "done" && args.value("mode","") == "chest"))) {
         const auto& chest = result.at("chest");
@@ -828,7 +860,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress = skill == "give_item" && !exited ? handoff_progress(result) : std::string{};
-    const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context.at("generation"),exited);
+    const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context,exited);
     if (skill == "pickup_drop" && result.contains("progress")) progress = result.at("progress").dump();
     if (skill == "collect" && (result.contains("capacity") || result.value("reasonCode","") == "pickup_inventory_full")) {
         const auto& capacity = result.at("capacity");
@@ -870,10 +902,10 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         if (result.contains("progress")) progress = result.at("progress").dump();
     }
     const bool craft_attempted = exited && skill == "craft" && result.at("craftAttempted").get<bool>();
-    const bool deposited = skill == "store_item" && result.contains("deposit") && result.at("deposit").value("stored",0) > 0;
-    const bool changed = exited && (skill == "store_item" ? deposited : skill == "give_item" ? thrown : skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
+    const bool transferred = chest_transfer && result.contains(field) && result.at(field).value(withdraw ? "withdrawn" : "stored",0) > 0;
+    const bool changed = exited && (chest_transfer ? transferred : skill == "give_item" ? thrown : skill == "pickup_drop" ? picked : skill == "craft" ? verified_craft(result,args,craft_attempted) :
         result.contains("changes") && verified_changes(result.at("changes")));
-    const bool inventory_attempted = (skill == "store_item" && result.contains("deposit") && result.at("deposit").at("state") == "pending" && result.at("deposit").at("attempted") == true) ||
+    const bool inventory_attempted = (chest_transfer && result.contains(field) && result.at(field).at("state") == "pending" && result.at(field).at("attempted") == true) ||
         (skill == "give_item" && result.contains("transfer") && result.at("transfer").at("attemptedClicks") != 0) ||
         (skill == "pickup_drop" && result.contains("pickup") && result.at("pickup").at("approachAttempted") == true);
     return {exited, exited && result.at("status") == "done", attempted, verified, changed, delivery, exited ? result.dump() : std::string{},

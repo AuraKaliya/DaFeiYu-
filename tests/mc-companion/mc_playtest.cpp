@@ -775,6 +775,33 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         return {{Role::assistant,"",{{id.empty() ? name : id,tool->name,args.dump()}}},FinishReason::tool_calls};
     };
     const auto& last = request.messages.back();
+    // 从实际送模的工作结算找回最近一次已退出的指定堆拾取。
+    const auto previous_pickup = [&](bool allow_read = false) -> Json {
+        for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
+            if (it->role != Role::user) continue;
+            const auto input = Json::parse(it->content,nullptr,false);
+            if (!input.is_object()) continue;
+            const auto work = input.contains("workSettlement") ? primary_receipt(input) :
+                input.value("task",Json::object()).value("lastAction",Json::object());
+            if ((work.value("skill","") == "pickup_drop" || (allow_read && work.value("skill","") == "observe")) &&
+                work.contains("result") && work.at("result").contains("dropTarget")) return work;
+        }
+        throw std::runtime_error("ground pickup: missing original settled work");
+    };
+    if (last.role == Role::tool && (last.tool_call_id == "resume-target" || last.tool_call_id == "read-final-target")) {
+        const auto target = Json::parse(last.content.substr(last.content.find('{'))).at("dropTarget");
+        if (last.tool_call_id == "read-final-target") {
+            if (target.at("state") != "not_tracked") throw std::runtime_error("ground pickup: original entity is still tracked");
+            return {{Role::assistant,"原堆已离开视野，按原工作核对过了。"}};
+        }
+        const auto work = previous_pickup();
+        const auto& pickup = work.at("result").at("pickup");
+        const int left = pickup.at("requested").get<int>()-pickup.at("verifiedCount").get<int>()-pickup.at("observed").value("otherCount",0);
+        if (target.at("state") != "tracked" || !target.value("withinOriginalRadius",false) || target.value("count",0) != left || !left)
+            return {{Role::assistant,"原堆的可取余量还没有核清。"}};
+        return call("_pickup_drop",{{"observation",target.at("observation")},{"entity",target.at("entity")},{"item",target.at("item")},
+            {"count",left},{"resumeWork",work.at("bridgeWork")}},"resume-original");
+    }
     if (last.role == Role::tool && (last.tool_call_id == "_observe" || last.tool_call_id == "remaining-soil")) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         const auto& sample = result.at("dropObservation");
@@ -793,6 +820,12 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "motion.finished") {
             const auto& work = primary_receipt(input);
             const auto& result = work.at("result");
+            if (result.contains("pickup") && result.at("pickup").contains("continuation")) {
+                if (result.at("status") == "done" && result.at("pickup").at("verifiedCount") == 2)
+                    return {{Role::assistant,"原来那堆剩下的两块已进背包。"}};
+                if (result.value("reasonCode","") == "pickup_other_stack_nearby" && result.at("nearbyDrop").at("stack").at("item") == "dirt")
+                    return {{Role::assistant,"原堆旁边还有另一堆泥土，我先停在原地。"}};
+            }
             if (work.at("skill") != "pickup_drop" || result.at("reasonCode") != "pickup_other_stack_nearby" ||
                 result.at("nearbyDrop").at("stack").at("item") != "stone" || result.at("pickup").at("approachAttempted") != false)
                 throw std::runtime_error("ground pickup: overlapping stack did not keep the actor in place");
@@ -807,6 +840,17 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
             return {{Role::assistant,"三块泥土都进了我的背包。"}};
         }
         const auto& events = input.at(input.at("trigger") == "skills.expanded" ? "recentEvents" : "events");
+        if (!events.empty()) {
+            const auto text = events.back().value("text","");
+            if (text == "石头挪开了。" || text == "旁边那堆也挪开了。" || text == "再核对原来的掉落。") {
+                if (std::ranges::none_of(request.tools,[](const auto& def) { return def.name.ends_with("_pickup_drop"); }))
+                    return call("_skills",{{"categories",{"inventory"}}});
+                const auto previous = previous_pickup(text == "再核对原来的掉落。");
+                const auto& target = previous.at("result").at("dropTarget");
+                return call("_observe",{{"mode","drop"},{"observation",target.at("observation")},{"entity",target.at("entity")}},
+                    text == "再核对原来的掉落。" ? "read-final-target" : "resume-target");
+            }
+        }
         if (!events.empty() && events.back().value("text","") == "只拿剩下的两块泥土，石头留给我。") {
             if (std::ranges::none_of(request.tools,[](const auto& def) { return def.name.ends_with("_pickup_drop"); }))
                 return call("_skills",{{"categories",{"inventory"}}});
@@ -850,11 +894,27 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
     const auto invoke = [&](std::string_view name, std::string id, const Json& data) -> Response {
         return {{Role::assistant,"",{tool(name,std::move(id),data)}},FinishReason::tool_calls};
     };
-    // 仅按原双边回执回答存入量和剩余量，窗口中断时保留原工作号。
+    // 按原双边回执和方向回答已转移量及剩余量，窗口中断时保留原工作号。
     const auto storage = [](const Json& proof) -> Response {
+        if (proof.value("direction","") == "withdraw") {
+            if (proof.at("state") == "pending") return {{Role::assistant,"取出工作 "+proof.at("work").get<std::string>()+" 的实取量待核实。"}};
+            return {{Role::assistant,"从左箱取到我的背包 "+std::to_string(proof.at("withdrawn").get<int>())+
+                " 块，剩余 "+std::to_string(proof.at("remaining").get<int>())+" 块。"}};
+        }
         if (proof.at("state") == "pending") return {{Role::assistant,"存箱工作 "+proof.at("work").get<std::string>()+" 的实存量待核实。"}};
         return {{Role::assistant,"左箱实存 "+std::to_string(proof.at("stored").get<int>())+
             " 块，剩余 "+std::to_string(proof.at("remaining").get<int>())+" 块。"}};
+    };
+    // 原取出量核实后才观察收件人，以原工作号绑定本次给物。
+    const auto after_withdrawal = [&](const Json& proof) -> Response {
+        if (!proof.contains("deliverTo") || proof.at("state") != "verified" || proof.at("withdrawn") == 0) return storage(proof);
+        return invoke("_observe","chest-offer-"+proof.at("work").get<std::string>(),{{"mode","handoff"},{"recipient",proof.at("deliverTo")},
+            {"item",proof.at("item")},{"count",proof.at("withdrawn")}});
+    };
+    // 从服务端归属回执分别回答原取出量、实际投出量和玩家已收量。
+    const auto chest_delivery = [](const Json& receipt, const Json& count) -> Response {
+        return {{Role::assistant,"左箱实取 "+std::to_string(count.get<int>())+" 块，已投 "+std::to_string(receipt.at("thrown").get<int>())+
+            " 块，你已收 "+std::to_string(receipt.at("recipientPicked").get<int>())+" 块。"}};
     };
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
@@ -862,17 +922,22 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
         const auto trigger = scene.at("trigger").get<std::string>();
         const auto& events = scene.at("events");
         const auto line = events.empty() ? std::string{} : events.back().value("text","");
-        if (line == "把这八块存进左箱" || line == "请把8块圆石放入左边的箱子") {
+        const bool withdraw = line == "从左箱取出八块圆石，放进你的背包" || line == "请把左边的箱子里的8块圆石取到伙伴背包里" ||
+            line == "从左箱取出八块圆石，交给我" || line == "请把左边的箱子里的8块圆石取出来给我";
+        if (withdraw || line == "把这八块存进左箱" || line == "请把8块圆石放入左边的箱子") {
             for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
                 if (it->role != Role::tool || it->tool_call_id != "inspect-chest") continue;
                 const auto chest = Json::parse(it->content.substr(it->content.find('{'))).at("chest");
-                return invoke("_store_item","deposit",{{"observation",chest.at("id")},{"sourceMessage",events.back().at("sequence")},
-                    {"item",chest.at("item")},{"count",8}});
+                Json args{{"observation",chest.at("id")},{"sourceMessage",events.back().at("sequence")},{"item",chest.at("item")},{"count",8}};
+                if (withdraw) args["destination"] = "companion_inventory";
+                return invoke(withdraw ? "_withdraw_item" : "_store_item",withdraw ? "withdrawal" : "deposit",args);
             }
             throw std::runtime_error("eight stone: missing original pointed chest observation");
         }
-        const std::string recheck = "复查存箱工作 ";
+        const std::string recheck = line.starts_with("复查取出工作 ") ? "复查取出工作 " : "复查存箱工作 ";
         if (line.starts_with(recheck)) return invoke("_observe","store-recheck",{{"mode","chest_receipt"},{"work",line.substr(recheck.size())}});
+        const std::string check_give = "复查交物工作 ";
+        if (line.starts_with(check_give)) return invoke("_observe","chest-give-recheck",{{"mode","handoff_receipt"},{"work",line.substr(check_give.size())}});
         if (line == "帮我挖 8 块圆石") {
             const Json q{{"question","八块圆石交到哪个箱子？"},{"options",{"左箱","扔给我"}},
                 {"scope",{{"skill","give_item"},{"item","cobblestone"}}}};
@@ -896,6 +961,9 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
             const auto& completed = primary_receipt(scene);
             const auto& result = completed.at("result");
             if (completed.at("skill") == "store_item" && result.contains("deposit")) return storage(result.at("deposit"));
+            if (completed.at("skill") == "withdraw_item" && result.contains("withdrawal")) return after_withdrawal(result.at("withdrawal"));
+            if (completed.at("skill") == "give_item" && result.contains("transfer") && result.at("transfer").contains("withdrawalWork") && result.contains("receipt"))
+                return chest_delivery(result.at("receipt"),result.at("transfer").at("requested"));
             if (completed.at("skill") == "collect" && result.value("broken",0) == 8 &&
                 result.at("inventoryDelta").value("cobblestone",0) == 8)
                 return {{Role::assistant,"八块圆石都进了我的背包，等你选交付位置。"}};
@@ -931,9 +999,23 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
                 " 块圆石，我背包里有 "+std::to_string(chest.at("stock").at("stored").get<int>())+" 块。"}};
         }
         if (last.tool_call_id == "store-recheck") return storage(Json::parse(last.content.substr(last.content.find('{'))).at("chestReceipt"));
-        if (last.tool_call_id == "deposit") {
+        if (last.tool_call_id.starts_with("chest-offer-")) {
+            const auto offer = Json::parse(last.content.substr(last.content.find('{'))).at("handoff");
+            return invoke("_give_item","chest-give",{{"observation",offer.at("id")},{"recipient",offer.at("recipient")},{"item",offer.at("item")},
+                {"count",offer.at("count")},{"withdrawalWork",last.tool_call_id.substr(std::string_view("chest-offer-").size())}});
+        }
+        if (last.tool_call_id == "chest-give-recheck") {
+            const auto proof = Json::parse(last.content.substr(last.content.find('{'))).at("handoffReceipt");
+            return chest_delivery(proof.at("receipt"),proof.at("requested"));
+        }
+        if (last.tool_call_id == "chest-give") {
             const auto result = Json::parse(last.content.substr(last.content.find('{')));
-            if (result.contains("deposit")) return storage(result.at("deposit"));
+            if (result.contains("receipt")) return chest_delivery(result.at("receipt"),result.at("transfer").at("requested"));
+        }
+        if (last.tool_call_id == "deposit" || last.tool_call_id == "withdrawal") {
+            const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            if (result.contains("withdrawal")) return after_withdrawal(result.at("withdrawal"));
+            if (result.contains(last.tool_call_id)) return storage(result.at(last.tool_call_id));
         }
         if (last.tool_call_id == "progress" || last.tool_call_id == "give-ready" || last.tool_call_id == "before-choice") {
             const auto sample = Json::parse(last.content.substr(last.content.find('{'))).at("handoff");
@@ -1371,11 +1453,12 @@ int wmain(int argc, wchar_t** argv) {
         const bool layered = resupply || mode == L"--layered-follow-probe";
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
-        const bool ground_pickup = mode == L"--ground-pickup-probe";
+        const bool ground_pickup = mode == L"--ground-pickup-probe" || mode == L"--ground-pickup-resume-probe";
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
-        const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-store-probe" ||
-            mode == L"--handoff-eight-full-probe" || mode == L"--handoff-eight-retired-probe";
+        const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-store-probe" || mode == L"--handoff-eight-withdraw-probe" ||
+            mode == L"--handoff-eight-full-probe" || mode == L"--handoff-eight-retired-probe" || mode == L"--handoff-eight-chest-delivery-probe" ||
+            mode == L"--handoff-eight-withdraw-boundary-probe";
         const bool handoff = eight || gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" ||
             mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-partial-probe" || mode == L"--handoff-other-probe";

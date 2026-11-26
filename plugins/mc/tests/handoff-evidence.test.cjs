@@ -7,6 +7,29 @@ const { makeReceiptRoom } = require('../bridge/partner-records.cjs');
 const id = n => '00000000-0000-0000-0000-' + String(n).padStart(12,'0');
 const actor = id(1), owner = id(2), stranger = id(3), mark = { stream: id(4), seq: 0 };
 
+// 复现 Paper 的同刻三件合堆，两次下一刻读回都只能看到终栈三件。
+test('同刻连续合堆按中间实体数量和最终库存确认收件', () => {
+  const rows = [], material = 'minecraft:cobblestone';
+  const add = (kind,fields) => rows.push({kind,seq:rows.length+1,stream:mark.stream,tick:10,material,...fields});
+  for (const n of [7,8,9]) {
+    const stack = {item:id(n),networkId:n,amount:1};
+    add('playerDrop',{...stack,actor}); add('added',stack);
+  }
+  add('merge',{item:id(8),amount:1,target:id(7),targetAmount:1});
+  add('merge',{item:id(9),amount:1,target:id(7),targetAmount:2});
+  add('mergeReadback',{cause:7,tick:11,sourceRemaining:0,targetRemaining:3});
+  add('mergeReadback',{cause:8,tick:11,sourceRemaining:0,targetRemaining:3});
+  add('pickup',{item:id(7),actor:owner,tick:50,amount:3,remaining:0,beforeStock:1});
+  add('pickupReadback',{cause:11,actor:owner,tick:51,afterStock:4,ground:0});
+  const read = () => handoffEvidence(rows,mark,actor,owner,'cobblestone',3);
+  assert.deepEqual([read().thrown,read().recipientPicked,read().pickupUnknown],[3,3,0]);
+  rows[7].targetAmount = 1;
+  assert.equal(read().pickupUnknown,3);
+  rows[7].targetAmount = 2;
+  rows[4].actor = stranger;
+  assert.deepEqual([read().thrown,read().recipientPicked,read().pickupUnknown],[2,0,2]);
+});
+
 // 复用隔离服实测的整堆和两个单件，后两件在原玩家拾取前合堆。
 function evidenceRows() {
   const rows = [];
@@ -104,6 +127,15 @@ test('full bridge retains all unsettled handoffs and reserves a single receipt l
   makeReceiptRoom(jobs,null,{ ...context,order:3 });
   assert.equal(jobs.size,63);
   assert.ok(jobs.has(0) && !jobs.has(1) && !jobs.has('read'));
+});
+
+// 回执满额时保留本次交付的原取出和备料观察，回收同场更早的无关工作。
+test('取箱交付的两个来源在新工作入场时仍可查', () => {
+  const jobs = new Map(), context = {generation:'g',controller:'c',order:3};
+  for (let index = 0; index < 64; ++index)
+    jobs.set(index,{receipt:{generation:'g',controller:'c',order:1,skill:index === 0 ? 'withdraw_item' : 'observe',exited:true,result:{}}});
+  makeReceiptRoom(jobs,null,context,jobs.get(1),() => true,jobs.get(0));
+  assert.deepEqual([jobs.has(0),jobs.has(1),jobs.has(2),jobs.size],[true,true,false,63]);
 });
 
 // 投物与生成记录都缺运行号时，仅保留其他能独立核实的投物与收取。

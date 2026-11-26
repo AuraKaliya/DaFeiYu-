@@ -49,6 +49,7 @@ class PartnerFacts {
     struct LateReceipt {
         bool exit_was_unknown = false, exited = false, effect_after_exit = false;
         bool handoff = false, pending_pickup = false, pickup_settled = false;
+        std::string withdrawal_work;
         nlohmann::json chest_basis;
         bool chest_settled = false;
     };

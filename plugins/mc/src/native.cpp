@@ -203,7 +203,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     } else if (index >= 10 && index - 10 < partner_skills.size() && !raw->config.key.empty()) {
         const auto& skill = partner_skills[index - 10];
         try {
-            *out = {sizeof(*out), 1, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
+            *out = {sizeof(*out), skill.contract_version, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
                 view(skill.name), view(skill.description), view(dfy::mc::partner_schema(skill))};
         } catch (...) { return report(DFY_V2_FAILED,error); }
     } else return report(DFY_V2_NOT_FOUND, error);
@@ -233,7 +233,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
     const auto* action = partner ? dfy::mc::partner_action(skill->name) : nullptr;
     const auto game_skill = action ? action->executor : partner ? skill->name : std::string_view{};
     const bool motion_skill = partner && skill->kind == SkillKind::motion;
-    const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target" || game_skill == "pickup_drop" || game_skill == "give_item" || game_skill == "store_item";
+    const bool wait_for_work = exact_dig || gather_ground || game_skill == "fill_target" || game_skill == "pickup_drop" || game_skill == "give_item" || game_skill == "store_item" || game_skill == "withdraw_item";
     bool local = partner && (skill->kind == SkillKind::task || skill->kind == SkillKind::catalog || skill->kind == SkillKind::knowledge ||
         skill->kind == SkillKind::question || skill->kind == SkillKind::motion_stop || skill->kind == SkillKind::approval_withdraw ||
         skill->kind == SkillKind::action_queue);
@@ -303,7 +303,7 @@ dfy_v2_status DFY_V2_CALL begin(dfy_v2_instance* raw, dfy_v2_string_view name, c
         const bool alters_world = controls_body && (game_skill == "collect" || placing);
         const auto front_block = partner_turn && controls_body ? raw->partner.front_barrier(call->session) : std::string_view{};
         auto action_block = placing && front_block.empty() ? raw->partner.bind_placement(call->session,game_skill,job.arguments) : std::string_view{};
-        const auto question = (alters_world || (controls_body && (game_skill == "give_item" || game_skill == "store_item"))) && action_block.empty() ? raw->partner.action_question(call->session,game_skill,
+        const auto question = (alters_world || (controls_body && (game_skill == "give_item" || game_skill == "store_item" || game_skill == "withdraw_item"))) && action_block.empty() ? raw->partner.action_question(call->session,game_skill,
             nlohmann::json::parse(job.arguments).at("arguments"),pointed.value_or(false) ? resolves : 0) : nlohmann::json{};
         const bool needs_plan = exact_dig && pointed.value_or(false) && raw->partner.has_pickup_continuation(resolves);
         const bool input_blocked = !front_block.empty() || !question.is_null() || needs_plan || !pointed.has_value() ||
@@ -436,7 +436,7 @@ dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket ticket, 
         try {
             std::optional<dfy::mc::GameResult> value;
             if (!job->cancelled && job->partner_session && !job->action->attempted() &&
-                (job->skill == "collect" || job->skill == "place" || job->skill == "fill_target" || job->skill == "give_item" || job->skill == "store_item")) {
+                (job->skill == "collect" || job->skill == "place" || job->skill == "fill_target" || job->skill == "give_item" || job->skill == "store_item" || job->skill == "withdraw_item")) {
                 const auto question = raw->partner.action_question(job->partner_session,job->skill,
                     nlohmann::json::parse(job->action->arguments()).at("arguments"),job->resolves);
                 if (!question.is_null()) value = dfy::mc::GameResult{true,dfy::mc::GameEffect::none,question.dump()};

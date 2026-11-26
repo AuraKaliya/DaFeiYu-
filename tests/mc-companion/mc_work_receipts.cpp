@@ -39,6 +39,7 @@ void late_pickup(bool ordered, bool recyclable) {
         throw std::runtime_error("original work not admitted");
     Json original{{"session",1},{"order",1},{"skill","give_item"},{"bridgeWork","give"},{"bridgeExited",true},{"factAdmission",0},
         {"effect",DFY_V2_TOOL_APPLIED},{"result",{{"status","blocked"},{"receipt",{{"source","server_events"},{"throwUnknown",0},{"pickupUnknown",8}}}}}};
+    if (recyclable) original["result"]["transfer"] = {{"withdrawalWork","chest-work"}};
     if (facts.report(1,"mc.partner.action",original)) throw std::runtime_error("missing original pending receipt");
     for (unsigned n=1;n<128;++n) {
         const auto work = "other-"+std::to_string(n);
@@ -49,8 +50,13 @@ void late_pickup(bool ordered, bool recyclable) {
     }
     const auto status = facts.reserve("later-read","observe",2);
     if (status != (recyclable ? DFY_V2_OK : DFY_V2_RESOURCE_EXHAUSTED)) throw std::runtime_error("wrong preflight result");
-    const Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"submitted",8},{"sourceThrough",12},
+    Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"submitted",8},{"sourceThrough",12},
         {"originalStatus","blocked"},{"receipt",{{"source","server_events"},{"recipientPicked",8},{"otherPicked",0},{"stream","s"},{"throwUnknown",0},{"pickupUnknown",0}}}};
+    if (recyclable) {
+        handoff["withdrawalWork"] = "other-chest-work";
+        if (facts.settle_pickup(1,"give",handoff) != DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("late pickup changed its original withdrawal");
+        handoff["withdrawalWork"] = "chest-work";
+    }
     const Json observed{{"session",1},{"order",2},{"skill","observe"},{"bridgeWork","later-read"},{"bridgeExited",true},
         {"factAdmission",status},{"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",{{"handoffReceipt",handoff}}}};
     if (facts.report(1,"mc.partner.action",observed)!=status) throw std::runtime_error("reader dropped its own recording status");
@@ -61,29 +67,37 @@ void late_pickup(bool ordered, bool recyclable) {
     if (item==results.end() || item->at("accepted")!=1 || item->at("revision")!=4 || item->at("effect").at("recipientPicked")!=8 ||
         item->at("effectReceipt")<=item->at("exited") || item->value("finalEffect",false)!=ordered)
         throw std::runtime_error("full index lost original pickup, exit or finality");
+    if (recyclable && item->at("effect").at("withdrawalWork") != "chest-work") throw std::runtime_error("late pickup lost its original withdrawal");
     if (ordered && facts.reserve("next","reply",3)) throw std::runtime_error("final pickup did not release an eligible slot");
 }
 
-// 核对迟到存箱实效只更新同一格位、同一委托和同一基线的原工作。
+// 核对迟到单箱存取实效只更新同一格位、同一委托和同一基线的原工作。
 // 步骤：登记中断和实际退出 → 拒绝换箱及换基线 → 接受原件并验证重传防重。
-void late_deposit() {
+void late_chest_transfer(bool withdraw) {
     dfy::app::BindingWorks works; ledger = &works;
     dfy_v2_agent_ordered_facts_api api{{{},submit,legacy},record,nullptr};
     dfy::mc::PartnerFacts facts;
     facts.configure(&api.base,"paired",&api);
     std::uint64_t request = 0;
-    if (facts.submit(1,"paired/world",{},Json::object(),false,request) || facts.reserve("deposit","store_item",3))
+    const auto skill = withdraw ? "withdraw_item" : "store_item", field = withdraw ? "withdrawal" : "deposit", amount = withdraw ? "withdrawn" : "stored";
+    if (facts.submit(1,"paired/world",{},Json::object(),false,request) || facts.reserve("deposit",skill,3))
         throw std::runtime_error("store not admitted");
-    const Json basis{{"work","deposit"},{"sourceMessage",3},{"observation","box"},{"item","cobblestone"},{"requested",8},
+    Json basis{{"work","deposit"},{"sourceMessage",3},{"observation","box"},{"item","cobblestone"},{"requested",8},
         {"cell",{{"x",2},{"y",-60},{"z",-2}}},{"before",{{"sampledAtMs",12}}},{"state","pending"}};
-    Json original{{"session",1},{"order",3},{"skill","store_item"},{"bridgeWork","deposit"},{"bridgeExited",true},{"factAdmission",0},
-        {"effect",DFY_V2_TOOL_UNKNOWN},{"result",{{"status","blocked"},{"deposit",basis}}}};
+    if (withdraw) basis.update(Json{{"direction","withdraw"},{"destination","companion_inventory"}});
+    Json original{{"session",1},{"order",3},{"skill",skill},{"bridgeWork","deposit"},{"bridgeExited",true},{"factAdmission",0},
+        {"effect",DFY_V2_TOOL_UNKNOWN},{"result",{{"status","blocked"},{field,basis}}}};
     if (facts.report(1,"mc.partner.action",original) || facts.reserve("check","observe",4))
         throw std::runtime_error("interrupted store not recorded");
     Json checked{{"session",1},{"order",4},{"skill","observe"},{"bridgeWork","check"},{"bridgeExited",true},{"factAdmission",0},
         {"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",{{"chestReceipt",basis}}}};
     auto& proof = checked["result"]["chestReceipt"];
-    proof.update(Json{{"state","verified"},{"stored",8},{"remaining",0},{"after",{{"sampledAtMs",15}}}});
+    proof.update(Json{{"state","verified"},{amount,8},{"remaining",0},{"after",{{"sampledAtMs",15}}}});
+    if (withdraw) {
+        proof["destination"] = "player_inventory";
+        if (facts.report(1,"mc.partner.action",checked)!=DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("another destination settled work");
+        proof["destination"] = basis.at("destination");
+    }
     proof["cell"]["z"] = 2;
     if (facts.report(1,"mc.partner.action",checked)!=DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("another chest settled work");
     proof["cell"] = basis.at("cell");
@@ -94,7 +108,7 @@ void late_deposit() {
     const auto watermark = works.watermark();
     const auto rows = works.view(1,0);
     const auto deposit = std::ranges::find_if(rows,[](const Json& row) { return row.at("work") == "deposit"; });
-    if (deposit == rows.end() || deposit->at("revision") != 4 || deposit->at("effect").at("stored") != 8 ||
+    if (deposit == rows.end() || deposit->at("revision") != 4 || deposit->at("effect").at(amount) != 8 ||
         !deposit->value("finalEffect",false)) throw std::runtime_error("original store is not finalized");
     if (facts.report(1,"mc.partner.action",checked) || works.watermark() != watermark)
         throw std::runtime_error("duplicate store settlement");
@@ -133,6 +147,6 @@ void retired_pickup(bool unknown_exit) {
 
 // 验证满额和退役时对原投物的查证，覆盖旧事实接口与迟到退出。
 int main() {
-    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); retired_pickup(false); retired_pickup(true); late_deposit(); return 0; }
+    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); retired_pickup(false); retired_pickup(true); late_chest_transfer(false); late_chest_transfer(true); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

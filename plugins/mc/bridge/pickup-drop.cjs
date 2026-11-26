@@ -13,9 +13,35 @@ function nearbyStack(others, feet) {
     p.y >= feet.y-1 && p.y <= feet.y+2.5);
 }
 
+// 从已退出且原因明确的原动作计算可续取余量，归属缺证、取消和完成均不产生新动作。
+// 步骤：核对原号、退出与对象 → 对照收取包和库存 → 计算同一原堆余量。
+function pickupRemainder(previous, source, args) {
+  const r = previous?.receipt, p = r?.result.pickup, target = r?.result.dropTarget;
+  const observed = p?.observed;
+  const recoverable = ['pickup_other_stack_nearby','pickup_insufficient_space','pickup_capacity_unknown','pickup_path_blocked',
+    'pickup_stand_unavailable','pickup_outside_observation','pickup_timed_out','pickup_other_collector'];
+  if (!r?.exited) throw blocked('pickup_exit_unconfirmed','原拾取是否退出尚未核实，请先查询原号');
+  if (r.result.status === 'done') throw blocked('pickup_already_completed','原堆已经完成拾取，请查原号');
+  if (r.result.status === 'interrupted') throw blocked('pickup_original_interrupted','原工作已中断，请保留已产生的效果');
+  if (r.skill !== 'pickup_drop' || r.result.status !== 'blocked' || !recoverable.includes(r.result.reasonCode) ||
+      previous.id !== args.resumeWork || r.generation !== source.generation || target?.dimension !== source.dimension ||
+      target.observation !== source.id || target.entity !== args.entity || p?.item !== args.item.replace(/^minecraft:/,'') ||
+      p.stockCurrent !== true || !Number.isSafeInteger(p.verifiedCount) || p.verifiedCount !== (observed?.selfCount ?? 0) ||
+      (p.approachAttempted && observed?.uuid !== args.entity))
+    throw blocked('pickup_remainder_unconfirmed','需要已退出原工作的同一实体、可核实的收取包及入包读数');
+  const prior = p.continuation;
+  const originalCount = target.original.count, verifiedBefore = (prior?.verifiedBefore ?? 0)+p.verifiedCount;
+  const otherBefore = (prior?.otherBefore ?? 0)+(observed?.otherCount ?? 0);
+  if (!Number.isSafeInteger(otherBefore) || otherBefore < 0 || verifiedBefore < 0 || args.count < 1 ||
+      originalCount-verifiedBefore-otherBefore !== args.count)
+    throw blocked('pickup_remainder_mismatch','续取数量必须等于原整堆扣除已核实收取后的剩余量');
+  return {work:previous.id,root:prior?.root ?? previous.id,sourceMessage:prior?.sourceMessage ?? r.order,
+    originalCount,verifiedBefore,otherBefore};
+}
+
 // 走近原观察确认的整堆物品，按目标实体的拾取包和本次背包变化分别结算。
 // 步骤：复核原栈、现场身份和容量 → 在原观察范围内接近目标 → 读回拾取人与库存 → 等待导航退出。
-async function pickupDrop(bot, args, source, check, result, movement) {
+async function pickupDrop(bot, args, source, check, result, movement, continuation, claim) {
   if (!validDropReference(args) || typeof args.item !== 'string' || !/^(?:minecraft:)?[a-z0-9_]{1,80}$/.test(args.item) ||
       !Number.isSafeInteger(args.count) || args.count < 1 || args.count > 0x7fffffff)
     throw blocked('pickup_parameters', '拾取需要原观察、实体 UUID、物品和整堆数量');
@@ -25,7 +51,7 @@ async function pickupDrop(bot, args, source, check, result, movement) {
   const before = inventory(bot);
   const entry = { state: 'unseen' };
   const pickup = result.pickup = { item, requested: args.count, stockBefore: before[item] ?? 0, approachAttempted: false,
-    observed: entry };
+    observed: entry,...(continuation && {continuation}) };
   const now = movement.now ?? (() => performance.now()), pause = movement.pause ?? delay;
   const start = now();
   let tracker, walk, walking = false, walkError, lastStand, confirmationSince, phase = 'checking_target';
@@ -48,10 +74,11 @@ async function pickupDrop(bot, args, source, check, result, movement) {
   try {
     sample('checking_target');
     movement.setSampler?.(sample);
-    if (target.original.item !== item || target.original.count !== args.count)
+    if (target.original.item !== item || target.original.count !== (continuation?.originalCount ?? args.count))
       throw blocked('pickup_whole_stack_required', '自然拾取会接收整堆，请核对原观察的物品和数量');
     if (target.state !== 'tracked') throw blocked('pickup_target_unavailable', '原堆已失去追踪或缺少当前栈读数');
     if (target.item !== item || target.count !== args.count) throw blocked('pickup_stack_changed', '原堆物品或数量已经改变');
+    claim?.();
     if (!target.withinOriginalRadius || !inside(bot.entity.position))
       throw blocked('pickup_outside_observation', '角色或目标已移出原观察半径');
     const capacity = result.capacity = inventoryCapacity(bot, item);
@@ -120,4 +147,4 @@ async function pickupDrop(bot, args, source, check, result, movement) {
     throw blocked('pickup_stock_unconfirmed', '退出时未能同时核实原堆收取量与库存增量');
 }
 
-module.exports = { pickupDrop };
+module.exports = { pickupDrop, pickupRemainder };

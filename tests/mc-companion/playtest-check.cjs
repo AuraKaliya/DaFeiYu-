@@ -126,7 +126,7 @@ async function checkPlayer(fixture, mode) {
     const gapGroup = explicitOpenings || mode === '--gap-group-probe';
     const wallProbe = doorProbe || mode === '--wall-probe' || mode.startsWith('--ask-') || mode.startsWith('--gap-');
     const vitals = mode === '--vitals-probe' || mode === '--air-episode-probe';
-    const arena = partner && !combined && !layered && !gapGroup && !handoff && !vitals && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe'].includes(mode) ?
+    const arena = partner && !combined && !layered && !gapGroup && !handoff && !vitals && !['--water-probe', '--fill-four-probe', '--gap-materials-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--ground-pickup-resume-probe'].includes(mode) ?
       await until(() => readArena(player, wallProbe, doorProbe || mode === '--gap-probe'), '独立客户端读回验收场地') : null;
     if (arena) {
       writeFileSync(join(fixture.evidence, 'arena.json'), JSON.stringify(arena, null, 2));
@@ -135,8 +135,8 @@ async function checkPlayer(fixture, mode) {
       await checkFillFour(fixture, player, whispers, combined);
     } else if (mode === '--craft-probe') {
       await checkCraft(fixture, player, whispers);
-    } else if (mode === '--ground-pickup-probe') {
-      await checkGroundPickup(fixture, player, whispers);
+    } else if (mode === '--ground-pickup-probe' || mode === '--ground-pickup-resume-probe') {
+      await checkGroundPickup(fixture, player, whispers,mode === '--ground-pickup-resume-probe');
     } else if (['--handoff-gather-probe','--handoff-moving-probe','--handoff-range-probe','--handoff-lost-probe'].includes(mode)) {
       await checkGatherHandoff(fixture, player, whispers, mode);
     } else if (mode.startsWith('--handoff-eight-')) {
@@ -328,7 +328,7 @@ async function checkVitals(fixture, player, whispers, followDepletion) {
 
 // 独立客户端对照原实体、服务端拾取包、旁边的物品和角色的实际入包数量。
 // 步骤：区分三堆初始物品 → 用玩家原话委托 → 串查身份、库存、退出与可见回复。
-async function checkGroundPickup(fixture, player, whispers) {
+async function checkGroundPickup(fixture, player, whispers, resume) {
   const tracked = (item, count) => Object.values(player.entities).find(entity => {
     const stack = entity.getDroppedItem?.();
     return stack?.name === item && stack.count === count;
@@ -381,7 +381,62 @@ async function checkGroundPickup(fixture, player, whispers) {
     assert.ok(actor.position.distanceTo(start) < 0.1);
     assert.equal(fixture.materialCount('dirt'), 3);
     assert.deepEqual(whispers, [reply, stopped]);
+    if (resume) await checkGroundResume(fixture,player,whispers,actor,other,stone,blocked,packets);
   } finally { player._client.removeListener('collect', onCollect); }
+}
+
+// 原堆受阻后只向伙伴提供现场变化，沿原 UUID 复查并续取，独立玩家核对旁堆与服务端收取包。
+// 步骤：换成同物同数旁堆 → 验证仍停步 → 移开旁堆并核对原目标实收 → 重复查询已退出工作。
+async function checkGroundResume(fixture, player, whispers, actor, target, stone, blocked, packets) {
+  const actions = () => readRows(fixture,'game-actions.jsonl');
+  const before = fixture.materialCount('dirt');
+  fixture.send('tp '+stone.uuid+' -5.5 -60 -4.5');
+  fixture.send('summon minecraft:item 0.85 -59.9 -5.5 {PickupDelay:32767s,Age:-32768s,Item:{id:"minecraft:dirt",count:2},Motion:[0d,0d,0d]}');
+  const decoy = await until(() => Object.values(player.entities).find(entity => entity.uuid !== target.uuid && entity.getDroppedItem?.()?.name === 'dirt' &&
+    entity.getDroppedItem().count === 2 && entity.position.distanceTo(target.position) < 1),'旁边同物同数保有独立 UUID');
+  await until(() => fixture.groundEntity(stone.uuid)?.position.distanceTo(target.position) > 4 &&
+    fixture.groundEntity(decoy.uuid)?.getDroppedItem?.()?.count === 2,'伙伴实际看见石头已移开和同物旁堆');
+  player.chat('石头挪开了。');
+  await until(() => whispers.includes('原堆旁边还有另一堆泥土，我先停在原地。'),'收到条件更新后仍只认原堆');
+  const guarded = actions().find(row => row.skill === 'pickup_drop' && row.arguments.resumeWork === blocked.work);
+  assert.deepEqual([guarded.exited,guarded.result.reasonCode,guarded.result.nearbyDrop.uuid,guarded.result.pickup.verifiedCount,
+    guarded.arguments.entity,guarded.arguments.observation],[true,'pickup_other_stack_nearby',decoy.uuid,0,target.uuid,blocked.arguments.observation]);
+  assert.equal(fixture.materialCount('dirt'),before);
+  fixture.send('tp '+decoy.uuid+' -7.5 -60 0.5');
+  await until(() => decoy.position.distanceTo(target.position) > 5 && fixture.groundEntity(decoy.uuid)?.position.distanceTo(target.position) > 5,
+    '独立玩家和伙伴均看见旁堆已移开且原目标仍在');
+  player.chat('旁边那堆也挪开了。');
+  await until(() => whispers.includes('原来那堆剩下的两块已进背包。'),'沿已退出原工作自动续取并向玩家核实',20000);
+  const completed = actions().find(row => row.skill === 'pickup_drop' && row.arguments.resumeWork === guarded.work);
+  const proof = completed.result.pickup;
+  assert.deepEqual([completed.exited,completed.arguments.entity,proof.continuation.root,proof.continuation.sourceMessage,proof.verifiedCount,
+    proof.observed.lastCollector.uuid,fixture.materialCount('dirt')],[true,target.uuid,blocked.work,blocked.order,2,actor.uuid,before+2]);
+  assert.deepEqual(packets.filter(row => row.collectedEntityId === target.id).map(row => [row.collectorEntityId,row.pickupItemCount]),[[actor.id,2]]);
+  assert.equal(packets.some(row => row.collectedEntityId === decoy.id),false);
+  const again = 'duplicate-ground-resume';
+  await fixture.pickupCall('partner.begin',completed,again);
+  const refused = await until(() => actions().find(row => row.work === again),'换号续取回指已完成工作');
+  assert.deepEqual([refused.result.originalWork,refused.result.pickup],[completed.work,undefined]);
+  await fixture.pickupCall('partner.begin',completed,'completed-ground-resume',{...completed.arguments,resumeWork:completed.work});
+  const exhausted = await until(() => actions().find(row => row.work === 'completed-ground-resume'),'已完成的原工作没有可续取余量');
+  assert.deepEqual([exhausted.result.reasonCode,exhausted.result.originalWork,exhausted.result.pickup],['pickup_already_completed',completed.work,undefined]);
+  for (const old of [blocked,guarded,completed]) {
+    const read = (await fixture.pickupCall('partner.receipt',old,old.work)).action;
+    assert.deepEqual([read.exited,read.result.pickup.verifiedCount],[true,old.result.pickup.verifiedCount]);
+  }
+  for (let i=0; i<2; ++i) {
+    const start = whispers.length;
+    player.chat('再核对原来的掉落。');
+    await until(() => whispers.slice(start).includes('原堆已离开视野，按原工作核对过了。'),'复查已退出原目标不再接近或拾取');
+  }
+  const reads = actions().filter(row => row.skill === 'observe' && row.result.dropTarget?.entity === target.uuid);
+  assert.deepEqual(reads.slice(-2).map(row => row.result.dropTarget.state),['not_tracked','not_tracked']);
+  assert.deepEqual([decoy.getDroppedItem().count,fixture.materialCount('dirt'),actions().filter(row =>
+    row.skill === 'pickup_drop' && row.result.pickup && row.arguments.entity === target.uuid).length],[2,before+2,3]);
+  writeFileSync(join(fixture.evidence,'ground-resume-evidence.json'),JSON.stringify({entity:target.uuid,neighbor:decoy.uuid,
+    observation:blocked.arguments.observation,sourceMessage:blocked.order,blocked:blocked.work,guarded:guarded.work,completed:completed.work,
+    continuation:proof.continuation,before,after:fixture.materialCount('dirt'),received:proof.verifiedCount,neighborRemaining:decoy.getDroppedItem().count,
+    duplicate:refused.result.originalWork,reads:reads.map(row => ({work:row.work,state:row.result.dropTarget.state}))},null,2));
 }
 
 // 从零库存核验原任务的两次破坏、入包、会合和玩家实收，并在采集中询问实际进度。
@@ -503,7 +558,7 @@ async function checkEightStones(fixture, player, whispers, mode) {
   player.chat('可以先交了吗？');
   await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
   assert.ok(!actions().some(row => row.skill === 'give_item'));
-  if (mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-store-probe') {
+  if (['--handoff-eight-chest-probe','--handoff-eight-store-probe','--handoff-eight-withdraw-probe','--handoff-eight-withdraw-boundary-probe','--handoff-eight-chest-delivery-probe'].includes(mode)) {
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     await until(() => player.players.DfyCompanion.entity.position.distanceTo(point(0.5,-60,0.5)) < 0.05,'伙伴回到可读箱位置');
     // 用独立协议玩家分别打开两个真实箱子，逐次关闭原窗口。
@@ -525,6 +580,9 @@ async function checkEightStones(fixture, player, whispers, mode) {
       read.result.chest.cell,read.result.chest.container.slots,read.result.chest.stock.slots,read.result.chest.stock.stored],
       [player.player.uuid,read.generation,'overworld',{x:2,y:-60,z:-2},27,36,8]);
     assert.deepEqual([await contents(),fixture.materialCount('cobblestone'),player.inventory.count(id)],[[0,5],8,0]);
+    if (mode === '--handoff-eight-chest-delivery-probe') await require('./chest-delivery-check.cjs').checkChestDelivery(fixture,player,whispers,contents,actions,trace);
+    if (mode === '--handoff-eight-withdraw-probe' || mode === '--handoff-eight-withdraw-boundary-probe')
+      await require('./chest-withdrawal-check.cjs').checkChestWithdrawals(fixture,player,whispers,contents,actions,trace,mode === '--handoff-eight-withdraw-boundary-probe');
     if (mode === '--handoff-eight-store-probe') await checkChestDeposits(fixture,player,whispers,contents,actions,trace);
     return;
   }
@@ -599,9 +657,9 @@ async function checkChestDeposits(fixture, player, whispers, contents, actions, 
     await until(() => whispers.slice(start).includes(interrupted ? '存箱工作 '+row.work+' 的实存量待核实。' : report),'按实效回答本局玩家');
     const after = await sample();
     assert.deepEqual([after.left,after.right,after.companion],[initial+stored,5,8-stored]);
-    assert.equal((await fixture.repeatStore(row,row.work)).action.exited,true);
+    assert.equal((await fixture.repeatChest(row,row.work)).action.exited,true);
     const duplicateId = 'repeat-store-'+index;
-    await fixture.repeatStore(row,duplicateId);
+    await fixture.repeatChest(row,duplicateId);
     const duplicate = await until(() => actions().find(entry => entry.work === duplicateId),'同一玩家原话换工作号仍指回原件');
     assert.equal(duplicate.result.originalWork,row.work);
     assert.equal(duplicate.result.deposit,undefined);

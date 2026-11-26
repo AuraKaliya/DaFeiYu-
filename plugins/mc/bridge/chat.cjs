@@ -25,7 +25,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   let closed = false;
   const entries = [];
   const chests = new WeakMap();
-  const deposits = new WeakMap();
+  const chestClaims = new WeakMap();
   let presence = null, trackingPresence = false, lastDeparture = 0;
 
   // 同一游戏代次内所有事实共享一个有界游标。
@@ -113,12 +113,12 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
       if (sync() !== expected || !this.inPresence(expected,number)) return null;
       return structuredClone(chests.get(entries.find(entry => entry.sequence === number)) ?? null);
     },
-    // 查询或认领原话上的一次存箱委托，控制器或工作号变更时仍返回首次认领。
-    depositWork(expected, number, claim) {
+    // 查询或认领原话上的一次单箱转移委托，控制器或工作号变更时仍返回首次认领。
+    chestWork(expected, number, claim) {
       const entry = sync() === expected && this.inPresence(expected,number) && entries.find(row => row.sequence === number);
-      if (!entry?.text) throw new Error('存箱委托原话已失效');
-      if (claim && !deposits.has(entry)) deposits.set(entry,claim);
-      return deposits.get(entry) ?? null;
+      if (!entry?.text) throw new Error('单箱转移委托原话已失效');
+      if (claim && !chestClaims.has(entry)) chestClaims.set(entry,claim);
+      return chestClaims.get(entry) ?? null;
     },
     // 仅在同一游戏来源中取得仍保留的原指令。
     get(expected, number) {

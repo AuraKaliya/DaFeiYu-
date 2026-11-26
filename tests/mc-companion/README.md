@@ -12,15 +12,26 @@ $plugin = '.\build\rebuild\windows-tests\plugins\mc\Debug\mc.companion'
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-facts-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-chest-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-store-probe
+node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-withdraw-probe
+node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-withdraw-boundary-probe
+node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-chest-delivery-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-full-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-probe
 ~~~
 
-第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余四局从“帮我挖 8 块圆石”开始。待选交付地点时，伙伴能继续采掘和查库存，提前给物会被待答拦下。
+第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余七局从“帮我挖 8 块圆石”开始。待选交付地点时，伙伴能继续采掘和查库存，提前给物会被待答拦下。
 
 选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
 
 存箱局的 `chest-evidence.json` 保存协议玩家逐箱数到的前后值、伙伴库存、原工作号、重复提交回指及迟到实效版本。隔离服记录 `run-1pvdZD` 中，四笔委托都引用玩家消息 5 的观察 `1.29`。正常存入 8 块，满箱存入 0 块，只余 3 块容量时存入 3 块。窗口关闭时工作 `1.57` 先保留待核实，随后在该工作的第 4 版确认实存 8 块。四笔委托中右箱各次读数均为 5 块。
+
+取出局的 `withdraw-evidence.json` 保存同一指箱观察下每笔委托的去向、原工作和复查记录。选中左箱 `(2,-60,-2)` 后，独立玩家打开双箱，并接收服务端对伙伴背包普通圆石的计数。右箱 `(2,-60,2)` 有 5 块圆石。正常局从 12 块中取 8 块，箱内不足和背包只容纳 3 块时各取 3 块，满包取 0 块。整栈点击后关窗的原工作先报告待查，再读双边实物确认 8 块。[协议玩家断言](chest-withdrawal-check.cjs)
+
+拆栈边界局也写出 `withdraw-evidence.json`。左箱依次有 64、7、7 块时，取八后各槽为 64、0、6。单一 64 块面对取八委托时，首次取半就会持有 32 块；工作以 `chest_split_unavailable` 退出，点击数为 0，伙伴净增 0。单栈 12 块首次取半后立即关窗，原工作重开双边库存核实实取 6、剩余 2。
+
+取箱交给本人局在同一双箱场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](chest-delivery-check.cjs)
+
+指定掉落续取局使用 `node .\tests\mc-companion\playtest.cjs $probe $plugin --ground-pickup-resume-probe`。两块泥土先被石头阻挡，石头移开时另一堆同物同数仍会阻止接近。两侧都看见旁堆移开后，仅原 UUID 被伙伴拾取。`ground-resume-evidence.json` 记录阻挡、续取、原号回查、旁堆余量和实际库存。部分收取、退出未知及取消另有固定游戏包测试。[拾取固定用例](../../plugins/mc/tests/ground-pickup.test.cjs)
 
 ## 首次真人体验
 

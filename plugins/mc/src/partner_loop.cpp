@@ -529,7 +529,7 @@ void PartnerLoop::submit(std::string_view wake) {
     if (!delegated) for (const auto& skill : partner_skills) {
         if (air_only && skill.name != "observe") continue;
         if ((completed_dig || completed_route || completed_pickup_plan || settlement_only || pickup_feedback) && skill.name != "reply") continue;
-        if (skill.kind == SkillKind::confirmed || skill.name == "move" || (skill.name == "fill_target" && !task_.target_ready())) continue;
+        if (!direct_skill(skill,task_.target_ready())) continue;
         if (skill.kind == SkillKind::motion_stop && !motion_ && !follow_) continue;
         if (skill.kind == SkillKind::approval_withdraw &&
             (!confirmation_ || !confirmation_->work || !confirmation_->decision.is_null())) continue;
@@ -537,7 +537,7 @@ void PartnerLoop::submit(std::string_view wake) {
         const bool direct = skill.name == "follow" || skill.name == "dig_block" || skill.name == "gather_ground";
         if (skill.kind != SkillKind::catalog && !direct && !base_category(category) &&
             !enabled.test(static_cast<std::size_t>(category))) continue;
-        ids[count] = "mc.companion/"+std::string(skill.name);
+        ids[count] = partner_tool_id(skill);
         visible[count] = view(ids[count]);
         disclosed.set(&skill-partner_skills.data());
         ++count;
@@ -966,12 +966,16 @@ Json PartnerLoop::discover(const Json& arguments) {
         entries[skill.name] = {{"skill",skill.name},{"implemented",true},
             {"direct",{{"tool",skill.name},{"visible",visible_skills_.test(&skill-partner_skills.data())}}}};
 
-    Json directory = Json::array();
+    Json directory = Json::array(), discovered = Json::array();
     for (std::size_t index = 0; index < categories.size(); ++index) {
         Json names = Json::array(), nodes = Json::array();
         for (const auto& skill : partner_skills) if (skill.kind != SkillKind::confirmed && skill.name != "move" &&
-            static_cast<std::size_t>(skill.category) == index)
+            static_cast<std::size_t>(skill.category) == index) {
             names.push_back(skill.name);
+            if (next.test(index) && !enabled.test(index) && !base_category(skill.category) && direct_skill(skill,task_.target_ready()) &&
+                !visible_skills_.test(&skill-partner_skills.data()))
+                discovered.push_back({{"id",partner_tool_id(skill)},{"version",skill.contract_version},{"schema",Json::parse(partner_schema(skill))}});
+        }
 
         for (const auto& action : partner_actions) {
             if ((!action.plan && !action.sequence) || static_cast<std::size_t>(action.category) != index) continue;
@@ -1003,10 +1007,12 @@ Json PartnerLoop::discover(const Json& arguments) {
     if (std::ranges::find(wanted,"dig_break") != wanted.end()) procedure["guidance"] = nearby_materials;
     Json contracts = Json::array();
     for (auto& [name,entry] : entries) contracts.push_back(std::move(entry));
-    return {{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},{"planNodes",plan_skills()},
+    Json result{{"status",changed ? "scheduled" : "listed"},{"categories",std::move(directory)},{"planNodes",plan_skills()},
         {"contracts",std::move(contracts)},
         {"procedures",Json::array({std::move(procedure)})},
         {"wake",expansion_pending_ && task_.can_continue()}};
+    if (!discovered.empty()) result["discoveredContracts"] = std::move(discovered);
+    return result;
 }
 
 // 局内任务在锚点和确切目标就绪时获得对应的工具目录。
@@ -1123,6 +1129,10 @@ void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) 
     }
     if (submitted) fact["bridgeExited"] = action->exited();
     if (exit_unknown) {
+        if (fact.at("skill") == "give_item") {
+            const auto args = Json::parse(action->arguments()).at("arguments");
+            if (args.contains("withdrawalWork")) fact["withdrawalWork"] = args.at("withdrawalWork");
+        }
         if (!fact.contains("result")) fact["result"] = {{"status","unconfirmed"}};
         if (!action->progress().empty()) fact["result"]["progress"] = Json::parse(action->progress());
     }
@@ -1320,7 +1330,7 @@ void PartnerLoop::advance_motion(bool stopping) {
     std::optional<GameResult> result;
     try {
         if (!motion.stopping && !motion.action->attempted() &&
-            (motion.skill == "collect" || motion.skill == "place" || motion.skill == "fill_target" || motion.skill == "craft" || motion.skill == "give_item" || motion.skill == "store_item")) {
+            (motion.skill == "collect" || motion.skill == "place" || motion.skill == "fill_target" || motion.skill == "craft" || motion.skill == "give_item" || motion.skill == "store_item" || motion.skill == "withdraw_item")) {
             const auto question = action_question(motion.session,motion.skill,Json::parse(motion.action->arguments()).at("arguments"));
             if (!question.is_null()) result = GameResult{false,GameEffect::none,question.dump()};
         }

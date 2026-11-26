@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const { EventEmitter } = require('node:events');
 const { Position } = require('./test-position.cjs');
 const { observeDrops } = require('../bridge/dropped-items.cjs');
-const { pickupDrop } = require('../bridge/pickup-drop.cjs');
+const { pickupDrop, pickupRemainder } = require('../bridge/pickup-drop.cjs');
 const { pickupEvidence } = require('../bridge/stone-evidence.cjs');
 
 // 用同一块自采圆石对照有效合堆、倒序合堆和倒序拾取的归属证据。
@@ -122,4 +122,43 @@ test('interruption preserves the partial pickup and joins the original navigatio
   f.movement.pause = async () => { f.packet(1,1); f.bot.inventory.slots[0] = { name: 'dirt', count: 1 }; cancelled = true; };
   await assert.rejects(f.run(() => { if (cancelled) throw new Error('cancelled'); }), /cancelled/);
   assert.deepEqual([exited, f.result.pickup.verifiedCount, f.bot.listenerCount('entityGone')], [true,1,0]);
+});
+
+// 原堆三件先实收一件，旁边同物出现后原导航退出；恢复时只能续取原 UUID 的两件。
+test('已退出的受阻工作按原包和库存续取，旁堆、未知与取消均不能替代', async () => {
+  const f = pickupFixture(), decoy = {...f.entity,id:8,uuid:'00112233-4455-6677-8899-aabbccddee00'};
+  let phase = 0;
+  f.movement.pause = async () => {
+    if (++phase === 1) {
+      f.packet(1,1); f.stack.count = 2; f.bot.inventory.slots[0] = {name:'dirt',count:1};
+      f.bot.entities[8] = decoy;
+    }
+  };
+  await assert.rejects(f.run(),{code:'pickup_other_stack_nearby'});
+  assert.deepEqual([f.result.pickup.verifiedCount,f.result.nearbyDrop.uuid],[1,decoy.uuid]);
+  const previous = {id:'initial',receipt:{skill:'pickup_drop',generation:'world',order:2,exited:true,
+    result:{...f.result,status:'blocked',reasonCode:'pickup_other_stack_nearby'}}};
+  const args = {...f.args,count:2,resumeWork:'initial'};
+  const recheck = () => pickupRemainder(previous,f.source,args);
+  for (const [field,value] of [['exited',false],['skill','observe']]) {
+    const bad = {...previous,receipt:{...previous.receipt,[field]:value}};
+    assert.throws(() => pickupRemainder(bad,f.source,args),{code:field === 'exited' ? 'pickup_exit_unconfirmed' : 'pickup_remainder_unconfirmed'});
+  }
+  for (const status of ['done','interrupted']) {
+    const bad = {...previous,receipt:{...previous.receipt,result:{...previous.receipt.result,status}}};
+    assert.throws(() => pickupRemainder(bad,f.source,args),{code:status === 'done' ? 'pickup_already_completed' : 'pickup_original_interrupted'});
+  }
+  assert.throws(() => pickupRemainder(previous,f.source,{...args,count:3}),{code:'pickup_remainder_mismatch'});
+  assert.throws(() => pickupRemainder(previous,f.source,{...args,entity:decoy.uuid}),{code:'pickup_remainder_unconfirmed'});
+  previous.receipt.result.pickup.stockCurrent = false;
+  assert.throws(recheck,{code:'pickup_remainder_unconfirmed'});
+  previous.receipt.result.pickup.stockCurrent = true;
+  assert.deepEqual(recheck(),{work:'initial',root:'initial',sourceMessage:2,originalCount:3,verifiedBefore:1,otherBefore:0});
+  decoy.position = new Position(-4,-60,-4);
+  const result = {};
+  await assert.rejects(pickupDrop(f.bot,args,f.source,() => {},{},f.movement),{code:'pickup_whole_stack_required'});
+  f.movement.pause = async () => { f.packet(1,2); f.bot.inventory.slots[0].count = 3; };
+  await pickupDrop(f.bot,args,f.source,() => {},result,f.movement,recheck());
+  assert.deepEqual([result.pickup.verifiedCount,result.pickup.continuation.verifiedBefore,result.inventoryDelta.dirt],[2,1,2]);
+  assert.equal(f.bot.entities[8].uuid,decoy.uuid);
 });
