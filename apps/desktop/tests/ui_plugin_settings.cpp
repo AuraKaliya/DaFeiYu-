@@ -8,15 +8,20 @@ void InteractionProbe::start_plugin_settings() {
         {"installed",true},{"loaded",false},{"generation","0"},{"canLoad",true},{"canUnload",false}},
         {{"id","test.two"},{"name","二号插件"},{"version","2"},{"state","active"},{"generation","97"},
         {"installed",true},{"loaded",true},{"canLoad",false},{"canUnload",true},{"loadedName","旧实例"},{"loadedVersion","1.7"},{"errorCode",0}}});
-    // 从页面实际发出的目录请求取身份，由原生 WebView2 消息口投递固定信封。
-    // 步骤：等候当前请求 → 核对操作类型 → 回显原号并交还固定结果。
-    const auto reply = [&](Json body) {
-        expect("sample directory request arrived","window.fixturePluginReads.length>0");
-        call("return the original plugin directory request",L"Runtime.evaluate",
-            {{"expression","window.fixturePluginReads.shift()"},{"returnByValue",true}},
+    // 从页面实际发出的同类请求取身份，由原生 WebView2 消息口投递固定信封。
+    // 步骤：等候当前请求 → 核对原意图或操作号 → 回显原请求号。
+    const auto reply = [&](Json body, std::string type="plugins.list") {
+        const auto index = "window.fixturePluginReads.findIndex(q=>q.type==="+Json(type).dump()+")";
+        expect("original plugin request arrived",index+">=0");
+        call("return the original plugin request",L"Runtime.evaluate",
+            {{"expression","window.fixturePluginReads.splice("+index+",1)[0]"},{"returnByValue",true}},
             [this,body=std::move(body)](const Json& result) mutable {
                 const auto& request=result.at("result").at("value");
-                if (request.at("type")!="plugins.list" || request.at("version")!="1") throw std::runtime_error("unexpected plugin operation");
+                if (request.at("version")!="1") throw std::runtime_error("unexpected plugin version");
+                if (request.at("type")=="plugins.receipt" && request.at("operation")!=body.at("operation")) throw std::runtime_error("wrong receipt");
+                if (request.at("type")=="plugins.load" && (request.at("id")!=body.at("id") || request.at("revision")!=body.at("revision") ||
+                    request.at("generation")!=body.at("targetGeneration") || request.at("command")!=body.at("command") ||
+                    request.at("instance")!=body.at("instance"))) throw std::runtime_error("wrong loading intent");
                 body.update(Json{{"version","1"},{"request",request.at("request")}});
                 require_hresult(view_->PostWebMessageAsJson(utf16(body.dump()).c_str()));
             });
@@ -62,6 +67,21 @@ void InteractionProbe::start_plugin_settings() {
     sample.update(Json{{"revision","3"},{"unavailableCount",0}});
     refresh(); reply(sample);
     expect("only confirmed empty samples show the empty state","document.querySelector('#plugin-directory-status').textContent.includes('当前插件目录为空') && !document.querySelector('[data-package]')");
+    sample.update(Json{{"revision","4"},{"packages",rows}});
+    refresh(); reply(sample);
+    expect("operations require selecting a package","!!document.querySelector('[data-package]') && !document.querySelector('#plugin-load')");
+    evaluate("select an installed package","document.querySelector('[data-package=\"test.one\"]').click(); true");
+    expect("only the permitted control appears","document.querySelector('#plugin-load')?.disabled===false && !document.querySelector('#plugin-unload')");
+    evaluate("double-click sends one original request","const load=document.querySelector('#plugin-load'); load.click(); load.click(); window.fixturePluginReads.filter(q=>q.type==='plugins.load').length===1");
+    Json receipt{{"event","plugins.operation"},{"instance","host-b"},{"operation","fixture-issued-id"},{"action","load"},{"command","1"},
+        {"id","test.one"},{"revision","4"},{"targetGeneration","0"},{"generation","0"},{"state","queued"},{"effect","unconfirmed"}};
+    reply(receipt,"plugins.load");
+    expect("admission is shown separately","document.querySelector('[data-work-state=queued]')?.textContent.includes('已接纳') && document.querySelector('#plugin-load').disabled");
+    evaluate("change selection while work is active","document.querySelector('[data-package=\"test.two\"]').click(); true");
+    receipt.update(Json{{"state","succeeded"},{"effect","loaded"},{"generation","98"}});
+    reply(receipt,"plugins.receipt");
+    expect("settlement still names the original package","document.querySelector('[data-work-target=\"test.one\"][data-work-effect=loaded]')?.textContent.includes('运行代次 98') && "
+        "document.querySelector('[data-selected-package=\"test.two\"]') && !window.fixturePluginReads.some(q=>q.type==='plugins.unload' || q.type==='plugins.load')");
     next();
 }
 }

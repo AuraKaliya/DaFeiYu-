@@ -2,11 +2,14 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { Label } from 'reka-ui';
 import { usePluginDirectory } from './plugin-directory';
+import { usePluginActions } from './plugin-actions';
 
 const props = defineProps<{ active: boolean; connected: boolean }>();
 const bridge = window.chrome.webview;
 const directory = usePluginDirectory(fields => bridge.postMessage(fields));
+const actions = usePluginActions(directory, fields => bridge.postMessage(fields), window.sessionStorage);
 const { view } = directory;
+const { work, readFailed } = actions;
 const selected = computed(() => view.value.reading?.packages.find(item => item.id === view.value.selected));
 const labels: Readonly<Record<string, string>> = { installed: '已安装', active: '已加载', stopping: '正在卸载', failed: '实例异常' };
 let timer = 0;
@@ -23,8 +26,39 @@ const feedback = computed(() => {
   return reading ? '正在重新读取插件目录，显示上次核实的列表。' : '正在读取插件目录…';
 });
 
-// 原生回包由当前文档的观察器核对身份。
-function receive(event: MessageEvent<unknown>): void { directory.receive(event.data); }
+// 操作文案固定在原意图，区分接纳、实例保留和退出实效。
+const result = computed(() => {
+  const item = work.value;
+  if (!item) return '';
+  if (view.value.reading?.instance !== item.instance) return '后台实例已更换，此回执属于原后台。';
+  if (item.state === 'sending') return '正在提交，等待后台接纳。';
+  if (item.state === 'queued') return '后台已接纳，正在排队。';
+  if (item.state === 'running') return '后台正在执行。';
+  if (item.state === 'pending') return '已请求停止，正在等待原实例退出。';
+  if (item.state === 'uncertain') return '尚未收到接纳回执，操作结果待确认。';
+  if (item.state === 'succeeded') return item.effect === 'loaded' ? `已加载，运行代次 ${item.generation}。` : `原实例（代次 ${item.targetGeneration}）已卸载。`;
+  if (item.effect === 'retained') {
+    if (item.state === 'inUse') return '仍有插件依赖这个实例，原实例已保留。';
+    return item.state === 'busy' ? '插件正忙，原实例已保留。' : '操作失败，原实例已保留。';
+  }
+  if (item.state === 'stale') return '目录修订或目标代次已变化，后台未执行。';
+  if (item.state === 'outOfOrder' || item.state === 'conflict') return '后台拒绝了该命令号，本次操作未执行。';
+  if (item.state === 'expired' || item.state === 'unknown') return '后台无法确认原操作记录，实效待确认。';
+  if (item.effect === 'notLoaded') return '加载失败，插件未加载。';
+  return item.effect === 'notApplied' ? '后台未执行本次操作。' : '操作实效待确认。';
+});
+
+// 原生回包分别核对目录和命令的原编号，后续查询只在可见设置发生。
+// 步骤：接纳目录或回执 → 根据当前后台安排原操作补读。
+function receive(event: MessageEvent<unknown>): void {
+  directory.receive(event.data); actions.receive(event.data);
+  if (props.active && props.connected) actions.tick();
+}
+// 在活动页面按各自期限推进目录和待结算回执。
+function tick(): void {
+  directory.tick();
+  if (props.active && props.connected) actions.tick();
+}
 // 随后台连接和设置可见性调整查询。
 function update(): void { directory.context(props.connected, props.active); }
 watch(() => [props.active, props.connected], update);
@@ -32,7 +66,7 @@ watch(() => [props.active, props.connected], update);
 onMounted(() => {
   bridge.addEventListener('message', receive);
   update();
-  timer = window.setInterval(directory.tick, 500);
+  timer = window.setInterval(tick, 500);
 });
 // 归还当前文档的监听和定时器，晚到回复失效。
 onUnmounted(() => {
@@ -68,6 +102,20 @@ onUnmounted(() => {
         <template v-if="selected.errorCode"><dt>实例错误码</dt><dd>{{ selected.errorCode }}</dd></template>
       </template>
     </dl>
+    <div v-if="selected" class="package-actions">
+      <button v-if="!selected.loaded" id="plugin-load" type="button" class="primary-action" :disabled="!actions.canStart('load')" @click="actions.start('load')">加载插件</button>
+      <button v-else id="plugin-unload" type="button" class="quiet-action" :disabled="!actions.canStart('unload')" @click="actions.start('unload')">卸载插件</button>
+    </div>
+    <div v-if="work" class="plugin-operation" :data-work-state="work.state" :data-work-effect="work.effect" :data-work-target="work.id">
+      <p role="status"><strong>{{ work.action === 'load' ? '加载' : '卸载' }} {{ work.id }}</strong> · {{ result }}
+        <span v-if="readFailed && work.operation && work.instance === view.reading?.instance">原回执暂时无法读取。</span></p>
+      <details v-if="work.operation">
+        <summary>操作回执</summary>
+        <dl class="package-details"><dt>操作号</dt><dd>{{ work.operation }}</dd><dt>提交时目录修订</dt><dd>{{ work.revision }}</dd></dl>
+        <button id="check-plugin-receipt" type="button" class="quiet-action"
+          :disabled="view.status !== 'ready' || work.instance !== view.reading?.instance" @click="actions.check">重新查询回执</button>
+      </details>
+    </div>
     <p v-if="view.reading" class="plugin-revision">目录修订 {{ view.reading.revision }}</p>
   </section>
 </template>
@@ -91,4 +139,8 @@ onUnmounted(() => {
 .package-details dt { color: var(--muted) }
 .package-details dd { margin: 0; overflow-wrap: anywhere }
 .plugin-revision { margin: 6px 0; overflow-wrap: anywhere }
+.package-actions { margin-block: 8px }
+.plugin-operation { margin-block: 10px; overflow-wrap: anywhere; font-size: 14px }
+.plugin-operation p { margin: 0 0 5px }
+.plugin-operation summary { cursor: pointer; color: var(--muted) }
 </style>
