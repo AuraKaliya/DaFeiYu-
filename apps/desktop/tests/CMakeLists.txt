@@ -2,7 +2,7 @@
 target_sources(dafeiyu PRIVATE
   ui_run_status_probe.cpp ui_run_status_probe.hpp ui_room_preview.cpp
   ui_main_panel.cpp ui_main_panel_fixture.hpp ui_dialogue_queue.cpp ui_dialogue_recovery.cpp ui_tray_panel.cpp ui_history_panel.cpp
-  ui_mailbox_panel.cpp ui_plugin_settings.cpp ui_plugin_windows.cpp)
+  ui_mailbox_panel.cpp ui_plugin_settings.cpp ui_plugin_windows.cpp ui_plugin_actions.cpp)
 target_include_directories(dafeiyu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(dafeiyu PRIVATE DFY_UI_RUN_STATUS_TEST)
 add_dependencies(dafeiyu dfy_status_example)

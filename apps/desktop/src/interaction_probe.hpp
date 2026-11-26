@@ -36,6 +36,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_plugin_settings();
     // 在两个独立设置窗口核对同一后台的目录、选中项及重载后的新代次。
     void start_plugin_windows(std::wstring_view mode, const std::filesystem::path& profile);
+    // 从真实设置页核对受控写入、跨文档恢复、同伴的旧目录和原后台回执。
+    void start_plugin_actions(std::wstring_view mode, const std::filesystem::path& profile);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif

@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -77,13 +77,25 @@ try {
         Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
         [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
         [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
-        if ($PluginSettings) {
+        if ($PluginSettings -or $PluginActions) {
             $second = Join-Path $data 'plugins/second'
             $null = New-Item -ItemType Directory -Path $second
             Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $second 'entry.dll')
             [IO.File]::WriteAllText((Join-Path $second 'plugin.json'),'{"manifest_version":1,"id":"test.second","name":"Second fixture","version":"2","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
             [IO.File]::WriteAllText((Join-Path $second 'defaults.json'),'{"mode":"t"}')
             $resident = Start-Resident
+            if ($PluginActions) {
+                $watcher = Start-Panel 'action-observe'
+                $manager = Start-Panel 'action-write'
+                Wait-Panels @($watcher,$manager)
+                Wait-Panels @((Start-Panel 'action-reopen'))
+                $original = (& $App --host-status $data | Out-String) | ConvertFrom-Json
+                if ($original.pid -ne $resident.Id -or (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls'))) {
+                    throw 'Package operations changed the resident or called the model'
+                }
+                Stop-Resident $resident
+                return
+            }
             $watcher = Start-Panel 'plugins-watch'
             $manager = Start-Panel 'plugins-manage'
             $timer = [Diagnostics.Stopwatch]::StartNew()
