@@ -775,6 +775,33 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         return {{Role::assistant,"",{{id.empty() ? name : id,tool->name,args.dump()}}},FinishReason::tool_calls};
     };
     const auto& last = request.messages.back();
+    // 从实际送模的工作结算找回最近一次已退出的指定堆拾取。
+    const auto previous_pickup = [&](bool allow_read = false) -> Json {
+        for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
+            if (it->role != Role::user) continue;
+            const auto input = Json::parse(it->content,nullptr,false);
+            if (!input.is_object()) continue;
+            const auto work = input.contains("workSettlement") ? primary_receipt(input) :
+                input.value("task",Json::object()).value("lastAction",Json::object());
+            if ((work.value("skill","") == "pickup_drop" || (allow_read && work.value("skill","") == "observe")) &&
+                work.contains("result") && work.at("result").contains("dropTarget")) return work;
+        }
+        throw std::runtime_error("ground pickup: missing original settled work");
+    };
+    if (last.role == Role::tool && (last.tool_call_id == "resume-target" || last.tool_call_id == "read-final-target")) {
+        const auto target = Json::parse(last.content.substr(last.content.find('{'))).at("dropTarget");
+        if (last.tool_call_id == "read-final-target") {
+            if (target.at("state") != "not_tracked") throw std::runtime_error("ground pickup: original entity is still tracked");
+            return {{Role::assistant,"原堆已离开视野，按原工作核对过了。"}};
+        }
+        const auto work = previous_pickup();
+        const auto& pickup = work.at("result").at("pickup");
+        const int left = pickup.at("requested").get<int>()-pickup.at("verifiedCount").get<int>()-pickup.at("observed").value("otherCount",0);
+        if (target.at("state") != "tracked" || !target.value("withinOriginalRadius",false) || target.value("count",0) != left || !left)
+            return {{Role::assistant,"原堆的可取余量还没有核清。"}};
+        return call("_pickup_drop",{{"observation",target.at("observation")},{"entity",target.at("entity")},{"item",target.at("item")},
+            {"count",left},{"resumeWork",work.at("bridgeWork")}},"resume-original");
+    }
     if (last.role == Role::tool && (last.tool_call_id == "_observe" || last.tool_call_id == "remaining-soil")) {
         const auto result = Json::parse(last.content.substr(last.content.find('{')));
         const auto& sample = result.at("dropObservation");
@@ -793,6 +820,12 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
         if (input.at("trigger") == "motion.finished") {
             const auto& work = primary_receipt(input);
             const auto& result = work.at("result");
+            if (result.contains("pickup") && result.at("pickup").contains("continuation")) {
+                if (result.at("status") == "done" && result.at("pickup").at("verifiedCount") == 2)
+                    return {{Role::assistant,"原来那堆剩下的两块已进背包。"}};
+                if (result.value("reasonCode","") == "pickup_other_stack_nearby" && result.at("nearbyDrop").at("stack").at("item") == "dirt")
+                    return {{Role::assistant,"原堆旁边还有另一堆泥土，我先停在原地。"}};
+            }
             if (work.at("skill") != "pickup_drop" || result.at("reasonCode") != "pickup_other_stack_nearby" ||
                 result.at("nearbyDrop").at("stack").at("item") != "stone" || result.at("pickup").at("approachAttempted") != false)
                 throw std::runtime_error("ground pickup: overlapping stack did not keep the actor in place");
@@ -807,6 +840,17 @@ dfy::model::Response ground_pickup_sample(const dfy::model::Request& request) {
             return {{Role::assistant,"三块泥土都进了我的背包。"}};
         }
         const auto& events = input.at(input.at("trigger") == "skills.expanded" ? "recentEvents" : "events");
+        if (!events.empty()) {
+            const auto text = events.back().value("text","");
+            if (text == "石头挪开了。" || text == "旁边那堆也挪开了。" || text == "再核对原来的掉落。") {
+                if (std::ranges::none_of(request.tools,[](const auto& def) { return def.name.ends_with("_pickup_drop"); }))
+                    return call("_skills",{{"categories",{"inventory"}}});
+                const auto previous = previous_pickup(text == "再核对原来的掉落。");
+                const auto& target = previous.at("result").at("dropTarget");
+                return call("_observe",{{"mode","drop"},{"observation",target.at("observation")},{"entity",target.at("entity")}},
+                    text == "再核对原来的掉落。" ? "read-final-target" : "resume-target");
+            }
+        }
         if (!events.empty() && events.back().value("text","") == "只拿剩下的两块泥土，石头留给我。") {
             if (std::ranges::none_of(request.tools,[](const auto& def) { return def.name.ends_with("_pickup_drop"); }))
                 return call("_skills",{{"categories",{"inventory"}}});
@@ -1409,7 +1453,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool layered = resupply || mode == L"--layered-follow-probe";
         const bool craft = mode == L"--craft-probe";
         const bool pickup = mode == L"--pickup-probe";
-        const bool ground_pickup = mode == L"--ground-pickup-probe";
+        const bool ground_pickup = mode == L"--ground-pickup-probe" || mode == L"--ground-pickup-resume-probe";
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
         const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-store-probe" || mode == L"--handoff-eight-withdraw-probe" ||
