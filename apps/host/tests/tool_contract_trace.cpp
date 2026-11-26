@@ -87,12 +87,56 @@ void verify(const std::filesystem::path& root) {
         at(6).at("epoch")!=at(5).at("epoch") && at(6).at("available").at(1).at("origin").at("run")==6,
         "contract reference did not resolve to its own version and history");
 }
+
+// 验证小模型窗口压缩普通问答后，下一步的有效定义仍可沿原发现位置取得完整参数。
+// 步骤：在同一授权下积累长答复 → 确认供应商投影已经归档 → 回读首次定义并对照当步工具。
+void compressed_contract(const std::filesystem::path& root) {
+    auto log = std::make_shared<app::RunLog>(root);
+    auto events = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(16,64),1,8);
+    ToolCatalog catalog;
+    const std::string id = "fixture/stock";
+    const std::string schema = R"({"type":"object","properties":{"place":{"type":"string"}},"required":["place"],"additionalProperties":false})";
+    catalog.add({id,runtime::next_domain(),3,{"stock","read current stock",schema}},[](const ToolInvocation&) {
+        return completed_tool({true,ToolEffect::not_applied,"stock",ToolError::none});
+    });
+    Config config;
+    config.context_window_tokens = 14*1024;
+    config.reserved_output_tokens = 512;
+    const std::string answer(1700,'a');
+    Session session(config,events,Backend{[&](const Config&,const Request&) { return Response{{Role::assistant,answer}}; }},4,log->sinks("long"));
+    RunOptions options;
+    options.tools = catalog.snapshot(std::span(&id,1));
+    for (unsigned i=0; i<15; ++i) {
+        const auto turn = session.begin("count "+std::to_string(i),options);
+        const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(4);
+        while (session.busy() && std::chrono::steady_clock::now()<end) { session.advance(); std::this_thread::yield(); }
+        check(!session.busy() && turn->answer()==answer,"small window interrupted completed dialogue");
+    }
+    std::ifstream stream(log->path());
+    Json first;
+    bool archived = false;
+    for (std::string line; std::getline(stream,line);) {
+        const auto row = Json::parse(line);
+        if (row.at("kind")!="model.prepared") continue;
+        if (first.is_null()) { first = row; continue; }
+        for (const auto& source : row.at("messageEvidence")) if (source.at("source")=="host_summary") archived = true;
+        const auto& refs = row.at("toolContracts");
+        const auto& current = refs.at("available").front();
+        const auto& origin = current.at("origin");
+        check(refs.at("changes").empty() && current.at("contract")==3 && origin.at("run")==first.at("run") &&
+            origin.at("step")==first.at("step") && origin.at("attempt")==first.at("attempt") &&
+            row.at("input").at("tools").front()==first.at("input").at("tools").at(origin.at("toolIndex").get<std::size_t>()),
+            "history compression lost the first effective tool definition");
+    }
+    check(archived,"fixture did not reach history compression");
+}
 }
 // 使用本地固定响应和隔离的轨迹目录验收工具契约。
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc!=2) return 2;
         verify(argv[1]);
+        compressed_contract(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
