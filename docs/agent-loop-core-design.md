@@ -342,7 +342,7 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 | 工具、人格和来源 | MC 的 `skills` 回执进入历史，唤醒后按当前范围重建顶层定义。取材回放中，发现后的本回合仍有 9 个定义，下个 `skills.expanded` 回合有 14 个。消息已有协议角色和调用 ID，部分来源仍靠正文前缀区分。默认人格中同时含语气和真实性规则，请求 Hook 还可改写系统段。[发现入口](../plugins/mc/src/partner_loop.cpp#L951) · [正式请求](../modules/agent/src/run_loop.cpp#L450) · [人格](../apps/host/src/persona.cpp#L9) · [消息结构](../modules/model/include/dafeiyu/model_messages.hpp#L8) |
 | 同一工具的三种反馈 | 固定回放中，`queue_actions` 的 `steps[0].arguments.focus="objects"` 超出计划入口枚举，稍后 `restricted-plan` 调用了已移出当步范围的同一工具。两条回执均为 `rejected / not_applied / unavailable`，正文为空。另一采掘场景能返回 `approval_required` 和 `broken=0`。第一个案例要求修参数，第二个需要重选入口，第三个可沿原审批等待。[计划参数案例](../tests/mc-companion/mc_plugin_partner.cpp#L602) · [范围案例](../tests/mc-companion/mc_plugin_partner.cpp#L645) · [审批案例](../tests/mc-companion/mc_plugin_partner.cpp#L1729) · [通用拒绝路径](../modules/agent/src/tool_batch.cpp#L75) |
 
-**2026-11-26 交付进度。** 第 1 项已在主线通过文末列出的原场景与执行边界回归。下一项是消息来源和事件时间，第 3～6 项依赖后续的工具和状态协议。主线定义通用来源、阶段和投影契约，MC 提供领域事实和一条事件唤醒试点。各步用固定响应、固定时钟或传输替身核对实际请求和实效。
+**2026-11-26 11:20 交付进度。** 第 1 项已在主线通过文末列出的原场景与执行边界回归。下一项是消息来源和事件时间，第 3～6 项依赖后续的工具和状态协议。主线定义通用来源、阶段和投影契约，MC 提供领域事实和一条事件唤醒试点。各步用固定响应、固定时钟或传输替身核对实际请求和实效。
 
 | 顺序 | 可独立审查的交付 | 离线验收 |
 | --- | --- | --- |
@@ -356,6 +356,16 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 **第 1 项的主线验收。** 从 `7d11205` 的两条空回执及一条缺审批号的回执复现。`plan-focus-denied` 在下一次模型请求中保留路径 `/steps/0/arguments/focus`、原值 `objects` 和允许值。`restricted-plan` 保留当步未授权的原因。直接、队列及计划入口均返回原审批号和采掘数 0。主线回放 `world-Egu7mv` 的 `model.prepared` 序号 34、98 分别收到上述参数和范围原因，`world-r08rgB` 序号 42 的 `pending` 收到 `item=141` 和 `broken=0`。新原话和过期观察能拦下尚未执行的变更。原工作实效未明时查回原调用，动作后取消仍保留已发生的效果。仅换尝试或审批号、JSON 排版和键顺序的相同宿主拒绝会触发原无进展上限。对应提交为 `1e71ae2`、`0cd58cc`、`8e4c683` 和 `ec23dd9`。[MC 原场景](../tests/mc-companion/mc_plugin_partner.cpp) · [首次执行前的复核](../modules/agent/tests/session_action_guard.cpp) · [原实效](../modules/agent/tests/goal_effect_guard.cpp) · [无进展与取消](../modules/agent/tests/run_loop.cpp)
 
 每步对照 `model.prepared` 和适配器编码，沿原事件、调用、工作、审批或投递号核对实际结果。计次、去重和状态读口用程序断言验收。字段预算与快照保留窗口留待固定回放校准。风格对完成率、来源标签对模型判断和实际选工具的影响列为“仅记录，不执行”，按项目约定使用离线替身做功能验收。[装配回放](../modules/agent/tests/loop_projection.cpp) · [工具批次](../modules/agent/tests/tool_batch.cpp) · [审批回放](../modules/agent/tests/tool_confirmation.cpp) · [项目测试原则](../AGENTS.md#测试原则)
+
+### 主线的消息来源、规则和工具契约
+
+第 2 项已通过主聊天、插件子会话、规划和两种模型传输入口的固定响应验证。来源由实际入口签发。真人原话中的 `<status>` 会在传输边界转义，历史仍保留原文。查看 `model.prepared` 时，`input.messages` 是统一消息，按相同下标读取 `messageEvidence` 得到来源和可用的 UTC 毫秒。`wireSha256` 对应本次思考模式下实际编码的消息、工具和输出限额。旧格式轨迹仍按当时留下的字段回放。[协议编码](../modules/model/src/protocol.cpp) · [纯文本传输](../modules/model/src/client.cpp) · [回放](../apps/host/src/trace_replay.cpp)
+
+主聊天优先采用渠道提交的原时间，缺省时采用首次入库时间。排队、丢回包重试和重启恢复都沿用这一次记录。工具时间取自宿主接收终态回执时，领域观察的采样对象与有效期仍看观察原件。规划生成与重排沿用当前目标原件，授权更换目标时转向该条控制消息和它的时间。最近送达的主聊天文本保留 SQLite 渠道消息号和写入时间。[持久消息](../apps/host/src/main_messages.cpp) · [恢复验收](../apps/host/tests/message_recovery.cpp)
+
+正式系统段依次说明职责与信息来源、授权与行动边界、判断与结算、输出与投递、人格与风格。主聊天、游戏插件、内部回报和计划分别绑定实际去向。两份只改措辞的人格文件得到相同的前四段、当轮工具及渠道结果。求助信与回信的身份留在邮箱数据中，渠道和回执语义随当步工具提供。[规则渲染](../modules/agent/src/prompt_rules.cpp) · [主聊天实收](../apps/host/tests/persistent_dialogue.cpp) · [游戏求助与回信](../tests/mc-companion/mc_confirmation_route.cpp)
+
+第 3 项已接通宿主侧的契约追踪。`model.prepared.toolContracts` 将当步可用的工具关联到本会话原件代次、原回合、步骤、尝试及 `input.tools` 的下标。修订或换实例时保留变化原因，重复展示复用原位置。只有模型客户端接纳请求才发布下一次比较的基线。重排、临时撤权、同名升级、换代和受限窗口中十五轮对话均已回放。尚未执行的动作仍由工具执行入口复核最新授权。[契约索引](../apps/host/src/tool_contract_trace.cpp) · [跨回合与压缩回放](../apps/host/tests/tool_contract_trace.cpp)
 
 ### 三个固定工作树的交付
 
