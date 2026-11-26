@@ -391,13 +391,16 @@ void trace_rewrites(const fs::path& run) {
     const auto capture = trace->sinks("fixture");
     std::vector<std::string> effective_arguments;
     ToolCatalog catalog;
-    const std::vector<std::string> ids{"fixture/cell"};
+    const std::vector<std::string> ids{"fixture/cell","fixture/second"};
     catalog.add({ids.front(),next_domain(),1,{name,"Read a cell",
         R"({"type":"object","properties":{"cell":{"type":"integer"}},"required":["cell"],"additionalProperties":false})"}},
         [&](const ToolInvocation& invocation) {
             effective_arguments.push_back(invocation.call.arguments);
             return completed_tool({true,ToolEffect::not_applied,invocation.call.arguments,ToolError::none});
         });
+    // 第二个工具的模型名排在前面，重放仍须遵守原请求的实际目录顺序。
+    catalog.add({ids.back(),next_domain(),1,{"aaa_lookup","Another cell",R"({"type":"object","properties":{},"additionalProperties":false})"}},
+        [](const auto&) { return completed_tool({true,ToolEffect::not_applied,"unused",ToolError::none}); });
     RunOptions options;
     options.tools = catalog.snapshot(ids);
     options.model_capture = capture.model;

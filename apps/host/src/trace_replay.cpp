@@ -367,7 +367,10 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
     for (const auto& tool : first.at("tools")) {
         model::ToolDefinition definition{tool.at("name"),tool.at("description"),tool.at("parameters")};
         ids.push_back("replay/"+definition.name);
-        catalog.add({ids.back(),runtime::next_domain(),1,std::move(definition)},
+        agent::ToolDescription recorded{ids.back(),runtime::next_domain(),1,std::move(definition)};
+        // 使用实际请求中的目录顺序，避免以重放工具的临时名称重新排列原契约。
+        recorded.display_order = static_cast<std::uint32_t>(ids.size());
+        catalog.add(std::move(recorded),
         // 按原步骤和精确参数兑现一次固定结果，永不接触游戏执行器。
         [&](const agent::ToolInvocation& invocation) {
             for (auto& candidate : original.tools) {
