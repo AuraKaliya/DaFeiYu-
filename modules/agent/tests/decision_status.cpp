@@ -169,6 +169,37 @@ void attention_limit() {
         tail.at("definitions").size() == 1 && full.at("items").size() == 10 && full.at("definitions").size() == 2,
         "attention count, order or rebuild scope");
 }
+// 两个任务可独立关注同一个隐式状态；终止或换版后仅原绑定的已发布快照保留原展示。
+// 步骤：交叠登记两个任务 → 先后解除并按号复核 → 拒绝越权、错版及缺少身份的登记。
+void task_attention() {
+    DecisionStatusStore store;
+    auto data = source("mc.test","implicit");
+    Json a{{"key","mc.test.view"},{"version",1},{"subject","O1"},{"mode","continuous"},{"task","repair"}};
+    auto b = a; b["task"] = "deliver";
+    data.attention = Json::array({a,b,a}).dump();
+    auto first = store.prepare(1,2,3,1,100,{data});
+    const auto original = Json::parse(first.tail);
+    const auto& items = original.at("items");
+    check(items.size()==1 && items[0].at("attention")==Json{{"mode","continuous"},{"tasks",{"deliver","repair"}}} &&
+        original.at("definitions").size()==1,"overlapping task watches duplicated or lost the fact");
+    publish(store,std::move(first));
+    auto other = a; other["subject"] = "O2";
+    data.attention = Json::array({b,other}).dump();
+    auto next = store.prepare(1,2,3,2,101,{data});
+    check(Json::parse(next.tail).at("items")[0].at("attention").at("tasks")==Json::array({"deliver"}),
+        "releasing one task cleared another or fabricated an unsampled object");
+    publish(store,std::move(next));
+    data.attention.clear();
+    const auto closed = store.prepare(1,2,4,1,102,{data});
+    check(Json::parse(closed.tail).at("items").empty() && Json::parse(closed.full).at("items")[0].at("attention").at("mode")=="implicit" &&
+        Json::parse(store.read(1,2,original.at("snapshot").get<std::string>())).at("status").at("items")==items,
+        "closing the task removed its source or changed the old snapshot");
+    for (const auto& bad : {Json{{"key","host.view"}},Json{{"version",2}},Json{{"task",""}},Json{{"extra",1}}}) {
+        auto invalid = a; invalid.update(bad);
+        data.attention = Json::array({invalid}).dump();
+        rejects([&] { store.prepare(1,2,4,1,103,{data}); },"invalid task watch accepted");
+    }
+}
 // 核对宿主任务引用按 UTF-8 字节计数，空任务不占字段，失败不会改写已发布的作用域。
 // 步骤：准备空任务 → 发布最长合法引用 → 拒绝超长和非法编码 → 核对原版读回。
 void task_scope() {
@@ -189,6 +220,6 @@ void task_scope() {
 }
 // 从公共 C++ 接口离线验收版本、作用域和内存边界。
 int main() {
-    try { frozen_steps(); retention(); result_limit(); original_facts(); attention_limit(); task_scope(); }
+    try { frozen_steps(); retention(); result_limit(); original_facts(); attention_limit(); task_attention(); task_scope(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

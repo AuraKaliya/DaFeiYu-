@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 #include <vector>
 
@@ -24,6 +25,7 @@ using OriginalId = std::tuple<std::string,std::string,std::uint64_t,std::uint64_
 struct Frame {
     Definitions definitions;
     std::map<std::pair<std::string,std::string>,Json> samples;
+    std::map<std::pair<std::string,std::string>,std::set<std::string>> tasks;
     std::map<OriginalId,std::string> originals;
     std::uint64_t cutoff = 0;
 };

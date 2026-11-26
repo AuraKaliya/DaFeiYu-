@@ -96,6 +96,18 @@ void sample(Frame& frame, const std::string& owner, Json row) {
     if (!inserted && it->second.at("fact") < fact) it->second = std::move(row);
     frame.cutoff = std::max(frame.cutoff,fact);
 }
+// 将任务对指定状态对象的关注绑定到原声明版本，同对象的多个任务分别持有。
+void watch(Frame& frame, const std::string& owner, const Json& row) {
+    fields(row,{"mode","key","version","subject","task"});
+    const auto& key = owned_key(row,owner);
+    const auto declaration = frame.definitions.find(key);
+    if (declaration == frame.definitions.end() || declaration->second->declaration.at("owner") != owner ||
+        declaration->second->version != positive(field(row,"version")))
+        throw std::invalid_argument("status: attention declaration mismatch");
+    const auto& subject = label(field(row,"subject"),256);
+    if (field(row,"mode") != "continuous") throw std::invalid_argument("status: unknown attention grant");
+    frame.tasks[{key,subject}].insert(label(field(row,"task"),128));
+}
 }
 // 校验宿主所有权、默认关注和值契约，同键同版在准备和发布之间保持唯一。
 // 步骤：规范化声明 → 核对已占槽及候选 → 编译 schema 并弱预留空槽。
@@ -138,11 +150,11 @@ Frame Registry::collect(const std::vector<DecisionStatusSource>& sources) {
         auto& current = frame.definitions[slot.committed->declaration.at("key").get<std::string>()];
         if (!current || current->version < slot.committed->version) current = slot.committed;
     }
-    std::size_t bytes = 0, declarations = 0, samples = 0;
+    std::size_t bytes = 0, declarations = 0, samples = 0, watches = 0;
     std::set<std::string> supplied;
     for (const auto& source : sources) {
         if (!dotted_name(source.owner)) throw std::invalid_argument("status: invalid owner");
-        for (const auto* input : {&source.definitions,&source.samples}) {
+        for (const auto* input : {&source.definitions,&source.samples,&source.attention}) {
             if (input->size() > 64*1024 || input->size() > 256*1024-bytes) throw std::length_error("status: input limit");
             bytes += input->size();
         }
@@ -160,6 +172,13 @@ Frame Registry::collect(const std::vector<DecisionStatusSource>& sources) {
     for (const auto& source : sources) for (const auto& row : rows(source.samples)) {
         if (++samples > 64) throw std::length_error("status: sample limit");
         sample(frame,source.owner,row);
+    }
+    for (const auto& source : sources) {
+        if (source.attention.empty()) continue;
+        for (const auto& row : rows(source.attention)) {
+            if (++watches > 64) throw std::length_error("status: attention limit");
+            watch(frame,source.owner,row);
+        }
     }
     return frame;
 }
@@ -239,10 +258,12 @@ void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& fr
     for (const auto& [identity,sample] : frame.samples) {
         const auto& definition = frame.definitions.at(identity.first);
         auto item = at_time(sample,utc_ms);
-        item["attention"] = definition->declaration.at("defaultAttention");
+        const auto tasks = frame.tasks.find(identity);
+        item["attention"] = tasks == frame.tasks.end() ? definition->declaration.at("defaultAttention") :
+            Json{{"mode","continuous"},{"tasks",tasks->second}};
         full.at("items").push_back(item);
         if (described.insert(identity.first).second) full.at("definitions").push_back(definition->declaration);
-        if (!definition->explicit_attention) continue;
+        if (!definition->explicit_attention && tasks == frame.tasks.end()) continue;
         const Version version{identity.first,definition->version};
         const bool explain = !record.visible.contains(version) && (!previous || !previous->visible.contains(version));
         const auto cost = item.dump().size() + 1 + (explain ? definition->declaration.dump().size()+1 : 0);

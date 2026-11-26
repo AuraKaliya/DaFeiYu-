@@ -6,9 +6,10 @@
 #include <vector>
 
 namespace dfy::agent {
-// 宿主绑定事实提供方；两个 JSON 数组分别声明状态项和提供当步原采样，空采样数组表示本步缺采样。
+// 宿主绑定事实提供方；分别提供声明、原采样及当前有效的关注，省略关注时沿用声明的默认值。
 struct DecisionStatusSource {
     std::string owner, definitions, samples;
+    std::string attention{};
 };
 namespace status_detail { struct FrozenRecord; }
 // 可移动的当步候选；tail 最多 8 个显式项、16 KiB，full 为含隐式项的完整快照对象。
