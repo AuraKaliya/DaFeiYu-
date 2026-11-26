@@ -4,6 +4,9 @@ target_include_directories(dfy_agent_test_support INTERFACE "${CMAKE_CURRENT_SOU
 
 dfy_add_unit_test(agent.run_loop dfy_run_loop_tests run_loop.cpp dfy_agent)
 
+dfy_add_unit_test(agent.decision_status_contract dfy_decision_status_contract_tests decision_status_contract.cpp dfy_agent nlohmann_json::nlohmann_json)
+dfy_add_unit_test(agent.decision_status dfy_decision_status_tests decision_status.cpp dfy_agent nlohmann_json::nlohmann_json)
+
 dfy_add_unit_test(agent.observation dfy_observation_tests observation.cpp dfy_agent)
 
 dfy_add_unit_test(agent.observation_inbox dfy_observation_inbox_tests observation_inbox.cpp dfy_agent)
