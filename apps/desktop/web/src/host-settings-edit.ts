@@ -21,18 +21,20 @@ function validIntent(value: unknown): value is Intent {
 export function useHostSettingEdit(settings: Settings, post: (fields: SaveRequest) => void,
     storage?: Pick<Storage,'getItem'|'setItem'>, clock = () => performance.now()) {
   const draft = shallowRef<{ instance: string; revision: string; text: string }>();
-  const receipt = shallowRef<Intent>();
+  const receipt = shallowRef<Intent>(), lookupNotice = shallowRef('');
   const prefix = 'save-' + crypto.randomUUID() + '-';
   let instance = '', serial = 0, due = Infinity;
   let pending: { instance: string; request: string; write: boolean; deadline: number } | undefined;
   // 捕获本窗原提交，以便刷新后继续查证。
-  function remember(): void {
-    try { if (receipt.value) storage?.setItem('dfy.settings.submission',JSON.stringify(receipt.value)); } catch {}
+  function remember(): boolean {
+    if (!storage || !receipt.value) return false;
+    try { storage.setItem('dfy.settings.submission',JSON.stringify(receipt.value)); return true; } catch { return false; }
   }
   // 连接首次就绪或后台更换时恢复原提交，只允许在新后台按稳定提交号补读。
+  // 步骤：释放旧查询 → 校验保存意图 → 安排原提交补读。
   function bind(source: string): void {
     if (source === instance) return;
-    instance = source; draft.value = undefined; pending = undefined; due = Infinity;
+    instance = source; draft.value = undefined; pending = undefined; due = Infinity; lookupNotice.value = '';
     if (!receipt.value) {
       try {
         const saved: unknown = JSON.parse(storage?.getItem('dfy.settings.submission') ?? 'null');
@@ -72,20 +74,30 @@ export function useHostSettingEdit(settings: Settings, post: (fields: SaveReques
   // 用户选择当前值时清除尚未提交的本窗草稿。
   function reset(): void { if (!busy()) draft.value = undefined; }
   // 仅点保存时产生新提交号，传输不确定转为按原号查询。
+  // 步骤：复核修订与输入 → 先存原提交 → 发送同一意图并等待回执。
   function save(): void {
     const entry = draft.value, timeout = value();
     if (!entry || timeout === undefined || !canSave()) return;
     const submission = crypto.randomUUID(), request = prefix + ++serial;
     receipt.value = { instance: entry.instance, revision: entry.revision, submission, timeout, state: 'sending' };
-    pending = { instance: entry.instance, request, write: true, deadline: clock() + 3500 }; due = Infinity; remember();
+    pending = { instance: entry.instance, request, write: true, deadline: clock() + 3500 }; due = Infinity; lookupNotice.value = '';
+    if (!remember()) {
+      pending = undefined; receipt.value = { ...receipt.value, state:'unavailable' };
+      lookupNotice.value = '当前窗口无法保存提交号，本次保存未提交。';
+      return;
+    }
     try { post({ type: 'settings.save', version: '1', owner: 'host', request, instance: entry.instance,
       revision: entry.revision, submission, changes: { timeout_ms: timeout } }); }
     catch { failed(true); }
   }
   // 明确未分派可重新编辑，写入结果未知时沿原稳定号核实。
+  // 步骤：结束当前请求 → 保留已核实保存或记录未确认 → 安排所需补读。
   function failed(unsent: boolean): void {
     if (!receipt.value) return;
     pending = undefined;
+    if (receipt.value.state === 'saved') {
+      lookupNotice.value = '暂时无法复查原提交，保留上次核实的保存结果。'; due = Infinity; return;
+    }
     receipt.value = { ...receipt.value, state: unsent ? 'unavailable' : 'uncertain' };
     due = unsent ? Infinity : clock() + 1200; remember();
   }
@@ -116,10 +128,15 @@ export function useHostSettingEdit(settings: Settings, post: (fields: SaveReques
     if (raw.state === 'saved' && (!managementNumber(raw.savedRevision) || raw.savedValue !== original.timeout ||
         BigInt(raw.savedRevision) !== BigInt(original.revision) + 1n)) return;
     pending = undefined; due = Infinity;
+    if (original.state === 'saved' && raw.state !== 'saved') {
+      lookupNotice.value = '当前后台未能提供这份原回执，保留上次核实的保存结果。';
+      settings.refresh(); return;
+    }
+    lookupNotice.value = '';
     receipt.value = { ...original, state:raw.state, savedRevision:raw.state === 'saved' ? raw.savedRevision as string : undefined };
     if (raw.state === 'saved' && draft.value?.instance === original.instance && draft.value.revision === original.revision &&
         value() === original.timeout) draft.value = undefined;
     remember(); settings.refresh();
   }
-  return { draft, receipt, input, value, busy, canSave, rebase, reset, save, tick, check, receive };
+  return { draft, receipt, lookupNotice, input, value, busy, canSave, rebase, reset, save, tick, check, receive };
 }

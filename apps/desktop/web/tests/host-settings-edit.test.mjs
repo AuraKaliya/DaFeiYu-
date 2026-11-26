@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { useHostSettings } from '../src/host-settings.ts';
 import { useHostSettingEdit } from '../src/host-settings-edit.ts';
+import { windowReceiptStorage } from '../src/receipt-storage.ts';
+import { rememberDialogue } from '../src/dialogue-recovery.ts';
 
 // 由同窗读口签发配置，原提交回执和当前配置分别送达。
 function fixture(memory=new Map(),host='one',allow=true) {
@@ -55,4 +57,33 @@ test('lost save results and the original submission survive a page or resident r
   restart.result('saved',again,{savedRevision:'2',savedValue:24000,appliedRevision:'2',pendingRestart:false});
   assert.equal(restart.edit.receipt.value.savedRevision,'2');
   assert.equal([...page.sent,...restart.sent].some(q=>q.type==='settings.save'),false);
+});
+
+// 成功落盘的原修订已核实，后来查询失败或记录退休都保留该事实。
+test('a retired or unreachable save receipt keeps the last confirmed saved revision',()=>{
+  const f=fixture();f.edit.input('19000');f.edit.save();const original=f.sent.at(-1);
+  f.result('saved',original,{savedRevision:'2',savedValue:19000});f.sample('2',19000);
+  f.edit.check();const check=f.sent.at(-1);
+  f.edit.receive({event:'management.error',version:'1',request:check.request});
+  assert.equal(f.edit.receipt.value.state,'saved');assert.equal(f.edit.receipt.value.savedRevision,'2');
+  f.edit.check();f.result('unknown',f.sent.at(-1),{revision:'40'});
+  assert.equal(f.edit.receipt.value.state,'saved');assert.equal(f.edit.receipt.value.timeout,19000);
+  assert.match(f.edit.lookupNotice.value,/上次核实/);
+  assert.equal(f.sent.filter(q=>q.type==='settings.save').length,1);
+});
+
+// 会话存储不可写时沿同一历史项保存身份，聊天快照不会清除回执；双重失败不发写命令。
+test('receipt storage falls back to compatible page history before a write',()=>{
+  const page={state:{dialogue:{draft:'旧草稿'}},replaceState(value){this.state=value;}};
+  const store=windowReceiptStorage(()=>{throw new Error('no session storage');},page);
+  store.setItem('test','original');assert.equal(page.state.dialogue.draft,'旧草稿');
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'history');
+  Object.defineProperty(globalThis,'history',{configurable:true,value:page});
+  try {rememberDialogue('新草稿',[],'conversation');} finally {
+    if(previous)Object.defineProperty(globalThis,'history',previous);else delete globalThis.history;
+  }
+  assert.equal(store.getItem('test'),'original');assert.equal(page.state.dialogue.draft,'新草稿');
+  const f=fixture({get:()=>undefined,set(){throw new Error('both stores unavailable');}});
+  f.edit.input('20000');f.edit.save();assert.equal(f.sent.some(q=>q.type==='settings.save'),false);
+  assert.match(f.edit.lookupNotice.value,/未提交/);
 });

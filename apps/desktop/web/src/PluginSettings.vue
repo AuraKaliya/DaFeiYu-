@@ -3,11 +3,12 @@ import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { Label } from 'reka-ui';
 import { usePluginDirectory } from './plugin-directory';
 import { usePluginActions } from './plugin-actions';
+import { windowReceiptStorage } from './receipt-storage';
 
 const props = defineProps<{ active: boolean; connected: boolean }>();
 const bridge = window.chrome.webview;
 const directory = usePluginDirectory(fields => bridge.postMessage(fields));
-const actions = usePluginActions(directory, fields => bridge.postMessage(fields), window.sessionStorage);
+const actions = usePluginActions(directory, fields => bridge.postMessage(fields), windowReceiptStorage());
 const { view } = directory;
 const { work, readFailed, lookupNotice } = actions;
 const selected = computed(() => view.value.reading?.packages.find(item => item.id === view.value.selected));

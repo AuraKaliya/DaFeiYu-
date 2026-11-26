@@ -90,6 +90,12 @@ test('a fresh document recovers without any write reply and keeps legacy operati
   memory.set('dfy.plugin.work.original',JSON.stringify(legacy));
   const older=fixture(memory); assert.equal(older.sent.at(-1).operation,'plugin/old-window/1');
   assert.equal(older.sent.some(q=>q.type==='plugins.load'),false);
+  legacy.work.operation='';legacy.work.state='sending';legacy.work.effect='unconfirmed';
+  memory.set('dfy.plugin.work.original',JSON.stringify(legacy));
+  const unnumbered=fixture(memory);
+  assert.equal(unnumbered.actions.work.value.state,'unknown');assert.match(unnumbered.actions.lookupNotice.value,/旧版/);
+  assert.equal(unnumbered.sent.some(q=>q.type!=='plugins.list'),false);
+  assert.equal(unnumbered.actions.canStart('load'),true);
 });
 
 // 原回执退休后继续保留已证实的效果，从未取得终态则按原号显示过期。
@@ -107,6 +113,14 @@ test('retired operation records preserve previously confirmed effects and native
   other.actions.receive({...absent(other.sent.at(-1),'stale'),instance:'replacement'});
   assert.equal(other.actions.work.value.instance,'original');assert.equal(other.actions.work.value.state,'stale');
   assert.equal(other.actions.work.value.effect,'unknown');
+});
+
+// 无法在窗口重载后恢复原号时明确保持未提交，目录仍可正常操作。
+test('an unavailable recovery store cannot leave a dispatched untraceable plugin write',()=>{
+  const f=fixture({get:()=>undefined,set(){throw new Error('unavailable');}});
+  f.actions.start('load');
+  assert.equal(f.sent.some(q=>q.type==='plugins.load'),false);
+  assert.equal(f.actions.work.value.effect,'notApplied');assert.match(f.actions.lookupNotice.value,/未提交/);
 });
 
 // 提交结果未知与明确未分派分开处理，次序错误只修正下一次显式命令。

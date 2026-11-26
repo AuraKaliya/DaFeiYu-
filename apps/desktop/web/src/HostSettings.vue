@@ -2,13 +2,14 @@
 import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useHostSettings } from './host-settings';
 import { useHostSettingEdit } from './host-settings-edit';
+import { windowReceiptStorage } from './receipt-storage';
 
 const props = defineProps<{ active: boolean; instance: string }>();
 const bridge = window.chrome.webview;
 const settings = useHostSettings(fields => bridge.postMessage(fields));
-const edit = useHostSettingEdit(settings, fields => bridge.postMessage(fields), window.sessionStorage);
+const edit = useHostSettingEdit(settings, fields => bridge.postMessage(fields), windowReceiptStorage());
 const { view } = settings;
-const { draft, receipt } = edit;
+const { draft, receipt, lookupNotice } = edit;
 const staleDraft = computed(() => !!draft.value && draft.value.instance === view.value.reading?.instance && draft.value.revision !== view.value.reading.revision);
 const notices: Readonly<Record<string,string>> = {
   sending:'正在提交保存。', uncertain:'保存结果待确认，正在按原提交号查询。', unknown:'当前配置未查到这笔提交的保存记录。',
@@ -18,6 +19,7 @@ const notices: Readonly<Record<string,string>> = {
 };
 let timer = 0;
 // 两个读口分别处理当前配置及原保存实效，仅在活动窗口继续查回。
+// 步骤：匹配配置快照 → 核对原提交回执 → 可见时继续补读。
 function receive(event: MessageEvent<unknown>): void {
   settings.receive(event.data); edit.receive(event.data);
   if (props.active && props.instance) edit.tick();
@@ -30,8 +32,10 @@ function change(event: Event): void { edit.input((event.currentTarget as HTMLInp
 function update(): void { settings.context(props.instance, props.active); }
 watch(() => [props.instance, props.active], update);
 // 在可见设置中开始独立观察。
+// 步骤：挂接监听 → 核对当前后台 → 安排有界轮询。
 onMounted(() => { bridge.addEventListener('message', receive); update(); timer = window.setInterval(tick, 500); });
 // 文档卸载时撤回监听和未完成的读取。
+// 步骤：停止轮询 → 释放监听 → 撤销原文档的查询。
 onUnmounted(() => { window.clearInterval(timer); bridge.removeEventListener('message', receive); settings.context('', false); });
 </script>
 
@@ -70,7 +74,7 @@ onUnmounted(() => { window.clearInterval(timer); bridge.removeEventListener('mes
         </div>
       </form>
       <div v-if="receipt" class="settings-receipt" :data-save-state="receipt.state">
-        <p role="status">{{ receipt.state === 'saved' ? `已保存 ${receipt.timeout} 毫秒，保存修订 ${receipt.savedRevision}。` : notices[receipt.state] }}</p>
+        <p role="status">{{ receipt.state === 'saved' ? `已保存 ${receipt.timeout} 毫秒，保存修订 ${receipt.savedRevision}。` : notices[receipt.state] }} {{ lookupNotice }}</p>
         <details><summary>保存回执</summary><p>提交号 {{ receipt.submission }}</p>
           <button id="check-host-save" type="button" class="quiet-action" :disabled="view.status !== 'ready'" @click="edit.check">查询原提交</button>
         </details>

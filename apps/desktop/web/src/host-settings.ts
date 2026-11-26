@@ -52,6 +52,7 @@ export function useHostSettings(post: ReadPost, clock = () => performance.now())
     try { post({ type: 'settings.read', version: '1', request, owner: 'host', instance }); } catch { fail(); }
   }
   // 切换窗口可见性或后台时使旧请求失效，旧后台的配置不出现在新后台下。
+  // 步骤：保留同源读数 → 撤销旧请求 → 按当前可见性读取。
   function context(source: string, visible: boolean): void {
     if (instance === source && active === visible) return;
     const reading = view.value.reading;
@@ -63,6 +64,7 @@ export function useHostSettings(post: ReadPost, clock = () => performance.now())
   // 用户刷新只推进当前只读请求。
   function refresh(): void { due = 0; tick(); }
   // 用原请求与后台归属接受原生快照，失效回复不能填入当前字段。
+  // 步骤：匹配原请求 → 区分过期和不可用 → 采用完整的已登记字段。
   function receive(value: unknown): void {
     if (!pending || !managementRecord(value) || value.request !== pending.request) return;
     pending = undefined; due = clock() + 2000;

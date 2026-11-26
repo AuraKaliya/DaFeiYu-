@@ -51,10 +51,11 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
   let blockedReading: PluginReading | undefined;
   let pending: { request: string; write: boolean; deadline: number } | undefined;
 
-  // 本窗只保存原命令和公开回执，存储不可用时仍可在当前页面读取结果。
-  function save(): void {
-    if (work.value?.instance !== bound) return;
-    try { storage?.setItem('dfy.plugin.work.' + bound, JSON.stringify({ nextCommand, work: work.value })); } catch {}
+  // 在本窗保留原命令和公开回执，调用者可核对提交前是否已保存原号。
+  function save(): boolean {
+    if (!storage || work.value?.instance !== bound) return false;
+    try { storage.setItem('dfy.plugin.work.' + bound, JSON.stringify({ nextCommand, work: work.value })); return true; }
+    catch { return false; }
   }
   // 换后台或刷新文档时只恢复同一后台的原操作。
   // 步骤：取消旧查询 → 校验当窗的恢复记录 → 安排按原号补读。
@@ -66,6 +67,11 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
       if (!object(saved) || (!pluginNumber(saved.nextCommand) && saved.nextCommand !== '18446744073709551616') ||
           saved.nextCommand === '0' || !savedWork(saved.work, bound)) return;
       nextCommand = saved.nextCommand;
+      if (!saved.work.operation && (unfinished.has(saved.work.state) || saved.work.state === 'uncertain')) {
+        work.value = { ...saved.work, state: 'unknown', effect: 'unknown' };
+        lookupNotice.value = '旧版未记录可查询的操作号，当前插件状态可在目录中核对。';
+        return;
+      }
       work.value = saved.work.state === 'sending' ? { ...saved.work, state: 'uncertain' } : saved.work;
       if (work.value.operation) due = 0;
     } catch {}
@@ -91,7 +97,12 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
     work.value = { instance: bound, command, action, id: row.id, revision: reading.revision, targetGeneration: row.generation,
       submission, operation: 'plugin/request/' + submission, state: 'sending', effect: 'unconfirmed', generation: row.generation };
     pending = { request, write: true, deadline: clock() + 3500 }; due = Infinity; readFailed.value = false; lookupNotice.value = '';
-    save();
+    if (!save()) {
+      nextCommand = command; pending = undefined;
+      work.value = { ...work.value, state: 'unavailable', effect: 'notApplied' };
+      lookupNotice.value = '当前窗口无法保存操作号，本次操作未提交。';
+      return;
+    }
     try { post({ type: 'plugins.' + action, version: '1', request, instance: bound, command, submission, id: row.id, revision: reading.revision, generation: row.generation }); }
     catch { undelivered(); }
   }
