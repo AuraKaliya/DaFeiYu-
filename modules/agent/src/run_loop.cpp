@@ -36,6 +36,7 @@ struct RunLoopState {
     std::unique_ptr<ExecutionPolicy> policy;
     ToolTime deadline;
     std::unique_ptr<ToolCatalog> status_reader;
+    PublishedDecisionStatus submitted_status;
     ToolBatch* batch = nullptr;
     std::optional<PlanScope> planning_scope;
     std::optional<PlanPrompt> planning_request;
@@ -533,7 +534,7 @@ struct RunLoopState {
         } else compressed_batches = record->context_->project(input,head_delta);
         capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
-        if (frozen) options.status_store->publish(std::move(*frozen));
+        if (frozen) submitted_status = options.status_store->publish(std::move(*frozen));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
         record->settle_inputs(InputState::submitted,current.attempt.step.sequence);
@@ -653,6 +654,8 @@ struct RunLoopState {
                     interrupt();
                 }
                 if (response && record->operation()->state() == OperationState::pending) {
+                    if (submitted_status && (response->finish == model::FinishReason::stop || response->finish == model::FinishReason::tool_calls))
+                        options.status_store->accept_response(submitted_status);
                     if (planning_request) {
                         stage = TurnFailure::model_response;
                         const auto candidate = parse_plan_response(*planning_scope,planning_request->expected,*response);

@@ -12,6 +12,8 @@ struct DecisionStatusSource {
     std::string attention{};
 };
 namespace status_detail { struct FrozenRecord; }
+// 只有实际提交过的快照能签发回执，调用者无须重解析尾注即可关联原模型响应。
+using PublishedDecisionStatus = std::shared_ptr<const status_detail::FrozenRecord>;
 // 可移动的当步候选；tail 最多 8 个显式项、16 KiB，full 为含隐式项的完整快照对象。
 struct FrozenDecisionStatus {
     std::string tail, full;
@@ -37,7 +39,9 @@ class DecisionStatusStore {
         std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources,
         bool rebuild = false, std::string_view task = {}) const;
     // 请求成功提交后移动候选入索引；不分配内存，空候选及其他存储的候选无效。
-    void publish(FrozenDecisionStatus&& frozen) noexcept;
+    PublishedDecisionStatus publish(FrozenDecisionStatus&& frozen) noexcept;
+    // 结构有效的模型响应只为该逻辑决策实际展示的计次项扣一次，跨绑定及重复回调无效。
+    void accept_response(const PublishedDecisionStatus& submitted) noexcept;
     // 按调用方的作用域读取冻结原版；含 state/status 的回包最多 64 KiB，窗口外或域不符返回原因。
     std::string read(std::uint64_t session, std::uint64_t epoch, std::string_view snapshot) const;
   private:

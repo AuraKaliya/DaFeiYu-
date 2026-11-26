@@ -1,6 +1,6 @@
 add_library(dfy_agent STATIC
   src/action_observations.cpp src/confirmation.cpp src/context_capacity.cpp src/context_status.cpp
-  src/decision_status.cpp src/decision_status.hpp
+  src/decision_status.cpp src/decision_status.hpp src/decision_attention.cpp
   src/diagnostic_fields.hpp src/diagnostic_json.cpp src/diagnostic_snapshot.cpp
   src/execution_policy.cpp src/observation.cpp src/observation_controller.cpp src/observation_inbox.cpp
   src/observation_input.cpp src/observation_trigger.cpp src/observation_verification.cpp

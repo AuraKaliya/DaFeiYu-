@@ -96,17 +96,26 @@ void sample(Frame& frame, const std::string& owner, Json row) {
     if (!inserted && it->second.at("fact") < fact) it->second = std::move(row);
     frame.cutoff = std::max(frame.cutoff,fact);
 }
-// 将任务对指定状态对象的关注绑定到原声明版本，同对象的多个任务分别持有。
+// 将任务或原事件的关注绑定到同来源的声明，计次事件还须指定其原始采样号。
 void watch(Frame& frame, const std::string& owner, const Json& row) {
-    fields(row,{"mode","key","version","subject","task"});
     const auto& key = owned_key(row,owner);
     const auto declaration = frame.definitions.find(key);
+    const auto version = positive(field(row,"version"));
     if (declaration == frame.definitions.end() || declaration->second->declaration.at("owner") != owner ||
-        declaration->second->version != positive(field(row,"version")))
+        declaration->second->version != version)
         throw std::invalid_argument("status: attention declaration mismatch");
     const auto& subject = label(field(row,"subject"),256);
-    if (field(row,"mode") != "continuous") throw std::invalid_argument("status: unknown attention grant");
-    frame.tasks[{key,subject}].insert(label(field(row,"task"),128));
+    const auto& mode = field(row,"mode");
+    if (mode == "continuous") {
+        fields(row,{"mode","key","version","subject","task"});
+        frame.tasks[{key,subject}].insert(label(field(row,"task"),128));
+    } else if (mode == "counted") {
+        fields(row,{"mode","key","version","subject","event","fact","count"});
+        const EventKey id{owner,positive(field(row,"event"))};
+        CountedWatch grant{key,subject,version,positive(field(row,"fact")),positive(field(row,"count"))};
+        const auto [it,fresh] = frame.counted.try_emplace(id,grant);
+        if (!fresh && it->second != grant) throw std::invalid_argument("status: conflicting attention event");
+    } else throw std::invalid_argument("status: unknown attention grant");
 }
 }
 // 校验宿主所有权、默认关注和值契约，同键同版在准备和发布之间保持唯一。
@@ -191,6 +200,8 @@ using Version = std::pair<std::string,std::uint64_t>;
 using Originals = std::map<OriginalId,std::weak_ptr<const std::string>>;
 struct FrozenRecord {
     std::uint64_t binding = 0, serial = 0, cutoff = 0;
+    std::pair<std::uint64_t,std::uint64_t> decision;
+    std::vector<EventRef> events, displayed;
     std::string snapshot, ready;
     Definitions definitions;
     std::set<Version> visible;
@@ -203,6 +214,7 @@ using namespace status_detail;
 struct DecisionStatusStore::Storage {
     std::mutex mutex;
     Registry registry;
+    EventAttention attention;
     Originals originals;
     const std::uint64_t binding = runtime::next_domain();
     std::uint64_t session = 0, epoch = 0, issued = 0, cutoff = 0, forgotten = 0;
@@ -248,12 +260,24 @@ Json at_time(Json sample, std::int64_t utc_ms) {
         sample["validity"] = utc_ms < sample.at("validUntilUtcMs").get<std::int64_t>() ? "current" : "expired";
     return sample;
 }
+// 收集仍需展示且明确绑定本采样的事件；同一对象与任务期关注共用一项。
+std::vector<EventRef> matching_events(const FrozenRecord& record, const std::pair<std::string,std::string>& identity,
+    std::uint64_t version, std::uint64_t fact) {
+    std::vector<EventRef> matches;
+    for (const auto& event : record.events) {
+        const auto& watch = event->watch;
+        if (event->remaining && watch.key==identity.first && watch.subject==identity.second &&
+            watch.version==version && watch.fact==fact) matches.push_back(event);
+    }
+    return matches;
+}
 // 按稳定键及对象顺序生成完整视图和显式尾注；跳过的显式项仍可按同一版号读取。
 // 步骤：冻结原件和有效期 → 附上首次显式展示的契约 → 限制尾注与完整快照大小。
 void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& frame, const FrozenRecord* previous,
     Json full, std::int64_t utc_ms) {
     Json tail = full;
     std::set<std::string> described;
+    std::set<std::uint64_t> wake_ids;
     std::size_t bytes = tail.dump().size() + 32, omitted = 0;
     for (const auto& [identity,sample] : frame.samples) {
         const auto& definition = frame.definitions.at(identity.first);
@@ -261,19 +285,34 @@ void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& fr
         const auto tasks = frame.tasks.find(identity);
         item["attention"] = tasks == frame.tasks.end() ? definition->declaration.at("defaultAttention") :
             Json{{"mode","continuous"},{"tasks",tasks->second}};
+        const auto events = matching_events(record,identity,definition->version,sample.at("fact").get<std::uint64_t>());
+        std::size_t wake_bytes = 0;
+        for (const auto& event : events) {
+            auto& attention = item.at("attention");
+            if (tasks == frame.tasks.end()) attention["mode"] = "counted";
+            attention["events"].push_back({{"event",event->event},{"remaining",event->remaining}});
+            if (event->remaining == event->watch.count && !wake_ids.contains(event->event))
+                wake_bytes += std::to_string(event->event).size()+1;
+        }
         full.at("items").push_back(item);
         if (described.insert(identity.first).second) full.at("definitions").push_back(definition->declaration);
-        if (!definition->explicit_attention && tasks == frame.tasks.end()) continue;
+        if (!definition->explicit_attention && tasks == frame.tasks.end() && events.empty()) continue;
         const Version version{identity.first,definition->version};
         const bool explain = !record.visible.contains(version) && (!previous || !previous->visible.contains(version));
-        const auto cost = item.dump().size() + 1 + (explain ? definition->declaration.dump().size()+1 : 0);
+        const auto cost = item.dump().size() + 1 + wake_bytes + (explain ? definition->declaration.dump().size()+1 : 0);
         if (tail.at("items").size() >= 8 || bytes+cost > 16*1024) { ++omitted; continue; }
         bytes += cost;
         record.visible.insert(version);
         if (explain) tail.at("definitions").push_back(definition->declaration);
         tail.at("items").push_back(std::move(item));
+        for (const auto& event : events) {
+            record.displayed.push_back(event);
+            if (event->remaining == event->watch.count && wake_ids.insert(event->event).second)
+                tail.at("wakeEvents").push_back(event->event);
+        }
     }
     if (omitted) tail["omittedExplicit"] = omitted;
+    full.at("wakeEvents") = tail.at("wakeEvents");
     result.full = full.dump();
     constexpr std::string_view prefix = R"({"state":"ready","status":)";
     const auto response_bytes = prefix.size() + result.full.size() + 1;
@@ -301,6 +340,8 @@ FrozenDecisionStatus DecisionStatusStore::prepare(std::uint64_t session, std::ui
     auto frame = state.registry.collect(sources);
     auto record = std::make_shared<FrozenRecord>();
     record->binding = state.binding;
+    record->decision = {turn,step};
+    record->events = state.attention.prepare(frame.counted);
     record->serial = state.issued + 1;
     record->cutoff = std::max(state.cutoff,frame.cutoff);
     record->snapshot = snapshot_prefix(session,epoch,state.binding) + std::to_string(record->serial);
@@ -320,17 +361,30 @@ FrozenDecisionStatus DecisionStatusStore::prepare(std::uint64_t session, std::ui
 }
 // 已提交请求只需发布准备好的不可变原件；槽满时按实际发布顺序淘汰。
 // 步骤：核对候选归属 → 固定本次注册和事实截止 → 交换历史槽并推进窗口。
-void DecisionStatusStore::publish(FrozenDecisionStatus&& frozen) noexcept {
+PublishedDecisionStatus DecisionStatusStore::publish(FrozenDecisionStatus&& frozen) noexcept {
     auto& state = *storage_;
-    if (!frozen.record_ || frozen.record_->binding != state.binding) return;
+    if (!frozen.record_ || frozen.record_->binding != state.binding) return {};
     auto record = std::move(frozen.record_);
     std::lock_guard lock(state.mutex);
     state.registry.publish(record->definitions);
+    state.attention.publish(record->events);
     state.cutoff = std::max(state.cutoff,record->cutoff);
     auto& slot = state.history[state.next];
     if (slot) state.forgotten = std::max(state.forgotten,slot->serial);
-    slot.swap(record);
+    slot = record;
     state.next = (state.next+1) % state.history.size();
+    return record;
+}
+// 只消费原请求中已展示的计次项，重复或倒序返回的回执不会再次扣除。
+void DecisionStatusStore::accept_response(const PublishedDecisionStatus& submitted) noexcept {
+    auto& state = *storage_;
+    if (!submitted || submitted->binding != state.binding) return;
+    std::lock_guard lock(state.mutex);
+    for (const auto& event : submitted->displayed) {
+        if (!event->remaining || submitted->decision <= event->last_decision) continue;
+        --event->remaining;
+        event->last_decision = submitted->decision;
+    }
 }
 // 查询仅对匹配的会话、代次和存储开放，直接返回发布时的原版正文。
 // 步骤：核对绑定前缀 → 寻找精确版本 → 区分保留窗口外和未知版本。

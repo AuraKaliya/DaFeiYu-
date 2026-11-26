@@ -22,10 +22,40 @@ struct Definition {
 using DefinitionRef = std::shared_ptr<const Definition>;
 using Definitions = std::map<std::string,DefinitionRef>;
 using OriginalId = std::tuple<std::string,std::string,std::uint64_t,std::uint64_t>;
+using EventKey = std::pair<std::string,std::uint64_t>;
+struct CountedWatch {
+    std::string key, subject;
+    std::uint64_t version, fact, count;
+    // 同一来源的原事件号只能绑定到相同的原采样和展示次数。
+    bool operator==(const CountedWatch&) const = default;
+};
+struct EventWatch {
+    CountedWatch watch;
+    std::uint64_t event, remaining;
+    std::shared_ptr<std::uint64_t> retired;
+    std::pair<std::uint64_t,std::uint64_t> last_decision{};
+    bool published = false;
+};
+using EventRef = std::shared_ptr<EventWatch>;
+using CountedWatches = std::map<EventKey,CountedWatch>;
+// 由原状态存储在同一互斥区内使用，预览仅弱预留，最近发布的原事件可识别重传。
+class EventAttention {
+  public:
+    // 验证同号原件并为本次冻结预留计次记录，淘汰窗口外的旧号不会重开关注。
+    std::vector<EventRef> prepare(const CountedWatches& watches);
+    // 请求已提交后用定长窗口保留原号，重复登记不推进窗口。
+    void publish(const std::vector<EventRef>& events) noexcept;
+  private:
+    std::map<EventKey,std::weak_ptr<EventWatch>> index_;
+    std::map<std::string,std::shared_ptr<std::uint64_t>> retired_;
+    std::array<EventRef,128> recent_{};
+    std::size_t next_ = 0;
+};
 struct Frame {
     Definitions definitions;
     std::map<std::pair<std::string,std::string>,Json> samples;
     std::map<std::pair<std::string,std::string>,std::set<std::string>> tasks;
+    CountedWatches counted;
     std::map<OriginalId,std::string> originals;
     std::uint64_t cutoff = 0;
 };

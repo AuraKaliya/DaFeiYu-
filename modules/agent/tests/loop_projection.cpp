@@ -292,6 +292,41 @@ void decision_read_revoked() {
     check(calls==2 && turn->answer()=="原授权已撤回","revoked reader did not settle with its original call");
 }
 
+// 第一次模型传输失败后保留原事件，下一轮的有效工具调用只消费实际展示的一次。
+// 步骤：记录失败请求 → 按原关注再次送模 → 返回快照读工具 → 核对原版及续行尾注。
+void counted_responses() {
+    using Json = nlohmann::json;
+    DecisionStatusSource source{"host",
+        R"([{"key":"host.signal","version":1,"description":"工作完成","defaultAttention":{"mode":"implicit"},"valueSchema":{"type":"object","properties":{},"additionalProperties":false}}])",
+        R"([{"key":"host.signal","version":1,"subject":"work","fact":9,"value":{}}])",
+        R"([{"key":"host.signal","version":1,"subject":"work","fact":9,"mode":"counted","count":1,"event":42}])"};
+    RunOptions options;
+    options.decision_status = DecisionStatusOptions{"binding",[source] { return std::vector{source}; },true};
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    unsigned calls = 0;
+    // 固定传输先失败一次，再使用原号查询，最后从配对工具回执确认该决策的旧视图。
+    // 步骤：核对此步来源 → 注入失败或返回查询调用 → 比对已消费尾注与原决策。
+    Session session({},channel,Backend{[&](const Config&,const Request& input) -> Response {
+        const auto tail = Json::parse(input.messages.back().content);
+        if (++calls<3) {
+            check(tail.at("wakeEvents")==Json::array({42}) && tail.at("items").size()==1,"failed request consumed counted attention");
+            if (calls==1) throw std::runtime_error("fixed transport failed");
+            return {{Role::assistant,"",{{"old","status_read",Json{{"snapshot",tail.at("snapshot")}}.dump()}}},FinishReason::tool_calls};
+        }
+        const auto& reply = input.messages[input.messages.size()-2];
+        check(tail.at("wakeEvents").empty() && tail.at("items").empty() && reply.tool_call_id=="old" &&
+            Json::parse(reply.content.substr(reply.content.find('{'))).at("status").at("wakeEvents")==Json::array({42}),
+            "accepted tool response failed to settle the original view");
+        return {{Role::assistant,"已读回原事件"}};
+    }});
+    auto failed = session.begin("检查回执",options);
+    until(session,[&] { return !session.busy(); });
+    check(failed->operation()->state()==OperationState::failed,"fixed failure was not observed");
+    auto retried = session.begin("再查原回执",options);
+    until(session,[&] { return !session.busy(); });
+    check(calls==3 && retried->answer()=="已读回原事件","retry or tool continuation did not settle");
+}
+
 // 连续提交问题基线、关闭增量与同版引用，拒收替换及活动中断都不提前消费状态。
 // 步骤：冻结同版投影 → 在会话内关闭问题 → 拒绝非法替换 → 从原历史继续并检查单次关闭。
 void status_versions() {
@@ -564,7 +599,7 @@ void reasoning_budget() {
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        source_boundaries(); source_times(); replay(); decision_read(); decision_read_revoked(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
+        source_boundaries(); source_times(); replay(); decision_read(); decision_read_revoked(); counted_responses(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
         mixed_dialogue(false); mixed_dialogue(true);
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();

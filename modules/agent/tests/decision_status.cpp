@@ -200,6 +200,69 @@ void task_attention() {
         rejects([&] { store.prepare(1,2,4,1,103,{data}); },"invalid task watch accepted");
     }
 }
+// 核对同一事件只唤醒一次，计次只发生于有效应答，历史快照始终保留当时的剩余次数。
+// 步骤：预览及放弃 → 重试同一逻辑步并重复回调 → 再展示一次 → 读回结算前的原件。
+void counted_attention() {
+    DecisionStatusStore store, foreign;
+    auto data = source("host","implicit",7);
+    Json event{{"mode","counted"},{"key","host.view"},{"version",1},{"subject","O1"},{"event",42},{"fact",7},{"count",2}};
+    const auto task = Json{{"mode","continuous"},{"key","host.view"},{"version",1},{"subject","O1"},{"task","repair"}};
+    data.attention = Json::array({task,event,event}).dump();
+    { auto preview = store.prepare(1,2,3,1,100,{data}); }
+    auto first = store.prepare(1,2,3,1,100,{data});
+    const auto view = Json::parse(first.tail), id = view.at("snapshot");
+    check(view.at("wakeEvents")==Json::array({42}) && view.at("items").size()==1 &&
+        view.at("items")[0].at("attention")==Json{{"mode","continuous"},{"tasks",{"repair"}},
+            {"events",Json::array({{{"event",42},{"remaining",2}}})}},"overlap lost the original event or duplicated its item");
+    auto submitted = store.publish(std::move(first));
+    foreign.accept_response(submitted);
+    auto retry = store.prepare(1,2,3,1,100,{data},true);
+    check(Json::parse(retry.tail).at("items")==view.at("items") && Json::parse(retry.tail).at("wakeEvents")==view.at("wakeEvents"),
+        "preview, publication or a foreign response consumed the event");
+    auto repeated = store.publish(std::move(retry));
+    store.accept_response(submitted); store.accept_response(repeated);
+    data.attention = Json::array({event}).dump();
+    auto second = store.prepare(1,2,3,2,101,{data});
+    const auto tail = Json::parse(second.tail);
+    check(tail.at("wakeEvents").empty() && tail.at("items")[0].at("attention")==Json{{"mode","counted"},
+        {"events",Json::array({{{"event",42},{"remaining",1}}})}},"retry counted twice or raised a second wake");
+    store.accept_response(store.publish(std::move(second)));
+    store.accept_response(submitted);
+    const auto done = store.prepare(1,2,4,1,102,{data});
+    check(Json::parse(done.tail).at("items").empty() && Json::parse(done.full).at("items")[0].at("attention").at("mode")=="implicit" &&
+        Json::parse(store.read(1,2,id.get<std::string>())).at("status").at("items")==view.at("items"),"exhausted attention rewrote history");
+    event["count"] = 3; data.attention = Json::array({event}).dump();
+    rejects([&] { store.prepare(1,2,4,2,103,{data}); },"retransmission replaced original count");
+}
+
+// 未入尾注的项和缺失的原样本均不扣次，离开有界窗口的旧事件重传不会重开。
+// 步骤：先冻结其他原件 → 裁掉第九项 → 在可展示步骤结算 → 跨过事件及快照窗口再重投。
+void counted_limits() {
+    DecisionStatusStore store;
+    auto data = source("host","implicit",7), filler = source("aaa","explicit");
+    Json event{{"mode","counted"},{"key","host.view"},{"version",1},{"subject","O1"},{"event",42},{"fact",7},{"count",1}};
+    data.attention = Json::array({event}).dump();
+    auto newer = source("host","implicit",8); newer.attention = data.attention;
+    auto absent = store.prepare(1,2,1,1,100,{newer});
+    check(Json::parse(absent.tail).at("items").empty(),"wake displayed a different fact");
+    store.accept_response(store.publish(std::move(absent)));
+    auto rows = Json::array(); auto sample = Json::parse(filler.samples)[0];
+    for (int i=0; i<8; ++i) { sample["subject"]=std::to_string(i); rows.push_back(sample); }
+    filler.samples = rows.dump();
+    auto trimmed = store.prepare(1,2,1,2,101,{data,filler});
+    check(Json::parse(trimmed.tail).at("omittedExplicit")==1 && Json::parse(trimmed.tail).at("wakeEvents").empty(),
+        "an omitted item claimed a wake");
+    store.accept_response(store.publish(std::move(trimmed)));
+    for (std::uint64_t n=42; n<182; ++n) {
+        event["event"]=n; data.attention=Json::array({event}).dump();
+        auto current = store.prepare(1,2,2,n,102,{data});
+        check(Json::parse(current.tail).at("wakeEvents")==Json::array({n}),"missing or cropped sample consumed the event");
+        store.accept_response(store.publish(std::move(current)));
+    }
+    event["event"]=42; data.attention=Json::array({event}).dump();
+    check(Json::parse(store.prepare(1,2,3,1,103,{data}).tail).at("items").empty(),"retired event woke again");
+}
+
 // 核对宿主任务引用按 UTF-8 字节计数，空任务不占字段，失败不会改写已发布的作用域。
 // 步骤：准备空任务 → 发布最长合法引用 → 拒绝超长和非法编码 → 核对原版读回。
 void task_scope() {
@@ -220,6 +283,6 @@ void task_scope() {
 }
 // 从公共 C++ 接口离线验收版本、作用域和内存边界。
 int main() {
-    try { frozen_steps(); retention(); result_limit(); original_facts(); attention_limit(); task_attention(); task_scope(); }
+    try { frozen_steps(); retention(); result_limit(); original_facts(); attention_limit(); task_attention(); counted_attention(); counted_limits(); task_scope(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
