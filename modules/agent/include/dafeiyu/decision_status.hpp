@@ -6,12 +6,12 @@
 #include <vector>
 
 namespace dfy::agent {
-// 宿主绑定事实提供方；两个 JSON 数组分别声明状态项和提供当步原采样。
+// 宿主绑定事实提供方；两个 JSON 数组分别声明状态项和提供当步原采样，空采样数组表示本步缺采样。
 struct DecisionStatusSource {
     std::string owner, definitions, samples;
 };
 namespace status_detail { struct FrozenRecord; }
-// 可移动的当步候选；tail 和 full 分别为送模投影与完整快照 JSON。
+// 可移动的当步候选；tail 最多 8 个显式项、16 KiB，full 为含隐式项的完整快照对象。
 struct FrozenDecisionStatus {
     std::string tail, full;
     // 允许宿主在需要本步冻结时再赋值。
@@ -31,12 +31,13 @@ class DecisionStatusStore {
     DecisionStatusStore();
     // 释放本绑定的注册原件及保留版本。
     ~DecisionStatusStore();
-    // 按当前采样和 UTC 毫秒准备本步；rebuild 在同绑定历史重建后重发实际展示项的声明。
+    // 按原采样冻结本步；rebuild 重发显式声明，可选 task 为最多 128 个 UTF-8 字节的宿主任务引用。
     FrozenDecisionStatus prepare(std::uint64_t session, std::uint64_t epoch, std::uint64_t turn,
-        std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources, bool rebuild = false) const;
+        std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources,
+        bool rebuild = false, std::string_view task = {}) const;
     // 请求成功提交后移动候选入索引；不分配内存，空候选及其他存储的候选无效。
     void publish(FrozenDecisionStatus&& frozen) noexcept;
-    // 按调用方的作用域读取冻结原版；裁剪、未知和绑定不符分别说明原因。
+    // 按调用方的作用域读取冻结原版；含 state/status 的回包最多 64 KiB，窗口外或域不符返回原因。
     std::string read(std::uint64_t session, std::uint64_t epoch, std::string_view snapshot) const;
   private:
     struct Storage;

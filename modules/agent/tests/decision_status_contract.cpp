@@ -65,10 +65,38 @@ void invalid_inputs() {
     }
     auto other = original; other["value"]["seen"] = 1;
     bad.samples = Json::array({original,other}).dump(); rejects([&] { registry.collect({bad}); });
+    auto newer = original; newer["fact"] = 8;
+    bad.samples = Json::array({newer,original,other}).dump(); rejects([&] { registry.collect({bad}); });
+}
+// 用最后一个注册槽验证失败整批回滚以及丢弃候选不会耗尽绑定。
+// 步骤：固定 63 个声明 → 在末槽拒绝两项批次 → 放弃单项候选 → 发布第 64 项。
+void registry_limit() {
+    Registry registry;
+    auto input = source();
+    input.samples = "[]";
+    const auto prototype = Json::parse(input.definitions)[0];
+    auto many = Json::array();
+    for (int i = 0; i < 63; ++i) {
+        auto definition = prototype;
+        definition["key"] = input.owner + ".field" + std::to_string(i);
+        many.push_back(std::move(definition));
+    }
+    input.definitions = many.dump();
+    registry.publish(registry.collect({input}).definitions);
+    auto a = prototype, b = prototype;
+    a["key"] = input.owner + ".a"; b["key"] = input.owner + ".b";
+    input.definitions = Json::array({a,b}).dump(); rejects([&] { registry.collect({input}); });
+    input.definitions = Json::array({a}).dump();
+    { const auto preview = registry.collect({input}); }
+    input.definitions = Json::array({b}).dump();
+    registry.publish(registry.collect({input}).definitions);
+    input.definitions = Json::array({a}).dump(); rejects([&] { registry.collect({input}); });
+    rejects([&] { registry.collect(std::vector<DecisionStatusSource>(33,input)); });
+    check(registry.collect({}).definitions.size() == 64,"registry reservation survived failed preparation");
 }
 }
 // 用固定本地 JSON 验证通用状态契约。
 int main() {
-    try { registrations(); invalid_inputs(); }
+    try { registrations(); invalid_inputs(); registry_limit(); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

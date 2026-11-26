@@ -1,5 +1,6 @@
 #include "decision_status.hpp"
 #include <dafeiyu/runtime_ids.hpp>
+#include <dafeiyu/utf8.hpp>
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -87,9 +88,11 @@ void sample(Frame& frame, const std::string& owner, Json row) {
         row.at("validUntilUtcMs").get<std::int64_t>() < row.at("sampledUtcMs").get<std::int64_t>())
         throw std::invalid_argument("status: invalid sample interval");
     row["source"] = owner;
-    auto [it,inserted] = frame.samples.try_emplace(std::make_pair(key,subject),row);
-    if (!inserted && it->second.at("fact") == fact && it->second.dump() != row.dump())
-        throw std::invalid_argument("status: conflicting fact");
+    auto canonical = row.dump();
+    const OriginalId id{key,subject,definition->second->version,fact};
+    const auto [origin,fresh] = frame.originals.try_emplace(id,std::move(canonical));
+    if (!fresh && origin->second != canonical) throw std::invalid_argument("status: conflicting fact");
+    auto [it,inserted] = frame.samples.try_emplace(std::make_pair(key,subject),std::move(row));
     if (!inserted && it->second.at("fact") < fact) it->second = std::move(row);
     frame.cutoff = std::max(frame.cutoff,fact);
 }
@@ -166,11 +169,13 @@ void Registry::publish(const Definitions& definitions) noexcept {
 }
 
 using Version = std::pair<std::string,std::uint64_t>;
+using Originals = std::map<OriginalId,std::weak_ptr<const std::string>>;
 struct FrozenRecord {
     std::uint64_t binding = 0, serial = 0, cutoff = 0;
     std::string snapshot, ready;
     Definitions definitions;
     std::set<Version> visible;
+    std::vector<std::shared_ptr<const std::string>> originals;
 };
 }
 
@@ -179,12 +184,30 @@ using namespace status_detail;
 struct DecisionStatusStore::Storage {
     std::mutex mutex;
     Registry registry;
+    Originals originals;
     const std::uint64_t binding = runtime::next_domain();
     std::uint64_t session = 0, epoch = 0, issued = 0, cutoff = 0, forgotten = 0;
     std::array<std::shared_ptr<const FrozenRecord>,32> history{};
     std::size_t next = 0;
 };
 namespace {
+// 候选和保留版本共享原件；同一键、对象、契约版及事实号只能对应一份原值与原时间。
+// 步骤：回收失去引用的索引 → 对照规范化原采样 → 复用或预留原件并交给候选持有。
+void pin_originals(Originals& originals, FrozenRecord& record, Frame& frame) {
+    std::erase_if(originals,[](const auto& entry) { return entry.second.expired(); });
+    record.originals.reserve(frame.originals.size());
+    for (auto& [id,canonical] : frame.originals) {
+        auto found = originals.find(id);
+        auto prior = found == originals.end() ? nullptr : found->second.lock();
+        if (prior && *prior != canonical) throw std::invalid_argument("status: conflicting original fact");
+        if (!prior) {
+            if (found == originals.end() && originals.size() >= 4096) throw std::length_error("status: original fact limit");
+            prior = std::make_shared<const std::string>(std::move(canonical));
+            originals.insert_or_assign(id,prior);
+        }
+        record.originals.push_back(std::move(prior));
+    }
+}
 // 用十进制保留完整身份，独立存储即使收到相同会话参数也有不同的查询前缀。
 std::string snapshot_prefix(std::uint64_t session, std::uint64_t epoch, std::uint64_t binding) {
     return std::format("{}/{}/status/{}.",session,epoch,binding);
@@ -246,11 +269,14 @@ DecisionStatusStore::~DecisionStatusStore() = default;
 // 在进入提交边界前完成全部校验、编码和索引记录分配，失败不改变可读历史。
 // 步骤：核对作用域 → 收集注册和采样 → 冻结两个视图 → 签发只属于本绑定的候选。
 FrozenDecisionStatus DecisionStatusStore::prepare(std::uint64_t session, std::uint64_t epoch, std::uint64_t turn,
-    std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources, bool rebuild) const {
+    std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources,
+    bool rebuild, std::string_view task) const {
     auto& state = *storage_;
     std::lock_guard lock(state.mutex);
     if (state.issued && (state.session != session || state.epoch != epoch)) throw std::invalid_argument("status: scope mismatch");
     if (state.issued == UINT64_MAX) throw std::overflow_error("status: snapshot versions exhausted");
+    if (task.size() > 128) throw std::length_error("status: task reference limit");
+    if (!runtime::valid_utf8(task)) throw std::invalid_argument("status: invalid task reference");
     auto frame = state.registry.collect(sources);
     auto record = std::make_shared<FrozenRecord>();
     record->binding = state.binding;
@@ -261,9 +287,11 @@ FrozenDecisionStatus DecisionStatusStore::prepare(std::uint64_t session, std::ui
         {"scope",{{"session",std::to_string(session)},{"epoch",std::to_string(epoch)}}},{"turn",turn},{"step",step},
         {"asOf",{{"event",record->cutoff},{"time",utc_text(utc_ms)},{"utcMs",utc_ms}}},
         {"wakeEvents",Json::array()},{"items",Json::array()},{"definitions",Json::array()}};
+    if (!task.empty()) header.at("scope")["task"] = std::string(task);
     const auto previous = (state.next + state.history.size()-1) % state.history.size();
     FrozenDecisionStatus result;
     project(result,*record,frame,rebuild ? nullptr : state.history[previous].get(),std::move(header),utc_ms);
+    pin_originals(state.originals,*record,frame);
     record->definitions = std::move(frame.definitions);
     state.session = session; state.epoch = epoch; state.issued = record->serial;
     result.record_ = std::move(record);

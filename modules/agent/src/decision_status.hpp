@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace dfy::agent::status_detail {
@@ -19,9 +20,11 @@ struct Definition {
 };
 using DefinitionRef = std::shared_ptr<const Definition>;
 using Definitions = std::map<std::string,DefinitionRef>;
+using OriginalId = std::tuple<std::string,std::string,std::uint64_t,std::uint64_t>;
 struct Frame {
     Definitions definitions;
     std::map<std::pair<std::string,std::string>,Json> samples;
+    std::map<OriginalId,std::string> originals;
     std::uint64_t cutoff = 0;
 };
 // 已提交的声明由绑定持有，尚未提交的同版候选共享弱预留，丢弃即可释放。
