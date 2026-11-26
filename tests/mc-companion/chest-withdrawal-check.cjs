@@ -70,6 +70,14 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
     await fixture.repeatChest(row,duplicateId);
     const duplicate = await until(() => actions().find(entry => entry.work === duplicateId),'换号重提返还原取出工作');
     assert.deepEqual([duplicate.result.originalWork,duplicate.result.withdrawal],[row.work,undefined]);
+    if (!index) {
+      const order = {recipient:player.player.uuid,item:'cobblestone',count:1};
+      await fixture.repeatChest(row,'bag-offer','observe',{mode:'handoff',...order});
+      await until(() => actions().find(entry => entry.work === 'bag-offer' && entry.result.handoff),'查到背包中已有可投物品');
+      await fixture.repeatChest(row,'bag-give','give_item',{observation:'bag-offer',...order});
+      const denied = await until(() => actions().find(entry => entry.work === 'bag-give'),'入伙伴背包的委托不能追加给物');
+      assert.deepEqual([denied.result.reasonCode,denied.result.transfer],['chest_delivery_not_authorized',undefined]);
+    }
     let recheck;
     if (interrupted) {
       const offset = whispers.length;
@@ -91,4 +99,4 @@ async function checkChestWithdrawals(fixture, player, whispers, contents, action
   }
 }
 
-module.exports = { checkChestWithdrawals };
+module.exports = { checkChestWithdrawals, serverStock };

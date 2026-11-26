@@ -503,7 +503,7 @@ async function checkEightStones(fixture, player, whispers, mode) {
   player.chat('可以先交了吗？');
   await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
   assert.ok(!actions().some(row => row.skill === 'give_item'));
-  if (['--handoff-eight-chest-probe','--handoff-eight-store-probe','--handoff-eight-withdraw-probe'].includes(mode)) {
+  if (['--handoff-eight-chest-probe','--handoff-eight-store-probe','--handoff-eight-withdraw-probe','--handoff-eight-chest-delivery-probe'].includes(mode)) {
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     await until(() => player.players.DfyCompanion.entity.position.distanceTo(point(0.5,-60,0.5)) < 0.05,'伙伴回到可读箱位置');
     // 用独立协议玩家分别打开两个真实箱子，逐次关闭原窗口。
@@ -525,6 +525,7 @@ async function checkEightStones(fixture, player, whispers, mode) {
       read.result.chest.cell,read.result.chest.container.slots,read.result.chest.stock.slots,read.result.chest.stock.stored],
       [player.player.uuid,read.generation,'overworld',{x:2,y:-60,z:-2},27,36,8]);
     assert.deepEqual([await contents(),fixture.materialCount('cobblestone'),player.inventory.count(id)],[[0,5],8,0]);
+    if (mode === '--handoff-eight-chest-delivery-probe') await require('./chest-delivery-check.cjs').checkChestDelivery(fixture,player,whispers,contents,actions,trace);
     if (mode === '--handoff-eight-withdraw-probe') await require('./chest-withdrawal-check.cjs').checkChestWithdrawals(fixture,player,whispers,contents,actions,trace);
     if (mode === '--handoff-eight-store-probe') await checkChestDeposits(fixture,player,whispers,contents,actions,trace);
     return;

@@ -75,7 +75,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
       skill: 'give_item', arguments: job.arguments });
   }
   fixture.ownerEntity = () => game.bot.players[owner]?.entity;
-  if (mode === '--handoff-eight-store-probe' || mode === '--handoff-eight-withdraw-probe') {
+  if (['--handoff-eight-store-probe','--handoff-eight-withdraw-probe','--handoff-eight-chest-delivery-probe'].includes(mode)) {
     // 在伙伴入场并装好库存插件后，截取下一次实际点击并关闭原窗口。
     fixture.interruptChest = () => {
       const click = game.bot.clickWindow;
@@ -89,8 +89,8 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         return value;
       };
     };
-    fixture.repeatChest = (job,id) => require('./bridge-world.cjs').query(channel,{version:1,method:'partner.begin',
-      key:bridgeKey,id,context:{generation:job.generation,order:job.order,controller:job.controller},skill:job.skill,arguments:job.arguments});
+    fixture.repeatChest = (job,id,skill=job.skill,args=job.arguments) => require('./bridge-world.cjs').query(channel,{version:1,method:'partner.begin',
+      key:bridgeKey,id,context:{generation:job.generation,order:job.order,controller:job.controller},skill:skill === 'give_item' && args.withdrawalWork ? 'give_withdrawn_item' : skill,arguments:args});
   }
   fixture.materialCount = material => game.bot.inventory.items().filter(item => item.name === material)
     .reduce((count, item) => count + item.count, 0);
@@ -346,7 +346,7 @@ async function main() {
   const eight = mode?.startsWith('--handoff-eight-');
   const playerThinking = (mode === '--live' ? liveThinking : config) ?? 'inherit';
   if (!['inherit', 'off', 'low'].includes(playerThinking)) throw new Error('玩家思考档位可选 inherit、off 或 low');
-  if (!['--handoff-eight-chest-probe', '--handoff-eight-store-probe', '--handoff-eight-withdraw-probe', '--handoff-eight-full-probe', '--handoff-eight-retired-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
+  if (!['--handoff-eight-chest-probe', '--handoff-eight-store-probe', '--handoff-eight-withdraw-probe', '--handoff-eight-chest-delivery-probe', '--handoff-eight-full-probe', '--handoff-eight-retired-probe', '--live', '--probe', '--partner-probe', '--follow-probe', '--wall-probe', '--ask-direct-probe', '--ask-main-probe',
     '--ask-main-manual-probe', '--gap-probe', '--gap-ambiguous-probe', '--gap-group-probe', '--gap-left-probe', '--gap-both-probe', '--gap-materials-probe', '--door-probe', '--water-probe', '--vitals-probe', '--air-episode-probe',
     '--fill-four-probe', '--follow-dig-fill-probe', '--layered-follow-probe', '--layered-resupply-probe', '--craft-probe', '--pickup-probe', '--ground-pickup-probe', '--handoff-probe', '--handoff-unobserved-probe', '--handoff-late-probe', '--handoff-progress-probe', '--handoff-feedback-probe', '--handoff-stale-feedback-probe', '--handoff-partial-probe', '--handoff-gather-probe', '--handoff-moving-probe', '--handoff-range-probe', '--handoff-lost-probe', '--handoff-other-probe'].includes(mode) ||
     (mode === '--live' && (!config || !fs.existsSync(config))))

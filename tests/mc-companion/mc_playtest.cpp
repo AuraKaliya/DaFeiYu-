@@ -861,13 +861,25 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
         return {{Role::assistant,"左箱实存 "+std::to_string(proof.at("stored").get<int>())+
             " 块，剩余 "+std::to_string(proof.at("remaining").get<int>())+" 块。"}};
     };
+    // 原取出量核实后才观察收件人，以原工作号绑定本次给物。
+    const auto after_withdrawal = [&](const Json& proof) -> Response {
+        if (!proof.contains("deliverTo") || proof.at("state") != "verified" || proof.at("withdrawn") == 0) return storage(proof);
+        return invoke("_observe","chest-offer-"+proof.at("work").get<std::string>(),{{"mode","handoff"},{"recipient",proof.at("deliverTo")},
+            {"item",proof.at("item")},{"count",proof.at("withdrawn")}});
+    };
+    // 从服务端归属回执分别回答原取出量、实际投出量和玩家已收量。
+    const auto chest_delivery = [](const Json& receipt, const Json& count) -> Response {
+        return {{Role::assistant,"左箱实取 "+std::to_string(count.get<int>())+" 块，已投 "+std::to_string(receipt.at("thrown").get<int>())+
+            " 块，你已收 "+std::to_string(receipt.at("recipientPicked").get<int>())+" 块。"}};
+    };
     const auto& last = request.messages.back();
     if (last.role == Role::user) {
         const auto scene = gather_scene(request);
         const auto trigger = scene.at("trigger").get<std::string>();
         const auto& events = scene.at("events");
         const auto line = events.empty() ? std::string{} : events.back().value("text","");
-        const bool withdraw = line == "从左箱取出八块圆石，放进你的背包" || line == "请把左边的箱子里的8块圆石取到伙伴背包里";
+        const bool withdraw = line == "从左箱取出八块圆石，放进你的背包" || line == "请把左边的箱子里的8块圆石取到伙伴背包里" ||
+            line == "从左箱取出八块圆石，交给我" || line == "请把左边的箱子里的8块圆石取出来给我";
         if (withdraw || line == "把这八块存进左箱" || line == "请把8块圆石放入左边的箱子") {
             for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
                 if (it->role != Role::tool || it->tool_call_id != "inspect-chest") continue;
@@ -880,6 +892,8 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
         }
         const std::string recheck = line.starts_with("复查取出工作 ") ? "复查取出工作 " : "复查存箱工作 ";
         if (line.starts_with(recheck)) return invoke("_observe","store-recheck",{{"mode","chest_receipt"},{"work",line.substr(recheck.size())}});
+        const std::string check_give = "复查交物工作 ";
+        if (line.starts_with(check_give)) return invoke("_observe","chest-give-recheck",{{"mode","handoff_receipt"},{"work",line.substr(check_give.size())}});
         if (line == "帮我挖 8 块圆石") {
             const Json q{{"question","八块圆石交到哪个箱子？"},{"options",{"左箱","扔给我"}},
                 {"scope",{{"skill","give_item"},{"item","cobblestone"}}}};
@@ -903,7 +917,9 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
             const auto& completed = primary_receipt(scene);
             const auto& result = completed.at("result");
             if (completed.at("skill") == "store_item" && result.contains("deposit")) return storage(result.at("deposit"));
-            if (completed.at("skill") == "withdraw_item" && result.contains("withdrawal")) return storage(result.at("withdrawal"));
+            if (completed.at("skill") == "withdraw_item" && result.contains("withdrawal")) return after_withdrawal(result.at("withdrawal"));
+            if (completed.at("skill") == "give_item" && result.contains("transfer") && result.at("transfer").contains("withdrawalWork") && result.contains("receipt"))
+                return chest_delivery(result.at("receipt"),result.at("transfer").at("requested"));
             if (completed.at("skill") == "collect" && result.value("broken",0) == 8 &&
                 result.at("inventoryDelta").value("cobblestone",0) == 8)
                 return {{Role::assistant,"八块圆石都进了我的背包，等你选交付位置。"}};
@@ -939,8 +955,22 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
                 " 块圆石，我背包里有 "+std::to_string(chest.at("stock").at("stored").get<int>())+" 块。"}};
         }
         if (last.tool_call_id == "store-recheck") return storage(Json::parse(last.content.substr(last.content.find('{'))).at("chestReceipt"));
+        if (last.tool_call_id.starts_with("chest-offer-")) {
+            const auto offer = Json::parse(last.content.substr(last.content.find('{'))).at("handoff");
+            return invoke("_give_item","chest-give",{{"observation",offer.at("id")},{"recipient",offer.at("recipient")},{"item",offer.at("item")},
+                {"count",offer.at("count")},{"withdrawalWork",last.tool_call_id.substr(std::string_view("chest-offer-").size())}});
+        }
+        if (last.tool_call_id == "chest-give-recheck") {
+            const auto proof = Json::parse(last.content.substr(last.content.find('{'))).at("handoffReceipt");
+            return chest_delivery(proof.at("receipt"),proof.at("requested"));
+        }
+        if (last.tool_call_id == "chest-give") {
+            const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            if (result.contains("receipt")) return chest_delivery(result.at("receipt"),result.at("transfer").at("requested"));
+        }
         if (last.tool_call_id == "deposit" || last.tool_call_id == "withdrawal") {
             const auto result = Json::parse(last.content.substr(last.content.find('{')));
+            if (result.contains("withdrawal")) return after_withdrawal(result.at("withdrawal"));
             if (result.contains(last.tool_call_id)) return storage(result.at(last.tool_call_id));
         }
         if (last.tool_call_id == "progress" || last.tool_call_id == "give-ready" || last.tool_call_id == "before-choice") {
@@ -1383,7 +1413,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool gather_handoff = mode == L"--handoff-gather-probe" || mode == L"--handoff-moving-probe" ||
             mode == L"--handoff-range-probe" || mode == L"--handoff-lost-probe";
         const bool eight = mode == L"--handoff-eight-chest-probe" || mode == L"--handoff-eight-store-probe" || mode == L"--handoff-eight-withdraw-probe" ||
-            mode == L"--handoff-eight-full-probe" || mode == L"--handoff-eight-retired-probe";
+            mode == L"--handoff-eight-full-probe" || mode == L"--handoff-eight-retired-probe" || mode == L"--handoff-eight-chest-delivery-probe";
         const bool handoff = eight || gather_handoff || mode == L"--handoff-probe" || mode == L"--handoff-unobserved-probe" ||
             mode == L"--handoff-late-probe" || mode == L"--handoff-progress-probe" || mode == L"--handoff-feedback-probe" ||
             mode == L"--handoff-stale-feedback-probe" || mode == L"--handoff-partial-probe" || mode == L"--handoff-other-probe";
