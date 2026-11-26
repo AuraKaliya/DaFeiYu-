@@ -77,6 +77,8 @@ class ObservationInbox {
     ObservationInbox& operator=(const ObservationInbox&) = delete;
     // 接纳新鲜且获准的状态，按来源／对象保留更高代次或修订；失败保持原值和水位。
     ObservationReceipt accept(const ObservationSnapshot& value, ObservationTime now);
+    // 为尚未接纳过的来源对象登记第一次完整重采样，已有水位时必须沿原票据刷新。
+    ObservationReceipt accept_initial_baseline(const ObservationSnapshot& value, ObservationTime now);
     // 为已有对象记录完整重采样的期望水位，不触发来源调用。
     std::optional<ObservationRefresh> refresh_ticket(runtime::DomainId source, std::string_view object) const;
     // 宿主确认载荷为完整重采样后显式调用；原水位仍匹配且新修订接纳成功才清除断档。

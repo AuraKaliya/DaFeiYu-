@@ -31,7 +31,8 @@ bool screen_blocks_lamp(RoomPoint observer) noexcept {
 
 // 给新实例及其唯一角色分配身份，初始身体修订固定为一。
 BuiltinRoom::BuiltinRoom()
-    : resident_{{runtime::next_domain(),1},runtime::next_domain(),RoomPlace::desk,RoomActivity::resting,1,desk_position} {}
+    : resident_{{runtime::next_domain(),1},runtime::next_domain(),RoomPlace::desk,RoomActivity::resting,1,desk_position},
+      source_(resident_.room.instance,agent::ObservationTrust::host_verified),inbox_({source_.id()},1) {}
 
 // 返回当前实例绑定的第一版书房布局。
 RoomLayout BuiltinRoom::layout() const noexcept { return {resident_.room,1,"书房",places,passages,objects,senses}; }

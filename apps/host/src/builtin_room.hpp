@@ -1,10 +1,14 @@
 ﻿#pragma once
 #include <dafeiyu/runtime_ids.hpp>
+#include <dafeiyu/observation_inbox.hpp>
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace dfy::app {
 struct RoomBinding {
@@ -47,6 +51,12 @@ struct HeardSwitch { RoomPlace direction; };
 // 声音只保留来向，只有亲见的变化能携带灯态。
 using RoomPercept = std::variant<SeenLampChange,HeardSwitch>;
 
+struct RoomPerceptPage {
+    std::uint64_t cursor;
+    bool history_gap;
+    std::vector<std::shared_ptr<const agent::ObservationRecord>> records;
+};
+
 // 应用实例拥有的首间书房与主角色身体，所有读取在原业务线程完成。
 class BuiltinRoom {
   public:
@@ -62,7 +72,27 @@ class BuiltinRoom {
     std::optional<RoomSelf> self(RoomBinding expected) const noexcept;
     // 以本体采样的身体位置筛选一次开关事件，返回该角色可知的内容。
     std::optional<RoomPercept> perceive_switch(const RoomSelf& sample, LampSwitch change) const noexcept;
+    // 由原生身体来源更新姿态，重复修订只能重报相同位置、活动和采样时刻。
+    bool accept_pose(const RoomSelf& sample, agent::ObservationTime sampled) noexcept;
+    // 在事件发生时签发角色实际可感知的快照，迟到投递仍携带原来筛出的字段。
+    std::optional<agent::ObservationSnapshot> capture_switch(LampSwitch change, std::uint64_t revision, agent::ObservationTime sampled);
+    // 将原生已筛选的感知送入本角色有界记录，重复、过期和迟到沿用观察收件裁定。
+    agent::ObservationReceipt receive(const agent::ObservationSnapshot& sample, agent::ObservationTime now);
+    // 按当前姿态完整读取周围，一次主动读取不会生成新的被动事件或唤醒。
+    std::shared_ptr<const agent::ObservationRecord> observe_current(RoomBinding room, runtime::DomainId body, agent::ObservationTime now);
+    // 按角色自己的被动事件游标读取，淘汰较老记录后显式报告历史缺口。
+    std::optional<RoomPerceptPage> percepts_since(RoomBinding room, runtime::DomainId body, std::uint64_t cursor) const;
   private:
+    // 将角色可知的字段与当前身体修订交给原来源，签发具有有限时效的只读观察。
+    agent::ObservationSnapshot sense_sample(std::string_view kind, bool from_desk, std::optional<bool> on, agent::ObservationTime sampled);
     RoomSelf resident_;
+    agent::ObservationSource source_;
+    agent::ObservationInbox inbox_;
+    agent::ObservationTime scene_time_ = agent::ObservationTime::min(), pose_time_ = agent::ObservationTime::min();
+    agent::ObservationTime switch_time_ = agent::ObservationTime::min();
+    std::uint64_t switch_revision_ = 0, sense_revision_ = 0, received_ = 0;
+    std::optional<bool> lamp_on_;
+    std::optional<agent::ObservationSnapshot> last_switch_;
+    std::array<std::shared_ptr<const agent::ObservationRecord>,32> history_{};
 };
 }

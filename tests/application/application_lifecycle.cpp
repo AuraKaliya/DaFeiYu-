@@ -370,6 +370,11 @@ void builtin_room(const fs::path& run) {
         self->activity==RoomActivity::resting && self->revision==1 && !first.room().self(second.room) &&
         !first.room().self({layout.room.instance,layout.room.generation+1}),"self query crossed room binding or lost initial pose");
     room_senses(first.room(),*self,*another);
+    const auto now = dfy::agent::ObservationTime{};
+    const auto signal = first.room().capture_switch({layout.room,true},1,now);
+    check(signal && first.room().receive(*signal,now).status==dfy::agent::ObservationAdmission::inserted &&
+        first.room().observe_current(layout.room,self->body,now)->payload().find("on")->as_bool() &&
+        first.room().percepts_since(layout.room,self->body,0)->cursor==1,"bound room did not retain its own signal");
     first.advance_plugins(); first.conversation().advance();
     check(!calls.load() && !first.conversation().status() && first.room().self(layout.room)->revision==self->revision,
         "read-only room query advanced the body or woke the model");

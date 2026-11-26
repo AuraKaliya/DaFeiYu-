@@ -19,6 +19,12 @@ ObservationInbox::ObservationInbox(std::vector<runtime::DomainId> sources, std::
 ObservationInbox::~ObservationInbox() { *alive_ = false; }
 // 普通采样永远不宣称补齐中间遗漏，断档保持到明确的完整重采样。
 ObservationReceipt ObservationInbox::accept(const ObservationSnapshot& value, ObservationTime now) { return accept_impl(value,now,false); }
+// 首次完整读取可以建立较高修订的基线，后续刷新仍需匹配发起时的原水位。
+ObservationReceipt ObservationInbox::accept_initial_baseline(const ObservationSnapshot& value, ObservationTime now) {
+    const auto& info = value.metadata();
+    if (latest(info.source,info.object.id)) return {ObservationAdmission::stale_refresh};
+    return accept_impl(value,now,true);
+}
 // 只合并状态采样；旧代次、旧修订、冲突或容量不足均不改变当前值。
 // 步骤：检查来源及时效 → 定位对象及版本水位 → 判断重复或断档 → 预留完整预算 → 原子替换记录。
 ObservationReceipt ObservationInbox::accept_impl(const ObservationSnapshot& value, ObservationTime now, bool baseline) {

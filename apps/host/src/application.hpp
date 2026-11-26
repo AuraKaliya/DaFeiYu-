@@ -74,6 +74,8 @@ class Application {
     MainMessages* main_messages() const noexcept { return main_messages_.get(); }
     // 读取本体的房间布局和绑定身体，不依赖窗口或加载的插件。
     const BuiltinRoom& room() const noexcept { return room_; }
+    // 在应用业务线程上接收原生房间采样并查询当前角色感知。
+    BuiltinRoom& room() noexcept { return room_; }
     // 使用本体的直接对话信箱接纳一轮，保留普通聊天的原正文和回执。
     agent::TurnDiagnostics submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {});
     // 向用户所见的原回合投递补充，保留有来源的收件回执。
