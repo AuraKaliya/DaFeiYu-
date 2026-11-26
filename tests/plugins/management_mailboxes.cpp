@@ -284,13 +284,19 @@ void receipts(const fs::path& root) {
             check(pending && pending->id.sequence==1 && !mail.network->front(mail.identity,{outbound}),"view consumed mail or generated a reply");
             reply_to_request(*plugin);
             ++replies;
-        } else {
+        } else if (action==2) {
             check(!mail.network->front(plugin->generation(),{inbound}),"DLL left its consumed request queued");
             const auto result = mail.network->read(mail.identity,{outbound});
             check(result.event && result.event.get().id.sequence==1 &&
                 result.event.get().payload->find("text")->as_string()=="received" && !mail.network->front(mail.identity,{outbound}),
                 "observer consumed or duplicated the native reply");
             ++reads;
+        } else {
+            // 由书房原接收方实际处理队首，再通过正常事件入口补入一封，最后一封仍待收。
+            for (int next=0; next<64; ++next) {
+                check(app.review_room()==app::MailboxIntakeResult::handled,"room did not consume its original evidence");
+                app.post_room_event(app::RoomEvent::presence_changed,"书房","private-room-mailbox-marker");
+            }
         }
     },nullptr,{},"receipt-host");
     until([&] { return bool(host.dialogue().display); },"receipt host startup");
@@ -340,6 +346,25 @@ void receipts(const fs::path& root) {
     until([&] { completed=query(second,box); return completed.at("messages").at(0).at("state")=="received"; },"native host read");
     check(completed.at("messages").at(0).at("id")==answer.at("id") && reads==1 && replies==1 && !model_calls,
         "actual receipt did not stay attached to the original reply");
+
+    auto expired = room;
+    expired["message"] = initial_room.at("messages").at(0).at("id");
+    step = 3;
+    Json retained;
+    until([&] {
+        retained=query(second,room);
+        return retained.at("mailboxes").at(0).at("accepted")=="65";
+    },"public receipt retention");
+    const auto& address = retained.at("mailboxes").at(0);
+    const auto& messages = retained.at("messages");
+    const auto gone = query(reconnected,expired);
+    auto oldest = room;
+    oldest["message"] = messages.back().at("id");
+    check(retained.at("state")=="ready" && address.at("firstRetained")=="2" && address.at("received")=="64" && messages.size()==64 &&
+        messages.front().at("state")=="pending" && messages.front().at("receipt").at("sequence")=="65" &&
+        messages.back().at("receipt").at("sequence")=="2" && query(second,oldest).at("messages")==Json::array({messages.back()}) &&
+        gone.at("state")=="stale" && gone.at("messages").empty() && query(second,box)==completed && !model_calls,
+        "retention lost pending mail, reused an expired identity or revised the unrelated plugin");
     host.close();
     until([&] { return host.exited(); },"receipt host shutdown");
     check(!host.failed(),"receipt host failed to drain");
