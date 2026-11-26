@@ -12,6 +12,8 @@ class BindingFacts {
     std::uint64_t prior(const plugins::SubagentInput& input) const;
     // 合入字段补丁，生成当前模型所见的数据及原始基线标识。
     std::string apply(const plugins::SubagentInput& input, std::uint64_t request, bool full);
+    // 取已合入增量的状态采样，定义和读取权限由实例宿主提供。
+    std::string status_samples() const;
     // 取得当前已准入绑定的代次。
     std::uint64_t epoch() const noexcept { return epoch_; }
     // 查询原作用域地址，供运行状态回执关联。

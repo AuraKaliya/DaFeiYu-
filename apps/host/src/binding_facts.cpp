@@ -80,14 +80,26 @@ std::string BindingFacts::apply(const plugins::SubagentInput& input, std::uint64
     }
     if (next.size() > 96 || next.dump().size() > 64*1024) throw std::length_error("binding: snapshot capacity exhausted");
     const bool baseline = frame.baseline || rebound || full;
+    const auto samples = next.find("decisionStatusSamples");
+    if (samples!=next.end() && (!samples->is_array() || samples->size()>32))
+        throw std::invalid_argument("binding: invalid decision status samples");
     auto projected = baseline ? next : changes;
+    projected.erase("decisionStatusSamples");
+    auto closed = baseline ? Json::array() : patch.at("closed");
+    std::erase(closed.get_ref<Json::array_t&>(),Json("decisionStatusSamples"));
     projected["factFrame"] = {{"epoch",frame.epoch},{"sequence",frame.sequence},{"scope",frame.scope},
-        {"mode",baseline ? "baseline" : "delta"},{"closed",baseline ? Json::array() : patch.at("closed")}};
+        {"mode",baseline ? "baseline" : "delta"},{"closed",std::move(closed)}};
     auto prompt = projected.dump();
     admitted_.push_back({frame.epoch,frame.sequence,request,digest(input)});
     if (admitted_.size() > 64) admitted_.pop_front();
     epoch_ = frame.epoch; sequence_ = frame.sequence; scope_ = frame.scope; fields_ = std::move(next);
     return prompt;
+}
+
+// 暴露当前完整采样集，正文投影始终使用其余领域字段。
+std::string BindingFacts::status_samples() const {
+    const auto it = fields_.find("decisionStatusSamples");
+    return it==fields_.end() ? "[]" : it->dump();
 }
 
 // 同一修订须与留存的阶段、实效声明、原接纳序号及正文匹配。

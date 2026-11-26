@@ -16,6 +16,29 @@ void rejects(const auto& operation) {
     throw std::runtime_error("unexpected work transition admitted");
 }
 
+// 固定玩家状态只保留在绑定镜像，增量、关闭和新代次不会留下重复的正文。
+void status_samples() {
+    dfy::app::BindingFacts facts;
+    dfy::plugins::SubagentInput input;
+    input.frame = dfy::plugins::SubagentFrame{3,1,"player/alpha",true};
+    const Json sample{{"key","sample.stage"},{"version",1},{"subject","goal"},{"fact",8},{"value",{{"phase","ready"}}}};
+    auto set = Json{{"event","entered"},{"decisionStatusSamples",Json::array({sample})}};
+    input.prompt = Json{{"set",set},{"closed",Json::array()}}.dump();
+    auto prompt = Json::parse(facts.apply(input,1,true));
+    check(!prompt.contains("decisionStatusSamples") && prompt.at("event")=="entered" &&
+        Json::parse(facts.status_samples())==Json::array({sample}),"status leaked into domain data or was lost");
+    input.frame = dfy::plugins::SubagentFrame{3,2,"player/alpha",false};
+    input.prompt = R"({"set":{"event":"again"},"closed":[]})";
+    (void)facts.apply(input,2,false);
+    check(Json::parse(facts.status_samples())==Json::array({sample}),"omitted sample lost on delta");
+    input.frame->sequence = 3;
+    input.prompt = R"({"set":{"decisionStatusSamples":{}},"closed":[]})";
+    rejects([&] { facts.apply(input,3,false); });
+    input.prompt = R"({"set":{},"closed":["decisionStatusSamples"]})";
+    prompt = Json::parse(facts.apply(input,3,false));
+    check(prompt.at("factFrame").at("closed").empty() && facts.status_samples()=="[]","closed sample remained visible");
+}
+
 // 同一工作经过多次实效更新后仍能登记真实退出，并继续查证迟到实收。
 // 步骤：填满旧修订窗口 → 以第十七版确认退出 → 继续上报实效 → 重试及冲突后核对原号。
 void late_revisions() {
@@ -119,6 +142,6 @@ void pending_capacity() {
 
 // 以真实宿主索引回放工作数量及修订边界。
 int main() {
-    try { late_revisions(); bounded_view(); archive_completed(); pending_capacity(); return 0; }
+    try { status_samples(); late_revisions(); bounded_view(); archive_completed(); pending_capacity(); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
