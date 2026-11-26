@@ -129,6 +129,7 @@ dfy_add_unit_test(agent.run_context dfy_run_context_tests run_context.cpp dfy_ag
 dfy_add_unit_test(agent.turn_input dfy_turn_input_tests turn_input.cpp dfy_agent)
 
 dfy_add_unit_test(agent.tool_executor dfy_tool_executor_tests tool_executor.cpp dfy_agent)
+dfy_add_unit_test(agent.tool_counts dfy_tool_counts_tests tool_counts.cpp dfy_agent nlohmann_json::nlohmann_json)
 
 dfy_add_unit_test(agent.tool_invocation dfy_tool_invocation_tests tool_invocation.cpp dfy_agent)
 

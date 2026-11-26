@@ -19,6 +19,14 @@ struct ToolResult {
 };
 struct ToolProgress { std::optional<ToolResult> result; bool exited = false; ToolError fault = ToolError::none; };
 struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; model::ToolCall call; };
+struct ToolCallCounts {
+    std::uint64_t proposed = 0, admitted = 0, dispatched = 0;
+    // 合计不重叠回合的工具数量，保留三个阶段各自的口径。
+    ToolCallCounts& operator+=(const ToolCallCounts& other) noexcept {
+        proposed += other.proposed; admitted += other.admitted; dispatched += other.dispatched;
+        return *this;
+    }
+};
 using ToolTime = std::chrono::steady_clock::time_point;
 using ToolClock = std::function<ToolTime()>;
 // 标记首次派发所需的宿主条件及阻塞来源。

@@ -252,7 +252,7 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
             slot.pending_facts->status_attention()};
         const bool can_read = read_authority.has_value();
         options.decision_status = agent::DecisionStatusOptions{scope,[source=std::move(source)] { return std::vector{source}; },
-            can_read,std::move(read_authority)};
+            can_read,std::move(read_authority),true};
     } else {
         const auto binding = std::to_string(slot.owner)+"/raw/"+platform::sha256(input.binding);
         options.decision_status = agent::DecisionStatusOptions{binding+(input.replace_history ? "/"+std::to_string(slot.request) : ""),{},false};

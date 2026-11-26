@@ -25,6 +25,8 @@ class ToolExecutor {
     bool busy() const noexcept;
     // 返回已接纳的不同命令数量，成功失败和取消均计入本次运行限额。
     std::size_t size() const noexcept { return size_; }
+    // 按原接纳槽统计全部或单次响应的接纳和实际派发，同号复用只计一次。
+    ToolCallCounts counts(std::optional<AttemptId> response = {}) const noexcept;
   private:
     struct Entry {
         std::unique_ptr<ToolDriver> driver;

@@ -99,4 +99,15 @@ bool ToolExecutor::busy() const noexcept {
     for (const auto& entry : entries_) if (entry.driver && entry.driver->request()->exit()->state() == runtime::OperationState::pending) return true;
     return false;
 }
+// 读取原执行器的唯一调用和派发回执，按需限定到一份模型响应。
+ToolCallCounts ToolExecutor::counts(std::optional<AttemptId> response) const noexcept {
+    ToolCallCounts counts;
+    for (const auto& entry : entries_) if (entry.driver) {
+        const auto request = entry.driver->request();
+        if (response && request->invocation().attempt != *response) continue;
+        ++counts.admitted;
+        if (request->dispatched()) ++counts.dispatched;
+    }
+    return counts;
+}
 }

@@ -57,6 +57,7 @@ struct ModelStepSnapshot {
     runtime::OperationState result = runtime::OperationState::pending, exit = runtime::OperationState::pending;
     std::optional<model::Usage> usage;
     TurnDiagnostics::TimePoint observed_exit;
+    std::size_t proposed_tools = 0;
 };
 // 模型前控制检查时固定的目标、计划与行动观察关联，无正文或可执行凭证。
 struct ModelContextSnapshot {
@@ -119,6 +120,8 @@ class TurnRequest {
     std::vector<ModelContextSnapshot> model_contexts() const { return model_contexts_; }
     // 复制各批次工具的状态与策略决定，不持有原生代码。
     std::vector<BatchToolSnapshot> tool_steps() const;
+    // 从已返回的原模型响应与执行器原件核对调用数量，可按一次响应读取。
+    ToolCallCounts tool_counts(std::optional<AttemptId> response = {}) const noexcept;
     // 为可信验证入口复制已退出工具的原回执；普通追踪不导出正文，调用不读取模型解释。
     std::optional<ToolResult> tool_result(runtime::DomainId candidate) const;
     // 返回可信控制界面的确认记录和待审参数；普通诊断与通知不包含这些正文。
@@ -147,6 +150,8 @@ class TurnRequest {
     friend class Session;
     friend class RunLoop;
     friend struct RunLoopState;
+    // 冻结本步可知的三个统计范围，沿原步骤和尝试号关联上一份响应。
+    DecisionStatusSource tool_count_status(ToolCallCounts previous, std::uint64_t step) const;
     // 为尚未发布的回合固定第一步骤与第一次尝试，不调用模型或观察者。
     explicit TurnRequest(RunId run, std::size_t trace_capacity) : attempt_{{run,1},1},journal_(run,trace_capacity) {}
     AttemptId attempt_;
@@ -281,6 +286,7 @@ class Session {
     std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
     std::shared_ptr<const ContextStatus> status_, active_status_;
     std::shared_ptr<DecisionStatusStore> decision_store_;
+    ToolCallCounts previous_tool_counts_;
     std::string status_binding_;
     std::uint64_t status_epoch_ = 0;
     const model::Backend backend_;

@@ -192,6 +192,8 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
             options.previous_status = replace ? nullptr : status_;
             auto next_status = options.context_status;
             const bool reuse = decision_store_ && status_binding==status_binding_;
+            const auto previous_counts = reuse ? previous_tool_counts_ : ToolCallCounts{};
+            options.previous_tool_counts = previous_counts;
             auto store = !options.decision_status ? nullptr : reuse ? decision_store_ : std::make_shared<DecisionStatusStore>();
             const auto status_epoch = !store ? 0 : reuse ? status_epoch_ : next_domain();
             options.status_store = store;
@@ -203,6 +205,7 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
             if (replace) status_.reset();
             active_status_ = std::move(next_status);
             decision_store_ = std::move(store);
+            previous_tool_counts_ = previous_counts;
             status_epoch_ = status_epoch;
             status_binding_ = std::move(status_binding);
             auto record = loop->request(); active_ = std::move(loop); slot = record; ++turn_;
@@ -341,7 +344,10 @@ void Session::advance() {
         if (state != OperationState::pending && !record->notifications_.finished)
             record->notifications_.finished = notify(state == OperationState::succeeded ? "turn_completed" :
                 state == OperationState::cancelled ? "turn_cancelled" : "turn_failed",record->turn());
-        if (record->exit()->state() != OperationState::pending) active_.reset();
+        if (record->exit()->state() != OperationState::pending) {
+            previous_tool_counts_ += record->tool_counts();
+            active_.reset();
+        }
     } catch (...) { working_ = false; throw; }
     working_ = false;
 }
@@ -352,6 +358,7 @@ events::ObservationReceipt Session::clear() {
     history_ = std::make_shared<const MessageHistory>();
     evidence_epoch_ = epoch;
     decision_store_.reset(); status_binding_.clear(); status_epoch_ = 0;
+    previous_tool_counts_ = {};
     status_.reset();
     active_status_.reset();
     return notify("session_cleared",0);

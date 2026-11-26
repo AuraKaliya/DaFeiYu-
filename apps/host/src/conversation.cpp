@@ -21,7 +21,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
     const bool natural_dialogue = player_facing && !options.tools && !options.planning;
-    options.decision_status = agent::DecisionStatusOptions{"main",{},natural_dialogue};
+    options.decision_status = agent::DecisionStatusOptions{"main",{},natural_dialogue,{},true};
     const bool can_speak = player_facing && main_messages_ && main_messages_->prepare_output(options);
     if (persona_) {
         const auto route = can_speak ? agent::OutputRoute::main_chat_with_reply :

@@ -514,7 +514,9 @@ struct RunLoopState {
         if (options.decision_status) {
             const auto utc = record->context_->event_time();
             if (!utc) throw std::runtime_error("run: decision status clock unavailable");
-            const auto sources = options.decision_status->sample ? options.decision_status->sample() : std::vector<DecisionStatusSource>{};
+            auto sources = options.decision_status->sample ? options.decision_status->sample() : std::vector<DecisionStatusSource>{};
+            if (options.decision_status->include_tool_counts)
+                sources.push_back(record->tool_count_status(options.previous_tool_counts,current.attempt.step.sequence));
             const auto run = record->run_id();
             const auto task = record->plan_ ? "plan/"+std::to_string(run.session)+"/"+std::to_string(run.sequence) : std::string{};
             const auto freeze = [&](bool rebuild) {
@@ -584,7 +586,11 @@ struct RunLoopState {
     // 步骤：复制真实状态及可选用量 → 保存步骤与首个退出事实 → 归还模型请求槽。
     void collect_model() {
         ModelStepSnapshot value{record->attempt_,record->model_->diagnostics(),record->model_->operation()->state(),record->model_->exit()->state()};
-        if (value.result == runtime::OperationState::succeeded) value.usage = record->model_->response().usage;
+        if (value.result == runtime::OperationState::succeeded) {
+            const auto& response = record->model_->response();
+            value.usage = response.usage;
+            value.proposed_tools = response.message.tool_calls.size();
+        }
         value.observed_exit = std::chrono::steady_clock::now();
         capture(ModelCapturePhase::exited,value.attempt,nullptr,record->model_->observed_response(),&value.call,value.result);
         record->model_steps_.push_back(value); record->completed_call_ = value.call;

@@ -99,6 +99,7 @@ void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
         const auto& outcome = request ? request->outcome() : agent::ToolResult{false,entry.effect,entry.rejection,entry.error};
         item["result"] = states.at(static_cast<std::size_t>(state));
         item["effect"] = effects.at(static_cast<std::size_t>(outcome.effect));
+        item["dispatched"] = request && request->dispatched();
         item["succeeded"] = outcome.succeeded;
         item["output"] = outcome.output;
         item["error"] = faults.at(static_cast<std::size_t>(outcome.error));

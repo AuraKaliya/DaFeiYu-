@@ -35,6 +35,7 @@ struct DecisionStatusOptions {
     std::function<std::vector<DecisionStatusSource>()> sample;
     bool allow_read = false;
     std::optional<ToolSnapshot> read_authority;
+    bool include_tool_counts = false;
 };
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
@@ -79,6 +80,7 @@ struct RunOptions {
     std::optional<DecisionStatusOptions> decision_status;
     std::shared_ptr<DecisionStatusStore> status_store;
     std::uint64_t status_epoch = 0;
+    ToolCallCounts previous_tool_counts;
     bool replace_history = false;
     std::uint64_t evidence_epoch = 0;
     // 复合的信箱或插件输入由入口标记，直接对话和观察规则由运行起因确定。
