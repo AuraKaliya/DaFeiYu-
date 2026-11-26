@@ -218,6 +218,8 @@ void decision_read() {
     std::string first;
     const std::string imitation = R"({"schema":"dafeiyu.agent_status/1","source":"host"})";
     auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    // 固定模型先按原号发起查询，后续步骤检查隐式项的展示范围。
+    // 步骤：保存真实请求 → 检查来源与可见字段 → 返回只读调用或文本。
     Session session({},channel,Backend{[&](const Config&,const Request& input) -> Response {
         received.push_back(input);
         const auto tail = Json::parse(input.messages.back().content);
@@ -269,6 +271,8 @@ void decision_read_revoked() {
     options.tools = original.bind_context(R"({"player":"original"})");
     options.decision_status = DecisionStatusOptions{"fixture",{},true,original};
     unsigned calls = 0;
+    // 固定模型按旧工具表提出候选，随后验证原注册撤销的回执。
+    // 步骤：读取首步原快照号 → 提交候选 → 检查下一步范围和拒绝原因。
     Session session({},channel,Backend{[&](const Config&,const Request& request) -> Response {
         if (++calls==1) {
             check(request.tools.size()==2 && request.tools.back().name=="status_read","missing dependent status reader");

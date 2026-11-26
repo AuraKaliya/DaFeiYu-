@@ -159,6 +159,8 @@ void verify_version_query(const std::filesystem::path& data) {
     config.trace_directory = data/"evidence";
     std::string before, after, delivery;
     unsigned steps = 0;
+    // 按实际输入兑现固定响应，同批读取的两条回执分别绑定原调用。
+    // 步骤：请求发言 → 记录两版并发起读取 → 对照两条工具输出。
     app::Application application({},data/"empty",data,Backend{[&](const Config&,const Request& input) -> Response {
         const auto& last = input.messages.back();
         const auto note = Json::parse(last.content);
