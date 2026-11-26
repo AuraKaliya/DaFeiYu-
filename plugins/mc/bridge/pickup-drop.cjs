@@ -39,6 +39,28 @@ function pickupRemainder(previous, source, args) {
     originalCount,verifiedBefore,otherBefore};
 }
 
+// 从原实体的收取包、同步库存和退出时的现场读数核实本次目标与余量。
+// 步骤：核对原堆与当前库存 → 累加同根工作的已核实数量 → 实读原堆余量或保留未知。
+function settledPickup(target, pickup, entity, sampledUtcMs) {
+  const observed = pickup.observed;
+  if (!pickup.stockCurrent || observed.uuid !== target.entity || observed.item !== pickup.item ||
+      !Number.isSafeInteger(pickup.verifiedCount) || !Number.isSafeInteger(sampledUtcMs)) return;
+  const before = pickup.continuation;
+  const acquired = (before?.verifiedBefore ?? 0)+pickup.verifiedCount;
+  const other = (before?.otherBefore ?? 0)+observed.otherCount;
+  const unaccounted = target.original.count-(before?.verifiedBefore ?? 0)-observed.selfCount-other;
+  if (!Number.isSafeInteger(unaccounted) || unaccounted < 0) return;
+  const proof = { observation:target.observation, entity:target.entity, item:pickup.item, dimension:target.dimension,
+    target:target.original.count, acquired, other, sampledUtcMs, remainingState:'unknown' };
+  const stack = entity?.uuid === target.entity ? dropStack(entity) : undefined;
+  if (stack?.item === pickup.item && stack.count === unaccounted) {
+    proof.remainingState = 'observed'; proof.pendingPickup = stack.count;
+  } else if (!entity && unaccounted === 0) {
+    proof.remainingState = 'accounted'; proof.pendingPickup = 0;
+  }
+  return proof;
+}
+
 // 走近原观察确认的整堆物品，按目标实体的拾取包和本次背包变化分别结算。
 // 步骤：复核原栈、现场身份和容量 → 在原观察范围内接近目标 → 读回拾取人与库存 → 等待导航退出。
 async function pickupDrop(bot, args, source, check, result, movement, continuation, claim) {
@@ -139,7 +161,11 @@ async function pickupDrop(bot, args, source, check, result, movement, continuati
       if (walking) movement.stop();
       if (walk) await walk;
     } finally {
-      try { tracker?.stop(); sample(); }
+      try {
+        tracker?.stop(); sample();
+        const proof = settledPickup(target,pickup,tracker?.live(),(movement.utcNow ?? Date.now)());
+        if (proof) pickup.effect = proof;
+      }
       finally { movement.setSampler?.(undefined); }
     }
   }

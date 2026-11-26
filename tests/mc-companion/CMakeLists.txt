@@ -28,6 +28,8 @@ add_test(NAME app.companion_session COMMAND dfy_companion_session_tests "$<TARGE
 set_tests_properties(app.companion_session PROPERTIES TIMEOUT 20)
 find_program(DFY_MC_NODE NAMES node)
 if(DFY_MC_NODE)
+  add_test(NAME app.mc_pickup_effect COMMAND "${DFY_MC_NODE}" "${PROJECT_SOURCE_DIR}/plugins/mc/tests/ground-pickup.test.cjs"
+    --host-status "$<TARGET_FILE:dfy_mc_status_sample_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>")
   dfy_test_executable(dfy_companion_board_tests companion_board.cpp)
   target_link_libraries(dfy_companion_board_tests PRIVATE dfy_terminal dfy_build_options)
   add_dependencies(dfy_companion_board_tests dfy_mc_companion)

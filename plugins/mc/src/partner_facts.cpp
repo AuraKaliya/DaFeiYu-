@@ -44,6 +44,23 @@ void decision_facts(Json& scene, const std::string& player, const std::deque<Jso
     if (!attention.empty()) scene["decisionStatusAttention"] = std::move(attention);
 }
 
+// 核对小型拾取摘要的必填类型、时间和余量口径，旧桥接及不完整回执继续保留原文。
+// 步骤：核对来源与计数范围 → 对照已入包及他人收取 → 区分现存、核清和未知。
+bool verified_pickup(const Json& value) {
+    if (!value.is_object() || value.size()!=(value.contains("pendingPickup") ? 10u : 9u) ||
+        !value.contains("sampledUtcMs") || !value.at("sampledUtcMs").is_number_integer()) return false;
+    for (const auto name : {"entity","observation","dimension","item","remainingState"})
+        if (!value.contains(name) || !value.at(name).is_string() || value.at(name).get_ref<const std::string&>().empty()) return false;
+    for (const auto name : {"target","acquired","other"})
+        if (!value.contains(name) || !value.at(name).is_number_integer() || value.at(name)<0 || value.at(name)>INT32_MAX) return false;
+    const auto total = value.at("target").get<std::int64_t>();
+    const auto received = value.at("acquired").get<std::int64_t>()+value.at("other").get<std::int64_t>();
+    if (total<1 || received>total) return false;
+    const auto pending = value.find("pendingPickup");
+    if (value.at("remainingState")=="unknown") return pending==value.end();
+    if (pending==value.end() || !pending->is_number_integer() || *pending<0 || *pending>total-received) return false;
+    return value.at("remainingState")=="observed" ? *pending>0 : value.at("remainingState")=="accounted" && *pending==0;
+}
 // 保留原箱内转移工作的方向、对象、委托、提交范围和实读基线，供迟到回执逐项对照。
 Json chest_transfer_basis(Json proof) {
     for (const auto field : {"state","after","stored","withdrawn","remaining"}) proof.erase(field);
@@ -88,6 +105,7 @@ void PartnerFacts::clear() noexcept {
     uncertain_.clear();
     finished_late_.clear();
     approvals_.clear();
+    pickup_sample_ = nullptr; pickup_task_.reset();
 }
 // 从信箱接纳回执固定原工作、裁定和执行结果，按到达顺序保留最近十六份供下一相关决策使用。
 // 步骤：核对来源绑定 → 沿原消息识别重投 → 保留有界可重读原件。
@@ -119,6 +137,16 @@ std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope
     auto candidate = scene;
     const bool same_scope = session == session_ && scope == scope_;
     decision_facts(candidate,player_,approvals_,same_scope,!isolate);
+    if (same_scope && !isolate && !pickup_sample_.is_null() && scene.contains("player") && scene.at("player") == player_) {
+        candidate["decisionStatusSamples"].push_back(pickup_sample_);
+        const auto task = scene.find("task");
+        if (pickup_task_ && task != scene.end() && task->contains("revision") && task->at("revision") == *pickup_task_ &&
+            task->value("next","")!="done") {
+            const auto& work = pickup_sample_.at("subject");
+            candidate["decisionStatusAttention"].push_back({{"key","mc.companion.pickup_effect"},{"version",1},{"subject",work},
+                {"mode","continuous"},{"task","task/"+std::to_string(*pickup_task_)}});
+        }
+    }
     std::string candidate_scope(scope);
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         Json changed = Json::object(), closed = Json::array();
@@ -134,7 +162,10 @@ std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope
         const auto result = service_->submit(session,&input,&frame,&request,&expected,nullptr);
         if (result == DFY_V2_NOT_FOUND && expected && !baseline && attempt == 0) { baseline = true; continue; }
         if (result) return result;
-        if (!same_scope) { uncertain_.clear(); finished_late_.clear(); approvals_.clear(); admission_ = 0; }
+        if (!same_scope) {
+            uncertain_.clear(); finished_late_.clear(); approvals_.clear(); admission_ = 0;
+            pickup_sample_ = nullptr; pickup_task_.reset();
+        }
         previous_ = std::move(candidate); scope_ = std::move(candidate_scope);
         sequence_ = sequence; session_ = session; isolated_ = isolate;
         return DFY_V2_OK;
@@ -187,12 +218,14 @@ void PartnerFacts::finish_late(const std::string& work) {
 
 // 以同一工作、版本及正文向宿主登记，调用返回前保留借用的字节。
 std::uint32_t PartnerFacts::put(std::string_view work, std::uint64_t revision, std::uint32_t phase, const Json& body,
-    bool final, std::uint64_t sequence) const {
+    bool final, std::uint64_t sequence, std::uint64_t* recorded) const {
     const auto text = body.dump();
     const dfy_v2_work_fact fact{session_,revision,bytes(work),bytes(text),phase,0};
     std::uint64_t receipt = 0;
-    if (ordered_) return ordered_->settle_ordered(session_,&fact,sequence,final ? DFY_V2_WORK_FINAL_EFFECT : 0,&receipt,nullptr);
-    return service_->settle(session_,&fact,&receipt,nullptr);
+    const auto status = ordered_ ? ordered_->settle_ordered(session_,&fact,sequence,final ? DFY_V2_WORK_FINAL_EFFECT : 0,&receipt,nullptr) :
+        service_->settle(session_,&fact,&receipt,nullptr);
+    if (!status && recorded) *recorded = receipt;
+    return status;
 }
 
 // 为首次派发固定原工作号、技能和原话，宿主写入成功后才消耗接纳序号。
@@ -274,11 +307,34 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
     Json effect{{"effect",action.at("effect")}};
     if (action.contains("result") && action.at("result").dump().size() <= 7000) effect["result"] = action.at("result");
     else effect["originalWork"] = work;
+    const auto original = action.find("result");
+    const Json* pickup = nullptr;
+    if (exited && action.at("skill") == "pickup_drop" && original != action.end() && original->contains("pickup")) {
+        const auto& proof = original->at("pickup");
+        if (proof.contains("effect") && proof.at("effect").dump().size() <= 2048 && verified_pickup(proof.at("effect")))
+            pickup = &proof.at("effect");
+    }
+    if (pickup && !effect.contains("result")) effect["pickupEffect"] = *pickup;
+    // 只投影已经写入原工作账本的那一版实效，退出补证和重传沿用原回执号。
+    // 步骤：登记原工作实效 → 核对成功回执及采样 → 留下最新一份的原号。
+    const auto put_effect = [&](std::uint64_t revision) {
+        std::uint64_t receipt = 0;
+        const auto status = put(work,revision,DFY_V2_WORK_EFFECT,effect,complete,0,&receipt);
+        if (!status && receipt && pickup && (pickup_sample_.is_null() || pickup_sample_.at("fact") < receipt)) {
+            auto value = *pickup;
+            const auto sampled = value.at("sampledUtcMs"); value.erase("sampledUtcMs");
+            pickup_sample_ = {{"key","mc.companion.pickup_effect"},{"version",1},{"subject",work},{"fact",receipt},
+                {"sampledUtcMs",sampled},{"value",std::move(value)}};
+            const auto task = action.value("taskRevision",std::uint64_t{});
+            pickup_task_ = task ? std::optional(task) : std::nullopt;
+        }
+        return status;
+    };
     const auto late = uncertain_.find(work);
     const bool exit_was_unknown = late != uncertain_.end() && late->second.exit_was_unknown;
     if (!exited || !exit_was_unknown) {
         if (!exited) effect["bridgeExited"] = false;
-        result = put(work,2,DFY_V2_WORK_EFFECT,effect,complete);
+        result = put_effect(2);
         if (result) return result;
         if (!exited) {
             auto& state = uncertain_[work];
@@ -293,7 +349,7 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
         late->second.exited = true;
         // 已送达的拾取比原动作结束时的库存更新，迟到读回不能覆盖更晚的实收。
         if (!late->second.pickup_settled) {
-            result = put(work,4,DFY_V2_WORK_EFFECT,effect,complete);
+            result = put_effect(4);
             if (result) return result;
             late->second.effect_after_exit = true;
             if (complete) finish_late(work);

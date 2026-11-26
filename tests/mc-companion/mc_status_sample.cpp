@@ -2,6 +2,7 @@
 #include "../../plugins/mc/src/partner_task.hpp"
 #include "binding_facts.hpp"
 #include <dafeiyu/decision_status.hpp>
+#include <dafeiyu/tool_abi_v2.h>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,14 @@ namespace {
 using Json = nlohmann::json;
 Json frames;
 bool request_baseline = false;
+dfy::app::BindingWorks* pickup_ledger = nullptr;
+
+// 将桥接拾取工作的 C ABI 原回执登记到真实的宿主工作索引。
+dfy_v2_status DFY_V2_CALL settle_pickup(uint64_t session,const dfy_v2_work_fact* fact,uint64_t* receipt,dfy_v2_error*) {
+    *receipt = pickup_ledger->settle(session,{fact->epoch,fact->revision,{fact->work.data,fact->work.length},
+        {fact->content.data,fact->content.length},fact->phase,0,false});
+    return DFY_V2_OK;
+}
 
 // 记录试点发出的原补丁和帧身份，可要求一次同号基线补发。
 dfy_v2_status DFY_V2_CALL capture(uint64_t, const dfy_v2_agent_input* input, const dfy_v2_fact_frame* frame,
@@ -147,6 +156,55 @@ void verify_approval() {
         facts.accept_approval(7,52,82,result)) throw std::runtime_error("approval escaped its original scope");
 }
 
+// 从真实桥接夹具的标准输入读取三个原工作结果，对照宿主实效回执和实际状态快照。
+// 步骤：建立玩家绑定 → 接纳原回执并用包声明冻结 → 对照库存和余量 → 结束任务后解除关注。
+void verify_pickup(const std::filesystem::path& package) {
+    std::ifstream file(package/"agent/status.json");
+    const auto definitions = Json::parse(file).at("definitions").dump();
+    const auto receipts = Json::parse(std::cin);
+    if (receipts.size()!=3) throw std::runtime_error("three original pickup receipts required");
+    dfy::app::BindingWorks ledger; pickup_ledger = &ledger;
+    dfy::app::BindingFacts mirror;
+    dfy::agent::DecisionStatusStore store;
+    dfy_v2_agent_facts_api api{{},capture,settle_pickup};
+    dfy::mc::PartnerFacts facts; facts.configure(&api,"paired");
+    Json scene{{"player","paired"},{"task",{{"revision",4},{"next","continue"}}}};
+    std::uint64_t request = 0;
+    // 合入本绑定的真实帧，以同一份包声明校验完整快照和当步尾注。
+    const auto send = [&] {
+        if (facts.submit(7,"paired/world",{},scene,false,request)) throw std::runtime_error("pickup frame rejected");
+        const auto& frame = frames.back();
+        dfy::plugins::SubagentInput input;
+        input.prompt = frame.at("patch").dump();
+        input.frame = dfy::plugins::SubagentFrame{7,frame.at("sequence"),frame.at("scope"),frame.at("flags")==DFY_V2_FACT_BASELINE};
+        mirror.apply(input,request,false);
+        auto frozen = store.prepare(7,7,request,1,1700000000000,{{"mc.companion",definitions,mirror.status_samples(),mirror.status_attention()}});
+        const auto tail = Json::parse(frozen.tail); store.publish(std::move(frozen)); return tail;
+    };
+    if (!send().at("items").empty()) throw std::runtime_error("pickup fabricated before original effect");
+    for (std::size_t i=0;i<receipts.size();++i) {
+        const auto work = "pickup-"+std::to_string(i);
+        auto raw = receipts.at(i);
+        const auto& proof = raw.at("pickup").at("effect");
+        if (i==1) raw["largeObservation"] = std::string(7200,'x');
+        Json action{{"session",7},{"order",2},{"skill","pickup_drop"},{"bridgeWork",work},{"bridgeExited",true},{"factAdmission",0},
+            {"effect",DFY_V2_TOOL_APPLIED},{"taskRevision",4},{"result",raw}};
+        if (facts.reserve(work,"pickup_drop",2) || facts.report(7,"mc.partner.action",action)) throw std::runtime_error("pickup admission failed");
+        const auto tail = send();
+        const auto& item = tail.at("items").at(0);
+        const auto original = Json::parse(ledger.read(7,item.at("fact")).value());
+        const auto& body = original.at("body");
+        const auto& source = body.contains("pickupEffect") ? body.at("pickupEffect") : body.at("result").at("pickup").at("effect");
+        auto value = item.at("value"); value["sampledUtcMs"] = item.at("sampledUtcMs");
+        if (tail.at("items").size()!=1 || item.at("subject")!=work || original.at("work")!=work || original.at("revision")!=2 ||
+            item.at("attention").at("tasks")!=Json::array({"task/4"}) || value!=source || source!=proof ||
+            value.at("acquired")!=3 || value.at("target")!=8 || value.contains("pendingPickup")!=(i==0))
+            throw std::runtime_error("pickup snapshot differs from original effect");
+    }
+    scene["task"]["next"] = "done";
+    if (!send().at("items").empty()) throw std::runtime_error("finished task kept pickup explicit");
+}
+
 // 核对包声明与真实任务修订，并验证缺样、备注更新、强制基线和重绑。
 // 步骤：读取实际包定义 → 接纳目标并核对原件 → 比对备注与同号补发 → 切换绑定。
 void verify(const std::filesystem::path& package) {
@@ -201,8 +259,9 @@ void verify(const std::filesystem::path& package) {
 // 从本配置生成的实际 MC 包读取状态定义并验证选定玩家的事实补丁。
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc != 2) throw std::invalid_argument("MC package path required");
-        verify(argv[1]);
+        if (argc == 3 && std::wstring_view(argv[2])==L"--pickup") verify_pickup(argv[1]);
+        else if (argc == 2) verify(argv[1]);
+        else throw std::invalid_argument("MC package path required");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

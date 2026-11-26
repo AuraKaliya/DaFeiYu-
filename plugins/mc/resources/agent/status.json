@@ -38,5 +38,21 @@
       "required": ["mailbox", "id", "order", "skill", "status", "source", "execution", "player", "generation"],
       "additionalProperties": false
     }
+  }, {
+    "key": "mc.companion.pickup_effect",
+    "version": 1,
+    "description": "沿原拾取工作和实效回执核对指定一堆物品。target 为原整堆，acquired 为本方经收取包和库存双重核实的入包数，other 为其他实体收取数。pendingPickup 仅在原堆有实读余量或全部去向已核清时提供。",
+    "defaultAttention": {"mode": "implicit"},
+    "valueSchema": {
+      "type": "object",
+      "properties": {
+        "observation": {"type": "string"}, "entity": {"type": "string"}, "item": {"type": "string"},
+        "dimension": {"type": "string"}, "target": {"type": "integer"}, "acquired": {"type": "integer"},
+        "other": {"type": "integer"}, "pendingPickup": {"type": "integer"},
+        "remainingState": {"type": "string", "enum": ["observed", "accounted", "unknown"]}
+      },
+      "required": ["observation", "entity", "item", "dimension", "target", "acquired", "other", "remainingState"],
+      "additionalProperties": false
+    }
   }]
 }

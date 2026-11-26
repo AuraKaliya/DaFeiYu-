@@ -31,7 +31,7 @@ test('mined stone requires merge and pickup readbacks after their own events', (
 });
 
 // 建立可独立控制导航、实体拾取包、背包同步和时钟的地面物品现场。
-function pickupFixture() {
+function pickupFixture(initialCount = 3) {
   const bot = new EventEmitter(), result = {};
   bot._client = new EventEmitter();
   bot.entity = { id: 1, position: new Position(0.5, -60, 0.5) };
@@ -40,11 +40,11 @@ function pickupFixture() {
   bot.inventory = { inventoryStart: 0, inventoryEnd: 2, slots: [null,null], items() { return this.slots.filter(Boolean); } };
   bot.blockAt = point => point.y < -60 ? { name: 'stone', boundingBox: 'block' } : { name: 'air', boundingBox: 'empty' };
   const uuid = '00112233-4455-6677-8899-aabbccddeeff';
-  const stack = { name: 'dirt', count: 3 };
+  const stack = { name: 'dirt', count: initialCount };
   const entity = { name: 'item', id: 5, uuid, position: new Position(3.5, -60, 0.5), getDroppedItem: () => stack };
   bot.entities = { 5: entity };
   const source = observeDrops(bot, { item: 'dirt', radius: 5 }, 'source', 'world');
-  const args = { observation: 'source', entity: uuid, item: 'dirt', count: 3 };
+  const args = { observation: 'source', entity: uuid, item: 'dirt', count: initialCount };
   let at = 0, moves = 0;
   const movement = { now: () => at, pause: async ms => { at += ms; }, stop() {},
     async go(stand, allowed) { ++moves; assert.ok(allowed(stand)); bot.entity.position = stand.offset(0.5, 0, 0.5); } };
@@ -67,6 +67,35 @@ test('an exact pickup waits for both the selected entity and its inventory incre
   assert.deepEqual([f.moves(), f.result.progress.phase, f.result.pickup.verifiedCount, f.result.inventoryDelta],
     [1, 'received', 3, { dirt: 3 }]);
   assert.equal(f.bot._client.listenerCount('collect'), 0);
+  assert.deepEqual([f.result.pickup.effect.acquired,f.result.pickup.effect.remainingState,f.result.pickup.effect.pendingPickup],
+    [3,'accounted',0]);
+});
+
+// 目标八件同时发生两方收取，当前实体栈和原包吻合时才能报告尚在地面的两件。
+test('原堆目标、已入包及可见余量沿同一工作复核', async () => {
+  const receipts = [];
+  for (const visible of [2,5,undefined]) {
+    const f = pickupFixture(8);
+    f.movement.utcNow = () => 1700000000000;
+    f.movement.pause = async () => {
+      f.packet(1,3); f.packet(9,3);
+      f.bot.inventory.slots[0] = {name:'dirt',count:3};
+      if (visible !== undefined) f.stack.count = visible;
+      else { f.bot.emit('entityGone',f.entity); delete f.bot.entities[5]; }
+    };
+    await assert.rejects(f.run(),{code:'pickup_other_collector'});
+    const proof = f.result.pickup.effect;
+    assert.deepEqual([proof.observation,proof.entity,proof.target,proof.acquired,proof.other,proof.sampledUtcMs],
+      ['source',f.entity.uuid,8,3,3,1700000000000]);
+    assert.equal(proof.remainingState,visible === 2 ? 'observed' : 'unknown');
+    assert.equal(proof.pendingPickup,visible === 2 ? 2 : undefined);
+    receipts.push(f.result);
+  }
+  if (process.argv[2] === '--host-status') {
+    const run = require('node:child_process').spawnSync(process.argv[3],[process.argv[4],'--pickup'],
+      {input:JSON.stringify(receipts),encoding:'utf8',windowsHide:true});
+    assert.equal(run.status,0,run.error?.message ?? run.stderr);
+  }
 });
 
 // 物品已变、只要求半堆、目标出界或背包已满时保持角色原位。

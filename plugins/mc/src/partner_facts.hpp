@@ -3,6 +3,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <nlohmann/json.hpp>
 
 namespace dfy::mc {
@@ -43,7 +44,7 @@ class PartnerFacts {
   private:
     // 向宿主提交本绑定原工作的一个确定版本，重复提交沿用原回执。
     std::uint32_t put(std::string_view work, std::uint64_t revision, std::uint32_t phase, const nlohmann::json& body,
-        bool final = false, std::uint64_t sequence = 0) const;
+        bool final = false, std::uint64_t sequence = 0, std::uint64_t* recorded = nullptr) const;
     // 依据原投物工作登记退出，所提交物品的去向核清后登记实际收取者。
     std::uint32_t report_handoff(const nlohmann::json& handoff);
     // 已无需继续复查的本地阶段只保留最近一窗，原宿主继续校验过期重传。
@@ -58,6 +59,8 @@ class PartnerFacts {
     std::map<std::string,LateReceipt> uncertain_;
     std::deque<std::string> finished_late_;
     std::deque<nlohmann::json> approvals_;
+    nlohmann::json pickup_sample_;
+    std::optional<std::uint64_t> pickup_task_;
     const dfy_v2_agent_facts_api* service_ = nullptr;
     const dfy_v2_agent_ordered_facts_api* ordered_ = nullptr;
     std::string player_, scope_;
