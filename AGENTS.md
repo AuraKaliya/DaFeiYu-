@@ -15,7 +15,7 @@
 - [项目预设](CMakePresets.json)随仓库提交。默认在根目录 `build/` 配置一次，`build/bin/Debug/` 和 `build/bin/Release/` 各自包含桌面入口 `dafeiyu.exe`、常驻本体 `dafeiyu-host.exe` 与前端资源。双击和 IDE 默认启动管理中心，托盘从本体所在目录打开同一主面板。
 - `BUILD_GUI` 默认开启，`BUILD_CLI` 默认关闭。选用 `windows-cli` 预设可同时生成 `dafeiyu-cli.exe`。纯终端配置显式选择 `BUILD_GUI=OFF`、`BUILD_CLI=ON`。可选组合、测试和个人工具链配置各用独立构建目录。
 - 一键脚本和[个人预设模板](build-scirpt/CMakeUserPresets.json)放在 `build-scirpt/`。根目录的 `CMakeUserPresets.json` 由个人维护并由 Git 忽略。个人构建预设继承项目预设，并显式绑定自己的配置预设。
-- 构建预设的 `jobs` 控制并行构建任务，单次 `-Jobs` 优先。`DFY_MSVC_COMPILE_JOBS` 单独限制每个 MSVC C++ 目标的编译进程。脚本从自身位置定位根工程，并返回配置或编译的退出码。[构建命令](文档/使用说明/构建与运行说明.md)
+- 构建预设的 `jobs` 控制并行构建任务，单次 `-Jobs` 优先。`DFY_MSVC_COMPILE_JOBS` 单独限制每个 MSVC C++ 目标的编译进程。脚本从自身位置定位根工程，并返回配置或编译的退出码。[构建命令](文档/使用说明/构建与运行说明.md#从源码构建)
 
 ## 架构与模块职责
 

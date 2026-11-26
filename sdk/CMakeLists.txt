@@ -18,7 +18,10 @@ target_include_directories(dfy_sdk INTERFACE include)
 dfy_group_target(dfy_sdk SDK)
 
 install(DIRECTORY include/ DESTINATION sdk/include CONFIGURATIONS Release COMPONENT SDK)
-install(FILES "${PROJECT_SOURCE_DIR}/文档/使用说明/插件开发说明.md" DESTINATION sdk RENAME README.md CONFIGURATIONS Release COMPONENT SDK)
+# SDK 可独立安装，开发手册和公开接口契约相邻，原有 README 入口共用同一份正文。
+install(FILES "${DFY_USER_MANUAL_DIR}/插件开发说明.md" "${DFY_USER_MANUAL_DIR}/插件接口说明.md"
+  DESTINATION sdk CONFIGURATIONS Release COMPONENT SDK)
+install(FILES "${DFY_USER_MANUAL_DIR}/插件开发说明.md" DESTINATION sdk RENAME README.md CONFIGURATIONS Release COMPONENT SDK)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

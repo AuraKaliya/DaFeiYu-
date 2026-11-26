@@ -24,6 +24,7 @@ endif()
 
 # 装配工程：准备第三方依赖，再加入 SDK、已实现的运行模块和最小查询示例。
 include(cmake/Dependencies.cmake)
+set(DFY_USER_MANUAL_DIR "${PROJECT_SOURCE_DIR}/文档/使用说明")
 add_subdirectory(sdk)
 add_subdirectory(modules)
 add_subdirectory(plugins)

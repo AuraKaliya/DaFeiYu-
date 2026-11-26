@@ -25,7 +25,7 @@ set_target_properties(dfy_ui_assets PROPERTIES FOLDER App)
 add_dependencies(dafeiyu dfy_ui_assets dafeiyu-host)
 install(TARGETS dafeiyu RUNTIME DESTINATION . CONFIGURATIONS Release COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BINARY_DIR}/bin/Release/ui/" DESTINATION ui CONFIGURATIONS Release COMPONENT Runtime)
-install(FILES "${PROJECT_SOURCE_DIR}/文档/使用说明/桌面管理中心说明.md" DESTINATION . RENAME UI验证说明.md CONFIGURATIONS Release COMPONENT Runtime)
+install(FILES "${DFY_USER_MANUAL_DIR}/桌面管理中心说明.md" DESTINATION . RENAME UI验证说明.md CONFIGURATIONS Release COMPONENT Runtime)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)
