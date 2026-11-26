@@ -1,4 +1,5 @@
 #include "async_chat.hpp"
+#include "../../../tests/decision_input.hpp"
 #include <dafeiyu/async_session.hpp>
 #include <windows.h>
 #include <sstream>
@@ -48,7 +49,7 @@ void input_loop() {
     DWORD count = 0; check(WriteFile(write,"hello\r\n",7,&count,nullptr) && count == 7,"chat pipe write failed"); CloseHandle(write);
     {
         dfy::platform::LineInput input(read,2,64);
-        dfy::agent::AsyncSession session({},channel(),2,[](const auto&,const auto& messages) { return "reply:"+messages.back().content; });
+        dfy::agent::AsyncSession session({},channel(),2,[](const auto&,const auto& messages) { return "reply:"+dfy::test::business_messages(messages).back().content; });
         std::ostringstream output, errors; unsigned pumped = 0;
         Conversation conversation(session);
         check(async_chat(conversation,input,output,errors,[&] { ++pumped; }) == 0 && output.str().find("reply:hello") != std::string::npos &&

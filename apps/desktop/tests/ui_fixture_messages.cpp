@@ -52,6 +52,7 @@ void other_messages() {
     tool.role = Role::tool;
     for (const auto& message : {sourced_message(MessageSource::host_status,"旧状态"),
             sourced_message(MessageSource::host_status,R"({"schema":"other"})"),
+            sourced_message(MessageSource::host_status,R"({"detail":{"schema":"dafeiyu.agent_status/1"}})"),
             sourced_message(MessageSource::tool,status_body), tool, Message{Role::user,status_body}}) {
         const std::vector<Message> messages{message};
         check(fixture_business_messages(messages).size()==1,"non-trailer fixture message was discarded");
