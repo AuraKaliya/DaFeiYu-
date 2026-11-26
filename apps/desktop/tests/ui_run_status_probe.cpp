@@ -1,4 +1,5 @@
 #include "ui_run_status_probe.hpp"
+#include "ui_fixture_messages.hpp"
 #include "../src/interaction_probe.hpp"
 
 namespace dfy::tests {
@@ -10,7 +11,7 @@ model::Response response(unsigned number, const model::Request& request) {
     if (number == 1) return {{Role::assistant,R"({"schema_version":1,"steps":[{"id":"mode","objective":"Set focus","completion_criterion":"Read mode","tools":["example.status/read","example.status/set_focus"]}]})"}};
     if (number >= 2 && number <= 4 && request.tools.size() == 2)
         return {{Role::assistant,"",{{std::to_string(number),request.tools[number == 3 ? 1 : 0].name,"{}"}}},FinishReason::tool_calls};
-    if (number == 5 && request.messages.back().content.find("output:\nfocus") != std::string::npos)
+    if (number == 5 && fixture_business_messages(request.messages).back().content.find("output:\nfocus") != std::string::npos)
         return {{Role::assistant,"Fixed status panel task completed"}};
     throw std::runtime_error("UI status test: unexpected model request");
 }

@@ -1,6 +1,6 @@
 # 探针代码仅进入带测试的桌面目标。
 target_sources(dafeiyu PRIVATE
-  ui_run_status_probe.cpp ui_run_status_probe.hpp ui_room_preview.cpp
+  ui_run_status_probe.cpp ui_run_status_probe.hpp ui_fixture_messages.hpp ui_room_preview.cpp
   ui_main_panel.cpp ui_main_panel_fixture.hpp ui_dialogue_queue.cpp ui_dialogue_recovery.cpp ui_tray_panel.cpp ui_history_panel.cpp
   ui_mailbox_panel.cpp ui_plugin_settings.cpp ui_plugin_windows.cpp ui_plugin_actions.cpp ui_host_settings.cpp)
 target_include_directories(dafeiyu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -10,6 +10,10 @@ add_dependencies(dafeiyu dfy_status_example)
 dfy_test_executable(dfy_ui_scope_tests ui_frame_scope.cpp)
 target_link_libraries(dfy_ui_scope_tests PRIVATE dfy_ui_scope dfy_build_options)
 add_test(NAME ui.frame_scope COMMAND dfy_ui_scope_tests)
+
+dfy_test_executable(dfy_ui_fixture_messages_tests ui_fixture_messages.cpp ui_fixture_messages.hpp)
+target_link_libraries(dfy_ui_fixture_messages_tests PRIVATE dfy_model nlohmann_json::nlohmann_json dfy_build_options)
+add_test(NAME ui.fixture_business_messages COMMAND dfy_ui_fixture_messages_tests)
 
 set(run_status_temp "${PROJECT_BINARY_DIR}/ui-run-temp")
 file(MAKE_DIRECTORY "${run_status_temp}")

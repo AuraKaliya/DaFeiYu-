@@ -1,4 +1,5 @@
 #include "../src/interaction_probe.hpp"
+#include "ui_fixture_messages.hpp"
 #include "ui_main_panel_fixture.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -10,19 +11,20 @@ std::unique_ptr<app::Application> open_panel_fixture(const std::filesystem::path
         // 依据约定原话制造失败或在途答复，并核对后继请求使用的上下文。
         // 步骤：选择固定响应 → 按场景等待放行或核验历史 → 归还实际答复。
         [gate](const auto&, const auto& request) -> model::Response {
-            const auto& text = request.messages.back().content;
+            const auto messages = fixture_business_messages(request.messages);
+            const auto& text = messages.back().content;
             if (text == "模拟请求失败") throw std::runtime_error("fixed private provider error");
             if (text == "等待桌面停止") {
                 ++gate->entered;
                 if (!gate->release.try_acquire_for(std::chrono::seconds(15))) throw std::runtime_error("UI fixture gate timed out");
             }
-            if (text == "检查清空后的上下文" && std::ranges::count_if(request.messages,[](const auto& message) {
+            if (text == "检查清空后的上下文" && std::ranges::count_if(messages,[](const auto& message) {
                 return message.role == model::Role::user || message.role == model::Role::assistant;
             }) != 1) throw std::runtime_error("UI fixture found prior dialogue");
             if (text == "窗口补充，保持同一轮") {
-                const auto count = request.messages.size();
-                if (count<3 || request.messages[count-3].content!="等待桌面停止" ||
-                    request.messages[count-2].role!=model::Role::assistant || request.messages[count-2].content!="固定回复：等待桌面停止")
+                const auto count = messages.size();
+                if (count<3 || messages[count-3].content!="等待桌面停止" ||
+                    messages[count-2].role!=model::Role::assistant || messages[count-2].content!="固定回复：等待桌面停止")
                     throw std::runtime_error("UI fixture missing original same-turn context");
             }
             return {{model::Role::assistant,"固定回复："+text}};
