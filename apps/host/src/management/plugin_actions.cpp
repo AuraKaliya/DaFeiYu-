@@ -16,15 +16,29 @@ PluginOperation refused(PluginOperation op, std::string_view state) {
     return op;
 }
 
-// 在原业务线程执行已安装包的加载，失败时保留宿主返回码和实际实例。
-// 步骤：核验本次修订、包和代次 → 调用现有插件管理器 → 按实查回加载结果。
+// 在原业务线程加载或卸载一个确切代次，依赖和活动保护沿用管理器的默认策略。
+// 步骤：复核修订、包和实例代次 → 调用已有生命周期入口 → 记录直接返回及已核实效果。
 void execute_plugin(plugins::PluginManager& manager, const PluginDirectory& view, PluginOperation& op) {
     const auto& cmd = op.command;
-    if (cmd.action!="load" || cmd.generation) { op = refused(std::move(op),"invalid"); return; }
+    const bool loading = cmd.action=="load";
+    if ((!loading && cmd.action!="unload") || loading!=(cmd.generation==0)) { op = refused(std::move(op),"invalid"); return; }
     const auto found = view.packages.find(cmd.id);
     if (!view.available) { op = refused(std::move(op),"unavailable"); return; }
     if (cmd.revision!=view.revision || found==view.packages.end() || found->second.generation!=cmd.generation) {
         op = refused(std::move(op),"stale");
+        return;
+    }
+    if (!loading) {
+        if (!found->second.can_unload()) { op = refused(std::move(op),"busy"); return; }
+        using Result = plugins::ShutdownResult;
+        const auto result = manager.unload(cmd.id);
+        switch (result) {
+        case Result::closed: op.native_result="closed"; op.state="succeeded"; op.effect="unloaded"; break;
+        case Result::pending: op.native_result=op.state="pending"; op.effect="stopping"; break;
+        case Result::busy: op.native_result=op.state="busy"; op.effect="retained"; break;
+        case Result::in_use: op.native_result=op.state="inUse"; op.effect="retained"; break;
+        case Result::failed: op.native_result=op.state="failed"; op.effect="retained"; break;
+        }
         return;
     }
     if (!found->second.can_load()) { op = refused(std::move(op),"busy"); return; }
@@ -54,6 +68,7 @@ Json operation_json(const PluginOperation& op, const Host& host, const Json& req
         {"generation",std::to_string(op.generation)}});
     if (op.expected) result["expectedCommand"] = std::to_string(op.expected);
     if (op.native_code) result["nativeCode"] = *op.native_code;
+    if (!op.native_result.empty()) result["nativeResult"] = op.native_result;
     return result;
 }
 }
@@ -93,6 +108,23 @@ PluginOperation Host::plugin_receipt(const std::string& client, const std::strin
     return {identity,{},instance==instance_ ? "unknown" : "stale","unknown"};
 }
 
+// 持有宿主锁时按原代次结算已受理的停止，真实退出与拒绝均保留最初的管理器返回值。
+// 步骤：发布本轮目录 → 定位待退出原代次 → 依据已消失或失败保留的事实结算。
+void Host::publish_plugin_directory(std::shared_ptr<const PluginDirectory> view) {
+    packages_ = std::move(view);
+    if (!packages_ || !waiting_plugins_) return;
+    for (auto& record : plugin_operations_) {
+        if (record->state!="pending") continue;
+        const auto found = packages_->packages.find(record->command.id);
+        if (found==packages_->packages.end() || found->second.generation!=record->command.generation) {
+            record->state="succeeded"; record->effect="unloaded";
+        } else if (found->second.state=="failed") {
+            record->state="failed"; record->effect="retained";
+        } else continue;
+        --waiting_plugins_;
+    }
+}
+
 // 在业务线程按最新目录执行一个原操作，并将实效与新目录一起发布。
 // 步骤：采样现场 → 移交一项已接纳工作 → 复核并执行 → 使用同一锁结算回执和目录。
 void Host::advance_plugin_actions(plugins::PluginManager& manager, std::shared_ptr<const PluginDirectory>& previous) {
@@ -101,7 +133,7 @@ void Host::advance_plugin_actions(plugins::PluginManager& manager, std::shared_p
     std::shared_ptr<PluginOperation> job;
     {
         std::lock_guard lock(mutex_);
-        if (!queued_plugins_) { packages_ = std::move(view); return; }
+        if (!queued_plugins_) { publish_plugin_directory(std::move(view)); return; }
         const auto next = std::ranges::find_if(plugin_operations_,[](const auto& item) { return item->state=="queued"; });
         job = *next;
         job->state = "running";
@@ -115,7 +147,8 @@ void Host::advance_plugin_actions(plugins::PluginManager& manager, std::shared_p
     try { previous = sample_plugins(manager,previous); view = previous; } catch (const std::exception&) { view.reset(); }
     std::lock_guard lock(mutex_);
     *job = std::move(result);
-    packages_ = std::move(view);
+    if (job->state=="pending") ++waiting_plugins_;
+    publish_plugin_directory(std::move(view));
 }
 
 // 只接受精确的包 ID、代次、目录修订和命令号，包的磁盘路径由管理器定位。
@@ -125,10 +158,10 @@ Json plugin_action_request(Host& host, const Json& request, const std::string& c
     const auto& type = request.at("type");
     if (type=="plugins.receipt" && request.size()==5)
         return operation_json(host.plugin_receipt(client,instance,plugin_identity(request.at("operation"),160)),host,request);
-    if (type!="plugins.load" || request.size()!=8) throw std::invalid_argument("plugins: invalid operation");
-    PluginCommand cmd{"load",plugin_identity(request.at("id"),64),plugin_number(request.at("command")),
+    if ((type!="plugins.load" && type!="plugins.unload") || request.size()!=8) throw std::invalid_argument("plugins: invalid operation");
+    PluginCommand cmd{type=="plugins.load" ? "load" : "unload",plugin_identity(request.at("id"),64),plugin_number(request.at("command")),
         plugin_number(request.at("revision")),plugin_number(request.at("generation"))};
-    if (!cmd.number || cmd.generation) throw std::invalid_argument("plugins: invalid command or target generation");
+    if (!cmd.number || (cmd.action=="load")!=(cmd.generation==0)) throw std::invalid_argument("plugins: invalid command or target generation");
     return operation_json(host.submit_plugin(client,instance,std::move(cmd)),host,request);
 }
 }

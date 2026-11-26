@@ -278,6 +278,8 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 操作回执带有原 `command`、`action`、`id`、`revision`、`targetGeneration` 和核实的 `generation`。实际成功加载为 `succeeded/loaded`，有底层返回码时提供 `nativeCode`。同一窗口重发原命令可读回原结果，改目标或参数返回 `conflict`，跳号返回 `outOfOrder` 和 `expectedCommand`。旧修订或代次返回 `stale/notApplied`。同一后台有界保留 64 项，进行中的记录受保护，已退休的命令号返回 `expired`。原操作号已不可查时返回 `unknown`。[业务线程与原操作回执](../apps/host/src/management/plugin_actions.cpp)
 
+`plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

@@ -1,4 +1,6 @@
 #include "management/resident.hpp"
+#include "fixtures/query_v2/mailbox_fixture.h"
+#include <dafeiyu/dynamic_library.hpp>
 #include <nlohmann/json.hpp>
 #include <windows.h>
 #include <atomic>
@@ -134,26 +136,98 @@ void directory(const fs::path& root, const fs::path& dll) {
     terminal(data,one.client,3,"/plugins refresh");
     check(call(data,one.client,pinned)==active && read(two.client)==active && call(data,two.client,room)==pending && !model_calls,
         "read or unchanged catalog refresh changed the revision, consumed an event or ran the model");
-    terminal(data,one.client,4,"/plugins unload test.directory");
-    until([&] { return read(one.client).at("packages").front().at("state")=="installed"; },"actual unload");
+    {
+        platform::DynamicLibrary control(packages/"test.directory"/"entry.dll");
+        const auto mode=reinterpret_cast<void (DFY_V2_CALL*)(std::uint32_t)>(control.symbol("dfy_lifecycle_mode"));
+        mode(6);
+    }
+    const auto unload=intent(active,live,"unload",2);
+    const auto accepted_stop=call(data,one.client,unload);
+    check(accepted_stop.at("state")=="queued","unload was not admitted");
+    const auto stopped=settled(data,two.client,accepted_stop);
+    check(stopped.at("state")=="succeeded" && stopped.at("nativeResult")=="pending" && stopped.at("effect")=="unloaded" &&
+        stopped.at("generation")==live.at("generation") && read(one.client).at("packages").front().at("state")=="installed",
+        "stop acceptance was confused with actual exit");
     check(call(data,two.client,pinned).at("state")=="stale","old package revision was accepted");
     terminal(data,one.client,5,"/plugins load test.directory");
     until([&] { const auto current=read(two.client).at("packages").front();
         return current.at("state")=="active" && current.at("generation")!=live.at("generation"); },"replacement generation");
+    auto old_target=unload;
+    old_target["revision"]=read(two.client).at("revision");
+    const auto old_stop=settled(data,one.client,call(data,two.client,old_target));
+    check(old_stop.at("state")=="stale" && old_stop.at("effect")=="notApplied" && call(data,one.client,unload)==stopped,
+        "old unload stopped the replacement or lost its original operation");
     const auto old=call(data,one.client,{{"type","plugins.list"},{"instance","previous-resident"}});
     check(old.at("state")=="stale" && old.at("packages").empty() && !model_calls,"old backend disclosed packages");
     server.request_stop();
     server.join();
     check(!outcome,"resident did not exit normally");
 }
+
+// 在插件自有子会话运行期间用两个正式管道请求卸载，只允许原工作退出后的新命令卸载。
+// 步骤：真实 C DLL 提交固定工作 → 核对忙碌和原代次保留 → 断开原窗口并复查 → 释放工作后显式重试。
+void busy_unload(const fs::path& root, const fs::path& dll) {
+    const auto data=root/"busy-user", packages=root/"busy-packages";
+    fs::create_directories(data);
+    package(packages/"fixture",dll);
+    std::atomic_bool release{false};
+    std::atomic_uint calls{0};
+    int outcome = -1;
+    std::jthread server([&](std::stop_token stop) {
+        // 仅这次原生子会话调用固定模型，夹具在后台停止时也能解开等待。
+        outcome=management::serve_resident(data,"busy",[&] {
+            auto app=std::make_unique<app::Application>(model::Config{},packages,data,model::Backend{
+                [&,stop](const auto&,const auto&) {
+                    ++calls;
+                    until([&] { return release.load() || stop.stop_requested(); },"fixed model release");
+                    return model::Response{{model::Role::assistant,"fixed"}};
+                }});
+            check(app->plugins().load("test.directory")==DFY_V2_OK,"busy plugin startup failed");
+            const auto plugin=app->plugins().instance("test.directory");
+            const auto api=plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+            std::uint64_t request=0;
+            check(api && plugin->invoke(*api,[&](const auto& service,auto* target) { return service.ask(target,&request,nullptr); })==DFY_V2_OK &&
+                request!=0,"native subagent work was not admitted");
+            return app;
+        },stop);
+    });
+    until([&] { return calls.load()!=0; },"busy native subagent");
+    const auto a=management::connect_resident(data,"busy"), b=management::connect_resident(data,"busy");
+    const Json list{{"type","plugins.list"}};
+    const auto before=call(data,a.client,list);
+    const auto unload=intent(before,before.at("packages").front(),"unload",1);
+    const auto submitted=call(data,a.client,unload);
+    const auto blocked=settled(data,b.client,submitted);
+    check(blocked.at("state")=="busy" && blocked.at("effect")=="retained" && blocked.at("nativeResult")=="busy" &&
+        call(data,b.client,list)==before && call(data,a.client,unload)==blocked && calls==1,"busy instance or original refusal did not survive");
+    (void)management::resident_request(data,{{"op","disconnect"},{"client",a.client}});
+    const auto reopened=management::connect_resident(data,"busy");
+    check(settled(data,reopened.client,submitted)==blocked,"reconnection lost the original busy receipt");
+    release=true;
+    unsigned sequence=0;
+    Json result;
+    until([&] {
+        const auto latest=call(data,b.client,list);
+        auto retry=intent(latest,latest.at("packages").front(),"unload",++sequence);
+        result=settled(data,b.client,call(data,b.client,retry));
+        return result.at("state")!="busy" && result.at("state")!="inUse";
+    },"explicit retry after native work exit");
+    check(result.at("state")=="succeeded" && result.at("effect")=="unloaded" && result.at("generation")==blocked.at("generation") &&
+        settled(data,reopened.client,submitted)==blocked && call(data,b.client,list).at("packages").front().at("loaded")==false &&
+        calls==1,"unload retry changed the old refusal or unloaded a different generation");
+    server.request_stop();
+    server.join();
+    check(!outcome,"busy resident did not exit normally");
+}
 }
 
 // 为每次运行隔离插件包、命名管道和用户设置，以固定模型验证管理入口。
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc!=3) return 2;
+        if (argc!=4) return 2;
         const auto root=fs::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         directory(root,argv[1]);
+        busy_unload(root,argv[3]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

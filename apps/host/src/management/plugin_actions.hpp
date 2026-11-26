@@ -18,6 +18,7 @@ struct PluginOperation {
     std::string_view state = "queued", effect = "unconfirmed";
     std::uint64_t generation = 0, expected = 0;
     std::optional<std::uint32_t> native_code;
+    std::string_view native_result;
     // 业务线程尚未确认终态的记录始终保留。
     bool unfinished() const noexcept { return state=="queued" || state=="running" || state=="pending"; }
 };

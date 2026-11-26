@@ -86,6 +86,8 @@ class Host {
     void advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot);
     // 在业务线程复核并执行一个插件操作，同时发布当前目录及原回执。
     void advance_plugin_actions(plugins::PluginManager& manager, std::shared_ptr<const PluginDirectory>& previous);
+    // 在宿主锁内以业务采样结算已受理的原代次停止并发布目录。
+    void publish_plugin_directory(std::shared_ptr<const PluginDirectory> view);
     // 推进原应用服务、发布值快照并在拥有线程上完成关闭。
     void run(std::stop_token stop, const Open& open, const Drive& drive) noexcept;
     // 在原拥有线程等待会话与插件实际退出，按边界发布收尾进展。
@@ -99,7 +101,7 @@ class Host {
     std::shared_ptr<const app::MailboxView> mailboxes_;
     std::shared_ptr<const PluginDirectory> packages_;
     std::deque<std::shared_ptr<PluginOperation>> plugin_operations_;
-    std::size_t queued_plugins_ = 0;
+    std::size_t queued_plugins_ = 0, waiting_plugins_ = 0;
     std::shared_ptr<const app::ConversationDisplay> display_;
     std::optional<DialogueCommand> pending_, stop_command_;
     mutable std::map<std::string,Client> clients_{{"",{}}};
