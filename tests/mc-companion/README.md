@@ -4,7 +4,12 @@
 
 ## 固定响应验收单个玩家绑定
 
-选定玩家的 `mc.companion.task_goal` 以玩家 UUID 为主体、任务执行修订为原事实号。`plugins.mc_status_sample` 核对无目标、备注更新、目标修订及基线重传。`plugins.mc_status_request` 和 `mc.status_replay` 用新旧两种请求核对原话和配对工具结果。集成宿主后，设置 `$env:DFY_MC_REQUIRE_STATUS_PROJECTION='1'` 再运行 `plugins.mc_partner_revision_correction-lost` 和 `plugins.mc_partner_revision_correction-late`，这两局会从实际安装的包读取声明，在首轮核实缺样，在后续 `model.prepared` 沿同下标的宿主来源对回 `task_update` 原修订。
+选定玩家的 `mc.companion.task_goal` 以玩家 UUID 为主体、任务执行修订为原事实号。`plugins.mc_status_sample` 核对无目标、备注更新、目标修订及基线重传。`plugins.mc_status_request` 和 `mc.status_replay` 用新旧两种请求核对原话和配对工具结果。包的 `readWith` 指定 `mc.companion/observe`，`plugins.mc_world` 从实际安装目录读取它，核对真实 DLL 注册的只读标志和实例。集成宿主后，两条纠正场景沿各回合的实例和实际工具契约核对 `status_read` 授权，并从宿主尾注对回 `task_update` 原修订。
+
+~~~powershell
+$env:DFY_MC_REQUIRE_STATUS_PROJECTION = '1'
+ctest --test-dir build/rebuild/windows-tests -C Release -R '^plugins\.mc_partner_revision_correction-(lost|late)$' --output-on-failure
+~~~
 
 在已准备好的隔离 Paper 场地逐局运行以下固定响应。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。
 

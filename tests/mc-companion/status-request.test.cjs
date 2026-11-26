@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { checkTaskGoalTrace, scenarioInput } = require('./partner-context.cjs');
+const { checkStatusReadGrant, checkTaskGoalTrace, scenarioInput } = require('./partner-context.cjs');
 
 // 回放同一正式请求的两种格式，核对原话、工具调用号、宿主来源和原始记录。
 test('领域消息和配对工具结果在新旧正式请求中保持原身份', () => {
@@ -26,6 +26,30 @@ test('领域消息和配对工具结果在新旧正式请求中保持原身份',
       assert.strictEqual(scenarioInput({...current,messageEvidence:evidence}).messages.at(-1),tail);
     const other = {role:'user',content:'{"schema":"another/1"}'};
     assert.strictEqual(scenarioInput({...current,input:{...current.input,messages:[...messages,other]}}).messages.at(-1),other);
+  }
+});
+
+// 状态读取只跟随本次 MC 实例的指定能力，用同名其他实例、旁包和仅发言范围复核权限。
+test('readWith 按原实例及当步规范工具 ID 核对', () => {
+  const readWith = 'mc.companion/observe';
+  const accepted = {kind:'subagent.accepted',plugin:'mc.companion',session:7,run:2,instance:18};
+  const tail = {role:'user',content:'{"schema":"dafeiyu.agent_status/1"}'};
+  // 保留同一个模型工具名，改变原契约或实例以核实判定依据。
+  const frame = (id,instance,reader) => {
+    const contracts = [{id,instance}], tools = [{name:'p_fixture_observe'}];
+    if (reader) {
+      contracts.push({id:'host/status_read',instance:7});
+      tools.push({name:'status_read'});
+    }
+    return {kind:'model.prepared',source:'plugin',session:7,run:2,step:1,projection:{purpose:'direct'},
+      input:{messages:[{role:'user',content:'场景'},tail],tools},messageEvidence:[{source:'plugin'},{source:'host_status'}],
+      toolContracts:{available:contracts}};
+  };
+  checkStatusReadGrant([accepted,frame(readWith,18,true)],readWith);
+  assert.throws(() => checkStatusReadGrant([accepted,frame(readWith,18,false)],readWith));
+  for (const [id,instance] of [[readWith,19],['other/observe',18],['mc.companion/reply',18]]) {
+    checkStatusReadGrant([accepted,frame(id,instance,false)],readWith);
+    assert.throws(() => checkStatusReadGrant([accepted,frame(id,instance,true)],readWith));
   }
 });
 

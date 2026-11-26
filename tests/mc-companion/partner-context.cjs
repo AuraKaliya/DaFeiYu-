@@ -17,6 +17,26 @@ function scenarioInput(row) {
   return { ...row.input, messages:original, tools:direct ? tools.filter(tool => tool.name !== 'status_read') : tools, status };
 }
 
+// 对照正式请求的原工具范围与本回合的实例接纳记录，验证包指定的状态读权限。
+// 步骤：定位每个 MC 回合的实例 → 核对当步原契约及实际送模工具 → 对照宿主读口。
+function checkStatusReadGrant(rows, readWith) {
+  const owners = new Map(rows.filter(row => row.kind === 'subagent.accepted').map(row => [row.session+'/'+row.run,row]));
+  for (const row of rows) {
+    if (row.kind !== 'model.prepared' || row.source !== 'plugin' || !scenarioInput(row).status) continue;
+    const owner = owners.get(row.session+'/'+row.run);
+    assert.ok(owner,'状态读取缺少本次插件回合的接纳记录');
+    if (owner.plugin !== 'mc.companion') continue;
+    assert.ok(Number.isSafeInteger(owner.instance) && owner.instance > 0,'状态读取缺少本次 MC 回合的实例身份');
+    const contracts = row.toolContracts.available;
+    const granted = contracts.some(contract => contract.id === readWith && contract.instance === owner.instance);
+    const reader = contracts.findIndex(contract => contract.id === 'host/status_read');
+    assert.equal(row.input.tools.findIndex(tool => tool.name === 'status_read'),reader);
+    if (reader >= 0) assert.ok(granted,'状态读取缺少同实例的原观察授权');
+    if (row.projection?.purpose === 'direct' && granted)
+      assert.ok(reader >= 0,'普通 MC 决策的观察授权应同时开放状态读取');
+  }
+}
+
 // 将试点状态逐项对回同会话先前接纳的任务修订，集成模式另核对宿主已剥离传输字段。
 // 步骤：沿工具回执保存原目标 → 检查初始基线缺样 → 按原主体和修订核对后续送模样本。
 function checkTaskGoalTrace(rows, definition, player, requireProjection) {
@@ -85,4 +105,4 @@ function readPartnerContext(row) {
   return { input, system: system.content, guidance, tools };
 }
 
-module.exports = { checkTaskGoalTrace, readPartnerContext, scenarioInput };
+module.exports = { checkStatusReadGrant, checkTaskGoalTrace, readPartnerContext, scenarioInput };

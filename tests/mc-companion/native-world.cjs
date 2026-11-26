@@ -7,7 +7,7 @@ const path = require('node:path');
 const { openBridge } = require('../../plugins/mc/bridge/pipe.cjs');
 const { fromGround, requiresCollectionApproval } = require('../../plugins/mc/bridge/collection.cjs');
 const { BuiltObjects } = require('../../plugins/mc/bridge/built-objects.cjs');
-const { checkTaskGoalTrace, readPartnerContext, scenarioInput } = require('./partner-context.cjs');
+const { checkStatusReadGrant, checkTaskGoalTrace, readPartnerContext, scenarioInput } = require('./partner-context.cjs');
 
 // 为原坐标提供固定拾取包，用于独立验证计划对拾取人及实际库存的要求。
 function pickedStack(targetCell, item, self = true) {
@@ -1470,6 +1470,8 @@ async function main() {
       if (correctionLost) {
         const rows = fs.readFileSync(path.join(root, 'trace', 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
         const catalog = JSON.parse(fs.readFileSync(path.join(root,'packages','mc.companion','agent','status.json'),'utf8'));
+        assert.equal(catalog.readWith,'mc.companion/observe');
+        checkStatusReadGrant(rows,catalog.readWith);
         const definition = catalog.definitions.find(entry => entry.key === 'mc.companion.task_goal');
         assert.equal(definition.version,1);
         checkTaskGoalTrace(rows,definition,factPlayer,process.env.DFY_MC_REQUIRE_STATUS_PROJECTION === '1');

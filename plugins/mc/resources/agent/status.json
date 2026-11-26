@@ -1,5 +1,6 @@
 {
   "schema": "dafeiyu.status_definitions/1",
+  "readWith": "mc.companion/observe",
   "definitions": [{
     "key": "mc.companion.task_goal",
     "version": 1,
