@@ -129,4 +129,49 @@ test('stale snapshots and source generations cannot reuse an earlier binding', (
   assert.equal(panel.view.value.directoryStatus,'ready');
   assert.equal(panel.view.value.directory.sources.length,0);
   assert.equal(panel.view.value.source,'');
+  f.advance(1550); f.directory([member],{instance:'resident-2',revision:'2'});
+  panel.select(member.id);
+  f.snapshot([],{instance:'resident-3',revision:'1',state:'stale'});
+  assert.equal(panel.view.value.detailStatus,'stale');
+  assert.equal(panel.view.value.directoryStatus,'stale');
+  assert.equal(f.latest('mailbox.list').instance,undefined);
+});
+
+// 同一信件分别核实实际入箱及取件时间，原地址不符时保留最近一次可信读数。
+test('receipts belong to the selected letter and display only confirmed public fields', () => {
+  const f = fixture(), panel = f.panel;
+  f.directory(); panel.visibility(true); f.directory(); panel.select('11');
+  const receipt = { mailbox:'84',sequence:'1',state:'accepted',acceptedUtcMs:1730000000000,acceptedRevision:'5' };
+  const row = { id:'84/1',category:'test.notice',categoryVersion:1,direction:'toHost',state:'pending',receipt,payload:'私有正文' };
+  f.snapshot([row]);
+  let letter = panel.view.value.snapshot.messages[0];
+  assert.equal(letter.direction,'toHost');
+  assert.equal(letter.categoryVersion,1);
+  assert.deepEqual(letter.receipts,[
+    {label:'原信箱',value:'84'}, {label:'投递序号',value:'1'}, {label:'入箱时间',utcMs:1730000000000}, {label:'入箱修订',value:'5'},
+  ]);
+  const collected = {...receipt,state:'received',receivedUtcMs:1730000000200,receivedRevision:'7',privateNote:'私有回执'};
+  f.advance(1550); f.directory();
+  f.snapshot([{...row,state:'received',receipt:collected}],{revision:'7'});
+  letter = panel.view.value.snapshot.messages[0];
+  assert.deepEqual(letter.receipts.slice(-2),[{label:'取件时间',utcMs:1730000000200},{label:'取件修订',value:'7'}]);
+  assert.equal(JSON.stringify(letter).includes('私有'),false);
+  f.advance(1550); f.directory();
+  f.snapshot([{...row,state:'received',receipt:{...collected,sequence:'2'}}],{revision:'8'});
+  assert.equal(panel.view.value.detailStatus,'unavailable');
+  assert.equal(panel.view.value.snapshot.revision,'7');
+});
+
+// 只要地址水位显示早期回执已裁剪，当前投影就不能被当成完整历史。
+test('retention coverage follows the original mailbox watermarks', () => {
+  const f = fixture(), panel = f.panel;
+  f.directory(); panel.visibility(true); f.directory(); panel.select('11');
+  f.snapshot([],{mailboxes:[{accepted:'0',firstRetained:'0'}]});
+  assert.equal(panel.view.value.snapshot.historyLimited,false);
+  f.advance(1550); f.directory();
+  f.snapshot([],{mailboxes:[{accepted:'150',firstRetained:'0'}]});
+  assert.equal(panel.view.value.snapshot.historyLimited,true);
+  f.advance(1550); f.directory();
+  f.snapshot([],{mailboxes:[{accepted:'1',firstRetained:'9'}]});
+  assert.equal(panel.view.value.detailStatus,'unavailable');
 });

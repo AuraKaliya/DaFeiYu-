@@ -17,10 +17,12 @@ const detailLabel = computed(() => {
   if (props.view.detailStatus === 'stale') return '所选来源已失效，请重新选择来源。';
   if (props.view.detailStatus === 'unavailable') return props.view.snapshot ? '读取失败，当前显示上次读到的信件。' : '暂时无法读取这个来源的信件。';
   if (props.view.detailStatus === 'loading') return '正在读取信件…';
-  return props.view.snapshot?.messages.length ? '' : '这个来源暂无信件。';
+  const snapshot = props.view.snapshot;
+  if (!snapshot || snapshot.source !== props.view.source || snapshot.messages.length) return '';
+  return snapshot.historyLimited ? '当前没有可显示的近期信件。' : '这个来源暂无信件。';
 });
 const states: Readonly<Record<string, string>> = { pending: '待收取', received: '原接收方已取件' };
-const kinds: Readonly<Record<string, string>> = { room: '本体书房', builtin: '内置来源', plugin: '插件来源' };
+const kinds: Readonly<Record<string, string>> = { builtin: '内置来源', plugin: '插件来源' };
 const localTime = new Intl.DateTimeFormat(undefined, {dateStyle:'short', timeStyle:'medium'});
 
 // 只通知观察范围改变，系统信箱继续由本体持有。
@@ -48,13 +50,19 @@ function select(event: Event): void { emit('select', (event.currentTarget as HTM
               type="button" class="quiet-action" @click="emit('retry')">重新读取</button>
       <template v-if="view.snapshot && view.detailStatus !== 'stale' && view.snapshot.source === view.source">
         <p class="mail-meta" :data-mail-revision="view.snapshot.revision">来源修订 {{ view.snapshot.revision }}<template v-if="view.snapshot.sampledUtcMs !== undefined"> · 采样 <time :datetime="new Date(view.snapshot.sampledUtcMs).toISOString()">{{ localTime.format(view.snapshot.sampledUtcMs) }}</time></template></p>
+        <p v-if="view.snapshot.historyLimited" class="mail-meta">仅显示后台仍保留的近期回执。</p>
         <ul v-if="view.snapshot.messages.length" :key="JSON.stringify([view.snapshot.instance, view.snapshot.source])" class="mail-letters" aria-label="信件">
           <li v-for="letter in view.snapshot.messages" :key="letter.id">
             <details :data-letter="letter.id">
               <summary><span>{{ letter.category }}</span><span class="mail-state">{{ states[letter.state] ?? letter.state }}</span></summary>
               <dl><dt>信件编号</dt><dd>{{ letter.id }}</dd>
+                <template v-if="letter.categoryVersion !== undefined"><dt>分类版本</dt><dd>{{ letter.categoryVersion }}</dd></template>
+                <template v-if="letter.direction"><dt>投递方向</dt><dd>{{ letter.direction === 'toHost' ? '发往本体' : '发往插件' }}</dd></template>
                 <template v-if="letter.summary"><dt>摘要</dt><dd>{{ letter.summary }}</dd></template>
-                <template v-for="receipt in letter.receipts" :key="receipt.label"><dt>{{ receipt.label }}</dt><dd>{{ receipt.value }}</dd></template>
+                <template v-for="field in letter.receipts" :key="field.label"><dt>{{ field.label }}</dt>
+                  <dd><time v-if="'utcMs' in field" :datetime="new Date(field.utcMs).toISOString()">{{ localTime.format(field.utcMs) }}</time>
+                    <template v-else>{{ field.value }}</template></dd>
+                </template>
               </dl>
               <p v-if="!letter.receipts.length" class="mail-meta">暂无公开回执</p>
             </details>
@@ -72,7 +80,7 @@ summary strong { font-weight: 650 }
 summary .mail-meta, .mail-state { margin-inline-start: 10px }
 .mail-content { padding-block: 6px 2px }
 .mail-meta, .mail-state { color: var(--muted, #536356); font-size: 12px }
-.mail-meta, .mail-feedback { margin-block: 6px }
+.mail-meta, .mail-feedback { margin-block: 6px; overflow-wrap: anywhere }
 .mail-feedback:empty { margin: 0 }
 .mail-source { display: flex; align-items: center; flex-wrap: wrap; gap: 6px }
 select { min-width: 0; max-width: 100%; padding: 4px 6px; font: inherit; color: inherit }

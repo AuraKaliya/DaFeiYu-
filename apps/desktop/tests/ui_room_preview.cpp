@@ -20,6 +20,7 @@ void InteractionProbe::start_room_preview(bool busy) {
     expect("letter states are independently visible","document.querySelectorAll('[data-letter]').length===2 && document.querySelector('[data-letter=\"21\"] summary').textContent.includes('待收取')");
     evaluate("inspect a public receipt","document.querySelector('[data-letter=\"22\"] summary').click(); true");
     expect("received letter has its actual receipt","document.querySelector('[data-letter=\"22\"][open] dl')?.textContent.includes('已由系统收取')");
+    expect("sample receipt preserves each original UTC instant","[...document.querySelectorAll('[data-letter=\"22\"] time')].map(t=>Date.parse(t.dateTime)).join(',')==='1732660800000,1732660802000'");
     evaluate("choose empty sample","pickMail('empty'); true");
     expect("confirmed empty","document.querySelector('.mail-feedback')?.textContent.includes('暂无信件') && !document.querySelector('[data-letter]')");
     evaluate("choose error sample","pickMail('unavailable'); true");

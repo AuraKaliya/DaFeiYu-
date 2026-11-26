@@ -1,5 +1,5 @@
 import { shallowRef } from 'vue';
-import type { MailboxView, MailDirectory, MailSnapshot, MailSource, MailLetter } from './mailbox-view';
+import type { MailboxView, MailDirectory, MailSnapshot, MailSource, MailLetter, MailReceiptField } from './mailbox-view';
 
 type Wire = Record<string, unknown>;
 type Kind = 'list' | 'read';
@@ -36,10 +36,47 @@ function source(entry: Wire): MailSource | undefined {
     kind: id(entry.kind) ? entry.kind : undefined, generation: id(entry.generation) ? entry.generation : undefined,
     plugin: id(entry.plugin) ? entry.plugin : undefined };
 }
-// 只选择管理协议公开的字段，未知字段留在原回包中。
+// 根据实际入箱水位和最早保留序号识别已经裁剪的历史。
+function limitedHistory(addresses: unknown): boolean | undefined {
+  if (addresses === undefined) return false;
+  if (!Array.isArray(addresses)) return;
+  let limited = false;
+  for (const box of addresses) {
+    if (!object(box) || typeof box.firstRetained !== 'string' || !/^\d{1,20}$/.test(box.firstRetained) ||
+        typeof box.accepted !== 'string' || !/^\d{1,20}$/.test(box.accepted)) return;
+    const first = BigInt(box.firstRetained), accepted = BigInt(box.accepted);
+    if (first > accepted) return;
+    if (first > 1n || (first === 0n && accepted > 0n)) limited = true;
+  }
+  return limited;
+}
+// 核对原信箱、连续投递号与入箱状态，只展示该信件实际具备的回执。
+function receiptFields(raw: unknown, letterId: string, received: boolean): MailReceiptField[] | undefined {
+  if (raw === undefined) return [];
+  if (!object(raw) || !id(raw.mailbox) || !id(raw.sequence) || raw.mailbox + '/' + raw.sequence !== letterId ||
+      raw.state !== (received ? 'received' : 'accepted') || !id(raw.acceptedRevision)) return;
+  const accepted = sampled(raw.acceptedUtcMs);
+  if (accepted === undefined) return;
+  const fields: MailReceiptField[] = [
+    { label: '原信箱', value: raw.mailbox }, { label: '投递序号', value: raw.sequence },
+    { label: '入箱时间', utcMs: accepted }, { label: '入箱修订', value: raw.acceptedRevision },
+  ];
+  if (received) {
+    const time = sampled(raw.receivedUtcMs);
+    if (time === undefined || !id(raw.receivedRevision)) return;
+    fields.push({ label: '取件时间', utcMs: time }, { label: '取件修订', value: raw.receivedRevision });
+  }
+  return fields;
+}
+// 只选择管理协议公开的分类、流向、收件状态与回执。
 function letter(entry: Wire): MailLetter | undefined {
   if (!id(entry.id) || !id(entry.category) || (entry.state !== 'pending' && entry.state !== 'received')) return;
-  return { id: entry.id, category: entry.category, state: entry.state, receipts: [] };
+  const receipts = receiptFields(entry.receipt, entry.id, entry.state === 'received');
+  if (!receipts) return;
+  return { id: entry.id, category: entry.category, state: entry.state, receipts,
+    direction: entry.direction === 'toHost' || entry.direction === 'toPlugin' ? entry.direction : undefined,
+    categoryVersion: typeof entry.categoryVersion === 'number' && Number.isSafeInteger(entry.categoryVersion) && entry.categoryVersion > 0
+      ? entry.categoryVersion : undefined };
 }
 
 // 每个窗口持有独立的信箱观察范围，后台拥有消费游标。
@@ -147,9 +184,13 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
     delete pending[kind];
     due[kind] = clock() + 1500;
     if (value.version !== '1' || !id(value.instance) || !id(value.revision)) { fail(kind); return; }
-    if (kind === 'list' && value.event === 'mailbox.directory' && value.state === 'stale') {
+    const replacedOnRead = kind === 'read' && value.event === 'mailbox.snapshot' && value.source === request.source &&
+      value.instance !== request.instance;
+    if (value.state === 'stale' && ((kind === 'list' && value.event === 'mailbox.directory') || replacedOnRead)) {
+      if (replacedOnRead) { delete pending.list; due.list = 0; }
       delete pending.read; discover = true;
       view.value = { ...view.value, directoryStatus: 'stale', detailStatus: 'stale', snapshot: undefined };
+      tick();
       return;
     }
     if (request.instance && value.instance !== request.instance) { fail(kind); return; }
@@ -160,9 +201,10 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
     } else if (kind === 'read' && value.event === 'mailbox.snapshot' && value.source === request.source &&
         view.value.source === request.source && (value.state === 'ready' || value.state === 'stale')) {
       const messages = items(value.messages,letter);
-      if (!messages || (value.state === 'ready' && older(value.revision, view.value.snapshot?.revision))) { fail(kind); return; }
+      const historyLimited = limitedHistory(value.mailboxes);
+      if (!messages || historyLimited === undefined || (value.state === 'ready' && older(value.revision, view.value.snapshot?.revision))) { fail(kind); return; }
       const snapshot: MailSnapshot = { instance: value.instance, source: request.source, revision: value.revision,
-        sampledUtcMs: sampled(value.sampledUtcMs), state: value.state, messages };
+        sampledUtcMs: sampled(value.sampledUtcMs), state: value.state, messages, historyLimited };
       view.value = { ...view.value, detailStatus: value.state, snapshot: value.state === 'ready' ? snapshot : undefined };
     } else { fail(kind); return; }
     tick();
