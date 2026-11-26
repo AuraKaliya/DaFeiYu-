@@ -20,8 +20,8 @@ void InteractionProbe::start_host_settings() {
     next();
 }
 
-// 仅替换插件目录读口的回包，在正式设置页面覆盖可用、过期和重连的反馈。
-// 步骤：选中原实例的包 → 核对失败时的旧列表 → 更换后台并读取空目录。
+// 固定插件读写的原生回包，在正式设置页面区分采样、接纳、实例保留及实际退出。
+// 步骤：选包并变更后台 → 读取空或不完整目录 → 提交后改选 → 核对忙碌、收尾及过期回执。
 void InteractionProbe::start_plugin_settings() {
     const Json rows=Json::array({{{"id","test.one"},{"name","一号插件"},{"version","1.2"},{"state","installed"},
         {"installed",true},{"loaded",false},{"generation","0"},{"canLoad",true},{"canUnload",false}},
@@ -125,16 +125,17 @@ void InteractionProbe::start_plugin_settings() {
     evaluate("retry from the same generation","document.querySelector('#plugin-unload').click(); true");
     stop.update(Json{{"command","3"},{"state","queued"},{"effect","unconfirmed"}}); stop.erase("nativeResult");
     reply(stop,"plugins.unload");
-    stop.update(Json{{"state","pending"},{"effect","stopping"},{"nativeResult","pending"}});
+    stop.update(Json{{"state","pending"},{"effect","stopping"},{"nativeResult","closed"}});
     reply(stop,"plugins.receipt");
-    expect("stopping does not report an actual exit","document.querySelector('[data-work-state=pending]')?.textContent.includes('等待原实例退出') && document.querySelector('#plugin-unload').disabled");
+    expect("native closure is distinct from actual exit","document.querySelector('[data-work-state=pending]')?.textContent.includes('等待原实例退出') && "
+        "document.querySelector('.plugin-operation details').textContent.includes('closed') && document.querySelector('#plugin-unload').disabled");
     stop.update(Json{{"state","succeeded"},{"effect","unloaded"}});
     reply(stop,"plugins.receipt");
     active_rows[1] = rows[0]; active_rows[1].update(Json{{"id","test.two"},{"name","二号插件"},{"version","2"}});
     sample.update(Json{{"revision","6"},{"packages",active_rows}});
     reply(sample);
-    expect("confirmed exit keeps the original pending return separately","document.querySelector('[data-work-effect=unloaded]')?.textContent.includes('已卸载') && "
-        "document.querySelector('.plugin-operation details').textContent.includes('pending') && document.querySelector('[data-selected-package=\"test.two\"]')?.dataset.selectedGeneration==='0'");
+    expect("confirmed exit keeps the actual original native return","document.querySelector('[data-work-effect=unloaded]')?.textContent.includes('已卸载') && "
+        "document.querySelector('.plugin-operation details').textContent.includes('closed') && document.querySelector('[data-selected-package=\"test.two\"]')?.dataset.selectedGeneration==='0'");
     evaluate("read the completed operation after retirement","document.querySelector('.plugin-operation summary').click(); document.querySelector('#check-plugin-receipt').click(); true");
     reply({{"event","plugins.operation"},{"instance","host-b"},{"state","expired"},{"effect","unknown"}},"plugins.receipt");
     expect("retired receipt preserves the last confirmed exit","document.querySelector('[data-work-effect=unloaded]')?.textContent.includes('回执已过期')");
