@@ -10,6 +10,7 @@ import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
 import ResidentRoomMailbox from './ResidentRoomMailbox.vue';
 import PluginSettings from './PluginSettings.vue';
+import HostSettings from './HostSettings.vue';
 import { originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -545,6 +546,7 @@ onUnmounted(() => {
       </RoomStateView>
     </template>
     <template #settings="{ active }">
+      <HostSettings :active="active" :instance="ready && messages.subscribed.value && shutdown === 'idle' ? messages.instance.value : ''" />
       <PluginSettings :active="active" :connected="ready && shutdown === 'idle'" />
       <h3 class="group-title">后台运行</h3>
       <p class="source-note">关闭管理中心后，大肥鱼会继续工作。</p>

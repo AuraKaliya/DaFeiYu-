@@ -53,7 +53,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
         }
         if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt" ||
             type == "mailbox.list" || type == "mailbox.read" || type == "plugins.list" || type == "plugins.receipt" ||
-            type == "plugins.load" || type == "plugins.unload") {
+            type == "plugins.load" || type == "plugins.unload" || type == "settings.read") {
             if (!panel) return E_ACCESSDENIED;
             return management_reply(message,source,false);
         }
@@ -105,7 +105,7 @@ HRESULT ProbeHost::management_reply(const nlohmann::json& request, std::wstring_
         else if (request.at("type")=="host.stop" || request.at("type")=="logs.open" || request.at("type")=="logs.read" ||
             request.value("type",std::string{}).starts_with("messages.") ||
             request.at("type")=="mailbox.list" || request.at("type")=="mailbox.read" ||
-            request.at("type")=="plugins.list" || request.at("type")=="plugins.receipt")
+            request.at("type")=="plugins.list" || request.at("type")=="plugins.receipt" || request.at("type")=="settings.read")
             deliver({{"event","management.error"},{"version","1"},{"request",request.at("request")},{"reason","management client queue unavailable"}});
     }
     return S_OK;

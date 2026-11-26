@@ -1,5 +1,6 @@
 import { shallowRef } from 'vue';
-import { pluginNumber, type PluginPost, type PluginReading, type usePluginDirectory } from './plugin-directory.ts';
+import type { PluginPost, PluginReading, usePluginDirectory } from './plugin-directory.ts';
+import { managementNumber as pluginNumber, managementRecord as object } from './management-values.ts';
 
 type Directory = ReturnType<typeof usePluginDirectory>;
 type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
@@ -22,8 +23,6 @@ function validOutcome(state: string, effect: string, original: PluginWork, gener
   return effect === 'notApplied' || effect === 'retained' || effect === 'notLoaded' || effect === 'unconfirmed';
 }
 
-// 核对后台或本窗保存的值对象，字符串身份不经过浮点转换。
-function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 // 只恢复原后台明确的命令和操作号，页面重复打开不会重写命令。
 function savedWork(value: unknown, instance: string): value is PluginWork {
   return object(value) && value.instance === instance && (value.action === 'load' || value.action === 'unload') &&

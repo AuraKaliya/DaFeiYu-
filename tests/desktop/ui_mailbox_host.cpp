@@ -13,8 +13,8 @@ using namespace std::chrono_literals;
 
 // 用真实测试插件发一封待收信件，记录固定模型的每次实际调用。
 // 步骤：创建隔离应用 → 手动收件并加载插件 → 由原插件代次发送测试来信。
-std::unique_ptr<app::Application> open_fixture(const fs::path& data) {
-    auto app = std::make_unique<app::Application>(model::Config{},data/"plugins",data,model::Backend{
+std::unique_ptr<app::Application> open_fixture(const fs::path& data, const model::Config& config) {
+    auto app = std::make_unique<app::Application>(config,data/"plugins",data,model::Backend{
         [data](const auto&,const auto&) -> model::Response {
             std::ofstream(data/"fixed-model-calls",std::ios::app) << "called\n";
             return {{model::Role::assistant,"固定收件答复"}};
@@ -64,7 +64,10 @@ int wmain(int argc,wchar_t** argv) {
         const std::wstring_view mode=argv[1];
         const fs::path config=argv[2], data=argv[3];
         const auto definition=management::startup_identity(config,data/"plugins");
-        if (mode==L"serve") return management::serve_resident(data,definition,[data] { return open_fixture(data); });
+        if (mode==L"serve" || mode==L"serve-settings") {
+            const auto options = mode==L"serve-settings" ? model::load_config(config) : model::Config{};
+            return management::serve_resident(data,definition,[data,options] { return open_fixture(data,options); });
+        }
         if (mode!=L"review" && mode!=L"reload") return 2;
         control(data,definition,mode==L"reload");
         return 0;

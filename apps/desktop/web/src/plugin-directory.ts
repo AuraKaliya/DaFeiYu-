@@ -1,6 +1,6 @@
 import { shallowRef } from 'vue';
+import { managementNumber as pluginNumber, managementRecord as record } from './management-values.ts';
 
-type Wire = Record<string, unknown>;
 export type PluginPost = (request: Readonly<Record<string, string>>) => void;
 export interface PluginPackage {
   id: string; name: string; version: string; state: 'installed' | 'active' | 'stopping' | 'failed';
@@ -13,13 +13,6 @@ export interface PluginDirectoryView {
   reading?: PluginReading; selected: string; notice: string;
 }
 
-// 管理回包只接受具名字段的对象。
-function record(value: unknown): value is Wire { return !!value && typeof value === 'object' && !Array.isArray(value); }
-// 保留后台签发的完整十进制字符串，修订和实例代次不经过浮点转换。
-export function pluginNumber(value: unknown): value is string {
-  return typeof value === 'string' && /^(0|[1-9]\d{0,19})$/.test(value) &&
-    (value.length < 20 || value <= '18446744073709551615');
-}
 // 管理计数和原生错误码只接受可完整表示的非负整数。
 function count(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
 

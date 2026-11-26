@@ -215,6 +215,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.postMessage({type:'messages.receipt',version:'1',request:'other-receipt',conversation:'main',source:'desktop',submission:'previous'});
         bridge.postMessage({type:'mailbox.list',version:'1',request:'other-mail-directory'});
         bridge.postMessage({type:'plugins.list',version:'1',request:'other-plugin-directory'});
+        bridge.postMessage({type:'settings.read',version:'1',request:'other-host-settings',owner:'host',instance:'original'});
         bridge.postMessage({type:'plugins.receipt',version:'1',request:'other-plugin-receipt',instance:'original',operation:'held'});
         bridge.postMessage({type:'plugins.load',version:'1',request:'other-plugin-load',instance:'original',command:'1',id:'test.one',revision:'1',generation:'0'});
         bridge.postMessage({type:'plugins.unload',version:'1',request:'other-plugin-unload',instance:'original',command:'2',id:'test.one',revision:'1',generation:'1'});

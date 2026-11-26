@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -23,8 +23,8 @@ function Start-FixtureProcess([string]$Program, [string]$Arguments) {
 }
 
 # 等待原数据目录确认刚启动的固定响应本体，再让面板走正式管道。
-function Start-Resident {
-    $resident = Start-FixtureProcess $Fixture ('serve "'+$config+'" "'+$data+'"')
+function Start-Resident([string]$Mode='serve') {
+    $resident = Start-FixtureProcess $Fixture ($Mode+' "'+$config+'" "'+$data+'"')
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     do {
         try { $status = (& $App --host-status $data 2>$null | Out-String) | ConvertFrom-Json }
@@ -77,6 +77,14 @@ try {
         Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
         [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
         [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
+        if ($HostSettings) {
+            [IO.File]::WriteAllText($config,'{"provider":"deepseek","base_url":"https://offline.invalid","model":"fixture","api_key_env":"DFY_UNUSED_HISTORY_FIXTURE","timeout_ms":17000}')
+            $resident = Start-Resident 'serve-settings'
+            Wait-Panels @((Start-Panel 'settings-read'))
+            if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading host settings called the model' }
+            Stop-Resident $resident
+            return
+        }
         if ($PluginSettings -or $PluginActions) {
             $second = Join-Path $data 'plugins/second'
             $null = New-Item -ItemType Directory -Path $second

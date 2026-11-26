@@ -1,6 +1,24 @@
 #include "../src/interaction_probe.hpp"
 
 namespace dfy::ui {
+// 在已握手窗口读取原后台实际采用的固定配置，并核实重复读取没有变更修订。
+// 步骤：打开设置 → 对照原生已发布字段 → 刷新并确认采用值。
+void InteractionProbe::start_host_settings() {
+    expect("settings session is bound","document.querySelector('#dialogue-state')?.dataset.ready==='true'");
+    evaluate("observe original host settings",R"JS((()=>{
+        window.hostReads=[];chrome.webview.addEventListener('message',({data})=>{
+            if(data.event==='settings.snapshot' && data.owner==='host' && data.state==='ready')hostReads.push(data);
+        }); document.querySelector('#board-settings').click();return true;
+    })())JS");
+    expect("formal settings display the actual startup configuration","document.querySelector('.host-settings')?.dataset.settingsState==='ready' && "
+        "document.querySelector('#host-provider')?.textContent==='deepseek' && document.querySelector('#applied-timeout')?.textContent.includes('17000') && "
+        "document.querySelector('#saved-timeout')?.textContent.includes('17000') && hostReads[0]?.instance===document.querySelector('.host-settings').dataset.settingsInstance");
+    evaluate("refresh original settings","document.querySelector('#refresh-host-settings').click(); true");
+    expect("reading keeps original host, revision and active value","hostReads.length>=2 && hostReads.at(-1).instance===hostReads[0].instance && "
+        "hostReads.at(-1).revision===hostReads[0].revision && !hostReads.at(-1).pendingRestart && hostReads.at(-1).fields.find(f=>f.id==='timeout_ms').appliedValue===17000");
+    next();
+}
+
 // 仅替换插件目录读口的回包，在正式设置页面覆盖可用、过期和重连的反馈。
 // 步骤：选中原实例的包 → 核对失败时的旧列表 → 更换后台并读取空目录。
 void InteractionProbe::start_plugin_settings() {
