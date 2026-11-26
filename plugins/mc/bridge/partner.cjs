@@ -7,7 +7,7 @@ const { observationInput, observeWindow } = require('./partner-observe.cjs');
 const { observeShore } = require('./shore.cjs');
 const { observeDrops, readDropTarget } = require('./dropped-items.cjs');
 const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
-const { pickupDrop } = require('./pickup-drop.cjs');
+const { pickupDrop, pickupRemainder } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
 const { giveItem, refreshHandoff, handoffSample, originalHandoffReceipt } = require('./give-item.cjs');
 const { chestWindows, chestSample, chestError } = require('./single-chest.cjs');
@@ -634,10 +634,25 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
           (from, goal) => probePath(bot, from, goal)?.status, args.probeFirst === true);
       } else if (r.skill === 'collect') await collect(bot, args, check, job, built);
       else if (r.skill === 'pickup_drop') {
-        await pickupDrop(bot, args, dropSource(r, args.observation), check, result, {
+        const source = dropSource(r,args.observation), observation = records.get(workKey(r.controller,args.observation));
+        const last = observation.pickups?.get(args.entity);
+        if (last !== args.resumeWork) {
+          if (last) result.originalWork = last;
+          throw chestError('pickup_original_work','请沿此次观察中指定实体的原工作核对余量');
+        }
+        const previous = last && records.get(workKey(r.controller,last));
+        let continuation;
+        if (last) {
+          try { continuation = pickupRemainder(previous,source,args); }
+          catch (error) { result.originalWork = last; throw error; }
+        }
+        await pickupDrop(bot, args, source, check, result, {
           go: (stand, allowed) => walk(bot, new goals.GoalBlock(stand.x, stand.y, stand.z), allowed),
           setSampler: sample => { job.sampleProgress = sample; },
           stop() { bot.pathfinder.setGoal(null); bot.clearControlStates(); },
+        },continuation,() => {
+          observation.pickups ??= new Map();
+          observation.pickups.set(args.entity,job.id);
         });
       }
       else if (r.skill === 'give_item') {
@@ -757,11 +772,11 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
             [...observations].some(job => chestRead(job.args.mode) && !job.receipt.exited))))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
-      const reference = ['store_item','withdraw_item','give_item'].includes(skill) ? args.observation :
+      const reference = ['store_item','withdraw_item','give_item','pickup_drop'].includes(skill) ? args.observation :
         skill === 'observe' && ['handoff_receipt','chest_receipt'].includes(args.mode) ? args.work : null;
       const lookup = reference && records.get(workKey(context.controller,reference));
-      const withdrawal = skill === 'give_item' && args.withdrawalWork && records.get(workKey(context.controller,args.withdrawalWork));
-      makeReceiptRoom(records,active,context,lookup,(generation,order) => inbox.inPresence(generation,order),withdrawal);
+      const parent = skill === 'give_item' ? args.withdrawalWork : skill === 'pickup_drop' ? args.resumeWork : undefined;
+      makeReceiptRoom(records,active,context,lookup,(generation,order) => inbox.inPresence(generation,order),parent && records.get(workKey(context.controller,parent)));
       const job = { id, key, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(key, job);
       if (controlsBody) {

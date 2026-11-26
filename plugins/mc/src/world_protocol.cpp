@@ -282,18 +282,34 @@ void verify_drop_target(const Json& sample, const Json& args, const Json& genera
 
 // 将独立拾取的选定实体、收取数量和库存增减同原命令核对。
 // 步骤：绑定原观察与目标 → 校验拾取人和原堆 → 对照进展、库存差量与成功条件。
-bool verify_ground_pickup(const Json& result, const Json& args, const Json& generation, bool exited) {
+bool verify_ground_pickup(const Json& result, const Json& args, const Json& context, bool exited) {
     if (!result.contains("pickup")) {
         if (result.contains("progress") || (exited && result.at("status") == "done"))
             throw std::invalid_argument("MC: missing pickup evidence");
         return false;
     }
     const auto& target = result.at("dropTarget");
-    verify_drop_target(target,args,generation);
+    verify_drop_target(target,args,context.at("generation"));
     const auto& pickup = result.at("pickup");
     const auto& entry = pickup.at("observed");
     const auto& name = pickup.at("item").get_ref<const std::string&>();
     const auto requested = args.at("count").get<std::int64_t>();
+    std::int64_t original_count = requested;
+    if (args.contains("resumeWork") != pickup.contains("continuation")) throw std::invalid_argument("MC: missing original pickup work");
+    if (pickup.contains("continuation")) {
+        const auto& basis = pickup.at("continuation");
+        if (basis.at("work") != args.at("resumeWork") || basis.at("root").get_ref<const std::string&>().empty() ||
+            basis.at("root").get_ref<const std::string&>().size() > 128 || !basis.at("sourceMessage").is_number_unsigned() ||
+            basis.at("sourceMessage") == 0 || basis.at("sourceMessage") > context.at("order") ||
+            !basis.at("originalCount").is_number_unsigned() || basis.at("originalCount") > INT32_MAX ||
+            !basis.at("verifiedBefore").is_number_unsigned() || basis.at("verifiedBefore") > INT32_MAX ||
+            !basis.at("otherBefore").is_number_unsigned() || basis.at("otherBefore") > INT32_MAX)
+            throw std::invalid_argument("MC: invalid pickup continuation basis");
+        original_count = basis.at("originalCount").get<std::int64_t>();
+        if (original_count != target.at("original").at("count") ||
+            original_count-basis.at("verifiedBefore").get<std::int64_t>()-basis.at("otherBefore").get<std::int64_t>() != requested)
+            throw std::invalid_argument("MC: pickup continuation exceeds verified remainder");
+    }
     if (name.empty() || name != item_name(args.at("item").get_ref<const std::string&>()) || requested < 1 || requested > 0x7fffffff ||
         pickup.at("requested") != requested || !pickup.at("approachAttempted").is_boolean() || !pickup.at("stockCurrent").is_boolean() ||
         !pickup.at("stockSampledAtMs").is_number_unsigned()) throw std::invalid_argument("MC: invalid pickup request binding");
@@ -320,7 +336,7 @@ bool verify_ground_pickup(const Json& result, const Json& args, const Json& gene
         if (!pickup.at(key).is_number_unsigned() || pickup.at(key) > 0x7fffffff) throw std::invalid_argument("MC: invalid pickup stock");
     const bool seen = entry.at("state") != "unseen";
     if ((seen || pickup.at("approachAttempted") == true) && (target.at("state") != "tracked" || target.at("withinOriginalRadius") != true ||
-        target.at("original").at("item") != name || target.at("original").at("count") != requested ||
+        target.at("original").at("item") != name || target.at("original").at("count") != original_count ||
         target.at("item") != name || target.at("count") != requested)) throw std::invalid_argument("MC: pickup target changed");
     int own = 0, other = 0;
     if (seen) {
@@ -706,9 +722,10 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         !args.at("work").is_string() || args.at("work").get_ref<const std::string&>().empty() || args.at("work").get_ref<const std::string&>().size() > 128))
         throw std::invalid_argument("MC: invalid handoff work reference");
     context["controller"] = config.controller;
-    // 旧桥接会拒绝带新约束的技能名，防止忽略采掘审批或原取出工作。
+    // 旧桥接会拒绝带新约束的技能名，防止忽略采掘审批、原取出工作或拾取余量。
     const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" :
-        skill == "give_item" && args.contains("withdrawalWork") ? "give_withdrawn_item" : skill;
+        skill == "give_item" && args.contains("withdrawalWork") ? "give_withdrawn_item" :
+        skill == "pickup_drop" && args.contains("resumeWork") ? "resume_pickup_drop" : skill;
     return Json{{"version",1},{"id",id},{"key",config.key},{"method",method},{"context",std::move(context)},
         {"skill",wire_skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
 }
@@ -843,7 +860,7 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         verify_fill(result,envelope.at("arguments"),result.at("status") == "done");
     }
     std::string progress = skill == "give_item" && !exited ? handoff_progress(result) : std::string{};
-    const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context.at("generation"),exited);
+    const bool picked = skill == "pickup_drop" && verify_ground_pickup(result,args,context,exited);
     if (skill == "pickup_drop" && result.contains("progress")) progress = result.at("progress").dump();
     if (skill == "collect" && (result.contains("capacity") || result.value("reasonCode","") == "pickup_inventory_full")) {
         const auto& capacity = result.at("capacity");

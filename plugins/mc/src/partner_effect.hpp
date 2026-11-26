@@ -27,7 +27,9 @@ inline bool game_uuid(const nlohmann::json& value) {
 
 // 核对两种拾取入口共有的观察身份、物品注册名和整堆数量。
 inline bool valid_pickup_request(const nlohmann::json& args) {
-    return args.is_object() && args.size() == 4 && args.contains("observation") && args.at("observation").is_string() &&
+    return args.is_object() && args.size() == 4+args.count("resumeWork") && (!args.contains("resumeWork") ||
+        (args.at("resumeWork").is_string() && !args.at("resumeWork").get_ref<const std::string&>().empty() &&
+         args.at("resumeWork").get_ref<const std::string&>().size() <= 128)) && args.contains("observation") && args.at("observation").is_string() &&
         !args.at("observation").get_ref<const std::string&>().empty() && args.at("observation").get_ref<const std::string&>().size() <= 128 &&
         args.contains("entity") && game_uuid(args.at("entity")) && args.contains("item") && args.at("item").is_string() &&
         !item_name(args.at("item").get_ref<const std::string&>()).empty() && args.contains("count") &&

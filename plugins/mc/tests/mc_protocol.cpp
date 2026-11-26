@@ -181,6 +181,19 @@ void ground_pickup_protocol() {
     const auto success = read();
     if (!success.arrived || !success.changed || !success.inventory_attempted || Json::parse(success.progress) != progress)
         throw std::runtime_error("ground pickup lost packet, inventory or work progress");
+    auto resumed = frame;
+    auto resume_args = args;
+    resume_args["resumeWork"] = "partial";
+    auto& resumed_result = resumed["action"]["result"];
+    resumed_result["dropTarget"]["original"]["count"] = 5;
+    resumed_result["pickup"]["continuation"] = {{"work","partial"},{"root","first"},{"sourceMessage",1},{"originalCount",5},{"verifiedBefore",1},{"otherBefore",1}};
+    const auto read_resume = [&] { return dfy::mc::partner_reply(resumed.dump(),"ground",controller,"pickup_drop",
+        Json{{"context",context},{"arguments",resume_args}}.dump()); };
+    if (!read_resume().arrived) throw std::runtime_error("verified pickup continuation lost");
+    resumed_result["pickup"]["continuation"]["verifiedBefore"] = 0;
+    rejects(read_resume);
+    invalid = resume_args;
+    if (Json::parse(submit()).at("skill") != "resume_pickup_drop") throw std::runtime_error("legacy bridge can ignore pickup remainder");
     observed["uuid"] = generation;
     rejects(read);
     observed["uuid"] = entity;
