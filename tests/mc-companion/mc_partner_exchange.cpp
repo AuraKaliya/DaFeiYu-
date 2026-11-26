@@ -39,7 +39,9 @@ int wmain(int argc, wchar_t** argv) {
             const auto body = Json::parse(last.content);
             if (!body.contains("delegation")) return {{Role::assistant,R"({"internal":"game fact acknowledged"})"}};
             if (++delegated != 1 || body.at("delegation").at("text") != "give a local greeting" || !body.at("events").empty() ||
-                body.contains("mcGuidance") || !input.messages.front().content.starts_with("Minecraft 委托规则\n") ||
+                body.contains("mcGuidance") || input.messages.front().source!=MessageSource::rules ||
+                input.messages.front().content.find("\nMinecraft 委托规则\n")==std::string::npos ||
+                input.messages.front().content.find("交回发起任务的插件")==std::string::npos ||
                 input.tools.size() != 3 || std::ranges::any_of(input.tools,[](const auto& tool) {
                     return tool.name.ends_with("_move") || tool.name.ends_with("_skills") || tool.name.ends_with("_collect_confirmed");
                 })) throw std::runtime_error("delegation lost source or widened authority");

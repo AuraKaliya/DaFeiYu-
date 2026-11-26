@@ -46,7 +46,8 @@ void verify(const fs::path& package, const fs::path& ordinary, const fs::path& r
                 entered.set_value();
                 gate.wait_for(5s);
             } else if (prompt == "where are you") {
-                check(request.tools.empty() && request.messages.size() == 1, "child context entered primary session");
+                check(request.tools.empty() && request.messages.size()==2 && request.messages.front().source==model::MessageSource::rules &&
+                    request.messages.back().source==model::MessageSource::human, "child context entered primary session");
             }
             return model::Response{{model::Role::assistant, "answer:" + prompt}};
         }});

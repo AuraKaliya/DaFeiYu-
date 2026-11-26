@@ -2,6 +2,7 @@
 #include "application_commands.hpp"
 #include "chat.hpp"
 #include <dafeiyu/tool_abi_v2.h>
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -65,7 +66,9 @@ void read_only(const fs::path& package, const fs::path& root) {
                     "native read result was not paired");
                 return Response{{Role::assistant,"read verified"}};
             case 3:
-                check(request.tools.empty() && last.content == "plain" && request.messages[2].role == Role::tool,
+                check(request.tools.empty() && last.content == "plain" && std::ranges::any_of(request.messages,[](const auto& previous) {
+                    return previous.role==Role::tool && previous.tool_call_id=="read-1" && previous.content.find("output:\n0")!=std::string::npos;
+                }),
                     "plain turn lost structured history or inherited tool grant");
                 return Response{{Role::assistant,"plain reply"}};
             }
