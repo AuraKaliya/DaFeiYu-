@@ -513,9 +513,11 @@ struct RunLoopState {
             const auto utc = record->context_->event_time();
             if (!utc) throw std::runtime_error("run: decision status clock unavailable");
             const auto sources = options.decision_status->sample ? options.decision_status->sample() : std::vector<DecisionStatusSource>{};
+            const auto run = record->run_id();
+            const auto task = record->plan_ ? "plan/"+std::to_string(run.session)+"/"+std::to_string(run.sequence) : std::string{};
             const auto freeze = [&](bool rebuild) {
-                frozen = options.status_store->prepare(record->run_id().session,options.status_epoch,record->run_id().sequence,
-                    current.attempt.step.sequence,*utc,sources,rebuild);
+                frozen = options.status_store->prepare(run.session,options.status_epoch,run.sequence,
+                    current.attempt.step.sequence,*utc,sources,rebuild,task);
                 return model::sourced_message(model::MessageSource::host_status,frozen->tail,*utc);
             };
             const bool baseline = options.replace_history && !record->model_requests_;

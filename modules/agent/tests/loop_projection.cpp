@@ -168,6 +168,10 @@ void replay() {
             std::ranges::count(messages,MessageSource::host_status,&Message::source)==1 &&
             tail.at("schema")=="dafeiyu.agent_status/1" && tail.at("items").empty() &&
             tail.at("step")==std::array{1,2,1,1,2,3,4}[i], "unexpected or accumulated decision tail");
+        const auto& scope = tail.at("scope");
+        if (i>=3) check(scope.at("task")=="plan/"+scope.at("session").get<std::string>()+"/"+
+            std::to_string(tail.at("turn").get<std::uint64_t>()),"replanning lost its original task");
+        else check(!scope.contains("task"),"ordinary conversation acquired an unrelated plan");
         if (i==1) check(messages[messages.size()-2].tool_call_id=="stock-W17","tail split tool continuation");
     }
     check(projections[0].size() == 2 && projections[2].size() == 2 &&
