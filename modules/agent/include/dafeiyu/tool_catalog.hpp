@@ -66,8 +66,8 @@ class ToolCatalog {
     ToolCatalog(const ToolCatalog&) = delete;
     // 禁止赋值或移动覆盖活动目录。
     ToolCatalog& operator=(const ToolCatalog&) = delete;
-    // 完整校验后注册描述和可选工厂；未绑定实现的描述不会向模型暴露。
-    runtime::DomainId add(ToolDescription description, ToolFactory factory = {});
+    // 注册描述和可选工厂；派生读取须取单成员普通只读授权，参数与上下文均未绑定，随后复核原注册。
+    runtime::DomainId add(ToolDescription description, ToolFactory factory = {}, const ToolSnapshot* required_read = nullptr);
     // 撤销并释放注册槽，旧快照仍保留描述但不能再解析执行目标。
     void remove(runtime::DomainId registration);
     // 改变当前授权开关，不改变已签发身份或旧快照成员集合。

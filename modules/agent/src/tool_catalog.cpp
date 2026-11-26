@@ -10,11 +10,23 @@
 
 namespace dfy::agent {
 struct ToolEntry {
+    enum class Grant { enabled, disabled, revoked };
     const ToolDescription description;
     const ToolSchema schema;
     const runtime::DomainId registration;
     const ToolFactory factory;
-    bool enabled = true, registered = true;
+    const std::optional<std::weak_ptr<const ToolEntry>> required_read;
+    Grant grant = Grant::enabled;
+    // 合并自身与前置原注册的实时授权，原目录退出或前置对象释放都表示撤销。
+    // 步骤：检查自有注册 → 锁定单层只读前置 → 核对撤销与临时禁用。
+    Grant effective_grant() const noexcept {
+        if (grant == Grant::revoked || !required_read) return grant;
+        const auto original = required_read->lock();
+        if (!original || original->grant == Grant::revoked) return Grant::revoked;
+        return grant == Grant::disabled ? Grant::disabled : original->grant;
+    }
+    // 只有当前授权有效且已绑定实现的成员可以投影和派生读取。
+    bool available() const noexcept { return factory && effective_grant() == Grant::enabled; }
 };
 namespace {
 // 固定参数保留 JSON 类型和完整对象内容，重复字段不能形成多义授权。
@@ -37,14 +49,24 @@ ToolCatalog::ToolCatalog(std::size_t capacity) {
     entries_.resize(capacity);
 }
 // 目录退出只撤销自己的成员，快照不拥有延续授权的权力。
-ToolCatalog::~ToolCatalog() { for (const auto& entry : entries_) if (entry) entry->registered = false; }
+ToolCatalog::~ToolCatalog() { for (const auto& entry : entries_) if (entry) entry->grant = ToolEntry::Grant::revoked; }
 // 在发布注册前校验全部描述，失败不消耗槽位或改变已有实例。
-// 步骤：校验身份与模型描述 → 拒绝名称冲突 → 准备参数契约 → 签发注册并发布。
-runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory factory) {
+// 步骤：校验身份与只读前置 → 拒绝名称冲突 → 准备参数契约 → 签发注册并发布。
+runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory factory, const ToolSnapshot* required_read) {
     if (description.id.empty() || description.id.size() > 128 || !description.instance || !description.version)
         throw std::invalid_argument("tools: identity, instance and version required");
     if (description.receipt_view_bytes && (description.receipt_view_bytes < 256 || description.receipt_view_bytes > 64*1024))
         throw std::invalid_argument("tools: receipt view must fit 256..65536 bytes");
+    std::optional<std::weak_ptr<const ToolEntry>> prerequisite;
+    if (required_read) {
+        if (description.changes_state || !factory || required_read->fixed_arguments_ ||
+            required_read->context_ || required_read->entries_.size() != 1)
+            throw std::invalid_argument("tools: one ordinary read grant and a read-only implementation required");
+        const auto& original = required_read->entries_.front();
+        if (original->description.changes_state || original->required_read || !original->available())
+            throw std::invalid_argument("tools: unavailable or dependent read prerequisite");
+        prerequisite.emplace(original);
+    }
     for (const auto c : description.id) if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == '/'))
         throw std::invalid_argument("tools: invalid canonical ID");
@@ -59,7 +81,7 @@ runtime::DomainId ToolCatalog::add(ToolDescription description, ToolFactory fact
     TraceVersions metadata; metadata.tools.push_back({description.id,description.version,description.instance,description.plugin_version,description.schema_digest});
     validate_trace_versions(metadata);
     const auto registration = runtime::next_domain();
-    *slot = std::make_shared<ToolEntry>(std::move(description),std::move(schema),registration,std::move(factory));
+    *slot = std::make_shared<ToolEntry>(std::move(description),std::move(schema),registration,std::move(factory),std::move(prerequisite));
     return registration;
 }
 // 仅按当前注册身份查找，不从过期身份猜测目标。
@@ -69,11 +91,13 @@ std::shared_ptr<ToolEntry> ToolCatalog::find(runtime::DomainId registration) con
 }
 // 先撤销旧快照的执行资格，再释放当前目录槽。
 void ToolCatalog::remove(runtime::DomainId registration) {
-    const auto entry = find(registration); entry->registered = false;
+    const auto entry = find(registration); entry->grant = ToolEntry::Grant::revoked;
     for (auto& slot : entries_) if (slot == entry) { slot.reset(); return; }
 }
 // 立即改变当前授权开关，旧快照在下次解析时观察此变更。
-void ToolCatalog::enable(runtime::DomainId registration, bool enabled) { find(registration)->enabled = enabled; }
+void ToolCatalog::enable(runtime::DomainId registration, bool enabled) {
+    find(registration)->grant = enabled ? ToolEntry::Grant::enabled : ToolEntry::Grant::disabled;
+}
 // 只允许宿主明确列出的工具进入模型可见集合，任一错误都不交付部分授权。
 // 步骤：检查授予数量及重复 → 核对成员与变更权限 → 形成固定快照。
 ToolSnapshot ToolCatalog::snapshot(std::span<const std::string> ids, bool allow_changes) const {
@@ -82,7 +106,8 @@ ToolSnapshot ToolCatalog::snapshot(std::span<const std::string> ids, bool allow_
     for (const auto& id : ids) {
         if (!seen.insert(id).second) throw std::invalid_argument("tools: duplicate grant");
         const auto entry = std::find_if(entries_.begin(),entries_.end(),[&](const auto& item) { return item && item->description.id == id; });
-        if (entry == entries_.end() || !(*entry)->enabled || ((*entry)->description.changes_state && !allow_changes))
+        if (entry == entries_.end() || (*entry)->effective_grant() != ToolEntry::Grant::enabled ||
+            ((*entry)->description.changes_state && !allow_changes))
             throw std::invalid_argument("tools: grant unavailable or not authorized");
         selected.push_back(*entry);
     }
@@ -91,7 +116,7 @@ ToolSnapshot ToolCatalog::snapshot(std::span<const std::string> ids, bool allow_
 // 投影固定成员中当前仍允许执行的描述，查询不扩大授权或改变注册生命周期。
 std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
     std::vector<model::ToolDefinition> result;
-    for (const auto& entry : entries_) if (entry->registered && entry->enabled && entry->factory) result.push_back(entry->description.model);
+    for (const auto& entry : entries_) if (entry->available()) result.push_back(entry->description.model);
     return result;
 }
 // 由当前可用的原注册生成与授权排列无关的模型定义。
@@ -109,7 +134,7 @@ std::vector<model::ToolDefinition> ToolSnapshot::ordered_definitions(std::vector
 // 按注册展示序和规范 ID 返回有效或原固定成员，供模型、规划和诊断复用。
 std::vector<ToolDescription> ToolSnapshot::descriptions(bool available_only) const {
     std::vector<ToolDescription> result;
-    for (const auto& entry : entries_) if (!available_only || (entry->registered && entry->enabled && entry->factory)) result.push_back(entry->description);
+    for (const auto& entry : entries_) if (!available_only || entry->available()) result.push_back(entry->description);
     std::ranges::sort(result, [](const ToolDescription& left, const ToolDescription& right) {
         return std::tie(left.display_order,left.id) < std::tie(right.display_order,right.id);
     });
@@ -143,7 +168,7 @@ ToolSnapshot ToolSnapshot::include_reader(const ToolSnapshot& reader) const {
     if (fixed_arguments_ || reader.fixed_arguments_ || reader.context_ || reader.entries_.size()!=1 || entries_.size()>=64)
         throw std::invalid_argument("tools: invalid reader grant");
     const auto& extra = reader.entries_.front();
-    if (extra->description.changes_state || !extra->registered || !extra->enabled || !extra->factory)
+    if (extra->description.changes_state || !extra->available())
         throw std::invalid_argument("tools: unavailable read-only capability");
     for (const auto& existing : entries_)
         if (existing->description.id==extra->description.id || existing->description.model.name==extra->description.model.name)
@@ -169,7 +194,7 @@ ToolSnapshot ToolSnapshot::bind_context(const std::string& context) const {
 ToolSnapshot ToolSnapshot::bind_arguments(const std::string& id, const std::string& arguments) const {
     auto result = restrict_to(std::span(&id, 1));
     const auto& entry = result.entries_.front();
-    if (!entry->registered || !entry->enabled || !entry->factory) throw std::invalid_argument("tools: unavailable binding");
+    if (!entry->available()) throw std::invalid_argument("tools: unavailable binding");
     entry->schema.validate(arguments);
     const auto canonical = exact_arguments(arguments);
     if (fixed_arguments_ && *fixed_arguments_ != canonical) throw std::invalid_argument("tools: cannot replace fixed arguments");
@@ -181,8 +206,9 @@ ToolSnapshot ToolSnapshot::bind_arguments(const std::string& id, const std::stri
 // 步骤：定位快照内名称 → 检查撤销和禁用 → 校验参数 → 返回原实例和注册身份。
 ToolSelection ToolSnapshot::resolve(const std::string& name, const std::string& arguments) const {
     for (const auto& entry : entries_) if (entry->description.model.name == name) {
-        if (!entry->registered) throw ToolRejection(R"({"stage":"scope","reason":"revoked"})");
-        if (!entry->enabled) throw ToolRejection(R"({"stage":"scope","reason":"disabled"})");
+        const auto grant = entry->effective_grant();
+        if (grant == ToolEntry::Grant::revoked) throw ToolRejection(R"({"stage":"scope","reason":"revoked"})");
+        if (grant == ToolEntry::Grant::disabled) throw ToolRejection(R"({"stage":"scope","reason":"disabled"})");
         entry->schema.validate(arguments);
         if (fixed_arguments_ && exact_arguments(arguments) != *fixed_arguments_)
             throw ToolRejection(R"({"stage":"scope","reason":"outside_fixed_arguments"})");
@@ -196,10 +222,13 @@ std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::Tool
     const auto selection = resolve(call.name,call.arguments);
     for (const auto& entry : entries_) if (entry->registration == selection.registration) {
         if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
+        // 首次实际调用时复核本工具及其前置原注册，拒绝时回报动作未发生。
+        // 步骤：核对撤销和禁用 → 附加已绑定的宿主上下文 → 调用已选工厂。
         ToolFactory guarded = [entry, context = context_](const ToolInvocation& input) {
-            if (!entry->registered)
+            const auto grant = entry->effective_grant();
+            if (grant == ToolEntry::Grant::revoked)
                 return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"revoked"})",ToolError::unavailable});
-            if (!entry->enabled)
+            if (grant == ToolEntry::Grant::disabled)
                 return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"disabled"})",ToolError::unavailable});
             if (!context) return entry->factory(input);
             auto native = input;
