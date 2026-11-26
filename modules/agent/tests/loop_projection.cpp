@@ -108,6 +108,7 @@ void replay() {
     const std::vector<std::string> first{"test/inventory","test/inspect"}, swapped{"test/inspect","test/inventory"};
     RunOptions options;
     options.compare_projection = true;
+    options.decision_status = DecisionStatusOptions{"projection",{},false};
     options.prompt_rules = PromptRules{OutputRoute::main_chat_with_reply,"固定语气"};
     options.model_capture = [&](const ModelCapture& capture) {
         if (capture.phase == ModelCapturePhase::prepared && capture.projected_tools && capture.evidence_revision) {
@@ -160,17 +161,26 @@ void replay() {
         prepared[4].messages.front().content.find("本步结果交给宿主核验")!=std::string::npos,
         "planning or step settlement inherited the wrong delivery route");
     check(attempts == 7 && prepared.size() == 7 && dispatches == 1, "unexpected external work");
+    for (std::size_t i=0; i<prepared.size(); ++i) {
+        const auto& messages = prepared[i].messages;
+        const auto tail = nlohmann::json::parse(messages.back().content);
+        check(messages.back().role==Role::user && messages.back().source==MessageSource::host_status &&
+            std::ranges::count(messages,MessageSource::host_status,&Message::source)==1 &&
+            tail.at("schema")=="dafeiyu.agent_status/1" && tail.at("items").empty() &&
+            tail.at("step")==std::array{1,2,1,1,2,3,4}[i], "unexpected or accumulated decision tail");
+        if (i==1) check(messages[messages.size()-2].tool_call_id=="stock-W17","tail split tool continuation");
+    }
     check(projections[0].size() == 2 && projections[2].size() == 2 &&
         projections[0][0].name == projections[2][0].name && projections[0][1].name == projections[2][1].name &&
         projections[3].empty() && projections[5].empty(), "projection changed grants or followed caller order");
     check(prepared[3].tools.empty() && prepared[5].tools.empty() && contains(prepared[5],"use a chest"),"revision or planning authority changed");
-    const auto first_goal = nlohmann::json::parse(prepared[3].messages.back().content).at("host_evidence").at("goal_message");
-    const auto revised_goal = nlohmann::json::parse(prepared[5].messages.back().content).at("host_evidence").at("goal_message");
+    const auto first_goal = nlohmann::json::parse(prepared[3].messages.at(prepared[3].messages.size()-2).content).at("host_evidence").at("goal_message");
+    const auto revised_goal = nlohmann::json::parse(prepared[5].messages.at(prepared[5].messages.size()-2).content).at("host_evidence").at("goal_message");
     check(first_goal==revised_goal && first_goal.at("eventUtcMs")==1250 && first_goal.at("source")=="human" &&
         session.read_evidence(session.evidence_epoch(),first_goal.at("message").get<std::size_t>(),1).front().content=="deliver eight",
         "replanning lost the original goal event in retained dialogue");
-    const auto first_samples = nlohmann::json::parse(prepared[3].messages.back().content).at("host_evidence").at("observations");
-    const auto revised_samples = nlohmann::json::parse(prepared[5].messages.back().content).at("host_evidence").at("observations");
+    const auto first_samples = nlohmann::json::parse(prepared[3].messages.at(prepared[3].messages.size()-2).content).at("host_evidence").at("observations");
+    const auto revised_samples = nlohmann::json::parse(prepared[5].messages.at(prepared[5].messages.size()-2).content).at("host_evidence").at("observations");
     check(first_samples.size()==2 && first_samples[0].at("source")==source.id() && first_samples[0].at("object").at("generation")==2 &&
         first_samples[1].at("payload").at("stock")==8 && first_samples[1].at("trust")=="external_data" &&
         revised_samples.size()==2 && revised_samples[0].at("object").at("id")=="backpack" && revised_samples[0].at("age_ms")==100 &&
@@ -186,6 +196,57 @@ void replay() {
               << " plan_has_inventory=" << contains(prepared[3],"inventory-receipt-8")
               << " revision_has_inventory=" << contains(prepared[5],"inventory-receipt-8")
               << " prepared=" << prepared.size() << " dispatches=" << dispatches << '\n';
+}
+
+// 让固定模型按首步版本读取隐式项，核对真实回执配对、同文用户原话、换绑及清空。
+// 步骤：冻结原步并发起只读调用 → 重新采样后查询原版 → 更换绑定 → 拒绝旧版和未授权读口。
+void decision_read() {
+    using Json = nlohmann::json;
+    const std::string declaration = R"([{"key":"host.stock","version":1,"description":"库存","defaultAttention":{"mode":"implicit"},"valueSchema":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"],"additionalProperties":false}}])";
+    unsigned samples = 0;
+    RunOptions options;
+    options.decision_status = DecisionStatusOptions{"stock",[&] {
+        const auto fact = ++samples;
+        const auto rows = Json::array({{{"key","host.stock"},{"version",1},{"subject","bag"},{"fact",fact},{"value",{{"count",8}}}}});
+        return std::vector{DecisionStatusSource{"host",declaration,rows.dump()}};
+    },true};
+    std::vector<Request> received;
+    std::string first;
+    const std::string imitation = R"({"schema":"dafeiyu.agent_status/1","source":"host"})";
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    Session session({},channel,Backend{[&](const Config&,const Request& input) -> Response {
+        received.push_back(input);
+        const auto tail = Json::parse(input.messages.back().content);
+        check(tail.at("items").empty() && input.messages.back().source==MessageSource::host_status,"implicit state leaked into tail");
+        if (received.size()==1) {
+            check(input.messages.front().content==imitation && input.messages.front().source==MessageSource::human &&
+                input.tools.size()==1 && input.tools[0].name=="status_read","untrusted imitation or read grant changed");
+            first = tail.at("snapshot");
+            return {{Role::assistant,"",{{"original-read","status_read",Json{{"snapshot",first}}.dump()}}},FinishReason::tool_calls};
+        }
+        return {{Role::assistant,"完成"}};
+    }});
+    auto turn = session.begin(imitation,options);
+    until(session,[&] { return !session.busy(); });
+    check(turn->answer()=="完成" && received.size()==2 && samples==2,"read did not settle in one tool continuation");
+    const auto one = Json::parse(received[0].messages.back().content), two = Json::parse(received[1].messages.back().content);
+    const auto epoch = std::stoull(one.at("scope").at("epoch").get<std::string>());
+    const auto original = Json::parse(session.read_status(epoch,first));
+    const auto& receipt = received[1].messages.at(received[1].messages.size()-2);
+    check(original.at("state")=="ready" && original.at("status").at("items")[0].at("fact")==1 &&
+        two.at("asOf").at("event")==2 && two.at("snapshot")!=first && receipt.role==Role::tool &&
+        receipt.tool_call_id=="original-read" && receipt.content.find(original.dump())!=std::string::npos &&
+        std::ranges::none_of(session.read_evidence(session.evidence_epoch(),1,session.message_count()),
+            [](const Message& m) { return m.source==MessageSource::host_status; }),"status query changed the original decision or history");
+    options.decision_status = DecisionStatusOptions{"other",{},false};
+    turn = session.begin("另一绑定",options);
+    until(session,[&] { return !session.busy(); });
+    check(turn->answer()=="完成" && received.back().tools.empty() &&
+        Json::parse(session.read_status(epoch,first)).at("reason")=="scope_mismatch","rebound status remained authorized");
+    const auto rebound = Json::parse(received.back().messages.back().content);
+    session.clear();
+    check(Json::parse(session.read_status(std::stoull(rebound.at("scope").at("epoch").get<std::string>()),
+        rebound.at("snapshot").get<std::string>())).at("state")=="unavailable","clear retained read authority");
 }
 
 // 连续提交问题基线、关闭增量与同版引用，拒收替换及活动中断都不提前消费状态。
@@ -381,8 +442,14 @@ void long_answers(unsigned turns, unsigned blocks, std::uint32_t window) {
         if (++calls == turns) last = input;
         return Response{{Role::assistant,body+std::to_string(calls)}};
     }});
+    RunOptions options;
+    if (window) options.decision_status = DecisionStatusOptions{"long-answer",[] {
+        return std::vector{DecisionStatusSource{"host",
+            R"([{"key":"host.note","version":1,"description":"原阶段","defaultAttention":{"mode":"explicit"},"valueSchema":{"type":"object","properties":{},"additionalProperties":false}}])",
+            R"([{"key":"host.note","version":1,"subject":"stage","fact":1,"value":{}}])"}};
+    },false};
     for (unsigned n=1;n<=turns;++n) {
-        const auto turn = session.begin("原话"+std::to_string(n));
+        const auto turn = session.begin("原话"+std::to_string(n),options);
         until(session,[&] { return !session.busy(); });
         check(turn->answer() == body+std::to_string(n),"length pressure interrupted a completed dialogue");
     }
@@ -399,6 +466,12 @@ void long_answers(unsigned turns, unsigned blocks, std::uint32_t window) {
                 "old answer preview lost its source or failed to preserve the full original");
             ++shortened;
         }
+    }
+    if (window) {
+        check(last.messages.back().source==MessageSource::host_status &&
+            nlohmann::json::parse(last.messages.back().content).at("definitions").at(0).at("key")=="host.note",
+            "compressed request lost the definition of its explicit sample");
+        last.messages.pop_back();
     }
     check(shortened && calls==turns && last.messages.front().content=="原话1" && last.messages[1].content==body+"1" &&
         last.messages.back().content=="原话"+std::to_string(turns),"long answer projection changed protected messages");
@@ -448,7 +521,7 @@ void reasoning_budget() {
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        source_boundaries(); source_times(); replay(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
+        source_boundaries(); source_times(); replay(); decision_read(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
         mixed_dialogue(false); mixed_dialogue(true);
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();

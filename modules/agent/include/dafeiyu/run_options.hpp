@@ -7,6 +7,7 @@
 #include <dafeiyu/action_observations.hpp>
 #include <dafeiyu/run_capture.hpp>
 #include <dafeiyu/context_status.hpp>
+#include <dafeiyu/decision_status.hpp>
 #include <dafeiyu/turn_input.hpp>
 #include <dafeiyu/prompt_rules.hpp>
 
@@ -28,6 +29,12 @@ class ObservationActionAuthorization {
 };
 enum class TextHookPoint { input, model_request, model_response, tool_arguments, reply };
 using TextHook = std::function<std::optional<std::string>(TextHookPoint,const PolicyContext&,std::string_view,std::string_view,std::size_t)>;
+// 由入口授权的本会话视图；采样只在原宿主线程的决策边界执行。
+struct DecisionStatusOptions {
+    std::string binding;
+    std::function<std::vector<DecisionStatusSource>()> sample;
+    bool allow_read = false;
+};
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
     std::optional<ToolSnapshot> tools;
@@ -67,6 +74,10 @@ struct RunOptions {
     bool compare_projection = false;
     // 状态基线由会话从已提交历史取得，新输入只能贡献当前绑定的事实。
     std::shared_ptr<const ContextStatus> context_status, previous_status;
+    // 正式入口按绑定声明数据来源；存储与有效代次由 Session 在接纳时签发。
+    std::optional<DecisionStatusOptions> decision_status;
+    std::shared_ptr<DecisionStatusStore> status_store;
+    std::uint64_t status_epoch = 0;
     bool replace_history = false;
     std::uint64_t evidence_epoch = 0;
     // 复合的信箱或插件输入由入口标记，直接对话和观察规则由运行起因确定。

@@ -187,11 +187,23 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
             options.evidence_epoch = epoch;
             options.previous_status = replace ? nullptr : status_;
             auto next_status = options.context_status;
+            auto status_binding = options.decision_status ? options.decision_status->binding : std::string{};
+            if (options.decision_status && (status_binding.empty() || status_binding.size()>512))
+                throw std::invalid_argument("session: invalid decision status binding");
+            const bool reuse = decision_store_ && status_binding==status_binding_;
+            auto store = !options.decision_status ? nullptr : reuse ? decision_store_ : std::make_shared<DecisionStatusStore>();
+            const auto status_epoch = !store ? 0 : reuse ? status_epoch_ : next_domain();
+            options.status_store = store;
+            options.status_epoch = status_epoch;
+            if (options.decision_status && !backend_.structured) options.decision_status->allow_read = false;
             auto loop = std::make_unique<RunLoop>(RunId{id_,turn_+1},config_,backend_,base,prompt,std::move(options));
             history_ = std::move(base);
             evidence_epoch_ = epoch;
             if (replace) status_.reset();
             active_status_ = std::move(next_status);
+            decision_store_ = std::move(store);
+            status_epoch_ = status_epoch;
+            status_binding_ = std::move(status_binding);
             auto record = loop->request(); active_ = std::move(loop); slot = record; ++turn_;
             record->notifications_.started = notify("turn_started",turn_); working_ = false; return record;
         }
@@ -338,9 +350,15 @@ events::ObservationReceipt Session::clear() {
     const auto epoch = next_domain();
     history_ = std::make_shared<const MessageHistory>();
     evidence_epoch_ = epoch;
+    decision_store_.reset(); status_binding_.clear(); status_epoch_ = 0;
     status_.reset();
     active_status_.reset();
     return notify("session_cleared",0);
+}
+// 读取指定快照时重核有效会话与绑定代次，关闭的会话不再授权读取。
+std::string Session::read_status(std::uint64_t epoch, std::string_view snapshot) const {
+    if (!*accepting_ || !decision_store_ || epoch!=status_epoch_) return R"({"state":"unavailable","reason":"scope_mismatch"})";
+    return decision_store_->read(id_,epoch,snapshot);
 }
 // 从本会话当前代次读取有限的原历史片段，过期代次、越界和未提交占位均不可见。
 MessageHistory Session::read_evidence(std::uint64_t epoch, std::size_t first, std::size_t count) const {

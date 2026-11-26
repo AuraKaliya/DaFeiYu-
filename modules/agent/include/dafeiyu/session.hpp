@@ -259,6 +259,8 @@ class Session {
     std::uint64_t evidence_epoch() const noexcept { return evidence_epoch_; }
     // 按当前会话、代次及一基消息位置读取已提交的原始证据，拒绝跨绑定读取。
     MessageHistory read_evidence(std::uint64_t epoch, std::size_t first, std::size_t count) const;
+    // 只读查询本会话当前绑定的旧版状态，清空或换绑后拒绝旧权限。
+    std::string read_status(std::uint64_t epoch, std::string_view snapshot) const;
     // 返回失去局部协调器但仍在真实收尾的运行数量。
     static std::size_t retained() noexcept;
     // 在原宿主线程重试保留运行，实际退出前不释放工作责任。
@@ -278,6 +280,9 @@ class Session {
     std::unique_ptr<RunLoop> active_;
     std::shared_ptr<const MessageHistory> history_ = std::make_shared<const MessageHistory>();
     std::shared_ptr<const ContextStatus> status_, active_status_;
+    std::shared_ptr<DecisionStatusStore> decision_store_;
+    std::string status_binding_;
+    std::uint64_t status_epoch_ = 0;
     const model::Backend backend_;
     const RunCaptureSinks capture_;
     std::shared_ptr<bool> accepting_ = std::make_shared<bool>(true);

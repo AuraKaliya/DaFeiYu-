@@ -1,4 +1,5 @@
 #include <dafeiyu/run_loop.hpp>
+#include "decision_query.hpp"
 #include <dafeiyu/plan_protocol.hpp>
 #include <dafeiyu/session.hpp>
 #include <dafeiyu/utf8.hpp>
@@ -34,6 +35,7 @@ struct RunLoopState {
     RunOptions options;
     std::unique_ptr<ExecutionPolicy> policy;
     ToolTime deadline;
+    std::unique_ptr<ToolCatalog> status_reader;
     ToolBatch* batch = nullptr;
     std::optional<PlanScope> planning_scope;
     std::optional<PlanPrompt> planning_request;
@@ -66,6 +68,12 @@ struct RunLoopState {
                 throw std::invalid_argument("run: mismatched or stale action observations");
             options.observations = guarded;
             record->initial_observation_binding_ = options.action_observations->binding();
+        }
+        if (options.decision_status) {
+            if (!options.status_store || !options.status_epoch)
+                throw std::invalid_argument("run: unbound decision status");
+            if (options.decision_status->allow_read && !options.planning && options.origin==RunOrigin::user_request)
+                status_reader = grant_status_reader(options.tools,options.status_store,run.session,options.status_epoch);
         }
         const bool changes = options.tools && options.tools->permits_state_changes();
         const bool observed_change = changes && options.origin == RunOrigin::observation_rule;
@@ -500,9 +508,29 @@ struct RunLoopState {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         const int head_delta = planning_request ? 0 : int(input.messages.front().role == model::Role::system) -
             int(record->context_->messages().front().role == model::Role::system);
-        compressed_batches = record->context_->project(input,head_delta);
+        std::optional<FrozenDecisionStatus> frozen;
+        if (options.decision_status) {
+            const auto utc = record->context_->event_time();
+            if (!utc) throw std::runtime_error("run: decision status clock unavailable");
+            const auto sources = options.decision_status->sample ? options.decision_status->sample() : std::vector<DecisionStatusSource>{};
+            const auto freeze = [&](bool rebuild) {
+                frozen = options.status_store->prepare(record->run_id().session,options.status_epoch,record->run_id().sequence,
+                    current.attempt.step.sequence,*utc,sources,rebuild);
+                return model::sourced_message(model::MessageSource::host_status,frozen->tail,*utc);
+            };
+            const bool baseline = options.replace_history && !record->model_requests_;
+            auto projected = input;
+            compressed_batches = record->context_->project(projected,head_delta,freeze(baseline));
+            const bool compact = compressed_batches || std::ranges::any_of(projected.messages,[](const auto& m) {
+                return m.source==model::MessageSource::host_summary;
+            });
+            if (!baseline && compact && !sources.empty())
+                compressed_batches = record->context_->project(input,head_delta,freeze(true));
+            else input = std::move(projected);
+        } else compressed_batches = record->context_->project(input,head_delta);
         capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
+        if (frozen) options.status_store->publish(std::move(*frozen));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;
         record->settle_inputs(InputState::submitted,current.attempt.step.sequence);

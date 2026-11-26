@@ -23,6 +23,7 @@ add_library(dfy_agent STATIC
   include/dafeiyu/tool_batch.hpp include/dafeiyu/tool_catalog.hpp include/dafeiyu/tool_executor.hpp
   include/dafeiyu/tool_schema.hpp include/dafeiyu/tool_work.hpp include/dafeiyu/trace_identity.hpp
   include/dafeiyu/turn_input.hpp)
+target_sources(dfy_agent PRIVATE src/decision_query.cpp src/decision_query.hpp)
 target_include_directories(dfy_agent PUBLIC include)
 target_link_libraries(dfy_agent PUBLIC dfy_event_streams dfy_model
   PRIVATE dfy_digest nlohmann_json::nlohmann_json dfy_build_options)
