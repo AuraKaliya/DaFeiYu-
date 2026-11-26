@@ -342,29 +342,31 @@ VS2022 x64 的 Debug、Release 各通过 288 项离线 CTest，含 266 项运行
 | 工具、人格和来源 | MC 的 `skills` 回执进入历史，唤醒后按当前范围重建顶层定义。取材回放中，发现后的本回合仍有 9 个定义，下个 `skills.expanded` 回合有 14 个。消息已有协议角色和调用 ID，部分来源仍靠正文前缀区分。默认人格中同时含语气和真实性规则，请求 Hook 还可改写系统段。[发现入口](../plugins/mc/src/partner_loop.cpp#L951) · [正式请求](../modules/agent/src/run_loop.cpp#L450) · [人格](../apps/host/src/persona.cpp#L9) · [消息结构](../modules/model/include/dafeiyu/model_messages.hpp#L8) |
 | 同一工具的三种反馈 | 固定回放中，`queue_actions` 的 `steps[0].arguments.focus="objects"` 超出计划入口枚举，稍后 `restricted-plan` 调用了已移出当步范围的同一工具。两条回执均为 `rejected / not_applied / unavailable`，正文为空。另一采掘场景能返回 `approval_required` 和 `broken=0`。第一个案例要求修参数，第二个需要重选入口，第三个可沿原审批等待。[计划参数案例](../tests/mc-companion/mc_plugin_partner.cpp#L602) · [范围案例](../tests/mc-companion/mc_plugin_partner.cpp#L645) · [审批案例](../tests/mc-companion/mc_plugin_partner.cpp#L1729) · [通用拒绝路径](../modules/agent/src/tool_batch.cpp#L75) |
 
-**以下交付均待实现。** 工具错误可独立先修。主线定义通用来源、阶段和投影契约，MC 提供领域事实和一条事件唤醒试点。各步用固定响应、固定时钟或传输替身核对实际请求和实效。
+**2026-11-26 交付进度。** 第 1 项已在主线通过文末列出的原场景与执行边界回归。下一项是消息来源和事件时间，第 3～6 项依赖后续的工具和状态协议。主线定义通用来源、阶段和投影契约，MC 提供领域事实和一条事件唤醒试点。各步用固定响应、固定时钟或传输替身核对实际请求和实效。
 
 | 顺序 | 可独立审查的交付 | 离线验收 |
 | --- | --- | --- |
-| 1 | 工具裁定保留可操作的原因，回执元数据与进展比较分开。 | 重放上述参数错、范围外、待审批三例，逐项核对字段、原调用或审批号、实际采掘数。另测观察过期、已有新原话、动作后停止及实效未知。相同失败只换时间或尝试号仍触发原无进展上限。 |
+| 1（已交付） | 工具裁定保留可操作的原因，回执元数据与进展比较分开。 | 重放上述参数错、范围外、待审批三例，逐项核对字段、原调用或审批号、实际采掘数。另测观察过期、已有新原话、动作后停止及实效未知。相同失败只换时间或尝试号仍触发原无进展上限。 |
 | 2 | 给消息增加内部来源与事件时间，按约定顺序渲染规则段，由适配器映射原生角色。 | 主聊天及子会话中输入同样的 `<status>` 文本，核对真人原文与宿主尾注的来源。重试时用户原话和工具回执的时间前缀相同，工具批次配对和协议所需推理字段完整。只改语气时，权限、验收及投递规则逐项相同。 |
 | 3 | 在轨迹原位置保存首次发现的工具契约和版本，按当步范围分别生成可调用定义。 | 连续决策的 `model.prepared` 显示同一发现只新增一次。升级或撤权可见变更记录，重新排序相同授权集合后定义稳定。执行前撤权使实际分派为零，压缩后仍能找到有效契约。 |
 | 4 | 本体和插件按 schema 注册状态项，共用逐决策尾部和按版本查询的只读入口。 | 空插件主会话、工具续行、规划／修订和 MC 使用同一外层结构。每个请求只有本步的一份尾注，前一工具批次已闭合，旧状态按号可读。未知键或错版值被拒收。覆盖隐式查询、过期但值相同、同值重采、压缩重建及换绑隔离。 |
 | 5 | 接入任务期关注与按次数关注，首个 MC 试点选审批结果或工作完成事件。 | 固定事件建任务、触发决策、解除关注。核对一次唤醒、一份事实、一次展示，下一相关步隐去一次性项，原件可查。再测预览、预算不足、提交失败、重试、重复回调、多任务同时关注、任务取消及终态回执。 |
 | 6 | 接入 TODO、环境、工具计数和最近核实实效。 | 一个回复提出三个候选，只接纳两个，核对三个计数范围与实际分派。把“目标 8、已入包 3、另有 2 待拾取”同原回执逐项核对。开发任务和 MC 任务分别收到与环境有关的字段，过期、无样本及已核实为零可区分。 |
 
-**`master` 首个可审查交付。** 从 `plugins.mc_partner_revision_pointed-craft` 的两个原调用号开始。`plan-focus-denied` 应指出 `steps[0].arguments.focus` 的值 `objects` 超出计划入口枚举，`restricted-plan` 应指出该步已无 `queue_actions` 权限。再用 `plugins.mc_partner_refused_collection` 验证等待审批时可查原审批号，实际采掘数为零。各场景在下一份 `model.prepared` 中按原调用号核对模型收到的原因。用 `agent.run_loop` 检查同因失败只换尝试号时仍按原上限停止。[MC 固定回放](../tests/mc-companion/mc_plugin_partner.cpp) · [CTest 入口](../tests/mc-companion/CMakeLists.txt) · [无进展回归](../modules/agent/tests/run_loop.cpp#L49)
+**第 1 项的主线验收。** 从 `7d11205` 的两条空回执及一条缺审批号的回执复现。`plan-focus-denied` 在下一次模型请求中保留路径 `/steps/0/arguments/focus`、原值 `objects` 和允许值。`restricted-plan` 保留当步未授权的原因。直接、队列及计划入口均返回原审批号和采掘数 0。主线回放 `world-Egu7mv` 的 `model.prepared` 序号 34、98 分别收到上述参数和范围原因，`world-r08rgB` 序号 42 的 `pending` 收到 `item=141` 和 `broken=0`。新原话和过期观察能拦下尚未执行的变更。原工作实效未明时查回原调用，动作后取消仍保留已发生的效果。仅换尝试或审批号、JSON 排版和键顺序的相同宿主拒绝会触发原无进展上限。对应提交为 `1e71ae2`、`0cd58cc`、`8e4c683` 和 `ec23dd9`。[MC 原场景](../tests/mc-companion/mc_plugin_partner.cpp) · [首次执行前的复核](../modules/agent/tests/session_action_guard.cpp) · [原实效](../modules/agent/tests/goal_effect_guard.cpp) · [无进展与取消](../modules/agent/tests/run_loop.cpp)
 
 每步对照 `model.prepared` 和适配器编码，沿原事件、调用、工作、审批或投递号核对实际结果。计次、去重和状态读口用程序断言验收。字段预算与快照保留窗口留待固定回放校准。风格对完成率、来源标签对模型判断和实际选工具的影响列为“仅记录，不执行”，按项目约定使用离线替身做功能验收。[装配回放](../modules/agent/tests/loop_projection.cpp) · [工具批次](../modules/agent/tests/tool_batch.cpp) · [审批回放](../modules/agent/tests/tool_confirmation.cpp) · [项目测试原则](../AGENTS.md#测试原则)
 
 ### 三个固定工作树的交付
 
-| 工作树 | 第一个可审查的交付 | 后续交付与验收 |
+| 工作树 | 本轮已合入主线 | 联验结果 |
 | --- | --- | --- |
-| `plugins` · MC 存箱 | 沿用八块圆石、两个箱子的隔离服场景，先只读绑定玩家指出的单个普通箱子。记录世界、维度、格位、槽位容量和伙伴库存。 | 加入明确委托“把这八块存进左箱”。正常时伙伴背包减少 8，选中箱增加 8，另一箱数量不变。满箱、只容得下部分物品、窗口中断分别报告实存量、剩余量或待核实。沿原工作复查，避免重复转移。原有“扔给我”满包用例继续核对玩家实收。[容器计划](mc-companion-development-plan.md#游戏-api-封装与工具) · [既有协议玩家场景](../tests/mc-companion/playtest-check.cjs) |
+| `plugins` · MC 存箱 | `f3d0d2c` 普通合并为 `dcc11ea`。玩家原话绑定普通单箱，明确委托固定物品、数量和格位，伙伴操作后重开同一箱核账。 | 主线隔离 Paper 局 `run-4mDqy9` 在正常、满箱和部分容量时分别实存 8、0、3 块，另一箱始终为 5。窗口中断后，查询 `1.61` 在原工作 `1.58` 第 4 版确认实存 8。四笔换号重提均指回原工作。[单箱契约](mc-companion-development-plan.md#游戏-api-封装与工具) · [协议玩家实物断言](../tests/mc-companion/playtest-check.cjs) |
 | `core` · 信箱只读接口 | 管理 IPC 已提供 `mailbox.list` 和 `mailbox.read`。窗口按后台实例、来源和修订查询目录、分类、原件及入箱／取件回执。系统继续持有消费游标和回信权。[字段与请求样例](ui-framework-design.md#56-管理信箱只读协议) | Debug 定向用例用真实 C 插件生成一封待收回信。运行中登记的主 Agent 业务地址归入同一插件来源，重复取样后原队首仍可读。两个管理客户端反复查看，断开一个再连接，原消费水位、回信数和模型调用数均不变。插件重载后旧来源失效，同目录重启后旧后台也返回失效。实际 WebView2 双窗随 UI 联验。[收发原件](../modules/events/src/mailboxes.cpp) · [正式管理入口验收](../tests/plugins/management_mailboxes.cpp) |
-| `ui` · 管理中心信箱 | 按 `core` 约定的响应，用固定样本在房间内的同一信箱入口呈现来源、收件状态和公开回执，分别显示空、过期和读取失败。 | 接入已合并的后台读口。用两个真实 WebView2 窗口反复打开同一封信，断开再连接后读到当前修订。关掉一个窗口，另一窗和后台收信照常工作。[房间与信箱设计](ui-framework-design.md#2-管理中心的界面组织) · [主面板](../apps/desktop/web/src/MainPanel.vue) |
+| `ui` · 管理中心信箱 | `70b90e2` 普通合并为 `c785e9a`。房间正式入口按来源列出信件及公开回执，区分空箱、旧来源和读失败，各窗口单独维护选择和重连。 | `ui.mailbox_windows` 用两扇真实 WebView2 窗口重复查看同一封待收件，只有独立接收方取件才出现取件时间。关闭后重新开窗仍能按原号查看，插件重载后旧来源失效。[窗口观察器](../apps/desktop/web/src/mailbox-observer.ts) · [双窗验收](../tests/desktop/ui_history_windows.ps1) |
 
-**开工与合并顺序。** 各固定工作树开工时同步已集成的 `master`。主线处理工具回执时，`plugins` 的容器只读观察和 `core` 的信箱读口可并行推进。`ui` 在读口字段约定后即可做样本验收，正式联调依赖 `core` 的接口提交先合入主线。MC 的容器写入依赖该插件自己的读口。每个行为单独提交和定向验证，三个开发分支由主 Session 按交付 SHA 保留历史合并。联验时在隔离 Paper 核对箱内实物，在真实窗口核对信箱读取无副作用，最后运行 Debug、Release 全量离线测试及安装包检查。[工作树流程](../.agents/skills/dafeiyu-worktree/SKILL.md) · [项目测试原则](../AGENTS.md#测试原则)
+**本轮集成顺序。** 三个固定分支从同一主线 `7d11205` 开工，于 2026-11-26 北京时间 11:20 固定交付。主线先合入 Core 的 `d420399`（合并 `58697bb`），再用同一后台验证并合入 UI，最后合入 MC。每笔普通合并保留开发线提交，代码集成点为 `dcc11ea`。下一轮先核对本文第 2 项的实际角色和原事件时间。管理中心步骤 7 先定真实包状态与修订的读口，MC 容器后续按单项委托验证取出。[多工作树流程](../.agents/skills/dafeiyu-worktree/SKILL.md) · [设置与插件管理](ui-framework-design.md#10-分步实施与验收)
+
+**本轮主线验收。** VS2022 x64 的 Debug、Release 各执行 293 项离线 CTest，均为零失败、零跳过，每个配置含 25 项桌面用例。隔离 Paper 的另两局 `run-wexiym`、`run-sv42mP` 验证满包玩家原地腾包和重新登录后腾包，两局均只投出一次，玩家实收 8 块。关闭测试入口的默认桌面包和可选 CLI 包分别核对发行入口、原后台退出及适用的插件生命周期。桌面包的运行环境差异记录在管理中心方案中。[隔离服断言](../tests/mc-companion/playtest-check.cjs) · [发行脚本](../scripts/verify-agent-package.ps1) · [桌面包验收环境](ui-framework-design.md#桌面发行验收环境)
 
 **接续边界。** MC 已在单绑定试点验证模型从摘要查回长工作实效，覆盖错代次和无效回执号。通用会话原文由宿主 C++ 接口 `Session::read_evidence` 按本会话代次和消息区间读取。若其他领域向模型开放原文读取，需在其工具授权里另行限定可读对象。房间步骤 11、12 分别核对事件发生时的感知、当前位置的取样及实际送模字段。管理中心在信箱之后接步骤 7 的设置与插件管理。[证据读口](../modules/agent/src/session.cpp) · [容量回放](../modules/agent/tests/loop_projection.cpp) · [房间实施次序](main-agent-room-development-plan.md#7-分步开发顺序) · [管理中心实施次序](ui-framework-design.md#10-分步实施与验收)
