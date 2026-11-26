@@ -28,15 +28,18 @@ void InteractionProbe::start_plugin_settings() {
         {"installed",true},{"loaded",true},{"canLoad",false},{"canUnload",true},{"loadedName","旧实例"},{"loadedVersion","1.7"},{"errorCode",0}}});
     // 从页面实际发出的同类请求取身份，由原生 WebView2 消息口投递固定信封。
     // 步骤：等候当前请求 → 核对原意图或操作号 → 回显原请求号。
+    const auto fixed_operation = std::make_shared<std::string>();
     const auto reply = [&](Json body, std::string type="plugins.list") {
         const auto index = "window.fixturePluginReads.findIndex(q=>q.type==="+Json(type).dump()+")";
         expect("original plugin request arrived",index+">=0");
         call("return the original plugin request",L"Runtime.evaluate",
             {{"expression","window.fixturePluginReads.splice("+index+",1)[0]"},{"returnByValue",true}},
-            [this,body=std::move(body)](const Json& result) mutable {
+            [this,fixed_operation,body=std::move(body)](const Json& result) mutable {
                 const auto& request=result.at("result").at("value");
                 if (request.at("version")!="1") throw std::runtime_error("unexpected plugin version");
-                if (request.at("type")=="plugins.receipt" && request.at("operation")!=body.at("operation")) throw std::runtime_error("wrong receipt");
+                if (request.at("type")=="plugins.load") *fixed_operation = "plugin/request/"+request.at("submission").get<std::string>();
+                if (request.at("type")=="plugins.receipt" && request.at("operation")!=*fixed_operation) throw std::runtime_error("wrong receipt");
+                if (body.at("event")=="plugins.operation") body["operation"] = *fixed_operation;
                 if (request.at("type")=="plugins.load" && (request.at("id")!=body.at("id") || request.at("revision")!=body.at("revision") ||
                     request.at("generation")!=body.at("targetGeneration") || request.at("command")!=body.at("command") ||
                     request.at("instance")!=body.at("instance"))) throw std::runtime_error("wrong loading intent");

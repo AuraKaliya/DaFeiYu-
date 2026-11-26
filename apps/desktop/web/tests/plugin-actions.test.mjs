@@ -20,7 +20,7 @@ function fixture(memory = new Map(), instance = 'original') {
     actions.tick();
   };
   const answer = (write, fields={}, query=sent.at(-1)) => actions.receive({version:'1',event:'plugins.operation',instance:write.instance,
-    request:query.request,operation:'host-issued-operation',action:write.type.split('.')[1],id:write.id,revision:write.revision,
+    request:query.request,operation:'plugin/request/'+write.submission,action:write.type.split('.')[1],id:write.id,revision:write.revision,
     targetGeneration:write.generation,generation:write.generation,command:write.command,state:'queued',effect:'unconfirmed',...fields});
   const advance = delay => { now += delay; actions.tick(); };
   directory.context(true,true); sample(); directory.select(target.id);
@@ -35,7 +35,8 @@ test('one click binds one command and only its original receipt can confirm an e
   actions.start('load'); const write = f.sent.at(-1);
   actions.start('load');
   assert.equal(f.sent.at(-1),write);
-  assert.deepEqual({...write,request:'x'},{type:'plugins.load',version:'1',request:'x',instance:'original',command:'1',id:target.id,revision:'42',generation:'0'});
+  assert.match(write.submission,/^[0-9a-f-]{36}$/);
+  assert.deepEqual({...write,request:'x',submission:'s'},{type:'plugins.load',version:'1',request:'x',submission:'s',instance:'original',command:'1',id:target.id,revision:'42',generation:'0'});
   f.answer(write,{instance:'other'}); assert.equal(actions.work.value.state,'sending');
   f.answer(write); assert.equal(actions.work.value.state,'queued');
   f.directory.select(target.id); f.advance(400); const query = f.sent.at(-1);
@@ -49,9 +50,9 @@ test('one click binds one command and only its original receipt can confirm an e
   assert.equal(actions.canStart('load'),false);
   f.sample([live],'original','43'); actions.start('unload');
   const unload=f.sent.at(-1); assert.equal(unload.command,'2'); assert.equal(unload.generation,live.generation);
-  f.answer(unload,{operation:'next'}); f.advance(400);
-  f.answer(unload,{operation:'next',state:'pending',effect:'stopping'}); assert.equal(actions.canStart('unload'),false);
-  f.advance(400); f.answer(unload,{operation:'next',state:'succeeded',effect:'unloaded'});
+  f.answer(unload); f.advance(400);
+  f.answer(unload,{state:'pending',effect:'stopping'}); assert.equal(actions.canStart('unload'),false);
+  f.advance(400); f.answer(unload,{state:'succeeded',effect:'unloaded'});
   assert.equal(actions.work.value.effect,'unloaded');
   assert.equal(f.sent.filter(q=>['plugins.load','plugins.unload'].includes(q.type)).length,2);
 });
@@ -62,7 +63,7 @@ test('reloaded pages and reconnected windows read the original operation without
   const memory = new Map(), f = fixture(memory);
   f.actions.start('load'); const write=f.sent.at(-1); f.answer(write);
   const restored = fixture(memory);
-  assert.equal(restored.sent.at(-1).operation,'host-issued-operation');
+  assert.equal(restored.sent.at(-1).operation,'plugin/request/'+write.submission);
   restored.advance(3600); assert.equal(restored.actions.readFailed.value,true);
   restored.advance(1600); restored.answer(write,{state:'busy',effect:'retained',generation:'8'});
   assert.equal(restored.actions.work.value.effect,'retained');
@@ -71,6 +72,24 @@ test('reloaded pages and reconnected windows read the original operation without
   assert.equal(other.actions.work.value,undefined);
   other.actions.start('load'); assert.equal(other.sent.at(-1).command,'1');
   assert.equal(other.sent.some(q=>q.type==='plugins.receipt'),false);
+});
+
+// 第一次写入回包完全丢失也能以提交前持有的操作号确认，旧版已签发号仍可读。
+// 步骤：发送后立即重载 → 只读追认原代次 → 恢复旧版本地记录。
+test('a fresh document recovers without any write reply and keeps legacy operation identities', () => {
+  const memory=new Map(),f=fixture(memory);
+  f.actions.start('load'); const original=f.sent.at(-1), expected='plugin/request/'+original.submission;
+  assert.equal(f.actions.work.value.operation,expected);
+  const reloaded=fixture(memory), lookup=reloaded.sent.at(-1);
+  assert.equal(lookup.type,'plugins.receipt'); assert.equal(lookup.operation,expected);
+  reloaded.answer(original,{state:'succeeded',effect:'loaded',generation:live.generation},lookup);
+  assert.equal(reloaded.actions.work.value.generation,live.generation);
+  assert.equal(reloaded.sent.some(q=>q.type==='plugins.load'),false);
+  const legacy=JSON.parse(memory.get('dfy.plugin.work.original'));
+  delete legacy.work.submission; legacy.work.operation='plugin/old-window/1';
+  memory.set('dfy.plugin.work.original',JSON.stringify(legacy));
+  const older=fixture(memory); assert.equal(older.sent.at(-1).operation,'plugin/old-window/1');
+  assert.equal(older.sent.some(q=>q.type==='plugins.load'),false);
 });
 
 // 提交结果未知与明确未分派分开处理，次序错误只修正下一次显式命令。

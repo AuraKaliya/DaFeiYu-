@@ -7,7 +7,7 @@ type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
 export type PluginAction = 'load' | 'unload';
 export interface PluginWork {
   instance: string; command: string; action: PluginAction; id: string; revision: string; targetGeneration: string;
-  operation: string; state: string; effect: string; generation: string;
+  operation: string; submission?: string; state: string; effect: string; generation: string;
 }
 const unfinished = new Set(['sending', 'queued', 'running', 'pending']);
 const states = new Set(['queued', 'running', 'pending', 'succeeded', 'failed', 'busy', 'inUse', 'stale', 'conflict',
@@ -28,7 +28,9 @@ function savedWork(value: unknown, instance: string): value is PluginWork {
   return object(value) && value.instance === instance && (value.action === 'load' || value.action === 'unload') &&
     typeof value.id === 'string' && !!value.id && pluginNumber(value.command) && value.command !== '0' &&
     pluginNumber(value.revision) && pluginNumber(value.targetGeneration) && pluginNumber(value.generation) &&
-    typeof value.operation === 'string' && value.operation.length <= 160 && typeof value.state === 'string' &&
+    typeof value.operation === 'string' && value.operation.length <= 160 &&
+    (value.submission === undefined || (typeof value.submission === 'string' && /^[0-9a-f-]{36}$/i.test(value.submission) &&
+      value.operation === 'plugin/request/' + value.submission)) && typeof value.state === 'string' &&
     (states.has(value.state) || value.state === 'sending' || value.state === 'uncertain') &&
     typeof value.effect === 'string' && effects.has(value.effect);
 }
@@ -76,13 +78,13 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
     bind(reading.instance);
     if (!canStart(action)) return;
     const row = reading.packages.find(item => item.id === selected)!;
-    const command = nextCommand, request = prefix + ++sequence;
+    const command = nextCommand, request = prefix + ++sequence, submission = crypto.randomUUID();
     nextCommand = (BigInt(command) + 1n).toString();
     work.value = { instance: bound, command, action, id: row.id, revision: reading.revision, targetGeneration: row.generation,
-      operation: '', state: 'sending', effect: 'unconfirmed', generation: row.generation };
+      submission, operation: 'plugin/request/' + submission, state: 'sending', effect: 'unconfirmed', generation: row.generation };
     pending = { request, write: true, deadline: clock() + 3500 }; due = Infinity; readFailed.value = false;
     save();
-    try { post({ type: 'plugins.' + action, version: '1', request, instance: bound, command, id: row.id, revision: reading.revision, generation: row.generation }); }
+    try { post({ type: 'plugins.' + action, version: '1', request, instance: bound, command, submission, id: row.id, revision: reading.revision, generation: row.generation }); }
     catch { undelivered(); }
   }
   // 明确未交给原生客户端时保留拒绝事实，下一次显式意图可使用原序号。
@@ -98,13 +100,14 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
   function unavailable(): void {
     const original = work.value;
     if (!original) return;
+    const lostWrite = pending?.write;
     pending = undefined; readFailed.value = true;
-    if (!original.operation) work.value = { ...original, state: 'uncertain', effect: 'unconfirmed' };
+    if (lostWrite || !original.operation) work.value = { ...original, state: 'uncertain', effect: 'unconfirmed' };
     due = original.operation ? clock() + 1500 : Infinity;
     save();
   }
   // 只在原后台的有效目录下轮询，每个窗口至多保留一个提交或查询请求。
-  // 步骤：核对后台或超时 → 等待查询时机 → 使用宿主实际签发的操作号。
+  // 步骤：核对后台或超时 → 等待查询时机 → 绑定稳定提交的操作号或旧版已签发号。
   function tick(): void {
     const { reading, status } = directory.view.value;
     if (!reading || status !== 'ready') return;
@@ -130,6 +133,7 @@ export function usePluginActions(directory: Directory, post: PluginPost, storage
     }
     if (value.event !== 'plugins.operation' || value.instance !== original.instance || typeof value.operation !== 'string' ||
         !value.operation || value.operation.length > 160 || (original.operation && value.operation !== original.operation) ||
+        (original.submission && value.submission !== undefined && value.submission !== original.submission) ||
         typeof value.state !== 'string' || !states.has(value.state) || typeof value.effect !== 'string' || !effects.has(value.effect)) return;
     const missing = !pending.write && value.state === 'unknown' && value.effect === 'unknown' && value.command === undefined;
     if (!missing && (value.command !== original.command || value.action !== original.action || value.id !== original.id ||
