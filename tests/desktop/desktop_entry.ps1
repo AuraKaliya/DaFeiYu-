@@ -1,5 +1,5 @@
 ﻿# 从其他工作目录打开正式桌面入口，按原实例的托盘命令恢复最小化的管理中心。
-param([Parameter(Mandatory)][string]$Panel, [Parameter(Mandatory)][string]$Root)
+param([Parameter(Mandatory)][string]$Panel, [Parameter(Mandatory)][string]$Root, [string]$ProfileTemp)
 $ErrorActionPreference = 'Stop'
 $panelPath = (Resolve-Path -LiteralPath $Panel).Path
 $hostPath = Join-Path (Split-Path -Parent $panelPath) 'dafeiyu-host.exe'
@@ -54,6 +54,12 @@ $info.Arguments = '--data "' + $data + '"'
 $info.WorkingDirectory = Join-Path $env:SystemRoot 'System32'
 $info.UseShellExecute = $false
 $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+# 安装包验证把浏览器配置限定在本轮目录，独立启动验证沿用系统临时目录。
+if ($ProfileTemp) {
+    $profileDirectory = (Resolve-Path -LiteralPath $ProfileTemp).Path
+    $info.EnvironmentVariables['TEMP'] = $profileDirectory
+    $info.EnvironmentVariables['TMP'] = $profileDirectory
+}
 $info.EnvironmentVariables.Remove('DEEPSEEK_API_KEY')
 $info.EnvironmentVariables.Remove('DASHSCOPE_API_KEY')
 $panelProcess = [Diagnostics.Process]::Start($info)

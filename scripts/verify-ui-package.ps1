@@ -59,7 +59,7 @@ try {
     if ($missing.ExitCode -ne 1 -or -not (Get-Content -LiteralPath (Join-Path $logs 'missing-assets.err') -Raw).Contains('UI assets missing')) { throw 'Missing-assets refusal was not confirmed' }
 } finally { $missing.Dispose() }
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'tests/desktop/desktop_entry.ps1') -Panel $executable -Root $logs
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'tests/desktop/desktop_entry.ps1') -Panel $executable -Root $logs -ProfileTemp $profileTemp
 if ($LASTEXITCODE -ne 0) { throw "Desktop entry or tray restoration was not verified ($LASTEXITCODE)" }
 $results | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $logs 'results.json') -Encoding utf8
 Write-Output "UI package: 7 modes, missing-assets refusal, desktop startup and tray restoration passed. Logs: $logs"
