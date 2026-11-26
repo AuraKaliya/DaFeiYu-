@@ -378,9 +378,11 @@ std::shared_ptr<const PluginDirectory> Host::packages() const {
     return packages_;
 }
 
-// 复制当前应用已发布的设置服务，读取期间不占用业务推进锁。
-std::shared_ptr<app::HostSettings> Host::settings() const {
+// 在短锁内核对窗口、启动和退出状态，文件操作只持有设置自身的锁。
+std::shared_ptr<app::HostSettings> Host::settings(const std::string& client, bool writing) const {
     std::lock_guard lock(mutex_);
+    if (client.empty() || !clients_.contains(client)) throw std::invalid_argument("settings: management client required");
+    if (writing && (exited_ || worker_.get_stop_token().stop_requested())) return {};
     return settings_;
 }
 

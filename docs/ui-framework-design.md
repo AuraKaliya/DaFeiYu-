@@ -280,11 +280,17 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 `plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
 
-### 5.8 主体设置读口
+### 5.8 主体设置读取与保存
 
 已连接窗口发送 `{"version":"1","request":"s1","type":"settings.read","owner":"host","instance":"原后台"}`。可带上次读到的十进制字符串 `revision` 核对同一版本。`settings.snapshot` 回显请求、所有者与后台，给出已保存的 `revision`、运行中采用的 `appliedRevision`、待重启标记 `pendingRestart` 和当前服务的写入能力 `canSave`。旧后台或旧修订返回 `state=stale` 及空字段表。主体尚无供应商配置时返回 `unavailable`。
 
-就绪时 `fields` 仅含真实启动配置中的 `provider` 和 `timeout_ms`，每项携带 `id`、`type`、`access_mode`、`source`、已保存的 `value` 和运行中的 `appliedValue`。供应商只读，超时的整数范围沿用模型配置的 1～600000 毫秒。当前阶段提供读口，`canSave=false`。读取只复制公开值，服务端点、模型私有参数与环境变量引用均留在宿主。[主体字段投影](../apps/host/src/management/settings_protocol.cpp) · [双窗口验证](../apps/host/tests/management_settings.cpp)
+就绪时 `fields` 返回 `provider` 和 `timeout_ms`，每项携带 `id`、`type`、`access_mode`、`source`、已保存的 `value` 和运行中的 `appliedValue`。供应商只读。超时允许 1～600000 毫秒的整数，来源为启动配置 `startup` 或主体用户覆盖 `user`。正式常驻入口启用保存，独立注入配置的应用可通过 `canSave=false` 表明只提供读取。后端只投影这两个字段。[主体字段投影](../apps/host/src/management/settings_protocol.cpp)
+
+保存示例为 `{"version":"1","request":"s2","type":"settings.save","owner":"host","instance":"原后台","revision":"1","submission":"window-a-1","changes":{"timeout_ms":5800}}`。`revision` 使用窗口所见的已保存修订，`submission` 由窗口为本次意图生成，最多 96 个 ASCII 字母、数字、点、斜杠、连字符或下划线。主体用户文件为数据目录下的 `host-settings.json`，采用同目录临时文件完整刷新后原子替换。首次读取沿用启动配置，首次保存才创建文件。
+
+`settings.result` 的 `state=saved` 表示已落盘，`savedRevision` 和 `savedValue` 对应该次提交，`revision`、`appliedRevision` 和 `pendingRestart` 对应当前状态。下次正式启动在创建会话前采用已保存的超时。只读字段使整批返回 `readOnly`，未知字段或越界值返回 `invalid`，两窗基于同一修订保存时后到者返回 `conflict` 和当前修订。磁盘发布失败返回 `failed`，文件在运行期间被外部改写时返回 `storageChanged` 并保留现场。
+
+同一意图可按原提交号重读。窗口发送 `{"version":"1","request":"s3","type":"settings.receipt","owner":"host","instance":"当前后台","submission":"window-a-1"}` 查询最近 32 次成功保存的原回执。以相同基准修订和相同值重发原提交会返回原保存修订，改值或改基准返回 `submissionConflict`。重启后用新后台身份仍可查原提交，超出保留范围或从未成功写入的提交返回 `unknown`。[保存与冲突裁定](../apps/host/src/host_settings.cpp) · [文件发布](../apps/host/src/host_settings_file.cpp) · [双窗、写锁与重启验证](../apps/host/tests/management_settings.cpp)
 
 ## 6 插件 UI 注册规范
 
