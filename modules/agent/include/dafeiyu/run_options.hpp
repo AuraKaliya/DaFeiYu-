@@ -73,7 +73,7 @@ struct RunOptions {
     std::optional<model::MessageSource> prompt_source;
     // 原话的渠道时间可随准入传入，后续事件的 UTC 时钟独立于期限和预算。
     std::optional<std::int64_t> prompt_utc_ms;
-    MessageClock message_clock = message_utc_now;
+    MessageClock message_clock;
     // 宿主固定的输出去向及人格表达，按当前用途装配到正式系统段。
     std::optional<PromptRules> prompt_rules;
 };

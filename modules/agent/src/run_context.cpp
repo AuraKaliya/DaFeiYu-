@@ -44,8 +44,8 @@ std::int64_t message_utc_now() noexcept {
 }
 // 隔离可控时钟错误，工具实际执行后仍可提交效果与退出。
 std::optional<std::int64_t> RunContext::event_time() const noexcept {
-    try { if (message_clock_) return message_clock_(); } catch (...) {}
-    return {};
+    try { return message_clock_ ? message_clock_() : message_utc_now(); }
+    catch (...) { return {}; }
 }
 // 准备本轮用户消息并验证历史完整性，输入只在后续明确提交时进入历史。
 // 步骤：校验独立观察数据 → 保留旧快照并追加目标及数据消息 → 校验角色、配对和容量。

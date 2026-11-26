@@ -13,7 +13,7 @@ class RunContext {
     // 从历史创建目标及最多四份观察数据，观察仅按数据消息附加，不授予角色或工具权限。
     RunContext(std::shared_ptr<const MessageHistory> history, std::string prompt, std::vector<std::string> observations = {},
         std::string status = {}, ContextWindow window = {}, model::MessageSource prompt_source = model::MessageSource::human,
-        MessageClock message_clock = message_utc_now, std::optional<std::int64_t> prompt_utc_ms = {});
+        MessageClock message_clock = {}, std::optional<std::int64_t> prompt_utc_ms = {});
     // 禁止复制未提交事务，避免两个写入者共享同一待填上下文。
     RunContext(const RunContext&) = delete;
     // 禁止赋值或移动覆盖事务责任，历史快照另行按值持有。
