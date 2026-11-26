@@ -1,5 +1,6 @@
 add_library(dfy_agent STATIC
   src/action_observations.cpp src/confirmation.cpp src/context_capacity.cpp src/context_status.cpp
+  src/decision_status.cpp src/decision_status.hpp
   src/diagnostic_fields.hpp src/diagnostic_json.cpp src/diagnostic_snapshot.cpp
   src/execution_policy.cpp src/observation.cpp src/observation_controller.cpp src/observation_inbox.cpp
   src/observation_input.cpp src/observation_trigger.cpp src/observation_verification.cpp
@@ -9,7 +10,7 @@ add_library(dfy_agent STATIC
   src/trace_identity.cpp
   include/dafeiyu/action_observations.hpp include/dafeiyu/async_session.hpp
   include/dafeiyu/confirmation.hpp include/dafeiyu/context_capacity.hpp
-  include/dafeiyu/context_status.hpp include/dafeiyu/diagnostic_json.hpp
+  include/dafeiyu/context_status.hpp include/dafeiyu/decision_status.hpp include/dafeiyu/diagnostic_json.hpp
   include/dafeiyu/diagnostic_snapshot.hpp include/dafeiyu/execution_policy.hpp
   include/dafeiyu/observation.hpp include/dafeiyu/observation_controller.hpp
   include/dafeiyu/observation_inbox.hpp include/dafeiyu/observation_input.hpp
