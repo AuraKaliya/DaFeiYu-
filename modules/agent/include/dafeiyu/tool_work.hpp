@@ -21,7 +21,7 @@ struct ToolProgress { std::optional<ToolResult> result; bool exited = false; Too
 struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; model::ToolCall call; };
 using ToolTime = std::chrono::steady_clock::time_point;
 using ToolClock = std::function<ToolTime()>;
-// 顺序资格与计费均由宿主先准备；预算覆盖保留结果，顺序占用覆盖实际工作退出。
+// 标记首次派发所需的宿主条件及阻塞来源。
 enum class ToolStartBlock { none, unavailable, user_input_pending, observation_stale };
 // 首次变更检查返回可核对的原因；布尔回调仍可提供原有的允许或拒绝。
 struct ToolStartDecision {
@@ -35,6 +35,7 @@ struct ToolStartDecision {
     std::string detail(std::string_view stage) const;
 };
 using ToolStartGuard = std::function<ToolStartDecision()>;
+// 预算覆盖结果保留期，顺序资格一直占用到实际工作退出。
 struct ToolResources {
     std::shared_ptr<runtime::SerialDomain> domain;
     std::shared_ptr<const runtime::SerialRequest> ordering;

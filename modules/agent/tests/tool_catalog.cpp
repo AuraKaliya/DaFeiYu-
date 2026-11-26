@@ -79,7 +79,12 @@ void subsets() {
     rejects([&] { original.restrict_to(std::vector<std::string>{"fixture/read","fixture/read"}); });
     check(subset.restrict_to({}).definitions().empty(),"empty subset exposed tools");
 
+    auto pending_write = original.prepare({{{1,1},2},1},{"pending","write","{}"});
     catalog.enable(write,false); const auto disabled = original.restrict_to(write_ids);
+    pending_write->advance();
+    const auto& blocked = pending_write->request()->outcome();
+    check(!writes && blocked.error == ToolError::unavailable && blocked.effect == ToolEffect::not_applied &&
+        blocked.output.find("before_start") != std::string::npos && blocked.output.find("disabled") != std::string::npos,"disabled work lost its last authorization check");
     check(disabled.permits_state_changes() && disabled.definitions().empty(),"subset hid disabled change permission");
     rejects([&] { disabled.resolve("write","{}"); }); catalog.enable(write,true);
     check(disabled.resolve("write","{}").registration == write,"reenable rebound subset");
@@ -90,6 +95,9 @@ void subsets() {
     delayed->advance(); rejects([&] { original.restrict_to(read_ids).resolve("read","{}"); });
     check(reads == 1 && !writes && delayed->request()->outcome().error == ToolError::unavailable && subset.definitions().empty(),
         "revoked subset invoked replacement or old tool");
+    check(delayed->request()->outcome().output.find("before_start") != std::string::npos &&
+        delayed->request()->outcome().output.find("revoked") != std::string::npos,
+        "revoked work lost its original registration decision");
 }
 }
 // 固定参数在重复收紧、重排字段和撤销时保持原边界。

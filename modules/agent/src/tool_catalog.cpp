@@ -177,8 +177,10 @@ std::unique_ptr<ToolDriver> ToolSnapshot::prepare(AttemptId attempt, model::Tool
     for (const auto& entry : entries_) if (entry->registration == selection.registration) {
         if (!entry->factory) throw std::invalid_argument("tools: implementation unavailable");
         ToolFactory guarded = [entry, context = context_](const ToolInvocation& input) {
-            if (!entry->registered || !entry->enabled)
-                return completed_tool({false,ToolEffect::not_applied,{},ToolError::unavailable});
+            if (!entry->registered)
+                return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"revoked"})",ToolError::unavailable});
+            if (!entry->enabled)
+                return completed_tool({false,ToolEffect::not_applied,R"({"stage":"before_start","reason":"disabled"})",ToolError::unavailable});
             if (!context) return entry->factory(input);
             auto native = input;
             native.call.arguments = "{\"context\":" + *context + ",\"arguments\":" + input.call.arguments + "}";
