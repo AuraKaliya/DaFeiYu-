@@ -1609,7 +1609,26 @@ async function checkGap(fixture, player, whispers, block, ambiguous) {
   assert.equal(block(...wall.doorLower).name, 'air');
   assert.equal(block(...wall.doorUpper).name, 'air');
   if (!ambiguous) assert.ok(wall.existingDoor.every(pos => block(...pos).name === 'oak_door'));
-  assert.ok(!actions.some(row => row.skill === 'collect'));
+  const collections = actions.filter(row => row.skill === 'collect');
+  if (ambiguous) {
+    // 撤回后重提的同类请求会进入桥接复核，按原调用查实际退出和现场实效。
+    const retry = trace().find(row => row.kind === 'tool.exited' && row.callId === 'approval-bypass');
+    assert.ok(retry);
+    assert.equal(collections.length, 1);
+    const [guard] = collections;
+    const exit = trace().find(row => row.kind === 'mail.received' && row.category === 'mc.partner.action' &&
+      row.body.invocation === retry.invocation && row.body.bridgeWork === guard.work);
+    assert.ok(exit?.body.bridgeExited && guard.exited);
+    assert.deepEqual(exit.body.result, guard.result);
+    assert.equal(guard.result.status, 'blocked');
+    assert.equal(guard.result.reasonCode, 'approval_required');
+    assert.equal(guard.result.broken, 0);
+    assert.deepEqual(guard.result.changes, []);
+    assert.deepEqual(guard.result.inventoryDelta, {});
+    const { x, y, z } = guard.result.progress.targetCell;
+    assert.equal(block(x, y, z).name, 'dirt');
+    assert.equal(fixture.materialCount('dirt'), 3);
+  } else assert.equal(collections.length, 0);
   assert.ok(trace().some(row => row.kind === 'tool.exited' && row.callId === 'wrong-gap' &&
     JSON.parse(row.output).placementAttempted === false));
 }
