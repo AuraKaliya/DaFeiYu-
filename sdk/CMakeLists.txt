@@ -18,7 +18,7 @@ target_include_directories(dfy_sdk INTERFACE include)
 dfy_group_target(dfy_sdk SDK)
 
 install(DIRECTORY include/ DESTINATION sdk/include CONFIGURATIONS Release COMPONENT SDK)
-install(FILES README.md DESTINATION sdk CONFIGURATIONS Release COMPONENT SDK)
+install(FILES "${PROJECT_SOURCE_DIR}/文档/使用说明/插件开发说明.md" DESTINATION sdk RENAME README.md CONFIGURATIONS Release COMPONENT SDK)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

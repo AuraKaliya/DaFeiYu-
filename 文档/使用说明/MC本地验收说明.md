@@ -1,6 +1,6 @@
 # Minecraft 本地协议探针
 
-本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../../docs/mc-companion-development-plan.md#外部试玩怎样评)，记录现场、可能的解释与实际效果。
+本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../开发计划/MC伙伴开发计划.md#外部试玩怎样评)，记录现场、可能的解释与实际效果。
 
 ## 固定响应验收单个玩家绑定
 
@@ -28,15 +28,15 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 
 第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余七局从“帮我挖 8 块圆石”开始。待选交付地点时，伙伴能继续采掘和查库存，提前给物会被待答拦下。
 
-选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
+选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../设计/Agent循环与上下文设计.md#主线实施记录)
 
 存箱局的 `chest-evidence.json` 保存协议玩家逐箱数到的前后值、伙伴库存、原工作号、重复提交回指及迟到实效版本。隔离服记录 `run-1pvdZD` 中，四笔委托都引用玩家消息 5 的观察 `1.29`。正常存入 8 块，满箱存入 0 块，只余 3 块容量时存入 3 块。窗口关闭时工作 `1.57` 先保留待核实，随后在该工作的第 4 版确认实存 8 块。四笔委托中右箱各次读数均为 5 块。
 
-取出局的 `withdraw-evidence.json` 保存同一指箱观察下每笔委托的去向、原工作和复查记录。选中左箱 `(2,-60,-2)` 后，独立玩家打开双箱，并接收服务端对伙伴背包普通圆石的计数。右箱 `(2,-60,2)` 有 5 块圆石。正常局从 12 块中取 8 块，箱内不足和背包只容纳 3 块时各取 3 块，满包取 0 块。整栈点击后关窗的原工作先报告待查，再读双边实物确认 8 块。[协议玩家断言](chest-withdrawal-check.cjs)
+取出局的 `withdraw-evidence.json` 保存同一指箱观察下每笔委托的去向、原工作和复查记录。选中左箱 `(2,-60,-2)` 后，独立玩家打开双箱，并接收服务端对伙伴背包普通圆石的计数。右箱 `(2,-60,2)` 有 5 块圆石。正常局从 12 块中取 8 块，箱内不足和背包只容纳 3 块时各取 3 块，满包取 0 块。整栈点击后关窗的原工作先报告待查，再读双边实物确认 8 块。[协议玩家断言](../../tests/mc-companion/chest-withdrawal-check.cjs)
 
 拆栈边界局也写出 `withdraw-evidence.json`。左箱依次有 64、7、7 块时，取八后各槽为 64、0、6。单一 64 块面对取八委托时，首次取半就会持有 32 块；工作以 `chest_split_unavailable` 退出，点击数为 0，伙伴净增 0。单栈 12 块首次取半后立即关窗，原工作重开双边库存核实实取 6、剩余 2。
 
-取箱交给本人局在同一双箱场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](chest-delivery-check.cjs)
+取箱交给本人局在同一双箱场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](../../tests/mc-companion/chest-delivery-check.cjs)
 
 指定掉落续取局使用 `node .\tests\mc-companion\playtest.cjs $probe $plugin --ground-pickup-resume-probe`。两块泥土先被石头阻挡，石头移开时另一堆同物同数仍会阻止接近。两侧都看见旁堆移开后，仅原 UUID 被伙伴拾取。`ground-resume-evidence.json` 记录阻挡、续取、原号回查、旁堆余量和实际库存。将末项换为 `--ground-pickup-facts-probe` 会把独立玩家设为事实试点，并在三次现场结算后分别用正式 `status_read` 查询当步快照。证据文件的 `decisions` 保存原工作、事实号、已收与待拾数量。部分收取、退出未知及取消另有固定游戏包测试。[拾取固定用例](../../plugins/mc/tests/ground-pickup.test.cjs)
 
@@ -80,7 +80,7 @@ DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同�
 
 真实模型只用于人工试玩。自动验收使用固定响应和延迟，核对工具回传、任务续行和 Trace。读取 `model.submitted`、`model.exited` 和 `mc.partner.action` 对照实际调用与游戏反馈。
 
-1. 用 Java 1.21.4 直接连接 `127.0.0.1:25580`，或使用下方浏览器入口。两种方式都用独立玩家身份见到大肥鱼；原版客户端接受本服的[角色资源包](appearance.md)。
+1. 用 Java 1.21.4 直接连接 `127.0.0.1:25580`，或使用下方浏览器入口。两种方式都用独立玩家身份见到大肥鱼；原版客户端接受本服的[角色资源包](../../tests/mc-companion/appearance.md)。
 2. 进场后用普通聊天按下方主题自由交互。本机离线服上的 `/msg` 私聊缺少可核对的发送者身份。
 3. 离服时，体验宿主给离场事件留出处理时间，再收尾。启动打印的 `DFY_TRACE` 指向模型与工具日志；同一宿主目录的 `board.txt` 记录实际发言，`game-actions.jsonl` 记录游戏执行结果。无人进服时，在宿主目录创建空文件 `stop` 可正常结束。
 
@@ -105,7 +105,7 @@ DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同�
 
 - 说「你跟着我走」，边走边问一句「到哪了」。观察她是否边走边答，以及转弯、停下再起步时是否继续跟随。
 - 在第一处缺口发话「过来帮我把墙的这个缺口填上」，随后走到门洞旁。核对她检查的是第一处缺口。现场有歧义时，观察她是否先确认，再按实际方格执行。
-- 核对补墙后的实际方块、门洞和材料余量，记录关键原话和大致时间。结束后用玩家消息号、子回合和工作号串查实际上下文、回执与发言。 [日志审阅与离线回放](../../docs/run-guide.md)
+- 核对补墙后的实际方块、门洞和材料余量，记录关键原话和大致时间。结束后用玩家消息号、子回合和工作号串查实际上下文、回执与发言。 [日志审阅与离线回放](构建与运行说明.md)
 
 ### 实机故障基线 `run-4VDQ2M`
 
@@ -171,7 +171,7 @@ ctest --test-dir build/rebuild/windows-tests -C Debug -V -R '^plugins\.mc_partne
 
 用玩家消息号 2 串起原话、首答实发和首次移动接纳。第一段移动在消息 3 的模型响应期间按原工作号读回抵达。消息 3 的实际回复在两段移动都完成前送达。第二段仍归原任务和原请求，完工后的发言以独立送达回执核对。
 
-`-V` 打印 Trace 路径和五段相对耗时。起点采用宿主 Trace 中的原话投影，动作采用桥接接纳和实际抵达的回执，发言采用 `sent=true` 的桥接回执。夹具仅检查因果顺序，耗时用于查看本次回放。 [断言](native-world.cjs#L73)
+`-V` 打印 Trace 路径和五段相对耗时。起点采用宿主 Trace 中的原话投影，动作采用桥接接纳和实际抵达的回执，发言采用 `sent=true` 的桥接回执。夹具仅检查因果顺序，耗时用于查看本次回放。 [断言](../../tests/mc-companion/native-world.cjs#L73)
 
 固定响应的 `--gap-group-probe` 另从独立玩家发出“帮我把墙上的缺口补好”计到该玩家收到伙伴的私聊。此场景原话未指定哪处开口，确认两处是否都补是有效反馈。该局证据目录的 `player-feedback.json` 保存原话、玩家端单调时钟的收发样本、耗时与判定，完成核对后附上原消息号、送模回合和游戏发言工作号。用 `node --test tests/mc-companion/player-feedback.test.cjs` 核对五秒边界，原话已明确时的重复追问、空泛应答和截尾采样分别结算。
 
@@ -195,19 +195,19 @@ node .\tests\mc-companion\native-world.cjs (Join-Path $fixture.FullName 'dfy_mc_
 ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^(mc\.partner_observe|plugins\.mc_partner_revision_(navigation(-mixed|-restart)?|layered(-blocked)?|repair-plan|attention))$'
 ```
 
-下表中的场景名省略 `plugins.mc_partner_revision_` 前缀。绕墙和垫高共用按原号核对前台接纳、唯一退出、分层结算和后继放行的断言。被跳过的节点不得出现前台动作回执。恢复跟随时，新执行段仍归属原逻辑工作号。[共用回执断言](native-world.cjs#L12)
+下表中的场景名省略 `plugins.mc_partner_revision_` 前缀。绕墙和垫高共用按原号核对前台接纳、唯一退出、分层结算和后继放行的断言。被跳过的节点不得出现前台动作回执。恢复跟随时，新执行段仍归属原逻辑工作号。[共用回执断言](../../tests/mc-companion/native-world.cjs#L12)
 
 | 现场问题与追溯入口 | 要守住的行为 | 定向回归 |
 | --- | --- | --- |
-| 补墙途中说「现在绕着这个墙跑两圈」。任务切换见 `9cf0e97`，计圈见 `7e18a5e`。[固定原话](native-world.cjs) | 旧采掘按原号退出，保留已拾取的一块泥土。新任务重新核验墙和四个站位，单条路线只在实际退出后唤醒子 Agent。 | `navigation` 核对任务切换。`mc.partner_observe` 核对站位、闭环和半圈计数。 |
+| 补墙途中说「现在绕着这个墙跑两圈」。任务切换见 `9cf0e97`，计圈见 `7e18a5e`。[固定原话](../../tests/mc-companion/native-world.cjs) | 旧采掘按原号退出，保留已拾取的一块泥土。新任务重新核验墙和四个站位，单条路线只在实际退出后唤醒子 Agent。 | `navigation` 核对任务切换。`mc.partner_observe` 核对站位、闭环和半圈计数。 |
 | 绕行与普通移动串联。计划合并见 `a537ea4`，在途回执见 `1546ce4`。 | 9 个检查点齐全但路线仍在途时，后继移动继续等待。 | `navigation-mixed` 保留到达起点、绕两圈、后继移动三层。 |
-| 「中途重新绕」，见 `451b1f7`。[固定原话](native-world.cjs) | 旧路线带一圈按原号退出，旧追问撤下。新修订沿原墙从零开始，完成后恢复原跟随。 | `navigation-restart` 先返回仍在途的停止回执，再返回原号退出。 |
-| 「你可以垫上来」后计划被拒却进入等待，见原始基线 `run-CA2yMm` 的回合 8、9。[历史回放](replay-follow-climb-baseline.cjs#L43) | 合法的放置和移动节点可接纳。无效计划在修订额度用完后明确结算。 | `layered` 验证合法计划接纳。`repair-plan` 验证两次拒绝后正常结算回合。 |
-| 高台掉队后请求垫上来，见同一基线的跟随工作 `1.240`、`1.267`、`1.276`、`1.315`。[历史回放](replay-follow-climb-baseline.cjs#L22) | 受阻和恢复沿用原跟随身份。垫高每次放置或移动按原号结算。中途站位失败时保留已有方块，跳过依赖步骤。 | `attention` 覆盖异常与恢复。`layered` 和 `layered-blocked` 分别覆盖四层完成和第一步移动受阻。后者的站位失败由夹具注入。 |
+| 「中途重新绕」，见 `451b1f7`。[固定原话](../../tests/mc-companion/native-world.cjs) | 旧路线带一圈按原号退出，旧追问撤下。新修订沿原墙从零开始，完成后恢复原跟随。 | `navigation-restart` 先返回仍在途的停止回执，再返回原号退出。 |
+| 「你可以垫上来」后计划被拒却进入等待，见原始基线 `run-CA2yMm` 的回合 8、9。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L43) | 合法的放置和移动节点可接纳。无效计划在修订额度用完后明确结算。 | `layered` 验证合法计划接纳。`repair-plan` 验证两次拒绝后正常结算回合。 |
+| 高台掉队后请求垫上来，见同一基线的跟随工作 `1.240`、`1.267`、`1.276`、`1.315`。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L22) | 受阻和恢复沿用原跟随身份。垫高每次放置或移动按原号结算。中途站位失败时保留已有方块，跳过依赖步骤。 | `attention` 覆盖异常与恢复。`layered` 和 `layered-blocked` 分别覆盖四层完成和第一步移动受阻。后者的站位失败由夹具注入。 |
 
-`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../../docs/mc-companion-development-plan.md#已验证的基线)
+`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../开发计划/MC伙伴开发计划.md#已验证的基线)
 
-**Paper 验证。** 绕墙的 Paper 探针从上述对照索引追溯。实际验收核对脚位经过墙两侧和两端、返回起点，以及重开时从起点重新跑。垫高的两种场地使用表中的 `--layered-resupply-probe` 与 `--layered-follow-probe`。复盘时沿同一个跟随工作号检查受阻、判定可达、恢复与实际退出，另用采掘、放置及移动回执核对已经发生的效果。[垫高探针](playtest-check.cjs#L202)
+**Paper 验证。** 绕墙的 Paper 探针从上述对照索引追溯。实际验收核对脚位经过墙两侧和两端、返回起点，以及重开时从起点重新跑。垫高的两种场地使用表中的 `--layered-resupply-probe` 与 `--layered-follow-probe`。复盘时沿同一个跟随工作号检查受阻、判定可达、恢复与实际退出，另用采掘、放置及移动回执核对已经发生的效果。[垫高探针](../../tests/mc-companion/playtest-check.cjs#L202)
 
 ### 指向操作回归
 

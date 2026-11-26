@@ -2,9 +2,9 @@
 
 大肥鱼默认打开 Windows 桌面管理中心。主面板与普通聊天终端连接同一个后台主 Agent，空插件目录也能问答。桌面可以续读主聊天、查看房间位置和信箱，在设置页加载或卸载已安装的插件。可选终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。项目使用 C++20、CMake 和 VS2022 x64。
 
-- **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
+- **想玩或运行程序**，见[运行说明](文档/使用说明/构建与运行说明.md)、[MC 插件](文档/使用说明/MC伙伴使用说明.md)与[本机试玩入口](文档/使用说明/MC本地验收说明.md#首次真人体验)。
 - **想审当前设计**，从[设计文档](文档/设计文档.md)进入项目架构、Agent、管理中心、内置书房和 MC 伙伴。
-- **想了解工程进展**，可从各开发线的交付范围和下一步读到对应源码与验收记录。[当前开发进度](docs/architecture.md#当前开发进度) · [架构图](docs/architecture.md#架构图) · [文档导航](docs/README.md)
+- **想了解工程进展**，可从各开发线的交付范围和下一步读到对应源码与验收记录。[当前开发进度](文档/设计/项目架构设计.md#当前开发进度) · [架构图](文档/设计/项目架构设计.md#架构图) · [文档导航](docs/README.md)
 
 ## 运行与构建
 
@@ -46,7 +46,7 @@ cmake --build --preset windows-release
 cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 ```
 
-分发包含程序、Release 运行库、无密钥配置、初始空插件目录、独立示例包、SDK 和第三方许可，安装目录可以独立运行。[运行说明](docs/run-guide.md) · [SDK 开发说明](sdk/README.md)
+分发包含程序、Release 运行库、无密钥配置、初始空插件目录、独立示例包、SDK 和第三方许可，安装目录可以独立运行。[运行说明](文档/使用说明/构建与运行说明.md) · [SDK 开发说明](文档/使用说明/插件开发说明.md)
 
 ## 会话与本地命令
 
@@ -77,13 +77,13 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 /task example.status/read example.status/set_focus focus "把状态面板切换到专注模式" --request 1
 ```
 
-首读完成后，输入 `/confirmations` 查看待确认动作，按显示的请求号和修订批准或拒绝。用 `/verification` 查询读回判定。示例状态随当前插件实例存活。完整操作见 [运行说明](docs/run-guide.md)。
+首读完成后，输入 `/confirmations` 查看待确认动作，按显示的请求号和修订批准或拒绝。用 `/verification` 查询读回判定。示例状态随当前插件实例存活。完整操作见 [运行说明](文档/使用说明/构建与运行说明.md)。
 
 模型等待期间仍可使用本地命令，新的普通问答明确报告忙碌。正常输入 EOF 等待已接纳回答完成；明确退出请求取消当前问答。取消决定与后台实际退出分开，迟到回答不能恢复已取消结果。模型默认不自动重发失败请求。
 
 `dfy.session.event@1` 记录 `kind`、`session`、`turn`、`messages`，不包含凭据或对话正文。种类为 `turn_started`、`turn_completed`、`turn_failed`、`turn_cancelled`、`session_cleared`；成功事件在历史提交后接纳，观察者始终延后运行。
 
-单次问答诊断将会话、回合、模型请求和通知事件身份关联，并记录单调时间及失败阶段。`/status` 仅查询有界内存快照，不调用模型；取消结果与实际退出分别显示。通知未接纳会独立提示一次，不改写问答结果，也不自动补发。诊断不含正文、凭据或异常内容，终端仅保留最近一轮，清空上下文后仍可查看，退出后丢弃。详细字段解释见 [运行说明](docs/run-guide.md)。
+单次问答诊断将会话、回合、模型请求和通知事件身份关联，并记录单调时间及失败阶段。`/status` 仅查询有界内存快照，不调用模型；取消结果与实际退出分别显示。通知未接纳会独立提示一次，不改写问答结果，也不自动补发。诊断不含正文、凭据或异常内容，终端仅保留最近一轮，清空上下文后仍可查看，退出后丢弃。详细字段解释见 [运行说明](文档/使用说明/构建与运行说明.md)。
 
 ## 插件与运行时
 
@@ -106,10 +106,10 @@ cmake --install build --config Release --prefix "$PWD/build/package/DaFeiYu"
 | Runtime：预算、调度、结果及重试 | [预算](modules/runtime/include/dafeiyu/budget.hpp)、[调度](modules/runtime/include/dafeiyu/owner_scheduler.hpp)、[结果](modules/runtime/include/dafeiyu/result_group.hpp)、[重试](modules/runtime/include/dafeiyu/retry_controller.hpp) |
 | Platform：系统输入、HTTPS 与代码寿命 | [输入](modules/platform/include/dafeiyu/line_input.hpp)、[传输](modules/platform/src/winhttp.cpp)、[CodeModule](modules/platform/include/dafeiyu/code_module.hpp) |
 | Plugins：目录、实例、包操作与依赖 | [管理器](modules/plugin_host/include/dafeiyu/plugin_manager.hpp)、[实例](modules/plugin_host/include/dafeiyu/plugin_instance.hpp)、[依赖](modules/plugin_host/include/dafeiyu/plugin_dependencies.hpp)、[包操作](modules/plugin_host/include/dafeiyu/plugin_package.hpp) |
-| SDK：独立 C 接口 | [v2 契约](docs/plugin-abi-v2.md)、[公开头与示例](sdk/README.md) |
+| SDK：独立 C 接口 | [v2 契约](文档/使用说明/插件接口说明.md)、[公开头与示例](文档/使用说明/插件开发说明.md) |
 | Tests：离线与真实 DLL 验收 | [构建清单](tests/CMakeLists.txt)、[单进程集成](tests/application/application_lifecycle.cpp) |
 
-源码按模块组织，VS 目标按职责分组。修改事件存储时，可在 Events 模块内找到实现和单模块测试，从根目录按目标构建。涉及宿主加载插件或跨进程投递的场景在顶层测试树中。[CMake 构建树](docs/architecture.md#cmake-构建树) · [Events 测试](modules/events/tests/CMakeLists.txt) · [跨模块测试](tests/CMakeLists.txt)
+源码按模块组织，VS 目标按职责分组。修改事件存储时，可在 Events 模块内找到实现和单模块测试，从根目录按目标构建。涉及宿主加载插件或跨进程投递的场景在顶层测试树中。[CMake 构建树](文档/设计/项目架构设计.md#cmake-构建树) · [Events 测试](modules/events/tests/CMakeLists.txt) · [跨模块测试](tests/CMakeLists.txt)
 
 ## 验证方式
 
@@ -129,8 +129,8 @@ ctest --test-dir build/rebuild/windows-ui -C Release --output-on-failure
 .\scripts\verify-agent-package.ps1 -Build .\build\rebuild\windows-ui
 ```
 
-开发、回归和最终验收使用固定模型响应或传输替身，按功能使用真实线程、Windows 管道、符号链接、DLL 和隔离 Paper。真实模型选工具、理解现场等表现按「仅记录，不执行」处理。游戏试玩和固定响应场地分别有独立入口。旧真实服务脚本及结果可从 Git 历史回查。[玩家试玩](tests/mc-companion/README.md#首次真人体验) · [固定响应场地](tests/mc-companion/README.md#固定响应验收场地)
+开发、回归和最终验收使用固定模型响应或传输替身，按功能使用真实线程、Windows 管道、符号链接、DLL 和隔离 Paper。真实模型选工具、理解现场等表现按「仅记录，不执行」处理。游戏试玩和固定响应场地分别有独立入口。旧真实服务脚本及结果可从 Git 历史回查。[玩家试玩](文档/使用说明/MC本地验收说明.md#首次真人体验) · [固定响应场地](文档/使用说明/MC本地验收说明.md#固定响应验收场地)
 
-原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。[Agent 会话与工具流程](docs/architecture.md#agent-会话与工具流程)
+原生观察规则默认只读，宿主可配置明确数据契约和标量条件，在命中后发起一个待审批变更。终端的主动委托与原生观察入口共用会话和工具授权。[Agent 会话与工具流程](文档/设计/项目架构设计.md#agent-会话与工具流程)
 
-第三方版本、归档校验和许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。
+第三方版本、归档校验和许可见 [THIRD_PARTY.md](文档/使用说明/第三方软件与素材许可.md)。开发过程和中文注释要求见 [AGENTS.md](AGENTS.md)。基础阶段后的新能力另行讨论与审查。
