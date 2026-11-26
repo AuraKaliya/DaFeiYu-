@@ -181,15 +181,16 @@ std::shared_ptr<TurnRequest> Session::begin(const std::string& prompt, RunOption
     working_ = true;
     try {
         for (auto& slot : records_) if (!slot) {
-            const bool replace = options.replace_history;
+            auto status_binding = options.decision_status ? options.decision_status->binding : std::string{};
+            if (options.decision_status && (status_binding.empty() || status_binding.size()>512))
+                throw std::invalid_argument("session: invalid decision status binding");
+            const bool replace = options.replace_history || (decision_store_ && status_binding!=status_binding_);
+            options.replace_history = replace;
             auto base = replace ? std::make_shared<const MessageHistory>() : history_;
             const auto epoch = replace ? next_domain() : evidence_epoch_;
             options.evidence_epoch = epoch;
             options.previous_status = replace ? nullptr : status_;
             auto next_status = options.context_status;
-            auto status_binding = options.decision_status ? options.decision_status->binding : std::string{};
-            if (options.decision_status && (status_binding.empty() || status_binding.size()>512))
-                throw std::invalid_argument("session: invalid decision status binding");
             const bool reuse = decision_store_ && status_binding==status_binding_;
             auto store = !options.decision_status ? nullptr : reuse ? decision_store_ : std::make_shared<DecisionStatusStore>();
             const auto status_epoch = !store ? 0 : reuse ? status_epoch_ : next_domain();

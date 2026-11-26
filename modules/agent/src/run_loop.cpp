@@ -73,7 +73,8 @@ struct RunLoopState {
             if (!options.status_store || !options.status_epoch)
                 throw std::invalid_argument("run: unbound decision status");
             if (options.decision_status->allow_read && !options.planning && options.origin==RunOrigin::user_request)
-                status_reader = grant_status_reader(options.tools,options.status_store,run.session,options.status_epoch);
+                status_reader = grant_status_reader(options.tools,options.status_store,run.session,options.status_epoch,
+                    options.decision_status->read_authority);
         }
         const bool changes = options.tools && options.tools->permits_state_changes();
         const bool observed_change = changes && options.origin == RunOrigin::observation_rule;

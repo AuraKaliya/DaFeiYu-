@@ -245,12 +245,47 @@ void decision_read() {
     options.decision_status = DecisionStatusOptions{"other",{},false};
     turn = session.begin("另一绑定",options);
     until(session,[&] { return !session.busy(); });
-    check(turn->answer()=="完成" && received.back().tools.empty() &&
-        Json::parse(session.read_status(epoch,first)).at("reason")=="scope_mismatch","rebound status remained authorized");
+    check(turn->answer()=="完成" && received.back().tools.empty() && !contains(received.back(),first) &&
+        session.message_count()==2 && Json::parse(session.read_status(epoch,first)).at("reason")=="scope_mismatch",
+        "rebound input retained an earlier status_read receipt");
     const auto rebound = Json::parse(received.back().messages.back().content);
     session.clear();
     check(Json::parse(session.read_status(std::stoull(rebound.at("scope").at("epoch").get<std::string>()),
         rebound.at("snapshot").get<std::string>())).at("state")=="unavailable","clear retained read authority");
+}
+
+// 验证插件在模型已看见读口后撤销观察授权时，旧候选无法读取，下一步也移除读口。
+// 步骤：冻结原授权 → 撤销注册并同名重建 → 执行已返回的候选 → 核对范围与拒绝回执。
+void decision_read_revoked() {
+    using Json = nlohmann::json;
+    auto channel = std::make_shared<dfy::events::BroadcastChannel>(std::make_shared<dfy::events::EventStore>(8,64),1,8);
+    const std::string id = "fixture/inspect";
+    ToolCatalog catalog;
+    ToolDescription inspect{id,23,1,{"inspect","读取",R"({"type":"object","properties":{},"additionalProperties":false})"}};
+    const auto factory = [](const auto&) { return completed_tool({true,ToolEffect::not_applied,"原观察",ToolError::none}); };
+    const auto registration = catalog.add(inspect,factory);
+    const auto original = catalog.snapshot(std::span(&id,1));
+    RunOptions options;
+    options.tools = original.bind_context(R"({"player":"original"})");
+    options.decision_status = DecisionStatusOptions{"fixture",{},true,original};
+    unsigned calls = 0;
+    Session session({},channel,Backend{[&](const Config&,const Request& request) -> Response {
+        if (++calls==1) {
+            check(request.tools.size()==2 && request.tools.back().name=="status_read","missing dependent status reader");
+            const auto tail = Json::parse(request.messages.back().content);
+            return {{Role::assistant,"",{{"late-read","status_read",Json{{"snapshot",tail.at("snapshot")}}.dump()}}},FinishReason::tool_calls};
+        }
+        const auto& receipt = request.messages.at(request.messages.size()-2);
+        check(request.tools.empty() && receipt.role==Role::tool && receipt.tool_call_id=="late-read" &&
+            receipt.content.find("revoked")!=std::string::npos && receipt.content.find(R"("state":"ready")")==std::string::npos,
+            "superseded observation grant exposed old status");
+        return {{Role::assistant,"原授权已撤回"}};
+    }});
+    auto turn = session.begin("查当前状态",options);
+    catalog.remove(registration);
+    catalog.add(inspect,factory);
+    until(session,[&] { return !session.busy(); });
+    check(calls==2 && turn->answer()=="原授权已撤回","revoked reader did not settle with its original call");
 }
 
 // 连续提交问题基线、关闭增量与同版引用，拒收替换及活动中断都不提前消费状态。
@@ -525,7 +560,7 @@ void reasoning_budget() {
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        source_boundaries(); source_times(); replay(); decision_read(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
+        source_boundaries(); source_times(); replay(); decision_read(); decision_read_revoked(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
         mixed_dialogue(false); mixed_dialogue(true);
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();

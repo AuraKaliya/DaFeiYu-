@@ -231,10 +231,16 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     options.extension = plugins::plugin_controls(snapshot,slot.owner);
     options.text_hook = plugins::plugin_text_hooks(snapshot,slot.owner);
     options.exit_observer = plugins::plugin_exit_hook(snapshot);
+    std::optional<agent::ToolSnapshot> read_authority;
     if (!input.tools.empty()) {
         auto catalog = std::make_shared<agent::ToolCatalog>(64);
         slot.registration = std::make_unique<plugins::PluginTools>(instance,catalog);
-        options.tools = catalog->snapshot(input.tools,input.allow_changes).bind_context(input.binding);
+        const auto granted = catalog->snapshot(input.tools,input.allow_changes);
+        const auto& reader = instance->status_read_with();
+        if (input.frame && !reader.empty() && std::ranges::any_of(granted.descriptions(),[&](const auto& member) {
+            return member.id==reader && member.instance==slot.owner && !member.changes_state;
+        })) read_authority = granted.restrict_to(std::span(&reader,1));
+        options.tools = granted.bind_context(input.binding);
     }
     // 每个实例及玩家事实帧使用自己的状态权限，旧式无帧单轮仍获得空的宿主状态。
     const auto owner = std::string(instance->plugin_id());
@@ -242,10 +248,9 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         const auto& frame = *input.frame;
         const auto scope = std::to_string(slot.owner)+"/"+std::to_string(frame.epoch)+"/"+frame.scope;
         agent::DecisionStatusSource source{owner,instance->status_definitions(),slot.pending_facts->status_samples()};
-        const auto& reader = instance->status_read_with();
-        const bool can_read = options.tools && !reader.empty() && std::ranges::any_of(options.tools->descriptions(),
-            [&](const auto& granted) { return granted.id==reader && granted.instance==slot.owner && !granted.changes_state; });
-        options.decision_status = agent::DecisionStatusOptions{scope,[source=std::move(source)] { return std::vector{source}; },can_read};
+        const bool can_read = read_authority.has_value();
+        options.decision_status = agent::DecisionStatusOptions{scope,[source=std::move(source)] { return std::vector{source}; },
+            can_read,std::move(read_authority)};
     } else {
         const auto binding = std::to_string(slot.owner)+"/raw/"+platform::sha256(input.binding);
         options.decision_status = agent::DecisionStatusOptions{binding+(input.replace_history ? "/"+std::to_string(slot.request) : ""),{},false};

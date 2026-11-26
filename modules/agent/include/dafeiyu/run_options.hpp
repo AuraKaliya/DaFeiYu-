@@ -34,6 +34,7 @@ struct DecisionStatusOptions {
     std::string binding;
     std::function<std::vector<DecisionStatusSource>()> sample;
     bool allow_read = false;
+    std::optional<ToolSnapshot> read_authority;
 };
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
