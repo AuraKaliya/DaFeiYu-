@@ -254,6 +254,12 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 发言首次写入后，在线终端即可读到正文，回合仍可继续运行。旧窗口的回合快照同步最近一条已写入的发言，持久历史保留每条发言。终端批处理读到 EOF 时，会等待自己发起的回合和待写答复。若持续无法写入，它以失败退出并显示原投递号，后台继续按该号补写。[正式终端验收](../tests/application/terminal_entry.ps1)
 
+### 5.6 管理信箱只读协议
+
+已握手的管理窗口沿用本地管道的 `op=request`。首次可发送 `{"version":"1","request":"dir-1","type":"mailbox.list"}`。回包的 `event` 为 `mailbox.directory`，回显 `request`，并带有后台 `instance`、目录 `revision`、采样时刻 `sampledUtcMs`、`state` 和 `sources`。绑定后的请求可附 `instance`，与当前后台不符时返回 `stale` 和空来源表。
+
+每个来源有 `id`、`label`、`kind`（`builtin` 或 `plugin`）和字符串 `generation`。插件来源另带包标识 `plugin`。主聊天、书房和实际接入信箱的各插件分别占一个来源。插件双向地址和它登记的主 Agent 业务地址归同一代次。窗口应保存服务端给出的来源 `id`，卸载后重新加载同包会签发新的来源。目录修订随地址绑定及撤销改变。读取已发布的目录不会触发收件或模型调用。[宿主投影](../apps/host/src/mailbox_view.cpp) · [管理分派](../apps/host/src/management/mailbox_protocol.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

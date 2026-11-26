@@ -39,7 +39,17 @@ MailboxId Mailboxes::open(runtime::DomainId receiver, runtime::DomainId sender, 
     auto store = std::make_shared<EventStore>(limits_.outstanding_events,payload_limit ? payload_limit : limits_.payload_bytes,budget_);
     const MailboxId id{store->domain()};
     entries_.push_back({id,receiver,sender,std::make_unique<SubscriptionQueue>(std::move(store),limits_.queue_depth)});
+    ++directory_revision_;
     return id;
+}
+
+// 复制实际属于该参与方的地址，管理端借此建立独立的只读目录。
+std::vector<MailboxBinding> Mailboxes::bindings(runtime::DomainId participant) const {
+    std::vector<MailboxBinding> result;
+    for (const auto& entry : entries_) {
+        if (entry.sender==participant || entry.receiver==participant) result.push_back({entry.id,entry.sender,entry.receiver});
+    }
+    return result;
 }
 
 // 仅接纳绑定发送者的下一个消息编号，重投归还本箱的原接纳身份。
@@ -123,11 +133,13 @@ void Mailboxes::close(runtime::DomainId receiver, MailboxId target) {
     const auto entry = find(target);
     if (entry->receiver != receiver) throw std::invalid_argument("mailboxes: receiver not bound");
     entries_.erase(entry);
+    ++directory_revision_;
 }
 
 // 同时撤销旧实例的发送及接收地址，已读数据由原持有者管理。
 void Mailboxes::revoke(runtime::DomainId participant) noexcept {
-    std::erase_if(entries_,[=](const auto& entry) { return entry.receiver == participant || entry.sender == participant; });
+    const auto removed = std::erase_if(entries_,[=](const auto& entry) { return entry.receiver == participant || entry.sender == participant; });
+    if (removed) ++directory_revision_;
 }
 
 // 在当前目录中查找非过期地址。

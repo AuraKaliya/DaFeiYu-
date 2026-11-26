@@ -10,7 +10,7 @@ add_library(dfy_application STATIC
   src/conversation.cpp src/conversation.hpp src/diagnostic_files.cpp src/diagnostic_files.hpp
   src/dialogue_queue.cpp src/event_dispatch.cpp src/event_dispatch.hpp src/interaction_routes.cpp
   src/interaction_routes.hpp src/mail_reply_tool.cpp src/mail_reply_tool.hpp src/mailbox_intake.cpp
-  src/mailbox_intake.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
+  src/mailbox_intake.hpp src/mailbox_view.cpp src/mailbox_view.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
   src/message_store.cpp src/message_store.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
   src/reply_delivery.hpp src/room_mailbox.cpp src/run_log.cpp src/run_log.hpp src/software_log.cpp
   src/software_log.hpp src/software_log_files.cpp src/software_log_files.hpp src/subagents.cpp
@@ -45,6 +45,7 @@ add_library(dfy_management STATIC
   src/log_settings.cpp src/log_settings.hpp src/management/client.cpp src/management/client.hpp
   src/management/dialogue_channel.hpp src/management/host.cpp src/management/host.hpp
   src/management/local_pipe.cpp src/management/local_pipe.hpp src/management/message_protocol.cpp
+  src/management/mailbox_protocol.cpp src/management/mailbox_protocol.hpp
   src/management/message_protocol.hpp src/management/poll_log.cpp src/management/poll_log.hpp
   src/management/protocol.cpp src/management/protocol.hpp src/management/resident.cpp
   src/management/resident.hpp src/management/resident_watch.cpp src/management/resident_watch.hpp

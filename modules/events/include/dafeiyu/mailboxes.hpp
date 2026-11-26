@@ -24,6 +24,10 @@ struct MailboxCategory {
     std::string name;
     std::uint32_t version;
 };
+struct MailboxBinding {
+    MailboxId mailbox;
+    runtime::DomainId sender, receiver;
+};
 
 // 创建由宿主拥有的单文本分类载荷，适用于原生服务及本体发送入口。
 std::shared_ptr<const runtime::StructValue> mailbox_text(std::string_view category, std::uint32_t version,
@@ -40,6 +44,10 @@ class Mailboxes {
     Mailboxes& operator=(const Mailboxes&) = delete;
     // 绑定接收方与允许投递的一方，签发进程期不复用的信箱地址。
     MailboxId open(runtime::DomainId receiver, runtime::DomainId sender, std::size_t payload_limit = 0);
+    // 返回实际开箱、关闭或撤销后的目录修订，查看及重复撤销不改变它。
+    std::uint64_t directory_revision() const noexcept { return directory_revision_; }
+    // 复制指定参与方当前绑定的地址及双方身份，保留系统的消费位置。
+    std::vector<MailboxBinding> bindings(runtime::DomainId participant) const;
     // 发送序号在目标信箱内从 1 连续递增；窗口内重投只读取原回执，消息正文仍取自首次接纳。
     DeliveryReceipt deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
         std::shared_ptr<const runtime::StructValue> payload);
@@ -76,5 +84,6 @@ class Mailboxes {
     const MailboxLimits limits_;
     std::shared_ptr<runtime::Budget> budget_;
     std::vector<Entry> entries_;
+    std::uint64_t directory_revision_ = 0;
 };
 }

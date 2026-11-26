@@ -60,6 +60,12 @@ add_dependencies(dfy_plugin_mailbox_dll_tests dfy_mailbox_fixture dfy_status_exa
 add_test(NAME plugins.mailbox_dll COMMAND dfy_plugin_mailbox_dll_tests "$<TARGET_FILE:dfy_mailbox_fixture>"
   "${PROJECT_BINARY_DIR}/tests/mailbox-dll" "$<TARGET_FILE_DIR:dfy_status_example>")
 
+dfy_test_executable(dfy_management_mailbox_tests management_mailboxes.cpp)
+target_link_libraries(dfy_management_mailbox_tests PRIVATE dfy_sdk_test_headers dfy_management dfy_build_options)
+add_dependencies(dfy_management_mailbox_tests dfy_mailbox_fixture)
+add_test(NAME app.management_mailboxes COMMAND dfy_management_mailbox_tests "$<TARGET_FILE:dfy_mailbox_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/mailbox-management")
+
 # 真实 C 实例验证停止受理与停止完成分离，保持 v1 生命周期契约冻结。
 dfy_test_executable(dfy_sdk_lifecycle_v2_tests sdk_lifecycle_v2.cpp)
 target_link_libraries(dfy_sdk_lifecycle_v2_tests PRIVATE dfy_plugins dfy_build_options)
