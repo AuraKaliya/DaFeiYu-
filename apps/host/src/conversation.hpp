@@ -44,8 +44,8 @@ class Conversation {
   public:
     // 借用寿命更长的会话和可选插件管理器，并保存应用构建标签。
     explicit Conversation(agent::Session& session, agent::RunVersionLabels version_labels = {}, plugins::PluginManager* plugins = nullptr,
-        const PersonaProfile* persona = nullptr) noexcept
-        : session_(session), version_labels_(std::move(version_labels)), plugins_(plugins), persona_(persona) {}
+        const PersonaProfile* persona = nullptr, std::optional<agent::DecisionObservationFeed> room_feed = {}) noexcept
+        : session_(session), version_labels_(std::move(version_labels)), plugins_(plugins), persona_(persona), room_feed_(std::move(room_feed)) {}
     // 只由原服务承担回合输出和实际退出责任。
     Conversation(const Conversation&) = delete;
     // 禁止替换已经绑定的会话。
@@ -93,6 +93,7 @@ class Conversation {
     const agent::RunVersionLabels version_labels_;
     plugins::PluginManager* const plugins_;
     const PersonaProfile* const persona_;
+    const std::optional<agent::DecisionObservationFeed> room_feed_;
     std::shared_ptr<agent::TurnRequest> current_;
     std::optional<agent::TurnDiagnostics> last_;
     std::optional<agent::DiagnosticSnapshot> last_diagnostic_;

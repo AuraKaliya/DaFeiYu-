@@ -1,7 +1,8 @@
 add_library(dfy_application STATIC
   src/application.cpp src/application.hpp src/ask.cpp src/ask.hpp src/binding_facts.cpp
   src/workspace_environment.cpp src/workspace_environment.hpp
-  src/binding_facts.hpp src/builtin_room.cpp src/builtin_room.hpp src/room_perception.cpp src/companion.cpp src/companion.hpp
+  src/binding_facts.hpp src/builtin_room.cpp src/builtin_room.hpp src/room_perception.cpp src/room_decision_feed.cpp src/room_decision_feed.hpp
+  src/companion.cpp src/companion.hpp
   src/companion_board.cpp src/companion_board.hpp src/companion_delivery.cpp src/companion_delivery.hpp
   src/companion_exchange.cpp src/companion_inbox.cpp src/companion_inbox.hpp src/companion_location.cpp
   src/companion_location.hpp src/companion_messages.cpp src/companion_messages.hpp

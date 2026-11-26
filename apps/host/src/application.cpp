@@ -1,5 +1,6 @@
 #include "application.hpp"
 #include "workspace_environment.hpp"
+#include "room_decision_feed.hpp"
 #include "host_settings.hpp"
 #include "run_log.hpp"
 #include "software_log.hpp"
@@ -60,7 +61,7 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       persona_(load_persona(user_data)),
       run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),
       session_(model_config_,channel_,model_backend_,4,run_log_ ? run_log_->sinks("main") : agent::RunCaptureSinks{}),
-      conversation_(session_,labels_,&plugins_,&persona_),
+      conversation_(session_,labels_,&plugins_,&persona_,room_decision_feed(room_)),
       mailbox_intake_(mailbox_host_,conversation_,run_log_,&plugins_),
       interactions_(plugins_,mailbox_host_,mailbox_intake_,tool_clock_,run_log_,run.wake_for_plugin_mail),
       subagents_(std::make_shared<Subagents>(plugins_,model_config_,channel_,model_backend_,labels_,tool_clock_,persona_,run_log_)) {

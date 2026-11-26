@@ -21,6 +21,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
     if (version_labels_.model_profile) options.version_labels.model_profile = version_labels_.model_profile;
     const bool natural_dialogue = player_facing && !options.tools && !options.planning;
+    if (player_facing && display_prompt && room_feed_) options.decision_observations = room_feed_;
     agent::DecisionStatusOptions main_status{"main",{},natural_dialogue,{},true};
     if (options.decision_status) main_status.sample = std::move(options.decision_status->sample);
     options.decision_status = std::move(main_status);

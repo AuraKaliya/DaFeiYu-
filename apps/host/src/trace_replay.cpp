@@ -56,6 +56,7 @@ struct RecordedModel {
     bool rewrite_observed = false;
     Json evidence;
     std::optional<model::Message> decision_tail;
+    std::optional<model::Message> room_observation;
     std::optional<std::string> wire_digest;
     bool thinking = false;
 };
@@ -87,10 +88,43 @@ std::optional<model::Message> external_status(const RecordedModel& entry, agent:
     return tail;
 }
 
+// 按旁证识别本步外部角色感知，校验房间、游标和原记录作用域。
+// 步骤：定位逐决策尾部之前的观察 → 核对批次及原件 → 还原原观察消息。
+std::optional<model::Message> external_room_observation(const RecordedModel& entry, agent::RunId run, std::size_t step) {
+    const auto& messages = entry.input.at("messages");
+    const auto tails = entry.decision_tail ? 1u : 0u;
+    if (entry.evidence.is_null() || messages.size()<=tails) return {};
+    const auto index = messages.size()-tails-1;
+    if (entry.evidence.at(index).at("source")!="observation") return {};
+    const auto& row = messages.at(index);
+    const auto value = Json::parse(row.at("content").get_ref<const std::string&>(),nullptr,false);
+    if (!value.is_object() || value.value("schema",std::string{})!="dafeiyu.room_perceptions/1") return {};
+    const auto& records = value.at("records");
+    if (row.at("role")!="user" || value.at("origin")!="personal_perception" || value.at("session")!=run.session ||
+        value.at("turn")!=run.sequence || value.at("step")!=step || !records.is_array() || records.empty() || records.size()>4)
+        throw std::invalid_argument("replay: invalid room perception scope");
+    auto cursor = value.at("after").get<std::uint64_t>();
+    for (const auto& record : records) {
+        const auto next = record.at("cursor").get<std::uint64_t>();
+        if (next<=cursor || (next-cursor!=1 && (&record!=&records.front() || !value.at("historyGap").get<bool>())) ||
+            record.at("provider_instance")!=value.at("room") || record.at("object").at("generation")!=value.at("generation") ||
+            record.at("object").at("id")!="room.senses" || record.at("trust")!="host_verified" ||
+            (record.contains("payload") && record.at("payload").at("body")!=value.at("body")))
+            throw std::invalid_argument("replay: room perception record differs");
+        cursor = next;
+    }
+    if (cursor!=value.at("through")) throw std::invalid_argument("replay: room perception cursor differs");
+    auto message = decode_message(row);
+    message.source = model::MessageSource::observation;
+    message.event_utc_ms = original_time(entry.evidence.at(index));
+    return message;
+}
+
 // 核对程序产生的来源，再以原事件时间重建供应商字段，早期轨迹仍能核对统一请求。
 // 步骤：比对原文与配对 → 核对来源并还原原时间 → 重新编码与比较指纹。
 bool matches_request(const model::Request& actual, const RecordedModel& entry) {
     auto request = actual;
+    if (entry.room_observation) request.messages.push_back(*entry.room_observation);
     if (entry.decision_tail) request.messages.push_back(*entry.decision_tail);
     if (encode_request(request)!=entry.input) return false;
     if (entry.evidence.is_null()) return !entry.wire_digest;
@@ -168,6 +202,7 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
                     throw std::invalid_argument("replay: message evidence count differs");
             }
             entry.decision_tail = external_status(entry,run,result.models.size());
+            entry.room_observation = external_room_observation(entry,run,result.models.size());
             if (row.contains("wireSha256")) {
                 if (entry.evidence.is_null()) throw std::invalid_argument("replay: missing message evidence");
                 entry.wire_digest = row.at("wireSha256").get<std::string>();
@@ -293,6 +328,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
         history->push_back(std::move(message));
     }
     if (original.models.front().decision_tail) history->pop_back();
+    if (original.models.front().room_observation) history->pop_back();
     if (history->empty() || history->back().role != model::Role::user)
         throw std::invalid_argument("replay: final initial user message required");
     agent::RunOptions options;
