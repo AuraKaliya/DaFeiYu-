@@ -49,6 +49,8 @@ class PartnerFacts {
     struct LateReceipt {
         bool exit_was_unknown = false, exited = false, effect_after_exit = false;
         bool handoff = false, pending_pickup = false, pickup_settled = false;
+        nlohmann::json chest_basis;
+        bool chest_settled = false;
     };
     std::map<std::string,LateReceipt> uncertain_;
     std::deque<std::string> finished_late_;

@@ -271,6 +271,8 @@ bool PartnerLoop::placement_choice_pending() const noexcept {
 // 按实际写入范围核对步骤是否需要玩家答复。
 // 步骤：按执行器及材料核对追问 → 核对未获选的放置格 → 比对待答方格及其支撑。
 Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill, const Json& args, std::uint64_t resolves) const {
+    // 存箱与投物共用交付去向待答，答复只解除对应材料的交付等待。
+    if (skill == "store_item") skill = "give_item";
     const bool placing = skill == "place" || skill == "fill_target";
     if ((!placing && skill != "collect" && skill != "craft" && skill != "give_item") || session != session_ || !session || delegated(session)) return {};
     const auto blocked = [](std::uint64_t item, std::string_view reason) {
