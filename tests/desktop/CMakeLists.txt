@@ -44,6 +44,11 @@ if(BUILD_GUI)
     -Fixture "$<TARGET_FILE:dfy_ui_mailbox_host>" -App "$<TARGET_FILE:dafeiyu-host>" -Root "${run_status_temp}"
     -MailPlugin "$<TARGET_FILE:dfy_mailbox_fixture>" -PluginActions)
   set_tests_properties(ui.plugin_actions_windows PROPERTIES TIMEOUT 95 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
+  add_test(NAME ui.plugin_public_settings COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dafeiyu>"
+    -Fixture "$<TARGET_FILE:dfy_ui_mailbox_host>" -App "$<TARGET_FILE:dafeiyu-host>" -Root "${run_status_temp}"
+    -MailPlugin "$<TARGET_FILE:dfy_mailbox_fixture>" -PluginFields)
+  set_tests_properties(ui.plugin_public_settings PROPERTIES TIMEOUT 75 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
   add_test(NAME ui.host_settings_window COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dafeiyu>"
     -Fixture "$<TARGET_FILE:dfy_ui_mailbox_host>" -App "$<TARGET_FILE:dafeiyu-host>" -Root "${run_status_temp}"

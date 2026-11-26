@@ -4,6 +4,7 @@ import { Label } from 'reka-ui';
 import { usePluginDirectory } from './plugin-directory';
 import { usePluginActions } from './plugin-actions';
 import { windowReceiptStorage } from './receipt-storage';
+import PluginPublicSettings from './PluginPublicSettings.vue';
 
 const props = defineProps<{ active: boolean; connected: boolean }>();
 const bridge = window.chrome.webview;
@@ -103,6 +104,9 @@ onUnmounted(() => {
         <template v-if="selected.errorCode"><dt>实例错误码</dt><dd>{{ selected.errorCode }}</dd></template>
       </template>
     </dl>
+    <PluginPublicSettings v-if="active && connected && view.status === 'ready' && view.reading && selected?.state === 'active' && selected.hasPublicSettings !== undefined"
+      :key="JSON.stringify([view.reading.instance,selected.id,selected.generation])" :instance="view.reading.instance" :id="selected.id"
+      :generation="selected.generation" @stale="directory.refresh" />
     <div v-if="selected" class="package-actions">
       <button v-if="!selected.loaded" id="plugin-load" type="button" class="primary-action" :disabled="!actions.canStart('load')" @click="actions.start('load')">加载插件</button>
       <button v-else id="plugin-unload" type="button" class="quiet-action" :disabled="!actions.canStart('unload')" @click="actions.start('unload')">卸载插件</button>

@@ -1,11 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { usePluginDirectory } from '../src/plugin-directory.ts';
+import { readPluginFields } from '../src/plugin-public-settings.ts';
 
 const installed = {id:'test.one',name:'一号插件',version:'1.2',state:'installed',generation:'0',
   installed:true,loaded:false,canLoad:true,canUnload:false};
 const loaded = {id:'test.two',name:'二号插件',version:'2',state:'active',generation:'97',installed:true,
   loaded:true,canLoad:false,canUnload:true,loadedName:'旧二号',loadedVersion:'1',errorCode:0};
+
+// 公开配置只接受原包、原代次及已采用的只读字符串，非法项使本次快照整体失效。
+// 步骤：核对公开值与来源 → 变换身份及声明 → 复核失效或不披露时的空字段。
+test('public settings belong to the original generation and expose only declared applied strings', () => {
+  const target = {instance:'host-a',id:'test.two',generation:'97'};
+  const field = {id:'label',type:'string',access_mode:'read_only',source:'user',value:'采用值',appliedValue:'采用值',private:'隐藏'};
+  const snapshot = {...target,owner:'plugin',request:'f1',event:'settings.snapshot',version:'1',state:'ready',
+    canSave:false,revision:'97',appliedRevision:'97',fields:[field]};
+  const parse = (changes = {}) => readPluginFields({...snapshot,...changes},'f1',target);
+  assert.deepEqual(parse(), {status:'ready',fields:[{id:'label',value:'采用值',source:'user'}]});
+  assert.equal(parse({request:'other'}), undefined);
+  for (const state of ['notDeclared','stale']) assert.deepEqual(parse({state,fields:[]}),{status:state,fields:[]});
+  for (const changes of [{owner:'host'},{id:'test.one'},{generation:'98'},{instance:'host-b'},{canSave:true},
+    {fields:[field,field]}, {fields:[{...field,access_mode:'write'}]}, {fields:[{...field,source:'private'}]},
+    {fields:[{...field,value:'other'}]}, {fields:[{...field,value:'鱼'.repeat(1366),appliedValue:'鱼'.repeat(1366)}]},
+    {state:'stale',fields:[field]}]) assert.deepEqual(parse(changes),{status:'unavailable',fields:[]});
+});
 
 // 以可控时钟应答当窗的请求号，不需要操作本机插件。
 function fixture() {

@@ -5,7 +5,7 @@ export type PluginPost = (request: Readonly<Record<string, string>>) => void;
 export interface PluginPackage {
   id: string; name: string; version: string; state: 'installed' | 'active' | 'stopping' | 'failed';
   installed: boolean; loaded: boolean; generation: string; canLoad: boolean; canUnload: boolean;
-  loadedName?: string; loadedVersion?: string; errorCode?: number;
+  loadedName?: string; loadedVersion?: string; errorCode?: number; hasPublicSettings?: boolean;
 }
 export interface PluginReading { instance: string; revision: string; packages: readonly PluginPackage[]; unavailableCount: number }
 export interface PluginDirectoryView {
@@ -36,6 +36,10 @@ function packages(raw: unknown): PluginPackage[] | undefined {
     if (row.loaded) {
       if (typeof item.loadedName !== 'string' || typeof item.loadedVersion !== 'string' || !count(item.errorCode)) return;
       row.loadedName = item.loadedName; row.loadedVersion = item.loadedVersion; row.errorCode = item.errorCode;
+      if (item.hasPublicSettings !== undefined) {
+        if (typeof item.hasPublicSettings !== 'boolean') return;
+        row.hasPublicSettings = item.hasPublicSettings;
+      }
     }
     ids.add(item.id);
     rows.push(row);

@@ -304,6 +304,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (observer_scenario==L"settings-read") { interaction->start_host_settings(); return; }
                 if (observer_scenario.starts_with(L"settings-")) { interaction->start_host_save(observer_scenario,user_data); return; }
                 if (observer_scenario.starts_with(L"action-")) { interaction->start_plugin_actions(observer_scenario,user_data); return; }
+                if (observer_scenario==L"plugins-fields") { interaction->start_plugin_fields(user_data); return; }
                 if (observer_scenario.starts_with(L"plugins-")) { interaction->start_plugin_windows(observer_scenario,user_data); return; }
                 if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
@@ -487,7 +488,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
         observer_mode==L"history-reopen" || observer_mode==L"history-restart";
     const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
-    const bool settings_check = observer_mode==L"plugins-manage" || observer_mode==L"plugins-watch" || observer_mode==L"action-write" ||
+    const bool settings_check = observer_mode==L"plugins-manage" || observer_mode==L"plugins-watch" || observer_mode==L"plugins-fields" || observer_mode==L"action-write" ||
         observer_mode==L"action-observe" || observer_mode==L"action-reopen" || observer_mode==L"settings-read" ||
         observer_mode==L"settings-write" || observer_mode==L"settings-conflict" || observer_mode==L"settings-restart";
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
