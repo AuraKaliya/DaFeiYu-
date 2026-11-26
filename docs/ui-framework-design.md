@@ -280,6 +280,8 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 `plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
 
+加载时若依赖尚未激活，或系统未能打开清单指定的 DLL，宿主按实际持有的代次结算。确认未创建实例时回执为 `failed/notLoaded` 和 `generation="0"`。生命周期已经返回状态码时附 `nativeCode`。卸载因依赖占用或停止失败而保留的原回执，在后来显式重试成功后仍可按原号读取。[依赖、停止失败和模块打开验证](../tests/plugins/management_plugins.cpp)
+
 ### 5.8 主体设置读取与保存
 
 已连接窗口发送 `{"version":"1","request":"s1","type":"settings.read","owner":"host","instance":"原后台"}`。可带上次读到的十进制字符串 `revision` 核对同一版本。`settings.snapshot` 回显请求、所有者与后台，给出已保存的 `revision`、运行中采用的 `appliedRevision`、待重启标记 `pendingRestart` 和当前服务的写入能力 `canSave`。旧后台或旧修订返回 `state=stale` 及空字段表。主体尚无供应商配置时返回 `unavailable`。

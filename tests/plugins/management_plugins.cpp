@@ -27,10 +27,19 @@ template<class Ready> void until(Ready ready, const char* stage) {
 }
 
 // 创建待安装的真实 C ABI 插件包。
-void package(const fs::path& source, const fs::path& dll) {
+void package(const fs::path& source, const fs::path& dll, const std::string& id="test.directory", const std::string& provider={}) {
     fs::create_directories(source);
     fs::copy_file(dll,source/"entry.dll");
-    std::ofstream(source/"plugin.json") << R"({"manifest_version":1,"id":"test.directory","name":"目录测试","version":"1","abi_version":2,"entry":"entry.dll"})";
+    Json manifest{{"manifest_version",1},{"id",id},{"name","目录测试"},{"version","1"},{"abi_version",2},{"entry","entry.dll"}};
+    if (!provider.empty()) manifest["dependencies"]={provider};
+    std::ofstream(source/"plugin.json") << manifest.dump();
+}
+
+// 在释放夹具控制句柄前设置下一次原生停止的确定性结果。
+void stop_mode(const fs::path& packages, unsigned mode) {
+    platform::DynamicLibrary control(packages/"test.directory"/"entry.dll");
+    const auto set=reinterpret_cast<void (DFY_V2_CALL*)(std::uint32_t)>(control.symbol("dfy_lifecycle_mode"));
+    set(mode);
 }
 
 // 通过真实端点以原观察者身份提交一个管理请求。
@@ -65,7 +74,55 @@ void terminal(const fs::path& data, const std::string& client, unsigned id, cons
     if (result.at("err")!="" || result.at("out")=="") throw std::runtime_error(line+" "+result.dump());
 }
 
-// 通过两个实名管道客户端核对磁盘包、独立运行代次和未被消费的到件。
+// 在已加载的提供方上验证停止失败保留、依赖拒绝与同一代次的显式重试。
+// 步骤：注入一次真实停止失败 → 安装依赖包并核对缺少活动提供方 → 加载两方 → 从原回执核对依赖保护。
+void dependency_results(const fs::path& root, const fs::path& dll) {
+    const auto data=root/"user", packages=root/"packages", dependent=root/"dependent";
+    const auto a=management::connect_resident(data,"offline"), b=management::connect_resident(data,"offline");
+    const auto read=[&] { return call(data,b.client,{{"type","plugins.list"}}); };
+    unsigned sequence=0;
+    const auto perform=[&](const std::string& id,const char* action) {
+        const auto view=read();
+        for (const auto& row : view.at("packages")) if (row.at("id")==id)
+            return settled(data,b.client,call(data,a.client,intent(view,row,action,++sequence)));
+        throw std::runtime_error("dependency fixture package absent");
+    };
+    stop_mode(packages,3);
+    const auto failed=perform("test.directory","unload");
+    const auto retained=read().at("packages").front();
+    check(failed.at("state")=="failed" && failed.at("nativeResult")=="failed" && failed.at("effect")=="retained" &&
+        retained.at("state")=="failed" && retained.at("canUnload")==true && retained.at("generation")==failed.at("generation"),
+        "failed native stop was not retained and retryable");
+    check(perform("test.directory","unload").at("effect")=="unloaded" && settled(data,b.client,failed)==failed,
+        "new stop did not complete independently of the original failure");
+    package(dependent,dll,"test.dependent","test.directory");
+    const auto path=dependent.generic_u8string();
+    terminal(data,a.client,1,"/plugins install \""+std::string(path.begin(),path.end())+"\"");
+    until([&] { return read().at("packages").size()==2; },"installed dependent");
+    const auto missing=perform("test.dependent","load");
+    check(missing.at("state")=="failed" && missing.at("effect")=="notLoaded" && missing.at("generation")=="0",
+        "missing active dependency left the confirmed no-instance effect unknown");
+    check(perform("test.directory","load").at("effect")=="loaded" && perform("test.dependent","load").at("effect")=="loaded",
+        "declared dependencies could not load after their provider");
+    const auto before=read();
+    const auto protected_stop=perform("test.directory","unload");
+    check(protected_stop.at("state")=="inUse" && protected_stop.at("nativeResult")=="inUse" && protected_stop.at("effect")=="retained" &&
+        before==read(),"default unload removed an instance with a live dependent");
+    check(perform("test.dependent","unload").at("effect")=="unloaded" && perform("test.directory","unload").at("effect")=="unloaded" &&
+        settled(data,b.client,protected_stop)==protected_stop && settled(data,b.client,missing)==missing,
+        "later cleanup changed an original dependency receipt");
+    const auto damaged=root/"damaged";
+    package(damaged,dll,"test.damaged");
+    std::ofstream(damaged/"entry.dll",std::ios::binary|std::ios::trunc) << "invalid fixture module";
+    const auto bad_path=damaged.generic_u8string();
+    terminal(data,a.client,2,"/plugins install \""+std::string(bad_path.begin(),bad_path.end())+"\"");
+    until([&] { return read().at("packages").size()==3; },"installed damaged fixture");
+    const auto broken=perform("test.damaged","load");
+    check(broken.at("state")=="failed" && broken.at("effect")=="notLoaded" && broken.at("generation")=="0" &&
+        !broken.contains("nativeCode") && settled(data,b.client,broken)==broken,"native module opening failure fabricated a status or a running instance");
+}
+
+// 通过两个已握手的管道客户端核对磁盘包、独立运行代次和未被消费的到件。
 // 步骤：观察空目录 → 正式安装、加载及双窗复查 → 卸载与重载 → 核对旧实例和旧修订。
 void directory(const fs::path& root, const fs::path& dll) {
     const auto data=root/"user", packages=root/"packages", source=root/"source";
@@ -136,11 +193,7 @@ void directory(const fs::path& root, const fs::path& dll) {
     terminal(data,one.client,3,"/plugins refresh");
     check(call(data,one.client,pinned)==active && read(two.client)==active && call(data,two.client,room)==pending && !model_calls,
         "read or unchanged catalog refresh changed the revision, consumed an event or ran the model");
-    {
-        platform::DynamicLibrary control(packages/"test.directory"/"entry.dll");
-        const auto mode=reinterpret_cast<void (DFY_V2_CALL*)(std::uint32_t)>(control.symbol("dfy_lifecycle_mode"));
-        mode(6);
-    }
+    stop_mode(packages,6);
     const auto unload=intent(active,live,"unload",2);
     const auto accepted_stop=call(data,one.client,unload);
     check(accepted_stop.at("state")=="queued","unload was not admitted");
@@ -159,6 +212,8 @@ void directory(const fs::path& root, const fs::path& dll) {
         "old unload stopped the replacement or lost its original operation");
     const auto old=call(data,one.client,{{"type","plugins.list"},{"instance","previous-resident"}});
     check(old.at("state")=="stale" && old.at("packages").empty() && !model_calls,"old backend disclosed packages");
+    dependency_results(root,dll);
+    check(!model_calls && call(data,two.client,room)==pending,"dependency operations changed the passive mailbox or ran a model");
     server.request_stop();
     server.join();
     check(!outcome,"resident did not exit normally");

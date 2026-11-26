@@ -44,15 +44,17 @@ void execute_plugin(plugins::PluginManager& manager, const PluginDirectory& view
     }
     if (!found->second.can_load()) { op = refused(std::move(op),"busy"); return; }
 
-    const auto code = manager.load(cmd.id);
-    op.native_code = code;
-    if (code==DFY_V2_OK) {
+    try { op.native_code = manager.load(cmd.id); }
+    catch (const std::exception&) {
+        // 依赖校验和模块打开失败可先于原生返回码，实效继续按管理器持有的代次核实。
+    }
+    if (op.native_code==DFY_V2_OK) {
         op.generation = manager.instance(cmd.id)->generation();
         op.state = "succeeded";
         op.effect = "loaded";
         return;
     }
-    op.state = code==DFY_V2_BUSY ? "busy" : "failed";
+    op.state = op.native_code==DFY_V2_BUSY ? "busy" : "failed";
     op.effect = "notLoaded";
     for (const auto& live : manager.loaded()) if (live.id==cmd.id) {
         op.generation = live.generation;
