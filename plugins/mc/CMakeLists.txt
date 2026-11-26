@@ -16,7 +16,7 @@ target_link_libraries(dfy_mc_companion PRIVATE dfy_mc_bridge dfy_sdk dfy_build_o
 target_compile_definitions(dfy_mc_companion PRIVATE DFY_PLUGIN_BUILD)
 set_target_properties(dfy_mc_companion PROPERTIES FOLDER "Plugins"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mc.companion")
-foreach(asset IN ITEMS plugin.json defaults.json)
+foreach(asset IN ITEMS plugin.json defaults.json agent/status.json)
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mc.companion/${asset}" INPUT "${CMAKE_CURRENT_SOURCE_DIR}/resources/${asset}")
 endforeach()
 

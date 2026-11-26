@@ -1,0 +1,15 @@
+{
+  "schema": "dafeiyu.status_definitions/1",
+  "definitions": [{
+    "key": "mc.companion.task_goal",
+    "version": 1,
+    "description": "MC 伙伴为配对玩家登记的当前任务目标。主体为玩家 UUID，事实号沿用本次会话的原执行修订号。",
+    "defaultAttention": {"mode": "explicit"},
+    "valueSchema": {
+      "type": "object",
+      "properties": {"goal": {"type": "string"}},
+      "required": ["goal"],
+      "additionalProperties": false
+    }
+  }]
+}

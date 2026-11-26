@@ -8,6 +8,17 @@ namespace {
 using Json = nlohmann::json;
 // 借用本次同步回调内仍存活的字段字节。
 dfy_v2_string_view bytes(std::string_view value) { return {value.data(),static_cast<uint32_t>(value.size())}; }
+
+// 从配对玩家的已接纳任务提取原执行修订和目标，缺少来源时保留缺样。
+Json task_goal_sample(const Json& scene, const std::string& player) {
+    const auto task = scene.find("task");
+    if (task == scene.end() || player.empty() || scene.value("player",std::string{}) != player) return nullptr;
+    const auto revision = task->find("revision"), goal = task->find("goal");
+    if (revision == task->end() || !revision->is_number_unsigned() || *revision == 0 ||
+        goal == task->end() || !goal->is_string() || goal->get_ref<const std::string&>().empty()) return nullptr;
+    return {{"key","mc.companion.task_goal"},{"version",1},{"subject",player},{"fact",*revision},{"value",{{"goal",*goal}}}};
+}
+
 // 保留原箱内转移工作的方向、对象、委托、提交范围和实读基线，供迟到回执逐项对照。
 Json chest_transfer_basis(Json proof) {
     for (const auto field : {"state","after","stored","withdrawn","remaining"}) proof.erase(field);
@@ -77,6 +88,11 @@ std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope
                 changed[key] = value;
         }
         if (!baseline) for (const auto& [key,value] : previous_.items()) if (!scene.contains(key)) closed.push_back(key);
+        if (changed.contains("task") || changed.contains("player")) {
+            auto sample = task_goal_sample(scene,player_);
+            if (!sample.is_null() && (baseline || sample != task_goal_sample(previous_,player_)))
+                changed["decisionStatusSamples"] = Json::array({std::move(sample)});
+        }
         const auto patch = Json{{"set",std::move(changed)},{"closed",std::move(closed)}}.dump();
         auto input = run; input.prompt = bytes(patch); input.flags &= ~DFY_V2_AGENT_REPLACE_HISTORY;
         const dfy_v2_fact_frame frame{session,sequence,bytes(scope),baseline ? DFY_V2_FACT_BASELINE : 0u,0};

@@ -173,13 +173,11 @@ ctest --test-dir build/rebuild/windows-tests -C Debug -V -R '^plugins\.mc_partne
 ```powershell
 $build = (Resolve-Path 'build/rebuild/windows-tests').Path
 $fixture = New-Item -ItemType Directory (Join-Path $env:TEMP ('dfy-response-timing-' + [Guid]::NewGuid().ToString('N')))
-$package = New-Item -ItemType Directory (Join-Path $fixture.FullName 'mc.companion')
+$package = Join-Path $fixture.FullName 'mc.companion'
 Copy-Item -LiteralPath "$build/tests/Debug/dfy_mc_plugin_partner_tests.exe" -Destination $fixture.FullName
-foreach ($file in 'plugin.json', 'defaults.json', 'dfy_mc_companion.dll') {
-  Copy-Item -LiteralPath "$build/plugins/mc/Debug/mc.companion/$file" -Destination $package.FullName
-}
+Copy-Item -LiteralPath "$build/plugins/mc/Debug/mc.companion" -Destination $package -Recurse
 node .\tests\mc-companion\native-world.cjs (Join-Path $fixture.FullName 'dfy_mc_plugin_partner_tests.exe') `
-  $package.FullName (Join-Path $fixture.FullName 'runs') partner-revision-response-timing
+  $package (Join-Path $fixture.FullName 'runs') partner-revision-response-timing
 ```
 
 ### 绕墙与「垫上来」回归

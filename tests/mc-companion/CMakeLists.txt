@@ -2,6 +2,11 @@ dfy_test_executable(dfy_mc_work_receipt_tests mc_work_receipts.cpp ../../plugins
 target_link_libraries(dfy_mc_work_receipt_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
 add_test(NAME plugins.mc_work_receipts COMMAND dfy_mc_work_receipt_tests)
 
+dfy_test_executable(dfy_mc_status_sample_tests mc_status_sample.cpp ../../plugins/mc/src/partner_facts.cpp ../../plugins/mc/src/partner_task.cpp)
+target_link_libraries(dfy_mc_status_sample_tests PRIVATE dfy_sdk nlohmann_json::nlohmann_json dfy_build_options)
+add_dependencies(dfy_mc_status_sample_tests dfy_mc_companion)
+add_test(NAME plugins.mc_status_sample COMMAND dfy_mc_status_sample_tests "$<TARGET_FILE_DIR:dfy_mc_companion>")
+
 # Node 只用于游戏桥接组合检查，普通无插件构建保持独立。
 dfy_test_executable(dfy_mc_playtest mc_playtest.cpp)
 target_link_libraries(dfy_mc_playtest PRIVATE dfy_terminal nlohmann_json::nlohmann_json dfy_build_options)
