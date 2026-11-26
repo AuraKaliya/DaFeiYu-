@@ -5,6 +5,7 @@ const { Position } = require('./test-position.cjs');
 const { ownerInbox } = require('../bridge/chat.cjs');
 const { chestWindows, chestSample } = require('../bridge/single-chest.cjs');
 const { observationInput } = require('../bridge/partner-observe.cjs');
+const { depositOrder, depositItem, reconcileDeposit } = require('../bridge/chest-deposit.cjs');
 
 // 提供位于两个普通箱子之间的玩家、同步窗口及独立的伙伴库存槽。
 function chestFixture() {
@@ -42,6 +43,10 @@ test('指箱回执只接受原消息命中的普通单箱', () => {
   bot.players.owner.entity.yaw = Math.PI;
   tell();
   assert.deepEqual(inbox.pointedChest(generation,2).cell,target.cell);
+  assert.equal(inbox.depositWork(generation,2),null);
+  const first = {controller:'first',work:'same'};
+  assert.deepEqual(inbox.depositWork(generation,2,first),first);
+  assert.deepEqual(inbox.depositWork(generation,2,{controller:'second',work:'same'}),first);
   assert.equal(inbox.pointedChest(generation,3).cell.z,2);
   const blockAt = bot.blockAt;
   bot.blockAt = p => ({...blockAt(p),getProperties:() => ({type:'left'})});
@@ -100,4 +105,74 @@ test('迟到的窗口不可跨控制器关闭',async () => {
   assert.equal(closed,false);
   bot.emit('end');
   assert.equal(bot.listenerCount('windowOpen'),0);
+});
+
+// 用独立的服务端槽位模拟普通点击和整栈转移，每次开窗取得一份新的同步副本。
+function transferFixture(initial, stock, interrupt = false) {
+  const { bot,target,slots } = chestFixture();
+  const stone = count => count ? {name:'cobblestone',count} : null;
+  slots.fill({name:'stone',count:64},0,27);
+  slots[0] = stone(initial);
+  slots[27] = stone(stock);
+  let clicks = 0;
+  const activate = bot.activateBlock;
+  bot.activateBlock = () => { activate(); bot.currentWindow.slots = structuredClone(slots); };
+  bot.clickWindow = async (i,button,mode) => {
+    const window = bot.currentWindow;
+    ++clicks;
+    if (mode === 1) {
+      const units = Math.min(window.slots[i].count,64-(window.slots[0]?.count ?? 0));
+      window.slots[0] = stone((window.slots[0]?.count ?? 0)+units);
+      window.slots[i] = stone(window.slots[i].count-units);
+    } else if (button === 1) {
+      window.slots[i] = stone((window.slots[i]?.count ?? 0)+1);
+      window.selectedItem = stone(window.selectedItem.count-1);
+    } else [window.slots[i],window.selectedItem] = [window.selectedItem ?? null,window.slots[i]];
+    slots.splice(0,slots.length,...structuredClone(window.slots));
+    if (interrupt) window.close();
+  };
+  const source = {...target,id:'observed',generation:'world',owner:'player',actor:'bot',item:'cobblestone',message:2};
+  const job = {id:'work',receipt:{result:{}},abort:new AbortController()};
+  const open = chestWindows(bot);
+  const run = () => depositItem(bot,open,source,{count:8,sourceMessage:3},job,() => {},() => {});
+  return { bot,source,job,open,run,slots,clicks:() => clicks };
+}
+
+// 复现八块委托、只能容纳三块及满箱，原有大栈也只能扣除委托数。
+test('验证双方实际变化，分别结算完整、部分和零存入', async () => {
+  for (const [initial,stock,stored] of [[0,8,8],[0,20,8],[61,8,3],[64,8,0],[0,4,4]]) {
+    const f = transferFixture(initial,stock);
+    if (stored === 8) await f.run();
+    else await assert.rejects(f.run(),{code:initial === 64 ? 'chest_full' : 'chest_incomplete'});
+    const proof = f.job.receipt.result.deposit;
+    assert.deepEqual([proof.state,proof.stored,proof.remaining,f.slots[0]?.count,f.slots[27]?.count ?? 0],
+      ['verified',stored,8-stored,initial+stored,stock-stored]);
+    assert.equal(f.clicks() === 0,stored === 0);
+  }
+});
+
+// 对中断的原工作重复读取同一服务端快照，净变化不一致时保留待查且不补点。
+test('关闭窗口后原号查回两侧数量，复查不转移物品', async () => {
+  const f = transferFixture(0,8,true);
+  await assert.rejects(f.run(),{code:'chest_window_closed'});
+  const proof = f.job.receipt.result.deposit;
+  assert.equal(proof.state,'pending');
+  assert.equal(proof.stored,undefined);
+  const after = await f.open(f.source,f.job.abort.signal,window => chestSample(f.bot,window,proof.item));
+  assert.equal(reconcileDeposit(proof,{...after,stock:proof.before.stock}).state,'pending');
+  for (let i = 0; i < 2; ++i) {
+    const checked = reconcileDeposit(proof,after);
+    assert.deepEqual([checked.work,checked.state,checked.stored,checked.remaining,f.clicks()],['work','verified',8,0,1]);
+  }
+});
+
+// 授权须同时匹配数量、材料和箱子，玩家单独选箱、询问或撤销均不会搬运。
+test('存箱只接受匹配原指向和数量的明确委托', () => {
+  const { bot,source } = transferFixture(0,8), args = {observation:'observed',item:'cobblestone',count:8,sourceMessage:3};
+  for (const line of ['把这八块存进左箱','请把8块圆石放入左边的箱子']) depositOrder(bot,source,'左箱',line,null,args);
+  for (const line of ['左箱','别把这八块存进左箱','把这八块存进左箱？','把这八块存进右箱','把这九块存进左箱','把8块泥土存进左箱'])
+    assert.throws(() => depositOrder(bot,source,'左箱',line,null,args));
+  assert.throws(() => depositOrder(bot,source,'左箱','把这八块存进左箱',{...source,cell:{x:0,y:0,z:2}},args));
+  assert.throws(() => depositOrder(bot,{...source,message:3},'把这八块存进左箱','把这八块存进左箱',source,args));
+  depositOrder(bot,{...source,message:3},'把这八块放进这个箱子','把这八块放进这个箱子',source,args);
 });

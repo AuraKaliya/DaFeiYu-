@@ -10,7 +10,8 @@ const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
 const { giveItem, refreshHandoff, handoffSample, originalHandoffReceipt } = require('./give-item.cjs');
-const { chestWindows, chestSample } = require('./single-chest.cjs');
+const { chestWindows, chestSample, chestError } = require('./single-chest.cjs');
+const { depositOrder, depositItem, reconcileDeposit } = require('./chest-deposit.cjs');
 const { makeReceiptRoom } = require('./partner-records.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
@@ -391,7 +392,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
     };
     try {
       check();
-      if (['craft','collect','give_item','place','fill_target','pickup_drop'].includes(r.skill)) {
+      if (['store_item','craft','collect','give_item','place','fill_target','pickup_drop'].includes(r.skill)) {
         await withChest.recover();
         check();
       }
@@ -414,6 +415,17 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         result.chest = await openChest(target,job.abort.signal,window => ({
           id: job.id, generation: r.generation, owner, actor: bot.entity.uuid ?? bot.player.uuid, message, item,
           ...target, ...chestSample(bot,window,item) }));
+      } else if (observation?.mode === 'chest_receipt') {
+        const original = records.get(workKey(r.controller,args.work));
+        const previous = original?.latestDeposit ?? original?.receipt.result.deposit;
+        if (!previous || !original.receipt.exited || previous.generation !== r.generation || previous.dimension !== bot.game.dimension ||
+            !inbox.inPresence(r.generation,previous.sourceMessage)) throw chestError('chest_work_unavailable','找不到同一在场周期的原存箱工作');
+        if (previous.state === 'pending') {
+          const after = await openChest(previous,job.abort.signal,window => chestSample(bot,window,previous.item));
+          check();
+          original.latestDeposit = reconcileDeposit(previous,after);
+        }
+        result.chestReceipt = original.latestDeposit ?? previous;
       } else if (observation?.mode === 'handoff') {
         result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'handoff_receipt') {
@@ -606,6 +618,34 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         const record = handoffSource(r,args,result);
         await giveItem(bot,owner,args,record.receipt.result.handoff,check,() => { record.transferWork = job.id; },job,witness);
       }
+      else if (r.skill === 'store_item') {
+        const existing = inbox.depositWork(r.generation,r.order);
+        if (existing) {
+          result.originalWork = existing.work;
+          throw chestError('chest_already_started','本条委托已接纳，请查原存箱工作');
+        }
+        const original = records.get(workKey(r.controller,args.observation))?.receipt;
+        const source = original?.result.chest, order = inbox.get(r.generation,r.order);
+        if (!source || original.skill !== 'observe' || !original.exited || original.result.status !== 'done' ||
+            source.generation !== r.generation || source.dimension !== bot.game.dimension || source.owner !== owner ||
+            !inbox.inPresence(r.generation,source.message) || !inbox.get(r.generation,source.message)?.text ||
+            r.order !== args.sourceMessage || !order?.text) throw chestError('chest_observation_stale','需要当前玩家委托和同场原单箱观察');
+        args = { ...args,item:args.item.replace(/^minecraft:/,'') };
+        depositOrder(bot,source,inbox.get(r.generation,source.message).text,order.text,inbox.pointedChest(r.generation,r.order),args);
+        const pending = [...records.values()].find(entry => {
+          const proof = entry.latestDeposit ?? entry.receipt.result.deposit;
+          return proof?.state === 'pending' && proof.generation === r.generation && proof.item === source.item &&
+            inbox.inPresence(r.generation,proof.sourceMessage);
+        });
+        if (pending) { result.originalWork = pending.id; throw chestError('chest_recheck_original','先查回原存箱工作未决的数量'); }
+        await depositItem(bot,openChest,source,args,job,() => {
+          const claim = inbox.depositWork(r.generation,r.order,{controller:r.controller,work:job.id});
+          if (claim.work !== job.id || claim.controller !== r.controller) {
+            result.originalWork = claim.work;
+            throw chestError('chest_already_started','本条委托已接纳，请查原存箱工作');
+          }
+        },check);
+      }
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
         if (args.sourceMessage !== undefined) {
@@ -628,7 +668,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
     } catch (error) {
       result.status = job.cancelled ? 'interrupted' : 'blocked';
       result.reason = String(error.message).slice(0, 240);
-      if (['collect', 'pickup_drop', 'give_item', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
+      if (['collect', 'pickup_drop', 'give_item', 'store_item', 'place', 'fill_target', 'craft', 'observe', 'route', 'move'].includes(r.skill) && error.code) result.reasonCode = error.code;
     } finally {
       if (builtSpace && world.space() === builtSpace) {
         if (r.skill === 'collect') built.removed(result.changes ?? []);
@@ -639,7 +679,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         }
       }
       r.exited = true;
-      if (['move', 'route', 'follow', 'collect', 'pickup_drop', 'give_item', 'place', 'fill_target', 'craft'].includes(r.skill))
+      if (['move', 'route', 'follow', 'collect', 'pickup_drop', 'give_item', 'store_item', 'place', 'fill_target', 'craft'].includes(r.skill))
         previous = { controller: r.controller, action: { ...result, generation: r.generation, order: r.order, skill: r.skill } };
       bot.emit('partnerSkillExit', { work: job.id, ...r, arguments: args });
     }
@@ -664,6 +704,8 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
           JSON.stringify(args) !== JSON.stringify(known.args))
           throw new Error('工作身份冲突');
         // 票据收回后的查证只读原记录，游戏工作的失联期限继续计时。
+        if (method === 'partner.receipt' && known.latestDeposit)
+          return { ...receipt,result:{...receipt.result,deposit:known.latestDeposit} };
         if (method === 'partner.receipt') return originalHandoffReceipt(known,witness);
         if (known === active) {
           known.polled = performance.now();
@@ -677,19 +719,22 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         return receipt;
       }
       const controlsBody = skill !== 'reply' && skill !== 'observe';
-      const needsWindow = skill === 'observe' && args.mode === 'chest';
+      const chestRead = mode => mode === 'chest' || mode === 'chest_receipt';
+      const needsWindow = skill === 'observe' && chestRead(args.mode);
       if (method !== 'partner.begin' || !current(context) || !lease.owns(context.controller) ||
           ((controlsBody || needsWindow) && ((active && !active.receipt.exited) ||
-            [...observations].some(job => job.args.mode === 'chest' && !job.receipt.exited))))
+            [...observations].some(job => chestRead(job.args.mode) && !job.receipt.exited))))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
-      const lookup = skill === 'observe' && args.mode === 'handoff_receipt' ? records.get(workKey(context.controller,args.work)) : undefined;
-      makeReceiptRoom(records,active,context,lookup);
+      const reference = skill === 'store_item' ? args.observation :
+        skill === 'observe' && ['handoff_receipt','chest_receipt'].includes(args.mode) ? args.work : null;
+      const lookup = reference && records.get(workKey(context.controller,reference));
+      makeReceiptRoom(records,active,context,lookup,(generation,order) => inbox.inPresence(generation,order));
       const job = { id, key, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(key, job);
       if (controlsBody) {
         active = job;
-        if (skill === 'give_item') job.abort = new AbortController();
+        if (skill === 'give_item' || skill === 'store_item') job.abort = new AbortController();
         const timer = setInterval(() => {
           if (active === job && (!lease.owns(context.controller) || !inbox.inPresence(context.generation, context.order) ||
               performance.now() - job.polled > 4000)) cancel();

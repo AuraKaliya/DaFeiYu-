@@ -88,7 +88,7 @@ function chestWindows(bot) {
       signal.throwIfAborted();
       return await use(window);
     } catch (error) {
-      if (!window && submitted && wait.aborted && !activation.signal.aborted) {
+      if (!window && submitted && wait.aborted) {
         drain(sent,owns);
         throw chestError('chest_window_unconfirmed','未取得完整的服务端箱子窗口');
       }

@@ -9,7 +9,7 @@ GameResult terminal_result(std::string_view skill, PartnerReply value) {
     auto effect = GameEffect::unknown;
     if (skill == "place" || skill == "fill_target")
         effect = value.placement_verified || value.changed ? GameEffect::observed : value.placement_attempted ? GameEffect::unknown : GameEffect::none;
-    else if (skill == "craft" || skill == "pickup_drop" || skill == "give_item")
+    else if (skill == "craft" || skill == "pickup_drop" || skill == "give_item" || skill == "store_item")
         effect = value.changed ? GameEffect::observed : (value.craft_attempted || value.inventory_attempted) ? GameEffect::unknown : GameEffect::none;
     else if (skill == "reply")
         effect = value.delivery == ReplyDelivery::sent ? GameEffect::observed : value.delivery == ReplyDelivery::not_sent ? GameEffect::none : GameEffect::unknown;

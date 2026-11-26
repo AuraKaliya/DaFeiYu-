@@ -28,9 +28,9 @@ function observationInput(args) {
       throw invalidObservation('chest_parameters', '单箱观察需要指箱原话编号和物品');
     return { mode, options: { message: args.message, item: args.item.replace(/^minecraft:/,'') } };
   }
-  if (mode === 'handoff_receipt') {
+  if (mode === 'handoff_receipt' || mode === 'chest_receipt') {
     if (typeof args.work !== 'string' || !args.work.length || args.work.length > 128 || Object.keys(args).length !== 2)
-      throw invalidObservation('handoff_work_reference', '复查收件需要原交物工作编号');
+      throw invalidObservation(mode === 'chest_receipt' ? 'chest_work_reference' : 'handoff_work_reference','复查需要原工作编号');
     return { mode, options: { work: args.work } };
   }
   if (Object.hasOwn(args, 'work')) throw invalidObservation('handoff_work_reference', '按工作复查收件需要 mode=handoff_receipt');
