@@ -16,41 +16,41 @@
 
 | 编号 | 已验收的行为 | 支持边界 | 交付提交与验证证据 |
 | --- | --- | --- | --- |
-| Agent-循环-0 | 建立普通决策、规划、修订和 MC 的固定输入基线 | 固定回放 7 份实际请求、1 次库存工具分派，分别定位授权排列、旧请求缺失库存回执和回复 Hook 后文本。隔离游戏另核对真实入包及玩家实收。 | `88e8945`，[请求与调用对照](../../modules/agent/tests/loop_projection.cpp) · [游戏端读回](../../tests/mc-companion/playtest-check.cjs) |
-| Agent-循环-1 | 同一冻结输入旁路比较有序工具、消息和首个差异 | 主会话与同一时刻一个 MC 绑定；比较不产生额外执行或玩家发言。 | `5015d70`，[工具排序](../../modules/agent/src/tool_catalog.cpp) · [固定投影](../../modules/agent/tests/loop_projection.cpp) |
-| Agent-循环-2 | 正式普通请求、计划和修订带入原库存、目标、步骤证据及实际送达文本 | 提议步骤零个可执行工具。Hook 改写后，以 SQLite 实际记录的可见答复供下轮引用。 | `fe6af78`、`669c478`，[规划与修订](../../modules/agent/tests/loop_projection.cpp) · [真实 DLL 与投递](../../tests/plugins/plugin_mailbox_dll.cpp) |
-| Agent-循环-3 | 单绑定事实基线、增量及原工作回执按号接纳和查回 | 通过可选 ABI 选择一个配对玩家。连续插话可保留同一在途工作，重传、丢序、新基线失败及旧代次迟到结算有界。 | `dfe0dce`、`0baea64`，[绑定事实](../../apps/host/src/binding_facts.cpp) · [插件固定回放](../../tests/mc-companion/mc_plugin_partner.cpp) |
-| Agent-循环-4 | 预留输出和整批工具回执空间，按安全边界归档或切换／回退 | 足额的 16 个工具调用可执行，批次或小模型窗口超限均在首次分派前受阻。非选定玩家继续使用原入口。 | `e1e8f4a`、`22c5eaa`、`6e2705c`，[批次与预算](../../modules/agent/tests/loop_projection.cpp) · [两种入口切换](../../tests/plugins/plugin_mailbox_dll.cpp) |
+| Agent-循环-0 | <a id="agent-循环-0"></a>建立普通决策、规划、修订和 MC 的固定输入基线 | 固定回放 7 份实际请求、1 次库存工具分派，分别定位授权排列、旧请求缺失库存回执和回复 Hook 后文本。隔离游戏另核对真实入包及玩家实收。 | `88e8945`，[请求与调用对照](../../modules/agent/tests/loop_projection.cpp) · [游戏端读回](../../tests/mc-companion/playtest-check.cjs) |
+| Agent-循环-1 | <a id="agent-循环-1"></a>同一冻结输入旁路比较有序工具、消息和首个差异 | 主会话与同一时刻一个 MC 绑定；比较不产生额外执行或玩家发言。 | `5015d70`，[工具排序](../../modules/agent/src/tool_catalog.cpp) · [固定投影](../../modules/agent/tests/loop_projection.cpp) |
+| Agent-循环-2 | <a id="agent-循环-2"></a>正式普通请求、计划和修订带入原库存、目标、步骤证据及实际送达文本 | 提议步骤零个可执行工具。Hook 改写后，以 SQLite 实际记录的可见答复供下轮引用。 | `fe6af78`、`669c478`，[规划与修订](../../modules/agent/tests/loop_projection.cpp) · [真实 DLL 与投递](../../tests/plugins/plugin_mailbox_dll.cpp) |
+| Agent-循环-3 | <a id="agent-循环-3"></a>单绑定事实基线、增量及原工作回执按号接纳和查回 | 通过可选 ABI 选择一个配对玩家。连续插话可保留同一在途工作，重传、丢序、新基线失败及旧代次迟到结算有界。 | `dfe0dce`、`0baea64`，[绑定事实](../../apps/host/src/binding_facts.cpp) · [插件固定回放](../../tests/mc-companion/mc_plugin_partner.cpp) |
+| Agent-循环-4 | <a id="agent-循环-4"></a>预留输出和整批工具回执空间，按安全边界归档或切换／回退 | 足额的 16 个工具调用可执行，批次或小模型窗口超限均在首次分派前受阻。非选定玩家继续使用原入口。 | `e1e8f4a`、`22c5eaa`、`6e2705c`，[批次与预算](../../modules/agent/tests/loop_projection.cpp) · [两种入口切换](../../tests/plugins/plugin_mailbox_dll.cpp) |
 
 ### 上下文装配
 
 | 编号 | 已验收的行为 | 支持边界 | 交付提交与验证证据 |
 | --- | --- | --- | --- |
-| Agent-上下文-1 | 工具裁定给出可操作的原因，区分无进展、待审批和实际效果 | 参数路径与枚举、范围外、原审批号、过期观察、目标变更、迟到实效及动作后取消。重复尝试号不会重置无进展上限。 | `1e71ae2`、`0cd58cc`、`ec23dd9`，[执行前复核](../../modules/agent/tests/session_action_guard.cpp) · [MC 原例](../../tests/mc-companion/mc_plugin_partner.cpp) |
-| Agent-上下文-2 | 按真实来源和原时间编码消息，稳定渲染五段规则 | 主聊天、子会话、规划、两种供应商传输。真人写入同名状态标签仍为外部原话，只换人格措辞时授权与投递独立。 | `79af3af`、`66e9b51`、`b333fe6`、`ceea5e2`，[规则](../../modules/agent/src/prompt_rules.cpp) · [重启与原时间](../../apps/host/tests/message_recovery.cpp) |
-| Agent-上下文-3 | 在原位置记录工具契约，依据该步范围装配真实可调用定义 | 宿主和 MC 试点。分类展开在原回执增加 5 项契约，同回合重复展开零新增，后续授权回合才有相应直调定义。 | `6f329d6`、`31717e1`，[跨轮契约追踪](../../apps/host/tests/tool_contract_trace.cpp) · [原轨迹回放](../../tests/mc-companion/mc_plugin_partner.cpp) |
-| Agent-上下文-4 | 注册状态 schema，逐决策发布冻结尾注，获准后按版本读回 | 主聊天、工具续行、规划／修订和选定 MC 绑定。隐式项、同值重采、到期、超窗、撤权、换绑、压缩均有独立判定。 | `dcac5ffe`，[7 次决策固定回放](../../modules/agent/tests/loop_projection.cpp) · [主聊天发言前后两版](../../apps/host/tests/persistent_dialogue.cpp) |
-| Agent-上下文-5 | 按任务持续关注或按事件展示次数，合并重复回调 | 第一项领域唤醒覆盖配对玩家审批未执行的终态。实际展示并收到有效模型响应才扣次，原事件与快照仍可查。 | `726c468`、`1c0e320`、`9163655`、`8e62507`，[关注计次](../../modules/agent/tests/decision_status.cpp) · [信箱与模型请求](../../tests/mc-companion/native-world.cjs) |
-| Agent-上下文-6 | 在同一快照读取待办、开发或游戏环境、工具计数和最近核实实效 | 测得 3 个候选、2 个接纳、1 个派发。游戏余量须匹配原工作与原实体；原堆与旁堆有独立玩家实物及三版原快照证据。 | `d7ab6f1`、`dea9fbb`、`a8f6d4a`、`0f87047`、`ef2efb5`，[计数](../../modules/agent/tests/tool_counts.cpp) · [隔离游戏实收](../../tests/mc-companion/playtest-check.cjs) |
+| Agent-上下文-1 | <a id="agent-上下文-1"></a>工具裁定给出可操作的原因，区分无进展、待审批和实际效果 | 参数路径与枚举、范围外、原审批号、过期观察、目标变更、迟到实效及动作后取消。重复尝试号不会重置无进展上限。 | `1e71ae2`、`0cd58cc`、`ec23dd9`，[执行前复核](../../modules/agent/tests/session_action_guard.cpp) · [MC 原例](../../tests/mc-companion/mc_plugin_partner.cpp) |
+| Agent-上下文-2 | <a id="agent-上下文-2"></a>按真实来源和原时间编码消息，稳定渲染五段规则 | 主聊天、子会话、规划、两种供应商传输。真人写入同名状态标签仍为外部原话，只换人格措辞时授权与投递独立。 | `79af3af`、`66e9b51`、`b333fe6`、`ceea5e2`，[规则](../../modules/agent/src/prompt_rules.cpp) · [重启与原时间](../../apps/host/tests/message_recovery.cpp) |
+| Agent-上下文-3 | <a id="agent-上下文-3"></a>在原位置记录工具契约，依据该步范围装配真实可调用定义 | 宿主和 MC 试点。分类展开在原回执增加 5 项契约，同回合重复展开零新增，后续授权回合才有相应直调定义。 | `6f329d6`、`31717e1`，[跨轮契约追踪](../../apps/host/tests/tool_contract_trace.cpp) · [原轨迹回放](../../tests/mc-companion/mc_plugin_partner.cpp) |
+| Agent-上下文-4 | <a id="agent-上下文-4"></a>注册状态 schema，逐决策发布冻结尾注，获准后按版本读回 | 主聊天、工具续行、规划／修订和选定 MC 绑定。隐式项、同值重采、到期、超窗、撤权、换绑、压缩均有独立判定。 | `dcac5ffe`，[7 次决策固定回放](../../modules/agent/tests/loop_projection.cpp) · [主聊天发言前后两版](../../apps/host/tests/persistent_dialogue.cpp) |
+| Agent-上下文-5 | <a id="agent-上下文-5"></a>按任务持续关注或按事件展示次数，合并重复回调 | 第一项领域唤醒覆盖配对玩家审批未执行的终态。实际展示并收到有效模型响应才扣次，原事件与快照仍可查。 | `726c468`、`1c0e320`、`9163655`、`8e62507`，[关注计次](../../modules/agent/tests/decision_status.cpp) · [信箱与模型请求](../../tests/mc-companion/native-world.cjs) |
+| Agent-上下文-6 | <a id="agent-上下文-6"></a>在同一快照读取待办、开发或游戏环境、工具计数和最近核实实效 | 测得 3 个候选、2 个接纳、1 个派发。游戏余量须匹配原工作与原实体；原堆与旁堆有独立玩家实物及三版原快照证据。 | `d7ab6f1`、`dea9fbb`、`a8f6d4a`、`0f87047`、`ef2efb5`，[计数](../../modules/agent/tests/tool_counts.cpp) · [隔离游戏实收](../../tests/mc-companion/playtest-check.cjs) |
 
 ### 从运行问题补齐的验收
 
 | 编号 | 已验收的行为 | 支持边界 | 交付提交与验证证据 |
 | --- | --- | --- | --- |
-| Agent-恢复-1 | 写库待定按原投递补写，新增原话阻止尚未分派的变更 | 已有独立只读操作可继续。规划和修订保留原观察与其时效。 | `9658c29`、`01f263b`，[SQLite 写锁](../../apps/host/tests/message_recovery.cpp) · [插话](../../modules/agent/tests/turn_input.cpp) |
-| Agent-恢复-2 | 普通对话和工具思考会话可归档已经完成的原轮次 | 两类会话各完成 515 轮，近期原话、工具调用结果配对及原件索引保留。计费按真正编码的字段。 | `38a2c48`、`5f009ff`，[容量回放](../../modules/agent/tests/loop_projection.cpp) |
-| Agent-恢复-3 | 满额工作索引与换绑后的迟到实效沿原号结算 | 回归做到第 45 次修订、第 390 个工作；全部 128 槽未决时拒绝新动作，旧工作仍能收尾。游戏断线重连后原玩家实收只记一次。 | `4bc1ccf`、`c9f7f94`、`462d59e`，[原索引](../../apps/host/tests/binding_works.cpp) · [原绑定回执](../../tests/mc-companion/mc_plugin_partner.cpp) |
-| Agent-重放-1 | 重放恢复录制时实际工具目录顺序 | Debug、Release 各核对三份原游戏回合，记录中的模型输入、工具和退出可对照。 | `8fce20e`，[离线重放](../../apps/host/src/trace_replay.cpp) · [入口回归](../../tests/application/application_lifecycle.cpp) |
+| Agent-恢复-1 | <a id="agent-恢复-1"></a>写库待定按原投递补写，新增原话阻止尚未分派的变更 | 已有独立只读操作可继续。规划和修订保留原观察与其时效。 | `9658c29`、`01f263b`，[SQLite 写锁](../../apps/host/tests/message_recovery.cpp) · [插话](../../modules/agent/tests/turn_input.cpp) |
+| Agent-恢复-2 | <a id="agent-恢复-2"></a>普通对话和工具思考会话可归档已经完成的原轮次 | 两类会话各完成 515 轮，近期原话、工具调用结果配对及原件索引保留。计费按真正编码的字段。 | `38a2c48`、`5f009ff`，[容量回放](../../modules/agent/tests/loop_projection.cpp) |
+| Agent-恢复-3 | <a id="agent-恢复-3"></a>满额工作索引与换绑后的迟到实效沿原号结算 | 回归做到第 45 次修订、第 390 个工作；全部 128 槽未决时拒绝新动作，旧工作仍能收尾。游戏断线重连后原玩家实收只记一次。 | `4bc1ccf`、`c9f7f94`、`462d59e`，[原索引](../../apps/host/tests/binding_works.cpp) · [原绑定回执](../../tests/mc-companion/mc_plugin_partner.cpp) |
+| Agent-重放-1 | <a id="agent-重放-1"></a>重放恢复录制时实际工具目录顺序 | Debug、Release 各核对三份原游戏回合，记录中的模型输入、工具和退出可对照。 | `8fce20e`，[离线重放](../../apps/host/src/trace_replay.cpp) · [入口回归](../../tests/application/application_lifecycle.cpp) |
 
 ## 待决策
 
 | 编号 | 要决定的问题 | 选项、影响或所缺依据 |
 | --- | --- | --- |
-| Agent-决策-1 | 将试点扩展到哪些领域、绑定或模型可调用的原件读口？ | 需要明确读者、可读对象、授权、换绑与回退场景。已有宿主 C++ 的会话原件读口，MC 另有绑定内的工作读口。 |
-| Agent-决策-2 | 模型能否在既有读取权限内申请任务期关注，谁可跨任务常开？ | 需确定所有者、释放条件、显式展示预算及用户设置。 |
-| Agent-决策-3 | 长期记忆采用哪些来源、写入与遗忘规则？ | 与主聊天 SQLite 原文及进程内历史压缩分别评审，需确定知情范围及读回依据。 |
-| Agent-决策-4 | 跨进程恢复哪些任务及在途工作？ | 需逐项确定持久身份、重启后实效查证、安全重试与过期授权。 |
-| Agent-决策-5 | 通用多 Agent 协作的参与者、委托及结算如何定义？ | 已有主 Agent 与插件子会话共用运行服务。本项需另定跨会话授权、责任人及回执契约。 |
+| Agent-决策-1 | <a id="agent-决策-1"></a>将试点扩展到哪些领域、绑定或模型可调用的原件读口？ | 需要明确读者、可读对象、授权、换绑与回退场景。已有宿主 C++ 的会话原件读口，MC 另有绑定内的工作读口。 |
+| Agent-决策-2 | <a id="agent-决策-2"></a>模型能否在既有读取权限内申请任务期关注，谁可跨任务常开？ | 需确定所有者、释放条件、显式展示预算及用户设置。 |
+| Agent-决策-3 | <a id="agent-决策-3"></a>长期记忆采用哪些来源、写入与遗忘规则？ | 与主聊天 SQLite 原文及进程内历史压缩分别评审，需确定知情范围及读回依据。 |
+| Agent-决策-4 | <a id="agent-决策-4"></a>跨进程恢复哪些任务及在途工作？ | 需逐项确定持久身份、重启后实效查证、安全重试与过期授权。 |
+| Agent-决策-5 | <a id="agent-决策-5"></a>通用多 Agent 协作的参与者、委托及结算如何定义？ | 已有主 Agent 与插件子会话共用运行服务。本项需另定跨会话授权、责任人及回执契约。 |
 
 ## 立项理念与原始需求
 

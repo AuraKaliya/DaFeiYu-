@@ -7,7 +7,7 @@ description: 大肥鱼项目在 ui、plugins、core 固定工作树中分工开�
 
 ## 工作树与 Session
 
-工作区根目录为 `E:\Project\DaFeiYu`。其下的四个目录同属一个本地 Git 仓库。每个开发 Session 固定使用自己的工作树，主工作树的 Session 负责集成。
+采用多工作树分工时，下表的四个目录同属一个本地 Git 仓库。以当前仓库 `git worktree list --porcelain` 的登记位置核对各目录和分支。每个开发 Session 固定使用自己的工作树，主工作树的 Session 负责集成。
 
 | 工作区根目录下的目录 | 固定分支 | 职责 |
 | --- | --- | --- |
