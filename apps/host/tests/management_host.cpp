@@ -125,6 +125,31 @@ void detach_before_apply(const std::filesystem::path& root) {
     until([&] { return host.exited(); },"detachment host did not exit");
     if (host.failed()) throw std::runtime_error("detachment host failed");
 }
+
+// 在业务线程发起原生移动，验证正式窗口协议可读取在途和实际抵达的位置。
+// 步骤：固定可控时钟并起步 → 读取半程坐标和身体活动 → 推进抵达并核对同一身体。
+void room_motion_snapshot(const std::filesystem::path& root) {
+    std::atomic<int> ms=500;
+    management::Host host([&] {
+        app::ApplicationRunConfig config;
+        config.tool_clock=[&] { return agent::ObservationTime{}+std::chrono::milliseconds(ms.load()); };
+        auto application=std::make_unique<app::Application>(model::Config{},root/"plugins",root/"room-motion",model::Backend{
+            [](const auto&,const auto&) { return model::Response{{model::Role::assistant,"固定"}}; }},config);
+        auto& room=application->room();
+        const auto binding=room.layout().room;
+        const auto started=room.start_move(binding,room.self(binding)->body,1,app::RoomPlace::window,agent::ObservationTime{});
+        if (started.admission!=app::MoveAdmission::accepted) throw std::runtime_error("motion fixture did not start");
+        return application;
+    });
+    const auto read=[&] { return management::dispatch(&host,{{"version","1"},{"request","position"},{"type","room.read"}}).at("room"); };
+    until([&] { const auto room=read(); return room.is_object() && room.at("activity")=="walking" && room.at("x")==2; },"window missed transit");
+    const auto body=read().at("body");
+    ms=1000;
+    until([&] { const auto room=read(); return room.at("activity")=="resting" && room.at("placeName")=="窗边" &&
+        room.at("x")==0 && room.at("body")==body; },"window missed arrival");
+    host.close();
+    until([&] { return host.exited(); },"room motion host did not exit");
+}
 }
 
 // 在 CTest 分配的目录运行无窗口业务生命周期回归。
@@ -133,6 +158,7 @@ int main(int argc, char** argv) {
         if (argc != 2) return 2;
         background_turn(argv[1]);
         detach_before_apply(argv[1]);
+        room_motion_snapshot(argv[1]);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

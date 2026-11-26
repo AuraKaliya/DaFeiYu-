@@ -44,6 +44,10 @@ dfy_test_executable(dfy_room_perception_tests room_perception.cpp)
 target_link_libraries(dfy_room_perception_tests PRIVATE dfy_application dfy_build_options)
 add_test(NAME app.room_perception COMMAND dfy_room_perception_tests)
 
+dfy_test_executable(dfy_room_motion_tests room_motion.cpp)
+target_link_libraries(dfy_room_motion_tests PRIVATE dfy_application dfy_build_options)
+add_test(NAME app.room_motion COMMAND dfy_room_motion_tests "${CMAKE_CURRENT_BINARY_DIR}/room-motion")
+
 dfy_test_executable(dfy_room_dialogue_tests room_dialogue.cpp)
 target_link_libraries(dfy_room_dialogue_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
 add_test(NAME app.room_dialogue COMMAND dfy_room_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/room-dialogue")

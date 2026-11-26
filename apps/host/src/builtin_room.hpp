@@ -19,7 +19,7 @@ struct RoomBinding {
 };
 enum class RoomPlace { desk, window, behind_screen };
 enum class RoomObject { desk_lamp, screen };
-enum class RoomActivity { resting };
+enum class RoomActivity { resting, walking };
 struct RoomPoint { std::int16_t x, y; };
 struct KnownPlace { RoomPlace id; std::string_view name; int x, y; };
 struct RoomPassage { RoomPlace from, to; unsigned distance; };
@@ -57,6 +57,18 @@ struct RoomPerceptPage {
     std::vector<std::shared_ptr<const agent::ObservationRecord>> records;
 };
 
+enum class MovePhase { walking, arrived, blocked };
+enum class MoveAdmission { accepted, duplicate, conflict, stale, busy, invalid };
+struct RoomMove {
+    std::uint64_t command;
+    runtime::DomainId action;
+    RoomPlace target;
+    MovePhase phase;
+    RoomSelf actual;
+    agent::ObservationTime started, updated;
+};
+struct MoveReply { MoveAdmission admission; std::optional<RoomMove> record; };
+
 // 应用实例拥有的首间书房与主角色身体，所有读取在原业务线程完成。
 class BuiltinRoom {
   public:
@@ -85,6 +97,16 @@ class BuiltinRoom {
     std::shared_ptr<const agent::ObservationRecord> observe_current(RoomBinding room, runtime::DomainId body, agent::ObservationTime now);
     // 按角色自己的被动事件游标读取，淘汰较老记录后显式报告历史缺口。
     std::optional<RoomPerceptPage> percepts_since(RoomBinding room, runtime::DomainId body, std::uint64_t cursor) const;
+    // 在原生房间空闲时安装某条既有通道的通行状态。
+    bool set_passage_open(RoomBinding room, RoomPlace from, RoomPlace to, bool open) noexcept;
+    // 接受一条原生移动命令，按原命令号区分重投、冲突和已过保留期。
+    MoveReply start_move(RoomBinding room, runtime::DomainId body, std::uint64_t command, RoomPlace target, agent::ObservationTime now);
+    // 以原动作的起步时刻推进身体，重复调度不重复走格。
+    void advance_move(agent::ObservationTime now) noexcept;
+    // 查询身体当前是否有在途动作，空闲轮询无需读取或推进场景时钟。
+    bool walking() const noexcept { return resident_.activity==RoomActivity::walking; }
+    // 仅向同房间、同身体交付原动作的最新或已退出回执。
+    std::optional<RoomMove> movement(RoomBinding room, runtime::DomainId body, runtime::DomainId action) const noexcept;
   private:
     // 将角色可知的字段与当前身体修订交给原来源，签发具有有限时效的只读观察。
     agent::ObservationSnapshot sense_sample(std::string_view kind, bool from_desk, std::optional<bool> on, agent::ObservationTime sampled);
@@ -100,5 +122,10 @@ class BuiltinRoom {
     std::optional<bool> lamp_on_;
     std::optional<agent::ObservationSnapshot> last_switch_;
     std::array<std::shared_ptr<const agent::ObservationRecord>,32> history_{};
+    std::array<std::optional<RoomMove>,32> moves_{};
+    std::uint64_t last_command_ = 0;
+    std::size_t move_slot_ = 0, walked_ = 0;
+    std::vector<RoomPoint> route_;
+    std::array<bool,2> open_passages_{true,true};
 };
 }

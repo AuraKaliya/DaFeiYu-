@@ -224,7 +224,7 @@ function receiveRoom(data: unknown, sequence: number): void {
   room.value = { source: '本体书房', identity, revision: data.revision, time: Date.now(),
     binding: { instance: data.instance, body: data.body }, fields: {
       '当前位置': `${data.roomName} · ${data.placeName}`, '身体坐标': `(${data.x}, ${data.y})`,
-      '身体行为': data.activity === 'resting' ? '停留' : '未知', '房间实例 / 代次': `${data.instance} / ${data.generation}`,
+      '身体行为': data.activity === 'resting' ? '停留' : data.activity === 'walking' ? '行走中' : '未知', '房间实例 / 代次': `${data.instance} / ${data.generation}`,
       '身体编号': data.body, '布局版本': data.layoutVersion,
     } };
 }

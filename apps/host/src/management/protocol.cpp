@@ -98,7 +98,7 @@ nlohmann::json room_snapshot(const Host& host) {
         room = {{"instance",std::to_string(self.room.instance)},{"generation",std::to_string(self.room.generation)},
             {"layoutVersion",std::to_string(location->layout_version)},{"body",std::to_string(self.body)},
             {"revision",std::to_string(self.revision)},{"roomName",location->room_name},{"placeName",location->place_name},
-            {"x",self.position.x},{"y",self.position.y},{"activity",self.activity == app::RoomActivity::resting ? "resting" : "unknown"}};
+            {"x",self.position.x},{"y",self.position.y},{"activity",self.activity == app::RoomActivity::walking ? "walking" : "resting"}};
     }
     return room;
 }

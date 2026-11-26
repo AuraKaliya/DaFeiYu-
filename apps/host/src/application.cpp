@@ -482,6 +482,7 @@ std::optional<CompletedTurn> Application::companion_result(agent::RunId run) con
 // 在宿主线程上推进子会话和插件，主会话的调用方仍拥有其结算回执。
 // 步骤：复核原工具范围 → 推进子会话与插件 → 处理排队对话和信箱。
 runtime::RunResult Application::advance_plugins() {
+    if (room_.walking()) room_.advance_move(tool_clock_());
     if (main_messages_) main_messages_->flush();
     collect_tool_registration();
     advance_verification();

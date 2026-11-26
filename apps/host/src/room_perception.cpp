@@ -25,7 +25,7 @@ bool BuiltinRoom::accept_pose(const RoomSelf& sample, agent::ObservationTime sam
     if (sample.room!=resident_.room || sample.body!=resident_.body || sample.activity!=RoomActivity::resting) return false;
     if (sample.revision==resident_.revision) return sampled==pose_time_ && sample.place==resident_.place &&
         sample.position.x==resident_.position.x && sample.position.y==resident_.position.y;
-    if (sample.revision<resident_.revision || sampled<scene_time_ ||
+    if (resident_.activity==RoomActivity::walking || sample.revision<resident_.revision || sampled<scene_time_ ||
         std::ranges::none_of(layout().places,[&](const auto& place) { return place.id==sample.place; })) return false;
     resident_ = sample;
     pose_time_ = scene_time_ = sampled;
@@ -57,6 +57,7 @@ std::optional<agent::ObservationSnapshot> BuiltinRoom::capture_switch(LampSwitch
         return lamp_on_==change.on && sampled==switch_time_ ? last_switch_ : std::nullopt;
     if (revision<switch_revision_ || sampled<scene_time_ || sampled>agent::ObservationTime::max()-sense_lifetime) return {};
 
+    advance_move(sampled);
     std::optional<agent::ObservationSnapshot> result;
     if (lamp_on_!=change.on) {
         if (const auto sense=perceive_switch(resident_,change)) {
@@ -108,6 +109,7 @@ agent::ObservationReceipt BuiltinRoom::receive(const agent::ObservationSnapshot&
 std::shared_ptr<const agent::ObservationRecord> BuiltinRoom::observe_current(RoomBinding room, runtime::DomainId body,
     agent::ObservationTime now) {
     if (room!=resident_.room || body!=resident_.body || now<scene_time_ || now>agent::ObservationTime::max()-sense_lifetime) return {};
+    advance_move(now);
     const auto ticket = inbox_.refresh_ticket(source_.id(),senses_id);
     const auto sense = perceive_switch(resident_,{room,lamp_on_.value_or(false)});
     const bool visible = sense && std::holds_alternative<SeenLampChange>(*sense);
