@@ -30,6 +30,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_tray_panel(const std::filesystem::path& profile);
     // 在正式面板执行长历史的双窗同步、关窗入库、分页刷新及重启核对。
     void start_history(std::wstring_view mode, const std::filesystem::path& profile);
+    // 在两个独立正式面板核对同一来源的公开信件、断连恢复及原代次失效。
+    void start_mailbox(std::wstring_view mode, const std::filesystem::path& profile);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif

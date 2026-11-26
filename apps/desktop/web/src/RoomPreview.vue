@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
+import RoomMailbox from './RoomMailbox.vue';
+import { sampleMailbox } from './room-mailbox-sample';
 
 const props = defineProps<{ initialBusy: boolean }>();
 const busy = ref(props.initialBusy);
@@ -10,11 +12,16 @@ const route = ref<'current' | 'next'>('current');
 const decision = ref('');
 const notice = ref('');
 const messages = ref<{ text: string; state: string }[]>([]);
+const mailSource = ref('');
+const mailRecovered = ref(false);
+const mailbox = computed(() => sampleMailbox(mailSource.value, mailRecovered.value));
 
 // 载入指定公开样本，并清理上一个样本中的局部操作。
 function selectSample(working: boolean): void {
   busy.value = working; stopped.value = false; expanded.value = true; route.value = 'current';
   decision.value = ''; notice.value = ''; draft.value = ''; messages.value = [];
+  mailSource.value = '';
+  mailRecovered.value = false;
 }
 // 记录一次本地输入及其去向，不将正文发送给宿主。
 function send(): void {
@@ -48,6 +55,7 @@ function enter(event: KeyboardEvent): void {
         <dt>位置</dt><dd>{{ busy ? '书桌与窗边之间' : '书桌旁' }}</dd>
         <dt>身体行为</dt><dd>{{ busy && !stopped ? '移动中' : '停留' }}</dd>
       </dl>
+      <RoomMailbox :view="mailbox" @select="mailSource = $event" @retry="mailRecovered = true" />
     </section>
     <section class="conversation" aria-labelledby="chat-heading">
       <div class="chat-bar"><h2 id="chat-heading">和大肥鱼说话</h2>

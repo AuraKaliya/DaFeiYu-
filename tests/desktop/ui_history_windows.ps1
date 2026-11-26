@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -42,10 +42,12 @@ function Start-Panel([string]$Mode) {
 }
 
 # 同时观察两窗，任一固定检查失败立即报告，只有浏览器和配置全部释放才可放行回答。
-function Wait-Panels([Diagnostics.Process[]]$Panels) {
+# 步骤：跟踪窗口和同伴进程 → 核对退出码 → 检查浏览器与配置回收报告。
+function Wait-Panels([Diagnostics.Process[]]$Panels, [Diagnostics.Process]$Peer) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {
         $running = 0
+        if ($Peer -and $Peer.HasExited -and $Peer.ExitCode -ne 0) { throw ('Observer failed: '+$Peer.StandardError.ReadToEnd()) }
         foreach ($window in $Panels) {
             if (!$window.HasExited) { ++$running }
             elseif ($window.ExitCode -ne 0) { throw ('Panel failed: '+$window.StandardError.ReadToEnd()) }
@@ -68,6 +70,42 @@ function Stop-Resident([Diagnostics.Process]$Resident) {
 
 $resident = $null
 try {
+    if ($MailPlugin) {
+        # 由真正的 C 插件产生来信，只有这个独立终端控制端可以请求取件或重载。
+        $package = Join-Path $data 'plugins/mail'
+        $null = New-Item -ItemType Directory -Path $package -Force
+        Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
+        [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
+        [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
+        $resident = Start-Resident
+        $watcher = Start-Panel 'mailbox-follow'
+        $first = Start-Panel 'mailbox-first'
+        Wait-Panels @($first) $watcher
+        $expected = [IO.File]::ReadAllText((Join-Path $data 'first-letter.json'))
+        $observed = [IO.File]::ReadAllText((Join-Path $data 'observer-letter.json'))
+        $counter = Join-Path $data 'fixed-model-calls'
+        if ($expected -ne $observed -or (Test-Path -LiteralPath $counter)) { throw 'Window reads changed the letter or started the model' }
+        [IO.File]::WriteAllText((Join-Path $data 'first-closed'),'closed')
+        foreach ($step in @(@('observer-offline','review','system-reviewed'), @('received-visible','reload','plugin-reloaded'))) {
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            while (!(Test-Path -LiteralPath (Join-Path $data $step[0]))) {
+                if ($watcher.HasExited) { throw ('Mailbox observer exited: '+$watcher.StandardError.ReadToEnd()) }
+                if ($timer.ElapsedMilliseconds -gt 15000) { throw ('Missing mailbox milestone: '+$step[0]) }
+                Start-Sleep -Milliseconds 40
+            }
+            if ($step[1] -eq 'reload') {
+                $reopened = Start-Panel 'mailbox-reopen'
+                Wait-Panels @($reopened) $watcher
+            }
+            & $Fixture $step[1] $config $data
+            if ($LASTEXITCODE -ne 0) { throw ('Independent system command failed: '+$step[1]) }
+            [IO.File]::WriteAllText((Join-Path $data $step[2]),'ready')
+        }
+        Wait-Panels @($watcher)
+        if ([IO.File]::ReadAllLines($counter).Count -ne 1) { throw 'Only the explicit system review should run the fixed model' }
+        Stop-Resident $resident
+        return
+    }
     $resident = Start-Resident
     $watcher = Start-Panel 'history-watch'
     $sender = Start-Panel 'history-send'
@@ -84,7 +122,7 @@ try {
     Wait-Panels @((Start-Panel 'history-restart'))
     Stop-Resident $resident
 } finally {
-    [IO.File]::WriteAllText((Join-Path $data 'release-reply'),'finish')
+    if (!$MailPlugin) { [IO.File]::WriteAllText((Join-Path $data 'release-reply'),'finish') }
     if ($resident -and !$resident.HasExited) {
         try { & $App --stop-host $data 2>$null | Out-Null } catch {}
         $null = $resident.WaitForExit(5000)

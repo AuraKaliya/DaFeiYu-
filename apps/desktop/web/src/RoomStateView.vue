@@ -68,6 +68,7 @@ watch(() => props.conversation, observe);
       <p class="readout-meta">修订 {{ group.value.revision }} · 本窗接收 {{ clock.format(group.value.time) }}</p>
     </template>
   </section>
+  <slot name="mailbox" />
   <h3 class="group-title">最近变化</h3>
   <ol v-if="history.length" class="changes" aria-label="本窗口最近观察到的变化">
     <li v-for="change in history" :key="change.id"><span>{{ change.text }}</span>

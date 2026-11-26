@@ -76,7 +76,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool main_panel = false, main_panel_check = false, panel_shutdown_check = false;
     bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
     bool observer_unexpected = false;
-    std::wstring history_check;
+    std::wstring observer_scenario;
     bool tray_check = false;
     bool resident_exit_seen = false;
     int result = 0;
@@ -199,7 +199,7 @@ struct Window : std::enable_shared_from_this<Window> {
             return S_OK;
         }).Get(),&navigation));
         navigation_bound = true; resize();
-        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(tray_check || !history_check.empty() ? 60 : main_panel_check ? 35 : 20);
+        if (smoke || interaction_mode) deadline = std::chrono::steady_clock::now()+std::chrono::seconds(tray_check || !observer_scenario.empty() ? 60 : main_panel_check ? 35 : 20);
         if (smoke || interaction_mode || run_status_host || resident_client) SetTimer(handle,1,20,nullptr);
         if (offline) prepare_offline(); else navigate();
     }
@@ -292,7 +292,8 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
-                if (!history_check.empty()) { interaction->start_history(history_check,user_data); return; }
+                if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
+                if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
                 if (observer_check) {
                     interaction->start_observer(observer_stop,observer_log_error,observer_unexpected ? user_data/"replacement.ready" : std::filesystem::path{});
                     return;
@@ -377,10 +378,10 @@ struct Window : std::enable_shared_from_this<Window> {
             };
 #endif
             const bool pinned = !tray_instance.empty();
-            const bool fixture_only = !history_check.empty();
+            const bool fixture_only = !observer_scenario.empty();
             const auto definition = pinned ? tray_definition : dfy::management::startup_identity(config,packages);
             resident_client = std::make_unique<dfy::management::Client>(data,definition,[=] {
-                if (fixture_only) throw std::runtime_error("history fixture resident unavailable");
+                if (fixture_only) throw std::runtime_error("fixture resident unavailable");
                 if (pinned) throw std::runtime_error("original tray resident unavailable");
                 dfy::management::launch_host(config,packages,data);
             },[data,log=software,opener=std::move(opener)](bool open) { return dfy::ui::log_settings(data,*log,open,opener); },software);
@@ -472,8 +473,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const std::wstring_view observer_mode = __argc==5 ? __wargv[4] : L"";
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
         observer_mode==L"history-reopen" || observer_mode==L"history-restart";
+    const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
-        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check))) &&
+        std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
@@ -520,7 +522,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->panel_shutdown_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-panel-shutdown";
         state->observer_check = observer_check;
 #ifdef DFY_UI_RUN_STATUS_TEST
-        if (observer_check && history_check) state->history_check = observer_mode;
+        if (observer_check && (history_check || mailbox_check)) state->observer_scenario = observer_mode;
 #endif
         state->tray_check = tray_check;
         state->observer_stop = observer_check && __argc==5 && std::wstring_view(__wargv[4])==L"stop";

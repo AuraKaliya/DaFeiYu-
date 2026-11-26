@@ -8,6 +8,7 @@ import MessageReceipt from './MessageReceipt.vue';
 import ManagementShell from './ManagementShell.vue';
 import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
+import ResidentRoomMailbox from './ResidentRoomMailbox.vue';
 import { originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -537,8 +538,10 @@ onUnmounted(() => {
     <template #status>
       <span id="dialogue-state" role="status" :data-ready="ready" :data-accepting="accepting && messages.subscribed.value && !pending">{{ panelStatus }}</span>
     </template>
-    <template #room>
-      <RoomStateView :room="room" :conversation="conversation" :room-current="roomCurrent" :conversation-current="ready" />
+    <template #room="{ active }">
+      <RoomStateView :room="room" :conversation="conversation" :room-current="roomCurrent" :conversation-current="ready">
+        <template #mailbox><ResidentRoomMailbox :active="active" :connected="ready && shutdown === 'idle'" /></template>
+      </RoomStateView>
     </template>
     <template #settings="{ active }">
       <h3 class="group-title">插件管理</h3>
