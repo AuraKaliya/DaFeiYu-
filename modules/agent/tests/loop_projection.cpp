@@ -48,6 +48,33 @@ void source_boundaries() {
         "user-authored markup and host status have indistinguishable provider messages");
 }
 
+// 核对用户原始时间、宿主采样及实际工具回执时间，协议重编码时沿用首次记录。
+// 步骤：建立可控时钟 → 提交带原生推理的工具批次 → 切换时间重编码 → 检查配对及未知时钟。
+void source_times() {
+    std::int64_t utc = 2000;
+    RunContext context(std::make_shared<const MessageHistory>(),"玩家原话",{},"状态",{},MessageSource::human,[&] { return utc; },1000);
+    const std::vector<ToolDefinition> tools{{"inspect","读取",R"({"type":"object"})"}};
+    Message assistant{Role::assistant,"",{{"original","inspect","{}"}},{},"private-continuation"};
+    context.prepare_tools(assistant,tools);
+    utc = 3000;
+    context.set_tool_result(0,{true,ToolEffect::not_applied,"原始回执",ToolError::none},OperationState::succeeded);
+    context.commit_tools();
+    const Request sent{context.messages(),tools};
+    const auto encoded = encode_request_fields(sent,true);
+    const auto wire = nlohmann::json::parse(encoded).at("messages");
+    utc = 9000;
+    check(wire[0].at("content").get<std::string>().starts_with(R"(<event source="host_status" utcMs="2000">)") &&
+        wire[1].at("content")==R"(<event source="human" utcMs="1000">玩家原话</event>)" &&
+        wire[2].at("reasoning_content")=="private-continuation" && wire[2].at("tool_calls")[0].at("id")=="original" &&
+        wire[3].at("tool_call_id")=="original" && wire[3].at("content")==
+        std::string(R"(<event source="tool" utcMs="3000"/>)")+"\n"+sent.messages[3].content &&
+        encode_request_fields({context.messages(),tools},true)==encoded,"event times or native tool pairing changed on repeat");
+    RunContext unknown(std::make_shared<const MessageHistory>(),"保持原话",{},"",{},MessageSource::human,
+        []() -> std::int64_t { throw std::runtime_error("clock unavailable"); });
+    check(!unknown.messages().back().event_utc_ms && wire_content(unknown.messages().back())==
+        R"(<event source="human">保持原话</event>)","unavailable clock invented an event time");
+}
+
 // 提供声明式两步计划，前缀验证和修订仍由正式宿主处理。
 Response proposal() {
     return {{Role::assistant, R"({"schema_version":1,"steps":[{"id":"count","objective":"check","completion_criterion":"checked","tools":[]},{"id":"deliver","objective":"deliver","completion_criterion":"received","tools":[]}]})"}};
@@ -409,7 +436,7 @@ void reasoning_budget() {
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        source_boundaries(); replay(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
+        source_boundaries(); source_times(); replay(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
         mixed_dialogue(false); mixed_dialogue(true);
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();

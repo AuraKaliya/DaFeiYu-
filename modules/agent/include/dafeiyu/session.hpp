@@ -222,7 +222,7 @@ class Session {
     // 用明确的工具范围、策略和限额接纳一次运行，旧入口保持无工具行为。
     std::shared_ptr<TurnRequest> begin(const std::string& prompt, RunOptions options);
     // 只向匹配身份的活动回合签收一条补充，已经封闭时保留原结果。
-    InputReceipt append_input(RunId expected, std::string text);
+    InputReceipt append_input(RunId expected, std::string text, std::optional<std::int64_t> event_utc_ms = {});
     // 使用宿主绑定凭证处理确认命令，不在提交决定时执行动作；保留结果期间可重取原回执。
     ConfirmationReceipt decide(const ConfirmationCaller& caller, const ConfirmationCommand& command);
     // 由宿主绑定的验证入口确认步骤完成条件；重复同证据不重复推进，调用本身不执行后续工作。

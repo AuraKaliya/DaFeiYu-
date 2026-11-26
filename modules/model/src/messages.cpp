@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <set>
 #include <array>
+#include <charconv>
 #include <stdexcept>
 
 namespace dfy::model {
@@ -23,8 +24,18 @@ void content_parts(const Message& message, const auto& append) {
     if (source == Source::unknown) { append(message.content); return; }
     const auto& info = source_info.at(static_cast<std::size_t>(source));
     if (info.role != message.role) throw std::invalid_argument("model: source and role differ");
-    if (message.role != Role::user) { append(message.content); return; }
-    append("<event source=\""); append(info.name); append("\">");
+    if (message.role != Role::user && !(message.role == Role::tool && message.event_utc_ms)) {
+        append(message.content); return;
+    }
+    append("<event source=\""); append(info.name); append("\"");
+    if (message.event_utc_ms) {
+        char digits[32];
+        const auto end = std::to_chars(digits,digits+sizeof digits,*message.event_utc_ms).ptr;
+        append(" utcMs=\""); append(std::string_view(digits,static_cast<std::size_t>(end-digits))); append("\"");
+    }
+    // 工具消息已有协议角色和调用号，时间头之后原样保留可解析的回执正文。
+    if (message.role == Role::tool) { append("/>\n"); append(message.content); return; }
+    append(">");
     std::string_view rest = message.content;
     for (auto pos = rest.find_first_of("<>&"); pos != rest.npos; pos = rest.find_first_of("<>&")) {
         append(rest.substr(0,pos));
@@ -56,9 +67,10 @@ void object_json(const std::string& text) {
 // 返回固定来源名，不读取消息正文。
 std::string_view source_name(MessageSource source) { return source_info.at(static_cast<std::size_t>(source)).name; }
 // 从已知来源构造使用供应商原生角色的统一消息。
-Message sourced_message(MessageSource source, std::string content) {
+Message sourced_message(MessageSource source, std::string content, std::optional<std::int64_t> event_utc_ms) {
     Message message{source_info.at(static_cast<std::size_t>(source)).role,std::move(content)};
     message.source = source;
+    message.event_utc_ms = event_utc_ms;
     return message;
 }
 // 仅在实际协议边界装配数据封套，统一历史及工具原文保持不变。

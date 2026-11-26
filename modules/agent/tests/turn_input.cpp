@@ -37,11 +37,15 @@ void same_turn() {
     }};
     Session session({},channel(),std::move(backend));
     RunOptions options; options.accept_user_input = true;
+    std::int64_t clock = 2000;
+    options.message_clock = [&] { return clock; };
+    options.prompt_utc_ms = 1000;
     const auto request = session.begin("最初原话",options);
     const auto run = request->run_id();
     check(first.try_acquire_for(2s),"first call did not receive its input");
     check(session.append_input({run.session,run.sequence+1},"错误回合").state==InputAdmission::closed,"stale turn accepted input");
-    const auto a = session.append_input(run,"补充甲"), b = session.append_input(run,"补充乙");
+    const auto a = session.append_input(run,"补充甲"), b = session.append_input(run,"补充乙",1500);
+    clock = 9000;
     check(a.message==1 && b.message==2 && request->inputs().size()==2 && request->inputs()[0].state==InputState::waiting &&
         !request->inputs()[0].model_step && received.front().messages.size()==1,"admission altered submitted first call");
     until(session,[&] { return request->inputs().back().state==InputState::submitted; });
@@ -49,6 +53,8 @@ void same_turn() {
     const auto& messages = received.back().messages;
     check(messages[0].content=="最初原话" && messages[1].role==Role::assistant && messages[1].content=="阶段文本" &&
         messages[2].role==Role::user && messages[2].content=="补充甲" && messages[3].role==Role::user && messages[3].content=="补充乙" &&
+        messages[0].event_utc_ms==1000 && messages[1].event_utc_ms==9000 &&
+        messages[2].event_utc_ms==2000 && messages[3].event_utc_ms==1500 &&
         request->inputs()[0].model_step==2 && request->inputs()[1].model_step==2 &&
         request->operation()->state()==OperationState::pending,"supplements were duplicated, reordered, or completed the turn early");
     release.release();

@@ -71,7 +71,13 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
             const auto key = prompt.source == model::MessageSource::human || prompt.source == model::MessageSource::unknown
                 ? std::string_view("user") : model::source_name(prompt.source);
             nlohmann::json turn{{std::string(key),prompt.content},{"assistant",input.messages[i+span-1].content}};
-            if (span == 3) turn["host_status"] = input.messages[i].content;
+            if (prompt.event_utc_ms) turn["input_utc_ms"] = *prompt.event_utc_ms;
+            const auto& answer = input.messages[i+span-1];
+            if (answer.event_utc_ms) turn["assistant_utc_ms"] = *answer.event_utc_ms;
+            if (span == 3) {
+                turn["host_status"] = input.messages[i].content;
+                if (input.messages[i].event_utc_ms) turn["status_utc_ms"] = *input.messages[i].event_utc_ms;
+            }
             turns.push_back(std::move(turn));
             i += span;
         }

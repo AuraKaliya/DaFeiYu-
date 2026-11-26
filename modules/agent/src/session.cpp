@@ -16,9 +16,9 @@ void TurnRequest::settle_inputs(InputState state, std::uint64_t step) noexcept {
 }
 
 // 将补充绑定到原活动回合，关闭、重入或过期身份不会产生新工作。
-InputReceipt Session::append_input(RunId expected, std::string text) {
+InputReceipt Session::append_input(RunId expected, std::string text, std::optional<std::int64_t> event_utc_ms) {
     if (working_ || !accepting() || !active_ || active_->request()->run_id() != expected) return {InputAdmission::closed};
-    return active_->append_input(std::move(text));
+    return active_->append_input(std::move(text),event_utc_ms);
 }
 
 namespace {

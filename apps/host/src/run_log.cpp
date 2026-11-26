@@ -162,7 +162,11 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value,
     if (value.input) {
         item["input"] = encode_request(*value.input);
         auto evidence = Json::array();
-        for (const auto& message : value.input->messages) evidence.push_back({{"source",model::source_name(message.source)}});
+        for (const auto& message : value.input->messages) {
+            Json origin{{"source",model::source_name(message.source)}};
+            if (message.event_utc_ms) origin["eventUtcMs"] = *message.event_utc_ms;
+            evidence.push_back(std::move(origin));
+        }
         item["messageEvidence"] = std::move(evidence);
         item["compressedBatches"] = value.compressed_batches;
     }

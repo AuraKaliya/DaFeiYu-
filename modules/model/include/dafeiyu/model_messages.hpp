@@ -24,9 +24,11 @@ struct Message {
     // 仅宿主最终提交的普通问答记录其原始消息数，供应商和模型无法指定该标记。
     std::uint8_t completed_dialogue_span = 0;
     MessageSource source = MessageSource::unknown;
+    // 来源事件的 UTC 毫秒，未提供的旧记录保持未知。
+    std::optional<std::int64_t> event_utc_ms;
 };
 // 按来源建立原生协议角色，保留调用者给出的完整正文。
-Message sourced_message(MessageSource source, std::string content);
+Message sourced_message(MessageSource source, std::string content, std::optional<std::int64_t> event_utc_ms = {});
 // 将有来源的统一消息映射成供应商可读正文，原消息保持可查。
 std::string wire_content(const Message& message);
 // 参数描述保留为 JSON 文本，供应商与 JSON 库类型不进入 Agent 公共接口。

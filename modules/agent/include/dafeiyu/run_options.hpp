@@ -7,6 +7,7 @@
 #include <dafeiyu/action_observations.hpp>
 #include <dafeiyu/run_capture.hpp>
 #include <dafeiyu/context_status.hpp>
+#include <dafeiyu/turn_input.hpp>
 
 namespace dfy::agent {
 class ObservationController;
@@ -69,5 +70,8 @@ struct RunOptions {
     std::uint64_t evidence_epoch = 0;
     // 复合的信箱或插件输入由入口标记，直接对话和观察规则由运行起因确定。
     std::optional<model::MessageSource> prompt_source;
+    // 原话的渠道时间可随准入传入，后续事件的 UTC 时钟独立于期限和预算。
+    std::optional<std::int64_t> prompt_utc_ms;
+    MessageClock message_clock = message_utc_now;
 };
 }

@@ -87,6 +87,7 @@ void project_plan_evidence(model::Request& plan, const std::vector<model::Messag
             const auto found = std::ranges::find(calls,message.tool_call_id,&model::ToolCall::id);
             if (found == calls.end()) throw std::logic_error("plan evidence: unmatched tool result");
             Json fact{{"call_id",found->id},{"tool",found->name},{"message",i+1},{"batch_message",begin}};
+            if (message.event_utc_ms) fact["eventUtcMs"] = *message.event_utc_ms;
             const auto preview = recent ? std::size_t{1536} : std::size_t{256};
             if (message.content.size() <= preview+128) fact["receipt"] = message.content;
             else {

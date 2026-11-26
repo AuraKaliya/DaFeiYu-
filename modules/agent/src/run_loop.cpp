@@ -102,7 +102,8 @@ struct RunLoopState {
             options.evidence_epoch ? options.evidence_epoch : run.session,config.thinking_enabled()};
         const auto source = options.prompt_source.value_or(options.origin == RunOrigin::mailbox ? model::MessageSource::mailbox :
             options.origin == RunOrigin::observation_rule ? model::MessageSource::host_control : model::MessageSource::human);
-        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window,source);
+        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window,source,
+            options.message_clock,options.prompt_utc_ms);
         record->versions_ = public_run_versions(config,options,deadline > now ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline-now) : std::chrono::milliseconds::zero());
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
@@ -692,7 +693,7 @@ std::shared_ptr<const MessageHistory> RunLoop::history() const noexcept { return
 void RunLoop::advance() { state_->advance(); }
 // 在获准的真人问答中签收补充，旧决定尚未开工的变更须等新原话送模后重新提出。
 // 步骤：核对来源和状态 → 检查条数及正文预算 → 登记原话并更新未开工变更的前置条件。
-InputReceipt RunLoop::append_input(std::string text) {
+InputReceipt RunLoop::append_input(std::string text, std::optional<std::int64_t> event_utc_ms) {
     auto& record = *state_->record;
     if (!state_->options.accept_user_input || state_->options.origin != RunOrigin::user_request || state_->options.planning)
         return {InputAdmission::unavailable};
@@ -706,7 +707,7 @@ InputReceipt RunLoop::append_input(std::string text) {
     if (record.inputs_.size() >= turn_input_count_limit || bytes > turn_input_byte_limit) return {InputAdmission::full};
 
     const auto message = record.inputs_.size()+1;
-    record.inputs_.push_back({message,std::move(text)});
+    record.inputs_.push_back({message,std::move(text),InputState::waiting,0,event_utc_ms ? event_utc_ms : record.context_->event_time()});
     state_->action_basis->user_input_pending = true;
     state_->last_fingerprint.reset();
     ++record.input_revision_;
