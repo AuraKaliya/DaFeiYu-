@@ -50,6 +50,7 @@ struct ApplicationRunConfig {
     bool wake_for_plugin_mail = true;
     std::filesystem::path trace_directory;
     std::weak_ptr<SoftwareLog> software_log;
+    bool manage_host_settings = false;
 };
 enum class RoomEvent { presence_changed, addressed };
 
@@ -229,8 +230,8 @@ class Application {
     const runtime::DomainId room_sender_;
     const events::MailboxId room_mailbox_;
     plugins::PluginManager plugins_;
-    const model::Config model_config_;
     const std::shared_ptr<HostSettings> host_settings_;
+    const model::Config model_config_;
     const model::Backend model_backend_;
     const agent::RunVersionLabels labels_;
     const PersonaProfile persona_;
