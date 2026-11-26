@@ -107,11 +107,13 @@ struct RunLoopState {
         if (options.confirmation_caller) record->confirmations_ = std::make_unique<ConfirmationBook>(run,*options.confirmation_caller,options.confirmation_limit,options.budget,&record->journal_);
         action_basis->observations = std::move(options.action_observations); options.action_observations.reset();
         // 最后检查只持有原操作读句柄与共享依据，避免捕获整个运行或把旧回执变成新的执行器。
-        const auto action_guard = [clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis] {
+        const auto action_guard = [clock = options.now,absolute = deadline,run_state = record->operation(),basis = action_basis]() -> ToolStartDecision {
             const auto current = clock();
             if (run_state->state() != runtime::OperationState::pending || run_state->cancellation_reason() != runtime::CancelReason::none ||
-                current >= absolute || basis->user_input_pending ||
-                (basis->observations && (!basis->available || !basis->observations->current(current)))) return false;
+                current >= absolute) return false;
+            if (basis->user_input_pending) return ToolStartBlock::user_input_pending;
+            if (basis->observations && (!basis->available || !basis->observations->current(current)))
+                return {ToolStartBlock::observation_stale,basis->observations->binding()};
             // 开始尝试变更后不再复用同一行动前依据；后续只读查询仍可继续。
             if (basis->observations) basis->available = false;
             return true;

@@ -57,6 +57,28 @@ void mixed_wait() {
     }
     check(cleanup.snapshot().front().state == ConfirmationState::cancelled && calls == 1,"destroyed batch left live confirmation");
 }
+// 比较两次同因拒绝的进展指纹，回执保留各自的原审批号。
+// 步骤：两次签发独立审批 → 按原号拒绝并核对真实回执 → 比较语义进展。
+void repeated_denial() {
+    ToolCatalog catalog;
+    catalog.add({"fixture/change",1,1,{"change","fixture",R"({"type":"object","properties":{},"additionalProperties":false})"},true,false});
+    const auto tools = catalog.snapshot(std::vector<std::string>{"fixture/change"},true);
+    std::optional<std::uint64_t> first;
+    DomainId previous = 0;
+    for (const auto id : {"one","two"}) {
+        ConfirmationCaller caller; ConfirmationBook book({1,1},caller); ToolExecutor executor({1,1},tools);
+        RunContext context(std::make_shared<const MessageHistory>(),"goal"); PolicySettings settings; settings.confirm_changes = true;
+        ToolBatch batch(context,executor,{dfy::model::Role::assistant,"",{{id,"change","{}"}}},tools,ExecutionPolicy({1,1},1,settings),control(),{},&book);
+        const auto decision = book.snapshot().at(0); book.decide(caller,{1,decision.id,decision.revision,decision.target,false},{});
+        for (unsigned i=0; !batch.done() && i<4; ++i) batch.advance(control());
+        const auto& output = context.committed()->back().content;
+        check(!executor.size() && previous != decision.id && output.find("\"approval\":"+std::to_string(decision.id)) != std::string::npos &&
+            output.find("\"approvalState\":\"denied\"") != std::string::npos,"denial lost its own receipt");
+        const auto key = batch.progress_fingerprint();
+        check(!first || *first == key,"new approval identity falsely counted as progress");
+        first = key; previous = decision.id;
+    }
+}
 // 验证模型同批重复提出的同一动作不能通过分别批准和拒绝绕开拒绝范围。
 void duplicate_candidates() {
     unsigned calls = 0; ToolCatalog catalog;
@@ -75,6 +97,6 @@ void duplicate_candidates() {
 }
 // 使用本地工具工厂验证确认，不调用模型。
 int main() {
-    try { scenarios(); mixed_wait(); duplicate_candidates(); std::cout << "Tool confirmation checks passed\n"; return 0; }
+    try { scenarios(); mixed_wait(); repeated_denial(); duplicate_candidates(); std::cout << "Tool confirmation checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

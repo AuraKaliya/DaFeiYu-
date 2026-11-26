@@ -22,6 +22,19 @@ struct ToolInvocation { AttemptId attempt; runtime::DomainId invocation = 0; mod
 using ToolTime = std::chrono::steady_clock::time_point;
 using ToolClock = std::function<ToolTime()>;
 // 顺序资格与计费均由宿主先准备；预算覆盖保留结果，顺序占用覆盖实际工作退出。
+enum class ToolStartBlock { none, unavailable, user_input_pending, observation_stale };
+// 首次变更检查返回可核对的原因；布尔回调仍可提供原有的允许或拒绝。
+struct ToolStartDecision {
+    ToolStartBlock block;
+    std::uint64_t observation = 0;
+    // 将已有布尔检查映射到明确允许或通用前置条件拒绝。
+    ToolStartDecision(bool allowed) : block(allowed ? ToolStartBlock::none : ToolStartBlock::unavailable) {}
+    // 保存宿主裁定的原因及其关联的原观察绑定。
+    ToolStartDecision(ToolStartBlock value, std::uint64_t binding = 0) : block(value), observation(binding) {}
+    // 编码拒绝发生的阶段和采样身份，供配对回执和运行追踪共用。
+    std::string detail(std::string_view stage) const;
+};
+using ToolStartGuard = std::function<ToolStartDecision()>;
 struct ToolResources {
     std::shared_ptr<runtime::SerialDomain> domain;
     std::shared_ptr<const runtime::SerialRequest> ordering;
@@ -29,7 +42,7 @@ struct ToolResources {
     std::optional<ToolTime> deadline;
     ToolClock now = std::chrono::steady_clock::now;
     // 纯宿主前置检查，仅在首次调用工厂前执行；拒绝或异常均为确定未发生。
-    std::function<bool()> before_start;
+    ToolStartGuard before_start;
 };
 // 同一宿主线程推进的已接纳工作；后台责任必须保持到 exited，不能在析构中强行中止。
 class ToolWork {

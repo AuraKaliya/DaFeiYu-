@@ -103,6 +103,7 @@ void pending_changes(InputBoundary boundary) {
     const auto& context = received[1].messages;
     check(context.size()==5 && context[2].tool_call_id=="stock" && context[2].content.find("eight")!=std::string::npos &&
         context[3].tool_call_id=="old" && context[3].content.find("effect=not_applied")!=std::string::npos &&
+        context[3].content.find("user_input_pending")!=std::string::npos &&
         context.back().role==Role::user && context.back().content=="改交给乙","next request lost evidence or accepted a stale effect");
     check(reads==1 && changes==(boundary==InputBoundary::confirmation ? std::vector<std::string>{} : std::vector<std::string>{"revised"}),
         "stale write started or fresh decision lost its grant");

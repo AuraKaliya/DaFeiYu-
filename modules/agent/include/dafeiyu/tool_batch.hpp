@@ -49,7 +49,7 @@ class ToolBatch {
     // 复制已实际退出候选的原工具回执正文；尚未退出或未接纳返回空，不推进执行。
     std::optional<ToolResult> result(runtime::DomainId candidate) const;
   private:
-    struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; std::optional<TraceFact> last; bool filled = false; };
+    struct Entry { BatchToolSnapshot metadata; model::ToolCall call; std::shared_ptr<ToolRequest> request; std::optional<TraceFact> last; std::string rejection_key; bool filled = false; };
     // 按阶段发布工具实际参数，记录异常不改变接纳或结果。
     void capture(const Entry& entry, ToolCapturePhase phase) noexcept;
     // 在原工具状态发生变化时记录无正文事实，重复推进不追加相同状态。

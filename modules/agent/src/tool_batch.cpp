@@ -1,5 +1,6 @@
 #include <dafeiyu/tool_batch.hpp>
 #include <dafeiyu/tool_schema.hpp>
+#include "diagnostic_fields.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
@@ -75,8 +76,17 @@ void ToolBatch::publish_policy(std::size_t index, ControlPoint point, PolicyDeci
 // 为拒绝候选记录零动作，不改写已经消费或发生效果的确认。
 void ToolBatch::reject(std::size_t index, ConfirmationState reason, std::string detail) {
     auto& entry = entries_[index];
-    if (entry.metadata.confirmation) confirmations_->invalidate(entry.metadata.confirmation,reason);
-    entry.metadata.rejection = std::move(detail);
+    auto data = nlohmann::json::parse(detail);
+    if (entry.metadata.confirmation) {
+        confirmations_->invalidate(entry.metadata.confirmation,reason);
+        const auto state = confirmations_->state(entry.metadata.confirmation);
+        data["approvalState"] = diagnostic_detail::EnumNames<ConfirmationState>::values[static_cast<std::size_t>(state)];
+        data["approval"] = entry.metadata.confirmation;
+    }
+    entry.metadata.rejection = data.dump();
+    // 身份可供原号查证；新尝试签发的审批号本身不能算一次进展。
+    data.erase("approval"); data.erase("originalCallId"); data.erase("originalInvocation");
+    entry.rejection_key = data.dump();
     context_.set_tool_result(index,{false,ToolEffect::not_applied,entry.metadata.rejection,ToolError::unavailable},
         runtime::OperationState::failed,ToolError::none,false);
     entry.metadata.result = runtime::OperationState::failed; entry.metadata.exit = runtime::OperationState::succeeded; entry.filled = true;
@@ -92,7 +102,13 @@ bool ToolBatch::review(const PolicyContext& current) {
         try {
             if (entry.metadata.confirmation) {
                 const auto state = confirmations_->state(entry.metadata.confirmation);
-                if (state != ConfirmationState::waiting && state != ConfirmationState::approved) { reject(index); continue; }
+                if (state != ConfirmationState::waiting && state != ConfirmationState::approved) {
+                    auto data = nlohmann::json{{"stage","approval"},{"reason","approval_unavailable"}};
+                    if (current.user_input_pending) data["condition"] = "user_input_pending";
+                    else if (!current.observations_current) { data["condition"] = "observation_stale"; data["observationBinding"] = current.observation_binding; }
+                    reject(index,ConfirmationState::invalidated,data.dump());
+                    continue;
+                }
             }
             const auto selected = tools_.resolve(entry.call.name,entry.call.arguments);
             entry.metadata.tool_id = selected.description.id;
@@ -102,7 +118,16 @@ bool ToolBatch::review(const PolicyContext& current) {
             entry.metadata.before = restrict_policy(policy_.before_tool(candidate,selected),extension_,ControlPoint::tool_start,candidate);
             if (previous != entry.metadata.before) publish_policy(index,ControlPoint::tool_start,*entry.metadata.before);
             const auto decision = *entry.metadata.before;
-            if (decision.verdict == PolicyVerdict::deny) { reject(index); continue; }
+            if (decision.verdict == PolicyVerdict::deny) {
+                auto detail = nlohmann::json{{"stage","policy"},{"reason",diagnostic_detail::EnumNames<PolicyReason>::values[static_cast<std::size_t>(decision.reason)]}}.dump();
+                if (decision.reason == PolicyReason::invalid_context && selected.description.changes_state) {
+                    if (candidate.user_input_pending) detail = ToolStartDecision(ToolStartBlock::user_input_pending).detail("policy");
+                    else if (!candidate.observations_current)
+                        detail = ToolStartDecision(ToolStartBlock::observation_stale,candidate.observation_binding).detail("policy");
+                }
+                reject(index,ConfirmationState::invalidated,std::move(detail));
+                continue;
+            }
             if (decision.verdict == PolicyVerdict::wait) {
                 if (!confirmations_ || decision.reason != PolicyReason::confirmation_required) { reject(index); continue; }
                 if (!entry.metadata.confirmation) entry.metadata.confirmation = confirmations_->offer(confirmation_target(candidate,selected,entry.call,entry.metadata.candidate));
@@ -195,8 +220,11 @@ bool ToolBatch::advance(const PolicyContext& current) {
                 std::any_of(entries_.begin(),entries_.end(),[](const auto& entry) { return !entry.request; }))
                 continuation_ = {PolicyVerdict::deny,PolicyReason::invalid_result};
             context_.commit_tools(); const auto& messages = *context_.committed();
-            for (std::size_t index = messages.size()-entries_.size(); index < messages.size(); ++index)
-                add_fingerprint(fingerprint_,messages[index].content);
+            const auto first = messages.size()-entries_.size();
+            for (std::size_t i = 0; i < entries_.size(); ++i) {
+                const auto& key = entries_[i].rejection_key;
+                add_fingerprint(fingerprint_,key.empty() ? messages[first+i].content : key);
+            }
             extension_ = {};
             done_ = true;
         }

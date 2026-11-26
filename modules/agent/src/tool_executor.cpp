@@ -1,4 +1,5 @@
 #include <dafeiyu/tool_executor.hpp>
+#include <dafeiyu/tool_schema.hpp>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
@@ -15,7 +16,7 @@ std::string canonical(const std::string& input) {
 }
 // 建立运行级调用上限、分层预算与独立顺序域，不执行模型或工具。
 // 步骤：校验运行及限额 → 预留回执槽 → 建立预算和顺序域。
-ToolExecutor::ToolExecutor(RunId run, ToolSnapshot tools, ToolLimits limits, std::shared_ptr<runtime::Budget> parent, ToolClock now, std::function<bool()> action_guard)
+ToolExecutor::ToolExecutor(RunId run, ToolSnapshot tools, ToolLimits limits, std::shared_ptr<runtime::Budget> parent, ToolClock now, ToolStartGuard action_guard)
     : run_(run), tools_(std::move(tools)), limits_(limits), now_(std::move(now)),action_guard_(std::move(action_guard)) {
     if (!run.session || !run.sequence || !limits.calls || limits.calls > 64 || !now_ ||
         limits.timeout <= std::chrono::milliseconds::zero() || limits.timeout > std::chrono::hours(1))
@@ -48,7 +49,11 @@ std::shared_ptr<ToolRequest> ToolExecutor::submit(AttemptId attempt, model::Tool
             const auto request = entry.driver->request();
             if (request->exit()->state() == OperationState::pending || request->outcome().effect == ToolEffect::unknown ||
                 (request->operation()->state() != OperationState::succeeded && request->outcome().effect == ToolEffect::applied))
-                throw std::logic_error("tools: prior matching action requires effect confirmation");
+                throw ToolRejection(nlohmann::json{{"stage","admission"},{"reason","prior_effect_unconfirmed"},
+                    {"originalCallId",request->invocation().call.id},{"originalInvocation",request->invocation().invocation},
+                    {"originalExited",request->exit()->state() != OperationState::pending},
+                    {"originalEffect",request->outcome().effect == ToolEffect::unknown ? "unknown" :
+                        request->outcome().effect == ToolEffect::applied ? "applied" : "not_applied"}}.dump());
         }
     }
     if (size_ == entries_.size()) throw std::length_error("tools: run call limit exhausted");

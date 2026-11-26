@@ -1,8 +1,17 @@
 #include <dafeiyu/tool_work.hpp>
 #include <dafeiyu/utf8.hpp>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace dfy::agent {
+// 将宿主最后一次前置检查转换为可沿原调用核对的有界事实。
+std::string ToolStartDecision::detail(std::string_view stage) const {
+    const auto reason = block == ToolStartBlock::user_input_pending ? "user_input_pending" :
+        block == ToolStartBlock::observation_stale ? "observation_stale" : "conditions_unavailable";
+    nlohmann::json data{{"stage",stage},{"reason",reason}};
+    if (observation) data["observationBinding"] = observation;
+    return data.dump();
+}
 namespace {
 class CompletedWork final : public ToolWork {
   public:
@@ -27,7 +36,7 @@ struct ToolWorkState {
     std::shared_ptr<const runtime::SerialRequest> ordering;
     std::optional<ToolTime> deadline;
     ToolClock now;
-    std::function<bool()> before_start;
+    ToolStartGuard before_start;
     ToolWorkState* next = nullptr;
     bool started = false, advancing = false, reported = false;
     // 完整准备记录和调用对象，计入进程内最多 256 个活动或保留驱动状态。
@@ -93,10 +102,13 @@ struct ToolWorkState {
         if (!started) {
             if (domain && ordering->phase() == SerialPhase::waiting) { advancing = false; return; }
             if (before_start) {
-                bool permitted = false;
-                try { permitted = before_start(); } catch (...) {}
+                ToolStartDecision decision(false);
+                try { decision = before_start(); } catch (...) {}
                 if (cancel() != CancelReason::none) { finish(); advancing = false; return; }
-                if (!permitted) { fail(ToolError::unavailable); finish(); advancing = false; return; }
+                if (decision.block != ToolStartBlock::none) {
+                    record->outcome_.output = decision.detail("before_start");
+                    fail(ToolError::unavailable); finish(); advancing = false; return;
+                }
             }
             if (domain) {
                 try { domain->begin(ordering); } catch (...) { advancing = false; throw; }

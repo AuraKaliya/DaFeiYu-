@@ -70,7 +70,13 @@ void scenario(Change change) {
     until(session,[&] { return !session.busy(); }); model.verify_complete(); const auto step = request->tool_steps()[0];
     check(calls == (change == Change::none ? 1u : 0u) && step.effect == (change == Change::none ? ToolEffect::applied : ToolEffect::not_applied),
         "stale observed action executed or lost original effect");
-    if (change == Change::admitted || change == Change::callback) check(step.accepted && step.result == OperationState::failed,"last check lost accepted-but-unstarted fact");
+    if (change == Change::admitted || change == Change::callback) {
+        const auto outcome = request->tool_result(step.candidate);
+        check(step.accepted && step.result == OperationState::failed && outcome &&
+            outcome->output.find("observation_stale") != std::string::npos &&
+            outcome->output.find(std::to_string(pending.target.observation_binding)) != std::string::npos,
+            "last check lost the accepted work or its original observation");
+    }
 }
 // 验证仅有历史采样而无当前性绑定的变更请求在模型提交前拒绝。
 void missing_guard() {

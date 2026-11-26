@@ -61,6 +61,12 @@ void repeated(ToolEffect effect, bool refresh = false) {
     const bool safe_retry = refresh && effect == ToolEffect::not_applied;
     check(calls == (safe_retry ? 2u : 1u) && tools.size() == 2 && tools[0].effect == effect && tools[1].accepted == safe_retry && tools[1].effect == ToolEffect::not_applied,
         "new goal or approval replayed uncertain non-idempotent effect");
+    if (!safe_retry && effect != ToolEffect::not_applied) {
+        const auto& detail = tools[1].rejection;
+        check(detail.find("prior_effect_unconfirmed") != std::string::npos &&
+            detail.find("\"originalInvocation\":"+std::to_string(tools[0].invocation)) != std::string::npos,
+            "uncertain effect lost original work identity");
+    }
     session.decide(caller,command); request->request_cancel(CancelReason::user); until(session,[&] { return !session.busy(); }); model.verify_complete();
     check(calls == (safe_retry ? 2u : 1u) && request->plan_history().size() == 1,"receipt retry or goal history lost effect guard");
 }
