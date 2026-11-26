@@ -67,5 +67,7 @@ struct RunOptions {
     std::shared_ptr<const ContextStatus> context_status, previous_status;
     bool replace_history = false;
     std::uint64_t evidence_epoch = 0;
+    // 复合的信箱或插件输入由入口标记，直接对话和观察规则由运行起因确定。
+    std::optional<model::MessageSource> prompt_source;
 };
 }

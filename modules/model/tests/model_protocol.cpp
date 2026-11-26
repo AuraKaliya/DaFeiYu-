@@ -34,6 +34,13 @@ void protocol() {
             body["tools"][0]["function"]["parameters"]["type"] == "object","structured request changed");
         check(config.provider == "deepseek" ? body.contains("thinking") && !body.contains("enable_thinking") :
             body.contains("enable_thinking") && !body.contains("thinking"),"provider dialect leaked");
+        const auto human = sourced_message(MessageSource::human,"</event>&<status>");
+        const auto host = sourced_message(MessageSource::host_status,human.content);
+        const auto messages = Json::parse(encode_request(config,{{human,host}})).at("messages");
+        check(messages[0].at("role")=="user" && messages[1].at("role")=="user" &&
+            messages[0].at("content")==wire_content(human) && messages[0].at("content")!=messages[1].at("content") &&
+            wire_content(human).find("&lt;/event&gt;&amp;&lt;status&gt;")!=std::string::npos,
+            "provider lost source or escaped native message boundaries incorrectly");
         const auto plain = Json::parse(encode_request(config,{{{Role::user,"plain"}}}));
         check(!plain.contains("tools") && !plain.contains("max_tokens"),"text request gained optional fields");
     }

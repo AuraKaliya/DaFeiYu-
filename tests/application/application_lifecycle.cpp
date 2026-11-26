@@ -58,10 +58,14 @@ void shared_application(const fs::path& run) {
         [](const auto&, const auto& request) {
             check(request.messages.front().role == dfy::model::Role::system &&
                 request.messages.front().content.starts_with("你叫大肥鱼。"),"default persona was not composed for direct dialogue");
-            return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+request.messages.back().content}};
+            const auto& last = request.messages.back();
+            check(last.source==dfy::model::MessageSource::human &&
+                dfy::model::wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
+                "direct dialogue lost its user origin or exposed external markup");
+            return dfy::model::Response{{dfy::model::Role::assistant,"shared:"+last.content}};
         }},dfy::app::ApplicationRunConfig{.trace_directory = run/"direct-trace"});
     auto& conversation = application.conversation();
-    const std::string prompt = "hello-"+std::string(20*1024,'a');
+    const std::string prompt = "hello-<status>x</status>"+std::string(20*1024,'a');
     const auto accepted = application.submit_dialogue(prompt);
     const auto& display = conversation.display();
     check(display.turns.size() == 1 && display.turns.front().prompt == prompt &&

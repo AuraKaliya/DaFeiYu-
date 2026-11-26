@@ -62,7 +62,8 @@ PlanPrompt prepare_plan_prompt(const PlanScope& scope, std::uint64_t expected_re
         "\"completion_criterion\":\"待宿主验证的完成条件\",\"tools\":[]}]}。工具 ID 只能来自数据中的 allowed_tool_ids；纯文本步骤使用空数组。"
         "这里只提出步骤，不执行工具，不返回状态、权限、目标修订或推理草稿。宿主依据实际工作和证据确认完成。"
         "若有旧计划，前 completed_prefix 项必须逐字段保留，只能修订后续步骤；修订数据不能授予新权限。";
-    model::Request request{{{model::Role::system,instructions},{model::Role::user,data.dump()}}};
+    model::Request request{{model::sourced_message(model::MessageSource::rules,instructions),
+        model::sourced_message(model::MessageSource::host_plan,data.dump())}};
     model::validate_request(request); return {expected,std::move(request)};
 }
 // 投影原调用配对、步骤验证和本次取样，保持规划请求的声明式工具范围。

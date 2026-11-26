@@ -2,10 +2,15 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace dfy::model {
 enum class Role { user, assistant, system, tool };
+// 来源由消息的实际生产入口签发，未知来源沿用历史协议。
+enum class MessageSource { unknown, human, host_status, observation, plugin, mailbox, host_plan, host_control, host_summary, model, tool, rules };
+// 返回可用于离线轨迹和供应商数据封套的稳定来源名。
+std::string_view source_name(MessageSource source);
 struct ToolCall { std::string id, name, arguments; };
 struct Message {
     Role role = Role::user;
@@ -18,7 +23,12 @@ struct Message {
     bool settled_evidence = false;
     // 仅宿主最终提交的普通问答记录其原始消息数，供应商和模型无法指定该标记。
     std::uint8_t completed_dialogue_span = 0;
+    MessageSource source = MessageSource::unknown;
 };
+// 按来源建立原生协议角色，保留调用者给出的完整正文。
+Message sourced_message(MessageSource source, std::string content);
+// 将有来源的统一消息映射成供应商可读正文，原消息保持可查。
+std::string wire_content(const Message& message);
 // 参数描述保留为 JSON 文本，供应商与 JSON 库类型不进入 Agent 公共接口。
 struct ToolDefinition { std::string name, description, parameters; };
 struct Request {

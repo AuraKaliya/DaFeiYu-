@@ -30,7 +30,7 @@ Json wire_fields(const Request& request, bool thinking) {
     validate_request(request,thinking);
     auto messages = Json::array();
     for (const auto& message : request.messages) {
-        Json item{{"role",role_name(message.role)},{"content",message.content}};
+        Json item{{"role",role_name(message.role)},{"content",wire_content(message)}};
         if (!message.tool_calls.empty()) {
             item["tool_calls"] = Json::array();
             for (const auto& call : message.tool_calls) item["tool_calls"].push_back({{"id",call.id},{"type","function"},

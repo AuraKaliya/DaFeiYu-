@@ -100,7 +100,9 @@ struct RunLoopState {
         const auto status = options.context_status ? project_context_status(options.previous_status.get(),*options.context_status) : std::string{};
         const ContextWindow window{config.context_window_tokens,config.reserved_output_tokens,
             options.evidence_epoch ? options.evidence_epoch : run.session,config.thinking_enabled()};
-        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window);
+        const auto source = options.prompt_source.value_or(options.origin == RunOrigin::mailbox ? model::MessageSource::mailbox :
+            options.origin == RunOrigin::observation_rule ? model::MessageSource::host_control : model::MessageSource::human);
+        record->context_ = std::make_unique<RunContext>(std::move(history),std::move(prompt),std::move(inputs),status,window,source);
         record->versions_ = public_run_versions(config,options,deadline > now ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline-now) : std::chrono::milliseconds::zero());
         record->model_steps_.reserve(options.policy.model_limit); record->batches_.reserve(options.policy.model_limit);
         record->model_contexts_.reserve(options.policy.model_limit);
@@ -476,6 +478,7 @@ struct RunLoopState {
             else if (has_system) input.messages.front().content = std::move(instructions);
             else if (!instructions.empty()) input.messages.insert(input.messages.begin(),{model::Role::system,std::move(instructions)});
         }
+        if (input.messages.front().role == model::Role::system) input.messages.front().source = model::MessageSource::rules;
         ModelContextSnapshot context{current.attempt,options.goal_revision};
         context.observation_binding = current.observation_binding;
         if (current.observation_binding) context.observations_current = current.observations_current;

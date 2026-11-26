@@ -374,6 +374,11 @@ void subagents(const fs::path& root) {
     using namespace dfy::app;
     std::atomic<unsigned> calls{0};
     Application app({},root,root.parent_path()/"subagent-data",Backend{[&](const auto&,const Request& request) {
+        const auto& last = request.messages.back();
+        check(last.source==MessageSource::plugin,"subagent envelope was attributed to a human");
+        if (last.content=="<status>x</status>")
+            check(wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
+                "plugin snapshot exposed external markup");
         ++calls;
         return Response{{Role::assistant,std::to_string(request.messages.size())}};
     }});
@@ -382,7 +387,7 @@ void subagents(const fs::path& root) {
     auto& agents = app.subagents();
     const auto owner = instance->generation();
     const auto a = agents.open(instance), b = agents.open(instance);
-    check(agents.submit(owner,a,{"first"}) == 1 && agents.busy(owner) && calls == 0,"queued turn dispatched inline");
+    check(agents.submit(owner,a,{"<status>x</status>"}) == 1 && agents.busy(owner) && calls == 0,"queued turn dispatched inline");
     check(agents.submit(owner,b,{"cancelled"}) == 1 && agents.cancel(owner,b,1),"queued cancellation failed");
     bool denied = false;
     try { (void)agents.status(next_domain(),a); } catch (const std::invalid_argument&) { denied = true; }

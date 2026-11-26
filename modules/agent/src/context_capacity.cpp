@@ -67,7 +67,10 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
         while (const auto span = dialogue_span(input.messages,i,keep_reasoning)) {
             if (i-first+span > 64 || ordinals[i+span-1]-ordinals[first] != i-first+span-1) break;
             large_answer |= input.messages[i+span-1].content.size() > 1024;
-            nlohmann::json turn{{"user",input.messages[i+span-2].content},{"assistant",input.messages[i+span-1].content}};
+            const auto& prompt = input.messages[i+span-2];
+            const auto key = prompt.source == model::MessageSource::human || prompt.source == model::MessageSource::unknown
+                ? std::string_view("user") : model::source_name(prompt.source);
+            nlohmann::json turn{{std::string(key),prompt.content},{"assistant",input.messages[i+span-1].content}};
             if (span == 3) turn["host_status"] = input.messages[i].content;
             turns.push_back(std::move(turn));
             i += span;
@@ -76,7 +79,7 @@ std::vector<std::size_t> pack_dialogue(model::Request& input, const std::vector<
         nlohmann::json group{{"source","completed_dialogue"},{"epoch",evidence_epoch},{"first",ordinals[first]},
             {"count",i-first},{"turns",std::move(turns)}};
         if (large_answer) large_groups.push_back(view.size());
-        view.push_back({Role::user,group.dump()});
+        view.push_back(model::sourced_message(model::MessageSource::host_summary,group.dump()));
     }
     input.messages = std::move(view);
     return large_groups;
@@ -147,7 +150,7 @@ std::size_t fit_context_request(model::Request& request, ContextWindow window, i
         for (const auto& call : assistant.tool_calls) ids.push_back(call.id);
         const auto ref = nlohmann::json{{"source","settled_tool_batch"},{"epoch",window.evidence_epoch},
             {"first",ordinal(i)},{"count",count+1},{"call_ids",std::move(ids)}};
-        compact.push_back({Role::user,ref.dump()});
+        compact.push_back(model::sourced_message(model::MessageSource::host_summary,ref.dump()));
         i = end; ++compressed;
     }
     request.messages = std::move(compact);

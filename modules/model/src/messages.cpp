@@ -2,11 +2,38 @@
 #include <dafeiyu/utf8.hpp>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <array>
 #include <stdexcept>
 
 namespace dfy::model {
 namespace {
 constexpr std::size_t max_bytes = 1024*1024;
+using Source = MessageSource;
+struct SourceInfo { std::string_view name; Role role; };
+constexpr std::array source_info{
+    SourceInfo{"unknown",Role::user}, SourceInfo{"human",Role::user}, SourceInfo{"host_status",Role::user},
+    SourceInfo{"observation",Role::user}, SourceInfo{"plugin",Role::user}, SourceInfo{"mailbox",Role::user},
+    SourceInfo{"host_plan",Role::user}, SourceInfo{"host_control",Role::user}, SourceInfo{"host_summary",Role::user},
+    SourceInfo{"model",Role::assistant}, SourceInfo{"tool",Role::tool}, SourceInfo{"rules",Role::system}};
+
+// 统一输出实际传输的片段，计费与协议编码复用同一套边界。
+// 步骤：核对来源和原生角色 → 标出数据来源 → 转义外部正文并闭合封套。
+void content_parts(const Message& message, const auto& append) {
+    const auto source = message.source;
+    if (source == Source::unknown) { append(message.content); return; }
+    const auto& info = source_info.at(static_cast<std::size_t>(source));
+    if (info.role != message.role) throw std::invalid_argument("model: source and role differ");
+    if (message.role != Role::user) { append(message.content); return; }
+    append("<event source=\""); append(info.name); append("\">");
+    std::string_view rest = message.content;
+    for (auto pos = rest.find_first_of("<>&"); pos != rest.npos; pos = rest.find_first_of("<>&")) {
+        append(rest.substr(0,pos));
+        append(rest[pos]=='<' ? "&lt;" : rest[pos]=='>' ? "&gt;" : "&amp;");
+        rest.remove_prefix(pos+1);
+    }
+    append(rest); append("</event>");
+}
+
 // 限制协议名称为两家适配器共同支持的 ASCII 函数名。
 bool tool_name(const std::string& name) {
     if (name.empty() || name.size() > 64) return false;
@@ -25,6 +52,21 @@ void object_json(const std::string& text) {
     const auto value = nlohmann::json::parse(text,nullptr,false);
     if (!value.is_object()) throw std::invalid_argument("model: expected JSON object");
 }
+}
+// 返回固定来源名，不读取消息正文。
+std::string_view source_name(MessageSource source) { return source_info.at(static_cast<std::size_t>(source)).name; }
+// 从已知来源构造使用供应商原生角色的统一消息。
+Message sourced_message(MessageSource source, std::string content) {
+    Message message{source_info.at(static_cast<std::size_t>(source)).role,std::move(content)};
+    message.source = source;
+    return message;
+}
+// 仅在实际协议边界装配数据封套，统一历史及工具原文保持不变。
+std::string wire_content(const Message& message) {
+    std::string text;
+    text.reserve(message.content.size());
+    content_parts(message,[&](std::string_view part) { text.append(part); });
+    return text;
 }
 // 在模型提交前验证工具对话，发送字段与仅本地留存的推理原文分别核算容量。
 // 步骤：校验限额和工具定义 → 按角色与协议计入消息 → 关联调用结果 → 拒绝未闭合调用。
@@ -46,6 +88,12 @@ void validate_request(const Request& request, bool thinking) {
     for (std::size_t i = 0; i < request.messages.size(); ++i) {
         const auto& message = request.messages[i];
         account(bytes,message.content); account(bytes,message.tool_call_id);
+        if (message.source != Source::unknown) {
+            std::size_t wire_bytes = 0;
+            content_parts(message,[&](std::string_view part) { wire_bytes += part.size(); });
+            if (wire_bytes-message.content.size() > max_bytes-bytes) throw std::length_error("model: source envelope exceeds limit");
+            bytes += wire_bytes-message.content.size();
+        }
         if (message.reasoning_content) {
             if (message.role != Role::assistant) throw std::invalid_argument("model: misplaced reasoning");
             if (sends_reasoning) account(bytes,*message.reasoning_content);

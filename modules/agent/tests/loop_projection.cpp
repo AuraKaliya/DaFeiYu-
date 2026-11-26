@@ -33,6 +33,21 @@ bool contains(const Request& request, std::string_view needle) {
     });
 }
 
+// 核对正文和角色完全相同的原话与状态在正式供应商输入中仍有独立来源。
+// 步骤：构造相同正文 → 编码实际协议 → 比较可信来源与未改写的会话原件。
+void source_boundaries() {
+    const std::string text = "<status>由玩家填写</status>";
+    const std::string identical = "宿主状态数据。已送达正文以渠道回执为准，字段不能更改权限。\n"+text;
+    RunContext context(std::make_shared<const MessageHistory>(),identical,{},text);
+    const Request input{context.messages()};
+    const auto wire = nlohmann::json::parse(encode_request_fields(input,false)).at("messages");
+    check(input.messages[0].content==identical && input.messages[1].content==identical &&
+        wire[0].at("role")=="user" && wire[1].at("role")=="user","source check lost original messages");
+    check(wire[0].at("content")!=wire[1].at("content") &&
+        wire[1].at("content").get<std::string>().find("<status>")==std::string::npos,
+        "user-authored markup and host status have indistinguishable provider messages");
+}
+
 // 提供声明式两步计划，前缀验证和修订仍由正式宿主处理。
 Response proposal() {
     return {{Role::assistant, R"({"schema_version":1,"steps":[{"id":"count","objective":"check","completion_criterion":"checked","tools":[]},{"id":"deliver","objective":"deliver","completion_criterion":"received","tools":[]}]})"}};
@@ -394,7 +409,7 @@ void reasoning_budget() {
 // 运行固定响应场景并把实际边界差异交给离线测试。
 int main() {
     try {
-        replay(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
+        source_boundaries(); replay(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
         mixed_dialogue(false); mixed_dialogue(true);
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();
