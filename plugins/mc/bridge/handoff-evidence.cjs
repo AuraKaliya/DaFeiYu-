@@ -30,9 +30,18 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
     else ++proof.omittedStacks;
   }
   const ground = new Map(), following = new Map(), byActor = new Map(), collected = new Map();
+  const nextTouch = new Map(), mergeBoundary = new Map();
   for (let i = rows.length-1; i >= 0; --i) {
     const row = rows[i];
-    if (kind(row) !== 'pickup' || row.material !== material) continue;
+    if (row.material !== material) continue;
+    if (kind(row) === 'merge') {
+      mergeBoundary.set(row.seq,[nextTouch.get(row.item),nextTouch.get(row.target)]);
+      nextTouch.set(row.item,{seq:row.seq,tick:row.tick,count:row.amount});
+      nextTouch.set(row.target,{seq:row.seq,tick:row.tick,count:row.targetAmount});
+      continue;
+    }
+    if (kind(row) !== 'pickup') continue;
+    nextTouch.set(row.item,{seq:row.seq,tick:row.tick});
     const next = byActor.get(row.actor);
     if (next && next.tick === row.tick) following.set(row.seq,next);
     byActor.set(row.actor,row);
@@ -44,14 +53,20 @@ function handoffEvidence(rows, mark, actor, recipient, item, submitted, sourceTh
     if (origin?.readySeq === r.seq) ground.set(r.item,origin.amount);
     if (type === 'merge' && (ground.has(r.item) || ground.has(r.target))) {
       const settled = after.get(r.seq);
-      const pure = ground.get(r.item) === r.amount && ground.get(r.target) === r.targetAmount;
+      const pure = r.item !== r.target && ground.has(r.item) && ground.has(r.target) &&
+        ground.get(r.item) === r.amount && ground.get(r.target) === r.targetAmount;
       ground.delete(r.item);
       ground.delete(r.target);
-      if (pure && settled && settled.seq > r.seq && kind(settled) === 'mergeReadback' && count(settled.sourceRemaining) && count(settled.targetRemaining) &&
-          settled.sourceRemaining <= r.amount && settled.targetRemaining >= r.targetAmount &&
-          settled.sourceRemaining+settled.targetRemaining === r.amount+r.targetAmount) {
-        if (settled.sourceRemaining) ground.set(r.item,settled.sourceRemaining);
-        if (settled.targetRemaining) ground.set(r.target,settled.targetRemaining);
+      if (pure && settled && settled.seq > r.seq && kind(settled) === 'mergeReadback' && count(settled.sourceRemaining) && count(settled.targetRemaining)) {
+        // 下一次合堆前的实体实存给出中间边界。间隔中已拾取或跨刻时，保留未决。
+        const atBoundary = (next,final) => !next || next.seq >= settled.seq ? final :
+          Number.isSafeInteger(r.tick) && next.tick === r.tick ? next.count : undefined;
+        const [nextSource,nextTarget] = mergeBoundary.get(r.seq);
+        const source = atBoundary(nextSource,settled.sourceRemaining), target = atBoundary(nextTarget,settled.targetRemaining);
+        if (count(source) && count(target) && source <= r.amount && target >= r.targetAmount && source+target === r.amount+r.targetAmount) {
+          if (source) ground.set(r.item,source);
+          if (target) ground.set(r.target,target);
+        }
       }
     }
     if (type !== 'pickup' || !ground.has(r.item)) continue;
