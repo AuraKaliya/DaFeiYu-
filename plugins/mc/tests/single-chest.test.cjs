@@ -5,7 +5,7 @@ const { Position } = require('./test-position.cjs');
 const { ownerInbox } = require('../bridge/chat.cjs');
 const { chestWindows, chestSample } = require('../bridge/single-chest.cjs');
 const { observationInput } = require('../bridge/partner-observe.cjs');
-const { depositOrder, depositItem, reconcileDeposit } = require('../bridge/chest-deposit.cjs');
+const { depositOrder, depositItem, reconcileDeposit } = require('../bridge/chest-transfer.cjs');
 
 // 提供位于两个普通箱子之间的玩家、同步窗口及独立的伙伴库存槽。
 function chestFixture() {

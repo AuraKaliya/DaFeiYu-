@@ -74,7 +74,7 @@
 | 提交生存交物（已接入） | `give_item(observation, recipient, item, count)` 复核原玩家、三格距离、窗口和槽内库存。同一观察只交给一个投物工作。 | 原工作分别报告已提交的数量、库存变化、已证实投出及实际收取。原号重提复用回执，换号保留原工作身份。[交物实现](../plugins/mc/bridge/give-item.cjs) |
 | 复查收件（已接入） | `observe(mode=handoff_receipt, work)` 使用原工作和投物来源上界，查询之后发生的收取。 | 回执可区分原玩家、其他收取者和仍待确认的数量。缺失服务端来源时保留未知。[收取归属](../plugins/mc/bridge/handoff-evidence.cjs) |
 | 查询指定单箱（已接入） | `observe(mode=chest, message, item)` 按绑定玩家发话时指中的普通单箱，核查世界、维度、格位、伙伴触及距离和可见性。 | 同一窗口给出箱内 27 格、伙伴主背包及快捷栏 36 格的普通物品数量、容量、缺读格与采样时间。玩家转头后仍引用原格位。[开箱读回](../plugins/mc/bridge/single-chest.cjs) · [双箱协议玩家](../tests/mc-companion/playtest-check.cjs) |
-| 存入指定普通单箱（已接入） | `store_item(observation, sourceMessage, item, count)` 引用先前实读的单箱和当前绑定玩家的存箱委托。例句“把这八块存进左箱”和“请把8块圆石放入左边的箱子”都核对数量及指定箱格。 | 工作在点击前固定两侧库存，关闭并重开同一箱核对实存与剩余。满箱结算为零；部分容量按实存结算。中断后 `observe(mode=chest_receipt, work)` 沿原号只读核对，确定的新实效补记到原工作。[存箱实现](../plugins/mc/bridge/chest-deposit.cjs) · [槽位及中断用例](../plugins/mc/tests/single-chest.test.cjs) |
+| 存入指定普通单箱（已接入） | `store_item(observation, sourceMessage, item, count)` 引用先前实读的单箱和当前绑定玩家的存箱委托。例句“把这八块存进左箱”和“请把8块圆石放入左边的箱子”都核对数量及指定箱格。 | 工作在点击前固定两侧库存，关闭并重开同一箱核对实存与剩余。满箱结算为零；部分容量按实存结算。中断后 `observe(mode=chest_receipt, work)` 沿原号只读核对，确定的新实效补记到原工作。[存箱实现](../plugins/mc/bridge/chest-transfer.cjs) · [槽位及中断用例](../plugins/mc/tests/single-chest.test.cjs) |
 
 ### 事件源、归并与 Agent 唤醒
 
