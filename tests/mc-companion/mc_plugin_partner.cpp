@@ -12,6 +12,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <semaphore>
+#include <set>
 #include <thread>
 
 namespace {
@@ -332,6 +333,7 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
     std::uint64_t second_item = 0;
     unsigned budget_plans = 0;
     std::string follow_id, old_work, plan_tool;
+    Json discovered_contracts;
     std::uint64_t original_admission = 0;
     app::ApplicationRunConfig run;
     run.trace_directory = root;
@@ -1189,7 +1191,31 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
                     task.at("goal") != "竖着补墙") throw std::runtime_error("the corrected goal and cells did not switch together");
                 return {{Role::assistant,R"({"internal":"wall rebound"})"}};
             }
-            if (last.tool_call_id == "start-task" && !direct_place) return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
+            if (last.tool_call_id == "start-task" && !direct_place) {
+                if (variant == L"partner-revision-direct-scope") return call("_skills","direct-index",Json::object());
+                return call("_skills","allow-dig",{{"categories",{"dig_break"}}});
+            }
+            if (variant == L"partner-revision-direct-scope" &&
+                (last.tool_call_id == "direct-index" || last.tool_call_id == "allow-dig" || last.tool_call_id == "repeat-direct")) {
+                const auto result = Json::parse(last.content.substr(last.content.find('{')));
+                const Json categories{{"categories",{"dig_break","inventory"}}};
+                if (last.tool_call_id == "allow-dig") {
+                    discovered_contracts = result.at("discoveredContracts");
+                    std::set<std::string> ids;
+                    for (const auto& contract : discovered_contracts) {
+                        if (contract.at("version") != 1 || !contract.at("schema").is_object()) throw std::runtime_error("incomplete SDK discovery");
+                        ids.insert(contract.at("id").get<std::string>());
+                    }
+                    if (discovered_contracts.size() != 5 || ids != std::set<std::string>{"mc.companion/collect","mc.companion/give_item",
+                        "mc.companion/pickup_drop","mc.companion/store_item","mc.companion/withdraw_item"} ||
+                        std::ranges::any_of(request.tools,[](const auto& tool) { return tool.name.ends_with("_collect"); }))
+                        throw std::runtime_error("discovery did not match newly exposed direct capabilities");
+                    return call("_skills","repeat-direct",categories);
+                }
+                if (result.contains("discoveredContracts") || result.at("status") != "listed")
+                    throw std::runtime_error("listing or repeated expansion duplicated discovery");
+                if (last.tool_call_id == "direct-index") return call("_skills","allow-dig",categories);
+            }
             if (last.tool_call_id == "allow-dig" && !direct) {
                 const Json first{{"id","first"},{"skill","dig_block"},
                     {"arguments",{{"block","grass_block"},{"x",1},{"y",-61},{"z",2}}}};
@@ -1263,6 +1289,16 @@ int verify_plan_revision(const std::filesystem::path& package, const std::filesy
             return call("_observe","observe-correction",{{"sources",{"message","self"}},{"message",2},{"focus","openings"},{"verify",wall}});
         }
         if (direct && input.at("trigger") == "skills.expanded") {
+            if (variant == L"partner-revision-direct-scope") {
+                if (discovered_contracts.empty()) throw std::runtime_error("next request lost discovery location");
+                for (const auto& contract : discovered_contracts) {
+                    const auto id = contract.at("id").get<std::string>();
+                    const auto suffix = "_"+id.substr(id.find('/')+1);
+                    const auto tool = std::ranges::find_if(request.tools,[&](const auto& def) { return def.name.ends_with(suffix); });
+                    if (tool == request.tools.end() || Json::parse(tool->parameters) != contract.at("schema"))
+                        throw std::runtime_error("disclosed schema differs from the authorized next request: "+id);
+                }
+            }
             if (direct_place)
                 return probe_placement("outside-append",outside);
             return call("_collect","direct-work",{{"block","grass_block"},{"count",2}});

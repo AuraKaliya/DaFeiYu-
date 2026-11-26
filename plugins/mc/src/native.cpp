@@ -203,7 +203,7 @@ dfy_v2_status DFY_V2_CALL describe(dfy_v2_instance* raw, uint32_t index, dfy_v2_
     } else if (index >= 10 && index - 10 < partner_skills.size() && !raw->config.key.empty()) {
         const auto& skill = partner_skills[index - 10];
         try {
-            *out = {sizeof(*out), 1, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
+            *out = {sizeof(*out), skill.contract_version, skill.changes ? DFY_V2_TOOL_CHANGES_STATE : 0u, 0,
                 view(skill.name), view(skill.description), view(dfy::mc::partner_schema(skill))};
         } catch (...) { return report(DFY_V2_FAILED,error); }
     } else return report(DFY_V2_NOT_FOUND, error);

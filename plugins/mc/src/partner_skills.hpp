@@ -94,7 +94,16 @@ struct PartnerSkill {
     bool changes;
     SkillKind kind = SkillKind::game;
     bool supports_approval = false;
+    std::uint32_t contract_version = 1;
 };
+
+// 为直调工具的 SDK 注册名添加插件命名空间，供授权范围与发现回执共用。
+inline std::string partner_tool_id(const PartnerSkill& skill) { return "mc.companion/"+std::string(skill.name); }
+
+// 核对直调技能和当前目标绑定，隐藏内部确认入口及尚未绑定目标的填充。
+inline bool direct_skill(const PartnerSkill& skill, bool target_ready) {
+    return skill.kind != SkillKind::confirmed && skill.name != "move" && (skill.name != "fill_target" || target_ready);
+}
 inline constexpr std::array<PartnerSkill,22> partner_skills{{
     {"observe", "partner.observe", "{} reads positions and inventory. Pointed mode uses the original message and focus=hit (crosshair), objects (cone and nearby blocks), or openings (wall gaps). "
         "choice describes aim. The player's words set the scope. Read saved terrain via mode=detail, observation=openingObservation.id. "
