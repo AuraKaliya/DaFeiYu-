@@ -13,4 +13,6 @@ struct ObservationInputFact {
 std::string observation_input(const ObservationRecord& observation, ObservationTime now);
 // 按规划请求时刻返回原观察数据或带来源的失效原因。
 std::string plan_observation_input(const ObservationRecord& observation, ObservationTime now);
+// 编码角色已接纳的历史观察，明确原样本时效与断档，不授予新的行动依据。
+std::string historical_observation_input(const ObservationRecord& observation, ObservationTime now);
 }

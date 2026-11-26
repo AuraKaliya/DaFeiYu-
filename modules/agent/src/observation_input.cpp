@@ -53,20 +53,23 @@ Json observation_metadata(const ObservationMetadata& data, ObservationTime now) 
         {"age_ms",duration_cast<milliseconds>(now-data.sampled).count()},
         {"valid_for_ms",duration_cast<milliseconds>(std::max(data.expires,now)-now).count()}};
 }
-}
-// 编码普通观察数据，来源标签不授予模型任何宿主权限。
-// 步骤：核对时效与完整基线 → 限制描述元数据 → 编码来源和载荷 → 核对最终文本大小。
-std::string observation_input(const ObservationRecord& observation, ObservationTime now) {
-    if (observation.validity(now) != ObservationValidity::fresh || observation.revision_gap())
-        throw std::invalid_argument("observation input: fresh complete state required");
-    const auto& data = observation.metadata(); const auto descriptor = observation.payload().descriptor();
+// 为已审定用途的元数据追加原结构值，所有读口共用描述和最终正文预算。
+std::string encode_observed_payload(const ObservationRecord& observation, Json value) {
+    const auto descriptor = observation.payload().descriptor();
     if (descriptor->name().size() > 128 || descriptor->name_bytes() > 64*1024 || descriptor->total_fields() > 1024 || descriptor->depth() > 8)
         throw std::length_error("observation input: descriptor limit exceeded");
-    auto value = observation_metadata(data,now);
     value["payload_schema"] = {{"name",descriptor->name()},{"version",descriptor->version()}};
     value["payload"] = encode_structure(observation.payload(),1);
     auto text = value.dump(); if (text.size() > 64*1024) throw std::length_error("observation input: encoded payload exceeds 64 KiB");
     return text;
+}
+}
+// 编码普通观察数据，来源标签不授予模型任何宿主权限。
+// 步骤：核对时效与完整基线 → 编码原来源与有界载荷。
+std::string observation_input(const ObservationRecord& observation, ObservationTime now) {
+    if (observation.validity(now) != ObservationValidity::fresh || observation.revision_gap())
+        throw std::invalid_argument("observation input: fresh complete state required");
+    return encode_observed_payload(observation,observation_metadata(observation.metadata(),now));
 }
 // 为规划复核原取样。在时效内使用普通封套，失效时保留原号与原因供补查。
 // 步骤：检查来源及时效 → 编码完整取样或标记缺口 → 返回原身份的数据封套。
@@ -81,5 +84,17 @@ std::string plan_observation_input(const ObservationRecord& observation, Observa
     case ObservationValidity::fresh: value["unavailable"] = "revision_gap"; break;
     }
     return value.dump();
+}
+// 保存当时确实接纳的历史字段，失去来源或尚未发生的样本沿用不可用回执。
+// 步骤：复核来源和采样时间 → 标出历史用途、时效和断档 → 编码原接纳的字段。
+std::string historical_observation_input(const ObservationRecord& observation, ObservationTime now) {
+    const auto validity = observation.validity(now);
+    if (validity==ObservationValidity::future || validity==ObservationValidity::source_revoked)
+        return plan_observation_input(observation,now);
+    auto value = observation_metadata(observation.metadata(),now);
+    value["use"] = "historical_event";
+    value["validity"] = validity==ObservationValidity::expired ? "expired" : "fresh";
+    value["revision_gap"] = observation.revision_gap();
+    return encode_observed_payload(observation,std::move(value));
 }
 }

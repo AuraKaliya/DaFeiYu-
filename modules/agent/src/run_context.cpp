@@ -75,11 +75,30 @@ void RunContext::check_history(model::Request input) const {
 }
 // 将本步状态放在已闭合的消息之后，并记住工具分派预留使用的实际首尾。
 // 步骤：核实尾注来源 → 在请求副本核算完整窗口 → 保存本步头尾供动作前校验。
-std::size_t RunContext::project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail) {
+std::size_t RunContext::project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail,
+    const std::optional<model::Message>& observation) {
     if (decision_tail && (decision_tail->role!=model::Role::user || decision_tail->source!=MessageSource::host_status))
         throw std::invalid_argument("context: expected host decision status");
-    if (decision_tail) input.messages.push_back(*decision_tail);
-    const auto compressed = fit_context_request(input,window_,head_delta);
+    observation_projected_ = false;
+    std::size_t compressed = 0;
+    if (observation) {
+        if (observation->source!=MessageSource::observation || observation->role!=model::Role::user)
+            throw std::invalid_argument("context: expected a host observation");
+        auto with_observation = input;
+        with_observation.messages.push_back(*observation);
+        if (decision_tail) with_observation.messages.push_back(*decision_tail);
+        try {
+            compressed = fit_context_request(with_observation,window_,head_delta);
+            input = std::move(with_observation);
+            observation_projected_ = true;
+        } catch (const std::length_error&) {
+            // 原观察留给下一次有容量的决策，当前照常准备用户请求。
+        }
+    }
+    if (!observation_projected_) {
+        if (decision_tail) input.messages.push_back(*decision_tail);
+        compressed = fit_context_request(input,window_,head_delta);
+    }
     effective_tail_ = std::move(decision_tail);
     head_known_ = true;
     if (!input.messages.empty() && input.messages.front().role == model::Role::system) effective_head_ = input.messages.front();

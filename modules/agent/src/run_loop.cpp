@@ -510,6 +510,19 @@ struct RunLoopState {
         interrupt(); if (record->operation()->state() != runtime::OperationState::pending) return;
         const int head_delta = planning_request ? 0 : int(input.messages.front().role == model::Role::system) -
             int(record->context_->messages().front().role == model::Role::system);
+        std::optional<model::Message> observation;
+        std::optional<DecisionObservationBatch> observation_batch;
+        if (const auto& feed=options.decision_observations) {
+            if (!feed->submitted_cursor || !feed->read) throw std::invalid_argument("run: missing observation source");
+            observation_batch = feed->read(*feed->submitted_cursor,current.attempt,current.now);
+            if (observation_batch) {
+                if (observation_batch->cursor<=*feed->submitted_cursor || observation_batch->text.empty() ||
+                    observation_batch->text.size()>16*1024 || !runtime::valid_utf8(observation_batch->text))
+                    throw std::invalid_argument("run: invalid observation batch");
+                observation = model::sourced_message(model::MessageSource::observation,std::move(observation_batch->text),
+                    record->context_->event_time());
+            }
+        }
         std::optional<FrozenDecisionStatus> frozen;
         if (options.decision_status) {
             const auto utc = record->context_->event_time();
@@ -527,16 +540,18 @@ struct RunLoopState {
             };
             const bool baseline = options.replace_history && !record->model_requests_;
             auto projected = input;
-            compressed_batches = record->context_->project(projected,head_delta,freeze(baseline));
+            compressed_batches = record->context_->project(projected,head_delta,freeze(baseline),observation);
             const bool compact = compressed_batches || std::ranges::any_of(projected.messages,[](const auto& m) {
                 return m.source==model::MessageSource::host_summary;
             });
             if (!baseline && compact && !sources.empty())
-                compressed_batches = record->context_->project(input,head_delta,freeze(true));
+                compressed_batches = record->context_->project(input,head_delta,freeze(true),observation);
             else input = std::move(projected);
-        } else compressed_batches = record->context_->project(input,head_delta);
+        } else compressed_batches = record->context_->project(input,head_delta,{},observation);
         capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
+        if (observation_batch && record->context_->observation_projected())
+            *options.decision_observations->submitted_cursor = observation_batch->cursor;
         if (frozen) submitted_status = options.status_store->publish(std::move(*frozen));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;

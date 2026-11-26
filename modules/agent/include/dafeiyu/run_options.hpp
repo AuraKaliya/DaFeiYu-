@@ -37,6 +37,12 @@ struct DecisionStatusOptions {
     std::optional<ToolSnapshot> read_authority;
     bool include_tool_counts = false;
 };
+// 只供正式请求使用的观察批次，游标由来源按角色签发。
+struct DecisionObservationBatch { std::uint64_t cursor; std::string text; };
+struct DecisionObservationFeed {
+    std::shared_ptr<std::uint64_t> submitted_cursor;
+    std::function<std::optional<DecisionObservationBatch>(std::uint64_t,AttemptId,ToolTime)> read;
+};
 // 宿主固定的运行选项，模型输出不得修改目标版本、权限或限额。
 struct RunOptions {
     std::optional<ToolSnapshot> tools;
@@ -78,6 +84,8 @@ struct RunOptions {
     std::shared_ptr<const ContextStatus> context_status, previous_status;
     // 正式入口按绑定声明数据来源；存储与有效代次由 Session 在接纳时签发。
     std::optional<DecisionStatusOptions> decision_status;
+    // 被动感知仅在本来就要发送的请求中读取，实际分派且正文入窗后才推进游标。
+    std::optional<DecisionObservationFeed> decision_observations;
     std::shared_ptr<DecisionStatusStore> status_store;
     std::uint64_t status_epoch = 0;
     ToolCallCounts previous_tool_counts;

@@ -28,7 +28,10 @@ class RunContext {
     void prepare_tools(const model::Message& assistant, const std::vector<model::ToolDefinition>& definitions,
         std::span<const std::uint32_t> receipt_views = {}, std::span<const std::uint8_t> archive_on_exit = {});
     // 在实际请求副本末尾冻结宿主状态并核算容量，工具执行前沿用该尾部预留。
-    std::size_t project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail = {});
+    std::size_t project(model::Request& input, int head_delta, std::optional<model::Message> decision_tail = {},
+        const std::optional<model::Message>& observation = {});
+    // 返回最近一次实际投影是否容纳被动观察，预算不足时来源游标应保持待送。
+    bool observation_projected() const noexcept { return observation_projected_; }
     // 在预留空间内格式化终态及真实效果，不再分配结果正文；拒绝状态与实际执行分开。
     void set_tool_result(std::size_t index, const ToolResult& outcome, runtime::OperationState state,
         ToolError fault = ToolError::none, bool accepted = true);
@@ -58,6 +61,7 @@ class RunContext {
     ContextWindow window_;
     MessageClock message_clock_;
     std::optional<model::Message> effective_head_, effective_tail_;
+    bool observation_projected_ = false;
     bool head_known_ = false;
     std::shared_ptr<const MessageHistory> committed_;
     std::shared_ptr<MessageHistory> pending_;
