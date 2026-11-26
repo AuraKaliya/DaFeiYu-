@@ -1,6 +1,11 @@
 #include "decision_status.hpp"
+#include <dafeiyu/runtime_ids.hpp>
 #include <algorithm>
+#include <charconv>
+#include <chrono>
+#include <format>
 #include <limits>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -51,7 +56,7 @@ std::uint64_t positive(const Json& value) {
 // 拒绝超出有符号 UTC 毫秒范围的原始时间。
 void check_time(const Json& value) {
     if (!value.is_number_integer() ||
-        (value.is_number_unsigned() && value.get<std::uint64_t>() > std::numeric_limits<std::int64_t>::max()))
+        (value.is_number_unsigned() && value.get<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())))
         throw std::invalid_argument("status: invalid UTC milliseconds");
 }
 // 核实点分命名空间中的各段非空，并只接受稳定标识字符。
@@ -158,5 +163,144 @@ Frame Registry::collect(const std::vector<DecisionStatusSource>& sources) {
 // 将已验证版本固定在原槽；其他在准备中的版本仍只由各自候选持有。
 void Registry::publish(const Definitions& definitions) noexcept {
     for (const auto& [key,entry] : definitions) slots_[entry->slot].committed = entry;
+}
+
+using Version = std::pair<std::string,std::uint64_t>;
+struct FrozenRecord {
+    std::uint64_t binding = 0, serial = 0, cutoff = 0;
+    std::string snapshot, ready;
+    Definitions definitions;
+    std::set<Version> visible;
+};
+}
+
+namespace dfy::agent {
+using namespace status_detail;
+struct DecisionStatusStore::Storage {
+    std::mutex mutex;
+    Registry registry;
+    const std::uint64_t binding = runtime::next_domain();
+    std::uint64_t session = 0, epoch = 0, issued = 0, cutoff = 0, forgotten = 0;
+    std::array<std::shared_ptr<const FrozenRecord>,32> history{};
+    std::size_t next = 0;
+};
+namespace {
+// 用十进制保留完整身份，独立存储即使收到相同会话参数也有不同的查询前缀。
+std::string snapshot_prefix(std::uint64_t session, std::uint64_t epoch, std::uint64_t binding) {
+    return std::format("{}/{}/status/{}.",session,epoch,binding);
+}
+// 以格里高利历的整 400 年周期换算 UTC，保留毫秒和 int64 时间两端的年份。
+std::string utc_text(std::int64_t utc_ms) {
+    using namespace std::chrono;
+    constexpr std::int64_t cycle_ms = 146097LL*86400000;
+    const sys_time<milliseconds> point{milliseconds{utc_ms % cycle_ms}};
+    const auto year = static_cast<int>(year_month_day{floor<days>(point)}.year()) + 400*(utc_ms/cycle_ms);
+    const auto year_text = year >= 0 && year <= 9999 ? std::format("{:04}",year) : std::format("{:+}",year);
+    return std::format("{}-{:%m-%dT%T}Z",year_text,point);
+}
+// 在原值外标记当步可信期，原件中的采样号、时间和业务值保持可核对。
+Json at_time(Json sample, std::int64_t utc_ms) {
+    if (sample.contains("sampledUtcMs") && utc_ms < sample.at("sampledUtcMs").get<std::int64_t>())
+        sample["validity"] = "not_yet_sampled";
+    else if (sample.contains("validUntilUtcMs"))
+        sample["validity"] = utc_ms < sample.at("validUntilUtcMs").get<std::int64_t>() ? "current" : "expired";
+    return sample;
+}
+// 按稳定键及对象顺序生成完整视图和显式尾注；跳过的显式项仍可按同一版号读取。
+// 步骤：冻结原件和有效期 → 附上首次显式展示的契约 → 限制尾注与完整快照大小。
+void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& frame, const FrozenRecord* previous,
+    Json full, std::int64_t utc_ms) {
+    Json tail = full;
+    std::set<std::string> described;
+    std::size_t bytes = tail.dump().size() + 32, omitted = 0;
+    for (const auto& [identity,sample] : frame.samples) {
+        const auto& definition = frame.definitions.at(identity.first);
+        auto item = at_time(sample,utc_ms);
+        item["attention"] = definition->declaration.at("defaultAttention");
+        full.at("items").push_back(item);
+        if (described.insert(identity.first).second) full.at("definitions").push_back(definition->declaration);
+        if (!definition->explicit_attention) continue;
+        const Version version{identity.first,definition->version};
+        const bool explain = !record.visible.contains(version) && (!previous || !previous->visible.contains(version));
+        const auto cost = item.dump().size() + 1 + (explain ? definition->declaration.dump().size()+1 : 0);
+        if (tail.at("items").size() >= 8 || bytes+cost > 16*1024) { ++omitted; continue; }
+        bytes += cost;
+        record.visible.insert(version);
+        if (explain) tail.at("definitions").push_back(definition->declaration);
+        tail.at("items").push_back(std::move(item));
+    }
+    if (omitted) tail["omittedExplicit"] = omitted;
+    result.full = full.dump();
+    constexpr std::string_view prefix = R"({"state":"ready","status":)";
+    const auto response_bytes = prefix.size() + result.full.size() + 1;
+    if (response_bytes > 64*1024) throw std::length_error("status: read response limit");
+    record.ready.reserve(response_bytes);
+    record.ready.append(prefix).append(result.full).push_back('}');
+    result.tail = tail.dump();
+}
+}
+// 为此有效绑定建立固定容量的版本及契约索引。
+DecisionStatusStore::DecisionStatusStore() : storage_(std::make_unique<Storage>()) {}
+// 释放本绑定的历史和注册；未提交候选不能发布到后续绑定。
+DecisionStatusStore::~DecisionStatusStore() = default;
+// 在进入提交边界前完成全部校验、编码和索引记录分配，失败不改变可读历史。
+// 步骤：核对作用域 → 收集注册和采样 → 冻结两个视图 → 签发只属于本绑定的候选。
+FrozenDecisionStatus DecisionStatusStore::prepare(std::uint64_t session, std::uint64_t epoch, std::uint64_t turn,
+    std::uint64_t step, std::int64_t utc_ms, const std::vector<DecisionStatusSource>& sources, bool rebuild) const {
+    auto& state = *storage_;
+    std::lock_guard lock(state.mutex);
+    if (state.issued && (state.session != session || state.epoch != epoch)) throw std::invalid_argument("status: scope mismatch");
+    if (state.issued == UINT64_MAX) throw std::overflow_error("status: snapshot versions exhausted");
+    auto frame = state.registry.collect(sources);
+    auto record = std::make_shared<FrozenRecord>();
+    record->binding = state.binding;
+    record->serial = state.issued + 1;
+    record->cutoff = std::max(state.cutoff,frame.cutoff);
+    record->snapshot = snapshot_prefix(session,epoch,state.binding) + std::to_string(record->serial);
+    Json header{{"schema","dafeiyu.agent_status/1"},{"source","host"},{"snapshot",record->snapshot},
+        {"scope",{{"session",std::to_string(session)},{"epoch",std::to_string(epoch)}}},{"turn",turn},{"step",step},
+        {"asOf",{{"event",record->cutoff},{"time",utc_text(utc_ms)},{"utcMs",utc_ms}}},
+        {"wakeEvents",Json::array()},{"items",Json::array()},{"definitions",Json::array()}};
+    const auto previous = (state.next + state.history.size()-1) % state.history.size();
+    FrozenDecisionStatus result;
+    project(result,*record,frame,rebuild ? nullptr : state.history[previous].get(),std::move(header),utc_ms);
+    record->definitions = std::move(frame.definitions);
+    state.session = session; state.epoch = epoch; state.issued = record->serial;
+    result.record_ = std::move(record);
+    return result;
+}
+// 已提交请求只需发布准备好的不可变原件；槽满时按实际发布顺序淘汰。
+// 步骤：核对候选归属 → 固定本次注册和事实截止 → 交换历史槽并推进窗口。
+void DecisionStatusStore::publish(FrozenDecisionStatus&& frozen) noexcept {
+    auto& state = *storage_;
+    if (!frozen.record_ || frozen.record_->binding != state.binding) return;
+    auto record = std::move(frozen.record_);
+    std::lock_guard lock(state.mutex);
+    state.registry.publish(record->definitions);
+    state.cutoff = std::max(state.cutoff,record->cutoff);
+    auto& slot = state.history[state.next];
+    if (slot) state.forgotten = std::max(state.forgotten,slot->serial);
+    slot.swap(record);
+    state.next = (state.next+1) % state.history.size();
+}
+// 查询仅对匹配的会话、代次和存储开放，直接返回发布时的原版正文。
+// 步骤：核对绑定前缀 → 寻找精确版本 → 区分保留窗口外和未知版本。
+std::string DecisionStatusStore::read(std::uint64_t session, std::uint64_t epoch, std::string_view snapshot) const {
+    auto& state = *storage_;
+    std::lock_guard lock(state.mutex);
+    if (snapshot.size() > 128) return R"({"state":"unavailable","reason":"invalid_snapshot"})";
+    const auto prefix = snapshot_prefix(session,epoch,state.binding);
+    if ((state.issued && (session != state.session || epoch != state.epoch)) ||
+        (snapshot.find("/status/") != snapshot.npos && !snapshot.starts_with(prefix)))
+        return R"({"state":"unavailable","reason":"scope_mismatch"})";
+    for (const auto& record : state.history) if (record && record->snapshot == snapshot) return record->ready;
+    if (snapshot.starts_with(prefix)) {
+        const auto suffix = snapshot.substr(prefix.size());
+        std::uint64_t serial = 0;
+        const auto [end,ec] = std::from_chars(suffix.data(),suffix.data()+suffix.size(),serial);
+        if (ec == std::errc{} && end == suffix.data()+suffix.size() && suffix.front() != '0' && serial <= state.forgotten)
+            return R"({"state":"unavailable","reason":"outside_retention"})";
+    }
+    return R"({"state":"unavailable","reason":"unknown_snapshot"})";
 }
 }
