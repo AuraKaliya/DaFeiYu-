@@ -504,9 +504,27 @@ async function checkEightStones(fixture, player, whispers, mode) {
   await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
   assert.ok(!actions().some(row => row.skill === 'give_item'));
   if (mode === '--handoff-eight-chest-probe') {
+    fixture.send('tp DfyCompanion 0.5 -60 0.5');
+    await until(() => player.players.DfyCompanion.entity.position.distanceTo(point(0.5,-60,0.5)) < 0.05,'伙伴回到可读箱位置');
+    // 用独立协议玩家分别打开两个真实箱子，逐次关闭原窗口。
+    const contents = async () => {
+      const counts = [];
+      for (const z of [-2,2]) {
+        const box = await player.openContainer(player.blockAt(point(2,-60,z)));
+        try { counts.push(box.countRange(0,box.inventoryStart,id)); } finally { box.close(); }
+      }
+      return counts;
+    };
+    assert.deepEqual(await contents(),[0,5]);
+    await player.lookAt(point(2.5,-59.5,-1.5),true);
+    await until(() => Math.cos(fixture.ownerEntity()?.yaw) > 0.99 && fixture.ownerEntity()?.pitch < -0.3,'伙伴观察到玩家指向左箱');
     player.chat('左箱');
-    await until(() => whispers.includes('已记下左箱，圆石还在我这里。'),'原选箱问题实际完成');
-    assert.deepEqual([fixture.materialCount('cobblestone'),player.inventory.count(id)],[8,0]);
+    await until(() => whispers.includes('左箱能再放 1728 块圆石，我背包里有 8 块。'),'读回指定单箱及伙伴库存');
+    const read = actions().find(row => row.result.chest);
+    assert.deepEqual([read.result.chest.owner,read.result.chest.generation,read.result.chest.dimension,
+      read.result.chest.cell,read.result.chest.container.slots,read.result.chest.stock.slots,read.result.chest.stock.stored],
+      [player.player.uuid,read.generation,'overworld',{x:2,y:-60,z:-2},27,36,8]);
+    assert.deepEqual([await contents(),fixture.materialCount('cobblestone'),player.inventory.count(id)],[[0,5],8,0]);
     return;
   }
   fixture.send('tp DfyCompanion 0.5 -60 0.5');

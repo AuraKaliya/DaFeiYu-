@@ -38,6 +38,20 @@ bool dimension(const Json& value) {
     });
 }
 
+// 对照实读槽位验证普通栈的数量、可合堆容量以及缺读覆盖。
+void verify_chest_slots(const Json& range, unsigned slots) {
+    if (range.at("slots") != slots) throw std::invalid_argument("MC: invalid chest slot range");
+    for (const auto key : {"stackSize","emptySlots","unknownSlots","mergeSpace","knownSpace","stored"})
+        if (!range.at(key).is_number_unsigned() || range.at(key) > 65536) throw std::invalid_argument("MC: invalid chest count");
+    const auto size = range.at("stackSize").get<unsigned>(), empty = range.at("emptySlots").get<unsigned>();
+    const auto unknown = range.at("unknownSlots").get<unsigned>(), merge = range.at("mergeSpace").get<unsigned>();
+    const auto stored = range.at("stored").get<unsigned>();
+    if (!size || size > 99 || empty+unknown > slots || (merge+stored)%size != 0 ||
+        merge+stored > (slots-empty-unknown)*size || range.at("knownSpace") != empty*size+merge ||
+        range.at("status") != (unknown ? "partial" : "sampled"))
+        throw std::invalid_argument("MC: inconsistent chest coverage");
+}
+
 // 判断空气值是否为游戏协议可表示的有符号刻数。
 bool air_ticks(const Json& value) {
     return value.is_number_integer() && value >= INT32_MIN && value <= INT32_MAX;
@@ -627,6 +641,10 @@ std::string partner_request(std::string_view method, std::string_view id, const 
     if (skill == "pickup_drop" && !valid_pickup_request(envelope.at("arguments")))
         throw std::invalid_argument("MC: invalid ground pickup arguments");
     const auto& args = envelope.at("arguments");
+    if (skill == "observe" && args.value("mode","") == "chest" && (args.size() != 3 ||
+        !args.at("message").is_number_unsigned() || args.at("message") == 0 || args.at("message") > context.at("order") ||
+        item_name(args.at("item").get_ref<const std::string&>()).empty()))
+        throw std::invalid_argument("MC: invalid chest observation arguments");
     if (skill == "give_item" && !valid_handoff_action(args)) throw std::invalid_argument("MC: invalid handoff arguments");
     if (skill == "observe" && args.value("mode","") == "handoff" && (args.size() != 4 || !valid_handoff_request(args)))
         throw std::invalid_argument("MC: invalid handoff observation arguments");
@@ -653,6 +671,19 @@ PartnerReply partner_reply(std::string_view wire, std::string_view id, std::stri
         throw std::invalid_argument("MC: invalid partner receipt");
     const bool exited = action.at("exited");
     const auto& result = action.at("result");
+    if (skill == "observe" && (result.contains("chest") || (exited && result.at("status") == "done" && args.value("mode","") == "chest"))) {
+        const auto& chest = result.at("chest");
+        if (args.value("mode","") != "chest" || chest.at("id").get_ref<const std::string&>() != id || chest.at("generation") != context.at("generation") ||
+            chest.at("message") != args.at("message") || chest.at("item").get_ref<const std::string&>() != item_name(args.at("item").get_ref<const std::string&>()) ||
+            !game_uuid(chest.at("owner")) || !game_uuid(chest.at("actor")) || !dimension(chest.at("dimension")) ||
+            !valid_action_cell(chest.at("cell")) || !chest.at("pointedAtMs").is_number_unsigned() ||
+            !chest.at("sampledAtMs").is_number_unsigned() || chest.at("pointedAtMs") > chest.at("sampledAtMs"))
+            throw std::invalid_argument("MC: invalid pointed chest identity");
+        verify_chest_slots(chest.at("container"),27);
+        verify_chest_slots(chest.at("stock"),36);
+        if (chest.at("stock").at("stackSize") != chest.at("container").at("stackSize"))
+            throw std::invalid_argument("MC: chest item stack size differs");
+    }
     const bool thrown = skill == "give_item" && verify_transfer(result,args,context.at("generation"),exited);
     if (skill == "give_item" && result.contains("handoffReceipt")) {
         if (!exited) throw std::invalid_argument("MC: handoff recheck before exit");

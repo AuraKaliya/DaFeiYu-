@@ -112,6 +112,7 @@ async function play(fixture, exe, pkg, mode, config, playerThinking) {
         send('fill -3 -60 -2 -2 -60 1 minecraft:cobblestone');
         send('setblock 2 -60 -2 minecraft:chest');
         send('setblock 2 -60 2 minecraft:chest');
+        send('item replace block 2 -60 2 container.0 with minecraft:cobblestone 5');
         send('effect give DfyCompanion minecraft:mining_fatigue 12 0 true');
       } else if (gatherHandoff) {
         if (movingHandoff) {

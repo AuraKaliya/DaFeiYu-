@@ -268,6 +268,33 @@ void vitals_protocol() {
     rejects(read);
 }
 
+// 对照指箱原话及两段库存，拒绝错误格位、夸大的容量与缺读冒充实读。
+void chest_protocol() {
+    const std::string world = "00112233-4455-6677-8899-aabbccddeeff", controller(32,'d');
+    const Json context{{"generation",world},{"order",3}};
+    const auto args = Json{{"context",context},{"arguments",{{"mode","chest"},{"message",2},{"item","minecraft:cobblestone"}}}}.dump();
+    Json action = context;
+    action.update(Json{{"controller",controller},{"skill","observe"},{"exited",true},{"result",{{"status","done"}}}});
+    Json frame{{"version",1},{"id","box"},{"action",action}};
+    auto& chest = frame["action"]["result"]["chest"] = {{"id","box"},{"generation",world},{"owner",world},{"actor",world},
+        {"dimension","overworld"},{"cell",{{"x",2},{"y",-60},{"z",-2}}},{"message",2},{"item","cobblestone"},
+        {"pointedAtMs",4},{"sampledAtMs",8}};
+    chest["container"] = {{"slots",27},{"stackSize",64},{"emptySlots",26},{"mergeSpace",56},{"knownSpace",1720},
+        {"unknownSlots",0},{"stored",8},{"status","sampled"}};
+    chest["stock"] = {{"slots",36},{"stackSize",64},{"emptySlots",35},{"mergeSpace",0},{"knownSpace",2240},
+        {"unknownSlots",1},{"stored",0},{"status","partial"}};
+    const auto read = [&] { return dfy::mc::partner_reply(frame.dump(),"box",controller,"observe",args); };
+    if (!read().arrived || read().changed) throw std::runtime_error("single chest read reported a transfer");
+    chest["container"]["knownSpace"] = 1728;
+    rejects(read);
+    chest["container"]["knownSpace"] = 1720;
+    chest["stock"]["status"] = "sampled";
+    rejects(read);
+    chest["stock"]["status"] = "partial";
+    chest["message"] = 3;
+    rejects(read);
+}
+
 // 核对交物观察、停止位置和收件证据都属于同一玩家与原工作。
 // 步骤：构造跨堆备料 → 核对提交与收件 → 对照停投位置、剩余量和迟到回执。
 void handoff_protocol() {
@@ -545,6 +572,7 @@ int main() {
         meeting_protocol();
         collect_progress_protocol();
         ground_pickup_protocol();
+        chest_protocol();
         handoff_protocol();
         vitals_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};

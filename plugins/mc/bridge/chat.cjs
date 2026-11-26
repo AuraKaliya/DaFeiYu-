@@ -1,3 +1,5 @@
+const { playerFocus } = require('./player-focus.cjs');
+
 // 复制收到聊天时客户端已知的玩家位置，保留未跟踪实体的情况。
 function sceneAtMessage(bot, owner, dimension) {
   const entity = Object.values(bot.players).find(player => player.uuid === owner)?.entity;
@@ -22,6 +24,7 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
   let sequence = 0;
   let closed = false;
   const entries = [];
+  const chests = new WeakMap();
   let presence = null, trackingPresence = false, lastDeparture = 0;
 
   // 同一游戏代次内所有事实共享一个有界游标。
@@ -60,9 +63,18 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
     if (!sync(snapshot) || (trackingPresence && presence?.type !== 'player.entered')) return;
     if (sequence >= Number.MAX_SAFE_INTEGER) return;
     const offer = classify(packet.plainMessage, generation, sequence + 1);
-    append({ text: packet.plainMessage, ...(withPresence && {
+    const entry = append({ text: packet.plainMessage, ...(withPresence && {
       type: 'player.message', sceneAtMessage: sceneAtMessage(bot, owner, snapshot.dimension),
     }), ...(offer && { offer }) });
+    const scene = entry?.sceneAtMessage;
+    if (scene?.eye && bot.entity?.position?.clone && bot.blockAt) {
+      const { hit } = playerFocus(bot, scene, bot.entity.position, 'hit');
+      if (hit?.block === 'chest') {
+        const { x, y, z } = hit;
+        if (bot.blockAt(bot.entity.position.clone().set(x,y,z))?.getProperties?.().type === 'single')
+          chests.set(entry, { cell: { x,y,z }, dimension: scene.dimension, pointedAtMs: scene.sampledAtMs });
+      }
+    }
   }
   bot._client.on('playerChat', receive);
   const joined = player => { if (player.uuid === owner && sync() && trackingPresence) recordPresence('player.entered'); };
@@ -94,6 +106,11 @@ function ownerInbox(bot, world, owner, localFixture = false, capacity = 32, clas
     // 工作只能在原玩家在场周期内继续执行。
     inPresence(expected, order) {
       return sync() === expected && (!withPresence || (presence?.type === 'player.entered' && order >= presence.sequence));
+    },
+    // 取回收信时实际指中的普通单箱，换代、离场或原话过窗后失效。
+    pointedChest(expected, number) {
+      if (sync() !== expected || !this.inPresence(expected,number)) return null;
+      return structuredClone(chests.get(entries.find(entry => entry.sequence === number)) ?? null);
     },
     // 仅在同一游戏来源中取得仍保留的原指令。
     get(expected, number) {

@@ -22,6 +22,12 @@ function observationInput(args) {
     if (Object.keys(args).length !== 1) throw invalidObservation('observe_vitals_parameters', '生命与氧气观察只读取同场伙伴自身');
     return { mode };
   }
+  if (mode === 'chest') {
+    if (Object.keys(args).length !== 3 || !Number.isSafeInteger(args.message) || args.message <= 0 ||
+        typeof args.item !== 'string' || !/^(?:minecraft:)?[a-z0-9_]{1,80}$/.test(args.item))
+      throw invalidObservation('chest_parameters', '单箱观察需要指箱原话编号和物品');
+    return { mode, options: { message: args.message, item: args.item.replace(/^minecraft:/,'') } };
+  }
   if (mode === 'handoff_receipt') {
     if (typeof args.work !== 'string' || !args.work.length || args.work.length > 128 || Object.keys(args).length !== 2)
       throw invalidObservation('handoff_work_reference', '复查收件需要原交物工作编号');

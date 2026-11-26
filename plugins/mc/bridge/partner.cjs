@@ -10,6 +10,7 @@ const { trackBreakDrop, pickupShortfall } = require('./collect-drops.cjs');
 const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
 const { giveItem, refreshHandoff, handoffSample, originalHandoffReceipt } = require('./give-item.cjs');
+const { chestWindows, chestSample } = require('./single-chest.cjs');
 const { makeReceiptRoom } = require('./partner-records.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
@@ -288,6 +289,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
   let sceneWorld, sceneRevision = 0, sceneNext = 0, sceneKey;
   const records = new Map();
   const observations = new Set();
+  const withChest = chestWindows(bot);
   const wallSurveys = new Map();
   const checkedRoutes = new Map();
   const built = new BuiltObjects();
@@ -400,6 +402,12 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
           const goal = new goals.GoalCompositeAny(stands.map(p => new goals.GoalBlock(p.x,p.y,p.z)));
           return probePath(bot,from,goal,inside);
         });
+      } else if (observation?.mode === 'chest') {
+        const { message, item } = observation.options;
+        const target = inbox.pointedChest(r.generation,message);
+        result.chest = await withChest(target,job.abort.signal,window => ({
+          id: job.id, generation: r.generation, owner, actor: bot.entity.uuid ?? bot.player.uuid, message, item,
+          ...target, ...chestSample(bot,window,item) }));
       } else if (observation?.mode === 'handoff') {
         result.handoff = observeHandoff(bot, owner, observation.options, job.id, r.generation);
       } else if (observation?.mode === 'handoff_receipt') {
@@ -663,8 +671,10 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
         return receipt;
       }
       const controlsBody = skill !== 'reply' && skill !== 'observe';
+      const needsWindow = skill === 'observe' && args.mode === 'chest';
       if (method !== 'partner.begin' || !current(context) || !lease.owns(context.controller) ||
-          (controlsBody && active && !active.receipt.exited))
+          ((controlsBody || needsWindow) && ((active && !active.receipt.exited) ||
+            [...observations].some(job => job.args.mode === 'chest' && !job.receipt.exited))))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
       const lookup = skill === 'observe' && args.mode === 'handoff_receipt' ? records.get(workKey(context.controller,args.work)) : undefined;

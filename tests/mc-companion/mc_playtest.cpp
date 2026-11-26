@@ -870,7 +870,8 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
             return invoke("_observe","before-choice",query);
         if (scene.contains("questionResult")) {
             const auto choice = scene.at("questionResult").value("answer","");
-            if (choice == "左箱") return {{Role::assistant,"已记下左箱，圆石还在我这里。"}};
+            if (choice == "左箱" && (trigger == "question.result" || line == "左箱"))
+                return invoke("_observe","inspect-chest",{{"mode","chest"},{"message",scene.at("questionResult").at("answerMessage")},{"item","cobblestone"}});
             if (choice == "扔给我" && (trigger == "question.result" || line == "扔给我"))
                 return invoke("_observe","give-ready",query);
         }
@@ -906,6 +907,11 @@ dfy::model::Response eight_stone_sample(const dfy::model::Request& request) {
             }
         }
     } else if (last.role == Role::tool) {
+        if (last.tool_call_id == "inspect-chest") {
+            const auto chest = Json::parse(last.content.substr(last.content.find('{'))).at("chest");
+            return {{Role::assistant,"左箱能再放 "+std::to_string(chest.at("container").at("knownSpace").get<int>())+
+                " 块圆石，我背包里有 "+std::to_string(chest.at("stock").at("stored").get<int>())+" 块。"}};
+        }
         if (last.tool_call_id == "progress" || last.tool_call_id == "give-ready" || last.tool_call_id == "before-choice") {
             const auto sample = Json::parse(last.content.substr(last.content.find('{'))).at("handoff");
             const auto count = sample.at("stock").at("available").get<int>();
