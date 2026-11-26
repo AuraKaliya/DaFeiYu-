@@ -1,6 +1,6 @@
 # Minecraft 本地协议探针
 
-本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../开发计划/MC伙伴开发计划.md#外部试玩怎样评)，记录现场、可能的解释与实际效果。
+本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../开发计划/MC伙伴开发计划.md#实施顺序与整体验收)，记录现场、可能的解释与实际效果。
 
 ## 固定响应验收单个玩家绑定
 
@@ -205,7 +205,7 @@ ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^(
 | 「你可以垫上来」后计划被拒却进入等待，见原始基线 `run-CA2yMm` 的回合 8、9。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L43) | 合法的放置和移动节点可接纳。无效计划在修订额度用完后明确结算。 | `layered` 验证合法计划接纳。`repair-plan` 验证两次拒绝后正常结算回合。 |
 | 高台掉队后请求垫上来，见同一基线的跟随工作 `1.240`、`1.267`、`1.276`、`1.315`。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L22) | 受阻和恢复沿用原跟随身份。垫高每次放置或移动按原号结算。中途站位失败时保留已有方块，跳过依赖步骤。 | `attention` 覆盖异常与恢复。`layered` 和 `layered-blocked` 分别覆盖四层完成和第一步移动受阻。后者的站位失败由夹具注入。 |
 
-`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../开发计划/MC伙伴开发计划.md#已验证的基线)
+`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../开发计划/MC伙伴开发计划.md#已完成)
 
 **Paper 验证。** 绕墙的 Paper 探针从上述对照索引追溯。实际验收核对脚位经过墙两侧和两端、返回起点，以及重开时从起点重新跑。垫高的两种场地使用表中的 `--layered-resupply-probe` 与 `--layered-follow-probe`。复盘时沿同一个跟随工作号检查受阻、判定可达、恢复与实际退出，另用采掘、放置及移动回执核对已经发生的效果。[垫高探针](../../tests/mc-companion/playtest-check.cjs#L202)
 
