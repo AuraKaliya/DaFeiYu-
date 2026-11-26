@@ -16,7 +16,8 @@ std::string_view package_state(const plugins::LoadedPlugin& live) {
 // 只编码清单公开元数据和运行事实，配置及宿主路径保留在业务线程。
 Json package_json(const std::string& id, const PackageRow& row) {
     Json result{{"id",id},{"name",row.name},{"version",row.version},{"state",row.state},{"installed",row.installed},
-        {"loaded",row.generation!=0},{"generation",std::to_string(row.generation)},{"canLoad",row.can_load()},{"canUnload",row.can_unload()}};
+        {"loaded",row.generation!=0},{"generation",std::to_string(row.generation)},{"canLoad",row.can_load()},{"canUnload",row.can_unload()},
+        {"hasPublicSettings",row.state=="active" && row.public_settings.state==plugins::PublicSettingsState::ready}};
     if (row.generation) {
         result["loadedName"] = row.loaded_name;
         result["loadedVersion"] = row.loaded_version;
@@ -56,6 +57,7 @@ std::shared_ptr<const PluginDirectory> sample_plugins(const plugins::PluginManag
         row.loaded_version = instance->plugin_version();
         if (!row.installed) { row.name = row.loaded_name; row.version = row.loaded_version; }
         row.generation = live.generation;
+        row.public_settings = instance->public_settings();
         row.error = live.error;
         row.state = package_state(live);
     }

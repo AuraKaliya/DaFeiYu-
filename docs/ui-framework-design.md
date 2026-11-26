@@ -300,6 +300,16 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 正式入口验收在同一用户目录先后启动两个 `dafeiyu-host.exe` 进程，分别持有原进程句柄并核对退出码。首次启动从指定配置取得超时，保存后另一个窗口仍可读到旧采用值。新进程采用用户覆盖，也能复查原保存回执。两次启动期间主会话均保持空闲。[正式本体验收](../apps/host/tests/resident_settings.cpp)
 
+### 5.9 插件公开设置读口
+
+窗口从 `plugins.list` 选择一个活动包，记录包的 `id`、`generation` 和后台 `instance`。活动行的 `hasPublicSettings=true` 表示该代次已登记可读字段。请求示例为 `{"version":"1","request":"ps1","type":"settings.read","owner":"plugin","instance":"原后台","id":"test.public-settings","generation":"原代次"}`。可加上次返回的 `revision` 复核原快照。[服务端读取](../apps/host/src/management/settings_protocol.cpp)
+
+`settings.snapshot` 回显 `owner`、`instance`、`id`、`generation` 和 `request`。就绪时 `state=ready`，`fields` 逐项给出 `id`、`type=string`、`access_mode=read_only`、`source=default|user`、`value` 和 `appliedValue`。两项值均取当前实例创建时真正采用的有效配置。该快照固定到代次，`revision` 与 `appliedRevision` 均等于代次。文件编辑在重新加载后才进入新代次。
+
+活动包无声明返回 `notDeclared`。后台、包、代次或修订不匹配时返回 `stale`。公开声明无效、字段类型不匹配或实例正在停止时返回 `unavailable`。这些状态均带空 `fields`，读口的 `canSave` 为 `false`。测试包仅登记 `displayName`，同一配置中的其他键保留在业务实例中。[测试插件声明](../tests/fixtures/public_settings/ui/manifest.json) · [双管道、覆盖来源与重载验收](../tests/plugins/management_plugins.cpp)
+
+启用测试的构建中，目标 `dfy_public_settings_fixture` 复用现有原生测试 DLL，按配置生成可显式安装的测试包。位置为构建目录下的 `tests/fixtures/public_settings/<配置>/test.public-settings/`。[夹具生成规则](../tests/fixtures/public_settings/CMakeLists.txt)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

@@ -276,6 +276,85 @@ void busy_unload(const fs::path& root, const fs::path& dll) {
     check(!outcome,"busy resident did not exit normally");
 }
 
+// 用真正安装的独立测试包核对当前代次的公开字段、值和来源，其他配置留在实例内部。
+// 步骤：双窗核对包默认与无声明包 → 改写用户文件并复读原代次 → 重载核对用户来源 → 隔离错误类型。
+void public_settings(const fs::path& root,const fs::path& dll,const fs::path& fixture) {
+    const auto data=root/"user", packages=root/"packages";
+    fs::create_directories(data);
+    package(packages/"ordinary",dll,"test.ordinary");
+    std::atomic_uint calls{0};
+    int outcome=-1;
+    std::jthread server([&](std::stop_token stop) {
+        outcome=management::serve_resident(data,"public-settings",[&] {
+            auto app=std::make_unique<app::Application>(model::Config{},packages,data,model::Backend{
+                [&](const auto&,const auto&) { ++calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
+            const auto installed=app->plugins().install(fixture);
+            check(app->plugins().load(installed.id)==DFY_V2_OK && app->plugins().load("test.ordinary")==DFY_V2_OK,"settings fixture startup failed");
+            return app;
+        },stop);
+    });
+    until([&] {
+        try { return management::resident_request(data,{{"op","status"}}).at("state")=="running"; }
+        catch (const std::system_error&) { return false; }
+    },"public settings startup");
+    const auto a=management::connect_resident(data,"public-settings"), b=management::connect_resident(data,"public-settings");
+    const auto catalog=[&] { return call(data,b.client,{{"type","plugins.list"}}); };
+    const auto before=catalog();
+    const auto plain=before.at("packages").at(0), target=before.at("packages").at(1);
+    check(plain.at("hasPublicSettings")==false && target.at("hasPublicSettings")==true,"directory advertised the wrong setting owner");
+    Json read{{"type","settings.read"},{"owner","plugin"},{"instance",a.instance},{"id",target.at("id")},{"generation",target.at("generation")}};
+    const auto original=call(data,a.client,read);
+    const Json defaults=Json::array({{{"id","displayName"},{"type","string"},{"access_mode","read_only"},{"source","default"},
+        {"value","书房观察器"},{"appliedValue","书房观察器"}}});
+    check(original.at("state")=="ready" && original.at("event")=="settings.snapshot" && original.at("revision")==read.at("generation") &&
+        original.at("canSave")==false && original.at("fields")==defaults && original==call(data,b.client,read) &&
+        original.dump().find("internal-fixture-only")==std::string::npos,"public default leaked a private setting or changed across windows");
+    auto other=read;
+    other["id"]=plain.at("id");
+    check(call(data,b.client,other).at("state")=="stale","foreign generation accepted");
+    other["generation"]=plain.at("generation");
+    const auto none=call(data,b.client,other);
+    check(none.at("state")=="notDeclared" && none.at("fields").empty(),"ordinary package fabricated a declaration");
+    other=read;
+    other["instance"]="old-resident";
+    check(call(data,b.client,other).at("state")=="stale","wrong resident returned plugin settings");
+    const auto file=data/"plugins"/"test.public-settings"/"settings.json";
+    fs::create_directories(file.parent_path());
+    std::ofstream(file) << R"({"displayName":"新观察器","privateOverride":"unlisted-user-marker"})";
+    check(call(data,b.client,read)==original,"disk edit changed an already loaded generation");
+
+    unsigned sequence=0;
+    const auto reload=[&] {
+        for (const auto action : {"unload","load"}) {
+            const auto dir=catalog();
+            const auto requested=intent(dir,dir.at("packages").at(1),action,++sequence);
+            check(settled(data,b.client,call(data,a.client,requested)).at("state")=="succeeded","public settings reload failed");
+            if (std::string_view(action)=="unload") check(catalog().at("packages").at(1).at("hasPublicSettings")==false,
+                "unloaded package still advertised a public instance setting");
+        }
+    };
+    reload();
+    const auto expired=call(data,b.client,read);
+    check(expired.at("state")=="stale" && expired.at("fields").empty(),"retired generation disclosed settings");
+    read["generation"]=catalog().at("packages").at(1).at("generation");
+    const auto updated=call(data,b.client,read);
+    check(updated.at("fields").size()==1 && updated.at("fields").front().at("value")=="新观察器" &&
+        updated.at("fields").front().at("source")=="user" && updated.dump().find("privateOverride")==std::string::npos &&
+        updated.dump().find("unlisted-user-marker")==std::string::npos,"user override or allowlist was lost");
+    read["revision"]=original.at("revision");
+    check(call(data,a.client,read).at("state")=="stale","old settings revision matched a replacement");
+    read.erase("revision");
+    std::ofstream(file,std::ios::trunc) << R"({"displayName":{"nested":"private-object"}})";
+    reload();
+    read["generation"]=catalog().at("packages").at(1).at("generation");
+    const auto bad=call(data,a.client,read);
+    check(bad.at("state")=="unavailable" && bad.at("fields").empty() && catalog().at("packages").at(1).at("state")=="active" && !calls,
+        "invalid public type leaked nested data, stopped the plugin or ran a model");
+    server.request_stop();
+    server.join();
+    check(!outcome,"public settings resident did not exit normally");
+}
+
 // 固定宿主推进节拍，核对 DLL 已关闭但原代次尚有一项调度包装时的目录和原回执。
 // 步骤：加载三个实际活动插件 → 在第三方仍排队时停止 → 冻结现场核对原代次 → 推进排空并复查。
 void queued_activity(const fs::path& root,const fs::path& dll) {
@@ -326,8 +405,13 @@ void queued_activity(const fs::path& root,const fs::path& dll) {
 // 为每次运行隔离插件包、命名管道和用户设置，以固定模型验证管理入口。
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc!=4) return 2;
+        if (argc!=4 && argc!=5) return 2;
         const auto root=fs::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
+        if (argc==5) {
+            if (std::wstring_view(argv[3])!=L"--public-settings") return 2;
+            public_settings(root,argv[1],argv[4]);
+            return 0;
+        }
         directory(root,argv[1]);
         busy_unload(root,argv[3]);
         queued_activity(root,argv[3]);

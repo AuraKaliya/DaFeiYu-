@@ -2,6 +2,7 @@
 #include "package_files.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -55,6 +56,51 @@ Json read_object(const fs::path& path, const char* source) {
         throw std::runtime_error(prefix + ": expected object");
     }
     return object;
+}
+
+// 从与包身份匹配的可选 UI 描述登记只读文本，只投影已合并到本代次的同名顶层字段。
+// 步骤：定位包内普通描述文件 → 核对版本与身份 → 逐项复核声明和值 → 整批发布或隔离登记错误。
+PublicSettings public_settings(const Manifest& manifest, const Json& effective, const Json& overrides) {
+    try {
+        const auto ui=manifest.directory/"ui";
+        if (files::is_reparse_point(ui)) throw std::runtime_error("settings: linked UI directory");
+        if (!fs::exists(fs::symlink_status(ui))) return {};
+        const auto dir=files::directory(ui);
+        if (dir.parent_path()!=manifest.directory) throw std::runtime_error("settings: invalid UI directory");
+        const auto path=dir/"manifest.json";
+        if (files::is_reparse_point(path)) throw std::runtime_error("settings: linked UI manifest");
+        if (!fs::exists(fs::symlink_status(path))) return {};
+        const auto ui_manifest=read_object(path,"UI registration");
+        const auto& version=ui_manifest.at("ui_schema_version");
+        const auto& contributions=ui_manifest.at("contributions");
+        if (!version.is_number_integer() || version!=1 || ui_manifest.at("plugin_id")!=manifest.id ||
+            !contributions.is_array() || contributions.size()>64) throw std::runtime_error("settings: invalid UI registration");
+        PublicSettings result;
+        std::set<std::string> contributions_seen, seen;
+        static const std::regex field_id("[A-Za-z][A-Za-z0-9_.-]{0,63}");
+        for (const auto& contribution : contributions) {
+            if (contribution.at("kind")!="settings") continue;
+            if (ui_manifest.contains("requires") && (!ui_manifest["requires"].is_array() || !ui_manifest["requires"].empty()))
+                throw std::runtime_error("settings: unsupported UI requirement");
+            const auto& fields=contribution.at("fields");
+            const auto& identity=contribution.at("id").get_ref<const std::string&>();
+            if (identity.size()>64 || !std::regex_match(identity,field_id) || !contributions_seen.insert(identity).second ||
+                contribution.size()!=3u+contribution.contains("title") || (contribution.contains("title") && !contribution.at("title").is_string()) ||
+                !fields.is_array() || fields.empty() || fields.size()>32-result.fields.size())
+                throw std::runtime_error("settings: invalid field registration");
+            for (const auto& field : fields) {
+                const auto& id=field.at("id").get_ref<const std::string&>();
+                if (field.size()!=3 || field.at("type")!="string" || field.at("access_mode")!="read_only" ||
+                    id.size()>64 || !std::regex_match(id,field_id) || !seen.insert(id).second)
+                    throw std::runtime_error("settings: invalid public field");
+                const auto& value=effective.at(id).get_ref<const std::string&>();
+                if (value.size()>4096) throw std::runtime_error("settings: public text too long");
+                result.fields.push_back({id,value,overrides.contains(id)});
+            }
+            result.state=PublicSettingsState::ready;
+        }
+        return result;
+    } catch (const std::exception&) { return {PublicSettingsState::unavailable,{}}; }
 }
 
 // 定位按插件 ID 隔离的用户配置，缺失路径按未配置处理，已有链接或错误类型明确拒绝。
@@ -112,7 +158,7 @@ std::shared_ptr<const EffectiveConfig> load_config(const Manifest& manifest, con
         for (const auto& [key, value] : overrides.items()) {
             effective[key] = value;
         }
-        return std::make_shared<const EffectiveConfig>(EffectiveConfig{current.id, effective.dump()});
+        return std::make_shared<const EffectiveConfig>(EffectiveConfig{current.id,effective.dump(),public_settings(current,effective,overrides)});
     } catch (const fs::filesystem_error&) {
         throw std::runtime_error("plugin config: filesystem error");
     }

@@ -1,0 +1,13 @@
+{
+  "ui_schema_version": 1,
+  "plugin_id": "test.public-settings",
+  "contributions": [
+    {
+      "kind": "settings",
+      "id": "public-settings",
+      "fields": [
+        {"id": "displayName", "type": "string", "access_mode": "read_only"}
+      ]
+    }
+  ]
+}

@@ -232,6 +232,8 @@ std::string_view PluginInstance::plugin_id() const noexcept { return state_->id;
 std::string_view PluginInstance::plugin_name() const noexcept { return state_->name; }
 // 读取实例创建时固定的原包版本，不查询磁盘上的后续替换文件。
 std::string_view PluginInstance::plugin_version() const noexcept { return state_->version; }
+// 只返回同一次配置合并时按声明提取的公开字段与来源。
+const PublicSettings& PluginInstance::public_settings() const noexcept { return state_->config->public_settings; }
 // 仅在原生实例活动期间允许查询新能力。
 PluginModuleV2& PluginInstance::active_module() {
     if (state_->phase != InstancePhase::active) throw std::logic_error("instance: active capability context required");

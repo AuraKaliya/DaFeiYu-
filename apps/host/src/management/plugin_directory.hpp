@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <dafeiyu/plugin_manager.hpp>
+#include <dafeiyu/plugin_config.hpp>
 #include <nlohmann/json_fwd.hpp>
 
 namespace dfy::management {
@@ -9,6 +10,7 @@ struct PackageRow {
     runtime::DomainId generation = 0;
     std::uint32_t error = 0;
     bool installed = false;
+    plugins::PublicSettings public_settings;
     // 当前目录中已安装且尚无实例的包可提交加载。
     bool can_load() const noexcept { return installed && !generation; }
     // 已持有的实例可提交卸载或重试，已在停止的实例沿原工作等待。
