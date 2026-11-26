@@ -144,6 +144,10 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         return true;
     })())JS");
     const std::string prompt = "你好，大肥鱼 <b>验证</b>";
+    evaluate("the formal mailbox reports an incomplete read through the native client",R"JS((async()=>{
+        const result=await dialogueAsk('probe-incomplete-mail',{type:'mailbox.read'});
+        return result?.event==='management.error' && result.version==='1' && result.request==='probe-incomplete-mail';
+    })())JS");
     evaluate("opening room does not start a model turn","(async()=>{const s=await dialogueAsk('probe-idle',{type:'state.read',topic:'run'});return s.run===null;})()");
     const auto text = Json(prompt).dump();
     call("focus emulation",L"Emulation.setFocusEmulationEnabled",{{"enabled",true}});
@@ -205,6 +209,8 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         bridge.postMessage({type:'messages.subscribe',version:'1',request:'other-subscription'});
         bridge.postMessage({type:'messages.read',version:'1',request:'other-history',conversation:'main',direction:'history',cursor:'0',through:'0',limit:24});
         bridge.postMessage({type:'messages.receipt',version:'1',request:'other-receipt',conversation:'main',source:'desktop',submission:'previous'});
+        bridge.postMessage({type:'mailbox.list',version:'1',request:'other-mail-directory'});
+        bridge.postMessage({type:'mailbox.read',version:'1',request:'other-mail-source',instance:'original',source:'room'});
         for (const kind of ['cancel','clear']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1'});
         for (const kind of ['append','enqueue']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',turn:'1',text:'wrong document'});
         for (const kind of ['remove','resume']) bridge.postMessage({type:'dialogue.'+kind,version:'1',request:'other-'+kind,command:'3',session:'1',message:'1'});
@@ -213,7 +219,7 @@ void InteractionProbe::start_main_panel(std::shared_ptr<const FrameChecks> check
         while (!replies.has('other-barrier') && performance.now()<end) await new Promise(r=>setTimeout(r,20));
         return location.origin==='https://center.dafeiyu.invalid' && !history.state?.dialogue &&
             replies.get('other-barrier')?.run?.result === 'failed' &&
-            ['write','read','room','subscription','history','receipt','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
+            ['write','read','room','subscription','history','receipt','mail-directory','mail-source','cancel','clear','append','enqueue','remove','resume'].every(key=>!replies.has('other-'+key));
     })())JS");
     call("return to dialogue document",L"Page.navigate",{{"url",utf8(main_panel_url)}});
     expect("return preserves only the accepted turns","document.querySelectorAll('.turn').length === 2 && !!document.querySelector('.incoming p')");

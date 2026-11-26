@@ -28,7 +28,7 @@ const narrowPane = ref<'state' | 'chat'>('chat');
         <button type="button" :aria-pressed="narrowPane === 'state'" @click="narrowPane = 'state'">房间状态</button>
         <button type="button" :aria-pressed="narrowPane === 'chat'" @click="narrowPane = 'chat'">聊天</button>
       </div>
-      <section class="room-view" aria-label="房间状态"><slot name="room" /></section>
+      <section class="room-view" aria-label="房间状态"><slot name="room" :active="board === 'room'" /></section>
       <section class="chat-pane" aria-label="和大肥鱼聊天"><slot /></section>
     </section>
     <section v-show="board === 'settings'" class="settings-view" aria-labelledby="settings-title">
