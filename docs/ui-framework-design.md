@@ -274,6 +274,10 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 每行有包 `id`、`name`、`version`、`installed`、`loaded`、`generation`、`state`、`canLoad` 和 `canUnload`。`installed` 表示最近一次成功扫描可发现该包，`loaded` 表示宿主仍持有具体实例。代次为十进制字符串，无实例为 `"0"`。状态为 `installed`、`active`、`stopping` 或 `failed`。有实例时另带实际加载的 `loadedName`、`loadedVersion` 和 `errorCode`，磁盘包已移出目录时仍列出其运行责任。操作字段表示可以提交，实际执行仍复核依赖、忙碌和停止状态。[业务目录](../apps/host/src/management/plugin_directory.cpp) · [双管道验收](../tests/plugins/management_plugins.cpp)
 
+已安装包的加载请求形如 `{"version":"1","request":"w1","type":"plugins.load","instance":"原后台","command":"1","id":"test.directory","revision":"原目录修订","generation":"0"}`。每个已握手窗口的插件命令独立从 `"1"` 连续递增。宿主返回 `plugins.operation`，初始 `state=queued`、`effect=unconfirmed` 和不透明的 `operation`。窗口可发送 `{"version":"1","request":"q1","type":"plugins.receipt","instance":"原后台","operation":"原操作号"}`，重新连接也能查询。
+
+操作回执带有原 `command`、`action`、`id`、`revision`、`targetGeneration` 和核实的 `generation`。实际成功加载为 `succeeded/loaded`，有底层返回码时提供 `nativeCode`。同一窗口重发原命令可读回原结果，改目标或参数返回 `conflict`，跳号返回 `outOfOrder` 和 `expectedCommand`。旧修订或代次返回 `stale/notApplied`。同一后台有界保留 64 项，进行中的记录受保护，已退休的命令号返回 `expired`。原操作号已不可查时返回 `unknown`。[业务线程与原操作回执](../apps/host/src/management/plugin_actions.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

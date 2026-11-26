@@ -37,6 +37,24 @@ Json call(const fs::path& data, const std::string& client, Json body) {
     return management::resident_request(data,{{"op","request"},{"client",client},{"body",std::move(body)}});
 }
 
+// 从窗口看到的原目录行生成受后台、修订和代次约束的命令。
+Json intent(const Json& directory, const Json& row, const char* action, unsigned sequence) {
+    return {{"type",std::string("plugins.")+action},{"instance",directory.at("instance")},{"command",std::to_string(sequence)},
+        {"id",row.at("id")},{"revision",directory.at("revision")},{"generation",row.at("generation")}};
+}
+
+// 使用原操作号从任一有效连接读回终态，等待期间不重发写命令。
+Json settled(const fs::path& data, const std::string& client, const Json& submitted) {
+    const Json read{{"type","plugins.receipt"},{"instance",submitted.at("instance")},{"operation",submitted.at("operation")}};
+    Json result;
+    until([&] {
+        result=call(data,client,read);
+        const auto& state=result.at("state");
+        return state!="queued" && state!="running" && state!="pending";
+    },"original plugin operation");
+    return result;
+}
+
 // 用同号轮询确认终端插件命令实际执行，失败保留原回执。
 void terminal(const fs::path& data, const std::string& client, unsigned id, const std::string& line) {
     const Json envelope{{"op","terminal"},{"client",client},{"body",{{"id",id},{"action","line"},{"text",line}}}};
@@ -85,12 +103,33 @@ void directory(const fs::path& root, const fs::path& dll) {
     check(row.at("id")=="test.directory" && row.at("name")=="目录测试" && row.at("version")=="1" && row.at("state")=="installed" &&
         row.at("generation")=="0" && row.at("installed")==true && row.at("loaded")==false && row.at("canLoad")==true &&
         row.at("canUnload")==false && installed.at("revision")!=first.at("revision"),"installation fabricated a running instance");
-    terminal(data,one.client,2,"/plugins load test.directory");
+    const auto load=intent(installed,row,"load",1);
+    bool extra_refused=false, outsider_refused=false;
+    try { auto path_argument=load; path_argument["path"]="outside"; (void)call(data,one.client,path_argument); }
+    catch (const std::runtime_error&) { extra_refused=true; }
+    try { (void)call(data,"not-a-connected-client",load); }
+    catch (const std::runtime_error&) { outsider_refused=true; }
+    check(extra_refused && outsider_refused && read(two.client)==installed,"unbound client or filesystem argument reached a load");
+    auto skipped=load;
+    skipped["command"]="2";
+    const auto out_of_order=call(data,one.client,skipped);
+    check(out_of_order.at("state")=="outOfOrder" && out_of_order.at("expectedCommand")=="1","command sequence gap executed");
+    const auto admitted=call(data,one.client,load);
+    check(admitted.at("event")=="plugins.operation" && admitted.at("state")=="queued" && admitted.at("effect")=="unconfirmed",
+        "admission claimed an unverified load");
+    const auto loaded=settled(data,two.client,admitted);
+    check(loaded.at("state")=="succeeded" && loaded.at("effect")=="loaded" && loaded.at("nativeCode")==DFY_V2_OK &&
+        loaded.at("generation")!="0" && call(data,one.client,load)==loaded,"original load receipt was lost or re-executed");
+    auto conflict=load;
+    conflict["id"]="test.other";
+    check(call(data,one.client,conflict).at("state")=="conflict","same command accepted a different target");
+    const auto obsolete=settled(data,one.client,call(data,two.client,load));
+    check(obsolete.at("state")=="stale" && obsolete.at("effect")=="notApplied","second window reloaded from an obsolete sample");
     Json active;
     until([&] { active=read(one.client); return active.at("packages").front().at("state")=="active"; },"active generation");
     const auto live=active.at("packages").front();
     const Json pinned{{"type","plugins.list"},{"instance",one.instance},{"revision",active.at("revision")}};
-    check(live.at("loaded")==true && live.at("generation")!="0" && live.at("canLoad")==false && live.at("canUnload")==true &&
+    check(live.at("loaded")==true && live.at("generation")==loaded.at("generation") && live.at("canLoad")==false && live.at("canUnload")==true &&
         live.at("loadedVersion")=="1" && active==call(data,two.client,pinned),"inconsistent active generation");
     terminal(data,one.client,3,"/plugins refresh");
     check(call(data,one.client,pinned)==active && read(two.client)==active && call(data,two.client,room)==pending && !model_calls,

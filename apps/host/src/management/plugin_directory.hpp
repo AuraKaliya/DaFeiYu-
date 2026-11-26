@@ -22,6 +22,10 @@ struct PluginDirectory {
     std::map<std::string,PackageRow> packages;
 };
 class Host;
+// 校验协议中的不透明身份，只借用请求本身的有界字符串。
+const std::string& plugin_identity(const nlohmann::json& value, std::size_t limit);
+// 严格解析管理协议共有的十进制命令号、修订和代次。
+std::uint64_t plugin_number(const nlohmann::json& value);
 // 在业务线程关联已发现包和实际运行代次，未变的快照供多个窗口共享。
 std::shared_ptr<const PluginDirectory> sample_plugins(const plugins::PluginManager& manager, const std::shared_ptr<const PluginDirectory>& previous);
 // 按后台及可选目录修订读取已发布的包状态。

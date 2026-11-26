@@ -196,6 +196,7 @@ nlohmann::json dispatch(Host* host, const nlohmann::json& request, const std::st
             {"available",host != nullptr},{"run",run_snapshot(host,request)}};
     if (!host) throw std::runtime_error("management: host unavailable");
     if (type=="plugins.list") return plugin_directory_request(*host,request);
+    if (type.starts_with("plugins.")) return plugin_action_request(*host,request,client);
     if (type.starts_with("mailbox.")) return mailbox_request(*host,request);
     if (type.starts_with("messages.")) return message_request(*host,request,client);
     if (type == "room.read" && request.size()==3)

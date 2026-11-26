@@ -161,6 +161,9 @@ std::optional<std::int64_t> Host::message_watermark(const std::string& client, b
 void Host::close(bool explicit_request) noexcept {
     if (explicit_request) explicit_stop_ = true;
     worker_.request_stop();
+    std::lock_guard lock(mutex_);
+    for (auto& op : plugin_operations_) if (op->state=="queued") { op->state="unavailable"; op->effect="notApplied"; }
+    queued_plugins_ = 0;
 }
 
 // 复制最近发布的阶段、开始点和等待对象。
@@ -408,15 +411,12 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             if (!display || display->revision != visible.revision) display = std::make_shared<const app::ConversationDisplay>(visible);
             try { mailboxes = app::sample_mailboxes(*application,mailboxes); }
             catch (const std::exception&) { mailboxes.reset(); }
-            std::shared_ptr<const PluginDirectory> published;
-            try { packages = sample_plugins(application->plugins(),packages); published = packages; }
-            catch (const std::exception&) {}
+            advance_plugin_actions(application->plugins(),packages);
             {
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;
                 room_location_ = location;
                 mailboxes_ = mailboxes;
-                packages_ = std::move(published);
                 display_ = display;
                 can_submit_ = conversation.accepting() && !conversation.busy() && !pending_ && !stop_command_ &&
                     (visible.queue.empty() || visible.queue_paused);
