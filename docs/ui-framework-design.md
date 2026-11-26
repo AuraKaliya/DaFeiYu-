@@ -292,6 +292,8 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 同一意图可按原提交号重读。窗口发送 `{"version":"1","request":"s3","type":"settings.receipt","owner":"host","instance":"当前后台","submission":"window-a-1"}` 查询最近 32 次成功保存的原回执。以相同基准修订和相同值重发原提交会返回原保存修订，改值或改基准返回 `submissionConflict`。重启后用新后台身份仍可查原提交，超出保留范围或从未成功写入的提交返回 `unknown`。[保存与冲突裁定](../apps/host/src/host_settings.cpp) · [文件发布](../apps/host/src/host_settings_file.cpp) · [双窗、写锁与重启验证](../apps/host/tests/management_settings.cpp)
 
+正式入口验收在同一用户目录先后启动两个 `dafeiyu-host.exe` 进程，分别持有原进程句柄并核对退出码。首次启动从指定配置取得超时，保存后另一个窗口仍可读到旧采用值。新进程采用用户覆盖，也能复查原保存回执。两次启动期间主会话均保持空闲。[正式本体验收](../apps/host/tests/resident_settings.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型
