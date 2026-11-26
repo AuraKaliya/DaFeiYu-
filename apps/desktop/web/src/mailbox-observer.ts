@@ -51,6 +51,7 @@ function limitedHistory(addresses: unknown): boolean | undefined {
   return limited;
 }
 // 核对原信箱、连续投递号与入箱状态，只展示该信件实际具备的回执。
+// 步骤：核对原信件身份 → 投影入箱时间与修订 → 已实收时补充取件回执。
 function receiptFields(raw: unknown, letterId: string, received: boolean): MailReceiptField[] | undefined {
   if (raw === undefined) return [];
   if (!object(raw) || !id(raw.mailbox) || !id(raw.sequence) || raw.mailbox + '/' + raw.sequence !== letterId ||
@@ -89,6 +90,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
   let sequence = 0, online = false, active = false, open = false, discover = true;
 
   // 原件失联时保留最近读数，不把网络失败显示为空信箱。
+  // 步骤：撤销失效请求 → 安排下次读取 → 标记受影响的目录或来源。
   function fail(kind: Kind): void {
     delete pending[kind];
     due[kind] = clock() + 1500;
@@ -100,6 +102,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
     } else view.value = { ...view.value, detailStatus: 'unavailable' };
   }
   // 发出有界的只读请求，保存请求当时的完整观察身份。
+  // 步骤：绑定实例和来源 → 预登记原请求 → 投递或记录发送失败。
   function send(kind: Kind): void {
     const instance = kind === 'list' && discover ? '' : view.value.directory?.instance ?? '';
     const source = kind === 'read' ? view.value.source : '';
@@ -111,6 +114,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
     try { post(fields); } catch { fail(kind); }
   }
   // 目录和可见详情分别限频，每种读取至多一个在途请求。
+  // 步骤：结算超时请求 → 按期限发现目录 → 读取仍有效的可见来源。
   function tick(): void {
     if (!active || !online) return;
     const now = clock();
@@ -123,6 +127,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
         !pending.read && now >= due.read) send('read');
   }
   // 连接或房间可见性改变后重新核实目录，其他窗口的请求独立。
+  // 步骤：废弃上次连接的请求 → 更新本窗读数状态 → 按可见性恢复读取。
   function context(connected: boolean, visible: boolean): void {
     if (connected === online && visible === active) return;
     online = connected; active = visible; discover = true;
@@ -138,6 +143,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
     if (open) { due.list = 0; tick(); }
   }
   // 用户显式切换才绑定新来源，相同名称的重载来源不会继承旧信件。
+  // 步骤：查当前目录 → 撤销旧快照 → 请求所选来源。
   function select(selected: string): void {
     const current = view.value.directory?.sources.find(item => item.id === selected);
     if (selected && !current) return;
@@ -149,6 +155,7 @@ export function useMailboxObserver(post: Post, clock = () => performance.now()) 
   // 用户重试同一观察范围，已有请求仍按原编号完成。
   function retry(): void { due.list = due.read = 0; tick(); }
   // 先核对目录实例再处理来源消失，旧实例的详情和标签一起归还。
+  // 步骤：识别后台替换 → 校验目录修订和来源代次 → 保留或撤销原选择。
   function directory(next: MailDirectory): void {
     const old = view.value;
     if (old.directory && old.directory.instance !== next.instance) {

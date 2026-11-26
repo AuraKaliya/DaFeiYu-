@@ -42,6 +42,7 @@ function Start-Panel([string]$Mode) {
 }
 
 # 同时观察两窗，任一固定检查失败立即报告，只有浏览器和配置全部释放才可放行回答。
+# 步骤：跟踪窗口和同伴进程 → 核对退出码 → 检查浏览器与配置回收报告。
 function Wait-Panels([Diagnostics.Process[]]$Panels, [Diagnostics.Process]$Peer) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {

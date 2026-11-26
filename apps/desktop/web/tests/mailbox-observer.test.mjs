@@ -5,6 +5,7 @@ import { useMailboxObserver } from '../src/mailbox-observer.ts';
 const sources = [{ id: '11', label: '书房' }, { id: '12', label: '测试插件' }];
 
 // 固定本窗时钟与后台回包，每次读取仍经过正式观察器。
+// 步骤：建立独立观察器 → 提供可控的目录与详情回包 → 接入固定时钟。
 function fixture() {
   const sent = [];
   let time = 0;
@@ -21,6 +22,7 @@ function fixture() {
 }
 
 // 收起、重复打开、切换来源和新目录都不交付系统收件或回信命令。
+// 步骤：切换来源并丢弃晚到回包 → 重读原件 → 撤销离开目录的来源。
 test('one room entry reads only the selected original source', () => {
   const f = fixture(), panel = f.panel;
   assert.deepEqual(Object.keys(f.sent[0]).sort(),['request','type','version']);
@@ -53,6 +55,7 @@ test('one room entry reads only the selected original source', () => {
 });
 
 // 未响应、读取失败和后台换代分别保持最近快照或撤销旧来源，晚到回包无权复活旧记录。
+// 步骤：制造读错 → 重连到新后台 → 排除旧回包并推进超时。
 test('timeout and reconnect never present a failed read as an empty source', () => {
   const f = fixture(), panel = f.panel;
   f.directory(); panel.visibility(true); f.directory(); panel.select('12');
@@ -85,6 +88,7 @@ test('timeout and reconnect never present a failed read as an empty source', () 
 });
 
 // 两窗用自己的请求号和选择，不同实例、缺项和重复身份的回包都不能覆盖有效投影。
+// 步骤：交错投递双窗回包 → 注入重复信件号 → 检查另一窗仍能独立读取。
 test('windows validate independent replies before publishing any letters', () => {
   const a = fixture(), b = fixture();
   b.directory([],{},a.latest('mailbox.list'));
@@ -106,6 +110,7 @@ test('windows validate independent replies before publishing any letters', () =>
 });
 
 // 原信箱撤销或同号换代时清除旧详情，目录的失效响应不会变成成功的空目录。
+// 步骤：撤销已读来源 → 更换同号代次 → 处理旧目录和后台替换。
 test('stale snapshots and source generations cannot reuse an earlier binding', () => {
   const f = fixture(), panel = f.panel;
   const member = { id:'11',label:'同名来源',kind:'plugin',generation:'1',plugin:'sample' };
@@ -138,6 +143,7 @@ test('stale snapshots and source generations cannot reuse an earlier binding', (
 });
 
 // 同一信件分别核实实际入箱及取件时间，原地址不符时保留最近一次可信读数。
+// 步骤：采样待收原件 → 核对实收时的公开回执 → 排除串号回包。
 test('receipts belong to the selected letter and display only confirmed public fields', () => {
   const f = fixture(), panel = f.panel;
   f.directory(); panel.visibility(true); f.directory(); panel.select('11');
@@ -163,6 +169,7 @@ test('receipts belong to the selected letter and display only confirmed public f
 });
 
 // 只要地址水位显示早期回执已裁剪，当前投影就不能被当成完整历史。
+// 步骤：读取全新空箱 → 标记保留范围 → 拒收矛盾水位。
 test('retention coverage follows the original mailbox watermarks', () => {
   const f = fixture(), panel = f.panel;
   f.directory(); panel.visibility(true); f.directory(); panel.select('11');

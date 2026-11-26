@@ -29,10 +29,12 @@ std::unique_ptr<app::Application> open_fixture(const fs::path& data) {
 }
 
 // 测试控制端使用独立的终端身份申请收件或重载，两个桌面窗口只查询公开投影。
+// 步骤：建立独立连接 → 以原命令号等待收件或重载实效 → 注销控制端。
 void control(const fs::path& data, const std::string& definition, bool reload) {
     const auto binding=management::connect_resident(data,definition);
     unsigned sequence=0;
     // 保持原命令号，在同一个终端请求上等待系统执行结果。
+    // 步骤：发出有界终端请求 → 等待同号结果 → 核对实际输出。
     const auto command = [&](const char* line, const char* expected) {
         const Json body{{"op","terminal"},{"client",binding.client},{"body",{{"id",++sequence},{"action","line"},{"text",line}}}};
         const auto end=std::chrono::steady_clock::now()+6s;

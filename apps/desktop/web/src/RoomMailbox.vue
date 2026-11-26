@@ -4,14 +4,17 @@ import type { MailboxView } from './mailbox-view';
 
 const props = defineProps<{ view: MailboxView }>();
 const emit = defineEmits<{ visibility: [open: boolean]; select: [source: string]; retry: [] }>();
+// 从当前目录定位选中项，保留原始来源身份。
 const sources = computed(() => props.view.directory?.sources ?? []);
 const selected = computed(() => sources.value.find(item => item.id === props.view.source));
+// 按目录读数的有效性显示来源数或读取状态。
 const directoryLabel = computed(() => {
   if (props.view.directoryStatus === 'unavailable') return '来源目录暂不可用';
   if (props.view.directoryStatus === 'stale') return '来源目录已过期';
   if (props.view.directoryStatus === 'loading') return '正在读取来源';
   return sources.value.length ? `${sources.value.length} 个来源` : '暂无信箱来源';
 });
+// 按来源与最近可信快照生成详情反馈，区分空箱、失效和历史裁剪。
 const detailLabel = computed(() => {
   if (!props.view.source) return props.view.selectionNotice ?? '';
   if (props.view.detailStatus === 'stale') return '所选来源已失效，请重新选择来源。';

@@ -13,11 +13,13 @@ function receive(event: MessageEvent<unknown>): void { observer.receive(event.da
 // 房间切换或原连接失效时立即更新只读范围。
 function update(): void { observer.context(props.connected, props.active); }
 watch(() => [props.connected, props.active], update);
+// 挂载时先接收回包，再按当前房间和连接状态启动定时读取。
 onMounted(() => {
   bridge.addEventListener('message', receive);
   update();
   timer = window.setInterval(observer.tick, 500);
 });
+// 卸载时停止定时读取，归还监听并撤销本窗在途请求。
 onUnmounted(() => {
   window.clearInterval(timer);
   bridge.removeEventListener('message', receive);
