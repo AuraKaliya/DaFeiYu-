@@ -8,7 +8,7 @@
 | 核对主线验收版本、各模块已交付的范围与下一项 | [当前开发进度](architecture.md#当前开发进度) · [架构图与模块职责](architecture.md#架构图) · [Agent 会话与工具流程](architecture.md#agent-会话与工具流程) |
 | 核对主 Agent、插件子 Agent、信箱与 Hook 的运行边界 | [当前边界](architecture.md#当前边界) |
 | 核对 Agent 回合中的规则顺序、消息来源与状态声明 | [Agent 循环的提示词设计与大肥鱼的应用](agent-loop-prompt-design.md) · [规则段顺序与来源](agent-loop-prompt-design.md#规则段顺序与来源) · [状态栏注册契约](agent-loop-core-design.md#agent-status-bar-的字段与更新时机) |
-| 从已交付的逐决策状态接续第 5 项事件关注与唤醒 | [第 4 项主线验收](agent-loop-core-design.md#第-4-项逐决策状态与按版本查询) · [六项开发顺序](agent-loop-core-design.md#上下文装配的实施顺序与验收) · [关注与唤醒设计](agent-loop-core-design.md#关注模式与事件唤醒) |
+| 核对第 5 项原审批唤醒并接续第 6 项工具计数和领域事实 | [第 4 项主线验收](agent-loop-core-design.md#第-4-项逐决策状态与按版本查询) · [六项开发顺序](agent-loop-core-design.md#上下文装配的实施顺序与验收) · [第 5 项试点回放](agent-loop-core-design.md#第-5-项审批唤醒与一次性展示) |
 | 查阅基础 Agent 循环设计、已修复的运行问题及后续分工 | [基础 Agent 循环核心设计方案](agent-loop-core-design.md) · [主线实施记录](agent-loop-core-design.md#主线实施记录) · [长会话与回执复查](agent-loop-core-design.md#长会话与回执复查) · [下一轮开发计划](agent-loop-core-design.md#九下一轮开发计划) |
 | 运行大肥鱼、选择模型、查询终端命令 | [运行说明](run-guide.md) |
 | 运行桌面主面板、只读探针和房间预览 | [桌面运行说明](ui-probe-run-guide.md) |
