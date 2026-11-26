@@ -16,27 +16,43 @@ void rejects(const auto& operation) {
     throw std::runtime_error("unexpected work transition admitted");
 }
 
-// 固定玩家状态只保留在绑定镜像，增量、关闭和新代次不会留下重复的正文。
+// 固定玩家状态与关注只保留在绑定镜像，增量、撤回和换代不在领域正文重复传输。
+// 步骤：接纳完整登记 → 续用或撤回关注 → 拒绝非法集合 → 换绑检查旧来源。
 void status_samples() {
     dfy::app::BindingFacts facts;
     dfy::plugins::SubagentInput input;
     input.frame = dfy::plugins::SubagentFrame{3,1,"player/alpha",true};
     const Json sample{{"key","sample.stage"},{"version",1},{"subject","goal"},{"fact",8},{"value",{{"phase","ready"}}}};
-    auto set = Json{{"event","entered"},{"decisionStatusSamples",Json::array({sample})}};
+    const Json watch{{"key","sample.stage"},{"version",1},{"subject","goal"},{"mode","counted"},{"event",12},{"fact",8},{"count",1}};
+    auto set = Json{{"event","entered"},{"decisionStatusSamples",Json::array({sample})},{"decisionStatusAttention",Json::array({watch})}};
     input.prompt = Json{{"set",set},{"closed",Json::array()}}.dump();
     auto prompt = Json::parse(facts.apply(input,1,true));
-    check(!prompt.contains("decisionStatusSamples") && prompt.at("event")=="entered" &&
-        Json::parse(facts.status_samples())==Json::array({sample}),"status leaked into domain data or was lost");
+    check(!prompt.contains("decisionStatusSamples") && !prompt.contains("decisionStatusAttention") && prompt.at("event")=="entered" &&
+        Json::parse(facts.status_samples())==Json::array({sample}) && Json::parse(facts.status_attention())==Json::array({watch}),
+        "status or attention leaked into domain data or was lost");
     input.frame = dfy::plugins::SubagentFrame{3,2,"player/alpha",false};
     input.prompt = R"({"set":{"event":"again"},"closed":[]})";
     (void)facts.apply(input,2,false);
-    check(Json::parse(facts.status_samples())==Json::array({sample}),"omitted sample lost on delta");
+    check(Json::parse(facts.status_samples())==Json::array({sample}) && Json::parse(facts.status_attention())==Json::array({watch}),
+        "omitted sample or attention lost on delta");
     input.frame->sequence = 3;
     input.prompt = R"({"set":{"decisionStatusSamples":{}},"closed":[]})";
     rejects([&] { facts.apply(input,3,false); });
-    input.prompt = R"({"set":{},"closed":["decisionStatusSamples"]})";
+    input.prompt = R"({"set":{"decisionStatusAttention":{}},"closed":[]})";
+    rejects([&] { facts.apply(input,3,false); });
+    input.prompt = R"({"set":{},"closed":["decisionStatusAttention"]})";
     prompt = Json::parse(facts.apply(input,3,false));
-    check(prompt.at("factFrame").at("closed").empty() && facts.status_samples()=="[]","closed sample remained visible");
+    check(prompt.at("factFrame").at("closed").empty() && facts.status_attention()=="[]" &&
+        Json::parse(facts.status_samples())==Json::array({sample}),"releasing attention erased the fact or leaked a close");
+    input.frame->sequence = 4;
+    input.prompt = Json{{"set",{{"decisionStatusAttention",Json::array({watch})}}},{"closed",{"decisionStatusSamples"}}}.dump();
+    prompt = Json::parse(facts.apply(input,4,false));
+    check(!prompt.contains("decisionStatusAttention") && prompt.at("factFrame").at("closed").empty() && facts.status_samples()=="[]",
+        "closed sample remained visible");
+    input.frame = dfy::plugins::SubagentFrame{4,1,"player/beta",true};
+    input.prompt = R"({"set":{},"closed":[]})";
+    (void)facts.apply(input,5,true);
+    check(facts.status_attention()=="[]" && facts.status_samples()=="[]","new binding inherited an old event");
 }
 
 // 同一工作经过多次实效更新后仍能登记真实退出，并继续查证迟到实收。

@@ -14,6 +14,8 @@ class BindingFacts {
     std::string apply(const plugins::SubagentInput& input, std::uint64_t request, bool full);
     // 取已合入增量的状态采样，定义和读取权限由实例宿主提供。
     std::string status_samples() const;
+    // 读取原绑定当前有效的任务与事件关注；省略字段的增量继续沿用已接纳集合。
+    std::string status_attention() const;
     // 取得当前已准入绑定的代次。
     std::uint64_t epoch() const noexcept { return epoch_; }
     // 查询原作用域地址，供运行状态回执关联。

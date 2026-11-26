@@ -80,13 +80,15 @@ std::string BindingFacts::apply(const plugins::SubagentInput& input, std::uint64
     }
     if (next.size() > 96 || next.dump().size() > 64*1024) throw std::length_error("binding: snapshot capacity exhausted");
     const bool baseline = frame.baseline || rebound || full;
-    const auto samples = next.find("decisionStatusSamples");
-    if (samples!=next.end() && (!samples->is_array() || samples->size()>32))
-        throw std::invalid_argument("binding: invalid decision status samples");
     auto projected = baseline ? next : changes;
-    projected.erase("decisionStatusSamples");
     auto closed = baseline ? Json::array() : patch.at("closed");
-    std::erase(closed.get_ref<Json::array_t&>(),Json("decisionStatusSamples"));
+    for (const auto* name : {"decisionStatusSamples","decisionStatusAttention"}) {
+        const auto rows = next.find(name);
+        if (rows!=next.end() && (!rows->is_array() || rows->size()>32))
+            throw std::invalid_argument("binding: invalid decision status array");
+        projected.erase(name);
+        std::erase(closed.get_ref<Json::array_t&>(),Json(name));
+    }
     projected["factFrame"] = {{"epoch",frame.epoch},{"sequence",frame.sequence},{"scope",frame.scope},
         {"mode",baseline ? "baseline" : "delta"},{"closed",std::move(closed)}};
     auto prompt = projected.dump();
@@ -99,6 +101,12 @@ std::string BindingFacts::apply(const plugins::SubagentInput& input, std::uint64
 // 暴露当前完整采样集，正文投影始终使用其余领域字段。
 std::string BindingFacts::status_samples() const {
     const auto it = fields_.find("decisionStatusSamples");
+    return it==fields_.end() ? "[]" : it->dump();
+}
+
+// 只向宿主状态装配返回当前关注，领域正文与关闭字段均已剥离传输信息。
+std::string BindingFacts::status_attention() const {
+    const auto it = fields_.find("decisionStatusAttention");
     return it==fields_.end() ? "[]" : it->dump();
 }
 

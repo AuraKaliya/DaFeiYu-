@@ -107,10 +107,11 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         const auto instance = slot.instance.lock();
         if (!instance) throw std::invalid_argument("subagent: status owner gone");
         const auto samples = pending->status_samples();
-        if (samples!="[]" || instance->status_definitions()!="[]") {
+        const auto attention = pending->status_attention();
+        if (samples!="[]" || attention!="[]" || instance->status_definitions()!="[]") {
             agent::DecisionStatusStore validation;
             (void)validation.prepare(id,input.frame->epoch,slot.request+1,1,agent::message_utc_now(),
-                {{std::string(instance->plugin_id()),instance->status_definitions(),samples}});
+                {{std::string(instance->plugin_id()),instance->status_definitions(),samples,attention}});
         }
         const auto after = baseline ? 0 : slot.projected_receipt;
         // 原事实帧最多约 64 KiB，另给两个水位及数组字段名留出空间。
@@ -247,7 +248,8 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     if (input.frame) {
         const auto& frame = *input.frame;
         const auto scope = std::to_string(slot.owner)+"/"+std::to_string(frame.epoch)+"/"+frame.scope;
-        agent::DecisionStatusSource source{owner,instance->status_definitions(),slot.pending_facts->status_samples()};
+        agent::DecisionStatusSource source{owner,instance->status_definitions(),slot.pending_facts->status_samples(),
+            slot.pending_facts->status_attention()};
         const bool can_read = read_authority.has_value();
         options.decision_status = agent::DecisionStatusOptions{scope,[source=std::move(source)] { return std::vector{source}; },
             can_read,std::move(read_authority)};

@@ -80,6 +80,8 @@ cmake --build .\build-status --config Release
 
 带绑定的事实帧使用 `set.decisionStatusSamples` 提交当前完整采样数组。每项提供 `key`、`version`、`subject`、正整数 `fact` 和对象 `value`，可附带 `sampledUtcMs` 与 `validUntilUtcMs`。增量帧省略该字段会沿用上个集合，显式空数组或 `closed` 中的同名字段会清空当前集合。旧快照按原版保留。宿主从领域消息剥离传输字段，再以自己的来源生成决策尾注。[帧校验](../apps/host/src/binding_facts.cpp) · [键和值校验](../modules/agent/src/decision_status.cpp)
 
+`set.decisionStatusAttention` 同样提交完整集合，每帧最多 32 项。每项用本插件已声明的 `key`、`version` 和 `subject` 定位对象。任务期关注使用 `"mode":"continuous"` 和原任务标识 `task`。多个任务可独立关注同一项，结束时从集合移除相应登记。按次数关注使用 `"mode":"counted"`、原事件正整数 `event`、所关注的采样号 `fact` 和正整数 `count`。一个绑定内同一来源的原事件号固定对应这份登记。首次展示将原号放入 `wakeEvents`，在该项实际送模并取得有效文本或工具响应后扣一次。被裁剪、缺少原采样或请求失败时保留次数。原状态按 `snapshot` 查询。[计次与重传](../modules/agent/src/decision_attention.cpp) · [模型响应结算](../modules/agent/src/run_loop.cpp)
+
 `read_receipt` 按原会话、代次和阶段接纳号读回数据。调用方传入缓冲区，可先以零容量取得所需字节数。活动记录带原正文，归档记录带阶段和正文 SHA-256，超过保留窗口返回 `DFY_V2_NOT_FOUND`。读取沿用原实例权限，期间不触发模型、工具或游戏工作。[宿主索引](../apps/host/src/binding_facts.cpp) · [跨 DLL 用例](tests/fixtures/query_v2/mailbox_fixture.c)
 
 关闭子会话后，可沿原实例和原会话号补报已登记工作的实效、退出或只读查证。宿主保留至多 16 份工作索引，活动和退役绑定共用该额度。新绑定首次登记工作时可回收已全部最终结算的退役索引。全为未决时会话问答仍可使用，新增工作返回容量不足，已有工作继续结算。插件实例卸载后撤销该实例的回执路由。[子会话生命周期](../apps/host/src/subagents.cpp)
