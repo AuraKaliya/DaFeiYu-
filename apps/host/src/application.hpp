@@ -27,6 +27,7 @@ struct DialogueQueueReceipt {
 class RunLog;
 class SoftwareLog;
 class MainMessages;
+struct MailboxDirectory;
 class MessageStore;
 struct VerificationReport {
     agent::RunId run;
@@ -89,6 +90,8 @@ class Application {
     plugins::PluginManager& plugins() noexcept { return plugins_; }
     // 借用本体持有的信箱目录及主体身份供宿主入口使用。
     const plugins::PluginMailboxHost& mailbox_host() const noexcept { return mailbox_host_; }
+    // 复制本体及已接入插件的实际信箱来源，只供受信管理宿主投影。
+    MailboxDirectory mailbox_directory() const;
     // 借用宿主的插件子会话服务。
     Subagents& subagents() noexcept { return *subagents_; }
     // 提供可信入口配置主会话按分类收件与发送方审查。

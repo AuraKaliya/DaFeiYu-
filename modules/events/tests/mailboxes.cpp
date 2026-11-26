@@ -96,6 +96,51 @@ void receipt_window() {
         "expired sequence was reaccepted");
 }
 
+// 公开回执反映原件实际取出的位置，重复观察、重投和失败均不推进任何水位。
+// 步骤：投递两封并观察 → 核对同号重投与满箱拒绝 → 实际取件 → 检查环形保留与撤销。
+void inspect_receipts() {
+    Mailboxes network({2,2,4,32,2});
+    const auto owner = next_domain(), sender = next_domain(), foreign = next_domain();
+    const auto box = network.open(owner,sender), other = network.open(foreign,sender);
+    const MailboxCategory wakes[] = {{"plugin.notice",1}};
+    network.wake_on(owner,box,wakes);
+    const auto payload = mailbox_text("plugin.notice",1,"private payload",32);
+    const auto topology = network.directory_revision();
+    const auto unrelated = network.revision(foreign,other);
+    const auto first = network.deliver(sender,box,1,payload).event;
+    const auto second = network.deliver(sender,box,2,payload).event;
+    const auto queued = network.inspect(owner,box);
+    const auto check_revision = network.revision();
+    check(queued.messages.size()==2 && !queued.messages[0].received_utc_ms && queued.messages[1].event==second &&
+        queued.messages[0].category=="plugin.notice" && queued.messages[0].version==1 && queued.messages[0].accepted_utc_ms>0 &&
+        queued.messages[0].accepted_revision<queued.messages[1].accepted_revision && queued.accepted==2 && !queued.received,"inspection lost pending receipt facts");
+    rejects<std::invalid_argument>([&] { network.inspect(foreign,box); });
+    check(network.deliver(sender,box,1,message("plugin.changed")).state==DeliveryState::repeated,"replay entered source");
+    rejects<std::length_error>([&] { network.deliver(sender,box,3,payload); });
+    check(network.inspect(sender,box).revision==queued.revision && network.pending_wake(owner,box)==second &&
+        network.revision()==check_revision && network.revision(foreign,other)==unrelated && network.directory_revision()==topology,
+        "inspection, rejected delivery or duplicate changed a revision or wake");
+
+    auto held = network.read(owner,box);
+    const auto read = network.inspect(owner,box);
+    check(held.event.get().id==first && read.received==1 && read.messages[0].received_utc_ms.has_value() &&
+        read.messages[0].received_revision==read.revision && !read.messages[1].received_utc_ms && read.revision>queued.revision && network.pending_wake(owner,box)==second,
+        "read receipt advanced before its original consumer");
+    network.deliver(sender,box,3,payload);
+    const auto rolled = network.inspect(owner,box);
+    check(rolled.messages.size()==2 && rolled.messages.front().event==second && rolled.received==1 && rolled.accepted==3,
+        "retention evicted a pending message or lost the consumed watermark");
+    const auto long_name = "test."+std::string(160,'x');
+    const auto type = std::make_shared<const StructDescriptor>(StructDescriptor::create(long_name,2,{}, {0,256}));
+    network.deliver_next(sender,other,std::make_shared<const StructValue>(StructValue::create(type,{},0)));
+    check(network.inspect(foreign,other).messages.front().category.empty() &&
+        network.front(foreign,other)->payload->descriptor()->name()==long_name,"private schema length changed the original delivery");
+    const auto other_revision = network.revision(foreign,other);
+    network.revoke(owner);
+    rejects<std::invalid_argument>([&] { network.inspect(owner,box); });
+    check(held.event.get().id==first && network.revision(foreign,other)==other_revision,"revoking a source affected a held message or another source");
+}
+
 // 验证指定分类触发唤醒，普通消息保留队列顺序且重投不重新唤醒。
 // 步骤：配置分类 → 投递普通及唤醒消息 → 顺序消费并检查信号 → 重投并验证。
 void wake_categories() {
@@ -125,6 +170,7 @@ int main() {
         directed_delivery();
         retained_budget();
         receipt_window();
+        inspect_receipts();
         wake_categories();
         return 0;
     } catch (const std::exception& error) {

@@ -10,7 +10,8 @@ struct PluginInstance::State {
     // 步骤：签发实例代次并加载模块与服务 → 查询完整生命周期 → 配置事件、可选组及通知 → 登记宿主状态名额。
     State(const Manifest& manifest, std::shared_ptr<const EffectiveConfig> settings,
         std::shared_ptr<events::BroadcastChannel> channel, InstanceLimits limits, std::shared_ptr<events::ConsumerGroup> group)
-        : generation(runtime::next_domain()), module(manifest, limits.code_leases, limits.active_calls), host(limits.references, limits.readers), config(std::move(settings)), id(manifest.id), version(manifest.version) {
+        : generation(runtime::next_domain()), module(manifest, limits.code_leases, limits.active_calls), host(limits.references, limits.readers),
+          config(std::move(settings)), id(manifest.id), name(manifest.name), version(manifest.version) {
         lifecycle = module.query<dfy_v2_lifecycle_api>(DFY_V2_LIFECYCLE_INTERFACE, 1);
         if (!lifecycle) throw std::runtime_error("instance: lifecycle unavailable");
         {
@@ -87,6 +88,7 @@ struct PluginInstance::State {
     std::vector<dfy_v2_hook_description> transition_registrations;
     std::weak_ptr<platform::CodeLease> hook_code;
     std::string id;
+    std::string name;
     std::string version;
     dfy_v2_instance* instance = nullptr;
     InstancePhase phase = InstancePhase::loaded;
@@ -226,6 +228,8 @@ uint32_t PluginInstance::last_error() const noexcept { return state_->error; }
 runtime::DomainId PluginInstance::generation() const noexcept { return state_->generation; }
 // 返回实例关联的包 ID，运行代次仍由 generation 单独表示。
 std::string_view PluginInstance::plugin_id() const noexcept { return state_->id; }
+// 返回原实例的清单显示名，供管理视图标注已登记的来源。
+std::string_view PluginInstance::plugin_name() const noexcept { return state_->name; }
 // 读取实例创建时固定的原包版本，不查询磁盘上的后续替换文件。
 std::string_view PluginInstance::plugin_version() const noexcept { return state_->version; }
 // 仅在原生实例活动期间允许查询新能力。

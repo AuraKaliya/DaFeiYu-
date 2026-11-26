@@ -2,6 +2,7 @@
 #include "software_log.hpp"
 #include "message_store.hpp"
 #include "main_messages.hpp"
+#include "mailbox_view.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/utf8.hpp>
 #include <algorithm>
@@ -361,6 +362,12 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
     slot.reset();
 }
 
+// 在管理线程借用已发布的不可变目录与回执，不调用业务收件方。
+std::shared_ptr<const app::MailboxView> Host::mailboxes() const {
+    std::lock_guard lock(mutex_);
+    return mailboxes_;
+}
+
 // 只在业务线程拥有和使用应用服务。
 // 步骤：创建应用 → 推进原工作并发布快照 → 有序关闭并报告退出。
 void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
@@ -373,6 +380,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
         auto& conversation = application->conversation();
         const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;
+        std::shared_ptr<const app::MailboxView> mailboxes;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
             terminal_.advance(*application);
@@ -390,10 +398,13 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             }
             const auto& visible = conversation.display();
             if (!display || display->revision != visible.revision) display = std::make_shared<const app::ConversationDisplay>(visible);
+            try { mailboxes = app::sample_mailboxes(*application,mailboxes); }
+            catch (const std::exception&) { mailboxes.reset(); }
             {
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;
                 room_location_ = location;
+                mailboxes_ = mailboxes;
                 display_ = display;
                 can_submit_ = conversation.accepting() && !conversation.busy() && !pending_ && !stop_command_ &&
                     (visible.queue.empty() || visible.queue_paused);
