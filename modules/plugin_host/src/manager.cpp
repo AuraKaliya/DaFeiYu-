@@ -305,7 +305,9 @@ std::string_view PluginManager::directory_error() const noexcept { return state_
 // 复制非敏感实例状态供终端展示，不暴露配置或凭据。
 std::vector<LoadedPlugin> PluginManager::loaded() const {
     std::vector<LoadedPlugin> result;
-    for (const auto& [id,entry] : state_->instances) result.push_back({id,entry.instance->phase(),*entry.faulted ? DFY_V2_FAILED : entry.instance->last_error()});
+    for (const auto& [id,entry] : state_->instances)
+        result.push_back({id,entry.instance->phase(),*entry.faulted ? DFY_V2_FAILED : entry.instance->last_error(),
+            entry.instance->generation(),entry.stopping});
     return result;
 }
 // 为实例预留目录与调度名额，再执行一次创建及启动，失败沿既有生命周期回收。

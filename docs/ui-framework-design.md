@@ -268,6 +268,12 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 消息按最近入箱顺序返回。每个地址另列 `id`、`direction`、累计 `accepted`、累计 `received` 和最早保留序号 `firstRetained`（无记录为 `"0"`）。后台保留全部待收信及有界的近期回执。窗口可在原请求加 `message` 查一封详情，加 `revision` 核对所见版本。当前有效的空来源返回 `ready` 和空信件表。后台或来源失效、指定修订已变、选中信件已离开保留区间时返回 `stale` 和空信件表。读取失败沿用 `management.error`。取得新目录及当前来源快照后可重新选择原件。[原生收发回执](../modules/events/src/mailboxes.cpp) · [管理信箱验收](../tests/plugins/management_mailboxes.cpp)
 
+### 5.7 设置页的插件管理协议
+
+初次查询发送 `{"version":"1","request":"p1","type":"plugins.list"}`。已握手窗口可指定 `instance`，并以 `revision` 核对原目录。响应 `plugins.directory` 回显请求，带有后台实例、十进制字符串修订、`ready` 或 `stale`、`packages` 和无效目录项数 `unavailableCount`。旧后台或旧修订返回空行集和 `stale`。有效空目录返回 `ready`。根目录扫描失败按管理错误上报。读取只使用业务线程已发布的目录。
+
+每行有包 `id`、`name`、`version`、`installed`、`loaded`、`generation`、`state`、`canLoad` 和 `canUnload`。`installed` 表示最近一次成功扫描可发现该包，`loaded` 表示宿主仍持有具体实例。代次为十进制字符串，无实例为 `"0"`。状态为 `installed`、`active`、`stopping` 或 `failed`。有实例时另带实际加载的 `loadedName`、`loadedVersion` 和 `errorCode`，磁盘包已移出目录时仍列出其运行责任。操作字段表示可以提交，实际执行仍复核依赖、忙碌和停止状态。[业务目录](../apps/host/src/management/plugin_directory.cpp) · [双管道验收](../tests/plugins/management_plugins.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

@@ -46,6 +46,7 @@ add_library(dfy_management STATIC
   src/management/dialogue_channel.hpp src/management/host.cpp src/management/host.hpp
   src/management/local_pipe.cpp src/management/local_pipe.hpp src/management/message_protocol.cpp
   src/management/mailbox_protocol.cpp src/management/mailbox_protocol.hpp
+  src/management/plugin_directory.cpp src/management/plugin_directory.hpp
   src/management/message_protocol.hpp src/management/poll_log.cpp src/management/poll_log.hpp
   src/management/protocol.cpp src/management/protocol.hpp src/management/resident.cpp
   src/management/resident.hpp src/management/resident_watch.cpp src/management/resident_watch.hpp

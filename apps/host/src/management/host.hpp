@@ -14,6 +14,7 @@ namespace dfy::app { class SoftwareLog; }
 namespace dfy::app { class MessageStore; }
 namespace dfy::app { struct MailboxView; }
 namespace dfy::management {
+struct PluginDirectory;
 enum class StopPhase { requested, conversation, plugins, complete, failed };
 struct StopProgress {
     StopPhase phase = StopPhase::requested;
@@ -34,6 +35,8 @@ class Host {
     std::optional<RoomLocation> room_location() const;
     // 返回同一份已发布的目录与收件快照，复制期间不调用业务服务。
     std::shared_ptr<const app::MailboxView> mailboxes() const;
+    // 借用业务线程最近发布的包目录及实际插件状态。
+    std::shared_ptr<const PluginDirectory> packages() const;
     // 为新观察客户端签发独立命令空间，正常页面刷新沿用原空间。
     std::string open_client();
     // 核对远端观察者身份并更新活跃时间，不读取正文。
@@ -86,6 +89,7 @@ class Host {
     std::optional<app::RunStatusSnapshot> snapshot_;
     std::optional<RoomLocation> room_location_;
     std::shared_ptr<const app::MailboxView> mailboxes_;
+    std::shared_ptr<const PluginDirectory> packages_;
     std::shared_ptr<const app::ConversationDisplay> display_;
     std::optional<DialogueCommand> pending_, stop_command_;
     mutable std::map<std::string,Client> clients_{{"",{}}};
