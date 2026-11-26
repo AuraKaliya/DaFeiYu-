@@ -1,4 +1,4 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings, [switch]$HostSave)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
@@ -77,10 +77,20 @@ try {
         Copy-Item -LiteralPath $MailPlugin -Destination (Join-Path $package 'entry.dll')
         [IO.File]::WriteAllText((Join-Path $package 'plugin.json'),'{"manifest_version":1,"id":"test.mail","name":"Mailbox fixture","version":"1","abi_version":2,"entry":"entry.dll","default_config":"defaults.json"}')
         [IO.File]::WriteAllText((Join-Path $package 'defaults.json'),'{"mode":"t"}')
-        if ($HostSettings) {
+        if ($HostSettings -or $HostSave) {
             [IO.File]::WriteAllText($config,'{"provider":"deepseek","base_url":"https://offline.invalid","model":"fixture","api_key_env":"DFY_UNUSED_HISTORY_FIXTURE","timeout_ms":17000}')
-            $resident = Start-Resident 'serve-settings'
-            Wait-Panels @((Start-Panel 'settings-read'))
+            if ($HostSave) {
+                $resident = Start-Resident 'serve-settings-write'
+                $writer = Start-Panel 'settings-write'
+                $editor = Start-Panel 'settings-conflict'
+                Wait-Panels @($writer,$editor)
+                Stop-Resident $resident
+                $resident = Start-Resident 'serve-settings-write'
+                Wait-Panels @((Start-Panel 'settings-restart'))
+            } else {
+                $resident = Start-Resident 'serve-settings'
+                Wait-Panels @((Start-Panel 'settings-read'))
+            }
             if (Test-Path -LiteralPath (Join-Path $data 'fixed-model-calls')) { throw 'Reading host settings called the model' }
             Stop-Resident $resident
             return

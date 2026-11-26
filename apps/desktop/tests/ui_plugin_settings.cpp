@@ -12,7 +12,8 @@ void InteractionProbe::start_host_settings() {
     })())JS");
     expect("formal settings display the actual startup configuration","document.querySelector('.host-settings')?.dataset.settingsState==='ready' && "
         "document.querySelector('#host-provider')?.textContent==='deepseek' && document.querySelector('#applied-timeout')?.textContent.includes('17000') && "
-        "document.querySelector('#saved-timeout')?.textContent.includes('17000') && hostReads[0]?.instance===document.querySelector('.host-settings').dataset.settingsInstance");
+        "document.querySelector('#saved-timeout')?.textContent.includes('17000') && hostReads[0]?.instance===document.querySelector('.host-settings').dataset.settingsInstance && "
+        "hostReads[0].canSave===false && !document.querySelector('#save-host-timeout')");
     evaluate("refresh original settings","document.querySelector('#refresh-host-settings').click(); true");
     expect("reading keeps original host, revision and active value","hostReads.length>=2 && hostReads.at(-1).instance===hostReads[0].instance && "
         "hostReads.at(-1).revision===hostReads[0].revision && !hostReads.at(-1).pendingRestart && hostReads.at(-1).fields.find(f=>f.id==='timeout_ms').appliedValue===17000");

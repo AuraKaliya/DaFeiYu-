@@ -40,6 +40,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_plugin_actions(std::wstring_view mode, const std::filesystem::path& profile);
     // 从真实设置入口核对本体采用的供应商、超时和修订。
     void start_host_settings();
+    // 用独立设置窗口复核保存、冲突保留、旧回执和原配置重启采用。
+    void start_host_save(std::wstring_view mode, const std::filesystem::path& profile);
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif
