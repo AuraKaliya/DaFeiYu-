@@ -19,6 +19,31 @@ Json task_goal_sample(const Json& scene, const std::string& player) {
     return {{"key","mc.companion.task_goal"},{"version",1},{"subject",player},{"fact",*revision},{"value",{{"goal",*goal}}}};
 }
 
+// 从等待中的原工作和已入信箱的终态生成关注，原始操作参数仍随领域候选提供。
+// 步骤：提取可见任务目标 → 登记原候选的任务期 → 按原消息号提供计次采样。
+void decision_facts(Json& scene, const std::string& player, const std::deque<Json>& approvals, bool same_scope, bool relevant) {
+    Json samples = Json::array(), attention = Json::array();
+    if (auto goal = task_goal_sample(scene,player); !goal.is_null()) samples.push_back(std::move(goal));
+    if (relevant && scene.contains("player") && scene.at("player") == player) {
+        const auto pending = scene.find("pendingApproval");
+        if (pending != scene.end() && pending->value("status","") == "waiting" && pending->contains("work")) {
+            const auto& work = pending->at("work");
+            samples.push_back({{"key","mc.companion.pending_approval"},{"version",1},{"subject",work},{"fact",pending->at("item")},
+                {"value",{{"order",pending->at("order")},{"skill",pending->at("skill")}}}});
+            attention.push_back({{"key","mc.companion.pending_approval"},{"version",1},{"subject",work},{"mode","continuous"},{"task",work}});
+        }
+        if (same_scope) for (const auto& receipt : approvals) {
+            const auto& work = receipt.at("work");
+            const auto& message = receipt.at("message");
+            samples.push_back({{"key","mc.companion.approval_result"},{"version",1},{"subject",work},{"fact",message},{"value",receipt.at("value")}});
+            attention.push_back({{"key","mc.companion.approval_result"},{"version",1},{"subject",work},{"fact",message},
+                {"mode","counted"},{"count",1},{"event",message}});
+        }
+    }
+    if (!samples.empty()) scene["decisionStatusSamples"] = std::move(samples);
+    if (!attention.empty()) scene["decisionStatusAttention"] = std::move(attention);
+}
+
 // 保留原箱内转移工作的方向、对象、委托、提交范围和实读基线，供迟到回执逐项对照。
 Json chest_transfer_basis(Json proof) {
     for (const auto field : {"state","after","stored","withdrawn","remaining"}) proof.erase(field);
@@ -62,6 +87,18 @@ void PartnerFacts::clear() noexcept {
     scope_.clear(); previous_ = nullptr; sequence_ = session_ = admission_ = 0; isolated_ = false;
     uncertain_.clear();
     finished_late_.clear();
+    approvals_.clear();
+}
+// 从信箱接纳回执固定原工作、裁定和执行结果，按到达顺序保留最近十六份供下一相关决策使用。
+// 步骤：核对来源绑定 → 沿原消息识别重投 → 保留有界可重读原件。
+bool PartnerFacts::accept_approval(std::uint64_t session, std::uint64_t mailbox, std::uint64_t message, const Json& result) {
+    if (!bound(session) || !mailbox || !message || result.at("player") != player_) return false;
+    if (!approvals_.empty() && approvals_.back().at("message") >= message) return false;
+    Json value{{"mailbox",mailbox}};
+    for (auto field : {"id","order","skill","status","source","execution","player","generation"}) value[field] = result.at(field);
+    approvals_.push_back({{"work",result.at("work")},{"message",message},{"value",std::move(value)}});
+    if (approvals_.size()>16) approvals_.pop_front();
+    return true;
 }
 // 把原绑定及未决工作交给迟到回执，活动场景和新的接纳序号留在各自会话。
 // 步骤：建立只含原会话地址的结算对象 → 移交原工作状态 → 交回共同所有权。
@@ -80,8 +117,8 @@ std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope
     bool baseline = session != session_ || scope != scope_ || isolated_ || isolate;
     const auto sequence = session == session_ ? sequence_+1 : 1;
     auto candidate = scene;
-    if (auto sample = task_goal_sample(scene,player_); !sample.is_null())
-        candidate["decisionStatusSamples"] = Json::array({std::move(sample)});
+    const bool same_scope = session == session_ && scope == scope_;
+    decision_facts(candidate,player_,approvals_,same_scope,!isolate);
     std::string candidate_scope(scope);
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         Json changed = Json::object(), closed = Json::array();
@@ -97,7 +134,7 @@ std::uint32_t PartnerFacts::submit(std::uint64_t session, std::string_view scope
         const auto result = service_->submit(session,&input,&frame,&request,&expected,nullptr);
         if (result == DFY_V2_NOT_FOUND && expected && !baseline && attempt == 0) { baseline = true; continue; }
         if (result) return result;
-        if (session_ != session || scope_ != scope) { uncertain_.clear(); finished_late_.clear(); admission_ = 0; }
+        if (!same_scope) { uncertain_.clear(); finished_late_.clear(); approvals_.clear(); admission_ = 0; }
         previous_ = std::move(candidate); scope_ = std::move(candidate_scope);
         sequence_ = sequence; session_ = session; isolated_ = isolate;
         return DFY_V2_OK;

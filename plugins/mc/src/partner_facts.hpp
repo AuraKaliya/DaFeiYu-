@@ -17,6 +17,8 @@ class PartnerFacts {
     bool enabled(std::string_view player) const noexcept { return service_ && player == player_; }
     // 查询当前工具是否属于已经提交事实基线的原会话。
     bool bound(std::uint64_t session) const noexcept { return service_ && session && session == session_; }
+    // 只在原绑定记录已收进信箱的审批终态，重复投递沿用原消息号。
+    bool accept_approval(std::uint64_t session, std::uint64_t mailbox, std::uint64_t message, const nlohmann::json& result);
     // 查询宿主是否提供原账本读取能力。
     bool can_read_receipts() const noexcept { return ordered_ && ordered_->read_receipt; }
     // 在游戏派发前为原工作登记宿主责任，失败不消费新的接纳序号。
@@ -55,6 +57,7 @@ class PartnerFacts {
     };
     std::map<std::string,LateReceipt> uncertain_;
     std::deque<std::string> finished_late_;
+    std::deque<nlohmann::json> approvals_;
     const dfy_v2_agent_facts_api* service_ = nullptr;
     const dfy_v2_agent_ordered_facts_api* ordered_ = nullptr;
     std::string player_, scope_;

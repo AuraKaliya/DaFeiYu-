@@ -12,5 +12,31 @@
       "required": ["goal"],
       "additionalProperties": false
     }
+  }, {
+    "key": "mc.companion.pending_approval",
+    "version": 1,
+    "description": "原工作等待玩家裁定，主体是工作号，事实号是审批候选号。",
+    "defaultAttention": {"mode": "implicit"},
+    "valueSchema": {
+      "type": "object",
+      "properties": {"order": {"type": "integer"}, "skill": {"type": "string"}},
+      "required": ["order", "skill"],
+      "additionalProperties": false
+    }
+  }, {
+    "key": "mc.companion.approval_result",
+    "version": 1,
+    "description": "审批已结算的原工作及其未执行原因，事实号和唤醒号沿用该信箱的原消息号。",
+    "defaultAttention": {"mode": "implicit"},
+    "valueSchema": {
+      "type": "object",
+      "properties": {
+        "mailbox": {"type": "integer"}, "id": {"type": "integer"}, "order": {"type": "integer"},
+        "skill": {"type": "string"}, "status": {"type": "string"}, "source": {"type": "string"},
+        "execution": {"type": "string"}, "player": {"type": "string"}, "generation": {"type": "string"}
+      },
+      "required": ["mailbox", "id", "order", "skill", "status", "source", "execution", "player", "generation"],
+      "additionalProperties": false
+    }
   }]
 }

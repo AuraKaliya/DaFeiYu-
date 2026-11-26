@@ -201,7 +201,8 @@ async function main() {
   const task = scene || variant === 'partner-task';
   const route = variant?.startsWith('partner-route-');
   const first = variant === 'partner-route-first';
-  const delayed = variant === 'partner-route-delayed';
+  const approvalAttention = variant === 'partner-route-delayed-attention';
+  const delayed = approvalAttention || variant === 'partner-route-delayed';
   const exchange = variant === 'partner-exchange';
   const showGame = confirm || (route && variant !== 'partner-route-panel' && variant !== 'partner-route-manual' && !delayed);
   const legacyAir = variant === 'partner-legacy-air';
@@ -213,7 +214,7 @@ async function main() {
   const channel = randomUUID();
   const key = randomBytes(32).toString('hex');
   const playerThinking = exchange || observationBatch ? 'low' : responseTiming ? 'off' : undefined;
-  const factPlayer = correctionLost || ['late','retired','capacity','lookup'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
+  const factPlayer = approvalAttention || correctionLost || ['late','retired','capacity','lookup'].includes(delivery) ? 'fff01234-1234-1234-1234-123456789abc' : undefined;
   fs.writeFileSync(path.join(config, 'settings.json'), JSON.stringify({ channel, bridgeKey: key, playerThinking, factPlayer }));
   let reads = 0, airAttempts = 0, airTail = 0;
   const slowAir = { work:null, stops:0, exitedAt:null, messageAt:null, repliedAt:null };
@@ -1238,6 +1239,29 @@ async function main() {
       assert.equal((await once(child, 'exit'))[0], 0);
     }
     if (partnerLoop) assert.equal(releases, execution ? 0 : 2);
+    if (approvalAttention) {
+      const rows = fs.readFileSync(path.join(root,'trace','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+      const receipts = rows.filter(row => row.kind === 'mail.received' && row.category === 'mc.confirmation.execution');
+      assert.equal(receipts.length,1);
+      const [receipt] = receipts;
+      const requests = rows.filter(row => row.kind === 'model.prepared' && row.source === 'plugin');
+      const wakes = requests.filter(row => scenarioInput(row).status?.wakeEvents.length);
+      assert.equal(wakes.length,1);
+      const { messages, status } = scenarioInput(wakes[0]);
+      assert.deepEqual(status.wakeEvents,[receipt.message]);
+      const samples = status.items.filter(item => item.key === 'mc.companion.approval_result');
+      assert.equal(samples.length,1);
+      const [sample] = samples;
+      assert.deepEqual([sample.subject,sample.fact,sample.attention],
+        [receipt.body.work,receipt.message,{mode:'counted',events:[{event:receipt.message,remaining:1}]}]);
+      const { id, order, skill, status: decision, source, execution, player, generation } = receipt.body;
+      assert.deepEqual(sample.value,{id,order,skill,status:decision,source,execution,player,generation,mailbox:receipt.mailbox});
+      assert.equal(Object.hasOwn(JSON.parse(messages.at(-1).content),'approvalResult'),false);
+      const later = requests.find(row => row.seq > wakes[0].seq && row.run === wakes[0].run);
+      assert.ok(later && scenarioInput(later).messages.at(-1).toolCallId === 'approval-snapshot');
+      assert.deepEqual(scenarioInput(later).status.wakeEvents,[]);
+      assert.ok(!collecting,'withdrawn candidate reached the game');
+    }
     if (legacyAir) assert.equal(airAttempts,1);
     if (showGame) assert.ok(approvedId);
     if (delivery === 'lookup') {

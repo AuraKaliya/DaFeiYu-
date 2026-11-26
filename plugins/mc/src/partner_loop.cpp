@@ -508,9 +508,10 @@ void PartnerLoop::submit(std::string_view wake) {
     if (confirmation_ && confirmation_->work && !delegated) {
         const auto& candidate = *confirmation_;
         input["pendingApproval"] = {{"item",candidate.request},{"order",candidate.order},{"skill",candidate.skill},
-            {"arguments",candidate.arguments},{"question",candidate.question},{"status",candidate.approved_order ? "approved" : "waiting"}};
+            {"arguments",candidate.arguments},{"question",candidate.question},{"work",candidate.work->id},
+            {"status",candidate.decision.is_null() ? Json("waiting") : candidate.decision.at("status")}};
     }
-    if (!delegated && !approval_result_.is_null()) input["approvalResult"] = approval_result_;
+    if (!incremental && !delegated && !approval_result_.is_null()) input["approvalResult"] = approval_result_;
     if (delegated) input["delegation"] = {{"id",awaiting_delegation_->id},{"text",awaiting_delegation_->text}};
     if (previous_.is_object() && !previous_.empty()) input["previousActivity"] = previous_;
     if (feed_.gap()) input["eventGap"] = true;
@@ -1111,11 +1112,11 @@ void PartnerLoop::record(std::uint64_t session, std::uint64_t invocation, std::s
 }
 
 // 用固定分类封装已校验事实，消息正文大小保持在信箱上限内。
-void PartnerLoop::publish(std::string_view category, const Json& payload) {
+void PartnerLoop::publish(std::string_view category, const Json& payload, std::uint64_t approval_session) {
     if (outbound_.size() >= 128) throw std::logic_error("MC partner: outbox capacity exhausted");
     auto framed = payload;
     if (const auto result = fact_stream_.report(session_,category,payload)) framed["factReceiptError"] = result;
-    outbound_.push_back({category,framed.dump()});
+    outbound_.push_back({category,framed.dump(),approval_session});
 }
 
 // 给实际提交过的动作附上原桥接证据，宿主接纳未知状态后保留原读口。
@@ -1436,6 +1437,8 @@ void PartnerLoop::flush() {
     if (response == DFY_V2_BUSY || response == DFY_V2_RESOURCE_EXHAUSTED) return;
     if (response || (receipt.state != DFY_V2_MAILBOX_ACCEPTED && receipt.state != DFY_V2_MAILBOX_REPEATED))
         throw std::runtime_error("MC partner: invalid mailbox delivery");
+    if (front.approval_session && fact_stream_.accept_approval(front.approval_session,receipt.mailbox,receipt.sequence,Json::parse(front.body)))
+        approval_result_ = receipt.sequence;
     ++sent_;
     outbound_.pop_front();
 }

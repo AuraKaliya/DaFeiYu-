@@ -108,6 +108,45 @@ void verify_withdrawal(const Json& definitions) {
         snapshots.read(session,session,snapshot) != original) throw std::runtime_error("new admission changed a frozen goal");
 }
 
+// 核对原候选的持续关注、终态接纳、断序恢复和隔离回合，失效绑定不能发布旧唤醒。
+// 步骤：接纳等待候选 → 接纳同号终态并拦重 → 重取基线 → 切换作用域并核对关闭。
+void verify_approval() {
+    const std::string player = "player";
+    dfy_v2_agent_facts_api api{{},capture,nullptr};
+    dfy::mc::PartnerFacts facts;
+    facts.configure(&api,player);
+    Json scene{{"player",player},{"pendingApproval",{{"status","waiting"},{"work","work-7"},{"item",42},{"order",2},{"skill","collect"}}}};
+    const Json result{{"player",player},{"work","work-7"},{"id",42},{"order",2},{"skill","collect"},
+        {"status","withdrawn"},{"source","host"},{"execution","skipped"},{"generation","world"}};
+    // 发出实际绑定补丁并取回本次接纳的传输内容。
+    const auto send = [&](std::uint64_t session, std::string_view scope, bool isolated = false) {
+        std::uint64_t request = 0;
+        if (facts.submit(session,scope,{},scene,isolated,request)) throw std::runtime_error("approval frame rejected");
+        return frames.back().at("patch").at("set");
+    };
+    const auto waiting = send(7,"world/1");
+    const auto& sample = waiting.at("decisionStatusSamples").at(0);
+    const auto& task = waiting.at("decisionStatusAttention").at(0);
+    if (sample.at("fact") != 42 || sample.at("subject") != "work-7" || sample.at("key") != "mc.companion.pending_approval" ||
+        task.at("mode") != "continuous" || task.at("task") != "work-7") throw std::runtime_error("lost waiting work reference");
+    scene.erase("pendingApproval");
+    auto other = result; other["player"] = "visitor";
+    if (facts.accept_approval(8,52,81,result) || facts.accept_approval(7,52,81,other) || facts.accept_approval(7,52,0,result) ||
+        !facts.accept_approval(7,52,81,result) || facts.accept_approval(7,52,81,result)) throw std::runtime_error("approval admission identity");
+    const auto settled = send(7,"world/1");
+    const auto& watch = settled.at("decisionStatusAttention").at(0);
+    const auto& terminal = settled.at("decisionStatusSamples").at(0);
+    if (watch.at("mode") != "counted" || watch.at("count") != 1 || watch.at("event") != 81 ||
+        terminal.at("fact") != 81 || terminal.at("value").at("mailbox") != 52 || terminal.at("value").at("execution") != "skipped" ||
+        terminal.at("subject") != sample.at("subject")) throw std::runtime_error("terminal lost the original receipt or work");
+    request_baseline = true;
+    if (send(7,"world/1").at("decisionStatusAttention") != settled.at("decisionStatusAttention") ||
+        send(7,"world/1",true).contains("decisionStatusSamples") ||
+        send(7,"world/1").at("decisionStatusSamples") != settled.at("decisionStatusSamples") ||
+        send(7,"world/2").contains("decisionStatusSamples") || send(8,"world/2").contains("decisionStatusAttention") ||
+        facts.accept_approval(7,52,82,result)) throw std::runtime_error("approval escaped its original scope");
+}
+
 // 核对包声明与真实任务修订，并验证缺样、备注更新、强制基线和重绑。
 // 步骤：读取实际包定义 → 接纳目标并核对原件 → 比对备注与同号补发 → 切换绑定。
 void verify(const std::filesystem::path& package) {
@@ -155,6 +194,7 @@ void verify(const std::filesystem::path& package) {
     scene["player"] = player;
     if (send(3).contains("decisionStatusSamples")) throw std::runtime_error("new binding inherited old goal");
     verify_withdrawal(catalog.at("definitions"));
+    verify_approval();
 }
 }
 

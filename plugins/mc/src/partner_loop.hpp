@@ -184,7 +184,7 @@ class PartnerLoop {
     // 返回任务图及各节点状态，供普通聊天与任务续行共用。
     nlohmann::json plan_context() const;
     // 在本地有界保留结构化事实，等本体接纳后归还。
-    void publish(std::string_view category, const nlohmann::json& payload);
+    void publish(std::string_view category, const nlohmann::json& payload, std::uint64_t approval_session = 0);
     // 推进原世界接管并发布其真实释放结果。
     bool release_game(const BridgeConfig& config, std::uint64_t instance);
     // 按原配对身份处理本地游戏回复或原动作时限。
@@ -367,7 +367,7 @@ class PartnerLoop {
     const dfy_v2_mailbox_text_api* mail_text_ = nullptr;
     const dfy_v2_reference_api* refs_ = nullptr;
     std::uint64_t sent_ = 0;
-    struct Frame { std::string_view category; std::string body; };
+    struct Frame { std::string_view category; std::string body; std::uint64_t approval_session = 0; };
     std::deque<Frame> outbound_;
     struct Delegation { std::uint64_t id; std::string world, text; };
     std::optional<Delegation> awaiting_delegation_, active_delegation_;

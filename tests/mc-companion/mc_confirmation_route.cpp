@@ -61,7 +61,8 @@ int wmain(int argc, wchar_t** argv) {
     try {
         if (argc != 4) throw std::runtime_error("package, test directory and route are required");
         const std::filesystem::path root = argv[2];
-        const bool delayed_review = std::wstring_view(argv[3]) == L"partner-route-delayed";
+        const bool attention = std::wstring_view(argv[3]) == L"partner-route-delayed-attention";
+        const bool delayed_review = attention || std::wstring_view(argv[3]) == L"partner-route-delayed";
         const bool manual = delayed_review || std::wstring_view(argv[3]) == L"partner-route-manual";
         const bool first = std::wstring_view(argv[3]) == L"partner-route-first";
         const bool panel = manual || std::wstring_view(argv[3]) == L"partner-route-panel";
@@ -72,6 +73,7 @@ int wmain(int argc, wchar_t** argv) {
         std::string internal_header;
         std::atomic_uint reply_rounds = 0;
         std::atomic_bool terminal_disconnected = false;
+        std::atomic_bool approval_read = false;
         const auto host_start = std::chrono::steady_clock::now();
         std::atomic_int host_seconds = 0;
         app::ApplicationRunConfig run;
@@ -130,6 +132,22 @@ int wmain(int argc, wchar_t** argv) {
                     FinishReason::tool_calls};
             }
             if (input.tools.empty()) return {{Role::assistant,"continue"}};
+            if (attention && dfy::test::is_decision_tail(formal.messages.back())) {
+                const auto tail = Json::parse(formal.messages.back().content);
+                if (!tail.at("wakeEvents").empty()) {
+                    if (std::ranges::none_of(formal.tools,[](const auto& tool) { return tool.name == "status_read"; }))
+                        throw std::runtime_error("approval wake lacks the granted snapshot reader");
+                    return {{Role::assistant,"",{{"approval-snapshot","status_read",Json{{"snapshot",tail.at("snapshot")}}.dump()}}},
+                        FinishReason::tool_calls};
+                }
+                if (last.tool_call_id == "approval-snapshot") {
+                    const auto original = Json::parse(last.content.substr(last.content.find('{'))).at("status");
+                    if (original.at("wakeEvents").size()!=1 || std::ranges::any_of(tail.at("items"),[](const auto& item) {
+                        return item.at("key") == "mc.companion.approval_result";
+                    })) throw std::runtime_error("approval lost its original or remained explicit after read");
+                    approval_read = true;
+                }
+            }
             if (last.role == Role::tool) return {{Role::assistant,R"({"internal":"collection finished"})"}};
             const auto body = Json::parse(last.content);
             const auto expanded = body.at("trigger") == "skills.expanded";
@@ -197,7 +215,7 @@ int wmain(int argc, wchar_t** argv) {
                 throw std::runtime_error("the original result was unavailable for explicit review");
             if (!requested_stop && state->settled_event == (first ? 4u : panel && !delayed_review ? 2u : 3u) &&
                 (local || (main_calls == expected_calls && !host.conversation().busy() && received(host.trace_file(),first || delayed_review))) &&
-                action_ended(host.trace_file(),first || delayed_review)) {
+                (!attention || approval_read) && action_ended(host.trace_file(),first || delayed_review)) {
                 host.stop_companion(id);
                 requested_stop = true;
             }

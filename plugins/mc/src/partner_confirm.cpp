@@ -232,8 +232,10 @@ void PartnerLoop::advance_confirmed_work(const BridgeConfig& config, bool closin
     } else {
         auto fact = item.decision;
         fact["execution"] = item.approved_order ? "stale" : "skipped";
-        publish("mc.confirmation.execution",fact);
-        approval_result_ = std::move(fact);
+        fact["work"] = item.work->id;
+        const bool bound = fact_stream_.bound(session_);
+        publish("mc.confirmation.execution",fact,bound ? session_ : 0);
+        if (!bound) approval_result_ = std::move(fact);
     }
     confirm_exited(item.request);
 }

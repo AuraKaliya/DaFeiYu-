@@ -133,7 +133,7 @@ if(DFY_MC_NODE)
   dfy_test_executable(dfy_mc_confirmation_route_tests mc_confirmation_route.cpp)
   target_link_libraries(dfy_mc_confirmation_route_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
   add_dependencies(dfy_mc_confirmation_route_tests dfy_mc_companion)
-  foreach(route IN ITEMS panel game local manual first delayed lost-terminal retry-reply)
+  foreach(route IN ITEMS panel game local manual first delayed delayed-attention lost-terminal retry-reply)
     add_test(NAME app.mc_confirmation_${route} COMMAND "${DFY_MC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/native-world.cjs"
       "$<TARGET_FILE:dfy_mc_confirmation_route_tests>" "$<TARGET_FILE_DIR:dfy_mc_companion>" "${PROJECT_BINARY_DIR}/tests/mc-confirmation-route" partner-route-${route})
     set_tests_properties(app.mc_confirmation_${route} PROPERTIES TIMEOUT 25)
