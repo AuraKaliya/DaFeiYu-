@@ -7,16 +7,18 @@
 | 方向 | 已经走通的路径 | 接续位置 |
 | --- | --- | --- |
 | 本体与插件宿主 | 主会话和插件子会话各自持有上下文和当轮工具。终端工具委托能从授权、审批走到执行和结果读回。信箱、ASK 与 Trace 能沿原消息找到回合、投递及收件回执。 | 当前任务和会话状态保留在进程内。长期记忆、跨会话保存与恢复、通用多 Agent 协作各自待评审。[宿主装配](../apps/host/src/application.cpp) · [当前边界](#当前边界) |
-| 管理中心与后台本体 | Windows 托盘按数据目录唤回面板、打开日志和确认退出。桌面与普通终端共用主会话，原话、追加、排队和实际发言写入 SQLite。每扇窗口按自己的水位翻页和重连续读，原命令可查回最新投递状态。 | 房间已接入真实信箱目录和公开回执，正式窗口只读后台快照。接下来对齐设置与插件管理的包状态和修订。[消息协议](ui-framework-design.md#55-主会话消息与持久化) · [实施顺序](ui-framework-design.md#10-分步实施与验收) |
+| 管理中心与后台本体 | Windows 托盘按数据目录唤回面板、打开日志和确认退出。桌面与普通终端共用主会话，原话、追加、排队和实际发言写入 SQLite。每扇窗口按自己的水位翻页和重连续读，原命令可查回最新投递状态。 | 设置页可受控加载或卸载已安装包，按原号复查实效，按代次读取公开配置，按修订保存本体超时。接下来接入插件可写字段和设置页的安装、移除回执。[消息协议](ui-framework-design.md#55-主会话消息与持久化) · [实施顺序](ui-framework-design.md#10-分步实施与验收) |
 | 主面板交互与内置房间 | 房间方案 01～08 已接通对话、忙时补充与排队、停止、清空和刷新恢复。09 将原生房间和身体位置接到正式面板。10 可按身体采样、距离和屏风遮挡筛选一次台灯变化，分别返回亲见的灯态、声响来向或空结果。 | 步骤 11 接入事件发生时的角色感知记录，以及按当前位置取样的主动查询。[房间实施顺序](main-agent-room-development-plan.md#7-分步开发顺序) |
-| MC 任务与消息 | 跟随、采掘、指定整堆拾取、合成、补墙和会合交物已有游戏侧实效。玩家还可明确委托伙伴存入指定普通单箱，以箱内和伙伴库存双边读回结算。同批多条原话各自取得发言回执。玩家可先回答后一项追问，受前一项约束的步骤继续等待。 | 现有实物交付边界和下一批场景见[MC 实施顺序](mc-companion-development-plan.md#实施顺序与跨方向验收)。 |
+| MC 任务与消息 | 跟随、采掘、指定整堆拾取、合成、补墙和会合交物已有游戏侧实效。普通单箱已接通存入、取到伙伴背包及将实取量交回原玩家。箱内、伙伴入包和玩家实收各有原工作可查。指定掉落受阻后可沿原 UUID 续取已核实余量。同批多条原话各自取得发言回执。玩家可先回答后一项追问，受前一项约束的步骤继续等待。 | 现有实物交付边界和下一批场景见[MC 实施顺序](mc-companion-development-plan.md#实施顺序与跨方向验收)。 |
 | MC 环境事件 | 桥接按伙伴实体核对生命、饥饿、余气。同次缺氧只触发一次只读复查，回执包含水格、岸边搜索范围、可达脚格或受阻及未确认原因。 | 自动恢复动作的授权和实效另行评审。[领域事件与唤醒](mc-companion-development-plan.md#事件源归并与-agent-唤醒) |
 
 主 Agent 和插件子会话共用请求投影、执行前复核与预算。用户补充要求后，尚未开工的变更需按新输入决定。规划及修订能看到带来源和时效的现场观察。模型层按实际协议核算推理续行。长会话可归档已结束的普通问答，近期消息和未决工作保持完整。主聊天在 SQLite 写入待定时沿原投递号补写。[循环与回执复查](agent-loop-core-design.md#长会话与回执复查)
 
 MC 单玩家试点在游戏动作前向宿主预留原工作号。游戏桥接核对实际退出，领域插件核实物品去向，宿主按原绑定索引接纳、实效和退出。玩家重连后腾包，独立客户端读到 8 块圆石，只有一次投物，最终实收补记在旧绑定。模型可从当前绑定的摘要按号查回长回执。[工作接口](../sdk/README.md) · [隔离服回归](../tests/mc-companion/README.md#固定响应验收单个玩家绑定)
 
-2026-11-26 的集成点为 `dcc11ea`。Agent 保留通用拒绝原因与原工作号，宿主在业务线程采样信箱，桌面通过管理 IPC 读公开回执。MC 在领域插件内验证选箱、两侧数量及迟到实效。公开 C ABI 和模型适配器沿用现有契约。Debug、Release 各通过 293 项离线验收。[主线阶段与证据](agent-loop-core-design.md#九下一轮开发计划) · [信箱协议](ui-framework-design.md#56-管理信箱只读协议) · [容器实物验收](../tests/mc-companion/README.md#固定响应验收单个玩家绑定)
+2026-11-26 14:00 冻结的三线代码集成于 `31717e1a`。宿主复核后台身份、插件代次和实际退出，界面消费公开快照及原提交回执。MC 插件持有场地事实与业务回执，模型层维持供应商原生角色和工具调用配对。主线将来源与原时间映射到协议。在 MC 的首次工具发现回执、下一回合授权和发送定义之间逐项核对了 5 份契约。集成主线的 Debug、Release 各通过 308 项离线测试，隔离 Paper 覆盖 10 种固定响应场景。[主线交付与后续](agent-loop-core-design.md#1400-三线集成与后续) · [插件公开配置](ui-framework-design.md#59-插件公开设置读口)
+
+2026-11-26 11:20 的集成点为 `dcc11ea`。Agent 保留通用拒绝原因与原工作号，宿主在业务线程采样信箱，桌面通过管理 IPC 读公开回执。MC 在领域插件内验证选箱、两侧数量及迟到实效。公开 C ABI 和模型适配器沿用现有契约。Debug、Release 各通过 293 项离线验收。[主线阶段与证据](agent-loop-core-design.md#九下一轮开发计划) · [信箱协议](ui-framework-design.md#56-管理信箱只读协议) · [容器实物验收](../tests/mc-companion/README.md#固定响应验收单个玩家绑定)
 
 在三线集成后，`6e2705c` 完成了主 Agent 和 MC 单个玩家绑定的循环迁移。该版的 Debug 和 Release 各通过 281 项离线测试，正式安装包另通过宿主与桌面检查。[主线分阶段记录](agent-loop-core-design.md#主线实施记录)
 
@@ -83,6 +85,11 @@ flowchart TB
     Resident --> App
     App -->|按实收与地址修订发布| MailView["信箱只读快照"]
     MailView -->|目录、信件与回执| Resident
+    Resident -->|业务线程按代次复核插件操作| Plugins
+    Plugins -->|目录、原代次与实际退出| Resident
+    App -->|创建并在启动时采用| HostSettings["HostSettings · 本体配置服务"]
+    Resident <-->|按修订读取及保存| HostSettings
+    HostSettings -->|原子写入| SettingsFile[(host-settings.json)]
     Main <--> Messages[(SQLite 主会话消息)]
     App -->|本地 Trace 文件| Viewer["浏览器 MC Trace 查看器"]
     Model -->|Platform / WinHTTP| Service["模型服务"]
@@ -94,13 +101,13 @@ flowchart TB
 | --- | --- |
 | **App** | 组装模型、插件和主会话，接纳工具授权、审批与状态读回。普通聊天、`--mc-partner` 和桌面主面板共享应用服务代码。`CompanionSession` 处理伙伴计划板、信箱委托和固定场景。`--complete` 是直接调用模型的单次文本入口。[命令行](../apps/terminal/src/main.cpp) · [Application](../apps/host/src/application.cpp) · [伙伴会话](../apps/host/src/companion.cpp) |
 | **Agent** | `Session` 持有当前运行和有界历史。每个 `RunLoop` 按稳定顺序提交工具定义。规划和修订复用目标、已确认步骤与原回执，可执行工具数为零。执行前为完整工具批次预留回执空间，已核实的旧批次可按工具契约归档。主 Agent 和插件子会话共享执行器并独立保存上下文。[容量](../modules/agent/src/context_capacity.cpp) · [主线验收](agent-loop-core-design.md#主线实施记录) [Session](../modules/agent/src/session.cpp) · [RunLoop](../modules/agent/src/run_loop.cpp) · [子会话宿主](../apps/host/src/subagents.cpp) |
-| **人格与场景** | 本体读取一个版本化人格档案，直接对话、房间点名和声明面向玩家的子回合共用。插件提供领域规则、原话和游戏事实。宿主按人格、场景规则、当前回合消息的顺序装配，固定本轮工具定义。内部停手判断和委托结算使用独立契约。真实送模记录保存人格和场景版本。[人格档案](../apps/host/src/persona.cpp) · [子回合装配](../apps/host/src/subagents.cpp) · [SDK 声明](../sdk/include/dafeiyu/agent_abi_v2.h) |
+| **人格与场景** | 本体读取一个版本化人格档案，直接对话、房间点名和声明面向玩家的子回合共用。插件提供领域规则、原话和游戏事实。宿主按职责与来源、授权、判断与结算、输出与投递、人格与风格的顺序渲染系统规则，随后投影当前消息和获准工具。内部停手判断和委托结算使用独立契约。真实送模记录保存人格和场景版本。[人格档案](../apps/host/src/persona.cpp) · [子回合装配](../apps/host/src/subagents.cpp) · [SDK 声明](../sdk/include/dafeiyu/agent_abi_v2.h) |
 | **Model / Platform** | Model 编解码请求并通过异步客户端接收完整响应。HTTP、控制台输入、DLL 装载和摘要算法属于 Windows Platform。默认 Provider 内置，空插件目录可直接问答。[模型客户端](../modules/model/src/client.cpp) · [协议](../modules/model/src/protocol.cpp) · [WinHTTP](../modules/platform/src/winhttp.cpp) · [代码装载](../modules/platform/src/code_module.cpp) |
 | **Plugins / SDK** | 可信 DLL 通过版本化 C ABI 接入，安装后显式加载。`modules/plugin_host` 管理实例与依赖、Hook 顺序、事件及活动调度。`modules/plugin_tools` 把实例登记的工具接到 Agent 执行器。实例忙碌时拒绝卸载，等原工作实际退出后可重试。[管理器](../modules/plugin_host/src/manager.cpp) · [工具登记](../modules/plugin_tools/src/registration.cpp) · [原生工具执行](../modules/plugin_tools/src/native_work.cpp) · [SDK 契约](../sdk/README.md) |
 | **Runtime / Events** | Runtime 提供有界操作、预算和调度，Events 提供广播通知与定向信箱。信箱地址绑定发送方、接收方与独立 FIFO，类别和版本决定处理方式。接纳、业务结果和实际退出分别结算。[广播通道](../modules/events/src/broadcast_channel.cpp) · [信箱](../modules/events/src/mailboxes.cpp) · [本体收件](../apps/host/src/mailbox_intake.cpp) |
 | **ASK** | `AskService` 持有通用票据，`InteractionRoutes` 将声明式解析结果分流到渠道或主 Agent 信箱。插件消费原答复并裁定动作。[ASK 状态机](../apps/host/src/ask.cpp) · [交互路由](../apps/host/src/interaction_routes.cpp) · [事件解析](#事件注册与解析) · [信箱唤醒](#信箱优先级与唤醒) |
 | **回信与回执** | `mail_reply` 将模型工具调用解析为绑定原信和本轮的转发意图。`ReplyDelivery` 处理两条路径的最终入箱与确认。入箱回执和插件消费回执各有身份。[回信工具](../apps/host/src/mail_reply_tool.cpp) · [结果投递](../apps/host/src/reply_delivery.cpp) |
-| **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../apps/host/src/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
+| **Trace** | 启用记录后，可按原消息、会话、回合和工作号串查实际送模、模型响应、工具及信件结果。`messageEvidence` 标明消息来源与原事件时间，`wireSha256` 校验协议字段，`toolContracts` 将当步可用定义指回首次出现或更新的位置。终端可用录制响应和工具回执离线重跑单轮。独立的 MC Trace 查看器在本机浏览器读取宿主日志，可附加同局游戏回执逐项对照。[本体落盘](../apps/host/src/run_log.cpp) · [终端审阅与回放](run-guide.md#trace-审阅与回放) · [MC Trace 查看器](mc-trace-viewer.md) |
 | **Desktop** | Vue 主面板经 WebView2 和异步命名管道向后台本体提交用户意图。窗口关闭后已接纳回合继续运行。应用管理主会话和下一轮队列，Agent 记录本轮补充实际进入的模型步骤。刷新按原命令查回执。受信页面通过 `room.read` 读取身体位置，公开 `state.read` 返回无正文运行摘要。[后台服务](../apps/host/src/management/resident.cpp) · [窗口客户端](../apps/host/src/management/client.cpp) · [应用队列](../apps/host/src/dialogue_queue.cpp) · [面板运行说明](ui-probe-run-guide.md) |
 
 构建入口是 CMake 和 VS2022 x64，宿主采用 C++20，公开 SDK 支持 C 消费者。默认启动目标是桌面管理中心。后台按用户数据目录持有主会话及托盘，托盘可恢复现有管理窗或在关窗后重新启动。`BUILD_CLI=ON` 加入终端，`BUILD_TESTING=ON` 启用离线测试。[根构建](../CMakeLists.txt) · [预设](../CMakePresets.json) · [分发规则](../cmake/Distribution.cmake)
