@@ -1,6 +1,6 @@
 # 大肥鱼
 
-大肥鱼默认打开 Windows 桌面管理中心。主面板与可选终端连接同一个后台主 Agent，空插件目录也能问答。桌面提供运行摘要和房间预览，终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。项目使用 C++20、CMake 和 VS2022 x64。
+大肥鱼默认打开 Windows 桌面管理中心。主面板与普通聊天终端连接同一个后台主 Agent，空插件目录也能问答。桌面可以续读主聊天、查看房间位置和信箱，在设置页加载或卸载已安装的插件。可选终端还支持受控工具调用和结果读回。MC 陪玩插件使用宿主托管的独立子会话，通过桥接操控游戏角色。项目使用 C++20、CMake 和 VS2022 x64。
 
 - **想玩或运行程序**，见[运行说明](docs/run-guide.md)、[MC 插件](plugins/mc/README.md)与[本机试玩入口](tests/mc-companion/README.md#首次真人体验)。
 - **想审当前设计**，见[管理中心首版开发方案](docs/ui-framework-design.md)、[主面板与内置房间](docs/main-agent-room-development-plan.md)、[MC 伙伴通用交互流程](docs/mc-companion-development-plan.md)与[MC 能力清单](docs/mc-partner-capability-review.md)。
