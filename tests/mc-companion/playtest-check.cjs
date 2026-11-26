@@ -503,7 +503,7 @@ async function checkEightStones(fixture, player, whispers, mode) {
   player.chat('可以先交了吗？');
   await until(() => whispers.includes('还在等你选交付位置，八块都在我这里。'),'实际给物候选被同一待答阻止');
   assert.ok(!actions().some(row => row.skill === 'give_item'));
-  if (mode === '--handoff-eight-chest-probe') {
+  if (mode === '--handoff-eight-chest-probe' || mode === '--handoff-eight-store-probe') {
     fixture.send('tp DfyCompanion 0.5 -60 0.5');
     await until(() => player.players.DfyCompanion.entity.position.distanceTo(point(0.5,-60,0.5)) < 0.05,'伙伴回到可读箱位置');
     // 用独立协议玩家分别打开两个真实箱子，逐次关闭原窗口。
@@ -525,6 +525,7 @@ async function checkEightStones(fixture, player, whispers, mode) {
       read.result.chest.cell,read.result.chest.container.slots,read.result.chest.stock.slots,read.result.chest.stock.stored],
       [player.player.uuid,read.generation,'overworld',{x:2,y:-60,z:-2},27,36,8]);
     assert.deepEqual([await contents(),fixture.materialCount('cobblestone'),player.inventory.count(id)],[[0,5],8,0]);
+    if (mode === '--handoff-eight-store-probe') await checkChestDeposits(fixture,player,whispers,contents,actions,trace);
     return;
   }
   fixture.send('tp DfyCompanion 0.5 -60 0.5');
@@ -556,6 +557,72 @@ async function checkEightStones(fixture, player, whispers, mode) {
     ['give_item',player.player.uuid,8,proof.throughSeq]);
   assert.ok(original.exited && !trace().some(row => row.body?.factReceiptError));
   assert.equal(actions().filter(row => row.skill === 'give_item').length,1);
+}
+
+// 在同一隔离双箱现场按新委托验证完整、满箱、部分与窗口中断的真实库存。
+// 步骤：备好各局容量并指箱 → 记录原工作 → 玩家独立数双箱 → 按原号重复查实效。
+async function checkChestDeposits(fixture, player, whispers, contents, actions, trace) {
+  const away = player.entity.position.clone().set(2.5,-54,0.5);
+  const rows = () => actions().filter(row => row.skill === 'store_item' && row.result.deposit);
+  const evidence = [];
+  // 由协议玩家分别数两个真实容器，再取伙伴自身已同步的普通圆石数量。
+  const sample = async () => {
+    const [left,right] = await contents();
+    return {left,right,companion:fixture.materialCount('cobblestone'),sampledAtMs:Math.floor(performance.now())};
+  };
+  for (const [index,scenario] of ['normal','full','partial','interrupted'].entries()) {
+    const initial = scenario === 'partial' ? 61 : 0;
+    if (index) {
+      const entries = ['partial','full'].includes(scenario) ? Array.from({length:27},(_,slot) =>
+        '{Slot:'+slot+'b,id:"minecraft:'+(initial && slot === 0 ? 'cobblestone' : 'stone')+'",count:'+(initial && slot === 0 ? 61 : 64)+'}') : [];
+      fixture.send('data modify block 2 -60 -2 Items set value ['+entries.join(',')+']');
+      fixture.send('clear DfyCompanion minecraft:cobblestone');
+      fixture.send('give DfyCompanion minecraft:cobblestone 8');
+      await until(() => fixture.materialCount('cobblestone') === 8,'伙伴收到本局八块圆石');
+    }
+    const before = await sample();
+    assert.deepEqual([before.left,before.right,before.companion],[initial,5,8]);
+    await player.lookAt(away,true);
+    await until(() => fixture.ownerEntity()?.pitch > 1,'玩家已从所选左箱转头看向上方');
+    if (scenario === 'interrupted') fixture.interruptChest();
+    const start = whispers.length;
+    player.chat(index % 2 ? '请把8块圆石放入左边的箱子' : '把这八块存进左箱');
+    const row = await until(() => rows()[index],'存箱原工作实际退出',20000);
+    const stored = scenario === 'full' ? 0 : scenario === 'partial' ? 3 : 8;
+    const report = '左箱实存 '+stored+' 块，剩余 '+(8-stored)+' 块。';
+    const interrupted = scenario === 'interrupted';
+    const proof = row.result.deposit;
+    const selection = actions().find(entry => entry.result.chest);
+    assert.deepEqual([proof.observation,proof.pointedMessage],[selection.work,selection.order]);
+    assert.deepEqual([proof.work,proof.sourceMessage,proof.state,proof.stored,proof.remaining],
+      [row.work,row.order,interrupted ? 'pending' : 'verified',interrupted ? undefined : stored,interrupted ? undefined : 8-stored]);
+    await until(() => whispers.slice(start).includes(interrupted ? '存箱工作 '+row.work+' 的实存量待核实。' : report),'按实效回答本局玩家');
+    const after = await sample();
+    assert.deepEqual([after.left,after.right,after.companion],[initial+stored,5,8-stored]);
+    assert.equal((await fixture.repeatStore(row,row.work)).action.exited,true);
+    const duplicateId = 'repeat-store-'+index;
+    await fixture.repeatStore(row,duplicateId);
+    const duplicate = await until(() => actions().find(entry => entry.work === duplicateId),'同一玩家原话换工作号仍指回原件');
+    assert.equal(duplicate.result.originalWork,row.work);
+    assert.equal(duplicate.result.deposit,undefined);
+    let recheck;
+    if (interrupted) {
+      const replyStart = whispers.length;
+      player.chat('复查存箱工作 '+row.work);
+      await until(() => whispers.slice(replyStart).includes(report),'沿原号重新开箱核对中断后的数量');
+      const checked = actions().find(entry => entry.result.chestReceipt?.work === row.work);
+      assert.deepEqual([checked.result.chestReceipt.stored,checked.result.chestReceipt.remaining],[8,0]);
+      const settled = await until(() => trace().find(entry => entry.kind === 'binding.work_settled' && entry.work === row.work &&
+        entry.revision === 4 && entry.finalEffect && entry.body.stored === 8),'迟到双边实效回到原工作');
+      recheck = {query:checked.work,original:settled.work,revision:settled.revision,stored:checked.result.chestReceipt.stored,
+        remaining:checked.result.chestReceipt.remaining};
+    }
+    assert.deepEqual([rows().length,await contents(),fixture.materialCount('cobblestone')],[index+1,[initial+stored,5],8-stored]);
+    evidence.push({scenario,world:proof.generation,dimension:proof.dimension,selected:proof.cell,other:{x:2,y:-60,z:2},
+      observation:proof.observation,pointedMessage:proof.pointedMessage,sourceMessage:proof.sourceMessage,work:row.work,
+      status:proof.state,stored:proof.stored,remaining:proof.remaining,rejectedDuplicate:duplicate.result.originalWork,before,after,recheck});
+    writeFileSync(join(fixture.evidence,'chest-evidence.json'),JSON.stringify(evidence,null,2));
+  }
 }
 
 // 让原玩家在投物后离场，验证重新入场后的真实拾取只结算到原绑定。

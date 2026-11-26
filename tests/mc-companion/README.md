@@ -4,18 +4,23 @@
 
 ## 固定响应验收单个玩家绑定
 
-在已准备好的隔离 Paper 场地运行以下四局。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。每次只运行一局。
+在已准备好的隔离 Paper 场地逐局运行以下固定响应。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。
 
 ~~~powershell
 $probe = '.\build\rebuild\windows-tests\tests\Debug\dfy_mc_playtest.exe'
 $plugin = '.\build\rebuild\windows-tests\plugins\mc\Debug\mc.companion'
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-facts-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-chest-probe
+node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-store-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-full-probe
 node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-probe
 ~~~
 
-第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余三局从“帮我挖 8 块圆石”开始。待选交付地点时可继续采掘、查库存，提前给物会被原待答拦下。选左箱的一局验证选择已送达、八块仍在伙伴包内。满包的两局分别在原连接和玩家重新入场后腾包。重连用例核对新连接中的实际库存、唯一一次投物和退役绑定的 `binding.work_settled` 原号回执。每局证据目录中的 `host/trace/events.jsonl` 记录送模请求，`host/game-actions.jsonl` 记录桥接工作和服务端实效。八块场景的 `player-feedback.json` 和 `progress-feedback.json` 使用同一协议玩家的时钟记录首次追问和进度答复。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
+第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余四局从“帮我挖 8 块圆石”开始。待选交付地点时，伙伴能继续采掘和查库存，提前给物会被待答拦下。
+
+选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../../docs/agent-loop-core-design.md#主线实施记录)
+
+存箱局的 `chest-evidence.json` 保存协议玩家逐箱数到的前后值、伙伴库存、原工作号、重复提交回指及迟到实效版本。隔离服记录 `run-1pvdZD` 中，四笔委托都引用玩家消息 5 的观察 `1.29`。正常存入 8 块，满箱存入 0 块，只余 3 块容量时存入 3 块。窗口关闭时工作 `1.57` 先保留待核实，随后在该工作的第 4 版确认实存 8 块。四笔委托中右箱各次读数均为 5 块。
 
 ## 首次真人体验
 

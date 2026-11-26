@@ -295,6 +295,46 @@ void chest_protocol() {
     rejects(read);
 }
 
+// 以两次同步窗口验证原存箱工作，只在箱增与伙伴库存减少一致时确认实效。
+// 步骤：验证完整转移 → 拒绝单边声称及伪造完成 → 用原工作号核对迟到回执。
+void deposit_protocol() {
+    const std::string world = "00112233-4455-6677-8899-aabbccddeeff", controller(32,'d');
+    Json context{{"generation",world},{"order",3}}, args{{"sourceMessage",3},{"observation","box"},{"item","cobblestone"},{"count",8}};
+    Json action = context;
+    action.update(Json{{"controller",controller},{"skill","store_item"},{"exited",true},{"result",{{"status","done"}}}});
+    Json frame{{"version",1},{"id","work"},{"action",action}};
+    auto& result = frame["action"]["result"];
+    auto& proof = result["deposit"] = {{"work","work"},{"generation",world},{"dimension","overworld"},{"sourceMessage",3},{"pointedMessage",2},
+        {"cell",{{"x",2},{"y",-60},{"z",-2}}},{"owner",world},{"actor",world},{"item","cobblestone"},{"observation","box"},
+        {"state","verified"},{"attempted",true},{"limit",8},{"requested",8},{"stored",8},{"remaining",0}};
+    // 构造至多只有一栈圆石的完整槽位范围。
+    const auto slots = [](int count,int stored) {
+        return Json{{"slots",count},{"emptySlots",count-(stored>0)},{"stackSize",64},{"unknownSlots",0},
+            {"stored",stored},{"mergeSpace",stored ? 64-stored : 0},{"knownSpace",count*64-stored},{"status","sampled"}};
+    };
+    proof["before"] = {{"sampledAtMs",10},{"container",slots(27,0)},{"stock",slots(36,8)}};
+    proof["after"] = {{"sampledAtMs",11},{"container",slots(27,8)},{"stock",slots(36,0)}};
+    const auto read = [&] { return dfy::mc::partner_reply(frame.dump(),frame.at("id").get<std::string>(),controller,
+        frame.at("action").at("skill").get<std::string>(),Json{{"context",context},{"arguments",args}}.dump()); };
+    if (!read().changed || !read().arrived) throw std::runtime_error("verified chest deposit lost");
+    const Json verified = proof;
+    proof["after"]["stock"] = slots(36,8);
+    rejects(read);
+    proof = verified;
+    proof["state"] = "pending";
+    rejects(read);
+    for (const auto key : {"after","stored","remaining"}) proof.erase(key);
+    result["status"] = "interrupted";
+    if (read().changed || !read().inventory_attempted) throw std::runtime_error("pending chest effect lost");
+    frame["id"] = "lookup";
+    frame["action"]["skill"] = "observe";
+    args = {{"mode","chest_receipt"},{"work","work"}};
+    result = {{"status","done"},{"chestReceipt",verified}};
+    if (read().changed || !read().arrived) throw std::runtime_error("chest receipt recheck performed a change");
+    args["work"] = "other";
+    rejects(read);
+}
+
 // 核对交物观察、停止位置和收件证据都属于同一玩家与原工作。
 // 步骤：构造跨堆备料 → 核对提交与收件 → 对照停投位置、剩余量和迟到回执。
 void handoff_protocol() {
@@ -573,6 +613,7 @@ int main() {
         collect_progress_protocol();
         ground_pickup_protocol();
         chest_protocol();
+        deposit_protocol();
         handoff_protocol();
         vitals_protocol();
         const auto source = Json{{"generation","00112233-4455-6677-8899-aabbccddeeff"},{"order",2}};

@@ -64,6 +64,42 @@ void late_pickup(bool ordered, bool recyclable) {
     if (ordered && facts.reserve("next","reply",3)) throw std::runtime_error("final pickup did not release an eligible slot");
 }
 
+// 核对迟到存箱实效只更新同一格位、同一委托和同一基线的原工作。
+// 步骤：登记中断和实际退出 → 拒绝换箱及换基线 → 接受原件并验证重传防重。
+void late_deposit() {
+    dfy::app::BindingWorks works; ledger = &works;
+    dfy_v2_agent_ordered_facts_api api{{{},submit,legacy},record,nullptr};
+    dfy::mc::PartnerFacts facts;
+    facts.configure(&api.base,"paired",&api);
+    std::uint64_t request = 0;
+    if (facts.submit(1,"paired/world",{},Json::object(),false,request) || facts.reserve("deposit","store_item",3))
+        throw std::runtime_error("store not admitted");
+    const Json basis{{"work","deposit"},{"sourceMessage",3},{"observation","box"},{"item","cobblestone"},{"requested",8},
+        {"cell",{{"x",2},{"y",-60},{"z",-2}}},{"before",{{"sampledAtMs",12}}},{"state","pending"}};
+    Json original{{"session",1},{"order",3},{"skill","store_item"},{"bridgeWork","deposit"},{"bridgeExited",true},{"factAdmission",0},
+        {"effect",DFY_V2_TOOL_UNKNOWN},{"result",{{"status","blocked"},{"deposit",basis}}}};
+    if (facts.report(1,"mc.partner.action",original) || facts.reserve("check","observe",4))
+        throw std::runtime_error("interrupted store not recorded");
+    Json checked{{"session",1},{"order",4},{"skill","observe"},{"bridgeWork","check"},{"bridgeExited",true},{"factAdmission",0},
+        {"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",{{"chestReceipt",basis}}}};
+    auto& proof = checked["result"]["chestReceipt"];
+    proof.update(Json{{"state","verified"},{"stored",8},{"remaining",0},{"after",{{"sampledAtMs",15}}}});
+    proof["cell"]["z"] = 2;
+    if (facts.report(1,"mc.partner.action",checked)!=DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("another chest settled work");
+    proof["cell"] = basis.at("cell");
+    proof["before"]["sampledAtMs"] = 13;
+    if (facts.report(1,"mc.partner.action",checked)!=DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("substituted baseline settled work");
+    proof["before"] = basis.at("before");
+    if (facts.report(1,"mc.partner.action",checked)) throw std::runtime_error("original store recheck failed");
+    const auto watermark = works.watermark();
+    const auto rows = works.view(1,0);
+    const auto deposit = std::ranges::find_if(rows,[](const Json& row) { return row.at("work") == "deposit"; });
+    if (deposit == rows.end() || deposit->at("revision") != 4 || deposit->at("effect").at("stored") != 8 ||
+        !deposit->value("finalEffect",false)) throw std::runtime_error("original store is not finalized");
+    if (facts.report(1,"mc.partner.action",checked) || works.watermark() != watermark)
+        throw std::runtime_error("duplicate store settlement");
+}
+
 // 在原会话退役后核清同一投物的全部去向，分别覆盖正常退出和迟到退出。
 // 步骤：接纳原件并模拟离场 → 验证作用域及未核清收件 → 按原号登记实收与其他收取。
 void retired_pickup(bool unknown_exit) {
@@ -97,6 +133,6 @@ void retired_pickup(bool unknown_exit) {
 
 // 验证满额和退役时对原投物的查证，覆盖旧事实接口与迟到退出。
 int main() {
-    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); retired_pickup(false); retired_pickup(true); return 0; }
+    try { late_pickup(false,false); late_pickup(true,false); late_pickup(true,true); retired_pickup(false); retired_pickup(true); late_deposit(); return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
