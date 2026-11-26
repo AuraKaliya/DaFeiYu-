@@ -51,6 +51,8 @@ MC 体验宿主在 `RUN_DIR/trace/events.jsonl` 保存模型请求、原始响�
 
 Minecraft 伙伴可在浏览器按回合核对模型调用、计划、游戏回执和实际发言。 [MC Trace 查看器](mc-trace-viewer.md)
 
+要复查当步状态，请在 `model.prepared` 中对齐 `input.messages` 与 `messageEvidence` 的下标。末条来源为 `host_status`、协议为 `dafeiyu.agent_status/1` 时，`snapshot` 指向该步的原版。若模型调用 `status_read`，用 `callId` 将 `tool.exited` 与下一次送模中的 `tool` 回执配对。离线回放使用记录的状态和原事件时间，可核对供应商编码指纹。[查看器的实际送模页](mc-trace-viewer.md) · [回放实现](../apps/host/src/trace_replay.cpp)
+
 在 `model.prepared` 中，`personaProfile` 标识本体人格，`promptTemplate` 标识额外场景规则的版本或摘要。`input.messages` 与 `input.tools` 保留本轮实际送模的正文和工具定义，可与 `model.exited`、`tool.exited` 及游戏回执交叉核对。比较体验时分别计算收件到首次实际发言、收件到动作接纳、接纳到游戏退出，并单列动作接纳后无实效或仅部分完成的情况。
 
 工具记录区分候选、接纳和退出，保存原调用编号以及有效参数和实际结果。MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
