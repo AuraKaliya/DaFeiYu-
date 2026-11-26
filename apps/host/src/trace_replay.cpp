@@ -55,6 +55,7 @@ struct RecordedModel {
     std::size_t rewritten_arguments = 0;
     bool rewrite_observed = false;
     Json evidence;
+    std::optional<model::Message> decision_tail;
     std::optional<std::string> wire_digest;
     bool thinking = false;
 };
@@ -68,12 +69,31 @@ std::optional<std::int64_t> original_time(const Json& evidence) {
     return time.get<std::int64_t>();
 }
 
+// 从已定位的日志行恢复当时外部提供的状态；普通用户可发送相同 JSON，来源由旁证决定。
+// 步骤：核对最后消息的来源和角色 → 比对协议及回合步骤 → 恢复原时间与不可变正文。
+std::optional<model::Message> external_status(const RecordedModel& entry, agent::RunId run, std::size_t step) {
+    const auto& messages = entry.input.at("messages");
+    if (entry.evidence.is_null() || messages.empty() || entry.evidence.back().at("source")!="host_status") return {};
+    const auto& last = messages.back();
+    const auto status = Json::parse(last.at("content").get_ref<const std::string&>(),nullptr,false);
+    if (!status.is_object() || status.value("schema","")!="dafeiyu.agent_status/1") return {};
+    if (last.at("role")!="user" || status.at("source")!="host" || status.at("turn")!=run.sequence ||
+        status.at("step")!=step || status.at("scope").at("session")!=std::to_string(run.session) ||
+        !status.at("snapshot").is_string() || !status.at("asOf").is_object() || !status.at("items").is_array() ||
+        !status.at("wakeEvents").is_array()) throw std::invalid_argument("replay: decision status scope or step differs");
+    auto tail = decode_message(last);
+    tail.source = model::MessageSource::host_status;
+    tail.event_utc_ms = original_time(entry.evidence.back());
+    return tail;
+}
+
 // 核对程序产生的来源，再以原事件时间重建供应商字段，早期轨迹仍能核对统一请求。
 // 步骤：比对原文与配对 → 核对来源并还原原时间 → 重新编码与比较指纹。
 bool matches_request(const model::Request& actual, const RecordedModel& entry) {
-    if (encode_request(actual)!=entry.input) return false;
-    if (entry.evidence.is_null()) return !entry.wire_digest;
     auto request = actual;
+    if (entry.decision_tail) request.messages.push_back(*entry.decision_tail);
+    if (encode_request(request)!=entry.input) return false;
+    if (entry.evidence.is_null()) return !entry.wire_digest;
     for (std::size_t i=0; i<request.messages.size(); ++i) {
         auto& message = request.messages[i];
         const auto& evidence = entry.evidence.at(i);
@@ -147,6 +167,7 @@ RecordedRun recorded_run(const std::filesystem::path& file, agent::RunId run) {
                 if (!entry.evidence.is_array() || entry.evidence.size()!=entry.input.at("messages").size())
                     throw std::invalid_argument("replay: message evidence count differs");
             }
+            entry.decision_tail = external_status(entry,run,result.models.size());
             if (row.contains("wireSha256")) {
                 if (entry.evidence.is_null()) throw std::invalid_argument("replay: missing message evidence");
                 entry.wire_digest = row.at("wireSha256").get<std::string>();
@@ -271,6 +292,7 @@ void replay_trace(const std::filesystem::path& file, agent::RunId run, std::ostr
         }
         history->push_back(std::move(message));
     }
+    if (original.models.front().decision_tail) history->pop_back();
     if (history->empty() || history->back().role != model::Role::user)
         throw std::invalid_argument("replay: final initial user message required");
     agent::RunOptions options;

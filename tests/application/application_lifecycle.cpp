@@ -1,3 +1,4 @@
+#include "../decision_input.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include "application.hpp"
 #include "run_log.hpp"
@@ -59,7 +60,7 @@ void shared_application(const fs::path& run) {
             check(request.messages.front().role == dfy::model::Role::system &&
                 request.messages.front().content.starts_with("【职责与信息来源 v1】") &&
                 request.messages.front().content.find("【人格与风格 v1】\n你叫大肥鱼。")!=std::string::npos,"default persona was not composed for direct dialogue");
-            const auto& last = request.messages.back();
+            const auto& last = dfy::test::business_messages(request).back();
             check(last.source==dfy::model::MessageSource::human &&
                 dfy::model::wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
                 "direct dialogue lost its user origin or exposed external markup");
@@ -116,7 +117,7 @@ void display_outcomes(const fs::path& run) {
         // 将取消场景保持在途，其他请求返回固定失败。
         // 步骤：匹配指定原话 → 等待放行或抛出替身错误 → 返回迟到文本。
         [&](const auto&, const auto& request) -> dfy::model::Response {
-            if (request.messages.back().content == "visible cancelled prompt") {
+            if (dfy::test::business_messages(request).back().content == "visible cancelled prompt") {
                 entered.set_value(); gate.wait();
                 return {{dfy::model::Role::assistant,"late private answer"}};
             }
@@ -160,7 +161,7 @@ void dialogue_queue(const fs::path& run) {
         // 按原话保持首次请求在途、制造一次失败或回复实际收到的最后一句。
         // 步骤：识别受控输入 → 依场景等待或失败 → 返回可核对的原话。
         [&](const auto&, const auto& request) -> dfy::model::Response {
-            const auto& text = request.messages.back().content;
+            const auto& text = dfy::test::business_messages(request).back().content;
             if (text == "当前原话") {
                 entered.release();
                 if (!release.try_acquire_for(std::chrono::seconds(5))) throw std::runtime_error("fixture release timed out");
@@ -239,7 +240,7 @@ void dialogue_inputs(const fs::path& run) {
     dfy::app::ApplicationRunConfig config;
     config.trace_directory = run/"input-trace";
     dfy::app::Application application({},run/"input-plugins",run/"input-user",dfy::model::Backend{
-        [](const auto&,const auto& request) -> dfy::model::Response { return {{dfy::model::Role::assistant,"收到："+request.messages.back().content}}; }
+        [](const auto&,const auto& request) -> dfy::model::Response { return {{dfy::model::Role::assistant,"收到："+dfy::test::business_messages(request).back().content}}; }
     },config);
     const auto begun = application.submit_dialogue("第一句话");
     const dfy::agent::RunId id{begun.session,begun.turn};
@@ -280,7 +281,7 @@ void dialogue_inputs(const fs::path& run) {
     try { dfy::app::replay_trace(altered,id,replay); }
     catch (const std::runtime_error& error) { rejected = std::string_view(error.what())=="replay: dialogue input settlement differs"; }
     check(rejected,"replay accepted a supplement assigned to the wrong model step");
-    for (const std::string mode : {"source","eventUtcMs","legacy"}) {
+    for (const std::string mode : {"source","eventUtcMs","tailBody","legacy"}) {
         const auto path = run/("replay-"+mode+".jsonl");
         std::ifstream source(application.trace_file(),std::ios::binary);
         std::ofstream changed(path,std::ios::binary);
@@ -288,8 +289,15 @@ void dialogue_inputs(const fs::path& run) {
         while (std::getline(source,line)) {
             auto row = nlohmann::json::parse(line);
             if (row.at("kind")=="model.prepared") {
-                if (mode=="legacy") { row.erase("messageEvidence"); row.erase("wireSha256"); }
-                else if (row.at("step")==2) row.at("messageEvidence").back()[mode] =
+                auto& messages = row.at("input").at("messages");
+                if (mode=="legacy") {
+                    messages.erase(messages.end()-1);
+                    row.erase("messageEvidence"); row.erase("wireSha256");
+                } else if (mode=="tailBody" && row.at("step")==2) {
+                    auto status = nlohmann::json::parse(messages.back().at("content").get<std::string>());
+                    status.at("asOf").at("event") = 1234;
+                    messages.back().at("content") = status.dump();
+                } else if (mode!="tailBody" && row.at("step")==2) row.at("messageEvidence").at(messages.size()-2)[mode] =
                     mode=="source" ? nlohmann::json("host_status") : nlohmann::json(0);
             }
             changed << row.dump() << '\n';
@@ -397,7 +405,7 @@ void trace_rewrites(const fs::path& run) {
         return {};
     };
     RunLoop loop(id,{},Backend{[&](const auto&,const Request& input) {
-        if (input.messages.back().role == Role::user)
+        if (dfy::test::business_messages(input).back().role == Role::user)
             return Response{{Role::assistant,"reading",{{"cell-1",name,R"({"cell":1})"},{"cell-2",name,R"({"cell":2})"}}},FinishReason::tool_calls};
         return Response{{Role::assistant,"finished"}};
     }},std::make_shared<MessageHistory>(),"read two cells",std::move(options));
@@ -517,7 +525,7 @@ void room_mailbox(const fs::path& run, bool automatic) {
         check(request.messages.front().role == Role::system &&
             request.messages.front().content.find("邮件正文")!=std::string::npos &&
             request.messages.front().content.ends_with("【人格与风格 v1】\nSpeak like a teammate."),"room persona overwrote mailbox rules");
-        return Response{{Role::assistant,request.messages.back().content}};
+        return Response{{Role::assistant,dfy::test::business_messages(request).back().content}};
     }},ApplicationRunConfig{.wake_for_room_address = automatic,.trace_directory = run/"room-trace"});
     check(application.post_room_event(RoomEvent::presence_changed,"room-1","joined").state == dfy::events::DeliveryState::accepted,
         "presence fact did not enter its mailbox");
