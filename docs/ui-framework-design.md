@@ -268,6 +268,48 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 消息按最近入箱顺序返回。每个地址另列 `id`、`direction`、累计 `accepted`、累计 `received` 和最早保留序号 `firstRetained`（无记录为 `"0"`）。后台保留全部待收信及有界的近期回执。窗口可在原请求加 `message` 查一封详情，加 `revision` 核对所见版本。当前有效的空来源返回 `ready` 和空信件表。后台或来源失效、指定修订已变、选中信件已离开保留区间时返回 `stale` 和空信件表。读取失败沿用 `management.error`。取得新目录及当前来源快照后可重新选择原件。[原生收发回执](../modules/events/src/mailboxes.cpp) · [管理信箱验收](../tests/plugins/management_mailboxes.cpp)
 
+### 5.7 设置页的插件管理协议
+
+初次查询发送 `{"version":"1","request":"p1","type":"plugins.list"}`。已握手窗口可指定 `instance`，并以 `revision` 核对原目录。响应 `plugins.directory` 回显请求，带有后台实例、十进制字符串修订、`ready` 或 `stale`、`packages` 和无效目录项数 `unavailableCount`。旧后台或旧修订返回空行集和 `stale`。有效空目录返回 `ready`。根目录扫描失败按管理错误上报。读取只使用业务线程已发布的目录。
+
+每行有包 `id`、`name`、`version`、`installed`、`loaded`、`generation`、`state`、`canLoad` 和 `canUnload`。`installed` 表示最近一次成功扫描可发现该包，`loaded` 表示宿主仍持有具体实例。代次为十进制字符串，无实例为 `"0"`。状态为 `installed`、`active`、`stopping` 或 `failed`。有实例时另带实际加载的 `loadedName`、`loadedVersion` 和 `errorCode`，磁盘包已移出目录时仍列出其运行责任。操作字段表示可以提交，实际执行仍复核依赖、忙碌和停止状态。[业务目录](../apps/host/src/management/plugin_directory.cpp) · [双管道验收](../tests/plugins/management_plugins.cpp)
+
+已安装包的加载请求形如 `{"version":"1","request":"w1","type":"plugins.load","instance":"原后台","command":"1","id":"test.directory","revision":"原目录修订","generation":"0"}`。每个已握手窗口的插件命令独立从 `"1"` 连续递增。宿主返回 `plugins.operation`，初始 `state=queued`、`effect=unconfirmed` 和不透明的 `operation`。窗口可发送 `{"version":"1","request":"q1","type":"plugins.receipt","instance":"原后台","operation":"原操作号"}`，重新连接也能查询。
+
+两个写入口均接受可选 `submission`。页面在首次提交前生成并保留 UUID，例如 `3b75faab-3207-4b0a-ae38-e7a7c0e96ada`，同时保留原 `instance`。此时操作号固定为 `plugin/request/3b75faab-3207-4b0a-ae38-e7a7c0e96ada`，第一次回包丢失或关窗时，新窗口可直接用 `plugins.receipt` 查询。公开标识允许 1～96 个 ASCII 字母、数字、连字符、下划线或点。回执回显原 `submission`。提交省略该字段时沿用原窗口命令水位和宿主签发的不透明操作号。
+
+原窗口重用同一 `command` 必须保持完整意图及 `submission` 一致。同一公开提交号改动作、包、修订或代次返回 `conflict`。另一窗口读回原件、或以相同意图命中已接纳记录，均只返回原回执，不占用该窗口的命令号。详细回执退休后，公开提交号在原后台仍返回 `expired`，重复提交也不会执行。未见过的操作号返回 `unknown`，重启后按旧后台身份查询返回 `stale`。[首包丢失与重连验证](../tests/plugins/management_plugin_recovery.cpp)
+
+操作回执带有原 `command`、`action`、`id`、`revision`、`targetGeneration` 和核实的 `generation`。实际成功加载为 `succeeded/loaded`，有底层返回码时提供 `nativeCode`。同一窗口重发原命令可读回原结果，改目标或参数返回 `conflict`，跳号返回 `outOfOrder` 和 `expectedCommand`。旧修订或代次返回 `stale/notApplied`。同一后台有界保留 64 项，进行中的记录受保护，已退休的命令号返回 `expired`。原操作号已不可查时返回 `unknown`。[业务线程与原操作回执](../apps/host/src/management/plugin_actions.cpp)
+
+`plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。DLL 已关闭而该代次仍有排队的宿主工作时，也保持该等待状态。同一操作号确认原代次实际回收后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending` 或 `closed`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
+
+加载时若依赖尚未激活，或系统未能打开清单指定的 DLL，宿主按实际持有的代次结算。确认未创建实例时回执为 `failed/notLoaded` 和 `generation="0"`。生命周期已经返回状态码时附 `nativeCode`。卸载因依赖占用或停止失败而保留的原回执，在后来显式重试成功后仍可按原号读取。[依赖、停止失败和模块打开验证](../tests/plugins/management_plugins.cpp)
+
+### 5.8 主体设置读取与保存
+
+已连接窗口发送 `{"version":"1","request":"s1","type":"settings.read","owner":"host","instance":"原后台"}`。可带上次读到的十进制字符串 `revision` 核对同一版本。`settings.snapshot` 回显请求、所有者与后台，给出已保存的 `revision`、运行中采用的 `appliedRevision`、待重启标记 `pendingRestart` 和当前服务的写入能力 `canSave`。旧后台或旧修订返回 `state=stale` 及空字段表。主体尚无供应商配置时返回 `unavailable`。
+
+就绪时 `fields` 返回 `provider` 和 `timeout_ms`，每项携带 `id`、`type`、`access_mode`、`source`、已保存的 `value` 和运行中的 `appliedValue`。供应商只读。超时允许 1～600000 毫秒的整数，来源为启动配置 `startup` 或主体用户覆盖 `user`。正式常驻入口启用保存，独立注入配置的应用可通过 `canSave=false` 表明只提供读取。后端只投影这两个字段。[主体字段投影](../apps/host/src/management/settings_protocol.cpp)
+
+保存示例为 `{"version":"1","request":"s2","type":"settings.save","owner":"host","instance":"原后台","revision":"1","submission":"window-a-1","changes":{"timeout_ms":5800}}`。`revision` 使用窗口所见的已保存修订，`submission` 由窗口为本次意图生成，最多 96 个 ASCII 字母、数字、点、斜杠、连字符或下划线。主体用户文件为数据目录下的 `host-settings.json`，采用同目录临时文件完整刷新后原子替换。首次读取沿用启动配置，首次保存才创建文件。
+
+`settings.result` 的 `state=saved` 表示已落盘，`savedRevision` 和 `savedValue` 对应该次提交，`revision`、`appliedRevision` 和 `pendingRestart` 对应当前状态。下次正式启动在创建会话前采用已保存的超时。只读字段使整批返回 `readOnly`，未知字段或越界值返回 `invalid`，两窗基于同一修订保存时后到者返回 `conflict` 和当前修订。磁盘发布失败返回 `failed`，文件在运行期间被外部改写时返回 `storageChanged` 并保留现场。
+
+同一意图可按原提交号重读。窗口发送 `{"version":"1","request":"s3","type":"settings.receipt","owner":"host","instance":"当前后台","submission":"window-a-1"}` 查询最近 32 次成功保存的原回执。以相同基准修订和相同值重发原提交会返回原保存修订，改值或改基准返回 `submissionConflict`。重启后用新后台身份仍可查原提交，超出保留范围或从未成功写入的提交返回 `unknown`。[保存与冲突裁定](../apps/host/src/host_settings.cpp) · [文件发布](../apps/host/src/host_settings_file.cpp) · [双窗、写锁与重启验证](../apps/host/tests/management_settings.cpp)
+
+正式入口验收在同一用户目录先后启动两个 `dafeiyu-host.exe` 进程，分别持有原进程句柄并核对退出码。首次启动从指定配置取得超时，保存后另一个窗口仍可读到旧采用值。新进程采用用户覆盖，也能复查原保存回执。两次启动期间主会话均保持空闲。[正式本体验收](../apps/host/tests/resident_settings.cpp)
+
+### 5.9 插件公开设置读口
+
+窗口从 `plugins.list` 选择一个活动包，记录包的 `id`、`generation` 和后台 `instance`。活动行的 `hasPublicSettings=true` 表示该代次已登记可读字段。请求示例为 `{"version":"1","request":"ps1","type":"settings.read","owner":"plugin","instance":"原后台","id":"test.public-settings","generation":"原代次"}`。可加上次返回的 `revision` 复核原快照。[服务端读取](../apps/host/src/management/settings_protocol.cpp)
+
+`settings.snapshot` 回显 `owner`、`instance`、`id`、`generation` 和 `request`。就绪时 `state=ready`，`fields` 逐项给出 `id`、`type=string`、`access_mode=read_only`、`source=default|user`、`value` 和 `appliedValue`。两项值均取当前实例创建时真正采用的有效配置。该快照固定到代次，`revision` 与 `appliedRevision` 均等于代次。文件编辑在重新加载后才进入新代次。
+
+活动包无声明返回 `notDeclared`。后台、包、代次或修订不匹配时返回 `stale`。公开声明无效、字段类型不匹配或实例正在停止时返回 `unavailable`。这些状态均带空 `fields`，读口的 `canSave` 为 `false`。测试包仅登记 `displayName`，同一配置中的其他键保留在业务实例中。[测试插件声明](../tests/fixtures/public_settings/ui/manifest.json) · [双管道、覆盖来源与重载验收](../tests/plugins/management_plugins.cpp)
+
+启用测试的构建中，目标 `dfy_public_settings_fixture` 复用现有原生测试 DLL，按配置生成可显式安装的测试包。位置为构建目录下的 `tests/fixtures/public_settings/<配置>/test.public-settings/`。[夹具生成规则](../tests/fixtures/public_settings/CMakeLists.txt)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型

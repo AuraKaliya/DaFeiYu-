@@ -3,6 +3,7 @@
 #include "message_store.hpp"
 #include "main_messages.hpp"
 #include "mailbox_view.hpp"
+#include "plugin_directory.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/utf8.hpp>
 #include <algorithm>
@@ -160,6 +161,9 @@ std::optional<std::int64_t> Host::message_watermark(const std::string& client, b
 void Host::close(bool explicit_request) noexcept {
     if (explicit_request) explicit_stop_ = true;
     worker_.request_stop();
+    std::lock_guard lock(mutex_);
+    for (auto& op : plugin_operations_) if (op->state=="queued") { op->state="unavailable"; op->effect="notApplied"; }
+    queued_plugins_ = 0;
 }
 
 // 复制最近发布的阶段、开始点和等待对象。
@@ -369,11 +373,29 @@ std::shared_ptr<const app::MailboxView> Host::mailboxes() const {
     return mailboxes_;
 }
 
+// 在观察线程复制已发布的目录指针，目录读取没有插件调用权。
+std::shared_ptr<const PluginDirectory> Host::packages() const {
+    std::lock_guard lock(mutex_);
+    return packages_;
+}
+
+// 在短锁内核对窗口、启动和退出状态，文件操作只持有设置自身的锁。
+std::shared_ptr<app::HostSettings> Host::settings(const std::string& client, bool writing) const {
+    std::lock_guard lock(mutex_);
+    if (client.empty() || !clients_.contains(client)) throw std::invalid_argument("settings: management client required");
+    if (writing && (exited_ || worker_.get_stop_token().stop_requested())) return {};
+    return settings_;
+}
+
 // 只在业务线程拥有和使用应用服务。
 // 步骤：创建应用 → 推进原工作并发布快照 → 有序关闭并报告退出。
 void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
     try {
         const auto application = open();
+        {
+            std::lock_guard lock(mutex_);
+            settings_ = application->host_settings();
+        }
         if (messages_) {
             application->bind_messages(messages_,instance_,software_);
             application->main_messages()->on_reply([this](const std::string& text) { terminal_.published(text); });
@@ -382,6 +404,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
         const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;
         std::shared_ptr<const app::MailboxView> mailboxes;
+        std::shared_ptr<const PluginDirectory> packages;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
             terminal_.advance(*application);
@@ -401,6 +424,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             if (!display || display->revision != visible.revision) display = std::make_shared<const app::ConversationDisplay>(visible);
             try { mailboxes = app::sample_mailboxes(*application,mailboxes); }
             catch (const std::exception&) { mailboxes.reset(); }
+            advance_plugin_actions(application->plugins(),packages);
             {
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;

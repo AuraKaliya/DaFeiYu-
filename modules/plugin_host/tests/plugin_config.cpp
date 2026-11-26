@@ -39,6 +39,49 @@ Manifest package(const fs::path& path, const std::string& id, bool defaults = fa
     return load_manifest(path);
 }
 
+// 核对声明属于当前包，重复、缺失或指向链接的声明均隔离于业务配置。
+// 步骤：验证默认与同值用户来源 → 替换所有者或字段 → 检查不完整声明与文件链接 → 核对私有业务配置仍可用。
+void public_registration(const fs::path& run) {
+    const auto root=run/"declaring", users=run/"declaring-user";
+    fs::create_directories(root);
+    write(root/"defaults.json",R"({"displayName":"same","internal":"never-public"})");
+    const auto manifest=package(root,"sample.public",true);
+    const auto dir=root/"ui", file=dir/"manifest.json";
+    fs::create_directory(dir);
+    const Json field{{"id","displayName"},{"type","string"},{"access_mode","read_only"}};
+    const Json contribution{{"id","view"},{"kind","settings"},{"fields",Json::array({field})}};
+    const Json valid{{"ui_schema_version",1},{"plugin_id","sample.public"},{"contributions",Json::array({contribution})}};
+    write(file,valid.dump());
+    const auto first=load_config(manifest,users);
+    check(first->public_settings.state==PublicSettingsState::ready && first->public_settings.fields.size()==1 &&
+        !first->public_settings.fields.front().user_override,"default public declaration was not registered");
+    fs::create_directories(users/"plugins"/manifest.id);
+    write(users/"plugins"/manifest.id/"settings.json",R"({"displayName":"same","public_settings":["internal"]})");
+    const auto same=load_config(manifest,users);
+    check(same->public_settings.fields.size()==1 && same->public_settings.fields.front().user_override,
+        "same-value override lost provenance or registered a private field");
+    const auto rejected=[&] {
+        const auto config=load_config(manifest,users);
+        check(config->public_settings.state==PublicSettingsState::unavailable && config->public_settings.fields.empty() &&
+            Json::parse(config->json).at("internal")=="never-public","invalid declaration disclosed a partial field or disabled the plugin configuration");
+    };
+    auto wrong=valid;
+    wrong["plugin_id"]="sample.other";
+    write(file,wrong.dump()); rejected();
+    wrong=valid;
+    wrong["contributions"][0]["fields"].push_back(field);
+    write(file,wrong.dump()); rejected();
+    wrong["contributions"][0]["fields"][1]["id"]="missing";
+    write(file,wrong.dump()); rejected();
+    wrong=valid;
+    wrong["requires"]={"unsupported"};
+    write(file,wrong.dump()); rejected();
+    fs::remove(file);
+    write(run/"foreign-ui.json",valid.dump());
+    dfy::tests::links::file(fs::absolute(run/"foreign-ui.json"),file);
+    rejected();
+}
+
 // 检查错误类别并确认错误信息不携带配置内容。
 // 步骤：执行预期失败的读取 → 核对错误类别与敏感标记隔离。
 void rejects(const Manifest& manifest, const fs::path& users, const std::string& expected) {
@@ -68,6 +111,7 @@ int main(int argc, char** argv) {
             }
         }
         const auto root = run / u8"中文 包";
+        public_registration(run);
         const auto users = run / u8"用户 数据";
         auto manifest = package(root, "sample.one");
         const auto empty = load_config(manifest, users);

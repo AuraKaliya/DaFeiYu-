@@ -3,6 +3,21 @@ target_link_libraries(dfy_management_host_tests PRIVATE dfy_management dfy_build
 add_test(NAME app.management_host COMMAND dfy_management_host_tests "${CMAKE_CURRENT_BINARY_DIR}/management-host")
 set_tests_properties(app.management_host PROPERTIES TIMEOUT 15)
 
+dfy_test_executable(dfy_management_settings_tests management_settings.cpp)
+target_link_libraries(dfy_management_settings_tests PRIVATE dfy_management dfy_build_options)
+add_test(NAME app.management_settings COMMAND dfy_management_settings_tests "${CMAKE_CURRENT_BINARY_DIR}/management-settings/$<CONFIG>")
+set_tests_properties(app.management_settings PROPERTIES TIMEOUT 90)
+
+dfy_test_executable(dfy_host_settings_tests host_settings.cpp)
+target_link_libraries(dfy_host_settings_tests PRIVATE dfy_application dfy_build_options)
+add_test(NAME app.host_settings COMMAND dfy_host_settings_tests "${CMAKE_CURRENT_BINARY_DIR}/host-settings/$<CONFIG>")
+
+dfy_test_executable(dfy_resident_settings_tests resident_settings.cpp)
+target_link_libraries(dfy_resident_settings_tests PRIVATE dfy_management dfy_build_options)
+add_dependencies(dfy_resident_settings_tests dafeiyu-host)
+add_test(NAME app.resident_settings COMMAND dfy_resident_settings_tests "$<TARGET_FILE:dafeiyu-host>" "${CMAKE_CURRENT_BINARY_DIR}/resident-settings/$<CONFIG>")
+set_tests_properties(app.resident_settings PROPERTIES TIMEOUT 90)
+
 dfy_test_executable(dfy_management_pipe_tests management_pipe.cpp)
 target_link_libraries(dfy_management_pipe_tests PRIVATE dfy_management dfy_build_options)
 add_test(NAME app.management_pipe COMMAND dfy_management_pipe_tests "${CMAKE_CURRENT_BINARY_DIR}/management-pipe")

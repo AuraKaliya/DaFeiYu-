@@ -27,6 +27,7 @@ struct DialogueQueueReceipt {
 class RunLog;
 class SoftwareLog;
 class MainMessages;
+class HostSettings;
 struct MailboxDirectory;
 class MessageStore;
 struct VerificationReport {
@@ -49,6 +50,7 @@ struct ApplicationRunConfig {
     bool wake_for_plugin_mail = true;
     std::filesystem::path trace_directory;
     std::weak_ptr<SoftwareLog> software_log;
+    bool manage_host_settings = false;
 };
 enum class RoomEvent { presence_changed, addressed };
 
@@ -62,6 +64,8 @@ class Application {
         model::Backend backend, ApplicationRunConfig run = {});
     // 返回本次宿主运行的本机日志位置，未开启时返回空路径。
     std::filesystem::path trace_file() const;
+    // 仅向管理宿主提供已登记的配置字段及当前应用值。
+    std::shared_ptr<HostSettings> host_settings() const noexcept { return host_settings_; }
     // 访问应用拥有的问答与运行服务。
     Conversation& conversation() noexcept { return conversation_; }
     // 在独占目录的后台关联主会话消息，独立测试和专用宿主可沿用原入口。
@@ -226,6 +230,7 @@ class Application {
     const runtime::DomainId room_sender_;
     const events::MailboxId room_mailbox_;
     plugins::PluginManager plugins_;
+    const std::shared_ptr<HostSettings> host_settings_;
     const model::Config model_config_;
     const model::Backend model_backend_;
     const agent::RunVersionLabels labels_;

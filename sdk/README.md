@@ -34,6 +34,8 @@ cmake --build .\build-status --config Release
 
 插件清单可以声明 `"dependencies": ["example.provider"]`。宿主加载前检查所选包的传递依赖及环路，直接提供方须已显式加载。启动成功后绑定实际实例，该关系进入 Hook 排序及卸载检查。
 
+插件可在包内 `ui/manifest.json` 登记公开的只读文本设置。`ui_schema_version` 取 1，`plugin_id` 与本包一致，`contributions` 中的 `kind="settings"` 条目以 `fields` 列出顶层配置键、`type="string"` 和 `access_mode="read_only"`。每个加载代次最多公开 32 个字段，每项 UTF-8 文本最多 4096 字节。公开副本和来源在合并包默认值与用户覆盖时固定。登记失败只影响设置视图，业务实例仍按自己的生命周期启动。[可复用测试声明](../tests/fixtures/public_settings/ui/manifest.json) · [管理 IPC](../docs/ui-framework-design.md#59-插件公开设置读口)
+
 ## 宿主能力
 
 | 能力 | 当前版本和职责 |

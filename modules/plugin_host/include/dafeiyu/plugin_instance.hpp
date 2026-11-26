@@ -8,6 +8,7 @@
 #include <functional>
 
 namespace dfy::plugins {
+struct PublicSettings;
 class PluginInstance;
 // 静态能力表与具体实例代次共同绑定，不能把一个实例的能力用于另一个实例。
 template<class T> class InstanceCapability {
@@ -91,6 +92,8 @@ class PluginInstance {
     std::string_view plugin_name() const noexcept;
     // 借用原包清单声明的版本，不把它解释为二进制签名或代码内容摘要。
     std::string_view plugin_version() const noexcept;
+    // 借用本代次创建时核实的公开设置副本，私有配置及 DLL 所有权不离开实例。
+    const PublicSettings& public_settings() const noexcept;
     // 从活动实例取得精确版本能力，并保留该实例的代码寿命。
     // 步骤：核对活动阶段并查询能力 → 固定具体实例代次 → 转交代码持有。
     template<class T> std::optional<InstanceCapability<T>> query(std::string_view name, std::uint32_t version) {

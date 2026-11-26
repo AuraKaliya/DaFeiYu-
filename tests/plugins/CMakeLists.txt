@@ -66,6 +66,23 @@ add_dependencies(dfy_management_mailbox_tests dfy_mailbox_fixture)
 add_test(NAME app.management_mailboxes COMMAND dfy_management_mailbox_tests "$<TARGET_FILE:dfy_mailbox_fixture>"
   "${CMAKE_CURRENT_BINARY_DIR}/mailbox-management")
 
+dfy_test_executable(dfy_management_plugins_tests management_plugins.cpp)
+target_link_libraries(dfy_management_plugins_tests PRIVATE dfy_sdk_test_headers dfy_management dfy_build_options)
+add_dependencies(dfy_management_plugins_tests dfy_query_v2_fixture dfy_mailbox_fixture dfy_public_settings_fixture)
+add_test(NAME app.management_plugins COMMAND dfy_management_plugins_tests "$<TARGET_FILE:dfy_query_v2_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/plugin-management" "$<TARGET_FILE:dfy_mailbox_fixture>")
+get_target_property(public_settings_package dfy_public_settings_fixture DFY_FIXTURE_PACKAGE)
+add_test(NAME app.management_plugin_settings COMMAND dfy_management_plugins_tests "$<TARGET_FILE:dfy_query_v2_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/public-plugin-settings/$<CONFIG>" --public-settings "${public_settings_package}")
+set_tests_properties(app.management_plugin_settings PROPERTIES TIMEOUT 90)
+
+dfy_test_executable(dfy_management_plugin_recovery_tests management_plugin_recovery.cpp)
+target_link_libraries(dfy_management_plugin_recovery_tests PRIVATE dfy_sdk_test_headers dfy_management dfy_build_options)
+add_dependencies(dfy_management_plugin_recovery_tests dfy_query_v2_fixture)
+add_test(NAME app.management_plugin_recovery COMMAND dfy_management_plugin_recovery_tests "$<TARGET_FILE:dfy_query_v2_fixture>"
+  "${CMAKE_CURRENT_BINARY_DIR}/plugin-recovery/$<CONFIG>")
+set_tests_properties(app.management_plugin_recovery PROPERTIES TIMEOUT 90)
+
 # 真实 C 实例验证停止受理与停止完成分离，保持 v1 生命周期契约冻结。
 dfy_test_executable(dfy_sdk_lifecycle_v2_tests sdk_lifecycle_v2.cpp)
 target_link_libraries(dfy_sdk_lifecycle_v2_tests PRIVATE dfy_plugins dfy_build_options)

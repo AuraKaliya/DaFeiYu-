@@ -47,6 +47,7 @@ int resident_command(std::span<const std::filesystem::path> args) {
             app::ApplicationRunConfig run;
             run.trace_directory = paths.trace;
             run.software_log = log;
+            run.manage_host_settings = true;
             const auto identity = startup_identity(paths.model, paths.plugins, paths.trace);
             const int code = serve_resident(paths.data, identity, [=] {
                 return std::make_unique<app::Application>(read_runtime_config(paths.model, *log), paths.plugins, paths.data,

@@ -4,7 +4,15 @@
 #include <dafeiyu/plugin_package.hpp>
 
 namespace dfy::plugins {
-struct LoadedPlugin { std::string id; InstancePhase phase; std::uint32_t error; };
+struct LoadedPlugin {
+    std::string id;
+    InstancePhase phase;
+    std::uint32_t error;
+    runtime::DomainId generation = 0;
+    bool stop_pending = false;
+    // 比较本次采样的包、实例代次、生命周期和错误码。
+    bool operator==(const LoadedPlugin&) const = default;
+};
 enum class LifecycleStage { load, stop, unloaded };
 struct LifecycleNotice {
     LifecycleStage stage;

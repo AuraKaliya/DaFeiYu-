@@ -11,7 +11,8 @@ add_library(dfy_application STATIC
   src/dialogue_queue.cpp src/event_dispatch.cpp src/event_dispatch.hpp src/interaction_routes.cpp
   src/interaction_routes.hpp src/mail_reply_tool.cpp src/mail_reply_tool.hpp src/mailbox_intake.cpp
   src/mailbox_intake.hpp src/mailbox_view.cpp src/mailbox_view.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
-  src/message_store.cpp src/message_store.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
+  src/message_store.cpp src/message_store.hpp src/host_settings.cpp src/host_settings.hpp
+  src/host_settings_file.cpp src/host_settings_file.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
   src/reply_delivery.hpp src/room_mailbox.cpp src/run_log.cpp src/run_log.hpp src/software_log.cpp
   src/software_log.hpp src/software_log_files.cpp src/software_log_files.hpp src/subagents.cpp
   src/subagents.hpp src/tool_contract_trace.cpp src/tool_contract_trace.hpp src/tool_verification.cpp src/tool_verification.hpp src/trace_commands.hpp
@@ -46,14 +47,18 @@ add_library(dfy_management STATIC
   src/management/dialogue_channel.hpp src/management/host.cpp src/management/host.hpp
   src/management/local_pipe.cpp src/management/local_pipe.hpp src/management/message_protocol.cpp
   src/management/mailbox_protocol.cpp src/management/mailbox_protocol.hpp
+  src/management/plugin_directory.cpp src/management/plugin_directory.hpp
+  src/management/plugin_actions.cpp src/management/plugin_actions.hpp
+  src/management/retired_plugin_requests.cpp src/management/retired_plugin_requests.hpp
   src/management/message_protocol.hpp src/management/poll_log.cpp src/management/poll_log.hpp
   src/management/protocol.cpp src/management/protocol.hpp src/management/resident.cpp
+  src/management/settings_protocol.cpp
   src/management/resident.hpp src/management/resident_watch.cpp src/management/resident_watch.hpp
   src/management/room_location.hpp src/management/terminal_host.cpp src/management/terminal_host.hpp
   src/paths.cpp src/paths.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json
-  PRIVATE dfy_host_commands dfy_build_options dfy_digest advapi32 shell32 ole32)
+  PRIVATE dfy_host_commands dfy_build_options dfy_digest advapi32 shell32 ole32 winsqlite3)
 dfy_group_target(dfy_management App)
 
 add_library(dfy_resident_entry STATIC src/resident_entry.cpp src/resident_entry.hpp src/resident_tray.cpp src/resident_tray.hpp)

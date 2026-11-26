@@ -2,6 +2,7 @@
 #include "host.hpp"
 #include "message_protocol.hpp"
 #include "mailbox_protocol.hpp"
+#include "plugin_directory.hpp"
 #include <nlohmann/json.hpp>
 #include <charconv>
 
@@ -182,6 +183,16 @@ nlohmann::json run_snapshot(const Host* host, const nlohmann::json& request) {
 }
 }
 
+// 拒绝前导零、尾随字符和越过整数范围的协议修订或身份。
+std::uint64_t management_number(const nlohmann::json& value) {
+    const auto& text = value.get_ref<const std::string&>();
+    std::uint64_t number = 0;
+    const auto parsed = std::from_chars(text.data(),text.data()+text.size(),number);
+    if (text.size()>20 || parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size() || (text.size()>1 && text.front()=='0'))
+        throw std::invalid_argument("management: invalid numeric identity");
+    return number;
+}
+
 // 在正式本体入口解析一次版本化请求，读取状态或提交具体对话命令。
 // 步骤：校验版本与身份 → 区分公开查询和会话请求 → 经宿主处理并回传原请求号。
 nlohmann::json dispatch(Host* host, const nlohmann::json& request, const std::string& client) {
@@ -194,6 +205,9 @@ nlohmann::json dispatch(Host* host, const nlohmann::json& request, const std::st
         return {{"event","state.snapshot"},{"version","1"},{"topic","run"},{"request",id},
             {"available",host != nullptr},{"run",run_snapshot(host,request)}};
     if (!host) throw std::runtime_error("management: host unavailable");
+    if (type.starts_with("settings.")) return settings_request(*host,request,client);
+    if (type=="plugins.list") return plugin_directory_request(*host,request);
+    if (type.starts_with("plugins.")) return plugin_action_request(*host,request,client);
     if (type.starts_with("mailbox.")) return mailbox_request(*host,request);
     if (type.starts_with("messages.")) return message_request(*host,request,client);
     if (type == "room.read" && request.size()==3)

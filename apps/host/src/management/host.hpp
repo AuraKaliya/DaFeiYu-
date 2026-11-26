@@ -1,6 +1,8 @@
 #pragma once
 #include "application.hpp"
 #include "dialogue_channel.hpp"
+#include "plugin_actions.hpp"
+#include "retired_plugin_requests.hpp"
 #include "room_location.hpp"
 #include "terminal_host.hpp"
 #include <atomic>
@@ -14,6 +16,7 @@ namespace dfy::app { class SoftwareLog; }
 namespace dfy::app { class MessageStore; }
 namespace dfy::app { struct MailboxView; }
 namespace dfy::management {
+struct PluginDirectory;
 enum class StopPhase { requested, conversation, plugins, complete, failed };
 struct StopProgress {
     StopPhase phase = StopPhase::requested;
@@ -34,6 +37,14 @@ class Host {
     std::optional<RoomLocation> room_location() const;
     // 返回同一份已发布的目录与收件快照，复制期间不调用业务服务。
     std::shared_ptr<const app::MailboxView> mailboxes() const;
+    // 借用业务线程最近发布的包目录及实际插件状态。
+    std::shared_ptr<const PluginDirectory> packages() const;
+    // 核对管理窗口后借用已发布的设置服务，停止期间拒绝接纳新写入。
+    std::shared_ptr<app::HostSettings> settings(const std::string& client, bool writing) const;
+    // 由有效管理客户端按连续命令号提交一个后台和目标范围已固定的包操作。
+    PluginOperation submit_plugin(const std::string& client, const std::string& instance, PluginCommand command);
+    // 读取原后台保留的插件操作回执，支持窗口重新连接。
+    PluginOperation plugin_receipt(const std::string& client, const std::string& instance, const std::string& operation) const;
     // 为新观察客户端签发独立命令空间，正常页面刷新沿用原空间。
     std::string open_client();
     // 核对远端观察者身份并更新活跃时间，不读取正文。
@@ -72,9 +83,14 @@ class Host {
         bool subscribed = false;
         std::chrono::steady_clock::time_point seen = std::chrono::steady_clock::now();
         std::deque<CommandRecord> commands;
+        std::uint64_t plugin_latest = 0;
     };
     // 在业务线程执行指定槽位中的命令，并将原回执保留到发布结果。
     void advance_dialogue(app::Application& application, std::optional<DialogueCommand>& slot);
+    // 在业务线程复核并执行一个插件操作，同时发布当前目录及原回执。
+    void advance_plugin_actions(plugins::PluginManager& manager, std::shared_ptr<const PluginDirectory>& previous);
+    // 在宿主锁内以业务采样结算已受理的原代次停止并发布目录。
+    void publish_plugin_directory(std::shared_ptr<const PluginDirectory> view);
     // 推进原应用服务、发布值快照并在拥有线程上完成关闭。
     void run(std::stop_token stop, const Open& open, const Drive& drive) noexcept;
     // 在原拥有线程等待会话与插件实际退出，按边界发布收尾进展。
@@ -86,6 +102,11 @@ class Host {
     std::optional<app::RunStatusSnapshot> snapshot_;
     std::optional<RoomLocation> room_location_;
     std::shared_ptr<const app::MailboxView> mailboxes_;
+    std::shared_ptr<const PluginDirectory> packages_;
+    std::shared_ptr<app::HostSettings> settings_;
+    std::deque<std::shared_ptr<PluginOperation>> plugin_operations_;
+    RetiredPluginRequests retired_plugin_requests_;
+    std::size_t queued_plugins_ = 0, waiting_plugins_ = 0;
     std::shared_ptr<const app::ConversationDisplay> display_;
     std::optional<DialogueCommand> pending_, stop_command_;
     mutable std::map<std::string,Client> clients_{{"",{}}};

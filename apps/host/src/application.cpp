@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "host_settings.hpp"
 #include "run_log.hpp"
 #include "software_log.hpp"
 #include "main_messages.hpp"
@@ -51,7 +52,9 @@ Application::Application(model::Config config, const std::filesystem::path& pack
       dialogue_sender_(runtime::next_domain()),
       dialogue_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,dialogue_sender_,dialogue_text_limit)),
       room_sender_(runtime::next_domain()), room_mailbox_(mailbox_host_.network->open(mailbox_host_.identity,room_sender_)),
-      plugins_(packages,user_data,channel_,16,mailbox_host_), model_config_(std::move(config)), model_backend_(std::move(backend)),
+      plugins_(packages,user_data,channel_,16,mailbox_host_),
+      host_settings_(std::make_shared<HostSettings>(run.manage_host_settings ? user_data : std::filesystem::path{},config.provider,config.timeout_ms)),
+      model_config_(std::move(config)), model_backend_(std::move(backend)),
       labels_(build_labels(std::move(run.model_profile))),
       persona_(load_persona(user_data)),
       run_log_(run.trace_directory.empty() ? nullptr : std::make_shared<RunLog>(run.trace_directory)),

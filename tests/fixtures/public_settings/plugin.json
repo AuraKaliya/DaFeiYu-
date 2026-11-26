@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "test.public-settings",
+  "name": "公开设置测试插件",
+  "version": "1",
+  "abi_version": 2,
+  "entry": "entry.dll",
+  "default_config": "defaults.json"
+}
