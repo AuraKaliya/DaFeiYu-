@@ -49,6 +49,7 @@ add_library(dfy_management STATIC
   src/management/mailbox_protocol.cpp src/management/mailbox_protocol.hpp
   src/management/plugin_directory.cpp src/management/plugin_directory.hpp
   src/management/plugin_actions.cpp src/management/plugin_actions.hpp
+  src/management/retired_plugin_requests.cpp src/management/retired_plugin_requests.hpp
   src/management/message_protocol.hpp src/management/poll_log.cpp src/management/poll_log.hpp
   src/management/protocol.cpp src/management/protocol.hpp src/management/resident.cpp
   src/management/settings_protocol.cpp
@@ -57,7 +58,7 @@ add_library(dfy_management STATIC
   src/paths.cpp src/paths.hpp)
 target_compile_definitions(dfy_management PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(dfy_management PUBLIC dfy_application nlohmann_json::nlohmann_json
-  PRIVATE dfy_host_commands dfy_build_options dfy_digest advapi32 shell32 ole32)
+  PRIVATE dfy_host_commands dfy_build_options dfy_digest advapi32 shell32 ole32 winsqlite3)
 dfy_group_target(dfy_management App)
 
 add_library(dfy_resident_entry STATIC src/resident_entry.cpp src/resident_entry.hpp src/resident_tray.cpp src/resident_tray.hpp)

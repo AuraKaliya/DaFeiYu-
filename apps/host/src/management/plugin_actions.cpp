@@ -2,6 +2,7 @@
 #include "plugin_actions.hpp"
 #include "plugin_directory.hpp"
 #include "protocol.hpp"
+#include <dafeiyu/digest.hpp>
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
@@ -9,6 +10,19 @@ namespace dfy::management {
 namespace {
 using Json = nlohmann::json;
 constexpr std::size_t receipt_limit = 64;
+constexpr std::string_view public_prefix = "plugin/request/";
+
+// 允许页面事前生成 UUID 或有界 ASCII 标识，公开身份始终只占一个路径段。
+bool valid_submission(std::string_view value) {
+    return !value.empty() && value.size()<=96 && std::ranges::all_of(value,[](unsigned char c) {
+        return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='-' || c=='_' || c=='.';
+    });
+}
+
+// 两个窗口共用公开提交号时仍须匹配原动作、包、目录修订及实际代次。
+bool same_target(const PluginCommand& first,const PluginCommand& other) {
+    return first.action==other.action && first.id==other.id && first.revision==other.revision && first.generation==other.generation;
+}
 
 // 写入一次没有分派的裁定并返回可脱离账本的值副本。
 PluginOperation refused(PluginOperation op, std::string_view state) {
@@ -70,6 +84,7 @@ Json operation_json(const PluginOperation& op, const Host& host, const Json& req
         {"revision",std::to_string(op.command.revision)},{"targetGeneration",std::to_string(op.command.generation)},
         {"generation",std::to_string(op.generation)}});
     if (op.expected) result["expectedCommand"] = std::to_string(op.expected);
+    if (!op.command.submission.empty()) result["submission"] = op.command.submission;
     if (op.native_code) result["nativeCode"] = *op.native_code;
     if (!op.native_result.empty()) result["nativeResult"] = op.native_result;
     return result;
@@ -82,18 +97,31 @@ PluginOperation Host::submit_plugin(const std::string& client, const std::string
     std::lock_guard lock(mutex_);
     const auto owner = clients_.find(client);
     if (client.empty() || owner==clients_.end()) throw std::invalid_argument("plugins: management client required");
-    PluginOperation op{"plugin/"+client+"/"+std::to_string(cmd.number),std::move(cmd)};
+    if (!cmd.submission.empty() && !valid_submission(cmd.submission)) throw std::invalid_argument("plugins: invalid submission");
+    auto identity = cmd.submission.empty() ? "plugin/"+platform::sha256(client+"/"+std::to_string(cmd.number)) :
+        std::string(public_prefix)+cmd.submission;
+    PluginOperation op{std::move(identity),std::move(cmd)};
+    op.originating_client=client;
     op.generation = op.command.generation;
     if (instance!=instance_) return refused(std::move(op),"stale");
-    for (const auto& prior : plugin_operations_) if (prior->identity==op.identity)
+    for (const auto& prior : plugin_operations_) if (prior->originating_client==client && prior->command.number==op.command.number)
         return prior->command==op.command ? *prior : refused(std::move(op),"conflict");
     auto& latest = owner->second.plugin_latest;
     if (op.command.number<=latest) { op.state="expired"; op.effect="unknown"; return op; }
     if (op.command.number!=latest+1) { op.expected=latest+1; return refused(std::move(op),"outOfOrder"); }
+    if (!op.command.submission.empty()) {
+        for (const auto& prior : plugin_operations_) if (prior->identity==op.identity) {
+            if (prior->originating_client!=client && same_target(prior->command,op.command)) return *prior;
+            return refused(std::move(op),"conflict");
+        }
+        if (retired_plugin_requests_.contains(op.command.submission)) { op.state="expired"; op.effect="unknown"; return op; }
+    }
     if (exited_ || worker_.get_stop_token().stop_requested()) return refused(std::move(op),"unavailable");
     if (plugin_operations_.size()==receipt_limit) {
         const auto retired = std::ranges::find_if(plugin_operations_,[](const auto& item) { return !item->unfinished(); });
         if (retired==plugin_operations_.end()) { latest=op.command.number; return refused(std::move(op),"full"); }
+        const auto& submission=(*retired)->command.submission;
+        if (!submission.empty()) retired_plugin_requests_.remember(submission);
         plugin_operations_.erase(retired);
     }
     plugin_operations_.push_back(std::make_shared<PluginOperation>(op));
@@ -106,9 +134,11 @@ PluginOperation Host::submit_plugin(const std::string& client, const std::string
 PluginOperation Host::plugin_receipt(const std::string& client, const std::string& instance, const std::string& identity) const {
     std::lock_guard lock(mutex_);
     if (client.empty() || !clients_.contains(client)) throw std::invalid_argument("plugins: management client required");
-    if (instance==instance_)
-        for (const auto& record : plugin_operations_) if (record->identity==identity) return *record;
-    return {identity,{},instance==instance_ ? "unknown" : "stale","unknown"};
+    if (instance!=instance_) return {identity,{},"stale","unknown"};
+    for (const auto& record : plugin_operations_) if (record->identity==identity) return *record;
+    if (identity.starts_with(public_prefix) && retired_plugin_requests_.contains(identity.substr(public_prefix.size())))
+        return {identity,{},"expired","unknown"};
+    return {identity,{},"unknown","unknown"};
 }
 
 // 持有宿主锁时按原代次结算已受理的停止，真实退出与拒绝均保留最初的管理器返回值。
@@ -161,10 +191,15 @@ Json plugin_action_request(Host& host, const Json& request, const std::string& c
     const auto& type = request.at("type");
     if (type=="plugins.receipt" && request.size()==5)
         return operation_json(host.plugin_receipt(client,instance,plugin_identity(request.at("operation"),160)),host,request);
-    if ((type!="plugins.load" && type!="plugins.unload") || request.size()!=8) throw std::invalid_argument("plugins: invalid operation");
+    const bool identified=request.contains("submission");
+    if ((type!="plugins.load" && type!="plugins.unload") || request.size()!=8u+identified) throw std::invalid_argument("plugins: invalid operation");
     PluginCommand cmd{type=="plugins.load" ? "load" : "unload",plugin_identity(request.at("id"),64),management_number(request.at("command")),
         management_number(request.at("revision")),management_number(request.at("generation"))};
     if (!cmd.number || (cmd.action=="load")!=(cmd.generation==0)) throw std::invalid_argument("plugins: invalid command or target generation");
+    if (identified) {
+        cmd.submission=plugin_identity(request.at("submission"),96);
+        if (!valid_submission(cmd.submission)) throw std::invalid_argument("plugins: invalid submission");
+    }
     return operation_json(host.submit_plugin(client,instance,std::move(cmd)),host,request);
 }
 }

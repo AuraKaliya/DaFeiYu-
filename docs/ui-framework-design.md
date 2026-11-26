@@ -276,6 +276,10 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 已安装包的加载请求形如 `{"version":"1","request":"w1","type":"plugins.load","instance":"原后台","command":"1","id":"test.directory","revision":"原目录修订","generation":"0"}`。每个已握手窗口的插件命令独立从 `"1"` 连续递增。宿主返回 `plugins.operation`，初始 `state=queued`、`effect=unconfirmed` 和不透明的 `operation`。窗口可发送 `{"version":"1","request":"q1","type":"plugins.receipt","instance":"原后台","operation":"原操作号"}`，重新连接也能查询。
 
+两个写入口均接受可选 `submission`。页面在首次提交前生成并保留 UUID，例如 `3b75faab-3207-4b0a-ae38-e7a7c0e96ada`，同时保留原 `instance`。此时操作号固定为 `plugin/request/3b75faab-3207-4b0a-ae38-e7a7c0e96ada`，第一次回包丢失或关窗时，新窗口可直接用 `plugins.receipt` 查询。公开标识允许 1～96 个 ASCII 字母、数字、连字符、下划线或点。回执回显原 `submission`。提交省略该字段时沿用原窗口命令水位和宿主签发的不透明操作号。
+
+原窗口重用同一 `command` 必须保持完整意图及 `submission` 一致。同一公开提交号改动作、包、修订或代次返回 `conflict`。另一窗口读回原件、或以相同意图命中已接纳记录，均只返回原回执，不占用该窗口的命令号。详细回执退休后，公开提交号在原后台仍返回 `expired`，重复提交也不会执行。未见过的操作号返回 `unknown`，重启后按旧后台身份查询返回 `stale`。[首包丢失与重连验证](../tests/plugins/management_plugin_recovery.cpp)
+
 操作回执带有原 `command`、`action`、`id`、`revision`、`targetGeneration` 和核实的 `generation`。实际成功加载为 `succeeded/loaded`，有底层返回码时提供 `nativeCode`。同一窗口重发原命令可读回原结果，改目标或参数返回 `conflict`，跳号返回 `outOfOrder` 和 `expectedCommand`。旧修订或代次返回 `stale/notApplied`。同一后台有界保留 64 项，进行中的记录受保护，已退休的命令号返回 `expired`。原操作号已不可查时返回 `unknown`。[业务线程与原操作回执](../apps/host/src/management/plugin_actions.cpp)
 
 `plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。

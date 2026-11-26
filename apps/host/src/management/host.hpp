@@ -2,6 +2,7 @@
 #include "application.hpp"
 #include "dialogue_channel.hpp"
 #include "plugin_actions.hpp"
+#include "retired_plugin_requests.hpp"
 #include "room_location.hpp"
 #include "terminal_host.hpp"
 #include <atomic>
@@ -104,6 +105,7 @@ class Host {
     std::shared_ptr<const PluginDirectory> packages_;
     std::shared_ptr<app::HostSettings> settings_;
     std::deque<std::shared_ptr<PluginOperation>> plugin_operations_;
+    RetiredPluginRequests retired_plugin_requests_;
     std::size_t queued_plugins_ = 0, waiting_plugins_ = 0;
     std::shared_ptr<const app::ConversationDisplay> display_;
     std::optional<DialogueCommand> pending_, stop_command_;
