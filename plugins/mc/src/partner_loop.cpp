@@ -1320,7 +1320,7 @@ void PartnerLoop::advance_motion(bool stopping) {
     std::optional<GameResult> result;
     try {
         if (!motion.stopping && !motion.action->attempted() &&
-            (motion.skill == "collect" || motion.skill == "place" || motion.skill == "fill_target" || motion.skill == "craft" || motion.skill == "give_item" || motion.skill == "store_item")) {
+            (motion.skill == "collect" || motion.skill == "place" || motion.skill == "fill_target" || motion.skill == "craft" || motion.skill == "give_item" || motion.skill == "store_item" || motion.skill == "withdraw_item")) {
             const auto question = action_question(motion.session,motion.skill,Json::parse(motion.action->arguments()).at("arguments"));
             if (!question.is_null()) result = GameResult{false,GameEffect::none,question.dump()};
         }

@@ -8,9 +8,9 @@ namespace {
 using Json = nlohmann::json;
 // 借用本次同步回调内仍存活的字段字节。
 dfy_v2_string_view bytes(std::string_view value) { return {value.data(),static_cast<uint32_t>(value.size())}; }
-// 保留原存箱工作的对象、委托、提交范围和实读基线，供迟到回执逐项对照。
-Json deposit_basis(Json proof) {
-    for (const auto field : {"state","after","stored","remaining"}) proof.erase(field);
+// 保留原箱内转移工作的方向、对象、委托、提交范围和实读基线，供迟到回执逐项对照。
+Json chest_transfer_basis(Json proof) {
+    for (const auto field : {"state","after","stored","withdrawn","remaining"}) proof.erase(field);
     return proof;
 }
 // 判定桥接退出后是否还有待查实效，给物须以服务器记录核清投出和去向。
@@ -197,10 +197,13 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
         const auto& original = proof.at("work").get_ref<const std::string&>();
         const auto late = uncertain_.find(original);
         if (late != uncertain_.end() && !late->second.chest_basis.is_null() && !late->second.chest_settled && proof.at("state") == "verified") {
-            if (deposit_basis(proof) != late->second.chest_basis) return DFY_V2_INVALID_ARGUMENT;
+            if (chest_transfer_basis(proof) != late->second.chest_basis) return DFY_V2_INVALID_ARGUMENT;
             const auto revision = late->second.effect_after_exit ? 5u : 4u;
-            handoff_status = put(original,revision,DFY_V2_WORK_EFFECT,{{"item",proof.at("item")},{"cell",proof.at("cell")},
-                {"stored",proof.at("stored")},{"remaining",proof.at("remaining")},{"sourceMessage",proof.at("sourceMessage")}},true);
+            Json effect{{"item",proof.at("item")},{"cell",proof.at("cell")},{"remaining",proof.at("remaining")},{"sourceMessage",proof.at("sourceMessage")}};
+            if (proof.contains("direction")) {
+                for (const auto field : {"direction","destination","withdrawn"}) effect[field] = proof.at(field);
+            } else effect["stored"] = proof.at("stored");
+            handoff_status = put(original,revision,DFY_V2_WORK_EFFECT,effect,true);
             if (!handoff_status) { late->second.chest_settled = true; finish_late(original); }
         }
     }
@@ -247,9 +250,11 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
         state.handoff = true; state.exited = true;
         state.pending_pickup = !state.pickup_settled && proof.value("source","") == "server_events" && proof.value("pickupUnknown",0) > 0;
     }
-    if (!complete && exited && action.at("skill") == "store_item" && action.contains("result") &&
-        action.at("result").contains("deposit") && action.at("result").at("deposit").at("state") == "pending")
-        uncertain_[work].chest_basis = deposit_basis(action.at("result").at("deposit"));
+    if (!complete && exited && (action.at("skill") == "store_item" || action.at("skill") == "withdraw_item") && action.contains("result")) {
+        const auto field = action.at("skill") == "withdraw_item" ? "withdrawal" : "deposit";
+        if (action.at("result").contains(field) && action.at("result").at(field).at("state") == "pending")
+            uncertain_[work].chest_basis = chest_transfer_basis(action.at("result").at(field));
+    }
     return handoff_status;
 }
 }

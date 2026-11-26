@@ -104,8 +104,8 @@ nlohmann::json PartnerLoop::open_question(std::uint64_t id, const Json& args) {
     if (!scope.is_null()) {
         const auto& skill = scope.at("skill").get_ref<const std::string&>();
         if (path != "local" || args.contains("placementOptions") || (!after_pickup.is_null() && skill != "collect") ||
-            (skill != "collect" && skill != "place" && skill != "craft" && skill != "give_item") ||
-            (skill == "place" && scope.contains("item")) || ((skill == "craft" || skill == "give_item") && scope.contains("block")))
+            (skill != "collect" && skill != "place" && skill != "craft" && skill != "give_item" && skill != "withdraw_item") ||
+            (skill == "place" && scope.contains("item")) || ((skill == "craft" || skill == "give_item" || skill == "withdraw_item") && scope.contains("block")))
             throw std::invalid_argument("MC question: invalid action scope");
         for (const auto key : {"block","item"}) if (scope.contains(key)) {
             const auto canonical = item_name(scope.at(key).get_ref<const std::string&>());
@@ -274,16 +274,16 @@ Json PartnerLoop::action_question(std::uint64_t session, std::string_view skill,
     // 存箱与投物共用交付去向待答，答复只解除对应材料的交付等待。
     if (skill == "store_item") skill = "give_item";
     const bool placing = skill == "place" || skill == "fill_target";
-    if ((!placing && skill != "collect" && skill != "craft" && skill != "give_item") || session != session_ || !session || delegated(session)) return {};
+    if ((!placing && skill != "collect" && skill != "craft" && skill != "give_item" && skill != "withdraw_item") || session != session_ || !session || delegated(session)) return {};
     const auto blocked = [](std::uint64_t item, std::string_view reason) {
         return Json{{"status","blocked"},{"reason",reason},{"item",item}};
     };
     const bool pending = placement_choice_pending();
     for (const auto& [item,q] : questions_) {
-        if ((skill != "give_item" || !q.scope.is_null()) && item != resolves && waiting_question(session,item) && (!pending || item != placement_choice_.item) &&
+        if (((skill != "give_item" && skill != "withdraw_item") || !q.scope.is_null()) && item != resolves && waiting_question(session,item) && (!pending || item != placement_choice_.item) &&
             question_covers(q.scope,skill,args)) return blocked(item,"waiting_for_player");
     }
-    if (skill == "craft" || skill == "give_item" || placement_choice_.revision != task_.revision()) return {};
+    if (skill == "craft" || skill == "give_item" || skill == "withdraw_item" || placement_choice_.revision != task_.revision()) return {};
     const bool fixed_cell = valid_action_cell(args);
     // 无固定格的地面取材由已绑定的保护格及实际地形筛选。
     if (skill == "collect" && !fixed_cell && args.value("source","") == "ground") return {};
