@@ -73,7 +73,7 @@ struct Window : std::enable_shared_from_this<Window> {
     bool offline = false, offline_enabled = false;
     bool business_mode = false;
     bool room_preview = false, room_busy = false;
-    bool main_panel = false, main_panel_check = false, panel_shutdown_check = false;
+    bool main_panel = false, main_panel_check = false, panel_shutdown_check = false, plugin_settings_check = false;
     bool observer_check = false, observer_stop = false, observer_log_error = false, observer_wait = false;
     bool observer_unexpected = false;
     std::wstring observer_scenario;
@@ -291,6 +291,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (tray_check) { interaction->start_tray_panel(user_data); return; }
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
+                if (plugin_settings_check) { interaction->start_plugin_settings(); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
                 if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
@@ -479,7 +480,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         std::wstring_view(__wargv[1])==L"--check-observer";
     const bool room_check = sample && std::wstring_view(__wargv[1]) == L"--check-room-preview";
     const bool run_status_mode = __argc == 3 && std::wstring_view(__wargv[1]) == L"--run-status";
-    const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" || std::wstring_view(__wargv[1]) == L"--check-panel-shutdown");
+    const bool main_panel_check = __argc == 2 && (std::wstring_view(__wargv[1]) == L"--check-main-panel" ||
+        std::wstring_view(__wargv[1]) == L"--check-panel-shutdown" || std::wstring_view(__wargv[1]) == L"--check-plugin-settings");
 #else
     const bool tray_check = false;
     const bool observer_check = false;
@@ -520,6 +522,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
         state->main_panel = main_panel || main_panel_check || observer_check;
         state->main_panel_check = main_panel_check;
         state->panel_shutdown_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-panel-shutdown";
+        state->plugin_settings_check = main_panel_check && std::wstring_view(__wargv[1])==L"--check-plugin-settings";
         state->observer_check = observer_check;
 #ifdef DFY_UI_RUN_STATUS_TEST
         if (observer_check && (history_check || mailbox_check)) state->observer_scenario = observer_mode;

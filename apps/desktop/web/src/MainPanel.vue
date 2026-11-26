@@ -9,6 +9,7 @@ import ManagementShell from './ManagementShell.vue';
 import LogSettings from './LogSettings.vue';
 import RoomStateView, { type StateReading } from './RoomStateView.vue';
 import ResidentRoomMailbox from './ResidentRoomMailbox.vue';
+import PluginSettings from './PluginSettings.vue';
 import { originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -544,8 +545,7 @@ onUnmounted(() => {
       </RoomStateView>
     </template>
     <template #settings="{ active }">
-      <h3 class="group-title">插件管理</h3>
-      <p class="source-note">插件目录尚未接入此视图。</p>
+      <PluginSettings :active="active" :connected="ready && shutdown === 'idle'" />
       <h3 class="group-title">后台运行</h3>
       <p class="source-note">关闭管理中心后，大肥鱼会继续工作。</p>
       <button id="host-stop" type="button" class="quiet-action" :disabled="!ready || shutdown !== 'idle'" @click="askStop">退出大肥鱼</button>

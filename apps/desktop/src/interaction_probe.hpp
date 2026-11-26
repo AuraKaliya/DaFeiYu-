@@ -32,6 +32,8 @@ class InteractionProbe : public std::enable_shared_from_this<InteractionProbe> {
     void start_history(std::wstring_view mode, const std::filesystem::path& profile);
     // 在两个独立正式面板核对同一来源的公开信件、断连恢复及原代次失效。
     void start_mailbox(std::wstring_view mode, const std::filesystem::path& profile);
+    // 从正式设置入口，用可控的原生协议回包核对目录和本窗选择。
+    void start_plugin_settings();
     // 以原生测试命令推进状态面板并核对主文档收到的只读值。
     void start_run_status(std::function<void()> submit, std::function<void()> approve);
 #endif
