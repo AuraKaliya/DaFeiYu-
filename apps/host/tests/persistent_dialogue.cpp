@@ -2,6 +2,7 @@
 #include "application.hpp"
 #include "main_messages.hpp"
 #include "trace_commands.hpp"
+#include <algorithm>
 #include <sstream>
 #include <windows.h>
 #include <fstream>
@@ -151,7 +152,7 @@ void verify_output(const std::filesystem::path& data) {
 }
 
 // 在正式主聊天中按原快照分别读取发言前后两版，验证同批配对及完整离线重放。
-// 步骤：记录初始空状态 → 发言后冻结原实收 → 同批读取两个版本 → 核对原 SQLite 消息和重放。
+// 步骤：记录发言前快照 → 发言后冻结原实收 → 同批核对两版投递和计数 → 对照 SQLite 消息和重放。
 void verify_version_query(const std::filesystem::path& data) {
     using namespace model;
     auto db = std::make_shared<app::MessageStore>(data);
@@ -182,9 +183,13 @@ void verify_version_query(const std::filesystem::path& data) {
             const auto& result = messages[messages.size()-2+i];
             const auto read = Json::parse(result.content.substr(result.content.find('{')));
             const auto& status = read.at("status");
+            const auto& items = status.at("items");
+            const auto spoken = std::ranges::find_if(items,[](const auto& item) { return item.at("key")=="host.delivery"; });
+            const auto counts = std::ranges::find_if(items,[](const auto& item) { return item.at("key")=="host.tool_counts"; });
             if (result.role!=Role::tool || result.tool_call_id!=(i ? "later" : "earlier") ||
                 read.at("state")!="ready" || status.at("snapshot")!=(i ? after : before) ||
-                (!i && !status.at("items").empty()) || (i && status.at("items")[0].at("value").at("delivery")!=delivery))
+                (i ? spoken==items.end() || spoken->at("value").at("delivery")!=delivery : spoken!=items.end()) ||
+                counts==items.end() || counts->at("value").at("turn").at("dispatched")!=i)
                 throw std::runtime_error("status_read returned a different decision or crossed receipt pairs");
         }
         return {{Role::assistant,"已查回两版。"}};
