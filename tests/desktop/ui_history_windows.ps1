@@ -92,6 +92,10 @@ try {
                 if ($timer.ElapsedMilliseconds -gt 15000) { throw ('Missing mailbox milestone: '+$step[0]) }
                 Start-Sleep -Milliseconds 40
             }
+            if ($step[1] -eq 'reload') {
+                $reopened = Start-Panel 'mailbox-reopen'
+                Wait-Panels @($reopened) $watcher
+            }
             & $Fixture $step[1] $config $data
             if ($LASTEXITCODE -ne 0) { throw ('Independent system command failed: '+$step[1]) }
             [IO.File]::WriteAllText((Join-Path $data $step[2]),'ready')

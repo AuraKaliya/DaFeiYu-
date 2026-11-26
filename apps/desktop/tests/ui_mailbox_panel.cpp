@@ -3,8 +3,8 @@
 
 namespace dfy::ui {
 // 两个正式窗口浏览同一封信，系统控制端单独推进取件与插件重载。
-// 步骤：重复查看并保存原号 → 首窗退出 → 另一窗模拟读链路中断 → 恢复后复核取件与来源换代。
-void InteractionProbe::start_mailbox(bool follow, const std::filesystem::path& data) {
+// 步骤：重复查看并保存原号 → 首窗退出 → 另一窗补读且首窗重新握手核实取件 → 复核来源换代。
+void InteractionProbe::start_mailbox(std::wstring_view mode, const std::filesystem::path& data) {
     const auto marker = [&](const char* name) {
         wait_for(name,[file=data/name] { std::ofstream(file).put('1'); return true; });
     };
@@ -25,6 +25,26 @@ void InteractionProbe::start_mailbox(bool follow, const std::filesystem::path& d
         });
         sel.value=option.value; sel.dispatchEvent(new Event('change')); return true;
     })())JS");
+    if (mode==L"mailbox-reopen") {
+        std::ifstream saved(data/"first-letter.json");
+        Json original;
+        saved >> original;
+        evaluate("recover the first window's observed identities","window.firstVerified="+original.dump()+"; true");
+        expect("a fresh native connection finds the original received letter",R"JS(mailSnapshots>0 &&
+            nativeMail.instance===firstVerified[4] && originalSource===firstVerified[0] &&
+            document.querySelector('[data-letter]')?.dataset.letter===firstVerified[1] &&
+            document.querySelector('.mail-state')?.textContent==='原接收方已取件' && nativeMail.revision!==firstVerified[2] &&
+            nativeMail.messages[0].receipt.acceptedRevision===firstVerified[5] &&
+            nativeMail.messages[0].receipt.acceptedUtcMs===firstVerified[6])JS");
+        evaluate("inspect the preserved acceptance time and the actual collection time",R"JS((()=>{
+            const letter=document.querySelector('[data-letter]'); letter.querySelector('summary').click();
+            const times=[...letter.querySelectorAll('time')].map(t=>Date.parse(t.dateTime));
+            return letter.open && times[0]===firstVerified[6] && times[1]===nativeMail.messages[0].receipt.receivedUtcMs;
+        })())JS");
+        next();
+        return;
+    }
+    const bool follow = mode==L"mailbox-follow";
     expect("original letter is still pending","mailSnapshots>0 && document.querySelectorAll('[data-letter]').length===1 && "
         "document.querySelector('[data-letter] summary')?.textContent.includes('test.notice') && document.querySelector('.mail-state')?.textContent==='待收取'");
     evaluate("read the public letter twice and reopen the mailbox",R"JS((()=>{
@@ -41,7 +61,8 @@ void InteractionProbe::start_mailbox(bool follow, const std::filesystem::path& d
         "document.querySelector('[data-mail-revision]').dataset.mailRevision===originalRevision && JSON.stringify(watermarks())===originalWatermarks && "
         "document.querySelector('.mail-state').textContent==='待收取'");
     call("record the identities actually rendered by this window",L"Runtime.evaluate",
-        {{"expression","[originalSource,originalLetter,originalRevision,originalWatermarks]"},{"returnByValue",true}},
+        {{"expression","[originalSource,originalLetter,originalRevision,originalWatermarks,nativeMail.instance,"
+             "nativeMail.messages[0].receipt.acceptedRevision,nativeMail.messages[0].receipt.acceptedUtcMs]"},{"returnByValue",true}},
         [file=data/(follow ? "observer-letter.json" : "first-letter.json")](const Json& reply) {
             std::ofstream(file) << reply.at("result").at("value").dump();
         });

@@ -292,7 +292,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (room_preview) { interaction->start_room_preview(room_busy); return; }
                 if (panel_shutdown_check) { interaction->start_panel_shutdown(panel_gate); return; }
                 if (main_panel_check) { interaction->start_main_panel(checks,panel_gate); return; }
-                if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario==L"mailbox-follow",user_data); return; }
+                if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
                 if (observer_check) {
                     interaction->start_observer(observer_stop,observer_log_error,observer_unexpected ? user_data/"replacement.ready" : std::filesystem::path{});
@@ -473,7 +473,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const std::wstring_view observer_mode = __argc==5 ? __wargv[4] : L"";
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
         observer_mode==L"history-reopen" || observer_mode==L"history-restart";
-    const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow";
+    const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
     const bool observer_check = (__argc==4 || (__argc==5 && (std::wstring_view(__wargv[4])==L"stop" ||
         std::wstring_view(__wargv[4])==L"wait" || std::wstring_view(__wargv[4])==L"unexpected" || std::wstring_view(__wargv[4])==L"log-error" || history_check || mailbox_check))) &&
         std::wstring_view(__wargv[1])==L"--check-observer";
