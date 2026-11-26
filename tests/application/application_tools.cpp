@@ -1,3 +1,4 @@
+#include "../decision_input.hpp"
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "chat.hpp"
@@ -55,7 +56,7 @@ void read_only(const fs::path& package, const fs::path& root) {
         // 仅提供本轮读调用、配对回复和后续普通问答三个结果。
         // 步骤：核对唯一工具范围 → 验证原工具结果及身份 → 验证后续问答只保留历史。
         [&](const Config&, const Request& request) {
-            const auto& last = request.messages.back();
+            const auto& last = dfy::test::business_messages(request).back();
             switch (++calls) {
             case 1:
                 check(last.content == "read the value" && request.tools.size() == 1 && request.tools[0].name.ends_with("_read"),
@@ -120,7 +121,7 @@ void confirmation(const fs::path& package, const fs::path& root, std::optional<b
         // 从固定模型返回候选，并核对应用授权后的配对事实。
         // 步骤：为本轮范围提出一次动作 → 分别验证执行或拒绝 → 返回预设说明。
         [approve](const Config&, const Request& request) {
-            const auto& last = request.messages.back();
+            const auto& last = dfy::test::business_messages(request).back();
             if (last.role == Role::user) {
                 check(request.tools.size() == 1 && request.tools[0].name.ends_with("_increment"),"wrong write scope");
                 return Response{{Role::assistant,"",{{"write-1",request.tools[0].name,"{}"}}},FinishReason::tool_calls};

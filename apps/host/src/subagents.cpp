@@ -59,6 +59,11 @@ runtime::DomainId Subagents::open(const std::shared_ptr<plugins::PluginInstance>
         instance->phase() != plugins::InstancePhase::active)) throw std::invalid_argument("subagent: owner unavailable");
     const auto free = std::ranges::find_if(slots_,[](const auto& slot) { return !slot; });
     if (free == slots_.end()) throw std::length_error("subagent: session capacity exhausted");
+    if (instance->status_definitions()!="[]") {
+        agent::DecisionStatusStore validation;
+        (void)validation.prepare(instance->generation(),1,1,1,agent::message_utc_now(),
+            {{std::string(instance->plugin_id()),instance->status_definitions(),"[]"}});
+    }
     const bool compare = log_ && instance->plugin_id() == "mc.companion" &&
         std::ranges::none_of(slots_,[](const auto& slot) { return slot && slot->compare_projection; });
     *free = std::make_unique<Slot>(instance,config_,events_,backend_,log_ ? log_->sinks("plugin",compare) : agent::RunCaptureSinks{});
@@ -99,6 +104,14 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
         pending = std::make_unique<BindingFacts>(slot.facts);
         const bool baseline = input.frame->baseline || !slot.continuous_history;
         auto prompt = pending->apply(input,slot.request+1,baseline);
+        const auto instance = slot.instance.lock();
+        if (!instance) throw std::invalid_argument("subagent: status owner gone");
+        const auto samples = pending->status_samples();
+        if (samples!="[]" || instance->status_definitions()!="[]") {
+            agent::DecisionStatusStore validation;
+            (void)validation.prepare(id,input.frame->epoch,slot.request+1,1,agent::message_utc_now(),
+                {{std::string(instance->plugin_id()),instance->status_definitions(),samples}});
+        }
         const auto after = baseline ? 0 : slot.projected_receipt;
         // 原事实帧最多约 64 KiB，另给两个水位及数组字段名留出空间。
         constexpr std::size_t projected_limit = 128*1024;
@@ -222,6 +235,20 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         auto catalog = std::make_shared<agent::ToolCatalog>(64);
         slot.registration = std::make_unique<plugins::PluginTools>(instance,catalog);
         options.tools = catalog->snapshot(input.tools,input.allow_changes).bind_context(input.binding);
+    }
+    // 每个实例及玩家事实帧使用自己的状态权限，旧式无帧单轮仍获得空的宿主状态。
+    const auto owner = std::string(instance->plugin_id());
+    if (input.frame) {
+        const auto& frame = *input.frame;
+        const auto scope = std::to_string(slot.owner)+"/"+std::to_string(frame.epoch)+"/"+frame.scope;
+        agent::DecisionStatusSource source{owner,instance->status_definitions(),slot.pending_facts->status_samples()};
+        const auto& reader = instance->status_read_with();
+        const bool can_read = options.tools && !reader.empty() && std::ranges::any_of(options.tools->descriptions(),
+            [&](const auto& granted) { return granted.id==reader && granted.instance==slot.owner && !granted.changes_state; });
+        options.decision_status = agent::DecisionStatusOptions{scope,[source=std::move(source)] { return std::vector{source}; },can_read};
+    } else {
+        const auto binding = std::to_string(slot.owner)+"/raw/"+platform::sha256(input.binding);
+        options.decision_status = agent::DecisionStatusOptions{binding+(input.replace_history ? "/"+std::to_string(slot.request) : ""),{},false};
     }
     options.replace_history = input.replace_history;
     slot.active = slot.session.begin(input.prompt,std::move(options));

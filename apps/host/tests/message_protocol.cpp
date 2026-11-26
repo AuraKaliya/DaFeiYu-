@@ -1,3 +1,4 @@
+#include "../../../tests/decision_input.hpp"
 #include "management/protocol.hpp"
 #include "management/host.hpp"
 #include "message_store.hpp"
@@ -64,7 +65,7 @@ void admission(const std::filesystem::path& root) {
     std::binary_semaphore release(0);
     management::Host host([&] {
         return std::make_unique<app::Application>(model::Config{},root/"empty",root,model::Backend{[&](const auto&,const auto& request) {
-            if (request.messages.back().content=="hold" && !release.try_acquire_for(std::chrono::seconds(60))) throw std::runtime_error("model gate expired");
+            if (dfy::test::business_messages(request).back().content=="hold" && !release.try_acquire_for(std::chrono::seconds(60))) throw std::runtime_error("model gate expired");
             return model::Response{{model::Role::assistant,"fixed"}};
         }});
     },{},nullptr,db,"capacity");

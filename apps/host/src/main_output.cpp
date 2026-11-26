@@ -27,35 +27,61 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
         true,true,{},{},0,1024,true},[this](const agent::ToolInvocation& call) { return speak(call); });
 }
 
-// 为新对话重置防重范围，已有专用工具与原调用的参数授权仍由该入口持有。
-// 步骤：归还上轮发言记录 → 核对入口与后端能力 → 固定工具及当轮说明。
-bool MainMessages::prepare_output(agent::RunOptions& options) {
-    explicit_deliveries_.clear();
-    output_input_ = 0;
-    auto state = std::make_shared<agent::ContextStatus>();
-    state->binding = "main/"+instance_;
+// 冻结最近实收原件和仍待落盘的投递，超长正文保留可按原渠道定位的前缀。
+// 步骤：登记渠道拥有的结构 → 沿原消息与提交号取样 → 输出本步显式状态。
+agent::DecisionStatusSource MainMessages::delivery_status() const {
+    static const auto definitions = [] {
+        const Json text{{"type","string"}};
+        Json fields = Json::object();
+        for (const auto key : {"delivery","channelMessage","turn","state","deliveredUtcMs","replyTo","deliveredText",
+            "deliveredPrefix","originalBytes","textSha256"}) fields[key] = text;
+        const Json receipt{{"type","object"},{"properties",fields},{"required",{"delivery","channelMessage","turn","state","deliveredUtcMs"}},
+            {"additionalProperties",false}};
+        const Json pending{{"type","object"},{"properties",{{"pendingDelivery",text}}},{"required",{"pendingDelivery"}},{"additionalProperties",false}};
+        return Json::array({
+            {{"key","host.delivery"},{"version",1},{"description","最近实际写入主聊天的发言与原渠道消息"},{"defaultAttention",{{"mode","explicit"}}},{"valueSchema",receipt}},
+            {{"key","host.pending_delivery"},{"version",1},{"description","仍待原号写入的主聊天发言"},{"defaultAttention",{{"mode","explicit"}}},{"valueSchema",pending}}
+        }).dump();
+    }();
+    auto samples = Json::array();
     if (delivered_) {
         const auto& saved = *delivered_;
         const auto& text = saved.envelope.at("text").get_ref<const std::string&>();
-        state->fields = {{"delivery",saved.submission},{"channelMessage",std::to_string(saved.id)},
+        Json value = {{"delivery",saved.submission},{"channelMessage",std::to_string(saved.id)},
             {"turn",saved.envelope.at("turn").get<std::string>()},{"state","delivered"},{"deliveredUtcMs",std::to_string(saved.utc_ms)}};
-        if (saved.envelope.contains("replyTo")) state->fields["replyTo"] = saved.envelope.at("replyTo").get<std::string>();
-        if (text.size() <= 4096) state->fields["deliveredText"] = text;
+        if (saved.envelope.contains("replyTo")) value["replyTo"] = saved.envelope.at("replyTo").get<std::string>();
+        if (text.size() <= 4096) value["deliveredText"] = text;
         else {
             auto bytes = std::size_t{2048};
             while ((static_cast<unsigned char>(text[bytes]) & 0xc0) == 0x80) --bytes;
-            state->fields["deliveredPrefix"] = text.substr(0,bytes);
-            state->fields["originalBytes"] = std::to_string(text.size());
-            state->fields["textSha256"] = platform::sha256(text);
+            value["deliveredPrefix"] = text.substr(0,bytes);
+            value["originalBytes"] = std::to_string(text.size());
+            value["textSha256"] = platform::sha256(text);
         }
+        samples.push_back({{"key","host.delivery"},{"version",1},{"subject","main"},{"fact",saved.id},
+            {"sampledUtcMs",saved.utc_ms},{"value",std::move(value)}});
     }
     for (const auto& [key,envelope] : replies_) {
-        if (std::stoull(envelope.at("turn").get<std::string>()) > context_floor_) {
-            state->fields["pendingDelivery"] = key;
+        const auto turn = std::stoull(envelope.at("turn").get<std::string>());
+        if (turn > context_floor_) {
+            samples.push_back({{"key","host.pending_delivery"},{"version",1},{"subject",key},{"fact",turn},
+                {"value",{{"pendingDelivery",key}}}});
             break;
         }
     }
-    if (!state->fields.empty()) options.context_status = std::move(state);
+    return {"host",definitions,samples.dump()};
+}
+
+// 为本轮主聊天绑定原渠道状态读口及发言权限；工具续行重新取得实际回执。
+// 步骤：重置原轮输出 → 绑定业务线程源 → 对获准的入口提供发言工具。
+bool MainMessages::prepare_output(agent::RunOptions& options) {
+    explicit_deliveries_.clear();
+    output_input_ = 0;
+    options.decision_status->sample = [source=weak_from_this()] {
+        const auto channel = source.lock();
+        if (!channel) throw std::logic_error("dialogue: status source closed");
+        return std::vector{channel->delivery_status()};
+    };
     if (!reply_tools_ || options.tools || options.planning) return false;
     options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
     return true;

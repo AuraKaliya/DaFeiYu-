@@ -1,3 +1,4 @@
+#include "../../../tests/decision_input.hpp"
 #include "management/host.hpp"
 #include "management/protocol.hpp"
 #include <nlohmann/json.hpp>
@@ -30,7 +31,7 @@ void background_turn(const std::filesystem::path& root) {
                 ++calls;
                 entered.release();
                 if (!release.try_acquire_for(4s)) throw std::runtime_error("fixture release timed out");
-                return model::Response{{model::Role::assistant,"已收到："+input.messages.back().content}};
+                return model::Response{{model::Role::assistant,"已收到："+dfy::test::business_messages(input).back().content}};
             }});
     });
     until([&] { return host.dialogue().accepting; },"host did not start");

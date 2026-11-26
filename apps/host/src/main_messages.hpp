@@ -12,7 +12,7 @@ class RunLog;
 nlohmann::json user_envelope(std::string_view route, const std::string& text, const std::string& instance,
     agent::RunId target, std::optional<std::int64_t> source_utc_ms = {});
 // 业务线程持有投递责任，数据库先记录交付边界，再调用原应用入口。
-class MainMessages {
+class MainMessages : public std::enable_shared_from_this<MainMessages> {
   public:
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
@@ -50,6 +50,8 @@ class MainMessages {
     void publish(std::int64_t id, const nlohmann::json& receipt);
     // 校验一次显式发言，将实际写入状态交还原工具调用。
     std::unique_ptr<agent::ToolWork> speak(const agent::ToolInvocation& invocation);
+    // 取业务线程已有的实收与待写原件，为本次决策提供带版本的采样。
+    agent::DecisionStatusSource delivery_status() const;
     // 使用原回合及渠道投递号保存发言，写盘失败时保留原件。
     nlohmann::json reply(agent::RunId run, const std::string& suffix, const std::string& text);
     // 按本轮的实际发言裁定是否需要另行交付最终文本。

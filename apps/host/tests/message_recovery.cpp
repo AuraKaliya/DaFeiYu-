@@ -1,3 +1,4 @@
+#include "../../../tests/decision_input.hpp"
 #include "application.hpp"
 #include "main_messages.hpp"
 #include "management/resident.hpp"
@@ -105,7 +106,7 @@ void repeated_reply(const std::filesystem::path& data, bool recover_before_retry
     std::binary_semaphore resume(0);
     const std::string answer = "材料已经收到。";
     app::Application application({},data/"empty",data,Backend{[&](const auto&,const Request& request) -> Response {
-        const auto& last = request.messages.back();
+        const auto& last = dfy::test::business_messages(request).back();
         if (last.role == Role::tool) {
             receipts.push_back(Json::parse(last.content.substr(last.content.find('{'))));
             if (receipts.size() == 2) return {{Role::assistant,answer}};
@@ -149,7 +150,7 @@ void separate_reply_sources(const std::filesystem::path& data) {
     std::atomic_bool first_delivered = false;
     std::binary_semaphore resume(0);
     app::Application application({},data/"empty",data,Backend{[&](const auto&,const Request& request) -> Response {
-        const auto& last = request.messages.back();
+        const auto& last = dfy::test::business_messages(request).back();
         if (last.role == Role::tool) {
             if (!first_delivered.exchange(true) && !resume.try_acquire_for(std::chrono::seconds(8)))
                 throw std::runtime_error("supplement gate expired");
@@ -198,7 +199,7 @@ void corrected_reply(const std::filesystem::path& data) {
     until(application,[&] { return !application.conversation().busy(); });
 
     const auto rows = store->page(true,0,store->watermark(),8).records;
-    if (received.size()!=2 || received.back().messages.back().content!="先改成乙。" ||
+    if (received.size()!=2 || dfy::test::business_messages(received.back()).back().content!="先改成乙。" ||
         rows.size()!=3 || rows.front().envelope.at("text")!="改发给乙。" || rows.front().envelope.at("replyTo")!=std::to_string(saved.message.id))
         throw std::runtime_error("stale main reply reached channel before a fresh decision");
 }
@@ -230,7 +231,7 @@ void verify(const std::filesystem::path& data) {
     const auto stored = db->find("desktop","safe")->utc_ms;
     std::vector<std::optional<std::int64_t>> times;
     app::Application application({},data/"plugins",data,model::Backend{[&](const auto&,const model::Request& request) {
-        times.push_back(request.messages.back().event_utc_ms);
+        times.push_back(dfy::test::business_messages(request).back().event_utc_ms);
         ++calls;
         return model::Response{{model::Role::assistant,"fixed answer"}};
     }});

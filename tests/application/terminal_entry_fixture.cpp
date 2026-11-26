@@ -1,3 +1,4 @@
+#include "../decision_input.hpp"
 #include "management/resident.hpp"
 #include <fstream>
 #include <iostream>
@@ -11,10 +12,10 @@ int wmain(int argc, wchar_t** argv) {
         return dfy::management::serve_resident(data,dfy::management::startup_identity(config,packages),[&] {
             return std::make_unique<dfy::app::Application>(dfy::model::Config{},packages,data,dfy::model::Backend{
                 [&](const auto&,const dfy::model::Request& input) {
-                    const auto text = input.messages.back().content;
+                    const auto text = dfy::test::business_messages(input).back().content;
                     if (text=="early-reply") return dfy::model::Response{{dfy::model::Role::assistant,"",
                         {{"speak","main_reply",R"({"text":"early question"})"}}},dfy::model::FinishReason::tool_calls};
-                    const bool finishing = input.messages.back().role==dfy::model::Role::tool;
+                    const bool finishing = dfy::test::business_messages(input).back().role==dfy::model::Role::tool;
                     if (text=="delayed" || finishing) {
                         std::ofstream(data/(finishing ? "answer-entered" : "entered")) << "entered";
                         const auto deadline = std::chrono::steady_clock::now()+std::chrono::seconds(10);

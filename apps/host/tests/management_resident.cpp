@@ -1,3 +1,4 @@
+#include "../../../tests/decision_input.hpp"
 #include "management/resident.hpp"
 #include "management/client.hpp"
 #include "management/terminal_client.hpp"
@@ -202,7 +203,7 @@ void reconnect(const std::filesystem::path& root) {
                 [&](const auto&,const auto& input) {
                     started.release();
                     if (!release.try_acquire_for(5s)) throw std::runtime_error("gate timed out");
-                    return model::Response{{model::Role::assistant,"回复："+input.messages.back().content}};
+                    return model::Response{{model::Role::assistant,"回复："+dfy::test::business_messages(input).back().content}};
                 }});
         },{},&software,[&](const auto& profile,const std::string& original,app::SoftwareLog* log) {
             if (profile!=data || log!=&software) throw std::runtime_error("wrong tray context");

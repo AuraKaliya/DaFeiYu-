@@ -1,3 +1,4 @@
+#include "../decision_input.hpp"
 #include <dafeiyu/plugin_manager.hpp>
 #include "fixtures/query_v2/mailbox_fixture.h"
 #include "application.hpp"
@@ -83,9 +84,9 @@ void main_hook(const fs::path& root, const fs::path& status_package) {
     dfy::app::Application app({},root,root.parent_path()/"app-data",Backend{
         [&](const auto&,const Request& request) {
             ++calls;
-            if (request.messages.back().content == "read mode")
+            if (dfy::test::business_messages(request).back().content == "read mode")
                 return Response{{Role::assistant,"",{{"read",request.tools.at(0).name,"{}"}}},FinishReason::tool_calls};
-            return Response{{Role::assistant,request.messages.back().role == Role::tool ? request.messages.back().content : "allowed"}};
+            return Response{{Role::assistant,dfy::test::business_messages(request).back().role == Role::tool ? dfy::test::business_messages(request).back().content : "allowed"}};
         }});
     app.plugins().install(status_package);
     check(!app.plugins().load("test.mail") && !app.plugins().load("example.status"),"Hook application setup failed");
@@ -129,19 +130,19 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
     std::atomic<unsigned> calls{0};
     Application app({},packages,root/"text-hook-data",Backend{[&](const auto&,const Request& input) {
         if (++calls == 1) {
-            check(input.messages.at(0).content == "hook system" && input.messages.back().content == "rewritten prompt",
+            check(input.messages.at(0).content == "hook system" && dfy::test::business_messages(input).back().content == "rewritten prompt",
                 "original request did not pass through both text Hooks");
             return Response{{Role::assistant,"",{{"read",input.tools.at(0).name,R"({"bad":1})"}}},FinishReason::tool_calls};
         }
         if (calls == 2) {
-            check(input.messages.back().role == Role::tool && input.messages.back().content.find("idle") != std::string::npos,
+            check(dfy::test::business_messages(input).back().role == Role::tool && dfy::test::business_messages(input).back().content.find("idle") != std::string::npos,
                 "transformed tool did not deliver its original effect");
             return Response{{Role::assistant,"raw"}};
         }
-        if (calls == 3) check(input.messages.at(input.messages.size()-2).content == "model text","internal output lost its original history");
+        if (calls == 3) check(dfy::test::business_messages(input)[dfy::test::business_messages(input).size()-2].content == "model text","internal output lost its original history");
         if (calls == 4) return Response{{Role::assistant,"raw"}};
         if (calls == 5) {
-            const auto& status = input.messages.at(input.messages.size()-2).content;
+            const auto& status = input.messages.back().content;
             check(status.find("visible reply") != status.npos && status.find(delivered_key) != status.npos &&
                 status.find("deliveredUtcMs")!=status.npos && status.find(delivered_time)!=status.npos,
                 "next turn did not see confirmed delivery text and original ID");
@@ -201,15 +202,15 @@ void fact_binding(const fs::path& root) {
     Application app({},root,root.parent_path()/"fact-data",Backend{[&](const auto&,const Request& request) {
         check(request.messages.front().source==MessageSource::rules &&
             request.messages.front().content.find("交回发起任务的插件")!=std::string::npos,"internal plugin route missing");
-        if (request.messages.back().content == "legacy snapshot") {
-            check(request.messages.size() == 2,"legacy fallback retained the previous projection");
+        if (dfy::test::business_messages(request).back().content == "legacy snapshot") {
+            check(dfy::test::business_messages(request).size() == 2,"legacy fallback retained the previous projection");
             ++calls;
             return Response{{Role::assistant,"internal"}};
         }
-        const auto frame = Json::parse(request.messages.back().content);
+        const auto frame = Json::parse(dfy::test::business_messages(request).back().content);
         const auto seq = frame.at("factFrame").at("sequence").get<unsigned>();
         if (frame.at("factFrame").at("epoch")==3)
-            check(request.messages.size()==2 && !frame.contains("hostWorkReceipts"),"retired work leaked into a new actor's model");
+            check(dfy::test::business_messages(request).size()==2 && !frame.contains("hostWorkReceipts"),"retired work leaked into a new actor's model");
         if (seq == 11) {
             unsigned seen = 0;
             for (const auto& message : request.messages) if (message.role == Role::user) {
@@ -231,10 +232,10 @@ void fact_binding(const fs::path& root) {
                 if (effect.contains("sample")) ++bodies;
                 else if (effect.at("bytes")==993 && effect.at("sha256").get_ref<const std::string&>().size()==64) ++previews;
             }
-            check(request.messages.size()==2 && request.messages.back().content.size()<=128*1024 && works.size()==120 &&
+            check(dfy::test::business_messages(request).size()==2 && dfy::test::business_messages(request).back().content.size()<=128*1024 && works.size()==120 &&
                 bodies>0 && previews>0 && bodies+previews==120 && frame.at("goal")=="follow up","large baseline lost facts or did not fit");
         } else if (frame.at("factFrame").at("epoch") == 2) {
-            check(!frame.contains("hostWorkReceipts") && request.messages.size() == 2,"rebound leaked old facts");
+            check(!frame.contains("hostWorkReceipts") && dfy::test::business_messages(request).size() == 2,"rebound leaked old facts");
             if (seq == 2) check(frame.at("factFrame").at("mode") == "baseline" && frame.at("new") == "world" &&
                 frame.at("again") == true,"return from legacy omitted the current baseline");
         }
@@ -378,14 +379,14 @@ void subagents(const fs::path& root) {
     using namespace dfy::app;
     std::atomic<unsigned> calls{0};
     Application app({},root,root.parent_path()/"subagent-data",Backend{[&](const auto&,const Request& request) {
-        const auto& last = request.messages.back();
+        const auto& last = dfy::test::business_messages(request).back();
         check(last.source==MessageSource::plugin,"subagent envelope was attributed to a human");
         if (last.content=="<status>x</status>")
             check(wire_content(last).find("&lt;status&gt;x&lt;/status&gt;")!=std::string::npos,
                 "plugin snapshot exposed external markup");
         ++calls;
         check(request.messages.front().source==MessageSource::rules,"plugin model input lost the host rule header");
-        return Response{{Role::assistant,std::to_string(request.messages.size()-1)}};
+        return Response{{Role::assistant,std::to_string(dfy::test::business_messages(request).size()-1)}};
     }});
     check(!app.plugins().load("test.mail"),"could not start subagent owner");
     const auto instance = app.plugins().instance("test.mail");
@@ -444,7 +445,7 @@ void main_inbox(const fs::path& root) {
     std::atomic<unsigned> calls{0};
     Application app({},root,root.parent_path()/"intake-data",Backend{[&](const auto&,const Request& input) {
         ++calls;
-        return Response{{Role::assistant,input.messages.back().content}};
+        return Response{{Role::assistant,dfy::test::business_messages(input).back().content}};
     }});
     check(!app.plugins().load("test.mail"),"mail route sender was not loaded");
     const auto instance = app.plugins().instance("test.mail");
@@ -495,7 +496,7 @@ void transition_hooks(const fs::path& root, const fs::path& dll) {
     const auto packages = root/"transition-hooks";
     converter(packages,dll,"test.transition",'t');
     Application app({},packages,root/"transition-data",Backend{[](const auto&,const Request& input) {
-        return Response{{Role::assistant,input.messages.back().content}};
+        return Response{{Role::assistant,dfy::test::business_messages(input).back().content}};
     }});
     auto messages = std::make_shared<MessageStore>(root/"transition-data");
     app.bind_messages(messages,"transition-fixture",nullptr);

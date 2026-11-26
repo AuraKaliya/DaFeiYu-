@@ -11,7 +11,7 @@ std::unique_ptr<ToolCatalog> grant_status_reader(std::optional<ToolSnapshot>& to
     catalog->add({id,session,1,{"status_read",
         "按宿主尾注中的 snapshot 原号读取本会话这一个版本的完整状态，包含隐式项。过期和错代次给出具体状态。",
         R"({"type":"object","properties":{"snapshot":{"type":"string"}},"required":["snapshot"],"additionalProperties":false})"},
-        false,true,{},{},0,0,true},[store=std::move(store),session,epoch](const ToolInvocation& input) {
+        false,true,{},{},UINT32_MAX,0,true},[store=std::move(store),session,epoch](const ToolInvocation& input) {
         const auto envelope = nlohmann::json::parse(input.call.arguments);
         const auto& args = envelope.contains("context") ? envelope.at("arguments") : envelope;
         const auto& ref = args.at("snapshot").get_ref<const std::string&>();

@@ -1,3 +1,4 @@
+#include "../decision_input.hpp"
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "chat.hpp"
@@ -33,7 +34,7 @@ model::Response scripted(Trial trial, unsigned call, const model::Request& reque
     if (call == 1) return {{Role::assistant,R"({"schema_version":1,"steps":[{"id":"mode","objective":"Set focus","completion_criterion":"Check actual mode","tools":["example.status/read","example.status/set_focus"]}]})"}};
     check(request.tools.size() == 2,"model did not receive the same two explicit grants");
     if (call == 2) return {{Role::assistant,"",{{"before",request.tools[trial == Trial::early_change ? 1 : 0].name,"{}"}}},FinishReason::tool_calls};
-    const auto& last = request.messages.back();
+    const auto& last = dfy::test::business_messages(request).back();
     check(last.role == Role::tool,"tool result was not paired before continuation");
     if (call == 3) return {{Role::assistant,"",{{"change",request.tools[1].name,"{}"}}},FinishReason::tool_calls};
     if (call == 4) return {{Role::assistant,"",{{"after",request.tools[0].name,"{}"}}},FinishReason::tool_calls};

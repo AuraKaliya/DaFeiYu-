@@ -1,3 +1,4 @@
+#include "../../../tests/decision_input.hpp"
 #include "application.hpp"
 #include "main_messages.hpp"
 #include <windows.h>
@@ -25,7 +26,7 @@ void verify(const std::filesystem::path& data) {
     auto db = std::make_shared<app::MessageStore>(data);
     std::vector<std::pair<std::string,std::optional<std::int64_t>>> seen;
     app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& input) {
-        seen.emplace_back(input.messages.back().content,input.messages.back().event_utc_ms);
+        seen.emplace_back(dfy::test::business_messages(input).back().content,dfy::test::business_messages(input).back().event_utc_ms);
         return model::Response{{model::Role::assistant,"相同的回答"}};
     }});
     application.bind_messages(db,instance,nullptr);
@@ -82,17 +83,26 @@ void check_output_trace(const std::filesystem::path& path, const app::StoredMess
         const auto& kind = row.at("kind");
         if (kind=="model.prepared") {
             const auto& request = row.at("input");
-            const auto& last = request.at("messages").back();
+            const auto& messages = request.at("messages");
+            const auto status = Json::parse(messages.back().at("content").get<std::string>());
+            if (row.at("messageEvidence").back().at("source")!="host_status" || status.at("step")!=row.at("step") ||
+                status.at("schema")!="dafeiyu.agent_status/1" || status.at("turn")!=row.at("run"))
+                throw std::runtime_error("decision status not bound to the actual main request");
+            const auto& last = messages.at(messages.size()-2);
             if (last.at("content")=="提前追问") {
                 const auto& tools = request.at("tools");
-                offered = tools.size()==1 && tools[0].at("name")=="main_reply" &&
+                offered = tools.size()==2 && tools[0].at("name")=="main_reply" && tools[1].at("name")=="status_read" &&
+                    status.at("items").empty() &&
                     Json::parse(tools[0].at("parameters").get<std::string>()).at("required")==Json::array({"text"}) &&
                     request.at("messages")[0].at("content").get<std::string>().find("main_reply")!=std::string::npos;
             }
             if (last.at("role")=="tool" && last.at("toolCallId")=="speak") {
                 const auto& body = last.at("content").get_ref<const std::string&>();
                 const auto receipt = Json::parse(body.substr(body.find('{')));
-                paired = receipt.at("state")=="delivered" && receipt.at("message")==std::to_string(explicit_reply.id) &&
+                const auto& items = status.at("items");
+                paired = items.size()==1 && items[0].at("key")=="host.delivery" &&
+                    items[0].at("value").at("delivery")==explicit_reply.submission &&
+                    items[0].at("fact")==explicit_reply.id && receipt.at("state")=="delivered" && receipt.at("message")==std::to_string(explicit_reply.id) &&
                     receipt.at("delivery")==explicit_reply.submission;
             }
             if (last.at("content")=="内部结算") internal = request.at("tools").empty();
@@ -115,7 +125,7 @@ void verify_output(const std::filesystem::path& data) {
     // 按实际请求给出固定问答与工具材料，让真实宿主决定每条输出的去向。
     // 步骤：识别首次发言或静默场景 → 返回内部回执或应交付用户的最终文本。
     app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& request) {
-        const auto& last = request.messages.back();
+        const auto& last = dfy::test::business_messages(request).back();
         if (last.content=="提前追问") return model::Response{{model::Role::assistant,"",{{"speak","main_reply",Json{{"text",question}}.dump()}}},
             model::FinishReason::tool_calls};
         if (last.content=="静默") return model::Response{{model::Role::assistant," \t "}};
@@ -149,7 +159,7 @@ void verify_styles(const std::filesystem::path& root) {
         auto db = std::make_shared<app::MessageStore>(data);
         app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& input) {
             headers.push_back(input.messages.front().content);
-            if (input.messages.front().source!=model::MessageSource::rules || input.tools.size()!=1 || input.tools[0].name!="main_reply")
+            if (input.messages.front().source!=model::MessageSource::rules || input.tools.size()!=2 || input.tools[0].name!="main_reply" || input.tools[1].name!="status_read")
                 throw std::runtime_error("style changed granted tools");
             return model::Response{{model::Role::assistant,"相同的回执"}};
         }});
