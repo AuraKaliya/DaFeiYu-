@@ -12,6 +12,21 @@ void add_fingerprint(std::uint64_t& hash, std::string_view text) noexcept {
     for (const unsigned char byte : text) { hash ^= byte; hash *= UINT64_C(1099511628211); }
     hash ^= 255;
 }
+// 按 JSON 值比较候选实参，格式损坏或超出规范化预算时仍可比较原文。
+// 步骤：限制输入及解析深度 → 对有效对象稳定排序 → 将结果只用于进展判断。
+void fingerprint_arguments(std::uint64_t& hash, const std::string& arguments) {
+    using Json = nlohmann::json;
+    if (arguments.size() <= 64*1024) {
+        try {
+            const auto value = Json::parse(arguments,[](int depth, Json::parse_event_t, Json&) {
+                if (depth > 16) throw std::length_error("batch: argument fingerprint depth exceeded");
+                return true;
+            },false);
+            if (!value.is_discarded()) { add_fingerprint(hash,value.dump()); return; }
+        } catch (const std::length_error&) {}
+    }
+    add_fingerprint(hash,arguments);
+}
 }
 // 准备有界工具批次，任何拒绝都产生配对回执而不执行该候选动作。
 // 步骤：检查总调用预算 → 准备元数据和完整上下文 → 裁定候选及确认 → 全部就绪才接纳。
@@ -31,14 +46,13 @@ ToolBatch::ToolBatch(RunContext& context, ToolExecutor& executor, const model::M
         entries_[index].metadata.attempt = control.attempt; entries_[index].metadata.candidate = runtime::next_domain();
         entries_[index].metadata.result = entries_[index].metadata.exit = runtime::OperationState::pending;
         add_fingerprint(fingerprint_,assistant.tool_calls[index].name);
-        // 仅规范化已经通过有界 schema 的候选；未知或非法候选仍按原文本比较，不扩大解析深度。
+        fingerprint_arguments(fingerprint_,assistant.tool_calls[index].arguments);
         try {
             const auto selected = tools.resolve(assistant.tool_calls[index].name,assistant.tool_calls[index].arguments);
             views[index] = selected.description.receipt_view_bytes;
             archivable[index] = selected.description.archive_on_exit;
-            add_fingerprint(fingerprint_,nlohmann::json::parse(assistant.tool_calls[index].arguments).dump());
-        } catch (const std::invalid_argument&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
-        catch (const std::length_error&) { add_fingerprint(fingerprint_,assistant.tool_calls[index].arguments); }
+        } catch (const std::invalid_argument&) {}
+        catch (const std::length_error&) {}
     }
     context_.prepare_tools(assistant,tools.definitions(),views,archivable);
     for (std::size_t index = 0; index < count; ++index) {

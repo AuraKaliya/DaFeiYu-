@@ -62,6 +62,31 @@ void limits() {
         if (repeat) check((*loop.history())[3].tool_calls[0].arguments == "{ }","progress check rewrote original arguments");
     }
 }
+// 核对同一拒绝换调用号和 JSON 排版时停止，修改实参后仍可继续修订。
+// 步骤：提交两次不合约的调用 → 核对实际派发次数 → 分别验证原参数与后续模型决策。
+void rejected_attempts() {
+    for (const bool changed : {false,true}) {
+        unsigned calls = 0;
+        ToolCatalog catalog; register_tool(catalog,calls,false);
+        const std::vector<std::string> ids{"fixture/action"};
+        auto spec = script(false,true);
+        spec.steps[0].response->message.tool_calls[0].arguments = R"({"extra":1,"other":2})";
+        const std::string next = changed ? R"({ "other": 2, "extra": 3 })" : R"({ "other": 2, "extra": 1 })";
+        spec.steps[1].response->message.tool_calls[0] = {"revised","action",next};
+        if (changed) {
+            auto final = script().steps.back(); final.last_tool_id = "revised";
+            spec.steps.push_back(std::move(final)); spec.expected_model_requests = 3;
+        }
+        ScriptedModel model(std::move(spec)); RunOptions options; options.tools = catalog.snapshot(ids);
+        options.now = model.clock(); options.no_progress_limit = 1;
+        RunLoop loop({1,1},{},model.backend(),std::make_shared<const MessageHistory>(),"goal",options);
+        drain(loop); model.verify_complete();
+        check(!calls && (*loop.history())[3].tool_calls[0].arguments == next &&
+            (changed ? loop.request()->operation()->state() == OperationState::succeeded :
+                loop.request()->diagnostics().stop_reason == PolicyReason::no_progress),
+            "reformatted rejected arguments bypassed no-progress or a changed candidate was suppressed");
+    }
+}
 // 验证模型前控制、运行期限和整批调用上限都在受控动作之前生效。
 // 步骤：拒绝模型前异常 → 模拟到期与超量批次 → 核对零动作及原历史。
 void admission_limits() {
@@ -116,6 +141,6 @@ void retention() {
 }
 // 用固定响应及本地工具验证完整循环，不调用真实模型。
 int main() {
-    try { outcomes(); limits(); admission_limits(); retention(); std::cout << "Run loop checks passed\n"; return 0; }
+    try { outcomes(); limits(); rejected_attempts(); admission_limits(); retention(); std::cout << "Run loop checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
