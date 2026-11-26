@@ -17,6 +17,8 @@ add_test(NAME ui.message_history_state COMMAND "${DFY_NPM_EXECUTABLE}" run test:
 set_tests_properties(ui.message_history_state PROPERTIES WORKING_DIRECTORY "${DFY_UI_WEB}" TIMEOUT 15)
 add_test(NAME ui.mailbox_observer COMMAND "${DFY_NPM_EXECUTABLE}" run test:mailbox)
 set_tests_properties(ui.mailbox_observer PROPERTIES WORKING_DIRECTORY "${DFY_UI_WEB}" TIMEOUT 15)
+add_test(NAME ui.plugin_directory COMMAND "${DFY_NPM_EXECUTABLE}" run test:plugins)
+set_tests_properties(ui.plugin_directory PROPERTIES WORKING_DIRECTORY "${DFY_UI_WEB}" TIMEOUT 15)
 foreach(mode IN ITEMS smoke offline interaction lifecycle close-early close-controller)
   add_test(NAME "ui.${mode}" COMMAND dafeiyu "--${mode}")
   set_tests_properties("ui.${mode}" PROPERTIES TIMEOUT 35)
