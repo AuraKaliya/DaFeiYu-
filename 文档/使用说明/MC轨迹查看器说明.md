@@ -1,6 +1,8 @@
-# MC Trace 查看器
+# MC轨迹查看器说明
 
-查看器在本机浏览器中按 Minecraft 伙伴回合复盘日志。它读取宿主实际送模、模型响应、程序对工具的裁定以及游戏桥回执。所选文件在浏览器内读取，不经过本地 HTTP 服务。运行查看器不依赖游戏进程或模型服务。
+供开发者或复盘玩家在本机浏览器核对 Minecraft 伙伴的宿主 Trace 与游戏回执。浏览器直接读取所选文件，复盘可以在游戏和模型服务已关闭时进行。
+
+**目录**　[打开日志](#打开日志) · [从回合定位原始证据](#从回合定位原始证据) · [按原工作号核对游戏实效](#按原工作号核对游戏实效) · [验收路径](#验收路径)
 
 ## 打开日志
 
@@ -39,6 +41,16 @@ npm run start:mc-trace
 - **原始记录**按文件物理行序浏览，可按行号、事件类型或工作身份定位。点击原行锚点可读取和复制该行。“全局日志”可核对其他 Agent、外部事件以及无法关联到 MC 回合的领域记录。
 
 宿主以自己的单调时钟记录模型阶段。游戏样本按记录中的游戏时钟呈现。部分旧文件没有完整回执或计时字段，缺少的数据显示为未知或未见记录。导入上限沿用宿主审阅的每文件 512 MiB、单行 16 MiB。损坏记录之前的有效前缀可查看。
+
+## 按原工作号核对游戏实效
+
+MC 信箱记录保留游戏代次、消息序号和原工作编号。使用 `invocation` 对照 Agent 工具回执，使用 `bridgeWork` 对照 `game-actions.jsonl` 的 `work`。业务成功、实际退出和发送回执各自取证。
+
+陪玩移动接纳后用 `mc.partner.motion` 记录开始及状态变化，用同一工作编号查对应的 `mc.partner.action` 终态。后续模型上下文的 `activeMotion` 记录正在运行的动作。查看墙体时，用 `sceneAtMessage` 核对发话现场，用 `task.target` 核对所选方格，再用放置回执的 `sourceMessage` 和 `taskRevision` 对照原任务。
+
+用 `mc.partner.question` 核对局内自然追问的实际呈现和到期。呈现记录带 `bridgeWork`，到期记录沿用原 `item`，下一条玩家原话送模时可看到 `pendingQuestion.status=expired`。同回合再次请求发言时，工具会返回 `already_requested`。
+
+用同一组 `eventDomain` 和 `event` 核对 `event.captured`、`event.decoded`、`event.dispatched` 和 `ask.opened`。随后用 `ask` 关联 `ask.presented`、`ask.answer` 和 `ask.transition`。游戏渠道用呈现记录里的 `body.bridgeWork` 核对游戏发言。最后用 `mailbox` 和 `message` 核对 `interaction.delivered` 的入箱与 `interaction.acknowledged` 的收件确认。子 Agent 的后续 `model.prepared` 记录收到的 `questionResult` 和原目标。
 
 ## 验收路径
 

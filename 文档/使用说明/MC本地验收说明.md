@@ -1,6 +1,29 @@
-# Minecraft 本地协议探针
+# MC本地验收说明
 
-本页的固定输入、台词断言与动作顺序用于回查现有探针。对真人试玩做定性评审时，参照[外部试玩评审方法](../开发计划/MC伙伴开发计划.md#实施顺序与整体验收)，记录现场、可能的解释与实际效果。
+供在 Windows 源码树复验 MC 伙伴的开发者使用。固定输入、协议玩家和游戏读回用于确定性验收。各命令从仓库根目录执行，运行证据写入独立体验目录。正常进服和浏览器操作见[MC 伙伴使用说明](MC伙伴使用说明.md#首次真人体验)。
+
+**目录**　[准备隔离场地](#准备隔离场地) · [固定响应验收单个玩家绑定](#固定响应验收单个玩家绑定) · [固定响应验收场地](#固定响应验收场地) · [目标绑定与定向回归](#目标绑定与定向回归) · [服务端事实与采掘](#服务端事实与采掘) · [录制回放与诊断](#录制回放与诊断) · [真实模型场景登记](#真实模型场景登记)
+
+## 准备隔离场地
+
+G02 双角色只读探针已验证的组合为 Minecraft Java 1.21.4、Paper 稳定构建 232、Java 21、Node 24.13.0 与锁文件中的 Mineflayer 4.39.0。下文以 D 盘的独立测试目录为例，路径可替换为本机位置。Paper JAR 的 SHA-256 为 `5ee4f542f628a14c644410b08c94ea42e772ef4d29fe92973636b6813d4eaffc`。[Paper 下载服务](https://docs.papermc.io/misc/downloads-service/)
+
+1. 在 D 盘测试目录设置 `TEMP`、`TMP`、`npm_config_cache`，Java 启动时将 `java.io.tmpdir` 和 `user.home` 指向该目录。将 `plugins/mc/bridge/package*.json` 复制到其中的 `bridge` 子目录，运行 `npm ci --prefix D:/DaFeiYu-MC-Test/bridge --ignore-scripts --no-audit --no-fund`。
+2. 使用独立空世界及已接受 EULA 的服务目录。配置 `server-ip=127.0.0.1`、`server-port=25579`、`online-mode=false`、`enforce-secure-profile=false`、`enable-rcon=false`、`enable-query=false`、`level-type=minecraft:flat` 和 `spawn-protection=0`。这种离线身份仅供本机隔离测试使用，线上玩家授权需要可信账号绑定。
+3. 从该目录启动 `java -Xms256m -Xmx1G -jar <Paper文件> --nogui`，待就绪后在本地控制台执行 `gamerule spawnRadius 0` 和 `setworldspawn 0 -60 0`。会合区位于主世界，水平坐标各在 ±8 内，高度为 -61 至 -58。重跑时两个测试角色也要位于该区。
+4. 设置 `NODE_PATH=D:/DaFeiYu-MC-Test/bridge/node_modules`，从项目根运行 `node tests/mc-companion/connection.cjs 25579`。最后可加一个尚不存在的 JSON 路径保存证据。验收读取两个玩家 UUID、实体、位置、会合区、真实脚下方块和背包，随后客户端离开。服务器用控制台 `stop` 正常关闭。
+
+G02 使用两个独立的本机协议身份，没有接触个人账号。它证明两个玩家处于同一真实世界，尚不判断掉落来源或正式运行的授权关系。
+
+**托管验证。** 在上述世界首次准备好并正常关服后，设置 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 为测试根、Java 可执行文件和 Paper JAR 的绝对路径。世界位于根目录的 `servers/stone-1.21.4`，根目录下创建 `evidence` 子目录。运行 `node tests/mc-companion/connection.cjs --managed`。夹具独占本次回环服进程，等待就绪、读取双端身份、保存证据，并在成功或失败后请求正常停服。每次证据存入新的 `evidence/run-*` 目录。
+
+### 体验资源与观察插件
+
+源码中运行 `./tests/mc-companion/prepare-appearance.ps1 -FixtureRoot D:/DaFeiYu-MC-Test` 会核验原 PNG，把图片与本机资源包写入体验根目录的 `appearance`。已有且匹配的图片可离线使用。源码和服端夹具不分发该 PNG。[角色素材来源与散列](第三方软件与素材许可.md#mc-体验素材)
+
+正式体验启动器会从基础服务器复制观察端。先在停服时按[两种圆石来源](#两种圆石来源)构建对应 JAR。需要启动图形客户端时使用[首次真人体验](MC伙伴使用说明.md#首次真人体验)。
+
+最小离线检查 G01 直接运行 `node --test plugins/mc/tests/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
 
 ## 固定响应验收单个玩家绑定
 
@@ -28,103 +51,21 @@ node .\tests\mc-companion\playtest.cjs $probe $plugin --handoff-eight-retired-pr
 
 第一局核对采集、会合、玩家实收两块泥土，以及基线与增量中的工作回执水位。其余七局从“帮我挖 8 块圆石”开始。待选交付地点时，伙伴能继续采掘和查库存，提前给物会被待答拦下。
 
-选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../开发计划/Agent开发计划.md#已完成)
+选箱局验证箱内和伙伴库存的只读回执。存箱局让玩家选中左箱后转头，后续四笔委托均引用首次选箱的观察。独立玩家逐笔数两个箱子，分别核对完整、满箱、部分和关闭窗口后的原号回查。满包投物的两局分别在原连接和玩家重新入场后腾包，核对实收、唯一一次投物和原工作的结算。每局的 `host/trace/events.jsonl` 记录送模请求与宿主回执，`host/game-actions.jsonl` 记录桥接工作。八块场景还通过 `player-feedback.json` 和 `progress-feedback.json` 记录首次追问和进度答复的玩家端耗时。[主线实施记录](../开发计划/Agent开发计划.md)
 
 存箱局的 `chest-evidence.json` 保存协议玩家逐箱数到的前后值、伙伴库存、原工作号、重复提交回指及迟到实效版本。隔离服记录 `run-1pvdZD` 中，四笔委托都引用玩家消息 5 的观察 `1.29`。正常存入 8 块，满箱存入 0 块，只余 3 块容量时存入 3 块。窗口关闭时工作 `1.57` 先保留待核实，随后在该工作的第 4 版确认实存 8 块。四笔委托中右箱各次读数均为 5 块。
 
-取出局的 `withdraw-evidence.json` 保存同一指箱观察下每笔委托的去向、原工作和复查记录。选中左箱 `(2,-60,-2)` 后，独立玩家打开双箱，并接收服务端对伙伴背包普通圆石的计数。右箱 `(2,-60,2)` 有 5 块圆石。正常局从 12 块中取 8 块，箱内不足和背包只容纳 3 块时各取 3 块，满包取 0 块。整栈点击后关窗的原工作先报告待查，再读双边实物确认 8 块。[协议玩家断言](../../tests/mc-companion/chest-withdrawal-check.cjs)
+取出局的 `withdraw-evidence.json` 保存同一指箱观察下每笔委托的去向、原工作和复查记录。选中左箱 `(2,-60,-2)` 后，独立玩家分别打开两个普通单箱，并接收服务端对伙伴背包普通圆石的计数。右箱 `(2,-60,2)` 有 5 块圆石。正常局从 12 块中取 8 块，箱内不足和背包只容纳 3 块时各取 3 块，满包取 0 块。整栈点击后关窗的原工作先报告待查，再读双边实物确认 8 块。[协议玩家断言](../../tests/mc-companion/chest-withdrawal-check.cjs)
 
 拆栈边界局也写出 `withdraw-evidence.json`。左箱依次有 64、7、7 块时，取八后各槽为 64、0、6。单一 64 块面对取八委托时，首次取半就会持有 32 块；工作以 `chest_split_unavailable` 退出，点击数为 0，伙伴净增 0。单栈 12 块首次取半后立即关窗，原工作重开双边库存核实实取 6、剩余 2。
 
-取箱交给本人局在同一双箱场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](../../tests/mc-companion/chest-delivery-check.cjs)
+取箱交给本人局在同一组两个普通单箱的场地运行。`chest-delivery-evidence.json` 记录选箱、取出、投物和复查编号，以及指定箱、旁箱、伙伴和目标玩家的前后库存。缺货局额外保留伙伴原有 11 块，零库存局仍能查到这 11 块，满包局在玩家腾包后验证原给物工作的第 4 版实收。[取出到给物的协议回归](../../tests/mc-companion/chest-delivery-check.cjs)
 
 指定掉落续取局使用 `node .\tests\mc-companion\playtest.cjs $probe $plugin --ground-pickup-resume-probe`。两块泥土先被石头阻挡，石头移开时另一堆同物同数仍会阻止接近。两侧都看见旁堆移开后，仅原 UUID 被伙伴拾取。`ground-resume-evidence.json` 记录阻挡、续取、原号回查、旁堆余量和实际库存。将末项换为 `--ground-pickup-facts-probe` 会把独立玩家设为事实试点，并在三次现场结算后分别用正式 `status_read` 查询当步快照。证据文件的 `decisions` 保存原工作、事实号、已收与待拾数量。部分收取、退出未知及取消另有固定游戏包测试。[拾取固定用例](../../plugins/mc/tests/ground-pickup.test.cjs)
 
-## 首次真人体验
+## 固定响应验收场地
 
-准备好 G02 运行目录和观察端后，用 `windows-tests` 预设构建 Debug 目标 `dafeiyu-cli`、`dfy_mc_companion`。在项目根目录通过 Windows PowerShell 5.1 或 PowerShell 7 启动，`-BuildDirectory` 指向实际的构建目录。
-
-```powershell
-.\tests\mc-companion\start-playtest.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build\rebuild\windows-tests'
-```
-
-正式入口使用配置的模型，从绑定玩家的在场事实或普通聊天发起回合。模型配置优先取 `-ModelConfig` 指定的 JSON 文件或 `DFY_MC_MODEL_CONFIG` 指向的路径，其次取体验根目录的 `partner-model.json`，缺省使用应用随附的 DeepSeek 配置。游戏连接与模型凭据分开保存。用 `api_key_env` 指定的环境变量向宿主提供凭据。
-
-体验启动脚本及浏览器玩家启动脚本均可加 `-PlayerThinking low`。DeepSeek 玩家回合启用低强度思考，`off` 关闭，默认 `inherit` 使用宿主设置。独立部署在插件的 `settings.json` 中设置 `"playerThinking":"low"`。查看 `model.prepared` 的 `thinking` 和 `reasoningEffort` 可核对实际送模配置。玩家等待时间从发话计到收到有用反馈。
-
-固定响应的两处开口场景可在 `playtest.cjs` 的 `--gap-group-probe` 后加 `low` 或 `off`。复用同一构建和场地分别运行，两局的 `player-feedback.json` 都记录实际送模档位、原消息、投递工作和玩家端首反馈耗时。
-
-明确范围的两局还从首次送模摘要取出对应墙面的开口尺寸与泥土库存。在 `player-feedback.json` 中，`candidates` 关联原候选编号，`materials` 给出所需、已有及短缺数量。可将候选展开的坐标与游戏实际放置回执逐格比较。
-
-### 动作调度和目标绑定基线
-
-在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
-
-```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe D:\DaFeiYu-MC-Test\evidence
-```
-
-脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
-
-「跟随中挖一格」与「取材后补四格」的后续基线可传入两局证据目录：
-
-```powershell
-node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe <run-FX9QKV目录> <run-rg8RdZ目录>
-```
-
-分别核对原跟随工作号、挖掘后的实际入包、取材确认过期或观察被新事件中断，以及两局均无放置回执。可独立重跑的六轮使用录制模型响应。外部事件导致的回合退出以原 Trace 与游戏回执为准。
-
-### 实机比较思考模式
-
-DeepSeek 配置可加布尔字段 `"thinking": true`，默认关闭。使用同一模型、同一场地和同一句「把你旁边那个木门拆下来，装到我指的这个缺口」，两次独立开局，只改变思考模式。分别记录玩家发话到首次观察、首次有效动作、完工和发言的耗时，检查原洞口是否保持、询问是否有必要。再用边走边聊确认模型处理期间跟随仍沿用原工作号。先比较思考模式，后续提示改动使用相同的对照条件单独比较。
-
-真实模型只用于人工试玩。自动验收使用固定响应和延迟，核对工具回传、任务续行和 Trace。读取 `model.submitted`、`model.exited` 和 `mc.partner.action` 对照实际调用与游戏反馈。
-
-1. 用 Java 1.21.4 直接连接 `127.0.0.1:25580`，或使用下方浏览器入口。两种方式都用独立玩家身份见到大肥鱼；原版客户端接受本服的[角色资源包](../../tests/mc-companion/appearance.md)。
-2. 进场后用普通聊天按下方主题自由交互。本机离线服上的 `/msg` 私聊缺少可核对的发送者身份。
-3. 离服时，体验宿主给离场事件留出处理时间，再收尾。启动打印的 `DFY_TRACE` 指向模型与工具日志；同一宿主目录的 `board.txt` 记录实际发言，`game-actions.jsonl` 记录游戏执行结果。无人进服时，在宿主目录创建空文件 `stop` 可正常结束。
-
-**定向验收**另需构建 `dfy_mc_playtest`。加 `-PartnerProbe` 以可控模型记录收到的入场、离场和玩家原话；两次发出相同插话，分别选择保留或中止正在执行的移动。核对动作回执及玩家所见发言与模型选择，服务故障查宿主状态。输入和决定的证据在 `host/model-events.jsonl`，游戏实效在 `host/game-actions.jsonl`。加 `-Probe` 仍跑旧的圆石授权与实带 16 块场景。两种验收均使用真实 Paper 和独立协议玩家，模型使用替身。自然语言理解质量留给真人游玩。
-
-### 本轮真人验收
-
-通过浏览器进入 Release 体验场。河边出生点附近，`(3, -60, 0)` 和 `(4, -60, 0)` 有两块泥土，`(5, -60, 1)` 有一根橡木原木。待看到大肥鱼入场后开始。
-
-1. **指向观察与合成。** 对准原木，先问「我指的这块是什么，你旁边又有什么？」再对准它说「把这根原木挖下来做成四块木板」。核对挖的是哪一格，原木是否先入包，合成是否实际消耗原木并产出四块木板，以及游戏里是否只报一次完工。库存和工作号可从 `host/game-actions.jsonl` 核对。
-2. **就近取材。** 走到两块泥土附近，说「从旁边取一块泥土，在你旁边垫一步，位置你选」。核对空位、实际取材和落块；若提出更换材料，留意原本可以继续的动作是否受到影响。
-3. **受阻与复跟。** 让大肥鱼跟随，到台沿拉开高度后说「你挖俩方块垫一下」。取材开始后插一句「我在上面等你」。核对两次实际入包、按原委托继续放置和踩上，以及有路时原跟随是否恢复。若玩家下来后已能汇合，核对答复是否依据最新距离和高差。随后说「不用跟了」，观察实际停步。
-4. **四格续补。** 在同一面墙留一个 2×2 缺口和一处旁边的门洞。指向缺口委托用泥土补好，明确保留门洞。选定四格后、放到上方前，用石头临时堵上方一格。等部分完成并报受阻，挪掉石头，说「把刚才剩下的补上」。核对只补余下格，已补格和门洞保持原样。
-5. **填两处开口。** 在同一墙面留下两处相隔的竖向开口。分别试「把这两处缺口都补了」和范围含糊的「把缺口补好」。如果有追问，用「两边都补上吧」接续。核对是否只填获准的两处，实际扣掉相应泥土，按游戏读回报告完成。
-6. **负坐标脚下定格。** 在负坐标的平坦区域，让大肥鱼站在草方块上并发话「挖你脚下的泥土」。核对她是否确认准确格和实际材质、保护当前落脚点。若改为允许采草方块，确认她移到安全位置并复核同一格后再动手。
-
-遇到偏差时留下原话、实际方块或库存变化和本局 `DFY_TRACE` 路径。固定响应下的对应场景见[固定响应验收场地](#固定响应验收场地)。
-
-### 首轮实机：接续我已经搭的墙
-
-由用户操作。先准备一段有两处缺口的墙，一处用来补，另一处留作门洞。准备约定的材料。
-
-- 说「你跟着我走」，边走边问一句「到哪了」。观察她是否边走边答，以及转弯、停下再起步时是否继续跟随。
-- 在第一处缺口发话「过来帮我把墙的这个缺口填上」，随后走到门洞旁。核对她检查的是第一处缺口。现场有歧义时，观察她是否先确认，再按实际方格执行。
-- 核对补墙后的实际方块、门洞和材料余量，记录关键原话和大致时间。结束后用玩家消息号、子回合和工作号串查实际上下文、回执与发言。 [日志审阅与离线回放](构建与运行说明.md)
-
-### 实机故障基线 `run-4VDQ2M`
-
-使用 `19f070c` 构建的 `dafeiyu`，将本局原始证据目录交给下列命令。仓库记录校验指纹与复现断言，原始模型请求、回复和游戏记录保存在体验目录。
-
-```powershell
-node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu.exe D:\DaFeiYu-MC-Test\evidence\run-4VDQ2M
-```
-
-工具核对 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log` 的原件。正式离线回放器用录制的模型响应和工具回执重跑 14 轮，逐次比较送模上下文、工具目录、调用及结果。游戏侧效果由原动作回执与控制台交叉核对。
-
-| 审查项 | 基线证据 |
-| --- | --- |
-| 任务状态 | 子回合 3 和 11 共三次提交 `revision=1`，实际上下文和回执为 `revision=0`，共同目标始终为空。 |
-| 工具范围 | 子回合 7 用错 `ask_player` 名称，实际目录里有该能力。子回合 12 调用未入目录的 `move`；`place` 下一轮才进入目录，整局没有提出放置调用。 |
-| 跟随和位置 | 子回合 6 显式停止仍为 `in_range` 的工作 `1.67`。同轮按消息 5 观察时，原玩家位置和现场读到的实时位置已经不同。 |
-| 确认等待 | 一个问题实际呈现两次，分别带 `649` 和 `1`。随后采集确认 `802` 等待期间，17:36:28 的「我给你了啊」在原确认过期后才入子回合 11，17:36:45 收到发言。子回合 10 回放重现 `source_denied`。游戏没有收到采集或放置工作。 |
-
-### 固定响应验收场地
+使用 `tests/mc-companion/start-playtest.ps1` 的定向验收需构建 `dfy_mc_playtest`。加 `-PartnerProbe` 以可控模型记录收到的入场、离场和玩家原话；两次发出相同插话，分别选择保留或中止正在执行的移动。核对动作回执及玩家所见发言与模型选择，服务故障查宿主状态。输入和决定的证据在 `host/model-events.jsonl`，游戏实效在 `host/game-actions.jsonl`。加 `-Probe` 仍跑旧的圆石授权与实带 16 块场景。两种验收均使用真实 Paper 和独立协议玩家，模型使用替身。
 
 固定探针在独立回环 Paper 布置场地，由独立协议玩家读取初始方块，并把读数与坐标保存为 `arena.json`。
 
@@ -160,6 +101,12 @@ node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\rebuild\windows-t
 | 渡水、聊天和无路 | `--water-probe` 在低一格的水道上检验持续跟随、干岸叫停、固定目标反向过水和密闭目标。 | 跟随期间可发言。普通移动按原工作号对照起步距离、实际位移、到岸脚位和干地读回。密闭目标留下本次无路原因及末次位置。 |
 
 复测时在同一份证据中记录玩家消息、入轮、实际发言、动作接纳与读回时刻。这样可以分别定位通信等待、模型耗时和游戏动作耗时。
+
+固定响应的两处开口场景可在 `playtest.cjs` 的 `--gap-group-probe` 后加 `low` 或 `off`。复用同一构建和场地分别运行，两局的 `player-feedback.json` 都记录实际送模档位、原消息、投递工作和玩家端首反馈耗时。
+
+明确范围的两局还从首次送模摘要取出对应墙面的开口尺寸与泥土库存。在 `player-feedback.json` 中，`candidates` 关联原候选编号，`materials` 给出所需、已有及短缺数量。可将候选展开的坐标与游戏实际放置回执逐格比较。
+
+## 目标绑定与定向回归
 
 ### 观察与响应的分段时序
 
@@ -205,7 +152,7 @@ ctest --test-dir build/rebuild/windows-tests -C Debug --output-on-failure -R '^(
 | 「你可以垫上来」后计划被拒却进入等待，见原始基线 `run-CA2yMm` 的回合 8、9。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L43) | 合法的放置和移动节点可接纳。无效计划在修订额度用完后明确结算。 | `layered` 验证合法计划接纳。`repair-plan` 验证两次拒绝后正常结算回合。 |
 | 高台掉队后请求垫上来，见同一基线的跟随工作 `1.240`、`1.267`、`1.276`、`1.315`。[历史回放](../../tests/mc-companion/replay-follow-climb-baseline.cjs#L22) | 受阻和恢复沿用原跟随身份。垫高每次放置或移动按原号结算。中途站位失败时保留已有方块，跳过依赖步骤。 | `attention` 覆盖异常与恢复。`layered` 和 `layered-blocked` 分别覆盖四层完成和第一步移动受阻。后者的站位失败由夹具注入。 |
 
-`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../开发计划/MC伙伴开发计划.md#已完成)
+`run-CA2yMm` 的原件由历史回放脚本按指纹核对，包括 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log`。绕墙的早期 Paper 对照从体验根目录下的 `evidence/mc-context-aafea37-mws05jz6/comparison.json` 追溯，现场工作号查该索引指向的运行记录。[历史对照记录](../开发计划/MC伙伴开发计划.md)
 
 **Paper 验证。** 绕墙的 Paper 探针从上述对照索引追溯。实际验收核对脚位经过墙两侧和两端、返回起点，以及重开时从起点重新跑。垫高的两种场地使用表中的 `--layered-resupply-probe` 与 `--layered-follow-probe`。复盘时沿同一个跟随工作号检查受阻、判定可达、恢复与实际退出，另用采掘、放置及移动回执核对已经发生的效果。[垫高探针](../../tests/mc-companion/playtest-check.cjs#L202)
 
@@ -241,34 +188,9 @@ node .\tests\mc-companion\playtest.cjs .\build\rebuild\windows-tests\tests\Debug
 
 三种模式均核对后续实际送模上下文保留共同目标和原答复。协议玩家独立读回原墙未覆盖、缺格已补，以及批准后的上下门格。Trace 可按事件身份、ASK 编号、模型运行和游戏工作号逐项核对。
 
-### 用浏览器进服
+## 服务端事实与采掘
 
-```powershell
-.\tests\mc-companion\browser-player\start.ps1 -FixtureRoot 'D:\DaFeiYu-MC-Test' -BuildDirectory '.\build' -Configuration Release
-```
-
-命令用指定构建启动 Paper 与本机连接服务，以独立浏览器资料打开 WebMC 2.4.0。加 `-PrepareOnly` 可以只准备服务。当前体验服的构建和配置吻合时可直接复用。服务已启动时，打开入口并点击“进入河边体验”。[浏览器玩家入口](http://127.0.0.1:25582/) · [固定发布版本](https://github.com/zardoy/minecraft-web-client/releases/tag/v2.4.0)
-
-你使用独立的本地玩家名 `DfyVisitor`。点击游戏画面后用 WASD 走动、鼠标转向，按 T 输入原话并回车。是否向你的玩家身份发言或继续行动，由大肥鱼结合上下文决定。浏览器按大肥鱼的离线 UUID 为其玩家模型加载已准备的皮肤。关闭游戏页面将离服，重开一轮可再运行启动脚本。此入口只连接本机 `127.0.0.1:25580` 的离线体验服。
-
-进入后按真人验收清单操作。体验目录的 `mwc/*-paper.log` 记录本局证据目录和 `DFY_TRACE`；同一宿主目录下用 `trace/events.jsonl` 核对消息和工具，使用 `game-actions.jsonl` 核对游戏实际退出和效果。代理状态可从本机健康页查看。[真人验收清单](#本轮真人验收) · [代理健康页](http://127.0.0.1:25582/health)
-
-G01 直接运行 `node --test plugins/mc/tests/hillside.test.mjs`。样本解释器消费固定材料事件，不启动游戏或模型。
-
-## G02 双角色只读探针
-
-已验证的组合为 Minecraft Java 1.21.4、Paper 稳定构建 232、Java 21、Node 24.13.0 与锁文件中的 Mineflayer 4.39.0。游戏、JDK 和依赖均在 D 盘的独立测试目录。Paper JAR 的 SHA-256 为 `5ee4f542f628a14c644410b08c94ea42e772ef4d29fe92973636b6813d4eaffc`。[Paper 下载服务](https://docs.papermc.io/misc/downloads-service/)
-
-1. 在 D 盘测试目录设置 `TEMP`、`TMP`、`npm_config_cache`，Java 启动时将 `java.io.tmpdir` 和 `user.home` 指向该目录。将 `plugins/mc/bridge/package*.json` 复制到其中的 `bridge` 子目录，运行 `npm ci --prefix D:/DaFeiYu-MC-Test/bridge --ignore-scripts --no-audit --no-fund`。
-2. 使用独立空世界及已接受 EULA 的服务目录。配置 `server-ip=127.0.0.1`、`server-port=25579`、`online-mode=false`、`enforce-secure-profile=false`、`enable-rcon=false`、`enable-query=false`、`level-type=minecraft:flat` 和 `spawn-protection=0`。这种离线身份仅供本机隔离测试使用，线上玩家授权需要可信账号绑定。
-3. 从该目录启动 `java -Xms256m -Xmx1G -jar <Paper文件> --nogui`，待就绪后在本地控制台执行 `gamerule spawnRadius 0` 和 `setworldspawn 0 -60 0`。会合区位于主世界，水平坐标各在 ±8 内，高度为 -61 至 -58。重跑时两个测试角色也要位于该区。
-4. 设置 `NODE_PATH=D:/DaFeiYu-MC-Test/bridge/node_modules`，从项目根运行 `node tests/mc-companion/connection.cjs 25579`。最后可加一个尚不存在的 JSON 路径保存证据。验收读取两个玩家 UUID、实体、位置、会合区、真实脚下方块和背包，随后客户端离开。服务器用控制台 `stop` 正常关闭。
-
-G02 使用两个独立的本机协议身份，没有接触个人账号。它证明两个玩家处于同一真实世界，尚不判断掉落来源或正式运行的授权关系。
-
-**托管验证。** 在上述世界首次准备好并正常关服后，设置 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 为测试根、Java 可执行文件和 Paper JAR 的绝对路径。世界位于根目录的 `servers/stone-1.21.4`，根目录下创建 `evidence` 子目录。运行 `node tests/mc-companion/connection.cjs --managed`。夹具独占本次回环服进程，等待就绪、读取双端身份、保存证据，并在成功或失败后请求正常停服。每次证据存入新的 `evidence/run-*` 目录。
-
-## G03 两种圆石来源
+### 两种圆石来源
 
 在已准备好的专用测试服停止时运行 `./tests/mc-companion/observer/build.ps1`。此脚本使用同一 JDK 和服务器自带的依赖，输出只读观察 JAR 到该实例。再运行 `node tests/mc-companion/origins.cjs`。测试控制台负责准备两个专用角色的物资和一个目标方块，观察插件只登记游戏事实。
 
@@ -276,7 +198,7 @@ G02 使用两个独立的本机协议身份，没有接触个人账号。它证�
 
 铁镐破坏后的服务端候选须与真实入世界的实体 UUID 对应，玩家主动丢物另有独立来源。两份圆石在场时关联客户端的物品网络编号。另用徒手实际破坏作零掉落负例。每次服务器启动使用独立观察流和从 1 开始的序号；`origins.json` 和 `no-drop.json` 分别保存两段结果。
 
-## G04a 真实合堆与分取
+### G04a 真实合堆与分取
 
 重建观察 JAR 后运行 `node tests/mc-companion/pickups.cjs`。在专用场地分别验证两份独立掉落只捡自采、两份合堆后全取、合堆后两人各取一块。为了稳定进入指定分支，夹具控制台摆放已经真实生成的实体并移动角色；未替换物品、修改合堆半径或注入拾取事件。分取时令角色背包实际只剩一块容量。
 
@@ -284,19 +206,19 @@ G02 使用两个独立的本机协议身份，没有接触个人账号。它证�
 
 在完整取走的分支，同一批服务端事件还用于两次回放。分别把合堆或拾取的读回提前到原事件之前，保留实体身份、数量和收取人，均须得到归属未知。11 月 24 日独立圆石服 `run-SN59PZ` 已复核三种实收和两次倒序回放。
 
-## G04b 返程持有量
+### G04b 返程持有量
 
 运行 `node tests/mc-companion/return.cjs`。角色原有 5 块，在会合区外接收来源已确认的混合堆 2 块，从实际数量为 7 的单堆丢出 1 块，然后由 Mineflayer 控制真实角色步行回河边。测试控制台只能通过观察端的采样命令读取指定角色同一时点的位置、库存与堆叠数量，普通玩家不能调用。成功回执同时保存出发和到达两端的独立读数。到场有 6 块，自采入包曾确认 1，当前能证明实带 0～1；删去途中丢物证据则明确未核实。
 
-## G05 游戏侧只读桥接
+### G05 游戏侧只读桥接
 
 运行 `node tests/mc-companion/bridge-world.cjs`。以真实独立角色开启短名绑定的 Windows 本地管道。每条连接只接收一条有界 `state.read` 请求，回复回显原请求编号，给出当前出生代次、角色、维度、位置、圆石总数和距最近服务端信号的时长。库存总数未作来源归属。撤销后读回空世界，关闭桥接后连接失败，写方法不进入游戏。
 
-## G08 游戏侧查看
+### G08 游戏侧查看
 
 运行 `node tests/mc-companion/owner-chat.cjs` 和 `node tests/mc-companion/inspect.cjs`。前者核对绑定玩家原话、来源和游标；后者在真实游戏里发出委托，并以私有本机管道请求查看。测试开场把角色放在河边，随后她通过实际寻路抵达山脚，视线读到圆石。负例覆盖“先别去”、旧世界、替换目的地和重复受理；旁路观察与客户端挖掘调用共同核对零采掘。此项仅验证游戏侧执行与回读。
 
-## 正式应用和有界采掘
+### 正式应用和有界采掘
 
 在独立测试服已关停时，运行 `node tests/mc-companion/player-session.cjs <dfy_mc_game_visit_tests.exe> <MC包目录> <变体>`。不加变体执行正式查看。`skip`、`tamper` 分别验证模型仅声称完成和替换参数。`decline` 在游戏中拒绝。`approve-game` 和 `approve-center` 分别验证两个入口的授权、原游戏接单与相冲突的迟到答复。`lost-receipt` 在游戏接单后丢回执，宿主只能回查；`lost-send` 在转交前断线，查明尚未接单后用原身份重投一次。
 
@@ -304,10 +226,64 @@ G02 使用两个独立的本机协议身份，没有接触个人账号。它证�
 
 同一正式入口的 `pickup-one` 检查一块自采与 5 块旧库存，`collect-16` 检查 16 个独立来源。`return-16` 在河边读到库存 21、自采实带 16；`return-14` 从零旧库存开始，在返程途中通过**独立夹具**实际扣掉 2 块，应显示实带 14、数量不足。实际移动触发只读观察端在下一 tick 读取位置和库存。固定异常样本可用 `node --test plugins/mc/tests/custody.test.cjs` 验证旧位置、错角色、错世界及混合库存范围。
 
-## G14 探索受阻分析
+### G14 探索受阻分析
 
 查看行动期间，MC 适配器按游戏物理更新采样，把角色位置和八格视线内命中的方块各自映射到四格见方的区域。区域编号代表本次探索的采样粒度。角色必须实际离开并再进入才算一次返回；三次原地位置回报无法触发询问。缺块、位置校正、超过一秒的采样停顿或窗口容量耗尽时重新建立窗口。
 
 宿主读取配对的 `search.progress` 用途，先核对世界、角色、查看消息号与同一连续窗口。三次返回仍有新增区域时直接继续；连续没有新增时再读一次，新的游戏采样仍无进展才询问原动作。游戏侧直接按目标和寻路器最近的结果／重算原因答复，移动可继续。只有后续新的可见区域才能标记探索恢复。普通 `state.read` 保持原结构。终端 `/companion status` 展示依据、问题、答复和验证；本步不调整游戏路线，也不弹出玩家审批。
 
 用 `dfy_companion_review_tests` 运行 `app.review_exploring`、`app.review_blocked`、`app.review_recheck`、`app.review_disconnect`、`app.review_gap`。使用真实 DLL、正式宿主、固定游戏轨迹和固定模型，原始消息及判定保存在各测试目录的 `review.txt`。正常轨迹与受阻轨迹走相同区域，只改变实际看到的表面。`mc.exploration` 单独验证采样计数。真实回环服的 `inspect.cjs` 定向验证移动期间按原询问取得路线答复，并核对零采掘。
+
+## 录制回放与诊断
+
+### 动作调度和目标绑定基线
+
+在已有 Debug 构建上核对本地的 `run-L5G5AB`、`run-LdgI0H` 原始记录。
+
+```powershell
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe D:\DaFeiYu-MC-Test\evidence
+```
+
+脚本核对原件指纹、玩家原话、采掘结果、取消前置步骤与未绑定放置。可独立重跑的模型回合使用原录制响应，依赖外部控制或决策截止的路径按原 Trace 断言。
+
+「跟随中挖一格」与「取材后补四格」的后续基线可传入两局证据目录：
+
+```powershell
+node .\tests\mc-companion\replay-action-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe <run-FX9QKV目录> <run-rg8RdZ目录>
+```
+
+分别核对原跟随工作号、挖掘后的实际入包、取材确认过期或观察被新事件中断，以及两局均无放置回执。可独立重跑的六轮使用录制模型响应。外部事件导致的回合退出以原 Trace 与游戏回执为准。
+
+### 实机故障基线 run-4VDQ2M
+
+历史采样使用 `19f070c`。对现行构建，将原始证据目录交给提供离线回放的 `dafeiyu-cli.exe`。仓库记录校验指纹与复现断言，原始模型请求、回复和游戏记录保存在体验目录。
+
+```powershell
+node .\tests\mc-companion\replay-playtest-baseline.cjs .\build\rebuild\windows-tests\bin\Debug\dafeiyu-cli.exe D:\DaFeiYu-MC-Test\evidence\run-4VDQ2M
+```
+
+工具核对 `host/trace/events.jsonl`、`host/game-actions.jsonl` 和 `console.log` 的原件。正式离线回放器用录制的模型响应和工具回执重跑 14 轮，逐次比较送模上下文、工具目录、调用及结果。游戏侧效果由原动作回执与控制台交叉核对。
+
+| 审查项 | 基线证据 |
+| --- | --- |
+| 任务状态 | 子回合 3 和 11 共三次提交 `revision=1`，实际上下文和回执为 `revision=0`，共同目标始终为空。 |
+| 工具范围 | 子回合 7 用错 `ask_player` 名称，实际目录里有该能力。子回合 12 调用未入目录的 `move`；`place` 下一轮才进入目录，整局没有提出放置调用。 |
+| 跟随和位置 | 子回合 6 显式停止仍为 `in_range` 的工作 `1.67`。同轮按消息 5 观察时，原玩家位置和现场读到的实时位置已经不同。 |
+| 确认等待 | 一个问题实际呈现两次，分别带 `649` 和 `1`。随后采集确认 `802` 等待期间，17:36:28 的「我给你了啊」在原确认过期后才入子回合 11，17:36:45 收到发言。子回合 10 回放重现 `source_denied`。游戏没有收到采集或放置工作。 |
+
+## 真实模型场景登记
+
+**仅记录，不执行。** 这些场景供记录真实玩家对自然语言理解的预期。工程验收使用固定模型响应和独立游戏读回，成功率只计可控回归。河边原场地的泥土在 `(3,-60,0)`、`(4,-60,0)`，橡木在 `(5,-60,1)`。[固定响应验收场地](#固定响应验收场地) · [MC 伙伴开发计划](../开发计划/MC伙伴开发计划.md)
+
+| 原始场景或玩家原话 | 预期与记录边界 |
+| --- | --- |
+| 同模型、同场地的「把你旁边那个木门拆下来，装到我指的这个缺口」 | 配置的 `thinking` 布尔值默认关闭。对照资料记录思考模式、原洞口、首次观察、首次有效动作、完工及发言耗时。提示词和场地修订另行记录。 |
+| 「我指的这块是什么，你旁边又有什么？」「把这根原木挖下来做成四块木板」 | 玩家指向与伙伴自身视角各有来源。实物应可查到原格采掘、原木入包、原料消耗、四块木板和单次完工发言。 |
+| 「从旁边取一块泥土，在你旁边垫一步，位置你选」 | 区分获准选位、真实取材与落块。提出更换材料时，仍可推进的原步骤与依赖答复的步骤分别记录。 |
+| 高台掉队后的「你挖俩方块垫一下」「我在上面等你」「不用跟了」 | 记录插话期间已有材料、两次实际入包、原任务放置与站位。若已能汇合，依据当前高差和距离判断，终点查原跟随的实际退出。 |
+| 2×2 缺口旁保留门洞，受阻后「把刚才剩下的补上」 | 一格被临时阻挡时保留已补格和欠缺数。续补后核对原门洞、实际剩余格和库存。 |
+| 两个竖向开口的「把这两处缺口都补了」「把缺口补好」「两边都补上吧」 | 记录是否需要澄清、答复关联的原事项、获准的格集合、实际扣料和实放量。 |
+| 负坐标草方块上的「挖你脚下的泥土」 | 关注脚格、实际材质、落脚保护。授权修订为可采草方块后，目标应可追溯至同一格及安全站位。 |
+| 「你跟着我走」「到哪了」，指着第一处缺口说「过来帮我把墙的这个缺口填上」后走向门洞 | 记录边走边答、转弯停走时的原跟随，以及伙伴观察的是发话处还是玩家新位置。实效包括第一处墙格、保留门洞与材料余量。 |
+
+记录中保留原话、可定位的玩家消息号、子回合、工作号、时间及 `DFY_TRACE` 路径。结论限于当时场地和确有读回的游戏事实。[日志审阅与离线回放](构建与运行说明.md#trace-审阅与回放)
