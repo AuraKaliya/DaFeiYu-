@@ -60,14 +60,14 @@ Json read_object(const fs::path& path, const char* source) {
 
 // 只从原包 agent/status.json 读取注册表，实例内沿用加载时的原件。
 // 步骤：检查固定目录和文件 → 有界读取注册表 → 核对包拥有的键并保存定义。
-std::string status_definitions(const Manifest& manifest) {
+void load_status(const Manifest& manifest, EffectiveConfig& config) {
     const auto agent = manifest.directory / "agent";
     if (files::is_reparse_point(agent)) throw std::runtime_error("plugin config: linked agent directory");
-    if (!fs::exists(fs::symlink_status(agent))) return "[]";
+    if (!fs::exists(fs::symlink_status(agent))) return;
     const auto path = files::directory(agent) / "status.json";
-    if (!fs::exists(fs::symlink_status(path))) return "[]";
+    if (!fs::exists(fs::symlink_status(path))) return;
     const auto doc = read_object(path,"agent status definitions");
-    if (doc.size()!=2 || doc.value("schema",std::string{})!="dafeiyu.status_definitions/1" ||
+    if (doc.size()!=(doc.contains("readWith") ? 3 : 2) || doc.value("schema",std::string{})!="dafeiyu.status_definitions/1" ||
         !doc.contains("definitions") || !doc.at("definitions").is_array() || doc.at("definitions").size()>32)
         throw std::runtime_error("plugin config: invalid agent status registration");
     const auto& definitions = doc.at("definitions");
@@ -77,7 +77,14 @@ std::string status_definitions(const Manifest& manifest) {
         if (!field.is_object() || !field.contains("key") || !field.at("key").is_string() ||
             !field.at("key").get_ref<const std::string&>().starts_with(manifest.id+"."))
             throw std::runtime_error("plugin config: foreign agent status owner");
-    return definitions.dump();
+    if (doc.contains("readWith")) {
+        const auto read = doc.at("readWith").get<std::string>();
+        const auto prefix = manifest.id+"/";
+        if (definitions.empty() || !read.starts_with(prefix) || read.size()==prefix.size() || read.size()>128 ||
+            read.find('/',prefix.size())!=read.npos) throw std::runtime_error("plugin config: invalid status reader grant");
+        config.status_read_with = read;
+    }
+    config.status_definitions = definitions.dump();
 }
 
 // 从与包身份匹配的可选 UI 描述登记只读文本，只投影已合并到本代次的同名顶层字段。
@@ -180,7 +187,9 @@ std::shared_ptr<const EffectiveConfig> load_config(const Manifest& manifest, con
         for (const auto& [key, value] : overrides.items()) {
             effective[key] = value;
         }
-        return std::make_shared<const EffectiveConfig>(EffectiveConfig{current.id,effective.dump(),public_settings(current,effective,overrides),status_definitions(current)});
+        EffectiveConfig config{current.id,effective.dump(),public_settings(current,effective,overrides)};
+        load_status(current,config);
+        return std::make_shared<const EffectiveConfig>(std::move(config));
     } catch (const fs::filesystem_error&) {
         throw std::runtime_error("plugin config: filesystem error");
     }

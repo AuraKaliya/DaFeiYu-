@@ -117,14 +117,18 @@ int main(int argc, char** argv) {
         fs::create_directory(declarations);
         const auto field = Json{{"key","sample.status.work"},{"version",1},{"description","stage"},
             {"defaultAttention",{{"mode","implicit"}}},{"valueSchema",{{"type","object"}}}};
-        Json registry{{"schema","dafeiyu.status_definitions/1"},{"definitions",Json::array({field})}};
+        Json registry{{"schema","dafeiyu.status_definitions/1"},{"definitions",Json::array({field})},{"readWith","sample.status/inspect"}};
         write(declarations/"status.json",registry.dump());
         const auto original = load_config(status_package,run/"status-user");
-        check(Json::parse(original->status_definitions)==registry.at("definitions"),"package status definition lost");
+        check(original->status_read_with=="sample.status/inspect" && Json::parse(original->status_definitions)==registry.at("definitions"),"package status definition lost");
         registry["definitions"][0]["key"]="host.activity";
         write(declarations/"status.json",registry.dump());
         rejects(status_package,run/"status-user","foreign agent status owner");
         check(Json::parse(original->status_definitions)[0]==field,"original status declaration changed");
+        registry["definitions"] = Json::array({field});
+        registry["readWith"] = "other/inspect";
+        write(declarations/"status.json",registry.dump());
+        rejects(status_package,run/"status-user","invalid status reader grant");
         fs::remove(declarations/"status.json");
         check(load_config(status_package,run/"status-user")->status_definitions=="[]","optional status declaration required");
         const auto users = run / u8"用户 数据";

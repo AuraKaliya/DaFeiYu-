@@ -236,6 +236,8 @@ std::string_view PluginInstance::plugin_version() const noexcept { return state_
 const PublicSettings& PluginInstance::public_settings() const noexcept { return state_->config->public_settings; }
 // 在原实例生命周期内提供冻结的包定义，后续重载另行读取。
 const std::string& PluginInstance::status_definitions() const noexcept { return state_->config->status_definitions; }
+// 返回本代次原包声明的只读能力，业务线程按每次授予的原注册复核。
+const std::string& PluginInstance::status_read_with() const noexcept { return state_->config->status_read_with; }
 // 仅在原生实例活动期间允许查询新能力。
 PluginModuleV2& PluginInstance::active_module() {
     if (state_->phase != InstancePhase::active) throw std::logic_error("instance: active capability context required");

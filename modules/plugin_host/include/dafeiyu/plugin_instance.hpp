@@ -96,6 +96,8 @@ class PluginInstance {
     const PublicSettings& public_settings() const noexcept;
     // 借用本加载代次声明的 Agent 状态定义，用户设置不能覆盖它。
     const std::string& status_definitions() const noexcept;
+    // 借用状态包声明的同实例只读能力 ID，未配置时为空。
+    const std::string& status_read_with() const noexcept;
     // 从活动实例取得精确版本能力，并保留该实例的代码寿命。
     // 步骤：核对活动阶段并查询能力 → 固定具体实例代次 → 转交代码持有。
     template<class T> std::optional<InstanceCapability<T>> query(std::string_view name, std::uint32_t version) {
