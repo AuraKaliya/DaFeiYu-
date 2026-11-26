@@ -3,6 +3,7 @@
 #include <dafeiyu/plugin_tools.hpp>
 #include <dafeiyu/tool_executor.hpp>
 #include <array>
+#include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -31,6 +32,12 @@ void verify(const std::filesystem::path& package, const std::filesystem::path& r
     check(manifest.id == "mc.companion" && manager.load(manifest.id) == 0, "MC plugin load failed");
     auto catalog = std::make_shared<agent::ToolCatalog>();
     plugins::PluginTools registration(manager.instance(manifest.id), catalog);
+    std::ifstream status_file(manifest.directory/"agent/status.json");
+    const auto status = nlohmann::json::parse(status_file);
+    const std::array status_grant{status.at("readWith").get<std::string>()};
+    const auto reader = catalog->snapshot(status_grant,false).descriptions().at(0);
+    check(reader.id == "mc.companion/observe" && reader.instance == manager.instance(manifest.id)->generation() &&
+        !reader.changes_state, "installed MC status readWith must reference this instance's read-only observe tool");
     const auto offer = plugins::companion_offer(*manager.instance(manifest.id), *catalog);
     check(offer && offer->state_tool == "mc.companion/world" && offer->state_topic == "world" &&
         offer->generation == manager.instance(manifest.id)->generation(), "MC role not registered by active instance");

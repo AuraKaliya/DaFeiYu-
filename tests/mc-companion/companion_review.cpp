@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include "application_commands.hpp"
 #include <fstream>
@@ -28,7 +29,7 @@ model::Response fixed(const model::Request& request) {
 // 步骤：从真实插件接纳固定委托 → 核对主侧决定 → 分开验证子答复和新观察 → 查询终端依据。
 void verify(const std::filesystem::path& pkg, const std::filesystem::path& root, std::wstring_view mode) {
     app::Application app({}, root / "packages", root / "user", model::Backend{
-        [](const auto&, const auto& request) { return fixed(request); }});
+        [](const auto&, const auto& request) { return fixed(dfy::mc_test::scenario_request(request)); }});
     app.plugins().install(pkg);
     if (app.plugins().load("mc.companion")) throw std::runtime_error("plugin load failed");
     const auto id = app.open_companion("mc.companion");

@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include <future>
 #include <iostream>
@@ -39,7 +40,8 @@ void verify(const fs::path& package, const fs::path& ordinary, const fs::path& r
     auto started = entered.get_future();
     const auto gate = release.get_future().share();
     app::Application application({}, root / "packages", root / "user", model::Backend{
-        [&](const auto&, const model::Request& request) {
+        [&](const auto&, const model::Request& formal) {
+            const auto request = dfy::mc_test::scenario_request(formal);
             const auto& prompt = request.messages.back().content;
             if (prompt == "wait here") {
                 check(request.tools.size() == 1, "child readonly tool missing");

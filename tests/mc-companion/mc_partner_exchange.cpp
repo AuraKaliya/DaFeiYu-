@@ -1,3 +1,4 @@
+#include "scenario_request.hpp"
 #include "application.hpp"
 #include <algorithm>
 #include <atomic>
@@ -20,7 +21,8 @@ int wmain(int argc, wchar_t** argv) {
         Config config;
         config.provider = "deepseek";
         config.model = "fixed-exchange";
-        Application host(config,root/"packages",root/"user",Backend{[&](const Config& effective,const Request& input) -> Response {
+        Application host(config,root/"packages",root/"user",Backend{[&](const Config& effective,const Request& formal) -> Response {
+            const auto input = dfy::mc_test::scenario_request(formal);
             const bool player = input.messages.front().content.find("Minecraft 同场规则") != std::string::npos;
             if (effective.thinking_enabled() != player || effective.reasoning_effort() != (player ? "low" : ""))
                 throw std::runtime_error("player thinking preference crossed a session boundary");

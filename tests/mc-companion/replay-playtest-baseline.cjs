@@ -1,3 +1,4 @@
+const { scenarioInput } = require('./partner-context.cjs');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -19,7 +20,7 @@ function readEvidence(root, file) {
 
 // 从实际送模消息取出 MC 上下文，与工具定义使用同一次模型请求。
 function context(request) {
-  return JSON.parse(request.input.messages.findLast(message => message.role === 'user').content);
+  return JSON.parse(scenarioInput(request).messages.findLast(message => message.role === 'user').content);
 }
 
 // 核对发生在游戏边界上的现象，包括回放所替代的工作和票据。

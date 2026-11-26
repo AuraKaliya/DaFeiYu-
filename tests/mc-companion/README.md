@@ -4,6 +4,13 @@
 
 ## 固定响应验收单个玩家绑定
 
+选定玩家的 `mc.companion.task_goal` 以玩家 UUID 为主体、任务执行修订为原事实号。`plugins.mc_status_sample` 核对无目标、备注更新、目标修订及基线重传。`plugins.mc_status_request` 和 `mc.status_replay` 用新旧两种请求核对原话和配对工具结果。包的 `readWith` 指定 `mc.companion/observe`，`plugins.mc_world` 从实际安装目录读取它，核对真实 DLL 注册的只读标志和实例。集成宿主后，两条纠正场景沿各回合的实例和实际工具契约核对 `status_read` 授权，并从宿主尾注对回 `task_update` 原修订。
+
+~~~powershell
+$env:DFY_MC_REQUIRE_STATUS_PROJECTION = '1'
+ctest --test-dir build/rebuild/windows-tests -C Release -R '^plugins\.mc_partner_revision_correction-(lost|late)$' --output-on-failure
+~~~
+
 在已准备好的隔离 Paper 场地逐局运行以下固定响应。设置本机的 `DFY_MC_TEST_ROOT`、`DFY_MC_JAVA`、`DFY_MC_PAPER_JAR` 和桥接依赖 `NODE_PATH`，从当前仓库源码构建服务端观察插件。以下示例的可执行程序是测试目标 `dfy_mc_playtest`，第二个参数是带有 `plugin.json` 的 Debug 插件目录。
 
 ~~~powershell
@@ -173,13 +180,11 @@ ctest --test-dir build/rebuild/windows-tests -C Debug -V -R '^plugins\.mc_partne
 ```powershell
 $build = (Resolve-Path 'build/rebuild/windows-tests').Path
 $fixture = New-Item -ItemType Directory (Join-Path $env:TEMP ('dfy-response-timing-' + [Guid]::NewGuid().ToString('N')))
-$package = New-Item -ItemType Directory (Join-Path $fixture.FullName 'mc.companion')
+$package = Join-Path $fixture.FullName 'mc.companion'
 Copy-Item -LiteralPath "$build/tests/Debug/dfy_mc_plugin_partner_tests.exe" -Destination $fixture.FullName
-foreach ($file in 'plugin.json', 'defaults.json', 'dfy_mc_companion.dll') {
-  Copy-Item -LiteralPath "$build/plugins/mc/Debug/mc.companion/$file" -Destination $package.FullName
-}
+Copy-Item -LiteralPath "$build/plugins/mc/Debug/mc.companion" -Destination $package -Recurse
 node .\tests\mc-companion\native-world.cjs (Join-Path $fixture.FullName 'dfy_mc_plugin_partner_tests.exe') `
-  $package.FullName (Join-Path $fixture.FullName 'runs') partner-revision-response-timing
+  $package (Join-Path $fixture.FullName 'runs') partner-revision-response-timing
 ```
 
 ### 绕墙与「垫上来」回归

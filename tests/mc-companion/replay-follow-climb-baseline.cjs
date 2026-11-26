@@ -1,3 +1,4 @@
+const { scenarioInput } = require('./partner-context.cjs');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -30,7 +31,7 @@ function verifyFollow(trace, actions) {
     assert.ok(progress.some(row => row.body.progress?.distance === distance && row.body.status === phase));
   const runs = trace.filter(row => row.kind === 'model.prepared' && row.step === 1);
   for (const [run, work] of [[3, '1.240'], [4, '1.267'], [5, '1.276'], [7, '1.315']]) {
-    const context = JSON.parse(runs.find(row => row.run === run).input.messages.at(-1).content);
+    const context = JSON.parse(scenarioInput(runs.find(row => row.run === run)).messages.at(-1).content);
     assert.equal(context.trigger, 'motion.finished');
     assert.equal(context.workSettlement.receipts[0].bridgeWork, work);
     assert.ok(trace.find(row => row.run === run && row.kind === 'run.exited').answer);
