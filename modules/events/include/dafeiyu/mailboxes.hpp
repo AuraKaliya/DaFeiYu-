@@ -28,6 +28,19 @@ struct MailboxBinding {
     MailboxId mailbox;
     runtime::DomainId sender, receiver;
 };
+// 仅保留投递与实际取件的公开元数据，不持有载荷及事件引用。
+struct MailboxMessageReceipt {
+    EventId event;
+    std::string category;
+    std::uint32_t version = 0;
+    std::int64_t accepted_utc_ms = 0;
+    std::optional<std::int64_t> received_utc_ms;
+    std::uint64_t accepted_revision = 0, received_revision = 0;
+};
+struct MailboxInspection {
+    std::uint64_t revision, accepted, received;
+    std::vector<MailboxMessageReceipt> messages;
+};
 
 // 创建由宿主拥有的单文本分类载荷，适用于原生服务及本体发送入口。
 std::shared_ptr<const runtime::StructValue> mailbox_text(std::string_view category, std::uint32_t version,
@@ -48,6 +61,12 @@ class Mailboxes {
     std::uint64_t directory_revision() const noexcept { return directory_revision_; }
     // 复制指定参与方当前绑定的地址及双方身份，保留系统的消费位置。
     std::vector<MailboxBinding> bindings(runtime::DomainId participant) const;
+    // 返回本网络最近的地址变动、成功投递或实际取件修订。
+    std::uint64_t revision() const noexcept { return revision_; }
+    // 借原参与方身份读取该地址的最近修订，用于跳过未变的回执。
+    std::uint64_t revision(runtime::DomainId participant, MailboxId target) const;
+    // 复制原地址的有界公开回执及真实读写水位，查询不会更新收件或唤醒。
+    MailboxInspection inspect(runtime::DomainId participant, MailboxId target) const;
     // 发送序号在目标信箱内从 1 连续递增；窗口内重投只读取原回执，消息正文仍取自首次接纳。
     DeliveryReceipt deliver(runtime::DomainId sender, MailboxId target, std::uint64_t sequence,
         std::shared_ptr<const runtime::StructValue> payload);
@@ -78,12 +97,17 @@ class Mailboxes {
         std::uint64_t accepted = 0;
         std::vector<MailboxCategory> wake_categories{};
         std::optional<EventId> wake{};
+        std::vector<MailboxMessageReceipt> receipts{};
+        std::uint64_t revision = 0;
     };
     // 查找当前目录中的有效地址，未知或已关闭的地址返回拒绝。
     std::vector<Entry>::iterator find(MailboxId target);
+    // 仅向原信箱实际绑定的一方提供同线程的只读记录。
+    const Entry& bound(runtime::DomainId participant, MailboxId target) const;
     const MailboxLimits limits_;
     std::shared_ptr<runtime::Budget> budget_;
     std::vector<Entry> entries_;
     std::uint64_t directory_revision_ = 0;
+    std::uint64_t revision_ = 0;
 };
 }
