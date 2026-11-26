@@ -1,4 +1,7 @@
 #include "management/resident.hpp"
+#include "management/protocol.hpp"
+#include "management/client.hpp"
+#include "fixtures/query_v2/mailbox_fixture.h"
 #include <nlohmann/json.hpp>
 #include <windows.h>
 #include <atomic>
@@ -74,19 +77,136 @@ void directory(const fs::path& root, const fs::path& dll) {
     Json loaded;
     until([&] { loaded=call(first.client,list); return loaded.at("sources").size()==3; },"directory after load");
     const auto original=loaded.at("sources").back();
+    auto pinned_list=list;
+    pinned_list.update(Json{{"instance",first.instance},{"revision",loaded.at("revision")}});
+    check(call(second.client,pinned_list)==loaded,"matching directory revision was unavailable");
+    const Json read{{"type","mailbox.read"},{"instance",first.instance},{"source",original.at("id")}};
+    const auto empty=call(first.client,read);
+    check(empty.at("event")=="mailbox.snapshot" && empty.at("state")=="ready" && empty.at("messages").empty() &&
+        empty.at("mailboxes").size()==2 && empty==call(second.client,read),"native empty source was unreadable");
+    {
+        management::Client window(data,"offline",[] { throw std::runtime_error("unexpected replacement resident"); });
+        auto invalid=read;
+        invalid.update(Json{{"version","1"},{"request","malformed"},{"revision",false}});
+        Json error;
+        check(window.post(invalid,[&](const Json& value) { error=value; }),"native client did not admit a query");
+        until([&] { window.advance(); return !error.is_null(); },"management error reply");
+        check(error.at("event")=="management.error" && error.at("request")=="malformed","malformed read appeared as an empty source");
+    }
+    auto wrong=read;
+    wrong["instance"]="previous-backend";
+    check(call(first.client,wrong).at("state")=="stale","source escaped its original resident");
     check(original.at("kind")=="plugin" && original.at("plugin")=="test.mail" && original.at("generation").is_string() &&
         loaded.at("revision")!=initial.at("revision") && loaded==call(second.client,list),"plugin not bound to its original generation");
     command("/plugins unload test.mail");
     until([&] { return call(first.client,list).at("sources").size()==2; },"directory after unload");
+    check(call(second.client,read).at("state")=="stale" && call(first.client,pinned_list).at("state")=="stale",
+        "unloaded source or old directory remained readable");
     command("/plugins load test.mail");
     Json reloaded;
     until([&] { reloaded=call(second.client,list); return reloaded.at("sources").size()==3; },"directory after reload");
     const auto replacement=reloaded.at("sources").back();
+    auto fresh=read;
+    fresh["source"]=replacement.at("id");
+    check(call(first.client,read).at("messages").empty() && call(first.client,read).at("state")=="stale" &&
+        call(second.client,fresh).at("state")=="ready","new generation exposed the previous snapshot");
     check(replacement.at("id")!=original.at("id") && replacement.at("generation")!=original.at("generation") &&
         reloaded.at("revision")!=loaded.at("revision") && model_calls==0,"reloaded source reused its identity or viewing started a turn");
     server.request_stop();
     server.join();
     check(outcome==0,"resident failed to drain");
+}
+
+// 让原系统持有收件和回信权，用真实 C DLL 在两端之间交付一封待处理的回信。
+// 步骤：投递原件并反复查看 → 由 DLL 实收并回信 → 换窗口查原号 → 本体实际收件后再核对。
+void receipts(const fs::path& root) {
+    std::atomic_uint model_calls{0}, replies{0}, reads{0}, step{0};
+    // 为受控业务线程建立真实插件和待处理原件。
+    // 步骤：创建应用并加载 DLL → 向其登记地址实际投递 → 启动原有推进循环。
+    management::Host host([&] {
+        auto app = std::make_unique<app::Application>(model::Config{},root/"plugins",root/"receipts",model::Backend{
+            [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
+        check(app->plugins().load("test.mail")==DFY_V2_OK,"receipt plugin failed to load");
+        const auto address = app->plugins().instance("test.mail")->mailbox_addresses().inbound;
+        const auto& mail = app->mailbox_host();
+        mail.network->deliver_next(mail.identity,{address},events::mailbox_text("test.request",1,"source",32));
+        app->post_room_event(app::RoomEvent::presence_changed,"书房","private-room-mailbox-marker");
+        return app;
+    },
+    // 每个指令只交给原接收方一次，先从真实队首核对之前查看的影响。
+    // 步骤：核对实际队首 → 调用插件回信或本体取件 → 记录完成次数。
+    [&](app::Application& app) {
+        const auto action = step.exchange(0);
+        if (!action) return;
+        const auto plugin = app.plugins().instance("test.mail");
+        const auto [inbound,outbound] = plugin->mailbox_addresses();
+        const auto& mail = app.mailbox_host();
+        if (action==1) {
+            const auto* pending = mail.network->front(plugin->generation(),{inbound});
+            check(pending && pending->id.sequence==1 && !mail.network->front(mail.identity,{outbound}),"view consumed mail or generated a reply");
+            const auto api = plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+            check(api && plugin->invoke(*api,[](const auto& service,auto* target) { return service.reply(target,nullptr); })==DFY_V2_OK,
+                "original DLL failed to receive and reply");
+            ++replies;
+        } else {
+            check(!mail.network->front(plugin->generation(),{inbound}),"DLL left its consumed request queued");
+            const auto result = mail.network->read(mail.identity,{outbound});
+            check(result.event && result.event.get().id.sequence==1 &&
+                result.event.get().payload->find("text")->as_string()=="received" && !mail.network->front(mail.identity,{outbound}),
+                "observer consumed or duplicated the native reply");
+            ++reads;
+        }
+    },nullptr,{},"receipt-host");
+    until([&] { return bool(host.dialogue().display); },"receipt host startup");
+    const auto first = host.open_client(), second = host.open_client();
+    const auto query = [&](const std::string& client, Json body) {
+        body.update(Json{{"version","1"},{"request","observe"},{"instance",host.instance()}});
+        return management::dispatch(&host,body,client);
+    };
+    const auto directory = query(first,{{"type","mailbox.list"}});
+    const Json box{{"type","mailbox.read"},{"source",directory.at("sources").back().at("id")}};
+    const Json room{{"type","mailbox.read"},{"source","builtin/room"}};
+    const auto initial_room = query(first,room);
+    check(initial_room.at("messages").at(0).at("category")=="room.presence" &&
+        initial_room.dump().find("private-room-mailbox-marker")==std::string::npos,"private mailbox body reached management");
+    const auto pending = query(first,box);
+    const auto& request = pending.at("messages").at(0);
+    auto wrong_source = room;
+    wrong_source["message"] = request.at("id");
+    const auto missing = query(first,wrong_source);
+    check(missing.at("state")=="stale" && missing.at("messages").empty() && missing.at("mailboxes").empty(),
+        "an existing message was exposed in an unrelated source");
+    auto detail = box;
+    detail.update(Json{{"message",request.at("id")},{"revision",pending.at("revision")}});
+    check(request.at("category")=="test.request" && request.at("direction")=="toPlugin" && request.at("state")=="pending" &&
+        request.size()==6 && request.at("receipt").size()==5 && request.at("receipt").at("state")=="accepted" &&
+        !request.at("receipt").contains("receivedUtcMs") &&
+        pending==query(second,box) && pending==query(first,detail) && !model_calls && !replies && !reads,"view changed pending request");
+
+    step = 1;
+    Json answered;
+    until([&] { answered=query(second,box); return answered.at("messages").size()==2; },"native DLL reply");
+    const auto& answer = answered.at("messages").at(0);
+    const auto& taken = answered.at("messages").at(1);
+    check(taken.at("id")==request.at("id") && taken.at("state")=="received" && taken.at("receipt").contains("receivedUtcMs") &&
+        taken.at("receipt").at("acceptedRevision")==request.at("receipt").at("acceptedRevision") &&
+        answer.at("category")=="test.reply" && answer.at("direction")=="toHost" && answer.at("state")=="pending" &&
+        answer.size()==6 && answered.at("revision")!=pending.at("revision") && query(first,detail).at("state")=="stale" &&
+        query(second,room)==initial_room && directory==query(first,{{"type","mailbox.list"}}),"public receipts or revision isolation failed");
+    detail["message"] = answer.at("id");
+    detail["revision"] = answered.at("revision");
+    host.close_client(first);
+    const auto reconnected = host.open_client();
+    check(query(reconnected,detail).at("messages")==Json::array({answer}) && answered==query(second,box) &&
+        replies==1 && !reads && !model_calls,"viewing generated, consumed or restarted work");
+    step = 2;
+    Json completed;
+    until([&] { completed=query(second,box); return completed.at("messages").at(0).at("state")=="received"; },"native host read");
+    check(completed.at("messages").at(0).at("id")==answer.at("id") && reads==1 && replies==1 && !model_calls,
+        "actual receipt did not stay attached to the original reply");
+    host.close();
+    until([&] { return host.exited(); },"receipt host shutdown");
+    check(!host.failed(),"receipt host failed to drain");
 }
 }
 
@@ -96,6 +216,7 @@ int wmain(int argc, wchar_t** argv) {
         if (argc!=3) return 2;
         const auto root=fs::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         directory(root,argv[1]);
+        receipts(root);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

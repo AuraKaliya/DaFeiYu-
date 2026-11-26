@@ -362,10 +362,10 @@ void Host::advance_dialogue(app::Application& application, std::optional<Dialogu
     slot.reset();
 }
 
-// 在管理线程上借用已发布的只读目录，不调用业务收件方。
-std::shared_ptr<const app::MailboxDirectory> Host::mailbox_directory() const {
+// 在管理线程借用已发布的不可变目录与回执，不调用业务收件方。
+std::shared_ptr<const app::MailboxView> Host::mailboxes() const {
     std::lock_guard lock(mutex_);
-    return mailbox_directory_;
+    return mailboxes_;
 }
 
 // 只在业务线程拥有和使用应用服务。
@@ -380,7 +380,7 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
         auto& conversation = application->conversation();
         const auto layout = application->room().layout();
         std::shared_ptr<const app::ConversationDisplay> display;
-        std::shared_ptr<const app::MailboxDirectory> mailboxes;
+        std::shared_ptr<const app::MailboxView> mailboxes;
         while (!stop.stop_requested()) {
             if (drive) drive(*application);
             terminal_.advance(*application);
@@ -398,15 +398,13 @@ void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexc
             }
             const auto& visible = conversation.display();
             if (!display || display->revision != visible.revision) display = std::make_shared<const app::ConversationDisplay>(visible);
-            if (!mailboxes || mailboxes->revision!=application->mailbox_host().network->directory_revision()) {
-                try { mailboxes = std::make_shared<const app::MailboxDirectory>(application->mailbox_directory()); }
-                catch (const std::exception&) { mailboxes.reset(); }
-            }
+            try { mailboxes = app::sample_mailboxes(*application,mailboxes); }
+            catch (const std::exception&) { mailboxes.reset(); }
             {
                 std::lock_guard lock(mutex_);
                 snapshot_ = snapshot;
                 room_location_ = location;
-                mailbox_directory_ = mailboxes;
+                mailboxes_ = mailboxes;
                 display_ = display;
                 can_submit_ = conversation.accepting() && !conversation.busy() && !pending_ && !stop_command_ &&
                     (visible.queue.empty() || visible.queue_paused);
