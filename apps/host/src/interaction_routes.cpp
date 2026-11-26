@@ -301,7 +301,7 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
     auto schema = Json::parse(R"({"type":"object","properties":{"channel":{"type":"string"}},"required":["channel"],"additionalProperties":false})");
     schema["properties"]["channel"]["enum"] = channels;
     auto catalog = std::make_shared<agent::ToolCatalog>(1);
-    catalog->add({tool,mail_.identity,1,{"ask","Ask the original question using an available channel.",schema.dump()},true},
+    catalog->add({tool,mail_.identity,1,{"ask","通过本次可用渠道向真人转交原问题。收到等待编号后可结束本轮，答复将沿原事项返回。",schema.dump()},true},
         // 在原事件身份下核对并开启提问。
         [this,id](const agent::ToolInvocation& invocation) {
             auto* current = find(id);
@@ -312,7 +312,6 @@ void InteractionRoutes::configure_main(const MailboxDelivery& delivery, agent::R
         });
     options.tools = catalog->snapshot(std::span(&tool,1),true);
     options.immutable_tool_arguments = "ask";
-    options.system_instructions += " 本轮收到子 Agent 求助。你可以用 ask 选择渠道向真人询问。工具返回等待编号后可以结束本轮。";
     main_run_tools_ = std::move(catalog);
 }
 

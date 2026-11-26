@@ -38,7 +38,7 @@ bool MainMessages::prepare_output(agent::RunOptions& options) {
         const auto& saved = *delivered_;
         const auto& text = saved.envelope.at("text").get_ref<const std::string&>();
         state->fields = {{"delivery",saved.submission},{"channelMessage",std::to_string(saved.id)},
-            {"turn",saved.envelope.at("turn").get<std::string>()},{"state","delivered"}};
+            {"turn",saved.envelope.at("turn").get<std::string>()},{"state","delivered"},{"deliveredUtcMs",std::to_string(saved.utc_ms)}};
         if (saved.envelope.contains("replyTo")) state->fields["replyTo"] = saved.envelope.at("replyTo").get<std::string>();
         if (text.size() <= 4096) state->fields["deliveredText"] = text;
         else {

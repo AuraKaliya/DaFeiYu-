@@ -68,6 +68,7 @@ int wmain(int argc, wchar_t** argv) {
         const bool lose_terminal = std::wstring_view(argv[3]) == L"partner-route-lost-terminal";
         const bool retry_reply = std::wstring_view(argv[3]) == L"partner-route-retry-reply";
         std::atomic_uint main_calls = 0;
+        std::string internal_header;
         std::atomic_uint reply_rounds = 0;
         std::atomic_bool terminal_disconnected = false;
         const auto host_start = std::chrono::steady_clock::now();
@@ -83,6 +84,14 @@ int wmain(int argc, wchar_t** argv) {
             });
             if (routed != input.tools.end()) {
                 ++main_calls;
+                const auto& head = input.messages.front();
+                if (head.source!=MessageSource::rules || head.content.find("本轮收到")!=std::string::npos ||
+                    routed->description.find(routed->name=="ask" ? "等待编号" : "原提问插件")==std::string::npos)
+                    throw std::runtime_error("temporary ASK state changed stable rules or lost its tool contract");
+                if (head.content.find("结果交回本体用于内部结算")!=std::string::npos) {
+                    if (internal_header.empty()) internal_header = head.content;
+                    else if (internal_header!=head.content) throw std::runtime_error("internal ASK and reply headings differ");
+                }
                 if (last.role == Role::tool) {
                     if (last.tool_call_id == "lost")
                         return {{Role::assistant,"",{{"present","ask",R"({"channel":"game"})"}}},FinishReason::tool_calls};
@@ -90,6 +99,7 @@ int wmain(int argc, wchar_t** argv) {
                         return {{Role::assistant,"",{{"reply","mail_reply","{}"},{"repeat","mail_reply","{}"}}},FinishReason::tool_calls};
                     return {{Role::assistant,"routing finished"}};
                 }
+                if (last.source!=MessageSource::mailbox) throw std::runtime_error("ASK mail lost its actual source");
                 const auto envelope = Json::parse(last.content);
                 const auto mail = Json::parse(envelope.at("content").get<std::string>());
                 if (routed->name == "mail_reply") {

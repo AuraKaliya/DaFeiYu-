@@ -125,7 +125,7 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
     using namespace dfy::model;
     const auto packages = root/"text-hook-app";
     converter(packages,dll,"test.e",'e');
-    std::string delivered_key;
+    std::string delivered_key, delivered_time;
     std::atomic<unsigned> calls{0};
     Application app({},packages,root/"text-hook-data",Backend{[&](const auto&,const Request& input) {
         if (++calls == 1) {
@@ -142,7 +142,8 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
         if (calls == 4) return Response{{Role::assistant,"raw"}};
         if (calls == 5) {
             const auto& status = input.messages.at(input.messages.size()-2).content;
-            check(status.find("visible reply") != status.npos && status.find(delivered_key) != status.npos,
+            check(status.find("visible reply") != status.npos && status.find(delivered_key) != status.npos &&
+                status.find("deliveredUtcMs")!=status.npos && status.find(delivered_time)!=status.npos,
                 "next turn did not see confirmed delivery text and original ID");
         }
         return Response{{Role::assistant,"done"}};
@@ -183,6 +184,7 @@ void run_text_hooks(const fs::path& root, const fs::path& dll, const fs::path& s
     check(rows.records.size() == 1 && rows.records[0].envelope.at("text") == "visible reply" &&
         rows.records[0].receipt.at("state") == "delivered","channel did not commit the effective text");
     delivered_key = rows.records[0].submission;
+    delivered_time = std::to_string(rows.records[0].utc_ms);
     app.submit_dialogue("what did you just say");
     check(finish() == "done" && calls == 5,"reading a confirmed output repeated outside work");
 }
