@@ -1,6 +1,7 @@
 #include "host.hpp"
 #include "plugin_actions.hpp"
 #include "plugin_directory.hpp"
+#include "protocol.hpp"
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
@@ -159,8 +160,8 @@ Json plugin_action_request(Host& host, const Json& request, const std::string& c
     if (type=="plugins.receipt" && request.size()==5)
         return operation_json(host.plugin_receipt(client,instance,plugin_identity(request.at("operation"),160)),host,request);
     if ((type!="plugins.load" && type!="plugins.unload") || request.size()!=8) throw std::invalid_argument("plugins: invalid operation");
-    PluginCommand cmd{type=="plugins.load" ? "load" : "unload",plugin_identity(request.at("id"),64),plugin_number(request.at("command")),
-        plugin_number(request.at("revision")),plugin_number(request.at("generation"))};
+    PluginCommand cmd{type=="plugins.load" ? "load" : "unload",plugin_identity(request.at("id"),64),management_number(request.at("command")),
+        management_number(request.at("revision")),management_number(request.at("generation"))};
     if (!cmd.number || (cmd.action=="load")!=(cmd.generation==0)) throw std::invalid_argument("plugins: invalid command or target generation");
     return operation_json(host.submit_plugin(client,instance,std::move(cmd)),host,request);
 }

@@ -1,6 +1,6 @@
 #include "plugin_directory.hpp"
 #include "host.hpp"
-#include <charconv>
+#include "protocol.hpp"
 #include <nlohmann/json.hpp>
 
 namespace dfy::management {
@@ -69,16 +69,6 @@ const std::string& plugin_identity(const Json& value, std::size_t limit) {
     return text;
 }
 
-// 解析完整规范的十进制字符串，超出 64 位或混入其他字符时拒绝。
-std::uint64_t plugin_number(const Json& value) {
-    const auto& text = plugin_identity(value,20);
-    std::uint64_t number = 0;
-    const auto parsed = std::from_chars(text.data(),text.data()+text.size(),number);
-    if (parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size() || (text.size()>1 && text.front()=='0'))
-        throw std::invalid_argument("plugins: invalid numeric identity");
-    return number;
-}
-
 // 按当前后台和完整十进制修订读取不可变包目录。
 // 步骤：核对读口字段 → 区分后台或修订失效与读取失败 → 编码同次采样的包行。
 nlohmann::json plugin_directory_request(const Host& host, const Json& request) {
@@ -88,7 +78,7 @@ nlohmann::json plugin_directory_request(const Host& host, const Json& request) {
     const auto view = host.packages();
     if (!view) throw std::runtime_error("plugins: directory unavailable");
     const bool wrong_instance = bound && plugin_identity(request.at("instance"),64)!=host.instance();
-    const bool wrong_revision = pinned && plugin_number(request.at("revision"))!=view->revision;
+    const bool wrong_revision = pinned && management_number(request.at("revision"))!=view->revision;
     const bool stale = wrong_instance || wrong_revision;
     if (!stale && !view->available) throw std::runtime_error("plugins: catalog scan unavailable");
     auto rows = Json::array();

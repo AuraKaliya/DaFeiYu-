@@ -38,6 +38,8 @@ class Host {
     std::shared_ptr<const app::MailboxView> mailboxes() const;
     // 借用业务线程最近发布的包目录及实际插件状态。
     std::shared_ptr<const PluginDirectory> packages() const;
+    // 借用应用创建时发布的主体设置服务，后台尚未就绪时为空。
+    std::shared_ptr<app::HostSettings> settings() const;
     // 由有效管理客户端按连续命令号提交一个后台和目标范围已固定的包操作。
     PluginOperation submit_plugin(const std::string& client, const std::string& instance, PluginCommand command);
     // 读取原后台保留的插件操作回执，支持窗口重新连接。
@@ -100,6 +102,7 @@ class Host {
     std::optional<RoomLocation> room_location_;
     std::shared_ptr<const app::MailboxView> mailboxes_;
     std::shared_ptr<const PluginDirectory> packages_;
+    std::shared_ptr<app::HostSettings> settings_;
     std::deque<std::shared_ptr<PluginOperation>> plugin_operations_;
     std::size_t queued_plugins_ = 0, waiting_plugins_ = 0;
     std::shared_ptr<const app::ConversationDisplay> display_;

@@ -378,11 +378,21 @@ std::shared_ptr<const PluginDirectory> Host::packages() const {
     return packages_;
 }
 
+// 复制当前应用已发布的设置服务，读取期间不占用业务推进锁。
+std::shared_ptr<app::HostSettings> Host::settings() const {
+    std::lock_guard lock(mutex_);
+    return settings_;
+}
+
 // 只在业务线程拥有和使用应用服务。
 // 步骤：创建应用 → 推进原工作并发布快照 → 有序关闭并报告退出。
 void Host::run(std::stop_token stop, const Open& open, const Drive& drive) noexcept {
     try {
         const auto application = open();
+        {
+            std::lock_guard lock(mutex_);
+            settings_ = application->host_settings();
+        }
         if (messages_) {
             application->bind_messages(messages_,instance_,software_);
             application->main_messages()->on_reply([this](const std::string& text) { terminal_.published(text); });

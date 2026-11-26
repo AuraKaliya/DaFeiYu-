@@ -280,6 +280,12 @@ UI Bridge 是版本化消息边界，连接握手返回协议版本、组件能�
 
 `plugins.unload` 使用相同信封和连续命令号，`generation` 必须取原目录行的非零代次。宿主按默认依赖保护卸载本包。若工作忙碌或有代码、依赖持有，原回执分别是 `busy/retained` 或 `inUse/retained`，实例继续存在。原管理器已受理但尚未退出时为 `pending/stopping`。同一操作号确认原代次实际退出后变为 `succeeded/unloaded`，`nativeResult` 保留初次调用的 `pending`。生命周期失败返回 `failed/retained`。显式重试使用当前目录和新命令号，原操作持续反映其自身结果。
 
+### 5.8 主体设置读口
+
+已连接窗口发送 `{"version":"1","request":"s1","type":"settings.read","owner":"host","instance":"原后台"}`。可带上次读到的十进制字符串 `revision` 核对同一版本。`settings.snapshot` 回显请求、所有者与后台，给出已保存的 `revision`、运行中采用的 `appliedRevision`、待重启标记 `pendingRestart` 和当前服务的写入能力 `canSave`。旧后台或旧修订返回 `state=stale` 及空字段表。主体尚无供应商配置时返回 `unavailable`。
+
+就绪时 `fields` 仅含真实启动配置中的 `provider` 和 `timeout_ms`，每项携带 `id`、`type`、`access_mode`、`source`、已保存的 `value` 和运行中的 `appliedValue`。供应商只读，超时的整数范围沿用模型配置的 1～600000 毫秒。当前阶段提供读口，`canSave=false`。读取只复制公开值，服务端点、模型私有参数与环境变量引用均留在宿主。[主体字段投影](../apps/host/src/management/settings_protocol.cpp) · [双窗口验证](../apps/host/tests/management_settings.cpp)
+
 ## 6 插件 UI 注册规范
 
 ### 6.1 描述文件与贡献类型
