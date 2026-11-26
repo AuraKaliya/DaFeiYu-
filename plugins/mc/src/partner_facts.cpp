@@ -159,6 +159,7 @@ std::uint32_t PartnerFacts::report_handoff(const Json& handoff) {
     const auto& work = handoff.at("work").get_ref<const std::string&>();
     const auto late = uncertain_.find(work);
     if (late == uncertain_.end() || !late->second.handoff) return DFY_V2_OK;
+    if (late->second.withdrawal_work != handoff.value("withdrawalWork","")) return DFY_V2_INVALID_ARGUMENT;
     if (!late->second.exited) {
         if (const auto result = put(work,3,DFY_V2_WORK_EXIT,{{"exited",true}})) return result;
         late->second.exited = true;
@@ -167,9 +168,11 @@ std::uint32_t PartnerFacts::report_handoff(const Json& handoff) {
     const auto& proof = handoff.at("receipt");
     if (proof.at("source") != "server_events" || proof.at("throwUnknown") != 0 || proof.at("pickupUnknown") != 0) return DFY_V2_OK;
     const auto revision = late->second.effect_after_exit ? 5u : 4u;
-    const auto result = put(work,revision,DFY_V2_WORK_EFFECT,{{"recipient",handoff.at("recipient")},{"item",handoff.at("item")},
+    Json effect{{"recipient",handoff.at("recipient")},{"item",handoff.at("item")},
         {"requested",handoff.at("requested")},{"submitted",handoff.at("submitted")},{"otherPicked",proof.at("otherPicked")},
-        {"recipientPicked",proof.at("recipientPicked")},{"stream",proof.at("stream")},{"sourceThrough",handoff.at("sourceThrough")}},true);
+        {"recipientPicked",proof.at("recipientPicked")},{"stream",proof.at("stream")},{"sourceThrough",handoff.at("sourceThrough")}};
+    if (handoff.contains("withdrawalWork")) effect["withdrawalWork"] = handoff.at("withdrawalWork");
+    const auto result = put(work,revision,DFY_V2_WORK_EFFECT,effect,true);
     if (!result) {
         late->second.pickup_settled = true; late->second.pending_pickup = false;
         finish_late(work);
@@ -202,6 +205,7 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
             Json effect{{"item",proof.at("item")},{"cell",proof.at("cell")},{"remaining",proof.at("remaining")},{"sourceMessage",proof.at("sourceMessage")}};
             if (proof.contains("direction")) {
                 for (const auto field : {"direction","destination","withdrawn"}) effect[field] = proof.at(field);
+                if (proof.contains("deliverTo")) effect["deliverTo"] = proof.at("deliverTo");
             } else effect["stored"] = proof.at("stored");
             handoff_status = put(original,revision,DFY_V2_WORK_EFFECT,effect,true);
             if (!handoff_status) { late->second.chest_settled = true; finish_late(original); }
@@ -229,6 +233,7 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
         if (!exited) {
             auto& state = uncertain_[work];
             state.exit_was_unknown = true; state.handoff = action.at("skill") == "give_item";
+            if (state.handoff) state.withdrawal_work = action.value("withdrawalWork","");
             return DFY_V2_OK;
         }
     }
@@ -248,6 +253,7 @@ std::uint32_t PartnerFacts::report(std::uint64_t session, std::string_view categ
         const auto& proof = action.at("result").at("receipt");
         auto& state = uncertain_[work];
         state.handoff = true; state.exited = true;
+        if (action.at("result").contains("transfer")) state.withdrawal_work = action.at("result").at("transfer").value("withdrawalWork","");
         state.pending_pickup = !state.pickup_settled && proof.value("source","") == "server_events" && proof.value("pickupUnknown",0) > 0;
     }
     if (!complete && exited && (action.at("skill") == "store_item" || action.at("skill") == "withdraw_item") && action.contains("result")) {

@@ -1123,6 +1123,10 @@ void PartnerLoop::publish_action(Json& fact, std::unique_ptr<GameWork>& action) 
     }
     if (submitted) fact["bridgeExited"] = action->exited();
     if (exit_unknown) {
+        if (fact.at("skill") == "give_item") {
+            const auto args = Json::parse(action->arguments()).at("arguments");
+            if (args.contains("withdrawalWork")) fact["withdrawalWork"] = args.at("withdrawalWork");
+        }
         if (!fact.contains("result")) fact["result"] = {{"status","unconfirmed"}};
         if (!action->progress().empty()) fact["result"]["progress"] = Json::parse(action->progress());
     }

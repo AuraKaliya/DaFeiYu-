@@ -59,6 +59,8 @@ void verify_chest_transfer(const Json& proof, const Json& args, const Json& cont
     const auto& requested = proof.at("requested");
     const auto amount_key = withdraw ? "withdrawn" : "stored";
     const auto source = withdraw ? "container" : "stock", destination = withdraw ? "stock" : "container";
+    if (proof.contains("deliverTo") && (!withdraw || proof.at("deliverTo") != proof.at("owner")))
+        throw std::invalid_argument("MC: chest handoff recipient mismatch");
     if (withdraw ? (proof.at("direction") != "withdraw" || proof.at("destination") != "companion_inventory" ||
                     (!recheck && args.at("destination") != proof.at("destination")) || proof.contains("stored"))
                  : (proof.contains("direction") || proof.contains("destination") || proof.contains("withdrawn")))
@@ -704,8 +706,9 @@ std::string partner_request(std::string_view method, std::string_view id, const 
         !args.at("work").is_string() || args.at("work").get_ref<const std::string&>().empty() || args.at("work").get_ref<const std::string&>().size() > 128))
         throw std::invalid_argument("MC: invalid handoff work reference");
     context["controller"] = config.controller;
-    // 旧桥接会拒绝受约束的技能名，防止忽略新审批参数后执行采掘。
-    const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" : skill;
+    // 旧桥接会拒绝带新约束的技能名，防止忽略采掘审批或原取出工作。
+    const auto wire_skill = skill == "collect" && envelope.at("arguments").contains("collectionGuards") ? "guarded_collect" :
+        skill == "give_item" && args.contains("withdrawalWork") ? "give_withdrawn_item" : skill;
     return Json{{"version",1},{"id",id},{"key",config.key},{"method",method},{"context",std::move(context)},
         {"skill",wire_skill},{"arguments",std::move(envelope.at("arguments"))}}.dump();
 }

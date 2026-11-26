@@ -11,7 +11,7 @@ const { pickupDrop } = require('./pickup-drop.cjs');
 const { observeHandoff } = require('./handoff.cjs');
 const { giveItem, refreshHandoff, handoffSample, originalHandoffReceipt } = require('./give-item.cjs');
 const { chestWindows, chestSample, chestError } = require('./single-chest.cjs');
-const { chestOrder, transferItem, reconcileTransfer, chestProof } = require('./chest-transfer.cjs');
+const { chestOrder, inventoryOrder, deliveryOrder, confirmedDelivery, transferItem, reconcileTransfer, chestProof } = require('./chest-transfer.cjs');
 const { makeReceiptRoom } = require('./partner-records.cjs');
 const { inventoryCapacity, inventory, inventoryDelta } = require('./inventory-capacity.cjs');
 const { observeWall, surface, validateRoute, runRoute } = require('./partner-route.cjs');
@@ -377,6 +377,32 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
     return record;
   }
 
+  // 将后继投物绑定到原玩家的取箱交付委托，同一原话更换备料观察仍只允许首次投物。
+  // 步骤：核对当前原话与备料来源 → 对照已退出取出的双边凭据 → 找回首次投物认领。
+  function chestDelivery(receipt, args, observation, result) {
+    for (const order of new Set([receipt.order,observation.order])) {
+      const text = inbox.get(receipt.generation,order)?.text;
+      if (order === receipt.order && inventoryOrder(text)) throw chestError('chest_delivery_not_authorized','本条取出委托只授权放进伙伴背包');
+      if (!deliveryOrder(text)) continue;
+      const claim = inbox.chestWork(receipt.generation,order);
+      if (!args.withdrawalWork || args.withdrawalWork !== claim?.work || claim.controller !== receipt.controller)
+        throw chestError('chest_delivery_source_required','请先查回本条委托的取出工作，再按实取数量交付');
+    }
+    if (args.withdrawalWork === undefined) return null;
+    const original = records.get(workKey(receipt.controller,args.withdrawalWork));
+    const proof = chestProof(original);
+    if (!original?.receipt.exited || original.receipt.skill !== 'withdraw_item' || !proof || !inbox.inPresence(receipt.generation,proof.sourceMessage) ||
+        !inbox.get(receipt.generation,proof.sourceMessage)?.text) throw chestError('chest_delivery_unconfirmed','原取出工作不在当前玩家委托范围');
+    const claim = inbox.chestWork(receipt.generation,proof.sourceMessage);
+    if (!claim || claim.work !== original.id || claim.controller !== receipt.controller) throw chestError('chest_delivery_unconfirmed','原取出工作身份已失效');
+    if (claim.giveWork) {
+      result.originalWork = claim.giveWork;
+      throw chestError('handoff_already_started','本次取出的物品已经提交交付，请查原投物工作');
+    }
+    confirmedDelivery(proof,args,observation.result.handoff);
+    return claim;
+  }
+
   // 在一次技能调用中只使用当前角色及绑定玩家可见的世界信息。
   async function run(job, args) {
     const r = job.receipt, result = r.result;
@@ -616,7 +642,11 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
       }
       else if (r.skill === 'give_item') {
         const record = handoffSource(r,args,result);
-        await giveItem(bot,owner,args,record.receipt.result.handoff,check,() => { record.transferWork = job.id; },job,witness);
+        const claim = chestDelivery(r,args,record.receipt,result);
+        await giveItem(bot,owner,args,record.receipt.result.handoff,check,() => {
+          record.transferWork = job.id;
+          if (claim) claim.giveWork = job.id;
+        },job,witness);
       }
       else if (r.skill === 'store_item' || r.skill === 'withdraw_item') {
         const withdraw = r.skill === 'withdraw_item';
@@ -632,7 +662,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
             !inbox.inPresence(r.generation,source.message) || !inbox.get(r.generation,source.message)?.text ||
             r.order !== args.sourceMessage || !order?.text) throw chestError('chest_observation_stale','需要当前玩家委托和同场原单箱观察');
         args = { ...args,item:args.item.replace(/^minecraft:/,'') };
-        chestOrder(bot,source,inbox.get(r.generation,source.message).text,order.text,inbox.pointedChest(r.generation,r.order),args,withdraw);
+        const deliverTo = chestOrder(bot,source,inbox.get(r.generation,source.message).text,order.text,inbox.pointedChest(r.generation,r.order),args,withdraw);
         const pending = [...records.values()].find(entry => {
           const proof = chestProof(entry);
           return proof?.state === 'pending' && proof.generation === r.generation && proof.item === source.item &&
@@ -645,7 +675,7 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
             result.originalWork = claim.work;
             throw chestError('chest_already_started','本条委托已接纳，请查原箱内转移工作');
           }
-        },check,withdraw);
+        },check,withdraw,deliverTo);
       }
       else if (r.skill === 'craft') await craftPlanks(bot, args, check, result);
       else if (r.skill === 'place' || r.skill === 'fill_target') {
@@ -727,10 +757,11 @@ function partnerService(bot, world, inbox, places, owner, witness = null) {
             [...observations].some(job => chestRead(job.args.mode) && !job.receipt.exited))))
         throw new Error('游戏工作已失效或正忙');
       if (skill === 'observe' && observations.size >= 3) throw new Error('观察工作已满');
-      const reference = ['store_item','withdraw_item'].includes(skill) ? args.observation :
+      const reference = ['store_item','withdraw_item','give_item'].includes(skill) ? args.observation :
         skill === 'observe' && ['handoff_receipt','chest_receipt'].includes(args.mode) ? args.work : null;
       const lookup = reference && records.get(workKey(context.controller,reference));
-      makeReceiptRoom(records,active,context,lookup,(generation,order) => inbox.inPresence(generation,order));
+      const withdrawal = skill === 'give_item' && args.withdrawalWork && records.get(workKey(context.controller,args.withdrawalWork));
+      makeReceiptRoom(records,active,context,lookup,(generation,order) => inbox.inPresence(generation,order),withdrawal);
       const job = { id, key, args, receipt: { ...context, skill, exited: false, result: {} }, polled: performance.now(), cancelled: false };
       records.set(key, job);
       if (controlsBody) {

@@ -39,6 +39,7 @@ void late_pickup(bool ordered, bool recyclable) {
         throw std::runtime_error("original work not admitted");
     Json original{{"session",1},{"order",1},{"skill","give_item"},{"bridgeWork","give"},{"bridgeExited",true},{"factAdmission",0},
         {"effect",DFY_V2_TOOL_APPLIED},{"result",{{"status","blocked"},{"receipt",{{"source","server_events"},{"throwUnknown",0},{"pickupUnknown",8}}}}}};
+    if (recyclable) original["result"]["transfer"] = {{"withdrawalWork","chest-work"}};
     if (facts.report(1,"mc.partner.action",original)) throw std::runtime_error("missing original pending receipt");
     for (unsigned n=1;n<128;++n) {
         const auto work = "other-"+std::to_string(n);
@@ -49,8 +50,13 @@ void late_pickup(bool ordered, bool recyclable) {
     }
     const auto status = facts.reserve("later-read","observe",2);
     if (status != (recyclable ? DFY_V2_OK : DFY_V2_RESOURCE_EXHAUSTED)) throw std::runtime_error("wrong preflight result");
-    const Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"submitted",8},{"sourceThrough",12},
+    Json handoff{{"work","give"},{"recipient","paired"},{"item","cobblestone"},{"requested",8},{"submitted",8},{"sourceThrough",12},
         {"originalStatus","blocked"},{"receipt",{{"source","server_events"},{"recipientPicked",8},{"otherPicked",0},{"stream","s"},{"throwUnknown",0},{"pickupUnknown",0}}}};
+    if (recyclable) {
+        handoff["withdrawalWork"] = "other-chest-work";
+        if (facts.settle_pickup(1,"give",handoff) != DFY_V2_INVALID_ARGUMENT) throw std::runtime_error("late pickup changed its original withdrawal");
+        handoff["withdrawalWork"] = "chest-work";
+    }
     const Json observed{{"session",1},{"order",2},{"skill","observe"},{"bridgeWork","later-read"},{"bridgeExited",true},
         {"factAdmission",status},{"effect",DFY_V2_TOOL_NOT_APPLIED},{"result",{{"handoffReceipt",handoff}}}};
     if (facts.report(1,"mc.partner.action",observed)!=status) throw std::runtime_error("reader dropped its own recording status");
@@ -61,6 +67,7 @@ void late_pickup(bool ordered, bool recyclable) {
     if (item==results.end() || item->at("accepted")!=1 || item->at("revision")!=4 || item->at("effect").at("recipientPicked")!=8 ||
         item->at("effectReceipt")<=item->at("exited") || item->value("finalEffect",false)!=ordered)
         throw std::runtime_error("full index lost original pickup, exit or finality");
+    if (recyclable && item->at("effect").at("withdrawalWork") != "chest-work") throw std::runtime_error("late pickup lost its original withdrawal");
     if (ordered && facts.reserve("next","reply",3)) throw std::runtime_error("final pickup did not release an eligible slot");
 }
 

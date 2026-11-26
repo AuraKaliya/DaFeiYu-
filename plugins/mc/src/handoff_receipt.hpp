@@ -13,9 +13,16 @@ inline bool valid_handoff_request(const nlohmann::json& args) {
         args.at("count").is_number_integer() && args.at("count") >= 1 && args.at("count") <= 2304;
 }
 
-// 实际交物还须引用原备料观察，两种动作入口使用同一组参数。
+// 核对交物可选的原取出编号，普通给物不要求取箱前置。
+inline bool valid_withdrawal_reference(const nlohmann::json& args) {
+    if (!args.contains("withdrawalWork")) return true;
+    const auto& work = args.at("withdrawalWork");
+    return work.is_string() && !work.get_ref<const std::string&>().empty() && work.get_ref<const std::string&>().size() <= 128;
+}
+
+// 实际交物引用原备料观察，按需另行绑定已核实的原取出工作。
 inline bool valid_handoff_action(const nlohmann::json& args) {
-    return args.is_object() && args.size() == 4 && valid_handoff_request(args) && args.contains("observation") &&
+    return args.is_object() && args.size() == 4+args.count("withdrawalWork") && valid_withdrawal_reference(args) && valid_handoff_request(args) && args.contains("observation") &&
         args.at("observation").is_string() && !args.at("observation").get_ref<const std::string&>().empty() &&
         args.at("observation").get_ref<const std::string&>().size() <= 128;
 }
@@ -177,7 +184,7 @@ inline void verify_handoff_proof(const nlohmann::json& proof, int submitted, con
 // 将只读复查限制在原交物的实体来源上界，并保留工作实际退出的状态。
 // 步骤：绑定原工作及消息 → 检查原数量和采样 → 核对新收件证据来自封存的投物。
 inline void verify_handoff_recheck(const nlohmann::json& sample, const nlohmann::json& args, std::string_view id, const nlohmann::json& context) {
-    if (sample.at("id").get_ref<const std::string&>() != id || sample.at("work") != args.at("work") || sample.at("generation") != context.at("generation") ||
+    if (!valid_withdrawal_reference(sample) || sample.at("id").get_ref<const std::string&>() != id || sample.at("work") != args.at("work") || sample.at("generation") != context.at("generation") ||
         !sample.at("order").is_number_unsigned() || sample.at("order") == 0 || sample.at("order") > context.at("order") ||
         sample.at("observation").get_ref<const std::string&>().empty() || !game_uuid(sample.at("recipient")) ||
         sample.at("dimension").get_ref<const std::string&>().empty() || item_name(sample.at("item").get_ref<const std::string&>()).empty() ||
@@ -203,7 +210,7 @@ inline void verify_original_handoff(const nlohmann::json& result, std::string_vi
     const auto& transfer = result.at("transfer");
     for (const auto* key : {"observation","recipient","item","requested","submitted"})
         if (sample.at(key) != transfer.at(key)) throw std::invalid_argument("MC: changed original handoff");
-    if (sample.at("order") != context.at("order") || sample.at("originalStatus") != result.at("status") ||
+    if (sample.value("withdrawalWork","") != transfer.value("withdrawalWork","") || sample.at("order") != context.at("order") || sample.at("originalStatus") != result.at("status") ||
         sample.at("dimension") != result.at("handoff").at("dimension") || sample.at("sampledAtMs") < transfer.at("sampledAtMs"))
         throw std::invalid_argument("MC: handoff receipt outside original scope");
 
@@ -230,6 +237,8 @@ inline bool verify_transfer(const nlohmann::json& result, const nlohmann::json& 
         return false;
     }
     const auto& transfer = result.at("transfer");
+    if (!valid_withdrawal_reference(transfer) || transfer.value("withdrawalWork","") != args.value("withdrawalWork",""))
+        throw std::invalid_argument("MC: changed withdrawal source for handoff");
     const auto& sample = result.at("handoff");
     const auto& item = sample.at("item").get_ref<const std::string&>();
     if (transfer.contains("progressAtMs") && (!transfer.at("progressAtMs").is_number_unsigned() ||

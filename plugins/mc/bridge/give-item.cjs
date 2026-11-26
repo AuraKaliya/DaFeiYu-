@@ -16,6 +16,7 @@ async function tossHandoff(bot, owner, args, source, check, claim, result, signa
     throw blocked('handoff_source_changed', '本次接收者、物品、数量、角色或维度与原交物观察不一致');
   const actor = bot.entity, before = inventory(bot);
   const transfer = result.transfer = { observation: source.id, recipient: owner, item: live.item, requested: live.count,
+    ...(args.withdrawalWork && {withdrawalWork:args.withdrawalWork}),
     submitted: 0, returnedClicks: 0, attemptedClicks: 0, stockBefore: before[live.item] ?? 0,
     sourceClaimed: false, progressAtMs: live.sampledAtMs };
   const recipient = live.target.state === 'visible' && bot.entities[live.target.entityId];
@@ -113,10 +114,10 @@ function refreshHandoff(job, witness) {
 // 从原工作封存的身份和采样结果构造回执，记录已经交给读者的证据。
 function handoffSample(job, id) {
   const { generation, order, result } = job.receipt;
-  const { observation, recipient, item, requested, submitted } = result.transfer;
+  const { observation, recipient, item, requested, submitted, withdrawalWork } = result.transfer;
   job.returnedProof = job.latestProof;
   return { id, work:job.id, order, observation, generation, dimension:result.handoff.dimension, recipient, item, requested, submitted,
-    originalStatus:result.status, sampledAtMs:job.proofAt, sourceThrough:job.handoffEvidence?.sourceThrough ?? null, receipt:job.latestProof };
+    ...(withdrawalWork && {withdrawalWork}), originalStatus:result.status, sampledAtMs:job.proofAt, sourceThrough:job.handoffEvidence?.sourceThrough ?? null, receipt:job.latestProof };
 }
 
 // 沿原号从封存的服务端流读取迟到收件，返回副本并保留动作退出时的原件。

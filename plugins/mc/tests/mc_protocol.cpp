@@ -322,6 +322,9 @@ void chest_transfer_protocol(bool withdraw) {
     if (!read().changed || !read().arrived) throw std::runtime_error("verified chest deposit lost");
     const Json verified = proof;
     if (withdraw) {
+        proof["deliverTo"] = "00112233-4455-6677-8899-aabbccddee00";
+        rejects(read);
+        proof = verified;
         proof["direction"] = "deposit";
         rejects(read);
         proof = verified;
@@ -449,6 +452,19 @@ void handoff_protocol() {
         {"generation",world},{"dimension","overworld"},{"recipient",owner},{"item","dirt"},{"requested",66},{"submitted",66},
         {"originalStatus","blocked"},{"sampledAtMs",150},{"sourceThrough",16},{"receipt",late}};
     if (!give().changed) throw std::runtime_error("original transfer lost its verified throws");
+    command["arguments"]["withdrawalWork"] = "withdraw";
+    const auto config = dfy::mc::configured_bridge(Json{{"channel","test"},{"bridgeKey",std::string(64,'a')}}.dump());
+    const auto wire = [&] { return Json::parse(dfy::mc::partner_request("partner.begin","give",config,"give_item",command.dump())); };
+    if (wire().at("skill") != "give_withdrawn_item") throw std::runtime_error("legacy bridge can ignore withdrawal work");
+    command["arguments"]["withdrawalWork"] = ""; rejects(wire);
+    command["arguments"]["withdrawalWork"] = "withdraw";
+    rejects(give);
+    transfer["withdrawalWork"] = "withdraw";
+    rejects(give);
+    bound["withdrawalWork"] = "withdraw";
+    if (!give().changed) throw std::runtime_error("original withdrawal and give link lost");
+    bound["withdrawalWork"] = "other"; rejects(give);
+    command["arguments"].erase("withdrawalWork"); transfer.erase("withdrawalWork"); bound.erase("withdrawalWork");
     bound["item"] = "stone"; rejects(give); bound["item"] = "dirt";
     bound["sourceThrough"] = 20; rejects(give); bound["sourceThrough"] = 16;
     bound["receipt"]["stream"] = owner; rejects(give);

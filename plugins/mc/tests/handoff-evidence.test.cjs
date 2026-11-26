@@ -129,6 +129,15 @@ test('full bridge retains all unsettled handoffs and reserves a single receipt l
   assert.ok(jobs.has(0) && !jobs.has(1) && !jobs.has('read'));
 });
 
+// 回执满额时保留本次交付的原取出和备料观察，回收同场更早的无关工作。
+test('取箱交付的两个来源在新工作入场时仍可查', () => {
+  const jobs = new Map(), context = {generation:'g',controller:'c',order:3};
+  for (let index = 0; index < 64; ++index)
+    jobs.set(index,{receipt:{generation:'g',controller:'c',order:1,skill:index === 0 ? 'withdraw_item' : 'observe',exited:true,result:{}}});
+  makeReceiptRoom(jobs,null,context,jobs.get(1),() => true,jobs.get(0));
+  assert.deepEqual([jobs.has(0),jobs.has(1),jobs.has(2),jobs.size],[true,true,false,63]);
+});
+
 // 投物与生成记录都缺运行号时，仅保留其他能独立核实的投物与收取。
 test('missing entity identities retain unverified thrown units', () => {
   const missing = evidenceRows();

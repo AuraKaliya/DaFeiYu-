@@ -11,6 +11,20 @@ function quantity(text) {
   return (high ? digits.indexOf(high) : 1)*10 + (low ? digits.indexOf(low) : 0);
 }
 
+// 从当前原话读取“从指定箱取出并交给我”的完整委托，选箱或单独给物不产生该授权。
+function deliveryOrder(instruction) {
+  const line = instruction?.replace(/\s+/g,'') ?? '';
+  return /^(?:请(?:你)?|麻烦(?:你)?)?(?:帮我)?从(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)?(?:取出|拿出)(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)[，,]?(?:然后|并|再)?(?:交给我|递给我|给我)[。！!]?$/u.exec(line) ??
+    /^(?:请(?:你)?|麻烦(?:你)?)?(?:把|将)(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)的(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)(?:取出|拿出)(?:来)?[，,]?(?:然后|并|再)?(?:交给我|递给我|给我)[。！!]?$/u.exec(line);
+}
+
+// 识别仅授权取到伙伴背包的原话，保留箱名、物品和数量供原观察核对。
+function inventoryOrder(instruction) {
+  const line = instruction?.replace(/\s+/g,'') ?? '';
+  return /^(?:请(?:你)?|麻烦(?:你)?)?(?:帮我)?从(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)?(?:取出|拿出)(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)[，,]?(?:放进|放入|放到|收到)(?:你的|伙伴(?:的)?|你自己的)背包(?:里|中)?[。！!]?$/u.exec(line) ??
+    /^(?:请(?:你)?|麻烦(?:你)?)?(?:把|将)(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)的(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)(?:取到|拿到|取进|收到)(?:你的|伙伴(?:的)?|你自己的)背包(?:里|中)?[。！!]?$/u.exec(line);
+}
+
 // 将当前委托的方向、物品、数量和去向与原消息及同一个普通箱相配。
 function chestOrder(bot, source, pointing, instruction, aim, args, withdraw = false) {
   if (Object.keys(args).length !== (withdraw ? 5 : 4) || (withdraw && args.destination !== 'companion_inventory') ||
@@ -18,10 +32,9 @@ function chestOrder(bot, source, pointing, instruction, aim, args, withdraw = fa
       args.sourceMessage < source.message || args.item !== source.item || !Number.isSafeInteger(args.count) || args.count < 1 || args.count > 2304)
     throw chestError('chest_order_mismatch','物品、数量或去向与指定范围不符');
   const line = instruction.replace(/\s+/g,'');
-  const match = withdraw
-    ? /^(?:请(?:你)?|麻烦(?:你)?)?(?:帮我)?从(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)?(?:取出|拿出)(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)[，,]?(?:放进|放入|放到|收到)(?:你的|伙伴(?:的)?|你自己的)背包(?:里|中)?[。！!]?$/u.exec(line) ??
-      /^(?:请(?:你)?|麻烦(?:你)?)?(?:把|将)(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子?|那个箱子?)(?:里|中)的(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]+?)(?:取到|拿到|取进|收到)(?:你的|伙伴(?:的)?|你自己的)背包(?:里|中)?[。！!]?$/u.exec(line)
-    : /^(?:请(?:你)?|麻烦(?:你)?)?(?:帮我)?(?:把|将)?(?<bound>这|那)?(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]*?)(?:存进|存入|放进|放入|放到|存到)(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子|那个箱子|这个箱|那个箱)[。！!]?$/u.exec(line);
+  const delivery = withdraw && deliveryOrder(line);
+  const match = delivery || (withdraw ? inventoryOrder(line)
+    : /^(?:请(?:你)?|麻烦(?:你)?)?(?:帮我)?(?:把|将)?(?<bound>这|那)?(?<count>[0-9一二两三四五六七八九十]+)(?:块|个)?(?<item>[\p{L}\w:]*?)(?:存进|存入|放进|放入|放到|存到)(?<box>左箱|右箱|左边的箱子|右边的箱子|这个箱子|那个箱子|这个箱|那个箱)[。！!]?$/u.exec(line));
   const names = [source.item,'minecraft:'+source.item,bot.registry.itemsByName[source.item]?.displayName,
     ...(source.item === 'cobblestone' ? ['圆石','圓石'] : [])];
   const fields = match?.groups;
@@ -32,6 +45,7 @@ function chestOrder(bot, source, pointing, instruction, aim, args, withdraw = fa
   const aimed = aim && aim.dimension === source.dimension && ['x','y','z'].every(key => aim.cell[key] === source.cell[key]);
   if ((named && (selected !== named || source.message >= args.sourceMessage)) || (aim && !aimed) || (!named && !aimed))
     throw chestError('chest_target_mismatch','当前委托没有指向已核对的同一个箱子');
+  return delivery ? source.owner : undefined;
 }
 
 // 用两次完整服务端窗口按原方向核对双边数量，只结算提交范围内的一致净变化。
@@ -126,7 +140,7 @@ async function moveOutOfChest(window, proof, click) {
 
 // 固定原工作的双边基线，转移后重新开箱，以服务端整窗读回结算。
 // 步骤：复核库存与空量并认领委托 → 提交有界点击 → 重开同一箱核对净变化或保留待查。
-async function transferItem(bot, withChest, source, args, job, claim, check, withdraw = false) {
+async function transferItem(bot, withChest, source, args, job, claim, check, withdraw = false, deliverTo) {
   const result = job.receipt.result, signal = job.abort.signal;
   const field = withdraw ? 'withdrawal' : 'deposit';
   let stopped;
@@ -142,7 +156,7 @@ async function transferItem(bot, withChest, source, args, job, claim, check, wit
     const limit = withdraw ? Math.min(args.count,before.container.stored,before.stock.knownSpace) :
       Math.min(args.count,before.stock.stored,before.container.knownSpace);
     const proof = result[field] = { work:job.id,observation:source.id,generation:source.generation,dimension:source.dimension,
-      ...(withdraw && {direction:'withdraw',destination:args.destination}),
+      ...(withdraw && {direction:'withdraw',destination:args.destination}),...(deliverTo && {deliverTo}),
       owner:source.owner,actor:source.actor,cell:source.cell,pointedMessage:source.message,sourceMessage:args.sourceMessage,
       item:source.item,requested:args.count,limit,attempted:false,state:'pending',before };
     try {
@@ -174,4 +188,14 @@ function chestProof(job) {
   return job?.latestChest ?? job?.receipt.result?.withdrawal ?? job?.receipt.result?.deposit;
 }
 
-module.exports = { chestOrder, transferItem, reconcileTransfer, chestProof };
+// 验证原工作查到的可交数量、物品和收件人，既有背包余量不能抬高这笔交付额度。
+function confirmedDelivery(proof, args, handoff) {
+  if (!proof || proof.work !== args.withdrawalWork || proof.state !== 'verified' || proof.direction !== 'withdraw' ||
+      proof.destination !== 'companion_inventory' || args.recipient !== handoff.recipient || proof.deliverTo !== handoff.recipient || proof.owner !== handoff.recipient ||
+      proof.generation !== handoff.generation || proof.dimension !== handoff.dimension || proof.actor !== handoff.actor.uuid ||
+      proof.item !== handoff.item || proof.item !== args.item.replace(/^minecraft:/,'') || proof.withdrawn <= 0 ||
+      proof.withdrawn !== args.count || proof.withdrawn !== handoff.count)
+    throw chestError('chest_delivery_unconfirmed','交给原玩家需要原取出工作核实的同种物品与实取数量');
+}
+
+module.exports = { chestOrder, inventoryOrder, deliveryOrder, confirmedDelivery, transferItem, reconcileTransfer, chestProof };

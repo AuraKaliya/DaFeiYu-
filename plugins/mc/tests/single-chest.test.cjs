@@ -5,7 +5,7 @@ const { Position } = require('./test-position.cjs');
 const { ownerInbox } = require('../bridge/chat.cjs');
 const { chestWindows, chestSample } = require('../bridge/single-chest.cjs');
 const { observationInput } = require('../bridge/partner-observe.cjs');
-const { chestOrder, transferItem, reconcileTransfer } = require('../bridge/chest-transfer.cjs');
+const { chestOrder, confirmedDelivery, transferItem, reconcileTransfer } = require('../bridge/chest-transfer.cjs');
 
 // 提供位于两个普通箱子之间的玩家、同步窗口及独立的伙伴库存槽。
 function chestFixture() {
@@ -216,4 +216,23 @@ test('取出绑定原指箱、材料、数量及伙伴自己的背包', () => {
   for (const line of ['左箱','把八块圆石存进左箱',order.replace('左箱','右箱'),order.replace('圆石','泥土'),
       order.replace('八','九'),order.replace('你的','我的'),'别'+order,order+'？','从左箱取出八块圆石']) assert.throws(() => check(line));
   assert.throws(() => check(order,{...args,destination:'player_inventory'}));
+});
+
+// 只有玩家本人明确要求交付时，原取出工作才产生一次交给本人的额度。
+test('从原箱取三块交本人，背包原有存货不能补足八块', async () => {
+  const f = transferFixture(3,17);
+  const args = {observation:'observed',sourceMessage:3,count:8,item:'cobblestone',destination:'companion_inventory'};
+  const grant = text => chestOrder(f.bot,f.source,'左箱',text,null,args,true);
+  for (const line of ['从左箱取出八块圆石，交给我','请把左边的箱子里的8块圆石取出来给我']) assert.equal(grant(line),f.source.owner);
+  for (const line of ['从左箱取出八块圆石，交给他','从右箱取出八块圆石，交给我','从左箱取出八块泥土，交给我','别从左箱取出八块圆石，交给我'])
+    assert.throws(() => grant(line));
+  assert.equal(grant('从左箱取出八块圆石，放进你的背包'),undefined);
+  await assert.rejects(transferItem(f.bot,f.open,f.source,args,f.job,() => {},() => {},true,f.source.owner),{code:'chest_item_short'});
+  const proof = f.job.receipt.result.withdrawal, give = {withdrawalWork:f.job.id,recipient:f.source.owner,item:'cobblestone',count:3};
+  const offer = {recipient:f.source.owner,generation:f.source.generation,dimension:f.source.dimension,item:give.item,count:3,actor:{uuid:f.source.actor}};
+  assert.deepEqual([proof.withdrawn,proof.remaining,f.slots[27].count],[3,5,20]);
+  confirmedDelivery(proof,give,offer);
+  for (const change of [{state:'pending'},{deliverTo:'other'},{deliverTo:undefined},{owner:'other'},{actor:'other'},{withdrawn:0},{work:'other'}])
+    assert.throws(() => confirmedDelivery({...proof,...change},give,offer),{code:'chest_delivery_unconfirmed'});
+  assert.throws(() => confirmedDelivery(proof,{...give,count:8},{...offer,count:8}),{code:'chest_delivery_unconfirmed'});
 });
