@@ -206,6 +206,51 @@ void directory(const fs::path& root, const fs::path& dll) {
     restart_with_mail(data,packages,first.instance,original.at("id").get<std::string>());
 }
 
+// 以真实插件事件触发懒登记，验证业务信箱仍属于原代次，反复取样保留原队首。
+// 步骤：取得仅有双向地址的基线 → 从 C DLL 发出已登记的业务事件 → 核对新增地址与实件 → 重采并检查原消费水位。
+void routed_source(const fs::path& root) {
+    std::atomic_uint model_calls{0};
+    app::Application app({},root/"plugins",root/"routed",model::Backend{
+        [&](const auto&,const auto&) { ++model_calls; return model::Response{{model::Role::assistant,"fixed"}}; }});
+    app.wake_for_plugin_mail(false);
+    check(app.plugins().load("test.mail")==DFY_V2_OK,"routed plugin failed to load");
+    const auto plugin = app.plugins().instance("test.mail");
+    const auto direct = plugin->mailbox_addresses();
+    const auto before = app::sample_mailboxes(app,{});
+    const auto registered = std::ranges::find_if(before->directory->sources,[](const auto& row) { return row.second.plugin=="test.mail"; });
+    check(registered!=before->directory->sources.end() && registered->second.bindings.size()==2,"missing initial mailbox pair");
+    const auto id = registered->first;
+    const auto api = plugin->query<dfy_test_mailbox_api>(DFY_TEST_MAILBOX_INTERFACE,1);
+    check(api && plugin->invoke(*api,[](const auto& service,auto* target) { return service.emit_notice(target,1,0); })==DFY_V2_OK,
+        "registered C notice was not admitted");
+
+    auto current = before;
+    until([&] {
+        app.advance_plugins();
+        current = app::sample_mailboxes(app,current);
+        return current->directory->sources.at(id).bindings.size()==3;
+    },"registered route publication");
+    const auto& bindings = current->directory->sources.at(id).bindings;
+    const auto extra = std::ranges::find_if(bindings,[&](const auto& binding) {
+        return binding.mailbox.value!=direct.inbound && binding.mailbox.value!=direct.outbound;
+    });
+    const auto& mail = app.mailbox_host();
+    check(extra!=bindings.end() && extra->sender==plugin->generation() && extra->receiver==mail.identity &&
+        current->directory->sources.size()==before->directory->sources.size() && current->directory->revision!=before->directory->revision &&
+        current->sources.at("builtin/room")==before->sources.at("builtin/room"),"business route split the source or revised an unrelated source");
+    const auto index = static_cast<std::size_t>(extra-bindings.begin());
+    const auto& route = current->sources.at(id)->addresses.at(index);
+    check(route.accepted==1 && !route.received && route.messages.size()==1 && route.messages.front().category=="test.notice",
+        "routed notice lost its original category or receipt");
+    for (int view=0; view<3; ++view) {
+        app.advance_plugins();
+        check(app::sample_mailboxes(app,current)==current,"viewing a passive notice changed its published revision");
+    }
+    const auto* original = mail.network->front(mail.identity,extra->mailbox);
+    check(original && original->id==route.messages.front().event && !model_calls &&
+        !mail.network->front(mail.identity,{direct.outbound}),"view consumed the real business notice, generated a reply or started the model");
+}
+
 // 让原系统持有收件和回信权，用真实 C DLL 在两端之间交付一封待处理的回信。
 // 步骤：投递原件并反复查看 → 由 DLL 实收并回信 → 换窗口查原号 → 本体实际收件后再核对。
 void receipts(const fs::path& root) {
@@ -308,6 +353,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto root=fs::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         directory(root,argv[1]);
         receipts(root);
+        routed_source(root);
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
