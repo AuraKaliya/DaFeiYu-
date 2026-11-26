@@ -1,6 +1,8 @@
 #include "../../../tests/decision_input.hpp"
 #include "application.hpp"
 #include "main_messages.hpp"
+#include "trace_commands.hpp"
+#include <sstream>
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -148,6 +150,56 @@ void verify_output(const std::filesystem::path& data) {
     check_output_trace(application.trace_file(),rows[3]);
 }
 
+// 在正式主聊天中按原快照分别读取发言前后两版，验证同批配对及完整离线重放。
+// 步骤：记录初始空状态 → 发言后冻结原实收 → 同批读取两个版本 → 核对原 SQLite 消息和重放。
+void verify_version_query(const std::filesystem::path& data) {
+    using namespace model;
+    auto db = std::make_shared<app::MessageStore>(data);
+    app::ApplicationRunConfig config;
+    config.trace_directory = data/"evidence";
+    std::string before, after, delivery;
+    unsigned steps = 0;
+    app::Application application({},data/"empty",data,Backend{[&](const Config&,const Request& input) -> Response {
+        const auto& last = input.messages.back();
+        const auto note = Json::parse(last.content);
+        const auto messages = dfy::test::business_messages(input);
+        if (last.source!=MessageSource::host_status || note.at("step")!=++steps) throw std::runtime_error("unbound decision");
+        if (steps==1) {
+            if (!note.at("items").empty()) throw std::runtime_error("first decision invented a delivery");
+            before = note.at("snapshot");
+            return {{Role::assistant,"",{{"speech","main_reply",R"({"text":"先答复。"})"}}},FinishReason::tool_calls};
+        }
+        if (steps==2) {
+            if (messages.back().tool_call_id!="speech") throw std::runtime_error("speech receipt lost its original call");
+            after = note.at("snapshot");
+            delivery = note.at("items").at(0).at("value").at("delivery");
+            return {{Role::assistant,"",{{"earlier","status_read",Json{{"snapshot",before}}.dump()},
+                {"later","status_read",Json{{"snapshot",after}}.dump()}}},FinishReason::tool_calls};
+        }
+        for (std::size_t i=0;i<2;++i) {
+            const auto& result = messages[messages.size()-2+i];
+            const auto read = Json::parse(result.content.substr(result.content.find('{')));
+            const auto& status = read.at("status");
+            if (result.role!=Role::tool || result.tool_call_id!=(i ? "later" : "earlier") ||
+                read.at("state")!="ready" || status.at("snapshot")!=(i ? after : before) ||
+                (!i && !status.at("items").empty()) || (i && status.at("items")[0].at("value").at("delivery")!=delivery))
+                throw std::runtime_error("status_read returned a different decision or crossed receipt pairs");
+        }
+        return {{Role::assistant,"已查回两版。"}};
+    }},config);
+    application.bind_messages(db,"versions",nullptr);
+    application.main_messages()->terminal("ask","核对刚才的发言");
+    const auto run = application.conversation().status().value();
+    drain(application);
+    const auto rows = db->page(true,0,db->watermark(),8).records;
+    if (steps!=3 || rows.size()!=3 || rows[1].submission!=delivery || rows[1].envelope.at("text")!="先答复。" ||
+        rows[0].envelope.at("text")!="已查回两版。") throw std::runtime_error("original channel delivery differs from the frozen state");
+    std::ostringstream replay;
+    app::replay_trace(application.trace_file(),{run.session,run.turn},replay);
+    if (replay.str().find("3 model requests, 3 tool exits, succeeded")==std::string::npos)
+        throw std::runtime_error("external decision inputs or read receipts diverged in replay");
+}
+
 // 用两个真实人格文件驱动相同的主聊天输入，逐段比较职责、授权、判断和输出契约。
 // 步骤：分别加载两份风格 → 捕获正式请求及当轮工具 → 核对规则顺序及实际送达。
 void verify_styles(const std::filesystem::path& root) {
@@ -190,6 +242,7 @@ int wmain(int argc, wchar_t** argv) {
         verify(root/"long-history");
         verify_output(root/"output");
         verify_styles(root/"styles");
+        verify_version_query(root/"versions");
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
