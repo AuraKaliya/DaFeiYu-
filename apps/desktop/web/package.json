@@ -10,7 +10,7 @@
     "test:history": "node --experimental-strip-types --test tests/message-history.test.mjs",
     "test:mailbox": "node --experimental-strip-types --test tests/mailbox-observer.test.mjs",
     "test:plugins": "node --experimental-strip-types --test tests/plugin-directory.test.mjs tests/plugin-actions.test.mjs",
-    "test:host-settings": "node --experimental-strip-types --test tests/host-settings.test.mjs",
+    "test:host-settings": "node --experimental-strip-types --test tests/host-settings.test.mjs tests/host-settings-edit.test.mjs",
     "build:mc-trace": "vue-tsc -p mc-trace/tsconfig.json --noEmit && vite build --config vite.mc-trace.config.ts",
     "start:mc-trace": "vite preview --config vite.mc-trace.config.ts",
     "test:mc-trace": "node --test mc-trace/*.test.mjs"
