@@ -4,6 +4,7 @@
 #include <string_view>
 
 namespace dfy::agent {
+struct ToolDescription;
 enum class ModelCapturePhase { prepared, submitted, exited, rewritten };
 
 // 仅在宿主同步回调期间借用模型内容。请求配置只提供模型、供应商和思考模式。
@@ -21,6 +22,9 @@ struct ModelCapture {
     std::uint64_t evidence_revision = 0;
     std::string_view purpose;
     std::size_t compressed_batches = 0;
+    // 与实际工具字段同次冻结，只在 prepared 同步回调中借用。
+    const std::vector<ToolDescription>* tool_contracts = nullptr;
+    std::uint64_t evidence_epoch = 0;
 };
 
 using ModelCaptureSink = std::function<void(const ModelCapture&)>;

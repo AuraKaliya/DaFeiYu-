@@ -17,6 +17,10 @@ dfy_test_executable(dfy_message_store_tests message_store.cpp)
 target_link_libraries(dfy_message_store_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 add_test(NAME app.message_store COMMAND dfy_message_store_tests "${CMAKE_CURRENT_BINARY_DIR}/message-store")
 
+dfy_test_executable(dfy_tool_contract_trace_tests tool_contract_trace.cpp)
+target_link_libraries(dfy_tool_contract_trace_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.tool_contract_trace COMMAND dfy_tool_contract_trace_tests "${CMAKE_CURRENT_BINARY_DIR}/tool-contract-trace")
+
 dfy_test_executable(dfy_binding_work_tests binding_works.cpp)
 target_link_libraries(dfy_binding_work_tests PRIVATE dfy_application nlohmann_json::nlohmann_json dfy_build_options)
 add_test(NAME app.binding_works COMMAND dfy_binding_work_tests)

@@ -9,6 +9,7 @@
 
 namespace dfy::plugins { struct SubagentWorkFact; }
 namespace dfy::app {
+class ToolContractTrace;
 // 单一宿主线程写入的局内日志，与运行和原生操作的结算责任独立。
 class RunLog final : public std::enable_shared_from_this<RunLog> {
   public:
@@ -31,7 +32,7 @@ class RunLog final : public std::enable_shared_from_this<RunLog> {
   private:
     // 写入一次模型记录，供后续按原请求身份复盘。
     void model(std::string_view source, const agent::ModelCapture& value,
-        std::map<std::string,std::vector<std::string>>& previous);
+        std::map<std::string,std::vector<std::string>>& previous, ToolContractTrace& contracts);
     // 写入候选、实际接纳及退出时的原工作证据。
     void tool(std::string_view source, const agent::ToolCapture& value);
     // 写入已经退出的运行，包括元数据与实际内部结算。

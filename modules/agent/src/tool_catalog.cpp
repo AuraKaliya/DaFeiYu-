@@ -96,10 +96,14 @@ std::vector<model::ToolDefinition> ToolSnapshot::definitions() const {
 }
 // 由当前可用的原注册生成与授权排列无关的模型定义。
 // 步骤：读取有效成员 → 按展示序与规范 ID 排序 → 返回有序模型契约。
-std::vector<model::ToolDefinition> ToolSnapshot::ordered_definitions() const {
+std::vector<model::ToolDefinition> ToolSnapshot::ordered_definitions(std::vector<ToolDescription>* captured) const {
     auto descriptions = this->descriptions();
     std::vector<model::ToolDefinition> result;
-    for (auto& item : descriptions) result.push_back(std::move(item.model));
+    result.reserve(descriptions.size());
+    if (captured) {
+        for (const auto& item : descriptions) result.push_back(item.model);
+        *captured = std::move(descriptions);
+    } else for (auto& item : descriptions) result.push_back(std::move(item.model));
     return result;
 }
 // 按注册展示序和规范 ID 返回有效或原固定成员，供模型、规划和诊断复用。

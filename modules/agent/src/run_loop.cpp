@@ -168,7 +168,8 @@ struct RunLoopState {
     // 在宿主线程发布可选的取证记录。采集失败不改变原运行裁定。
     void capture(ModelCapturePhase phase, AttemptId attempt, const model::Request* input = nullptr,
         const model::Response* output = nullptr, const model::CallDiagnostics* call = nullptr,
-        runtime::OperationState result = runtime::OperationState::pending) noexcept {
+        runtime::OperationState result = runtime::OperationState::pending,
+        const std::vector<ToolDescription>* contracts = nullptr) noexcept {
         if (!options.model_capture) return;
         const auto& versions = record->versions_;
         const auto view = [](const std::optional<std::string>& label) { return label ? std::string_view(*label) : std::string_view{}; };
@@ -179,6 +180,8 @@ struct RunLoopState {
                 (plan_step ? "plan_step" : "direct");
             sample.evidence_revision = record->journal_.revision();
             sample.compressed_batches = compressed_batches;
+            sample.tool_contracts = contracts;
+            sample.evidence_epoch = options.evidence_epoch;
             std::vector<model::ToolDefinition> ordered;
             if (phase == ModelCapturePhase::prepared && options.compare_projection) {
                 const auto& scope = record->plan_ ? step_tools : options.tools;
@@ -457,8 +460,9 @@ struct RunLoopState {
         const auto& scope = record->plan_ ? step_tools : options.tools;
         const auto pending = std::span<const TurnInput>(record->inputs_).subspan(record->settled_inputs_);
         if (!pending.empty()) record->context_->append_user_inputs(pending,prior_answer);
+        std::vector<ToolDescription> contracts;
         model::Request input = planning_request ? planning_request->request :
-            model::Request{record->context_->messages(),scope ? scope->ordered_definitions() : std::vector<model::ToolDefinition>{}};
+            model::Request{record->context_->messages(),scope ? scope->ordered_definitions(options.model_capture ? &contracts : nullptr) : std::vector<model::ToolDefinition>{}};
         if (planning_request) {
             const auto status = options.context_status ? project_context_status(nullptr,*options.context_status) : std::string{};
             std::vector<std::string> observations;
@@ -496,7 +500,7 @@ struct RunLoopState {
         const int head_delta = planning_request ? 0 : int(input.messages.front().role == model::Role::system) -
             int(record->context_->messages().front().role == model::Role::system);
         compressed_batches = record->context_->project(input,head_delta);
-        capture(ModelCapturePhase::prepared,current.attempt,&input);
+        capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (!record->model_requests_) record->origin_ = request->diagnostics().submitted;
         record->attempt_ = current.attempt; record->model_ = std::move(request); ++record->model_requests_;

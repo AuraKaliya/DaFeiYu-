@@ -1,4 +1,5 @@
 #include "run_log.hpp"
+#include "tool_contract_trace.hpp"
 #include "trace_model.hpp"
 #include <dafeiyu/model_protocol.hpp>
 #include <dafeiyu/digest.hpp>
@@ -75,7 +76,8 @@ RunLog::~RunLog() { append("trace.closed",Json::object()); }
 agent::RunCaptureSinks RunLog::sinks(std::string source, bool compare_projection) {
     const auto log = shared_from_this();
     auto previous = std::make_shared<std::map<std::string,std::vector<std::string>>>();
-    return {[log, source, previous](const auto& value) { log->model(source,value,*previous); },
+    auto contracts = std::make_shared<ToolContractTrace>();
+    return {[log, source, previous, contracts](const auto& value) { log->model(source,value,*previous,*contracts); },
         [log, source](const auto& record) { log->exit(source,record); },
         [log, source](const auto& value) { log->tool(source,value); },compare_projection || source == "main"};
 }
@@ -149,7 +151,7 @@ void RunLog::mail(std::string_view kind, runtime::DomainId mailbox, runtime::Dom
 // 保留每次模型请求及其真正退出，不以准备状态推断服务已调用。
 // 步骤：固定运行与步骤身份 → 加入实际输入或输出 → 记录调用时刻与结果。
 void RunLog::model(std::string_view source, const agent::ModelCapture& value,
-    std::map<std::string,std::vector<std::string>>& previous) {
+    std::map<std::string,std::vector<std::string>>& previous, ToolContractTrace& contracts) {
     using namespace std::chrono;
     const auto attempt = value.attempt;
     Json item{{"source",source},{"session",attempt.step.run.session},{"run",attempt.step.run.sequence},
@@ -176,6 +178,10 @@ void RunLog::model(std::string_view source, const agent::ModelCapture& value,
         try { item["projection"] = compare_input(value,fields,previous[std::string(value.purpose)]); }
         catch (...) { item["projectionUnavailable"] = true; }
     }
+    if (value.phase==agent::ModelCapturePhase::prepared && value.tool_contracts) {
+        try { item["toolContracts"] = contracts.prepare(value); }
+        catch (...) { item["toolContractsUnavailable"] = true; }
+    } else if (value.phase==agent::ModelCapturePhase::submitted) contracts.submitted(attempt);
     if (value.output) item["output"] = encode_response(*value.output);
     if (value.call) {
         const auto& call = *value.call;

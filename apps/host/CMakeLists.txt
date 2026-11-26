@@ -14,7 +14,7 @@ add_library(dfy_application STATIC
   src/message_store.cpp src/message_store.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
   src/reply_delivery.hpp src/room_mailbox.cpp src/run_log.cpp src/run_log.hpp src/software_log.cpp
   src/software_log.hpp src/software_log_files.cpp src/software_log_files.hpp src/subagents.cpp
-  src/subagents.hpp src/tool_verification.cpp src/tool_verification.hpp src/trace_commands.hpp
+  src/subagents.hpp src/tool_contract_trace.cpp src/tool_contract_trace.hpp src/tool_verification.cpp src/tool_verification.hpp src/trace_commands.hpp
   src/trace_model.hpp src/trace_read.cpp src/trace_read.hpp src/trace_replay.cpp
   src/transition_notice.cpp src/transition_notice.hpp)
 target_include_directories(dfy_application PUBLIC src)
