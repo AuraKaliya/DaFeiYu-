@@ -187,13 +187,15 @@ bool LocalPipe::serve_one(std::chrono::milliseconds wait, const Handler& handle)
     struct Disconnect {
         HANDLE pipe;
         // 清理当前连接，未完成客户端不影响下一次接入。
-        ~Disconnect() { DisconnectNamedPipe(pipe); }
+        ~Disconnect() { if (pipe) DisconnectNamedPipe(pipe); }
     } disconnect{pipe};
+    bool connected = false;
     try {
         transfer(pipe,Clock::now()+wait,[&](DWORD*, OVERLAPPED* op) {
             if (ConnectNamedPipe(pipe,op)) return TRUE;
             return GetLastError()==ERROR_PIPE_CONNECTED ? TRUE : FALSE;
         });
+        connected = true;
         const auto end = Clock::now()+std::chrono::seconds(5);
         const auto input = receive_frame(pipe,request_limit,end);
         const auto reply = handle(input);
@@ -203,6 +205,8 @@ bool LocalPipe::serve_one(std::chrono::milliseconds wait, const Handler& handle)
         return ack == 1;
     } catch (const std::system_error& error) {
         const auto code = error.code().value();
+        // 空闲等待刚撤销时可能已有新客户接入，留给下一次 ConnectNamedPipe 接纳。
+        if (!connected && code==ERROR_SEM_TIMEOUT) disconnect.pipe = nullptr;
         if (code==ERROR_SEM_TIMEOUT || code==ERROR_BROKEN_PIPE || code==ERROR_NO_DATA || code==ERROR_PIPE_NOT_CONNECTED ||
             code==ERROR_INVALID_DATA) return false;
         throw;
