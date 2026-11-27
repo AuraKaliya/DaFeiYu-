@@ -157,16 +157,25 @@ void MessageStore::commit_case(const Json& batch,const Json& proposal) {
 // 步骤：解析引用与截止号 → 核对当前授权和版本 → 在编码预算内交付原件。
 Json MessageStore::search_cases(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const {
     Json out{{"items",Json::array()},{"limited",false}};
-    if (topics.size()!=1 || !count || topics[0].empty() || topics[0].size()>160) throw std::invalid_argument("comparison: expected one topic");
+    if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("comparison: expected one to three topics");
+    for(const auto& t:topics) if(t.empty() || t.size()>160 || t.find_first_not_of(" \t\r\n")==t.npos)
+        throw std::invalid_argument("comparison: invalid topic");
     std::lock_guard lock(state_->mutex); auto* db=state_->db;
     auto name=topics.front(); const auto prefix=conversation()+"/comparison/", history=conversation()+"/comparison-opinion/";
     std::int64_t requested=0,cutoff=INT64_MAX;
+    const auto reference=[](const std::string& t){return t.find("/comparison/")!=t.npos || t.find("/comparison-opinion/")!=t.npos;};
+    if (topics.size()>1 && std::ranges::any_of(topics,reference)) return out;
     if (name.starts_with(history)) {
         const auto s=std::string_view(name).substr(history.size()); const auto [end,ec]=std::from_chars(s.data(),s.data()+s.size(),requested);
         if (ec!=std::errc{} || end!=s.data()+s.size() || requested<=0 || s.front()=='0') return out;
         Statement get(db,"SELECT name,through_member FROM case_opinion WHERE id=? AND valid=1"); get.bind(1,requested); if(!get.next()) return out;
         name=get.text(0); cutoff=get.number(1);
     } else if (name.starts_with(prefix)) name.erase(0,prefix.size());
+    else {
+        if(reference(name)) return out;
+        bool ambiguous=false; name=resolve_case_terms(db,topics,ambiguous);
+        if (name.empty()) {if (ambiguous) out["ambiguous"]=true; return out;}
+    }
     Statement get(db,"SELECT scope,head,(SELECT max(id) FROM case_member m WHERE m.name=c.name AND active=1) FROM observation_case c WHERE name=?");
     get.bind(1,name); if(!get.next()) return out;
     const auto scope=Json::parse(get.text(0)); const auto evidence=classify(db,name,scope,cutoff);

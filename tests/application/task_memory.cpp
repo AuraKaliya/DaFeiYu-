@@ -161,6 +161,9 @@ int wmain(int argc, wchar_t** argv) {
         if (argc==6 && std::wstring_view(argv[5])==L"--recall") {
             understanding_recall(argv[3],data); return 0;
         }
+        if (argc==6 && std::wstring_view(argv[5])==L"--case-recall") {
+            understanding_recall(argv[3],data,true); return 0;
+        }
         std::ifstream corpus(fs::path(argv[3]),std::ios::binary);
         unsigned cases=0, reads=0;
         std::size_t requests=0;

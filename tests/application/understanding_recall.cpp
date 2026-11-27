@@ -59,7 +59,7 @@ void populate(const fs::path& data,unsigned groups) {
 }
 
 // 普通主人来信走实际模型和工具入口；固定后端只提议查询，期望命中由语料独立指定。
-void query(const fs::path& data,const Json& row,Measures& metrics) {
+void query(const fs::path& data,const Json& row,Measures& metrics,bool comparisons) {
     auto db=std::make_shared<app::MessageStore>(data);
     const auto profile=db->conversation(), id=row.at("id").get<std::string>();
     std::vector<std::string> wire_hashes;
@@ -79,14 +79,14 @@ void query(const fs::path& data,const Json& row,Measures& metrics) {
             if (!row.contains("topics")) { delivered="按本轮已知情况回答。"; return {{model::Role::assistant,delivered}}; }
             auto topics=row.at("topics").get<std::vector<std::string>>();
             for (auto& term : topics) if (term.starts_with("@")) term=profile+term.substr(1);
-            Json args{{"view","understanding"},{"need",row.value("need",std::string{"single"})},{"count",row.value("count",1)},{"topics",topics}};
+            Json args{{"view",comparisons ? "comparisons" : "understanding"},{"need",row.value("need",std::string{"single"})},{"count",row.value("count",1)},{"topics",topics}};
             start=Clock::now();
             return {{model::Role::assistant,"",{{"query","memory_search",args.dump()}}},model::FinishReason::tool_calls};
         }
         metrics.roundtrips.push_back(std::chrono::duration<double,std::milli>(Clock::now()-start).count());
         require(wire_hashes.size()==2,"unexpected extra query");
         const auto status=Json::parse(input.messages.back().content);
-        const auto found=std::ranges::find_if(status.at("items"),[](const auto& s){return s.at("key")=="memory.understanding";});
+        const auto found=std::ranges::find_if(status.at("items"),[&](const auto& s){return s.at("key")== (comparisons ? "memory.comparisons" : "memory.understanding");});
         if (row.value("skip",false)) {
             require(found==status.at("items").end(),"skipped query exposed evidence");
             delivered="用本轮材料即可。";
@@ -95,7 +95,18 @@ void query(const fs::path& data,const Json& row,Measures& metrics) {
             const auto& selection=found->at("value"), &items=selection.at("items");
             metrics.max_evidence=std::max(metrics.max_evidence,items.dump().size());
             require(items.dump().size()<=2048 && selection.value("ambiguous",false)==row.value("ambiguous",false),"budget or ambiguity mismatch");
-            if (!row.contains("version")) {
+            if (comparisons && row.contains("case")) {
+                const auto& v=items.at(0);
+                require(items.size()==1 && v.at("reference")==profile+"/comparison/"+row.at("case").get<std::string>() && v.at("state")==row.at("state"),
+                    "wrong comparison scope");
+                if(v.at("state")=="conflicting_observations") {
+                    const auto& refs=v.at("conflictRefs"); const auto& facts=v.at("facts");
+                    require(refs.size()==2 && facts.size()>=2 && facts.at(0).at("reference")==refs.at(0) &&
+                        facts.at(1).at("reference")==refs.at(1) && facts.at(0).at("readTool")!=facts.at(1).at("readTool"),"independent witnesses omitted");
+                    ++metrics.challenges;
+                }
+                delivered="查到比较「"+v.at("scope").at("object").get<std::string>()+"」，依据 "+v.at("facts").at(0).at("reference").get<std::string>();
+            } else if (!row.contains("version")) {
                 require(items.empty(),"stale or unrelated evidence");
                 delivered=row.value("ambiguous",false) ? "你想问哪一类任务？" : "我还没有对应的解释。";
             } else {
@@ -128,18 +139,20 @@ void query(const fs::path& data,const Json& row,Measures& metrics) {
 }
 
 // 对同一批固定问句逐档放大近邻数量，报告实收字节、反例覆盖和工具往返的分位数。
-void understanding_recall(const fs::path& corpus,const fs::path& data) {
+void understanding_recall(const fs::path& corpus,const fs::path& data,bool comparisons) {
     std::ifstream in(corpus,std::ios::binary);
     std::vector<Json> rows;
     for (std::string line;std::getline(in,line);) rows.push_back(Json::parse(line));
     require(!rows.empty(),"empty retrieval corpus");
-    for (const auto groups : {2u,32u,256u}) {
-        const auto root=data/std::to_string(groups); fs::create_directories(root); populate(root,groups);
+    const std::array<unsigned,3> sizes=comparisons ? std::array{32u,512u,4096u} : std::array{2u,32u,256u};
+    for (const auto groups : sizes) {
+        const auto root=data/std::to_string(groups); fs::create_directories(root);
+        if(comparisons) populate_comparison_archive(root,groups); else populate(root,groups);
         Measures m;
-        for (const auto& row : rows) try { query(root,row,m); }
+        for (const auto& row : rows) try { query(root,row,m,comparisons); }
         catch(const std::exception& e) {throw std::runtime_error(row.at("id").get<std::string>()+": "+e.what());}
         std::ranges::sort(m.roundtrips);
-        std::cout<<groups*16<<" observations, "<<m.cases<<" correct, "<<m.challenges<<" challenged recalled, "
+        std::cout<<(comparisons ? groups : groups*16)<<(comparisons ? " comparison scopes, " : " observations, ")<<m.cases<<" correct, "<<m.challenges<<" challenged recalled, "
             <<m.requests<<" requests, evidence max "<<m.max_evidence<<" bytes, wire max "<<m.max_wire
             <<" bytes, tool roundtrip p95 "<<m.roundtrips.at((95*m.roundtrips.size()+99)/100-1)<<" ms\n";
     }

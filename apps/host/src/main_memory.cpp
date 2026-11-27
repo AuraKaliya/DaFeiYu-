@@ -39,7 +39,7 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,10,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,11,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -58,7 +58,8 @@ void MainMessages::register_memory_tools() {
         "摘要和正文保留原作者。digest 是本体按角色选的发信人原话，pending 或 fallback 时按需展开。"
         "bodyRef、noteRef 展开已交付副本，摘录可按 offset 查看上下文。读懂待收的信后用 memory_ack 按号签收。"
         "主人问已发布的做法时用 knowledge，填条目键或主题，引用当前版并说明适用条件。"
-        "跨工具对照用 comparisons，填一个比较键或版本号。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
+        "跨工具对照用 comparisons，填一至三个主题词，先写对象或常用别称，可用度量、条件、检查点区分，也可单填比较键或版本号。"
+        "多个词须同时符合，ambiguous 时询问具体对象或条件。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
         "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。",
         R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});

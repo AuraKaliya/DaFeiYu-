@@ -28,6 +28,21 @@ void MessageStore::define_case(const std::string& name,const Json& scope) {
     std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
     Statement add(db,"INSERT OR IGNORE INTO observation_case(name,scope) VALUES(?,?)"); add.bind(1,name); add.bind(2,scope.dump()); add.next();
     if (scope_for(db,{name,"check"})!=scope) throw std::invalid_argument("comparison: conflicting definition");
+    index_case_terms(db,name,scope);
+    tx.commit();
+}
+// 别名仅用于匹配；添加、删除均可重试，主题词数量独立于实际经历数。
+void MessageStore::case_alias(const std::string& name,const std::string& alias,bool remove) {
+    bounded(alias,98);
+    if(alias.find('/')!=alias.npos || alias.find_first_of("\t\r\n")!=alias.npos || alias.front()==' ' || alias.back()==' ')
+        throw std::invalid_argument("comparison: invalid alias");
+    std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
+    scope_for(db,{name,"check"});
+    Statement change(db,remove ? "DELETE FROM case_term WHERE name=? AND kind='alias' AND term=?" :
+        "INSERT OR IGNORE INTO case_term(name,kind,term) VALUES(?,'alias',?)");
+    change.bind(1,name); change.bind(2,alias); change.next();
+    Statement n(db,"SELECT count(*) FROM case_term WHERE name=? AND kind='alias'"); n.bind(1,name); n.next();
+    if(n.number(0)>8) throw std::invalid_argument("comparison: alias limit");
     tx.commit();
 }
 // 核对准备派发的任务引用的比较与采样检查点。

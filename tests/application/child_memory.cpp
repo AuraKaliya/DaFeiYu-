@@ -190,10 +190,11 @@ struct Fixture {
                     const auto& selection=item.at("digest"); check(selection.size()==want.at("digest").size(),"wrong digest count");
                     const auto& raw=bodies.at(want.at("ref").get<std::string>().substr(1));
                     for(std::size_t j=0;j<selection.size();++j) {
-                        const auto& s=selection[j]; const auto& w=want.at("digest")[j]; const auto pos=s.at("offset").get<std::size_t>(),end=s.at("endOffset").get<std::size_t>();
-                        const auto quote=s.at("text").get<std::string>();
-                        check(end<=raw.size() && end>pos && raw.substr(pos,quote.size())==quote && s.at("role")==w.at("role") &&
-                            quote.find(w.at("contains").get<std::string>())!=quote.npos && s.at("partial")==Json(quote.size()<end-pos),"wrong extract or original bytes");
+                        const auto& picked=selection[j]; const auto& w=want.at("digest")[j];
+                        const auto pos=picked.at("offset").get<std::size_t>(),end=picked.at("endOffset").get<std::size_t>();
+                        const auto quote=picked.at("text").get<std::string>();
+                        check(end<=raw.size() && end>pos && raw.substr(pos,quote.size())==quote && picked.at("role")==w.at("role") &&
+                            quote.find(w.at("contains").get<std::string>())!=quote.npos && picked.at("partial")==Json(quote.size()<end-pos),"wrong extract or original bytes");
                         if(w.contains("save")) originals[w.at("save").get<std::string>()]=pos;
                     }
                 } else if(want.contains("digestState")) check(!item.contains("digest"),"unvalidated digest exposed");

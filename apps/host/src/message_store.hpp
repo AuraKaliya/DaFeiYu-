@@ -88,6 +88,8 @@ class MessageStore {
         std::vector<std::string>* dependencies=nullptr) const;
     // 登记不可变的比较对象、观测量、单位、适用条件及比较口径。
     void define_case(const std::string& name,const nlohmann::json& scope);
+    // 为比较维护主人认可的检索别名，原范围与出处保持稳定。
+    void case_alias(const std::string& name,const std::string& alias,bool remove);
     // 在接纳带标记的工具任务前确认比较定义及检查点。
     void validate_case(const ComparisonTag& tag) const;
     // 主人事后指定某份已有回执或来信的比较条件。
