@@ -5,6 +5,7 @@
 #include "run_log.hpp"
 #include "software_log.hpp"
 #include "main_messages.hpp"
+#include "task_reflection.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/utf8.hpp>
 #include <dafeiyu/model_client.hpp>
@@ -111,7 +112,8 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 
 // 数据目录所有者在开始处理命令前绑定唯一的持久消息入口。
 void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log) {
-    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log,run_log_.get(),model_backend_.structured);
+    auto reflection = std::make_shared<TaskReflection>(store,model_config_,model_backend_,persona_,tool_clock_,run_log_.get());
+    main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log,run_log_.get(),model_backend_.structured,std::move(reflection));
     conversation_.main_messages_ = main_messages_.get();
     main_messages_->restore();
 }
@@ -510,8 +512,8 @@ runtime::RunResult Application::advance_plugins() {
     interactions_.advance();
     advance_dialogue_queue();
     const auto mail = mailbox_intake_.advance();
-    if (main_messages_ && mail==MailboxIntakeResult::idle && !conversation_.busy() && conversation_.accepting() &&
-        conversation_.display().queue.empty()) main_messages_->review_idle_task();
+    if (main_messages_) main_messages_->review_idle_task(mail==MailboxIntakeResult::idle && !conversation_.busy() &&
+        conversation_.accepting() && conversation_.display().queue.empty());
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }
 
@@ -519,6 +521,7 @@ runtime::RunResult Application::advance_plugins() {
 // 步骤：核对主会话收尾 → 关闭陪伴会话或等待 → 关闭原管理器。
 plugins::ShutdownResult Application::close_plugins() noexcept {
     if (!conversation_.closed()) return plugins::ShutdownResult::busy;
+    if (main_messages_ && !main_messages_->close_reflection()) return plugins::ShutdownResult::pending;
     subagents_->stop();
     if (!subagents_->empty()) return plugins::ShutdownResult::pending;
     if (companion_ && !companion_->closed()) {

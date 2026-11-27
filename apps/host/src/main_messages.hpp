@@ -9,6 +9,7 @@ namespace dfy::app {
 class Application;
 class SoftwareLog;
 class RunLog;
+class TaskReflection;
 // 固定原文与目的地，普通发送跨启动有效，追加与队列绑定原实例和回合。
 nlohmann::json user_envelope(std::string_view route, const std::string& text, const std::string& instance,
     agent::RunId target, std::optional<std::int64_t> source_utc_ms = {});
@@ -17,7 +18,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
   public:
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
-        RunLog* trace, bool structured);
+        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
     bool prepare_output(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 在每个主会话入口固定受众；主人私聊可按主题或稳定身份读取一份原件。
@@ -28,7 +29,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     // 只在原运行实际退出后固化计划、工具动作与独立的验证回执。
     void task_exited(const agent::TurnRequest& run);
     // 前台工作及信箱优先，空闲推进最多整理一份仍获准的任务亲历。
-    void review_idle_task();
+    void review_idle_task(bool idle);
+    // 收尾时等待空闲推断实际退出。
+    bool close_reflection();
     // 管理终端查询可收录的最近原话身份。
     std::string last_memory_source() const { return store_->last_memory_source(); }
     // 仅受信管理入口可收录或撤回当前档案原件的读取权。
@@ -76,6 +79,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     agent::DecisionStatusSource experience_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 投影本轮获准读取的任务、原行动或原回执，禁止历史快照重新展开。
     agent::DecisionStatusSource task_source(std::uint64_t turn, const nlohmann::json& selection) const;
+    // 把本体写下的解释和带角色的任务证据分别装入当前私聊。
+    agent::DecisionStatusSource understanding_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 封装记忆工具的确定回执及效果。
     static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。
@@ -103,6 +108,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;
     bool idle_review_due_ = true;
+    std::shared_ptr<TaskReflection> reflection_;
     std::uint64_t search_step_ = 0;
     SoftwareLog* log_;
     RunLog* trace_;

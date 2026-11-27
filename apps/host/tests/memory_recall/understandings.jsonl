@@ -1,0 +1,47 @@
+{"op":"task","id":"gallery-morning","expected":"focus"}
+{"op":"read","missing":true}
+{"op":"task","id":"gallery-unverified"}
+{"op":"task","id":"gallery-denied","approve":false}
+{"op":"task","id":"gallery-noon","expected":"focus"}
+{"op":"legacy"}
+{"op":"reflect","inputs":["gallery-morning","gallery-noon"],"claim":{"text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","condition":"any","when":"","predict":"target","value":""}}
+{"op":"read","text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","relation":"formed","standing":"current","supports":2,"count":2,"facts":["gallery-morning/support","gallery-noon/support"],"alias":"panelV1"}
+{"op":"task","id":"gallery-evening","expected":"focus"}
+{"op":"reflect","inputs":["gallery-morning","gallery-noon","gallery-evening"],"claim":{"text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","condition":"any","when":"","predict":"target","value":""},"prior":"我原先以为，切换展厅面板后，读回都会符合当次目标。"}
+{"op":"read","text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","relation":"reinforced","standing":"current","supports":3,"count":1,"facts":["gallery-morning/support"],"parent":"panelV1","alias":"panelV2","next":1}
+{"op":"read","text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","relation":"reinforced","standing":"current","supports":3,"count":2,"facts":["gallery-noon/support","gallery-evening/support"],"offset":1}
+{"op":"task","id":"gallery-standby","expected":"idle"}
+{"op":"read","text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","relation":"reinforced","standing":"challenged","supports":3,"count":1,"facts":["gallery-standby/counterexample"],"contrary":1,"cited":[false]}
+{"op":"reflect","inputs":["gallery-noon","gallery-evening","gallery-standby"],"claim":{"text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","condition":"expected","when":"focus","predict":"target","value":""},"prior":"我原先以为，切换展厅面板后，读回都会符合当次目标。","interrupt":"foreground","outcome":"interrupted"}
+{"op":"reflect","inputs":["gallery-noon","gallery-evening","gallery-standby"],"claim":{"text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","condition":"expected","when":"focus","predict":"target","value":""},"prior":"我原先以为，切换展厅面板后，读回都会符合当次目标。"}
+{"op":"read","text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","relation":"narrowed","standing":"current","supports":3,"count":2,"facts":["gallery-standby/outside/prior","gallery-noon/support"],"parent":"panelV2","alias":"panelV3","room":true,"expand":true,"cited":[true,true]}
+{"op":"read","text":"我原先以为，切换展厅面板后，读回都会符合当次目标。","relation":"formed","standing":"superseded","supports":2,"count":2,"facts":["gallery-morning/support","gallery-noon/support"],"selector":"panelV1"}
+{"op":"task","id":"gallery-standby-again","expected":"idle"}
+{"op":"reflect","inputs":["gallery-noon","gallery-evening","gallery-standby-again"],"prior":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","outcome":"deferred"}
+{"op":"task","id":"gallery-late","expected":"focus"}
+{"op":"reflect","inputs":["gallery-noon","gallery-evening","gallery-late"],"claim":{"text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","condition":"expected","when":"focus","predict":"target","value":""},"prior":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","forge":true,"outcome":"rejected"}
+{"op":"task","id":"registry-morning","expected":"1","counter":true}
+{"op":"task","id":"registry-noon","expected":"1","counter":true}
+{"op":"reflect","inputs":["registry-morning","registry-noon"],"claim":{"text":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","condition":"any","when":"","predict":"value","value":"1"}}
+{"op":"read","text":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","relation":"formed","standing":"current","supports":2,"count":2,"facts":["registry-morning/support","registry-noon/support"],"selector":"test.tools/increment","alias":"counterV1"}
+{"op":"task","id":"registry-evening","expected":"2","counter":true,"warmup":true}
+{"op":"read","text":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","relation":"formed","standing":"challenged","supports":2,"count":1,"facts":["registry-evening/counterexample"],"selector":"test.tools/increment","contrary":1,"cited":[false]}
+{"op":"reflect","inputs":["registry-morning","registry-noon","registry-evening"],"claim":{"text":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","condition":"any","when":"","predict":"value","value":"1"},"prior":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","outcome":"rejected"}
+{"op":"task","id":"registry-recheck","expected":"2","counter":true,"warmup":true}
+{"op":"reflect","inputs":["registry-morning","registry-noon","registry-evening","registry-recheck"],"claim":{"text":"最初两次读到 1，随后两次读到 2，每次都符合各自的目标。我现在按当次目标来预期读数。","condition":"any","when":"","predict":"target","value":""},"prior":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。"}
+{"op":"read","text":"最初两次读到 1，随后两次读到 2，每次都符合各自的目标。我现在按当次目标来预期读数。","relation":"revised","standing":"current","supports":4,"count":2,"facts":["registry-evening/support/prior","registry-recheck/support/prior"],"selector":"test.tools/increment","alias":"counterV2","parent":"counterV1"}
+{"op":"read","text":"前两次登记后我都读到 1，因此我暂时预期每次登记后都会读到 1。","relation":"formed","standing":"superseded","supports":2,"count":2,"facts":["registry-morning/support","registry-noon/support"],"selector":"counterV1"}
+{"op":"task","id":"registry-different-target","counter":true,"expected":"9"}
+{"op":"read","text":"最初两次读到 1，随后两次读到 2，每次都符合各自的目标。我现在按当次目标来预期读数。","relation":"revised","standing":"challenged","supports":4,"contrary":1,"count":1,"facts":["registry-different-target/counterexample"],"cited":[false],"selector":"test.tools/increment"}
+{"op":"reflect","inputs":["registry-evening","registry-recheck","registry-different-target"],"prior":"最初两次读到 1，随后两次读到 2，每次都符合各自的目标。我现在按当次目标来预期读数。","claim":{"text":"前两次都是从 0 开始，后来从 1 开始时我读到了 2。我现在只判断登记会改变读数。","condition":"any","when":"","predict":"changed","value":""}}
+{"op":"read","text":"前两次都是从 0 开始，后来从 1 开始时我读到了 2。我现在只判断登记会改变读数。","relation":"revised","standing":"current","supports":5,"count":2,"facts":["registry-different-target/support/prior","registry-evening/support"],"cited":[true,true],"selector":"test.tools/increment","parent":"counterV2","alias":"counterV3"}
+{"op":"task","id":"gallery-final","expected":"focus"}
+{"op":"reflect","inputs":["gallery-evening","gallery-late","gallery-final"],"claim":{"text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","condition":"expected","when":"focus","predict":"target","value":""},"prior":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。"}
+{"op":"read","text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","relation":"reinforced","standing":"current","supports":5,"count":1,"facts":["gallery-standby/outside/prior"],"parent":"panelV3","contrast":"panelV2","cited":[false],"next":1}
+{"op":"task","id":"gallery-post-close","expected":"focus"}
+{"op":"reflect","inputs":["gallery-late","gallery-final","gallery-post-close"],"claim":{"text":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","condition":"expected","when":"focus","predict":"target","value":""},"prior":"我现在只在目标为 focus 时预期能读到目标。要求 idle 的那次，面板仍读到 focus。","interrupt":"gallery-morning","outcome":"interrupted"}
+{"op":"read","selector":"panelV1","missing":true}
+{"op":"read","selector":"panelV3","missing":true}
+{"op":"read","missing":true}
+{"op":"read","text":"前两次都是从 0 开始，后来从 1 开始时我读到了 2。我现在只判断登记会改变读数。","relation":"revised","standing":"current","supports":5,"count":1,"facts":["registry-different-target/support/prior"],"selector":"test.tools/increment"}
+{"op":"read","selector":"00000000000000000000000000000000/understanding/1","missing":true}

@@ -45,6 +45,13 @@ class MessageStore {
     std::vector<StoredMessage> unfinished(std::int64_t after) const;
   private:
     friend class MainMessages;
+    friend class TaskReflection;
+    // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
+    std::optional<nlohmann::json> next_comparison() const;
+    // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。
+    void commit_understanding(const nlohmann::json& comparison, const nlohmann::json& proposal);
+    // 按工具、任务主题或原版本号读取解释及分页的亲历事实。
+    nlohmann::json search_understandings(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const;
     // 按原运行身份一次性提交任务事实及待复盘原因。
     void save_task(const nlohmann::json& task);
     // 原子取一份仍获准的待办，以原回执整理复盘结论。

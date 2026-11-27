@@ -130,6 +130,7 @@ void MessageStore::save_task(const Json& task) {
     Statement add(db,"INSERT INTO task_memory(origin,goal,tool,body,reason,signature) VALUES(?,?,?,?,?,?)");
     add.bind(1,origin); add.bind(2,task.at("goal").get_ref<const std::string&>()); add.bind(3,task.at("tool").get_ref<const std::string&>());
     add.bind(4,body); add.bind(5,reason); add.bind(6,signature); add.next();
+    index_task_observation(db,sqlite3_last_insert_rowid(db),task);
     sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
     tx.commit();
 }

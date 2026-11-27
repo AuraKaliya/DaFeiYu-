@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "task_memory_fixture.hpp"
 #include "main_messages.hpp"
 #include <dafeiyu/model_protocol.hpp>
 #include <dafeiyu/digest.hpp>
@@ -8,14 +9,14 @@
 #include <iostream>
 #include <thread>
 
-namespace {
+namespace dfy::tests::task_memory {
 using namespace dfy;
 using Json = nlohmann::json;
 namespace fs = std::filesystem;
 // 把失败定位到当前语料中的断言。
 void require(bool ok, const std::string& reason) { if (!ok) throw std::runtime_error(reason); }
 // 推进到真实退出，审批与取消均沿原宿主入口执行。
-void drain(app::Application& host, const Json& row = Json::object()) {
+void drain(app::Application& host, const Json& row) {
     const auto until = std::chrono::steady_clock::now()+std::chrono::seconds(6);
     while (host.conversation().busy()) {
         host.advance_plugins();
@@ -57,13 +58,15 @@ std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path&
     const auto id = row.at("id").get<std::string>(), tool = row.at("tool").get<std::string>();
     const auto plugin = tool.substr(0,tool.find('/')), reader = plugin+"/read";
     std::vector<model::Request> requests;
+    bool warmup = row.value("warmup",false);
+    std::size_t start = 0;
     app::ApplicationRunConfig config;
     config.trace_directory = data/"logs";
     app::Application host({},data/id,data,model::Backend{[&](const auto&,const model::Request& request)->model::Response {
-        const auto index = requests.size();
+        const auto index = requests.size()-start;
         requests.push_back(request);
         const auto& script = row.at("script");
-        const auto step = index<script.size() ? script[index].get<std::string>() : "claim";
+        const auto step = warmup ? (index==0 ? "change" : "claim") : index<script.size() ? script[index].get<std::string>() : "claim";
         if (step=="plan") {
             Json plan{{"schema_version",1},{"steps",Json::array({{{"id","work"},{"objective","施行原计划"},{"completion_criterion","读回目标状态"},{"tools",{reader,tool}}}})}};
             return {{model::Role::assistant,plan.dump()}};
@@ -82,6 +85,10 @@ std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path&
         reinterpret_cast<void (DFY_V2_CALL*)(uint32_t)>(fixture->symbol("dfy_tool_test_mode"))(7);
     }
     require(host.plugins().load(plugin)==0,"native fixture did not load");
+    if (warmup) {
+        host.submit_confirmed(tool,"准备不同的初始读数");
+        drain(host); start=requests.size(); warmup=false;
+    }
     if (row.contains("expected")) host.submit_verified(reader,tool,row.at("expected"),goal);
     else if (row.value("readOnly",false)) host.submit_read_only(tool,goal);
     else host.submit_confirmed(tool,goal);
@@ -225,12 +232,16 @@ void recall(const Json& row, const fs::path& data, const std::string& goal, cons
 
 // 读取跨领域的通用场景，以两种实际插件验证本体工具任务的原始行动及回执。
 int wmain(int argc, wchar_t** argv) {
+    using namespace dfy::tests::task_memory;
     try {
-        if (argc!=5) return 2;
+        if (argc!=5 && argc!=6) return 2;
         const fs::path root(argv[4]);
         fs::create_directories(root);
         fs::path data;
         for (unsigned n=1;;++n) if (fs::create_directory(data=root/std::to_string(n))) break;
+        if (argc==6 && std::wstring_view(argv[5])==L"--understandings") {
+            understanding_cases(argv[3],data,argv[1],argv[2]); return 0;
+        }
         std::ifstream corpus(fs::path(argv[3]),std::ios::binary);
         unsigned cases=0, reads=0;
         std::size_t requests=0;

@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>6) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>7) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -90,6 +90,17 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "body TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,reason TEXT NOT NULL,signature TEXT NOT NULL,review TEXT NOT NULL DEFAULT '');"
             "CREATE INDEX task_review_queue ON task_memory(id) WHERE active=1 AND reason<>'' AND review='';"
             "CREATE INDEX task_transition ON task_memory(signature) WHERE active=1 AND signature<>''; PRAGMA user_version=6");
+        if (previous<7) {
+            sql(db,"CREATE TABLE task_observation(task INTEGER PRIMARY KEY,family TEXT NOT NULL,before_value TEXT NOT NULL,"
+                "expected TEXT NOT NULL,actual TEXT NOT NULL,action INTEGER NOT NULL,baseline INTEGER NOT NULL,readback INTEGER NOT NULL,effect TEXT NOT NULL);"
+                "CREATE INDEX observation_series ON task_observation(family,task);"
+                "CREATE TABLE reflection_progress(family TEXT PRIMARY KEY,cursor INTEGER NOT NULL DEFAULT 0,head INTEGER NOT NULL DEFAULT 0);"
+                "CREATE TABLE task_understanding(id INTEGER PRIMARY KEY,family TEXT NOT NULL,parent INTEGER NOT NULL,through_task INTEGER NOT NULL,"
+                "relation TEXT NOT NULL,claim TEXT NOT NULL,cites TEXT NOT NULL,contrast INTEGER NOT NULL,valid INTEGER NOT NULL DEFAULT 1);"
+                "CREATE INDEX understanding_series ON task_understanding(family,through_task); PRAGMA user_version=7");
+            Statement old(db,"SELECT id,body FROM task_memory WHERE active=1 ORDER BY id");
+            while (old.next()) index_task_observation(db,old.number(0),Json::parse(old.text(1)));
+        }
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -170,6 +181,14 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         Statement known(db,"SELECT 1 FROM task_memory WHERE id=?");
         known.bind(1,id);
         if (!known.next()) throw std::invalid_argument("memory: unknown task");
+        if (changed) {
+            Statement invalidate(db,"UPDATE task_understanding SET valid=0 WHERE family=(SELECT family FROM task_observation WHERE task=?1) AND through_task>=?1");
+            invalidate.bind(1,id); invalidate.next();
+            Statement restart(db,"UPDATE reflection_progress SET cursor=0,head=0 WHERE family=(SELECT family FROM task_observation WHERE task=?1) AND cursor>=?1");
+            restart.bind(1,id); restart.next();
+            Statement remove(db,"DELETE FROM task_observation WHERE task=?");
+            remove.bind(1,id); remove.next();
+        }
         if (changed) sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
         Statement revision(db,"SELECT memory_revision FROM conversation");
         revision.next(); tx.commit();

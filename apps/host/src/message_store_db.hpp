@@ -4,6 +4,8 @@
 #include <mutex>
 
 namespace dfy::app::message_db {
+// 在任务原件的写事务内索引独立核验过的观察，旧档案升级也复用同一规则。
+void index_task_observation(sqlite3* db, std::int64_t id, const nlohmann::json& task);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。
 inline void check(int code) {
     if (code!=SQLITE_OK) throw std::runtime_error("messages: SQLite error "+std::to_string(code));

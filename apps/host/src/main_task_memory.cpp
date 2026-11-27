@@ -1,4 +1,5 @@
 #include "main_messages.hpp"
+#include "task_reflection.hpp"
 #include "run_log.hpp"
 #include "trace_model.hpp"
 #include <dafeiyu/digest.hpp>
@@ -9,6 +10,7 @@ using Json = nlohmann::json;
 // 本体任务入口固定原运行、实际提供实例、用户要求和宿主事先约定的核验条件。
 void MainMessages::watch_task(const agent::TurnDiagnostics& run, const std::string& goal, const std::string& tool,
     runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected) {
+    reflection_->interrupt();
     Json task{{"origin",instance_+"/"+std::to_string(run.session)+"/"+std::to_string(run.turn)},{"goal",goal},{"tool",tool},
         {"provider",provider},{"changes",scope.permits_state_changes()},{"verification","unconfirmed"},{"works",Json::array()}};
     const auto offered = scope.definitions();
@@ -62,17 +64,43 @@ void MainMessages::task_exited(const agent::TurnRequest& run) {
 }
 
 // 空闲时按优先级整理一项，持久化待办在重启后继续，写锁不会重新触发工具。
-void MainMessages::review_idle_task() {
-    if (!idle_review_due_ || !pending_.empty() || !unsaved_tasks_.empty() || !retry_.empty() || !replies_.empty() ||
-        std::chrono::steady_clock::now()<retry_at_) return;
-    try { idle_review_due_ = store_->review_idle_task(); }
-    catch (const std::runtime_error&) {
-        storage_failed();
-        retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+void MainMessages::review_idle_task(bool idle) {
+    idle = idle && pending_.empty() && unsaved_tasks_.empty() && retry_.empty() && replies_.empty() &&
+        std::chrono::steady_clock::now()>=retry_at_;
+    if (idle && idle_review_due_) {
+        try { idle_review_due_ = store_->review_idle_task(); }
+        catch (const std::runtime_error&) {
+            storage_failed();
+            retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+        }
     }
+    reflection_->advance(idle && !idle_review_due_);
+}
+// 本体关闭时回收独立模型调用的退出责任。
+bool MainMessages::close_reflection() {
+    return reflection_->close();
 }
 
 // 只把本轮查中的原件和来源送入私聊决策尾注。
+agent::DecisionStatusSource MainMessages::understanding_source(std::uint64_t turn, const Json& selection) const {
+    static const auto schema=[] {
+        const Json str{{"type","string"}}, num{{"type","integer"}}, flag{{"type","boolean"}};
+        const auto object=[](const Json& fields){return Json{{"type","object"},{"properties",fields},{"additionalProperties",false}};};
+        Json facts=Json::object(), claim=Json::object(), item=Json::object();
+        for (const auto key : {"taskRef","actionRef","receiptRef","baselineRef","readbackRef","before","expected","actual","effect","goal","verification","role"}) facts[key]=str;
+        facts["challengedPrevious"]=flag; facts["cited"]=flag;
+        for (const auto key : {"text","condition","when","predict","value"}) claim[key]=str;
+        for (const auto key : {"reference","previousReference","revisedFrom","author","kind","relation","standing"}) item[key]=str;
+        for (const auto key : {"supportCount","counterexampleCount","nextOffset"}) item[key]=num;
+        item["claim"]=object(claim); item["facts"]={{"type","array"},{"items",object(facts)}};
+        const auto value=object({{"limited",flag},{"items",{{"type","array"},{"items",object(item)}}}});
+        return Json::array({{{"key","memory.understanding"},{"version",1},{"description","本体个人解释和原任务事实，反例优先"},
+            {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
+    }();
+    return {"memory",schema,Json::array({{{"key","memory.understanding"},{"version",1},{"subject",store_->conversation()},
+        {"fact",turn},{"value",selection}}}).dump()};
+}
+// 原任务概览或逐字回执只在本轮决策可见。
 agent::DecisionStatusSource MainMessages::task_source(std::uint64_t turn, const Json& selection) const {
     static const auto schema = [] {
         Json fields = Json::object();
