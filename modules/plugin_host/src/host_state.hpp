@@ -64,6 +64,8 @@ inline thread_local HostState* current_host = nullptr;
 const dfy_v2_mailbox_text_api& mailbox_text_api();
 // 返回宿主子会话能力版本 1。
 const dfy_v2_agent_api& agent_api(uint32_t version);
+// 返回当前原实例可协商的持久子会话记忆能力。
+const dfy_v2_agent_memory_api& agent_memory_api();
 // 返回独立协商的版本化事实及原工作结算服务。
 const dfy_v2_agent_facts_api& agent_facts_api();
 // 返回支持有序工作结算及回执读回的第二版不可变服务表。

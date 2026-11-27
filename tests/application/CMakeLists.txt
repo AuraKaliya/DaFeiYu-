@@ -54,6 +54,12 @@ set_tests_properties(app.task_understanding PROPERTIES TIMEOUT 90)
 add_test(NAME app.understanding_recall COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/understanding_queries.jsonl" "${PROJECT_BINARY_DIR}/tests/understanding-recall/$<CONFIG>" --recall)
 set_tests_properties(app.understanding_recall PROPERTIES TIMEOUT 90)
+dfy_test_executable(dfy_child_memory_tests child_memory.cpp)
+target_link_libraries(dfy_child_memory_tests PRIVATE dfy_host_commands dfy_build_options nlohmann_json::nlohmann_json)
+add_dependencies(dfy_child_memory_tests dfy_status_example dfy_tools_fixture)
+add_test(NAME app.child_memory COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/child_memory.jsonl" "${PROJECT_BINARY_DIR}/tests/child-memory/$<CONFIG>")
+set_tests_properties(app.child_memory PROPERTIES TIMEOUT 60)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

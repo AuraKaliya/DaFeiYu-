@@ -34,6 +34,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     bool close_reflection();
     // 管理终端查询可收录的最近原话身份。
     std::string last_memory_source() const { return store_->last_memory_source(); }
+    // 仅管理入口可指定分身权限与一份明确共享的本人原话。
+    void grant_avatar(const std::string& plugin,const std::string& channel,const std::string& account,int access,std::string_view source);
     // 仅受信管理入口可收录或撤回当前档案原件的读取权。
     void change_memory(std::string_view identity, const std::optional<std::string>& topic);
     // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。

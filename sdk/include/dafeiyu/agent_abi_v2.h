@@ -5,6 +5,11 @@
 #define DFY_V2_AGENT_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_PERSONA_VERSION UINT32_C(2)
 #define DFY_V2_AGENT_THINKING_VERSION UINT32_C(3)
+#define DFY_V2_AGENT_MEMORY_INTERFACE "dfy.agent.memory"
+#define DFY_V2_AGENT_MEMORY_VERSION UINT32_C(1)
+#define DFY_V2_MEMORY_TASK UINT32_C(1)
+#define DFY_V2_MEMORY_BUSINESS UINT32_C(2)
+#define DFY_V2_MEMORY_AVATAR UINT32_C(3)
 #define DFY_V2_AGENT_FACTS_INTERFACE "dfy.agent.facts"
 #define DFY_V2_AGENT_FACTS_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_ORDERED_FACTS_VERSION UINT32_C(2)
@@ -58,6 +63,17 @@ typedef struct dfy_v2_agent_api {
     // 请求关闭整个上下文，宿主推进退出；同实例忙碌时卸载返回 BUSY。
     dfy_v2_status (DFY_V2_CALL *close)(uint64_t session, dfy_v2_error* error);
 } dfy_v2_agent_api;
+typedef struct dfy_v2_agent_memory_api {
+    dfy_v2_api_header header;
+    // 在原插件回调内打开持久身份。subject 为委托号、业务对象或分身账号；只有分身填写 channel。
+    dfy_v2_status (DFY_V2_CALL *open_bound)(uint32_t preset, dfy_v2_string_view subject,
+        dfy_v2_string_view channel, uint64_t* session, dfy_v2_error* error);
+    // 同步存入原子会话自己的记录，同 event 同内容重试沿用原件号，冲突或越权失败。
+    dfy_v2_status (DFY_V2_CALL *remember)(uint64_t session, dfy_v2_string_view event, dfy_v2_string_view topic,
+        dfy_v2_string_view content, uint64_t* original, dfy_v2_error* error);
+    // 为该会话选择送模的精确主题，空值清除选择；读取和向当前受众转述由宿主在实际提交时复核。
+    dfy_v2_status (DFY_V2_CALL *select_topic)(uint64_t session, dfy_v2_string_view topic, dfy_v2_error* error);
+} dfy_v2_agent_memory_api;
 // scope 标明插件侧玩家和世界，实际所有者及会话由宿主绑定。序号与代次均从非零值开始。
 typedef struct dfy_v2_fact_frame {
     uint64_t epoch, sequence;

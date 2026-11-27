@@ -7,6 +7,7 @@
 
 namespace dfy::app {
 class RunLog;
+class MessageStore;
 struct PersonaProfile;
 using plugins::SubagentInput;
 using plugins::SubagentPhase;
@@ -23,6 +24,19 @@ class Subagents final : public plugins::PluginAgents {
     ~Subagents() override;
     // 为原插件创建一个独立上下文，允许在 DLL 启动时登记。
     runtime::DomainId open(const std::shared_ptr<plugins::PluginInstance>& instance) override;
+    // 主档案绑定后才公开持久子会话服务。
+    void bind_memory(std::shared_ptr<MessageStore> store);
+    // 仅在本体已接续档案时允许协商记忆接口。
+    bool memory_available() const noexcept override { return static_cast<bool>(memory_); }
+    // 核对调用实例并把新运行号绑定到指定持久子库。
+    runtime::DomainId open_bound(const std::shared_ptr<plugins::PluginInstance>& instance,const plugins::MemoryIdentity& who) override;
+    // 将插件显式交付的记录写入当前绑定。
+    std::uint64_t remember(runtime::DomainId owner,runtime::DomainId session,const std::string& event,
+        const std::string& topic,const std::string& content) override;
+    // 为后续请求选择获准的精确主题，换题时隔离旧历史。
+    void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) override;
+    // 停用授权已经变更的子会话，包含在途和已结算但尚可读取的旧答复。
+    void invalidate_memory(std::int64_t child,std::string_view source={});
     // 仅复制本轮输入，宿主在退出原 DLL 调用后发起模型请求。
     std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) override;
     // 把回执写入原实例会话的工作记录，陈旧的授权不能发起新工作。
@@ -64,6 +78,7 @@ class Subagents final : public plugins::PluginAgents {
     agent::ToolClock clock_;
     const PersonaProfile& persona_;
     std::shared_ptr<RunLog> log_;
+    std::shared_ptr<MessageStore> memory_;
     std::array<std::unique_ptr<Slot>,16> slots_;
     std::array<std::unique_ptr<WorkSlot>,16> work_slots_;
     bool stopping_ = false;

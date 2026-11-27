@@ -259,7 +259,13 @@ bool application_command(Application& application, std::string_view command, std
         } else if (words.size()==3 && words[1]=="revoke") {
             memory->change_memory(words[2],std::nullopt);
             output << "Revoked " << words[2] << '\n';
-        } else throw std::invalid_argument("Usage: /memory last | keep CONVERSATION/MESSAGE \"TOPIC\" | revoke CONVERSATION/MESSAGE");
+        } else if ((words.size()==7 || words.size()==8) && words[1]=="avatar") {
+            int access=words[5]=="off" ? 0 : words[5]=="read" ? 1 : words[5]=="write" ? 2 : words[5]=="both" ? 3 : -1;
+            if (access<0 || (words[6]!="private" && words[6]!="relay")) throw std::invalid_argument("memory: invalid avatar rights");
+            if (words[6]=="relay") access|=4;
+            memory->grant_avatar(words[2],words[3],words[4],access,words.size()==8 ? words[7] : "");
+            output << "Updated avatar memory access.\n";
+        } else throw std::invalid_argument("Usage: /memory last | keep REF TOPIC | revoke REF | avatar PLUGIN CHANNEL ACCOUNT off|read|write|both private|relay [REF]");
     }
     else if (name == "/mail") {
         const auto words = command_words(command);

@@ -7,6 +7,8 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+namespace dfy::plugins { struct MemoryIdentity; }
+
 namespace dfy::app {
 // 识别主聊天显式收录格式，返回原句中由主人指定的主题。
 std::optional<std::string_view> memory_capture_topic(std::string_view text);
@@ -18,6 +20,7 @@ struct StoredMessage {
 struct MessageAdmission { StoredMessage message; bool created; };
 struct MessagePage { std::vector<StoredMessage> records; bool more = false; };
 struct MemoryChange { std::int64_t revision; bool changed, review_due; };
+struct ChildBinding { std::int64_t owner; std::string shared_source; };
 
 // 每个数据目录拥有一个跨启动的主会话，原文与有序投递回执在同一库内提交。
 class MessageStore {
@@ -46,6 +49,15 @@ class MessageStore {
   private:
     friend class MainMessages;
     friend class TaskReflection;
+    friend class Subagents;
+    // 将真实包身份与结构化预设绑定到跨启动的子库。
+    ChildBinding bind_child(std::string_view plugin,const plugins::MemoryIdentity& identity);
+    // 保存原子库中的一份显式记录，拒绝越权、重试冲突及失效来源。
+    std::int64_t child_note(std::int64_t child,const std::string& event,const std::string& topic,const std::string& content);
+    // 根据当前读权与实际受众生成限量投影，复核授权原话。
+    nlohmann::json child_projection(std::int64_t child,std::string_view topic,bool outward) const;
+    // 主人配置指定插件、渠道和账号的分身权限及一份明确共享的原件。
+    std::int64_t grant_avatar(std::string_view plugin,const plugins::MemoryIdentity& identity,int access,std::string_view reference);
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
     std::optional<nlohmann::json> next_comparison() const;
     // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。

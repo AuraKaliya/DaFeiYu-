@@ -2,6 +2,7 @@
 #include "binding_facts.hpp"
 #include "run_log.hpp"
 #include "persona.hpp"
+#include "message_store.hpp"
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
@@ -28,6 +29,9 @@ struct Subagents::Slot {
     BindingFacts facts;
     std::unique_ptr<BindingFacts> pending_facts;
     bool continuous_history = false;
+    std::optional<ChildBinding> memory;
+    std::string topic;
+    bool outward=false, reset_memory_history=false;
     std::uint64_t projected_receipt = 0, pending_receipt = 0;
 };
 struct Subagents::WorkSlot {
@@ -52,6 +56,43 @@ Subagents::Subagents(plugins::PluginManager& plugins, model::Config config, std:
 
 // 释放槽位，原会话仍负责协作取消和等待正在使用的资源。
 Subagents::~Subagents() = default;
+
+// 替换主档案时先撤销以前一切持久绑定。
+void Subagents::bind_memory(std::shared_ptr<MessageStore> store) {
+    if (memory_!=store) for (auto& slot : slots_) if (slot && slot->memory) slot->closing=true;
+    memory_=std::move(store);
+}
+
+// 校验原插件与持久身份后创建新的独立运行上下文。
+runtime::DomainId Subagents::open_bound(const std::shared_ptr<plugins::PluginInstance>& instance,const plugins::MemoryIdentity& who) {
+    if (!memory_ || !instance) throw std::invalid_argument("child memory: profile required");
+    auto binding=memory_->bind_child(instance->plugin_id(),who);
+    const auto id=open(instance);
+    find(instance->generation(),id).memory=std::move(binding);
+    return id;
+}
+// 按原所有者和原会话查子库，未绑定、关停及越权写入均被拒绝。
+std::uint64_t Subagents::remember(runtime::DomainId owner,runtime::DomainId id,const std::string& event,const std::string& topic,const std::string& content) {
+    const auto& slot=find(owner,id);
+    if (stopping_ || slot.closing || !slot.memory) throw std::invalid_argument("child memory: unavailable");
+    return memory_->child_note(slot.memory->owner,event,topic,content);
+}
+// 只有原插件在两个请求之间可以选择主题，切换主题清除上次投影的历史。
+void Subagents::select_topic(runtime::DomainId owner,runtime::DomainId id,std::string topic) {
+    auto& slot=find(owner,id);
+    if (stopping_ || slot.closing || !slot.memory || slot.active || slot.queued || topic.size()>128 ||
+        (!topic.empty() && (topic.find_first_not_of(" ")==topic.npos || std::ranges::any_of(topic,[](unsigned char c){return c<32 || c==127;}))))
+        throw std::invalid_argument("child memory: invalid selection");
+    if (slot.topic!=topic) { slot.topic=std::move(topic); slot.reset_memory_history=true; }
+}
+// 撤回源或渠道权限后立即封住旧答复，在途推断请求取消并留待真实退出。
+void Subagents::invalidate_memory(std::int64_t child,std::string_view source) {
+    for (auto& slot : slots_) if (slot && slot->memory && (slot->memory->owner==child ||
+        (!source.empty() && slot->memory->shared_source==source))) {
+        slot->closing=true; slot->queued.reset(); slot->answer.clear();
+        if (slot->active) slot->active->request_cancel(runtime::CancelReason::owner_stop);
+    }
+}
 
 // 在独立槽位内创建上下文并签发原会话地址。
 runtime::DomainId Subagents::open(const std::shared_ptr<plugins::PluginInstance>& instance) {
@@ -102,7 +143,8 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
     std::unique_ptr<BindingFacts> pending;
     if (input.frame) {
         pending = std::make_unique<BindingFacts>(slot.facts);
-        const bool baseline = input.frame->baseline || !slot.continuous_history;
+        const bool baseline = input.frame->baseline || !slot.continuous_history ||
+            (slot.memory && (slot.reset_memory_history || slot.outward!=input.player_facing));
         auto prompt = pending->apply(input,slot.request+1,baseline);
         const auto instance = slot.instance.lock();
         if (!instance) throw std::invalid_argument("subagent: status owner gone");
@@ -171,6 +213,7 @@ std::optional<std::string> Subagents::read_receipt(runtime::DomainId owner, runt
 // 投影原请求状态和本次结算正文。
 SubagentStatus Subagents::status(runtime::DomainId owner, runtime::DomainId id) const {
     const auto& slot = find(owner,id);
+    if (slot.memory && slot.closing) return {slot.request,SubagentPhase::cancelled,{}};
     return {slot.request,slot.phase,slot.answer};
 }
 
@@ -258,7 +301,24 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         options.decision_status = agent::DecisionStatusOptions{binding+(input.replace_history ? "/"+std::to_string(slot.request) : ""),{},false};
     }
     options.replace_history = input.replace_history;
+    if (slot.memory) {
+        auto& status=*options.decision_status;
+        options.replace_history=options.replace_history || slot.reset_memory_history || slot.outward!=input.player_facing;
+        status.binding+="/child/"+std::to_string(slot.memory->owner)+(input.player_facing ? "/out/" : "/in/")+platform::sha256(slot.topic);
+        const auto records=memory_->child_projection(slot.memory->owner,slot.topic,input.player_facing);
+        if (!records.empty()) {
+            static const std::string schema=R"([{"key":"childmemory.records","version":1,"description":"原子会话按授权收到的记录，origin 标明所有者","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"origin":{"type":"string"},"reference":{"type":"string"},"text":{"type":"string"},"sourceRef":{"type":"string"},"partial":{"type":"boolean"}},"required":["origin","reference","text"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}])";
+            agent::DecisionStatusSource source{"childmemory",schema,nlohmann::json::array({{{"key","childmemory.records"},{"version",1},
+                {"subject",std::to_string(slot.memory->owner)},{"fact",slot.request},{"value",{{"items",records}}}}}).dump()};
+            status.sample=[previous=std::move(status.sample),source=std::move(source)]{
+                auto result=previous ? previous() : std::vector<agent::DecisionStatusSource>{};
+                result.push_back(source); return result;
+            };
+        }
+    }
     slot.active = slot.session.begin(input.prompt,std::move(options));
+    slot.outward=input.player_facing;
+    slot.reset_memory_history=false;
     slot.continuous_history = static_cast<bool>(slot.pending_facts);
     if (slot.pending_facts) {
         slot.facts = std::move(*slot.pending_facts);

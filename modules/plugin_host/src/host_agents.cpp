@@ -51,6 +51,40 @@ dfy_v2_status DFY_V2_CALL open(uint64_t* output, dfy_v2_error* error) {
     });
 }
 
+// 从实际插件回调建立持久身份，原会话号及所有者均由宿主签发。
+dfy_v2_status DFY_V2_CALL open_bound(uint32_t preset,dfy_v2_string_view subject,dfy_v2_string_view channel,
+    uint64_t* session,dfy_v2_error* error) {
+    if (session) *session=0;
+    return boundary(error,[&](auto& host) {
+        const auto service=host.agents.lock();
+        const auto instance=host.agent_instance.lock();
+        if (!service || !instance) return DFY_V2_UNSUPPORTED;
+        if (!session || preset<DFY_V2_MEMORY_TASK || preset>DFY_V2_MEMORY_AVATAR) return DFY_V2_INVALID_ARGUMENT;
+        *session=service->open_bound(instance,{static_cast<MemoryPreset>(preset),text(subject,128),text(channel,128)});
+        return DFY_V2_OK;
+    });
+}
+// 将借用参数在回调内复制为原会话的不可变记忆记录。
+dfy_v2_status DFY_V2_CALL remember(uint64_t session,dfy_v2_string_view event,dfy_v2_string_view topic,
+    dfy_v2_string_view content,uint64_t* original,dfy_v2_error* error) {
+    if (original) *original=0;
+    return boundary(error,[&](auto& host) {
+        const auto service=host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        if (!original || !session) return DFY_V2_INVALID_ARGUMENT;
+        *original=service->remember(host.agent_owner,session,text(event,128),text(topic,128),text(content,768));
+        return DFY_V2_OK;
+    });
+}
+// 仅让原会话选择自己的主题，宿主稍后按当轮受众取件。
+dfy_v2_status DFY_V2_CALL select_topic(uint64_t session,dfy_v2_string_view topic,dfy_v2_error* error) {
+    return boundary(error,[&](auto& host) {
+        const auto service=host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        service->select_topic(host.agent_owner,session,text(topic,128)); return DFY_V2_OK;
+    });
+}
+
 // 校验并复制本轮输入，在宿主回调边界后才会开始执行。
 // 步骤：清空输出及校验布局 → 核对服务 → 复制有界输入 → 接纳回合。
 template<uint32_t version>
@@ -196,6 +230,11 @@ const dfy_v2_agent_api& agent_api(uint32_t version) {
         submit<DFY_V2_AGENT_THINKING_VERSION>,status,cancel,close};
     if (version == DFY_V2_AGENT_THINKING_VERSION) return thinking;
     return version == DFY_V2_AGENT_PERSONA_VERSION ? persona : basic;
+}
+// 发布独立协商的子会话记忆表。
+const dfy_v2_agent_memory_api& agent_memory_api() {
+    static const dfy_v2_agent_memory_api api{{sizeof(api),DFY_V2_AGENT_MEMORY_VERSION},open_bound,remember,select_topic};
+    return api;
 }
 // 发布独立的小型事实表，原子会话服务的大小和字段位置保持 ABI 兼容。
 const dfy_v2_agent_facts_api& agent_facts_api() {

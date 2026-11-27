@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>8) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>9) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -110,6 +110,12 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
                 update.bind(2,rows.number(0)); update.next();
             }
         }
+        if (previous<9) sql(db,"CREATE TABLE IF NOT EXISTS child_owner(id INTEGER PRIMARY KEY,plugin TEXT NOT NULL,preset INTEGER NOT NULL,"
+            "subject TEXT NOT NULL,channel TEXT NOT NULL,access INTEGER NOT NULL,source INTEGER NOT NULL DEFAULT 0,"
+            "UNIQUE(plugin,preset,subject,channel));"
+            "CREATE TABLE IF NOT EXISTS child_note(id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,event TEXT NOT NULL,topic TEXT NOT NULL,"
+            "content TEXT NOT NULL,source INTEGER NOT NULL,UNIQUE(owner,event));"
+            "CREATE INDEX IF NOT EXISTS child_topic ON child_note(owner,topic,id DESC); PRAGMA user_version=9");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

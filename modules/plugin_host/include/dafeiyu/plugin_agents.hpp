@@ -9,6 +9,8 @@
 
 namespace dfy::plugins {
 class PluginInstance;
+enum class MemoryPreset : unsigned { task=1, business, avatar };
+struct MemoryIdentity { MemoryPreset preset; std::string subject, channel; };
 enum class SubagentThinking { inherit, off, low };
 struct SubagentFrame { std::uint64_t epoch, sequence; std::string scope; bool baseline; };
 struct SubagentWorkFact {
@@ -48,6 +50,15 @@ class PluginAgents {
     virtual ~PluginAgents() = default;
     // 为宿主绑定的原实例创建独立上下文。
     virtual runtime::DomainId open(const std::shared_ptr<PluginInstance>& instance) = 0;
+    // 当前宿主是否已绑定支持持久身份的数据档案。
+    virtual bool memory_available() const noexcept = 0;
+    // 以真实插件实例和结构化业务身份打开独立会话。
+    virtual runtime::DomainId open_bound(const std::shared_ptr<PluginInstance>& instance,const MemoryIdentity& identity) = 0;
+    // 原实例向本会话所属的逻辑库幂等写入一项有来源的记录。
+    virtual std::uint64_t remember(runtime::DomainId owner,runtime::DomainId session,const std::string& event,
+        const std::string& topic,const std::string& content) = 0;
+    // 为以后回合装配本会话获准的主题，业务忙碌时拒绝修改。
+    virtual void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) = 0;
     // 接纳一个有界回合供后续宿主推进。
     virtual std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) = 0;
     // 只接纳同一实例及原工作号的回执，重复版本返回原接纳号。

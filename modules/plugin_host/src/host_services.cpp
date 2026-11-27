@@ -203,6 +203,12 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
     if (!output || !name.data || !name.length || !version) return DFY_V2_INVALID_ARGUMENT;
     return detail::boundary(error, [&](auto& host) {
         const std::string_view requested(name.data, name.length);
+        if (requested == DFY_V2_AGENT_MEMORY_INTERFACE) {
+            const auto service=host.agents.lock();
+            if (!service || !service->memory_available() || version!=DFY_V2_AGENT_MEMORY_VERSION) return DFY_V2_UNSUPPORTED;
+            *output=&detail::agent_memory_api();
+            return DFY_V2_OK;
+        }
         if (requested == DFY_V2_AGENT_FACTS_INTERFACE) {
             if (host.agents.expired()) return DFY_V2_UNSUPPORTED;
             if (version == DFY_V2_AGENT_ORDERED_FACTS_VERSION) *output = &detail::ordered_agent_facts_api();

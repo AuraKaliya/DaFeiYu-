@@ -143,13 +143,21 @@ std::unique_ptr<agent::ToolWork> MainMessages::reflect_memory(const agent::ToolI
 
 // 将管理操作提交到同一持久身份；撤权后停止可能带有旧正文的在途私聊。
 void MainMessages::change_memory(std::string_view identity, const std::optional<std::string>& topic) {
+    const auto original=topic ? std::optional<StoredMessage>{} : store_->recall_memory(identity);
     const auto result = store_->change_memory(identity,topic);
     memory_revision_ = result.revision;
     if (result.changed && !topic) {
+        if (original) app_.subagents().invalidate_memory(0,store_->conversation()+"/"+std::to_string(original->id));
         reflection_->interrupt();
         search_result_.reset();
         if (app_.conversation().busy() && owner_memory_turn_) app_.conversation().cancel();
     }
+}
+
+// 主人修改指定分身授权时，先事务写盘，再封住读过旧授权的运行与模型答复。
+void MainMessages::grant_avatar(const std::string& plugin,const std::string& channel,const std::string& account,int access,std::string_view source) {
+    const auto id=store_->grant_avatar(plugin,{plugins::MemoryPreset::avatar,account,channel},access,source);
+    if (id) app_.subagents().invalidate_memory(id);
 }
 
 // 将读出的原话作为带来源的数据，沿正式决策尾注和上下文预算送模。

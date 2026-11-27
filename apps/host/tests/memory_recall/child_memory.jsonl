@@ -1,0 +1,84 @@
+{"op":"source","text":"记住 手册：限定共享的蓝色说明。"}
+{"op":"open","session":"task","preset":1,"subject":"work-42"}
+{"op":"note","session":"task","event":"once","text":"委托甲的原始记录。","save":"first"}
+{"op":"note","session":"task","event":"once","text":"委托甲的原始记录。","same":"first"}
+{"op":"note","session":"task","event":"once","text":"重传冲突。","deny":true}
+{"op":"select","session":"task"}
+{"op":"run","session":"task","expect":["委托甲的原始记录。"]}
+{"op":"run","session":"task","expect":[],"out":true}
+{"op":"run","session":"task","expect":["委托甲的原始记录。"]}
+{"op":"select","session":"task","topic":"另一主题"}
+{"op":"run","session":"task","expect":[]}
+{"op":"open","session":"new","preset":1,"subject":"work-43"}
+{"op":"select","session":"new"}
+{"op":"run","session":"new","expect":[]}
+{"op":"open","session":"business","preset":2,"subject":"unit-1"}
+{"op":"note","session":"business","event":"first","text":"东区设备的私有读数。"}
+{"op":"select","session":"business"}
+{"op":"run","session":"business","expect":["东区设备的私有读数。"]}
+{"op":"open","session":"unit2","preset":2,"subject":"unit-2"}
+{"op":"select","session":"unit2"}
+{"op":"run","session":"unit2","expect":[]}
+{"op":"open","session":"same-label","preset":1,"subject":"unit-1"}
+{"op":"select","session":"same-label"}
+{"op":"run","session":"same-label","expect":[]}
+{"op":"open","session":"other","preset":2,"subject":"unit-1","plugin":"test.tools"}
+{"op":"select","session":"other","plugin":"test.tools"}
+{"op":"run","session":"other","expect":[],"plugin":"test.tools"}
+{"op":"note","session":"other","event":"first","text":"同对象在另一个插件中的记录。","plugin":"test.tools"}
+{"op":"run","session":"other","expect":["同对象在另一个插件中的记录。"],"plugin":"test.tools"}
+{"op":"note","session":"business","event":"intruder","text":"跨包写入。","plugin":"test.tools","deny":true}
+{"op":"open","session":"no-grant","preset":3,"subject":"north","channel":"bridge","deny":true}
+{"op":"open","session":"invalid","preset":2,"subject":"unit-1","channel":"bridge","deny":true}
+{"op":"grant","command":"/memory avatar example.status bridge north read private @source"}
+{"op":"open","session":"avatar","preset":3,"subject":"north","channel":"bridge"}
+{"op":"select","session":"avatar"}
+{"op":"run","session":"avatar","expect":["记住 手册：限定共享的蓝色说明。"]}
+{"op":"note","session":"avatar","event":"denied","text":"只读账号不能写。","deny":true}
+{"op":"run","session":"avatar","expect":[],"out":true}
+{"op":"open","session":"wrong-channel","preset":3,"subject":"north","channel":"other","deny":true}
+{"op":"open","session":"wrong-account","preset":3,"subject":"other","channel":"bridge","deny":true}
+{"op":"grant","command":"/memory avatar example.status bridge south write private"}
+{"op":"open","session":"writer","preset":3,"subject":"south","channel":"bridge"}
+{"op":"note","session":"writer","event":"e1","text":"只写账号记下的内容。"}
+{"op":"select","session":"writer"}
+{"op":"run","session":"writer","expect":[]}
+{"op":"grant","command":"/memory avatar example.status bridge north both relay @source"}
+{"op":"open","session":"avatar2","preset":3,"subject":"north","channel":"bridge"}
+{"op":"note","session":"avatar2","event":"d1","text":"分身就蓝色说明写的笔记。"}
+{"op":"select","session":"avatar2"}
+{"op":"run","session":"avatar2","expect":["记住 手册：限定共享的蓝色说明。","分身就蓝色说明写的笔记。"],"out":true}
+{"op":"main"}
+{"op":"restart"}
+{"op":"note","session":"task","event":"old","text":"旧代次尝试写。","deny":true}
+{"op":"open","session":"again","preset":1,"subject":"work-42"}
+{"op":"select","session":"again"}
+{"op":"run","session":"again","expect":["委托甲的原始记录。"]}
+{"op":"open","session":"business2","preset":2,"subject":"unit-1"}
+{"op":"select","session":"business2"}
+{"op":"run","session":"business2","expect":["东区设备的私有读数。"]}
+{"op":"open","session":"avatar3","preset":3,"subject":"north","channel":"bridge"}
+{"op":"select","session":"avatar3"}
+{"op":"run","session":"avatar3","expect":["记住 手册：限定共享的蓝色说明。","分身就蓝色说明写的笔记。"]}
+{"op":"run","session":"avatar3","expect":["记住 手册：限定共享的蓝色说明。","分身就蓝色说明写的笔记。"],"hold":true}
+{"op":"revoke","command":"/memory revoke @source"}
+{"op":"status","session":"avatar3"}
+{"op":"release"}
+{"op":"open","session":"avatar4","preset":3,"subject":"north","channel":"bridge"}
+{"op":"select","session":"avatar4"}
+{"op":"run","session":"avatar4","expect":[],"out":true}
+{"op":"grant","command":"/memory avatar example.status bridge north both private"}
+{"op":"open","session":"avatar5","preset":3,"subject":"north","channel":"bridge"}
+{"op":"select","session":"avatar5"}
+{"op":"run","session":"avatar5","expect":[]}
+{"op":"grant","command":"/memory avatar example.status bridge north off private"}
+{"op":"open","session":"after-off","preset":3,"subject":"north","channel":"bridge","deny":true}
+{"op":"grant","command":"/memory avatar example.status bridge south read private"}
+{"op":"open","session":"south2","preset":3,"subject":"south","channel":"bridge"}
+{"op":"select","session":"south2"}
+{"op":"run","session":"south2","expect":["只写账号记下的内容。"]}
+{"op":"restart"}
+{"op":"open","session":"off-restart","preset":3,"subject":"north","channel":"bridge","deny":true}
+{"op":"open","session":"independent","preset":2,"subject":"unit-1"}
+{"op":"select","session":"independent"}
+{"op":"run","session":"independent","expect":["东区设备的私有读数。"]}
