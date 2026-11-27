@@ -60,8 +60,9 @@ void MainMessages::register_memory_tools() {
         "主人问已发布的做法时用 knowledge，填条目键或主题，引用当前版并说明适用条件。"
         "跨工具对照用 comparisons，填一至三个主题词，先写对象或常用别称，可用度量、条件、检查点区分，也可单填比较键或版本号。"
         "多个词须同时符合，ambiguous 时询问具体对象或条件。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
-        "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
+        "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。"
+        "比较两次渠道采样用 observations，topics 分别填两次任务的完整名称或读回回执号。按返回的理由说明可比性，转发须追到原件。",
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -111,13 +112,15 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto take = count>=limit ? limit : count.get<unsigned>();
         if (args.contains("offset") && ((view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
-        const auto result = view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
+        const auto result = view=="observations" ? store_->compare_observations(topics) :
+            view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
             view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
             view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
             view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
             own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
         const auto size = result.at("items").size();
-        search_result_ = view=="comparisons" ? case_source(call.attempt.step.run.sequence,result) :
+        search_result_ = view=="observations" ? observation_source(call.attempt.step.run.sequence,result) :
+            view=="comparisons" ? case_source(call.attempt.step.run.sequence,result) :
             view=="knowledge" ? knowledge_source(store_->conversation(),call.attempt.step.run.sequence,result) :
             view=="letters" ? letter_source(call.attempt.step.run.sequence,result) :
             view=="understanding" ? understanding_source(call.attempt.step.run.sequence,result) :

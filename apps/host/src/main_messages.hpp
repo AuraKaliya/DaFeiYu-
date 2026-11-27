@@ -108,6 +108,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     agent::DecisionStatusSource understanding_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 把跨渠道证据与本体解释按不同字段装配到私聊。
     agent::DecisionStatusSource case_source(std::uint64_t turn,const nlohmann::json& result) const;
+    // 仅在当前私人回合交付跨渠道判断及其两份原件。
+    agent::DecisionStatusSource observation_source(std::uint64_t turn,const nlohmann::json& result) const;
     // 封装记忆工具的确定回执及效果。
     static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。

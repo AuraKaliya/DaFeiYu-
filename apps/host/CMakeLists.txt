@@ -15,7 +15,7 @@ add_library(dfy_application STATIC
   src/mailbox_intake.hpp src/mailbox_view.cpp src/mailbox_view.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
   src/message_store.cpp src/message_store.hpp src/main_memory.cpp src/main_experience.cpp src/main_task_memory.cpp src/host_settings.cpp src/host_settings.hpp
   src/message_store_db.hpp src/child_memory.cpp src/child_letters.cpp src/main_letters.cpp src/knowledge_store.cpp src/main_knowledge.cpp src/knowledge.hpp
-  src/comparison_tag.hpp src/case_store.cpp src/case_search.cpp src/case_evidence.cpp src/case_review.cpp src/case_review.hpp src/main_comparison.cpp
+  src/comparison_tag.hpp src/case_store.cpp src/case_search.cpp src/channel_observation.cpp src/case_evidence.cpp src/case_review.cpp src/case_review.hpp src/main_comparison.cpp
   src/letter_digest.cpp
   src/task_store.cpp src/task_understanding.cpp src/task_reflection.cpp src/task_reflection.hpp
   src/host_settings_file.cpp src/host_settings_file.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp

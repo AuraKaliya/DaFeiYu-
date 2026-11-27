@@ -24,4 +24,6 @@ void populate_comparison_archive(const fs::path& data,unsigned groups);
 std::size_t populate_long_archive(const fs::path& data,unsigned natives);
 // 同组历史扩容后验证首屏、深页、撤权以及前台实收预算。
 void long_case_recall(const fs::path& corpus,const fs::path& data);
+// 由两个隔离的业务插件发回原件，核对主人私聊中的比较、来源及撤权。
+void channel_observations(const fs::path& corpus,const fs::path& data,const fs::path& freight,const fs::path& museum);
 }

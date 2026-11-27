@@ -1,8 +1,16 @@
 ﻿#include <dafeiyu/tool_abi_v2.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef DFY_CHANNEL_FIXTURE
+// 根据该渠道的配置快照解码原始业务记录，结果由当前插件实例独占。
+int dfy_channel_decode(dfy_v2_string_view config,char* output,size_t capacity);
+#endif
 typedef struct job { uint64_t sequence; uint32_t alive, increment, ready, succeeded, effect, exited, cancel; char output[32]; } job;
-struct dfy_v2_instance { uint32_t alive, running; uint64_t owner, next_job, value; dfy_v2_query_interface_fn host; job jobs[2]; };
+struct dfy_v2_instance { uint32_t alive, running; uint64_t owner, next_job, value; dfy_v2_query_interface_fn host; job jobs[2];
+#ifdef DFY_CHANNEL_FIXTURE
+    char reading[4097];
+#endif
+};
 static struct dfy_v2_instance instances[8];
 static uint64_t next_owner = 0;
 static uint32_t mode = 0, starts = 0, effects = 0, releases = 0;
@@ -44,7 +52,11 @@ static dfy_v2_status DFY_V2_CALL create(dfy_v2_query_interface_fn host, dfy_v2_s
     unsigned n; if (output) *output = NULL;
     if (!output || !host || !config.data || next_owner == UINT64_MAX) return report(DFY_V2_INVALID_ARGUMENT,error);
     for (n = 0; n < 8; ++n) if (!instances[n].alive) {
-        memset(&instances[n],0,sizeof(instances[n])); instances[n].alive = 1; instances[n].owner = ++next_owner;
+        memset(&instances[n],0,sizeof(instances[n]));
+#ifdef DFY_CHANNEL_FIXTURE
+        if (!dfy_channel_decode(config,instances[n].reading,sizeof(instances[n].reading))) return report(DFY_V2_INVALID_ARGUMENT,error);
+#endif
+        instances[n].alive = 1; instances[n].owner = ++next_owner;
         instances[n].host = host; *output = &instances[n]; return report(DFY_V2_OK,error);
     }
     return report(DFY_V2_RESOURCE_EXHAUSTED,error);
@@ -124,6 +136,9 @@ static dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket t
     if (mode == 6) { work->exited = 1; mode = 1; }
     output->struct_size = sizeof(*output); output->result_ready = 1; output->succeeded = work->succeeded;
     output->effect = work->effect; output->exited = work->exited; output->output = view(work->output);
+#ifdef DFY_CHANNEL_FIXTURE
+    if (!work->increment) output->output=view(instance->reading);
+#endif
     if (mode == 5) { mode = 0; --output->struct_size; }
     return report(DFY_V2_OK,error);
 }

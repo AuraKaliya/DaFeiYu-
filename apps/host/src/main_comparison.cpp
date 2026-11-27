@@ -3,6 +3,21 @@
 
 namespace dfy::app {
 using Json=nlohmann::json;
+// 以本轮状态样本交付两份渠道读回、精确换算及判断依据。
+agent::DecisionStatusSource MainMessages::observation_source(std::uint64_t turn,const Json& result) const {
+    static const auto schema=[] {
+        const Json str{{"type","string"}},flag{{"type","boolean"}};
+        const auto obj=[](Json fields){return Json{{"type","object"},{"properties",std::move(fields)},{"additionalProperties",false}};};
+        const auto list=[](Json items){return Json{{"type","array"},{"items",std::move(items)}};};
+        Json fields=Json::object();
+        for(const auto k:{"reference","readTool","originalRef","originalTool","object","measure","label","checkpoint","observer","sample",
+            "value","unit","normalizedValue","normalizedUnit"}) fields[k]=str;
+        const auto item=obj({{"state",str},{"reason",str},{"partial",flag},{"facts",list(obj(fields))}});
+        return Json::array({{{"key","memory.observations"},{"version",1},{"description","本体按渠道原回执核对的对象、检查点、采样方和单位"},
+            {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",obj({{"items",list(item)},{"limited",flag},{"ambiguous",flag}})}}}).dump();
+    }();
+    return {"memory",schema,Json::array({{{"key","memory.observations"},{"version",1},{"subject",store_->conversation()},{"fact",turn},{"value",result}}}).dump()};
+}
 // 主人声明可比性；事后整理的依据在查询中保留其标记。
 void MainMessages::manage_case(const std::vector<std::string>& words) {
     if (words.size()==8 && words[1]=="define")

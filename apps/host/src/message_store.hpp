@@ -111,6 +111,8 @@ class MessageStore {
     void commit_digest(const nlohmann::json& batch,const nlohmann::json& proposal);
     // 查当前或某一历史版本的跨渠道证据、分歧及本体理解。
     nlohmann::json search_cases(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const;
+    // 用两份仍可读取的渠道回执核对同物、同次采样、来源独立性与原值。
+    nlohmann::json compare_observations(const std::vector<std::string>& topics) const;
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
     std::optional<nlohmann::json> next_comparison() const;
     // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。
