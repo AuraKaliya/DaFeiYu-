@@ -21,6 +21,8 @@
 
 ### 本体记忆与知识库
 
+2026 年 11 月 27 日在本地完成一次全量离线回归。Debug 和 Release 各通过 340 项，其中核心及集成测试 306 项，桌面测试 34 项。下表中的送模数据来自固定模型后端实际收到的请求。真实模型面对新问法时如何选工具、提取参数和归纳，另列场景保留观察。
+
 | 编号 | 已验收的行为 | 支持边界 | 验证入口 |
 | --- | --- | --- | --- |
 | Agent-记忆-1 | <a id="agent-记忆-1"></a>同题逐批加入过期、转述、越权及独立分歧材料，核对候选、来源、修订与总字节数 | 系统 SQLite 中的合成逻辑库，主对照预算 256 个 UTF-8 字节。前四阶段返回同一条 83 字节的证据，独立分歧加入后两条占 189 字节。另验历史时点、跨委托隔离、受众、撤权、完整往返行程及容量边界。主聊天原件接入见下一项。 | Debug、Release 各连续三次通过 `app.memory_recall_baseline`。构建目标 `dfy_memory_recall_tests`，执行 CTest 加 `-V` 可查看每阶段耗时。[查询](../../apps/host/tests/memory_recall/search.sql) · [固定语料](../../apps/host/tests/memory_recall/corpus.sql) · [验收程序](../../apps/host/tests/memory_recall/experiment.cpp) |

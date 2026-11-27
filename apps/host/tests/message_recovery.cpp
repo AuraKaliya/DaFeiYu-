@@ -1,4 +1,5 @@
 #include "../../../tests/decision_input.hpp"
+#include "legacy_memory_schema.hpp"
 #include "application.hpp"
 #include "main_messages.hpp"
 #include "management/resident.hpp"
@@ -223,11 +224,11 @@ void verify(const std::filesystem::path& data) {
         const auto path = (data/"main-conversation.sqlite3").u8string();
         if (sqlite3_open(reinterpret_cast<const char*>(path.c_str()),&legacy)!=SQLITE_OK) throw std::runtime_error("legacy fixture open failed");
         std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(legacy,&sqlite3_close);
-        if (sqlite3_exec(legacy,"DROP TABLE outbox; DROP TABLE task_understanding; DROP TABLE reflection_progress; DROP TABLE task_observation;"
+        const auto schema="BEGIN;"+dfy::tests::drop_later_memory_schema+"DROP TABLE outbox; DROP TABLE task_understanding; DROP TABLE reflection_progress; DROP TABLE task_observation;"
             "DROP TABLE task_memory; DROP TABLE experience_review; DROP TABLE main_experience; DROP TABLE memory_review; DROP TABLE personal_memory;"
             "ALTER TABLE conversation RENAME TO current_conversation; CREATE TABLE conversation(id TEXT NOT NULL);"
-            "INSERT INTO conversation SELECT id FROM current_conversation; DROP TABLE current_conversation; PRAGMA user_version=1",
-            nullptr,nullptr,nullptr)!=SQLITE_OK)
+            "INSERT INTO conversation SELECT id FROM current_conversation; DROP TABLE current_conversation; PRAGMA user_version=1; COMMIT;";
+        if (sqlite3_exec(legacy,schema.c_str(),nullptr,nullptr,nullptr)!=SQLITE_OK)
             throw std::runtime_error("legacy fixture schema failed");
     }
     auto db = std::make_shared<app::MessageStore>(data);

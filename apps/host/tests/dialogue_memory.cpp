@@ -1,4 +1,5 @@
 #include "application.hpp"
+#include "legacy_memory_schema.hpp"
 #include "main_messages.hpp"
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/model_protocol.hpp>
@@ -32,12 +33,12 @@ void seed_legacy(const std::filesystem::path& data, const Json& seed, Sources& s
     const auto path = (data/"main-conversation.sqlite3").u8string();
     const auto opened = sqlite3_open(reinterpret_cast<const char*>(path.c_str()),&handle);
     std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(handle,&sqlite3_close);
-    require(opened==SQLITE_OK && sqlite3_exec(handle,"BEGIN; DROP TABLE task_understanding; DROP TABLE reflection_progress; DROP TABLE task_observation;"
+    const auto schema="BEGIN;"+dfy::tests::drop_later_memory_schema+"DROP TABLE task_understanding; DROP TABLE reflection_progress; DROP TABLE task_observation;"
         "DROP TABLE task_memory; DROP TABLE experience_review; DROP TABLE main_experience; DROP TABLE memory_review; DROP INDEX active_memory_topic;"
         "ALTER TABLE personal_memory RENAME TO newer; CREATE TABLE personal_memory(message INTEGER PRIMARY KEY,topic TEXT NOT NULL,active INTEGER NOT NULL);"
         "INSERT INTO personal_memory SELECT message,topic,active FROM newer; DROP TABLE newer;"
-        "CREATE INDEX active_memory_topic ON personal_memory(topic,message DESC) WHERE active=1; PRAGMA user_version=3; COMMIT",
-        nullptr,nullptr,nullptr)==SQLITE_OK,"could not prepare v3 profile");
+        "CREATE INDEX active_memory_topic ON personal_memory(topic,message DESC) WHERE active=1; PRAGMA user_version=3; COMMIT";
+    require(opened==SQLITE_OK && sqlite3_exec(handle,schema.c_str(),nullptr,nullptr,nullptr)==SQLITE_OK,"could not prepare v3 profile");
 }
 
 // 让业务线程推进到本回合成功结算。

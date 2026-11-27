@@ -61,6 +61,7 @@ target_link_libraries(dfy_persistent_dialogue_tests PRIVATE dfy_application dfy_
 add_test(NAME app.persistent_dialogue COMMAND dfy_persistent_dialogue_tests "${CMAKE_CURRENT_BINARY_DIR}/persistent-dialogue")
 
 dfy_test_executable(dfy_message_recovery_tests message_recovery.cpp)
+target_sources(dfy_message_recovery_tests PRIVATE legacy_memory_schema.hpp)
 target_link_libraries(dfy_message_recovery_tests PRIVATE dfy_management dfy_build_options winsqlite3)
 add_test(NAME app.message_recovery COMMAND dfy_message_recovery_tests "${CMAKE_CURRENT_BINARY_DIR}/message-recovery")
 
@@ -86,6 +87,7 @@ add_test(NAME app.main_memory COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:
 set_tests_properties(app.main_memory PROPERTIES TIMEOUT 40)
 
 dfy_test_executable(dfy_dialogue_memory_tests dialogue_memory.cpp)
+target_sources(dfy_dialogue_memory_tests PRIVATE legacy_memory_schema.hpp)
 target_link_libraries(dfy_dialogue_memory_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 add_test(NAME app.dialogue_memory COMMAND dfy_dialogue_memory_tests "${CMAKE_CURRENT_SOURCE_DIR}/memory_recall/dialogue.jsonl"
   "${CMAKE_CURRENT_BINARY_DIR}/dialogue-memory/$<CONFIG>")
