@@ -1,0 +1,74 @@
+{"op":"open","session":"writer","preset":2,"subject":"档案"}
+{"op":"begin","session":"writer","key":"长信","mode":4,"abi":1,"deny":true}
+{"op":"begin","session":"writer","key":"长信","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","save":"long","parts":["我先清点了交接材料。",{"text":"逐项登记过现场条目，","repeat":100},"。\n中段登记显示三份已交接。",{"text":"另附日常事项记录，","repeat":120},"。\n最后复核仍缺少接收方的签字。"]}
+{"op":"admin","command":"/comparison define inbox 值班交接 报告 文本 当班结束 literal"}
+{"op":"admin","command":"/comparison attach inbox checkpoint $long","deny":true}
+{"op":"pump"}
+{"op":"mail","selector":"$long","items":[{"ref":"$long","mode":"digest","phase":"end","digestState":"pending","summaryKind":"excerpt","bodyRef":"$long/body"}]}
+{"op":"restart"}
+{"op":"digest","ref":"$long","picks":[{"role":"activity","contains":"我先清点了交接材料"},{"role":"reported_result","contains":"中段登记显示三份已交接"},{"role":"open_question","contains":"最后复核仍缺少接收方的签字"}]}
+{"op":"mail","selector":"$long","items":[{"ref":"$long","mode":"digest","phase":"end","digestState":"ready","digestEditor":"main","digest":[{"role":"activity","contains":"我先清点了交接材料"},{"role":"reported_result","contains":"中段登记显示三份已交接"},{"role":"open_question","contains":"最后复核仍缺少接收方的签字","save":"ending"}],"bodyRef":"$long/body"}]}
+{"op":"mail","selector":"$long/body","offsetFrom":"ending","items":[{"ref":"$long/body","origin":"sender_body","source":"long"}]}
+{"op":"restart"}
+{"op":"mail","selector":"$long","items":[{"ref":"$long","mode":"digest","phase":"end","digestState":"ready","digestEditor":"main","digest":[{"role":"activity","contains":"我先清点了交接材料"},{"role":"reported_result","contains":"中段登记显示三份已交接"},{"role":"open_question","contains":"最后复核仍缺少接收方的签字"}]}]}
+{"op":"mail","room":true,"pending":false,"forbidden":["我先清点了交接材料","最后复核仍缺少接收方的签字","另附日常事项记录"]}
+{"op":"open","session":"writer","preset":2,"subject":"档案"}
+{"op":"begin","session":"writer","key":"伪造提议","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","save":"forged","summary":"发信人提供的短报告。","body":"这是一次没有现场证实的报告。"}
+{"op":"pump"}
+{"op":"digest","ref":"$forged","picks":[],"propose":{"picks":[{"offset":1,"role":"reported_result","text":"所有问题已经修好。"}]},"outcome":"rejected"}
+{"op":"mail","selector":"$forged","items":[{"ref":"$forged","mode":"digest","phase":"end","digestState":"fallback","summary":"发信人提供的短报告。","summaryKind":"sender_summary","bodyRef":"$forged/body"}]}
+{"op":"begin","session":"writer","key":"空报告","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","save":"empty"}
+{"op":"pump"}
+{"op":"mail","selector":"$empty","items":[{"ref":"$empty","mode":"digest","phase":"end","digestState":"no_body"}]}
+{"op":"begin","session":"writer","key":"主动搁置","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","save":"defer","body":"转交一段没有结论的报告。"}
+{"op":"pump"}
+{"op":"digest","ref":"$defer","picks":[],"propose":{"defer":true},"outcome":"deferred"}
+{"op":"mail","selector":"$defer","items":[{"ref":"$defer","mode":"digest","phase":"end","digestState":"fallback","bodyRef":"$defer/body"}]}
+{"op":"begin","session":"writer","key":"整理调用失败","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","body":"原报告仍可按号追溯。","save":"transport"}
+{"op":"pump"}
+{"op":"digest","ref":"$transport","transport":true,"outcome":"backend_fallback"}
+{"op":"mail","selector":"$transport","items":[{"ref":"$transport","digestState":"fallback","bodyRef":"$transport/body"}]}
+{"op":"begin","session":"writer","key":"预算不足","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","save":"capacity","body":"未确认的采样记录。","repeat":230}
+{"op":"pump"}
+{"op":"restart","window":384}
+{"op":"digest","ref":"$capacity","picks":[],"outcome":"capacity_fallback"}
+{"op":"restart"}
+{"op":"mail","selector":"$capacity","items":[{"ref":"$capacity","mode":"digest","phase":"end","digestState":"fallback","bodyRef":"$capacity/body"}]}
+{"op":"open","session":"proof","preset":2,"subject":"仅整理信件"}
+{"op":"note","session":"proof","event":"private-note","text":"子库笔记未导出。","save":"private-note"}
+{"op":"begin","session":"proof","key":"字符边界","mode":4,"abi":2}
+{"op":"run","session":"proof","expect":[]}
+{"op":"end","session":"proof","body":"只寄这段报告。","note":"private-note","deny":true}
+{"op":"end","session":"proof","body":"只寄这段报告。","summary":"\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t交接摘要末尾仍待核对。","save":"escaped"}
+{"op":"pump"}
+{"op":"digest","ref":"$escaped","picks":[{"role":"activity","contains":"只寄这段报告"}]}
+{"op":"mail","selector":"$escaped","items":[{"ref":"$escaped","digestState":"ready","summaryRef":"$escaped/summary","partial":true,"digest":[{"role":"activity","contains":"只寄这段报告"}]}]}
+{"op":"mail","selector":"$escaped/summary","items":[{"ref":"$escaped/summary","origin":"sender_summary","source":"escaped-summary"}]}
+{"op":"mail","selector":"$escaped/note","items":[]}
+{"op":"source","text":"记住 手册：本次交接材料只给指定分身。"}
+{"op":"admin","command":"/memory avatar example.status bridge north both private @source"}
+{"op":"open","session":"avatar","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"avatar","key":"可撤的来源","mode":4,"abi":2}
+{"op":"select","session":"avatar"}
+{"op":"run","session":"avatar","expect":["记住 手册：本次交接材料只给指定分身。"]}
+{"op":"end","session":"avatar","save":"private","body":"这个待确认的问题只保留在受权信中。"}
+{"op":"pump"}
+{"op":"digest","ref":"$private","picks":[{"role":"open_question","contains":"只保留在受权信中"}],"hold":true}
+{"op":"admin","command":"/memory revoke @source"}
+{"op":"digest_release","outcome":"interrupted"}
+{"op":"mail","selector":"$private","items":[]}
+{"op":"restart"}
+{"op":"mail","selector":"$private","items":[]}
+{"op":"mail","selector":"$private/body","items":[]}

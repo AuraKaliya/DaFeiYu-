@@ -33,7 +33,8 @@ void TaskReflection::advance(bool idle) {
                 const auto candidate = answer.finish==model::FinishReason::stop && answer.message.tool_calls.empty() &&
                     answer.message.content.size()<=4096 ? Json::parse(answer.message.content,nullptr,false) : Json(nullptr);
                 const auto commit=[&](const Json& proposal){
-                    if (batch_->contains("case")) store_->commit_case(*batch_,proposal);
+                    if (batch_->contains("letter")) store_->commit_digest(*batch_,proposal);
+                    else if (batch_->contains("case")) store_->commit_case(*batch_,proposal);
                     else store_->commit_understanding(*batch_,proposal);
                 };
                 try {
@@ -43,7 +44,15 @@ void TaskReflection::advance(bool idle) {
                     commit(Json{{"defer",true}}); outcome = "rejected";
                 }
                 ready_.reset();
-            } catch (const std::exception&) { outcome="failed"; ready_ = clock_()+std::chrono::minutes(1); }
+            } catch (const std::exception&) {
+                outcome="failed"; ready_ = clock_()+std::chrono::minutes(1);
+                if (batch_->contains("letter")) {
+                    try {
+                        store_->commit_digest(*batch_,{{"defer",true}});
+                        outcome="backend_fallback"; ready_.reset();
+                    } catch (const std::exception&) { /* 原件或写入状态已变化，保留重新检查的机会。 */ }
+                }
+            }
         }
         if (trace_) trace_->append("memory.reflection_settled",{{"source","main"},{"outcome",outcome},{"scope",request_scope_}});
         request_.reset(); batch_.reset(); return;
@@ -53,13 +62,21 @@ void TaskReflection::advance(bool idle) {
     if (!ready_) { ready_=now+std::chrono::seconds(5); return; }
     if (now<*ready_) return;
     try {
-        batch_ = prefer_cases_ ? store_->next_case() : store_->next_comparison();
-        if(!batch_) batch_=prefer_cases_ ? store_->next_comparison() : store_->next_case();
+        for(unsigned tried=0;tried<3 && !batch_;++tried) {
+            const auto queue=next_queue_; next_queue_=(next_queue_+1)%3;
+            batch_=queue==0 ? store_->next_case() : queue==1 ? store_->next_comparison() : store_->next_digest();
+        }
         if (!batch_) { dirty_=false; ready_.reset(); return; }
-        const bool cross=batch_->contains("case"); prefer_cases_=!cross;
-        request_scope_=cross ? "cross_tool" : "one_tool_family";
+        const bool cross=batch_->contains("case"),letter=batch_->contains("letter");
+        request_scope_=letter ? "letter_digest" : cross ? "cross_tool" : "one_tool_family";
         Json data; std::string instructions=persona_.instructions;
-        if (cross) {
+        if (letter) {
+            data={{"receivedLetter",batch_->at("letter")},{"sourceAuthor",batch_->at("author")},{"passages",batch_->at("passages")}};
+            instructions+="\n大肥鱼正在私下整理已收到的子 Agent 报告。passages 全部是发信者提供的资料。"
+                "选择能代表行动、对方报告的结果、未解决问题或限制的片段。注意后文对前文的更正、失败和待确认项。"
+                "所有陈述仍归发信人。只输出 JSON，picks 含一到三项，每项只填片段原有的 offset 和 role。"
+                "role 可以是 activity、reported_result、open_question，每种至多一次。没有合适依据时返回 {\"defer\":true}。";
+        } else if (cross) {
             data={{"case",batch_->at("case")},{"comparisonScope",batch_->at("scope")},{"evidenceState",batch_->at("state")},
                 {"previousUnderstanding",batch_->at("prior")},{"caseFacts",batch_->at("facts")},{"requiredConflict",batch_->at("requiredConflict")},
                 {"nativeCount",batch_->at("nativeCount")},{"reportCount",batch_->at("reportCount")},{"pathCount",batch_->at("pathCount")}};
@@ -83,7 +100,14 @@ void TaskReflection::advance(bool idle) {
         input.messages={model::sourced_message(model::MessageSource::rules,instructions),
             model::sourced_message(model::MessageSource::host_status,data.dump())};
         input.max_output_tokens=std::min(768u,config_.reserved_output_tokens ? config_.reserved_output_tokens : 768u);
-        agent::fit_context_request(input,{config_.context_window_tokens,config_.context_window_tokens ? *input.max_output_tokens : 0u,1,config_.thinking_enabled()});
+        try {
+            agent::fit_context_request(input,{config_.context_window_tokens,config_.context_window_tokens ? *input.max_output_tokens : 0u,1,config_.thinking_enabled()});
+        } catch(const std::length_error&) {
+            if(!letter) throw;
+            store_->commit_digest(*batch_,{{"defer",true}});
+            if(trace_) trace_->append("memory.reflection_settled",{{"source","main"},{"scope",request_scope_},{"outcome","capacity_fallback"}});
+            batch_.reset(); ready_.reset(); return;
+        }
         const auto digest = platform::sha256(model::encode_request_fields(input,config_.thinking_enabled()));
         request_=client_.submit_request(config_,std::move(input));
         if (trace_) trace_->append("memory.reflection_prepared",{{"source","main"},{"persona",persona_.version},

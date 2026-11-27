@@ -1,6 +1,7 @@
 #include "main_messages.hpp"
 #include "application.hpp"
 #include "run_log.hpp"
+#include "task_reflection.hpp"
 #include <set>
 
 namespace dfy::app {
@@ -27,7 +28,7 @@ void MainMessages::advance_letters() {
                     const auto* data=delivery.event.payload->find("text");
                     if (!data || data->as_string()!=std::to_string(self->letter_in_flight_))
                         throw std::logic_error("letter: wrong transport pointer");
-                    self->store_->receive_letter(self->letter_in_flight_); self->letter_in_flight_=0;
+                    self->store_->receive_letter(self->letter_in_flight_); self->letter_in_flight_=0; self->reflection_->notify();
                     return {};
                 },MailboxPriority::normal,{},{},{},true);
             } catch (...) {host.network->revoke(sender); throw;}
@@ -55,15 +56,18 @@ agent::DecisionStatusSource MainMessages::letter_source(std::uint64_t turn,const
     static const auto schema=[]{
         Json fields=Json::object();
         for(const auto key : {"reference","plugin","subject","author","audience","channel","exchange","phase","mode","outcome","persona","startRef",
-            "summary","summaryKind","bodyRef","noteRef","noteOrigin","letterRef","origin","text"}) fields[key]={{"type","string"}};
+            "summary","summaryKind","summaryRef","bodyRef","noteRef","noteOrigin","letterRef","origin","text","digestState","digestEditor"}) fields[key]={{"type","string"}};
         for(const auto key : {"preset","nextOffset"}) fields[key]={{"type","integer"}};
         for(const auto key : {"acknowledged","partial"}) fields[key]={{"type","boolean"}};
+        const Json str{{"type","string"}},num{{"type","integer"}},flag{{"type","boolean"}};
+        fields["digest"]={{"type","array"},{"items",{{"type","object"},{"properties",{{"role",str},{"text",str},{"offset",num},{"endOffset",num},{"partial",flag}}},
+            {"additionalProperties",false}}}};
         const Json item{{"type","object"},{"properties",fields},{"additionalProperties",false}};
         const Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},{"limited",{{"type","boolean"}}}}},{"additionalProperties",false}};
-        return Json::array({{{"key","memory.letters"},{"version",1},{"description","发到本体的子 Agent 来信及明确导出的副本"},
+        return Json::array({{{"key","memory.letters"},{"version",2},{"description","发到本体的子 Agent 来信、明确导出的副本和可溯源的摘录"},
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
-    return {"memory",schema,Json::array({{{"key","memory.letters"},{"version",1},{"subject",store_->conversation()},{"fact",turn},{"value",result}}}).dump()};
+    return {"memory",schema,Json::array({{{"key","memory.letters"},{"version",2},{"subject",store_->conversation()},{"fact",turn},{"value",result}}}).dump()};
 }
 // 主 Agent 在读到私聊证据后才可确认这些原信，签收失败时保留待收状态。
 void MainMessages::register_letter_tools() {

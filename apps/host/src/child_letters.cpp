@@ -34,7 +34,7 @@ constexpr char allowed[]=" AND (source=0 OR EXISTS(SELECT 1 FROM personal_memory
 // 步骤：校验模式和原身份 → 查原交付或核实终态 → 固定摘要与可读副本 → 原子入待送箱。
 std::int64_t MessageStore::post_letter(std::int64_t child,const std::string& exchange,unsigned mode,const std::string& persona,
     bool start,std::string_view outcome,const std::string& summary,const std::string& body,std::uint64_t note) {
-    if (mode<1 || mode>3 || exchange.size()>128 || exchange.find_first_not_of(" ")==exchange.npos ||
+    if (mode<1 || mode>4 || exchange.size()>128 || exchange.find_first_not_of(" ")==exchange.npos ||
         std::ranges::any_of(exchange,[](unsigned char c){return c<32 || c==127;}) || !runtime::valid_utf8(exchange) ||
         summary.size()>480 || body.size()>8192 || !runtime::valid_utf8(summary) || !runtime::valid_utf8(body) ||
         (mode==1 && (!summary.empty() || !body.empty() || note)) || (mode!=3 && note) || note>INT64_MAX)
@@ -53,7 +53,7 @@ std::int64_t MessageStore::post_letter(std::int64_t child,const std::string& exc
     if (!start && outcome.empty()) throw std::invalid_argument("letter: no observed exit for exchange");
     const auto source=owner.number(4);
     Json envelope{{"plugin",owner.text(0)},{"preset",owner.number(1)},{"subject",owner.text(2)},{"exchange",exchange},
-        {"phase",phase},{"mode",mode==1 ? "status" : mode==2 ? "summary" : "original"},{"audience","owner"},
+        {"phase",phase},{"mode",mode==1 ? "status" : mode==2 ? "summary" : mode==3 ? "original" : "digest"},{"audience","owner"},
         {"author",conversation()+"/child/"+std::to_string(child)},{"outcome",outcome}};
     if (!owner.text(3).empty()) envelope["channel"]=owner.text(3);
     if (!persona.empty()) envelope["persona"]=persona;
@@ -66,8 +66,9 @@ std::int64_t MessageStore::post_letter(std::int64_t child,const std::string& exc
             envelope["summary"]=part(summary.empty() ? body : summary,0,480);
             envelope["summaryKind"]=summary.empty() ? "excerpt" : "sender_summary";
             envelope["partial"]=envelope.at("summary").get_ref<const std::string&>().size()<(summary.empty() ? body.size() : summary.size());
+            if (!summary.empty() && envelope.at("partial")==true) envelope["senderSummary"]=summary;
         }
-        if (mode==3 && !body.empty()) envelope["body"]=body;
+        if (mode>=3 && !body.empty()) envelope["body"]=body;
         if (note) {
             Statement copy(db,"SELECT content FROM child_note WHERE owner=? AND id=? AND (source=0 OR (source=? AND "
                 "EXISTS(SELECT 1 FROM personal_memory p WHERE p.active=1 AND p.message=child_note.source)))");
@@ -80,6 +81,9 @@ std::int64_t MessageStore::post_letter(std::int64_t child,const std::string& exc
     Statement add(db,"INSERT INTO child_letter(owner,exchange,phase,signature,envelope,source) VALUES(?,?,?,?,?,?)");
     add.bind(1,child); add.bind(2,exchange); add.bind(3,phase); add.bind(4,signature); add.bind(5,envelope.dump()); add.bind(6,source); add.next();
     const auto id=sqlite3_last_insert_rowid(db);
+    if (!start && mode==4 && !body.empty()) {
+        Statement draft(db,"INSERT INTO letter_digest(letter,state,selection) VALUES(?,'pending','[]')"); draft.bind(1,id); draft.next();
+    }
     sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0"); tx.commit(); return id;
 }
 // 读取跨启动仍需经过真实宿主信箱的最早指针。
@@ -116,7 +120,7 @@ Json MessageStore::search_letters(const std::vector<std::string>& topics,unsigne
     if (term.starts_with(prefix)) {
         const auto rest=std::string_view(term).substr(prefix.size()); const auto slash=rest.find('/');
         id=letter_id(rest.substr(0,slash));
-        if (slash!=rest.npos) {section=rest.substr(slash+1); if (section!="note" && section!="body") return result;}
+        if (slash!=rest.npos) {section=rest.substr(slash+1); if (section!="note" && section!="body" && section!="summary") return result;}
     } else if (term.find("/letter/")!=term.npos) return result;
     if (offset && section.empty()) throw std::invalid_argument("letter: offset requires an exported original");
     std::lock_guard lock(state_->mutex);
@@ -129,12 +133,36 @@ Json MessageStore::search_letters(const std::vector<std::string>& topics,unsigne
         const auto ref=prefix+std::to_string(get.number(0)); auto item=Json::parse(get.text(1));
         if (section.empty()) {
             for (const auto key : {"body","note"}) if (item.erase(key)) item[std::string(key)+"Ref"]=ref+"/"+key;
+            if (item.erase("senderSummary")) item["summaryRef"]=ref+"/summary";
             item["reference"]=ref; item["acknowledged"]=get.number(2)!=0;
+            if (item.at("mode")=="digest" && item.at("phase")=="end") {
+                Statement edit(state_->db,"SELECT state,selection FROM letter_digest WHERE letter=?"); edit.bind(1,get.number(0));
+                if (edit.next()) {
+                    item["digestState"]=edit.text(0);
+                    if (edit.text(0)=="ready") {
+                        item["digestEditor"]="main"; item["digest"]=Json::parse(edit.text(1));
+                        if (item.value("summaryKind",std::string{})=="excerpt") {item.erase("summary"); item.erase("summaryKind"); item.erase("partial");}
+                    }
+                } else item["digestState"]="no_body";
+            }
+            // 长身份和摘要同时出现时先保留角色、原文位置及各自的原件入口。
+            if (item.dump().size()+2>2048 && item.contains("digest")) for(auto& pick:item["digest"]) {
+                const auto text=pick.at("text").get<std::string>(); pick["text"]=part(text,0,64);
+                if(pick.at("text")!=text) pick["partial"]=true;
+            }
+            if (item.dump().size()+2>2048 && item.contains("summary")) {
+                if(item.at("summaryKind")=="sender_summary") item["summaryRef"]=ref+"/summary";
+                item["summary"]=part(item.at("summary").get_ref<const std::string&>(),0,80); item["partial"]=true;
+            }
+            if (item.dump().size()+2>2048 && item.contains("digest")) {
+                for(auto& pick:item["digest"]) {pick["text"]=""; pick["partial"]=true;}
+            }
         } else {
-            if (!item.contains(section)) continue;
-            const auto& raw=item.at(section).get_ref<const std::string&>(); auto chunk=part(raw,offset,640);
+            const bool summary=section=="summary";
+            if (!item.contains(section) || (summary && item.value("summaryKind",std::string{})!="sender_summary")) continue;
+            const auto& raw=item.at(summary && item.contains("senderSummary") ? "senderSummary" : section).get_ref<const std::string&>(); auto chunk=part(raw,offset,640);
             Json original{{"reference",ref+"/"+section},{"letterRef",ref},{"author",item.at("author")},{"audience","owner"},
-                {"origin",section=="note" ? "exported_note" : "sender_body"},{"text",chunk}};
+                {"origin",summary ? "sender_summary" : section=="note" ? "exported_note" : "sender_body"},{"text",chunk}};
             if (section=="note") original["noteOrigin"]=item.at("noteOrigin");
             if (offset+chunk.size()<raw.size()) original["nextOffset"]=offset+chunk.size();
             item=std::move(original);

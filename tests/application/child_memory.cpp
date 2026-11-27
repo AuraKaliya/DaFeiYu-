@@ -52,11 +52,13 @@ struct Fixture {
     std::unique_ptr<app::Application> host;
     agent::ToolTime now{};
     Json idle_case;
+    unsigned window_tokens=0;
+    std::size_t pending_idle=0;
     // 从实际 Trace 中筛出跨工具复盘已结算的结果。
-    std::vector<std::string> idle_outcomes() const {
+    std::vector<std::string> idle_outcomes(const std::string& scope) const {
         std::ifstream in(host->trace_file(),std::ios::binary); std::vector<std::string> found;
         for(std::string line;std::getline(in,line);) {const auto e=Json::parse(line); if(e.at("kind")=="memory.reflection_settled" &&
-            e.value("scope",std::string{})=="cross_tool") found.push_back(e.at("outcome"));}
+            e.value("scope",std::string{})==scope) found.push_back(e.at("outcome"));}
         return found;
     }
 
@@ -65,9 +67,13 @@ struct Fixture {
         if (host) audit();
         host.reset(); db=std::make_shared<app::MessageStore>(root);
         app::ApplicationRunConfig config; config.trace_directory=root/"logs"; config.tool_clock=[this]{return now;};
-        host=std::make_unique<app::Application>(model::Config{},root/"packages",root,
+        model::Config mc; mc.context_window_tokens=window_tokens; if(window_tokens) mc.reserved_output_tokens=128;
+        host=std::make_unique<app::Application>(mc,root/"packages",root,
             model::Backend{[this](const model::Config& cfg,const model::Request& request){
-                try {return answer(cfg,request);} catch(const std::exception& e){failure=e.what(); throw;}
+                try {return answer(cfg,request);} catch(const std::exception& e){
+                    if (!idle_case.is_object() || !idle_case.value("transport",false)) failure=e.what();
+                    throw;
+                }
             }},config);
         host->bind_messages(db,"child-"+std::to_string(++hosts),nullptr);
         if (hosts==1) { host->plugins().install(panel); host->plugins().install(counter); }
@@ -79,6 +85,27 @@ struct Fixture {
         const auto wire=model::encode_request_fields(request,cfg.thinking_enabled());
         hashes.push_back(platform::sha256(wire)); ++received;
         const auto tail=Json::parse(request.messages.back().content,nullptr,false);
+        if (tail.is_object() && tail.contains("receivedLetter")) {
+            check(idle_case.is_object() && request.tools.empty() && tail.at("receivedLetter")==letter_ref(idle_case.at("ref")) &&
+                request.messages.size()==2 && tail.at("sourceAuthor").get<std::string>().find("/child/")!=std::string::npos,"wrong private digest source");
+            const auto& spans=tail.at("passages"); const auto& raw=bodies.at(idle_case.at("ref").get<std::string>().substr(1));
+            check(spans.size()<=64,"too many digest passages");
+            for(const auto& span:spans) {const auto q=span.at("text").get<std::string>();
+                check(raw.substr(span.at("offset"),q.size())==q,"editor received fabricated excerpt");}
+            if (idle_case.value("transport",false)) throw std::runtime_error("fixture transport closed");
+            Json picks=Json::array();
+            for(const auto& pick:idle_case.value("picks",Json::array())) {
+                auto it=std::ranges::find_if(spans,[&](const auto& s){return s.at("text").template get<std::string>().find(pick.at("contains").template get<std::string>())!=std::string::npos;});
+                check(it!=spans.end(),"late report detail missing from private backend");
+                picks.push_back({{"role",pick.at("role")},{"offset",it->at("offset")}});
+            }
+            entered=true;
+            if(idle_case.value("hold",false)) {
+                const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(6);
+                while(!release && std::chrono::steady_clock::now()<deadline) std::this_thread::yield();
+            }
+            return {{model::Role::assistant,idle_case.contains("propose") ? idle_case.at("propose").dump() : Json{{"picks",picks}}.dump()}};
+        }
         if (tail.is_object() && tail.contains("observations")) return {{model::Role::assistant,R"({"defer":true})"}};
         if (tail.is_object() && tail.contains("caseFacts")) {
             check(idle_case.is_object() && request.tools.empty() && tail.at("case")==idle_case.at("case") &&
@@ -127,6 +154,8 @@ struct Fixture {
     }
     // 固定后端先查信，再对实际交付的证据提出签收，逐字展开只检查接收方快照。
     model::Response read_mail(const model::Request& request) {
+        for(const auto& marker:mail_case.value("forbidden",Json::array())) for(const auto& message:request.messages)
+            check(message.content.find(marker.get<std::string>())==std::string::npos,"unrequested report text reached model");
         const auto status=Json::parse(request.messages.back().content);
         const auto& samples=status.at("items");
         ++mail_step;
@@ -155,8 +184,19 @@ struct Fixture {
                 }
                 check(item.at("reference")==letter_ref(want.at("ref")) && item.at("audience")=="owner" &&
                     item.at("author").get<std::string>().starts_with(db->conversation()+"/child/"),"wrong original sender or reference");
-                for(const auto key : {"phase","outcome","mode","summaryKind","summary","acknowledged","partial","origin","subject"})
+                for(const auto key : {"phase","outcome","mode","summaryKind","summary","acknowledged","partial","origin","subject","digestState","digestEditor"})
                     if (want.contains(key)) check(item.at(key)==want.at(key),std::string("wrong letter ")+key);
+                if(want.contains("digest")) {
+                    const auto& selection=item.at("digest"); check(selection.size()==want.at("digest").size(),"wrong digest count");
+                    const auto& raw=bodies.at(want.at("ref").get<std::string>().substr(1));
+                    for(std::size_t j=0;j<selection.size();++j) {
+                        const auto& s=selection[j]; const auto& w=want.at("digest")[j]; const auto pos=s.at("offset").get<std::size_t>(),end=s.at("endOffset").get<std::size_t>();
+                        const auto quote=s.at("text").get<std::string>();
+                        check(end<=raw.size() && end>pos && raw.substr(pos,quote.size())==quote && s.at("role")==w.at("role") &&
+                            quote.find(w.at("contains").get<std::string>())!=quote.npos && s.at("partial")==Json(quote.size()<end-pos),"wrong extract or original bytes");
+                        if(w.contains("save")) originals[w.at("save").get<std::string>()]=pos;
+                    }
+                } else if(want.contains("digestState")) check(!item.contains("digest"),"unvalidated digest exposed");
                 if (want.contains("source")) {
                     const auto& full=bodies.at(want.at("source").get<std::string>());
                     const auto offset=mail_case.value("offset",std::size_t{});
@@ -167,6 +207,7 @@ struct Fixture {
                 if (want.contains("export")) check(item.at("noteRef")==letter_ref(want.at("export")) &&
                     item.at("noteOrigin").get<std::string>().starts_with(item.at("author").get<std::string>()+"/note/"),"unbound note copy");
                 if (want.contains("bodyRef")) check(item.at("bodyRef")==letter_ref(want.at("bodyRef")),"wrong full-body link");
+                if (want.contains("summaryRef")) check(item.at("summaryRef")==letter_ref(want.at("summaryRef")),"wrong sender-summary link");
                 if (item.contains("phase")) check(!item.contains("body") && !item.contains("note") && !item.contains("text"),"long report was injected whole");
             }
             if (mail_case.contains("ack")) {
@@ -206,7 +247,7 @@ struct Fixture {
     // 回放一次主人操作、插件调用或真实子回合。
     void step(const Json& row) {
         const auto op=row.at("op").get<std::string>(), session_name=row.value("session",std::string{});
-        if (op=="restart") { restart(); return; }
+        if (op=="restart") {window_tokens=row.value("window",0u); restart(); return;}
         if (op=="source") {
             const auto text=row.at("text").get<std::string>(); markers.insert(text);
             const auto alias=row.value("alias",std::string{"@source"});
@@ -221,14 +262,17 @@ struct Fixture {
             try {knowledge.chat(*host,query,++kb_reads);} catch(const std::exception&) {if(!failure.empty()) throw std::runtime_error(failure); throw;}
             return;
         }
-        if (op=="idle") {
-            idle_case=row; const auto prior=idle_outcomes().size();
+        if (op=="idle" || op=="digest" || op=="digest_release") {
+            const auto scope=op=="idle" ? "cross_tool" : "letter_digest";
+            if(op=="digest_release") release=true;
+            else {idle_case=row; pending_idle=idle_outcomes(scope).size(); entered=false; release=false;}
             const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(6);
-            while(idle_outcomes().size()==prior) {
+            while(idle_outcomes(scope).size()==pending_idle) {
+                if(row.value("hold",false) && entered) return;
                 host->advance_plugins(); now+=std::chrono::seconds(1); std::this_thread::yield();
                 check(std::chrono::steady_clock::now()<deadline,"idle did not settle: "+failure);
             }
-            check(failure.empty() && idle_outcomes().back()==row.value("outcome",std::string{"accepted"}),"incorrect idle outcome: "+failure);
+            check(failure.empty() && idle_outcomes(scope).back()==row.value("outcome",std::string{"accepted"}),"incorrect idle outcome: "+failure);
             idle_case=nullptr; return;
         }
         if (op=="case_task") {
@@ -261,6 +305,7 @@ struct Fixture {
         if (op=="pump") {for(int n=0;n<16;++n) host->advance_plugins(); return;}
         if (op=="mail") {
             mail_case=row; mail_step=0; reply.clear(); expect_persona.reset();
+            if(row.contains("offsetFrom")) mail_case["offset"]=originals.at(row.at("offsetFrom").get<std::string>());
             if (row.value("room",false)) {host->post_room_event(app::RoomEvent::addressed,"书房","查收新的来信了吗？"); host->advance_plugins();}
             else host->main_messages()->terminal("q"+std::to_string(++mail_reads),"请核对已交付的子 Agent 来信。");
             until([&]{return !host->conversation().busy();});
@@ -292,15 +337,22 @@ struct Fixture {
             if (op=="select") return memory.select_topic(id,view(row.value("topic",std::string{"手册"})),nullptr);
             if (op=="select_kb") return service<dfy_v2_agent_knowledge_api>(DFY_V2_AGENT_KNOWLEDGE_INTERFACE,1).select_topic(id,view(row.at("topic").get<std::string>()),nullptr);
             if (op=="begin" || op=="end") {
-                const auto& api=service<dfy_v2_agent_letters_api>(DFY_V2_AGENT_LETTERS_INTERFACE,1); std::uint64_t receipt=0;
+                const auto version=row.value("abi",1u);
+                const auto& api=service<dfy_v2_agent_letters_api>(DFY_V2_AGENT_LETTERS_INTERFACE,version); std::uint64_t receipt=0;
+                check(api.header.interface_version==version,"wrong negotiated letters version");
                 const auto key=row.value("key",std::string{}),summary=row.value("summary",std::string{}),segment=row.value("body",std::string{});
                 std::string body; for (unsigned i=0;i<row.value("repeat",1u);++i) body+=segment;
+                if(row.contains("parts")) for(const auto& part:row.at("parts")) {
+                    if(part.is_string()) body+=part.get<std::string>();
+                    else for(unsigned i=0;i<part.at("repeat");++i) body+=part.at("text").get<std::string>();
+                }
                 const auto result=op=="begin" ? api.begin(id,view(key),row.at("mode"),row.value("persona",false),&receipt,nullptr) :
                     api.finish(id,view(summary),view(body),row.contains("note") ? originals.at(row.at("note")) : 0,&receipt,nullptr);
                 if (!result && row.contains("save")) {
                     const auto label=row.at("save").get<std::string>();
                     if (letters.contains(label)) check(letters.at(label)==receipt,"duplicate exchange generated another letter");
-                    letters[label]=receipt; bodies[label]=body; knowledge.references["$"+label]=db->conversation()+"/letter/"+std::to_string(receipt);
+                    letters[label]=receipt; bodies[label]=body; bodies[label+"-summary"]=summary;
+                    knowledge.references["$"+label]=db->conversation()+"/letter/"+std::to_string(receipt);
                 }
                 if (result) check(!receipt,"rejected letter has receipt");
                 return result;

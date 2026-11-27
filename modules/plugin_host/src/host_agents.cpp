@@ -93,13 +93,14 @@ dfy_v2_status DFY_V2_CALL select_knowledge(uint64_t session,dfy_v2_string_view t
     });
 }
 // 校验交付模式并为原插件持久会话记录一次启动。
+template<uint32_t last_mode>
 dfy_v2_status DFY_V2_CALL begin_letter(uint64_t session,dfy_v2_string_view exchange,uint32_t mode,uint32_t flags,
     uint64_t* receipt,dfy_v2_error* error) {
     if (receipt) *receipt=0;
     return boundary(error,[&](auto& host) {
         const auto service=host.agents.lock();
         if (!service) return DFY_V2_UNSUPPORTED;
-        if (!receipt || (flags&~DFY_V2_LETTER_PERSONA)) return DFY_V2_INVALID_ARGUMENT;
+        if (!receipt || !mode || mode>last_mode || (flags&~DFY_V2_LETTER_PERSONA)) return DFY_V2_INVALID_ARGUMENT;
         *receipt=service->begin_letter(host.agent_owner,session,text(exchange,128),mode,flags!=0); return DFY_V2_OK;
     });
 }
@@ -266,9 +267,10 @@ const dfy_v2_agent_memory_api& agent_memory_api() {
     return api;
 }
 // 返回插件可选的启动及结束信表。
-const dfy_v2_agent_letters_api& agent_letters_api() {
-    static const dfy_v2_agent_letters_api api{{sizeof(api),DFY_V2_AGENT_LETTERS_VERSION},begin_letter,finish_letter};
-    return api;
+const dfy_v2_agent_letters_api& agent_letters_api(uint32_t version) {
+    static const dfy_v2_agent_letters_api original{{sizeof(original),DFY_V2_AGENT_LETTERS_VERSION},begin_letter<DFY_V2_LETTER_ORIGINAL>,finish_letter};
+    static const dfy_v2_agent_letters_api digest{{sizeof(digest),DFY_V2_AGENT_LETTERS_DIGEST_VERSION},begin_letter<DFY_V2_LETTER_DIGEST>,finish_letter};
+    return version==DFY_V2_AGENT_LETTERS_DIGEST_VERSION ? digest : original;
 }
 // 发布仅支持主动选择主题的子会话知识能力。
 const dfy_v2_agent_knowledge_api& agent_knowledge_api() {

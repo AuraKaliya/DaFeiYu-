@@ -205,9 +205,10 @@ dfy_v2_status DFY_V2_CALL HostServices::query(dfy_v2_string_view name, uint32_t 
         const std::string_view requested(name.data, name.length);
         if (requested == DFY_V2_AGENT_MEMORY_INTERFACE || requested == DFY_V2_AGENT_LETTERS_INTERFACE || requested==DFY_V2_AGENT_KNOWLEDGE_INTERFACE) {
             const auto service=host.agents.lock();
-            if (!service || !service->memory_available() || version!=DFY_V2_AGENT_MEMORY_VERSION) return DFY_V2_UNSUPPORTED;
+            if (!service || !service->memory_available()) return DFY_V2_UNSUPPORTED;
+            if (version!=1 && !(requested==DFY_V2_AGENT_LETTERS_INTERFACE && version==DFY_V2_AGENT_LETTERS_DIGEST_VERSION)) return DFY_V2_UNSUPPORTED;
             if (requested==DFY_V2_AGENT_MEMORY_INTERFACE) *output=&detail::agent_memory_api();
-            else if (requested==DFY_V2_AGENT_LETTERS_INTERFACE) *output=&detail::agent_letters_api();
+            else if (requested==DFY_V2_AGENT_LETTERS_INTERFACE) *output=&detail::agent_letters_api(version);
             else *output=&detail::agent_knowledge_api();
             return DFY_V2_OK;
         }

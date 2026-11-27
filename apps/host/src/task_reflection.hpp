@@ -13,6 +13,8 @@ class TaskReflection {
         PersonaProfile persona, agent::ToolClock clock, RunLog* trace);
     // 新任务或撤权后重新检查队列，旧的在途推断不能写回。
     void interrupt();
+    // 来信入箱后重新检查待办，已经在整理的独立材料可继续。
+    void notify() noexcept {dirty_=true;}
     // 推进模型实际退出，连续空闲后才取新材料或写回。
     void advance(bool idle);
     // 请求协作停止并报告后台调用是否实际退出。
@@ -28,7 +30,7 @@ class TaskReflection {
     std::optional<nlohmann::json> batch_;
     std::optional<agent::ToolTime> ready_;
     bool dirty_ = true;
-    bool prefer_cases_ = true;
+    unsigned next_queue_ = 0;
     std::string request_scope_;
 };
 }

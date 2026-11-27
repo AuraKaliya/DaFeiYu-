@@ -70,6 +70,9 @@ set_tests_properties(app.knowledge_publication PROPERTIES TIMEOUT 60)
 add_test(NAME app.cross_tool_memory COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/comparisons.jsonl" "${PROJECT_BINARY_DIR}/tests/comparisons/$<CONFIG>")
 set_tests_properties(app.cross_tool_memory PROPERTIES TIMEOUT 90)
+add_test(NAME app.letter_digest COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/letter_digests.jsonl" "${PROJECT_BINARY_DIR}/tests/letter-digests/$<CONFIG>")
+set_tests_properties(app.letter_digest PROPERTIES TIMEOUT 90)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

@@ -96,6 +96,10 @@ class MessageStore {
     std::optional<nlohmann::json> next_case() const;
     // 将本体的解释与全组状态、独立路径和反证重新核验后写入新版本。
     void commit_case(const nlohmann::json& batch,const nlohmann::json& proposal);
+    // 取一封已实际收到、原件获准且明确要求私下整理的长信。
+    std::optional<nlohmann::json> next_digest() const;
+    // 按收件副本重验摘录位置，保存整理结果或保留原信供回退。
+    void commit_digest(const nlohmann::json& batch,const nlohmann::json& proposal);
     // 查当前或某一历史版本的跨渠道证据、分歧及本体理解。
     nlohmann::json search_cases(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const;
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
