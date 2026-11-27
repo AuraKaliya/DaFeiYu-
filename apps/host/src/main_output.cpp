@@ -21,12 +21,13 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
     : app_(application),store_(std::move(store)),instance_(std::move(instance)),
       memory_revision_(store_->memory_revision()),log_(log),trace_(trace) {
     if (!structured) return;
-    reply_tools_ = std::make_unique<agent::ToolCatalog>(4);
+    reply_tools_ = std::make_unique<agent::ToolCatalog>(6);
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",
         "向当前主聊天发送一条发言或追问。text 为用户将看到的原文。回执给出投递号和写入状态。",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})"},
         true,true,{},{},0,1024,true},[this](const agent::ToolInvocation& call) { return speak(call); });
     register_memory_tools();
+    register_experience_tools();
 }
 
 // 冻结最近实收原件和仍待落盘的投递，超长正文保留可按原渠道定位的前缀。
@@ -87,7 +88,7 @@ bool MainMessages::prepare_output(agent::RunOptions& options, DialogueAudience a
     if (!reply_tools_ || options.tools || options.planning) return false;
     if (audience==DialogueAudience::owner && !memory_capture_topic(prompt) &&
         !prompt.starts_with("回想 ") && !prompt.starts_with("撤回记忆 ")) {
-        const std::string ids[]{reply_id,"main/memory_note","main/memory_search","main/memory_reflect"};
+        const std::string ids[]{reply_id,"main/memory_note","main/memory_search","main/memory_reflect","main/choose","main/experience_review"};
         options.tools = reply_tools_->snapshot(ids,true);
     } else options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
     return true;
@@ -119,15 +120,18 @@ std::int64_t MainMessages::commit_reply(const Json& envelope) {
 
 // 所有面向用户的主会话发言沿同一持久写口取得回执。
 // 步骤：绑定原回合与用户消息 → 提交一次渠道发言 → 失败时保留同号原件供补写。
-Json MainMessages::reply(agent::RunId run, const std::string& suffix, const std::string& text) {
+Json MainMessages::reply(agent::RunId run, const std::string& suffix, const std::string& text, const Json& experience) {
     const auto key = reply_prefix(instance_,run)+suffix;
     Json envelope{{"sender","assistant"},{"route","reply"},{"text",text},{"delivery",key},{"instance",instance_},
         {"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)}};
     if (parent_.first==run) envelope["replyTo"] = std::to_string(parent_.second);
+    if (!experience.is_null()) envelope["experience"] = experience;
 
     std::int64_t message;
     try { message = commit_reply(envelope); }
     catch (const std::runtime_error&) {
+        // 选择需在同一事务核实原来信，存储不可用时沿同号重试，不能排队盲发。
+        if (!experience.is_null()) { storage_failed(); return {{"state","unverified"},{"delivery",key}}; }
         if (replies_.try_emplace(key,std::move(envelope)).second) storage_failed();
         retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
         return {{"state","pending"},{"delivery",key}};

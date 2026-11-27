@@ -93,3 +93,6 @@ set_tests_properties(app.dialogue_memory PROPERTIES TIMEOUT 40)
 add_test(NAME app.memory_reflection COMMAND dfy_dialogue_memory_tests "${CMAKE_CURRENT_SOURCE_DIR}/memory_recall/reflection.jsonl"
   "${CMAKE_CURRENT_BINARY_DIR}/memory-reflection/$<CONFIG>")
 set_tests_properties(app.memory_reflection PROPERTIES TIMEOUT 40)
+add_test(NAME app.experience_reflection COMMAND dfy_dialogue_memory_tests "${CMAKE_CURRENT_SOURCE_DIR}/memory_recall/experience.jsonl"
+  "${CMAKE_CURRENT_BINARY_DIR}/experience-reflection/$<CONFIG>")
+set_tests_properties(app.experience_reflection PROPERTIES TIMEOUT 40)

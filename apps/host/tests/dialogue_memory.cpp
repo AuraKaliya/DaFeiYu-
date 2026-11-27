@@ -32,7 +32,7 @@ void seed_legacy(const std::filesystem::path& data, const Json& seed, Sources& s
     const auto path = (data/"main-conversation.sqlite3").u8string();
     const auto opened = sqlite3_open(reinterpret_cast<const char*>(path.c_str()),&handle);
     std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(handle,&sqlite3_close);
-    require(opened==SQLITE_OK && sqlite3_exec(handle,"BEGIN; DROP TABLE memory_review; DROP INDEX active_memory_topic;"
+    require(opened==SQLITE_OK && sqlite3_exec(handle,"BEGIN; DROP TABLE experience_review; DROP TABLE main_experience; DROP TABLE memory_review; DROP INDEX active_memory_topic;"
         "ALTER TABLE personal_memory RENAME TO newer; CREATE TABLE personal_memory(message INTEGER PRIMARY KEY,topic TEXT NOT NULL,active INTEGER NOT NULL);"
         "INSERT INTO personal_memory SELECT message,topic,active FROM newer; DROP TABLE newer;"
         "CREATE INDEX active_memory_topic ON personal_memory(topic,message DESC) WHERE active=1; PRAGMA user_version=3; COMMIT",
@@ -55,7 +55,7 @@ void drain(app::Application& host) {
 void check_request(const model::Request& request, const Sources& sources, const std::string& profile,
     const Json& row, unsigned step, bool followup) {
     const bool owner = !row.contains("audience") && !row.contains("original");
-    for (const std::string name : {"memory_note","memory_search","memory_reflect"}) {
+    for (const std::string name : {"memory_note","memory_search","memory_reflect","main_choose","experience_review"}) {
         const auto tool = std::ranges::find(request.tools,name,&model::ToolDefinition::name);
         require((tool!=request.tools.end())==owner,"incorrect tool audience");
     }
@@ -121,9 +121,50 @@ std::string cited_answer(const Json& items) {
     return reply;
 }
 
+// 由实际送模的材料生成固定答复，逐份引用当场实选与投递号。
+std::string experience_answer(const Json& value) {
+    std::string answer = value.at("kind")=="why" ? "现在我猜："+value.at("interpretation").get<std::string>() : "同样条件下，我的实选依次是：";
+    for (const auto& event : value.at("items")) {
+        answer += "\n"+event.at("scene").get<std::string>()+"，"+event.at("choice").get<std::string>()+" ["+event.at("reference").get<std::string>()+"]";
+        if (event.contains("impression") && !event.at("impression").get_ref<const std::string&>().empty())
+            answer += " 当时我说："+event.at("impression").get<std::string>();
+    }
+    return answer;
+}
+
+// 按语料的独立期望核对每步实际装入的原场次，连同引用的来信和当时送达的原话一起核实。
+void check_experiences(const model::Request& request, const Sources& episodes, const std::string& profile,
+    const Json& row, unsigned step, bool followup) {
+    const auto status = Json::parse(request.messages.back().content);
+    const auto& items = status.at("items");
+    const auto batch = std::ranges::find_if(items,[](const Json& item){return item.at("key")=="memory.experiences";});
+    const bool read = !followup && row.contains("events") && step>=row.value("searchStep",1u);
+    require((batch!=items.end())==read,"incorrect experience visibility");
+    if (read) {
+        const auto& value = batch->at("value");
+        const auto& evidence = value.at("items");
+        require(evidence.size()==row.at("events").size() && evidence.size()<=3 && evidence.dump().size()<=2048 &&
+            value.at("limited")==row.value("limited",false),"wrong experience budget");
+        require(value.value("kind",std::string{})==row.value("kind",std::string{}) &&
+            value.value("interpretation",std::string{})==row.value("why",std::string{}),"changed review or axis");
+        for (std::size_t i=0;i<evidence.size();++i) {
+            const auto& saved = episodes.at(row.at("events")[i].get<std::string>());
+            const auto& event = evidence.at(i);
+            require(event.at("reference")==profile+"/"+std::to_string(saved.id) &&
+                event.at("parentReference")==profile+"/"+saved.envelope.at("replyTo").get<std::string>() &&
+                event.at("utcMs")==saved.utc_ms && event.at("deliveredText")==saved.envelope.at("text"),"wrong delivery or original input");
+            for (const auto& [key,field] : saved.envelope.at("experience").items())
+                require(event.at(key)==field,"rewrote contemporaneous observation");
+        }
+    }
+    const auto wire = model::encode_request_fields(request,false);
+    for (const auto& forbidden : row.value("absent",std::vector<std::string>{}))
+        require(wire.find(forbidden)==wire.npos,"private or unsupported conclusion in backend request");
+}
+
 // 从同一档案重开主聊天，播放固定的模型提议，并独立核对实际工具回执与送模材料。
 // 步骤：绑定来源与受众 → 按正常入口交付 → 验证每步回执、下一轮及 Trace 摘要。
-std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sources) {
+std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sources, Sources& episodes) {
     const auto id = row.at("id").get<std::string>();
     auto text = row.at("text").get<std::string>()+std::string(row.value("padding",0u),'A');
     const auto steps = row.value("steps",Json::array());
@@ -133,18 +174,27 @@ std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sou
     const auto reference = [&](std::string key) {
         if (!key.starts_with("$")) return key;
         key.erase(0,1);
+        if (key.starts_with("#")) {
+            if (key.substr(1)==id && !episodes.contains(id)) {
+                for (const auto& msg : db->page(true,0,db->watermark(),3).records)
+                    if (msg.source=="main" && msg.envelope.contains("experience") && msg.envelope.at("instance")==id)
+                        return db->conversation()+"/"+std::to_string(msg.id);
+            }
+            return db->conversation()+"/"+std::to_string(episodes.at(key.substr(1)).id);
+        }
         if (sources.contains(key)) return db->conversation()+"/"+std::to_string(sources.at(key).id);
         return db->conversation()+"/"+std::to_string(db->find("terminal",key).value().id);
     };
     if (text.starts_with("回想 $")) text = "回想 "+reference(text.substr(std::string_view("回想 ").size()));
     app::ApplicationRunConfig config;
     config.trace_directory = data/"traces"/id;
-    bool followup = false;
+    bool followup = false, room_check = false;
     std::string previous_snapshot;
     std::vector<model::Request> requests;
     app::Application host({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& request)->model::Response {
         requests.push_back(request);
         const auto step = Json::parse(request.messages.back().content).at("step").get<unsigned>()-1;
+        if (room_check) return {{model::Role::assistant,"收到。"}};
         if (followup && !step)
             return {{model::Role::assistant,"",{{"probe","status_read",Json{{"snapshot",previous_snapshot}}.dump()}}},model::FinishReason::tool_calls};
         if (!followup && step<steps.size()) {
@@ -153,7 +203,13 @@ std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sou
             if (action.key()=="memory_reflect") for (const auto field : {"prior","later"})
                 args[field] = reference(args.at(field).get<std::string>());
             if (action.key()=="memory_search") for (auto& term : args.at("topics")) term = reference(term.get<std::string>());
+            if (action.key()=="experience_review") for (auto& ref : args.at("evidence")) ref = reference(ref.get<std::string>());
             return {{model::Role::assistant,"",{{"call"+std::to_string(step),action.key(),args.dump()}}},model::FinishReason::tool_calls};
+        }
+        if (row.value("citeExperience",false)) {
+            const auto status = Json::parse(request.messages.back().content);
+            for (const auto& item : status.at("items")) if (item.at("key")=="memory.experiences")
+                return {{model::Role::assistant,experience_answer(item.at("value"))}};
         }
         if (row.value("cite",false)) {
             const auto status = Json::parse(request.messages.back().content);
@@ -164,8 +220,7 @@ std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sou
     }},config);
     host.bind_messages(db,id,nullptr);
     auto& channel = *host.main_messages();
-    if (row.contains("revoke"))
-        channel.change_memory(db->conversation()+"/"+std::to_string(sources.at(row.at("revoke").get<std::string>()).id),std::nullopt);
+    if (row.contains("revoke")) channel.change_memory(reference("$"+row.at("revoke").get<std::string>()),std::nullopt);
     const auto audience = row.value("audience",std::string{"owner"});
     if (audience!="owner") host.post_room_event(app::RoomEvent::addressed,"书房",audience=="room" ? text : "待收的来信");
     if (audience=="room") require(host.review_room()==app::MailboxIntakeResult::submitted,"room not admitted");
@@ -175,19 +230,52 @@ std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sou
         require(channel.deliver(saved.message.id,envelope,saved.message.utc_ms).at("state")=="accepted","desktop original rejected");
     } else channel.terminal(id,text);
     drain(host);
+    if (row.contains("chosen")) {
+        const auto& args = row.at("steps").at(0).at("main_choose");
+        const auto parent = db->find(row.contains("utcMs")?"desktop":"terminal",id).value();
+        const auto page = db->page(true,0,db->watermark(),4);
+        unsigned found = 0;
+        for (const auto& msg : page.records) {
+            if (msg.source!="main" || msg.envelope.value("replyTo",std::string{})!=std::to_string(parent.id) || !msg.envelope.contains("experience")) continue;
+            require(msg.receipt.at("state")=="delivered" && msg.envelope.at("experience")==args &&
+                msg.envelope.at("text")=="我选「"+args.at("choice").get<std::string>()+"」。"+args.at("impression").get<std::string>(),
+                "choice not actually delivered");
+            episodes.emplace(id,msg);
+            ++found;
+        }
+        require(found==(row.at("chosen")==true ? 1u : 0u),"wrong number of delivered decisions");
+    }
     if (!steps.empty() && steps.front().contains("memory_note")) sources.emplace(id,*db->find(row.contains("utcMs")?"desktop":"terminal",id));
     require(requests.size()==steps.size()+1 && states.size()==steps.size(),"wrong number of decisions");
     for (unsigned i=0;i<requests.size();++i) {
         check_request(requests[i],sources,db->conversation(),row,i,false);
+        check_experiences(requests[i],episodes,db->conversation(),row,i,false);
         if (!i) continue;
         const auto& messages = requests[i].messages;
         const auto& receipt = messages.at(messages.size()-2);
         require(receipt.role==model::Role::tool && receipt.tool_call_id=="call"+std::to_string(i-1),"unpaired tool receipt");
         const auto result = Json::parse(receipt.content.substr(receipt.content.find('{')));
         require(result.at("state")==states.at(i-1),"unexpected receipt: "+result.dump());
+        if (result.at("state")=="delivered" && steps.at(i-1).contains("main_choose"))
+            require(result.at("reference")==reference("$#"+id) && result.contains("reviewDue")==row.value("dueChoice",false),"wrong experience identity or trigger");
         if (result.at("state")=="saved") require(result.at("reference")==db->conversation()+"/"+std::to_string(sources.at(id).id),"wrong stored original");
         if (result.at("state")=="saved" && row.contains("due"))
             require(result.value("reviewDue",std::string{})==row.at("due").get<std::string>(),"wrong review trigger");
+    }
+    if (row.value("citeExperience",false)) {
+        const auto msg = db->page(true,0,db->watermark(),1).records.at(0);
+        const auto& answer = msg.envelope.at("text").get_ref<const std::string&>();
+        require(msg.source=="main" && msg.receipt.at("state")=="delivered" &&
+            (row.at("kind")=="why" ? answer.starts_with("现在我猜："+row.at("why").get<std::string>()) : answer.starts_with("同样条件下，我的实选依次是：")),
+            "missing first-person review at delivery");
+        for (const auto& key : row.at("events")) {
+            const auto& saved = episodes.at(key.get<std::string>());
+            const auto& args = saved.envelope.at("experience");
+            require(answer.find(args.at("scene").get<std::string>()+"，"+args.at("choice").get<std::string>()+" ["+
+                reference("$#"+key.get<std::string>())+"]")!=answer.npos,"delivered answer lacks cited experience");
+            if (!args.at("impression").get_ref<const std::string&>().empty())
+                require(answer.find("当时我说："+args.at("impression").get<std::string>())!=answer.npos,"lost contemporaneous impression");
+        }
     }
     if (row.value("cite",false)) {
         const auto message = db->page(true,0,db->watermark(),1).records.at(0);
@@ -211,9 +299,21 @@ std::size_t run(const Json& row, const std::filesystem::path& data, Sources& sou
         require(requests.size()==steps.size()+3,"missing snapshot probe");
         check_request(requests.at(requests.size()-2),sources,db->conversation(),row,0,true);
         check_request(requests.back(),sources,db->conversation(),row,1,true);
+        check_experiences(requests.back(),episodes,db->conversation(),row,1,true);
         const auto& content = requests.back().messages.at(requests.back().messages.size()-2).content;
         const auto read = Json::parse(content.substr(content.find('{')));
         require(read.at("state")=="ready" && read.at("status").at("omittedDecisionOnly")==1,"historic snapshot bypassed search budget");
+    }
+    if (row.contains("roomAfter")) {
+        room_check = true;
+        const auto before = requests.size();
+        host.post_room_event(app::RoomEvent::addressed,"书房","有人进了书房。");
+        require(host.review_room()==app::MailboxIntakeResult::submitted,"private-to-room handover failed");
+        drain(host);
+        require(requests.size()==before+1,"unexpected room decisions");
+        Json room{{"id",id},{"audience","room"},{"absent",row.at("roomAfter")}};
+        check_request(requests.back(),sources,db->conversation(),room,0,false);
+        check_experiences(requests.back(),episodes,db->conversation(),room,0,false);
     }
     std::ifstream trace(host.trace_file(),std::ios::binary);
     std::size_t verified = 0;
@@ -234,13 +334,13 @@ int wmain(int argc, wchar_t** argv) {
         if (argc!=3) return 2;
         const auto data = std::filesystem::path(argv[2])/std::to_string(GetCurrentProcessId())/std::to_string(GetTickCount64());
         std::ifstream corpus(std::filesystem::path(argv[1]),std::ios::binary);
-        Sources sources;
+        Sources sources, episodes;
         unsigned cases = 0;
         std::size_t requests = 0;
         for (std::string line;std::getline(corpus,line);) {
             const auto row = Json::parse(line);
             if (!cases && row.contains("legacy")) seed_legacy(data,row.at("legacy"),sources);
-            try { requests += run(row,data,sources); }
+            try { requests += run(row,data,sources,episodes); }
             catch (const std::exception& e) { throw std::runtime_error(row.at("id").get<std::string>()+": "+e.what()); }
             ++cases;
         }

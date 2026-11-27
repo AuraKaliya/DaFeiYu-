@@ -58,6 +58,16 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> speak(const agent::ToolInvocation& invocation);
     // 注册主人私聊中的记忆判断与按需检索契约。
     void register_memory_tools();
+    // 注册私聊中实际作出选择和比较已见亲历的两个入口。
+    void register_experience_tools();
+    // 将亲历选择作为真实答复交付，当前原话与投递一起核实。
+    std::unique_ptr<agent::ToolWork> choose(const agent::ToolInvocation& invocation);
+    // 只比较本轮已查回的独立经历。
+    std::unique_ptr<agent::ToolWork> review_experience(const agent::ToolInvocation& invocation);
+    // 投影亲历及其解释，历史快照只保留本次读取的数量。
+    agent::DecisionStatusSource experience_source(std::uint64_t turn, const nlohmann::json& selection) const;
+    // 封装记忆工具的确定回执及效果。
+    static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。
     std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
     // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
@@ -67,7 +77,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     // 取业务线程已有的实收与待写原件，为本次决策提供带版本的采样。
     agent::DecisionStatusSource delivery_status() const;
     // 使用原回合及渠道投递号保存发言，写盘失败时保留原件。
-    nlohmann::json reply(agent::RunId run, const std::string& suffix, const std::string& text);
+    nlohmann::json reply(agent::RunId run, const std::string& suffix, const std::string& text, const nlohmann::json& experience = nullptr);
     // 按本轮的实际发言裁定是否需要另行交付最终文本。
     void final_reply(agent::RunId run, const std::string& text);
     // 提交原投递并以数据库消息号记录渠道实效。

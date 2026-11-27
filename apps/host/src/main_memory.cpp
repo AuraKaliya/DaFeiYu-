@@ -4,11 +4,11 @@
 
 namespace dfy::app {
 using Json = nlohmann::json;
-namespace {
 // 按工具执行的实际结果返回回执，区分写入、只读与拒绝。
-std::unique_ptr<agent::ToolWork> memory_receipt(Json value, agent::ToolEffect effect, bool ok = true) {
+std::unique_ptr<agent::ToolWork> MainMessages::memory_receipt(Json value, agent::ToolEffect effect, bool ok) {
     return agent::completed_tool({ok,effect,value.dump(),ok ? agent::ToolError::none : agent::ToolError::failed});
 }
+namespace {
 // 冻结有序的本轮证据；工具回执与普通会话历史只记录查询结果的数量。
 agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64_t turn, const Json& result) {
     static const auto schema = [] {
@@ -37,15 +37,17 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,2,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,3,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
         "每轮一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches；"
         "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
-        "reviewDue 表示有待比较的原话，limited 表示部分命中未装入，无依据时说明或追问。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals"]}},"required":["topics","count","need"],"additionalProperties":false})"},
+        "reviewDue 表示有待比较的原话。回顾自己实际作过的选择用 episodes，topics 可填主题或投递原件号。"
+        "why 查现在对过去的解释，change 查相似情境下实际换过的选择。用一个主题或当时那场的投递号查配套依据，need 用 multiple，count 给三。"
+        "从 memory.experiences 区分当时的感受与后来推测，说明哪几次经历支持判断并引用 reference。limited 表示材料未全部装入。",
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change"]}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -89,10 +91,14 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
     if (count<=0) return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);
     try {
         const unsigned limit = need=="single" ? 1u : 3u;
-        const auto result = store_->search_memory(args.at("topics").get<std::vector<std::string>>(),
-            count>=limit ? limit : count.get<unsigned>(),args.value("view",std::string{"current"}));
+        const auto topics = args.at("topics").get<std::vector<std::string>>();
+        const auto view = args.value("view",std::string{"current"});
+        const bool own = view=="episodes" || view=="why" || view=="change";
+        const auto take = count>=limit ? limit : count.get<unsigned>();
+        const auto result = own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
         const auto size = result.at("items").size();
-        search_result_ = matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
+        search_result_ = own ? experience_source(call.attempt.step.run.sequence,result) :
+            matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
         search_step_ = call.attempt.step.sequence;
         return memory_receipt({{"state",size ? "ready" : result.at("limited")==true ? "limited" : "no_match"},
             {"count",size},{"limited",result.at("limited")}},agent::ToolEffect::not_applied);
@@ -107,6 +113,8 @@ std::unique_ptr<agent::ToolWork> MainMessages::reflect_memory(const agent::ToolI
     if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_)
         return memory_receipt({{"state","unseen_evidence"}},agent::ToolEffect::not_applied,false);
     const auto samples = Json::parse(search_result_->samples);
+    if (samples.at(0).at("key")!="memory.matches")
+        return memory_receipt({{"state","unseen_evidence"}},agent::ToolEffect::not_applied,false);
     const auto& items = samples.at(0).at("value").at("items");
     for (const auto key : {"prior","later"})
         if (std::none_of(items.begin(),items.end(),[&](const auto& item){return item.at("reference")==args.at(key);}))

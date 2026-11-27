@@ -1,6 +1,7 @@
 #include "message_store.hpp"
 #include <winsqlite/winsqlite3.h>
 #include <dafeiyu/utf8.hpp>
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <mutex>
@@ -109,7 +110,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>4) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>5) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -131,6 +132,10 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "CREATE TABLE memory_review(message INTEGER PRIMARY KEY,series INTEGER NOT NULL,version INTEGER NOT NULL,"
             "basis INTEGER NOT NULL,excerpt TEXT NOT NULL,event_utc INTEGER NOT NULL);"
             "CREATE INDEX review_versions ON memory_review(series,version,message); PRAGMA user_version=4");
+        if (previous<5) sql(db,"CREATE TABLE main_experience(message INTEGER PRIMARY KEY,parent INTEGER NOT NULL UNIQUE,topic TEXT NOT NULL,active INTEGER NOT NULL,open_offer INTEGER NOT NULL);"
+            "CREATE INDEX experience_topic ON main_experience(topic,message DESC) WHERE active=1;"
+            "CREATE TABLE experience_review(topic TEXT NOT NULL,kind TEXT NOT NULL,anchor INTEGER NOT NULL,later INTEGER NOT NULL,"
+            "evidence TEXT NOT NULL,interpretation TEXT NOT NULL,PRIMARY KEY(topic,kind,anchor,later)); PRAGMA user_version=5");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -207,6 +212,17 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
     prior.bind(1,id);
     const bool exists = prior.next();
     bool changed = false;
+    bool known_experience = false;
+    if (!topic) {
+        Statement known(db,"SELECT active FROM main_experience WHERE message=?1 OR parent=?1");
+        known.bind(1,id);
+        known_experience = known.next();
+        if (known_experience && known.number(0)) {
+            Statement revoke(db,"UPDATE main_experience SET active=0 WHERE message=?1 OR parent=?1");
+            revoke.bind(1,id); revoke.next();
+            changed = true;
+        }
+    }
     if (topic && (!exists || !excerpt.empty())) {
         const auto query = std::string(memory_source)+" AND m.id=?";
         Statement source(db,query.c_str());
@@ -219,9 +235,9 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         Statement add(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,?,1,?)");
         add.bind(1,id); add.bind(2,*topic); add.bind(3,kind.empty() ? std::string_view("") : kind); add.next();
         changed = true;
-    } else if (!exists || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
+    } else if ((!exists && !known_experience) || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
         throw std::invalid_argument("memory: unknown, revoked or conflicting original");
-    } else if (!topic && prior.number(1)) {
+    } else if (!topic && exists && prior.number(1)) {
         Statement revoke(db,"UPDATE personal_memory SET active=0 WHERE message=?");
         revoke.bind(1,id); revoke.next();
         changed = true;
@@ -383,6 +399,169 @@ nlohmann::json MessageStore::search_memory(const std::vector<std::string>& topic
     if (!review_due.empty()) selection["reviewDue"] = review_due;
     return selection;
 }
+namespace {
+// 从同一份已送达的本体发言取事实与稳定身份，授权墓碑同时遮住原件和派生判断。
+std::optional<Json> episode(sqlite3* db, const std::string& profile, std::int64_t id) {
+    Statement row(db,"SELECT e.parent,m.utc,m.envelope,r.body,e.open_offer,p.envelope FROM main_experience e JOIN messages m ON m.id=e.message "
+        "JOIN messages p ON p.id=e.parent JOIN receipts r ON r.rev=m.latest WHERE e.active=1 AND e.message=? AND m.source='main'");
+    row.bind(1,id);
+    if (!row.next() || Json::parse(row.text(3)).at("state")!="delivered") return {};
+    const auto envelope = Json::parse(row.text(2));
+    auto value = envelope.at("experience");
+    value["reference"] = profile+"/"+std::to_string(id);
+    value["parentReference"] = profile+"/"+std::to_string(row.number(0));
+    value["utcMs"] = row.number(1);
+    value["deliveredText"] = envelope.at("text");
+    value["openOffer"] = row.number(4)!=0;
+    const auto prompt = Json::parse(row.text(5)).at("text");
+    if (prompt.dump().size()<=384) value["situationText"] = prompt;
+    return value;
+}
+// 对可独立识别的主人直接委托保留凭据；其他自然措辞仍可记录亲历与事后解释。
+bool explicit_offer(std::string_view input, std::string_view authority) {
+    constexpr std::string_view invitations[]{"这次由你选","由你选","你来选","你自己选","你来决定","由你决定","你自己决定",
+        "你想选哪个","你选哪一个","任选其一","都可以，你选","You decide","It's your choice"};
+    if (std::ranges::find(invitations,authority)==std::end(invitations)) return false;
+    const auto end = input.find_last_not_of(" \r\n\t");
+    input = input.substr(0,end+1);
+    for (std::string_view mark : {"。","？","！",".","?","!"})
+        if (input.ends_with(mark)) { input.remove_suffix(mark.size()); break; }
+    if (!input.ends_with(authority)) return false;
+    input.remove_suffix(authority.size());
+    for (std::string_view separator : {"。","？","！","，","；","：",", ",". ","\n"})
+        if (input.ends_with(separator)) return true;
+    return input.empty();
+}
+// 在实际发言的写事务内核对来信、授权、选项和逐字情境，每封来信只产生一次选择。
+bool index_choice(sqlite3* db, std::int64_t message, const Json& envelope, const std::string& profile) {
+    const auto& args = envelope.at("experience");
+    const auto parent = memory_message(profile+"/"+envelope.at("replyTo").get<std::string>(),profile);
+    Statement source(db,"SELECT m.envelope,r.body FROM messages m JOIN receipts r ON r.rev=m.latest WHERE m.id=?1 "
+        "AND m.source IN ('desktop','terminal') AND NOT EXISTS(SELECT 1 FROM personal_memory WHERE message=?1 AND active=0) "
+        "AND NOT EXISTS(SELECT 1 FROM main_experience WHERE parent=?1)");
+    source.bind(1,parent);
+    if (!source.next()) throw std::invalid_argument("experience: unavailable input");
+    const auto input = Json::parse(source.text(0)), receipt = Json::parse(source.text(1));
+    if (input.at("sender")!="user" || (receipt.at("state")!="accepted" && receipt.at("state")!="submitted") ||
+        receipt.at("instance")!=envelope.at("instance") || receipt.at("session")!=envelope.at("session") || receipt.at("turn")!=envelope.at("turn"))
+        throw std::invalid_argument("experience: wrong turn");
+    const auto& text = input.at("text").get_ref<const std::string&>();
+    const auto topic = args.at("topic").get<std::string>();
+    check_memory_topic(topic);
+    // 所有描述主人提供的条件与选项都须能在原信逐字定位。
+    const auto excerpt = [&](const std::string& value, std::size_t limit) {
+        return value.size()<=limit && value.find_first_not_of(" \r\n\t")!=value.npos && text.find(value)!=text.npos;
+    };
+    auto options = args.at("options").get<std::vector<std::string>>();
+    std::ranges::sort(options);
+    if (!excerpt(args.at("scene"),160) || !excerpt(args.at("authority"),160) || options.empty() || options.size()>4 ||
+        (args.at("agency")=="free" && options.size()<2) || std::adjacent_find(options.begin(),options.end())!=options.end() ||
+        std::ranges::any_of(options,[&](const auto& option){return !excerpt(option,64);}) ||
+        !std::ranges::binary_search(options,args.at("choice").get<std::string>()) ||
+        args.at("impression").get_ref<const std::string&>().size()>192)
+        throw std::invalid_argument("experience: unsupported choice");
+    Statement prior(db,"SELECT 1 FROM main_experience WHERE topic=? AND active=1 LIMIT 1");
+    prior.bind(1,topic);
+    const bool due = prior.next();
+    Statement add(db,"INSERT INTO main_experience(message,parent,topic,active,open_offer) VALUES(?,?,?,1,?)");
+    add.bind(1,message); add.bind(2,parent); add.bind(3,topic);
+    add.bind(4,args.at("agency")=="free" && explicit_offer(text,args.at("authority").get_ref<const std::string&>())); add.next();
+    sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
+    return due;
+}
+}
+
+// 查原件时排序和限量；查结论时把列明的依据作为一组，在同一预算内全部交付。
+Json MessageStore::search_experience(const std::vector<std::string>& topics, unsigned count, std::string_view view) const {
+    if (topics.empty() || topics.size()>3 || !count || (view!="episodes" && topics.size()!=1))
+        throw std::invalid_argument("experience: invalid query");
+    auto* db = state_->db;
+    std::lock_guard lock(state_->mutex);
+    Json result{{"items",Json::array()},{"limited",false}};
+    if (view=="episodes") {
+        Statement rows(db,"WITH q(term) AS (VALUES(?1),(?2),(?3)) SELECT message FROM main_experience JOIN q ON "
+            "(typeof(term)='integer' AND term=message) OR (typeof(term)='text' AND instr(topic,term)>0) WHERE active=1 "
+            "GROUP BY message ORDER BY min(CASE WHEN term=message THEN 0 WHEN term=topic THEN 1 ELSE 2 END),message DESC LIMIT 13");
+        for (std::size_t i=0;i<topics.size();++i) {
+            const int slot = static_cast<int>(i+1);
+            if (topics[i].find('/')!=std::string::npos) rows.bind(slot,memory_message(topics[i],conversation()));
+            else { check_memory_topic(topics[i]); rows.bind(slot,topics[i]); }
+        }
+        auto& items = result.at("items");
+        while (rows.next()) {
+            if (items.size()>=count) { result["limited"] = true; break; }
+            if (auto item = episode(db,conversation(),rows.number(0))) {
+                items.push_back(std::move(*item));
+                if (items.dump().size()>2048) { items.erase(items.end()-1); result["limited"] = true; }
+            }
+        }
+        return result;
+    }
+    Statement review(db,"SELECT evidence,interpretation FROM experience_review WHERE kind=?1 AND "
+        "((typeof(?2)='text' AND topic=?2) OR (typeof(?2)='integer' AND (anchor=?2 OR later=?2))) "
+        "ORDER BY (anchor=?2) DESC,later DESC,anchor DESC LIMIT 1");
+    review.bind(1,view);
+    if (topics[0].find('/')!=std::string::npos) review.bind(2,memory_message(topics[0],conversation()));
+    else { check_memory_topic(topics[0]); review.bind(2,topics[0]); }
+    if (!review.next()) return result;
+    auto items = Json::array();
+    for (const auto id : Json::parse(review.text(0)).get<std::vector<std::int64_t>>()) {
+        auto item = episode(db,conversation(),id);
+        if (!item) return result;
+        items.push_back(std::move(*item));
+    }
+    Json complete{{"items",std::move(items)},{"limited",false},{"kind",view}};
+    if (view=="why") complete["interpretation"] = review.text(1);
+    if (complete.at("items").size()<=count) {
+        if (complete.dump().size()<=2048) return complete;
+        // 原场次可以逐份展开，概要优先保留每次实选及原件号。
+        for (auto& item : complete.at("items"))
+            for (const auto field : {"deliveredText","options","authority","topic","parentReference","impression","situationText"}) item.erase(field);
+        complete["limited"] = true;
+        if (complete.dump().size()<=2048) return complete;
+    }
+    result["limited"] = true;
+    return result;
+}
+
+// 以原件号固定解释的支持集；选择变化额外核实自主性、相同条件、相同可选项及不同实收。
+// 步骤：核实独立经历和先后 → 检查判断种类 → 在各自分支幂等追加修订。
+void MessageStore::review_experience(const Json& review) {
+    const auto refs = review.at("evidence").get<std::vector<std::string>>();
+    const auto kind = review.at("kind").get<std::string>(), why = review.at("interpretation").get<std::string>();
+    if (refs.size()<2 || refs.size()>3 || (kind!="why" && kind!="change") || why.size()>384 ||
+        (kind=="why" ? why.find_first_not_of(" \r\n\t")==why.npos : !why.empty()))
+        throw std::invalid_argument("experience: invalid review");
+    std::lock_guard lock(state_->mutex);
+    auto* db = state_->db;
+    Transaction tx(db);
+    std::vector<std::int64_t> ids;
+    Json first;
+    for (const auto& ref : refs) {
+        const auto id = memory_message(ref,conversation());
+        auto item = episode(db,conversation(),id);
+        if (!item || (!ids.empty() && (id<=ids.back() || item->at("topic")!=first.at("topic"))))
+            throw std::invalid_argument("experience: unordered or unrelated sources");
+        auto& options = item->at("options");
+        std::sort(options.begin(),options.end());
+        if (ids.empty()) first = *item;
+        if (kind=="change" && (item->at("openOffer")!=true || item->at("scene")!=first.at("scene") ||
+            options!=first.at("options") || (ids.size()+1==refs.size() && item->at("choice")==first.at("choice"))))
+            throw std::invalid_argument("experience: choices not comparable");
+        ids.push_back(id);
+    }
+    const auto topic = first.at("topic").get<std::string>(), evidence = Json(ids).dump();
+    Statement existing(db,"SELECT later,evidence,interpretation FROM experience_review WHERE topic=? AND kind=? AND anchor=? AND later>=? ORDER BY later LIMIT 1");
+    existing.bind(1,topic); existing.bind(2,kind); existing.bind(3,ids.front()); existing.bind(4,ids.back());
+    if (existing.next()) {
+        if (existing.number(0)!=ids.back() || existing.text(1)!=evidence || existing.text(2)!=why)
+            throw std::invalid_argument("experience: stale or conflicting review");
+    } else {
+        Statement add(db,"INSERT INTO experience_review(topic,kind,anchor,later,evidence,interpretation) VALUES(?,?,?,?,?,?)");
+        add.bind(1,topic); add.bind(2,kind); add.bind(3,ids.front()); add.bind(4,ids.back()); add.bind(5,evidence); add.bind(6,why); add.next();
+    }
+    tx.commit();
+}
 // 用读锁固定当前提交位置。
 std::optional<StoredMessage> MessageStore::find(std::string_view source, std::string_view submission) const {
     std::lock_guard lock(state_->mutex);
@@ -418,7 +597,10 @@ MessageAdmission MessageStore::put(std::string_view source, std::string_view sub
     insert.bind(4,utc);
     insert.next();
     const auto id = sqlite3_last_insert_rowid(db);
-    const auto revision = append_receipt(db,id,receipt);
+    auto actual = receipt;
+    if (source=="main" && envelope.contains("experience") && actual.at("state")=="delivered" &&
+        index_choice(db,id,envelope,conversation())) actual["reviewDue"] = "compare_experiences";
+    const auto revision = append_receipt(db,id,actual);
     if ((source=="desktop" || source=="terminal") && envelope.is_object() && envelope.contains("text") &&
         envelope.at("text").is_string() && envelope.value("sender",Json{})=="user" && envelope.value("route",Json{})=="send" &&
         receipt.value("state",Json{})=="pending") {
@@ -432,7 +614,7 @@ MessageAdmission MessageStore::put(std::string_view source, std::string_view sub
         }
     }
     transaction.commit();
-    return {{id,revision,utc,std::string(source),std::string(submission),envelope,receipt},true};
+    return {{id,revision,utc,std::string(source),std::string(submission),envelope,std::move(actual)},true};
 }
 // 同一回执重试保留原序号，更新失败不发布水位。
 void MessageStore::update(std::int64_t message, const Json& receipt) {

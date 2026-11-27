@@ -52,6 +52,10 @@ class MessageStore {
         std::string_view excerpt = {}, std::string_view kind = {});
     // 把两份获准原件按重复表达或明确更正建立有来源的修订关系。
     void reflect_memory(const nlohmann::json& comparison);
+    // 按主题或稳定投递号读取本体亲历，复盘结论只随完整、仍获准的依据交付。
+    nlohmann::json search_experience(const std::vector<std::string>& topics, unsigned count, std::string_view view) const;
+    // 核实不同场次的亲历并分别追加解释修订或自主选择变化。
+    void review_experience(const nlohmann::json& review);
     // 查询当前档案中最近一次实际接纳的用户原话身份。
     std::string last_memory_source() const;
     // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。
