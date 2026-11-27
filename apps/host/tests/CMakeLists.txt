@@ -84,3 +84,9 @@ target_link_libraries(dfy_main_memory_tests PRIVATE dfy_host_commands dfy_applic
 add_test(NAME app.main_memory COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:dfy_main_memory_tests>"
   "-DROOT=${CMAKE_CURRENT_BINARY_DIR}/main-memory/$<CONFIG>" -P "${CMAKE_CURRENT_SOURCE_DIR}/main_memory_restart.cmake")
 set_tests_properties(app.main_memory PROPERTIES TIMEOUT 40)
+
+dfy_test_executable(dfy_dialogue_memory_tests dialogue_memory.cpp)
+target_link_libraries(dfy_dialogue_memory_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.dialogue_memory COMMAND dfy_dialogue_memory_tests "${CMAKE_CURRENT_SOURCE_DIR}/memory_recall/dialogue.jsonl"
+  "${CMAKE_CURRENT_BINARY_DIR}/dialogue-memory/$<CONFIG>")
+set_tests_properties(app.dialogue_memory PROPERTIES TIMEOUT 40)

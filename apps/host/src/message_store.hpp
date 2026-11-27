@@ -47,11 +47,14 @@ class MessageStore {
     // 返回当前档案的记忆授权修订，零表示从未收录原话。
     std::int64_t memory_revision() const;
     // 在一个事务内按原件身份收录或撤权，重复操作保留修订号。
-    std::pair<std::int64_t,bool> change_memory(std::string_view identity, const std::optional<std::string>& topic);
+    std::pair<std::int64_t,bool> change_memory(std::string_view identity, const std::optional<std::string>& topic,
+        std::string_view excerpt = {});
     // 查询当前档案中最近一次实际接纳的用户原话身份。
     std::string last_memory_source() const;
     // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。
     std::optional<StoredMessage> recall_memory(std::string_view selector) const;
+    // 按本档案获准主题选择候选，在整份证据数组的字节预算内保留原件。
+    nlohmann::json search_memory(const std::vector<std::string>& topics, unsigned count) const;
     struct State;
     std::unique_ptr<State> state_;
 };

@@ -81,7 +81,7 @@ flowchart TB
 | --- | --- |
 | 身份和作用域 | `dafeiyu.agent_status/1` 的 `scope`、`snapshot`、`turn`、`step` 标识一个绑定下的一次决策。有任务时才附任务身份。`asOf.event` 是接纳事实号上界，`asOf.utcMs` 是这一步判断的时刻。 |
 | 声明与采样 | 本体与插件按命名空间登记稳定键、schema 版本、描述、值类型及默认关注。采样附对象、来源、原事实号和可取得的时间与有效期。无采样、已过期、未知实效与实测为零分别表达。[注册与校验](../../modules/agent/src/decision_status.cpp) |
-| 展示与读回 | 尾注最多展示 8 个显式项、16 KiB，完整读回连响应最多 64 KiB，同一绑定保留最近 32 个已发布版本。`status_read` 按快照号查询当时的原件，执行前沿原只读授权复核。超出保留窗口、清空、换绑和撤权均返回可区别的结果。[查询实现](../../modules/agent/src/decision_query.cpp) |
+| 展示与读回 | 尾注最多展示 8 个显式项、16 KiB，完整读回连响应最多 64 KiB，同一绑定保留最近 32 个已发布版本。`status_read` 按快照号查询可读原件，执行前沿原只读授权复核。提供方可用 `snapshotRead=false` 标明仅供当前决策的材料，快照读回以 `omittedDecisionOnly` 给出省略项数。超出保留窗口、清空、换绑和撤权均返回可区别的结果。[查询实现](../../modules/agent/src/decision_query.cpp) |
 | 待办与环境 | `host.plan_todo` 带创建／最近更新时间和原验证证据。终端明确给定的工作目录、系统和可取得的时区属于该次开发任务。游戏现场的角色、维度和库存由桥接取样，标明宿主收件时间，试点采样有效窗口为 1 秒。[待办投影](../../modules/agent/src/plan_status.cpp) · [目录采样](../../apps/host/src/workspace_environment.cpp) |
 | 工具数与实效 | `host.tool_counts` 分别表示提出、接纳和实际派发，按会话、回合和上次响应统计。同一原物品堆的领用与余量由领域回执证明；另一堆或失去视野时余量保持未知。[三种计数](../../modules/agent/tests/tool_counts.cpp) · [原物品堆验证](../../plugins/mc/tests/ground-pickup.test.cjs) |
 

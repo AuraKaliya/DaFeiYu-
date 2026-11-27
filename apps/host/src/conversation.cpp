@@ -25,7 +25,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     agent::DecisionStatusOptions main_status{"main",{},natural_dialogue,{},true};
     if (options.decision_status) main_status.sample = std::move(options.decision_status->sample);
     options.decision_status = std::move(main_status);
-    const bool can_speak = player_facing && main_messages_ && main_messages_->prepare_output(options);
+    const bool can_speak = player_facing && main_messages_ && main_messages_->prepare_output(options,audience,prompt);
     if (main_messages_) main_messages_->prepare_memory(options,audience,prompt);
     if (persona_) {
         const auto route = can_speak ? agent::OutputRoute::main_chat_with_reply :

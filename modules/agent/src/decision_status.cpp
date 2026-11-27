@@ -121,7 +121,9 @@ void watch(Frame& frame, const std::string& owner, const Json& row) {
 // 校验宿主所有权、默认关注和值契约，同键同版在准备和发布之间保持唯一。
 // 步骤：规范化声明 → 核对已占槽及候选 → 编译 schema 并弱预留空槽。
 DefinitionRef Registry::reserve(const std::string& owner, Json row) {
-    fields(row,{"key","version","description","defaultAttention","valueSchema","owner"});
+    fields(row,{"key","version","description","defaultAttention","valueSchema","owner","snapshotRead"});
+    if (row.contains("snapshotRead") && !row.at("snapshotRead").is_boolean())
+        throw std::invalid_argument("status: invalid snapshot read policy");
     const auto& key = owned_key(row,owner);
     if (row.contains("owner") && row.at("owner") != owner) throw std::invalid_argument("status: wrong declaration owner");
     row["owner"] = owner;
@@ -271,14 +273,14 @@ std::vector<EventRef> matching_events(const FrozenRecord& record, const std::pai
     }
     return matches;
 }
-// 按稳定键及对象顺序生成完整视图和显式尾注；跳过的显式项仍可按同一版号读取。
+// 按稳定键及对象顺序生成可查快照与显式尾注；仅供当前决策的材料不进入快照读口。
 // 步骤：冻结原件和有效期 → 附上首次显式展示的契约 → 限制尾注与完整快照大小。
 void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& frame, const FrozenRecord* previous,
     Json full, std::int64_t utc_ms) {
     Json tail = full;
     std::set<std::string> described;
     std::set<std::uint64_t> wake_ids;
-    std::size_t bytes = tail.dump().size() + 32, omitted = 0;
+    std::size_t bytes = tail.dump().size() + 32, omitted = 0, decision_only = 0;
     for (const auto& [identity,sample] : frame.samples) {
         const auto& definition = frame.definitions.at(identity.first);
         auto item = at_time(sample,utc_ms);
@@ -294,8 +296,10 @@ void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& fr
             if (event->remaining == event->watch.count && !wake_ids.contains(event->event))
                 wake_bytes += std::to_string(event->event).size()+1;
         }
-        full.at("items").push_back(item);
-        if (described.insert(identity.first).second) full.at("definitions").push_back(definition->declaration);
+        if (definition->declaration.value("snapshotRead",true)) {
+            full.at("items").push_back(item);
+            if (described.insert(identity.first).second) full.at("definitions").push_back(definition->declaration);
+        } else ++decision_only;
         if (!definition->explicit_attention && tasks == frame.tasks.end() && events.empty()) continue;
         const Version version{identity.first,definition->version};
         const bool explain = !record.visible.contains(version) && (!previous || !previous->visible.contains(version));
@@ -312,6 +316,7 @@ void project(FrozenDecisionStatus& result, FrozenRecord& record, const Frame& fr
         }
     }
     if (omitted) tail["omittedExplicit"] = omitted;
+    if (decision_only) full["omittedDecisionOnly"] = decision_only;
     full.at("wakeEvents") = tail.at("wakeEvents");
     result.full = full.dump();
     constexpr std::string_view prefix = R"({"state":"ready","status":)";

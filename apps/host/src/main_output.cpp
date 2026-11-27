@@ -21,11 +21,12 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
     : app_(application),store_(std::move(store)),instance_(std::move(instance)),
       memory_revision_(store_->memory_revision()),log_(log),trace_(trace) {
     if (!structured) return;
-    reply_tools_ = std::make_unique<agent::ToolCatalog>(1);
+    reply_tools_ = std::make_unique<agent::ToolCatalog>(3);
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",
         "向当前主聊天发送一条发言或追问。text 为用户将看到的原文。回执给出投递号和写入状态。",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})"},
         true,true,{},{},0,1024,true},[this](const agent::ToolInvocation& call) { return speak(call); });
+    register_memory_tools();
 }
 
 // 冻结最近实收原件和仍待落盘的投递，超长正文保留可按原渠道定位的前缀。
@@ -75,7 +76,7 @@ agent::DecisionStatusSource MainMessages::delivery_status() const {
 
 // 为本轮主聊天绑定原渠道状态读口及发言权限；工具续行重新取得实际回执。
 // 步骤：重置原轮输出 → 绑定业务线程源 → 对获准的入口提供发言工具。
-bool MainMessages::prepare_output(agent::RunOptions& options) {
+bool MainMessages::prepare_output(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt) {
     explicit_deliveries_.clear();
     output_input_ = 0;
     options.decision_status->sample = [source=weak_from_this()] {
@@ -84,7 +85,11 @@ bool MainMessages::prepare_output(agent::RunOptions& options) {
         return std::vector{channel->delivery_status()};
     };
     if (!reply_tools_ || options.tools || options.planning) return false;
-    options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
+    if (audience==DialogueAudience::owner && !memory_capture_topic(prompt) &&
+        !prompt.starts_with("回想 ") && !prompt.starts_with("撤回记忆 ")) {
+        const std::string ids[]{reply_id,"main/memory_note","main/memory_search"};
+        options.tools = reply_tools_->snapshot(ids,true);
+    } else options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
     return true;
 }
 

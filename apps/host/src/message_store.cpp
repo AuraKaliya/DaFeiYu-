@@ -192,7 +192,8 @@ std::string MessageStore::last_memory_source() const {
 }
 // 将记忆索引绑定不可变消息；撤权保留原件和墓碑，旧收录重试不能复活授权。
 // 步骤：核对身份与原件 → 幂等改变索引 → 同一事务内提交权限修订。
-std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic) {
+std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic,
+    std::string_view excerpt) {
     const auto id = memory_message(identity,conversation());
     if (topic) check_memory_topic(*topic);
     std::lock_guard lock(state_->mutex);
@@ -202,11 +203,15 @@ std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identi
     prior.bind(1,id);
     const bool exists = prior.next();
     bool changed = false;
-    if (topic && !exists) {
+    if (topic && (!exists || !excerpt.empty())) {
         const auto query = std::string(memory_source)+" AND m.id=?";
         Statement source(db,query.c_str());
         source.bind(1,id);
         if (!source.next() || !eligible_original(source,true)) throw std::invalid_argument("memory: eligible user quote within 2048 bytes required");
+        if (!excerpt.empty() && Json::parse(source.text(1)).at("text").get<std::string>().find(excerpt)==std::string::npos)
+            throw std::invalid_argument("memory: excerpt differs from original");
+    }
+    if (topic && !exists) {
         Statement add(db,"INSERT INTO personal_memory VALUES(?,?,1)");
         add.bind(1,id); add.bind(2,*topic); add.next();
         changed = true;
@@ -239,6 +244,35 @@ std::optional<StoredMessage> MessageStore::recall_memory(std::string_view select
     Statement result(state_->db,(select+(by_id ? "p.message=?" : "p.topic=? ORDER BY p.message DESC LIMIT 1")).c_str());
     if (by_id) result.bind(1,id); else result.bind(1,selector);
     return result.next() ? std::optional(row(result)) : std::nullopt;
+}
+// 按完整主题、局部主题及新近次序取唯一原件，预算不足时继续尝试较短候选。
+// 步骤：验证有限主题 → 在授权索引中合并排名 → 按序核算带来源的证据数组。
+nlohmann::json MessageStore::search_memory(const std::vector<std::string>& topics, unsigned count) const {
+    if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("memory: invalid search");
+    for (const auto& topic : topics) check_memory_topic(topic);
+    std::lock_guard lock(state_->mutex);
+    Statement matches(state_->db,"WITH terms(term) AS (VALUES(?1),(?2),(?3)), ranked AS ("
+        "SELECT p.message,p.topic,min(CASE WHEN p.topic=t.term THEN 0 ELSE 1 END) AS rank "
+        "FROM personal_memory p JOIN terms t ON instr(p.topic,t.term)>0 WHERE p.active=1 "
+        "GROUP BY p.message ORDER BY rank,p.message DESC LIMIT 13) "
+        "SELECT m.id,r.topic,m.source,m.utc,m.envelope FROM ranked r JOIN messages m ON m.id=r.message "
+        "ORDER BY r.rank,m.id DESC");
+    for (std::size_t i=0;i<topics.size();++i) matches.bind(static_cast<int>(i+1),topics[i]);
+    Json items = Json::array();
+    std::size_t bytes = 2;
+    bool limited = false;
+    unsigned candidates = 0;
+    while (matches.next()) {
+        if (++candidates>12 || items.size()>=count || items.size()>=3) { limited = true; break; }
+        const auto envelope = Json::parse(matches.text(4));
+        Json item{{"reference",conversation()+"/"+std::to_string(matches.number(0))},{"topic",matches.text(1)},
+            {"source",matches.text(2)},{"utcMs",envelope.value("sourceUtcMs",matches.number(3))},{"quote",envelope.at("text")}};
+        const auto cost = item.dump().size() + (items.empty() ? 0 : 1);
+        if (bytes+cost>2048) { limited = true; continue; }
+        bytes += cost;
+        items.push_back(std::move(item));
+    }
+    return {{"items",std::move(items)},{"limited",limited}};
 }
 // 用读锁固定当前提交位置。
 std::optional<StoredMessage> MessageStore::find(std::string_view source, std::string_view submission) const {

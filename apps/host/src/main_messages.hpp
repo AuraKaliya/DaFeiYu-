@@ -18,7 +18,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
         RunLog* trace, bool structured);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
-    bool prepare_output(agent::RunOptions& options);
+    bool prepare_output(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 在每个主会话入口固定受众；主人私聊可按主题或稳定身份读取一份原件。
     void prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 管理终端查询可收录的最近原话身份。
@@ -56,6 +56,12 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     void publish(std::int64_t id, const nlohmann::json& receipt);
     // 校验一次显式发言，将实际写入状态交还原工具调用。
     std::unique_ptr<agent::ToolWork> speak(const agent::ToolInvocation& invocation);
+    // 注册主人私聊中的记忆判断与按需检索契约。
+    void register_memory_tools();
+    // 核实原回合与实际收件后，根据模型判断收录当前原话。
+    std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
+    // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
+    std::unique_ptr<agent::ToolWork> search_memory(const agent::ToolInvocation& invocation);
     // 取业务线程已有的实收与待写原件，为本次决策提供带版本的采样。
     agent::DecisionStatusSource delivery_status() const;
     // 使用原回合及渠道投递号保存发言，写盘失败时保留原件。
@@ -69,7 +75,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string instance_;
     std::int64_t memory_revision_;
     std::string memory_binding_ = "main";
+    bool owner_memory_turn_ = false;
     std::optional<std::int64_t> incoming_memory_;
+    std::optional<agent::DecisionStatusSource> search_result_;
     SoftwareLog* log_;
     RunLog* trace_;
     std::function<void(const std::string&)> reply_sink_;
