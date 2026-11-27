@@ -22,6 +22,9 @@ struct MessageAdmission { StoredMessage message; bool created; };
 struct MessagePage { std::vector<StoredMessage> records; bool more = false; };
 struct MemoryChange { std::int64_t revision; bool changed, review_due; std::string reference; };
 struct ChildBinding { std::int64_t owner; std::string shared_source; };
+enum class IdleQueue : unsigned {cross_tool,tool_family,letter_digest};
+// 固定三类本体空闲工作的轮转次序，空队列可在同一轮跳过。
+constexpr IdleQueue following_queue(IdleQueue queue) {return static_cast<IdleQueue>((static_cast<unsigned>(queue)+1)%3);}
 
 // 每个数据目录拥有一个跨启动的主会话，原文与有序投递回执在同一库内提交。
 class MessageStore {
@@ -51,6 +54,8 @@ class MessageStore {
     friend class MainMessages;
     friend class TaskReflection;
     friend class Subagents;
+    // 跨启动恢复最近一次已完成工作的后继类别。
+    IdleQueue next_idle_queue() const;
     // 给管理入口提供可跨启动核对的档案身份与版本，不读取私人内容。
     nlohmann::json profile_info() const;
     // 将真实包身份与结构化预设绑定到跨启动的子库。

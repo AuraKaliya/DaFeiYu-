@@ -204,7 +204,8 @@ void MessageStore::commit_understanding(const Json& batch, const Json& proposal)
         next = sqlite3_last_insert_rowid(db);
     }
     Statement save(db,"UPDATE reflection_progress SET cursor=?,head=? WHERE family=?");
-    save.bind(1,through); save.bind(2,next); save.bind(3,family); save.next(); tx.commit();
+    save.bind(1,through); save.bind(2,next); save.bind(3,family); save.next();
+    complete_idle_queue(db,IdleQueue::tool_family); tx.commit();
 }
 
 // 独立装配本体解释和可展开的原始观察；反例先展示，旧版本仍按当时的依据解释。

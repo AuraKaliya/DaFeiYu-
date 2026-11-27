@@ -47,6 +47,7 @@ struct Fixture {
     std::string failure,reply;
     unsigned mail_step=0,mail_reads=0,mail_received=0,kb_reads=0;
     std::atomic<bool> entered=false,release=false;
+    std::mutex wire_mutex;
     bool holding=false;
     unsigned hosts=0,received=0;
     std::size_t task_requests=0;
@@ -63,8 +64,14 @@ struct Fixture {
     // 从实际 Trace 中筛出跨工具复盘已结算的结果。
     std::vector<std::string> idle_outcomes(const std::string& scope) const {
         std::ifstream in(host->trace_file(),std::ios::binary); std::vector<std::string> found;
-        for(std::string line;std::getline(in,line);) {const auto e=Json::parse(line); if(e.at("kind")=="memory.reflection_settled" &&
-            e.value("scope",std::string{})==scope) found.push_back(e.at("outcome"));}
+        for(std::string line;std::getline(in,line);) {
+            const auto e=Json::parse(line);
+            if(scope=="prepared" && e.at("kind")=="memory.reflection_prepared") found.push_back(e.at("wireSha256"));
+            if(e.at("kind")!="memory.reflection_settled") continue;
+            const auto recorded=e.value("scope",std::string{});
+            if(scope=="all") found.push_back(recorded+"/"+e.at("outcome").get<std::string>());
+            else if(recorded==scope) found.push_back(e.at("outcome"));
+        }
         return found;
     }
 
@@ -93,9 +100,10 @@ struct Fixture {
     // 核查实际请求、受众和来源；保留一次可控的迟到答复供在途撤权验收。
     model::Response answer(const model::Config& cfg,const model::Request& request) {
         const auto wire=model::encode_request_fields(request,cfg.thinking_enabled());
-        hashes.push_back(platform::sha256(wire)); ++received;
+        {std::lock_guard lock(wire_mutex); hashes.push_back(platform::sha256(wire)); ++received;}
         const auto tail=Json::parse(request.messages.back().content,nullptr,false);
         if (tail.is_object() && tail.contains("receivedLetter")) {
+            if(idle_case.is_object() && idle_case.value("scope",std::string{"letter_digest"})!="letter_digest") return {{model::Role::assistant,R"({"defer":true})"}};
             check(idle_case.is_object() && request.tools.empty() && tail.at("receivedLetter")==letter_ref(idle_case.at("ref")) &&
                 request.messages.size()==2 && tail.at("sourceAuthor").get<std::string>().find("/child/")!=std::string::npos,"wrong private digest source");
             const auto& spans=tail.at("passages"); const auto& raw=bodies.at(idle_case.at("ref").get<std::string>().substr(1));
@@ -118,6 +126,7 @@ struct Fixture {
         }
         if (tail.is_object() && tail.contains("observations")) return {{model::Role::assistant,R"({"defer":true})"}};
         if (tail.is_object() && tail.contains("caseFacts")) {
+            if(idle_case.is_object() && idle_case.value("scope",std::string{"cross_tool"})!="cross_tool") return {{model::Role::assistant,R"({"defer":true})"}};
             check(idle_case.is_object() && request.tools.empty() && tail.at("case")==idle_case.at("case") &&
                 tail.at("evidenceState")==idle_case.at("state"),"unscheduled or incorrect cross-tool review");
             Json refs=Json::array();
@@ -125,7 +134,15 @@ struct Fixture {
             if(idle_case.contains("cites")) {refs=Json::array(); for(const auto& ref:idle_case.at("cites")) refs.push_back(knowledge.resolve(ref));}
             check(tail.at("previousUnderstanding").is_object()==idle_case.value("prior",false),"wrong prior interpretation at idle");
             const auto decision=idle_case.value("judgement",tail.at("evidenceState")=="conflicting_observations" ? std::string{"unresolved"} : tail.at("evidenceState").get<std::string>());
+            if(idle_case.value("foreground",false)) {
+                entered=true; const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(6);
+                while(!release && std::chrono::steady_clock::now()<deadline) std::this_thread::yield();
+            }
             return {{model::Role::assistant,Json{{"text",idle_case.at("text")},{"judgement",decision},{"cites",refs}}.dump()}};
+        }
+        if(idle_case.is_object() && idle_case.value("foreground",false)) {
+            check(wire.find("先回应眼前的交接")!=wire.npos && wire.find("caseFacts")==wire.npos,"private batch in foreground");
+            return {{model::Role::assistant,"眼前的交接我先听你说。"}};
         }
         if (knowledge.row.is_object()) return knowledge.answer(request);
         if (mail_case.is_object()) return read_mail(request);
@@ -241,6 +258,7 @@ struct Fixture {
     }
     // 保存每一份实际请求同原 Trace 逐件核验，含协作取消后的后台答复。
     void audit() {
+        std::lock_guard lock(wire_mutex);
         std::ifstream in(host->trace_file(),std::ios::binary); std::size_t n=0;
         for (std::string line;std::getline(in,line);) {
             auto e=Json::parse(line);
@@ -267,6 +285,27 @@ struct Fixture {
     void step(const Json& row) {
         const auto op=row.at("op").get<std::string>(), session_name=row.value("session",std::string{});
         if (op=="restart") {window_tokens=row.value("window",0u); restart(row); return;}
+        if (op=="quiet" || op=="drained") {
+            const auto prepared=idle_outcomes("prepared").size();
+            for(unsigned i=0;i<(op=="quiet" ? 4u : 25u);++i) {host->advance_plugins(); now+=std::chrono::seconds(1);}
+            check(idle_outcomes("prepared").size()==prepared,"idle requested before quiet window or after draining"); return;
+        }
+        if(op=="schedule") {
+            const auto settled=idle_outcomes("all").size(); idle_case=row; entered=false; release=false;
+            const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(6); bool replied=false;
+            while(idle_outcomes("all").size()==settled) {
+                host->advance_plugins(); now+=std::chrono::seconds(1);
+                if(row.value("foreground",false) && entered && !replied) {
+                    host->main_messages()->terminal("interrupt-queue","先回应眼前的交接。"); tests::task_memory::drain(*host);
+                    check(db->page(true,0,db->watermark(),1).records.front().envelope.at("text")=="眼前的交接我先听你说。","foreground not delivered");
+                    replied=true; release=true;
+                }
+                check(std::chrono::steady_clock::now()<deadline,"mixed idle queue did not settle: "+failure); std::this_thread::yield();
+            }
+            const auto actual=idle_outcomes("all").back(),want=row.at("scope").get<std::string>()+"/"+row.value("outcome",std::string{"accepted"});
+            check(actual==want && replied==row.value("foreground",false) && failure.empty(),"expected "+want+", got "+actual+" "+failure);
+            idle_case=nullptr; return;
+        }
         if (op=="invalid_archive") {tests::check_unusable_archive(root,row.at("fault")); return;}
         if (op=="profile") {
             std::ostringstream out,err; app::application_command(*host,"/memory profile",out,err); const auto info=Json::parse(out.str());

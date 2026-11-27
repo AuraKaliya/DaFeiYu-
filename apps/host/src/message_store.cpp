@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>15) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>16) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -147,6 +147,8 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         }
         if(previous<15) sql(db,"CREATE INDEX IF NOT EXISTS case_native_checkpoint ON case_member(name,checkpoint,id) WHERE active=1 AND kind='tool_readback';"
             "CREATE INDEX IF NOT EXISTS case_kind_sequence ON case_member(name,kind,id) WHERE active=1; PRAGMA user_version=15");
+        if(previous<16) sql(db,"CREATE TABLE IF NOT EXISTS idle_schedule(id INTEGER PRIMARY KEY CHECK(id=1),next_queue INTEGER NOT NULL CHECK(next_queue BETWEEN 0 AND 2));"
+            "INSERT OR IGNORE INTO idle_schedule VALUES(1,0); PRAGMA user_version=16");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -160,6 +162,17 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
 MessageStore::~MessageStore() = default;
 // 返回数据库给当前目录签发的逻辑身份。
 const std::string& MessageStore::conversation() const noexcept { return state_->conversation; }
+
+// 当次结论、延期或回退落盘后，下次启动先让另一类工作取得机会。
+void message_db::complete_idle_queue(sqlite3* db,IdleQueue queue) {
+    Statement save(db,"UPDATE idle_schedule SET next_queue=? WHERE id=1"); save.bind(1,static_cast<unsigned>(following_queue(queue))); save.next();
+}
+// 从本档案取已提交的调度进度，尚在途的提议不会改变它。
+IdleQueue MessageStore::next_idle_queue() const {
+    std::lock_guard lock(state_->mutex); Statement get(state_->db,"SELECT next_queue FROM idle_schedule WHERE id=1");
+    if(!get.next()) throw std::runtime_error("memory: missing idle schedule");
+    return static_cast<IdleQueue>(get.number(0));
+}
 
 // 管理终端核对实际打开的持久身份、数据结构版本和主聊天记忆修订。
 nlohmann::json MessageStore::profile_info() const {

@@ -30,7 +30,7 @@ class TaskReflection {
     std::optional<nlohmann::json> batch_;
     std::optional<agent::ToolTime> ready_;
     bool dirty_ = true;
-    unsigned next_queue_ = 0;
+    IdleQueue next_queue_;
     std::string request_scope_;
 };
 }

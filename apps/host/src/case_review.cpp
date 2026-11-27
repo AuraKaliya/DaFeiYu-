@@ -102,7 +102,8 @@ void MessageStore::commit_case(const Json& batch,const Json& proposal) {
         add.bind(3,through); add.bind(4,proposal.at("judgement").get_ref<const std::string&>()); add.bind(5,proposal.at("text").get_ref<const std::string&>());
         add.bind(6,proposal.at("cites").dump()); add.next(); head=sqlite3_last_insert_rowid(db);
     }
-    Statement save(db,"UPDATE observation_case SET cursor=?,head=? WHERE name=?"); save.bind(1,through); save.bind(2,head); save.bind(3,name); save.next(); tx.commit();
+    Statement save(db,"UPDATE observation_case SET cursor=?,head=? WHERE name=?"); save.bind(1,through); save.bind(2,head); save.bind(3,name); save.next();
+    complete_idle_queue(db,IdleQueue::cross_tool); tx.commit();
 }
 // 查询一项已命名比较或精确版本。首屏优先交付分歧双方，继续翻页才展开其余原件。
 // 步骤：解析引用与截止号 → 核对当前授权和版本 → 在编码预算内交付原件。

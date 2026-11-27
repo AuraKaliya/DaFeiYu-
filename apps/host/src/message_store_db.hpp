@@ -5,6 +5,8 @@
 
 namespace dfy::app::message_db {
 struct MemoryBasis { std::string kind,dependency; std::int64_t record; };
+// 与本次复盘的游标和结论同事务登记轮转进度。
+void complete_idle_queue(sqlite3* db,IdleQueue queue);
 // 检验同档案原件的可见性、证据种类及撤权依赖。
 std::optional<MemoryBasis> resolve_basis(sqlite3* db,const std::string& profile,const std::string& reference);
 // 按不可变比较条件绑定一份独立读回或已收报告，同一原件不会增加票数。

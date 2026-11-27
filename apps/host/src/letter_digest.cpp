@@ -90,6 +90,7 @@ void MessageStore::commit_digest(const Json& batch,const Json& proposal) {
         }
     }
     Statement update(db,"UPDATE letter_digest SET state=?,selection=? WHERE letter=?"); update.bind(1,selected.empty() ? "fallback" : "ready");
-    update.bind(2,selected.dump()); update.bind(3,id); update.next(); tx.commit();
+    update.bind(2,selected.dump()); update.bind(3,id); update.next();
+    complete_idle_queue(db,IdleQueue::letter_digest); tx.commit();
 }
 }

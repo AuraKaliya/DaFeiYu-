@@ -10,7 +10,7 @@ using Json = nlohmann::json;
 TaskReflection::TaskReflection(std::shared_ptr<MessageStore> store, model::Config config, model::Backend backend,
     PersonaProfile persona, agent::ToolClock clock, RunLog* trace)
     : store_(std::move(store)),config_(std::move(config)),persona_(std::move(persona)),clock_(std::move(clock)),
-      trace_(trace),client_(1,std::move(backend)) {}
+      trace_(trace),client_(1,std::move(backend)),next_queue_(store_->next_idle_queue()) {}
 
 // 前台收件或权限变化优先，即使后台已经返回，尚未提交的提议也作废。
 void TaskReflection::interrupt() {
@@ -63,8 +63,8 @@ void TaskReflection::advance(bool idle) {
     if (now<*ready_) return;
     try {
         for(unsigned tried=0;tried<3 && !batch_;++tried) {
-            const auto queue=next_queue_; next_queue_=(next_queue_+1)%3;
-            batch_=queue==0 ? store_->next_case() : queue==1 ? store_->next_comparison() : store_->next_digest();
+            const auto queue=next_queue_; next_queue_=following_queue(queue);
+            batch_=queue==IdleQueue::cross_tool ? store_->next_case() : queue==IdleQueue::tool_family ? store_->next_comparison() : store_->next_digest();
         }
         if (!batch_) { dirty_=false; ready_.reset(); return; }
         const bool cross=batch_->contains("case"),letter=batch_->contains("letter");
@@ -111,7 +111,7 @@ void TaskReflection::advance(bool idle) {
         const auto digest = platform::sha256(model::encode_request_fields(input,config_.thinking_enabled()));
         request_=client_.submit_request(config_,std::move(input));
         if (trace_) trace_->append("memory.reflection_prepared",{{"source","main"},{"persona",persona_.version},
-            {"wireSha256",digest},{"thinking",config_.thinking_enabled()},{"through",batch_->at("through")}});
+            {"wireSha256",digest},{"thinking",config_.thinking_enabled()},{"through",batch_->at("through")},{"scope",request_scope_}});
     } catch (const std::exception&) { batch_.reset(); ready_=now+std::chrono::minutes(1); }
 }
 

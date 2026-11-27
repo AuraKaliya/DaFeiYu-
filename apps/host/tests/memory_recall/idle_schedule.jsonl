@@ -1,0 +1,35 @@
+{"op":"admin","command":"/comparison define floor floor交接台 达标情况 布尔 开馆检查 target"}
+{"op":"case_task","id":"floor-task-1","save":"@floor1","tool":"example.status/set_focus","expected":"focus","case":"floor","checkpoint":"early"}
+{"op":"case_task","id":"floor-task-2","save":"@floor2","tool":"test.tools/increment","expected":"1","case":"floor","checkpoint":"early"}
+{"op":"admin","command":"/comparison define desk desk交接台 达标情况 布尔 开馆检查 target"}
+{"op":"case_task","id":"desk-task-1","save":"@desk1","tool":"example.status/set_focus","expected":"focus","case":"desk","checkpoint":"early"}
+{"op":"case_task","id":"desk-task-2","save":"@desk2","tool":"test.tools/increment","expected":"1","case":"desk","checkpoint":"early"}
+{"op":"open","session":"writer","subject":"交接人","preset":2}
+{"op":"begin","session":"writer","key":"early","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","body":"交接人报告仍待复查。","save":"early"}
+{"op":"begin","session":"writer","key":"late","mode":4,"abi":2}
+{"op":"run","session":"writer","expect":[]}
+{"op":"end","session":"writer","body":"交接人报告仍待复查。","save":"late"}
+{"op":"pump"}
+{"op":"restart"}
+{"op":"quiet"}
+{"op":"schedule","scope":"cross_tool","case":"floor","state":"targets_met","text":"我在这两次开馆检查里各自读到了当次目标。"}
+{"op":"restart"}
+{"op":"schedule","scope":"one_tool_family","outcome":"deferred"}
+{"op":"restart"}
+{"op":"schedule","scope":"letter_digest","ref":"$early","picks":[{"role":"open_question","contains":"仍待复查"}]}
+{"op":"restart"}
+{"op":"schedule","scope":"cross_tool","case":"desk","state":"targets_met","text":"这是一份被打断的临时解释。","foreground":true,"outcome":"interrupted"}
+{"op":"restart"}
+{"op":"compare","topics":["desk"],"state":"targets_met","facts":["@desk1","@desk2"]}
+{"op":"schedule","scope":"cross_tool","case":"desk","state":"targets_met","text":"我能核对两次实际达标的读回。"}
+{"op":"restart"}
+{"op":"schedule","scope":"one_tool_family","outcome":"deferred"}
+{"op":"restart"}
+{"op":"schedule","scope":"letter_digest","ref":"$late","picks":[{"role":"open_question","contains":"仍待复查"}]}
+{"op":"restart"}
+{"op":"drained"}
+{"op":"mail","selector":"$early","items":[{"ref":"$early","digestState":"ready","digest":[{"role":"open_question","contains":"仍待复查"}]}]}
+{"op":"mail","selector":"$late","items":[{"ref":"$late","digestState":"ready","digest":[{"role":"open_question","contains":"仍待复查"}]}]}
+{"op":"compare","topics":["desk"],"state":"targets_met","facts":["@desk1","@desk2"],"opinion":{"standing":"current","text":"我能核对两次实际达标的读回。"}}
