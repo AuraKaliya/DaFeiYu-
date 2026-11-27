@@ -13,6 +13,7 @@ using namespace app::message_db;
 using Clock=std::chrono::steady_clock;
 struct Measures {
     unsigned cases=0, requests=0, challenges=0;
+    unsigned intended_queries=0, intended_recalled=0;
     std::size_t max_evidence=0, max_wire=0;
     std::vector<double> roundtrips;
 };
@@ -96,10 +97,15 @@ void query(const fs::path& data,const Json& row,Measures& metrics,bool compariso
             const auto& selection=found->at("value"), &items=selection.at("items");
             metrics.max_evidence=std::max(metrics.max_evidence,items.dump().size());
             require(items.dump().size()<=2048 && selection.value("ambiguous",false)==row.value("ambiguous",false),"budget or ambiguity mismatch");
-            if (comparisons && row.contains("case")) {
+            const bool labeled=comparisons && row.contains("intendedCase");
+            if(labeled) ++metrics.intended_queries;
+            if (comparisons && (row.contains("case") || (labeled && !items.empty()))) {
                 const auto& v=items.at(0);
-                require(items.size()==1 && v.at("reference")==profile+"/comparison/"+row.at("case").get<std::string>() && v.at("state")==row.at("state"),
+                const auto& expected=row.at(labeled ? "intendedCase" : "case");
+                require(items.size()==1 && v.at("reference")==profile+"/comparison/"+expected.get<std::string>() &&
+                    (!row.contains("state") || v.at("state")==row.at("state")),
                     "wrong comparison scope");
+                if(labeled) ++metrics.intended_recalled;
                 if(v.at("state")=="conflicting_observations" && !row.value("offset",std::size_t{})) {
                     const auto& refs=v.at("conflictRefs"); const auto& facts=v.at("facts");
                     require(refs.size()==2 && facts.size()>=2 && facts.at(0).at("reference")==refs.at(0) &&
@@ -165,6 +171,9 @@ void understanding_recall(const fs::path& corpus,const fs::path& data,bool compa
         for (const auto& row : rows) try { query(root,row,m,comparisons); }
         catch(const std::exception& e) {throw std::runtime_error(row.at("id").get<std::string>()+": "+e.what());}
         std::ranges::sort(m.roundtrips);
+        if(m.intended_queries)
+            std::cout<<groups<<" scopes, intended objects recalled "<<m.intended_recalled<<"/"<<m.intended_queries
+                <<", no evidence "<<(m.intended_queries-m.intended_recalled)<<"\n";
         std::cout<<(comparisons ? groups : groups*16)<<(comparisons ? " comparison scopes, " : " observations, ")<<m.cases<<" correct, "<<m.challenges<<" challenged recalled, "
             <<m.requests<<" requests, evidence max "<<m.max_evidence<<" bytes, wire max "<<m.max_wire
             <<" bytes, tool roundtrip p95 "<<m.roundtrips.at((95*m.roundtrips.size()+99)/100-1)<<" ms\n";

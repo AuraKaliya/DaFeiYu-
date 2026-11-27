@@ -27,3 +27,9 @@
 {"id":"Q27","ask":"是西翼交班桌，检查点是收馆点。","topics":["西翼交班桌","收馆点"]}
 {"id":"Q28","ask":"已知是西馆交接台，但我只想看调试日那次。","topics":["西馆交接台","调试日"]}
 {"id":"Q29","ask":"早班的日班台，东边签收台。","topics":["东边签收台","早班交接后","FIRSTSHIFT"],"case":"east","state":"conflicting_observations"}
+{"id":"P01","ask":"东侧签收柜台在早班交接后的读数打架了吗？","topics":["东侧签收柜台","早班交接后"],"intendedCase":"east"}
+{"id":"P02","ask":"西侧收发岗在午班交接后，两边的结果对得上吗？","topics":["西侧收发岗","午班交接后"],"intendedCase":"west"}
+{"id":"P03","ask":"东厅夜班交接桌在收馆点有什么记录？","topics":["东厅夜班交接桌","收馆点"],"intendedCase":"night"}
+{"id":"P04","ask":"东馆五号档案橱在例行巡查时有几条读数？","topics":["东馆五号档案橱","例行巡查"],"intendedCase":"cabinet-5"}
+{"id":"P05","ask":"east 那条交接记录，两边怎么说的？","topics":["EAST","早班交接后"],"intendedCase":"east","case":"east","state":"conflicting_observations"}
+{"id":"P06","ask":"cabinet-5 那扇柜子的原记录呢？","topics":["CABINET-5","例行巡查"],"intendedCase":"cabinet-5","case":"cabinet-5","state":"insufficient_paths"}
