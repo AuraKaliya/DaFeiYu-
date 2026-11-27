@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "conversation.hpp"
+#include "comparison_tag.hpp"
 #include "builtin_room.hpp"
 #include "companion.hpp"
 #include "tool_verification.hpp"
@@ -165,10 +166,10 @@ class Application {
     agent::TurnDiagnostics submit_confirmed(const std::string& tool_id, const std::string& prompt, const std::filesystem::path& workspace = {});
     // 提交同一实例的无参读取及变更工具，由宿主比对变更后的实际文本状态。
     agent::TurnDiagnostics submit_verified(const std::string& reader, const std::string& change, const std::string& expected,
-        const std::string& prompt);
+        const std::string& prompt,std::optional<ComparisonTag> comparison={});
     // 使用当前宿主的顺序请求号提交任务，同一已接纳命令复用原回执。
     TaskAdmission submit_verified_once(std::uint64_t command, const std::string& reader, const std::string& change,
-        const std::string& expected, const std::string& prompt);
+        const std::string& expected, const std::string& prompt,std::optional<ComparisonTag> comparison={});
     // 只读查询仍在保留范围的请求及原运行身份。
     std::optional<agent::RunId> task_run(std::uint64_t command) const noexcept;
     // 读取当前运行或空闲时最近退出的运行，指定身份不匹配时返回空值。

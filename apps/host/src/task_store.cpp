@@ -130,7 +130,15 @@ void MessageStore::save_task(const Json& task) {
     Statement add(db,"INSERT INTO task_memory(origin,goal,tool,body,reason,signature) VALUES(?,?,?,?,?,?)");
     add.bind(1,origin); add.bind(2,task.at("goal").get_ref<const std::string&>()); add.bind(3,task.at("tool").get_ref<const std::string&>());
     add.bind(4,body); add.bind(5,reason); add.bind(6,signature); add.next();
-    index_task_observation(db,sqlite3_last_insert_rowid(db),task);
+    const auto id=sqlite3_last_insert_rowid(db); index_task_observation(db,id,task);
+    if (task.contains("comparison")) {
+        Statement read(db,"SELECT readback FROM task_observation WHERE task=?"); read.bind(1,id);
+        if (read.next()) {
+            const auto& tag=task.at("comparison");
+            link_case_member(db,conversation(),tag.at("name"),tag.at("checkpoint"),conversation()+"/task/"+std::to_string(id)+
+                "/receipt/"+std::to_string(read.number(0)),"at_start");
+        }
+    }
     sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
     tx.commit();
 }

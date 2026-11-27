@@ -1,4 +1,5 @@
 #pragma once
+#include "comparison_tag.hpp"
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -85,6 +86,18 @@ class MessageStore {
     // 核实当前发布状态、源权限及目标受众后按主题投影，内部保留撤权依赖。
     nlohmann::json search_knowledge(const std::vector<std::string>& topics,unsigned count,std::int64_t child=0,bool outward=false,
         std::vector<std::string>* dependencies=nullptr) const;
+    // 登记不可变的比较对象、观测量、单位、适用条件及比较口径。
+    void define_case(const std::string& name,const nlohmann::json& scope);
+    // 在接纳带标记的工具任务前确认比较定义及检查点。
+    void validate_case(const ComparisonTag& tag) const;
+    // 主人事后指定某份已有回执或来信的比较条件。
+    void attach_case(const ComparisonTag& tag,const std::string& reference);
+    // 取得有两条独立工具路径的下一份空闲比较材料。
+    std::optional<nlohmann::json> next_case() const;
+    // 将本体的解释与全组状态、独立路径和反证重新核验后写入新版本。
+    void commit_case(const nlohmann::json& batch,const nlohmann::json& proposal);
+    // 查当前或某一历史版本的跨渠道证据、分歧及本体理解。
+    nlohmann::json search_cases(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const;
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
     std::optional<nlohmann::json> next_comparison() const;
     // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。

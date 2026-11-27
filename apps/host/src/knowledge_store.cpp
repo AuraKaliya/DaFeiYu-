@@ -26,9 +26,8 @@ std::int64_t number(std::string_view s) {
     if(ec!=std::errc{} || end!=s.data()+s.size() || id<=0 || s.front()=='0') throw std::invalid_argument("knowledge: invalid source");
     return id;
 }
-struct Basis {std::string kind,dependency;};
 // 独立核对主人原话、动作后的独立回执或本体已经收到的子会话结束信，并保留原有作者类别。
-std::optional<Basis> basis(sqlite3* db,const std::string& profile,const std::string& ref) {
+std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const std::string& ref) {
     if (!ref.starts_with(profile+"/")) return {};
     auto tail=std::string_view(ref).substr(profile.size()+1);
     if (tail.starts_with("task/")) {
@@ -37,15 +36,15 @@ std::optional<Basis> basis(sqlite3* db,const std::string& profile,const std::str
         const auto task=number(tail.substr(0,split)), receipt=number(tail.substr(split+9));
         Statement get(db,"SELECT 1 FROM task_observation o JOIN task_memory t ON t.id=o.task WHERE o.task=? AND o.readback=? AND t.active=1");
         get.bind(1,task); get.bind(2,receipt);
-        if (get.next()) return Basis{"tool_readback",profile+"/task/"+std::to_string(task)};
+        if (get.next()) return MemoryBasis{"tool_readback",profile+"/task/"+std::to_string(task),task};
     } else if (tail.starts_with("letter/")) {
         Statement get(db,"SELECT source FROM child_letter WHERE id=? AND phase='end' AND received=1 "
             "AND (source=0 OR source IN (SELECT message FROM personal_memory WHERE active=1))");
-        get.bind(1,number(tail.substr(7)));
-        if (get.next()) return Basis{"sender_report",get.number(0) ? profile+"/"+std::to_string(get.number(0)) : ref};
+        const auto id=number(tail.substr(7)); get.bind(1,id);
+        if (get.next()) return MemoryBasis{"sender_report",get.number(0) ? profile+"/"+std::to_string(get.number(0)) : ref,id};
     } else if (tail.find('/')==tail.npos) {
         Statement get(db,"SELECT 1 FROM personal_memory WHERE active=1 AND message=?"); get.bind(1,number(tail));
-        if (get.next()) return Basis{"owner_statement",ref};
+        if (get.next()) return MemoryBasis{"owner_statement",ref,number(tail)};
     }
     return {};
 }
@@ -61,6 +60,11 @@ bool references(sqlite3* db,const std::string& profile,std::int64_t edition,Json
     }
     return !refs.empty();
 }
+}
+
+// 让跨渠道比较与发布共用同一套原件核验。
+std::optional<MemoryBasis> message_db::resolve_basis(sqlite3* db,const std::string& profile,const std::string& ref) {
+    return basis(db,profile,ref);
 }
 
 // 在幂等提议键下保存草案与逐项有类型的原件，已发布内容只可另建修订。

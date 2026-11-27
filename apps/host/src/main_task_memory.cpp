@@ -9,13 +9,14 @@ using Json = nlohmann::json;
 
 // 本体任务入口固定原运行、实际提供实例、用户要求和宿主事先约定的核验条件。
 void MainMessages::watch_task(const agent::TurnDiagnostics& run, const std::string& goal, const std::string& tool,
-    runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected) {
+    runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected,std::optional<ComparisonTag> comparison) {
     reflection_->interrupt();
     Json task{{"origin",instance_+"/"+std::to_string(run.session)+"/"+std::to_string(run.turn)},{"goal",goal},{"tool",tool},
         {"provider",provider},{"changes",scope.permits_state_changes()},{"verification","unconfirmed"},{"works",Json::array()}};
     const auto offered = scope.definitions();
     if (offered.size()==1) task["wireName"] = offered.front().name;
     if (expected) task["expected"] = *expected;
+    if (comparison) task["comparison"]={{"name",comparison->name},{"checkpoint",comparison->checkpoint}};
     watched_task_.emplace(agent::RunId{run.session,run.turn},std::move(task));
 }
 

@@ -220,7 +220,11 @@ agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, cons
 // 在原 Session 中开启有实际读回条件的单步任务。
 // 步骤：核对同实例及无参读写契约 → 固定原运行预算和证明条件 → 接纳后绑定工具与验证责任。
 agent::TurnDiagnostics Application::submit_verified(const std::string& reader, const std::string& change, const std::string& expected,
-    const std::string& prompt) {
+    const std::string& prompt,std::optional<ComparisonTag> comparison) {
+    if (comparison) {
+        if (!main_messages_) throw std::invalid_argument("comparison: persistent profile required");
+        main_messages_->validate_case(*comparison);
+    }
     if (prompt.find_first_not_of(" \t\r\n") == std::string::npos) throw std::invalid_argument("verification: user goal required");
     const auto package = package_of(reader);
     if (package_of(change) != package) throw std::invalid_argument("verification: tools must use the same plugin instance");
@@ -250,7 +254,7 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
     const auto goal = prompt+"\nWithin one plan step, make exactly three separate tool calls in this order: "+
         reader+", "+change+", "+reader+". Then summarize the outcome. The host verifies the final state.";
     const auto accepted = conversation_.submit(goal,std::move(options),false,nullptr,DialogueAudience::private_task);
-    if (main_messages_) main_messages_->watch_task(accepted,prompt,change,prepared.instance->generation(),write_scope,expected);
+    if (main_messages_) main_messages_->watch_task(accepted,prompt,change,prepared.instance->generation(),write_scope,expected,std::move(comparison));
     tool_registration_.emplace(ToolRegistration{accepted.turn,prepared.instance,std::move(prepared.registration)});
     verification_.emplace(VerificationReport{{accepted.session,accepted.turn},{}});
     verifier_ = std::move(verifier);
@@ -260,7 +264,7 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
 // 安全重复提交受控任务，不因丢失回执创建第二次动作。
 // 步骤：校验请求及范围 → 核对原回执或顺序 → 完整准备摘要 → 接纳一次并发布原回执。
 TaskAdmission Application::submit_verified_once(std::uint64_t command, const std::string& reader, const std::string& change,
-    const std::string& expected, const std::string& prompt) {
+    const std::string& expected, const std::string& prompt,std::optional<ComparisonTag> comparison) {
     if (!command) throw std::invalid_argument("task: positive request required");
     auto& slot = task_receipts_[(command-1)%task_receipts_.size()];
     if (command <= task_watermark_ && (!slot || slot->command != command)) throw std::invalid_argument("task: request receipt expired");
@@ -268,13 +272,15 @@ TaskAdmission Application::submit_verified_once(std::uint64_t command, const std
     if (reader.size() > 128 || change.size() > 128 || expected.size() > 1024 || prompt.size() > 1024*1024)
         throw std::length_error("task: command exceeds input limits");
 
-    auto digest = platform::sha256(nlohmann::json::array({reader,change,expected,prompt}).dump());
+    auto fields=nlohmann::json::array({reader,change,expected,prompt});
+    if (comparison) fields.push_back({comparison->name,comparison->checkpoint});
+    auto digest = platform::sha256(fields.dump());
     if (command <= task_watermark_) {
         if (slot->digest != digest) throw std::invalid_argument("task: request body conflicts with receipt");
         return {slot->accepted,true};
     }
 
-    const auto accepted = submit_verified(reader,change,expected,prompt);
+    const auto accepted = submit_verified(reader,change,expected,prompt,std::move(comparison));
     slot.emplace(TaskReceipt{command,std::move(digest),accepted});
     task_watermark_ = command;
     return {accepted,false};

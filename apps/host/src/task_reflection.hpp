@@ -28,5 +28,7 @@ class TaskReflection {
     std::optional<nlohmann::json> batch_;
     std::optional<agent::ToolTime> ready_;
     bool dirty_ = true;
+    bool prefer_cases_ = true;
+    std::string request_scope_;
 };
 }

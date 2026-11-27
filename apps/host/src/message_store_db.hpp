@@ -4,6 +4,14 @@
 #include <mutex>
 
 namespace dfy::app::message_db {
+struct MemoryBasis { std::string kind,dependency; std::int64_t record; };
+// 检验同档案原件的可见性、证据种类及撤权依赖。
+std::optional<MemoryBasis> resolve_basis(sqlite3* db,const std::string& profile,const std::string& reference);
+// 按不可变比较条件绑定一份独立读回或已收报告，同一原件不会增加票数。
+void link_case_member(sqlite3* db,const std::string& profile,const std::string& name,const std::string& checkpoint,
+    const std::string& reference,std::string_view attribution);
+// 原件撤权与依赖它的比较解释在同一写事务中停用。
+void revoke_case_basis(sqlite3* db,const std::string& dependency);
 // 在任务原件的写事务内索引独立核验过的观察，旧档案升级也复用同一规则。
 void index_task_observation(sqlite3* db, std::int64_t id, const nlohmann::json& task);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。

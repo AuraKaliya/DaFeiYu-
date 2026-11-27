@@ -32,7 +32,11 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     void prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 绑定本体直接接纳的工具任务，子会话与信箱转述无此入口。
     void watch_task(const agent::TurnDiagnostics& run, const std::string& goal, const std::string& tool,
-        runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected = {});
+        runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected = {},std::optional<ComparisonTag> comparison={});
+    // 在实际提交前验证已登记的比较条件。
+    void validate_case(const ComparisonTag& tag) const {store_->validate_case(tag);}
+    // 主人登记比较条件或根据已有原件事后指定检查点。
+    void manage_case(const std::vector<std::string>& words);
     // 只在原运行实际退出后固化计划、工具动作与独立的验证回执。
     void task_exited(const agent::TurnRequest& run);
     // 前台工作及信箱优先，空闲推进最多整理一份仍获准的任务亲历。
@@ -100,6 +104,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     agent::DecisionStatusSource task_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 把本体写下的解释和带角色的任务证据分别装入当前私聊。
     agent::DecisionStatusSource understanding_source(std::uint64_t turn, const nlohmann::json& selection) const;
+    // 把跨渠道证据与本体解释按不同字段装配到私聊。
+    agent::DecisionStatusSource case_source(std::uint64_t turn,const nlohmann::json& result) const;
     // 封装记忆工具的确定回执及效果。
     static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。

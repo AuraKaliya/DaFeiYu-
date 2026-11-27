@@ -89,7 +89,15 @@ std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path&
         host.submit_confirmed(tool,"准备不同的初始读数");
         drain(host); start=requests.size(); warmup=false;
     }
-    if (row.contains("expected")) host.submit_verified(reader,tool,row.at("expected"),goal);
+    if (row.contains("case")) {
+        const app::ComparisonTag tag{row.at("case"),row.at("checkpoint")};
+        const auto accepted=host.submit_verified_once(1,reader,tool,row.at("expected"),goal,tag);
+        const auto replay=host.submit_verified_once(1,reader,tool,row.at("expected"),goal,tag);
+        require(!accepted.reused && replay.reused && accepted.status.turn==replay.status.turn,"comparison task replayed");
+        bool denied=false; try {host.submit_verified_once(1,reader,tool,row.at("expected"),goal,app::ComparisonTag{tag.name,"different checkpoint"});}
+        catch (const std::invalid_argument&) {denied=true;}
+        require(denied,"numbered task changed scope");
+    } else if (row.contains("expected")) host.submit_verified(reader,tool,row.at("expected"),goal);
     else if (row.value("readOnly",false)) host.submit_read_only(tool,goal);
     else host.submit_confirmed(tool,goal);
     drain(host,row);

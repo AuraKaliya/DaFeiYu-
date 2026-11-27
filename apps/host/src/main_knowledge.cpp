@@ -39,6 +39,7 @@ void MainMessages::register_knowledge_tool() {
                         (kind=="memory.tasks" && item.value("kind",std::string{})=="receipt")) seen.insert(item.at("reference"));
                     if (kind=="memory.tasks" && item.contains("readbackRef")) seen.insert(item.at("readbackRef"));
                     if (kind=="memory.understanding") for(const auto& f : item.at("facts")) seen.insert(f.at("readbackRef"));
+                    if (kind=="memory.comparisons") for(const auto& f : item.at("facts")) seen.insert(f.at("reference"));
                 }
                 const auto draft=Json::parse(call.call.arguments);
                 for(const auto& ref : draft.at("sources")) if(!seen.contains(ref.get<std::string>())) throw std::invalid_argument("unseen");

@@ -47,14 +47,24 @@ struct Fixture {
     std::atomic<bool> entered=false,release=false;
     bool holding=false;
     unsigned hosts=0,received=0;
+    std::size_t task_requests=0;
     std::shared_ptr<app::MessageStore> db;
     std::unique_ptr<app::Application> host;
+    agent::ToolTime now{};
+    Json idle_case;
+    // 从实际 Trace 中筛出跨工具复盘已结算的结果。
+    std::vector<std::string> idle_outcomes() const {
+        std::ifstream in(host->trace_file(),std::ios::binary); std::vector<std::string> found;
+        for(std::string line;std::getline(in,line);) {const auto e=Json::parse(line); if(e.at("kind")=="memory.reflection_settled" &&
+            e.value("scope",std::string{})=="cross_tool") found.push_back(e.at("outcome"));}
+        return found;
+    }
 
     // 重建应用、数据库连接和插件实例，保留原档案与已安装的插件包。
     void restart() {
         if (host) audit();
         host.reset(); db=std::make_shared<app::MessageStore>(root);
-        app::ApplicationRunConfig config; config.trace_directory=root/"logs";
+        app::ApplicationRunConfig config; config.trace_directory=root/"logs"; config.tool_clock=[this]{return now;};
         host=std::make_unique<app::Application>(model::Config{},root/"packages",root,
             model::Backend{[this](const model::Config& cfg,const model::Request& request){
                 try {return answer(cfg,request);} catch(const std::exception& e){failure=e.what(); throw;}
@@ -68,11 +78,22 @@ struct Fixture {
     model::Response answer(const model::Config& cfg,const model::Request& request) {
         const auto wire=model::encode_request_fields(request,cfg.thinking_enabled());
         hashes.push_back(platform::sha256(wire)); ++received;
+        const auto tail=Json::parse(request.messages.back().content,nullptr,false);
+        if (tail.is_object() && tail.contains("observations")) return {{model::Role::assistant,R"({"defer":true})"}};
+        if (tail.is_object() && tail.contains("caseFacts")) {
+            check(idle_case.is_object() && request.tools.empty() && tail.at("case")==idle_case.at("case") &&
+                tail.at("evidenceState")==idle_case.at("state"),"unscheduled or incorrect cross-tool review");
+            Json refs=Json::array();
+            for(const auto& f : tail.at("caseFacts")) if(f.at("origin")=="main_readback") refs.push_back(f.at("reference"));
+            if(idle_case.contains("cites")) {refs=Json::array(); for(const auto& ref:idle_case.at("cites")) refs.push_back(knowledge.resolve(ref));}
+            check(tail.at("previousUnderstanding").is_object()==idle_case.value("prior",false),"wrong prior interpretation at idle");
+            const auto decision=idle_case.value("judgement",tail.at("evidenceState")=="conflicting_observations" ? std::string{"unresolved"} : tail.at("evidenceState").get<std::string>());
+            return {{model::Role::assistant,Json{{"text",idle_case.at("text")},{"judgement",decision},{"cites",refs}}.dump()}};
+        }
         if (knowledge.row.is_object()) return knowledge.answer(request);
         if (mail_case.is_object()) return read_mail(request);
         if (expect_persona) check((request.messages.front().content.find("你叫大肥鱼")!=std::string::npos)==*expect_persona,"wrong startup persona");
         Json records=Json::array();
-        const auto tail=Json::parse(request.messages.back().content,nullptr,false);
         bool saw_knowledge=false;
         if (tail.is_object() && tail.contains("items")) for (const auto& s : tail.at("items")) {
             if (s.at("key")=="childmemory.records") records=s.at("value").at("items");
@@ -163,7 +184,8 @@ struct Fixture {
         std::ifstream in(host->trace_file(),std::ios::binary); std::size_t n=0;
         for (std::string line;std::getline(in,line);) {
             auto e=Json::parse(line);
-            if (e.at("kind")=="model.prepared") check(e.at("wireSha256")==hashes.at(n++),"prepared fields differ");
+            if (e.at("kind")=="model.prepared" || e.at("kind")=="memory.reflection_prepared")
+                check(e.at("wireSha256")==hashes.at(n++),"prepared fields differ");
             if (e.at("kind")=="mail.received" && e.value("category",std::string{})=="memory.letter") ++mail_received;
         }
         check(n==hashes.size(),"missing prepared request");
@@ -183,7 +205,7 @@ struct Fixture {
     }
     // 回放一次主人操作、插件调用或真实子回合。
     void step(const Json& row) {
-        const auto op=row.at("op").get<std::string>(), alias=row.value("session",std::string{});
+        const auto op=row.at("op").get<std::string>(), session_name=row.value("session",std::string{});
         if (op=="restart") { restart(); return; }
         if (op=="source") {
             const auto text=row.at("text").get<std::string>(); markers.insert(text);
@@ -194,10 +216,36 @@ struct Fixture {
         }
         if (op=="admin") {knowledge.admin(*host,row); return;}
         if (op=="kb") {knowledge.chat(*host,row,++kb_reads); return;}
+        if (op=="compare") {
+            auto query=row; query["view"]="comparisons"; query["sample"]="memory.comparisons";
+            try {knowledge.chat(*host,query,++kb_reads);} catch(const std::exception&) {if(!failure.empty()) throw std::runtime_error(failure); throw;}
+            return;
+        }
+        if (op=="idle") {
+            idle_case=row; const auto prior=idle_outcomes().size();
+            const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(6);
+            while(idle_outcomes().size()==prior) {
+                host->advance_plugins(); now+=std::chrono::seconds(1); std::this_thread::yield();
+                check(std::chrono::steady_clock::now()<deadline,"idle did not settle: "+failure);
+            }
+            check(failure.empty() && idle_outcomes().back()==row.value("outcome",std::string{"accepted"}),"incorrect idle outcome: "+failure);
+            idle_case=nullptr; return;
+        }
+        if (op=="case_task") {
+            auto task=row; task["script"]={"plan","read","change","read","claim"};
+            const std::string goal=row.at("id"),alias=row.at("save"),tool=row.at("tool");
+            const auto works=tests::task_memory::perform(task,root,tool.starts_with("example.status/") ? panel : counter,goal,task_requests);
+            if (!row.value("approve",true)) return;
+            check(works.size()==3,"expected three original receipt events");
+            knowledge.traces[alias]=works;
+            Json capture{{"topics",{goal}},{"view","tasks"},{"sample","memory.tasks"},{"capture",{{"alias",alias},{"field","readbackRef"}}}};
+            knowledge.chat(*host,capture,++kb_reads);
+            const auto ref=knowledge.resolve(alias); knowledge.references[alias+"-task"]=ref.substr(0,ref.rfind("/receipt/"));
+            return;
+        }
         if (op=="verified") {
-            std::size_t requests=0;
             Json task{{"id","actual-task"},{"expected","focus"},{"tool","example.status/set_focus"},{"script",{"plan","read","change","read","claim"}}};
-            const auto works=tests::task_memory::perform(task,root,panel,"核实展台面板",requests);
+            const auto works=tests::task_memory::perform(task,root,panel,"核实展台面板",task_requests);
             check(works.size()==3 && works.back().at("output")=="focus","verified fixture missing"); return;
         }
         if (op=="grant" || op=="revoke") {
@@ -224,12 +272,12 @@ struct Fixture {
             holding=false; return;
         }
         const bool deny=row.value("deny",false);
-        const auto id=sessions.contains(alias) ? sessions.at(alias) : 0;
+        const auto id=sessions.contains(session_name) ? sessions.at(session_name) : 0;
         const auto rc=call(row,[&](const auto& memory,const auto& agent)->dfy_v2_status {
             if (op=="open") {
                 const auto preset=row.at("preset").get<unsigned>(); const auto subject=row.at("subject").get<std::string>(), channel=row.value("channel",std::string{});
                 std::uint64_t session=0; const auto result=memory.open_bound(preset,view(subject),view(channel),&session,nullptr);
-                if (!result) sessions[alias]=session; else check(!session,"issued a rejected binding");
+                if (!result) sessions[session_name]=session; else check(!session,"issued a rejected binding");
                 return result;
             }
             if (op=="note") {
@@ -299,6 +347,7 @@ int wmain(int argc,wchar_t** argv) {
         }
         fixture.audit(); check(count && fixture.hosts>=2,"incomplete corpus");
         if (fixture.mail_reads) check(fixture.mail_received>0,"persistent letters bypassed real mailbox");
-        std::cout<<count<<" steps, "<<fixture.hosts<<" application instances, "<<fixture.received<<" actual requests, "<<fixture.mail_received<<" mailbox receipts\n"; return 0;
+        std::cout<<count<<" steps, "<<fixture.hosts<<" application instances, "<<fixture.received<<" actual requests, "<<fixture.mail_received
+            <<" mailbox receipts, "<<fixture.task_requests<<" additional verified-task requests\n"; return 0;
     } catch(const std::exception& e) {std::cerr<<e.what()<<'\n'; return 1;}
 }

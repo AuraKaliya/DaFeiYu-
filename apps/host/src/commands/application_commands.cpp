@@ -248,6 +248,10 @@ void companion_command(Application& app, std::string_view command, std::ostream&
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
     if (name == "/companion") companion_command(application, command, output);
+    else if (name=="/comparison") {
+        auto* memory=application.main_messages(); if (!memory) throw std::invalid_argument("comparison: profile required");
+        memory->manage_case(command_words(command)); output<<"Comparison recorded.\n";
+    }
     else if (name=="/knowledge") {
         auto* memory=application.main_messages();
         if (!memory) throw std::invalid_argument("knowledge: profile required");
@@ -291,12 +295,13 @@ bool application_command(Application& application, std::string_view command, std
     }
     else if (name == "/run" || name == "/run-confirmed") submit(application,command,name == "/run-confirmed",output,errors);
     else if (name == "/task") {
-        const auto words = command_words(command);
-        const bool numbered = words.size() == 7 && words[5] == "--request";
-        if (words.size() != 5 && !numbered)
-            throw std::invalid_argument("Usage: /task READ_TOOL CHANGE_TOOL EXPECTED \"GOAL\" [--request ID]");
-        const auto admission = numbered ? application.submit_verified_once(positive_id(words[6]),words[1],words[2],words[3],words[4]) :
-            TaskAdmission{application.submit_verified(words[1],words[2],words[3],words[4])};
+        const auto words = command_words(command,10);
+        std::size_t next=5; std::optional<ComparisonTag> tag;
+        if (words.size()>=8 && words[5]=="--case") {tag=ComparisonTag{words[6],words[7]}; next=8;}
+        const bool numbered = words.size()==next+2 && words[next]=="--request";
+        if (words.size()!=next && !numbered) throw std::invalid_argument("Usage: /task READ_TOOL CHANGE_TOOL EXPECTED GOAL [--case KEY CHECKPOINT] [--request ID]");
+        const auto admission = numbered ? application.submit_verified_once(positive_id(words[next+1]),words[1],words[2],words[3],words[4],tag) :
+            TaskAdmission{application.submit_verified(words[1],words[2],words[3],words[4],tag)};
         if (admission.reused) output << "Original run " << admission.status.session << '/' << admission.status.turn << " retained.\n";
         else write_accepted(admission.status,"Use /confirmations for pending actions and /verification for actual state evidence.",output,errors);
     } else if (name == "/task-status") {

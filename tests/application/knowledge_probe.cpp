@@ -36,7 +36,8 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
         require(std::ranges::any_of(input.tools,[](const auto& t){return t.name=="knowledge_propose";}) &&
             std::ranges::none_of(input.tools,[](const auto& t){return t.name=="knowledge_publish";}),"wrong owner chat authority");
         Json topics=Json::array(); for(const auto& term : terms) topics.push_back(resolve(term));
-        Json search{{"topics",topics},{"view",row.value("view",std::string{"knowledge"})},{"need","multiple"},{"count",3}};
+        Json search{{"topics",topics},{"view",row.value("view",std::string{"knowledge"})},{"need","multiple"},{"count",row.value("count",3)}};
+        if (row.contains("offset")) search["offset"]=row.at("offset");
         return {{model::Role::assistant,"",{{"find","memory_search",search.dump()}}},model::FinishReason::tool_calls};
     }
     if (step==2) {
@@ -46,6 +47,7 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
         const auto found=std::ranges::find_if(samples,[&](const auto& s){return s.at("key")==kind;});
         require(found!=samples.end(),"expected knowledge source missing"); const auto& items=found->at("value").at("items");
         if (kind=="knowledge.published") verify(items,row.at("expect"),true);
+        if (kind=="memory.comparisons") verify_comparison(items);
         if (row.contains("capture")) {
             const auto& save=row.at("capture"); references[save.at("alias").get<std::string>()]=items.at(0).at(save.at("field").get<std::string>());
         }
@@ -63,11 +65,13 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
 // 管理权限来自真实命令入口，失败操作必须拒绝，正文及修订可通过主人审阅结果复核。
 void KnowledgeProbe::admin(app::Application& host,const Json& input) const {
     auto cmd=input.at("command").get<std::string>();
-    for(const auto& [alias,ref] : references) if(auto p=cmd.find(alias);p!=cmd.npos) cmd.replace(p,alias.size(),ref);
+    for(auto it=references.rbegin();it!=references.rend();++it)
+        if(auto p=cmd.find(it->first);p!=cmd.npos) cmd.replace(p,it->first.size(),it->second);
     std::ostringstream out,err;
     try { app::application_command(host,cmd,out,err); }
     catch(const std::invalid_argument&) {require(input.value("deny",false),"valid administrative action rejected: "+cmd); return;}
     require(!input.value("deny",false),"administrative action should have failed");
+    if (!cmd.starts_with("/knowledge ")) return;
     const auto result=Json::parse(out.str());
     if (input.contains("revision")) require(result.at("revision")==input.at("revision"),"wrong publication revision");
     if (input.contains("inspect")) {

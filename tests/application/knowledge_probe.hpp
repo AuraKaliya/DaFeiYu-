@@ -20,5 +20,8 @@ struct KnowledgeProbe {
     void admin(app::Application& host,const Json& input) const;
     // 核对实际装配的知识版本、适用条件、出处与受众可见范围。
     void verify(const Json& items,const Json& wanted,bool owner) const;
+    // 对照真实工具 Trace 和原信身份，检查跨工具事实、意见与反例。
+    void verify_comparison(const Json& items);
+    std::map<std::string,std::vector<Json>> traces;
 };
 }

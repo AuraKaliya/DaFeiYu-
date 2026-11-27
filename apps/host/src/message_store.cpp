@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>11) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>12) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -129,6 +129,14 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "kind TEXT NOT NULL,dependency TEXT NOT NULL,PRIMARY KEY(edition,position));"
             "CREATE TABLE IF NOT EXISTS knowledge_grant(edition INTEGER NOT NULL,child INTEGER NOT NULL,rights INTEGER NOT NULL,PRIMARY KEY(edition,child));"
             "PRAGMA user_version=11");
+        if (previous<12) sql(db,"CREATE TABLE IF NOT EXISTS observation_case(name TEXT PRIMARY KEY,scope TEXT NOT NULL,cursor INTEGER NOT NULL DEFAULT 0,head INTEGER NOT NULL DEFAULT 0);"
+            "CREATE TABLE IF NOT EXISTS case_member(id INTEGER PRIMARY KEY,name TEXT NOT NULL,checkpoint TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,"
+            "kind TEXT NOT NULL,record INTEGER NOT NULL,dependency TEXT NOT NULL,attribution TEXT NOT NULL,path TEXT NOT NULL,reader TEXT NOT NULL,"
+            "reading TEXT NOT NULL,met INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1);"
+            "CREATE INDEX IF NOT EXISTS case_sequence ON case_member(name,id) WHERE active=1;"
+            "CREATE INDEX IF NOT EXISTS case_dependency ON case_member(dependency) WHERE active=1;"
+            "CREATE TABLE IF NOT EXISTS case_opinion(id INTEGER PRIMARY KEY,name TEXT NOT NULL,parent INTEGER NOT NULL,through_member INTEGER NOT NULL,"
+            "judgement TEXT NOT NULL,body TEXT NOT NULL,cites TEXT NOT NULL,valid INTEGER NOT NULL DEFAULT 1); PRAGMA user_version=12");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -210,6 +218,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         known.bind(1,id);
         if (!known.next()) throw std::invalid_argument("memory: unknown task");
         if (changed) {
+            revoke_case_basis(db,task_space+"/"+std::to_string(id));
             Statement invalidate(db,"UPDATE task_understanding SET valid=0 WHERE family=(SELECT family FROM task_observation WHERE task=?1) AND through_task>=?1");
             invalidate.bind(1,id); invalidate.next();
             Statement restart(db,"UPDATE reflection_progress SET cursor=0,head=0 WHERE family=(SELECT family FROM task_observation WHERE task=?1) AND cursor>=?1");
@@ -261,6 +270,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         revoke.bind(1,id); revoke.next();
         changed = true;
     }
+    if (changed && !topic) revoke_case_basis(db,conversation()+"/"+std::to_string(id));
     if (changed) sql(db,topic ? "UPDATE conversation SET memory_revision=1 WHERE memory_revision=0" :
         "UPDATE conversation SET memory_revision=memory_revision+1");
     Statement revision(db,"SELECT memory_revision FROM conversation");

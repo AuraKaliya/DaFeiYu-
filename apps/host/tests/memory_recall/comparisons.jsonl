@@ -1,0 +1,62 @@
+{"op":"admin","command":"/comparison define handoff 展示台交接 约定目标达成情况 布尔 当班交接完成后 target"}
+{"op":"admin","command":"/comparison define handoff 展示台交接 约定目标达成情况 布尔 当班交接完成后 target"}
+{"op":"admin","command":"/comparison define handoff 另一地点 约定目标达成情况 布尔 当班交接完成后 target","deny":true}
+{"op":"admin","command":"/comparison define bad X X X X fuzzy","deny":true}
+{"op":"admin","command":"/comparison define ordered-code 交接回执 各渠道原始回报码 UTF8原文 固定协议版本 literal"}
+{"op":"admin","command":"/comparison define dispatch 交接流程 各阶段是否达标 布尔 各阶段完成后 target"}
+{"op":"admin","command":"/comparison define relay 值班报告 交接结果 文本 当班结束后 literal"}
+{"op":"admin","command":"/task example.status/read example.status/set_focus focus 不执行 --case unknown day","deny":true}
+{"op":"case_task","id":"panel-a","save":"@p","tool":"example.status/set_focus","expected":"focus","case":"handoff","checkpoint":"day-one"}
+{"op":"compare","topics":["handoff"],"state":"insufficient_paths","nativeCount":1,"pathCount":1,"facts":["@p"],"attributes":{"@p":{"attribution":"at_start","actual":"focus","checkpoint":"day-one","met":true}}}
+{"op":"case_task","id":"counter-a","save":"@c","tool":"test.tools/increment","expected":"1","case":"handoff","checkpoint":"day-one"}
+{"op":"compare","topics":["handoff"],"state":"targets_met","nativeCount":2,"pathCount":2,"reportCount":0,"scope":{"object":"展示台交接","measure":"约定目标达成情况","unit":"布尔","conditions":"当班交接完成后","criterion":"target"},"facts":["@p","@c"]}
+{"op":"admin","command":"/comparison attach handoff day-one @p"}
+{"op":"admin","command":"/comparison attach handoff day-two @p","deny":true}
+{"op":"admin","command":"/comparison attach ordered-code day-one @p","deny":true}
+{"op":"admin","command":"/comparison attach handoff day-one @p-task","deny":true}
+{"op":"idle","case":"handoff","state":"targets_met","text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。"}
+{"op":"compare","topics":["handoff"],"state":"targets_met","opinion":{"text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。","standing":"current","save":"@v1"},"facts":["@p","@c"]}
+{"op":"restart"}
+{"op":"compare","topics":["handoff"],"state":"targets_met","opinion":{"text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。","standing":"current"},"facts":["@p","@c"]}
+{"op":"case_task","id":"counter-missed","save":"@bad","tool":"test.tools/increment","expected":"9","case":"handoff","checkpoint":"day-one"}
+{"op":"compare","topics":["handoff"],"state":"conflicting_observations","nativeCount":3,"pathCount":2,"count":1,"conflict":["@bad","@p"],"facts":["@bad","@p"],"opinion":{"text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。","standing":"challenged"},"attributes":{"@bad":{"expected":"9","actual":"1","met":false}}}
+{"op":"idle","case":"handoff","state":"conflicting_observations","text":"我猜应该全都完成。","judgement":"targets_met","prior":true,"outcome":"rejected"}
+{"op":"compare","topics":["handoff"],"state":"conflicting_observations","opinion":{"text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。","standing":"challenged"},"conflict":["@bad","@p"]}
+{"op":"case_task","id":"counter-missed-two","save":"@bad2","tool":"test.tools/increment","expected":"9","case":"handoff","checkpoint":"day-one"}
+{"op":"idle","case":"handoff","state":"conflicting_observations","text":"我无法解释。","prior":true,"cites":["@c","@p"],"outcome":"rejected"}
+{"op":"case_task","id":"counter-missed-three","save":"@bad3","tool":"test.tools/increment","expected":"9","case":"handoff","checkpoint":"day-one"}
+{"op":"idle","case":"handoff","state":"conflicting_observations","text":"同一检查点有两份不同的达标读回，我仍不能确定这次交接整体是否完成。","prior":true}
+{"op":"compare","topics":["handoff"],"state":"conflicting_observations","conflict":["@bad3","@p"],"opinion":{"text":"同一检查点有两份不同的达标读回，我仍不能确定这次交接整体是否完成。","standing":"current","previousReference":"@v1","save":"@v2"},"count":1,"facts":["@bad3","@p"],"nextOffset":2}
+{"op":"compare","topics":["handoff"],"state":"conflicting_observations","conflict":["@bad3","@p"],"opinion":{"text":"同一检查点有两份不同的达标读回，我仍不能确定这次交接整体是否完成。","standing":"current"},"count":1,"offset":2,"facts":["@c"]}
+{"op":"compare","topics":["@v1"],"state":"targets_met","opinion":{"text":"我在两条交接路径上都读回了当次预期的结果，只能据此说明这两次达标。","standing":"historical"},"facts":["@p","@c"]}
+{"op":"admin","command":"/memory revoke @p-task"}
+{"op":"compare","topics":["@v1"],"missing":true}
+{"op":"compare","topics":["@v2"],"missing":true}
+{"op":"compare","topics":["handoff"],"state":"insufficient_paths","nativeCount":4,"pathCount":1}
+{"op":"restart"}
+{"op":"compare","topics":["@v2"],"missing":true}
+{"op":"case_task","id":"codec-mode-a","save":"@fa","tool":"example.status/set_focus","expected":"focus","case":"ordered-code","checkpoint":"same"}
+{"op":"case_task","id":"codec-mode-b","save":"@fb","tool":"example.status/set_idle","expected":"idle","case":"ordered-code","checkpoint":"same"}
+{"op":"compare","topics":["ordered-code"],"state":"variable_reading","pathCount":2,"facts":["@fa","@fb"]}
+{"op":"case_task","id":"codec-other","save":"@fc","tool":"test.tools/increment","expected":"1","case":"ordered-code","checkpoint":"same"}
+{"op":"compare","topics":["ordered-code"],"state":"conflicting_observations","pathCount":3,"conflict":["@fc","@fb"],"facts":["@fa","@fb","@fc"]}
+{"op":"case_task","id":"separate-morning","save":"@ma","tool":"example.status/set_focus","expected":"focus","case":"dispatch","checkpoint":"morning"}
+{"op":"case_task","id":"separate-noon","save":"@mb","tool":"test.tools/increment","expected":"2"}
+{"op":"admin","command":"/comparison attach dispatch noon @mb"}
+{"op":"compare","topics":["dispatch"],"state":"variable_result","pathCount":2,"facts":["@ma","@mb"],"attributes":{"@mb":{"attribution":"owner_retrospective","checkpoint":"noon","met":false}}}
+{"op":"case_task","id":"permission-denied","save":"@denied","tool":"example.status/set_focus","expected":"focus","case":"dispatch","checkpoint":"morning","approve":false}
+{"op":"compare","topics":["dispatch"],"state":"variable_result","nativeCount":2,"facts":["@ma","@mb"]}
+{"op":"open","session":"sender","preset":2,"subject":"值班组"}
+{"op":"begin","session":"sender","key":"交接复述","mode":2,"save":"begin"}
+{"op":"run","session":"sender","expect":[]}
+{"op":"end","session":"sender","summary":"据交接人转述，两条路线都已完成。","save":"end"}
+{"op":"admin","command":"/comparison attach relay handoff $end","deny":true}
+{"op":"pump"}
+{"op":"admin","command":"/comparison attach relay handoff $begin","deny":true}
+{"op":"admin","command":"/comparison attach relay handoff $end"}
+{"op":"admin","command":"/comparison attach relay handoff $end"}
+{"op":"compare","topics":["relay"],"state":"reports_only","nativeCount":0,"pathCount":0,"reportCount":1,"facts":["$end"],"attributes":{"$end":{"report":"据交接人转述，两条路线都已完成。","attribution":"owner_retrospective","summaryKind":"sender_summary"}}}
+{"op":"restart"}
+{"op":"compare","topics":["relay"],"state":"reports_only","nativeCount":0,"reportCount":1,"facts":["$end"]}
+{"op":"compare","topics":["foreign/comparison-opinion/1"],"missing":true}
+{"op":"compare","topics":["nonexistent"],"missing":true}
