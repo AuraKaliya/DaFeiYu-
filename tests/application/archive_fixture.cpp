@@ -24,7 +24,7 @@ auto signature(sqlite3* db) {
 void legacy_archive(const fs::path& directory,unsigned version) {
     task_memory::require(version>=9 && version<=13,"unsupported fixture schema");
     auto conn=connection(directory); auto* db=conn.get(); Transaction tx(db);
-    sql(db,"DROP TABLE case_term; DROP INDEX case_checkpoint");
+    sql(db,"DROP INDEX IF EXISTS case_native_checkpoint; DROP INDEX IF EXISTS case_kind_sequence; DROP TABLE case_term; DROP INDEX case_checkpoint");
     if(version<13) sql(db,"DROP TABLE letter_digest");
     if(version<12) sql(db,"DROP TABLE case_opinion; DROP TABLE case_member; DROP TABLE observation_case");
     if(version<11) sql(db,"DROP TABLE knowledge_grant; DROP TABLE knowledge_basis; DROP TABLE knowledge_edition; DROP TABLE knowledge_article");

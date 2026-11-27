@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>14) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>15) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -145,6 +145,8 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             Statement cases(db,"SELECT name,scope FROM observation_case");
             while(cases.next()) index_case_terms(db,cases.text(0),Json::parse(cases.text(1)));
         }
+        if(previous<15) sql(db,"CREATE INDEX IF NOT EXISTS case_native_checkpoint ON case_member(name,checkpoint,id) WHERE active=1 AND kind='tool_readback';"
+            "CREATE INDEX IF NOT EXISTS case_kind_sequence ON case_member(name,kind,id) WHERE active=1; PRAGMA user_version=15");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

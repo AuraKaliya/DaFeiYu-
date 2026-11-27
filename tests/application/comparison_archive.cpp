@@ -1,6 +1,7 @@
 #include "task_memory_fixture.hpp"
 #include "main_messages.hpp"
 #include "message_store_db.hpp"
+#include "case_review.hpp"
 
 namespace dfy::tests::task_memory {
 using namespace app::message_db;
@@ -40,5 +41,37 @@ void populate_comparison_archive(const fs::path& data,unsigned groups) {
     owner->manage_case({"/comparison","alias","east","东边签收台"}); owner->manage_case({"/comparison","alias","east","东边签收台"});
     owner->manage_case({"/comparison","alias","west","西翼交班桌"}); owner->manage_case({"/comparison","alias","night","夜间交班桌"});
     owner->manage_case({"/comparison","alias","east","已移除别名"}); owner->manage_case({"/comparison","unalias","east","已移除别名"});
+}
+// 一组连续观测中第一项与第二项相斥，第三项与这两项分别共用读者或读数。
+// 步骤：产生有稳定原号的读回 → 插入已收到的独立报告 → 计量宿主实际持有的候选行数。
+std::size_t populate_long_archive(const fs::path& data,unsigned natives) {
+    const auto profile=app::MessageStore(data).conversation();
+    sqlite3* db=nullptr; const auto file=(data/"main-conversation.sqlite3").u8string();
+    check(sqlite3_open(reinterpret_cast<const char*>(file.c_str()),&db)); std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(db,&sqlite3_close);
+    Transaction tx(db);
+    const Json scope{{"object","长年台账"},{"measure","达标"},{"conditions","登记后"},{"unit","布尔"},{"criterion","target"}};
+    Statement group(db,"INSERT INTO observation_case(name,scope) VALUES('ledger',?)"); group.bind(1,scope.dump()); group.next();
+    for(unsigned i=1;i<=natives;++i) {
+        const std::string path=i==2 ? "bar" : "foo", reader=path+"/read", action=path+"/set";
+        const auto family=Json::array({action,reader}).dump(),base=profile+"/task/"+std::to_string(i);
+        const auto checkpoint=i<=3 ? std::string{"early"} : std::to_string(i);
+        Statement t(db,"INSERT INTO task_memory(id,origin,goal,tool,body,reason,signature) VALUES(?,?,'长期登记',?,'{}','','')");
+        t.bind(1,i); t.bind(2,base); t.bind(3,action); t.next();
+        Statement o(db,"INSERT INTO task_observation VALUES(?,?,'off','on',?,2,1,3,'applied')");
+        o.bind(1,i); o.bind(2,family); o.bind(3,i==1 ? "off" : "on"); o.next();
+        Statement m(db,"INSERT INTO case_member(name,checkpoint,reference,kind,record,dependency,attribution,path,reader,reading,met) "
+            "VALUES('ledger',?,?,'tool_readback',?,?,'at_start',?,?,?,?)");
+        m.bind(1,checkpoint); m.bind(2,base+"/receipt/3"); m.bind(3,i); m.bind(4,base); m.bind(5,family);
+        m.bind(6,reader); m.bind(7,i==1 ? "missed" : "met"); m.bind(8,i!=1); m.next();
+    }
+    sql(db,"INSERT INTO child_owner(id,plugin,preset,subject,channel,access) VALUES(7,'example',2,'业务组','',3)");
+    const Json envelope{{"author",profile+"/child/7"},{"outcome","succeeded"},{"summary","交接班转述仍需现场确认。"},{"summaryKind","sender_summary"}};
+    Statement letter(db,"INSERT INTO child_letter(id,owner,exchange,phase,signature,envelope,source,received) VALUES(1,7,'交接','end','fixture',?,0,1)");
+    letter.bind(1,envelope.dump()); letter.next();
+    Statement m(db,"INSERT INTO case_member(name,checkpoint,reference,kind,record,dependency,attribution,path,reader,reading,met) "
+        "VALUES('ledger','early',?,'sender_report',1,?,'owner_retrospective','','','',0)");
+    const auto ref=profile+"/letter/1"; m.bind(1,ref); m.bind(2,ref); m.next();
+    index_case_terms(db,"ledger",scope); sql(db,"UPDATE conversation SET memory_revision=1"); tx.commit();
+    return app::case_review::classify(db,"ledger",scope,INT64_MAX).members.size();
 }
 }

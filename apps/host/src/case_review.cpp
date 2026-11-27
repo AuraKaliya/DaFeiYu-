@@ -1,9 +1,7 @@
 #include "case_review.hpp"
 #include <algorithm>
 #include <charconv>
-#include <map>
 #include <set>
-#include <dafeiyu/utf8.hpp>
 
 namespace dfy::app {
 using namespace message_db;
@@ -21,10 +19,6 @@ std::string preview(const std::string& value) {
         end/=2;
     }
 }
-// 保留优先级顺序，同一见证不重复占用一条额度。
-void unique_push(std::vector<std::size_t>& picked,std::size_t index) {
-    if (std::find(picked.begin(),picked.end(),index)==picked.end()) picked.push_back(index);
-}
 // 将现场证据分歧映射为可写入的保留意见。
 std::string judgement(const std::string& state) {return state=="conflicting_observations" ? "unresolved" : state;}
 // 只载入仍可引用的本体解释及其原件编号。
@@ -40,57 +34,14 @@ Json opinion(sqlite3* db,const std::string& profile,std::int64_t id) {
 Json batch_for(sqlite3* db,const std::string& profile,const std::string& name,const Json& scope,std::int64_t cursor,std::int64_t head,std::int64_t through) {
     const auto evidence=classify(db,name,scope,through);
     Json result{{"case",name},{"scope",scope},{"cursor",cursor},{"head",head},{"through",through},{"prior",opinion(db,profile,head)},
-        {"state",evidence.state},{"nativeCount",evidence.natives},{"reportCount",evidence.members.size()-evidence.natives},
+        {"state",evidence.state},{"nativeCount",evidence.natives},{"reportCount",evidence.total-evidence.natives},
         {"pathCount",evidence.paths},{"facts",Json::array()},{"requiredConflict",Json::array()}};
-    for (const auto index : evidence.conflict) result["requiredConflict"].push_back(evidence.members[index].ref);
-    for (const auto index : evidence.order) {
-        result["facts"].push_back(fact(db,evidence.members[index]));
-        if (result["facts"].size()==4) break;
-    }
+    result["requiredConflict"]=evidence.conflict;
+    for (const auto& witness:case_review::page(db,name,through,evidence,0,4)) result["facts"].push_back(fact(db,witness));
     return result;
 }
 }
 
-// 同一检查点才比较冲突。没有分歧时全组共享读者或读数，保留两份不同代表即可判断下一条。
-// 步骤：读取轻量索引 → 按检查点比较独立采样 → 归类 → 排列首屏与续页见证。
-Evidence case_review::classify(sqlite3* db,const std::string& name,const Json& scope,std::int64_t through) {
-    Evidence out; std::set<std::string> paths,values;
-    std::map<std::string,std::vector<std::size_t>> witnesses;
-    std::vector<std::size_t> preferred; std::optional<std::size_t> report,first,different_path,different_reading;
-    Statement rows(db,"SELECT id,record,reference,checkpoint,kind,path,reader,reading,attribution FROM case_member "
-        "WHERE name=? AND active=1 AND id<=? ORDER BY id DESC"); rows.bind(1,name); rows.bind(2,through);
-    while (rows.next()) {
-        const auto i=out.members.size();
-        out.members.push_back({rows.number(0),rows.number(1),rows.text(2),rows.text(3),rows.text(4),rows.text(5),rows.text(6),rows.text(7),rows.text(8)});
-        const auto& m=out.members.back();
-        if (m.kind=="sender_report") {if (!report) report=i; continue;}
-        ++out.natives; paths.insert(m.path); values.insert(m.reading);
-        if (!first) first=i;
-        if (!different_path && out.members[*first].path!=m.path) different_path=i;
-        if (!different_reading && out.members[*first].reading!=m.reading) different_reading=i;
-        if (!out.conflict.empty()) continue;
-        auto& local=witnesses[m.checkpoint];
-        for (const auto j : local) {
-            const auto& prev=out.members[j];
-            if (m.reader!=prev.reader && m.reading!=prev.reading) {out.conflict={j,i}; break;}
-        }
-        if (local.empty()) local.push_back(i);
-        else if (std::none_of(local.begin(),local.end(),[&](auto j){return out.members[j].reader==m.reader;}) ||
-            std::none_of(local.begin(),local.end(),[&](auto j){return out.members[j].reading==m.reading;})) {
-            if (local.size()<2) local.push_back(i);
-        }
-    }
-    out.paths=paths.size();
-    out.state=out.members.empty() ? "no_evidence" : !out.natives ? "reports_only" : out.paths<2 ? "insufficient_paths" :
-        !out.conflict.empty() ? "conflicting_observations" : scope.at("criterion")=="literal" ?
-        (values.size()==1 ? "consistent_reading" : "variable_reading") : values.size()>1 ? "variable_result" :
-        values.contains("met") ? "targets_met" : "targets_missed";
-    preferred=out.conflict;
-    for (const auto idx : {first,different_path,different_reading,report}) if(idx) unique_push(preferred,*idx);
-    out.order=preferred;
-    for (std::size_t i=0;i<out.members.size();++i) if(std::find(preferred.begin(),preferred.end(),i)==preferred.end()) out.order.push_back(i);
-    return out;
-}
 
 // 展开主 Agent 的原动作与读回或带作者的结束信。
 Json case_review::fact(sqlite3* db,const Member& row) {
@@ -179,23 +130,24 @@ Json MessageStore::search_cases(const std::vector<std::string>& topics,unsigned 
     Statement get(db,"SELECT scope,head,(SELECT max(id) FROM case_member m WHERE m.name=c.name AND active=1) FROM observation_case c WHERE name=?");
     get.bind(1,name); if(!get.next()) return out;
     const auto scope=Json::parse(get.text(0)); const auto evidence=classify(db,name,scope,cutoff);
-    if (offset>=evidence.order.size()) return out;
+    if (offset>=evidence.total) return out;
     Json item{{"reference",prefix+name},{"scope",scope},{"state",evidence.state},{"nativeCount",evidence.natives},
-        {"reportCount",evidence.members.size()-evidence.natives},{"pathCount",evidence.paths},{"facts",Json::array()}};
-    if (!evidence.conflict.empty()) for(const auto i:evidence.conflict) item["conflictRefs"].push_back(evidence.members[i].ref);
+        {"reportCount",evidence.total-evidence.natives},{"pathCount",evidence.paths},{"facts",Json::array()}};
+    if (!evidence.conflict.empty()) item["conflictRefs"]=evidence.conflict;
     const auto head=get.number(1),id=requested ? requested : head;
     if (auto authored=opinion(db,conversation(),id); !authored.is_null()) {
         Statement last(db,"SELECT through_member FROM case_opinion WHERE id=?"); last.bind(1,id); last.next();
         authored["standing"]=id!=head || (requested && cutoff<get.number(2)) ? "historical" : authored.at("judgement")!=judgement(evidence.state) ? "challenged" :
-            !requested && last.number(0)<evidence.members.front().id ? "awaiting_review" : "current";
+            !requested && last.number(0)<evidence.latest ? "awaiting_review" : "current";
         item["opinion"]=std::move(authored);
     }
     const auto take=std::max<std::size_t>(!offset ? evidence.conflict.size() : 0,std::min(count,3u));
+    const auto selected=case_review::page(db,name,cutoff,evidence,offset,take);
     std::size_t end=offset; std::vector<Json> full;
     const auto required=!offset ? std::max<std::size_t>(1,evidence.conflict.size()) : 1;
     // 先保留必需的引用，分歧一方不会因另一方的长读数挤掉。剩余额度逐份补回完整字段。
-    for(;end<evidence.order.size() && end-offset<required;++end) {
-        auto f=fact(db,evidence.members[evidence.order[end]]);
+    for(;end-offset<selected.size() && end-offset<required;++end) {
+        auto f=fact(db,selected[end-offset]);
         item["facts"].push_back({{"reference",f.at("reference")},{"origin",f.at("origin")},{"checkpoint",f.at("checkpoint")},{"partial",true}});
         full.push_back(std::move(f));
     }
@@ -203,11 +155,11 @@ Json MessageStore::search_cases(const std::vector<std::string>& topics,unsigned 
         auto& slot=item["facts"][i]; auto compact=slot; slot=full[i];
         if(item.dump().size()+48>2048) slot=std::move(compact);
     }
-    for(;end<evidence.order.size() && end-offset<take;++end) {
-        item["facts"].push_back(fact(db,evidence.members[evidence.order[end]]));
+    for(;end-offset<selected.size();++end) {
+        item["facts"].push_back(fact(db,selected[end-offset]));
         if(item.dump().size()+48>2048) {item["facts"].erase(item["facts"].end()-1); break;}
     }
-    if (end<evidence.order.size()) {item["nextOffset"]=end; out["limited"]=true;}
+    if (end<evidence.total) {item["nextOffset"]=end; out["limited"]=true;}
     out["items"].push_back(std::move(item));
     return out;
 }

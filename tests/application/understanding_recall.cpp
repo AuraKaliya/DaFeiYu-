@@ -80,6 +80,7 @@ void query(const fs::path& data,const Json& row,Measures& metrics,bool compariso
             auto topics=row.at("topics").get<std::vector<std::string>>();
             for (auto& term : topics) if (term.starts_with("@")) term=profile+term.substr(1);
             Json args{{"view",comparisons ? "comparisons" : "understanding"},{"need",row.value("need",std::string{"single"})},{"count",row.value("count",1)},{"topics",topics}};
+            if(row.contains("offset")) args["offset"]=row.at("offset");
             start=Clock::now();
             return {{model::Role::assistant,"",{{"query","memory_search",args.dump()}}},model::FinishReason::tool_calls};
         }
@@ -99,11 +100,22 @@ void query(const fs::path& data,const Json& row,Measures& metrics,bool compariso
                 const auto& v=items.at(0);
                 require(items.size()==1 && v.at("reference")==profile+"/comparison/"+row.at("case").get<std::string>() && v.at("state")==row.at("state"),
                     "wrong comparison scope");
-                if(v.at("state")=="conflicting_observations") {
+                if(v.at("state")=="conflicting_observations" && !row.value("offset",std::size_t{})) {
                     const auto& refs=v.at("conflictRefs"); const auto& facts=v.at("facts");
                     require(refs.size()==2 && facts.size()>=2 && facts.at(0).at("reference")==refs.at(0) &&
                         facts.at(1).at("reference")==refs.at(1) && facts.at(0).at("readTool")!=facts.at(1).at("readTool"),"independent witnesses omitted");
                     ++metrics.challenges;
+                }
+                if(row.contains("refs")) {
+                    const auto& facts=v.at("facts"); require(facts.size()==row.at("refs").size(),"wrong long-history page size");
+                    for(std::size_t i=0;i<facts.size();++i) {
+                        const auto suffix=row.at("refs")[i].get<std::string>();
+                        require(facts[i].at("reference")==profile+suffix && facts[i].at("origin")==
+                            (suffix.starts_with("/letter/") ? "sender_report" : "main_readback"),"wrong long-history original");
+                    }
+                    require(v.at("nativeCount")==row.at("nativeCount") && v.at("reportCount")==1,"wrong long-history counts");
+                    if(row.contains("next")) require(v.at("nextOffset")==row.at("next"),"wrong continuation");
+                    else require(!v.contains("nextOffset"),"unexpected continuation");
                 }
                 delivered="查到比较「"+v.at("scope").at("object").get<std::string>()+"」，依据 "+v.at("facts").at(0).at("reference").get<std::string>();
             } else if (!row.contains("version")) {
@@ -125,6 +137,7 @@ void query(const fs::path& data,const Json& row,Measures& metrics,bool compariso
         return {{model::Role::assistant,delivered}};
     }},config);
     host.bind_messages(db,id,nullptr);
+    if(row.contains("revoke")) host.main_messages()->change_memory(profile+row.at("revoke").get<std::string>(),std::nullopt);
     host.main_messages()->terminal(id,human); drain(host);
     require(!delivered.empty() && db->page(true,0,db->watermark(),1).records.front().envelope.at("text")==delivered,"answer did not reach owner");
     std::size_t prepared=0;
@@ -156,5 +169,28 @@ void understanding_recall(const fs::path& corpus,const fs::path& data,bool compa
             <<m.requests<<" requests, evidence max "<<m.max_evidence<<" bytes, wire max "<<m.max_wire
             <<" bytes, tool roundtrip p95 "<<m.roundtrips.at((95*m.roundtrips.size()+99)/100-1)<<" ms\n";
     }
+}
+
+// 每档通过真实私聊取首屏和深页，最后撤回早期反证并重新核对。
+void long_case_recall(const fs::path& corpus,const fs::path& data) {
+    std::ifstream in(corpus,std::ios::binary); std::vector<Json> rows;
+    for(std::string line;std::getline(in,line);) rows.push_back(Json::parse(line));
+    std::size_t high=0;
+    for(const auto scale:{64u,1024u,8192u}) {
+        const auto dir=data/std::to_string(scale); fs::create_directories(dir);
+        const auto held=populate_long_archive(dir,scale); high=std::max(high,held); Measures m;
+        for(auto row:rows) {
+            row["topics"]={"ledger"};
+            for(const auto key:{"offset","next","nativeCount"}) if(row.contains(key) && row.at(key).is_string()) {
+                const auto code=row.at(key).get<std::string>(); row[key]=code=="N" ? scale : code=="N-1" ? scale-1 : scale+1;
+            }
+            if(row.contains("refs")) for(auto& ref:row["refs"]) if(ref=="/latest") ref="/task/"+std::to_string(scale)+"/receipt/3";
+            try {query(dir,row,m,true);} catch(const std::exception& e){throw std::runtime_error(row.at("id").get<std::string>()+": "+e.what());}
+        }
+        std::ranges::sort(m.roundtrips);
+        std::cout<<scale<<" native + 1 report, "<<m.cases<<" correct, held "<<held<<" candidate rows, "<<m.requests<<" requests, evidence max "
+            <<m.max_evidence<<" bytes, wire max "<<m.max_wire<<" bytes, p95 "<<m.roundtrips.back()<<" ms\n";
+    }
+    require(!rows.empty() && high<=6,"candidate memory grew with history: "+std::to_string(high));
 }
 }

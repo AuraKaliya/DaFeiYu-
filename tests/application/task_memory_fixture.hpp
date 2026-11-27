@@ -20,4 +20,8 @@ void understanding_cases(const fs::path& corpus, const fs::path& data, const fs:
 void understanding_recall(const fs::path& corpus, const fs::path& data,bool comparisons=false);
 // 构造指定规模的旧版跨工具档案并经过正式升级及主人别名管理入口。
 void populate_comparison_archive(const fs::path& data,unsigned groups);
+// 将早期独立分歧埋入单组长期档案，测量实际保留的候选数量。
+std::size_t populate_long_archive(const fs::path& data,unsigned natives);
+// 同组历史扩容后验证首屏、深页、撤权以及前台实收预算。
+void long_case_recall(const fs::path& corpus,const fs::path& data);
 }
