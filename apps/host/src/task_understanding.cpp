@@ -111,6 +111,26 @@ std::int64_t ref_id(std::string_view value) {
         throw std::invalid_argument("reflection: invalid reference");
     return id;
 }
+
+// 对当前解释按不同主题命中数、精确目标或工具号排序，同分时保留问题的歧义。
+// 每个主题在每组至多计一次，重复任务、历史版本和未授权的原件不增加权重。
+std::int64_t match_understanding(sqlite3* db,const std::vector<std::string>& topics,bool& ambiguous) {
+    Statement find(db,
+        "WITH words(term) AS (VALUES (?1),(?2),(?3)), terms AS (SELECT DISTINCT term FROM words WHERE term<>'') ,"
+        "hits(head,term,exact) AS ("
+        "SELECT p.head,q.term,max(t.goal=q.term OR t.tool=q.term) FROM terms q JOIN task_observation o "
+        "JOIN task_memory t ON t.id=o.task JOIN reflection_progress p ON p.family=o.family "
+        "WHERE p.head>0 AND t.active=1 AND (instr(t.goal,q.term)>0 OR instr(t.tool,q.term)>0) GROUP BY p.head,q.term "
+        "UNION ALL SELECT u.id,q.term,0 FROM terms q JOIN reflection_progress p JOIN task_understanding u ON u.id=p.head "
+        "WHERE u.valid=1 AND instr(u.recall_text,q.term)>0) "
+        "SELECT head,count(DISTINCT term) AS coverage,max(exact) AS identity_hit FROM hits GROUP BY head "
+        "ORDER BY coverage DESC,identity_hit DESC,head LIMIT 2");
+    for (int i=0;i<3;++i) find.bind(i+1,i<static_cast<int>(topics.size()) ? topics[i] : std::string{});
+    if (!find.next()) return 0;
+    const auto id=find.number(0), coverage=find.number(1), exact=find.number(2);
+    ambiguous=find.next() && coverage==find.number(1) && exact==find.number(2);
+    return ambiguous ? 0 : id;
+}
 }
 
 // 每组首次取两次独立经历，以后逐次处理，离线积压也不能跳过中间的反例。
@@ -176,11 +196,11 @@ void MessageStore::commit_understanding(const Json& batch, const Json& proposal)
             else if (challenge && (!prediction || !scope)) relation = "revised";
             else throw std::invalid_argument("reflection: missing counterexample");
         }
-        Statement add(db,"INSERT INTO task_understanding(family,parent,through_task,relation,claim,cites,contrast) "
+        Statement add(db,"INSERT INTO task_understanding(family,parent,through_task,relation,claim,cites,contrast,recall_text) "
             "VALUES(?1,?2,?3,?4,?5,?6,CASE WHEN ?4 IN ('narrowed','revised') THEN ?2 ELSE "
-            "coalesce((SELECT contrast FROM task_understanding WHERE id=?2),0) END)");
+            "coalesce((SELECT contrast FROM task_understanding WHERE id=?2),0) END,?7)");
         add.bind(1,family); add.bind(2,head); add.bind(3,through); add.bind(4,relation); add.bind(5,claim.dump());
-        add.bind(6,proposal.at("cites").dump()); add.next();
+        add.bind(6,proposal.at("cites").dump()); add.bind(7,claim.at("text").get_ref<const std::string&>()); add.next();
         next = sqlite3_last_insert_rowid(db);
     }
     Statement save(db,"UPDATE reflection_progress SET cursor=?,head=? WHERE family=?");
@@ -189,24 +209,27 @@ void MessageStore::commit_understanding(const Json& batch, const Json& proposal)
 
 // 独立装配本体解释和可展开的原始观察；反例先展示，旧版本仍按当时的依据解释。
 Json MessageStore::search_understandings(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const {
-    if (topics.size()!=1 || topics.front().empty() || topics.front().size()>160 || !count)
-        throw std::invalid_argument("reflection: one selector required");
+    if (topics.empty() || topics.size()>3 || !count || std::ranges::any_of(topics,[](const auto& term){
+        return term.size()>160 || term.find_first_not_of(" \t\r\n")==term.npos;
+    })) throw std::invalid_argument("reflection: invalid topics");
     std::lock_guard lock(state_->mutex);
     auto* db = state_->db;
     const auto& term = topics.front();
     const auto prefix = conversation()+"/understanding/", task_prefix = conversation()+"/task/";
     Json result{{"items",Json::array()},{"limited",false}};
     std::int64_t id=0;
-    if (term.starts_with(prefix)) id = ref_id(std::string_view(term).substr(prefix.size()));
-    else {
-        const bool by_task = term.starts_with(task_prefix);
-        if (!by_task && (term.find("/task/")!=term.npos || term.find("/understanding/")!=term.npos)) return result;
-        Statement match(db,by_task ?
-            "SELECT p.head FROM reflection_progress p JOIN task_observation o ON o.family=p.family WHERE o.task=?" :
-            "SELECT p.head FROM reflection_progress p JOIN task_observation o ON o.family=p.family JOIN task_memory t ON t.id=o.task "
-            "WHERE p.head>0 AND (instr(t.goal,?1)>0 OR instr(t.tool,?1)>0) ORDER BY (t.tool=?1 OR t.goal=?1) DESC,o.task DESC LIMIT 1");
-        if (by_task) match.bind(1,ref_id(std::string_view(term).substr(task_prefix.size()))); else match.bind(1,term);
-        if (match.next()) id = match.number(0);
+    if (std::ranges::any_of(topics,[](const auto& t){return t.find("/task/")!=t.npos || t.find("/understanding/")!=t.npos;})) {
+        if (topics.size()!=1) return result;
+        if (term.starts_with(prefix)) id=ref_id(std::string_view(term).substr(prefix.size()));
+        else if (term.starts_with(task_prefix)) {
+            Statement match(db,"SELECT p.head FROM reflection_progress p JOIN task_observation o ON o.family=p.family WHERE o.task=?");
+            match.bind(1,ref_id(std::string_view(term).substr(task_prefix.size())));
+            if (match.next()) id=match.number(0);
+        }
+    } else {
+        bool ambiguous=false;
+        id=match_understanding(db,topics,ambiguous);
+        if (ambiguous) { result["ambiguous"]=true; return result; }
     }
     Statement version(db,"SELECT u.family,u.parent,u.through_task,u.relation,u.claim,u.cites,p.head,u.contrast,"
         "(SELECT v.through_task FROM task_understanding v WHERE v.family=u.family AND v.parent=u.contrast AND v.valid=1 AND u.contrast>0 "

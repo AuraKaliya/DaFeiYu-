@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>7) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>8) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -100,6 +100,15 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
                 "CREATE INDEX understanding_series ON task_understanding(family,through_task); PRAGMA user_version=7");
             Statement old(db,"SELECT id,body FROM task_memory WHERE active=1 ORDER BY id");
             while (old.next()) index_task_observation(db,old.number(0),Json::parse(old.text(1)));
+        }
+        if (previous<8) {
+            sql(db,"ALTER TABLE task_understanding ADD COLUMN recall_text TEXT NOT NULL DEFAULT ''; PRAGMA user_version=8");
+            Statement rows(db,"SELECT id,claim FROM task_understanding WHERE valid=1");
+            while (rows.next()) {
+                Statement update(db,"UPDATE task_understanding SET recall_text=? WHERE id=?");
+                update.bind(1,Json::parse(rows.text(1)).at("text").get<std::string>());
+                update.bind(2,rows.number(0)); update.next();
+            }
         }
     }
     Statement identity(db,"SELECT id FROM conversation");

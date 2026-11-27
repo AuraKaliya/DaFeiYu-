@@ -14,4 +14,6 @@ std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path&
     std::size_t& request_count);
 // 回放跨任务理解的通用语料并核对后台请求与私聊投递。
 void understanding_cases(const fs::path& corpus, const fs::path& data, const fs::path& panel, const fs::path& counter);
+// 在多种档案规模下用普通聊天入口测量查回、歧义、证据预算和往返耗时。
+void understanding_recall(const fs::path& corpus, const fs::path& data);
 }

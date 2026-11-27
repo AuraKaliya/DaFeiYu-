@@ -38,7 +38,7 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,5,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,6,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -49,7 +49,9 @@ void MainMessages::register_memory_tools() {
         "why 查现在对过去的解释，change 查相似情境下实际换过的选择。用一个主题或当时那场的投递号查配套依据，need 用 multiple，count 给三。"
         "从 memory.experiences 区分当时感受与后来推测。查本体工具任务用 tasks，填目标词、工具号或原件号。memory.tasks 区分 goal、plan、"
         "实际派发 execution、工具 effect 与独立读回 verification。引用 actionRef、receiptRef 和已有的 readbackRef。按号展开原件，"
-        "nextAction 可追到其他提议，长原文下轮用 nextOffset 续查。查跨任务的个人理解选 understanding，填一个任务号、工具号、目标词或版本号。"
+        "nextAction 可追到其他提议，长原文下轮用 nextOffset 续查。主人问我从过去几次任务学到了什么、这个看法还成立吗，选 understanding。"
+        "取一至三个能区分对象、动作或同义措辞的主题词，也可单独填任务号或版本号。主题只查当前看法。ambiguous 时请主人说清对象。"
+        "问现场现在怎样需新采样，只问一次行动查 tasks。发现反例应说明原判断的局限。"
         "claim 是我目前或当时的理解，facts 才是实际观察。区分 current、challenged、superseded，指出反例并引用行动和读回，"
         "previousReference 可追溯旧看法。nextOffset 可按证据条数翻页。",
         R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
@@ -111,7 +113,7 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             own ? experience_source(call.attempt.step.run.sequence,result) :
             matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
         search_step_ = call.attempt.step.sequence;
-        return memory_receipt({{"state",size ? "ready" : result.at("limited")==true ? "limited" : "no_match"},
+        return memory_receipt({{"state",size ? "ready" : result.value("ambiguous",false) ? "ambiguous" : result.at("limited")==true ? "limited" : "no_match"},
             {"count",size},{"limited",result.at("limited")}},agent::ToolEffect::not_applied);
     } catch (const std::invalid_argument&) {
         return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);

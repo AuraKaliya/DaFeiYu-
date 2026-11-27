@@ -93,11 +93,11 @@ agent::DecisionStatusSource MainMessages::understanding_source(std::uint64_t tur
         for (const auto key : {"reference","previousReference","revisedFrom","author","kind","relation","standing"}) item[key]=str;
         for (const auto key : {"supportCount","counterexampleCount","nextOffset"}) item[key]=num;
         item["claim"]=object(claim); item["facts"]={{"type","array"},{"items",object(facts)}};
-        const auto value=object({{"limited",flag},{"items",{{"type","array"},{"items",object(item)}}}});
-        return Json::array({{{"key","memory.understanding"},{"version",1},{"description","本体个人解释和原任务事实，反例优先"},
+        const auto value=object({{"limited",flag},{"ambiguous",flag},{"items",{{"type","array"},{"items",object(item)}}}});
+        return Json::array({{{"key","memory.understanding"},{"version",2},{"description","本体个人解释和原任务事实，反例优先"},
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
-    return {"memory",schema,Json::array({{{"key","memory.understanding"},{"version",1},{"subject",store_->conversation()},
+    return {"memory",schema,Json::array({{{"key","memory.understanding"},{"version",2},{"subject",store_->conversation()},
         {"fact",turn},{"value",selection}}}).dump()};
 }
 // 原任务概览或逐字回执只在本轮决策可见。
