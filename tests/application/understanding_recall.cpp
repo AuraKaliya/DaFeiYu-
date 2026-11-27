@@ -176,11 +176,16 @@ void query(const fs::path& data,const Json& row,Measures& metrics,bool compariso
         return {{model::Role::assistant,delivered}};
     }},config);
     host.bind_messages(db,id,nullptr);
+    if(row.contains("management")) host.main_messages()->manage_case(row.at("management").get<std::vector<std::string>>());
     if(row.contains("revoke")) host.main_messages()->change_memory(profile+row.at("revoke").get<std::string>(),std::nullopt);
     host.main_messages()->terminal(id,human); drain(host);
     require(!delivered.empty() && db->page(true,0,db->watermark(),1).records.front().envelope.at("text")==delivered,"answer did not reach owner");
-    if(row.contains("category") && !audit)
+    if(row.contains("category") && !audit) {
         require(observed==row.at("expect").get<std::string>(),"expected "+row.at("expect").get<std::string>()+", got "+observed);
+        require(observed=="-" || observed=="?" || observed==row.value("target",std::string{}),"retrieved an unintended object");
+    }
+    if(row.contains("category") && audit)
+        std::cout<<"observed "<<data.filename().string()<<" "<<id<<" "<<observed<<"\n";
     std::size_t prepared=0;
     std::ifstream trace(host.trace_file(),std::ios::binary);
     for(std::string line;std::getline(trace,line);) {

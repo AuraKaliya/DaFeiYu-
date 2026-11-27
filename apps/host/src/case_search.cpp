@@ -20,15 +20,25 @@ std::string resolve_case_terms(sqlite3* db,const std::vector<std::string>& topic
         "WITH words(word) AS(VALUES(?1),(?2),(?3)),q(word) AS(SELECT DISTINCT lower(trim(word)) FROM words WHERE trim(word)<>''),"
         "hits(name,word,anchor,exact) AS("
         "SELECT t.name,q.word,t.kind IN('object','alias','name'),t.term=q.word FROM case_term t JOIN q "
-        "WHERE instr(lower(t.term),q.word)>0 AND EXISTS(SELECT 1 FROM case_member m WHERE m.name=t.name AND m.active=1) "
+        "WHERE instr(lower(t.term),q.word)>0 AND (q.word NOT GLOB '*[0-9０-９]*' OR dfy_number_match(t.term,q.word)) "
+        "AND EXISTS(SELECT 1 FROM case_member m WHERE m.name=t.name AND m.active=1) "
         "UNION ALL SELECT m.name,q.word,0,1 FROM q JOIN case_member m ON m.checkpoint=q.word COLLATE NOCASE WHERE m.active=1 GROUP BY m.name,q.word),"
         "unique_hits(name,word,anchor,exact_anchor,exact) AS(SELECT name,word,max(anchor),max(anchor*exact),max(exact) FROM hits GROUP BY name,word) "
-        "SELECT name,count(*) AS coverage,sum(exact_anchor) AS specific,sum(anchor) AS subjects,sum(exact) AS full FROM unique_hits "
+        "SELECT name,count(*) AS coverage,sum(exact_anchor) AS specific,sum(anchor) AS subjects,sum(exact) AS full,"
+        "max(CASE WHEN word=lower(trim(?1)) THEN exact_anchor ELSE 0 END) FROM unique_hits "
         "GROUP BY name HAVING subjects>0 AND coverage=(SELECT count(*) FROM q) ORDER BY specific DESC,subjects DESC,full DESC,name LIMIT 2");
     for(std::size_t i=0;i<3;++i) query.bind(static_cast<int>(i+1),i<topics.size() ? topics[i] : std::string{});
-    if(!query.next()) return {};
+    if(!query.next()) {
+        const auto match=resolve_composed_terms(db,topics); ambiguous=match.ambiguous; return match.name;
+    }
     const auto name=query.text(0); const auto score=[&]{return std::array{query.number(1),query.number(2),query.number(3),query.number(4)};};
-    const auto best=score(); ambiguous=query.next() && score()==best;
+    const auto best=score();
+    if(!query.number(5)) {
+        // 未折叠的子串可能只落在旁机；先检查是否有整项等价的登记名。
+        const auto whole=resolve_composed_terms(db,topics,true);
+        if(!whole.name.empty() || whole.ambiguous || whole.registered) {ambiguous=whole.ambiguous; return whole.name;}
+    }
+    ambiguous=query.next() && score()==best;
     return ambiguous ? std::string{} : name;
 }
 }

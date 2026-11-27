@@ -1,0 +1,12 @@
+{"id":"T01","category":"edits","management":["/comparison","alias","supply","A区扫描台备机"],"ask":"我要A区扫描台本机的回执。","topics":["A区扫描台"],"target":"full","expect":"full"}
+{"id":"T02","category":"edits","ask":"A区扫描台在初检时有记录吗？","topics":["A区扫描台","初检"],"expect":"-"}
+{"id":"T03","category":"edits","management":["/comparison","alias","humid","a区扫描台"],"ask":"这个全角小写的名字具体指哪组？","topics":["ａ区扫描台"],"expect":"?"}
+{"id":"T04","category":"edits","ask":"请按登记的小写别名查。","topics":["a区扫描台"],"target":"humid","expect":"humid"}
+{"id":"T05","category":"edits","management":["/comparison","unalias","humid","a区扫描台"],"ask":"现在这个全角别称还能唯一定位吗？","topics":["ａ区扫描台"],"target":"full","expect":"full"}
+{"id":"T06","category":"edits","revoke":"/task/141","ask":"撤回本机读回之后，还有本机的记录吗？","topics":["A区扫描台"],"expect":"-"}
+{"id":"T07","category":"edits","ask":"备机的记录还在吗？","topics":["A区扫描台备机"],"target":"supply","expect":"supply"}
+{"id":"T08","category":"edits","management":["/comparison","unalias","intake","回气格栅"],"ask":"移除回气格栅别称后，还能按组合说法查吗？","topics":["北楼回气格栅","开机后"],"expect":"-"}
+{"id":"T09","category":"edits","ask":"按回风口的本名和原检查点呢？","topics":["初检的北楼回风口"],"target":"intake","expect":"intake"}
+{"id":"T10","category":"edits","management":["/comparison","alias","code-02","样品篮０２"],"ask":"样品篮０就是这个编号吗？","topics":["样品篮０"],"expect":"-"}
+{"id":"T11","category":"edits","ask":"按完整登记号，样品篮02呢？","topics":["样品篮02"],"target":"code-02","expect":"code-02"}
+{"id":"T12","category":"edits","management":["/comparison","alias","code-02","备件篮0２"],"ask":"能查到独立的备件篮0吗？","topics":["备件篮0"],"expect":"-"}

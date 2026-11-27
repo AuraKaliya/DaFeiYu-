@@ -55,6 +55,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     const auto path = (profile/"main-conversation.sqlite3").u8string();
     check(sqlite3_open_v2(reinterpret_cast<const char*>(path.c_str()),&state_->db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE,nullptr));
     auto* db = state_->db;
+    register_case_matching(db);
     check(sqlite3_busy_timeout(db,150));
     sql(db,"PRAGMA synchronous=FULL");
     Transaction transaction(db);

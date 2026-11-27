@@ -60,6 +60,12 @@ set_tests_properties(app.understanding_recall PROPERTIES TIMEOUT 90)
 add_test(NAME app.comparison_recall COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/comparison_queries.jsonl" "${PROJECT_BINARY_DIR}/tests/comparison-recall/$<CONFIG>" --case-recall)
 set_tests_properties(app.comparison_recall PROPERTIES TIMEOUT 120)
+add_test(NAME app.comparison_paraphrases COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/comparison_paraphrases.jsonl" "${PROJECT_BINARY_DIR}/tests/comparison-paraphrases/$<CONFIG>" --case-recall)
+set_tests_properties(app.comparison_paraphrases PROPERTIES TIMEOUT 120)
+add_test(NAME app.comparison_term_changes COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/comparison_term_changes.jsonl" "${PROJECT_BINARY_DIR}/tests/comparison-term-changes/$<CONFIG>" --case-recall)
+set_tests_properties(app.comparison_term_changes PROPERTIES TIMEOUT 120)
 add_test(NAME app.comparison_history_budget COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/long_case_queries.jsonl" "${PROJECT_BINARY_DIR}/tests/comparison-history/$<CONFIG>" --long-case)
 set_tests_properties(app.comparison_history_budget PROPERTIES TIMEOUT 90)
