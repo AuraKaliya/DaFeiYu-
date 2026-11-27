@@ -42,7 +42,7 @@ add_test(NAME app.replay_task COMMAND dfy_tool_verification_tests "$<TARGET_FILE
   "${PROJECT_BINARY_DIR}/tests/tool-verification-replay/$<CONFIG>" --capture app_task_reconnect)
 set_tests_properties(app.tool_verification app.replay_task PROPERTIES TIMEOUT 15)
 dfy_test_executable(dfy_task_memory_tests task_memory.cpp)
-target_sources(dfy_task_memory_tests PRIVATE task_execution_fixture.cpp task_resume.cpp task_understanding_cases.cpp understanding_recall.cpp comparison_archive.cpp channel_observations.cpp task_memory_fixture.hpp)
+target_sources(dfy_task_memory_tests PRIVATE task_execution_fixture.cpp task_resume.cpp tone_replay.cpp task_understanding_cases.cpp understanding_recall.cpp comparison_archive.cpp channel_observations.cpp task_memory_fixture.hpp)
 add_dependencies(dfy_task_memory_tests dfy_status_example dfy_tools_fixture dfy_freight_fixture dfy_museum_fixture)
 target_link_libraries(dfy_task_memory_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 add_test(NAME app.task_memory COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
@@ -53,6 +53,9 @@ add_test(NAME app.task_resume COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:
   "-DCORPUS=${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/tasks.jsonl" "-DROOT=${PROJECT_BINARY_DIR}/tests/task-resume/$<CONFIG>"
   -P "${CMAKE_CURRENT_SOURCE_DIR}/task_resume.cmake")
 set_tests_properties(app.task_resume PROPERTIES TIMEOUT 90)
+add_test(NAME app.tone_replay COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:dfy_task_memory_tests>"
+  "-DROOT=${PROJECT_BINARY_DIR}/tests/tone-replay/$<CONFIG>" -P "${CMAKE_CURRENT_SOURCE_DIR}/tone_replay.cmake")
+set_tests_properties(app.tone_replay PROPERTIES TIMEOUT 90)
 add_test(NAME app.channel_observations COMMAND dfy_task_memory_tests "$<TARGET_FILE:dfy_freight_fixture>" "$<TARGET_FILE:dfy_museum_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/channel_observations.jsonl" "${PROJECT_BINARY_DIR}/tests/channel-observations/$<CONFIG>" --channels)
 set_tests_properties(app.channel_observations PROPERTIES TIMEOUT 90)

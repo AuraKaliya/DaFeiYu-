@@ -116,6 +116,10 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。
     std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
+    // 处理本体已准备好的语气整理，失败保留原待办。
+    void settle_tone();
+    // 在每次送模前读取当前实际受众可用的语气材料。
+    std::optional<agent::DecisionStatusSource> tone_projection(std::string_view prompt) const;
     // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
     std::unique_ptr<agent::ToolWork> search_memory(const agent::ToolInvocation& invocation);
     // 仅用本轮上一决策可见的两份原件提交复盘关系。
@@ -138,6 +142,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     struct TaskResume { std::uint64_t message; std::string reference; bool owner_only; };
     std::optional<TaskResume> incoming_task_;
     std::optional<agent::DecisionStatusSource> search_result_;
+    std::optional<std::string> tone_read_,tone_pending_;
+    bool tone_due_=true,tone_context_current_=true;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;
     bool idle_review_due_ = true;

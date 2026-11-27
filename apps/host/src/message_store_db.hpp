@@ -5,6 +5,10 @@
 
 namespace dfy::app::message_db {
 struct MemoryBasis { std::string kind,dependency; std::int64_t record; };
+// 只接受当前档案签发的完整原件号。
+std::int64_t memory_message(std::string_view identity,const std::string& conversation);
+// 取已获正式接纳的主人原话。
+std::optional<std::string> owner_quote(sqlite3* db,std::int64_t id);
 // 与本次复盘的游标和结论同事务登记轮转进度。
 void complete_idle_queue(sqlite3* db,IdleQueue queue);
 // 检验同档案原件的可见性、证据种类及撤权依赖。

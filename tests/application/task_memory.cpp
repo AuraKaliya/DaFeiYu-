@@ -150,6 +150,9 @@ void recall(const Json& row, const fs::path& data, const std::string& goal, cons
 int wmain(int argc, wchar_t** argv) {
     using namespace dfy::tests::task_memory;
     try {
+        if (argc==4 && std::wstring_view(argv[1])==L"--tone") {
+            tone_replay(argv[2],fs::path(argv[3]).string()); return 0;
+        }
         if (argc!=5 && argc!=6) return 2;
         constexpr std::wstring_view resume = L"--resume-";
         if (argc==6 && std::wstring_view(argv[5]).starts_with(resume)) {

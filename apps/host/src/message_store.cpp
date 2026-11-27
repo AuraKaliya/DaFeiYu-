@@ -63,7 +63,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>17) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>18) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -163,6 +163,10 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "UPDATE observation_case SET cursor=0,head=CASE WHEN head IN(SELECT id FROM case_opinion WHERE valid=0) THEN 0 ELSE head END "
             "WHERE EXISTS(SELECT 1 FROM invalid_member m WHERE m.name=observation_case.name AND m.id<=observation_case.cursor);"
             "UPDATE case_member SET active=0 WHERE id IN(SELECT id FROM invalid_member); DROP TABLE invalid_member; PRAGMA user_version=17");
+        if(previous<18) sql(db,"CREATE TABLE IF NOT EXISTS tone_correction(message INTEGER PRIMARY KEY,reply INTEGER NOT NULL,parent INTEGER NOT NULL,"
+            "basis INTEGER NOT NULL,project TEXT NOT NULL,state TEXT NOT NULL,body TEXT NOT NULL,rewrite INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1);"
+            "CREATE INDEX IF NOT EXISTS tone_project ON tone_correction(project,message DESC) WHERE active=1 AND state='ready';"
+            "CREATE INDEX IF NOT EXISTS tone_draft ON tone_correction(message) WHERE active=1 AND state='draft'; PRAGMA user_version=18");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -213,8 +217,16 @@ void check_memory_topic(std::string_view topic) {
     if (topic.size()>128 || topic.find_first_not_of(" \t\r\n")==topic.npos ||
         topic.find('/')!=topic.npos || !runtime::valid_utf8(topic)) throw std::invalid_argument("memory: invalid topic");
 }
+}
+// 向本体整理流程提供与现行记忆共用的原话接纳判据。
+std::optional<std::string> message_db::owner_quote(sqlite3* db,std::int64_t id) {
+    const auto query = std::string(memory_source)+" AND m.id=?";
+    Statement source(db,query.c_str()); source.bind(1,id);
+    if (!source.next() || !eligible_original(source,false)) return {};
+    return Json::parse(source.text(1)).at("text").get<std::string>();
+}
 // 在当前档案内校验原件身份，拒绝跨档案或不完整的消息号。
-std::int64_t memory_message(std::string_view identity, const std::string& conversation) {
+std::int64_t message_db::memory_message(std::string_view identity, const std::string& conversation) {
     if (!identity.starts_with(conversation+"/")) throw std::invalid_argument("memory: different conversation");
     identity.remove_prefix(conversation.size()+1);
     std::int64_t id = 0;
@@ -222,7 +234,6 @@ std::int64_t memory_message(std::string_view identity, const std::string& conver
     if (result.ec!=std::errc{} || result.ptr!=identity.data()+identity.size() || id<=0)
         throw std::invalid_argument("memory: invalid message identity");
     return id;
-}
 }
 // 带显式主题的单行消息可在桌面或终端发出，实际保存完整原句。
 std::optional<std::string_view> memory_capture_topic(std::string_view text) {
@@ -288,6 +299,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
     const bool exists = prior.next();
     bool changed = false;
     bool known_experience = false;
+    bool known_tone = false;
     if (!topic) {
         Statement known(db,"SELECT active FROM main_experience WHERE message=?1 OR parent=?1");
         known.bind(1,id);
@@ -296,6 +308,17 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
             Statement revoke(db,"UPDATE main_experience SET active=0 WHERE message=?1 OR parent=?1");
             revoke.bind(1,id); revoke.next();
             changed = true;
+        }
+        Statement tone(db,"SELECT active FROM tone_correction WHERE message=?1 OR parent=?1 OR reply=?1 OR basis=?1 OR rewrite=?1 ORDER BY active DESC LIMIT 1");
+        tone.bind(1,id);
+        known_tone = tone.next();
+        if (known_tone && !exists) {
+            Statement tombstone(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,'',0,'tone')");
+            tombstone.bind(1,id); tombstone.next(); changed = true;
+        }
+        if (known_tone && tone.number(0)) {
+            Statement revoke(db,"UPDATE tone_correction SET active=0 WHERE message=?1 OR parent=?1 OR reply=?1 OR basis=?1 OR rewrite=?1");
+            revoke.bind(1,id); revoke.next(); changed = true;
         }
     }
     if (topic && (!exists || !excerpt.empty())) {
@@ -310,7 +333,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         Statement add(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,?,1,?)");
         add.bind(1,id); add.bind(2,*topic); add.bind(3,kind.empty() ? std::string_view("") : kind); add.next();
         changed = true;
-    } else if ((!exists && !known_experience) || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
+    } else if ((!exists && !known_experience && !known_tone) || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
         throw std::invalid_argument("memory: unknown, revoked or conflicting original");
     } else if (!topic && exists && prior.number(1)) {
         Statement revoke(db,"UPDATE personal_memory SET active=0 WHERE message=?");

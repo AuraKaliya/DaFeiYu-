@@ -68,6 +68,7 @@ void MainMessages::task_exited(const agent::TurnRequest& run) {
 void MainMessages::review_idle_task(bool idle) {
     idle = idle && pending_.empty() && unsaved_tasks_.empty() && retry_.empty() && replies_.empty() &&
         std::chrono::steady_clock::now()>=retry_at_;
+    if (idle) settle_tone();
     if (idle && idle_review_due_) {
         try { idle_review_due_ = store_->review_idle_task(); }
         catch (const std::runtime_error&) {

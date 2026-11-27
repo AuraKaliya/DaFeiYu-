@@ -140,6 +140,16 @@ class MessageStore {
     void review_experience(const nlohmann::json& review);
     // 查询当前档案中最近一次实际接纳的用户原话身份。
     std::string last_memory_source() const;
+    // 验证所指答复后保留语气反馈或补证，准备好的范围等待业务整理。
+    nlohmann::json note_tone(std::int64_t message,const nlohmann::json& proposal);
+    // 原子发布准备完成的范围与依据，关联实际送达的改写。
+    void settle_tones();
+    // 在当前项目和汇报条件下查一条适用纠正。
+    nlohmann::json tone_for(std::string_view prompt) const;
+    // 按登记项目找最近一条可补证的未定反馈。
+    std::string unclear_tone(std::string_view project) const;
+    // 按原件号重验私有索引，读取原文和保存的标注理由。
+    nlohmann::json tone_original(std::string_view reference,bool pending=false) const;
     // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。
     std::optional<StoredMessage> recall_memory(std::string_view selector) const;
     // 按本档案获准主题选择候选，在整份证据数组的字节预算内保留原件。

@@ -28,22 +28,41 @@ agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64
     }();
     return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",2},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
 }
+
+// 私有语气材料只能用于本步决策，历史状态查阅不再展开。
+agent::DecisionStatusSource tone_source(std::string_view key,std::string_view description,Json value,
+    std::initializer_list<const char*> text_fields) {
+    Json fields{{"message",{{"type","integer"}}},{"reference",{{"type","string"}}}};
+    for (const auto name : text_fields) fields[name]={{"type","string"}};
+    Json schema{{"key",key},{"version",1},{"description",description},{"defaultAttention",{{"mode","explicit"}}},
+        {"snapshotRead",false},{"valueSchema",{{"type","object"},{"properties",std::move(fields)},{"additionalProperties",false}}}};
+    auto subject=value.at("reference").get<std::string>();
+    if (value.contains("state")) subject+="/"+value.at("state").get<std::string>();
+    Json sample{{"key",key},{"version",1},{"subject",subject},{"fact",value.at("message")},{"value",std::move(value)}};
+    return {"memory",Json::array({std::move(schema)}).dump(),Json::array({std::move(sample)}).dump()};
+}
 }
 
 // 将语义判断交给主 Agent，以工具契约说明长期价值、当轮用途和排除情形。
 void MainMessages::register_memory_tools() {
     reply_tools_->add({"main/memory_note",app_.mailbox_host().identity,2,{"memory_note",
         "主人直接陈述可复用的长期偏好、持续约束、未来承诺、影响后续安排的经历或对这些事实的更正时，选简短稳定的主题，"
-        "摘录当前原话中的依据 excerpt。只有主人确认且未来仍有用时 scope 取 ongoing。涉及拒绝保存、敏感秘密、转述、猜测、寒暄或一次性要求时直接交谈。"
+        "摘录当前原话中的依据 excerpt。通常只收录主人确认且未来仍有用的原话。涉及拒绝保存、敏感秘密、转述、猜测或寒暄时直接交谈。"
         "收录对象是当前整条真人原话，混有不宜保存的内容时跳过。仅在收到 saved 回执后确认收录。"
-        "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
-        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
+        "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。"
+        "主人直接纠正已送达回复的语气时，用 kind=correction 和 tone，reply 逐字摘录所指回复。仅纠正当前这次用 one_time，"
+        "所指明确但范围不清用 unconfirmed。语境足以界定下次适用的场合时可直接用 ongoing，写短提示 hint 和基于现有原话的 reason。"
+        "默认用于项目进度，正式验收场合才适用时 condition=accepted。draft 表示已保留、待整理。"
+        "新反馈明确补足同一经历的范围时，用已知原件号 tone.prior；转述、泛泛评价和表达来源不清时直接交谈。",
+        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted"]},"prior":{"type":"string"}},"required":["reply"],"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
     reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,11,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
         "每轮一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches；"
+        "语气条目已有浅层提示，追问标注理由时把其完整 reference 单独填进 originals，查阅 memory.tone_original。"
+        "主人补充语气范围时，可用 tone_pending 按一个登记项目键找近期未定的原话，同样查阅 memory.tone_original。"
         "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
         "reviewDue 表示有待比较的原话。回顾自己实际作过的选择用 episodes，topics 可填主题或投递原件号。"
@@ -62,7 +81,7 @@ void MainMessages::register_memory_tools() {
         "多个词须同时符合，ambiguous 时询问具体对象或条件。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
         "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。"
         "比较两次渠道采样用 observations，topics 分别填两次任务的完整名称或读回回执号。按返回的理由说明可比性，转发须追到原件。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations","tone_pending"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -75,7 +94,8 @@ void MainMessages::register_memory_tools() {
 // 只按当前主人原话核实模型引用的片段，临时或未确认的判断不产生长期索引。
 std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::ToolInvocation& call) {
     const auto args = Json::parse(call.call.arguments);
-    if (args.at("scope")!="ongoing")
+    const bool tone=args.contains("tone");
+    if (!tone && args.at("scope")!="ongoing")
         return memory_receipt({{"state","skipped"}},agent::ToolEffect::not_applied);
     const auto excerpt = args.at("excerpt").get<std::string>();
     if (!owner_memory_turn_ || parent_.first!=call.attempt.step.run ||
@@ -85,6 +105,15 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
     Json receipt{{"state","saved"},{"reference",ref}};
     try {
         const auto kind = args.at("kind").get<std::string>();
+        if (tone) {
+            if (kind!="correction") throw std::invalid_argument("tone: correction required");
+            const auto feedback=store_->note_tone(parent_.second,args);
+            if (feedback.at("state")=="skipped") return memory_receipt(feedback,agent::ToolEffect::not_applied);
+            tone_pending_=feedback.at("reference").get<std::string>();
+            tone_due_|=feedback.at("state")=="draft";
+            memory_revision_=store_->memory_revision();
+            return memory_receipt(feedback,agent::ToolEffect::applied);
+        }
         const auto result = store_->change_memory(ref,args.at("topic").get<std::string>(),excerpt,kind);
         memory_revision_ = result.revision;
         if (result.review_due) receipt["reviewDue"] = kind=="correction" ? "correction" : "compare";
@@ -96,7 +125,7 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
 
 // 按实际受众和本轮额度签发一次检索；无命中也有确定回执。
 std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolInvocation& call) {
-    if (!owner_memory_turn_ || search_result_)
+    if (!owner_memory_turn_ || search_result_ || tone_read_)
         return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
     const auto args = Json::parse(call.call.arguments);
     const auto& need = args.at("need");
@@ -112,6 +141,17 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto take = count>=limit ? limit : count.get<unsigned>();
         if (args.contains("offset") && ((view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
+        if (view=="tone_pending") {
+            if (topics.size()!=1) throw std::invalid_argument("tone: one project required");
+            tone_read_=store_->unclear_tone(topics.front());
+            const bool found=!tone_read_->empty();
+            return memory_receipt({{"state",found ? "ready" : "no_match"},{"count",found ? 1 : 0},{"limited",false}},agent::ToolEffect::not_applied);
+        }
+        if (view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos &&
+            !store_->tone_original(topics.front()).is_null()) {
+            tone_read_=topics.front();
+            return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
+        }
         const auto result = view=="observations" ? store_->compare_observations(topics) :
             view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
             view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
@@ -164,6 +204,8 @@ void MainMessages::change_memory(std::string_view identity, const std::optional<
         app_.subagents().invalidate_memory(0,result.reference);
         reflection_->interrupt();
         search_result_.reset();
+        tone_read_.reset();
+        tone_pending_.reset();
         if (app_.conversation().busy() && owner_memory_turn_) app_.conversation().cancel();
     }
 }
@@ -174,13 +216,47 @@ void MainMessages::grant_avatar(const std::string& plugin,const std::string& cha
     if (id) app_.subagents().invalidate_memory(id);
 }
 
+// 保存已核实的整理提议；存储暂时失败时保留待办供下次恢复。
+void MainMessages::settle_tone() {
+    if (!tone_due_) return;
+    try { store_->settle_tones(); tone_due_=false; }
+    catch (const std::runtime_error&) {
+        storage_failed();
+        retry_at_=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+    }
+}
+
+// 按需展开优先，其次保留当前反馈或装配一条适用的浅层记忆。
+std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::string_view prompt) const {
+    if (tone_read_) {
+        if (tone_read_->empty()) return {};
+        auto evidence=store_->tone_original(*tone_read_);
+        if (!evidence.is_null()) return tone_source("memory.tone_original","获准的纠正原话，已整理时附标注理由。",std::move(evidence),
+            {"state","quote","reason","replyReference","basisReference","rewriteReference"});
+        return {};
+    }
+    if (tone_pending_) {
+        auto evidence=store_->tone_original(*tone_pending_,true);
+        if (!evidence.is_null()) return tone_source("memory.tone_pending","本轮待整理的主人语气反馈，先用于本次回复。",std::move(evidence),
+            {"state","excerpt"});
+    }
+    auto evidence=tone_context_current_ ? store_->tone_for(prompt) : Json(nullptr);
+    if (!evidence.is_null()) return tone_source("memory.tone","当前汇报语境适用的语气偏好。本轮明确要求优先，按需查原文或理由。",std::move(evidence),
+        {"project","condition","hint"});
+    return {};
+}
+
 // 将获准原话及接续任务作为带来源的数据，沿正式决策尾注和上下文预算送模。
 // 步骤：按受众及修订隔离历史、投递和快照 → 固定私聊所选原件 → 在送模前逐步采样。
 void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt) {
     reflection_->interrupt();
-    memory_revision_ = store_->memory_revision();
     search_result_.reset();
+    tone_read_.reset();
+    tone_pending_.reset();
+    tone_context_current_=true;
     owner_memory_turn_ = audience==DialogueAudience::owner;
+    if (owner_memory_turn_) settle_tone();
+    memory_revision_ = store_->memory_revision();
     if (!memory_revision_ && !reply_tools_ && audience!=DialogueAudience::private_task && memory_binding_=="main") return;
     auto& status = *options.decision_status;
     if (memory_revision_) status.binding = std::string(owner_memory_turn_ ? "main/owner/" : "main/other/") + std::to_string(memory_revision_);
@@ -197,7 +273,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     }
     constexpr std::string_view prefix = "回想 ";
     if (!owner_memory_turn_) return;
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_] {
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt] {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
         if (!current) return sources;
@@ -206,6 +282,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
         else if (task) {
             if (auto selected=current->resumed_task_source(task->reference,task->message)) sources.push_back(std::move(*selected));
         }
+        if (auto tone=current->tone_projection(prompt)) sources.push_back(std::move(*tone));
         return sources;
     };
     std::string selector;

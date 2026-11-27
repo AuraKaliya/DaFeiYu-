@@ -93,7 +93,12 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
             else if (envelope.at("route")=="append") {
                 const auto received = app_.append_dialogue(run,text,utc);
                 native = received.message;
-                if (received.state==agent::InputAdmission::accepted) appended_[{run.sequence,native}] = id;
+                if (received.state==agent::InputAdmission::accepted) {
+                    appended_[{run.sequence,native}] = id;
+                    // 补充原话可能换题，旧场合的自动提示从这一刻停止装配。
+                    tone_context_current_=false;
+                    tone_pending_.reset();
+                }
                 using State = agent::InputAdmission;
                 result["state"] = received.state==State::accepted ? "waiting" : received.state==State::closed ? "stale" :
                     received.state==State::full ? "full" : received.state==State::unavailable ? "unavailable" : "rejected";
