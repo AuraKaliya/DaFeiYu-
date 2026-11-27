@@ -2,6 +2,7 @@
 #include "application_commands.hpp"
 #include "main_messages.hpp"
 #include "knowledge_probe.hpp"
+#include "archive_fixture.hpp"
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/host_services.hpp>
@@ -54,6 +55,10 @@ struct Fixture {
     Json idle_case;
     unsigned window_tokens=0;
     std::size_t pending_idle=0;
+    std::string archive="main";
+    std::map<std::string,std::string> profile_ids;
+    // 测试中的第二份独立档案与第一份使用同一插件安装目录。
+    fs::path data_dir() const {return archive=="main" ? root : root/"second-profile";}
     // 从实际 Trace 中筛出跨工具复盘已结算的结果。
     std::vector<std::string> idle_outcomes(const std::string& scope) const {
         std::ifstream in(host->trace_file(),std::ios::binary); std::vector<std::string> found;
@@ -63,12 +68,15 @@ struct Fixture {
     }
 
     // 重建应用、数据库连接和插件实例，保留原档案与已安装的插件包。
-    void restart() {
+    void restart(const Json& settings=Json::object()) {
         if (host) audit();
-        host.reset(); db=std::make_shared<app::MessageStore>(root);
+        host.reset(); db.reset(); archive=settings.value("archive",archive);
+        check(archive=="main" || archive=="secondary","unknown test archive");
+        if(settings.contains("legacy")) tests::legacy_archive(data_dir(),settings.at("legacy"));
+        db=std::make_shared<app::MessageStore>(data_dir());
         app::ApplicationRunConfig config; config.trace_directory=root/"logs"; config.tool_clock=[this]{return now;};
         model::Config mc; mc.context_window_tokens=window_tokens; if(window_tokens) mc.reserved_output_tokens=128;
-        host=std::make_unique<app::Application>(mc,root/"packages",root,
+        host=std::make_unique<app::Application>(mc,root/"packages",data_dir(),
             model::Backend{[this](const model::Config& cfg,const model::Request& request){
                 try {return answer(cfg,request);} catch(const std::exception& e){
                     if (!idle_case.is_object() || !idle_case.value("transport",false)) failure=e.what();
@@ -77,7 +85,8 @@ struct Fixture {
             }},config);
         host->bind_messages(db,"child-"+std::to_string(++hosts),nullptr);
         if (hosts==1) { host->plugins().install(panel); host->plugins().install(counter); }
-        for (const auto plugin : {"example.status","test.tools"}) check(host->plugins().load(plugin)==0,"plugin not loaded");
+        for (const auto& plugin : settings.value("plugins",std::vector<std::string>{"example.status","test.tools"}))
+            check(host->plugins().load(plugin)==0,"plugin not loaded");
         hashes.clear();
     }
     // 核查实际请求、受众和来源；保留一次可控的迟到答复供在途撤权验收。
@@ -149,7 +158,7 @@ struct Fixture {
     std::string letter_ref(std::string selector) const {
         if (!selector.starts_with("$")) return selector;
         const auto slash=selector.find('/');
-        return db->conversation()+"/letter/"+std::to_string(letters.at(selector.substr(1,slash==selector.npos ? slash : slash-1)))+
+        return knowledge.references.at(selector.substr(0,slash))+
             (slash==selector.npos ? "" : selector.substr(slash));
     }
     // 固定后端先查信，再对实际交付的证据提出签收，逐字展开只检查接收方快照。
@@ -180,7 +189,8 @@ struct Fixture {
                 const auto& item=items[i],&want=answers[i];
                 if (want.contains("capture")) {
                     const auto ref=item.at("reference").get<std::string>(), prefix=db->conversation()+"/letter/";
-                    check(ref.starts_with(prefix),"wrong receiver profile"); letters[want.at("capture").get<std::string>()]=std::stoull(ref.substr(prefix.size()));
+                    check(ref.starts_with(prefix),"wrong receiver profile"); const auto alias=want.at("capture").get<std::string>();
+                    letters[alias]=std::stoull(ref.substr(prefix.size())); knowledge.references["$"+alias]=ref;
                 }
                 check(item.at("reference")==letter_ref(want.at("ref")) && item.at("audience")=="owner" &&
                     item.at("author").get<std::string>().starts_with(db->conversation()+"/child/"),"wrong original sender or reference");
@@ -248,7 +258,25 @@ struct Fixture {
     // 回放一次主人操作、插件调用或真实子回合。
     void step(const Json& row) {
         const auto op=row.at("op").get<std::string>(), session_name=row.value("session",std::string{});
-        if (op=="restart") {window_tokens=row.value("window",0u); restart(); return;}
+        if (op=="restart") {window_tokens=row.value("window",0u); restart(row); return;}
+        if (op=="invalid_archive") {tests::check_unusable_archive(root,row.at("fault")); return;}
+        if (op=="profile") {
+            std::ostringstream out,err; app::application_command(*host,"/memory profile",out,err); const auto info=Json::parse(out.str());
+            check(info.at("profile")==db->conversation() && info.at("schemaVersion")>=14 && info.at("chatMemoryRevision")>=0,"wrong profile info");
+            for(const auto& [label,value]:profile_ids) check((value==db->conversation())==(label==archive),"identity crossed archives or changed on upgrade");
+            profile_ids[archive]=db->conversation(); return;
+        }
+        if (op=="padded") {
+            auto ref=knowledge.resolve(row.at("ref")); ref.insert(ref.rfind('/')+1,"000"); knowledge.references[row.at("save").get<std::string>()]=ref; return;
+        }
+        if(op=="collision") {
+            if(row.contains("notes")) check(originals.at(row.at("notes")[0])==originals.at(row.at("notes")[1]),"missing local ID collision");
+            else {
+                const auto a=knowledge.resolve(row.at("refs")[0]),b=knowledge.resolve(row.at("refs")[1]);
+                check(a!=b && a.substr(a.rfind('/'))==b.substr(b.rfind('/')),"expected distinct profiles with equal local ID");
+            }
+            return;
+        }
         if (op=="source") {
             const auto text=row.at("text").get<std::string>(); markers.insert(text);
             const auto alias=row.value("alias",std::string{"@source"});
@@ -279,7 +307,7 @@ struct Fixture {
         if (op=="case_task") {
             auto task=row; task["script"]={"plan","read","change","read","claim"};
             const std::string goal=row.at("id"),alias=row.at("save"),tool=row.at("tool");
-            const auto works=tests::task_memory::perform(task,root,tool.starts_with("example.status/") ? panel : counter,goal,task_requests);
+            const auto works=tests::task_memory::perform(task,data_dir(),tool.starts_with("example.status/") ? panel : counter,goal,task_requests);
             if (!row.value("approve",true)) return;
             check(works.size()==3,"expected three original receipt events");
             knowledge.traces[alias]=works;
@@ -290,7 +318,7 @@ struct Fixture {
         }
         if (op=="verified") {
             Json task{{"id","actual-task"},{"expected","focus"},{"tool","example.status/set_focus"},{"script",{"plan","read","change","read","claim"}}};
-            const auto works=tests::task_memory::perform(task,root,panel,"核实展台面板",task_requests);
+            const auto works=tests::task_memory::perform(task,data_dir(),panel,"核实展台面板",task_requests);
             check(works.size()==3 && works.back().at("output")=="focus","verified fixture missing"); return;
         }
         if (op=="grant" || op=="revoke") {

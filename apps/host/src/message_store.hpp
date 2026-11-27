@@ -51,6 +51,8 @@ class MessageStore {
     friend class MainMessages;
     friend class TaskReflection;
     friend class Subagents;
+    // 给管理入口提供可跨启动核对的档案身份与版本，不读取私人内容。
+    nlohmann::json profile_info() const;
     // 将真实包身份与结构化预设绑定到跨启动的子库。
     ChildBinding bind_child(std::string_view plugin,const plugins::MemoryIdentity& identity);
     // 保存原子库中的一份显式记录，拒绝越权、重试冲突及失效来源。

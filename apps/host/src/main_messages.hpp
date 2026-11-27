@@ -45,6 +45,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     bool close_reflection();
     // 管理终端查询可收录的最近原话身份。
     std::string last_memory_source() const { return store_->last_memory_source(); }
+    // 核对当前管理连接实际使用的档案和数据库版本。
+    nlohmann::json profile_info() const {return store_->profile_info();}
     // 仅管理入口可指定分身权限与一份明确共享的本人原话。
     void grant_avatar(const std::string& plugin,const std::string& channel,const std::string& account,int access,std::string_view source);
     // 主人通过管理命令审阅、发布、校正、撤下知识，或授权某版给指定子库。

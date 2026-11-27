@@ -261,7 +261,8 @@ bool application_command(Application& application, std::string_view command, std
         auto* memory = application.main_messages();
         if (!memory) throw std::invalid_argument("memory: persistent main chat required");
         const auto words = command_words(command);
-        if (words.size()==2 && words[1]=="last") output << memory->last_memory_source() << '\n';
+        if (words.size()==2 && words[1]=="profile") output << memory->profile_info().dump() << '\n';
+        else if (words.size()==2 && words[1]=="last") output << memory->last_memory_source() << '\n';
         else if (words.size()==4 && words[1]=="keep") {
             memory->change_memory(words[2],words[3]);
             output << "Remembered " << words[2] << '\n';
@@ -274,7 +275,7 @@ bool application_command(Application& application, std::string_view command, std
             if (words[6]=="relay") access|=4;
             memory->grant_avatar(words[2],words[3],words[4],access,words.size()==8 ? words[7] : "");
             output << "Updated avatar memory access.\n";
-        } else throw std::invalid_argument("Usage: /memory last | keep REF TOPIC | revoke REF | avatar PLUGIN CHANNEL ACCOUNT off|read|write|both private|relay [REF]");
+        } else throw std::invalid_argument("Usage: /memory profile | last | keep REF TOPIC | revoke REF | avatar PLUGIN CHANNEL ACCOUNT off|read|write|both private|relay [REF]");
     }
     else if (name == "/mail") {
         const auto words = command_words(command);

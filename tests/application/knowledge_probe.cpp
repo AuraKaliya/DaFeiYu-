@@ -31,6 +31,8 @@ void KnowledgeProbe::chat(app::Application& host,const Json& input,unsigned id) 
 }
 // 区分提出草案、读到发布版和真正发布三种动作。
 model::Response KnowledgeProbe::answer(const model::Request& input) {
+    for(const auto& ignored:row.value("without",Json::array())) for(const auto& message:input.messages)
+        require(message.content.find(ignored.get<std::string>())==std::string::npos,"another archive or withdrawn material in model history");
     const auto& terms=row.at("topics");
     if (++step==1) {
         require(std::ranges::any_of(input.tools,[](const auto& t){return t.name=="knowledge_propose";}) &&
@@ -45,9 +47,19 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
         const auto& samples=status.at("items");
         const auto kind=row.value("sample",std::string{"knowledge.published"});
         const auto found=std::ranges::find_if(samples,[&](const auto& s){return s.at("key")==kind;});
+        if(row.contains("rejected")) {
+            const auto receipt=std::ranges::find_if(input.messages.rbegin(),input.messages.rend(),[](const auto& m){return m.role==model::Role::tool;});
+            require(found==samples.end() && receipt!=input.messages.rend() && receipt->content.find(row.at("rejected").get<std::string>())!=std::string::npos,
+                "foreign reference was accepted"); reply="没有本档案的原件。"; return {{model::Role::assistant,reply}};
+        }
         require(found!=samples.end(),"expected knowledge source missing"); const auto& items=found->at("value").at("items");
         if (kind=="knowledge.published") verify(items,row.at("expect"),true);
         if (kind=="memory.comparisons") verify_comparison(items);
+        if (row.contains("originals")) {
+            const auto& expected=row.at("originals"); require(expected.size()==items.size(),"wrong number of restored originals");
+            for(std::size_t i=0;i<items.size();++i) require(items[i].at("reference")==resolve(expected[i].at("ref")) &&
+                items[i].at("quote")==expected[i].at("text"),"restored identity or quotation changed");
+        }
         if (row.contains("capture")) {
             const auto& save=row.at("capture"); references[save.at("alias").get<std::string>()]=items.at(0).at(save.at("field").get<std::string>());
         }

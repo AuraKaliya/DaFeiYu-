@@ -58,7 +58,7 @@ add_test(NAME app.comparison_recall COMMAND dfy_task_memory_tests "$<TARGET_FILE
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/comparison_queries.jsonl" "${PROJECT_BINARY_DIR}/tests/comparison-recall/$<CONFIG>" --case-recall)
 set_tests_properties(app.comparison_recall PROPERTIES TIMEOUT 120)
 dfy_test_executable(dfy_child_memory_tests child_memory.cpp)
-target_sources(dfy_child_memory_tests PRIVATE task_execution_fixture.cpp knowledge_probe.cpp knowledge_probe.hpp comparison_probe.cpp)
+target_sources(dfy_child_memory_tests PRIVATE task_execution_fixture.cpp knowledge_probe.cpp knowledge_probe.hpp comparison_probe.cpp archive_fixture.cpp archive_fixture.hpp)
 target_link_libraries(dfy_child_memory_tests PRIVATE dfy_host_commands dfy_build_options nlohmann_json::nlohmann_json)
 add_dependencies(dfy_child_memory_tests dfy_status_example dfy_tools_fixture)
 add_test(NAME app.child_memory COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
@@ -76,6 +76,9 @@ set_tests_properties(app.cross_tool_memory PROPERTIES TIMEOUT 90)
 add_test(NAME app.letter_digest COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/letter_digests.jsonl" "${PROJECT_BINARY_DIR}/tests/letter-digests/$<CONFIG>")
 set_tests_properties(app.letter_digest PROPERTIES TIMEOUT 90)
+add_test(NAME app.memory_archive_recovery COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/archive_recovery.jsonl" "${PROJECT_BINARY_DIR}/tests/memory-archive/$<CONFIG>")
+set_tests_properties(app.memory_archive_recovery PROPERTIES TIMEOUT 90)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

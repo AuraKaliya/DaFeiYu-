@@ -1,0 +1,89 @@
+{"op":"invalid_archive","fault":"multiple"}
+{"op":"invalid_archive","fault":"malformed"}
+{"op":"invalid_archive","fault":"empty"}
+{"op":"invalid_archive","fault":"future"}
+{"op":"profile"}
+{"op":"source","text":"记住 交接：甲档案由青鸟签收。","alias":"@a"}
+{"op":"open","session":"work","preset":2,"subject":"交接岗"}
+{"op":"note","session":"work","event":"old-orig","text":"甲档案的橙色编号。","save":"noteA"}
+{"op":"select","session":"work"}
+{"op":"run","session":"work","expect":["甲档案的橙色编号。"]}
+{"op":"restart","legacy":9,"plugins":[]}
+{"op":"profile"}
+{"op":"kb","topics":["交接"],"view":"originals","sample":"memory.matches","originals":[{"ref":"@a","text":"记住 交接：甲档案由青鸟签收。"}]}
+{"op":"restart","plugins":["example.status"]}
+{"op":"open","session":"work","preset":2,"subject":"交接岗"}
+{"op":"select","session":"work"}
+{"op":"run","session":"work","expect":["甲档案的橙色编号。"]}
+{"op":"note","session":"work","event":"old-orig","text":"甲档案的橙色编号。","same":"noteA"}
+{"op":"begin","session":"work","mode":3,"key":"甲交接","save":"startA"}
+{"op":"run","session":"work","expect":["甲档案的橙色编号。"]}
+{"op":"end","session":"work","summary":"甲档案的寄件摘要。","body":"这是甲档案明确寄出的全文。","note":"noteA","save":"endA"}
+{"op":"restart","legacy":10,"plugins":[]}
+{"op":"profile"}
+{"op":"pump"}
+{"op":"mail","selector":"$endA","items":[{"ref":"$endA","mode":"original","subject":"交接岗","summary":"甲档案的寄件摘要。","bodyRef":"$endA/body","export":"$endA/note"}],"ack":["$endA"]}
+{"op":"mail","selector":"$endA/note","items":[{"ref":"$endA/note","origin":"exported_note","source":"noteA"}]}
+{"op":"admin","command":"/knowledge propose handoff first 0 交接规程 仅甲档案 交接前核对青鸟签收记录。 @a"}
+{"op":"admin","command":"/knowledge publish handoff first"}
+{"op":"admin","command":"/knowledge grant handoff first example.status business 交接岗 - read"}
+{"op":"restart","legacy":11,"plugins":[]}
+{"op":"profile"}
+{"op":"kb","topics":["交接规程"],"expect":[{"article":"handoff","edition":"first","revision":1,"statement":"交接前核对青鸟签收记录。","applies":"仅甲档案","proposer":"owner","kinds":["owner_statement"],"refs":["@a"]}]}
+{"op":"restart","plugins":["example.status"]}
+{"op":"open","session":"work","preset":2,"subject":"交接岗"}
+{"op":"select_kb","session":"work","topic":"交接规程"}
+{"op":"run","session":"work","expect":[],"knowledge":[{"article":"handoff","edition":"first","revision":1,"statement":"交接前核对青鸟签收记录。","applies":"仅甲档案","proposer":"owner","kinds":["owner_statement"],"refs":["@a"]}]}
+{"op":"admin","command":"/comparison define receipt 值班交接 签收记录 份 交接之后 literal"}
+{"op":"admin","command":"/comparison attach receipt 甲班 $endA"}
+{"op":"restart","legacy":12,"plugins":[]}
+{"op":"profile"}
+{"op":"compare","topics":["值班交接"],"state":"reports_only","nativeCount":0,"reportCount":1,"facts":["$endA"]}
+{"op":"restart","legacy":13,"plugins":[]}
+{"op":"profile"}
+{"op":"compare","topics":["值班交接"],"state":"reports_only","facts":["$endA"]}
+{"op":"restart","plugins":[],"archive":"secondary"}
+{"op":"profile"}
+{"op":"source","text":"记住 交接：乙档案由白鹭签收。","alias":"@b"}
+{"op":"collision","refs":["@a","@b"]}
+{"op":"kb","topics":["交接"],"view":"originals","sample":"memory.matches","originals":[{"ref":"@b","text":"记住 交接：乙档案由白鹭签收。"}],"without":["记住 交接：甲档案由青鸟签收。","甲档案的橙色编号。"]}
+{"op":"kb","topics":["@a"],"view":"originals","sample":"memory.matches","originals":[],"rejected":"invalid_query","without":["记住 交接：甲档案由青鸟签收。","甲档案的橙色编号。"]}
+{"op":"admin","command":"/memory revoke @a","deny":true}
+{"op":"mail","selector":"$endA","items":[],"forbidden":["甲档案的橙色编号。","甲档案的寄件摘要。"]}
+{"op":"kb","topics":["交接规程"],"expect":[],"without":["交接前核对青鸟签收记录。"]}
+{"op":"compare","topics":["值班交接"],"missing":true}
+{"op":"restart","plugins":["example.status"]}
+{"op":"open","session":"work","preset":2,"subject":"交接岗"}
+{"op":"select","session":"work"}
+{"op":"run","session":"work","expect":[]}
+{"op":"note","session":"work","event":"old-orig","text":"乙档案的蓝色编号。","save":"noteB"}
+{"op":"collision","notes":["noteA","noteB"]}
+{"op":"run","session":"work","expect":["乙档案的蓝色编号。"]}
+{"op":"restart","plugins":["example.status"],"archive":"main"}
+{"op":"profile"}
+{"op":"kb","topics":["交接"],"view":"originals","sample":"memory.matches","originals":[{"ref":"@a","text":"记住 交接：甲档案由青鸟签收。"}],"without":["记住 交接：乙档案由白鹭签收。","乙档案的蓝色编号。"]}
+{"op":"open","session":"work","preset":2,"subject":"交接岗"}
+{"op":"select","session":"work"}
+{"op":"run","session":"work","expect":["甲档案的橙色编号。"]}
+{"op":"case_task","id":"archive-direct","save":"@native","tool":"example.status/set_focus","expected":"focus"}
+{"op":"admin","command":"/knowledge propose native first 0 展台校验 当班展台 展台校验需独立读回。 @native"}
+{"op":"admin","command":"/knowledge publish native first"}
+{"op":"admin","command":"/knowledge grant native first example.status business 交接岗 - read"}
+{"op":"select_kb","session":"work","topic":"展台校验"}
+{"op":"run","session":"work","expect":[],"knowledge":[{"article":"native","edition":"first","statement":"展台校验需独立读回。","kinds":["tool_readback"]}],"hold":true}
+{"op":"padded","ref":"@native-task","save":"@paddedTask"}
+{"op":"admin","command":"/memory revoke @paddedTask"}
+{"op":"status","session":"work"}
+{"op":"release"}
+{"op":"kb","topics":["展台校验"],"expect":[]}
+{"op":"padded","ref":"@a","save":"@paddedA"}
+{"op":"admin","command":"/memory revoke @paddedA"}
+{"op":"kb","topics":["交接规程"],"expect":[],"without":["交接前核对青鸟签收记录。"]}
+{"op":"restart","plugins":[]}
+{"op":"profile"}
+{"op":"kb","topics":["@a"],"view":"originals","sample":"memory.matches","originals":[],"without":["记住 交接：甲档案由青鸟签收。"]}
+{"op":"kb","topics":["交接规程"],"expect":[]}
+{"op":"mail","selector":"$endA","items":[{"ref":"$endA","mode":"original","acknowledged":true,"summary":"甲档案的寄件摘要。"}]}
+{"op":"restart","plugins":[],"archive":"secondary"}
+{"op":"profile"}
+{"op":"kb","topics":["交接"],"view":"originals","sample":"memory.matches","originals":[{"ref":"@b","text":"记住 交接：乙档案由白鹭签收。"}],"without":["记住 交接：甲档案由青鸟签收。","甲档案的橙色编号。"]}

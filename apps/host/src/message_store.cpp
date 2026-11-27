@@ -148,13 +148,23 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
-    state_->conversation = identity.text(0);
+    const auto profile_id=identity.text(0);
+    if (profile_id.size()!=32 || profile_id.find_first_not_of("0123456789abcdef")!=profile_id.npos || identity.next())
+        throw std::runtime_error("messages: invalid or ambiguous conversation identity");
+    state_->conversation = profile_id;
     transaction.commit();
 }
 // 归还数据库及其串行化状态。
 MessageStore::~MessageStore() = default;
 // 返回数据库给当前目录签发的逻辑身份。
 const std::string& MessageStore::conversation() const noexcept { return state_->conversation; }
+
+// 管理终端核对实际打开的持久身份、数据结构版本和主聊天记忆修订。
+nlohmann::json MessageStore::profile_info() const {
+    std::lock_guard lock(state_->mutex); Statement version(state_->db,"PRAGMA user_version"); version.next();
+    Statement info(state_->db,"SELECT memory_revision FROM conversation"); info.next();
+    return {{"profile",conversation()},{"schemaVersion",version.number(0)},{"chatMemoryRevision",info.number(0)}};
+}
 
 namespace {
 // 仅受信主聊天来源、真人原话及已接纳或实际送模的回执可作为个人记忆原件。
