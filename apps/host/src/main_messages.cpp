@@ -71,6 +71,8 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
             constexpr std::string_view revoke = "撤回记忆 ";
             if (text.starts_with(revoke)) change_memory(std::string_view(text).substr(revoke.size()),std::nullopt);
             if (memory_capture_topic(text)) incoming_memory_ = id;
+            if (const auto task = envelope.find("resumeTask"); task!=envelope.end())
+                incoming_task_ = TaskResume{static_cast<std::uint64_t>(id),task->get<std::string>()};
             const auto start = app_.submit_dialogue(text,utc);
             run = {start.session,start.turn};
             parent_ = {run,id};
@@ -97,13 +99,16 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
     } catch (const std::logic_error&) { result["state"] = "rejected"; }
     catch (const std::exception&) { result["state"] = "unknown"; }
     incoming_memory_.reset();
+    incoming_task_.reset();
     result.update(Json{{"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)},{"nativeMessage",std::to_string(native)}});
     publish(id,result);
     return result;
 }
-// 原始命令身份在超时重查时保持不变，旧投递结果不启动新回合。
-void MainMessages::terminal(const std::string& submission, const std::string& text) {
-    const auto envelope = user_envelope("send",text,{}, {});
+// 终端原话和所选旧任务共同确定一次提交，超时重查沿用原投递结果。
+// 步骤：固定原信封 → 核对同号重试和当前回合 → 入库并交付。
+void MainMessages::terminal(const std::string& submission, const std::string& text, std::string_view task_reference) {
+    auto envelope = user_envelope("send",text,{}, {});
+    if (!task_reference.empty()) envelope["resumeTask"] = task_reference;
     if (const auto previous = store_->find("terminal",submission)) {
         if (previous->envelope!=envelope) throw std::invalid_argument("messages: submission conflict");
         if (previous->receipt.at("state")=="accepted") return;

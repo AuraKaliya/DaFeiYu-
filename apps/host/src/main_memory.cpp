@@ -174,8 +174,8 @@ void MainMessages::grant_avatar(const std::string& plugin,const std::string& cha
     if (id) app_.subagents().invalidate_memory(id);
 }
 
-// 将读出的原话作为带来源的数据，沿正式决策尾注和上下文预算送模。
-// 步骤：按受众及修订隔离历史、投递和快照 → 匹配私聊请求 → 绑定原事件与逐步采样。
+// 将获准原话及接续任务作为带来源的数据，沿正式决策尾注和上下文预算送模。
+// 步骤：按受众及修订隔离历史、投递和快照 → 固定私聊所选原件 → 在送模前逐步采样。
 void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt) {
     reflection_->interrupt();
     memory_revision_ = store_->memory_revision();
@@ -197,11 +197,15 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     }
     constexpr std::string_view prefix = "回想 ";
     if (!owner_memory_turn_) return;
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample)] {
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_] {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
-        if (current) if (auto notice=current->inbox_notice()) sources.push_back(std::move(*notice));
-        if (current && current->search_result_) sources.push_back(*current->search_result_);
+        if (!current) return sources;
+        if (auto notice=current->inbox_notice()) sources.push_back(std::move(*notice));
+        if (current->search_result_) sources.push_back(*current->search_result_);
+        else if (task) {
+            if (auto selected=current->resumed_task_source(task->reference,task->message)) sources.push_back(std::move(*selected));
+        }
         return sources;
     };
     std::string selector;

@@ -101,8 +101,20 @@ agent::DecisionStatusSource MainMessages::understanding_source(std::uint64_t tur
     return {"memory",schema,Json::array({{{"key","memory.understanding"},{"version",2},{"subject",store_->conversation()},
         {"fact",turn},{"value",selection}}}).dump()};
 }
+// 在送模前按完整任务号复核档案归属和有效性，主题及回执号均不触发接续。
+// 步骤：检查任务号 → 沿原查回预算读取 → 用已入库的接续消息号标记证据。
+std::optional<agent::DecisionStatusSource> MainMessages::resumed_task_source(std::string_view reference, std::uint64_t message) const {
+    const auto prefix = store_->conversation()+"/task/";
+    if (!reference.starts_with(prefix) || reference.find('/',prefix.size())!=reference.npos) return {};
+    try {
+        const auto selection = store_->search_tasks({std::string(reference)},1,0);
+        if (!selection.at("items").empty()) return task_source(message,selection);
+    } catch (const std::invalid_argument&) { return {}; }
+    return {};
+}
+
 // 原任务概览或逐字回执只在本轮决策可见。
-agent::DecisionStatusSource MainMessages::task_source(std::uint64_t turn, const Json& selection) const {
+agent::DecisionStatusSource MainMessages::task_source(std::uint64_t fact, const Json& selection) const {
     static const auto schema = [] {
         Json fields = Json::object();
         for (const auto key : {"reference","taskRef","origin","goal","goalRef","tool","plan","expected","execution","effect","verification",
@@ -123,6 +135,6 @@ agent::DecisionStatusSource MainMessages::task_source(std::uint64_t turn, const 
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
     return {"memory",schema,Json::array({{{"key","memory.tasks"},{"version",1},{"subject",store_->conversation()},
-        {"fact",turn},{"value",selection}}}).dump()};
+        {"fact",fact},{"value",selection}}}).dump()};
 }
 }

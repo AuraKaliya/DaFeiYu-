@@ -53,8 +53,9 @@ std::vector<Json> trace(const fs::path& path, const std::vector<model::Request>&
 }
 
 // 通过本体的真实任务入口运行固定提议，宿主及插件提供工作、效果与独立读回。
+// 步骤：装载夹具并接纳任务 → 裁定审批及等待退出 → 按需处理空闲复盘并核对原回执。
 std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path& package, const std::string& goal,
-    std::size_t& request_count) {
+    std::size_t& request_count, bool review) {
     const auto id = row.at("id").get<std::string>(), tool = row.at("tool").get<std::string>();
     const auto plugin = tool.substr(0,tool.find('/')), reader = plugin+"/read";
     std::vector<model::Request> requests;
@@ -101,6 +102,7 @@ std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path&
     else if (row.value("readOnly",false)) host.submit_read_only(tool,goal);
     else host.submit_confirmed(tool,goal);
     drain(host,row);
+    if (review) host.advance_plugins();
     request_count += requests.size();
     return trace(host.trace_file(),requests);
 }

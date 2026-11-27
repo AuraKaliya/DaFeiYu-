@@ -151,6 +151,11 @@ int wmain(int argc, wchar_t** argv) {
     using namespace dfy::tests::task_memory;
     try {
         if (argc!=5 && argc!=6) return 2;
+        constexpr std::wstring_view resume = L"--resume-";
+        if (argc==6 && std::wstring_view(argv[5]).starts_with(resume)) {
+            task_resume(argv[3],argv[4],argv[1],fs::path(std::wstring_view(argv[5]).substr(resume.size())).string());
+            return 0;
+        }
         const fs::path root(argv[4]);
         fs::create_directories(root);
         fs::path data;

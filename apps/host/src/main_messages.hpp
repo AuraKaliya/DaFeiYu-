@@ -61,8 +61,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string pending_reply(agent::RunId run) const;
     // 将已经入库且尚未投递的原文交付给其指定入口，保留独立的实际回执。
     nlohmann::json deliver(std::int64_t id, const nlohmann::json& envelope, std::int64_t stored_utc_ms);
-    // 在终端命令空间按原号入库并交付普通输入。
-    void terminal(const std::string& submission, const std::string& text);
+    // 在终端命令空间按原号入库，可绑定本轮明确选择的旧任务。
+    void terminal(const std::string& submission, const std::string& text, std::string_view task_reference = {});
     // 重试已知结果的写盘，不重发已执行的动作。
     void flush();
     // 启动时区分未交付、可恢复队列和实效未知的旧运行。
@@ -103,7 +103,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     // 投影亲历及其解释，历史快照只保留本次读取的数量。
     agent::DecisionStatusSource experience_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 投影本轮获准读取的任务、原行动或原回执，禁止历史快照重新展开。
-    agent::DecisionStatusSource task_source(std::uint64_t turn, const nlohmann::json& selection) const;
+    agent::DecisionStatusSource task_source(std::uint64_t fact, const nlohmann::json& selection) const;
+    // 为主人接续查回当前档案中仍获准的一份任务概览。
+    std::optional<agent::DecisionStatusSource> resumed_task_source(std::string_view reference, std::uint64_t message) const;
     // 把本体写下的解释和带角色的任务证据分别装入当前私聊。
     agent::DecisionStatusSource understanding_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 把跨渠道证据与本体解释按不同字段装配到私聊。
@@ -133,6 +135,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string memory_binding_ = "main";
     bool owner_memory_turn_ = false;
     std::optional<std::int64_t> incoming_memory_;
+    struct TaskResume { std::uint64_t message; std::string reference; };
+    std::optional<TaskResume> incoming_task_;
     std::optional<agent::DecisionStatusSource> search_result_;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;

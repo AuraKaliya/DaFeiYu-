@@ -13,7 +13,9 @@ void drain(app::Application& host, const Json& row = Json::object());
 std::vector<Json> trace(const fs::path& path,const std::vector<model::Request>& requests);
 // 从真实插件入口执行语料中的任务并取回原 Trace。
 std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path& package, const std::string& goal,
-    std::size_t& request_count);
+    std::size_t& request_count, bool review = false);
+// 为跨进程接续准备任务档案，或在一个快照副本上执行指定对照。
+void task_resume(const fs::path& corpus, const fs::path& root, const fs::path& panel, const std::string& phase);
 // 回放跨任务理解的通用语料并核对后台请求与私聊投递。
 void understanding_cases(const fs::path& corpus, const fs::path& data, const fs::path& panel, const fs::path& counter);
 // 在多种档案规模下用普通聊天入口测量查回、歧义、证据预算和往返耗时。
