@@ -51,7 +51,7 @@ HRESULT ProbeHost::message(ICoreWebView2WebMessageReceivedEventArgs* args) noexc
             if (id.empty() || id.size()>64) return E_INVALIDARG;
             return management_reply(message,source,false);
         }
-        if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt" ||
+        if (type == "messages.subscribe" || type == "messages.read" || type == "messages.receipt" || type == "messages.tasks" ||
             type == "mailbox.list" || type == "mailbox.read" || type == "plugins.list" || type == "plugins.receipt" ||
             type == "plugins.load" || type == "plugins.unload" || type == "settings.read" || type == "settings.save" || type == "settings.receipt") {
             if (!panel) return E_ACCESSDENIED;

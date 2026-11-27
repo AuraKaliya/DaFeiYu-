@@ -2,7 +2,7 @@ import type { StoredMessage } from './message-history';
 
 type StableSubmission = { submission?: string; sourceUtcMs?: number };
 export type TextCommand = StableSubmission & { command: string; text: string } &
-  ({ type: 'dialogue.submit' } | { type: 'dialogue.append' | 'dialogue.enqueue'; session: string; turn: string; instance?: string });
+  ({ type: 'dialogue.submit'; resumeTask?: string } | { type: 'dialogue.append' | 'dialogue.enqueue'; session: string; turn: string; instance?: string });
 export type WireCommand = TextCommand |
   { type: 'dialogue.cancel' | 'dialogue.clear'; command: string; session: string; turn: string } |
   { type: 'dialogue.resume' | 'dialogue.remove'; command: string; session: string; message: string };
@@ -14,6 +14,12 @@ const forms = {
 const encoder = new TextEncoder();
 const limit = 1024 * 1024;
 const draftKey = 'dafeiyu.panel.draft';
+
+// 保留完整档案和原件序号，避免把序号转换成可能丢失精度的数字。
+export function isTaskReference(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{32}\/task\/[1-9]\d{0,18}$/.test(value) &&
+    BigInt(value.slice(38)) <= 9223372036854775807n;
+}
 
 // 核对同一历史项留下的命令形状，保留原参数与十进制身份。
 function isWireCommand(value: unknown): value is WireCommand {
@@ -28,7 +34,10 @@ function isWireCommand(value: unknown): value is WireCommand {
     if (item.sourceUtcMs !== undefined &&
         (typeof item.sourceUtcMs !== 'number' || !Number.isSafeInteger(item.sourceUtcMs) || item.sourceUtcMs < 0)) return false;
     allowed.add('sourceUtcMs');
-    if (item.type !== 'dialogue.submit') {
+    if (item.type === 'dialogue.submit') {
+      if (item.resumeTask !== undefined && !isTaskReference(item.resumeTask)) return false;
+      allowed.add('resumeTask');
+    } else {
       if (typeof item.instance !== 'string' || !item.instance) return false;
       allowed.add('instance');
     }
@@ -54,8 +63,9 @@ export function recoverDialogue(): { draft: string; commands: WireCommand[]; con
 // 原提交的载荷和目标一致才可用持久回执结算草稿，未决状态继续查询原记录。
 export function originalReceipt(fields: TextCommand, row: StoredMessage) {
   const route = fields.type === 'dialogue.submit' ? 'send' : fields.type === 'dialogue.append' ? 'append' : 'enqueue';
+  const selected = fields.type === 'dialogue.submit' ? fields.resumeTask : undefined;
   if (row.source !== 'desktop' || row.submission !== fields.submission || row.sender !== 'user' ||
-      row.route !== route || row.text !== fields.text || row.sourceUtcMs !== fields.sourceUtcMs ||
+      row.route !== route || row.text !== fields.text || row.sourceUtcMs !== fields.sourceUtcMs || row.resumeTask !== selected ||
       (fields.type === 'dialogue.submit' ? row.target !== undefined : !row.target ||
         row.target.instance !== fields.instance || row.target.session !== fields.session || row.target.turn !== fields.turn)) return 'conflict';
   switch (row.receipt.state) {

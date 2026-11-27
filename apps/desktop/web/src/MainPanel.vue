@@ -11,7 +11,7 @@ import RoomStateView, { type StateReading } from './RoomStateView.vue';
 import ResidentRoomMailbox from './ResidentRoomMailbox.vue';
 import PluginSettings from './PluginSettings.vue';
 import HostSettings from './HostSettings.vue';
-import { originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
+import { isTaskReference, originalReceipt, recoverDialogue, rememberDialogue, rememberDraft, type WireCommand } from './dialogue-recovery';
 
 type Operation = 'pending' | 'succeeded' | 'failed' | 'cancelled';
 type CommandState = 'unavailable' | 'queued' | 'accepted' | 'busy' | 'rejected' | 'conflict' | 'expired' | 'stale' | 'full';
@@ -23,9 +23,10 @@ interface Turn {
 }
 interface QueuedMessage { readonly session: string; readonly message: string; readonly text: string }
 interface Receipt { readonly command: string; readonly state: CommandState }
+interface TaskCard { readonly reference: string; readonly goal: string; readonly utcMs: number }
 type Target = Pick<Turn, 'session' | 'turn'>;
 type Pending = { readonly id: string; readonly action: 'send' | 'enqueue' | 'append'; readonly text: string } |
-  { readonly id: string; readonly action: 'clear' | 'resume' | 'remove' };
+  { readonly id: string; readonly action: 'clear' | 'resume' | 'remove' | 'task' };
 
 const operations: ReadonlySet<unknown> = new Set<Operation>(['pending', 'succeeded', 'failed', 'cancelled']);
 const commandStates: ReadonlySet<unknown> = new Set<CommandState>(['unavailable', 'queued', 'accepted', 'busy', 'rejected', 'conflict', 'expired', 'stale', 'full']);
@@ -57,6 +58,10 @@ const pendingStop = ref('');
 const stopTarget = shallowRef<Target>();
 const transcript = ref<HTMLOListElement>();
 const messages = useMessageHistory();
+const tasks = shallowRef<readonly TaskCard[]>([]);
+const tasksOpen = ref(false);
+const tasksState = ref<'loading' | 'ready' | 'error'>('loading');
+let taskRequest = '';
 const timeline = computed(() => messageTimeline(messages.rows.value, turns.value, messages.instance.value, messages.more.value));
 const composer = ref<HTMLTextAreaElement>();
 const clearDialog = ref<HTMLDialogElement>();
@@ -80,6 +85,8 @@ const canChoose = computed(() => queueMode.value && lastTurn.value?.result === '
 const appendMode = computed(() => canChoose.value && destination.value === 'current');
 const canSend = computed(() => ready.value && messages.subscribed.value && (accepting.value || queueMode.value) &&
   !pending.value && !!draft.value.trim() && !tooLong.value);
+const taskConnection = computed(() => ready.value && messages.subscribed.value && shutdown.value === 'idle' ? messages.instance.value : '');
+const canResumeTask = computed(() => !!taskConnection.value && accepting.value && !queueMode.value && !pending.value);
 const stoppedCurrent = computed(() => !!stopTarget.value && stopTarget.value.session === lastTurn.value?.session && stopTarget.value.turn === lastTurn.value?.turn);
 const canStop = computed(() => ready.value && !pendingStop.value && !stoppedCurrent.value && lastTurn.value?.result === 'pending');
 const canClear = computed(() => accepting.value && !pending.value && !!lastTurn.value);
@@ -93,7 +100,8 @@ const panelStatus = computed(() => {
   if (!messages.subscribed.value) return '正在连接聊天记录';
   if (lastTurn.value?.result === 'cancelled' && lastTurn.value.exit === 'pending') return '正在收尾';
   if (stoppedCurrent.value && lastTurn.value?.result === 'pending') return '已请求停止';
-  if (pending.value) return { send: '正在提交', enqueue: '正在排队', append: '正在提交补充', clear: '正在重置上下文', resume: '正在恢复', remove: '正在移除' }[pending.value.action];
+  if (pending.value) return { send: '正在提交', enqueue: '正在排队', append: '正在提交补充',
+    clear: '正在重置上下文', resume: '正在恢复', remove: '正在移除', task: '正在接续旧任务' }[pending.value.action];
   if (accepting.value) return '可以聊天';
   return '正在处理对话';
 });
@@ -125,7 +133,8 @@ function recover(): void {
     if (fields.type === 'dialogue.cancel') {
       pendingStop.value = id;
       stopTarget.value = { session: fields.session, turn: fields.turn };
-    } else if ('text' in fields) {
+    } else if (fields.type === 'dialogue.submit' && fields.resumeTask) pending.value = { id, action: 'task' };
+    else if ('text' in fields) {
       const action = fields.type === 'dialogue.submit' ? 'send' : fields.type === 'dialogue.append' ? 'append' : 'enqueue';
       pending.value = { id, action, text: fields.text };
     } else pending.value = { id, action: fields.type === 'dialogue.clear' ? 'clear' : fields.type === 'dialogue.resume' ? 'resume' : 'remove' };
@@ -164,6 +173,23 @@ function isQueuedMessage(value: unknown): value is QueuedMessage {
 // 验证窗口命令回执，以原命令号关联本地草稿。
 function isReceipt(value: unknown): value is Receipt {
   return isRecord(value) && isDecimal(value.command) && commandStates.has(value.state);
+}
+
+// 卡片只接收本档案的完整原件号与可展示的目标、时间。
+function isTaskCard(value: unknown): value is TaskCard {
+  return isRecord(value) && isTaskReference(value.reference) && value.reference.startsWith(`${messages.conversation.value}/`) &&
+    typeof value.goal === 'string' && typeof value.utcMs === 'number' && Number.isSafeInteger(value.utcMs) && Math.abs(value.utcMs) <= 8.64e15;
+}
+
+// 打开列表时从当前后台重读卡片，连接变更时丢弃旧档案的投影。
+// 步骤：清掉旧列表与请求身份 → 复核当前订阅 → 查询最近任务。
+function readTasks(): void {
+  tasks.value = [];
+  taskRequest = '';
+  tasksState.value = 'loading';
+  if (!tasksOpen.value || !taskConnection.value) return;
+  taskRequest = `${scope}${++request}`;
+  bridge.postMessage({ type: 'messages.tasks', version: '1', request: taskRequest, conversation: messages.conversation.value });
 }
 
 // 给当前页面的所有命令使用独立请求身份，便于拒绝其他文档的回包。
@@ -262,6 +288,10 @@ function settle(receipt: Receipt): void {
   if (receipt.state === 'accepted') {
     if ('text' in current && draft.value === current.text) draft.value = '';
     if (current.action === 'clear') composer.value?.focus();
+    if (current.action === 'task') tasksOpen.value = false;
+  } else if (current.action === 'task' && receipt.state === 'stale') {
+    notice.value = '所选旧任务已不可用，列表已请求更新。';
+    readTasks();
   } else if (current.action === 'append' && receipt.state === 'full') notice.value = '本轮可接收的补充已满，草稿已保留。';
   else if (current.action === 'append' && receipt.state === 'stale') notice.value = '原回合已结束，草稿已保留，可以另发。';
   else notice.value = rejection[receipt.state];
@@ -345,6 +375,15 @@ function receive(event: MessageEvent<unknown>): void {
     return;
   }
   if (shutdown.value === 'stopping') return;
+  if (value.request === taskRequest) {
+    taskRequest = '';
+    if (value.event === 'messages.tasks' && value.instance === taskConnection.value &&
+        value.conversation === messages.conversation.value && Array.isArray(value.tasks) && value.tasks.every(isTaskCard)) {
+      tasks.value = value.tasks;
+      tasksState.value = 'ready';
+    } else tasksState.value = 'error';
+    return;
+  }
   if (value.event === 'management.error') {
     if (value.request === shutdownRequest) shutdown.value = 'unknown';
     if (sequence < latestSnapshot) return;
@@ -422,6 +461,19 @@ function send(): void {
     accepting.value = false;
     post({ type: 'dialogue.submit', ...original });
   }
+}
+
+// 把点击保存为新的私聊提交，草稿继续留在输入区。
+// 步骤：检查空闲状态 → 固定原提交号 → 发送完整任务号并等待接纳。
+function resumeOldTask(task: TaskCard): void {
+  if (!canResumeTask.value) return;
+  const id = String(++command);
+  originalConversation = messages.conversation.value;
+  pending.value = { id, action: 'task' };
+  accepting.value = false;
+  notice.value = '';
+  post({ type: 'dialogue.submit', command: id, submission: crypto.randomUUID(), sourceUtcMs: Date.now(),
+    text: '接着聊这项任务，先说说上次做到哪了。', resumeTask: task.reference });
 }
 
 // 由用户把未带入的原话放回编辑区，保留已有草稿并等待显式发送。
@@ -517,6 +569,7 @@ function leaving(): void {
 // 用户申请旧页时保持当前阅读位置。
 function earlier(): void { readingEarlier = true; messages.earlier(); }
 watch(() => lastTurn.value?.turn, () => { destination.value = 'current'; });
+watch([tasksOpen, taskConnection], readTasks);
 watch(draft, value => {
   try { rememberDraft(value); } catch { notice.value = '当前窗口无法保留刷新前的草稿。'; }
 }, { flush: 'sync' });
@@ -588,6 +641,19 @@ onUnmounted(() => {
         </template>
       </ol>
     </section>
+    <details id="old-tasks" class="task-panel" :open="tasksOpen" @toggle="tasksOpen = ($event.currentTarget as HTMLDetailsElement).open">
+      <summary><strong>旧任务</strong></summary>
+      <p v-if="tasksState === 'loading'" role="status">{{ taskConnection ? '正在读取旧任务…' : '正在等待本体连接…' }}</p>
+      <p v-else-if="tasksState === 'error'" role="status">暂时无法读取旧任务。 <button type="button" class="task-action" @click="readTasks">重试</button></p>
+      <p v-else-if="!tasks.length">暂无可接续的旧任务</p>
+      <ol v-else class="task-list" aria-label="可接续的旧任务">
+        <li v-for="task in tasks" :key="task.reference" :data-task-reference="task.reference">
+          <div><strong>{{ task.goal }}</strong><small>#{{ task.reference.split('/').at(-1) }} · <MessageTime :record="task" /></small></div>
+          <button type="button" class="task-action" :disabled="!canResumeTask" :aria-label="`接着聊 · 任务 ${task.reference.split('/').at(-1)}`"
+            aria-describedby="dialogue-state" @click="resumeOldTask(task)">接着聊</button>
+        </li>
+      </ol>
+    </details>
     <details v-if="queue.length" class="queue-panel" :data-paused="queuePaused" open>
       <summary><strong>待发消息</strong><span>{{ queuePaused ? '已暂停' : '按顺序发送' }} · {{ queue.length }} 条</span></summary>
       <ol class="queue-list" aria-label="等待下一轮的消息">

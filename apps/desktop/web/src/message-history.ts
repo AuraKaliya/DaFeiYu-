@@ -4,6 +4,7 @@ type Wire = Record<string, unknown>;
 export interface StoredMessage {
   message: string; revision: string; utcMs: number; sender: string; route: string; text: string;
   source: string; submission: string; receipt: Wire; target?: Wire; sourceUtcMs?: number;
+  resumeTask?: string;
   instance?: string; session?: string; turn?: string; delivery?: string;
 }
 type Read = { kind: 'subscribe' | 'recent' | 'older' | 'changes'; id: string; cursor: string; through: string; sent: number };
@@ -23,6 +24,7 @@ function stored(value: unknown): value is StoredMessage {
     typeof value.utcMs === 'number' && Number.isSafeInteger(value.utcMs) && Math.abs(value.utcMs) <= 8.64e15 &&
     typeof value.text === 'string' && typeof value.sender === 'string' && typeof value.route === 'string' &&
     typeof value.source === 'string' && typeof value.submission === 'string' && record(value.receipt) &&
+    (value.resumeTask === undefined || typeof value.resumeTask === 'string') &&
     (value.target === undefined || record(value.target));
 }
 

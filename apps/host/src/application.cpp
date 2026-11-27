@@ -124,10 +124,10 @@ void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::
 std::filesystem::path Application::trace_file() const { return run_log_ ? run_log_->path() : std::filesystem::path{}; }
 
 // 保持已获准自动启动的队首优先，再从直接对话信箱接纳新轮。
-agent::TurnDiagnostics Application::submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms) {
+agent::TurnDiagnostics Application::submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms, bool include_mail) {
     const auto& display = conversation_.display();
     if (!display.queue.empty() && !display.queue_paused) throw std::logic_error("dialogue: next message already queued");
-    return begin_dialogue(text,{},event_utc_ms);
+    return begin_dialogue(text,{},event_utc_ms,include_mail);
 }
 
 // 将收到的真人补充绑定原会话，收件和实际送模分别记录。
@@ -165,12 +165,13 @@ std::pair<std::string,events::EventId> Application::receive_dialogue(const std::
 }
 
 // 在原工作退出后用已收原文启动新轮，排队项只在入队时投递一次。
-agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail, std::optional<std::int64_t> event_utc_ms) {
+agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail, std::optional<std::int64_t> event_utc_ms,
+    bool include_mail) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
     const auto received = mail.sequence ? std::pair{text,mail} : receive_dialogue(text,"dialogue.text");
-    // 显式收录的主人原话单独入轮，排队信件仍可按原身份收取。
+    // 显式收录和旧任务私聊单独入轮，待收信件保留在原信箱。
     const bool capture = main_messages_ && !mail.sequence && memory_capture_topic(received.first).has_value();
-    const auto result = mailbox_intake_.submit_dialogue(received.first,event_utc_ms,!capture);
+    const auto result = mailbox_intake_.submit_dialogue(received.first,event_utc_ms,include_mail && !capture);
     if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,
         mail.sequence ? "dialogue.enqueue" : "dialogue.text",received.first,
         agent::RunId{result.session,result.turn});

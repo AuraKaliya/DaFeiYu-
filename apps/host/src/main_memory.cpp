@@ -186,7 +186,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     if (memory_revision_) status.binding = std::string(owner_memory_turn_ ? "main/owner/" : "main/other/") + std::to_string(memory_revision_);
     // 任务从独立上下文起步；主人可接着追问刚退出的任务，房间和撤权后的新修订另起上下文。
     const auto task_prefix = "main/task/"+std::to_string(std::max<std::int64_t>(1,memory_revision_))+"/";
-    if (audience==DialogueAudience::private_task) {
+    if (audience==DialogueAudience::private_task || (owner_memory_turn_ && incoming_task_ && incoming_task_->owner_only)) {
         const auto previous = app_.conversation().status();
         status.binding = task_prefix+std::to_string(previous ? previous->turn+1 : 1);
     } else if (owner_memory_turn_ && memory_binding_.starts_with(task_prefix)) status.binding = memory_binding_;

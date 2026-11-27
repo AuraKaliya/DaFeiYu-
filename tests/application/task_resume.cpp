@@ -18,15 +18,19 @@ Json fixture(const fs::path& corpus, std::string_view id) {
     throw std::runtime_error("missing resume fixture");
 }
 
-// 结算 T03 和另一档案中的同序号任务，以原 Trace 固定参照回执。
+// 结算 T03 及对照任务，以原 Trace 固定参照回执。
 // 步骤：运行原夹具并处理空闲复盘 → 读档案身份 → 写出与实际回执对应的预期。
-void seed_resume(const fs::path& corpus, const fs::path& root, const fs::path& panel) {
+void seed_resume(const fs::path& corpus, const fs::path& root, const fs::path& panel, bool desktop) {
     const auto row = fixture(corpus,"T03");
     const auto goal = row.at("goal").get<std::string>();
     std::size_t requests = 0;
     const auto works = perform(row,root/"seed",panel,goal,requests,true);
     perform(row,root/"foreign-origin",panel,goal,requests,true);
     require(works.size()==3 && works.at(2).at("output")==row.at("after"),"T03 original readback differs");
+    if (desktop) {
+        const auto newer = perform(fixture(corpus,"T10"),root/"seed",panel,goal,requests);
+        require(newer.size()==3 && newer.at(2).at("output")=="idle","newer same-name task was not settled");
+    }
 
     const app::MessageStore source(root/"seed"), foreign(root/"foreign-origin");
     require(source.conversation()!=foreign.conversation(),"fixture archives share an identity");
@@ -68,7 +72,7 @@ void check_room(const model::Request& request) {
 // 重开同一快照，用同一个替身比较首次得到依据的请求并核对实际投递。
 // 步骤：准备对照条件 → 经原私聊入口接纳接续 → 查实收请求、原件与投递 → 输出测量。
 void task_resume(const fs::path& corpus, const fs::path& root, const fs::path& panel, const std::string& phase) {
-    if (phase=="seed") { seed_resume(corpus,root,panel); return; }
+    if (phase=="seed" || phase=="desktop-seed") { seed_resume(corpus,root,panel,phase=="desktop-seed"); return; }
     const auto data = root/phase;
     require(fs::is_regular_file(data/"main-conversation.sqlite3"),"missing replay snapshot");
     std::ifstream proof(root/"task.json",std::ios::binary);

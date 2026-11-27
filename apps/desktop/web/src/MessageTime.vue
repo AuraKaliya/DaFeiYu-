@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { StoredMessage } from './message-history';
-defineProps<{ record?: StoredMessage }>();
+defineProps<{ record?: Pick<StoredMessage, 'utcMs'> }>();
 const localTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
 </script>
 

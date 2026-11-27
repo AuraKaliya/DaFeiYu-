@@ -21,12 +21,18 @@ if(BUILD_GUI)
   set_tests_properties(ui.desktop_entry PROPERTIES TIMEOUT 75 SKIP_RETURN_CODE 77)
   dfy_test_executable(dfy_ui_history_host ui_history_host.cpp)
   target_include_directories(dfy_ui_history_host PRIVATE "${PROJECT_SOURCE_DIR}/apps/desktop/tests")
-  target_link_libraries(dfy_ui_history_host PRIVATE dfy_management nlohmann_json::nlohmann_json dfy_build_options)
-  add_dependencies(dfy_ui_history_host dafeiyu)
+  target_link_libraries(dfy_ui_history_host PRIVATE dfy_management nlohmann_json::nlohmann_json dfy_build_options dfy_digest)
+  add_dependencies(dfy_ui_history_host dafeiyu dfy_task_memory_tests)
   add_test(NAME ui.history_windows COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dafeiyu>"
     -Fixture "$<TARGET_FILE:dfy_ui_history_host>" -App "$<TARGET_FILE:dafeiyu-host>" -Root "${run_status_temp}")
   set_tests_properties(ui.history_windows PROPERTIES TIMEOUT 130 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
+  add_test(NAME ui.task_resume COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/ui_history_windows.ps1" -Panel "$<TARGET_FILE:dafeiyu>"
+    -Fixture "$<TARGET_FILE:dfy_ui_history_host>" -App "$<TARGET_FILE:dafeiyu-host>" -Root "${run_status_temp}"
+    -TaskSeed "$<TARGET_FILE:dfy_task_memory_tests>" -StatusPackage "$<TARGET_FILE_DIR:dfy_status_example>"
+    -ToolsPackage "$<TARGET_FILE_DIR:dfy_tools_fixture>" -TaskCorpus "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/tasks.jsonl")
+  set_tests_properties(ui.task_resume PROPERTIES TIMEOUT 90 ENVIRONMENT "TEMP=${run_status_temp};TMP=${run_status_temp}")
   dfy_test_executable(dfy_ui_mailbox_host ui_mailbox_host.cpp)
   target_link_libraries(dfy_ui_mailbox_host PRIVATE dfy_sdk_test_headers dfy_management dfy_build_options)
   add_dependencies(dfy_ui_mailbox_host dafeiyu dfy_mailbox_fixture)

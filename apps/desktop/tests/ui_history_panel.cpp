@@ -2,6 +2,30 @@
 #include <fstream>
 
 namespace dfy::ui {
+// 从正式页面接续较早的同名任务，并确认答复和原草稿都在正确位置。
+// 步骤：重读旧卡 → 点选较早原件 → 核对正式答复与草稿。
+void InteractionProbe::start_task_resume(const std::filesystem::path& data) {
+    std::ifstream proof(data.parent_path()/"task.json",std::ios::binary);
+    const auto expected = Json::parse(proof);
+    expect("restarted panel is accepting owner messages","document.querySelector('#dialogue-state')?.dataset.accepting==='true'");
+    evaluate("open the old task cards","document.querySelector('#old-tasks summary').click(); true");
+    expect("two same-name cards with distinct references","document.querySelectorAll('#old-tasks [data-task-reference]').length===2 && "
+        "[...document.querySelectorAll('#old-tasks li strong')].every(title=>title.textContent==="+expected.at("goal").dump()+")");
+    evaluate("select the older T03 card by its full reference",R"JS(((reference)=>{
+        const cards=[...document.querySelectorAll('#old-tasks [data-task-reference]')];
+        if(cards[0].dataset.taskReference===reference) return false;
+        const selected=cards[1];
+        if(selected.dataset.taskReference!==reference) return false;
+        const draft=document.querySelector('#dialogue-draft'), button=selected.querySelector('button');
+        if(button.disabled || button.textContent!=='接着聊') return false;
+        draft.value='保留这条草稿'; draft.dispatchEvent(new Event('input'));
+        button.click(); return true;
+    })()JS"+expected.at("reference").dump()+")");
+    expect("fixed answer delivered to this chat and draft preserved","document.querySelector('.turn .incoming[data-stored-message] p')?.textContent==="
+        "'已核对所选任务的原回执。' && document.querySelector('#dialogue-draft').value==='保留这条草稿'");
+    next();
+}
+
 // 多个真实窗口共用一个独立的固定响应后台，测试信号只用于控制关闭和断连的边界。
 // 步骤：发送窗提交长对话 → 观察窗从原游标追赶 → 新窗口翻到首条并刷新 → 重启后复查原号。
 void InteractionProbe::start_history(std::wstring_view mode, const std::filesystem::path& data) {

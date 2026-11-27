@@ -112,12 +112,18 @@ nlohmann::json dialogue_response(Host& host, const nlohmann::json& request, cons
         reply["event"] = "dialogue.receipt";
         auto base = request;
         const bool stable = request.contains("submission");
+        const bool resume = stable && type=="dialogue.submit" && request.contains("resumeTask");
         if (stable) {
             base.erase("submission");
             base.erase("instance");
             base.erase("sourceUtcMs");
         }
+        if (resume) base.erase("resumeTask");
         auto command = dialogue_command(base,type);
+        if (resume) {
+            command.resume_task = request.at("resumeTask").get<std::string>();
+            if (command.resume_task.empty()) throw std::invalid_argument("messages: missing task reference");
+        }
         if (stable) {
             if (type!="dialogue.submit" && type!="dialogue.append" && type!="dialogue.enqueue")
                 throw std::invalid_argument("messages: expected a text operation");

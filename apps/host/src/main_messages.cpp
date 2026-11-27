@@ -68,12 +68,21 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
     std::uint64_t native = 0;
     try {
         if (envelope.at("route")=="send") {
+            const auto task = envelope.find("resumeTask");
+            const bool owner_only = task!=envelope.end() && envelope.value("ownerOnly",false);
+            if (task!=envelope.end()) {
+                const auto& reference = task->get_ref<const std::string&>();
+                if (owner_only && !resumed_task_source(reference,id)) {
+                    result["state"] = "stale";
+                    publish(id,result);
+                    return result;
+                }
+                incoming_task_ = TaskResume{static_cast<std::uint64_t>(id),reference,owner_only};
+            }
             constexpr std::string_view revoke = "撤回记忆 ";
             if (text.starts_with(revoke)) change_memory(std::string_view(text).substr(revoke.size()),std::nullopt);
             if (memory_capture_topic(text)) incoming_memory_ = id;
-            if (const auto task = envelope.find("resumeTask"); task!=envelope.end())
-                incoming_task_ = TaskResume{static_cast<std::uint64_t>(id),task->get<std::string>()};
-            const auto start = app_.submit_dialogue(text,utc);
+            const auto start = app_.submit_dialogue(text,utc,!owner_only);
             run = {start.session,start.turn};
             parent_ = {run,id};
             result["state"] = "accepted";

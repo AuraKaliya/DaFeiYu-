@@ -167,6 +167,19 @@ bool MessageStore::review_idle_task() {
     update.bind(1,note); update.bind(2,next.number(0)); update.next(); tx.commit();
     return true;
 }
+// 只为任务卡投影当前可读的身份、目标及时间，原回执留在原档案中。
+Json MessageStore::recent_tasks() const {
+    std::lock_guard lock(state_->mutex);
+    Statement rows(state_->db,"SELECT id,goal,body FROM task_memory WHERE active=1 ORDER BY id DESC LIMIT 12");
+    Json cards = Json::array();
+    while (rows.next()) {
+        const auto task = Json::parse(rows.text(2));
+        cards.push_back({{"reference",conversation()+"/task/"+std::to_string(rows.number(0))},
+            {"goal",summary(rows.text(1),180)},{"utcMs",task.at("utcMs")}});
+    }
+    return cards;
+}
+
 // 合并主题与原件号命中，按精确程度和新近顺序，在单轮预算内装入证据。
 Json MessageStore::search_tasks(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const {
     if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("task memory: invalid query");

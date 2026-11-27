@@ -41,6 +41,11 @@ Json message_request(Host& host, const Json& request, const std::string& client)
         return reply;
     }
     if (request.at("conversation")!=db->conversation()) throw std::invalid_argument("messages: different conversation");
+    if (type=="messages.tasks" && request.size()==4) {
+        reply["event"] = "messages.tasks";
+        reply["tasks"] = db->recent_tasks();
+        return reply;
+    }
     if (type=="messages.receipt" && request.size()==6) {
         const auto row = db->find(request.at("source").get_ref<const std::string&>(),request.at("submission").get_ref<const std::string&>());
         reply["event"] = "messages.receipt";

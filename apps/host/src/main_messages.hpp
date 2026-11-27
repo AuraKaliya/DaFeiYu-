@@ -135,7 +135,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string memory_binding_ = "main";
     bool owner_memory_turn_ = false;
     std::optional<std::int64_t> incoming_memory_;
-    struct TaskResume { std::uint64_t message; std::string reference; };
+    struct TaskResume { std::uint64_t message; std::string reference; bool owner_only; };
     std::optional<TaskResume> incoming_task_;
     std::optional<agent::DecisionStatusSource> search_result_;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;

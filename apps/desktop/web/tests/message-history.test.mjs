@@ -89,6 +89,11 @@ test('recovered submissions agree with native command receipts', () => {
   }
   assert.equal(originalReceipt(fields,{ ...row, sourceUtcMs:81 }), 'conflict');
   assert.equal(originalReceipt(fields,{ ...row, target:{ ...row.target, instance:'replacement' } }), 'conflict');
+  const prefix = `${'a'.repeat(32)}/task/`;
+  const original = { ...sample(1), resumeTask: prefix + '1' };
+  const resume = { type:'dialogue.submit', command:'10', submission:original.submission, text:original.text, resumeTask:original.resumeTask };
+  assert.equal(originalReceipt(resume,original),'accepted');
+  assert.equal(originalReceipt(resume,{ ...original, resumeTask:prefix + '2' }),'conflict');
 });
 
 // 手动核对与恢复只读同一原号；断连及迟到的旧文档回复不能表示记录不存在。

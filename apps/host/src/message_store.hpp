@@ -48,6 +48,8 @@ class MessageStore {
     std::int64_t watermark() const;
     // 在固定水位向前补读回执，或以消息号倒序读取当时的历史投影。
     MessagePage page(bool history, std::int64_t cursor, std::int64_t through, unsigned limit) const;
+    // 为受信主聊天读取最近获准的任务卡和可用于接续的完整原件号。
+    nlohmann::json recent_tasks() const;
     // 按消息号读取一批尚需核对的投递，已结算历史不进入启动扫描。
     std::vector<StoredMessage> unfinished(std::int64_t after) const;
   private:

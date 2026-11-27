@@ -1,8 +1,9 @@
-﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings, [switch]$HostSave, [switch]$PluginFields)
+﻿param([string]$Panel, [string]$Fixture, [string]$App, [string]$Root, [string]$MailPlugin, [switch]$PluginSettings, [switch]$PluginActions, [switch]$HostSettings, [switch]$HostSave, [switch]$PluginFields,
+    [string]$TaskSeed, [string]$StatusPackage, [string]$ToolsPackage, [string]$TaskCorpus)
 $ErrorActionPreference = 'Stop'
 $base = (Resolve-Path -LiteralPath $Root).Path
 $folder = Join-Path $base ('history-' + [guid]::NewGuid().ToString('N'))
-$data = Join-Path $folder 'user data'
+$data = Join-Path $folder $(if ($TaskSeed) { 'seed' } else { 'user data' })
 $null = New-Item -ItemType Directory -Path $data -Force
 $config = Join-Path $folder 'offline.json'
 [IO.File]::WriteAllText($config,'{"provider":"deepseek","base_url":"https://offline.invalid","model":"fixture","api_key_env":"DFY_UNUSED_HISTORY_FIXTURE"}')
@@ -70,6 +71,16 @@ function Stop-Resident([Diagnostics.Process]$Resident) {
 
 $resident = $null
 try {
+    if ($TaskSeed) {
+        & $TaskSeed $StatusPackage $ToolsPackage $TaskCorpus $folder --resume-desktop-seed
+        if ($LASTEXITCODE -ne 0) { throw 'T03 task seed failed' }
+        $resident = Start-Resident 'serve-task-resume'
+        Wait-Panels @((Start-Panel 'task-resume'))
+        Stop-Resident $resident
+        & $Fixture verify-task-resume $config $data
+        if ($LASTEXITCODE -ne 0) { throw 'Desktop resume verification failed' }
+        return
+    }
     if ($MailPlugin) {
         # 由真正的 C 插件产生来信，只有这个独立终端控制端可以请求取件或重载。
         $package = Join-Path $data 'plugins/mail'
@@ -204,7 +215,7 @@ try {
     Wait-Panels @((Start-Panel 'history-restart'))
     Stop-Resident $resident
 } finally {
-    if (!$MailPlugin) { [IO.File]::WriteAllText((Join-Path $data 'release-reply'),'finish') }
+    if (!$MailPlugin -and !$TaskSeed) { [IO.File]::WriteAllText((Join-Path $data 'release-reply'),'finish') }
     if ($resident -and !$resident.HasExited) {
         try { & $App --stop-host $data 2>$null | Out-Null } catch {}
         $null = $resident.WaitForExit(5000)

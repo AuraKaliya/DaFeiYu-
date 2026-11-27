@@ -19,7 +19,12 @@ constexpr std::size_t command_limit = 16;
 // 以稳定的原实例和用户原话建立跨连接可比较的载荷。
 nlohmann::json envelope(const DialogueCommand& command) {
     const auto route = command.action==DialogueAction::send ? "send" : command.action==DialogueAction::append ? "append" : "enqueue";
-    return app::user_envelope(route,command.text,command.instance,command.target,command.source_utc_ms);
+    auto value = app::user_envelope(route,command.text,command.instance,command.target,command.source_utc_ms);
+    if (!command.resume_task.empty()) {
+        value["resumeTask"] = command.resume_task;
+        value["ownerOnly"] = true;
+    }
+    return value;
 }
 
 // 入库前按后台已发布的目标和容量核验新文字，实际交付仍复核原运行。
@@ -270,6 +275,8 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     const bool target_valid = command.action == DialogueAction::send ? command.target == agent::RunId{} :
         command.target.session && (by_message ? !command.target.sequence : command.target.sequence != 0);
     if (!command.id || !target_valid || by_message != (command.message != 0) ||
+        (!command.resume_task.empty() && (!messages_ || command.action!=DialogueAction::send ||
+            command.submission.empty() || command.resume_task.size()>57)) ||
         (with_text ? command.text.size() > app::dialogue_text_limit || command.text.find_first_not_of(" \t\r\n") == std::string::npos ||
             !runtime::valid_utf8(command.text) : !command.text.empty()))
         return {command.id,State::rejected,{}};
@@ -277,6 +284,7 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
     if (!command.submission.empty()) {
         nlohmann::json identity{fingerprint,command.submission,command.instance};
         if (command.source_utc_ms) identity.push_back(*command.source_utc_ms);
+        if (!command.resume_task.empty()) identity.push_back(command.resume_task);
         fingerprint = platform::sha256(identity.dump());
     }
 

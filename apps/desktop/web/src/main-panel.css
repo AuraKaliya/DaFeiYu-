@@ -56,7 +56,7 @@ button:disabled { cursor: default }
 .turn-input { background: #ebf0e7; border-inline-start: 2px solid #81a28c }
 .input-receipt { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px }
 .input-receipt button { padding: 4px 6px; border: 0; border-radius: 4px; color: var(--accent); background: var(--paper) }
-.queue-panel {
+:is(.queue-panel, .task-panel) {
   flex: none;
   margin-block: 4px 8px;
   padding-inline: 14px;
@@ -65,22 +65,29 @@ button:disabled { cursor: default }
   font-size: 14px;
 }
 .queue-panel[data-paused="true"] { background: #f3eadb }
-.queue-panel summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none }
-.queue-panel summary::after {
+:is(.queue-panel, .task-panel) summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none }
+:is(.queue-panel, .task-panel) summary::after {
   content: ""; width: 7px; height: 7px; margin-inline-start: auto;
   border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
 }
-.queue-panel[open] summary::after { transform: rotate(225deg) }
+:is(.queue-panel, .task-panel)[open] summary::after { transform: rotate(225deg) }
 .queue-panel summary span { color: var(--muted); font-size: 13px }
-.queue-list { overflow: auto; overscroll-behavior: contain; max-height: min(23dvh, 160px); margin: 0 0 6px; padding: 0; list-style: none }
-.queue-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-top: 1px solid #536c571f }
+:is(.queue-list, .task-list) { overflow: auto; overscroll-behavior: contain; max-height: min(23dvh, 160px); margin: 0 0 6px; padding: 0; list-style: none }
+:is(.queue-list, .task-list) li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-top: 1px solid #536c571f }
 .queue-list li span { padding: 8px 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere }
-.queue-remove, .queue-resume {
+.queue-remove, .queue-resume, .task-action {
   flex: none; min-height: 36px; padding: 4px 8px; border: 0; border-radius: 6px;
   background: transparent; color: var(--muted); font-size: 13px;
 }
 .queue-resume { margin-bottom: 8px; background: var(--paper); color: var(--accent); font-weight: 600 }
-.queue-remove:hover:enabled, .queue-resume:hover:enabled { background: #fff9ee; color: var(--ink) }
+.queue-remove:hover:enabled, .queue-resume:hover:enabled, .task-action:hover:enabled { background: #fff9ee; color: var(--ink) }
+.task-panel { background: #edf2ee }
+.task-panel summary { min-height: 36px }
+.task-panel li { align-items: center; padding-block: 6px }
+.task-panel li div { min-width: 0; overflow-wrap: anywhere }
+.task-panel small, .task-panel p { color: var(--muted); font-size: 13px }
+.task-panel small { display: block }
+.task-panel button:enabled { color: var(--accent); font-weight: 600 }
 .panel-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

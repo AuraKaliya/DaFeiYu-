@@ -307,6 +307,7 @@ struct Window : std::enable_shared_from_this<Window> {
                 if (observer_scenario==L"plugins-fields") { interaction->start_plugin_fields(user_data); return; }
                 if (observer_scenario.starts_with(L"plugins-")) { interaction->start_plugin_windows(observer_scenario,user_data); return; }
                 if (observer_scenario.starts_with(L"mailbox-")) { interaction->start_mailbox(observer_scenario,user_data); return; }
+                if (observer_scenario==L"task-resume") { interaction->start_task_resume(user_data); return; }
                 if (!observer_scenario.empty()) { interaction->start_history(observer_scenario,user_data); return; }
                 if (observer_check) {
                     interaction->start_observer(observer_stop,observer_log_error,observer_unexpected ? user_data/"replacement.ready" : std::filesystem::path{});
@@ -486,7 +487,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show) {
     const bool tray_check = tray_panel && GetEnvironmentVariableW(L"DFY_UI_CHECK_TRAY_PANEL", nullptr, 0);
     const std::wstring_view observer_mode = __argc==5 ? __wargv[4] : L"";
     const bool history_check = observer_mode==L"history-send" || observer_mode==L"history-watch" ||
-        observer_mode==L"history-reopen" || observer_mode==L"history-restart";
+        observer_mode==L"history-reopen" || observer_mode==L"history-restart" || observer_mode==L"task-resume";
     const bool mailbox_check = observer_mode==L"mailbox-first" || observer_mode==L"mailbox-follow" || observer_mode==L"mailbox-reopen";
     const bool settings_check = observer_mode==L"plugins-manage" || observer_mode==L"plugins-watch" || observer_mode==L"plugins-fields" || observer_mode==L"action-write" ||
         observer_mode==L"action-observe" || observer_mode==L"action-reopen" || observer_mode==L"settings-read" ||
