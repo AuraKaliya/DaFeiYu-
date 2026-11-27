@@ -66,6 +66,8 @@ const dfy_v2_mailbox_text_api& mailbox_text_api();
 const dfy_v2_agent_api& agent_api(uint32_t version);
 // 返回当前原实例可协商的持久子会话记忆能力。
 const dfy_v2_agent_memory_api& agent_memory_api();
+// 返回持久子会话的生命周期信箱服务表。
+const dfy_v2_agent_letters_api& agent_letters_api();
 // 返回独立协商的版本化事实及原工作结算服务。
 const dfy_v2_agent_facts_api& agent_facts_api();
 // 返回支持有序工作结算及回执读回的第二版不可变服务表。

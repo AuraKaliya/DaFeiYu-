@@ -85,6 +85,28 @@ dfy_v2_status DFY_V2_CALL select_topic(uint64_t session,dfy_v2_string_view topic
     });
 }
 
+// 校验交付模式并为原插件持久会话记录一次启动。
+dfy_v2_status DFY_V2_CALL begin_letter(uint64_t session,dfy_v2_string_view exchange,uint32_t mode,uint32_t flags,
+    uint64_t* receipt,dfy_v2_error* error) {
+    if (receipt) *receipt=0;
+    return boundary(error,[&](auto& host) {
+        const auto service=host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        if (!receipt || (flags&~DFY_V2_LETTER_PERSONA)) return DFY_V2_INVALID_ARGUMENT;
+        *receipt=service->begin_letter(host.agent_owner,session,text(exchange,128),mode,flags!=0); return DFY_V2_OK;
+    });
+}
+// 同步复制插件交付的正文，接受前从会话取真实退出状态。
+dfy_v2_status DFY_V2_CALL finish_letter(uint64_t session,dfy_v2_string_view summary,dfy_v2_string_view body,
+    uint64_t note,uint64_t* receipt,dfy_v2_error* error) {
+    if (receipt) *receipt=0;
+    return boundary(error,[&](auto& host) {
+        const auto service=host.agents.lock();
+        if (!service) return DFY_V2_UNSUPPORTED;
+        if (!receipt) return DFY_V2_INVALID_ARGUMENT;
+        *receipt=service->finish_letter(host.agent_owner,session,text(summary,480),text(body,8192),note); return DFY_V2_OK;
+    });
+}
 // 校验并复制本轮输入，在宿主回调边界后才会开始执行。
 // 步骤：清空输出及校验布局 → 核对服务 → 复制有界输入 → 接纳回合。
 template<uint32_t version>
@@ -234,6 +256,11 @@ const dfy_v2_agent_api& agent_api(uint32_t version) {
 // 发布独立协商的子会话记忆表。
 const dfy_v2_agent_memory_api& agent_memory_api() {
     static const dfy_v2_agent_memory_api api{{sizeof(api),DFY_V2_AGENT_MEMORY_VERSION},open_bound,remember,select_topic};
+    return api;
+}
+// 返回插件可选的启动及结束信表。
+const dfy_v2_agent_letters_api& agent_letters_api() {
+    static const dfy_v2_agent_letters_api api{{sizeof(api),DFY_V2_AGENT_LETTERS_VERSION},begin_letter,finish_letter};
     return api;
 }
 // 发布独立的小型事实表，原子会话服务的大小和字段位置保持 ABI 兼容。

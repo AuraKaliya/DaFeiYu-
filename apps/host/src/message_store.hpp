@@ -58,6 +58,21 @@ class MessageStore {
     nlohmann::json child_projection(std::int64_t child,std::string_view topic,bool outward) const;
     // 主人配置指定插件、渠道和账号的分身权限及一份明确共享的原件。
     std::int64_t grant_avatar(std::string_view plugin,const plugins::MemoryIdentity& identity,int access,std::string_view reference);
+    // 入事务寄出带有稳定委托号的子库启动或结束信，重复信件沿用原号。
+    std::int64_t post_letter(std::int64_t child,const std::string& exchange,unsigned mode,const std::string& persona,
+        bool start,std::string_view outcome,const std::string& summary,const std::string& body,std::uint64_t note);
+    // 取得尚未由宿主实际收件的最早信号。
+    std::int64_t pending_letter() const;
+    // 判定已恢复的交付是否已有结束信，阻止重启后重派动作。
+    bool letter_finished(std::int64_t child,const std::string& exchange) const;
+    // 给原地址已接收的持久信件登记收件回执。
+    void receive_letter(std::int64_t id);
+    // 私聊只公布有待确认的已收信件，不提前披露内容。
+    bool unread_letter() const;
+    // 查询已送至本体的信件快照及接收方获准的长文分段。
+    nlohmann::json search_letters(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const;
+    // 一次确认本轮实际交给主 Agent 并获其签收的原信号。
+    void acknowledge_letters(const std::vector<std::string>& references);
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
     std::optional<nlohmann::json> next_comparison() const;
     // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。

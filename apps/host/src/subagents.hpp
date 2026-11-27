@@ -37,6 +37,12 @@ class Subagents final : public plugins::PluginAgents {
     void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) override;
     // 停用授权已经变更的子会话，包含在途和已结算但尚可读取的旧答复。
     void invalidate_memory(std::int64_t child,std::string_view source={});
+    // 新信落盘后通知实际信箱泵发送一个有界指针。
+    void on_letter(std::function<void()> listener) { letter_ready_=std::move(listener); }
+    // 登记或续接本委托的启动原信。
+    std::uint64_t begin_letter(runtime::DomainId owner,runtime::DomainId session,std::string exchange,unsigned mode,bool persona) override;
+    // 私下交付实际退出状态及插件选择导出的报告。
+    std::uint64_t finish_letter(runtime::DomainId owner,runtime::DomainId session,std::string summary,std::string body,std::uint64_t note) override;
     // 仅复制本轮输入，宿主在退出原 DLL 调用后发起模型请求。
     std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) override;
     // 把回执写入原实例会话的工作记录，陈旧的授权不能发起新工作。
@@ -79,6 +85,7 @@ class Subagents final : public plugins::PluginAgents {
     const PersonaProfile& persona_;
     std::shared_ptr<RunLog> log_;
     std::shared_ptr<MessageStore> memory_;
+    std::function<void()> letter_ready_;
     std::array<std::unique_ptr<Slot>,16> slots_;
     std::array<std::unique_ptr<WorkSlot>,16> work_slots_;
     bool stopping_ = false;

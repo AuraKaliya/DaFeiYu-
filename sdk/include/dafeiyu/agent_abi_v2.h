@@ -10,6 +10,12 @@
 #define DFY_V2_MEMORY_TASK UINT32_C(1)
 #define DFY_V2_MEMORY_BUSINESS UINT32_C(2)
 #define DFY_V2_MEMORY_AVATAR UINT32_C(3)
+#define DFY_V2_AGENT_LETTERS_INTERFACE "dfy.agent.letters"
+#define DFY_V2_AGENT_LETTERS_VERSION UINT32_C(1)
+#define DFY_V2_LETTER_STATUS UINT32_C(1)
+#define DFY_V2_LETTER_SUMMARY UINT32_C(2)
+#define DFY_V2_LETTER_ORIGINAL UINT32_C(3)
+#define DFY_V2_LETTER_PERSONA UINT32_C(1)
 #define DFY_V2_AGENT_FACTS_INTERFACE "dfy.agent.facts"
 #define DFY_V2_AGENT_FACTS_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_ORDERED_FACTS_VERSION UINT32_C(2)
@@ -74,6 +80,15 @@ typedef struct dfy_v2_agent_memory_api {
     // 为该会话选择送模的精确主题，空值清除选择；读取和向当前受众转述由宿主在实际提交时复核。
     dfy_v2_status (DFY_V2_CALL *select_topic)(uint64_t session, dfy_v2_string_view topic, dfy_v2_error* error);
 } dfy_v2_agent_memory_api;
+typedef struct dfy_v2_agent_letters_api {
+    dfy_v2_api_header header;
+    // 为原持久子会话寄启动信。exchange 是同一委托的稳定交付号，模式及人格选择在首次寄信时固定。
+    dfy_v2_status (DFY_V2_CALL *begin)(uint64_t session,dfy_v2_string_view exchange,uint32_t mode,uint32_t flags,
+        uint64_t* receipt,dfy_v2_error* error);
+    // 在实际终态后寄结束信，可选一份自己的笔记显式导出。相同交付重试沿用原信号。
+    dfy_v2_status (DFY_V2_CALL *finish)(uint64_t session,dfy_v2_string_view summary,dfy_v2_string_view body,
+        uint64_t note,uint64_t* receipt,dfy_v2_error* error);
+} dfy_v2_agent_letters_api;
 // scope 标明插件侧玩家和世界，实际所有者及会话由宿主绑定。序号与代次均从非零值开始。
 typedef struct dfy_v2_fact_frame {
     uint64_t epoch, sequence;

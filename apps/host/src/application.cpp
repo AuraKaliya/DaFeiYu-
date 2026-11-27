@@ -116,6 +116,7 @@ void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::
     auto reflection = std::make_shared<TaskReflection>(store,model_config_,model_backend_,persona_,tool_clock_,run_log_.get());
     main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log,run_log_.get(),model_backend_.structured,std::move(reflection));
     conversation_.main_messages_ = main_messages_.get();
+    subagents_->on_letter([inbox=std::weak_ptr(main_messages_)]{if (auto m=inbox.lock()) m->letters_ready();});
     main_messages_->restore();
 }
 
@@ -512,6 +513,7 @@ runtime::RunResult Application::advance_plugins() {
     dispatch_event(plugins_,interactions_,run_log_.get());
     interactions_.advance();
     advance_dialogue_queue();
+    if (main_messages_) main_messages_->advance_letters();
     const auto mail = mailbox_intake_.advance();
     if (main_messages_) main_messages_->review_idle_task(mail==MailboxIntakeResult::idle && !conversation_.busy() &&
         conversation_.accepting() && conversation_.display().queue.empty());

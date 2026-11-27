@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>9) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>10) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -116,6 +116,11 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "CREATE TABLE IF NOT EXISTS child_note(id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,event TEXT NOT NULL,topic TEXT NOT NULL,"
             "content TEXT NOT NULL,source INTEGER NOT NULL,UNIQUE(owner,event));"
             "CREATE INDEX IF NOT EXISTS child_topic ON child_note(owner,topic,id DESC); PRAGMA user_version=9");
+        if (previous<10) sql(db,"CREATE TABLE IF NOT EXISTS child_letter(id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,"
+            "exchange TEXT NOT NULL,phase TEXT NOT NULL,signature TEXT NOT NULL,envelope TEXT NOT NULL,source INTEGER NOT NULL,"
+            "received INTEGER NOT NULL DEFAULT 0,seen INTEGER NOT NULL DEFAULT 0,UNIQUE(owner,exchange,phase));"
+            "CREATE INDEX IF NOT EXISTS letter_pending ON child_letter(id) WHERE received=0;"
+            "CREATE INDEX IF NOT EXISTS letter_inbox ON child_letter(id) WHERE received=1 AND seen=0; PRAGMA user_version=10");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

@@ -32,6 +32,20 @@ struct Subagents::Slot {
     std::optional<ChildBinding> memory;
     std::string topic;
     bool outward=false, reset_memory_history=false;
+    std::string exchange,letter_persona;
+    unsigned delivery_mode=0;
+    std::uint64_t exchange_start=0;
+    bool delivered=false, permission_closed=false;
+    // 只根据本交换开始后原会话的实际退出状态给结束信定性。
+    std::string_view outcome() const {
+        if (request<=exchange_start) return {};
+        switch (phase) {
+        case SubagentPhase::succeeded: return "succeeded";
+        case SubagentPhase::cancelled: return "cancelled";
+        case SubagentPhase::failed: return "failed";
+        default: return {};
+        }
+    }
     std::uint64_t projected_receipt = 0, pending_receipt = 0;
 };
 struct Subagents::WorkSlot {
@@ -59,7 +73,7 @@ Subagents::~Subagents() = default;
 
 // 替换主档案时先撤销以前一切持久绑定。
 void Subagents::bind_memory(std::shared_ptr<MessageStore> store) {
-    if (memory_!=store) for (auto& slot : slots_) if (slot && slot->memory) slot->closing=true;
+    if (memory_!=store) for (auto& slot : slots_) if (slot && slot->memory) invalidate_memory(slot->memory->owner);
     memory_=std::move(store);
 }
 
@@ -89,9 +103,35 @@ void Subagents::select_topic(runtime::DomainId owner,runtime::DomainId id,std::s
 void Subagents::invalidate_memory(std::int64_t child,std::string_view source) {
     for (auto& slot : slots_) if (slot && slot->memory && (slot->memory->owner==child ||
         (!source.empty() && slot->memory->shared_source==source))) {
-        slot->closing=true; slot->queued.reset(); slot->answer.clear();
+        slot->closing=true; slot->permission_closed=true; slot->queued.reset(); slot->answer.clear();
         if (slot->active) slot->active->request_cancel(runtime::CancelReason::owner_stop);
     }
+}
+
+// 用本子库的交付号建立生命周期信件，重启后沿用原信；同一在途交付只由一个会话持有。
+std::uint64_t Subagents::begin_letter(runtime::DomainId owner,runtime::DomainId id,std::string exchange,unsigned mode,bool persona) {
+    auto& slot=find(owner,id);
+    if (!slot.memory || slot.closing || stopping_ || slot.queued || slot.active ||
+        (!slot.exchange.empty() && !slot.delivered && slot.exchange!=exchange)) throw std::invalid_argument("letter: busy binding");
+    for (const auto& other : slots_) if (other && other.get()!=&slot && other->memory && other->memory->owner==slot.memory->owner &&
+        other->exchange==exchange && !other->delivered && !other->permission_closed) throw std::invalid_argument("letter: active exchange");
+    const auto style=persona ? persona_.version : "";
+    const auto n=memory_->post_letter(slot.memory->owner,exchange,mode,style,true,"started",{},{},0);
+    if (slot.exchange!=exchange) {
+        slot.delivered=memory_->letter_finished(slot.memory->owner,exchange); slot.exchange_start=slot.request;
+        slot.exchange=std::move(exchange); slot.delivery_mode=mode; slot.letter_persona=style; slot.reset_memory_history=true;
+    }
+    if (letter_ready_) letter_ready_();
+    return n;
+}
+// 由真实退出状态证明任务已经结束，语义结果以发信人的报告单独交付。
+std::uint64_t Subagents::finish_letter(runtime::DomainId owner,runtime::DomainId id,std::string summary,std::string body,std::uint64_t note) {
+    auto& slot=find(owner,id);
+    if (!slot.memory || slot.exchange.empty() || slot.closing || stopping_ || slot.queued || slot.active)
+        throw std::invalid_argument("letter: inactive exchange");
+    const auto n=memory_->post_letter(slot.memory->owner,slot.exchange,slot.delivery_mode,slot.letter_persona,false,
+        slot.outcome(),summary,body,note);
+    slot.delivered=true; if (letter_ready_) letter_ready_(); return n;
 }
 
 // 在独立槽位内创建上下文并签发原会话地址。
@@ -129,6 +169,7 @@ Subagents::WorkSlot* Subagents::work_slot(runtime::DomainId owner, runtime::Doma
 // 步骤：核对身份与空闲 → 校验正文和工具范围 → 发布排队状态。
 std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, SubagentInput input) {
     auto& slot = find(owner,id);
+    if (slot.delivered) throw std::invalid_argument("letter: exchange already finished");
     if (input.frame && !slot.closing && !stopping_) {
         const auto& ledger = slot.pending_facts ? *slot.pending_facts : slot.facts;
         if (const auto original = ledger.prior(input)) return original;
@@ -236,7 +277,7 @@ void Subagents::close(runtime::DomainId owner, runtime::DomainId id) { find(owne
 void Subagents::close_owner(runtime::DomainId owner) noexcept {
     for (auto& ledger : work_slots_) if (ledger && ledger->owner == owner) ledger.reset();
     for (auto& slot : slots_) if (slot && slot->owner == owner) {
-        if (slot->phase != SubagentPhase::running) { slot.reset(); continue; }
+        if (slot->phase != SubagentPhase::running && (slot->exchange.empty() || slot->delivered || slot->permission_closed)) { slot.reset(); continue; }
         slot->closing = true;
         slot->queued.reset();
     }
@@ -272,6 +313,10 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     options.version_labels.control_extension = snapshot.version;
     options.system_instructions = std::move(input.instructions);
     persona_.apply(options,input.player_facing ? agent::OutputRoute::plugin_player : agent::OutputRoute::plugin_internal);
+    if (!slot.letter_persona.empty()) {
+        options.prompt_rules->style=persona_.instructions;
+        options.version_labels.persona_profile=slot.letter_persona;
+    }
     options.extension = plugins::plugin_controls(snapshot,slot.owner);
     options.text_hook = plugins::plugin_text_hooks(snapshot,slot.owner);
     options.exit_observer = plugins::plugin_exit_hook(snapshot);
@@ -363,6 +408,14 @@ void Subagents::advance() {
             }
         }
         if (slot->closing && slot->session.closed()) {
+            if (!slot->exchange.empty() && !slot->delivered && !slot->permission_closed) {
+                const auto outcome=slot->outcome();
+                try {
+                    memory_->post_letter(slot->memory->owner,slot->exchange,slot->delivery_mode,slot->letter_persona,false,
+                        outcome.empty() ? "closed_without_result" : outcome,{},{},0);
+                    slot->delivered=true; if (letter_ready_) letter_ready_();
+                } catch (const std::runtime_error&) { continue; }
+            }
             if (auto* ledger = work_slot(slot->owner,slot->session.id())) ledger->retired = true;
             slot.reset();
         }

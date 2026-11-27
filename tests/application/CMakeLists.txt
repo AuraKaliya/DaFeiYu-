@@ -60,6 +60,9 @@ add_dependencies(dfy_child_memory_tests dfy_status_example dfy_tools_fixture)
 add_test(NAME app.child_memory COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/child_memory.jsonl" "${PROJECT_BINARY_DIR}/tests/child-memory/$<CONFIG>")
 set_tests_properties(app.child_memory PROPERTIES TIMEOUT 60)
+add_test(NAME app.child_letters COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/child_letters.jsonl" "${PROJECT_BINARY_DIR}/tests/child-letters/$<CONFIG>")
+set_tests_properties(app.child_letters PROPERTIES TIMEOUT 60)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

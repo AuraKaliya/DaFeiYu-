@@ -38,7 +38,7 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,6,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,7,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -53,8 +53,9 @@ void MainMessages::register_memory_tools() {
         "取一至三个能区分对象、动作或同义措辞的主题词，也可单独填任务号或版本号。主题只查当前看法。ambiguous 时请主人说清对象。"
         "问现场现在怎样需新采样，只问一次行动查 tasks。发现反例应说明原判断的局限。"
         "claim 是我目前或当时的理解，facts 才是实际观察。区分 current、challenged、superseded，指出反例并引用行动和读回，"
-        "previousReference 可追溯旧看法。nextOffset 可按证据条数翻页。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
+        "previousReference 可追溯旧看法。nextOffset 可按证据条数翻页。子 Agent 来信用 letters，主题填待收、交付号或原信号；"
+        "摘要和正文保留原作者，bodyRef、noteRef 展开已交付副本。读懂待收的信后用 memory_ack 按号签收。",
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -102,13 +103,15 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto view = args.value("view",std::string{"current"});
         const bool own = view=="episodes" || view=="why" || view=="change";
         const auto take = count>=limit ? limit : count.get<unsigned>();
-        if (args.contains("offset") && ((view!="tasks" && view!="understanding") || args.at("offset")<0))
+        if (args.contains("offset") && ((view!="tasks" && view!="understanding" && view!="letters") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
-        const auto result = view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
+        const auto result = view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
+            view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
             view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
             own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
         const auto size = result.at("items").size();
-        search_result_ = view=="understanding" ? understanding_source(call.attempt.step.run.sequence,result) :
+        search_result_ = view=="letters" ? letter_source(call.attempt.step.run.sequence,result) :
+            view=="understanding" ? understanding_source(call.attempt.step.run.sequence,result) :
             view=="tasks" ? task_source(call.attempt.step.run.sequence,result) :
             own ? experience_source(call.attempt.step.run.sequence,result) :
             matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
@@ -186,6 +189,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     status.sample = [channel=weak_from_this(),other=std::move(status.sample)] {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
+        if (current) if (auto notice=current->inbox_notice()) sources.push_back(std::move(*notice));
         if (current && current->search_result_) sources.push_back(*current->search_result_);
         return sources;
     };

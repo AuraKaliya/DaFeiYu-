@@ -59,6 +59,10 @@ class PluginAgents {
         const std::string& topic,const std::string& content) = 0;
     // 为以后回合装配本会话获准的主题，业务忙碌时拒绝修改。
     virtual void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) = 0;
+    // 在持久会话内建立带稳定交付号的启动信件。
+    virtual std::uint64_t begin_letter(runtime::DomainId owner,runtime::DomainId session,std::string exchange,unsigned mode,bool persona)=0;
+    // 根据实际退出回执将插件明确导出的材料交给本体信箱。
+    virtual std::uint64_t finish_letter(runtime::DomainId owner,runtime::DomainId session,std::string summary,std::string body,std::uint64_t note)=0;
     // 接纳一个有界回合供后续宿主推进。
     virtual std::uint64_t submit(runtime::DomainId owner, runtime::DomainId session, SubagentInput input) = 0;
     // 只接纳同一实例及原工作号的回执，重复版本返回原接纳号。

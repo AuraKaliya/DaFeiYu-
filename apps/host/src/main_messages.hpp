@@ -1,6 +1,7 @@
 #pragma once
 #include "message_store.hpp"
 #include <dafeiyu/run_identity.hpp>
+#include <dafeiyu/mailboxes.hpp>
 #include "conversation.hpp"
 #include <map>
 #include <deque>
@@ -19,6 +20,12 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
         RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection);
+    // 释放本档案为持久信件开设的进程期通知地址。
+    ~MainMessages();
+    // 子会话寄信后唤醒送信泵。
+    void letters_ready() noexcept { letters_due_=true; }
+    // 用真实信箱传递一个稳定信件指针，正文始终由接收方受控读取。
+    void advance_letters();
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
     bool prepare_output(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 在每个主会话入口固定受众；主人私聊可按主题或稳定身份读取一份原件。
@@ -71,6 +78,12 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> speak(const agent::ToolInvocation& invocation);
     // 注册主人私聊中的记忆判断与按需检索契约。
     void register_memory_tools();
+    // 注册对本轮实际收到的信件进行显式签收的私聊工具。
+    void register_letter_tools();
+    // 从原主档案信箱装配带发信者及内容类型的证据。
+    agent::DecisionStatusSource letter_source(std::uint64_t turn,const nlohmann::json& selection) const;
+    // 仅在主人私聊的实时状态中提示仍有待签收来信。
+    std::optional<agent::DecisionStatusSource> inbox_notice() const;
     // 注册私聊中实际作出选择和比较已见亲历的两个入口。
     void register_experience_tools();
     // 将亲历选择作为真实答复交付，当前原话与投递一起核实。
@@ -110,6 +123,10 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;
     bool idle_review_due_ = true;
+    bool letters_due_=true;
+    std::int64_t letter_in_flight_=0;
+    runtime::DomainId letter_sender_=0;
+    events::MailboxId letter_box_{};
     std::shared_ptr<TaskReflection> reflection_;
     std::uint64_t search_step_ = 0;
     SoftwareLog* log_;
