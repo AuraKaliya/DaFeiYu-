@@ -1,5 +1,4 @@
-#include "message_store.hpp"
-#include <winsqlite/winsqlite3.h>
+#include "message_store_db.hpp"
 #include <dafeiyu/utf8.hpp>
 #include <algorithm>
 #include <charconv>
@@ -7,51 +6,9 @@
 #include <mutex>
 
 namespace dfy::app {
+using namespace message_db;
 namespace {
 using Json = nlohmann::json;
-// 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。
-void check(int code) {
-    if (code!=SQLITE_OK) throw std::runtime_error("messages: SQLite error "+std::to_string(code));
-}
-// 执行宿主内置的固定 SQL。
-void sql(sqlite3* db, const char* text) { check(sqlite3_exec(db,text,nullptr,nullptr,nullptr)); }
-
-struct Transaction {
-    sqlite3* db;
-    // 在执行检查之前取得写入序列，确保并发重试看到已提交结果。
-    explicit Transaction(sqlite3* connection) : db(connection) { sql(db,"BEGIN IMMEDIATE"); }
-    // 失败或异常离开时撤销本次写入。
-    ~Transaction() { if (db) sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr); }
-    // 写盘成功后转移到已完成状态，提交失败仍保留回滚责任。
-    void commit() { sql(db,"COMMIT"); db = nullptr; }
-};
-struct Statement {
-    sqlite3_stmt* stmt = nullptr;
-    // 预编译一条固定语句，由本作用域独占游标。
-    Statement(sqlite3* db, const char* text) { check(sqlite3_prepare_v2(db,text,-1,&stmt,nullptr)); }
-    // 归还语句和它持有的读取位置。
-    ~Statement() { sqlite3_finalize(stmt); }
-    // 将带长度的 UTF-8 数据复制为 SQL 参数。
-    void bind(int column, std::string_view value) {
-        check(sqlite3_bind_text64(stmt,column,value.data(),value.size(),SQLITE_TRANSIENT,SQLITE_UTF8));
-    }
-    // 不经浮点格式转换绑定消息或修订号。
-    void bind(int column, std::int64_t value) { check(sqlite3_bind_int64(stmt,column,value)); }
-    // 读取下一行并区分正常结束与存储失败。
-    bool next() {
-        const int result = sqlite3_step(stmt);
-        if (result!=SQLITE_ROW && result!=SQLITE_DONE) check(result);
-        return result==SQLITE_ROW;
-    }
-    // 读取本行非空的整数列。
-    std::int64_t number(int column) const { return sqlite3_column_int64(stmt,column); }
-    // 在游标前进前复制数据库给出的 UTF-8 文本。
-    std::string text(int column) const {
-        const auto* value = sqlite3_column_text(stmt,column);
-        if (!value) throw std::runtime_error("messages: missing stored text");
-        return {reinterpret_cast<const char*>(value),static_cast<std::size_t>(sqlite3_column_bytes(stmt,column))};
-    }
-};
 
 // 从共享列顺序解码一份持久消息和指定修订的回执。
 StoredMessage row(const Statement& query) {
@@ -90,13 +47,6 @@ std::int64_t append_receipt(sqlite3* db, std::int64_t id, const Json& receipt) {
 }
 }
 
-struct MessageStore::State {
-    sqlite3* db = nullptr;
-    std::mutex mutex;
-    std::string conversation;
-    // 关闭此实例打开的唯一数据库句柄。
-    ~State() { if (db) sqlite3_close_v2(db); }
-};
 
 // 默认回滚日志和完整同步使原文接纳先于业务交付，逻辑会话号只在新库签发。
 // 步骤：打开目录内的数据库 → 识别版本 → 原子建表与签发身份 → 读取固定身份。
@@ -110,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>5) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>6) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -136,6 +86,10 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "CREATE INDEX experience_topic ON main_experience(topic,message DESC) WHERE active=1;"
             "CREATE TABLE experience_review(topic TEXT NOT NULL,kind TEXT NOT NULL,anchor INTEGER NOT NULL,later INTEGER NOT NULL,"
             "evidence TEXT NOT NULL,interpretation TEXT NOT NULL,PRIMARY KEY(topic,kind,anchor,later)); PRAGMA user_version=5");
+        if (previous<6) sql(db,"CREATE TABLE task_memory(id INTEGER PRIMARY KEY,origin TEXT NOT NULL UNIQUE,goal TEXT NOT NULL,tool TEXT NOT NULL,"
+            "body TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,reason TEXT NOT NULL,signature TEXT NOT NULL,review TEXT NOT NULL DEFAULT '');"
+            "CREATE INDEX task_review_queue ON task_memory(id) WHERE active=1 AND reason<>'' AND review='';"
+            "CREATE INDEX task_transition ON task_memory(signature) WHERE active=1 AND signature<>''; PRAGMA user_version=6");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -203,6 +157,24 @@ std::string MessageStore::last_memory_source() const {
 // 步骤：核对身份与原件 → 幂等改变索引 → 同一事务内提交权限修订。
 MemoryChange MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic,
     std::string_view excerpt, std::string_view kind) {
+    const auto task_space = conversation()+"/task";
+    if (identity.starts_with(task_space+"/")) {
+        if (topic) throw std::invalid_argument("memory: task identity is already assigned");
+        const auto id = memory_message(identity,task_space);
+        std::lock_guard lock(state_->mutex);
+        auto* db = state_->db;
+        Transaction tx(db);
+        Statement revoke(db,"UPDATE task_memory SET active=0,review='' WHERE active=1 AND id=?");
+        revoke.bind(1,id); revoke.next();
+        const bool changed = sqlite3_changes(db)!=0;
+        Statement known(db,"SELECT 1 FROM task_memory WHERE id=?");
+        known.bind(1,id);
+        if (!known.next()) throw std::invalid_argument("memory: unknown task");
+        if (changed) sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
+        Statement revision(db,"SELECT memory_revision FROM conversation");
+        revision.next(); tx.commit();
+        return {revision.number(0),changed,false};
+    }
     const auto id = memory_message(identity,conversation());
     if (topic) check_memory_topic(*topic);
     std::lock_guard lock(state_->mutex);

@@ -104,6 +104,10 @@ std::vector<BatchToolSnapshot> TurnRequest::tool_steps() const {
     for (const auto& batch : batches_) { auto values = batch->snapshot(); result.insert(result.end(),values.begin(),values.end()); }
     return result;
 }
+// 沿原批次读取同一回合的行动与回执，不触发再次执行。
+void TurnRequest::visit_tool_evidence(const ToolCaptureSink& visitor) const {
+    for (const auto& batch : batches_) batch->visit_evidence(visitor);
+}
 // 按宿主候选身份查询完整工具回执，值副本不持有原生代码或工作。
 std::optional<ToolResult> TurnRequest::tool_result(runtime::DomainId candidate) const {
     for (const auto& batch : batches_) if (auto value = batch->result(candidate)) return value;

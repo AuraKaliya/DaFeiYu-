@@ -117,6 +117,8 @@ static dfy_v2_status DFY_V2_CALL poll(dfy_v2_instance* raw, dfy_v2_tool_ticket t
             else { ++instance->value; ++effects; work->effect = DFY_V2_TOOL_APPLIED; }
         }
         (void)snprintf(work->output,sizeof(work->output),"%llu",(unsigned long long)instance->value);
+        // 模拟工作已经派发、提供方却无法确认实效的终态回执。
+        if (mode == 7 && work->increment) { work->effect = DFY_V2_TOOL_UNKNOWN; work->succeeded = 0; mode = 0; }
         if (work->cancel) work->exited = 1;
     } else work->exited = 1;
     if (mode == 6) { work->exited = 1; mode = 1; }

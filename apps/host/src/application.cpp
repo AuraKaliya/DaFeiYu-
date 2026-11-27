@@ -206,7 +206,9 @@ agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, cons
 
     if (!workspace.empty())
         options.decision_status = agent::DecisionStatusOptions{"main",[source=workspace_environment(workspace)] { return std::vector{source}; }};
-    const auto accepted = conversation_.submit(prompt,std::move(options));
+    const auto scope = *options.tools;
+    const auto accepted = conversation_.submit(prompt,std::move(options),false,nullptr,DialogueAudience::private_task);
+    if (main_messages_) main_messages_->watch_task(accepted,prompt,tool_id,prepared.instance->generation(),scope);
     tool_registration_.emplace(ToolRegistration{accepted.turn,prepared.instance,std::move(prepared.registration)});
     return accepted;
 }
@@ -243,7 +245,8 @@ agent::TurnDiagnostics Application::submit_verified(const std::string& reader, c
 
     const auto goal = prompt+"\nWithin one plan step, make exactly three separate tool calls in this order: "+
         reader+", "+change+", "+reader+". Then summarize the outcome. The host verifies the final state.";
-    const auto accepted = conversation_.submit(goal,std::move(options));
+    const auto accepted = conversation_.submit(goal,std::move(options),false,nullptr,DialogueAudience::private_task);
+    if (main_messages_) main_messages_->watch_task(accepted,prompt,change,prepared.instance->generation(),write_scope,expected);
     tool_registration_.emplace(ToolRegistration{accepted.turn,prepared.instance,std::move(prepared.registration)});
     verification_.emplace(VerificationReport{{accepted.session,accepted.turn},{}});
     verifier_ = std::move(verifier);
@@ -507,6 +510,8 @@ runtime::RunResult Application::advance_plugins() {
     interactions_.advance();
     advance_dialogue_queue();
     const auto mail = mailbox_intake_.advance();
+    if (main_messages_ && mail==MailboxIntakeResult::idle && !conversation_.busy() && conversation_.accepting() &&
+        conversation_.display().queue.empty()) main_messages_->review_idle_task();
     return mail == MailboxIntakeResult::rejected ? runtime::RunResult::failed : plugins;
 }
 

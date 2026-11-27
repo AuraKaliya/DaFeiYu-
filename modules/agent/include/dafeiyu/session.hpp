@@ -120,6 +120,8 @@ class TurnRequest {
     std::vector<ModelContextSnapshot> model_contexts() const { return model_contexts_; }
     // 复制各批次工具的状态与策略决定，不持有原生代码。
     std::vector<BatchToolSnapshot> tool_steps() const;
+    // 按批次顺序向可信宿主同步借出工具提议及对应的真实回执。
+    void visit_tool_evidence(const ToolCaptureSink& visitor) const;
     // 从已返回的原模型响应与执行器原件核对调用数量，可按一次响应读取。
     ToolCallCounts tool_counts(std::optional<AttemptId> response = {}) const noexcept;
     // 为可信验证入口复制已退出工具的原回执；普通追踪不导出正文，调用不读取模型解释。

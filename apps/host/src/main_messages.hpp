@@ -3,6 +3,7 @@
 #include <dafeiyu/run_identity.hpp>
 #include "conversation.hpp"
 #include <map>
+#include <deque>
 
 namespace dfy::app {
 class Application;
@@ -21,6 +22,13 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     bool prepare_output(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
     // 在每个主会话入口固定受众；主人私聊可按主题或稳定身份读取一份原件。
     void prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
+    // 绑定本体直接接纳的工具任务，子会话与信箱转述无此入口。
+    void watch_task(const agent::TurnDiagnostics& run, const std::string& goal, const std::string& tool,
+        runtime::DomainId provider, const agent::ToolSnapshot& scope, std::optional<std::string> expected = {});
+    // 只在原运行实际退出后固化计划、工具动作与独立的验证回执。
+    void task_exited(const agent::TurnRequest& run);
+    // 前台工作及信箱优先，空闲推进最多整理一份仍获准的任务亲历。
+    void review_idle_task();
     // 管理终端查询可收录的最近原话身份。
     std::string last_memory_source() const { return store_->last_memory_source(); }
     // 仅受信管理入口可收录或撤回当前档案原件的读取权。
@@ -66,6 +74,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> review_experience(const agent::ToolInvocation& invocation);
     // 投影亲历及其解释，历史快照只保留本次读取的数量。
     agent::DecisionStatusSource experience_source(std::uint64_t turn, const nlohmann::json& selection) const;
+    // 投影本轮获准读取的任务、原行动或原回执，禁止历史快照重新展开。
+    agent::DecisionStatusSource task_source(std::uint64_t turn, const nlohmann::json& selection) const;
     // 封装记忆工具的确定回执及效果。
     static std::unique_ptr<agent::ToolWork> memory_receipt(nlohmann::json value, agent::ToolEffect effect, bool ok = true);
     // 核实原回合与实际收件后，根据模型判断收录当前原话。
@@ -90,6 +100,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     bool owner_memory_turn_ = false;
     std::optional<std::int64_t> incoming_memory_;
     std::optional<agent::DecisionStatusSource> search_result_;
+    std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
+    std::deque<nlohmann::json> unsaved_tasks_;
+    bool idle_review_due_ = true;
     std::uint64_t search_step_ = 0;
     SoftwareLog* log_;
     RunLog* trace_;

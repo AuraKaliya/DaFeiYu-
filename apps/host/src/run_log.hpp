@@ -9,6 +9,8 @@
 
 namespace dfy::plugins { struct SubagentWorkFact; }
 namespace dfy::app {
+// 从工具执行器的原件编码行动、实际派发和回执，供 Trace 与本体亲历共用。
+nlohmann::json tool_capture_fact(std::string_view source, const agent::ToolCapture& value);
 class ToolContractTrace;
 // 单一宿主线程写入的局内日志，与运行和原生操作的结算责任独立。
 class RunLog final : public std::enable_shared_from_this<RunLog> {

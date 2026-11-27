@@ -37,7 +37,7 @@ void MainMessages::register_memory_tools() {
         "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,3,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,4,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -46,8 +46,10 @@ void MainMessages::register_memory_tools() {
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
         "reviewDue 表示有待比较的原话。回顾自己实际作过的选择用 episodes，topics 可填主题或投递原件号。"
         "why 查现在对过去的解释，change 查相似情境下实际换过的选择。用一个主题或当时那场的投递号查配套依据，need 用 multiple，count 给三。"
-        "从 memory.experiences 区分当时的感受与后来推测，说明哪几次经历支持判断并引用 reference。limited 表示材料未全部装入。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change"]}},"required":["topics","count","need"],"additionalProperties":false})"},
+        "从 memory.experiences 区分当时感受与后来推测。查本体工具任务用 tasks，填目标词、工具号或原件号。memory.tasks 区分 goal、plan、"
+        "实际派发 execution、工具 effect 与独立读回 verification。引用 actionRef、receiptRef 和已有的 readbackRef。按号展开原件，"
+        "nextAction 可追到其他提议，长原文下轮用 nextOffset 续查。limited 表示材料未全部装入。",
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -95,9 +97,13 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto view = args.value("view",std::string{"current"});
         const bool own = view=="episodes" || view=="why" || view=="change";
         const auto take = count>=limit ? limit : count.get<unsigned>();
-        const auto result = own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
+        if (args.contains("offset") && (view!="tasks" || args.at("offset")<0))
+            throw std::invalid_argument("memory: invalid offset");
+        const auto result = view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
+            own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
         const auto size = result.at("items").size();
-        search_result_ = own ? experience_source(call.attempt.step.run.sequence,result) :
+        search_result_ = view=="tasks" ? task_source(call.attempt.step.run.sequence,result) :
+            own ? experience_source(call.attempt.step.run.sequence,result) :
             matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
         search_step_ = call.attempt.step.sequence;
         return memory_receipt({{"state",size ? "ready" : result.at("limited")==true ? "limited" : "no_match"},
@@ -144,9 +150,15 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     memory_revision_ = store_->memory_revision();
     search_result_.reset();
     owner_memory_turn_ = audience==DialogueAudience::owner;
-    if (!memory_revision_ && !reply_tools_) return;
+    if (!memory_revision_ && !reply_tools_ && audience!=DialogueAudience::private_task && memory_binding_=="main") return;
     auto& status = *options.decision_status;
     if (memory_revision_) status.binding = std::string(owner_memory_turn_ ? "main/owner/" : "main/other/") + std::to_string(memory_revision_);
+    // 任务从独立上下文起步；主人可接着追问刚退出的任务，房间和撤权后的新修订另起上下文。
+    const auto task_prefix = "main/task/"+std::to_string(std::max<std::int64_t>(1,memory_revision_))+"/";
+    if (audience==DialogueAudience::private_task) {
+        const auto previous = app_.conversation().status();
+        status.binding = task_prefix+std::to_string(previous ? previous->turn+1 : 1);
+    } else if (owner_memory_turn_ && memory_binding_.starts_with(task_prefix)) status.binding = memory_binding_;
     if (memory_binding_ != status.binding) {
         const auto previous = app_.conversation().status();
         clear_context(previous ? previous->turn : 0);

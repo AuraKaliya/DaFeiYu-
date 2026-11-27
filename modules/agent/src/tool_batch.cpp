@@ -264,6 +264,14 @@ std::vector<BatchToolSnapshot> ToolBatch::snapshot() const {
     }
     return result;
 }
+// 逐项借出原参数、身份和当前工作，只有终结的候选或实际退出的工作携带终态回执。
+void ToolBatch::visit_evidence(const ToolCaptureSink& visitor) const {
+    for (const auto& entry : entries_) {
+        const auto phase = entry.filled || (entry.request && entry.request->exit()->state()!=runtime::OperationState::pending)
+            ? ToolCapturePhase::exited : entry.request ? ToolCapturePhase::admitted : ToolCapturePhase::candidate;
+        visitor({phase,entry.metadata,entry.call,entry.request.get()});
+    }
+}
 // 可信验证读取原工具回执，不从模型转述或未完成占位中推测实际结果。
 std::optional<ToolResult> ToolBatch::result(runtime::DomainId candidate) const {
     for (const auto& entry : entries_) if (entry.metadata.candidate == candidate && entry.request &&

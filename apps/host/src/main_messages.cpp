@@ -29,6 +29,10 @@ void MainMessages::publish(std::int64_t id, const Json& receipt) {
 // 在有限频率下补写积压的业务结果。
 void MainMessages::flush() {
     if (std::chrono::steady_clock::now()<retry_at_) return;
+    if (!unsaved_tasks_.empty()) {
+        try { store_->save_task(unsaved_tasks_.front()); unsaved_tasks_.pop_front(); idle_review_due_ = true; }
+        catch (const std::runtime_error&) { retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250); }
+    }
     if (!pending_.empty() && app_.conversation().accepting()) {
         const auto& display = app_.conversation().display();
         if (pending_.begin()->second.envelope.at("route")!="send" || (!app_.conversation().busy() && (display.queue.empty() || display.queue_paused))) {
@@ -144,7 +148,7 @@ void MainMessages::restore() {
 // 只等待已经发生的写盘责任，尚未执行的原话已在待办表中。
 void MainMessages::finish() {
     const auto end = std::chrono::steady_clock::now()+std::chrono::seconds(4);
-    while (!retry_.empty() || !replies_.empty()) {
+    while (!retry_.empty() || !replies_.empty() || !unsaved_tasks_.empty()) {
         flush();
         if (std::chrono::steady_clock::now()>=end) throw std::runtime_error("messages: verified results could not be saved");
         std::this_thread::sleep_for(std::chrono::milliseconds(10));

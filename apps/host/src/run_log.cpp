@@ -84,7 +84,7 @@ agent::RunCaptureSinks RunLog::sinks(std::string source, bool compare_projection
 
 // 串联候选参数、已接纳调用和原退出回执。
 // 步骤：写入候选身份 → 区分派发状态 → 附上实际结果或拒绝事实。
-void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
+Json tool_capture_fact(std::string_view source, const agent::ToolCapture& value) {
     const auto& entry = value.candidate;
     const auto attempt = entry.attempt;
     const auto state = value.request ? value.request->operation()->state() : entry.result;
@@ -105,7 +105,11 @@ void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
         item["error"] = faults.at(static_cast<std::size_t>(outcome.error));
         item["fault"] = faults.at(static_cast<std::size_t>(request ? request->fault() : entry.fault));
     }
-    append(tool_phases.at(static_cast<std::size_t>(value.phase)),std::move(item));
+    return item;
+}
+// 以阶段名把同一份原工作证据写入诊断日志。
+void RunLog::tool(std::string_view source, const agent::ToolCapture& value) {
+    append(tool_phases.at(static_cast<std::size_t>(value.phase)),tool_capture_fact(source,value));
 }
 
 // 在每条记录上固定顺序和相对时钟，失败后停止写入并报告证据缺口。

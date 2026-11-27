@@ -45,6 +45,12 @@ class MessageStore {
     std::vector<StoredMessage> unfinished(std::int64_t after) const;
   private:
     friend class MainMessages;
+    // 按原运行身份一次性提交任务事实及待复盘原因。
+    void save_task(const nlohmann::json& task);
+    // 原子取一份仍获准的待办，以原回执整理复盘结论。
+    bool review_idle_task();
+    // 以主题或稳定原件号查回任务、行动或回执，长原文按字节分段。
+    nlohmann::json search_tasks(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const;
     // 返回当前档案的记忆授权修订，零表示从未收录原话。
     std::int64_t memory_revision() const;
     // 在一个事务内按原件身份收录或撤权，重复操作保留修订号。

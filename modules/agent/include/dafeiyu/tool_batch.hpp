@@ -46,6 +46,8 @@ class ToolBatch {
     std::uint64_t progress_fingerprint() const;
     // 返回只读值快照，不把工作、参数或输出持有交给观察者。
     std::vector<BatchToolSnapshot> snapshot() const;
+    // 同步借出原提议和最后可证的工具阶段，保留取消后才退出的工作回执。
+    void visit_evidence(const ToolCaptureSink& visitor) const;
     // 复制已实际退出候选的原工具回执正文；尚未退出或未接纳返回空，不推进执行。
     std::optional<ToolResult> result(runtime::DomainId candidate) const;
   private:

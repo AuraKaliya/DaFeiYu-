@@ -41,6 +41,12 @@ add_test(NAME app.tool_verification COMMAND dfy_tool_verification_tests "$<TARGE
 add_test(NAME app.replay_task COMMAND dfy_tool_verification_tests "$<TARGET_FILE_DIR:dfy_status_example>"
   "${PROJECT_BINARY_DIR}/tests/tool-verification-replay/$<CONFIG>" --capture app_task_reconnect)
 set_tests_properties(app.tool_verification app.replay_task PROPERTIES TIMEOUT 15)
+dfy_test_executable(dfy_task_memory_tests task_memory.cpp)
+add_dependencies(dfy_task_memory_tests dfy_status_example dfy_tools_fixture)
+target_link_libraries(dfy_task_memory_tests PRIVATE dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.task_memory COMMAND dfy_task_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/tasks.jsonl" "${PROJECT_BINARY_DIR}/tests/task-memory/$<CONFIG>")
+set_tests_properties(app.task_memory PROPERTIES TIMEOUT 90)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

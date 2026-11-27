@@ -13,7 +13,8 @@ add_library(dfy_application STATIC
   src/dialogue_queue.cpp src/event_dispatch.cpp src/event_dispatch.hpp src/interaction_routes.cpp
   src/interaction_routes.hpp src/mail_reply_tool.cpp src/mail_reply_tool.hpp src/mailbox_intake.cpp
   src/mailbox_intake.hpp src/mailbox_view.cpp src/mailbox_view.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
-  src/message_store.cpp src/message_store.hpp src/main_memory.cpp src/main_experience.cpp src/host_settings.cpp src/host_settings.hpp
+  src/message_store.cpp src/message_store.hpp src/main_memory.cpp src/main_experience.cpp src/main_task_memory.cpp src/host_settings.cpp src/host_settings.hpp
+  src/message_store_db.hpp src/task_store.cpp
   src/host_settings_file.cpp src/host_settings_file.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
   src/reply_delivery.hpp src/room_mailbox.cpp src/run_log.cpp src/run_log.hpp src/software_log.cpp
   src/software_log.hpp src/software_log_files.cpp src/software_log_files.hpp src/subagents.cpp

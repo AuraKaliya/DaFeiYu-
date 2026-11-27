@@ -186,6 +186,7 @@ std::optional<CompletedTurn> Conversation::advance() {
     update_display(status,completed);
     if (main_messages_) main_messages_->observe({status.session,status.turn},current_->inputs(),user_output_ && completed ? &*completed : nullptr);
     if (status.exit != OperationState::pending) {
+        if (main_messages_) main_messages_->task_exited(*current_);
         last_ = status;
         try { last_diagnostic_.emplace(capture_diagnostic()); diagnostic_error_ = {}; }
         catch (...) { last_diagnostic_.reset(); diagnostic_error_ = std::current_exception(); }
