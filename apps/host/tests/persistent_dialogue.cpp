@@ -94,8 +94,8 @@ void check_output_trace(const std::filesystem::path& path, const app::StoredMess
             const auto& last = messages.at(messages.size()-2);
             if (last.at("content")=="提前追问") {
                 const auto& tools = request.at("tools");
-                offered = tools.size()==4 && tools[0].at("name")=="main_reply" && tools[1].at("name")=="memory_note" &&
-                    tools[2].at("name")=="memory_search" && tools[3].at("name")=="status_read" &&
+                offered = tools.size()==5 && tools[0].at("name")=="main_reply" && tools[1].at("name")=="memory_note" &&
+                    tools[2].at("name")=="memory_search" && tools[3].at("name")=="memory_reflect" && tools[4].at("name")=="status_read" &&
                     status.at("items").empty() &&
                     Json::parse(tools[0].at("parameters").get<std::string>()).at("required")==Json::array({"text"}) &&
                     request.at("messages")[0].at("content").get<std::string>().find("main_reply")!=std::string::npos;
@@ -219,8 +219,9 @@ void verify_styles(const std::filesystem::path& root) {
         auto db = std::make_shared<app::MessageStore>(data);
         app::Application application({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& input) {
             headers.push_back(input.messages.front().content);
-            if (input.messages.front().source!=model::MessageSource::rules || input.tools.size()!=4 || input.tools[0].name!="main_reply" ||
-                input.tools[1].name!="memory_note" || input.tools[2].name!="memory_search" || input.tools[3].name!="status_read")
+            if (input.messages.front().source!=model::MessageSource::rules || input.tools.size()!=5 || input.tools[0].name!="main_reply" ||
+                input.tools[1].name!="memory_note" || input.tools[2].name!="memory_search" || input.tools[3].name!="memory_reflect" ||
+                input.tools[4].name!="status_read")
                 throw std::runtime_error("style changed granted tools");
             return model::Response{{model::Role::assistant,"相同的回执"}};
         }});

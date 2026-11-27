@@ -109,7 +109,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>3) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>4) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -127,6 +127,10 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         if (previous<3) sql(db,"ALTER TABLE conversation ADD COLUMN memory_revision INTEGER NOT NULL DEFAULT 0;"
             "CREATE TABLE personal_memory(message INTEGER PRIMARY KEY,topic TEXT NOT NULL,active INTEGER NOT NULL);"
             "CREATE INDEX active_memory_topic ON personal_memory(topic,message DESC) WHERE active=1; PRAGMA user_version=3");
+        if (previous<4) sql(db,"ALTER TABLE personal_memory ADD COLUMN kind TEXT NOT NULL DEFAULT '';"
+            "CREATE TABLE memory_review(message INTEGER PRIMARY KEY,series INTEGER NOT NULL,version INTEGER NOT NULL,"
+            "basis INTEGER NOT NULL,excerpt TEXT NOT NULL,event_utc INTEGER NOT NULL);"
+            "CREATE INDEX review_versions ON memory_review(series,version,message); PRAGMA user_version=4");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -192,8 +196,8 @@ std::string MessageStore::last_memory_source() const {
 }
 // 将记忆索引绑定不可变消息；撤权保留原件和墓碑，旧收录重试不能复活授权。
 // 步骤：核对身份与原件 → 幂等改变索引 → 同一事务内提交权限修订。
-std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic,
-    std::string_view excerpt) {
+MemoryChange MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic,
+    std::string_view excerpt, std::string_view kind) {
     const auto id = memory_message(identity,conversation());
     if (topic) check_memory_topic(*topic);
     std::lock_guard lock(state_->mutex);
@@ -212,8 +216,8 @@ std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identi
             throw std::invalid_argument("memory: excerpt differs from original");
     }
     if (topic && !exists) {
-        Statement add(db,"INSERT INTO personal_memory VALUES(?,?,1)");
-        add.bind(1,id); add.bind(2,*topic); add.next();
+        Statement add(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,?,1,?)");
+        add.bind(1,id); add.bind(2,*topic); add.bind(3,kind.empty() ? std::string_view("") : kind); add.next();
         changed = true;
     } else if (!exists || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
         throw std::invalid_argument("memory: unknown, revoked or conflicting original");
@@ -227,8 +231,67 @@ std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identi
     Statement revision(db,"SELECT memory_revision FROM conversation");
     revision.next();
     const auto result = revision.number(0);
+    bool due = false;
+    if (topic && !kind.empty()) {
+        Statement related(db,"SELECT 1 FROM personal_memory WHERE active=1 AND topic=? AND message<? "
+            "AND NOT EXISTS(SELECT 1 FROM memory_review WHERE message=?) LIMIT 1");
+        related.bind(1,*topic); related.bind(2,id); related.bind(3,id);
+        due = related.next();
+    }
     transaction.commit();
-    return {result,changed};
+    return {result,changed,due};
+}
+// 在同一事务核对双方原件，只允许沿当前版本增加依据或追加明确更正。
+// 步骤：验证次序和逐字依据 → 检查重试与版本头 → 原子登记来源及它所支持的修订。
+void MessageStore::reflect_memory(const Json& comparison) {
+    const auto prior = memory_message(comparison.at("prior").get<std::string>(),conversation());
+    const auto next = memory_message(comparison.at("later").get<std::string>(),conversation());
+    const bool replace = comparison.at("relation")=="replaces";
+    if (prior>=next) throw std::invalid_argument("memory: evidence order");
+    std::lock_guard lock(state_->mutex);
+    auto* db = state_->db;
+    Transaction tx(db);
+    std::string topic;
+    std::int64_t series = prior, version = prior, prior_utc = 0;
+    for (const auto id : {prior,next}) {
+        const auto excerpt = comparison.at(id==prior ? "priorExcerpt" : "laterExcerpt").get<std::string>();
+        Statement source(db,"SELECT p.topic,p.kind,m.envelope,m.utc,r.body FROM personal_memory p JOIN messages m ON m.id=p.message "
+            "JOIN receipts r ON r.rev=m.latest WHERE p.message=? AND p.active=1 AND m.source IN ('desktop','terminal')");
+        source.bind(1,id);
+        if (!source.next()) throw std::invalid_argument("memory: unavailable original");
+        const auto envelope = Json::parse(source.text(2));
+        const auto state = Json::parse(source.text(4)).at("state");
+        const auto utc = envelope.value("sourceUtcMs",source.number(3));
+        if ((state!="accepted" && state!="submitted") || envelope.at("sender")!="user" ||
+            excerpt.find_first_not_of(" \r\n\t")==excerpt.npos || excerpt.size()>384 ||
+            envelope.at("text").get<std::string>().find(excerpt)==std::string::npos)
+            throw std::invalid_argument("memory: unverified excerpt");
+        if (id==prior) { topic = source.text(0); prior_utc = utc; }
+        else if (utc<prior_utc || source.text(0)!=topic || (replace && !source.text(1).empty() && source.text(1)!="correction"))
+            throw std::invalid_argument("memory: different topic or unconfirmed correction");
+        Statement existing(db,"SELECT series,version,basis,excerpt FROM memory_review WHERE message=?");
+        existing.bind(1,id);
+        if (existing.next()) {
+            if (id==prior) {
+                if (existing.text(3)!=excerpt) throw std::invalid_argument("memory: different reviewed claim");
+                series = existing.number(0); version = existing.number(1);
+            }
+            else if (existing.number(0)!=series || existing.number(1)!=(replace ? next : version) ||
+                existing.number(2)!=prior || existing.text(3)!=excerpt) throw std::invalid_argument("memory: conflicting review");
+            continue;
+        }
+        if (id==next) {
+            Statement head(db,"SELECT max(CASE WHEN version<=?2 THEN version END),max(message),max(event_utc) "
+                "FROM memory_review WHERE series=?1");
+            head.bind(1,series); head.bind(2,next); head.next();
+            if (head.number(0)!=version || (replace && (head.number(1)>=next || head.number(2)>utc)))
+                throw std::invalid_argument("memory: stale comparison");
+        }
+        Statement insert(db,"INSERT INTO memory_review(message,series,version,basis,excerpt,event_utc) VALUES(?,?,?,?,?,?)");
+        insert.bind(1,id); insert.bind(2,series); insert.bind(3,id==next && replace ? next : version);
+        insert.bind(4,id==prior ? 0 : prior); insert.bind(5,excerpt); insert.bind(6,utc); insert.next();
+    }
+    tx.commit();
 }
 // 从获准索引回到同一份消息正文及渠道来源；同主题取最近的原消息。
 std::optional<StoredMessage> MessageStore::recall_memory(std::string_view selector) const {
@@ -241,38 +304,84 @@ std::optional<StoredMessage> MessageStore::recall_memory(std::string_view select
     std::lock_guard lock(state_->mutex);
     const std::string select = "SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM personal_memory p "
         "JOIN messages m ON m.id=p.message JOIN receipts r ON r.rev=m.latest WHERE p.active=1 AND ";
-    Statement result(state_->db,(select+(by_id ? "p.message=?" : "p.topic=? ORDER BY p.message DESC LIMIT 1")).c_str());
+    Statement result(state_->db,(select+(by_id ? "p.message=?" : "p.topic=? AND NOT EXISTS(SELECT 1 FROM memory_review v "
+        "WHERE v.message=p.message AND v.version<(SELECT max(version) FROM memory_review WHERE series=v.series)) "
+        "ORDER BY p.message DESC LIMIT 1")).c_str());
     if (by_id) result.bind(1,id); else result.bind(1,selector);
     return result.next() ? std::optional(row(result)) : std::nullopt;
 }
 // 按完整主题、局部主题及新近次序取唯一原件，预算不足时继续尝试较短候选。
 // 步骤：验证有限主题 → 在授权索引中合并排名 → 按序核算带来源的证据数组。
-nlohmann::json MessageStore::search_memory(const std::vector<std::string>& topics, unsigned count) const {
+nlohmann::json MessageStore::search_memory(const std::vector<std::string>& topics, unsigned count, std::string_view view) const {
     if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("memory: invalid search");
-    for (const auto& topic : topics) check_memory_topic(topic);
     std::lock_guard lock(state_->mutex);
-    Statement matches(state_->db,"WITH terms(term) AS (VALUES(?1),(?2),(?3)), ranked AS ("
-        "SELECT p.message,p.topic,min(CASE WHEN p.topic=t.term THEN 0 ELSE 1 END) AS rank "
-        "FROM personal_memory p JOIN terms t ON instr(p.topic,t.term)>0 WHERE p.active=1 "
-        "GROUP BY p.message ORDER BY rank,p.message DESC LIMIT 13) "
-        "SELECT m.id,r.topic,m.source,m.utc,m.envelope FROM ranked r JOIN messages m ON m.id=r.message "
-        "ORDER BY r.rank,m.id DESC");
-    for (std::size_t i=0;i<topics.size();++i) matches.bind(static_cast<int>(i+1),topics[i]);
+    // 按版本整理前先取可读依据。版本头保留已撤回修订的位置，避免撤权后把旧偏好重新当作当前。
+    Statement matches(state_->db,R"sql(
+        WITH input(q) AS (VALUES(?1),(?2),(?3)),
+        terms(term,pick) AS (
+            SELECT q,0 FROM input WHERE typeof(q)='text'
+            UNION ALL
+            SELECT p.topic,p.message FROM input JOIN personal_memory p ON p.message=q
+            WHERE typeof(q)='integer' AND p.active=1
+        ), matched AS (
+            SELECT p.message,p.topic,min(CASE WHEN p.message=t.pick THEN -1 WHEN p.topic=t.term THEN 0 ELSE 1 END) AS rank,
+                   max(t.pick=0 OR t.pick=p.message) AS wanted
+            FROM personal_memory p JOIN terms t ON (t.pick=0 AND instr(p.topic,t.term)>0) OR (t.pick>0 AND p.topic=t.term)
+            WHERE p.active=1 GROUP BY p.message
+        ), visible AS (
+            SELECT p.*,v.version,v.excerpt,(SELECT max(version) FROM memory_review WHERE series=v.series) AS head,
+                   min(p.message) OVER part AS first,max(p.message) OVER part AS last,count(*) OVER part AS mentions
+            FROM matched p LEFT JOIN memory_review v ON v.message=p.message
+            WINDOW part AS (PARTITION BY coalesce(v.version,p.message))
+        ), ranked AS (
+            SELECT *,CASE WHEN ?4='originals' THEN message ELSE last END AS recency FROM visible
+            WHERE wanted=1 AND (?4='originals' OR version IS NULL OR (message=first AND (?4='history' OR version=head)))
+            ORDER BY rank,recency DESC LIMIT 13
+        )
+        SELECT m.id,r.topic,m.source,m.utc,m.envelope,coalesce(r.version,0),r.excerpt,r.version=r.head,r.mentions,r.last,
+               EXISTS(SELECT 1 FROM personal_memory u WHERE u.topic=r.topic AND u.active=1 AND u.kind='correction'
+                      AND u.message>r.version AND NOT EXISTS(SELECT 1 FROM memory_review c WHERE c.message=u.message)),
+               (SELECT old.message FROM memory_review anchor JOIN personal_memory old ON old.message=anchor.basis
+                WHERE anchor.message=r.version AND old.active=1),
+               CASE WHEN r.version IS NULL AND EXISTS(SELECT 1 FROM personal_memory earlier WHERE earlier.active=1
+                      AND earlier.topic=r.topic AND earlier.message<r.message)
+                    THEN CASE WHEN p.kind='correction' THEN 'correction' ELSE 'compare' END ELSE '' END
+        FROM ranked r JOIN messages m ON m.id=r.message JOIN personal_memory p ON p.message=r.message
+        ORDER BY r.rank,r.recency DESC
+    )sql");
+    for (std::size_t i=0;i<topics.size();++i) {
+        const int slot = static_cast<int>(i+1);
+        if (view=="originals" && topics[i].find('/')!=std::string::npos) matches.bind(slot,memory_message(topics[i],conversation()));
+        else { check_memory_topic(topics[i]); matches.bind(slot,topics[i]); }
+    }
+    matches.bind(4,view);
     Json items = Json::array();
     std::size_t bytes = 2;
     bool limited = false;
+    std::string review_due;
     unsigned candidates = 0;
     while (matches.next()) {
         if (++candidates>12 || items.size()>=count || items.size()>=3) { limited = true; break; }
         const auto envelope = Json::parse(matches.text(4));
         Json item{{"reference",conversation()+"/"+std::to_string(matches.number(0))},{"topic",matches.text(1)},
             {"source",matches.text(2)},{"utcMs",envelope.value("sourceUtcMs",matches.number(3))},{"quote",envelope.at("text")}};
+        if (matches.number(5)) {
+            item["standing"] = !matches.number(7) ? "superseded" : matches.number(10) ? "needs_review" : "current";
+            item["conclusion"] = matches.text(6);
+            item["mentions"] = matches.number(8);
+            item["latestReference"] = conversation()+"/"+std::to_string(matches.number(9));
+            if (matches.number(11)) item["previousReference"] = conversation()+"/"+std::to_string(matches.number(11));
+        }
         const auto cost = item.dump().size() + (items.empty() ? 0 : 1);
         if (bytes+cost>2048) { limited = true; continue; }
+        const auto due = matches.text(12);
+        if (due=="correction" || review_due.empty()) review_due = due;
         bytes += cost;
         items.push_back(std::move(item));
     }
-    return {{"items",std::move(items)},{"limited",limited}};
+    Json selection{{"items",std::move(items)},{"limited",limited}};
+    if (!review_due.empty()) selection["reviewDue"] = review_due;
+    return selection;
 }
 // 用读锁固定当前提交位置。
 std::optional<StoredMessage> MessageStore::find(std::string_view source, std::string_view submission) const {
@@ -317,7 +426,7 @@ MessageAdmission MessageStore::put(std::string_view source, std::string_view sub
         if (const auto topic = memory_capture_topic(text.get_ref<const std::string&>())) {
             check_memory_topic(*topic);
             if (text.dump().size()>2048) throw std::invalid_argument("memory: quote exceeds 2048 bytes");
-            Statement retain(db,"INSERT INTO personal_memory VALUES(?,?,1)");
+            Statement retain(db,"INSERT INTO personal_memory(message,topic,active) VALUES(?,?,1)");
             retain.bind(1,id); retain.bind(2,*topic); retain.next();
             sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
         }

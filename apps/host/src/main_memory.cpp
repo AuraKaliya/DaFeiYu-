@@ -1,5 +1,6 @@
 #include "main_messages.hpp"
 #include "application.hpp"
+#include <algorithm>
 
 namespace dfy::app {
 using Json = nlohmann::json;
@@ -14,31 +15,44 @@ agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64
         Json fields = Json::object();
         for (const auto key : {"reference","topic","source","quote"}) fields[key] = {{"type","string"}};
         fields["utcMs"] = {{"type","integer"}};
+        for (const auto key : {"standing","conclusion","latestReference","previousReference"}) fields[key] = {{"type","string"}};
+        fields["mentions"] = {{"type","integer"}};
         Json item{{"type","object"},{"properties",fields},{"required",{"reference","topic","source","quote","utcMs"}},{"additionalProperties",false}};
-        Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},{"limited",{{"type","boolean"}}}}},
+        Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},{"limited",{{"type","boolean"}}},
+            {"reviewDue",{{"type","string"}}}}},
             {"required",{"items","limited"}},{"additionalProperties",false}};
-        return Json::array({{{"key","memory.matches"},{"version",1},{"description","本轮按相关主题查回的主人原话，按匹配顺序列出"},
+        return Json::array({{{"key","memory.matches"},{"version",2},{"description","获准的原话及有依据的复盘结论，按匹配顺序列出"},
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
-    return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",1},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
+    return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",2},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
 }
 }
 
 // 将语义判断交给主 Agent，以工具契约说明长期价值、当轮用途和排除情形。
 void MainMessages::register_memory_tools() {
-    reply_tools_->add({"main/memory_note",app_.mailbox_host().identity,1,{"memory_note",
+    reply_tools_->add({"main/memory_note",app_.mailbox_host().identity,2,{"memory_note",
         "主人直接陈述可复用的长期偏好、持续约束、未来承诺、影响后续安排的经历或对这些事实的更正时，选简短稳定的主题，"
         "摘录当前原话中的依据 excerpt。只有主人确认且未来仍有用时 scope 取 ongoing。涉及拒绝保存、敏感秘密、转述、猜测、寒暄或一次性要求时直接交谈。"
-        "收录对象是当前整条真人原话，混有不宜保存的内容时跳过。仅在收到 saved 回执后确认收录。",
+        "收录对象是当前整条真人原话，混有不宜保存的内容时跳过。仅在收到 saved 回执后确认收录。"
+        "回执含 reviewDue 表示已有同主题原件，宜用 memory_search 的 originals 对照。同一事项才复盘，主题相同本身不足以合并。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,1,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,2,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
-        "每轮一次，查阅下一步宿主状态 memory.matches 的有序原件。limited 表示部分命中未装入，无依据时说明或追问。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]}},"required":["topics","count","need"],"additionalProperties":false})"},
+        "每轮一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches；"
+        "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
+        "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
+        "reviewDue 表示有待比较的原话，limited 表示部分命中未装入，无依据时说明或追问。",
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals"]}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
+    reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
+        "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
+        "prior、later 填从早到晚的 reference，两段 excerpt 各取相应原话中保留适用条件的完整意思，已整理的依据沿用其 conclusion。"
+        "同一件事的重述选 confirms；明确替代旧约定选 replaces。不同事项、临时例外或矛盾未明时保持分开，需要时追问。",
+        R"({"type":"object","properties":{"prior":{"type":"string"},"later":{"type":"string"},"priorExcerpt":{"type":"string"},"laterExcerpt":{"type":"string"},"relation":{"type":"string","enum":["confirms","replaces"]}},"required":["prior","later","priorExcerpt","laterExcerpt","relation"],"additionalProperties":false})"},
+        true,true,{},{},3,512,true},[this](const agent::ToolInvocation& call){return reflect_memory(call);});
 }
 
 // 只按当前主人原话核实模型引用的片段，临时或未确认的判断不产生长期索引。
@@ -51,12 +65,16 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
         excerpt.find_first_not_of(" \r\n\t")==excerpt.npos || excerpt.size()>2048)
         return memory_receipt({{"state","invalid_source"}},agent::ToolEffect::not_applied,false);
     const auto ref = store_->conversation()+"/"+std::to_string(parent_.second);
+    Json receipt{{"state","saved"},{"reference",ref}};
     try {
-        memory_revision_ = store_->change_memory(ref,args.at("topic").get<std::string>(),excerpt).first;
+        const auto kind = args.at("kind").get<std::string>();
+        const auto result = store_->change_memory(ref,args.at("topic").get<std::string>(),excerpt,kind);
+        memory_revision_ = result.revision;
+        if (result.review_due) receipt["reviewDue"] = kind=="correction" ? "correction" : "compare";
     } catch (const std::invalid_argument&) {
         return memory_receipt({{"state","invalid_source"}},agent::ToolEffect::not_applied,false);
     }
-    return memory_receipt({{"state","saved"},{"reference",ref}},agent::ToolEffect::applied);
+    return memory_receipt(std::move(receipt),agent::ToolEffect::applied);
 }
 
 // 按实际受众和本轮额度签发一次检索；无命中也有确定回执。
@@ -71,9 +89,11 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
     if (count<=0) return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);
     try {
         const unsigned limit = need=="single" ? 1u : 3u;
-        const auto result = store_->search_memory(args.at("topics").get<std::vector<std::string>>(),count>=limit ? limit : count.get<unsigned>());
+        const auto result = store_->search_memory(args.at("topics").get<std::vector<std::string>>(),
+            count>=limit ? limit : count.get<unsigned>(),args.value("view",std::string{"current"}));
         const auto size = result.at("items").size();
         search_result_ = matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
+        search_step_ = call.attempt.step.sequence;
         return memory_receipt({{"state",size ? "ready" : result.at("limited")==true ? "limited" : "no_match"},
             {"count",size},{"limited",result.at("limited")}},agent::ToolEffect::not_applied);
     } catch (const std::invalid_argument&) {
@@ -81,11 +101,30 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
     }
 }
 
+// 限制比较到本轮检索给出的原件，写盘时按当前授权重新验证引用和版本。
+std::unique_ptr<agent::ToolWork> MainMessages::reflect_memory(const agent::ToolInvocation& call) {
+    const auto args = Json::parse(call.call.arguments);
+    if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_)
+        return memory_receipt({{"state","unseen_evidence"}},agent::ToolEffect::not_applied,false);
+    const auto samples = Json::parse(search_result_->samples);
+    const auto& items = samples.at(0).at("value").at("items");
+    for (const auto key : {"prior","later"})
+        if (std::none_of(items.begin(),items.end(),[&](const auto& item){return item.at("reference")==args.at(key);}))
+            return memory_receipt({{"state","unseen_evidence"}},agent::ToolEffect::not_applied,false);
+    try {
+        store_->reflect_memory(args);
+    } catch (const std::invalid_argument&) {
+        return memory_receipt({{"state","invalid_comparison"}},agent::ToolEffect::not_applied,false);
+    }
+    return memory_receipt({{"state","reviewed"},{"relation",args.at("relation")},{"prior",args.at("prior")},{"later",args.at("later")}},
+        agent::ToolEffect::applied);
+}
+
 // 将管理操作提交到同一持久身份；撤权后停止可能带有旧正文的在途私聊。
 void MainMessages::change_memory(std::string_view identity, const std::optional<std::string>& topic) {
-    const auto [revision,changed] = store_->change_memory(identity,topic);
-    memory_revision_ = revision;
-    if (changed && !topic) {
+    const auto result = store_->change_memory(identity,topic);
+    memory_revision_ = result.revision;
+    if (result.changed && !topic) {
         search_result_.reset();
         if (app_.conversation().busy() && owner_memory_turn_) app_.conversation().cancel();
     }

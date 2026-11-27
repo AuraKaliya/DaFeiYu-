@@ -62,6 +62,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
     // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
     std::unique_ptr<agent::ToolWork> search_memory(const agent::ToolInvocation& invocation);
+    // 仅用本轮上一决策可见的两份原件提交复盘关系。
+    std::unique_ptr<agent::ToolWork> reflect_memory(const agent::ToolInvocation& invocation);
     // 取业务线程已有的实收与待写原件，为本次决策提供带版本的采样。
     agent::DecisionStatusSource delivery_status() const;
     // 使用原回合及渠道投递号保存发言，写盘失败时保留原件。
@@ -78,6 +80,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     bool owner_memory_turn_ = false;
     std::optional<std::int64_t> incoming_memory_;
     std::optional<agent::DecisionStatusSource> search_result_;
+    std::uint64_t search_step_ = 0;
     SoftwareLog* log_;
     RunLog* trace_;
     std::function<void(const std::string&)> reply_sink_;

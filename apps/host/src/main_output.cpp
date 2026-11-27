@@ -21,7 +21,7 @@ MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStor
     : app_(application),store_(std::move(store)),instance_(std::move(instance)),
       memory_revision_(store_->memory_revision()),log_(log),trace_(trace) {
     if (!structured) return;
-    reply_tools_ = std::make_unique<agent::ToolCatalog>(3);
+    reply_tools_ = std::make_unique<agent::ToolCatalog>(4);
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",
         "向当前主聊天发送一条发言或追问。text 为用户将看到的原文。回执给出投递号和写入状态。",
         R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})"},
@@ -87,7 +87,7 @@ bool MainMessages::prepare_output(agent::RunOptions& options, DialogueAudience a
     if (!reply_tools_ || options.tools || options.planning) return false;
     if (audience==DialogueAudience::owner && !memory_capture_topic(prompt) &&
         !prompt.starts_with("回想 ") && !prompt.starts_with("撤回记忆 ")) {
-        const std::string ids[]{reply_id,"main/memory_note","main/memory_search"};
+        const std::string ids[]{reply_id,"main/memory_note","main/memory_search","main/memory_reflect"};
         options.tools = reply_tools_->snapshot(ids,true);
     } else options.tools = reply_tools_->snapshot(std::span(&reply_id,1),true);
     return true;
