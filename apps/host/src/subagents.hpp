@@ -35,6 +35,10 @@ class Subagents final : public plugins::PluginAgents {
         const std::string& topic,const std::string& content) override;
     // 为后续请求选择获准的精确主题，换题时隔离旧历史。
     void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) override;
+    // 选择个人或知识视图时隔离上一视图的历史。
+    void select_knowledge(runtime::DomainId owner,runtime::DomainId session,std::string topic) override;
+    // 发布状态或下游授权改变后停用已经见过该版的运行。
+    void invalidate_knowledge(const std::string& article,std::int64_t child=0);
     // 停用授权已经变更的子会话，包含在途和已结算但尚可读取的旧答复。
     void invalidate_memory(std::int64_t child,std::string_view source={});
     // 新信落盘后通知实际信箱泵发送一个有界指针。

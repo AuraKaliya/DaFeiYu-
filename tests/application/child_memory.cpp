@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "application_commands.hpp"
 #include "main_messages.hpp"
+#include "knowledge_probe.hpp"
 #include <dafeiyu/agent_abi_v2.h>
 #include <dafeiyu/digest.hpp>
 #include <dafeiyu/host_services.hpp>
@@ -36,11 +37,13 @@ struct Fixture {
     std::vector<std::string> hashes;
     Json expected;
     Json mail_case;
+    tests::KnowledgeProbe knowledge;
+    Json expected_knowledge;
     std::map<std::string,std::uint64_t> letters;
     std::map<std::string,std::string> bodies;
     std::optional<bool> expect_persona;
     std::string failure,reply;
-    unsigned mail_step=0,mail_reads=0,mail_received=0;
+    unsigned mail_step=0,mail_reads=0,mail_received=0,kb_reads=0;
     std::atomic<bool> entered=false,release=false;
     bool holding=false;
     unsigned hosts=0,received=0;
@@ -65,12 +68,19 @@ struct Fixture {
     model::Response answer(const model::Config& cfg,const model::Request& request) {
         const auto wire=model::encode_request_fields(request,cfg.thinking_enabled());
         hashes.push_back(platform::sha256(wire)); ++received;
+        if (knowledge.row.is_object()) return knowledge.answer(request);
         if (mail_case.is_object()) return read_mail(request);
         if (expect_persona) check((request.messages.front().content.find("你叫大肥鱼")!=std::string::npos)==*expect_persona,"wrong startup persona");
         Json records=Json::array();
         const auto tail=Json::parse(request.messages.back().content,nullptr,false);
-        if (tail.is_object() && tail.contains("items")) for (const auto& s : tail.at("items"))
+        bool saw_knowledge=false;
+        if (tail.is_object() && tail.contains("items")) for (const auto& s : tail.at("items")) {
             if (s.at("key")=="childmemory.records") records=s.at("value").at("items");
+            if (s.at("key")=="knowledge.published") {
+                check(expected_knowledge.is_array(),"unsolicited knowledge"); knowledge.verify(s.at("value").at("items"),expected_knowledge,false); saw_knowledge=true;
+            }
+        }
+        check(saw_knowledge==expected_knowledge.is_array(),"knowledge projection absent");
         std::vector<std::string> actual;
         for (const auto& r : records) {
             actual.push_back(r.at("text").get<std::string>());
@@ -177,18 +187,27 @@ struct Fixture {
         if (op=="restart") { restart(); return; }
         if (op=="source") {
             const auto text=row.at("text").get<std::string>(); markers.insert(text);
-            const auto m=db->put("terminal","original",app::user_envelope("send",text,"owner",{}),{{"state","pending"}});
+            const auto alias=row.value("alias",std::string{"@source"});
+            const auto m=db->put("terminal",alias,app::user_envelope("send",text,"owner",{}),{{"state","pending"}});
             db->update(m.message.id,{{"state","completed"}});
-            source=db->conversation()+"/"+std::to_string(m.message.id); return;
+            source=db->conversation()+"/"+std::to_string(m.message.id); knowledge.references[alias]=source; return;
+        }
+        if (op=="admin") {knowledge.admin(*host,row); return;}
+        if (op=="kb") {knowledge.chat(*host,row,++kb_reads); return;}
+        if (op=="verified") {
+            std::size_t requests=0;
+            Json task{{"id","actual-task"},{"expected","focus"},{"tool","example.status/set_focus"},{"script",{"plan","read","change","read","claim"}}};
+            const auto works=tests::task_memory::perform(task,root,panel,"核实展台面板",requests);
+            check(works.size()==3 && works.back().at("output")=="focus","verified fixture missing"); return;
         }
         if (op=="grant" || op=="revoke") {
             auto cmd=row.at("command").get<std::string>();
-            if (auto pos=cmd.find("@source");pos!=cmd.npos) cmd.replace(pos,7,source);
+            for (const auto& [alias,ref] : knowledge.references) if(auto pos=cmd.find(alias);pos!=cmd.npos) cmd.replace(pos,alias.size(),ref);
             std::ostringstream out,err;
             app::application_command(*host,cmd,out,err); return;
         }
         if (op=="main") {
-            expected=Json::array(); expect_persona.reset(); host->main_messages()->terminal("main","你还记得这件事吗？");
+            expected=Json::array(); expected_knowledge=nullptr; expect_persona.reset(); host->main_messages()->terminal("main","你还记得这件事吗？");
             until([&]{return !host->conversation().busy();}); return;
         }
         if (op=="pump") {for(int n=0;n<16;++n) host->advance_plugins(); return;}
@@ -223,6 +242,7 @@ struct Fixture {
                 return result;
             }
             if (op=="select") return memory.select_topic(id,view(row.value("topic",std::string{"手册"})),nullptr);
+            if (op=="select_kb") return service<dfy_v2_agent_knowledge_api>(DFY_V2_AGENT_KNOWLEDGE_INTERFACE,1).select_topic(id,view(row.at("topic").get<std::string>()),nullptr);
             if (op=="begin" || op=="end") {
                 const auto& api=service<dfy_v2_agent_letters_api>(DFY_V2_AGENT_LETTERS_INTERFACE,1); std::uint64_t receipt=0;
                 const auto key=row.value("key",std::string{}),summary=row.value("summary",std::string{}),segment=row.value("body",std::string{});
@@ -232,7 +252,7 @@ struct Fixture {
                 if (!result && row.contains("save")) {
                     const auto label=row.at("save").get<std::string>();
                     if (letters.contains(label)) check(letters.at(label)==receipt,"duplicate exchange generated another letter");
-                    letters[label]=receipt; bodies[label]=body;
+                    letters[label]=receipt; bodies[label]=body; knowledge.references["$"+label]=db->conversation()+"/letter/"+std::to_string(receipt);
                 }
                 if (result) check(!receipt,"rejected letter has receipt");
                 return result;
@@ -245,6 +265,7 @@ struct Fixture {
                 return result;
             }
             check(op=="run","unknown fixture action"); expected=row.at("expect"); entered=false; release=false; holding=row.value("hold",false);
+            expected_knowledge=row.value("knowledge",Json(nullptr));
             expect_persona=row.contains("persona") ? std::optional(row.at("persona").get<bool>()) : std::nullopt;
             dfy_v2_agent_input input{}; input.prompt=view("按当前授权的主题回复。");
             if (row.value("out",false)) input.flags=DFY_V2_AGENT_PLAYER_FACING;

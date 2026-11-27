@@ -85,6 +85,13 @@ dfy_v2_status DFY_V2_CALL select_topic(uint64_t session,dfy_v2_string_view topic
     });
 }
 
+// 在已绑定实例中选择本次希望使用的知识主题。
+dfy_v2_status DFY_V2_CALL select_knowledge(uint64_t session,dfy_v2_string_view topic,dfy_v2_error* error) {
+    return boundary(error,[&](auto& host){
+        const auto service=host.agents.lock(); if (!service) return DFY_V2_UNSUPPORTED;
+        service->select_knowledge(host.agent_owner,session,text(topic,128)); return DFY_V2_OK;
+    });
+}
 // 校验交付模式并为原插件持久会话记录一次启动。
 dfy_v2_status DFY_V2_CALL begin_letter(uint64_t session,dfy_v2_string_view exchange,uint32_t mode,uint32_t flags,
     uint64_t* receipt,dfy_v2_error* error) {
@@ -261,6 +268,11 @@ const dfy_v2_agent_memory_api& agent_memory_api() {
 // 返回插件可选的启动及结束信表。
 const dfy_v2_agent_letters_api& agent_letters_api() {
     static const dfy_v2_agent_letters_api api{{sizeof(api),DFY_V2_AGENT_LETTERS_VERSION},begin_letter,finish_letter};
+    return api;
+}
+// 发布仅支持主动选择主题的子会话知识能力。
+const dfy_v2_agent_knowledge_api& agent_knowledge_api() {
+    static const dfy_v2_agent_knowledge_api api{{sizeof(api),DFY_V2_AGENT_KNOWLEDGE_VERSION},select_knowledge};
     return api;
 }
 // 发布独立的小型事实表，原子会话服务的大小和字段位置保持 ABI 兼容。

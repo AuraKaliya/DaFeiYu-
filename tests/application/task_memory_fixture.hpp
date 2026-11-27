@@ -9,6 +9,8 @@ namespace fs = std::filesystem;
 void require(bool ok, const std::string& reason);
 // 推进业务和退出并按场景裁定审批。
 void drain(app::Application& host, const Json& row = Json::object());
+// 核对真实后端请求并返回工作原始回执。
+std::vector<Json> trace(const fs::path& path,const std::vector<model::Request>& requests);
 // 从真实插件入口执行语料中的任务并取回原 Trace。
 std::vector<Json> perform(const Json& row, const fs::path& data, const fs::path& package, const std::string& goal,
     std::size_t& request_count);

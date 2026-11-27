@@ -16,6 +16,8 @@
 #define DFY_V2_LETTER_SUMMARY UINT32_C(2)
 #define DFY_V2_LETTER_ORIGINAL UINT32_C(3)
 #define DFY_V2_LETTER_PERSONA UINT32_C(1)
+#define DFY_V2_AGENT_KNOWLEDGE_INTERFACE "dfy.agent.knowledge"
+#define DFY_V2_AGENT_KNOWLEDGE_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_FACTS_INTERFACE "dfy.agent.facts"
 #define DFY_V2_AGENT_FACTS_VERSION UINT32_C(1)
 #define DFY_V2_AGENT_ORDERED_FACTS_VERSION UINT32_C(2)
@@ -89,6 +91,11 @@ typedef struct dfy_v2_agent_letters_api {
     dfy_v2_status (DFY_V2_CALL *finish)(uint64_t session,dfy_v2_string_view summary,dfy_v2_string_view body,
         uint64_t note,uint64_t* receipt,dfy_v2_error* error);
 } dfy_v2_agent_letters_api;
+typedef struct dfy_v2_agent_knowledge_api {
+    dfy_v2_api_header header;
+    // 为持久会话选择已发布知识的主题，替换此前的记忆选择；宿主按版本和受众核对权限。
+    dfy_v2_status (DFY_V2_CALL *select_topic)(uint64_t session,dfy_v2_string_view topic,dfy_v2_error* error);
+} dfy_v2_agent_knowledge_api;
 // scope 标明插件侧玩家和世界，实际所有者及会话由宿主绑定。序号与代次均从非零值开始。
 typedef struct dfy_v2_fact_frame {
     uint64_t epoch, sequence;

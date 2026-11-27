@@ -60,7 +60,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>10) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>11) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -121,6 +121,14 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "received INTEGER NOT NULL DEFAULT 0,seen INTEGER NOT NULL DEFAULT 0,UNIQUE(owner,exchange,phase));"
             "CREATE INDEX IF NOT EXISTS letter_pending ON child_letter(id) WHERE received=0;"
             "CREATE INDEX IF NOT EXISTS letter_inbox ON child_letter(id) WHERE received=1 AND seen=0; PRAGMA user_version=10");
+        if (previous<11) sql(db,"CREATE TABLE IF NOT EXISTS knowledge_article(article TEXT PRIMARY KEY,revision INTEGER NOT NULL DEFAULT 0,head INTEGER NOT NULL DEFAULT 0);"
+            "CREATE TABLE IF NOT EXISTS knowledge_edition(id INTEGER PRIMARY KEY,article TEXT NOT NULL,tag TEXT NOT NULL,base INTEGER NOT NULL,"
+            "topic TEXT NOT NULL,applies TEXT NOT NULL,statement TEXT NOT NULL,proposer TEXT NOT NULL,published INTEGER NOT NULL DEFAULT 0,"
+            "UNIQUE(article,tag));"
+            "CREATE TABLE IF NOT EXISTS knowledge_basis(edition INTEGER NOT NULL,position INTEGER NOT NULL,reference TEXT NOT NULL,"
+            "kind TEXT NOT NULL,dependency TEXT NOT NULL,PRIMARY KEY(edition,position));"
+            "CREATE TABLE IF NOT EXISTS knowledge_grant(edition INTEGER NOT NULL,child INTEGER NOT NULL,rights INTEGER NOT NULL,PRIMARY KEY(edition,child));"
+            "PRAGMA user_version=11");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -212,7 +220,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         if (changed) sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
         Statement revision(db,"SELECT memory_revision FROM conversation");
         revision.next(); tx.commit();
-        return {revision.number(0),changed,false};
+        return {revision.number(0),changed,false,task_space+"/"+std::to_string(id)};
     }
     const auto id = memory_message(identity,conversation());
     if (topic) check_memory_topic(*topic);
@@ -266,7 +274,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         due = related.next();
     }
     transaction.commit();
-    return {result,changed,due};
+    return {result,changed,due,conversation()+"/"+std::to_string(id)};
 }
 // 在同一事务核对双方原件，只允许沿当前版本增加依据或追加明确更正。
 // 步骤：验证次序和逐字依据 → 检查重试与版本头 → 原子登记来源及它所支持的修订。

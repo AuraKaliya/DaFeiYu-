@@ -43,6 +43,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::string last_memory_source() const { return store_->last_memory_source(); }
     // 仅管理入口可指定分身权限与一份明确共享的本人原话。
     void grant_avatar(const std::string& plugin,const std::string& channel,const std::string& account,int access,std::string_view source);
+    // 主人通过管理命令审阅、发布、校正、撤下知识，或授权某版给指定子库。
+    nlohmann::json manage_knowledge(const std::vector<std::string>& words);
     // 仅受信管理入口可收录或撤回当前档案原件的读取权。
     void change_memory(std::string_view identity, const std::optional<std::string>& topic);
     // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。
@@ -80,6 +82,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     void register_memory_tools();
     // 注册对本轮实际收到的信件进行显式签收的私聊工具。
     void register_letter_tools();
+    // 主 Agent 可按本轮看到的原件提议知识候选。
+    void register_knowledge_tool();
     // 从原主档案信箱装配带发信者及内容类型的证据。
     agent::DecisionStatusSource letter_source(std::uint64_t turn,const nlohmann::json& selection) const;
     // 仅在主人私聊的实时状态中提示仍有待签收来信。

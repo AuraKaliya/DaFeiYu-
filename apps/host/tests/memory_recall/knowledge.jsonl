@@ -1,0 +1,82 @@
+{"op":"source","text":"记住 操作规程：主人的展台午休用专注设置。","alias":"@source"}
+{"op":"kb","topics":["操作规程"],"view":"originals","sample":"memory.matches","draft":{"article":"display","edition":"bad","base":0,"statement":"无效。","topic":"展台规程","applies":"仅用于本展台交接","sources":["foreign/1"]},"state":"invalid_proposal"}
+{"op":"kb","topics":["操作规程"],"view":"originals","sample":"memory.matches","draft":{"article":"display","edition":"v1","base":0,"statement":"午休展台可按主人规定切换为专注。","topic":"展台规程","applies":"仅用于本展台交接","sources":["@source"]}}
+{"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge inspect display v1","revision":0,"inspect":{"statement":"午休展台可按主人规定切换为专注。","current":false,"publishedRevision":0}}
+{"op":"admin","command":"/knowledge publish display v1","revision":1}
+{"op":"admin","command":"/knowledge publish display v1","revision":1}
+{"op":"kb","topics":["展台规程"],"expect":[{"article":"display","edition":"v1","revision":1,"statement":"午休展台可按主人规定切换为专注。","applies":"仅用于本展台交接","kinds":["owner_statement"],"proposer":"main","refs":["@source"]}]}
+{"op":"open","session":"east","preset":2,"subject":"east"}
+{"op":"open","session":"west","preset":2,"subject":"west"}
+{"op":"select_kb","session":"east","topic":"展台规程"}
+{"op":"run","session":"east","expect":[],"knowledge":[]}
+{"op":"admin","command":"/knowledge grant display v1 example.status business east - read"}
+{"op":"run","session":"east","expect":[],"knowledge":[{"article":"display","edition":"v1","revision":1,"statement":"午休展台可按主人规定切换为专注。","applies":"仅用于本展台交接","kinds":["owner_statement"],"proposer":"main"}]}
+{"op":"run","session":"east","expect":[],"knowledge":[],"out":true}
+{"op":"select_kb","session":"west","topic":"展台规程"}
+{"op":"run","session":"west","expect":[],"knowledge":[]}
+{"op":"verified"}
+{"op":"kb","topics":["核实展台面板"],"view":"tasks","sample":"memory.tasks","capture":{"alias":"@readback","field":"readbackRef"},"draft":{"article":"display","edition":"v2","base":1,"statement":"展台切换后要独立读回状态。","topic":"展台规程","applies":"仅用于本展台交接","sources":["@readback"]}}
+{"op":"admin","command":"/knowledge inspect display v2","revision":1,"inspect":{"statement":"展台切换后要独立读回状态。","current":false}}
+{"op":"run","session":"east","expect":[],"knowledge":[{"article":"display","edition":"v1","revision":1,"statement":"午休展台可按主人规定切换为专注。","applies":"仅用于本展台交接","kinds":["owner_statement"],"proposer":"main"}],"hold":true}
+{"op":"admin","command":"/knowledge publish display v2","revision":2}
+{"op":"status","session":"east"}
+{"op":"release"}
+{"op":"kb","topics":["展台规程"],"expect":[{"article":"display","edition":"v2","revision":2,"statement":"展台切换后要独立读回状态。","applies":"仅用于本展台交接","kinds":["tool_readback"],"proposer":"main","refs":["@readback"]}]}
+{"op":"admin","command":"/knowledge publish display v1","deny":true}
+{"op":"admin","command":"/knowledge grant display v1 example.status business east - read","deny":true}
+{"op":"open","session":"east2","preset":2,"subject":"east"}
+{"op":"select_kb","session":"east2","topic":"展台规程"}
+{"op":"run","session":"east2","expect":[],"knowledge":[]}
+{"op":"admin","command":"/knowledge grant display v2 example.status business east - relay"}
+{"op":"run","session":"east2","expect":[],"knowledge":[{"article":"display","edition":"v2","revision":2,"statement":"展台切换后要独立读回状态。","applies":"仅用于本展台交接","kinds":["tool_readback"],"proposer":"main"}],"out":true}
+{"op":"admin","command":"/knowledge grant display v2 example.status business east - off"}
+{"op":"open","session":"east3","preset":2,"subject":"east"}
+{"op":"select_kb","session":"east3","topic":"展台规程"}
+{"op":"run","session":"east3","expect":[],"knowledge":[]}
+{"op":"restart"}
+{"op":"kb","topics":["展台规程"],"expect":[{"article":"display","edition":"v2","revision":2,"statement":"展台切换后要独立读回状态。","applies":"仅用于本展台交接","kinds":["tool_readback"],"proposer":"main"}]}
+{"op":"open","session":"sender","preset":2,"subject":"reports"}
+{"op":"begin","session":"sender","key":"交接","mode":2,"save":"ls"}
+{"op":"run","session":"sender","expect":[]}
+{"op":"end","session":"sender","save":"le","summary":"我查过交接清单。"}
+{"op":"pump"}
+{"op":"admin","command":"/knowledge propose display v3 2 \"展台规程\" \"仅用于本展台交接\" \"交接时同时核对主人的约定和子会话的报告。\" @source $le"}
+{"op":"admin","command":"/knowledge propose display v3 2 \"展台规程\" \"仅用于本展台交接\" \"交接时同时核对主人的约定和子会话的报告。\" @source $le"}
+{"op":"admin","command":"/knowledge propose display v3 2 \"展台规程\" \"仅用于本展台交接\" \"替换草案\" @source $le","deny":true}
+{"op":"admin","command":"/knowledge publish display v3","revision":3}
+{"op":"kb","topics":["展台规程"],"expect":[{"article":"display","edition":"v3","revision":3,"statement":"交接时同时核对主人的约定和子会话的报告。","applies":"仅用于本展台交接","kinds":["owner_statement","sender_report"],"proposer":"owner","refs":["@source","$le"]}]}
+{"op":"admin","command":"/knowledge withdraw display 1","deny":true}
+{"op":"grant","command":"/memory avatar example.status social account both private"}
+{"op":"open","session":"av","preset":3,"subject":"account","channel":"social"}
+{"op":"admin","command":"/knowledge grant display v3 example.status avatar account social relay"}
+{"op":"select_kb","session":"av","topic":"展台规程"}
+{"op":"run","session":"av","expect":[],"knowledge":[{"article":"display","edition":"v3","revision":3,"statement":"交接时同时核对主人的约定和子会话的报告。","applies":"仅用于本展台交接","kinds":["owner_statement","sender_report"],"proposer":"owner"}]}
+{"op":"run","session":"av","expect":[],"knowledge":[],"out":true}
+{"op":"grant","command":"/memory avatar example.status social account both relay"}
+{"op":"open","session":"av2","preset":3,"subject":"account","channel":"social"}
+{"op":"select_kb","session":"av2","topic":"展台规程"}
+{"op":"run","session":"av2","expect":[],"knowledge":[{"article":"display","edition":"v3","revision":3,"statement":"交接时同时核对主人的约定和子会话的报告。","applies":"仅用于本展台交接","kinds":["owner_statement","sender_report"],"proposer":"owner"}],"out":true}
+{"op":"admin","command":"/knowledge withdraw display 3","revision":4}
+{"op":"admin","command":"/knowledge withdraw display 3","revision":4}
+{"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge publish display v3","deny":true}
+{"op":"restart"}
+{"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge propose display v4 4 \"展台规程\" \"仅用于本展台交接\" \"午休展台可按主人规定切换为专注。\" @source"}
+{"op":"admin","command":"/knowledge publish display v4","revision":5}
+{"op":"open","session":"reader","preset":2,"subject":"east"}
+{"op":"admin","command":"/knowledge grant display v4 example.status business east - read"}
+{"op":"select_kb","session":"reader","topic":"展台规程"}
+{"op":"run","session":"reader","expect":[],"knowledge":[{"article":"display","edition":"v4","revision":5,"statement":"午休展台可按主人规定切换为专注。","applies":"仅用于本展台交接","kinds":["owner_statement"],"proposer":"owner"}],"hold":true}
+{"op":"revoke","command":"/memory revoke @source"}
+{"op":"status","session":"reader"}
+{"op":"release"}
+{"op":"kb","topics":["展台规程"],"expect":[]}
+{"op":"admin","command":"/knowledge inspect display v4","revision":5,"inspect":{"evidenceUnavailable":true}}
+{"op":"admin","command":"/knowledge publish display v4","deny":true}
+{"op":"open","session":"after","preset":2,"subject":"east"}
+{"op":"select_kb","session":"after","topic":"展台规程"}
+{"op":"run","session":"after","expect":[],"knowledge":[]}
+{"op":"restart"}
+{"op":"kb","topics":["展台规程"],"expect":[]}

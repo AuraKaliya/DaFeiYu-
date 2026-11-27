@@ -5,7 +5,7 @@
 namespace dfy::app {
 // 双引号只负责组合参数，反斜杠始终是普通路径字符，不执行 shell 转义或命令替换。
 // 步骤：检查总长度 → 按引号状态累计参数 → 核对闭合及数量 → 返回完整词表。
-std::vector<std::string> command_words(std::string_view command) {
+std::vector<std::string> command_words(std::string_view command,std::size_t limit) {
     if (command.size() > 64*1024) throw std::length_error("command: input exceeds 64 KiB");
     std::vector<std::string> words; std::string word; bool quoted = false, started = false;
     for (const char value : command) {
@@ -13,11 +13,11 @@ std::vector<std::string> command_words(std::string_view command) {
         else if (!quoted && (value == ' ' || value == '\t')) {
             if (started) { words.push_back(std::move(word)); word.clear(); started = false; }
         } else { word.push_back(value); started = true; }
-        if (words.size() > 8) throw std::length_error("command: too many arguments");
+        if (words.size() > limit) throw std::length_error("command: too many arguments");
     }
     if (quoted) throw std::invalid_argument("command: unmatched double quote");
     if (started) words.push_back(std::move(word));
-    if (words.size() > 8) throw std::length_error("command: too many arguments");
+    if (words.size() > limit) throw std::length_error("command: too many arguments");
     return words;
 }
 namespace {

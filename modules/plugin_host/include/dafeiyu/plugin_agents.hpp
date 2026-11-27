@@ -59,6 +59,8 @@ class PluginAgents {
         const std::string& topic,const std::string& content) = 0;
     // 为以后回合装配本会话获准的主题，业务忙碌时拒绝修改。
     virtual void select_topic(runtime::DomainId owner,runtime::DomainId session,std::string topic) = 0;
+    // 选择经主人发布并授权本子库的知识主题。
+    virtual void select_knowledge(runtime::DomainId owner,runtime::DomainId session,std::string topic)=0;
     // 在持久会话内建立带稳定交付号的启动信件。
     virtual std::uint64_t begin_letter(runtime::DomainId owner,runtime::DomainId session,std::string exchange,unsigned mode,bool persona)=0;
     // 根据实际退出回执将插件明确导出的材料交给本体信箱。

@@ -68,6 +68,8 @@ const dfy_v2_agent_api& agent_api(uint32_t version);
 const dfy_v2_agent_memory_api& agent_memory_api();
 // 返回持久子会话的生命周期信箱服务表。
 const dfy_v2_agent_letters_api& agent_letters_api();
+// 返回按当前版本及渠道授权查询知识的服务表。
+const dfy_v2_agent_knowledge_api& agent_knowledge_api();
 // 返回独立协商的版本化事实及原工作结算服务。
 const dfy_v2_agent_facts_api& agent_facts_api();
 // 返回支持有序工作结算及回执读回的第二版不可变服务表。

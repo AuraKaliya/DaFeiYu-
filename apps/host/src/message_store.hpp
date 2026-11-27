@@ -19,7 +19,7 @@ struct StoredMessage {
 };
 struct MessageAdmission { StoredMessage message; bool created; };
 struct MessagePage { std::vector<StoredMessage> records; bool more = false; };
-struct MemoryChange { std::int64_t revision; bool changed, review_due; };
+struct MemoryChange { std::int64_t revision; bool changed, review_due; std::string reference; };
 struct ChildBinding { std::int64_t owner; std::string shared_source; };
 
 // 每个数据目录拥有一个跨启动的主会话，原文与有序投递回执在同一库内提交。
@@ -73,6 +73,18 @@ class MessageStore {
     nlohmann::json search_letters(const std::vector<std::string>& topics,unsigned count,std::size_t offset) const;
     // 一次确认本轮实际交给主 Agent 并获其签收的原信号。
     void acknowledge_letters(const std::vector<std::string>& references);
+    // 保存有出处的候选版本；它仅供主人审阅。
+    nlohmann::json propose_knowledge(const nlohmann::json& draft,std::string_view proposer);
+    // 在同一事务校验当前版本及全部原件后发布或撤下，变更只由管理入口发起。
+    bool publish_knowledge(const std::string& article,const std::string& edition,std::optional<std::int64_t> withdraw);
+    // 主人按指定子库授予某一已发布版本的读取或转述权。
+    std::int64_t grant_knowledge(const std::string& article,const std::string& edition,const std::string& plugin,
+        const plugins::MemoryIdentity& identity,int rights);
+    // 管理入口读取版本清单或可审阅的具体草案。
+    nlohmann::json inspect_knowledge(const std::string& article,const std::string& edition) const;
+    // 核实当前发布状态、源权限及目标受众后按主题投影，内部保留撤权依赖。
+    nlohmann::json search_knowledge(const std::vector<std::string>& topics,unsigned count,std::int64_t child=0,bool outward=false,
+        std::vector<std::string>* dependencies=nullptr) const;
     // 取得下一份有独立原件的跨任务比较，只在提交后移动进度。
     std::optional<nlohmann::json> next_comparison() const;
     // 在同一事务重查原件、版本及判断的适用范围，通过后追加本体解释。

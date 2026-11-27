@@ -16,6 +16,7 @@ _Static_assert(sizeof(dfy_v2_agent_facts_api) == 24 && sizeof(dfy_v2_fact_frame)
 _Static_assert(sizeof(dfy_v2_agent_ordered_facts_api) == 40,"ordered agent facts ABI");
 _Static_assert(sizeof(dfy_v2_agent_memory_api)==32 && offsetof(dfy_v2_agent_memory_api,select_topic)==24,"agent memory ABI");
 _Static_assert(sizeof(dfy_v2_agent_letters_api)==24,"agent letters ABI");
+_Static_assert(sizeof(dfy_v2_agent_knowledge_api)==16,"agent knowledge ABI");
 struct dfy_v2_instance {
     dfy_v2_query_interface_fn host;
     const dfy_v2_mailbox_api* mail;

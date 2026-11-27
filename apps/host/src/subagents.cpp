@@ -3,10 +3,12 @@
 #include "run_log.hpp"
 #include "persona.hpp"
 #include "message_store.hpp"
+#include "knowledge.hpp"
 #include <dafeiyu/digest.hpp>
 #include <nlohmann/json.hpp>
 #include <dafeiyu/plugin_hooks.hpp>
 #include <algorithm>
+#include <set>
 
 namespace dfy::app {
 struct Subagents::Slot {
@@ -32,6 +34,8 @@ struct Subagents::Slot {
     std::optional<ChildBinding> memory;
     std::string topic;
     bool outward=false, reset_memory_history=false;
+    bool knowledge=false;
+    std::set<std::string> articles,dependencies;
     std::string exchange,letter_persona;
     unsigned delivery_mode=0;
     std::uint64_t exchange_start=0;
@@ -97,12 +101,24 @@ void Subagents::select_topic(runtime::DomainId owner,runtime::DomainId id,std::s
     if (stopping_ || slot.closing || !slot.memory || slot.active || slot.queued || topic.size()>128 ||
         (!topic.empty() && (topic.find_first_not_of(" ")==topic.npos || std::ranges::any_of(topic,[](unsigned char c){return c<32 || c==127;}))))
         throw std::invalid_argument("child memory: invalid selection");
-    if (slot.topic!=topic) { slot.topic=std::move(topic); slot.reset_memory_history=true; }
+    if (slot.topic!=topic || slot.knowledge) { slot.topic=std::move(topic); slot.reset_memory_history=true; }
+    slot.knowledge=false;
+}
+// 复用主题校验，然后明确将此次选择指向已授权的发布库。
+void Subagents::select_knowledge(runtime::DomainId owner,runtime::DomainId id,std::string topic) {
+    select_topic(owner,id,std::move(topic)); auto& slot=find(owner,id); slot.knowledge=true; slot.reset_memory_history=true;
+}
+// 只撤销确实取得过该条知识的会话，其他委托的工作仍可继续。
+void Subagents::invalidate_knowledge(const std::string& article,std::int64_t child) {
+    for(auto& slot : slots_) if (slot && slot->memory && (!child || slot->memory->owner==child) && slot->articles.contains(article)) {
+        slot->closing=true; slot->permission_closed=true; slot->queued.reset(); slot->answer.clear();
+        if (slot->active) slot->active->request_cancel(runtime::CancelReason::owner_stop);
+    }
 }
 // 撤回源或渠道权限后立即封住旧答复，在途推断请求取消并留待真实退出。
 void Subagents::invalidate_memory(std::int64_t child,std::string_view source) {
     for (auto& slot : slots_) if (slot && slot->memory && (slot->memory->owner==child ||
-        (!source.empty() && slot->memory->shared_source==source))) {
+        (!source.empty() && (slot->memory->shared_source==source || slot->dependencies.contains(std::string(source)))))) {
         slot->closing=true; slot->permission_closed=true; slot->queued.reset(); slot->answer.clear();
         if (slot->active) slot->active->request_cancel(runtime::CancelReason::owner_stop);
     }
@@ -349,8 +365,20 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
     if (slot.memory) {
         auto& status=*options.decision_status;
         options.replace_history=options.replace_history || slot.reset_memory_history || slot.outward!=input.player_facing;
-        status.binding+="/child/"+std::to_string(slot.memory->owner)+(input.player_facing ? "/out/" : "/in/")+platform::sha256(slot.topic);
-        const auto records=memory_->child_projection(slot.memory->owner,slot.topic,input.player_facing);
+        status.binding+="/child/"+std::to_string(slot.memory->owner)+(input.player_facing ? "/out/" : "/in/")+
+            (slot.knowledge ? "knowledge/" : "personal/")+platform::sha256(slot.topic);
+        const auto records=slot.knowledge ? nlohmann::json::array() : memory_->child_projection(slot.memory->owner,slot.topic,input.player_facing);
+        if (slot.knowledge && !slot.topic.empty()) {
+            std::vector<std::string> dependencies;
+            const auto published=memory_->search_knowledge({slot.topic},3,slot.memory->owner,input.player_facing,&dependencies);
+            for(const auto& item : published.at("items")) slot.articles.insert(item.at("article").get<std::string>());
+            slot.dependencies.insert(dependencies.begin(),dependencies.end());
+            auto source=knowledge_source(std::to_string(slot.memory->owner),slot.request,published);
+            status.sample=[previous=std::move(status.sample),source=std::move(source)]{
+                auto result=previous ? previous() : std::vector<agent::DecisionStatusSource>{};
+                result.push_back(source); return result;
+            };
+        }
         if (!records.empty()) {
             static const std::string schema=R"([{"key":"childmemory.records","version":1,"description":"原子会话按授权收到的记录，origin 标明所有者","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"origin":{"type":"string"},"reference":{"type":"string"},"text":{"type":"string"},"sourceRef":{"type":"string"},"partial":{"type":"boolean"}},"required":["origin","reference","text"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}])";
             agent::DecisionStatusSource source{"childmemory",schema,nlohmann::json::array({{{"key","childmemory.records"},{"version",1},

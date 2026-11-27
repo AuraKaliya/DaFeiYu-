@@ -248,6 +248,11 @@ void companion_command(Application& app, std::string_view command, std::ostream&
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
     if (name == "/companion") companion_command(application, command, output);
+    else if (name=="/knowledge") {
+        auto* memory=application.main_messages();
+        if (!memory) throw std::invalid_argument("knowledge: profile required");
+        output<<memory->manage_knowledge(command_words(command,11)).dump()<<'\n';
+    }
     else if (name == "/memory") {
         auto* memory = application.main_messages();
         if (!memory) throw std::invalid_argument("memory: persistent main chat required");
