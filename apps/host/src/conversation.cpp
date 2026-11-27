@@ -15,7 +15,7 @@ constexpr std::size_t display_turn_limit = 16;
 // 接纳问答并固定唯一回合，拒绝覆盖尚待退出的工作。
 // 步骤：核对当前回合 → 合并宿主控制 → 预留显示条目 → 通过原会话接纳并关联身份。
 agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::RunOptions options, bool player_facing,
-    const std::string* display_prompt) {
+    const std::string* display_prompt, DialogueAudience audience) {
     if (current_) throw std::logic_error("session: wait for the current request to finish");
     if (version_labels_.application_commit) options.version_labels.application_commit = version_labels_.application_commit;
     if (version_labels_.build) options.version_labels.build = version_labels_.build;
@@ -26,6 +26,7 @@ agent::TurnDiagnostics Conversation::submit(const std::string& prompt, agent::Ru
     if (options.decision_status) main_status.sample = std::move(options.decision_status->sample);
     options.decision_status = std::move(main_status);
     const bool can_speak = player_facing && main_messages_ && main_messages_->prepare_output(options);
+    if (main_messages_) main_messages_->prepare_memory(options,audience,prompt);
     if (persona_) {
         const auto route = can_speak ? agent::OutputRoute::main_chat_with_reply :
             player_facing ? agent::OutputRoute::main_chat : agent::OutputRoute::main_internal;

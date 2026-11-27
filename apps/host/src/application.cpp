@@ -164,7 +164,9 @@ std::pair<std::string,events::EventId> Application::receive_dialogue(const std::
 agent::TurnDiagnostics Application::begin_dialogue(const std::string& text, events::EventId mail, std::optional<std::int64_t> event_utc_ms) {
     if (conversation_.busy() || !conversation_.accepting()) throw std::logic_error("session: wait for the current request to finish");
     const auto received = mail.sequence ? std::pair{text,mail} : receive_dialogue(text,"dialogue.text");
-    const auto result = mailbox_intake_.submit_dialogue(received.first,event_utc_ms);
+    // 显式收录的主人原话单独入轮，排队信件仍可按原身份收取。
+    const bool capture = main_messages_ && !mail.sequence && memory_capture_topic(received.first).has_value();
+    const auto result = mailbox_intake_.submit_dialogue(received.first,event_utc_ms,!capture);
     if (run_log_) run_log_->mail("mail.dispatched",dialogue_mailbox_.value,dialogue_sender_,received.second,
         mail.sequence ? "dialogue.enqueue" : "dialogue.text",received.first,
         agent::RunId{result.session,result.turn});

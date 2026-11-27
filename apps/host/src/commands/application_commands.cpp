@@ -1,5 +1,6 @@
 #include "application_commands.hpp"
 #include "application.hpp"
+#include "main_messages.hpp"
 #include "diagnostic_files.hpp"
 #include "diagnostics.hpp"
 #include "plugin_commands.hpp"
@@ -247,6 +248,19 @@ void companion_command(Application& app, std::string_view command, std::ostream&
 bool application_command(Application& application, std::string_view command, std::ostream& output, std::ostream& errors) {
     const auto name = command.substr(0,command.find_first_of(" \t"));
     if (name == "/companion") companion_command(application, command, output);
+    else if (name == "/memory") {
+        auto* memory = application.main_messages();
+        if (!memory) throw std::invalid_argument("memory: persistent main chat required");
+        const auto words = command_words(command);
+        if (words.size()==2 && words[1]=="last") output << memory->last_memory_source() << '\n';
+        else if (words.size()==4 && words[1]=="keep") {
+            memory->change_memory(words[2],words[3]);
+            output << "Remembered " << words[2] << '\n';
+        } else if (words.size()==3 && words[1]=="revoke") {
+            memory->change_memory(words[2],std::nullopt);
+            output << "Revoked " << words[2] << '\n';
+        } else throw std::invalid_argument("Usage: /memory last | keep CONVERSATION/MESSAGE \"TOPIC\" | revoke CONVERSATION/MESSAGE");
+    }
     else if (name == "/mail") {
         const auto words = command_words(command);
         if (words.size() == 3 && words[1] == "wake" && (words[2] == "auto" || words[2] == "manual")) {

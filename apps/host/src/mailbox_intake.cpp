@@ -123,8 +123,10 @@ MailboxIntakeResult MailboxIntake::advance(bool only_wake) {
 
 // 在主动对话中纳入一封待收信件，无可接纳信件时沿用原对话文本。
 // 步骤：按同一优先级筛选有限队首 → 尝试同一回合接纳 → 必要时提交原话。
-agent::TurnDiagnostics MailboxIntake::submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms) {
-    for (std::size_t checked = 0; checked < routes_.size(); ++checked) {
+agent::TurnDiagnostics MailboxIntake::submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms,
+    bool include_mail) {
+    const auto checks = include_mail ? routes_.size() : 0;
+    for (std::size_t checked = 0; checked < checks; ++checked) {
         const auto* route = select(false);
         if (!route) break;
         agent::TurnDiagnostics accepted{};
@@ -135,6 +137,6 @@ agent::TurnDiagnostics MailboxIntake::submit_dialogue(const std::string& text, s
     }
     agent::RunOptions options;
     options.prompt_utc_ms = event_utc_ms;
-    return conversation_.submit(text,std::move(options),true,&text);
+    return conversation_.submit(text,std::move(options),true,&text,DialogueAudience::owner);
 }
 }

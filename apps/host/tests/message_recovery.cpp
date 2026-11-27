@@ -223,7 +223,10 @@ void verify(const std::filesystem::path& data) {
         const auto path = (data/"main-conversation.sqlite3").u8string();
         if (sqlite3_open(reinterpret_cast<const char*>(path.c_str()),&legacy)!=SQLITE_OK) throw std::runtime_error("legacy fixture open failed");
         std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(legacy,&sqlite3_close);
-        if (sqlite3_exec(legacy,"DROP TABLE outbox; PRAGMA user_version=1",nullptr,nullptr,nullptr)!=SQLITE_OK)
+        if (sqlite3_exec(legacy,"DROP TABLE outbox; DROP TABLE personal_memory;"
+            "ALTER TABLE conversation RENAME TO current_conversation; CREATE TABLE conversation(id TEXT NOT NULL);"
+            "INSERT INTO conversation SELECT id FROM current_conversation; DROP TABLE current_conversation; PRAGMA user_version=1",
+            nullptr,nullptr,nullptr)!=SQLITE_OK)
             throw std::runtime_error("legacy fixture schema failed");
     }
     auto db = std::make_shared<app::MessageStore>(data);

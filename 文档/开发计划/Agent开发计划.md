@@ -8,9 +8,7 @@
 
 ## 待办
 
-| 编号 | 状态 | 独立交付项 | 完成条件 |
-| --- | --- | --- | --- |
-| Agent-记忆-2 | <a id="agent-记忆-2"></a>待开发 | 从主聊天接入本体签发的持久身份与第一份有来源的个人记忆 | 同一原话重试只入库一次，重启后沿原身份查回。用两种受众和撤权后的原件读取验证访问范围，核对实际 `model.prepared` 的来源与上下文占用。 |
+个人记忆的第一项主聊天接入见 [Agent-记忆-2](#agent-记忆-2)。后续的主动复盘、知识发布和分身权限在[待决策](#待决策)中维护。
 
 书房和 MC 的领域接入分别由[书房计划](内置书房开发计划.md#待办)和 [MC 计划](MC伙伴开发计划.md#待办)持有。
 
@@ -20,7 +18,8 @@
 
 | 编号 | 已验收的行为 | 支持边界 | 验证入口 |
 | --- | --- | --- | --- |
-| Agent-记忆-1 | <a id="agent-记忆-1"></a>同题逐批加入过期、转述、越权及独立分歧材料，核对候选、来源、修订与总字节数 | 系统 SQLite 中的合成逻辑库，主对照预算 256 个 UTF-8 字节。前四阶段返回同一条 83 字节的证据，独立分歧加入后两条占 189 字节。另验历史时点、跨委托隔离、受众、撤权、完整往返行程及容量边界。正式主循环接入见上方待办。 | Debug、Release 各连续三次通过 `app.memory_recall_baseline`。构建目标 `dfy_memory_recall_tests`，执行 CTest 加 `-V` 可查看每阶段耗时。[查询](../../apps/host/tests/memory_recall/search.sql) · [固定语料](../../apps/host/tests/memory_recall/corpus.sql) · [验收程序](../../apps/host/tests/memory_recall/experiment.cpp) |
+| Agent-记忆-1 | <a id="agent-记忆-1"></a>同题逐批加入过期、转述、越权及独立分歧材料，核对候选、来源、修订与总字节数 | 系统 SQLite 中的合成逻辑库，主对照预算 256 个 UTF-8 字节。前四阶段返回同一条 83 字节的证据，独立分歧加入后两条占 189 字节。另验历史时点、跨委托隔离、受众、撤权、完整往返行程及容量边界。主聊天原件接入见下一项。 | Debug、Release 各连续三次通过 `app.memory_recall_baseline`。构建目标 `dfy_memory_recall_tests`，执行 CTest 加 `-V` 可查看每阶段耗时。[查询](../../apps/host/tests/memory_recall/search.sql) · [固定语料](../../apps/host/tests/memory_recall/corpus.sql) · [验收程序](../../apps/host/tests/memory_recall/experiment.cpp) |
+| Agent-记忆-2 | <a id="agent-记忆-2"></a>在主聊天收录短原话，重启后按主题或原会话号与消息号查询，并可撤回读取权 | 仅主人单独对话获得原件。单一数据档案内验证桌面来源、终端补收录、同号重试、房间及合并来信、跨档案编号、在途撤权、旧快照和撤权后再启动。 | Debug、Release 各连续三次通过 `app.main_memory`。每次在三个独立进程中将 15 份 `model.prepared` 与固定后端实际请求逐一核对。样例重启后按原号查回的原件项占 392 字节，整份编码请求占 3072 字节。[宿主入口](../../apps/host/src/main_memory.cpp) · [验收程序](../../apps/host/tests/main_memory.cpp) · [使用方法](../使用说明/构建与运行说明.md#交互命令) |
 
 ### 共用循环与事实投影
 

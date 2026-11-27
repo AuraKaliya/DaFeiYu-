@@ -18,7 +18,8 @@ std::string reply_prefix(const std::string& instance, agent::RunId run) {
 // 步骤：固定渠道所有者 → 注册面向当前主聊天的发言契约 → 绑定业务线程执行入口。
 MainMessages::MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance,
     SoftwareLog* log, RunLog* trace, bool structured)
-    : app_(application),store_(std::move(store)),instance_(std::move(instance)),log_(log),trace_(trace) {
+    : app_(application),store_(std::move(store)),instance_(std::move(instance)),
+      memory_revision_(store_->memory_revision()),log_(log),trace_(trace) {
     if (!structured) return;
     reply_tools_ = std::make_unique<agent::ToolCatalog>(1);
     reply_tools_->add({reply_id,app_.mailbox_host().identity,1,{"main_reply",

@@ -64,6 +64,9 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
     std::uint64_t native = 0;
     try {
         if (envelope.at("route")=="send") {
+            constexpr std::string_view revoke = "撤回记忆 ";
+            if (text.starts_with(revoke)) change_memory(std::string_view(text).substr(revoke.size()),std::nullopt);
+            if (memory_capture_topic(text)) incoming_memory_ = id;
             const auto start = app_.submit_dialogue(text,utc);
             run = {start.session,start.turn};
             parent_ = {run,id};
@@ -89,6 +92,7 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
         }
     } catch (const std::logic_error&) { result["state"] = "rejected"; }
     catch (const std::exception&) { result["state"] = "unknown"; }
+    incoming_memory_.reset();
     result.update(Json{{"session",std::to_string(run.session)},{"turn",std::to_string(run.sequence)},{"nativeMessage",std::to_string(native)}});
     publish(id,result);
     return result;

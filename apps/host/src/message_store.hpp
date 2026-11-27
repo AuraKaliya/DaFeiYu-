@@ -2,10 +2,14 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <nlohmann/json.hpp>
 
 namespace dfy::app {
+// 识别主聊天显式收录格式，返回原句中由主人指定的主题。
+std::optional<std::string_view> memory_capture_topic(std::string_view text);
 struct StoredMessage {
     std::int64_t id, revision, utc_ms;
     std::string source, submission;
@@ -39,6 +43,15 @@ class MessageStore {
     // 按消息号读取一批尚需核对的投递，已结算历史不进入启动扫描。
     std::vector<StoredMessage> unfinished(std::int64_t after) const;
   private:
+    friend class MainMessages;
+    // 返回当前档案的记忆授权修订，零表示从未收录原话。
+    std::int64_t memory_revision() const;
+    // 在一个事务内按原件身份收录或撤权，重复操作保留修订号。
+    std::pair<std::int64_t,bool> change_memory(std::string_view identity, const std::optional<std::string>& topic);
+    // 查询当前档案中最近一次实际接纳的用户原话身份。
+    std::string last_memory_source() const;
+    // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。
+    std::optional<StoredMessage> recall_memory(std::string_view selector) const;
     struct State;
     std::unique_ptr<State> state_;
 };

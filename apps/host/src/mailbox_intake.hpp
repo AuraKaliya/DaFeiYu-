@@ -37,7 +37,8 @@ class MailboxIntake {
     // 在有待处理到件信号时推进一个信箱，保持箱内 FIFO。
     MailboxIntakeResult advance(bool only_wake = true);
     // 在真人打开主回合时带入一封审核通过的待收信件。
-    agent::TurnDiagnostics submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {});
+    agent::TurnDiagnostics submit_dialogue(const std::string& text, std::optional<std::int64_t> event_utc_ms = {},
+        bool include_mail = true);
     // 判断主回合的工具快照是否仍被在途工作使用。
     bool busy() const noexcept { return conversation_.busy(); }
   private:

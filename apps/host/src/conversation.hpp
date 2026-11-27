@@ -6,6 +6,7 @@
 
 namespace dfy::plugins { class PluginManager; }
 namespace dfy::app {
+enum class DialogueAudience { other, owner };
 inline constexpr std::size_t dialogue_display_byte_limit = 2*1024*1024;
 struct PersonaProfile;
 class MainMessages;
@@ -52,7 +53,7 @@ class Conversation {
     Conversation& operator=(const Conversation&) = delete;
     // 接纳运行并返回开始状态，显式提供用户原话时才保留显示条目。
     agent::TurnDiagnostics submit(const std::string& prompt, agent::RunOptions options = {}, bool player_facing = false,
-        const std::string* display_prompt = nullptr);
+        const std::string* display_prompt = nullptr, DialogueAudience audience = DialogueAudience::other);
     // 向尚待结算的回合登记用户取消。
     bool cancel();
     // 空闲时清空会话上下文，返回原通知回执。

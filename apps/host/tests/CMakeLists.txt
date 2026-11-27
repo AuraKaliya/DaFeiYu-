@@ -78,3 +78,9 @@ dfy_test_executable(dfy_memory_recall_tests memory_recall/experiment.cpp)
 target_link_libraries(dfy_memory_recall_tests PRIVATE dfy_build_options nlohmann_json::nlohmann_json winsqlite3)
 add_test(NAME app.memory_recall_baseline COMMAND dfy_memory_recall_tests "${CMAKE_CURRENT_SOURCE_DIR}/memory_recall")
 set_tests_properties(app.memory_recall_baseline PROPERTIES TIMEOUT 15)
+
+dfy_test_executable(dfy_main_memory_tests main_memory.cpp)
+target_link_libraries(dfy_main_memory_tests PRIVATE dfy_host_commands dfy_application dfy_build_options nlohmann_json::nlohmann_json)
+add_test(NAME app.main_memory COMMAND ${CMAKE_COMMAND} "-DPROGRAM=$<TARGET_FILE:dfy_main_memory_tests>"
+  "-DROOT=${CMAKE_CURRENT_BINARY_DIR}/main-memory/$<CONFIG>" -P "${CMAKE_CURRENT_SOURCE_DIR}/main_memory_restart.cmake")
+set_tests_properties(app.main_memory PROPERTIES TIMEOUT 40)

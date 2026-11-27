@@ -13,7 +13,7 @@ add_library(dfy_application STATIC
   src/dialogue_queue.cpp src/event_dispatch.cpp src/event_dispatch.hpp src/interaction_routes.cpp
   src/interaction_routes.hpp src/mail_reply_tool.cpp src/mail_reply_tool.hpp src/mailbox_intake.cpp
   src/mailbox_intake.hpp src/mailbox_view.cpp src/mailbox_view.hpp src/main_messages.cpp src/main_messages.hpp src/main_output.cpp
-  src/message_store.cpp src/message_store.hpp src/host_settings.cpp src/host_settings.hpp
+  src/message_store.cpp src/message_store.hpp src/main_memory.cpp src/host_settings.cpp src/host_settings.hpp
   src/host_settings_file.cpp src/host_settings_file.hpp src/persona.cpp src/persona.hpp src/reply_delivery.cpp
   src/reply_delivery.hpp src/room_mailbox.cpp src/run_log.cpp src/run_log.hpp src/software_log.cpp
   src/software_log.hpp src/software_log_files.cpp src/software_log_files.hpp src/subagents.cpp
@@ -41,7 +41,7 @@ add_library(dfy_host_commands STATIC
   src/commands/chat.cpp src/commands/chat.hpp src/commands/diagnostics.cpp src/commands/diagnostics.hpp
   src/commands/plugin_commands.cpp src/commands/plugin_commands.hpp)
 target_include_directories(dfy_host_commands PUBLIC src/commands)
-target_link_libraries(dfy_host_commands PUBLIC dfy_application PRIVATE dfy_build_options)
+target_link_libraries(dfy_host_commands PUBLIC dfy_application PRIVATE dfy_build_options nlohmann_json::nlohmann_json)
 dfy_group_target(dfy_host_commands App)
 
 add_library(dfy_management STATIC

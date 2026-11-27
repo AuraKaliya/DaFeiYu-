@@ -1,5 +1,7 @@
 #include "message_store.hpp"
 #include <winsqlite/winsqlite3.h>
+#include <dafeiyu/utf8.hpp>
+#include <charconv>
 #include <chrono>
 #include <mutex>
 
@@ -107,7 +109,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     Transaction transaction(db);
     {
         Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>2) throw std::runtime_error("messages: unsupported database version");
+        if (!version.next() || version.number(0)>3) throw std::runtime_error("messages: unsupported database version");
         const auto previous = version.number(0);
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
@@ -122,6 +124,9 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             while (existing.next()) index_delivery(db,existing.number(0),Json::parse(existing.text(1)));
             sql(db,"PRAGMA user_version=2");
         }
+        if (previous<3) sql(db,"ALTER TABLE conversation ADD COLUMN memory_revision INTEGER NOT NULL DEFAULT 0;"
+            "CREATE TABLE personal_memory(message INTEGER PRIMARY KEY,topic TEXT NOT NULL,active INTEGER NOT NULL);"
+            "CREATE INDEX active_memory_topic ON personal_memory(topic,message DESC) WHERE active=1; PRAGMA user_version=3");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -132,6 +137,109 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
 MessageStore::~MessageStore() = default;
 // 返回数据库给当前目录签发的逻辑身份。
 const std::string& MessageStore::conversation() const noexcept { return state_->conversation; }
+
+namespace {
+// 仅受信主聊天来源、真人原话及已接纳或实际送模的回执可作为个人记忆原件。
+constexpr char memory_source[] = "SELECT m.id,m.envelope,r.body FROM messages m JOIN receipts r ON r.rev=m.latest "
+    "WHERE m.source IN ('desktop','terminal')";
+// 核对原渠道实际接纳状态和作者；补收录时使用与直接写入相同的正文计量。
+bool eligible_original(const Statement& source, bool check_size) {
+    const auto state = Json::parse(source.text(2)).at("state");
+    if (state!="accepted" && state!="submitted") return false;
+    const auto envelope = Json::parse(source.text(1));
+    const auto text = envelope.find("text");
+    return envelope.is_object() && envelope.value("sender",Json{})=="user" && text!=envelope.end() &&
+        text->is_string() && (!check_size || text->dump().size()<=2048);
+}
+// 约束主题长度及命名空间，保留斜线给跨启动原件号。
+void check_memory_topic(std::string_view topic) {
+    if (topic.size()>128 || topic.find_first_not_of(" \t\r\n")==topic.npos ||
+        topic.find('/')!=topic.npos || !runtime::valid_utf8(topic)) throw std::invalid_argument("memory: invalid topic");
+}
+// 在当前档案内校验原件身份，拒绝跨档案或不完整的消息号。
+std::int64_t memory_message(std::string_view identity, const std::string& conversation) {
+    if (!identity.starts_with(conversation+"/")) throw std::invalid_argument("memory: different conversation");
+    identity.remove_prefix(conversation.size()+1);
+    std::int64_t id = 0;
+    const auto result = std::from_chars(identity.data(),identity.data()+identity.size(),id);
+    if (result.ec!=std::errc{} || result.ptr!=identity.data()+identity.size() || id<=0)
+        throw std::invalid_argument("memory: invalid message identity");
+    return id;
+}
+}
+// 带显式主题的单行消息可在桌面或终端发出，实际保存完整原句。
+std::optional<std::string_view> memory_capture_topic(std::string_view text) {
+    constexpr std::string_view prefix = "记住 ", separator = "：";
+    if (!text.starts_with(prefix)) return {};
+    text.remove_prefix(prefix.size());
+    const auto end = text.find(separator);
+    if (end==text.npos || text.substr(end+separator.size()).find_first_not_of(" \t\r\n")==text.npos) return {};
+    return text.substr(0,end);
+}
+// 读取本档案已提交的最近一次记忆权限变化。
+std::int64_t MessageStore::memory_revision() const {
+    std::lock_guard lock(state_->mutex);
+    Statement current(state_->db,"SELECT memory_revision FROM conversation");
+    current.next();
+    return current.number(0);
+}
+// 取近期符合条件的真实输入，返回可以跨重启复用的完整原件号。
+std::string MessageStore::last_memory_source() const {
+    std::lock_guard lock(state_->mutex);
+    Statement source(state_->db,(std::string(memory_source)+" ORDER BY m.id DESC").c_str());
+    while (source.next()) if (eligible_original(source,false)) return conversation()+"/"+std::to_string(source.number(0));
+    throw std::invalid_argument("memory: no accepted user message");
+}
+// 将记忆索引绑定不可变消息；撤权保留原件和墓碑，旧收录重试不能复活授权。
+// 步骤：核对身份与原件 → 幂等改变索引 → 同一事务内提交权限修订。
+std::pair<std::int64_t,bool> MessageStore::change_memory(std::string_view identity, const std::optional<std::string>& topic) {
+    const auto id = memory_message(identity,conversation());
+    if (topic) check_memory_topic(*topic);
+    std::lock_guard lock(state_->mutex);
+    auto* db = state_->db;
+    Transaction transaction(db);
+    Statement prior(db,"SELECT topic,active FROM personal_memory WHERE message=?");
+    prior.bind(1,id);
+    const bool exists = prior.next();
+    bool changed = false;
+    if (topic && !exists) {
+        const auto query = std::string(memory_source)+" AND m.id=?";
+        Statement source(db,query.c_str());
+        source.bind(1,id);
+        if (!source.next() || !eligible_original(source,true)) throw std::invalid_argument("memory: eligible user quote within 2048 bytes required");
+        Statement add(db,"INSERT INTO personal_memory VALUES(?,?,1)");
+        add.bind(1,id); add.bind(2,*topic); add.next();
+        changed = true;
+    } else if (!exists || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
+        throw std::invalid_argument("memory: unknown, revoked or conflicting original");
+    } else if (!topic && prior.number(1)) {
+        Statement revoke(db,"UPDATE personal_memory SET active=0 WHERE message=?");
+        revoke.bind(1,id); revoke.next();
+        changed = true;
+    }
+    if (changed) sql(db,topic ? "UPDATE conversation SET memory_revision=1 WHERE memory_revision=0" :
+        "UPDATE conversation SET memory_revision=memory_revision+1");
+    Statement revision(db,"SELECT memory_revision FROM conversation");
+    revision.next();
+    const auto result = revision.number(0);
+    transaction.commit();
+    return {result,changed};
+}
+// 从获准索引回到同一份消息正文及渠道来源；同主题取最近的原消息。
+std::optional<StoredMessage> MessageStore::recall_memory(std::string_view selector) const {
+    const bool by_id = selector.find('/')!=selector.npos;
+    if (by_id && !selector.starts_with(conversation()+"/")) return {};
+    std::int64_t id = 0;
+    if (by_id) {
+        try { id = memory_message(selector,conversation()); } catch (const std::invalid_argument&) { return {}; }
+    }
+    std::lock_guard lock(state_->mutex);
+    const std::string select = "SELECT m.id,r.rev,m.utc,m.source,m.submission,m.envelope,r.body FROM personal_memory p "
+        "JOIN messages m ON m.id=p.message JOIN receipts r ON r.rev=m.latest WHERE p.active=1 AND ";
+    Statement result(state_->db,(select+(by_id ? "p.message=?" : "p.topic=? ORDER BY p.message DESC LIMIT 1")).c_str());
+    if (by_id) result.bind(1,id); else result.bind(1,selector);
+    return result.next() ? std::optional(row(result)) : std::nullopt;
+}
 // 用读锁固定当前提交位置。
 std::optional<StoredMessage> MessageStore::find(std::string_view source, std::string_view submission) const {
     std::lock_guard lock(state_->mutex);
@@ -168,6 +276,18 @@ MessageAdmission MessageStore::put(std::string_view source, std::string_view sub
     insert.next();
     const auto id = sqlite3_last_insert_rowid(db);
     const auto revision = append_receipt(db,id,receipt);
+    if ((source=="desktop" || source=="terminal") && envelope.is_object() && envelope.contains("text") &&
+        envelope.at("text").is_string() && envelope.value("sender",Json{})=="user" && envelope.value("route",Json{})=="send" &&
+        receipt.value("state",Json{})=="pending") {
+        const auto& text = envelope.at("text");
+        if (const auto topic = memory_capture_topic(text.get_ref<const std::string&>())) {
+            check_memory_topic(*topic);
+            if (text.dump().size()>2048) throw std::invalid_argument("memory: quote exceeds 2048 bytes");
+            Statement retain(db,"INSERT INTO personal_memory VALUES(?,?,1)");
+            retain.bind(1,id); retain.bind(2,*topic); retain.next();
+            sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
+        }
+    }
     transaction.commit();
     return {{id,revision,utc,std::string(source),std::string(submission),envelope,receipt},true};
 }

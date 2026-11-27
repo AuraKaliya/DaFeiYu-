@@ -19,6 +19,12 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
         RunLog* trace, bool structured);
     // 为面向用户的回合固定发言工具与渠道说明，保留已有的专用工具范围。
     bool prepare_output(agent::RunOptions& options);
+    // 在每个主会话入口固定受众；主人私聊可按主题或稳定身份读取一份原件。
+    void prepare_memory(agent::RunOptions& options, DialogueAudience audience, const std::string& prompt);
+    // 管理终端查询可收录的最近原话身份。
+    std::string last_memory_source() const { return store_->last_memory_source(); }
+    // 仅受信管理入口可收录或撤回当前档案原件的读取权。
+    void change_memory(std::string_view identity, const std::optional<std::string>& topic);
     // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。
     void clear_context(std::uint64_t through) noexcept { context_floor_ = through; delivered_.reset(); }
     // 绑定业务线程的实时终端输出，只有首次写盘成功才通知。
@@ -61,6 +67,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     Application& app_;
     std::shared_ptr<MessageStore> store_;
     std::string instance_;
+    std::int64_t memory_revision_;
+    std::string memory_binding_ = "main";
+    std::optional<std::int64_t> incoming_memory_;
     SoftwareLog* log_;
     RunLog* trace_;
     std::function<void(const std::string&)> reply_sink_;

@@ -319,6 +319,8 @@ DialogueReceipt Host::submit_dialogue(DialogueCommand command) {
                     command.stored_utc_ms = accepted.message.utc_ms;
                 }
             }
+        } catch (const std::invalid_argument&) {
+            return {command.id,State::rejected,command.target};
         } catch (const std::runtime_error&) {
             if (software_) software_->record(app::SoftwareEvent::message_storage,app::SoftwareResult::failed);
             return {command.id,State::unavailable,command.target};
