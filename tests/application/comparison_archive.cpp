@@ -7,16 +7,29 @@ namespace dfy::tests::task_memory {
 using namespace app::message_db;
 // 比例档案只合成无外部副作用的原件；索引回填和别名维护使用正式实现。
 // 步骤：写入第十三版可见与已撤原件 → 重开升级 → 登记及移除主人别名。
-void populate_comparison_archive(const fs::path& data,unsigned groups) {
+void populate_comparison_archive(const fs::path& data,unsigned groups,bool varied) {
     const auto profile=app::MessageStore(data).conversation();
     sqlite3* db=nullptr; const auto file=(data/"main-conversation.sqlite3").u8string(); check(sqlite3_open(reinterpret_cast<const char*>(file.c_str()),&db));
     std::unique_ptr<sqlite3,decltype(&sqlite3_close)> close(db,&sqlite3_close);
     Transaction tx(db); sql(db,"DROP TABLE case_term; PRAGMA user_version=13; UPDATE conversation SET memory_revision=1");
     for(unsigned g=1;g<=groups;++g) {
-        const std::string name=g==1 ? "east" : g==2 ? "west" : g==3 ? "night" : g==4 ? "withdrawn" : "cabinet-"+std::to_string(g);
-        const std::string obj=g==1 || g==3 ? "东馆交接台" : g==2 ? "西馆交接台" : g==4 ? "已撤红标对象" : "东馆资料柜"+std::to_string(g);
-        const std::string condition=g==1 ? "早班交接后" : g==2 ? "午班交接后" : g==3 ? "晚班复核" : "例行巡查";
-        const std::string checkpoint=g==1 ? "FirstShift" : g==2 ? "中午点" : g==3 ? "收馆点" : "巡查点";
+        std::string name=g==1 ? "east" : g==2 ? "west" : g==3 ? "night" : g==4 ? "withdrawn" : "cabinet-"+std::to_string(g);
+        std::string obj=g==1 || g==3 ? "东馆交接台" : g==2 ? "西馆交接台" : g==4 ? "已撤红标对象" : "东馆资料柜"+std::to_string(g);
+        std::string condition=g==1 ? "早班交接后" : g==2 ? "午班交接后" : g==3 ? "晚班复核" : "例行巡查";
+        std::string checkpoint=g==1 ? "FirstShift" : g==2 ? "中午点" : g==3 ? "收馆点" : "巡查点";
+        struct Site {const char *key,*object,*condition,*checkpoint;};
+        static constexpr Site sites[]={
+            {"intake","北楼回风口","开机后","初检"},{"supply","北楼送风口","开机后","初检"},
+            {"humid","育苗房湿度计","浇水后","晨检"},{"temp","育苗房温度计","浇水后","晨检"},
+            {"rack-80","转运架80","装车前","点货"},{"rack-81","转运架81","装车前","点货"},
+            {"press","压力表","停机后","闭馆点"},{"full","Ａ区扫描台","交班前","复验"},
+            {"code-02","样品盒02","签封前","交样"},{"acid","废液收集桶","封桶后","称重"},
+            {"reader","读卡口","开门后","采样"},{"outside","外门读卡口","开门后","采样"},
+            {"pump","西区抽水泵","检修后","复测"},{"reserve","备用抽水泵","检修后","复测"},
+            {"neg","负压阀","关门后","初测"},{"pos","正压阀","关门后","初测"}};
+        if(varied && g>=7 && g<7+std::size(sites)) {
+            const auto& s=sites[g-7]; name=s.key; obj=s.object; condition=s.condition; checkpoint=s.checkpoint;
+        }
         const Json scope{{"object",obj},{"measure","交接是否达到预期"},{"unit","布尔"},{"conditions",condition},{"criterion","target"}};
         Statement group(db,"INSERT INTO observation_case(name,scope) VALUES(?,?)"); group.bind(1,name); group.bind(2,scope.dump()); group.next();
         for(unsigned n=1;n<=(g<=3 ? 2u : 1u);++n) {
@@ -41,6 +54,11 @@ void populate_comparison_archive(const fs::path& data,unsigned groups) {
     owner->manage_case({"/comparison","alias","east","东边签收台"}); owner->manage_case({"/comparison","alias","east","东边签收台"});
     owner->manage_case({"/comparison","alias","west","西翼交班桌"}); owner->manage_case({"/comparison","alias","night","夜间交班桌"});
     owner->manage_case({"/comparison","alias","east","已移除别名"}); owner->manage_case({"/comparison","unalias","east","已移除别名"});
+    if(varied) {
+        owner->manage_case({"/comparison","alias","intake","回气格栅"});
+        owner->manage_case({"/comparison","alias","humid","水汽表"});
+        owner->manage_case({"/comparison","alias","pump","排水机组"});
+    }
 }
 // 一组连续观测中第一项与第二项相斥，第三项与这两项分别共用读者或读数。
 // 步骤：产生有稳定原号的读回 → 插入已收到的独立报告 → 计量宿主实际持有的候选行数。

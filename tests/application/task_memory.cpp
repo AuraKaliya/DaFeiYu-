@@ -164,6 +164,9 @@ int wmain(int argc, wchar_t** argv) {
         if (argc==6 && std::wstring_view(argv[5])==L"--case-recall") {
             understanding_recall(argv[3],data,true); return 0;
         }
+        if (argc==6 && std::wstring_view(argv[5])==L"--measure-paraphrases") {
+            understanding_recall(argv[3],data,true,true); return 0;
+        }
         if (argc==6 && std::wstring_view(argv[5])==L"--long-case") {long_case_recall(argv[3],data); return 0;}
         if (argc==6 && std::wstring_view(argv[5])==L"--channels") {channel_observations(argv[3],data,argv[1],argv[2]); return 0;}
         std::ifstream corpus(fs::path(argv[3]),std::ios::binary);
