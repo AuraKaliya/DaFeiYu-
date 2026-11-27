@@ -27,7 +27,6 @@ std::string part(const std::string& value,std::size_t offset,std::size_t budget)
         n/=2;
     }
 }
-constexpr char allowed[]=" AND (source=0 OR EXISTS(SELECT 1 FROM personal_memory p WHERE p.message=child_letter.source AND p.active=1)) ";
 }
 
 // 将一次交付的状态、正文及明确导出的原件复制为接收方的不可变信件。
@@ -42,26 +41,30 @@ std::int64_t MessageStore::post_letter(std::int64_t child,const std::string& exc
     const auto signature=platform::sha256(Json::array({mode,persona,summary,body,note}).dump());
     const auto phase=start ? "start" : "end";
     std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
-    Statement owner(db,"SELECT plugin,preset,subject,channel,source,access FROM child_owner WHERE id=? AND access<>0");
+    Statement owner(db,"SELECT plugin,preset,subject,channel,source,access FROM child_owner WHERE id=? AND access<>0 AND "
+        "(source=0 OR source IN(SELECT message FROM personal_memory WHERE active=1))");
     owner.bind(1,child); if (!owner.next()) throw std::invalid_argument("letter: inactive owner");
-    Statement previous(db,"SELECT id,signature FROM child_letter WHERE owner=? AND exchange=? AND phase=?");
+    const auto source=owner.number(4); std::int64_t start_id=0;
+    if (!start) {
+        Statement opened(db,"SELECT id,source FROM child_letter WHERE owner=? AND exchange=? AND phase='start'");
+        opened.bind(1,child); opened.bind(2,exchange);
+        if(!opened.next() || opened.number(1)!=source) throw std::invalid_argument("letter: different exchange source");
+        start_id=opened.number(0);
+    }
+    Statement previous(db,"SELECT id,signature,source FROM child_letter WHERE owner=? AND exchange=? AND phase=?");
     previous.bind(1,child); previous.bind(2,exchange); previous.bind(3,phase);
     if (previous.next()) {
-        if (previous.text(1)!=signature) throw std::invalid_argument("letter: conflicting replay");
+        if (previous.text(1)!=signature || previous.number(2)!=source) throw std::invalid_argument("letter: conflicting replay");
         const auto id=previous.number(0); tx.commit(); return id;
     }
     if (!start && outcome.empty()) throw std::invalid_argument("letter: no observed exit for exchange");
-    const auto source=owner.number(4);
     Json envelope{{"plugin",owner.text(0)},{"preset",owner.number(1)},{"subject",owner.text(2)},{"exchange",exchange},
         {"phase",phase},{"mode",mode==1 ? "status" : mode==2 ? "summary" : mode==3 ? "original" : "digest"},{"audience","owner"},
         {"author",conversation()+"/child/"+std::to_string(child)},{"outcome",outcome}};
     if (!owner.text(3).empty()) envelope["channel"]=owner.text(3);
     if (!persona.empty()) envelope["persona"]=persona;
     if (!start) {
-        Statement opened(db,"SELECT id FROM child_letter WHERE owner=? AND exchange=? AND phase='start'");
-        opened.bind(1,child); opened.bind(2,exchange);
-        if (!opened.next()) throw std::invalid_argument("letter: missing start");
-        envelope["startRef"]=conversation()+"/letter/"+std::to_string(opened.number(0));
+        envelope["startRef"]=conversation()+"/letter/"+std::to_string(start_id);
         if (!summary.empty() || !body.empty()) {
             envelope["summary"]=part(summary.empty() ? body : summary,0,480);
             envelope["summaryKind"]=summary.empty() ? "excerpt" : "sender_summary";
@@ -107,8 +110,7 @@ void MessageStore::receive_letter(std::int64_t id) {
 // 只向获准的主人私聊提示收件箱有待确认的材料。
 bool MessageStore::unread_letter() const {
     std::lock_guard lock(state_->mutex);
-    const auto sql=std::string("SELECT 1 FROM child_letter WHERE received=1 AND seen=0")+allowed+" LIMIT 1";
-    Statement get(state_->db,sql.c_str()); return get.next();
+    Statement get(state_->db,"SELECT 1 FROM readable_letter WHERE seen=0 LIMIT 1"); return get.next();
 }
 
 // 从接收方快照读概览或逐字导出的副本，不打开原子库。
@@ -125,7 +127,7 @@ Json MessageStore::search_letters(const std::vector<std::string>& topics,unsigne
     if (offset && section.empty()) throw std::invalid_argument("letter: offset requires an exported original");
     std::lock_guard lock(state_->mutex);
     const auto filter=id ? " AND id=?" : term=="待收" ? " AND seen=0" : " AND exchange=?";
-    const auto query=std::string("SELECT id,envelope,seen FROM child_letter WHERE received=1")+filter+allowed+
+    const auto query=std::string("SELECT id,envelope,seen FROM readable_letter WHERE 1")+filter+
         (term=="待收" ? " ORDER BY id LIMIT 4" : " ORDER BY id DESC LIMIT 4");
     Statement get(state_->db,query.c_str());
     if (id) get.bind(1,id); else if (term!="待收") get.bind(1,term);
@@ -180,8 +182,8 @@ void MessageStore::acknowledge_letters(const std::vector<std::string>& reference
     std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
     for (const auto& ref : references) {
         if (!ref.starts_with(prefix)) throw std::invalid_argument("letter: different profile");
-        const auto query=std::string("UPDATE child_letter SET seen=1 WHERE received=1 AND id=?")+allowed;
-        Statement mark(db,query.c_str()); mark.bind(1,letter_id(std::string_view(ref).substr(prefix.size()))); mark.next();
+        Statement mark(db,"UPDATE child_letter SET seen=1 WHERE id=?1 AND EXISTS(SELECT 1 FROM readable_letter WHERE id=?1)");
+        mark.bind(1,letter_id(std::string_view(ref).substr(prefix.size()))); mark.next();
         if (!sqlite3_changes(db)) throw std::invalid_argument("letter: unavailable");
     }
     tx.commit();

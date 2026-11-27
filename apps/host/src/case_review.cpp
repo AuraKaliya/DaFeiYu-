@@ -47,7 +47,8 @@ Json batch_for(sqlite3* db,const std::string& profile,const std::string& name,co
 Json case_review::fact(sqlite3* db,const Member& row) {
     Json item{{"reference",row.ref},{"checkpoint",row.checkpoint},{"attribution",row.attribution}};
     if (row.kind=="sender_report") {
-        Statement get(db,"SELECT envelope FROM child_letter WHERE id=?"); get.bind(1,row.record); get.next();
+        Statement get(db,"SELECT envelope FROM readable_letter WHERE id=?"); get.bind(1,row.record);
+        if(!get.next()) throw std::invalid_argument("comparison: unavailable report");
         const auto env=Json::parse(get.text(0));
         item["origin"]="sender_report"; item["author"]=env.at("author"); item["exit"]=env.at("outcome");
         if(env.contains("summary")) {item["report"]=preview(env.at("summary")); item["summaryKind"]=env.at("summaryKind");}

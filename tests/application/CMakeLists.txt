@@ -88,6 +88,9 @@ set_tests_properties(app.child_memory_context PROPERTIES TIMEOUT 90)
 add_test(NAME app.memory_idle_schedule COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/idle_schedule.jsonl" "${PROJECT_BINARY_DIR}/tests/idle-schedule/$<CONFIG>")
 set_tests_properties(app.memory_idle_schedule PROPERTIES TIMEOUT 90)
+add_test(NAME app.letter_authority COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/letter_authority.jsonl" "${PROJECT_BINARY_DIR}/tests/letter-authority/$<CONFIG>")
+set_tests_properties(app.letter_authority PROPERTIES TIMEOUT 90)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。

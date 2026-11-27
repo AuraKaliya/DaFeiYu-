@@ -81,6 +81,7 @@ struct Fixture {
         host.reset(); db.reset(); archive=settings.value("archive",archive);
         check(archive=="main" || archive=="secondary","unknown test archive");
         if(settings.contains("legacy")) tests::legacy_archive(data_dir(),settings.at("legacy"));
+        if(settings.contains("legacyLetter")) tests::legacy_letter_scope(data_dir(),knowledge.resolve(settings.at("legacyLetter")),knowledge.resolve(settings.at("newBasis")));
         db=std::make_shared<app::MessageStore>(data_dir());
         app::ApplicationRunConfig config; config.trace_directory=root/"logs"; config.tool_clock=[this]{return now;};
         model::Config mc; mc.context_window_tokens=window_tokens; if(window_tokens) mc.reserved_output_tokens=128;

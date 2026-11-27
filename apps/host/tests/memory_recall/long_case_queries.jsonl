@@ -1,6 +1,6 @@
 {"id":"L1","ask":"相隔这么久，最初的冲突还能追到吗？","offset":0,"refs":["/task/2/receipt/3","/task/1/receipt/3"],"case":"ledger","state":"conflicting_observations","nativeCount":"N","next":2}
 {"id":"L2","ask":"继续，最近的实际读回是哪一份？","offset":2,"refs":["/latest"],"case":"ledger","state":"conflicting_observations","nativeCount":"N","next":3}
-{"id":"L3","ask":"继续，当时有没有交接人的转述？","offset":3,"refs":["/letter/1"],"case":"ledger","state":"conflicting_observations","nativeCount":"N","next":4}
+{"id":"L3","ask":"继续，当时有没有交接人的转述？","offset":3,"refs":["/letter/2"],"case":"ledger","state":"conflicting_observations","nativeCount":"N","next":4}
 {"id":"L4","ask":"我要最后一页的那份原件。","offset":"N","refs":["/task/3/receipt/3"],"case":"ledger","state":"conflicting_observations","nativeCount":"N"}
 {"id":"L5","ask":"超过最后一页还有什么？","offset":"N+1"}
 {"id":"L6","ask":"撤回那次反例后，眼下有哪些材料？","offset":0,"refs":["/latest"],"case":"ledger","state":"targets_met","nativeCount":"N-1","next":1,"revoke":"/task/1"}

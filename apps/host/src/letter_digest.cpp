@@ -41,9 +41,8 @@ Json passages(const std::string& body) {
 }
 // 取仍授权给接收方的完整原信，原发件人始终来自持久快照。
 std::optional<Json> pending(sqlite3* db,const std::string& profile,std::int64_t id) {
-    Statement get(db,"SELECT d.letter,l.envelope FROM letter_digest d JOIN child_letter l ON l.id=d.letter "
-        "WHERE d.state='pending' AND l.received=1 AND (?1=0 OR d.letter=?1) AND (l.source=0 OR EXISTS("
-        "SELECT 1 FROM personal_memory p WHERE p.message=l.source AND p.active=1)) ORDER BY d.letter LIMIT 1");
+    Statement get(db,"SELECT d.letter,l.envelope FROM letter_digest d JOIN readable_letter l ON l.id=d.letter "
+        "WHERE d.state='pending' AND (?1=0 OR d.letter=?1) ORDER BY d.letter LIMIT 1");
     get.bind(1,id); if(!get.next()) return {};
     const auto n=get.number(0); const auto env=Json::parse(get.text(1));
     return Json{{"letter",profile+"/letter/"+std::to_string(n)},{"through",n},{"author",env.at("author")},

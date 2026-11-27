@@ -65,12 +65,13 @@ std::size_t populate_long_archive(const fs::path& data,unsigned natives) {
         m.bind(6,reader); m.bind(7,i==1 ? "missed" : "met"); m.bind(8,i!=1); m.next();
     }
     sql(db,"INSERT INTO child_owner(id,plugin,preset,subject,channel,access) VALUES(7,'example',2,'业务组','',3)");
+    sql(db,"INSERT INTO child_letter(id,owner,exchange,phase,signature,envelope,source,received) VALUES(1,7,'交接','start','fixture','{}',0,1)");
     const Json envelope{{"author",profile+"/child/7"},{"outcome","succeeded"},{"summary","交接班转述仍需现场确认。"},{"summaryKind","sender_summary"}};
-    Statement letter(db,"INSERT INTO child_letter(id,owner,exchange,phase,signature,envelope,source,received) VALUES(1,7,'交接','end','fixture',?,0,1)");
+    Statement letter(db,"INSERT INTO child_letter(id,owner,exchange,phase,signature,envelope,source,received) VALUES(2,7,'交接','end','fixture',?,0,1)");
     letter.bind(1,envelope.dump()); letter.next();
     Statement m(db,"INSERT INTO case_member(name,checkpoint,reference,kind,record,dependency,attribution,path,reader,reading,met) "
-        "VALUES('ledger','early',?,'sender_report',1,?,'owner_retrospective','','','',0)");
-    const auto ref=profile+"/letter/1"; m.bind(1,ref); m.bind(2,ref); m.next();
+        "VALUES('ledger','early',?,'sender_report',2,?,'owner_retrospective','','','',0)");
+    const auto ref=profile+"/letter/2"; m.bind(1,ref); m.bind(2,ref); m.next();
     index_case_terms(db,"ledger",scope); sql(db,"UPDATE conversation SET memory_revision=1"); tx.commit();
     return app::case_review::classify(db,"ledger",scope,INT64_MAX).members.size();
 }

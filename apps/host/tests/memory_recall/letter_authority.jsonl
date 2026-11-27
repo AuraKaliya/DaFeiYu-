@@ -1,0 +1,62 @@
+{"op":"source","alias":"@old","text":"记住 登记：甲来源只用于橙色交接。"}
+{"op":"admin","command":"/memory avatar example.status bridge north both private @old"}
+{"op":"open","session":"first","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"first","key":"完成旧交接","mode":2,"save":"completedStart"}
+{"op":"run","session":"first","expect":[]}
+{"op":"end","session":"first","summary":"仅据甲来源寄出的既有报告。","save":"completed"}
+{"op":"pump"}
+{"op":"begin","session":"first","key":"在途旧交接","mode":2,"save":"pendingStart"}
+{"op":"source","alias":"@new","text":"记住 登记：乙来源只用于蓝色交接。"}
+{"op":"admin","command":"/memory avatar example.status bridge north both private @new"}
+{"op":"open","session":"second","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"second","key":"在途旧交接","mode":2,"deny":true}
+{"op":"begin","session":"second","key":"完成旧交接","mode":2,"deny":true}
+{"op":"mail","selector":"$completed","items":[{"ref":"$completed","summary":"仅据甲来源寄出的既有报告。"}]}
+{"op":"restart"}
+{"op":"open","session":"third","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"third","key":"在途旧交接","mode":2,"deny":true}
+{"op":"begin","session":"third","key":"乙来源独立交接","mode":2,"save":"newStart"}
+{"op":"run","session":"third","expect":[]}
+{"op":"end","session":"third","summary":"仅据乙来源的独立报告。","save":"newEnd"}
+{"op":"pump"}
+{"op":"mail","selector":"$newEnd","items":[{"ref":"$newEnd","summary":"仅据乙来源的独立报告。"}]}
+{"op":"admin","command":"/memory revoke @old"}
+{"op":"mail","selector":"$completed","items":[]}
+{"op":"mail","selector":"$newEnd","items":[{"ref":"$newEnd","summary":"仅据乙来源的独立报告。"}]}
+{"op":"admin","command":"/memory revoke @new"}
+{"op":"restart"}
+{"op":"open","session":"revoked","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"revoked","key":"不应空投","mode":2,"deny":true}
+{"op":"admin","command":"/memory avatar example.status bridge north both private"}
+{"op":"open","session":"clean","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"clean","key":"在途旧交接","mode":2,"deny":true}
+{"op":"begin","session":"clean","key":"独立新信","mode":2,"save":"freeStart"}
+{"op":"run","session":"clean","expect":[]}
+{"op":"end","session":"clean","summary":"本次为无共享原件的新报告。","save":"freeEnd"}
+{"op":"pump"}
+{"op":"mail","selector":"$freeEnd","items":[{"ref":"$freeEnd","summary":"本次为无共享原件的新报告。"}]}
+{"op":"source","alias":"@c","text":"记住 旧档案：登记处的旧来源。"}
+{"op":"source","alias":"@d","text":"记住 新档案：登记处的新来源。"}
+{"op":"admin","command":"/memory avatar example.status bridge north both private @c"}
+{"op":"open","session":"legacy","preset":3,"subject":"north","channel":"bridge"}
+{"op":"begin","session":"legacy","key":"旧版异源交接","mode":4,"abi":2}
+{"op":"run","session":"legacy","expect":[]}
+{"op":"end","session":"legacy","body":"旧报告称最后一项尚待确认。","save":"legacy"}
+{"op":"pump"}
+{"op":"admin","command":"/comparison define old 交接核对 是否达标 布尔 交接后 target"}
+{"op":"case_task","id":"legacy-native-1","save":"@v1","tool":"example.status/set_focus","expected":"focus","case":"old","checkpoint":"same"}
+{"op":"case_task","id":"legacy-native-2","save":"@v2","tool":"test.tools/increment","expected":"1","case":"old","checkpoint":"same"}
+{"op":"admin","command":"/comparison attach old same $legacy"}
+{"op":"idle","case":"old","state":"targets_met","text":"我核对过两个动作的读回。"}
+{"op":"compare","topics":["old"],"state":"targets_met","reportCount":1,"opinion":{"standing":"current","save":"@legacyOpinion"}}
+{"op":"admin","command":"/knowledge propose report first 0 旧报告 当班 旧报告称还有一项待核对。 $legacy"}
+{"op":"admin","command":"/knowledge publish report first"}
+{"op":"restart","legacyLetter":"$legacy","newBasis":"@d","plugins":[]}
+{"op":"mail","selector":"$legacy","items":[],"forbidden":["旧报告称最后一项尚待确认"]}
+{"op":"mail","selector":"$legacy/body","items":[]}
+{"op":"kb","topics":["旧报告"],"expect":[]}
+{"op":"compare","topics":["old"],"state":"targets_met","nativeCount":2,"reportCount":0,"facts":["@v1","@v2"]}
+{"op":"compare","topics":["@legacyOpinion"],"missing":true}
+{"op":"mail","selector":"$freeEnd","items":[{"ref":"$freeEnd","summary":"本次为无共享原件的新报告。"}]}
+{"op":"restart"}
+{"op":"kb","topics":["旧报告"],"expect":[]}

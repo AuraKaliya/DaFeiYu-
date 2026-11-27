@@ -38,8 +38,7 @@ std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const st
         get.bind(1,task); get.bind(2,receipt);
         if (get.next()) return MemoryBasis{"tool_readback",profile+"/task/"+std::to_string(task),task};
     } else if (tail.starts_with("letter/")) {
-        Statement get(db,"SELECT source FROM child_letter WHERE id=? AND phase='end' AND received=1 "
-            "AND (source=0 OR source IN (SELECT message FROM personal_memory WHERE active=1))");
+        Statement get(db,"SELECT source FROM readable_letter WHERE id=? AND phase='end'");
         const auto id=number(tail.substr(7)); get.bind(1,id);
         if (get.next()) return MemoryBasis{"sender_report",get.number(0) ? profile+"/"+std::to_string(get.number(0)) : ref,id};
     } else if (tail.find('/')==tail.npos) {

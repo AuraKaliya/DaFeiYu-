@@ -24,12 +24,23 @@ auto signature(sqlite3* db) {
 void legacy_archive(const fs::path& directory,unsigned version) {
     task_memory::require(version>=9 && version<=13,"unsupported fixture schema");
     auto conn=connection(directory); auto* db=conn.get(); Transaction tx(db);
-    sql(db,"DROP TABLE IF EXISTS idle_schedule; DROP INDEX IF EXISTS case_native_checkpoint; DROP INDEX IF EXISTS case_kind_sequence; DROP TABLE case_term; DROP INDEX case_checkpoint");
+    sql(db,"DROP VIEW IF EXISTS readable_letter; DROP TABLE IF EXISTS idle_schedule; DROP INDEX IF EXISTS case_native_checkpoint; "
+        "DROP INDEX IF EXISTS case_kind_sequence; DROP TABLE case_term; DROP INDEX case_checkpoint");
     if(version<13) sql(db,"DROP TABLE letter_digest");
     if(version<12) sql(db,"DROP TABLE case_opinion; DROP TABLE case_member; DROP TABLE observation_case");
     if(version<11) sql(db,"DROP TABLE knowledge_grant; DROP TABLE knowledge_basis; DROP TABLE knowledge_edition; DROP TABLE knowledge_article");
     if(version<10) sql(db,"DROP TABLE child_letter");
     sql(db,("PRAGMA user_version="+std::to_string(version)).c_str()); tx.commit();
+}
+// 旧版可能按新的授权写结束信，开始时的原件仍留在启动信中。
+void legacy_letter_scope(const fs::path& directory,const std::string& letter,const std::string& source) {
+    auto conn=connection(directory); auto* db=conn.get(); Transaction tx(db);
+    const auto id=std::stoll(letter.substr(letter.rfind('/')+1)),src=std::stoll(source.substr(source.rfind('/')+1));
+    Statement change(db,"UPDATE child_letter SET source=? WHERE id=? AND phase='end'"); change.bind(1,src); change.bind(2,id); change.next();
+    task_memory::require(sqlite3_changes(db)==1,"missing legacy mail");
+    Statement affected(db,"UPDATE case_member SET dependency=? WHERE reference=?"); affected.bind(1,source); affected.bind(2,letter); affected.next();
+    Statement basis(db,"UPDATE knowledge_basis SET dependency=? WHERE reference=?"); basis.bind(1,source); basis.bind(2,letter); basis.next();
+    sql(db,"DROP VIEW IF EXISTS readable_letter; PRAGMA user_version=16"); tx.commit();
 }
 // 全部异常样本建在测试自有目录，检查失败重开前后数据与版本相等。
 void check_unusable_archive(const fs::path& temporary,const std::string& fault) {

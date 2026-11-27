@@ -59,9 +59,12 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
     sql(db,"PRAGMA synchronous=FULL");
     Transaction transaction(db);
     {
-        Statement version(db,"PRAGMA user_version");
-        if (!version.next() || version.number(0)>16) throw std::runtime_error("messages: unsupported database version");
-        const auto previous = version.number(0);
+        std::int64_t previous=0;
+        {
+            Statement version(db,"PRAGMA user_version");
+            if (!version.next() || version.number(0)>17) throw std::runtime_error("messages: unsupported database version");
+            previous=version.number(0);
+        }
         if (previous==0) {
             sql(db,"CREATE TABLE conversation(id TEXT NOT NULL); INSERT INTO conversation VALUES(lower(hex(randomblob(16))));"
                 "CREATE TABLE messages(id INTEGER PRIMARY KEY,source TEXT NOT NULL,submission TEXT NOT NULL,envelope TEXT NOT NULL,"
@@ -149,6 +152,16 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "CREATE INDEX IF NOT EXISTS case_kind_sequence ON case_member(name,kind,id) WHERE active=1; PRAGMA user_version=15");
         if(previous<16) sql(db,"CREATE TABLE IF NOT EXISTS idle_schedule(id INTEGER PRIMARY KEY CHECK(id=1),next_queue INTEGER NOT NULL CHECK(next_queue BETWEEN 0 AND 2));"
             "INSERT OR IGNORE INTO idle_schedule VALUES(1,0); PRAGMA user_version=16");
+        // 已交付的旧信保留原样；开始和结束来源不一致时，停用相关报告和派生解释。
+        if(previous<17) sql(db,"CREATE VIEW IF NOT EXISTS readable_letter AS SELECT e.* FROM child_letter e WHERE e.received=1 "
+            "AND (e.source=0 OR EXISTS(SELECT 1 FROM personal_memory p WHERE p.message=e.source AND p.active=1)) "
+            "AND (e.phase='start' OR EXISTS(SELECT 1 FROM child_letter s WHERE s.owner=e.owner AND s.exchange=e.exchange AND s.phase='start' AND s.source=e.source));"
+            "CREATE TEMP TABLE invalid_member AS SELECT m.id,m.name FROM case_member m WHERE m.active=1 AND m.kind='sender_report' "
+            "AND NOT EXISTS(SELECT 1 FROM readable_letter l WHERE l.id=m.record);"
+            "UPDATE case_opinion SET valid=0 WHERE EXISTS(SELECT 1 FROM invalid_member m WHERE m.name=case_opinion.name AND m.id<=case_opinion.through_member);"
+            "UPDATE observation_case SET cursor=0,head=CASE WHEN head IN(SELECT id FROM case_opinion WHERE valid=0) THEN 0 ELSE head END "
+            "WHERE EXISTS(SELECT 1 FROM invalid_member m WHERE m.name=observation_case.name AND m.id<=observation_case.cursor);"
+            "UPDATE case_member SET active=0 WHERE id IN(SELECT id FROM invalid_member); DROP TABLE invalid_member; PRAGMA user_version=17");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
