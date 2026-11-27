@@ -36,6 +36,8 @@ struct Subagents::Slot {
     bool outward=false, reset_memory_history=false;
     bool knowledge=false;
     std::set<std::string> articles,dependencies;
+    std::string memory_binding;
+    std::uint64_t memory_epoch=0;
     std::string exchange,letter_persona;
     unsigned delivery_mode=0;
     std::uint64_t exchange_start=0;
@@ -97,16 +99,21 @@ std::uint64_t Subagents::remember(runtime::DomainId owner,runtime::DomainId id,c
 }
 // 只有原插件在两个请求之间可以选择主题，切换主题清除上次投影的历史。
 void Subagents::select_topic(runtime::DomainId owner,runtime::DomainId id,std::string topic) {
+    select_memory(owner,id,std::move(topic),false);
+}
+// 连续选择同一知识范围可沿用其原历史和权限依赖。
+void Subagents::select_knowledge(runtime::DomainId owner,runtime::DomainId id,std::string topic) {
+    select_memory(owner,id,std::move(topic),true);
+}
+// 选择行为本身仍允许查询上一份答复，在下一轮真正接纳前保留其撤权依赖。
+void Subagents::select_memory(runtime::DomainId owner,runtime::DomainId id,std::string topic,bool knowledge) {
     auto& slot=find(owner,id);
     if (stopping_ || slot.closing || !slot.memory || slot.active || slot.queued || topic.size()>128 ||
         (!topic.empty() && (topic.find_first_not_of(" ")==topic.npos || std::ranges::any_of(topic,[](unsigned char c){return c<32 || c==127;}))))
         throw std::invalid_argument("child memory: invalid selection");
-    if (slot.topic!=topic || slot.knowledge) { slot.topic=std::move(topic); slot.reset_memory_history=true; }
-    slot.knowledge=false;
-}
-// 复用主题校验，然后明确将此次选择指向已授权的发布库。
-void Subagents::select_knowledge(runtime::DomainId owner,runtime::DomainId id,std::string topic) {
-    select_topic(owner,id,std::move(topic)); auto& slot=find(owner,id); slot.knowledge=true; slot.reset_memory_history=true;
+    if (slot.topic!=topic || slot.knowledge!=knowledge) {
+        slot.topic=std::move(topic); slot.knowledge=knowledge; slot.reset_memory_history=true;
+    }
 }
 // 只撤销确实取得过该条知识的会话，其他委托的工作仍可继续。
 void Subagents::invalidate_knowledge(const std::string& article,std::int64_t child) {
@@ -234,6 +241,10 @@ std::uint64_t Subagents::submit(runtime::DomainId owner, runtime::DomainId id, S
     slot.queued_utc_ms = agent::message_utc_now();
     slot.pending_facts = std::move(pending);
     slot.answer.clear();
+    if(slot.memory && (slot.queued->replace_history || slot.reset_memory_history || slot.outward!=slot.queued->player_facing)) {
+        // 旧答复已不可读。即使本轮排队期间取消，下次成功派发也必须使用新上下文。
+        slot.reset_memory_history=true; slot.articles.clear(); slot.dependencies.clear();
+    }
     slot.phase = SubagentPhase::queued;
     return ++slot.request;
 }
@@ -362,17 +373,21 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         options.decision_status = agent::DecisionStatusOptions{binding+(input.replace_history ? "/"+std::to_string(slot.request) : ""),{},false};
     }
     options.replace_history = input.replace_history;
+    std::set<std::string> articles,dependencies;
+    std::string binding; auto epoch=slot.memory_epoch;
     if (slot.memory) {
         auto& status=*options.decision_status;
         options.replace_history=options.replace_history || slot.reset_memory_history || slot.outward!=input.player_facing;
+        if(options.replace_history) epoch=slot.request;
         status.binding+="/child/"+std::to_string(slot.memory->owner)+(input.player_facing ? "/out/" : "/in/")+
-            (slot.knowledge ? "knowledge/" : "personal/")+platform::sha256(slot.topic);
+            (slot.knowledge ? "knowledge/" : "personal/")+platform::sha256(slot.topic)+"/"+std::to_string(epoch);
+        binding=status.binding;
         const auto records=slot.knowledge ? nlohmann::json::array() : memory_->child_projection(slot.memory->owner,slot.topic,input.player_facing);
         if (slot.knowledge && !slot.topic.empty()) {
-            std::vector<std::string> dependencies;
-            const auto published=memory_->search_knowledge({slot.topic},3,slot.memory->owner,input.player_facing,&dependencies);
-            for(const auto& item : published.at("items")) slot.articles.insert(item.at("article").get<std::string>());
-            slot.dependencies.insert(dependencies.begin(),dependencies.end());
+            std::vector<std::string> sources;
+            const auto published=memory_->search_knowledge({slot.topic},3,slot.memory->owner,input.player_facing,&sources);
+            for(const auto& item : published.at("items")) articles.insert(item.at("article").get<std::string>());
+            dependencies.insert(sources.begin(),sources.end());
             auto source=knowledge_source(std::to_string(slot.memory->owner),slot.request,published);
             status.sample=[previous=std::move(status.sample),source=std::move(source)]{
                 auto result=previous ? previous() : std::vector<agent::DecisionStatusSource>{};
@@ -390,6 +405,11 @@ void Subagents::begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>
         }
     }
     slot.active = slot.session.begin(input.prompt,std::move(options));
+    if(slot.memory) {
+        if(slot.memory_binding!=binding) {slot.articles.clear(); slot.dependencies.clear();}
+        slot.articles.merge(articles); slot.dependencies.merge(dependencies);
+        slot.memory_binding=std::move(binding); slot.memory_epoch=epoch;
+    }
     slot.outward=input.player_facing;
     slot.reset_memory_history=false;
     slot.continuous_history = static_cast<bool>(slot.pending_facts);

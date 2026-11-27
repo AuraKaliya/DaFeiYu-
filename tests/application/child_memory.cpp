@@ -37,6 +37,7 @@ struct Fixture {
     std::string source,signature;
     std::vector<std::string> hashes;
     Json expected;
+    Json child_turn;
     Json mail_case;
     tests::KnowledgeProbe knowledge;
     Json expected_knowledge;
@@ -145,6 +146,12 @@ struct Fixture {
             else check(r.at("origin")=="child.note" && r.at("reference").get<std::string>().starts_with(db->conversation()+"/child/"),"untyped child source");
         }
         check(actual==expected.get<std::vector<std::string>>(),"different delivered projection: "+Json(actual).dump());
+        if(child_turn.is_object()) {
+            for(const auto& marker:child_turn.value("historyHas",Json::array()))
+                check(wire.find(marker.get<std::string>())!=wire.npos,"expected previous answer was discarded");
+            for(const auto& marker:child_turn.value("historyLacks",Json::array()))
+                check(wire.find(marker.get<std::string>())==wire.npos,"old audience or topic leaked into next request");
+        }
         for (const auto& marker : markers) if (std::ranges::find(actual,marker)==actual.end())
             check(wire.find(marker)==wire.npos,"private history or source leaked: "+marker);
         entered=true;
@@ -152,7 +159,8 @@ struct Fixture {
             const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(5);
             while (!release && std::chrono::steady_clock::now()<until) std::this_thread::yield();
         }
-        return {{model::Role::assistant,actual.empty() ? "没有本轮材料。" : actual.front()}};
+        return {{model::Role::assistant,child_turn.is_object() && child_turn.contains("answer") ? child_turn.at("answer").get<std::string>() :
+            actual.empty() ? "没有本轮材料。" : actual.front()}};
     }
     // 将语料中的原信别名转为测试实际收到的档案信号，保留接收方副本后缀。
     std::string letter_ref(std::string selector) const {
@@ -341,8 +349,13 @@ struct Fixture {
             check(failure.empty() && !reply.empty(),"mail query failed: "+failure);
             mail_case=nullptr; return;
         }
-        if (op=="release") {
+        if (op=="release" || op=="finish_queued") {
             release=true; until([&]{return !host->subagents().busy(host->plugins().instance("example.status")->generation());});
+            if(row.contains("answer")) {
+                const auto status=host->subagents().status(host->plugins().instance("example.status")->generation(),sessions.at(session_name));
+                check(failure.empty() && status.phase==plugins::SubagentPhase::succeeded && status.answer==row.at("answer"),
+                    "unrelated revocation cancelled replacement context: "+failure);
+            }
             holding=false; return;
         }
         const bool deny=row.value("deny",false);
@@ -393,7 +406,7 @@ struct Fixture {
                 if (!result) check(!status.answer.length && status.phase==DFY_V2_AGENT_CANCELLED,"revoked answer still available");
                 return result;
             }
-            check(op=="run","unknown fixture action"); expected=row.at("expect"); entered=false; release=false; holding=row.value("hold",false);
+            check(op=="run","unknown fixture action"); expected=row.at("expect"); child_turn=row; entered=false; release=false; holding=row.value("hold",false);
             expected_knowledge=row.value("knowledge",Json(nullptr));
             expect_persona=row.contains("persona") ? std::optional(row.at("persona").get<bool>()) : std::nullopt;
             dfy_v2_agent_input input{}; input.prompt=view("按当前授权的主题回复。");

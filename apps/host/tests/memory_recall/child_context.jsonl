@@ -1,0 +1,67 @@
+{"op":"source","alias":"@a","text":"记住 甲依据：只在甲事项采用青色索引。"}
+{"op":"source","alias":"@b","text":"记住 乙依据：只在乙事项使用西窗清单。"}
+{"op":"source","alias":"@c","text":"记住 丙依据：舞台依次核验三步。"}
+{"op":"open","session":"w","preset":2,"subject":"值班员"}
+{"op":"admin","command":"/knowledge propose alpha v1 0 青色事项 受托时 青色事项的获准做法。 @a"}
+{"op":"admin","command":"/knowledge publish alpha v1"}
+{"op":"admin","command":"/knowledge grant alpha v1 example.status business 值班员 - read"}
+{"op":"admin","command":"/knowledge propose beta v1 0 西窗事项 受托时 西窗事项的获准做法。 @b"}
+{"op":"admin","command":"/knowledge publish beta v1"}
+{"op":"admin","command":"/knowledge grant beta v1 example.status business 值班员 - read"}
+{"op":"admin","command":"/knowledge propose gamma v1 0 舞台事项 受托时 舞台事项的获准做法。 @c"}
+{"op":"admin","command":"/knowledge publish gamma v1"}
+{"op":"admin","command":"/knowledge grant gamma v1 example.status business 值班员 - relay"}
+{"op":"admin","command":"/knowledge propose delta v1 0 门厅事项 受托时 门厅事项的获准做法。 @c"}
+{"op":"admin","command":"/knowledge publish delta v1"}
+{"op":"admin","command":"/knowledge grant delta v1 example.status business 值班员 - read"}
+{"op":"admin","command":"/knowledge propose omega v1 0 楼上事项 受托时 楼上事项的获准做法。 @c"}
+{"op":"admin","command":"/knowledge publish omega v1"}
+{"op":"admin","command":"/knowledge grant omega v1 example.status business 值班员 - read"}
+{"op":"select_kb","session":"w","topic":"青色事项"}
+{"op":"run","session":"w","expect":[],"knowledge":[{"article":"alpha","edition":"v1","statement":"青色事项的获准做法。","kinds":["owner_statement"]}],"answer":"先前青标答复"}
+{"op":"select_kb","session":"w","topic":"西窗事项"}
+{"op":"run","session":"w","expect":[],"knowledge":[{"article":"beta","edition":"v1","statement":"西窗事项的获准做法。","kinds":["owner_statement"]}],"answer":"当前西窗答复","hold":true,"historyLacks":["先前青标答复","青色事项的获准做法"]}
+{"op":"admin","command":"/knowledge withdraw alpha 1"}
+{"op":"release","session":"w","answer":"当前西窗答复"}
+{"op":"select_kb","session":"w","topic":"西窗事项"}
+{"op":"run","session":"w","expect":[],"knowledge":[{"article":"beta","edition":"v1","statement":"西窗事项的获准做法。","kinds":["owner_statement"]}],"answer":"复查西窗答复","historyHas":["当前西窗答复"],"hold":true}
+{"op":"admin","command":"/knowledge grant beta v1 example.status business 值班员 - off"}
+{"op":"status","session":"w"}
+{"op":"release","session":"w"}
+{"op":"admin","command":"/knowledge grant beta v1 example.status business 值班员 - read"}
+{"op":"open","session":"q","preset":2,"subject":"值班员"}
+{"op":"select_kb","session":"q","topic":"西窗事项"}
+{"op":"run","session":"q","expect":[],"knowledge":[{"article":"beta","edition":"v1","statement":"西窗事项的获准做法。","kinds":["owner_statement"]}],"answer":"旧排队依据"}
+{"op":"select_kb","session":"q","topic":"舞台事项"}
+{"op":"run","session":"q","expect":[],"knowledge":[{"article":"gamma","edition":"v1","statement":"舞台事项的获准做法。","kinds":["owner_statement"]}],"answer":"新排队材料","queued":true,"historyLacks":["旧排队依据","西窗事项的获准做法"]}
+{"op":"admin","command":"/knowledge withdraw beta 1"}
+{"op":"finish_queued","session":"q","answer":"新排队材料"}
+{"op":"select_kb","session":"q","topic":"舞台事项"}
+{"op":"run","session":"q","expect":[],"knowledge":[{"article":"gamma","edition":"v1","statement":"舞台事项的获准做法。","kinds":["owner_statement"]}],"answer":"可转述舞台结果","out":true,"historyLacks":["新排队材料"],"hold":true}
+{"op":"admin","command":"/knowledge grant gamma v1 example.status business 值班员 - read"}
+{"op":"status","session":"q"}
+{"op":"release","session":"q"}
+{"op":"open","session":"r","preset":2,"subject":"值班员"}
+{"op":"select_kb","session":"r","topic":"门厅事项"}
+{"op":"run","session":"r","expect":[],"knowledge":[{"article":"delta","edition":"v1","statement":"门厅事项的获准做法。","kinds":["owner_statement"]}],"answer":"门厅私用答复"}
+{"op":"run","session":"r","expect":[],"knowledge":[],"answer":"对外无获准材料","out":true,"historyLacks":["门厅私用答复","门厅事项的获准做法"],"hold":true}
+{"op":"admin","command":"/knowledge withdraw delta 1"}
+{"op":"release","session":"r","answer":"对外无获准材料"}
+{"op":"open","session":"s","preset":2,"subject":"值班员"}
+{"op":"select_kb","session":"s","topic":"楼上事项"}
+{"op":"run","session":"s","expect":[],"knowledge":[{"article":"omega","edition":"v1","statement":"楼上事项的获准做法。","kinds":["owner_statement"]}],"answer":"仍可查询的旧答复"}
+{"op":"select_kb","session":"s","topic":"舞台事项"}
+{"op":"admin","command":"/knowledge withdraw omega 1"}
+{"op":"status","session":"s"}
+{"op":"restart"}
+{"op":"open","session":"same","preset":2,"subject":"值班员"}
+{"op":"select_kb","session":"same","topic":"舞台事项"}
+{"op":"run","session":"same","expect":[],"knowledge":[{"article":"gamma","edition":"v1","statement":"舞台事项的获准做法。","kinds":["owner_statement"]}],"answer":"舞台的旧解释"}
+{"op":"admin","command":"/knowledge propose shared v1 0 另一舞台 受托时 另一舞台的获准做法。 @c"}
+{"op":"admin","command":"/knowledge publish shared v1"}
+{"op":"admin","command":"/knowledge grant shared v1 example.status business 值班员 - read"}
+{"op":"select_kb","session":"same","topic":"另一舞台"}
+{"op":"run","session":"same","expect":[],"knowledge":[{"article":"shared","edition":"v1","statement":"另一舞台的获准做法。","kinds":["owner_statement"]}],"hold":true,"historyLacks":["舞台的旧解释","舞台事项的获准做法"]}
+{"op":"admin","command":"/memory revoke @c"}
+{"op":"status","session":"same"}
+{"op":"release","session":"same"}

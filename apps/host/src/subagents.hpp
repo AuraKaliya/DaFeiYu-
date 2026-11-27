@@ -77,6 +77,8 @@ class Subagents final : public plugins::PluginAgents {
     WorkSlot* work_slot(runtime::DomainId owner, runtime::DomainId id) const noexcept;
     // 绑定原所有者及会话，拒绝过期或其他实例提交。
     Slot& find(runtime::DomainId owner, runtime::DomainId id) const;
+    // 复用主题校验，按个人记录或发布知识决定下一轮是否更换上下文。
+    void select_memory(runtime::DomainId owner,runtime::DomainId id,std::string topic,bool knowledge);
     // 从原实例构造本轮工具权限、控制快照及独立运行。
     void begin(Slot& slot, const std::shared_ptr<plugins::PluginInstance>& instance);
 

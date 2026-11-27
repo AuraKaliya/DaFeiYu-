@@ -82,6 +82,9 @@ set_tests_properties(app.letter_digest PROPERTIES TIMEOUT 90)
 add_test(NAME app.memory_archive_recovery COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
   "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/archive_recovery.jsonl" "${PROJECT_BINARY_DIR}/tests/memory-archive/$<CONFIG>")
 set_tests_properties(app.memory_archive_recovery PROPERTIES TIMEOUT 90)
+add_test(NAME app.child_memory_context COMMAND dfy_child_memory_tests "$<TARGET_FILE_DIR:dfy_status_example>" "$<TARGET_FILE_DIR:dfy_tools_fixture>"
+  "${PROJECT_SOURCE_DIR}/apps/host/tests/memory_recall/child_context.jsonl" "${PROJECT_BINARY_DIR}/tests/child-context/$<CONFIG>")
+set_tests_properties(app.child_memory_context PROPERTIES TIMEOUT 90)
 set_tests_properties(app.lifecycle PROPERTIES TIMEOUT 15)
 
 # 验证插件本地命令、中文路径解析及真实加载卸载。
