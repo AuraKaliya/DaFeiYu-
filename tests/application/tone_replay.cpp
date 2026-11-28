@@ -119,10 +119,15 @@ void verify_trace(Replay& replay,bool require_compaction=false) {
     trace(replay.host.trace_file(),replay.requests);
     std::ifstream input(replay.host.trace_file(),std::ios::binary);
     bool compacted=false;
+    std::size_t next=0;
     for (std::string line;std::getline(input,line);) {
         const auto event=Json::parse(line);
         if (event.at("kind")!="model.prepared") continue;
         require(event.at("input").at("messages").size()==event.at("messageEvidence").size(),"trace lost message provenance");
+        const auto& request=replay.requests.at(next++);
+        require(event.at("wireBytes")==model::encode_request_fields(request,event.at("thinking")).size(),"wrong wire byte count in Trace");
+        for (std::size_t i=0;i<request.messages.size();++i) if (const auto id=request.messages[i].source_message)
+            require(event.at("messageEvidence").at(i).at("channelMessage")==std::to_string(id),"Trace lost the durable input number");
         compacted|=event.value("compressedBatches",std::size_t{})>0;
     }
     if (require_compaction) require(compacted,"seed never compressed the dialogue");
@@ -330,7 +335,9 @@ void recent_dialogue_recover(const fs::path& root,bool enabled,bool revoke=false
 // 验证旧检查点的原件经历再次压缩和重启仍可查回，受众和撤回依赖沿原件执行。
 // 步骤：取采用过的原号 → 生成下一份检查点 → 跨启动分段读取 → 核对隔离、撤权及清空。
 void recent_dialogue_index(const fs::path& root) {
-    std::string human,answer,other;
+    std::string human,answer,other,latest_user,latest_reply;
+    constexpr auto latest_goal="把目标改为核对实际收件编号，先保留待答状态。";
+    const auto latest_text="已保留待答。先等收件编号。"+std::string(128,'r');
     {
         Replay replay(root,"recent-index-first");
         replay.responses.push_back(say());
@@ -353,6 +360,8 @@ void recent_dialogue_index(const fs::path& root) {
         const auto following=replay.send("resumed-once","先聊眼下这件事。",{say()});
         require(sample(following.front(),"context.recent_dialogue").is_null(),"checkpoint was injected twice after model admission");
         pad_history(replay,"new-history");
+        replay.send("latest-scope",latest_goal,{say(latest_text)});
+        latest_user=replay.reference("latest-scope");
         verify_trace(replay);
     }
     Replay replay(root,"recent-index-second");
@@ -364,6 +373,11 @@ void recent_dialogue_index(const fs::path& root) {
         if (!p) {
             const auto latest=sample(packets.front(),"context.recent_dialogue");
             require(latest.is_object() && latest.at("summary").get<std::string>().find(answer)==std::string::npos,"new checkpoint did not replace old snapshot");
+            const auto& tail=latest.at("lastTurn");
+            require(tail.at("reference")==latest_user && tail.at("user")==latest_goal &&
+                latest_text.starts_with(tail.at("assistant").get<std::string>().substr(0,30)) && tail.at("assistant")!=latest_text,
+                "restart lost the latest effective goal or included a long reply in full");
+            latest_reply=tail.at("replyReference");
         }
         const auto value=sample(packets.back(),"memory.matches");
         const auto& item=value.at("items").at(0);
@@ -374,6 +388,8 @@ void recent_dialogue_index(const fs::path& root) {
         require(offset==pages.size(),"missing bytes between pages");
     }
     require(pages==std::string(3000,'z'),"partial archived reply did not reconstruct original");
+    const auto latest=replay.send("read-latest-scope","按原号核对最近实际收到的待答回执。",{lookup(latest_reply),say()});
+    require(sample(latest.back(),"memory.matches").at("items").at(0).at("quote")==latest_text,"latest reply was not recoverable by its original number");
     replay.host.main_messages()->change_memory(human,std::nullopt);
     const auto denied=replay.send("read-revoked-parent","查询已撤回的来信对应答复。",{lookup(answer),say()});
     require(sample(denied.back(),"memory.matches").at("items").empty(),"revoked parent still exposed the answer");

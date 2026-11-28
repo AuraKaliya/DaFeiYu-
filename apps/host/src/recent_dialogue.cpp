@@ -37,6 +37,19 @@ void message_db::index_recent_origins(sqlite3* db) {
         "UNION ALL SELECT reply,owner FROM p WHERE owner>0 AND reply>0");
 }
 
+// 保留检查点之后实际送达的私聊问答编号，语气纠正沿自己的专用证据链。
+void message_db::index_recent_reply(sqlite3* db,std::int64_t reply,std::string_view parent) {
+    Statement save(db,"WITH owner(id) AS (SELECT p.id FROM messages p JOIN receipts r ON r.rev=p.latest "
+        "JOIN recent_dialogue d ON p.id>=d.through_message JOIN conversation c ON c.memory_revision=d.authority "
+        "WHERE p.id=CAST(?1 AS INTEGER) AND CAST(p.id AS TEXT)=?1 AND p.source IN ('terminal','desktop') "
+        "AND json_extract(p.envelope,'$.sender')='user' AND json_extract(p.envelope,'$.route')='send' "
+        "AND json_type(p.envelope,'$.resumeTask') IS NULL AND json_extract(r.body,'$.state') IN ('accepted','submitted') "
+        "AND NOT EXISTS (SELECT 1 FROM tone_correction t WHERE t.message=p.id) "
+        "AND NOT EXISTS (SELECT 1 FROM personal_memory m WHERE m.message=p.id AND m.active=0)) "
+        "INSERT OR IGNORE INTO recent_dialogue_origin SELECT id,id FROM owner UNION ALL SELECT ?2,id FROM owner");
+    save.bind(1,parent); save.bind(2,reply); save.next();
+}
+
 // 逐字核对当前宿主给出的原话和实际送达的回答，保留两者各自的持久身份。
 // 步骤：校验完整轮次和发布记录 → 摘取原件开头 → 按本次权限修订生成摘要。
 std::optional<std::string> MessageStore::summarize_dialogue(std::span<const model::Message> messages) const {
@@ -83,10 +96,19 @@ void MessageStore::save_recent_dialogue(std::int64_t current,const Json& groups,
 // 从提交过的检查点取最近一组短摘要，完整索引继续供按号核对。
 Json MessageStore::restored_dialogue() const {
     std::lock_guard lock(state_->mutex);
-    const auto saved=checkpoint(state_->db);
+    auto* db=state_->db;
+    const auto saved=checkpoint(db);
     if (saved.is_null()) return nullptr;
-    return {{"summary",saved.at("groups").back().at("items").dump()},{"toneReference",saved.at("toneReference")},
+    Json result{{"summary",saved.at("groups").back().at("items").dump()},{"toneReference",saved.at("toneReference")},
         {"through",saved.at("through")}};
+    Statement last(db,"SELECT u.id,a.id,json_extract(u.envelope,'$.text'),json_extract(a.envelope,'$.text') "
+        "FROM recent_dialogue_origin o JOIN messages u ON u.id=o.parent JOIN messages a ON a.id=o.message "
+        "WHERE a.id<>u.id AND u.id>=? AND NOT EXISTS (SELECT 1 FROM personal_memory p WHERE p.active=0 AND p.message IN (u.id,a.id)) "
+        "ORDER BY a.id DESC LIMIT 1");
+    last.bind(1,saved.at("through").get<std::int64_t>());
+    if (last.next()) result["lastTurn"]={{"reference",conversation()+"/"+std::to_string(last.number(0))},{"user",excerpt(last.text(2))},
+        {"replyReference",conversation()+"/"+std::to_string(last.number(1))},{"assistant",excerpt(last.text(3))}};
+    return result;
 }
 
 // 从曾经实际采用的摘要按原号分段读回，来信撤权时同时封住关联答复。
@@ -170,7 +192,7 @@ std::optional<agent::DecisionStatusSource> MainMessages::restored_recent_context
         if (tone.is_null()) value.erase("toneReference");
         else value["toneState"]=tone.at("state");
     } catch (const std::runtime_error&) { storage_failed(); return {}; }
-    const auto* schema=R"([{"key":"context.recent_dialogue","version":1,"description":"最近已结算的主人私聊摘录，按完整原件号查证，当前请求优先。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"summary":{"type":"string"},"toneReference":{"type":"string"},"toneState":{"type":"string"}},"additionalProperties":false}}])";
+    const auto* schema=R"([{"key":"context.recent_dialogue","version":1,"description":"主人私聊前一次压缩的摘录和最近实收问答，按完整原件号查证，当前请求优先。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"summary":{"type":"string"},"toneReference":{"type":"string"},"toneState":{"type":"string"},"lastTurn":{"type":"object","properties":{"reference":{"type":"string"},"user":{"type":"string"},"replyReference":{"type":"string"},"assistant":{"type":"string"}},"additionalProperties":false}},"additionalProperties":false}}])";
     return agent::DecisionStatusSource{"context",schema,Json::array({{{"key","context.recent_dialogue"},
         {"version",1},{"subject",store_->conversation()},{"fact",through},{"value",std::move(value)}}}).dump()};
 }

@@ -772,6 +772,9 @@ MessageAdmission MessageStore::put(std::string_view source, std::string_view sub
     if (source=="main" && envelope.contains("experience") && actual.at("state")=="delivered" &&
         index_choice(db,id,envelope,conversation())) actual["reviewDue"] = "compare_experiences";
     const auto revision = append_receipt(db,id,actual);
+    if (source=="main" && actual.value("state",Json{})=="delivered" && envelope.value("sender",Json{})=="assistant" &&
+        envelope.contains("replyTo") && envelope.at("replyTo").is_string())
+        index_recent_reply(db,id,envelope.at("replyTo").get_ref<const std::string&>());
     if ((source=="desktop" || source=="terminal") && envelope.is_object() && envelope.contains("text") &&
         envelope.at("text").is_string() && envelope.value("sender",Json{})=="user" && envelope.value("route",Json{})=="send" &&
         receipt.value("state",Json{})=="pending") {

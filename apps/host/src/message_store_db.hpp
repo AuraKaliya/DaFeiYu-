@@ -35,6 +35,8 @@ std::string_view task_prediction(const nlohmann::json& claim,std::string_view be
 std::vector<std::string> withdraw_challenged_knowledge(sqlite3* db,std::int64_t task);
 // 保存已采用摘要的原件及其主人来信依赖，允许跨检查点查回。
 void index_recent_origins(sqlite3* db);
+// 在实际送达事务中为已有检查点保存之后结算的私聊原件号。
+void index_recent_reply(sqlite3* db,std::int64_t reply,std::string_view parent);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。
 inline void check(int code) {
     if (code!=SQLITE_OK) throw std::runtime_error("messages: SQLite error "+std::to_string(code));
