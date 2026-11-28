@@ -188,6 +188,7 @@ class Application {
     // 等原会话实际退出后推进插件关闭，保留管理器的本轮结果。
     plugins::ShutdownResult close_plugins() noexcept;
   private:
+    friend class MainMessages;
     struct ToolRegistration {
         std::uint64_t turn = 0;
         std::weak_ptr<plugins::PluginInstance> instance;
@@ -211,6 +212,8 @@ class Application {
 
     // 针对用户明确选择的包，临时登记活动实例的工具。
     PreparedTools prepare_tools(std::string_view package);
+    // 只把仍在活动的原面板读口授予接续回合，注册由原回合持有。
+    std::shared_ptr<plugins::PluginTools> prepare_resume_reader(agent::RunOptions& options,const std::string& reader);
     // 准备并接纳一个工具范围，按入口的授权意图固定人工确认。
     agent::TurnDiagnostics submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes, const std::filesystem::path& workspace);
     // 撤销不属于当前运行或已失效实例的注册。

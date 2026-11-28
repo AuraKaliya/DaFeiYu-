@@ -83,6 +83,12 @@ Json TerminalHost::execute(app::Application& application, const Job& job) {
     if (action=="line") {
         const auto before = conversation.status();
         app::ChatController controller(conversation,out,err,[&](std::string_view command) {
+            if (command.substr(0,command.find_first_of(" \t"))=="/resume") {
+                const auto args=app::command_words(command);
+                if (args.size()!=3 || !application.main_messages()) throw std::invalid_argument("Usage: /resume TASK_REF \"MESSAGE\"");
+                application.main_messages()->terminal(job.client+"/"+request.at("id").dump(),args[2],args[1],true);
+                return true;
+            }
             if (command.substr(0,command.find_first_of(" \t"))=="/ask") {
                 const auto args = app::command_words(command);
                 if (args.size()==4 && (!job.interactive || !job.offered_ask || args[2]!=std::to_string(job.offered_ask)))

@@ -25,6 +25,7 @@ struct MessageAdmission { StoredMessage message; bool created; };
 struct MessagePage { std::vector<StoredMessage> records; bool more = false; };
 struct MemoryChange { std::int64_t revision; bool changed, review_due; std::string reference; };
 struct ChildBinding { std::int64_t owner; std::string shared_source; };
+struct TaskResumeTarget {std::string reader, expected, prior_readback;};
 enum class IdleQueue : unsigned {cross_tool,tool_family,letter_digest};
 // 固定三类本体空闲工作的轮转次序，空队列可在同一轮跳过。
 constexpr IdleQueue following_queue(IdleQueue queue) {return static_cast<IdleQueue>((static_cast<unsigned>(queue)+1)%3);}
@@ -145,6 +146,8 @@ class MessageStore {
     bool review_idle_task();
     // 以主题或稳定原件号查回任务、行动或回执，长原文按字节分段。
     nlohmann::json search_tasks(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const;
+    // 按完整已核验任务号取得固定对象的读口和原核验条件。
+    std::optional<TaskResumeTarget> task_resume_target(std::string_view reference) const;
     // 返回当前档案的记忆授权修订，零表示从未收录原话。
     std::int64_t memory_revision() const;
     // 在一个事务内按原件身份收录或撤权，重复操作保留修订号。

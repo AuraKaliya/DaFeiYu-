@@ -269,6 +269,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     tone_read_.reset();
     tone_pending_.reset();
     tone_context_current_=true;
+    resume_context_current_=true;
     owner_memory_turn_ = audience==DialogueAudience::owner;
     if (owner_memory_turn_) settle_tone();
     memory_revision_ = store_->memory_revision();
@@ -289,15 +290,17 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     constexpr std::string_view prefix = "回想 ";
     if (!owner_memory_turn_) return;
     const auto recent=prepare_recent_context(options);
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,recent,first_decision=true]() mutable {
+    auto check=incoming_task_ && incoming_task_->check_live ? prepare_resume_check(options,incoming_task_->reference,incoming_task_->message) : nullptr;
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,recent,check=std::move(check),first_decision=true]() mutable {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
         if (!current) return sources;
         if (auto notice=current->inbox_notice()) sources.push_back(std::move(*notice));
         if (current->search_result_) sources.push_back(*current->search_result_);
-        else if (task) {
+        else if (task && current->resume_context_current_) {
             if (auto selected=current->resumed_task_source(task->reference,task->message)) sources.push_back(std::move(*selected));
         }
+        if (check) if (auto reading=check()) sources.push_back(std::move(*reading));
         if (first_decision && recent)
             if (auto restored=current->restored_recent_context()) sources.push_back(std::move(*restored));
         if (auto tone=current->tone_projection(prompt,std::exchange(first_decision,false))) sources.push_back(std::move(*tone));

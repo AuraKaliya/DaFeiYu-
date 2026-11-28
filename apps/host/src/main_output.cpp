@@ -89,6 +89,7 @@ bool MainMessages::prepare_output(agent::RunOptions& options, DialogueAudience a
         return std::vector{channel->delivery_status()};
     };
     if (!reply_tools_ || options.tools || options.planning) return false;
+    if (audience==DialogueAudience::owner && incoming_task_ && incoming_task_->check_live) return false;
     if (audience==DialogueAudience::owner && !memory_capture_topic(prompt) &&
         !prompt.starts_with("回想 ") && !prompt.starts_with("撤回记忆 ")) {
         std::vector<std::string> ids{reply_id,"main/memory_note","main/memory_search","main/memory_reflect","main/choose","main/experience_review","main/knowledge_propose"};

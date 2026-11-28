@@ -67,6 +67,81 @@ void check_room(const model::Request& request) {
     require(std::ranges::none_of(request.tools,[](const auto& tool) { return tool.name=="memory_search"; }),
         "memory lookup exposed to the room audience");
 }
+
+// 从替身收到的实际尾注取得本次复核，和历史任务概览保持独立。
+Json received_check(const model::Request& request) {
+    const auto tail=Json::parse(request.messages.back().content);
+    for (const auto& item : tail.at("items")) if (item.at("key")=="task.resume") return item.at("value");
+    return nullptr;
+}
+
+// 新进程内用真实面板读口验证旧目标，记录当前工作和固定回答的实际入包。
+// 步骤：建立当前面板状态 → 明确接续原号 → 校验仅有读回及本轮裁定 → 核对送达和字节。
+void live_resume(const fs::path& panel,const fs::path& data,const Json& expected,std::string_view phase) {
+    const bool focus=phase=="live-focus", absent=phase=="live-unknown";
+    const bool foreign=phase=="live-foreign", revoked=phase=="live-revoked";
+    const auto reference=expected.at("reference").get<std::string>();
+    const auto db=std::make_shared<app::MessageStore>(data);
+    bool setup=focus;
+    std::size_t start=0;
+    std::vector<model::Request> requests;
+    std::vector<std::size_t> bytes;
+    Json verdict;
+    std::string answer;
+    app::Application host({},data/"packages",data,model::Backend{[&](const auto& config,const model::Request& request)->model::Response {
+        const auto index=requests.size()-start;
+        requests.push_back(request);
+        if (setup) {
+            if (index) return {{model::Role::assistant,"样例现场已准备。"}};
+            return {{model::Role::assistant,"",{{"set",request.tools.at(0).name,"{}"}}},model::FinishReason::tool_calls};
+        }
+        bytes.push_back(model::encode_request_fields(request,config.thinking_enabled()).size());
+        const auto past=received_task(request);
+        require(!past.is_null() && past.at("reference")==reference && past.at("verification")=="contradicted" &&
+            past.at("readbackRef")==expected.at("readbackRef"),"current run did not receive the original T03");
+        verdict=received_check(request);
+        require(verdict.at("expected")=="idle" && verdict.at("previousReadback")==expected.at("readbackRef"),"check lost the original target");
+        if (index==0 && !absent) {
+            require(verdict.at("state")=="awaiting_readback" && request.tools.size()==1 &&
+                request.tools.front().name.ends_with("_read"),"resume scope is not the single read tool");
+            return {{model::Role::assistant,"",{{"verify-live",request.tools.front().name,"{}"}}},model::FinishReason::tool_calls};
+        }
+        answer=absent ? "当前面板状态未知。" : focus ? "当前仍为专注，目标还未满足。" : "当前已是待机，目标满足。";
+        return {{model::Role::assistant,answer}};
+    }},app::ApplicationRunConfig{.trace_directory=data/"live-trace"});
+    host.bind_messages(db,std::string(phase),nullptr);
+    if (!absent && !foreign && !revoked) {
+        host.plugins().install(panel);
+        require(host.plugins().load("example.status")==0,"live panel fixture did not load");
+    }
+    if (focus) {
+        host.submit_confirmed("example.status/set_focus","准备读回对照的面板状态");
+        drain(host); setup=false; start=requests.size();
+    }
+    if (revoked) host.main_messages()->change_memory(reference,std::nullopt);
+    const auto selected=foreign ? expected.at("foreignReference").get<std::string>() : reference;
+    bool rejected=false;
+    try {host.main_messages()->terminal("live","接续原任务，先确认当前面板状态。",selected,true);}
+    catch (const std::runtime_error&) {rejected=true;}
+    if (foreign || revoked) {
+        require(rejected && requests.empty() && db->find("terminal","live")->receipt.at("state")=="stale","unavailable reference started a run");
+        return;
+    }
+    require(!rejected,"valid continuation was not started");
+    drain(host);
+    const auto work=trace(host.trace_file(),requests);
+    const auto changes=focus ? 1u : 0u;
+    require(work.size()==changes+(absent ? 0u : 1u) && requests.size()-start==(absent ? 1u : 2u),"unexpected read or state-changing work");
+    require(verdict.at("state")==(absent ? "unknown" : focus ? "remaining" : "satisfied"),"wrong host conclusion");
+    if (absent) require(!verdict.contains("current") && requests.back().tools.empty(),"unknown state fabricated an observation");
+    else require(verdict.at("current")== (focus ? "focus" : "idle") && verdict.at("candidate")==work.back().at("candidate") &&
+        work.back().at("toolId")=="example.status/read" && work.back().at("effect")=="not_applied","current evidence is not a readback");
+    const auto input=db->find("terminal","live");
+    const auto reply=db->page(true,0,db->watermark(),1).records.front();
+    require(input && reply.envelope.at("replyTo")==std::to_string(input->id) && reply.envelope.at("text")==answer,"wrong resume delivery");
+    std::cout<<Json{{"phase",phase},{"oldEvidenceRequest",1},{"readbackRequest",absent ? Json(nullptr) : Json(2)},
+        {"verification",verdict},{"wireBytes",bytes},{"dispatchedChanges",0}}.dump()<<'\n';
+}
 }
 
 // 重开同一快照，用同一个替身比较首次得到依据的请求并核对实际投递。
@@ -77,6 +152,7 @@ void task_resume(const fs::path& corpus, const fs::path& root, const fs::path& p
     require(fs::is_regular_file(data/"main-conversation.sqlite3"),"missing replay snapshot");
     std::ifstream proof(root/"task.json",std::ios::binary);
     const auto expected = Json::parse(proof);
+    if (phase.starts_with("live-")) {live_resume(panel,data,expected,phase); return;}
     const auto goal = expected.at("goal").get<std::string>();
     const auto reference = expected.at("reference").get<std::string>();
     const bool baseline = phase=="baseline", same_name = phase=="same-name", room = phase=="room";

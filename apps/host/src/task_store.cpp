@@ -180,6 +180,21 @@ Json MessageStore::recent_tasks() const {
     return cards;
 }
 
+// 沿仍可读的原任务和独立读回确定目标，首批只接续固定面板的单一状态。
+std::optional<TaskResumeTarget> MessageStore::task_resume_target(std::string_view reference) const {
+    const auto prefix=conversation()+"/task/";
+    if (!reference.starts_with(prefix) || reference.find('/',prefix.size())!=reference.npos) return {};
+    const auto task=positive_id(reference.substr(prefix.size()));
+    std::lock_guard lock(state_->mutex);
+    Statement get(state_->db,"SELECT json_extract(o.family,'$[1]'),o.expected,o.readback FROM task_observation o "
+        "JOIN task_memory t ON t.id=o.task WHERE o.task=? AND t.active=1");
+    get.bind(1,task);
+    if (!get.next() || get.text(0)!="example.status/read") return {};
+    const auto expected=get.text(1);
+    if (expected!="idle" && expected!="focus") return {};
+    return TaskResumeTarget{get.text(0),expected,std::string(reference)+"/receipt/"+std::to_string(get.number(2))};
+}
+
 // 合并主题与原件号命中，按精确程度和新近顺序，在单轮预算内装入证据。
 Json MessageStore::search_tasks(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const {
     if (topics.empty() || topics.size()>3 || !count) throw std::invalid_argument("task memory: invalid query");

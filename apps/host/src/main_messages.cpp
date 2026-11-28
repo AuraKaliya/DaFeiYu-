@@ -77,7 +77,7 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
                     publish(id,result);
                     return result;
                 }
-                incoming_task_ = TaskResume{static_cast<std::uint64_t>(id),reference,owner_only};
+                incoming_task_ = TaskResume{static_cast<std::uint64_t>(id),reference,owner_only,owner_only && envelope.value("resumeCheck",false)};
             }
             constexpr std::string_view revoke = "撤回记忆 ";
             if (text.starts_with(revoke)) change_memory(std::string_view(text).substr(revoke.size()),std::nullopt);
@@ -98,6 +98,7 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
                     appended_[{run.sequence,native}] = id;
                     // 补充原话可能换题，旧场合的自动提示从这一刻停止装配。
                     tone_context_current_=false;
+                    resume_context_current_=false;
                     tone_pending_.reset();
                 }
                 using State = agent::InputAdmission;
@@ -122,9 +123,13 @@ Json MainMessages::deliver(std::int64_t id, const Json& envelope, std::int64_t s
 }
 // 终端原话和所选旧任务共同确定一次提交，超时重查沿用原投递结果。
 // 步骤：固定原信封 → 核对同号重试和当前回合 → 入库并交付。
-void MainMessages::terminal(const std::string& submission, const std::string& text, std::string_view task_reference) {
+void MainMessages::terminal(const std::string& submission, const std::string& text, std::string_view task_reference,bool check_live) {
     auto envelope = user_envelope("send",text,{}, {});
     if (!task_reference.empty()) envelope["resumeTask"] = task_reference;
+    if (check_live) {
+        if (task_reference.empty()) throw std::invalid_argument("resume: full task reference required");
+        envelope["ownerOnly"]=true; envelope["resumeCheck"]=true;
+    }
     if (const auto previous = store_->find("terminal",submission)) {
         if (previous->envelope!=envelope) throw std::invalid_argument("messages: submission conflict");
         if (previous->receipt.at("state")=="accepted") return;

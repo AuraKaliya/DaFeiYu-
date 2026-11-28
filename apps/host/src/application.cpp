@@ -201,6 +201,21 @@ Application::PreparedTools Application::prepare_tools(std::string_view package) 
     return {instance,std::move(catalog),std::move(registration)};
 }
 
+// 在独立接续回合授权原面板的只读工具，版本或契约不符时保持未知。
+std::shared_ptr<plugins::PluginTools> Application::prepare_resume_reader(agent::RunOptions& options,const std::string& reader) {
+    if (reader!="example.status/read" || options.tools) return {};
+    try {
+        auto prepared=prepare_tools(package_of(reader));
+        auto scope=prepared.catalog->snapshot(std::span(&reader,1));
+        require_parameterless(scope);
+        if (scope.descriptions().front().plugin_version!="1.0.0") return {};
+        auto registration=std::shared_ptr<plugins::PluginTools>(std::move(prepared.registration));
+        options.policy.tool_limit=1;
+        options.tools=std::move(scope);
+        return registration;
+    } catch (const std::exception&) {return {};}
+}
+
 // 从用户指定的已加载实例授予一个工具。
 // 步骤：准备原实例注册 → 固定确认策略和范围 → 接纳并保留原注册。
 agent::TurnDiagnostics Application::submit_tool(const std::string& tool_id, const std::string& prompt, bool confirm_changes, const std::filesystem::path& workspace) {

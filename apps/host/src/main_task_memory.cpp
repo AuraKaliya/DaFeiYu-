@@ -1,4 +1,5 @@
 #include "main_messages.hpp"
+#include "application.hpp"
 #include "task_reflection.hpp"
 #include "run_log.hpp"
 #include "trace_model.hpp"
@@ -112,6 +113,53 @@ std::optional<agent::DecisionStatusSource> MainMessages::resumed_task_source(std
         if (!selection.at("items").empty()) return task_source(message,selection);
     } catch (const std::invalid_argument&) { return {}; }
     return {};
+}
+
+// 新回合只按实际退出的读口回执裁定原目标，历史结果一直以自己的身份附带。
+// 步骤：取有权的原目标 → 绑定固定只读工具 → 核对当前回执 → 投影满足、剩余或未知。
+std::function<std::optional<agent::DecisionStatusSource>()> MainMessages::prepare_resume_check(agent::RunOptions& options,
+    const std::string& reference,std::uint64_t message) {
+    const auto target=store_->task_resume_target(reference);
+    options.decision_status->allow_read=false;
+    const auto registration=reply_tools_ && target ? app_.prepare_resume_reader(options,target->reader) : nullptr;
+    if (registration) {
+        options.extension=[channel=weak_from_this()](agent::ControlPoint point,const agent::PolicyContext& control) {
+            const auto current=channel.lock();
+            if (point==agent::ControlPoint::tool_start && (!current || !current->resume_context_current_ || control.user_input_pending))
+                return agent::PolicyDecision{agent::PolicyVerdict::deny,agent::PolicyReason::stale_goal};
+            return agent::PolicyDecision{agent::PolicyVerdict::allow,agent::PolicyReason::none};
+        };
+        options.version_labels.control_extension="app.task-resume-reader-v1";
+    }
+    return [channel=weak_from_this(),target,registration,reference,message,fact=std::uint64_t{}]()
+        mutable -> std::optional<agent::DecisionStatusSource> {
+        const auto current=channel.lock();
+        if (!current || !current->resume_context_current_ || !current->resumed_task_source(reference,message)) return {};
+        Json value{{"reference",reference},{"state",registration ? "awaiting_readback" : "unknown"}};
+        if (target) {
+            value["expected"]=target->expected;
+            value["previousReadback"]=target->prior_readback;
+        }
+        const auto& run=current->app_.conversation().current_;
+        if (registration && run && static_cast<std::uint64_t>(current->parent_.second)==message && current->parent_.first==run->run_id()) {
+            using State=runtime::OperationState;
+            for (const auto& work : run->tool_steps()) if (work.tool_id==target->reader) {
+                value["state"]="unknown";
+                value["candidate"]=work.candidate;
+                const auto actual=run->tool_result(work.candidate);
+                if (work.accepted && work.result==State::succeeded && work.exit==State::succeeded && work.fault==agent::ToolError::none &&
+                    actual && actual->succeeded && actual->effect==agent::ToolEffect::not_applied &&
+                    (actual->output=="idle" || actual->output=="focus")) {
+                    value["current"]=actual->output;
+                    value["state"]=actual->output==target->expected ? "satisfied" : "remaining";
+                }
+                break;
+            }
+        }
+        constexpr auto schema=R"([{"key":"task.resume","version":1,"description":"明确接续任务的本次状态。awaiting_readback 时调用提供的只读工具。只有 satisfied 表示现场满足原目标，remaining 表示尚未满足，unknown 表示缺少已核验读回。","defaultAttention":{"mode":"explicit"},"snapshotRead":false,"valueSchema":{"type":"object","properties":{"reference":{"type":"string"},"state":{"type":"string"},"expected":{"type":"string"},"previousReadback":{"type":"string"},"candidate":{"type":"integer"},"current":{"type":"string"}},"additionalProperties":false}}])";
+        return agent::DecisionStatusSource{"task",schema,Json::array({{{"key","task.resume"},{"version",1},
+            {"subject",reference+"/"+std::to_string(message)},{"fact",++fact},{"value",std::move(value)}}}).dump()};
+    };
 }
 
 // 原任务概览或逐字回执只在本轮决策可见。
