@@ -441,11 +441,15 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
         "WHERE article=? AND (?2='' OR tag=?2) ORDER BY id DESC LIMIT 16");
     rows.bind(1,article); rows.bind(2,tag);
     while(rows.next()) {
-        Json item{{"edition",rows.text(1)},{"base",rows.number(2)},{"publishedRevision",rows.number(3)},{"current",rows.number(0)==get.number(1)},
+        const bool current=rows.number(0)==get.number(1);
+        Json item{{"edition",rows.text(1)},{"base",rows.number(2)},{"publishedRevision",rows.number(3)},{"current",current},
             {"claimKind",rows.text(8)},{"publisher",rows.number(3) ? rows.text(9) : std::string{}}};
-        if (!tag.empty()) {
+        if (current || !tag.empty()) {
             Json refs=Json::array();
-            if (references(db,conversation(),rows.number(0),refs)) {
+            if (!references(db,conversation(),rows.number(0),refs)) {
+                item["current"]=false;
+                item["evidenceUnavailable"]=true;
+            } else if (!tag.empty()) {
                 item["topic"]=rows.text(4); item["applies"]=rows.text(5); item["statement"]=rows.text(6); item["proposer"]=rows.text(7); item["sources"]=refs;
                 const auto verified=rows.text(10);
                 if (!verified.empty()) {
@@ -456,7 +460,7 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
                         item["current"]=false;
                     }
                 }
-            } else item["evidenceUnavailable"]=true;
+            }
         }
         result["editions"].push_back(std::move(item));
     }
