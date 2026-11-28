@@ -130,25 +130,35 @@ bool MainMessages::prepare_recent_context(agent::RunOptions& options) {
         }
         return {};
     };
-    options.save_dialogue_summary=[channel=weak_from_this(),id=incoming_dialogue_](const model::Request& request) {
+    options.prepare_dialogue_checkpoint=[channel=weak_from_this(),id=incoming_dialogue_](const model::Request& request) -> std::function<void()> {
         const auto current=channel.lock();
-        if (!current) return;
+        if (!current) return {};
         auto groups=Json::array();
+        bool restored=false;
         for (const auto& message : request.messages) {
+            if (message.source==model::MessageSource::host_status && message.content.find(R"("key":"context.recent_dialogue")")!=std::string::npos)
+                restored=true;
             if (message.source!=model::MessageSource::host_summary || message.content.size()>2048 ||
                 message.content.find(R"("source":"recent_dialogue")")==std::string::npos) continue;
             auto summary=Json::parse(message.content);
             if (summary.value("source","")==summary_kind) groups.push_back(std::move(summary));
         }
-        if (!groups.empty()) try { current->store_->save_recent_dialogue(id,groups,current->tone_pending_.value_or("")); }
-        catch (const std::runtime_error&) { current->storage_failed(); }
+        if (groups.empty() && !restored) return {};
+        // 仅提交本次实际接纳的范围，同时确认恢复材料已进入模型请求。
+        return [channel,id,groups=std::move(groups),tone=current->tone_pending_.value_or(""),restored] {
+            const auto admitted=channel.lock();
+            if (!admitted) return;
+            if (restored) admitted->restore_recent_due_=false;
+            if (!groups.empty()) try { admitted->store_->save_recent_dialogue(id,groups,tone); }
+            catch (const std::runtime_error&) { admitted->storage_failed(); }
+        };
     };
     return true;
 }
 
 // 冷启动后的首次同受众决策提供短摘要和待查号，正文仍按号取得。
 std::optional<agent::DecisionStatusSource> MainMessages::restored_recent_context() {
-    if (!std::exchange(restore_recent_due_,false)) return {};
+    if (!restore_recent_due_) return {};
     Json value;
     std::int64_t through=0;
     try {

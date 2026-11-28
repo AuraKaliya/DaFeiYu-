@@ -98,8 +98,8 @@ struct RunOptions {
     std::optional<std::int64_t> prompt_utc_ms;
     std::uint64_t prompt_message = 0;
     DialogueSummary summarize_dialogue;
-    // 在完整请求通过容量复核后通知宿主保存本次使用的摘要检查点。
-    std::function<void(const model::Request&)> save_dialogue_summary;
+    // 从通过容量核对的请求提取检查点，返回只在模型接纳后调用的提交动作。
+    std::function<std::function<void()>(const model::Request&)> prepare_dialogue_checkpoint;
     MessageClock message_clock;
     // 宿主固定的输出去向及人格表达，按当前用途装配到正式系统段。
     std::optional<PromptRules> prompt_rules;

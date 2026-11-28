@@ -548,7 +548,7 @@ struct RunLoopState {
                 compressed_batches = record->context_->project(input,head_delta,freeze(true),observation,options.summarize_dialogue);
             else input = std::move(projected);
         } else compressed_batches = record->context_->project(input,head_delta,{},observation,options.summarize_dialogue);
-        if (options.save_dialogue_summary) options.save_dialogue_summary(input);
+        auto commit_dialogue_checkpoint = options.prepare_dialogue_checkpoint ? options.prepare_dialogue_checkpoint(input) : std::function<void()>{};
         capture(ModelCapturePhase::prepared,current.attempt,&input,nullptr,nullptr,runtime::OperationState::pending,&contracts);
         auto request = models.submit_request(config,std::move(input),static_cast<bool>(options.model_capture));
         if (observation_batch && record->context_->observation_projected())
@@ -563,6 +563,7 @@ struct RunLoopState {
         submitted.kind = TraceFactKind::model_submitted; record->journal_.append(submitted);
         const auto call = record->model_->diagnostics();
         capture(ModelCapturePhase::submitted,current.attempt,nullptr,nullptr,&call);
+        if (commit_dialogue_checkpoint) commit_dialogue_checkpoint();
     }
     // 将下一计划步骤交给原模型工具循环，工作成功仍须另行由宿主验证。
     // 步骤：取得下一未完成步骤 → 收紧原工具范围并预留工作 → 准备步骤输入与关联 → 提交原模型入口。

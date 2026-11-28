@@ -338,6 +338,10 @@ void recent_dialogue_index(const fs::path& root) {
             "indexed room probe was not accepted");
         replay.host.advance_plugins(); drain(replay.host);
         require(replay.requests.size()==1 && sample(replay.requests.front(),"context.recent_dialogue").is_null(),"room consumed a private checkpoint");
+        bool rejected=false;
+        try { replay.host.main_messages()->terminal("oversized-first",std::string(31000,'x')); }
+        catch (const std::runtime_error&) { rejected=true; }
+        require(rejected && replay.requests.size()==1 && !replay.host.conversation().busy(),"failed admission reached the model");
         const auto started=replay.send("resume-old","我们刚才聊到哪里？",{say()});
         const auto context=sample(started.front(),"context.recent_dialogue");
         const auto entries=Json::parse(context.at("summary").get<std::string>());
@@ -346,6 +350,8 @@ void recent_dialogue_index(const fs::path& root) {
         human=found->at("reference").get<std::string>(); answer=found->at("replyReference").get<std::string>();
         other=replay.reference("padding-2");
         if (other==human) other=replay.reference("padding-3");
+        const auto following=replay.send("resumed-once","先聊眼下这件事。",{say()});
+        require(sample(following.front(),"context.recent_dialogue").is_null(),"checkpoint was injected twice after model admission");
         pad_history(replay,"new-history");
         verify_trace(replay);
     }
@@ -381,7 +387,7 @@ void recent_dialogue_index(const fs::path& root) {
     Replay foreign(root.parent_path()/"index-foreign");
     const auto rejected=foreign.send("read-foreign","确认档案号。",{lookup(answer),say()});
     require(sample(rejected.back(),"memory.matches").is_null(),"recent original was accepted in a foreign archive");
-    std::cout<<"Recent summary index: 3000 original bytes restored after the next checkpoint; room, revocation, clear and archive isolation passed\n";
+    std::cout<<"Recent summary index: 3000 original bytes restored after the next checkpoint; failed admission, room, revocation, clear and archive isolation passed\n";
 }
 
 // 核对当前请求的正文未曝光原件材料，模型自行填写的工具参数不算宿主证据。
