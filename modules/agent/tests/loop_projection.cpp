@@ -479,6 +479,29 @@ void traceable_recent_dialogue() {
         "invalid summary modified the archive or the fallback");
 }
 
+// 首包已经采用近期摘要时，工具预留使用相同的裁定并继续保留原话。
+// 步骤：构造会压缩的长原话 → 投影首包 → 为整批真实结果预留 → 核对原历史与回执。
+void reserve_with_recent_dialogue() {
+    auto history=std::make_shared<MessageHistory>(MessageHistory{
+        {Role::user,"原目标"},{Role::assistant,"已接纳"},{Role::user,std::string(3900,'q')},{Role::assistant,"旧回答"},
+        {Role::user,"近期问题"},{Role::assistant,"近期答复"}});
+    history->at(3).completed_dialogue_span=2;
+    RunContext context(history,"检查当前状态",{}, {},{3600,256,57,false});
+    const std::vector<ToolDefinition> tools{{"read","读取当前状态",R"({"type":"object","properties":{},"additionalProperties":false})"}};
+    Request request{context.messages(),tools};
+    context.project(request,0,sourced_message(MessageSource::host_status,"还有一件待核实的事项"),{},
+        [](auto) {return R"({"source":"recent_dialogue","reference":"profile/old"})";});
+    check(contains(request,"profile/old"),"first send did not use a recent summary");
+    constexpr std::uint32_t views[]{256};
+    context.prepare_tools({Role::assistant,"",{{"read-once","read","{}"}}},tools,views);
+    using State=dfy::runtime::OperationState;
+    context.set_tool_result(0,{true,ToolEffect::not_applied,"checked",ToolError::none},State::succeeded);
+    context.commit_tools();
+    check(context.committed()->at(2).content==std::string(3900,'q') &&
+        context.committed()->back().tool_call_id=="read-once" && context.committed()->back().content.ends_with("checked"),
+        "tool reservation lost the original or its matching receipt");
+}
+
 // 在普通与带工具的思考会话中越过 512 轮，核对实际送模的历史归属和按位置读回的原件。
 // 步骤：连续提交固定问答 → 冻结最后一轮请求 → 对照每组原话、回答、角色及保护边界。
 void long_dialogue(bool thinking) {
@@ -654,7 +677,7 @@ void reasoning_budget() {
 int main() {
     try {
         source_boundaries(); source_times(); replay(); decision_read(); decision_read_revoked(); counted_responses(); status_versions(); compress_settled(); long_dialogue(false); long_dialogue(true);
-        mixed_dialogue(false); mixed_dialogue(true); traceable_recent_dialogue();
+        mixed_dialogue(false); mixed_dialogue(true); traceable_recent_dialogue(); reserve_with_recent_dialogue();
         long_answers(26,7500,0); long_answers(12,300,14*1024);
         reasoning_budget();
         batch_capacity(0,0,false); batch_capacity(768,0,true); batch_capacity(768,4096,false);

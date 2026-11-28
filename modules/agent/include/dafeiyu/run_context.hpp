@@ -60,6 +60,7 @@ class RunContext {
     void commit_text(std::string answer, std::optional<std::string> reasoning, std::uint8_t dialogue_span);
     ContextWindow window_;
     MessageClock message_clock_;
+    DialogueSummary dialogue_summary_;
     std::optional<model::Message> effective_head_, effective_tail_;
     bool observation_projected_ = false;
     bool head_known_ = false;

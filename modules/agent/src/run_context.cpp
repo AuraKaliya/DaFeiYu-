@@ -101,6 +101,7 @@ std::size_t RunContext::project(model::Request& input, int head_delta, std::opti
         compressed = fit_context_request(input,window_,head_delta,summarize);
     }
     effective_tail_ = std::move(decision_tail);
+    dialogue_summary_ = summarize;
     head_known_ = true;
     if (!input.messages.empty() && input.messages.front().role == model::Role::system) effective_head_ = input.messages.front();
     else effective_head_.reset();
@@ -147,7 +148,7 @@ void RunContext::prepare_tools(const model::Message& assistant, const std::vecto
         forecast.messages[i].event_utc_ms = (std::numeric_limits<std::int64_t>::min)();
     }
     if (effective_tail_) forecast.messages.push_back(*effective_tail_);
-    fit_context_request(forecast,window_,head);
+    fit_context_request(forecast,window_,head,dialogue_summary_);
     auto pending = std::make_shared<MessageHistory>(std::move(prepared.messages));
     pending_ = std::move(pending); tool_begin_ = start; replies_.swap(replies);
 }
