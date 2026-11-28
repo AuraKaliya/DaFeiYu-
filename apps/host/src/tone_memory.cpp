@@ -1,4 +1,6 @@
 #include "message_store_db.hpp"
+#include "tone_memory.hpp"
+#include <cmath>
 
 namespace dfy::app {
 using Json = nlohmann::json;
@@ -15,6 +17,25 @@ bool casual_share(std::string_view text) {
         if (text.find(cue)!=text.npos) return true;
     }
     return false;
+}
+
+// 用同一向量空间的余弦相似度判断用途是否值得送入候选。
+// 步骤：检查范围配置 → 编码当前来信 → 校验向量并比较得分。
+bool matches_casual_scope(std::string_view prompt,const ToneRecallOptions& recall) {
+    const auto& scope=recall.casual_scope_vector;
+    const auto minimum=recall.minimum_similarity;
+    if (scope.empty() || !(minimum>0 && minimum<=1)) return false;
+    const auto query=recall.encode_query(prompt);
+    if (query.size()!=scope.size()) return false;
+    double dot=0,query_norm=0,scope_norm=0;
+    for (std::size_t i=0;i<query.size();++i) {
+        const double a=query[i],b=scope[i];
+        dot+=a*b;
+        query_norm+=a*a;
+        scope_norm+=b*b;
+    }
+    return query_norm>0 && scope_norm>0 && std::isfinite(query_norm) && std::isfinite(scope_norm) &&
+        dot/(std::sqrt(query_norm)*std::sqrt(scope_norm))>=minimum;
 }
 
 // 从有边界的完整登记名定位项目，多个同名或同时指向多个登记对象时保持未知。
@@ -163,15 +184,27 @@ void MessageStore::settle_tones() {
     )");
 }
 
-// 优先核对登记项目的适用条件，普通私聊按聊天用途取最新一条候选。
-// 步骤：识别当前线索 → 在本档案查询已发布且获准的纠正 → 选出一条浅层材料。
-Json MessageStore::tone_for(std::string_view prompt) const {
+// 优先核对项目和普通私聊的预设线索，首包缺少线索时可补查聊天用途。
+// 步骤：识别线索 → 对可读的范围按需编码 → 从本档案重验并选出一条浅层材料。
+Json MessageStore::tone_for(std::string_view prompt,const ToneRecallOptions& recall,bool first_decision) const {
     const auto progress=progress_of(prompt);
-    const bool casual=casual_share(prompt);
-    if (progress==Progress::other && !casual) return nullptr;
-    std::lock_guard lock(state_->mutex);
+    const bool casual=recall.include_casual && casual_share(prompt);
+    const bool semantic=first_decision && recall.include_casual && recall.encode_query;
+    if (progress==Progress::other && !casual && !semantic) return nullptr;
+    std::unique_lock lock(state_->mutex);
     const auto project=progress==Progress::other ? std::string{} : project_of(state_->db,prompt);
-    if (project.empty() && !casual) return nullptr;
+    if (project.empty() && !casual) {
+        if (!semantic) return nullptr;
+        {
+            Statement eligible(state_->db,"SELECT 1 FROM tone_correction WHERE project='' AND active=1 AND state='ready' "
+                "AND json_extract(body,'$.condition')=? LIMIT 1");
+            eligible.bind(1,casual_condition);
+            if (!eligible.next()) return nullptr;
+        }
+        lock.unlock();
+        if (!matches_casual_scope(prompt,recall)) return nullptr;
+        lock.lock();
+    }
     Statement notes(state_->db,"SELECT message,body FROM tone_correction WHERE project=? AND active=1 AND state='ready' ORDER BY message DESC");
     notes.bind(1,project);
     while (notes.next()) {

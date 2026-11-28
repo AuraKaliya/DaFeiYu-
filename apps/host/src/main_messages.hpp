@@ -1,5 +1,6 @@
 #pragma once
 #include "message_store.hpp"
+#include "tone_memory.hpp"
 #include <dafeiyu/run_identity.hpp>
 #include <dafeiyu/mailboxes.hpp>
 #include "conversation.hpp"
@@ -19,7 +20,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
   public:
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
-        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, bool recall_casual_tone);
+        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, ToneRecallOptions tone_recall);
     // 释放本档案为持久信件开设的进程期通知地址。
     ~MainMessages();
     // 子会话寄信后唤醒送信泵。
@@ -119,7 +120,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     // 处理本体已准备好的语气整理，失败保留原待办。
     void settle_tone();
     // 在每次送模前读取当前实际受众可用的语气材料。
-    std::optional<agent::DecisionStatusSource> tone_projection(std::string_view prompt) const;
+    std::optional<agent::DecisionStatusSource> tone_projection(std::string_view prompt,bool first_decision) const;
     // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
     std::unique_ptr<agent::ToolWork> search_memory(const agent::ToolInvocation& invocation);
     // 仅用本轮上一决策可见的两份原件提交复盘关系。
@@ -143,7 +144,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<TaskResume> incoming_task_;
     std::optional<agent::DecisionStatusSource> search_result_;
     std::optional<std::string> tone_read_,tone_pending_;
-    const bool recall_casual_tone_;
+    const ToneRecallOptions tone_recall_;
     bool tone_due_=true,tone_context_current_=true;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;

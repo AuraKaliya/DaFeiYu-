@@ -11,6 +11,7 @@
 namespace dfy::plugins { struct MemoryIdentity; }
 
 namespace dfy::app {
+struct ToneRecallOptions;
 // 识别主聊天显式收录格式，返回原句中由主人指定的主题。
 std::optional<std::string_view> memory_capture_topic(std::string_view text);
 struct StoredMessage {
@@ -144,8 +145,8 @@ class MessageStore {
     nlohmann::json note_tone(std::int64_t message,const nlohmann::json& proposal);
     // 原子发布准备完成的范围与依据，关联实际送达的改写。
     void settle_tones();
-    // 按项目和汇报条件查适用纠正，或按聊天用途查一条普通私聊候选。
-    nlohmann::json tone_for(std::string_view prompt) const;
+    // 查适用的项目纠正或普通私聊候选，首包的词面漏召回可按语义补查。
+    nlohmann::json tone_for(std::string_view prompt,const ToneRecallOptions& recall,bool first_decision) const;
     // 按登记项目找最近一条可补证的未定反馈。
     std::string unclear_tone(std::string_view project) const;
     // 按原件号重验私有索引，读取原文和保存的标注理由。

@@ -3,6 +3,7 @@
 #include "knowledge.hpp"
 #include "application.hpp"
 #include <algorithm>
+#include <utility>
 
 namespace dfy::app {
 using Json = nlohmann::json;
@@ -229,7 +230,7 @@ void MainMessages::settle_tone() {
 
 // 按需展开优先，其次保留当前反馈或装配一条浅层记忆，普通私聊只提供候选。
 // 步骤：按号复核查证材料 → 核对待整理反馈 → 查询并投影当前语境的浅层材料。
-std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::string_view prompt) const {
+std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::string_view prompt,bool first_decision) const {
     if (tone_read_) {
         if (tone_read_->empty()) return {};
         auto evidence=store_->tone_original(*tone_read_);
@@ -242,15 +243,13 @@ std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::st
         if (!evidence.is_null()) return tone_source("memory.tone_pending","本轮待整理的主人语气反馈，先用于本次回复。",std::move(evidence),
             {"state","excerpt"});
     }
-    auto evidence=tone_context_current_ ? store_->tone_for(prompt) : Json(nullptr);
+    auto evidence=tone_context_current_ ? store_->tone_for(prompt,tone_recall_,first_decision) : Json(nullptr);
     if (evidence.is_null()) return {};
     if (evidence.contains("project"))
         return tone_source("memory.tone","当前汇报语境适用的语气偏好。本轮明确要求优先，按需查原文或理由。",std::move(evidence),
             {"project","condition","hint"});
-    if (recall_casual_tone_)
-        return tone_source("memory.tone_candidate","仅在本轮语境符合适用条件时采用的语气候选。本轮明确请求优先，用途不明时暂缓采用。需要原文或理由时按号查证。",
-            std::move(evidence),{"condition","hint"});
-    return {};
+    return tone_source("memory.tone_candidate","仅在本轮语境符合适用条件时采用的语气候选。本轮明确请求优先，用途不明时暂缓采用。需要原文或理由时按号查证。",
+        std::move(evidence),{"condition","hint"});
 }
 
 // 将获准原话及接续任务作为带来源的数据，沿正式决策尾注和上下文预算送模。
@@ -280,7 +279,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     }
     constexpr std::string_view prefix = "回想 ";
     if (!owner_memory_turn_) return;
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt] {
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,first_decision=true]() mutable {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
         if (!current) return sources;
@@ -289,7 +288,7 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
         else if (task) {
             if (auto selected=current->resumed_task_source(task->reference,task->message)) sources.push_back(std::move(*selected));
         }
-        if (auto tone=current->tone_projection(prompt)) sources.push_back(std::move(*tone));
+        if (auto tone=current->tone_projection(prompt,std::exchange(first_decision,false))) sources.push_back(std::move(*tone));
         return sources;
     };
     std::string selector;

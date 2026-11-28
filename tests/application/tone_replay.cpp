@@ -2,6 +2,7 @@
 #include "main_messages.hpp"
 #include "message_store_db.hpp"
 #include <dafeiyu/model_protocol.hpp>
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -73,7 +74,7 @@ struct Replay {
     std::function<void()> after_receive;
     app::Application host;
     // 每个进程经真实本体入口接纳同一固定脚本，记录替身实收请求。
-    explicit Replay(const fs::path& root,std::string_view instance={},bool recall_casual_tone=true) : db(std::make_shared<app::MessageStore>(root)),
+    explicit Replay(const fs::path& root,std::string_view instance={},app::ToneRecallOptions tone_recall={}) : db(std::make_shared<app::MessageStore>(root)),
       host(model_config(),root/"empty",root,model::Backend{[this](const auto&,const model::Request& request) {
         requests.push_back(request);
         if (interrupt && !sample(request,"memory.tone_pending").is_null()) std::quick_exit(23);
@@ -81,7 +82,7 @@ struct Replay {
         require(!responses.empty(),"unexpected backend request");
         auto response=std::move(responses.front()); responses.pop_front(); return response;
     }},app::ApplicationRunConfig{.trace_directory=root/"trace"}) {
-        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr,recall_casual_tone);
+        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr,std::move(tone_recall));
     }
 
     // 经原聊天入口完成一次回合并切出这一回合的实收请求。
@@ -295,7 +296,7 @@ void chat_no_original(const model::Request& request) {
 // 比较两份同源快照的实际候选、前台首包和下一步按号深查，并回放不同聊天用途。
 // 步骤：核对真实检索 → 用同一脚本记录首包及深查 → 验证求助和用途不明。
 void chat_compare(const fs::path& root,bool enabled) {
-    Replay replay(root,{},enabled);
+    Replay replay(root,{},app::ToneRecallOptions{.include_casual=enabled});
     const auto reference=replay.reference("milk-note");
     const auto routine=replay.send("takeout",takeout,{say("等了一个午休，送到还凉了，确实够烦的。")});
     require(routine.size()==1,"casual response used an additional request");
@@ -387,10 +388,70 @@ void chat_preflight(const fs::path& root) {
     verify_trace(replay);
     std::cout<<"Cold unclear and revocation before the first submission after restart: no private content or reference\n";
 }
+
+// 每个场景从同源快照独立启动，固定向量只替代编码，候选和送模由正式宿主决定。
+// 步骤：选定同一问句与响应 → 接入 A/B 编码选项 → 核对实收候选与优先条件。
+void semantic_compare(const fs::path& root,std::string_view phase) {
+    struct Case {
+        std::string_view name;
+        const char* prompt;
+        const char* answer;
+        std::vector<float> query;
+        bool passes_similarity;
+    };
+    const Case cases[]{
+        {"paraphrase","午休全搭在等这单外卖上了，打开还是凉的。你说我这一中午图什么呀。",
+            "等了一整个午休，打开还是凉的，这顿饭也太折腾了。",{3,1},true},
+        {"refund","午休全搭在等这单外卖上了，打开还是凉的。帮我写两句给商家，我想申请退款。",
+            "您好，餐品送达时已经凉了，麻烦帮我办理退款。",{5,3},true},
+        {"unclear","外卖到了，都凉了。","都凉了啊，等了很久吗？",{1,3},false},
+        {"literal",takeout,"等了一整个午休，打开还是凉的，这顿饭也太折腾了。",{},false},
+    };
+    const bool enabled=phase.starts_with("B-");
+    require(enabled || phase.starts_with("A-"),"unknown semantic replay group");
+    const auto sample_case=std::ranges::find_if(cases,[&](const auto& entry){return entry.name==phase.substr(2);});
+    require(sample_case!=std::end(cases),"unknown semantic replay case");
+    const auto& row=*sample_case;
+    const bool literal=row.name=="literal";
+
+    std::vector<std::string> encoded_inputs;
+    app::ToneRecallOptions recall{.casual_scope_vector={2,0},.minimum_similarity=0.8};
+    if (enabled) recall.encode_query=[&](std::string_view prompt) {
+        encoded_inputs.emplace_back(prompt);
+        return row.query;
+    };
+    Replay replay(root/std::string(phase),"semantic-replay",std::move(recall));
+    const auto reference=replay.reference("milk-note");
+    const auto requests=replay.send(std::string(row.name),row.prompt,{say(row.answer)});
+    require(requests.size()==1,"semantic recall added a chat model request");
+    const auto expected_inputs=enabled && !literal ? std::vector<std::string>{row.prompt} : std::vector<std::string>{};
+    require(encoded_inputs==expected_inputs,"semantic fallback encoded an unexpected input");
+    const auto& first=requests.front();
+    const auto candidate=sample(first,"memory.tone_candidate");
+    shallow(first,literal || (enabled && row.passes_similarity) ? reference : "","memory.tone_candidate");
+    chat_no_original(first);
+    const auto wire=model::encode_request_fields(first,false);
+    require(wire.find(row.prompt)!=std::string::npos,"semantic replay lost the current prompt");
+    if (!candidate.is_null())
+        require(candidate.at("hint")==milk_hint &&
+            candidate.at("condition")=="主人私聊中随口分享日常小烦恼，希望自然接话" &&
+            wire.find("本轮明确请求优先")!=std::string::npos,"semantic recall lost the conditional scope or current-request priority");
+    std::cout<<Json{{"group",enabled ? "B" : "A"},{"case",row.name},{"reference",reference},
+        {"candidateFirst",candidate.is_null() ? Json(nullptr) : Json(1)},{"firstPacketCandidate",candidate},
+        {"encodeCalls",encoded_inputs.size()},{"requestCount",requests.size()},{"firstBytes",wire.size()}}.dump(-1,' ',true)<<'\n';
+
+    if (enabled && row.name=="paraphrase") {
+        replay.host.main_messages()->change_memory(reference,std::nullopt);
+        chat_withheld(replay.send("semantic-revoked",row.prompt,{say(row.answer)}).front(),reference);
+        require(encoded_inputs==expected_inputs,"semantic fallback encoded without an eligible scope");
+    }
+    verify_trace(replay);
+}
 }
 
 // 按独立进程阶段回放项目与普通私聊，项目崩溃样例沿原档案恢复。
 void tone_replay(const fs::path& root,std::string_view phase) {
+    if (phase.starts_with("semantic-")) {semantic_compare(root,phase.substr(9)); return;}
     if (phase=="chat-seed") {chat_seed(root); return;}
     if (phase=="chat-A" || phase=="chat-B") {chat_compare(root/std::string(phase.substr(5)),phase=="chat-B"); return;}
     if (phase=="chat-guards") {chat_guards(root); return;}
