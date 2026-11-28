@@ -20,7 +20,7 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
   public:
     // 绑定独占目录的当前实例和原业务线程。
     MainMessages(Application& application, std::shared_ptr<MessageStore> store, std::string instance, SoftwareLog* log,
-        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, ToneRecallOptions tone_recall);
+        RunLog* trace, bool structured, std::shared_ptr<TaskReflection> reflection, ToneRecallOptions tone_recall, bool recent_summary);
     // 释放本档案为持久信件开设的进程期通知地址。
     ~MainMessages();
     // 子会话寄信后唤醒送信泵。
@@ -56,6 +56,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     void change_memory(std::string_view identity, const std::optional<std::string>& topic);
     // 明确清空会话后隔离旧回合的投影，旧投递仍按原号结算。
     void clear_context(std::uint64_t through) noexcept { context_floor_ = through; delivered_.reset(); }
+    // 明确清空时同步撤下待恢复的近期摘要。
+    void clear_recent_context();
     // 绑定业务线程的实时终端输出，只有首次写盘成功才通知。
     void on_reply(std::function<void(const std::string&)> sink) { reply_sink_ = std::move(sink); }
     // 查询原回合仍在等待写入的一项投递号，供发起终端等待或说明结果。
@@ -119,6 +121,10 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
     // 处理本体已准备好的语气整理，失败保留原待办。
     void settle_tone();
+    // 仅按实际入口绑定摘要投影与检查点。
+    bool prepare_recent_context(agent::RunOptions& options);
+    // 为重启后的第一轮主人私聊装配当前仍获准的摘要与待查号。
+    std::optional<agent::DecisionStatusSource> restored_recent_context();
     // 在每次送模前读取当前实际受众可用的语气材料。
     std::optional<agent::DecisionStatusSource> tone_projection(std::string_view prompt,bool first_decision) const;
     // 每轮只提交一批检索证据，工具回执只携带数量及截断状态。
@@ -145,6 +151,9 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::optional<agent::DecisionStatusSource> search_result_;
     std::optional<std::string> tone_read_,tone_pending_;
     const ToneRecallOptions tone_recall_;
+    const bool recent_summary_;
+    bool restore_recent_due_ = true;
+    std::int64_t incoming_dialogue_ = 0;
     bool tone_due_=true,tone_context_current_=true;
     std::optional<std::pair<agent::RunId,nlohmann::json>> watched_task_;
     std::deque<nlohmann::json> unsaved_tasks_;

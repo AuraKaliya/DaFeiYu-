@@ -74,7 +74,7 @@ struct Replay {
     std::function<void()> after_receive;
     app::Application host;
     // 每个进程经真实本体入口接纳同一固定脚本，记录替身实收请求。
-    explicit Replay(const fs::path& root,std::string_view instance={},app::ToneRecallOptions tone_recall={}) : db(std::make_shared<app::MessageStore>(root)),
+    explicit Replay(const fs::path& root,std::string_view instance={},app::ToneRecallOptions tone_recall={},bool recent_summary=true) : db(std::make_shared<app::MessageStore>(root)),
       host(model_config(),root/"empty",root,model::Backend{[this](const auto&,const model::Request& request) {
         requests.push_back(request);
         if (interrupt && !sample(request,"memory.tone_pending").is_null()) std::quick_exit(23);
@@ -82,7 +82,7 @@ struct Replay {
         require(!responses.empty(),"unexpected backend request");
         auto response=std::move(responses.front()); responses.pop_front(); return response;
     }},app::ApplicationRunConfig{.trace_directory=root/"trace"}) {
-        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr,std::move(tone_recall));
+        host.bind_messages(db,instance.empty() ? root.filename().string() : std::string(instance),nullptr,std::move(tone_recall),recent_summary);
     }
 
     // 经原聊天入口完成一次回合并切出这一回合的实收请求。
@@ -285,6 +285,42 @@ void chat_seed(const fs::path& root) {
     verify_trace(replay,true);
 }
 
+// 对照同一段主人私聊在待整理续行中的容量投影。
+// 步骤：积累完整旧问答 → 登记牛奶反馈 → 核对保护原话、来源及实际送模字节。
+void recent_dialogue_pressure(const fs::path& root,bool enabled) {
+    Replay replay(root,{}, {},enabled);
+    pad_history(replay);
+    replay.send("milk",milk,{say(milk_before)});
+    const auto feedback=replay.send("milk-note",milk_feedback,{chat_note(milk_feedback,milk_before),say("就买瓶牛奶还得排二十分钟，换我也烦。")});
+    const auto& reply=feedback.back();
+    const auto ref=replay.reference("milk-note");
+    require(sample(reply,"memory.tone_pending").at("reference")==ref &&
+        sample(reply,"memory.tone_pending").at("state")=="draft","pressure lost the staged correction");
+    bool recent=false, original=false;
+    for (const auto& message : reply.messages) {
+        recent|=message.source==model::MessageSource::host_summary && message.content.find(R"("source":"recent_dialogue")")!=std::string::npos;
+        original|=message.source==model::MessageSource::human && message.content==milk_feedback;
+    }
+    require(recent==enabled && original,"incorrect recent dialogue projection");
+    verify_trace(replay);
+    std::cout<<model::encode_request_fields(reply,false).size()<<'\n';
+}
+
+// 重启后用原号查询纠正，同时核对检查点只在有权档案加载。
+void recent_dialogue_recover(const fs::path& root,bool enabled,bool revoke=false) {
+    Replay replay(root,revoke ? "recent-revoked" : "recent-restarted",{},enabled);
+    const auto reference=replay.reference("milk-note");
+    if (revoke) replay.host.main_messages()->change_memory(reference,std::nullopt);
+    const auto packets=replay.send(revoke ? "revoked-audit" : "recent-audit","刚才买牛奶时我怎么纠正你的？",{lookup(reference),say()});
+    const auto restored=sample(packets.front(),"context.recent_dialogue");
+    require(restored.is_object()==(enabled&&!revoke),"unexpected restored summary");
+    if (restored.is_object()) require(restored.at("toneReference")==reference,"checkpoint lost the pending original reference");
+    const auto original=sample(packets.back(),"memory.tone_original");
+    if (revoke) require(original.is_null(),"revoked correction survived restart");
+    else require(original.at("quote")==milk_feedback && original.at("reason")==milk_reason,"original lookup lost quote or reason");
+    verify_trace(replay);
+}
+
 // 核对当前请求的正文未曝光原件材料，模型自行填写的工具参数不算宿主证据。
 void chat_no_original(const model::Request& request) {
     require(sample(request,"memory.tone_original").is_null(),"private chat original expanded unexpectedly");
@@ -451,6 +487,10 @@ void semantic_compare(const fs::path& root,std::string_view phase) {
 
 // 按独立进程阶段回放项目与普通私聊，项目崩溃样例沿原档案恢复。
 void tone_replay(const fs::path& root,std::string_view phase) {
+    if (phase=="recent-seed") { Replay replay(root/"seed"); return; }
+    if (phase=="recent-A" || phase=="recent-B") { recent_dialogue_pressure(root/std::string(phase.substr(7)),phase=="recent-B"); return; }
+    if (phase=="recent-recover-A" || phase=="recent-recover-B") { recent_dialogue_recover(root/std::string(phase.substr(15)),phase.ends_with('B')); return; }
+    if (phase=="recent-revoked") { recent_dialogue_recover(root/"revoked",true,true); return; }
     if (phase.starts_with("semantic-")) {semantic_compare(root,phase.substr(9)); return;}
     if (phase=="chat-seed") {chat_seed(root); return;}
     if (phase=="chat-A" || phase=="chat-B") {chat_compare(root/std::string(phase.substr(5)),phase=="chat-B"); return;}

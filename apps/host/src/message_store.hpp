@@ -3,12 +3,14 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
 #include <nlohmann/json.hpp>
 
 namespace dfy::plugins { struct MemoryIdentity; }
+namespace dfy::model { struct Message; }
 
 namespace dfy::app {
 struct ToneRecallOptions;
@@ -151,6 +153,16 @@ class MessageStore {
     std::string unclear_tone(std::string_view project) const;
     // 按原件号重验私有索引，读取原文和保存的标注理由。
     nlohmann::json tone_original(std::string_view reference,bool pending=false) const;
+    // 逐项核对已结算问答的原话和实际送达文本，生成带原件号的有界摘要。
+    std::optional<std::string> summarize_dialogue(std::span<const model::Message> messages) const;
+    // 把实际采用的摘要及同轮待整理引用写成一个检查点。
+    void save_recent_dialogue(std::int64_t current, const nlohmann::json& groups, std::string_view tone);
+    // 只在当前授权版本下恢复最后一次提交的可读摘要。
+    nlohmann::json restored_dialogue() const;
+    // 用检查点中存在的完整原件号按当前授权回查原话或实际答复。
+    nlohmann::json recent_original(std::string_view reference) const;
+    // 清空会话时撤下其可恢复摘要。
+    void clear_recent_dialogue();
     // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。
     std::optional<StoredMessage> recall_memory(std::string_view selector) const;
     // 按本档案获准主题选择候选，在整份证据数组的字节预算内保留原件。

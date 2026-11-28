@@ -72,7 +72,7 @@ class Application {
     Conversation& conversation() noexcept { return conversation_; }
     // 在独占目录关联主会话消息，并绑定当前实例的语气召回选项。
     void bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log,
-        ToneRecallOptions tone_recall = {});
+        ToneRecallOptions tone_recall = {}, bool recent_summary = true);
     // 返回当前业务线程的主消息投递器。
     MainMessages* main_messages() const noexcept { return main_messages_.get(); }
     // 读取本体的房间布局和绑定身体，不依赖窗口或加载的插件。

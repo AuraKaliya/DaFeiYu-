@@ -154,12 +154,16 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             tone_read_=topics.front();
             return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
         }
-        const auto result = view=="observations" ? store_->compare_observations(topics) :
+        auto result = view=="observations" ? store_->compare_observations(topics) :
             view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
             view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
             view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
             view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
             own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
+        if (view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos && result.at("items").empty()) {
+            auto original=store_->recent_original(topics.front());
+            if (!original.is_null()) result=std::move(original);
+        }
         const auto size = result.at("items").size();
         search_result_ = view=="observations" ? observation_source(call.attempt.step.run.sequence,result) :
             view=="comparisons" ? case_source(call.attempt.step.run.sequence,result) :
@@ -279,7 +283,8 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     }
     constexpr std::string_view prefix = "回想 ";
     if (!owner_memory_turn_) return;
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,first_decision=true]() mutable {
+    const auto recent=prepare_recent_context(options);
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,recent,first_decision=true]() mutable {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
         if (!current) return sources;
@@ -288,6 +293,8 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
         else if (task) {
             if (auto selected=current->resumed_task_source(task->reference,task->message)) sources.push_back(std::move(*selected));
         }
+        if (first_decision && recent)
+            if (auto restored=current->restored_recent_context()) sources.push_back(std::move(*restored));
         if (auto tone=current->tone_projection(prompt,std::exchange(first_decision,false))) sources.push_back(std::move(*tone));
         return sources;
     };

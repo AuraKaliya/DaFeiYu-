@@ -63,7 +63,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>18) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>19) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -167,6 +167,10 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "basis INTEGER NOT NULL,project TEXT NOT NULL,state TEXT NOT NULL,body TEXT NOT NULL,rewrite INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1);"
             "CREATE INDEX IF NOT EXISTS tone_project ON tone_correction(project,message DESC) WHERE active=1 AND state='ready';"
             "CREATE INDEX IF NOT EXISTS tone_draft ON tone_correction(message) WHERE active=1 AND state='draft'; PRAGMA user_version=18");
+        if(previous<19) sql(db,"CREATE TABLE IF NOT EXISTS recent_dialogue(slot INTEGER PRIMARY KEY CHECK(slot=1),"
+            "through_message INTEGER NOT NULL,authority INTEGER NOT NULL,body TEXT NOT NULL,tone TEXT NOT NULL);"
+            "CREATE INDEX IF NOT EXISTS recent_dialogue_reply ON messages(json_extract(envelope,'$.replyTo'),id) WHERE source='main';"
+            "PRAGMA user_version=19");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

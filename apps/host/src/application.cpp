@@ -112,11 +112,11 @@ Application::Application(model::Config config, const std::filesystem::path& pack
 
 // 数据目录所有者在开始处理命令前绑定唯一的持久消息入口。
 void Application::bind_messages(std::shared_ptr<MessageStore> store, const std::string& instance, SoftwareLog* log,
-    ToneRecallOptions tone_recall) {
+    ToneRecallOptions tone_recall, bool recent_summary) {
     subagents_->bind_memory(store);
     auto reflection = std::make_shared<TaskReflection>(store,model_config_,model_backend_,persona_,tool_clock_,run_log_.get());
     main_messages_ = std::make_shared<MainMessages>(*this,std::move(store),instance,log,run_log_.get(),model_backend_.structured,
-        std::move(reflection),std::move(tone_recall));
+        std::move(reflection),std::move(tone_recall),recent_summary);
     conversation_.main_messages_ = main_messages_.get();
     subagents_->on_letter([inbox=std::weak_ptr(main_messages_)]{if (auto m=inbox.lock()) m->letters_ready();});
     main_messages_->restore();
