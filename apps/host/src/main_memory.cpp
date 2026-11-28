@@ -95,7 +95,7 @@ agent::DecisionStatusSource tone_source(std::string_view key,std::string_view de
 
 // 将语义判断交给主 Agent，以工具契约说明长期价值、当轮用途和排除情形。
 void MainMessages::register_memory_tools() {
-    reply_tools_->add({"main/memory_note",app_.mailbox_host().identity,2,{"memory_note",
+    reply_tools_->add({"main/memory_note",app_.mailbox_host().identity,3,{"memory_note",
         "主人直接陈述可复用的长期偏好、持续约束、未来承诺、影响后续安排的经历或对这些事实的更正时，选简短稳定的主题，"
         "摘录当前原话中的依据 excerpt。通常只收录主人确认且未来仍有用的原话。涉及拒绝保存、敏感秘密、转述、猜测或寒暄时直接交谈。"
         "收录对象是当前整条真人原话，混有不宜保存的内容时跳过。仅在收到 saved 回执后确认收录。"
@@ -104,10 +104,10 @@ void MainMessages::register_memory_tools() {
         "所指明确但范围不清用 unconfirmed。语境足以界定下次适用的场合时可直接用 ongoing，写短提示 hint 和基于现有原话的 reason。"
         "项目进度用默认 condition=progress，正式验收场合用 accepted。主人私聊随口分享小烦恼、希望自然接话时用 casual_share，"
         "reason 说明所指回复和主人原话怎样支持这个用途。draft 表示已保留、待整理。"
-        "新反馈明确补足同一经历的范围时，用已知原件号 tone.prior；转述、泛泛评价和表达来源不清时直接交谈。",
-        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted","casual_share"]},"prior":{"type":"string"}},"required":["reply"],"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
+        "新反馈明确补足范围时，先查本轮待定原件，再填 tone.prior，可省略 reply。转述、泛泛评价和表达来源不清时直接交谈。",
+        R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted","casual_share"]},"prior":{"type":"string"}},"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,11,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,12,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -116,7 +116,7 @@ void MainMessages::register_memory_tools() {
         "themes 可传空 topics 查近期主题；如果需要，下一步用 originals 一次展开其中至多三个完整原件号。"
         "语气条目已有浅层提示，追问标注理由时把其完整 reference 单独填进 originals，查阅 memory.tone_original。"
         "近期摘要的长原文返回 nextOffset，下轮用同一个完整编号和该 offset 继续查。"
-        "主人补充语气范围时，可用 tone_pending 按一个登记项目键找近期未定的原话，同样查阅 memory.tone_original。"
+        "主人补充语气范围时，用 tone_pending 填一个登记项目键或当前原话重复的独特短句。查阅 memory.tone_original 后再补定。"
         "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
         "reviewDue 表示有待比较的原话。回顾自己实际作过的选择用 episodes，topics 可填主题或投递原件号。"
@@ -163,6 +163,9 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
         const auto kind = args.at("kind").get<std::string>();
         if (tone) {
             if (kind!="correction") throw std::invalid_argument("tone: correction required");
+            const auto prior=args.at("tone").find("prior");
+            if (prior!=args.at("tone").end() && (!tone_read_ || *prior!=*tone_read_ || call.attempt.step.sequence<=search_step_))
+                throw std::invalid_argument("tone: original has not been read in this turn");
             const auto feedback=store_->note_tone(parent_.second,args);
             if (feedback.at("state")=="skipped") return memory_receipt(feedback,agent::ToolEffect::not_applied);
             tone_pending_=feedback.at("reference").get<std::string>();
@@ -213,13 +216,15 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         if (args.contains("offset") && ((!document && !page_text && view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
         if (view=="tone_pending") {
-            if (topics.size()!=1) throw std::invalid_argument("tone: one project required");
-            tone_read_=store_->unclear_tone(topics.front());
+            if (topics.size()!=1) throw std::invalid_argument("tone: one project or quoted phrase required");
+            tone_read_=store_->unclear_tone(topics.front(),parent_.second);
+            search_step_=call.attempt.step.sequence;
             const bool found=!tone_read_->empty();
             return memory_receipt({{"state",found ? "ready" : "no_match"},{"count",found ? 1 : 0},{"limited",false}},agent::ToolEffect::not_applied);
         }
         if (exact_text && !page_text && !store_->tone_original(topics.front()).is_null()) {
             tone_read_=topics.front();
+            search_step_=call.attempt.step.sequence;
             return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
         }
         auto result = document ? store_->knowledge_document_page(topics.front(),offset) :
@@ -315,7 +320,7 @@ std::optional<agent::DecisionStatusSource> MainMessages::tone_projection(std::st
         if (tone_read_->empty()) return {};
         auto evidence=store_->tone_original(*tone_read_);
         if (!evidence.is_null()) return tone_source("memory.tone_original","获准的纠正原话，已整理时附标注理由。",std::move(evidence),
-            {"state","quote","reason","replyReference","basisReference","rewriteReference"});
+            {"state","quote","reason","replyReference","basisReference","basisQuote","rewriteReference"});
         return {};
     }
     if (tone_pending_) {

@@ -173,8 +173,8 @@ class MessageStore {
     void settle_tones();
     // 查适用的项目纠正或普通私聊候选，首包的词面漏召回可按语义补查。
     nlohmann::json tone_for(std::string_view prompt,const ToneRecallOptions& recall,bool first_decision) const;
-    // 按登记项目找最近一条可补证的未定反馈。
-    std::string unclear_tone(std::string_view project) const;
+    // 按登记项目或当前主人重复的原话选择待补证反馈。
+    std::string unclear_tone(std::string_view selector,std::int64_t current) const;
     // 按原件号重验私有索引，读取原文和保存的标注理由。
     nlohmann::json tone_original(std::string_view reference,bool pending=false) const;
     // 逐项核对已结算问答的原话和实际送达文本，生成带原件号的有界摘要。

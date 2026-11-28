@@ -26,6 +26,7 @@ constexpr auto milk_before="我理解你的负面情绪。针对排队问题，�
 constexpr auto milk_feedback="这句收一点。我就是跟你说件小事，你顺着我说的聊两句就行。";
 constexpr auto milk_hint="接住刚说的具体事情，口吻自然一点";
 constexpr auto milk_reason="来信说随口吐槽，主人纠正把小事当成求助的回法，希望顺着这件事自然聊。";
+constexpr auto clarify_reason="主人把上次回应日常小事时的语气要求限定在随口分享。";
 constexpr auto takeout="午休全耗在等外卖上了，送来还凉透了，跟你嘀咕两句。";
 constexpr auto takeout_paraphrase="午休全搭在等这单外卖上了，打开还是凉的。你说我这一中午图什么呀。";
 constexpr auto takeout_answer="等了一整个午休，打开还是凉的，这顿饭也太折腾了。";
@@ -56,14 +57,21 @@ model::Response note(std::string quote,std::string reply,std::string scope="ongo
 }
 
 // 用固定的范围判断登记日常分享中的纠正，语境依据由本体核验。
-model::Response chat_note(std::string feedback,std::string prior_reply) {
+model::Response chat_note(std::string feedback,std::string prior_reply,std::string prior={}) {
+    Json tone{{"hint",milk_hint},{"condition","casual_share"},{"reason",prior.empty() ? milk_reason : clarify_reason}};
+    if (prior.empty()) tone["reply"]=std::move(prior_reply); else tone["prior"]=std::move(prior);
     return call("memory_note",{{"topic","日常分享语气"},{"kind","correction"},{"scope","ongoing"},{"excerpt",feedback},
-        {"tone",{{"reply",prior_reply},{"hint",milk_hint},{"reason",milk_reason},{"condition","casual_share"}}}});
+        {"tone",std::move(tone)}});
 }
 
 // 两组以同一个固定按号请求展开原话。
 model::Response lookup(const std::string& reference) {
     return call("memory_search",{{"topics",{reference}},{"count",1},{"need","single"},{"view","originals"}});
+}
+
+// 查找主人此次明确指向的一次待定纠正。
+model::Response pending_tone(const std::string& phrase) {
+    return call("memory_search",{{"topics",{phrase}},{"count",1},{"need","single"},{"view","tone_pending"}});
 }
 
 // 为种子采样设定可实测的输入预算。
@@ -218,7 +226,7 @@ void compare(const fs::path& root,bool enabled) {
         shallow(replay.send("south","「海棠南区项目」的进度如何？",{say()}).front());
         shallow(replay.send("once-check","「薄荷项目」的进度如何？",{say()}).front());
         const auto clarify=replay.send("clarify","说的是「海棠北区项目」，所有普通项目进度都平实一点。",
-            {call("memory_search",{{"topics",{"north"}},{"count",1},{"view","tone_pending"},{"need","single"}}),
+            {pending_tone("north"),
              note("所有普通项目进度都平实一点","一路开挂","ongoing","progress",unclear),say()});
         require(sample(clarify[1],"memory.tone_original").at("reference")==unclear,"clarification was not grounded in its original");
         shallow(replay.send("after-clarify",report,{say()}).front(),unclear);
@@ -289,7 +297,7 @@ void chat_seed(const fs::path& root) {
     replay.send("milk",milk,{say(milk_before)});
     const auto feedback=replay.send("milk-note",milk_feedback,{chat_note(milk_feedback,milk_before),say("就买瓶牛奶还得排二十分钟，换我也烦。")});
     require(sample(feedback.back(),"memory.tone_pending").at("state")=="draft","casual correction was not staged");
-    replay.send("unclear-chat","真服了。",{say("让我来替你分析一下。")});
+    replay.send("unclear-chat","雨伞落在公交上了，找不着。真服了。",{say("让我来替你分析一下。")});
     const auto unclear=replay.send("unclear-chat-note","这句收一点",{chat_note("这句收一点","让我来替你分析一下。"),say("怎么了？")});
     require(sample(unclear.back(),"memory.tone_pending").at("state")=="unclear","unclear experience became reusable");
     pad_history(replay);
@@ -510,6 +518,46 @@ void chat_preflight(const fs::path& root) {
     std::cout<<"Cold unclear and revocation before the first submission after restart: no private content or reference\n";
 }
 
+// 重启后以唯一原话找到待定语气，沿原号和新反馈补足适用范围。
+// 步骤：拦下未经查回的补写和模糊线索 → 查到待定原话 → 核对来源与后续候选 → 撤权回退。
+void chat_clarification(const fs::path& root,bool revoked) {
+    Replay replay(root/(revoked ? "clarify-revoked" : "clarify"));
+    const auto original=replay.reference("unclear-chat-note"), fallback=replay.reference("milk-note");
+    const std::string locator="雨伞落在公交上", feedback="以后我只是跟你说件小事时，先顺着聊两句。";
+    const auto prompt="上次「"+locator+"」那次，我只是抱怨。"+feedback;
+    if (revoked) {
+        replay.host.main_messages()->change_memory(original,std::nullopt);
+        for (const auto& request:replay.send("revoked-pending",prompt,{pending_tone(locator),say()}))
+            require(sample(request,"memory.tone_original").is_null(),"withdrawn pending feedback was recalled");
+        verify_trace(replay);
+        return;
+    }
+
+    replay.send("unseen",prompt,{chat_note(feedback,"",original),say()});
+    const auto unchanged=sample(replay.send("unseen-check","核对这条仍待定的原话。",{lookup(original),say()}).back(),"memory.tone_original");
+    require(unchanged.at("state")=="unclear","unseen feedback was rewritten");
+    replay.send("second-unclear","钥匙掉进雨水篦子里了，真服了。",{say("我给你写三步找回方案。")});
+    replay.send("second-note","这句收一点",{chat_note("这句收一点","我给你写三步找回方案。"),say()});
+    for (const auto& request:replay.send("ambiguous","两次我都说「这句收一点」，是说的哪次？",{pending_tone("这句收一点"),say()}))
+        require(sample(request,"memory.tone_original").is_null(),"ambiguous pending feedback was chosen");
+    for (const auto& request:replay.send("unquoted","我想继续聊前些天的回复语气。",{pending_tone(locator),say()}))
+        require(sample(request,"memory.tone_original").is_null(),"model invented a selector for pending feedback");
+
+    const auto clarification=replay.send("clarification",prompt,{pending_tone(locator),chat_note(feedback,"",original),say()});
+    const auto recalled=sample(clarification[1],"memory.tone_original");
+    require(sample(clarification.front(),"memory.tone_original").is_null() && recalled.at("quote")=="这句收一点" &&
+        recalled.at("reference")==original && recalled.at("state")=="unclear","cold clarification did not read the exact pending evidence");
+    shallow(replay.send("after-clarification",takeout,{say()}).front(),original,"memory.tone_candidate");
+    const auto basis=replay.reference("clarification");
+    const auto audited=sample(replay.send("check-clarification","按编号核对这两个语气依据。",{lookup(original),say()}).back(),"memory.tone_original");
+    require(audited.at("state")=="ready" && audited.at("quote")=="这句收一点" && audited.at("basisReference")==basis &&
+        audited.at("basisQuote")==feedback && audited.at("reason")==clarify_reason,"clarification lost an original or its annotation");
+    replay.host.main_messages()->change_memory(basis,std::nullopt);
+    shallow(replay.send("after-basis-revoke",takeout,{say()}).front(),fallback,"memory.tone_candidate");
+    verify_trace(replay);
+    std::cout<<"Private clarification: quote at request 2, original reference reused, source and reason verified, ambiguous and revoked evidence withheld\n";
+}
+
 // 每个场景从同源快照独立启动，固定向量只替代编码，候选和送模由正式宿主决定。
 // 步骤：选定同一问句与响应 → 接入 A/B 编码选项 → 核对实收候选与优先条件。
 void semantic_compare(const fs::path& root,std::string_view phase) {
@@ -635,6 +683,7 @@ void tone_replay(const fs::path& root,std::string_view phase) {
     if (phase=="chat-A" || phase=="chat-B") {chat_compare(root/std::string(phase.substr(5)),phase=="chat-B"); return;}
     if (phase=="chat-guards") {chat_guards(root); return;}
     if (phase=="chat-preflight") {chat_preflight(root); return;}
+    if (phase=="chat-clarify" || phase=="chat-clarify-revoked") {chat_clarification(root,phase.ends_with("revoked")); return;}
     if (phase=="seed") {seed(root); return;}
     if (phase=="A" || phase=="B") {compare(root/std::string(phase),phase=="B"); return;}
     if (phase=="guards") {guards(root); return;}

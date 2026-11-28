@@ -113,8 +113,9 @@ Progress progress_of(std::string_view prompt) {
 Json MessageStore::note_tone(std::int64_t message,const Json& proposal) {
     const auto& tone = proposal.at("tone");
     const auto excerpt = proposal.at("excerpt").get<std::string>();
-    const auto reply_quote = tone.at("reply").get<std::string>();
-    if (!short_text(excerpt,256) || !short_text(reply_quote,512)) throw std::invalid_argument("tone: invalid excerpt");
+    const auto reply_quote = tone.value("reply",std::string{});
+    if (!short_text(excerpt,256) || ((!tone.contains("prior") || tone.contains("reply")) && !short_text(reply_quote,512)))
+        throw std::invalid_argument("tone: invalid excerpt");
     const auto scope = proposal.at("scope");
     if (scope=="private" || scope=="one_time") return {{"state","skipped"}};
 
@@ -225,14 +226,29 @@ Json MessageStore::tone_for(std::string_view prompt,const ToneRecallOptions& rec
     return nullptr;
 }
 
-// 按明确的项目引用选择一条仍获准的未定经历，供模型补证。
-std::string MessageStore::unclear_tone(std::string_view project) const {
+// 选择仍获准的未定经历，普通私聊须有当前主人复述的唯一逐字线索。
+// 步骤：校验当前原话 → 按项目或原件中的同一句定位 → 有歧义时保持待定。
+std::string MessageStore::unclear_tone(std::string_view selector,std::int64_t current) const {
     std::lock_guard lock(state_->mutex);
-    const auto name=project_of(state_->db,project);
-    if (name.empty()) return {};
-    Statement note(state_->db,"SELECT message FROM tone_correction WHERE project=? AND state='unclear' AND active=1 ORDER BY message DESC LIMIT 1");
-    note.bind(1,name);
-    return note.next() ? conversation()+"/"+std::to_string(note.number(0)) : std::string{};
+    auto* db=state_->db;
+    const auto original=owner_quote(db,current);
+    if (!original || !short_text(selector,96)) return {};
+    const auto name=project_of(db,selector);
+    if (!name.empty()) {
+        Statement note(db,"SELECT message FROM tone_correction WHERE project=?1 AND message<?2 "
+            "AND state='unclear' AND active=1 ORDER BY message DESC LIMIT 1");
+        note.bind(1,name); note.bind(2,current);
+        return note.next() ? conversation()+"/"+std::to_string(note.number(0)) : std::string{};
+    }
+    if (selector.size()<6 || original->find(selector)==original->npos) return {};
+    Statement notes(db,"SELECT t.message FROM tone_correction t JOIN messages u ON u.id=t.message "
+        "JOIN messages p ON p.id=t.parent JOIN messages a ON a.id=t.reply WHERE t.project='' AND t.message<?2 "
+        "AND t.state='unclear' AND t.active=1 AND (instr(json_extract(u.envelope,'$.text'),?1)>0 "
+        "OR instr(json_extract(p.envelope,'$.text'),?1)>0 OR instr(json_extract(a.envelope,'$.text'),?1)>0) LIMIT 2");
+    notes.bind(1,selector); notes.bind(2,current);
+    if (!notes.next()) return {};
+    const auto id=notes.number(0);
+    return notes.next() ? std::string{} : conversation()+"/"+std::to_string(id);
 }
 
 // 按当前授权展开纠正原文；运行中的待整理视图只携带一段短原话。
@@ -251,8 +267,10 @@ Json MessageStore::tone_original(std::string_view reference,bool pending) const 
         value.update({{"quote",std::move(*quote)},{"reason",status=="ready" ? body.at("reason") : Json("")},
             {"replyReference",conversation()+"/"+std::to_string(note.number(2))},
             {"basisReference",conversation()+"/"+std::to_string(note.number(3))}});
+        if (note.number(3)!=id) value["basisQuote"]=body.at("excerpt");
         if (note.number(4)) value["rewriteReference"]=conversation()+"/"+std::to_string(note.number(4));
     } else return nullptr;
+    if (value.contains("basisQuote") && Json::array({value}).dump().size()>evidence_bytes) value.erase("basisQuote");
     return Json::array({value}).dump().size()<=evidence_bytes ? value : Json(nullptr);
 }
 }
