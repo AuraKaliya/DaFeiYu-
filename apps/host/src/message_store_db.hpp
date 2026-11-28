@@ -29,6 +29,10 @@ struct CaseTermMatch {std::string name; bool ambiguous=false,registered=false;};
 CaseTermMatch resolve_composed_terms(sqlite3* db,const std::vector<std::string>& topics,bool whole_only=false);
 // 在任务原件的写事务内索引独立核验过的观察，旧档案升级也复用同一规则。
 void index_task_observation(sqlite3* db, std::int64_t id, const nlohmann::json& task);
+// 将结构化预测应用到独立读回，供个人理解和知识验核共用。
+std::string_view task_prediction(const nlohmann::json& claim,std::string_view before,std::string_view expected,std::string_view actual);
+// 在新观察事务内撤下被读回反驳的已发布规律，返回受影响的条目键。
+std::vector<std::string> withdraw_challenged_knowledge(sqlite3* db,std::int64_t task);
 // 保存已采用摘要的原件及其主人来信依赖，允许跨检查点查回。
 void index_recent_origins(sqlite3* db);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。

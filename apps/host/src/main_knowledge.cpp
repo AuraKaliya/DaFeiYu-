@@ -13,7 +13,7 @@ agent::DecisionStatusSource knowledge_source(const std::string& subject,std::uin
     static const auto schema=[]{
         const Json str{{"type","string"}},number{{"type","integer"}};
         Json fields=Json::object();
-        for(const auto key : {"article","edition","topic","applies","statement","proposer","publisher","library","category","claimKind"}) fields[key]=str;
+        for(const auto key : {"article","edition","topic","applies","statement","proposer","publisher","library","category","claimKind","verification"}) fields[key]=str;
         fields["revision"]=number;
         fields["sources"]={{"type","array"},{"items",{{"type","object"},{"properties",{{"kind",str},{"reference",str}}},{"additionalProperties",false}}}};
         const Json item{{"type","object"},{"properties",fields},{"additionalProperties",false}};
@@ -44,9 +44,10 @@ void MainMessages::register_knowledge_tool() {
     reply_tools_->add({"main/knowledge_propose",app_.mailbox_host().identity,1,{"knowledge_propose",
         "主人要求整理可复用做法时，可将刚刚查到的真实依据整理成待主人审阅的草案。"
         "article、edition 为简短字母数字键，base 为当前发布修订，首次为 0。说明 topic、applies、statement。"
-        "按已知资料选择 library 及 kind。observation 逐字记录一道独立读回的值，rule 附两次独立读回。"
+        "按已知资料选择 library 及 kind。rule 可用 check 提交同一动作和读口的条件及预测，此时省略 applies 和 statement，由本体填写。"
+        "condition 用 any、before 或 expected，when 是范围值。predict 用 target、changed、unchanged 或 value，value 是预测读数。无值的字段填空。"
         "sources 填本轮看过的一至三份主人原话号、动作后独立读回号或子 Agent 结束信号。报告须注明原作者。成功后仅说明已提议。",
-        R"({"type":"object","properties":{"article":{"type":"string"},"edition":{"type":"string"},"base":{"type":"integer"},"topic":{"type":"string"},"applies":{"type":"string"},"statement":{"type":"string"},"library":{"type":"string"},"kind":{"type":"string","enum":["observation","rule"]},"sources":{"type":"array","items":{"type":"string"}}},"required":["article","edition","base","topic","applies","statement","sources"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"article":{"type":"string"},"edition":{"type":"string"},"base":{"type":"integer"},"topic":{"type":"string"},"applies":{"type":"string"},"statement":{"type":"string"},"library":{"type":"string"},"kind":{"type":"string","enum":["observation","rule"]},"check":{"type":"object","properties":{"condition":{"type":"string","enum":["any","before","expected"]},"when":{"type":"string"},"predict":{"type":"string","enum":["target","changed","unchanged","value"]},"value":{"type":"string"}},"required":["condition","when","predict","value"],"additionalProperties":false},"sources":{"type":"array","items":{"type":"string"}}},"required":["article","edition","base","topic","sources"],"additionalProperties":false})"},
         true,true,{},{},7,512,true},[this](const agent::ToolInvocation& call){
             try {
                 if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_) throw std::invalid_argument("unseen");
@@ -125,6 +126,14 @@ Json MainMessages::manage_knowledge(const std::vector<std::string>& words) {
         Json draft{{"library",article},{"kind",words[3]},{"article",words[4]},{"edition",words[5]},{"base",revision(words[6])},
             {"topic",words[7]},{"applies",words[8]},{"statement",words[9]},{"sources",std::vector<std::string>(words.begin()+10,words.end())}};
         return store_->propose_knowledge(draft,"owner");
+    }
+    if (verb=="propose-checked" && (words.size()==13 || words.size()==14)) {
+        const auto& condition=words[7],&predict=words[9];
+        Json check{{"condition",condition},{"when",condition=="any" && words[8]=="-" ? "" : words[8]},
+            {"predict",predict},{"value",predict!="value" && words[10]=="-" ? "" : words[10]}};
+        return store_->propose_knowledge({{"library",article},{"kind","rule"},{"article",words[3]},{"edition",words[4]},
+            {"base",revision(words[5])},{"topic",words[6]},{"check",std::move(check)},
+            {"sources",std::vector<std::string>(words.begin()+11,words.end())}},"owner");
     }
     if (verb=="inspect" && (words.size()==3 || words.size()==4)) return store_->inspect_knowledge(article,words.size()==4 ? words[3] : "");
     if (verb=="propose" && words.size()>=9 && words.size()<=11) {

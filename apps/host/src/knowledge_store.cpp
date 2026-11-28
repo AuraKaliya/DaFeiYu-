@@ -85,11 +85,79 @@ void check_claim(sqlite3* db,std::string_view kind,const std::string& statement,
     }))
         throw std::invalid_argument("knowledge: external source required");
 }
+
+// 按原动作和原读口检查当前仍获准的观察，保留第一条相反的原始读回位置。
+std::string counterexample(sqlite3* db,const Json& rule) {
+    Statement rows(db,"SELECT task,readback,before_value,expected,actual FROM task_observation WHERE family=? ORDER BY task");
+    rows.bind(1,rule.at("family").get_ref<const std::string&>());
+    while (rows.next()) if (task_prediction(rule.at("check"),rows.text(2),rows.text(3),rows.text(4))=="counterexample")
+        return "/task/"+std::to_string(rows.number(0))+"/receipt/"+std::to_string(rows.number(1));
+    return {};
+}
+
+// 逐份复算结构化规律的支持证据，正文由宿主从可核验字段生成。
+// 步骤：校验条件与预测 → 比较同动作同读口的独立证据及反例 → 生成发布正文和验核记录。
+Json verify_rule(sqlite3* db,const Json& check,const std::vector<MemoryBasis>& sources,std::string& applies,std::string& statement) {
+    constexpr const char* fields[]={"condition","when","predict","value"};
+    if (!check.is_object() || check.size()!=4 || std::ranges::any_of(fields,[&](const auto* field){
+        return !check.contains(field) || !check.at(field).is_string();
+    })) throw std::invalid_argument("knowledge: invalid rule verification");
+    const auto& condition=check.at("condition"), &predict=check.at("predict");
+    const auto when=check.at("when").get<std::string>(), value=check.at("value").get<std::string>();
+    if ((condition!="any" && condition!="before" && condition!="expected") ||
+        (predict!="target" && predict!="changed" && predict!="unchanged" && predict!="value") ||
+        (condition=="any" && !when.empty()) || (predict!="value" && !value.empty()))
+        throw std::invalid_argument("knowledge: invalid rule verification");
+    if (condition!="any") prose(when,128);
+    if (predict=="value") prose(value,128);
+    std::string family;
+    for (const auto& source : sources) {
+        Statement read(db,"SELECT family,before_value,expected,actual FROM task_observation WHERE task=?"); read.bind(1,source.record);
+        if (!read.next() || task_prediction(check,read.text(1),read.text(2),read.text(3))!="support" || (!family.empty() && family!=read.text(0)))
+            throw std::invalid_argument("knowledge: each witness must support the same action and reader");
+        family=read.text(0);
+    }
+    Json rule{{"family",family},{"check",check}};
+    if (!counterexample(db,rule).empty()) throw std::invalid_argument("knowledge: known counterexample");
+    const auto tools=Json::parse(family);
+    applies="动作 "+tools.at(0).get<std::string>()+"，独立读口 "+tools.at(1).get<std::string>()+"。";
+    if (condition!="any") applies+=(condition=="before" ? "动作前读数为「" : "任务目标为「")+when+"」。";
+    statement="在已核验样本中，";
+    if (predict=="target") statement+="读回与该任务目标一致。";
+    else if (predict=="changed") statement+="动作后的独立读数发生变化。";
+    else if (predict=="unchanged") statement+="动作后的独立读数保持原值。";
+    else statement+="动作后的独立读数为「"+value+"」。";
+    return rule;
+}
+
+// 新出现的相反读回阻止存在验核记录的版本继续发布或交付。
+bool no_known_counterexample(sqlite3* db,std::string_view verification) {
+    return verification.empty() || counterexample(db,Json::parse(verification)).empty();
+}
 }
 
 // 让跨渠道比较与发布共用同一套原件核验。
 std::optional<MemoryBasis> message_db::resolve_basis(sqlite3* db,const std::string& profile,const std::string& ref) {
     return basis(db,profile,ref);
+}
+
+// 新独立读回挑战已发布规律时，在同一任务事务推进知识修订并清空当前版。
+// 步骤：取本次独立读数 → 核对同一动作和读口的已发布规律 → 撤下受挑战版本。
+std::vector<std::string> message_db::withdraw_challenged_knowledge(sqlite3* db,std::int64_t task) {
+    Statement observation(db,"SELECT family,before_value,expected,actual FROM task_observation WHERE task=?");
+    observation.bind(1,task); if (!observation.next()) return {};
+    const auto before=observation.text(1),expected=observation.text(2),actual=observation.text(3);
+    Statement rules(db,"SELECT e.article,e.verification FROM knowledge_edition e JOIN knowledge_article a ON a.head=e.id "
+        "WHERE e.verification<>'' AND json_extract(e.verification,'$.family')=?");
+    rules.bind(1,observation.text(0));
+    std::vector<std::string> withdrawn;
+    while (rules.next()) if (task_prediction(Json::parse(rules.text(1)).at("check"),before,expected,actual)=="counterexample")
+        withdrawn.push_back(rules.text(0));
+    for (const auto& article : withdrawn) {
+        Statement clear(db,"UPDATE knowledge_article SET revision=revision+1,head=0 WHERE article=?"); clear.bind(1,article); clear.next();
+    }
+    if (!withdrawn.empty()) sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
+    return withdrawn;
 }
 
 // 保存库自己的说明、来源及支持检索的标签，库类别初次登记后固定。
@@ -172,10 +240,12 @@ bool MessageStore::withdraw_knowledge_document(const std::string& reference) {
 // 在幂等提议键下保存草案与逐项有类型的原件，已发布内容只可另建修订。
 Json MessageStore::propose_knowledge(const Json& draft,std::string_view proposer) {
     const auto article=draft.at("article").get<std::string>(), tag=draft.at("edition").get<std::string>();
-    const auto topic=draft.at("topic").get<std::string>(), scope=draft.at("applies").get<std::string>(), text=draft.at("statement").get<std::string>();
+    const auto topic=draft.at("topic").get<std::string>();
+    auto scope=draft.value("applies",std::string{}), text=draft.value("statement",std::string{});
     const auto base=draft.at("base").get<std::int64_t>(); const auto refs=draft.at("sources").get<std::vector<std::string>>();
     const auto library=draft.value("library",std::string("observed")), kind=draft.value("kind",std::string("legacy"));
-    key(article); key(tag); prose(topic,130); prose(scope,240); prose(text,640);
+    const auto check=draft.value("check",Json(nullptr));
+    key(article); key(tag); prose(topic,130);
     key(library);
     if (base<0 || refs.empty() || refs.size()>3 || std::set<std::string>(refs.begin(),refs.end()).size()!=refs.size())
         throw std::invalid_argument("knowledge: invalid basis or revision");
@@ -186,15 +256,30 @@ Json MessageStore::propose_knowledge(const Json& draft,std::string_view proposer
     if ((category=="observed" && kind!="observation" && kind!="rule" &&
         !(kind=="legacy" && !draft.contains("kind") && !draft.contains("library"))) || (category=="external" && kind!="external"))
         throw std::invalid_argument("knowledge: claim kind does not belong to library");
+    std::vector<MemoryBasis> sources;
+    for (const auto& ref : refs) {
+        const auto source=basis(db,conversation(),ref);
+        if (!source) throw std::invalid_argument("knowledge: unavailable source");
+        sources.push_back(*source);
+    }
+    check_claim(db,kind,text,sources);
+    std::string verification;
+    if (!check.is_null()) {
+        if (kind!="rule" || draft.contains("applies") || draft.contains("statement"))
+            throw std::invalid_argument("knowledge: verified rule text is generated from the check");
+        verification=verify_rule(db,check,sources,scope,text).dump();
+    }
+    prose(scope,240); prose(text,640);
     Statement make(db,"INSERT OR IGNORE INTO knowledge_article(article,library) VALUES(?,?)"); make.bind(1,article); make.bind(2,library); make.next();
     Statement current(db,"SELECT revision,library FROM knowledge_article WHERE article=?"); current.bind(1,article); current.next();
     if (current.text(1)!=library) throw std::invalid_argument("knowledge: article library is fixed");
-    Statement prior(db,"SELECT id,base,topic,applies,statement,proposer,claim_kind FROM knowledge_edition WHERE article=? AND tag=?");
+    Statement prior(db,"SELECT id,base,topic,applies,statement,proposer,claim_kind,verification FROM knowledge_edition WHERE article=? AND tag=?");
     prior.bind(1,article); prior.bind(2,tag);
     std::int64_t id=0;
     if (prior.next()) {
         id=prior.number(0);
-        if(prior.number(1)!=base || prior.text(2)!=topic || prior.text(3)!=scope || prior.text(4)!=text || prior.text(5)!=proposer || prior.text(6)!=kind)
+        if(prior.number(1)!=base || prior.text(2)!=topic || prior.text(3)!=scope || prior.text(4)!=text || prior.text(5)!=proposer ||
+            prior.text(6)!=kind || prior.text(7)!=verification)
             throw std::invalid_argument("knowledge: conflicting proposal");
         Statement existing(db,"SELECT reference FROM knowledge_basis WHERE edition=? ORDER BY position"); existing.bind(1,id);
         for(const auto& ref : refs) if (!existing.next() || existing.text(0)!=ref) throw std::invalid_argument("knowledge: conflicting sources");
@@ -205,19 +290,16 @@ Json MessageStore::propose_knowledge(const Json& draft,std::string_view proposer
             Statement typed(db,"SELECT 1 FROM knowledge_edition WHERE article=? AND claim_kind<>'legacy' LIMIT 1"); typed.bind(1,article);
             if (typed.next()) throw std::invalid_argument("knowledge: typed revision required");
         }
-        Statement add(db,"INSERT INTO knowledge_edition(article,tag,base,topic,applies,statement,proposer,claim_kind) VALUES(?,?,?,?,?,?,?,?)");
+        Statement add(db,"INSERT INTO knowledge_edition(article,tag,base,topic,applies,statement,proposer,claim_kind,verification) VALUES(?,?,?,?,?,?,?,?,?)");
         add.bind(1,article); add.bind(2,tag); add.bind(3,base); add.bind(4,topic); add.bind(5,scope); add.bind(6,text); add.bind(7,proposer);
-        add.bind(8,kind); add.next();
+        add.bind(8,kind); add.bind(9,verification); add.next();
         id=sqlite3_last_insert_rowid(db);
     }
-    std::vector<MemoryBasis> sources;
     for(std::size_t i=0;i<refs.size();++i) {
-        const auto source=basis(db,conversation(),refs[i]); if (!source) throw std::invalid_argument("knowledge: unavailable source");
+        const auto& source=sources[i];
         Statement add(db,"INSERT OR IGNORE INTO knowledge_basis VALUES(?,?,?,?,?)"); add.bind(1,id); add.bind(2,static_cast<std::int64_t>(i));
-        add.bind(3,refs[i]); add.bind(4,source->kind); add.bind(5,source->dependency); add.next();
-        sources.push_back(*source);
+        add.bind(3,refs[i]); add.bind(4,source.kind); add.bind(5,source.dependency); add.next();
     }
-    check_claim(db,kind,text,sources);
     tx.commit(); return {{"article",article},{"edition",tag},{"base",base},{"state","recorded"}};
 }
 
@@ -270,10 +352,11 @@ bool MessageStore::publish_knowledge(const std::string& article,const std::strin
         if (!head && rev>0 && *withdraw==rev-1) {tx.commit(); return false;}
         if (!head || *withdraw!=rev) throw std::invalid_argument("knowledge: stale withdrawal");
     } else {
-        key(tag); Statement draft(db,"SELECT id,base,published FROM knowledge_edition WHERE article=? AND tag=?");
+        key(tag); Statement draft(db,"SELECT id,base,published,verification FROM knowledge_edition WHERE article=? AND tag=?");
         draft.bind(1,article); draft.bind(2,tag); if (!draft.next()) throw std::invalid_argument("knowledge: unknown proposal");
         next=draft.number(0); Json refs=Json::array();
         if (!references(db,conversation(),next,refs)) throw std::invalid_argument("knowledge: withdrawn evidence");
+        if (!no_known_counterexample(db,draft.text(3))) throw std::invalid_argument("knowledge: known counterexample");
         if (head==next) {tx.commit(); return false;}
         if (draft.number(1)!=rev || draft.number(2)) throw std::invalid_argument("knowledge: stale proposal");
         Statement publish(db,"UPDATE knowledge_edition SET published=? WHERE id=?"); publish.bind(1,rev+1); publish.bind(2,next); publish.next();
@@ -291,10 +374,11 @@ std::int64_t MessageStore::grant_knowledge(const std::string& article,const std:
     target.bind(1,plugin); target.bind(2,static_cast<unsigned>(who.preset)); target.bind(3,who.subject); target.bind(4,who.channel);
     if(!target.next()) throw std::invalid_argument("knowledge: unknown child");
     const auto child=target.number(0);
-    Statement version(db,"SELECT e.id,a.head FROM knowledge_edition e JOIN knowledge_article a USING(article) WHERE e.article=? AND e.tag=?");
+    Statement version(db,"SELECT e.id,a.head,e.verification FROM knowledge_edition e JOIN knowledge_article a USING(article) WHERE e.article=? AND e.tag=?");
     version.bind(1,article); version.bind(2,tag); if(!version.next()) throw std::invalid_argument("knowledge: unknown edition");
     Json refs=Json::array();
-    if(rights && (version.number(0)!=version.number(1) || !references(db,conversation(),version.number(0),refs)))
+    if(rights && (version.number(0)!=version.number(1) || !references(db,conversation(),version.number(0),refs) ||
+        !no_known_counterexample(db,version.text(2))))
         throw std::invalid_argument("knowledge: unavailable publication");
     Statement set(db,"INSERT INTO knowledge_grant VALUES(?,?,?) ON CONFLICT(edition,child) DO UPDATE SET rights=excluded.rights WHERE rights<>excluded.rights");
     set.bind(1,version.number(0)); set.bind(2,child); set.bind(3,rights); set.next();
@@ -307,12 +391,22 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
     Statement get(db,"SELECT revision,head,library,category FROM knowledge_article JOIN knowledge_library USING(library) WHERE article=?"); get.bind(1,article);
     if(!get.next()) throw std::invalid_argument("knowledge: unknown article");
     Json result{{"article",article},{"revision",get.number(0)},{"library",get.text(2)},{"category",get.text(3)},{"editions",Json::array()}};
-    Statement rows(db,"SELECT id,tag,base,published,topic,applies,statement,proposer,claim_kind,publisher FROM knowledge_edition "
+    Statement rows(db,"SELECT id,tag,base,published,topic,applies,statement,proposer,claim_kind,publisher,verification FROM knowledge_edition "
         "WHERE article=? AND (?2='' OR tag=?2) ORDER BY id DESC LIMIT 16");
     rows.bind(1,article); rows.bind(2,tag);
     while(rows.next()) {
         Json item{{"edition",rows.text(1)},{"base",rows.number(2)},{"publishedRevision",rows.number(3)},{"current",rows.number(0)==get.number(1)},
             {"claimKind",rows.text(8)},{"publisher",rows.number(3) ? rows.text(9) : std::string{}}};
+        const auto verified=rows.text(10);
+        if (!verified.empty()) {
+            const auto rule=Json::parse(verified);
+            const auto contrary=counterexample(db,rule);
+            if (!contrary.empty()) {
+                item["current"]=false;
+                if (!tag.empty()) item["counterexampleReference"]=conversation()+contrary;
+            }
+            if (!tag.empty()) item["check"]=rule.at("check");
+        }
         if (!tag.empty()) {
             Json refs=Json::array();
             if (references(db,conversation(),rows.number(0),refs)) {
@@ -331,7 +425,7 @@ Json MessageStore::search_knowledge(const std::vector<std::string>& topics,unsig
     for(const auto& topic : topics) prose(topic,160);
     std::lock_guard lock(state_->mutex); auto* db=state_->db;
     Statement hits(db,"WITH q(term) AS (VALUES(?1),(?2),(?3)) SELECT e.id,e.article,e.tag,e.topic,e.applies,e.statement,e.published,e.proposer,"
-        "l.library,l.category,e.claim_kind,e.publisher FROM knowledge_article a JOIN knowledge_edition e ON e.id=a.head JOIN knowledge_library l USING(library) JOIN q "
+        "l.library,l.category,e.claim_kind,e.publisher,e.verification FROM knowledge_article a JOIN knowledge_edition e ON e.id=a.head JOIN knowledge_library l USING(library) JOIN q "
         "WHERE term<>'' AND (a.article=term OR instr(e.topic,term)>0 OR l.library=term OR EXISTS(SELECT 1 FROM json_each(l.tags) WHERE value=term)) "
         "AND (?4=0 OR EXISTS(SELECT 1 FROM knowledge_grant g "
         "JOIN child_owner c ON c.id=g.child WHERE g.edition=e.id AND c.id=?4 AND (g.rights & ?5)=?5 AND (c.access & 1)=1 "
@@ -343,11 +437,13 @@ Json MessageStore::search_knowledge(const std::vector<std::string>& topics,unsig
     auto& items=result.at("items");
     while(hits.next()) {
         Json refs=Json::array(); std::vector<std::string> deps;
-        if (!references(db,conversation(),hits.number(0),refs,&deps)) continue;
+        const auto verification=hits.text(12);
+        if (!no_known_counterexample(db,verification) || !references(db,conversation(),hits.number(0),refs,&deps)) continue;
         if (items.size()>=count) {result["limited"]=true; break;}
         Json item{{"article",hits.text(1)},{"edition",hits.text(2)},{"topic",hits.text(3)},{"applies",hits.text(4)},{"statement",hits.text(5)},
             {"revision",hits.number(6)},{"proposer",hits.text(7)},{"publisher",hits.text(11)},{"sources",refs},
             {"library",hits.text(8)},{"category",hits.text(9)},{"claimKind",hits.text(10)}};
+        if (!verification.empty()) item["verification"]="checked_samples";
         if (child) for(auto& ref : item["sources"]) ref.erase("reference");
         items.push_back(std::move(item));
         if (items.dump().size()>2048) {items.erase(items.end()-1); result["limited"]=true; continue;}

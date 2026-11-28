@@ -129,3 +129,20 @@
 {"op":"admin","command":"/knowledge withdraw @observation 1","revision":2}
 {"op":"admin","command":"/knowledge record-observation field @second","result":{"article":"@observation","state":"inactive","created":false}}
 {"op":"kb","topics":["example.status/read"],"expect":[]}
+{"op":"admin","command":"/knowledge propose-checked field panel-checked future 0 面板读回规律 any - target - @readback @readback","deny":true}
+{"op":"admin","command":"/knowledge propose-checked field panel-checked wrong 0 面板读回规律 any - value idle @readback @second","deny":true}
+{"op":"admin","command":"/knowledge propose-checked field panel-checked v1 0 面板读回规律 any - target - @readback @second"}
+{"op":"admin","command":"/knowledge propose-checked field panel-pending v1 0 较早草案 any - target - @readback @second"}
+{"op":"admin","command":"/knowledge publish panel-checked v1","revision":1}
+{"op":"kb","topics":["面板读回规律"],"expect":[{"article":"panel-checked","edition":"v1","revision":1,"claimKind":"rule","verification":"checked_samples","statement":"在已核验样本中，读回与该任务目标一致。","kinds":["tool_readback","tool_readback"],"refs":["@readback","@second"]}]}
+{"op":"case_task","id":"面板待机反例","save":"@contrary","tool":"example.status/set_focus","expected":"idle"}
+{"op":"restart"}
+{"op":"kb","topics":["面板读回规律"],"expect":[]}
+{"op":"admin","command":"/knowledge inspect panel-checked v1","revision":2,"inspect":{"current":false,"publishedRevision":1,"counterexampleReference":"@contrary","check":{"condition":"any","when":"","predict":"target","value":""}}}
+{"op":"admin","command":"/knowledge publish panel-pending v1","deny":true}
+{"op":"admin","command":"/knowledge propose-checked field panel-checked wide 2 面板读回规律 any - target - @readback @second","deny":true}
+{"op":"kb","topics":["核实展台面板","再次核实面板"],"view":"tasks","sample":"memory.tasks","draft":{"library":"field","kind":"rule","article":"panel-checked","edition":"v2","base":2,"topic":"面板读回规律","sources":["@readback","@second"],"check":{"condition":"expected","when":"focus","predict":"target","value":""}}}
+{"op":"admin","command":"/knowledge publish panel-checked v2","revision":3}
+{"op":"kb","topics":["面板读回规律"],"expect":[{"article":"panel-checked","edition":"v2","revision":3,"verification":"checked_samples","applies":"动作 example.status/set_focus，独立读口 example.status/read。任务目标为「focus」。","kinds":["tool_readback","tool_readback"],"refs":["@readback","@second"]}]}
+{"op":"admin","command":"/memory revoke @second-task"}
+{"op":"kb","topics":["面板读回规律"],"expect":[]}

@@ -126,6 +126,8 @@ class MainMessages : public std::enable_shared_from_this<MainMessages> {
     std::unique_ptr<agent::ToolWork> consider_memory(const agent::ToolInvocation& invocation);
     // 处理本体已准备好的语气整理，失败保留原待办。
     void settle_tone();
+    // 写入已结算任务并停止依赖已受反驳知识的在途交付。
+    void persist_task(const nlohmann::json& task);
     // 仅按实际入口绑定摘要投影与检查点。
     bool prepare_recent_context(agent::RunOptions& options);
     // 为重启后的第一轮主人私聊装配当前仍获准的摘要与待查号。

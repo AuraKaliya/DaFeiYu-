@@ -143,7 +143,7 @@ class MessageStore {
     // 按工具、任务主题或原版本号读取解释及分页的亲历事实。
     nlohmann::json search_understandings(const std::vector<std::string>& topics, unsigned count, std::size_t offset) const;
     // 按原运行身份一次性提交任务事实及待复盘原因。
-    void save_task(const nlohmann::json& task);
+    std::vector<std::string> save_task(const nlohmann::json& task);
     // 原子取一份仍获准的待办，以原回执整理复盘结论。
     bool review_idle_task();
     // 以主题或稳定原件号查回任务、行动或回执，长原文按字节分段。

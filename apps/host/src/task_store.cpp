@@ -109,7 +109,7 @@ std::optional<Json> original(const Json& task, const std::string& base, const st
 }
 
 // 在同一事务中保存不可变运行证据和待办原因，相同转变只提请首次复盘。
-void MessageStore::save_task(const Json& task) {
+std::vector<std::string> MessageStore::save_task(const Json& task) {
     std::lock_guard lock(state_->mutex);
     auto* db = state_->db;
     Transaction tx(db);
@@ -118,7 +118,7 @@ void MessageStore::save_task(const Json& task) {
     existing.bind(1,origin);
     if (existing.next()) {
         if (existing.text(0)!=body) throw std::logic_error("task memory: run identity conflict");
-        tx.commit(); return;
+        tx.commit(); return {};
     }
     auto reason = task.value("reason",std::string{});
     const auto signature = task.value("signature",std::string{});
@@ -139,8 +139,9 @@ void MessageStore::save_task(const Json& task) {
                 "/receipt/"+std::to_string(read.number(0)),"at_start");
         }
     }
+    auto withdrawn=withdraw_challenged_knowledge(db,id);
     sql(db,"UPDATE conversation SET memory_revision=1 WHERE memory_revision=0");
-    tx.commit();
+    tx.commit(); return withdrawn;
 }
 // 空闲时取一份待办，按当时的实际工作和核验结果写回结论，不发起模型或工具调用。
 bool MessageStore::review_idle_task() {

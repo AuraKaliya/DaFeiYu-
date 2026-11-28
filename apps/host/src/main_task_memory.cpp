@@ -59,10 +59,21 @@ void MainMessages::task_exited(const agent::TurnRequest& run) {
         }
     }
     if (unsaved_tasks_.empty()) {
-        try { store_->save_task(task); idle_review_due_ = true; }
+        try { persist_task(task); }
         catch (const std::runtime_error&) { storage_failed(); unsaved_tasks_.push_back(std::move(task)); }
     } else unsaved_tasks_.push_back(std::move(task));
     watched_task_.reset();
+}
+
+// 原任务和由其独立读回触发的知识撤下先落盘，再隔离收到旧知识的请求。
+void MainMessages::persist_task(const Json& task) {
+    const auto withdrawn=store_->save_task(task);
+    idle_review_due_=true;
+    if (withdrawn.empty()) return;
+    for (const auto& article : withdrawn) app_.subagents().invalidate_knowledge(article);
+    search_result_.reset();
+    if (app_.conversation().busy() && owner_memory_turn_) app_.conversation().cancel();
+    memory_revision_=store_->memory_revision();
 }
 
 // 空闲时按优先级整理一项，持久化待办在重启后继续，写锁不会重新触发工具。

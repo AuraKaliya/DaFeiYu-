@@ -30,7 +30,7 @@ void MainMessages::publish(std::int64_t id, const Json& receipt) {
 void MainMessages::flush() {
     if (std::chrono::steady_clock::now()<retry_at_) return;
     if (!unsaved_tasks_.empty()) {
-        try { store_->save_task(unsaved_tasks_.front()); unsaved_tasks_.pop_front(); idle_review_due_ = true; }
+        try { persist_task(unsaved_tasks_.front()); unsaved_tasks_.pop_front(); }
         catch (const std::runtime_error&) { retry_at_ = std::chrono::steady_clock::now()+std::chrono::milliseconds(250); }
     }
     if (!pending_.empty() && app_.conversation().accepting()) {

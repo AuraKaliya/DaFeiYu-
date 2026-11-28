@@ -69,7 +69,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>24) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>25) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -202,6 +202,12 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             if (!has_column(db,"knowledge_edition","publisher"))
                 sql(db,"ALTER TABLE knowledge_edition ADD COLUMN publisher TEXT NOT NULL DEFAULT 'owner'");
             sql(db,"PRAGMA user_version=24");
+        }
+        if(previous<25) {
+            if (!has_column(db,"knowledge_edition","verification"))
+                sql(db,"ALTER TABLE knowledge_edition ADD COLUMN verification TEXT NOT NULL DEFAULT ''");
+            sql(db,"CREATE INDEX IF NOT EXISTS checked_knowledge_family ON knowledge_edition(json_extract(verification,'$.family'),article) "
+                "WHERE verification<>''; PRAGMA user_version=25");
         }
     }
     Statement identity(db,"SELECT id FROM conversation");

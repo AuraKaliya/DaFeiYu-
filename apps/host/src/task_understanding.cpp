@@ -27,6 +27,16 @@ void message_db::index_task_observation(sqlite3* db, std::int64_t id, const Json
     group.bind(1,family); group.next();
 }
 
+// 判断独立读回对结构化预测的关系，范围外读数不计为依据或反例。
+std::string_view message_db::task_prediction(const Json& claim,std::string_view before,std::string_view expected,std::string_view actual) {
+    const auto& when=claim.at("when").get_ref<const std::string&>();
+    if ((claim.at("condition")=="before" && when!=before) || (claim.at("condition")=="expected" && when!=expected)) return "outside";
+    const auto& predict=claim.at("predict");
+    const bool hit=predict=="target" ? actual==expected : predict=="changed" ? actual!=before :
+        predict=="unchanged" ? actual==before : claim.at("value").get_ref<const std::string&>()==actual;
+    return hit ? "support" : "counterexample";
+}
+
 namespace {
 // 对只作展示的长文本保留明确的省略标志，核验始终读完整值。
 std::string brief(std::string value) {
@@ -42,13 +52,7 @@ std::string brief(std::string value) {
 // 把一项可检验判断应用在原始采样上；未落入条件的任务单独归类。
 std::string role(const Json& claim, const Statement& row) {
     if (claim.is_null()) return "observation";
-    const auto before = row.text(1), expected = row.text(2), actual = row.text(3);
-    if ((claim.at("condition")=="before" && claim.at("when")!=before) ||
-        (claim.at("condition")=="expected" && claim.at("when")!=expected)) return "outside";
-    const auto& prediction = claim.at("predict");
-    const bool hit = prediction=="target" ? actual==expected : prediction=="changed" ? actual!=before :
-        prediction=="unchanged" ? actual==before : claim.at("value")==actual;
-    return hit ? "support" : "counterexample";
+    return std::string(task_prediction(claim,row.text(1),row.text(2),row.text(3)));
 }
 // 读取轻量的原任务索引，行号和候选号仍与不可变工作回执共用。
 constexpr char observations[] = "SELECT task,before_value,expected,actual,action,baseline,readback,effect,substr(goal,1,97) "
