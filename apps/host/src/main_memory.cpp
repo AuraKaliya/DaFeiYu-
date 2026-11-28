@@ -31,6 +31,32 @@ agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64
     return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",2},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
 }
 
+// 只交付主题、次数与原件索引，深查仍需本轮调用原件读取。
+agent::DecisionStatusSource theme_source(std::string_view profile,std::uint64_t turn,const Json& result) {
+    static const auto schema=[] {
+        const Json string{{"type","string"}};
+        const Json item{{"type","object"},{"properties",{{"topic",string},{"mentions",{{"type","integer"}}},
+            {"references",{{"type","array"},{"items",string}}}}},{"additionalProperties",false}};
+        const Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},
+            {"limited",{{"type","boolean"}}}}},{"additionalProperties",false}};
+        return Json::array({{{"key","memory.themes"},{"version",1},{"description","主人的经历主题和原件索引。与当前来信相关时，可按号深查。"},
+            {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
+    }();
+    return {"memory",schema,Json::array({{{"key","memory.themes"},{"version",1},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
+}
+
+// 浅查后只允许展开刚选出的原件，不能借一次索引开启其他任意查询。
+bool can_open_theme(const agent::DecisionStatusSource& prior,const std::vector<std::string>& topics) {
+    const auto sample=Json::parse(prior.samples).at(0);
+    if (sample.at("key")!="memory.themes" || topics.empty() || topics.size()>3) return false;
+    const auto& items=sample.at("value").at("items");
+    return std::ranges::all_of(topics,[&](const auto& reference){
+        return std::ranges::any_of(items,[&](const auto& item){
+            const auto& refs=item.at("references"); return std::find(refs.begin(),refs.end(),Json(reference))!=refs.end();
+        });
+    });
+}
+
 // 私有语气材料只能用于本步决策，历史状态查阅不再展开。
 agent::DecisionStatusSource tone_source(std::string_view key,std::string_view description,Json value,
     std::initializer_list<const char*> text_fields) {
@@ -63,7 +89,9 @@ void MainMessages::register_memory_tools() {
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
-        "每轮一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches；"
+        "每轮可查一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches。"
+        "觉得当前事情与过去几次经历有关时，可先用 themes 按主题猜测找线索，已有 memory.themes 时也可直接选号。"
+        "themes 可传空 topics 查近期主题；如果需要，下一步用 originals 一次展开其中至多三个完整原件号。"
         "语气条目已有浅层提示，追问标注理由时把其完整 reference 单独填进 originals，查阅 memory.tone_original。"
         "近期摘要的长原文返回 nextOffset，下轮用同一个完整编号和该 offset 继续查。"
         "主人补充语气范围时，可用 tone_pending 按一个登记项目键找近期未定的原话，同样查阅 memory.tone_original。"
@@ -85,7 +113,7 @@ void MainMessages::register_memory_tools() {
         "多个词须同时符合，ambiguous 时询问具体对象或条件。交代对象、量和检查点，区分独立读回、来信作者与自己的解释。"
         "同检查点独立读数矛盾时保留疑问并引用两份原件。仅有报告时只归于发信人。"
         "比较两次渠道采样用 observations，topics 分别填两次任务的完整名称或读回回执号。按返回的理由说明可比性，转发须追到原件。",
-        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations","tone_pending"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
+        R"({"type":"object","properties":{"topics":{"type":"array","items":{"type":"string"}},"count":{"type":"integer"},"need":{"type":"string","enum":["single","multiple","context_sufficient","general"]},"view":{"type":"string","enum":["current","history","originals","themes","episodes","why","change","tasks","understanding","letters","knowledge","comparisons","observations","tone_pending"]},"offset":{"type":"integer"}},"required":["topics","count","need"],"additionalProperties":false})"},
         false,true,{},{},2,512,true},[this](const agent::ToolInvocation& call){return search_memory(call);});
     reply_tools_->add({"main/memory_reflect",app_.mailbox_host().identity,1,{"memory_reflect",
         "同一事项反复提到、主人明确更改偏好，或追问前后依据时，比较本轮已查回的两条原话。"
@@ -127,20 +155,23 @@ std::unique_ptr<agent::ToolWork> MainMessages::consider_memory(const agent::Tool
     return memory_receipt(std::move(receipt),agent::ToolEffect::applied);
 }
 
-// 按实际受众和本轮额度签发一次检索；无命中也有确定回执。
+// 按实际受众和本轮额度签发检索，浅层主题可接一次有出处的深查。
 std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolInvocation& call) {
-    if (!owner_memory_turn_ || search_result_ || tone_read_)
+    if (!owner_memory_turn_ || tone_read_)
         return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
     const auto args = Json::parse(call.call.arguments);
-    const auto& need = args.at("need");
-    if (need=="context_sufficient" || need=="general")
-        return memory_receipt({{"state","skipped"}},agent::ToolEffect::not_applied);
-    const auto& count = args.at("count");
-    if (count<=0) return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);
     try {
-        const unsigned limit = need=="single" ? 1u : 3u;
         const auto topics = args.at("topics").get<std::vector<std::string>>();
         const auto view = args.value("view",std::string{"current"});
+        if (search_result_ && (view!="originals" || args.contains("offset") || call.attempt.step.sequence<=search_step_ ||
+            !can_open_theme(*search_result_,topics)))
+            return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
+        const auto& need = args.at("need");
+        if (need=="context_sufficient" || need=="general")
+            return memory_receipt({{"state","skipped"}},agent::ToolEffect::not_applied);
+        const auto& count = args.at("count");
+        if (count<=0) return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);
+        const unsigned limit = need=="single" ? 1u : 3u;
         const bool own = view=="episodes" || view=="why" || view=="change";
         const bool exact_text=view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos;
         const bool page_text=exact_text && args.contains("offset");
@@ -157,7 +188,8 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             tone_read_=topics.front();
             return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
         }
-        auto result = page_text ? store_->recent_original(topics.front(),args.at("offset").get<std::size_t>()) :
+        auto result = view=="themes" ? store_->search_memory_themes(topics,take) :
+            page_text ? store_->recent_original(topics.front(),args.at("offset").get<std::size_t>()) :
             view=="observations" ? store_->compare_observations(topics) :
             view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
             view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
@@ -170,7 +202,8 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             if (!original.is_null()) result=std::move(original);
         }
         const auto size = result.at("items").size();
-        search_result_ = view=="observations" ? observation_source(call.attempt.step.run.sequence,result) :
+        search_result_ = view=="themes" ? theme_source(store_->conversation(),call.attempt.step.run.sequence,result) :
+            view=="observations" ? observation_source(call.attempt.step.run.sequence,result) :
             view=="comparisons" ? case_source(call.attempt.step.run.sequence,result) :
             view=="knowledge" ? knowledge_source(store_->conversation(),call.attempt.step.run.sequence,result) :
             view=="letters" ? letter_source(call.attempt.step.run.sequence,result) :
@@ -291,7 +324,10 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
     if (!owner_memory_turn_) return;
     const auto recent=prepare_recent_context(options);
     auto check=incoming_task_ && incoming_task_->check_live ? prepare_resume_check(options,incoming_task_->reference,incoming_task_->message) : nullptr;
-    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,recent,check=std::move(check),first_decision=true]() mutable {
+    const bool theme_lookup=reply_tools_ && !incoming_task_ && !incoming_memory_ && !prompt.empty() && prompt.size()<=2048 &&
+        !prompt.starts_with(prefix) && !memory_capture_topic(prompt) && !prompt.starts_with("撤回记忆 ");
+    status.sample = [channel=weak_from_this(),other=std::move(status.sample),task=incoming_task_,prompt,recent,theme_lookup,
+        check=std::move(check),first_decision=true]() mutable {
         auto sources = other ? other() : std::vector<agent::DecisionStatusSource>{};
         const auto current = channel.lock();
         if (!current) return sources;
@@ -303,6 +339,10 @@ void MainMessages::prepare_memory(agent::RunOptions& options, DialogueAudience a
         if (check) if (auto reading=check()) sources.push_back(std::move(*reading));
         if (first_decision && recent)
             if (auto restored=current->restored_recent_context()) sources.push_back(std::move(*restored));
+        if (first_decision && theme_lookup) {
+            const auto themes=current->store_->search_memory_themes({},1,prompt);
+            if (!themes.at("items").empty()) sources.push_back(theme_source(current->store_->conversation(),current->store_->watermark(),themes));
+        }
         if (auto tone=current->tone_projection(prompt,std::exchange(first_decision,false))) sources.push_back(std::move(*tone));
         return sources;
     };

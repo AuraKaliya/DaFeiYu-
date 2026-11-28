@@ -537,6 +537,33 @@ nlohmann::json MessageStore::search_memory(const std::vector<std::string>& topic
     if (!review_due.empty()) selection["reviewDue"] = review_due;
     return selection;
 }
+
+// 从当前仍可读的经历生成主题索引，只交付计数和最近的原号。
+// 步骤：核对主题范围 → 按精确程度和新近程度选择主题 → 逐组签发可查回的原件号。
+Json MessageStore::search_memory_themes(const std::vector<std::string>& topics,unsigned count,std::string_view prompt) const {
+    if (topics.size()>3 || !count || count>3) throw std::invalid_argument("memory: invalid theme search");
+    for (const auto& topic : topics) check_memory_topic(topic);
+    std::lock_guard lock(state_->mutex); auto* db=state_->db;
+    Statement groups(db,"WITH terms(q) AS (VALUES(?1),(?2),(?3)) SELECT topic,count(*) AS mentions,max(message) AS latest "
+        "FROM personal_memory WHERE active=1 AND kind IN ('','event') AND topic<>'' AND "
+        "(CASE WHEN ?4<>'' THEN instr(?4,topic)>0 AND length(CAST(topic AS BLOB))>=6 "
+        "WHEN ?1='' THEN 1 ELSE EXISTS(SELECT 1 FROM terms WHERE q<>'' AND instr(topic,q)>0) END) "
+        "GROUP BY topic ORDER BY (topic IN (SELECT q FROM terms)) DESC,latest DESC LIMIT ?5");
+    for (unsigned i=0;i<3;++i) groups.bind(i+1,i<topics.size() ? topics[i] : std::string{});
+    groups.bind(4,prompt); groups.bind(5,count+1);
+    Json items=Json::array(); bool limited=false;
+    while (groups.next()) {
+        if (items.size()==count) {limited=true; break;}
+        const auto topic=groups.text(0);
+        Statement notes(db,"SELECT message FROM personal_memory WHERE topic=? AND active=1 AND kind IN ('','event') ORDER BY message DESC LIMIT 3");
+        notes.bind(1,topic);
+        Json refs=Json::array();
+        while (notes.next()) refs.push_back(conversation()+"/"+std::to_string(notes.number(0)));
+        items.push_back({{"topic",topic},{"mentions",groups.number(1)},{"references",std::move(refs)}});
+        if (items.dump().size()>2048) {items.erase(items.end()-1); limited=true; break;}
+    }
+    return {{"items",std::move(items)},{"limited",limited}};
+}
 namespace {
 // 从同一份已送达的本体发言取事实与稳定身份，授权墓碑同时遮住原件和派生判断。
 std::optional<Json> episode(sqlite3* db, const std::string& profile, std::int64_t id) {

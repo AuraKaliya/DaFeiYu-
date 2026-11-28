@@ -187,6 +187,8 @@ class MessageStore {
     std::optional<StoredMessage> recall_memory(std::string_view selector) const;
     // 按本档案获准主题选择候选，在整份证据数组的字节预算内保留原件。
     nlohmann::json search_memory(const std::vector<std::string>& topics, unsigned count, std::string_view view) const;
+    // 按主题或当前来信寻找长期经历的浅层索引，正文留给按号查证。
+    nlohmann::json search_memory_themes(const std::vector<std::string>& topics,unsigned count,std::string_view prompt="") const;
     struct State;
     std::unique_ptr<State> state_;
 };

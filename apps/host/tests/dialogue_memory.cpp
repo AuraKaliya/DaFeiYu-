@@ -63,6 +63,22 @@ void check_request(const model::Request& request, const Sources& sources, const 
     }
     const auto tail = Json::parse(request.messages.back().content);
     const auto& items = tail.at("items");
+    const auto themes=std::ranges::find_if(items,[](const auto& item){return item.at("key")=="memory.themes";});
+    if (!owner) require(themes==items.end(),"private themes in another audience");
+    if (row.contains("themeSteps") && !followup) {
+        const auto& at=row.at("themeSteps");
+        const bool shown=std::find(at.begin(),at.end(),Json(step))!=at.end();
+        require((themes!=items.end())==shown,"unexpected theme projection");
+        if (shown) {
+            const auto& results=themes->at("value").at("items");
+            require(results.size()==1 && results.dump().size()<=2048,"theme size or budget");
+            const auto& item=results.at(0),&expected=row.at("theme");
+            Json refs=Json::array();
+            for (const auto& id : expected.at("ids")) refs.push_back(profile+"/"+std::to_string(sources.at(id).id));
+            require(item==Json{{"topic",expected.at("topic")},{"mentions",expected.at("mentions")},{"references",refs}},
+                "wrong theme, evidence order or raw text in shallow layer");
+        }
+    }
     if (row.contains("original")) {
         const auto found = std::find_if(items.begin(),items.end(),[](const auto& item){return item.at("key")=="memory.original";});
         require((found==items.end())==row.at("original").is_null(),"wrong direct original visibility");
