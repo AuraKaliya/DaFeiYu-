@@ -69,6 +69,11 @@ model::Response lookup(const std::string& reference) {
     return call("memory_search",{{"topics",{reference}},{"count",1},{"need","single"},{"view","originals"}});
 }
 
+// 用固定响应沿宿主提供的偏移请求下一段，测试也可传故意错误的编号或偏移。
+model::Response original_page(const std::string& reference,std::size_t offset) {
+    return call("memory_search",{{"topics",{reference}},{"count",1},{"need","single"},{"view","originals"},{"offset",offset}});
+}
+
 // 查找主人此次明确指向的一次待定纠正。
 model::Response pending_tone(const std::string& phrase) {
     return call("memory_search",{{"topics",{phrase}},{"count",1},{"need","single"},{"view","tone_pending"}});
@@ -375,9 +380,9 @@ void recent_dialogue_index(const fs::path& root) {
     Replay replay(root,"recent-index-second");
     auto pages=std::string{};
     std::size_t offset=0;
+    std::vector<std::size_t> next_offsets;
     for (unsigned p=0;p<5;++p) {
-        const auto query=call("memory_search",{{"topics",{answer}},{"count",1},{"need","single"},{"view","originals"},{"offset",offset}});
-        const auto packets=replay.send("read-page-"+std::to_string(p),"按原号查答复的下一段。",{query,say()});
+        const auto packets=replay.send("read-page-"+std::to_string(p),"按原号查答复的下一段。",{original_page(answer,offset),say()});
         if (!p) {
             const auto latest=sample(packets.front(),"context.recent_dialogue");
             require(latest.is_object() && latest.at("summary").get<std::string>().find(answer)==std::string::npos,"new checkpoint did not replace old snapshot");
@@ -394,8 +399,27 @@ void recent_dialogue_index(const fs::path& root) {
         if (!item.contains("nextOffset")) break;
         offset=item.at("nextOffset").get<std::size_t>();
         require(offset==pages.size(),"missing bytes between pages");
+        next_offsets.push_back(offset);
     }
     require(pages==std::string(3000,'z'),"partial archived reply did not reconstruct original");
+    require(next_offsets.size()==2,"sample should produce three pages");
+    const auto one_turn=replay.send("read-pages-in-turn","沿原号分段核对这条完整回复。",{lookup(answer),
+        original_page(other,next_offsets[0]),original_page(answer,next_offsets[0]+1),original_page(answer,next_offsets[0]),
+        original_page(answer,next_offsets[1]),say()});
+    for (const auto index:{2u,3u}) {
+        const auto rejected=std::ranges::find_if(one_turn[index].messages.rbegin(),one_turn[index].messages.rend(),
+            [](const auto& item){return item.role==model::Role::tool;});
+        require(rejected!=one_turn[index].messages.rend() && rejected->content.find(R"("state":"unavailable")")!=std::string::npos,
+            "same-turn pagination accepted a different source or offset");
+    }
+    std::string collected;
+    for (const auto index:{1u,4u,5u}) {
+        const auto data=sample(one_turn[index],"memory.matches");
+        const auto& item=data.at("items").at(0);
+        require(item.at("reference")==answer && data.at("items").dump().size()<=2048,"same-turn pagination changed source or budget");
+        collected+=item.at("quote").get<std::string>();
+    }
+    require(collected==pages,"same-turn pages did not reconstruct the exact answer");
     const auto latest=replay.send("read-latest-scope","按原号核对最近实际收到的待答回执。",{lookup(latest_reply),say()});
     require(sample(latest.back(),"memory.matches").at("items").at(0).at("quote")==latest_text,"latest reply was not recoverable by its original number");
     replay.host.main_messages()->change_memory(human,std::nullopt);
@@ -411,7 +435,7 @@ void recent_dialogue_index(const fs::path& root) {
     Replay foreign(root.parent_path()/"index-foreign");
     const auto rejected=foreign.send("read-foreign","确认档案号。",{lookup(answer),say()});
     require(sample(rejected.back(),"memory.matches").is_null(),"recent original was accepted in a foreign archive");
-    std::cout<<"Recent summary index: 3000 original bytes restored after the next checkpoint; failed admission, room, revocation, clear and archive isolation passed\n";
+    std::cout<<"Recent summary index: 3000 original bytes restored in one turn after the next checkpoint; wrong page, failed admission, room, revocation, clear and archive isolation passed\n";
 }
 
 // 核对当前请求的正文未曝光原件材料，模型自行填写的工具参数不算宿主证据。

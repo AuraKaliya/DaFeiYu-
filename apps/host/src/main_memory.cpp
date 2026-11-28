@@ -13,7 +13,7 @@ std::unique_ptr<agent::ToolWork> MainMessages::memory_receipt(Json value, agent:
 }
 namespace {
 // 冻结有序的本轮证据；工具回执与普通会话历史只记录查询结果的数量。
-agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64_t turn, const Json& result) {
+agent::DecisionStatusSource matches_source(std::string_view subject, std::uint64_t turn, const Json& result) {
     static const auto schema = [] {
         Json fields = Json::object();
         for (const auto key : {"reference","topic","source","quote"}) fields[key] = {{"type","string"}};
@@ -28,7 +28,7 @@ agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64
         return Json::array({{{"key","memory.matches"},{"version",2},{"description","获准的原话及有依据的复盘结论，按匹配顺序列出"},
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
-    return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",2},{"subject",profile},{"fact",turn},{"value",result}}}).dump()};
+    return {"memory",schema,Json::array({{{"key","memory.matches"},{"version",2},{"subject",subject},{"fact",turn},{"value",result}}}).dump()};
 }
 
 // 只交付主题、次数与原件索引，深查仍需本轮调用原件读取。
@@ -46,8 +46,7 @@ agent::DecisionStatusSource theme_source(std::string_view profile,std::uint64_t 
 }
 
 // 浅查后只允许展开刚选出的原件，不能借一次索引开启其他任意查询。
-bool can_open_theme(const agent::DecisionStatusSource& prior,const std::vector<std::string>& topics) {
-    const auto sample=Json::parse(prior.samples).at(0);
+bool can_open_theme(const Json& sample,const std::vector<std::string>& topics) {
     if (sample.at("key")!="memory.themes" || topics.empty() || topics.size()>3) return false;
     const auto& items=sample.at("value").at("items");
     return std::ranges::all_of(topics,[&](const auto& reference){
@@ -57,24 +56,28 @@ bool can_open_theme(const agent::DecisionStatusSource& prior,const std::vector<s
     });
 }
 
-// 从刚查到的知识版打开引用原件，随后只沿原件签发的下一页位置续读。
-bool can_open_document(const agent::DecisionStatusSource& prior,const std::string& reference,std::size_t offset) {
-    const auto sample=Json::parse(prior.samples).at(0);
+// 原件续页只接受刚送达的同一编号与下一段位置。
+bool next_source_page(const Json& sample,std::string_view key,const std::string& reference,std::size_t offset) {
+    if (sample.at("key").get_ref<const std::string&>()!=key) return false;
     const auto& items=sample.at("value").at("items");
+    return items.size()==1 && items.front().at("reference")==reference &&
+        items.front().contains("nextOffset") && items.front().at("nextOffset")==offset;
+}
+
+// 从刚查到的知识版打开引用原件，随后只沿原件签发的下一页位置续读。
+bool can_open_document(const Json& sample,const std::string& reference,std::size_t offset) {
     if (sample.at("key")=="knowledge.published" && !offset) {
-        return std::ranges::any_of(items,[&](const auto& item){
+        return std::ranges::any_of(sample.at("value").at("items"),[&](const auto& item){
             return std::ranges::any_of(item.at("sources"),[&](const auto& source){
                 return source.at("kind")=="external_document" && source.at("reference")==reference;
             });
         });
     }
-    return sample.at("key")=="knowledge.original" && items.size()==1 && items.front().at("reference")==reference &&
-        items.front().contains("nextOffset") && items.front().at("nextOffset")==offset;
+    return next_source_page(sample,"knowledge.original",reference,offset);
 }
 
 // 只认刚送达目录中的完整库名，库名相同的其他条目不参与本次检索。
-bool can_open_library(const agent::DecisionStatusSource& prior,const std::vector<std::string>& topics) {
-    const auto sample=Json::parse(prior.samples).at(0);
+bool can_open_library(const Json& sample,const std::vector<std::string>& topics) {
     return sample.at("key")=="knowledge.libraries" && topics.size()==1 &&
         std::ranges::any_of(sample.at("value").at("items"),[&](const auto& item){return item.at("library")==topics.front();});
 }
@@ -107,7 +110,7 @@ void MainMessages::register_memory_tools() {
         "新反馈明确补足范围时，先查本轮待定原件，再填 tone.prior，可省略 reply。转述、泛泛评价和表达来源不清时直接交谈。",
         R"({"type":"object","properties":{"topic":{"type":"string"},"excerpt":{"type":"string"},"kind":{"type":"string","enum":["preference","constraint","commitment","event","correction"]},"scope":{"type":"string","enum":["ongoing","one_time","unconfirmed","private"]},"tone":{"type":"object","properties":{"reply":{"type":"string"},"hint":{"type":"string"},"reason":{"type":"string"},"condition":{"type":"string","enum":["progress","accepted","casual_share"]},"prior":{"type":"string"}},"additionalProperties":false}},"required":["topic","excerpt","kind","scope"],"additionalProperties":false})"},
         true,true,{},{},1,512,true},[this](const agent::ToolInvocation& call){return consider_memory(call);});
-    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,12,{"memory_search",
+    reply_tools_->add({"main/memory_search",app_.mailbox_host().identity,13,{"memory_search",
         "当答案需要以前的约定、偏好或个人事实，且当前对话依据不足时检索。普通常识、寒暄、当前原话足够时直接回应。"
         "topics 填一至三个主题词，可含同义词。need 按缺少的依据填 single 或 multiple，已有依据填 context_sufficient，常识填 general。"
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
@@ -115,7 +118,7 @@ void MainMessages::register_memory_tools() {
         "觉得当前事情与过去几次经历有关时，可先用 themes 按主题猜测找线索，已有 memory.themes 时也可直接选号。"
         "themes 可传空 topics 查近期主题；如果需要，下一步用 originals 一次展开其中至多三个完整原件号。"
         "语气条目已有浅层提示，追问标注理由时把其完整 reference 单独填进 originals，查阅 memory.tone_original。"
-        "近期摘要的长原文返回 nextOffset，下轮用同一个完整编号和该 offset 继续查。"
+        "近期摘要的长原文返回 nextOffset，可用同一个完整编号和该 offset 继续查本条下一段。"
         "主人补充语气范围时，用 tone_pending 填一个登记项目键或当前原话重复的独特短句。查阅 memory.tone_original 后再补定。"
         "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
@@ -191,14 +194,18 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto topics = args.at("topics").get<std::vector<std::string>>();
         const auto view = args.value("view",std::string{"current"});
         const bool document=view=="knowledge_source";
+        const bool exact_text=view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos;
+        const bool page_text=exact_text && args.contains("offset");
         if (document && (topics.size()!=1 || (args.contains("offset") && args.at("offset")<0)))
             throw std::invalid_argument("knowledge: one original reference and a nonnegative offset required");
         const auto offset = args.value("offset",std::size_t{});
         std::string_view library="";
         if (search_result_) {
-            const bool catalog_selection=view=="knowledge" && can_open_library(*search_result_,topics);
-            const bool linked=catalog_selection || (document ? can_open_document(*search_result_,topics.front(),offset) :
-                view=="originals" && !args.contains("offset") && can_open_theme(*search_result_,topics));
+            const auto prior=Json::parse(search_result_->samples).at(0);
+            const bool catalog_selection=view=="knowledge" && can_open_library(prior,topics);
+            const bool linked=catalog_selection || (document && can_open_document(prior,topics.front(),offset)) ||
+                (page_text && next_source_page(prior,"memory.matches",topics.front(),offset)) ||
+                (view=="originals" && !args.contains("offset") && can_open_theme(prior,topics));
             if (!linked || call.attempt.step.sequence<=search_step_)
                 return memory_receipt({{"state","unavailable"}},agent::ToolEffect::not_applied,false);
             if (catalog_selection) library=topics.front();
@@ -210,8 +217,6 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         if (count<=0) return memory_receipt({{"state","invalid_query"}},agent::ToolEffect::not_applied,false);
         const unsigned limit = need=="single" ? 1u : 3u;
         const bool own = view=="episodes" || view=="why" || view=="change";
-        const bool exact_text=view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos;
-        const bool page_text=exact_text && args.contains("offset");
         const auto take = count>=limit ? limit : count.get<unsigned>();
         if (args.contains("offset") && ((!document && !page_text && view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
@@ -253,7 +258,8 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             view=="understanding" ? understanding_source(call.attempt.step.run.sequence,result) :
             view=="tasks" ? task_source(call.attempt.step.run.sequence,result) :
             own ? experience_source(call.attempt.step.run.sequence,result) :
-            matches_source(store_->conversation(),call.attempt.step.run.sequence,result);
+            matches_source(page_text ? topics.front()+"/"+std::to_string(offset) : store_->conversation(),
+                call.attempt.step.run.sequence,result);
         search_step_ = call.attempt.step.sequence;
         return memory_receipt({{"state",size ? "ready" : result.value("ambiguous",false) ? "ambiguous" : result.at("limited")==true ? "limited" : "no_match"},
             {"count",size},{"limited",result.at("limited")}},agent::ToolEffect::not_applied);
