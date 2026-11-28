@@ -29,6 +29,8 @@ struct CaseTermMatch {std::string name; bool ambiguous=false,registered=false;};
 CaseTermMatch resolve_composed_terms(sqlite3* db,const std::vector<std::string>& topics,bool whole_only=false);
 // 在任务原件的写事务内索引独立核验过的观察，旧档案升级也复用同一规则。
 void index_task_observation(sqlite3* db, std::int64_t id, const nlohmann::json& task);
+// 保存已采用摘要的原件及其主人来信依赖，允许跨检查点查回。
+void index_recent_origins(sqlite3* db);
 // 将系统返回码映射为可公开核对的失败，避免泄漏 SQL 参数或消息正文。
 inline void check(int code) {
     if (code!=SQLITE_OK) throw std::runtime_error("messages: SQLite error "+std::to_string(code));

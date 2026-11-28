@@ -69,7 +69,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>22) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>23) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -193,6 +193,11 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
             "PRAGMA user_version=21");
         if(previous<22) sql(db,"CREATE TABLE IF NOT EXISTS tone_scope_vector(slot INTEGER PRIMARY KEY CHECK(slot=1),"
             "scope TEXT NOT NULL,encoder TEXT NOT NULL,components TEXT NOT NULL); PRAGMA user_version=22");
+        if(previous<23) {
+            sql(db,"CREATE TABLE IF NOT EXISTS recent_dialogue_origin(message INTEGER PRIMARY KEY,parent INTEGER NOT NULL)");
+            index_recent_origins(db);
+            sql(db,"PRAGMA user_version=23");
+        }
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");
@@ -326,6 +331,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
     bool changed = false;
     bool known_experience = false;
     bool known_tone = false;
+    bool known_recent = false;
     if (!topic) {
         Statement known(db,"SELECT active FROM main_experience WHERE message=?1 OR parent=?1");
         known.bind(1,id);
@@ -338,9 +344,11 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         Statement tone(db,"SELECT active FROM tone_correction WHERE message=?1 OR parent=?1 OR reply=?1 OR basis=?1 OR rewrite=?1 ORDER BY active DESC LIMIT 1");
         tone.bind(1,id);
         known_tone = tone.next();
-        if (known_tone && !exists) {
-            Statement tombstone(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,'',0,'tone')");
-            tombstone.bind(1,id); tombstone.next(); changed = true;
+        Statement recent(db,"SELECT 1 FROM recent_dialogue_origin WHERE message=?");
+        recent.bind(1,id); known_recent=recent.next();
+        if ((known_tone || known_recent) && !exists) {
+            Statement tombstone(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,'',0,?)");
+            tombstone.bind(1,id); tombstone.bind(2,known_tone ? "tone" : "recent"); tombstone.next(); changed = true;
         }
         if (known_tone && tone.number(0)) {
             Statement revoke(db,"UPDATE tone_correction SET active=0 WHERE message=?1 OR parent=?1 OR reply=?1 OR basis=?1 OR rewrite=?1");
@@ -359,7 +367,7 @@ MemoryChange MessageStore::change_memory(std::string_view identity, const std::o
         Statement add(db,"INSERT INTO personal_memory(message,topic,active,kind) VALUES(?,?,1,?)");
         add.bind(1,id); add.bind(2,*topic); add.bind(3,kind.empty() ? std::string_view("") : kind); add.next();
         changed = true;
-    } else if ((!exists && !known_experience && !known_tone) || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
+    } else if ((!exists && !known_experience && !known_tone && !known_recent) || (topic && (prior.text(0)!=*topic || !prior.number(1)))) {
         throw std::invalid_argument("memory: unknown, revoked or conflicting original");
     } else if (!topic && exists && prior.number(1)) {
         Statement revoke(db,"UPDATE personal_memory SET active=0 WHERE message=?");

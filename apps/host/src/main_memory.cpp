@@ -20,6 +20,7 @@ agent::DecisionStatusSource matches_source(std::string_view profile, std::uint64
         fields["utcMs"] = {{"type","integer"}};
         for (const auto key : {"standing","conclusion","latestReference","previousReference"}) fields[key] = {{"type","string"}};
         fields["mentions"] = {{"type","integer"}};
+        fields["nextOffset"] = {{"type","integer"}};
         Json item{{"type","object"},{"properties",fields},{"required",{"reference","topic","source","quote","utcMs"}},{"additionalProperties",false}};
         Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},{"limited",{{"type","boolean"}}},
             {"reviewDue",{{"type","string"}}}}},
@@ -64,6 +65,7 @@ void MainMessages::register_memory_tools() {
         "count 按回答所需给出，单个事实取一条，对照时最多三条。"
         "每轮一次。view 默认 current，问变更过程选 history，比较具体原话选 originals，此时 topics 也可填已知原件号。查阅 memory.matches；"
         "语气条目已有浅层提示，追问标注理由时把其完整 reference 单独填进 originals，查阅 memory.tone_original。"
+        "近期摘要的长原文返回 nextOffset，下轮用同一个完整编号和该 offset 继续查。"
         "主人补充语气范围时，可用 tone_pending 按一个登记项目键找近期未定的原话，同样查阅 memory.tone_original。"
         "current 标明当前依据，superseded 是当时的说法，needs_review 尚有更正待核对。回答时说明适用版本，追溯时引用原话和 reference。"
         "mentions 是获准原话数。previousReference 可追溯上次更正依据。无 standing 的条目是尚未整理的原话。"
@@ -140,8 +142,10 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
         const auto topics = args.at("topics").get<std::vector<std::string>>();
         const auto view = args.value("view",std::string{"current"});
         const bool own = view=="episodes" || view=="why" || view=="change";
+        const bool exact_text=view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos;
+        const bool page_text=exact_text && args.contains("offset");
         const auto take = count>=limit ? limit : count.get<unsigned>();
-        if (args.contains("offset") && ((view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
+        if (args.contains("offset") && ((!page_text && view!="tasks" && view!="understanding" && view!="letters" && view!="comparisons") || args.at("offset")<0))
             throw std::invalid_argument("memory: invalid offset");
         if (view=="tone_pending") {
             if (topics.size()!=1) throw std::invalid_argument("tone: one project required");
@@ -149,18 +153,19 @@ std::unique_ptr<agent::ToolWork> MainMessages::search_memory(const agent::ToolIn
             const bool found=!tone_read_->empty();
             return memory_receipt({{"state",found ? "ready" : "no_match"},{"count",found ? 1 : 0},{"limited",false}},agent::ToolEffect::not_applied);
         }
-        if (view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos &&
-            !store_->tone_original(topics.front()).is_null()) {
+        if (exact_text && !page_text && !store_->tone_original(topics.front()).is_null()) {
             tone_read_=topics.front();
             return memory_receipt({{"state","ready"},{"count",1},{"limited",false}},agent::ToolEffect::not_applied);
         }
-        auto result = view=="observations" ? store_->compare_observations(topics) :
+        auto result = page_text ? store_->recent_original(topics.front(),args.at("offset").get<std::size_t>()) :
+            view=="observations" ? store_->compare_observations(topics) :
             view=="comparisons" ? store_->search_cases(topics,take,args.value("offset",std::size_t{})) :
             view=="knowledge" ? store_->search_knowledge(topics,take) : view=="letters" ? store_->search_letters(topics,take,args.value("offset",std::size_t{})) :
             view=="understanding" ? store_->search_understandings(topics,take,args.value("offset",std::size_t{})) :
             view=="tasks" ? store_->search_tasks(topics,take,args.value("offset",std::size_t{})) :
             own ? store_->search_experience(topics,take,view) : store_->search_memory(topics,take,view);
-        if (view=="originals" && topics.size()==1 && topics.front().find('/')!=std::string::npos && result.at("items").empty()) {
+        if (result.is_null()) result={{"items",Json::array()},{"limited",false}};
+        if (exact_text && !page_text && result.at("items").empty()) {
             auto original=store_->recent_original(topics.front());
             if (!original.is_null()) result=std::move(original);
         }

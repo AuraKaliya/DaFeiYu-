@@ -129,8 +129,8 @@ void verify_trace(Replay& replay,bool require_compaction=false) {
 }
 
 // 经正常对话扩大历史窗口，给 Trace 核对上下文压缩留出实样。
-void pad_history(Replay& replay) {
-    for (unsigned i=0;i<10;++i) replay.send("padding-"+std::to_string(i),"容量对照 "+std::to_string(i),{say(std::string(3000,'z'))});
+void pad_history(Replay& replay,std::string_view prefix="padding") {
+    for (unsigned i=0;i<10;++i) replay.send(std::string(prefix)+"-"+std::to_string(i),"容量对照 "+std::to_string(i),{say(std::string(3000,'z'))});
 }
 
 // 按正常收录、改写和整理流程生成启动快照。
@@ -325,6 +325,63 @@ void recent_dialogue_recover(const fs::path& root,bool enabled,bool revoke=false
     if (revoke) require(original.is_null(),"revoked correction survived restart");
     else require(original.at("quote")==milk_feedback && original.at("reason")==milk_reason,"original lookup lost quote or reason");
     verify_trace(replay);
+}
+
+// 验证旧检查点的原件经历再次压缩和重启仍可查回，受众和撤回依赖沿原件执行。
+// 步骤：取采用过的原号 → 生成下一份检查点 → 跨启动分段读取 → 核对隔离、撤权及清空。
+void recent_dialogue_index(const fs::path& root) {
+    std::string human,answer,other;
+    {
+        Replay replay(root,"recent-index-first");
+        replay.responses.push_back(say());
+        require(replay.host.post_room_event(app::RoomEvent::addressed,"书房","请看一下现在。").state==events::DeliveryState::accepted,
+            "indexed room probe was not accepted");
+        replay.host.advance_plugins(); drain(replay.host);
+        require(replay.requests.size()==1 && sample(replay.requests.front(),"context.recent_dialogue").is_null(),"room consumed a private checkpoint");
+        const auto started=replay.send("resume-old","我们刚才聊到哪里？",{say()});
+        const auto context=sample(started.front(),"context.recent_dialogue");
+        const auto entries=Json::parse(context.at("summary").get<std::string>());
+        const auto found=std::ranges::find_if(entries,[](const auto& entry){return entry.at("assistant").template get<std::string>().starts_with("zz");});
+        require(found!=entries.end(),"checkpoint did not cite the long response");
+        human=found->at("reference").get<std::string>(); answer=found->at("replyReference").get<std::string>();
+        other=replay.reference("padding-2");
+        if (other==human) other=replay.reference("padding-3");
+        pad_history(replay,"new-history");
+        verify_trace(replay);
+    }
+    Replay replay(root,"recent-index-second");
+    auto pages=std::string{};
+    std::size_t offset=0;
+    for (unsigned p=0;p<5;++p) {
+        const auto query=call("memory_search",{{"topics",{answer}},{"count",1},{"need","single"},{"view","originals"},{"offset",offset}});
+        const auto packets=replay.send("read-page-"+std::to_string(p),"按原号查答复的下一段。",{query,say()});
+        if (!p) {
+            const auto latest=sample(packets.front(),"context.recent_dialogue");
+            require(latest.is_object() && latest.at("summary").get<std::string>().find(answer)==std::string::npos,"new checkpoint did not replace old snapshot");
+        }
+        const auto value=sample(packets.back(),"memory.matches");
+        const auto& item=value.at("items").at(0);
+        require(item.at("reference")==answer && item.at("source")=="model" && value.at("items").dump().size()<=2048,"wrong source or page budget");
+        pages+=item.at("quote").get<std::string>();
+        if (!item.contains("nextOffset")) break;
+        offset=item.at("nextOffset").get<std::size_t>();
+        require(offset==pages.size(),"missing bytes between pages");
+    }
+    require(pages==std::string(3000,'z'),"partial archived reply did not reconstruct original");
+    replay.host.main_messages()->change_memory(human,std::nullopt);
+    const auto denied=replay.send("read-revoked-parent","查询已撤回的来信对应答复。",{lookup(answer),say()});
+    require(sample(denied.back(),"memory.matches").at("items").empty(),"revoked parent still exposed the answer");
+    const auto retained=replay.send("read-sibling","查询另一份原件。",{lookup(other),say()});
+    require(sample(retained.back(),"memory.matches").at("items").at(0).at("reference")==other,"unrelated archive entry was withdrawn");
+    replay.host.conversation().clear();
+    const auto cleared=replay.send("read-cleared","确认已清空这次上下文。",{lookup(other),say()});
+    require(sample(cleared.back(),"memory.matches").at("items").empty(),"clear retained a recent summary index");
+    verify_trace(replay);
+
+    Replay foreign(root.parent_path()/"index-foreign");
+    const auto rejected=foreign.send("read-foreign","确认档案号。",{lookup(answer),say()});
+    require(sample(rejected.back(),"memory.matches").is_null(),"recent original was accepted in a foreign archive");
+    std::cout<<"Recent summary index: 3000 original bytes restored after the next checkpoint; room, revocation, clear and archive isolation passed\n";
 }
 
 // 核对当前请求的正文未曝光原件材料，模型自行填写的工具参数不算宿主证据。
@@ -549,6 +606,7 @@ void tone_replay(const fs::path& root,std::string_view phase) {
     if (phase=="recent-A" || phase=="recent-B") { recent_dialogue_pressure(root/std::string(phase.substr(7)),phase=="recent-B"); return; }
     if (phase=="recent-recover-A" || phase=="recent-recover-B") { recent_dialogue_recover(root/std::string(phase.substr(15)),phase.ends_with('B')); return; }
     if (phase=="recent-revoked") { recent_dialogue_recover(root/"revoked",true,true); return; }
+    if (phase=="recent-index") {recent_dialogue_index(root/"index"); return;}
     if (phase.starts_with("cache-")) {cached_compare(root,phase.substr(6)); return;}
     if (phase.starts_with("semantic-")) {semantic_compare(root,phase.substr(9)); return;}
     if (phase=="chat-seed") {chat_seed(root); return;}

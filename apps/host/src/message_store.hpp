@@ -174,8 +174,8 @@ class MessageStore {
     void save_recent_dialogue(std::int64_t current, const nlohmann::json& groups, std::string_view tone);
     // 只在当前授权版本下恢复最后一次提交的可读摘要。
     nlohmann::json restored_dialogue() const;
-    // 用检查点中存在的完整原件号按当前授权回查原话或实际答复。
-    nlohmann::json recent_original(std::string_view reference) const;
+    // 用已采用摘要的原件号按当前授权分段回查原话或实际答复。
+    nlohmann::json recent_original(std::string_view reference,std::size_t offset=0) const;
     // 清空会话时撤下其可恢复摘要。
     void clear_recent_dialogue();
     // 仅由主人私聊的读取路径按主题或原身份取一份仍获准的原件。

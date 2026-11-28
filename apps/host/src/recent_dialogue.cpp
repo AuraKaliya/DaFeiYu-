@@ -1,6 +1,7 @@
 #include "main_messages.hpp"
 #include "message_store_db.hpp"
 #include <dafeiyu/model_messages.hpp>
+#include <algorithm>
 #include <utility>
 
 namespace dfy::app {
@@ -23,6 +24,17 @@ Json checkpoint(sqlite3* db) {
     if (!get.next()) return nullptr;
     return {{"groups",Json::parse(get.text(0))},{"toneReference",get.text(1)},{"through",get.number(2)}};
 }
+}
+
+// 核对档案前缀后将实际采用的问答绑定到持久消息，而非序列化时的位置。
+void message_db::index_recent_origins(sqlite3* db) {
+    sql(db,"WITH i(item,profile) AS (SELECT v.value,c.id FROM recent_dialogue d,conversation c,"
+        "json_each(d.body) g,json_each(g.value,'$.items') v WHERE d.authority=c.memory_revision), "
+        "p(owner,reply) AS (SELECT CAST(substr(json_extract(item,'$.reference'),34) AS INTEGER),"
+        "CAST(substr(json_extract(item,'$.replyReference'),34) AS INTEGER) FROM i WHERE "
+        "substr(json_extract(item,'$.reference'),1,33)=profile||'/' AND substr(json_extract(item,'$.replyReference'),1,33)=profile||'/') "
+        "INSERT OR IGNORE INTO recent_dialogue_origin SELECT owner,owner FROM p WHERE owner>0 AND reply>0 "
+        "UNION ALL SELECT reply,owner FROM p WHERE owner>0 AND reply>0");
 }
 
 // 逐字核对当前宿主给出的原话和实际送达的回答，保留两者各自的持久身份。
@@ -56,6 +68,7 @@ std::optional<std::string> MessageStore::summarize_dialogue(std::span<const mode
 // 单次写入只保存本轮实际采用的全部范围，重试与旧回合不能覆盖较新的检查点。
 void MessageStore::save_recent_dialogue(std::int64_t current,const Json& groups,std::string_view tone) {
     std::lock_guard lock(state_->mutex);
+    Transaction tx(state_->db);
     Statement save(state_->db,"INSERT INTO recent_dialogue SELECT 1,?1,memory_revision,?2,?3 FROM conversation WHERE memory_revision=?4 "
         "ON CONFLICT(slot) DO UPDATE SET through_message=excluded.through_message,authority=excluded.authority,body=excluded.body,tone=excluded.tone "
         "WHERE excluded.through_message>=recent_dialogue.through_message AND "
@@ -63,6 +76,8 @@ void MessageStore::save_recent_dialogue(std::int64_t current,const Json& groups,
         "OR excluded.body<>recent_dialogue.body OR excluded.tone<>recent_dialogue.tone)");
     save.bind(1,current); save.bind(2,groups.dump()); save.bind(3,tone);
     save.bind(4,groups.front().at("authority").get<std::int64_t>()); save.next();
+    if (sqlite3_changes(state_->db)) index_recent_origins(state_->db);
+    tx.commit();
 }
 
 // 从提交过的检查点取最近一组短摘要，完整索引继续供按号核对。
@@ -74,30 +89,34 @@ Json MessageStore::restored_dialogue() const {
         {"through",saved.at("through")}};
 }
 
-// 按摘要中已授权的原号查原件，正文超过预算时保留受限状态。
-Json MessageStore::recent_original(std::string_view reference) const {
+// 从曾经实际采用的摘要按原号分段读回，来信撤权时同时封住关联答复。
+// 步骤：校验档案号 → 重验原件及来信权限 → 按 UTF-8 边界与证据预算截取。
+Json MessageStore::recent_original(std::string_view reference,std::size_t offset) const {
     const auto id=memory_message(reference,conversation());
     std::lock_guard lock(state_->mutex);
-    const auto saved=checkpoint(state_->db);
-    if (saved.is_null()) return nullptr;
-    for (const auto& group : saved.at("groups")) for (const auto& item : group.at("items")) {
-        const bool user=item.at("reference").get_ref<const std::string&>()==reference;
-        if (!user && item.at("replyReference").get_ref<const std::string&>()!=reference) continue;
-        Statement source(state_->db,"SELECT envelope,utc FROM messages WHERE id=?1 "
-            "AND NOT EXISTS(SELECT 1 FROM personal_memory WHERE message=?1 AND active=0)");
-        source.bind(1,id);
-        if (!source.next()) return nullptr;
-        Json results=Json::array({{{"reference",reference},{"topic","近期对话"},{"source",user ? "human" : "model"},
-            {"utcMs",source.number(1)},{"quote",Json::parse(source.text(0)).at("text")}}});
-        const bool limited=results.dump().size()>2048;
-        return {{"items",limited ? Json::array() : std::move(results)},{"limited",limited}};
+    Statement source(state_->db,"SELECT m.envelope,m.utc,a.parent FROM recent_dialogue_origin a JOIN messages m ON m.id=a.message "
+        "WHERE a.message=? AND NOT EXISTS(SELECT 1 FROM personal_memory WHERE active=0 AND message IN (a.message,a.parent))");
+    source.bind(1,id);
+    if (!source.next()) return nullptr;
+    const auto text=Json::parse(source.text(0)).at("text").get<std::string>();
+    if (offset>text.size() || (offset<text.size() && (static_cast<unsigned char>(text[offset])&0xc0)==0x80))
+        throw std::invalid_argument("context: invalid byte offset");
+    Json item{{"reference",reference},{"topic","近期对话"},{"source",source.number(2)==id ? "human" : "model"},{"utcMs",source.number(1)}};
+    for (auto bytes=std::min(text.size()-offset,std::size_t{2048});;) {
+        auto end=offset+bytes;
+        while (end>offset && end<text.size() && (static_cast<unsigned char>(text[end])&0xc0)==0x80) --end;
+        item["quote"]=text.substr(offset,end-offset);
+        if (end<text.size()) item["nextOffset"]=end; else item.erase("nextOffset");
+        if (item.dump().size()+2<=2048) return {{"items",Json::array({std::move(item)})},{"limited",end<text.size()}};
+        bytes/=2;
     }
-    return nullptr;
 }
 
 // 清空显式会话时让已保存的摘要退出恢复路径。
 void MessageStore::clear_recent_dialogue() {
-    std::lock_guard lock(state_->mutex); sql(state_->db,"DELETE FROM recent_dialogue");
+    std::lock_guard lock(state_->mutex); Transaction tx(state_->db);
+    sql(state_->db,"DELETE FROM recent_dialogue; DELETE FROM recent_dialogue_origin");
+    tx.commit();
 }
 
 // 仅对实际收到的主人私聊绑定投影，派生写入失败沿用当前可读原件。
