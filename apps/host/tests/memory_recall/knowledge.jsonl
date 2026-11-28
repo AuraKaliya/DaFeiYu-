@@ -118,3 +118,14 @@
 {"op":"admin","command":"/knowledge source @doc","deny":true}
 {"op":"admin","command":"/knowledge inspect external-file v1","revision":1,"inspect":{"evidenceUnavailable":true}}
 {"op":"kb","topics":["文件规程"],"expect":[]}
+{"op":"kb","topics":["文件规程"],"expect":[],"observation":{"library":"field","reference":"@second"},"state":"invalid_observation"}
+{"op":"admin","command":"/knowledge record-observation external @second","deny":true}
+{"op":"admin","command":"/knowledge record-observation field ffffffffffffffffffffffffffffffff/task/1/receipt/4","deny":true}
+{"op":"kb","topics":["再次核实面板"],"view":"tasks","sample":"memory.tasks","observation":{"library":"field","reference":"@second"},"state":"published","saveArticle":"@observation"}
+{"op":"admin","command":"/knowledge record-observation field @second","result":{"article":"@observation","state":"published","created":false}}
+{"op":"restart"}
+{"op":"kb","topics":["example.status/read"],"expect":[{"edition":"readback","revision":1,"statement":"focus","library":"field","claimKind":"observation","publisher":"host","kinds":["tool_readback"],"refs":["@second"]}]}
+{"op":"admin","command":"/knowledge inspect @observation readback","revision":1,"inspect":{"publisher":"host","current":true}}
+{"op":"admin","command":"/knowledge withdraw @observation 1","revision":2}
+{"op":"admin","command":"/knowledge record-observation field @second","result":{"article":"@observation","state":"inactive","created":false}}
+{"op":"kb","topics":["example.status/read"],"expect":[]}

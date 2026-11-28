@@ -18,7 +18,7 @@ void KnowledgeProbe::verify(const Json& items,const Json& wanted,bool owner) con
         const auto& v=items[i]; const auto& w=wanted[i];
         for(const auto key : {"article","edition","revision","applies","statement","proposer","library","category","claimKind"}) if (w.contains(key))
             require(v.at(key)==w.at(key),std::string("incorrect publication ")+key);
-        require(v.at("publisher")=="owner","unapproved publisher");
+        require(v.at("publisher")==w.value("publisher",std::string{"owner"}),"unexpected publisher");
         const auto& sources=v.at("sources"); require(sources.size()==w.at("kinds").size(),"wrong number of knowledge sources");
         for(std::size_t j=0;j<sources.size();++j) {
             require(sources[j].at("kind")==w.at("kinds")[j] && sources[j].contains("reference")==owner,"private knowledge reference or wrong source");
@@ -70,9 +70,21 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
             for(auto& ref : draft.at("sources")) ref=resolve(ref);
             return {{model::Role::assistant,"",{{"offer","knowledge_propose",draft.dump()}}},model::FinishReason::tool_calls};
         }
+        if (row.contains("observation")) {
+            require(std::ranges::any_of(input.tools,[](const auto& tool){return tool.name=="knowledge_observe";}),"missing observation tool");
+            auto observation=row.at("observation"); observation["reference"]=resolve(observation.at("reference"));
+            return {{model::Role::assistant,"",{{"observe","knowledge_observe",observation.dump()}}},model::FinishReason::tool_calls};
+        }
     } else {
         const auto receipt=std::ranges::find_if(input.messages.rbegin(),input.messages.rend(),[](const auto& m){return m.role==model::Role::tool;});
         require(receipt!=input.messages.rend() && receipt->content.find(row.value("state",std::string{"recorded"}))!=std::string::npos,"wrong proposal outcome");
+        if (row.contains("saveArticle")) {
+            constexpr std::string_view delimiter="\noutput:\n";
+            const auto first=receipt->content.find(delimiter); require(first!=std::string::npos,"missing observation result");
+            const auto result=Json::parse(receipt->content.substr(first+delimiter.size()));
+            require(result.at("created")==true,"observation was not published");
+            references[row.at("saveArticle").get<std::string>()]=result.at("article");
+        }
     }
     reply="已经按来源核对。"; return {{model::Role::assistant,reply}};
 }
@@ -94,6 +106,9 @@ void KnowledgeProbe::admin(app::Application& host,const Json& input,const std::f
     require(!input.value("deny",false),"administrative action should have failed");
     if (!cmd.starts_with("/knowledge ")) return;
     const auto result=Json::parse(out.str());
+    if (input.contains("result"))
+        for (const auto& [key,value] : input.at("result").items())
+            require(result.at(key)==(value.is_string() ? Json(resolve(value)) : value),"wrong administrative outcome");
     if (input.contains("save")) {
         references[input.at("save").get<std::string>()]=result.at("reference").get<std::string>();
         require(result.at("sha256")==platform::sha256(input.at("file").get<std::string>()),"incorrect document digest");

@@ -221,6 +221,45 @@ Json MessageStore::propose_knowledge(const Json& draft,std::string_view proposer
     tx.commit(); return {{"article",article},{"edition",tag},{"base",base},{"state","recorded"}};
 }
 
+// 把可用的独立读回原值登记为客观观察，不接受模型撰写的正文或范围。
+// 步骤：核对库类别与原件 → 检查同源重试 → 同事务发布原值和出处。
+Json MessageStore::record_knowledge_observation(const std::string& library,const std::string& reference) {
+    key(library);
+    std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
+    Statement catalog(db,"SELECT 1 FROM knowledge_library WHERE library=? AND category='observed'"); catalog.bind(1,library);
+    if (!catalog.next()) throw std::invalid_argument("knowledge: observations require an observed library");
+    const auto source=basis(db,conversation(),reference);
+    if (!source || source->kind!="tool_readback") throw std::invalid_argument("knowledge: independent readback required");
+    const auto article="obs-"+platform::sha256(library+"\n"+reference).substr(0,24);
+    Statement prior(db,"SELECT a.head,e.id FROM knowledge_article a LEFT JOIN knowledge_edition e "
+        "ON e.article=a.article AND e.tag='readback' AND e.publisher='host' JOIN knowledge_library l USING(library) WHERE a.article=? AND l.library=?");
+    prior.bind(1,article); prior.bind(2,library);
+    if (prior.next()) {
+        const auto edition=prior.number(1);
+        Json refs=Json::array();
+        if (!edition || !references(db,conversation(),edition,refs) || refs.size()!=1 || refs.front().at("reference")!=reference)
+            throw std::invalid_argument("knowledge: conflicting observation identity");
+        tx.commit();
+        return {{"article",article},{"edition","readback"},{"state",prior.number(0)==edition ? "published" : "inactive"},{"created",false}};
+    }
+
+    Statement actual(db,"SELECT json_extract(family,'$[1]'),actual FROM task_observation WHERE task=?");
+    actual.bind(1,source->record); if (!actual.next()) throw std::invalid_argument("knowledge: missing verified value");
+    const auto reader=actual.text(0), observation=actual.text(1); prose(reader,130); prose(observation,640);
+    Statement article_row(db,"INSERT INTO knowledge_article(article,library) VALUES(?,?)");
+    article_row.bind(1,article); article_row.bind(2,library); article_row.next();
+    Statement add(db,"INSERT INTO knowledge_edition(article,tag,base,topic,applies,statement,proposer,claim_kind,published,publisher) "
+        "VALUES(?,'readback',0,?, '只记录此原件对应的一次独立现场读回',?,'host','observation',1,'host')");
+    add.bind(1,article); add.bind(2,reader); add.bind(3,observation); add.next();
+    const auto edition=sqlite3_last_insert_rowid(db);
+    Statement head(db,"UPDATE knowledge_article SET revision=1,head=? WHERE article=?");
+    head.bind(1,edition); head.bind(2,article); head.next();
+    Statement cite(db,"INSERT INTO knowledge_basis VALUES(?,0,?,'tool_readback',?)");
+    cite.bind(1,edition); cite.bind(2,reference); cite.bind(3,source->dependency); cite.next();
+    sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
+    tx.commit(); return {{"article",article},{"edition","readback"},{"state","published"},{"created",true}};
+}
+
 // 由主人发布当前基线上的候选或按当前修订撤下，历史版本永不自动回升。
 bool MessageStore::publish_knowledge(const std::string& article,const std::string& tag,std::optional<std::int64_t> withdraw) {
     key(article); std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
@@ -268,12 +307,12 @@ Json MessageStore::inspect_knowledge(const std::string& article,const std::strin
     Statement get(db,"SELECT revision,head,library,category FROM knowledge_article JOIN knowledge_library USING(library) WHERE article=?"); get.bind(1,article);
     if(!get.next()) throw std::invalid_argument("knowledge: unknown article");
     Json result{{"article",article},{"revision",get.number(0)},{"library",get.text(2)},{"category",get.text(3)},{"editions",Json::array()}};
-    Statement rows(db,"SELECT id,tag,base,published,topic,applies,statement,proposer,claim_kind FROM knowledge_edition "
+    Statement rows(db,"SELECT id,tag,base,published,topic,applies,statement,proposer,claim_kind,publisher FROM knowledge_edition "
         "WHERE article=? AND (?2='' OR tag=?2) ORDER BY id DESC LIMIT 16");
     rows.bind(1,article); rows.bind(2,tag);
     while(rows.next()) {
         Json item{{"edition",rows.text(1)},{"base",rows.number(2)},{"publishedRevision",rows.number(3)},{"current",rows.number(0)==get.number(1)},
-            {"claimKind",rows.text(8)}};
+            {"claimKind",rows.text(8)},{"publisher",rows.number(3) ? rows.text(9) : std::string{}}};
         if (!tag.empty()) {
             Json refs=Json::array();
             if (references(db,conversation(),rows.number(0),refs)) {
@@ -292,7 +331,7 @@ Json MessageStore::search_knowledge(const std::vector<std::string>& topics,unsig
     for(const auto& topic : topics) prose(topic,160);
     std::lock_guard lock(state_->mutex); auto* db=state_->db;
     Statement hits(db,"WITH q(term) AS (VALUES(?1),(?2),(?3)) SELECT e.id,e.article,e.tag,e.topic,e.applies,e.statement,e.published,e.proposer,"
-        "l.library,l.category,e.claim_kind FROM knowledge_article a JOIN knowledge_edition e ON e.id=a.head JOIN knowledge_library l USING(library) JOIN q "
+        "l.library,l.category,e.claim_kind,e.publisher FROM knowledge_article a JOIN knowledge_edition e ON e.id=a.head JOIN knowledge_library l USING(library) JOIN q "
         "WHERE term<>'' AND (a.article=term OR instr(e.topic,term)>0 OR l.library=term OR EXISTS(SELECT 1 FROM json_each(l.tags) WHERE value=term)) "
         "AND (?4=0 OR EXISTS(SELECT 1 FROM knowledge_grant g "
         "JOIN child_owner c ON c.id=g.child WHERE g.edition=e.id AND c.id=?4 AND (g.rights & ?5)=?5 AND (c.access & 1)=1 "
@@ -307,7 +346,7 @@ Json MessageStore::search_knowledge(const std::vector<std::string>& topics,unsig
         if (!references(db,conversation(),hits.number(0),refs,&deps)) continue;
         if (items.size()>=count) {result["limited"]=true; break;}
         Json item{{"article",hits.text(1)},{"edition",hits.text(2)},{"topic",hits.text(3)},{"applies",hits.text(4)},{"statement",hits.text(5)},
-            {"revision",hits.number(6)},{"proposer",hits.text(7)},{"publisher","owner"},{"sources",refs},
+            {"revision",hits.number(6)},{"proposer",hits.text(7)},{"publisher",hits.text(11)},{"sources",refs},
             {"library",hits.text(8)},{"category",hits.text(9)},{"claimKind",hits.text(10)}};
         if (child) for(auto& ref : item["sources"]) ref.erase("reference");
         items.push_back(std::move(item));

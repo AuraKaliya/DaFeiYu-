@@ -18,12 +18,28 @@ agent::DecisionStatusSource knowledge_source(const std::string& subject,std::uin
         fields["sources"]={{"type","array"},{"items",{{"type","object"},{"properties",{{"kind",str},{"reference",str}}},{"additionalProperties",false}}}};
         const Json item{{"type","object"},{"properties",fields},{"additionalProperties",false}};
         const Json value{{"type","object"},{"properties",{{"items",{{"type","array"},{"items",item}}},{"limited",{{"type","boolean"}}}}},{"additionalProperties",false}};
-        return Json::array({{{"key","knowledge.published"},{"version",1},{"description","主人发布的当前知识版本，含适用条件、修订和来源类别"},
+        return Json::array({{{"key","knowledge.published"},{"version",1},{"description","当前已发布的知识版本，含发布者、适用条件、修订和来源类别"},
             {"defaultAttention",{{"mode","explicit"}}},{"snapshotRead",false},{"valueSchema",value}}}).dump();
     }();
     return {"knowledge",schema,Json::array({{{"key","knowledge.published"},{"version",1},{"subject",subject},{"fact",fact},{"value",selection}}}).dump()};
 }
-// 只允许主 Agent 从本轮已交付的依据提议，发布、改变读者和撤下属于主人。
+namespace {
+// 从实际送达的查回状态枚举本轮允许提交为出处的原号。
+std::set<std::string> delivered_references(const agent::DecisionStatusSource& result) {
+    const auto source=Json::parse(result.samples).at(0);
+    const auto& kind=source.at("key");
+    std::set<std::string> seen;
+    for(const auto& item : source.at("value").at("items")) {
+        if ((kind=="memory.matches" && item.contains("reference")) || (kind=="memory.letters" && item.value("phase",std::string{})=="end") ||
+            (kind=="memory.tasks" && item.value("kind",std::string{})=="receipt")) seen.insert(item.at("reference"));
+        if (kind=="memory.tasks" && item.contains("readbackRef")) seen.insert(item.at("readbackRef"));
+        if (kind=="memory.understanding") for(const auto& f : item.at("facts")) seen.insert(f.at("readbackRef"));
+        if (kind=="memory.comparisons") for(const auto& f : item.at("facts")) seen.insert(f.at("reference"));
+    }
+    return seen;
+}
+}
+// 主人私聊可整理已送达的依据，客观观察的发布正文始终由本体从原件填写。
 void MainMessages::register_knowledge_tool() {
     reply_tools_->add({"main/knowledge_propose",app_.mailbox_host().identity,1,{"knowledge_propose",
         "主人要求整理可复用做法时，可将刚刚查到的真实依据整理成待主人审阅的草案。"
@@ -34,20 +50,25 @@ void MainMessages::register_knowledge_tool() {
         true,true,{},{},7,512,true},[this](const agent::ToolInvocation& call){
             try {
                 if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_) throw std::invalid_argument("unseen");
-                const auto source=Json::parse(search_result_->samples).at(0);
-                const auto& kind=source.at("key");
-                std::set<std::string> seen;
-                for(const auto& item : source.at("value").at("items")) {
-                    if (kind=="memory.matches" || (kind=="memory.letters" && item.value("phase",std::string{})=="end") ||
-                        (kind=="memory.tasks" && item.value("kind",std::string{})=="receipt")) seen.insert(item.at("reference"));
-                    if (kind=="memory.tasks" && item.contains("readbackRef")) seen.insert(item.at("readbackRef"));
-                    if (kind=="memory.understanding") for(const auto& f : item.at("facts")) seen.insert(f.at("readbackRef"));
-                    if (kind=="memory.comparisons") for(const auto& f : item.at("facts")) seen.insert(f.at("reference"));
-                }
+                const auto seen=delivered_references(*search_result_);
                 const auto draft=Json::parse(call.call.arguments);
                 for(const auto& ref : draft.at("sources")) if(!seen.contains(ref.get<std::string>())) throw std::invalid_argument("unseen");
                 return memory_receipt(store_->propose_knowledge(draft,"main"),agent::ToolEffect::applied);
             } catch(const std::invalid_argument&) {return memory_receipt({{"state","invalid_proposal"}},agent::ToolEffect::not_applied,false);}
+        });
+    reply_tools_->add({"main/knowledge_observe",app_.mailbox_host().identity,1,{"knowledge_observe",
+        "把本轮查回的一次独立现场读回登记到指定客观观察库。填写库名和读回的完整原件号，本体保存原值和出处。",
+        R"({"type":"object","properties":{"library":{"type":"string"},"reference":{"type":"string"}},"required":["library","reference"],"additionalProperties":false})"},
+        true,true,{},{},7,512,true},[this](const agent::ToolInvocation& call){
+            try {
+                if (!owner_memory_turn_ || !search_result_ || call.attempt.step.sequence<=search_step_) throw std::invalid_argument("unseen");
+                const auto args=Json::parse(call.call.arguments);
+                const auto ref=args.at("reference").get<std::string>();
+                if (!delivered_references(*search_result_).contains(ref)) throw std::invalid_argument("unseen");
+                const auto result=store_->record_knowledge_observation(args.at("library"),ref);
+                memory_revision_=store_->memory_revision();
+                return memory_receipt(result,result.at("created")==true ? agent::ToolEffect::applied : agent::ToolEffect::not_applied);
+            } catch(const std::invalid_argument&) {return memory_receipt({{"state","invalid_observation"}},agent::ToolEffect::not_applied,false);}
         });
 }
 namespace {
@@ -79,6 +100,11 @@ Json MainMessages::manage_knowledge(const std::vector<std::string>& words) {
         return store_->knowledge_libraries(words.size()==3 ? words[2] : "");
     if (words.size()<3) throw std::invalid_argument("knowledge: missing command arguments");
     const auto& verb=words[1],&article=words[2];
+    if (verb=="record-observation" && words.size()==4) {
+        const auto result=store_->record_knowledge_observation(article,words[3]);
+        memory_revision_=store_->memory_revision();
+        return result;
+    }
     if (verb=="import" && words.size()==7)
         return store_->import_knowledge_document(article,words[3],words[4],words[5],document_file(words[6]));
     if (verb=="source" && words.size()==3) return store_->inspect_knowledge_document(article);

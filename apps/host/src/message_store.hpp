@@ -106,6 +106,8 @@ class MessageStore {
     bool withdraw_knowledge_document(const std::string& reference);
     // 在同一事务校验当前版本及全部原件后发布或撤下，变更只由管理入口发起。
     bool publish_knowledge(const std::string& article,const std::string& edition,std::optional<std::int64_t> withdraw);
+    // 按已验核的独立读回登记一条带原件的客观观察。
+    nlohmann::json record_knowledge_observation(const std::string& library,const std::string& reference);
     // 主人按指定子库授予某一已发布版本的读取或转述权。
     std::int64_t grant_knowledge(const std::string& article,const std::string& edition,const std::string& plugin,
         const plugins::MemoryIdentity& identity,int rights);
