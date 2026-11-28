@@ -8,7 +8,9 @@
 {"id":"Q03","ask":"两边转来的消息算几次采样？","topics":["物流转交","馆藏转交"],"state":"same_receipt","why":"只计一次","via":["物流转交","馆藏转交"],"roots":["馆藏交接","馆藏交接"]}
 {"id":"馆藏复秤","channel":"museum","record":{"accession":"assets:B7","title":"交接箱","instrument":"lab:balance","entry":"馆藏复秤","inventoryRound":"audit:R1","reading":"1249.99","units":"g","quantity":"quantity:gross"}}
 {"id":"Q04","ask":"是同一轮核验，为何还不能确认重量？","topics":["@馆藏复秤","@物流交接"],"state":"conflict","why":"保留双方","via":["馆藏复秤","物流交接"],"roots":["馆藏复秤","物流交接"],"values":["1249990","1250000"],"base":"mg"}
-{"id":"Q05","ask":"从馆方的转交追查，和港口实测如何？","topics":["@馆藏转交","@物流交接"],"state":"equivalent","why":"独立采样","via":["馆藏转交","物流交接"],"roots":["馆藏交接","物流交接"],"values":["1250000","1250000"],"base":"mg"}
+{"id":"Q05","ask":"从馆方的转交追查，和港口实测如何？确认后请登记馆方采样。","topics":["@馆藏转交","@物流交接"],"state":"equivalent","why":"独立采样","via":["馆藏转交","物流交接"],"roots":["馆藏交接","物流交接"],"values":["1250000","1250000"],"base":"mg","publishObservation":"馆藏交接"}
+{"id":"只记原件","recordObservation":"馆藏转交","deny":true}
+{"id":"重开观察库","observationVisible":true}
 {"id":"下轮复核","channel":"museum","record":{"accession":"assets:B7","title":"交接箱","instrument":"lab:balance","entry":"下轮复核","inventoryRound":"audit:R2","reading":"999","units":"g","quantity":"quantity:gross"}}
 {"id":"Q06","ask":"第二次盘点可否推翻第一次？","topics":["下轮复核","物流交接"],"state":"different_checkpoints","why":"检查点不同","via":["下轮复核","物流交接"],"roots":["下轮复核","物流交接"]}
 {"id":"馆藏长度","channel":"museum","record":{"accession":"assets:B7","title":"交接箱","instrument":"lab:balance","entry":"馆藏长度","inventoryRound":"audit:R1","reading":"1250","units":"mm","quantity":"quantity:gross"}}
@@ -40,6 +42,8 @@
 {"id":"Q15","ask":"别人档案中的回执能直接合并吗？","topics":["foreign/task/1/receipt/1","馆藏交接"]}
 {"id":"Q16","room":true,"topics":["@物流交接","@馆藏交接"]}
 {"id":"撤销原件","withdraw":"馆藏交接"}
+{"id":"重开观察库并检查撤权","observationVisible":false}
+{"id":"重试已撤回原件","recordObservation":"馆藏交接","deny":true}
 {"id":"Q17","ask":"撤回那份原件后，两份转发还能看到采样吗？","topics":["物流转交","馆藏转交"]}
 {"id":"Q18","ask":"直接查被撤回的馆藏编号呢？","topics":["@馆藏交接","@物流交接"]}
 {"id":"Q19","ask":"另一份有独立出处的复秤还能查吗？","topics":["@物流交接","@馆藏复秤"],"state":"conflict","why":"保留双方","via":["物流交接","馆藏复秤"],"roots":["物流交接","馆藏复秤"],"values":["1250000","1249990"],"base":"mg"}

@@ -116,6 +116,18 @@ std::pair<const char*,const char*> decide(const Json& a,const Json& b) {
     return {"conflict","同一对象和检查点，两份独立采样换算后仍相矛盾，须保留双方原件。"};
 }
 }
+
+// 只有来自实际读口的直接采样才可入客观观察库，引用必须是该份原回执。
+std::optional<Json> message_db::verified_channel_observation(sqlite3* db,const std::string& profile,const std::string& reference) {
+    if (!reference.starts_with(profile+"/task/")) return {};
+    bool ambiguous=false;
+    const auto receipt=read_receipt(db,profile,reference,ambiguous);
+    if (!receipt || receipt->payload.contains("forward")) return {};
+    auto fact=evidence(db,profile,*receipt);
+    if (!fact || !fact->contains("object")) return {};
+    return fact;
+}
+
 // 在同一档案快照中重查两项原件与转发来源，按一项比较交付双方，保持顺序与预算。
 Json MessageStore::compare_observations(const std::vector<std::string>& topics) const {
     if(topics.size()!=2) throw std::invalid_argument("observations: expected two task names or receipts");

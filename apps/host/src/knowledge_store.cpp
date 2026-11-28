@@ -44,6 +44,7 @@ std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const st
         Statement get(db,"SELECT 1 FROM task_observation o JOIN task_memory t ON t.id=o.task WHERE o.task=? AND o.readback=? AND t.active=1");
         get.bind(1,task); get.bind(2,receipt);
         if (get.next()) return MemoryBasis{"tool_readback",profile+"/task/"+std::to_string(task),task};
+        if (verified_channel_observation(db,profile,ref)) return MemoryBasis{"channel_observation",profile+"/task/"+std::to_string(task),task};
     } else if (tail.starts_with("letter/")) {
         Statement get(db,"SELECT source FROM readable_letter WHERE id=? AND phase='end'");
         const auto id=number(tail.substr(7)); get.bind(1,id);
@@ -87,7 +88,8 @@ void check_claim(sqlite3* db,std::string_view kind,const std::string& statement,
                 throw std::invalid_argument("knowledge: observation must reproduce the verified value");
         }
     } else if (std::ranges::any_of(sources,[kind](const auto& s){
-        return kind=="external" ? s.kind!="owner_statement" && s.kind!="external_document" : s.kind=="external_document";
+        return kind=="external" ? s.kind!="owner_statement" && s.kind!="external_document" :
+            s.kind=="external_document" || s.kind=="channel_observation";
     }))
         throw std::invalid_argument("knowledge: external source required");
 }
@@ -344,7 +346,8 @@ Json MessageStore::record_knowledge_observation(const std::string& library,const
     Statement catalog(db,"SELECT 1 FROM knowledge_library WHERE library=? AND category='observed'"); catalog.bind(1,library);
     if (!catalog.next()) throw std::invalid_argument("knowledge: observations require an observed library");
     const auto source=basis(db,conversation(),reference);
-    if (!source || source->kind!="tool_readback") throw std::invalid_argument("knowledge: independent readback required");
+    if (!source || (source->kind!="tool_readback" && source->kind!="channel_observation"))
+        throw std::invalid_argument("knowledge: independent readback required");
     const auto article="obs-"+platform::sha256(library+"\n"+reference).substr(0,24);
     Statement prior(db,"SELECT a.head,e.id FROM knowledge_article a LEFT JOIN knowledge_edition e "
         "ON e.article=a.article AND e.tag='readback' AND e.publisher='host' JOIN knowledge_library l USING(library) WHERE a.article=? AND l.library=?");
@@ -358,19 +361,29 @@ Json MessageStore::record_knowledge_observation(const std::string& library,const
         return {{"article",article},{"edition","readback"},{"state",prior.number(0)==edition ? "published" : "inactive"},{"created",false}};
     }
 
-    Statement actual(db,"SELECT json_extract(family,'$[1]'),actual FROM task_observation WHERE task=?");
-    actual.bind(1,source->record); if (!actual.next()) throw std::invalid_argument("knowledge: missing verified value");
-    const auto reader=actual.text(0), observation=actual.text(1); prose(reader,130); prose(observation,640);
+    std::string topic,scope,observation;
+    if (source->kind=="channel_observation") {
+        const auto actual=verified_channel_observation(db,conversation(),reference);
+        if (!actual) throw std::invalid_argument("knowledge: missing channel observation");
+        const auto field=[&](const char* name){return actual->at(name).get<std::string>();};
+        topic=field("label"); scope="对象 "+field("object")+"，度量 "+field("measure")+"，检查点 "+field("checkpoint")+"。";
+        observation="采样方 "+field("observer")+"，采样号 "+field("sample")+"，原读数 "+field("value")+" "+field("unit")+"。";
+    } else {
+        Statement actual(db,"SELECT json_extract(family,'$[1]'),actual FROM task_observation WHERE task=?");
+        actual.bind(1,source->record); if (!actual.next()) throw std::invalid_argument("knowledge: missing verified value");
+        topic=actual.text(0); scope="只记录此原件对应的一次独立现场读回"; observation=actual.text(1);
+    }
+    prose(topic,130); prose(scope,240); prose(observation,640);
     Statement article_row(db,"INSERT INTO knowledge_article(article,library) VALUES(?,?)");
     article_row.bind(1,article); article_row.bind(2,library); article_row.next();
     Statement add(db,"INSERT INTO knowledge_edition(article,tag,base,topic,applies,statement,proposer,claim_kind,published,publisher) "
-        "VALUES(?,'readback',0,?, '只记录此原件对应的一次独立现场读回',?,'host','observation',1,'host')");
-    add.bind(1,article); add.bind(2,reader); add.bind(3,observation); add.next();
+        "VALUES(?,'readback',0,?,?,?,'host','observation',1,'host')");
+    add.bind(1,article); add.bind(2,topic); add.bind(3,scope); add.bind(4,observation); add.next();
     const auto edition=sqlite3_last_insert_rowid(db);
     Statement head(db,"UPDATE knowledge_article SET revision=1,head=? WHERE article=?");
     head.bind(1,edition); head.bind(2,article); head.next();
-    Statement cite(db,"INSERT INTO knowledge_basis VALUES(?,0,?,'tool_readback',?)");
-    cite.bind(1,edition); cite.bind(2,reference); cite.bind(3,source->dependency); cite.next();
+    Statement cite(db,"INSERT INTO knowledge_basis VALUES(?,0,?,?,?)");
+    cite.bind(1,edition); cite.bind(2,reference); cite.bind(3,source->kind); cite.bind(4,source->dependency); cite.next();
     sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
     tx.commit(); return {{"article",article},{"edition","readback"},{"state","published"},{"created",true}};
 }

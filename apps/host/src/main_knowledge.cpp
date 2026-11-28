@@ -47,6 +47,7 @@ std::set<std::string> delivered_references(const agent::DecisionStatusSource& re
         if (kind=="memory.tasks" && item.contains("readbackRef")) seen.insert(item.at("readbackRef"));
         if (kind=="memory.understanding") for(const auto& f : item.at("facts")) seen.insert(f.at("readbackRef"));
         if (kind=="memory.comparisons") for(const auto& f : item.at("facts")) seen.insert(f.at("reference"));
+        if (kind=="memory.observations") for(const auto& f : item.at("facts")) seen.insert(f.at("originalRef"));
     }
     return seen;
 }

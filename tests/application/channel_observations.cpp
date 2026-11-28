@@ -16,18 +16,18 @@ fs::path package(const fs::path& root,const fs::path& library,const std::string&
     std::ofstream(dest/"plugin.json")<<manifest.dump();
     return dest;
 }
-// 通过私聊的原任务视图取宿主签发的回执号，或逐字读回该回执。
-Json task_item(const fs::path& data,const std::string& topic,std::size_t& chats) {
+// 重启后走主人私聊检索，读取原任务回执或已发布的观察。
+Json memory_items(const fs::path& data,const std::string& topic,std::size_t& chats,std::string_view view="tasks",std::string_view key="memory.tasks") {
     std::vector<model::Request> requests; Json items;
     app::ApplicationRunConfig config; config.trace_directory=data/"logs";
     app::Application host({},data/"empty",data,model::Backend{[&](const auto&,const model::Request& req)->model::Response {
         requests.push_back(req);
         if(requests.size()==1) {
-            Json args{{"view","tasks"},{"topics",{topic}},{"count",1},{"need","single"}};
+            Json args{{"view",view},{"topics",{topic}},{"count",1},{"need","single"}};
             return {{model::Role::assistant,"",{{"original","memory_search",args.dump()}}},model::FinishReason::tool_calls};
         }
         const auto samples=Json::parse(req.messages.back().content).at("items");
-        for(const auto& s:samples) if(s.at("key")=="memory.tasks") items=s.at("value").at("items");
+        for(const auto& s:samples) if(s.at("key").get_ref<const std::string&>()==key) items=s.at("value").at("items");
         return {{model::Role::assistant,"已核对原件。"}};
     }},config);
     host.bind_messages(std::make_shared<app::MessageStore>(data),"original",nullptr);
@@ -53,6 +53,10 @@ std::size_t recall(const fs::path& data,const Json& row,const std::map<std::stri
             } else if(requests.size()==1) {
                 Json args{{"view","observations"},{"topics",terms},{"need","single"},{"count",1}};
                 return {{model::Role::assistant,"",{{"compare","memory_search",args.dump()}}},model::FinishReason::tool_calls};
+            } else if (requests.size()==3 && row.contains("publishObservation")) {
+                const auto receipt=std::ranges::find_if(req.messages.rbegin(),req.messages.rend(),[](const auto& m){return m.role==model::Role::tool;});
+                require(receipt!=req.messages.rend() && receipt->tool_call_id=="catalogue-observation" &&
+                    receipt->content.find(R"("state":"published")")!=std::string::npos,"direct observation was not published");
             } else {
                 const auto tail=Json::parse(req.messages.back().content); const auto& samples=tail.at("items");
                 const auto it=std::ranges::find_if(samples,[](const auto& s){return s.at("key")=="memory.observations";});
@@ -82,6 +86,11 @@ std::size_t recall(const fs::path& data,const Json& row,const std::map<std::stri
                         if(row.contains("values")) require(f.at("normalizedValue")==row.at("values")[i] && f.at("normalizedUnit")==row.at("base"),"incorrect conversion");
                         answer+=" "+via.ref+" "+root.ref;
                     }
+                    if (row.contains("publishObservation")) {
+                        const auto& original=originals.at(row.at("publishObservation"));
+                        Json args{{"library","observed"},{"reference",original.ref}};
+                        return {{model::Role::assistant,"",{{"catalogue-observation","knowledge_observe",args.dump()}}},model::FinishReason::tool_calls};
+                    }
                 }
             }
         } catch(const std::exception& e) {failure=e.what(); answer="核对失败。";}
@@ -90,7 +99,8 @@ std::size_t recall(const fs::path& data,const Json& row,const std::map<std::stri
     host.bind_messages(db,"channels",nullptr);
     if(row.value("room",false)) {host.post_room_event(app::RoomEvent::addressed,"书房","两次读数怎么比较？"); host.advance_plugins();}
     else host.main_messages()->terminal(row.at("id"),row.at("ask"));
-    drain(host); require(failure.empty(),failure); require(requests.size()==(row.value("room",false) ? 1u : 2u),"wrong number of model requests");
+    drain(host); require(failure.empty(),failure);
+    require(requests.size()==(row.value("room",false) ? 1u : row.contains("publishObservation") ? 3u : 2u),"wrong number of model requests");
     if(!row.value("room",false)) require(db->page(true,0,db->watermark(),1).records.front().envelope.at("text")==answer,"missing delivered citations");
     trace(host.trace_file(),requests); return requests.size();
 }
@@ -118,10 +128,25 @@ void channel_observations(const fs::path& corpus,const fs::path& data,const fs::
                 const auto raw=works[0].at("output").get<std::string>(); const auto envelope=Json::parse(raw);
                 require(envelope.at("format")=="dfy.observation/1" && (record.contains("forward") ?
                     envelope.at("forward")==record.at("forward") : envelope.at("native")==record),"channel lost original data");
-                const auto item=task_item(data,goal,chats).at(0);
+                const auto item=memory_items(data,goal,chats).at(0);
                 const auto ref=item.at("receiptRef").get<std::string>();
-                require(task_item(data,ref,chats).at(0).at("payload")==raw,"could not reopen native receipt");
+                require(memory_items(data,ref,chats).at(0).at("payload")==raw,"could not reopen native receipt");
                 sources[id]={ref,tool,raw};
+            } else if (row.contains("recordObservation")) {
+                app::Application host({},data/"empty",data); host.bind_messages(std::make_shared<app::MessageStore>(data),"admin",nullptr);
+                bool rejected=false;
+                try { host.main_messages()->manage_knowledge({"/knowledge","record-observation","observed",sources.at(row.at("recordObservation")).ref}); }
+                catch (const std::invalid_argument&) {rejected=true;}
+                require(rejected==row.value("deny",false),"wrong direct observation admission");
+            } else if (row.contains("observationVisible")) {
+                const auto items=memory_items(data,"交接箱",chats,"knowledge","knowledge.published");
+                require(items.size()==(row.at("observationVisible")==true ? 1u : 0u),"wrong observation visibility after process recreation");
+                if (!items.empty()) {
+                    const auto& item=items.at(0);
+                    require(item.at("applies")=="对象 assets:B7，度量 quantity:gross，检查点 audit:R1。" &&
+                        item.at("statement")=="采样方 lab:balance，采样号 馆藏交接，原读数 1250 g。" &&
+                        item.at("sources")==Json::array({{{"kind","channel_observation"},{"reference",sources.at("馆藏交接").ref}}}),"observation departed from native facts");
+                }
             } else if(row.contains("withdraw")) {
                 app::Application host({},data/"empty",data); host.bind_messages(std::make_shared<app::MessageStore>(data),"admin",nullptr);
                 const auto ref=sources.at(row.at("withdraw")).ref; host.main_messages()->change_memory(ref.substr(0,ref.rfind("/receipt/")),std::nullopt);

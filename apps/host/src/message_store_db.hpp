@@ -13,6 +13,8 @@ std::optional<std::string> owner_quote(sqlite3* db,std::int64_t id);
 void complete_idle_queue(sqlite3* db,IdleQueue queue);
 // 检验同档案原件的可见性、证据种类及撤权依赖。
 std::optional<MemoryBasis> resolve_basis(sqlite3* db,const std::string& profile,const std::string& reference);
+// 从本档案完整回执号核对一次原生直接采样，转发与缺少采样字段的结果不可登记。
+std::optional<nlohmann::json> verified_channel_observation(sqlite3* db,const std::string& profile,const std::string& reference);
 // 按不可变比较条件绑定一份独立读回或已收报告，同一原件不会增加票数。
 void link_case_member(sqlite3* db,const std::string& profile,const std::string& name,const std::string& checkpoint,
     const std::string& reference,std::string_view attribution);
