@@ -1,4 +1,5 @@
 #include "message_store_db.hpp"
+#include <dafeiyu/digest.hpp>
 #include <dafeiyu/plugin_agents.hpp>
 #include <dafeiyu/utf8.hpp>
 #include <algorithm>
@@ -26,7 +27,7 @@ std::int64_t number(std::string_view s) {
     if(ec!=std::errc{} || end!=s.data()+s.size() || id<=0 || s.front()=='0') throw std::invalid_argument("knowledge: invalid source");
     return id;
 }
-// 独立核对主人原话、动作后的独立回执或本体已经收到的子会话结束信，并保留原有作者类别。
+// 核对依据原件类型和此刻的读取权，保留原作者类别及撤权依赖。
 std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const std::string& ref) {
     if (!ref.starts_with(profile+"/")) return {};
     auto tail=std::string_view(ref).substr(profile.size()+1);
@@ -41,6 +42,10 @@ std::optional<MemoryBasis> basis(sqlite3* db,const std::string& profile,const st
         Statement get(db,"SELECT source FROM readable_letter WHERE id=? AND phase='end'");
         const auto id=number(tail.substr(7)); get.bind(1,id);
         if (get.next()) return MemoryBasis{"sender_report",get.number(0) ? profile+"/"+std::to_string(get.number(0)) : ref,id};
+    } else if (tail.starts_with("document/")) {
+        Statement get(db,"SELECT 1 FROM knowledge_document WHERE reference=? AND active=1");
+        get.bind(1,ref);
+        if (get.next()) return MemoryBasis{"external_document",ref,0};
     } else if (tail.find('/')==tail.npos) {
         Statement get(db,"SELECT 1 FROM personal_memory WHERE active=1 AND message=?"); get.bind(1,number(tail));
         if (get.next()) return MemoryBasis{"owner_statement",ref,number(tail)};
@@ -75,7 +80,9 @@ void check_claim(sqlite3* db,std::string_view kind,const std::string& statement,
             if (sources.size()!=1 || !actual.next() || actual.text(0)!=statement)
                 throw std::invalid_argument("knowledge: observation must reproduce the verified value");
         }
-    } else if (kind=="external" && std::ranges::any_of(sources,[](const auto& s){return s.kind!="owner_statement";}))
+    } else if (std::ranges::any_of(sources,[kind](const auto& s){
+        return kind=="external" ? s.kind!="owner_statement" && s.kind!="external_document" : s.kind=="external_document";
+    }))
         throw std::invalid_argument("knowledge: external source required");
 }
 }
@@ -115,6 +122,51 @@ Json MessageStore::knowledge_libraries(std::string_view library) const {
             {"origin",rows.text(3)},{"tags",Json::parse(rows.text(4))}});
     }
     return {{"libraries",std::move(result)},{"limited",false}};
+}
+
+// 提交一个独立编号的外部资料快照，重复导入只允许相同字节、标题与来源。
+// 步骤：核对文本和标识 → 计算内容摘要 → 原子写入或核对已有版本。
+Json MessageStore::import_knowledge_document(std::string_view id,std::string_view version,const std::string& title,
+    const std::string& origin,const std::string& body) {
+    key(id); key(version); prose(title,180); prose(origin,256);
+    if (body.empty() || body.size()>16*1024 || !runtime::valid_utf8(body) || std::ranges::any_of(body,[](unsigned char c){
+        return c<32 && c!='\r' && c!='\n' && c!='\t';
+    })) throw std::invalid_argument("knowledge: expected UTF-8 text of at most 16 KiB");
+    const auto ref=conversation()+"/document/"+std::string(id)+"/"+std::string(version), digest=platform::sha256(body);
+    std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
+    Statement existing(db,"SELECT title,origin,body,active FROM knowledge_document WHERE reference=?"); existing.bind(1,ref);
+    if (existing.next()) {
+        if (existing.text(0)!=title || existing.text(1)!=origin || existing.text(2)!=body || !existing.number(3))
+            throw std::invalid_argument("knowledge: use a new document version");
+    } else {
+        Statement add(db,"INSERT INTO knowledge_document(reference,title,origin,sha256,body) VALUES(?,?,?,?,?)");
+        add.bind(1,ref); add.bind(2,title); add.bind(3,origin); add.bind(4,digest); add.bind(5,body); add.next();
+    }
+    tx.commit(); return {{"reference",ref},{"sha256",digest},{"bytes",body.size()}};
+}
+
+// 将原件原样交回给主人；跨档案与撤下编号一律拒绝。
+Json MessageStore::inspect_knowledge_document(const std::string& reference) const {
+    std::lock_guard lock(state_->mutex);
+    if (!reference.starts_with(conversation()+"/document/")) throw std::invalid_argument("knowledge: wrong document archive");
+    Statement get(state_->db,"SELECT title,origin,sha256,body FROM knowledge_document WHERE reference=? AND active=1");
+    get.bind(1,reference);
+    if (!get.next()) throw std::invalid_argument("knowledge: unavailable document");
+    return {{"reference",reference},{"title",get.text(0)},{"origin",get.text(1)},{"sha256",get.text(2)},{"text",get.text(3)}};
+}
+
+// 撤权和授权修订同事务生效，重试不会复活原件或再次推进修订。
+bool MessageStore::withdraw_knowledge_document(const std::string& reference) {
+    std::lock_guard lock(state_->mutex); auto* db=state_->db; Transaction tx(db);
+    if (!reference.starts_with(conversation()+"/document/")) throw std::invalid_argument("knowledge: wrong document archive");
+    Statement get(db,"SELECT active FROM knowledge_document WHERE reference=?"); get.bind(1,reference);
+    if (!get.next()) throw std::invalid_argument("knowledge: unknown document");
+    const bool changed=get.number(0)!=0;
+    if (changed) {
+        Statement withdraw(db,"UPDATE knowledge_document SET active=0 WHERE reference=?"); withdraw.bind(1,reference); withdraw.next();
+        sql(db,"UPDATE conversation SET memory_revision=memory_revision+1");
+    }
+    tx.commit(); return changed;
 }
 
 // 在幂等提议键下保存草案与逐项有类型的原件，已发布内容只可另建修订。

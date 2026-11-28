@@ -17,7 +17,7 @@ struct KnowledgeProbe {
     // 固定每一步的提议，检查实际进入后端的知识或来源。
     model::Response answer(const model::Request& input);
     // 通过原管理分派器执行主人命令并检查成功、拒绝或审计字段。
-    void admin(app::Application& host,const Json& input) const;
+    void admin(app::Application& host,const Json& input,const std::filesystem::path& directory);
     // 核对实际装配的知识版本、适用条件、出处与受众可见范围。
     void verify(const Json& items,const Json& wanted,bool owner) const;
     // 对照真实工具 Trace 和原信身份，检查跨工具事实、意见与反例。

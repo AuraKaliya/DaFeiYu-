@@ -96,3 +96,25 @@
 {"op":"admin","command":"/knowledge propose-in external external external-manual v1 0 手册摘录 展厅手册 \"每周交接一次\" @manual"}
 {"op":"admin","command":"/knowledge publish external-manual v1","revision":1}
 {"op":"kb","topics":["手册摘录"],"expect":[{"article":"external-manual","edition":"v1","revision":1,"library":"external","category":"external","claimKind":"external","kinds":["owner_statement"]}]}
+{"op":"admin","command":"/knowledge import manual v1 \"展馆手册 v1\" \"展馆业务部通知\"","file":"# 交接\r\n展厅每周三交接。\n独立留存的备注。\n","save":"@doc"}
+{"op":"admin","command":"/knowledge import manual v1 \"展馆手册 v1\" \"展馆业务部通知\"","file":"# 交接\r\n展厅每周三交接。\n独立留存的备注。\n","save":"@doc"}
+{"op":"admin","command":"/knowledge import manual v1 \"展馆手册 v1\" \"展馆业务部通知\"","file":"文件已被覆盖。","deny":true}
+{"op":"admin","command":"/knowledge propose wrong-category v1 0 手册摘录 展厅手册 \"每周三交接\" @doc","deny":true}
+{"op":"admin","command":"/knowledge propose-in external external external-file v1 0 文件规程 展厅手册 \"每周三交接\" @doc"}
+{"op":"admin","command":"/knowledge publish external-file v1","revision":1}
+{"op":"restart"}
+{"op":"admin","command":"/knowledge source @doc","document":{"title":"展馆手册 v1","origin":"展馆业务部通知","text":"# 交接\r\n展厅每周三交接。\n独立留存的备注。\n"}}
+{"op":"admin","command":"/knowledge source ffffffffffffffffffffffffffffffff/document/manual/v1","deny":true}
+{"op":"kb","topics":["文件规程"],"expect":[{"article":"external-file","edition":"v1","revision":1,"statement":"每周三交接","claimKind":"external","kinds":["external_document"],"refs":["@doc"]}]}
+{"op":"open","session":"docReader","preset":2,"subject":"document-reader"}
+{"op":"select_kb","session":"docReader","topic":"文件规程"}
+{"op":"run","session":"docReader","expect":[],"knowledge":[]}
+{"op":"admin","command":"/knowledge grant external-file v1 example.status business document-reader - read"}
+{"op":"run","session":"docReader","expect":[],"knowledge":[{"article":"external-file","edition":"v1","revision":1,"statement":"每周三交接","kinds":["external_document"]}],"hold":true}
+{"op":"admin","command":"/knowledge withdraw-source @doc"}
+{"op":"status","session":"docReader"}
+{"op":"release"}
+{"op":"admin","command":"/knowledge withdraw-source @doc"}
+{"op":"admin","command":"/knowledge source @doc","deny":true}
+{"op":"admin","command":"/knowledge inspect external-file v1","revision":1,"inspect":{"evidenceUnavailable":true}}
+{"op":"kb","topics":["文件规程"],"expect":[]}

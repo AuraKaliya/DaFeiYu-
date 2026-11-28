@@ -332,7 +332,7 @@ struct Fixture {
             db->update(m.message.id,{{"state","completed"}});
             source=db->conversation()+"/"+std::to_string(m.message.id); knowledge.references[alias]=source; return;
         }
-        if (op=="admin") {knowledge.admin(*host,row); return;}
+        if (op=="admin") {knowledge.admin(*host,row,root); return;}
         if (op=="kb") {knowledge.chat(*host,row,++kb_reads); return;}
         if (op=="compare") {
             auto query=row; query["view"]="comparisons"; query["sample"]="memory.comparisons";

@@ -69,7 +69,7 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
         std::int64_t previous=0;
         {
             Statement version(db,"PRAGMA user_version");
-            if (!version.next() || version.number(0)>20) throw std::runtime_error("messages: unsupported database version");
+            if (!version.next() || version.number(0)>21) throw std::runtime_error("messages: unsupported database version");
             previous=version.number(0);
         }
         if (previous==0) {
@@ -188,6 +188,9 @@ MessageStore::MessageStore(const std::filesystem::path& profile) : state_(std::m
                 sql(db,"ALTER TABLE knowledge_edition ADD COLUMN claim_kind TEXT NOT NULL DEFAULT 'legacy'");
             sql(db,"PRAGMA user_version=20");
         }
+        if(previous<21) sql(db,"CREATE TABLE IF NOT EXISTS knowledge_document(reference TEXT PRIMARY KEY,title TEXT NOT NULL,"
+            "origin TEXT NOT NULL,sha256 TEXT NOT NULL,body TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1);"
+            "PRAGMA user_version=21");
     }
     Statement identity(db,"SELECT id FROM conversation");
     if (!identity.next()) throw std::runtime_error("messages: missing conversation identity");

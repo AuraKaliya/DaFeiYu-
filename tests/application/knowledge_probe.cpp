@@ -1,6 +1,8 @@
 #include "knowledge_probe.hpp"
 #include "application_commands.hpp"
 #include "main_messages.hpp"
+#include <dafeiyu/digest.hpp>
+#include <fstream>
 #include <sstream>
 
 namespace dfy::tests {
@@ -75,16 +77,31 @@ model::Response KnowledgeProbe::answer(const model::Request& input) {
     reply="已经按来源核对。"; return {{model::Role::assistant,reply}};
 }
 // 管理权限来自真实命令入口，失败操作必须拒绝，正文及修订可通过主人审阅结果复核。
-void KnowledgeProbe::admin(app::Application& host,const Json& input) const {
+void KnowledgeProbe::admin(app::Application& host,const Json& input,const std::filesystem::path& directory) {
     auto cmd=input.at("command").get<std::string>();
     for(auto it=references.rbegin();it!=references.rend();++it)
         if(auto p=cmd.find(it->first);p!=cmd.npos) cmd.replace(p,it->first.size(),it->second);
+    if (input.contains("file")) {
+        const auto path=std::filesystem::absolute(directory/"external source.md");
+        std::ofstream fixture(path,std::ios::binary|std::ios::trunc);
+        require(static_cast<bool>(fixture<<input.at("file").get<std::string>()),"cannot prepare the external source");
+        const auto encoded=path.u8string();
+        cmd+=" \""+std::string(encoded.begin(),encoded.end())+"\"";
+    }
     std::ostringstream out,err;
     try { app::application_command(host,cmd,out,err); }
     catch(const std::invalid_argument&) {require(input.value("deny",false),"valid administrative action rejected: "+cmd); return;}
     require(!input.value("deny",false),"administrative action should have failed");
     if (!cmd.starts_with("/knowledge ")) return;
     const auto result=Json::parse(out.str());
+    if (input.contains("save")) {
+        references[input.at("save").get<std::string>()]=result.at("reference").get<std::string>();
+        require(result.at("sha256")==platform::sha256(input.at("file").get<std::string>()),"incorrect document digest");
+    }
+    if (input.contains("document")) {
+        for (const auto& [key,value] : input.at("document").items()) require(result.at(key)==value,"incorrect original document");
+        require(result.at("sha256")==platform::sha256(result.at("text").get<std::string>()),"document digest changed");
+    }
     if (input.contains("libraries")) require(result.at("libraries")==input.at("libraries"),"incorrect library catalog");
     if (input.contains("revision")) require(result.at("revision")==input.at("revision"),"wrong publication revision");
     if (input.contains("inspect")) {

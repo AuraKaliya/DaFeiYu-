@@ -1,7 +1,9 @@
 #include "knowledge.hpp"
 #include "main_messages.hpp"
 #include "application.hpp"
+#include <dafeiyu/utf8.hpp>
 #include <charconv>
+#include <fstream>
 #include <set>
 
 namespace dfy::app {
@@ -55,13 +57,39 @@ std::int64_t revision(const std::string& value) {
     if(ec!=std::errc{} || end!=value.data()+value.size() || n<0) throw std::invalid_argument("knowledge: invalid revision");
     return n;
 }
+// 管理端显式给出绝对资料路径，最多读一个允许入库的文本原件加一字节。
+std::string document_file(const std::string& value) {
+    if (value.find('\0')!=value.npos || !runtime::valid_utf8(value)) throw std::invalid_argument("knowledge: invalid document path");
+    const std::filesystem::path path(std::u8string(value.begin(),value.end()));
+    std::error_code status;
+    if (!path.is_absolute() || !std::filesystem::is_regular_file(path,status))
+        throw std::invalid_argument("knowledge: expected an absolute path to a regular file");
+    std::ifstream file(path,std::ios::binary);
+    if (!file) throw std::invalid_argument("knowledge: cannot open document");
+    std::string bytes(16*1024+1,'\0');
+    file.read(bytes.data(),static_cast<std::streamsize>(bytes.size()));
+    if (file.bad() || (file.fail() && !file.eof())) throw std::invalid_argument("knowledge: cannot read document");
+    bytes.resize(static_cast<std::size_t>(file.gcount()));
+    return bytes;
+}
 }
 // 主人逐版决定哪些草案可发布、给谁读；变更后撤销旧请求并隔离原上下文。
 Json MainMessages::manage_knowledge(const std::vector<std::string>& words) {
     if (words.size()>=2 && words[1]=="libraries" && words.size()<=3)
         return store_->knowledge_libraries(words.size()==3 ? words[2] : "");
-    if (words.size()<3) throw std::invalid_argument("knowledge: expected propose, inspect, publish, withdraw or grant");
+    if (words.size()<3) throw std::invalid_argument("knowledge: missing command arguments");
     const auto& verb=words[1],&article=words[2];
+    if (verb=="import" && words.size()==7)
+        return store_->import_knowledge_document(article,words[3],words[4],words[5],document_file(words[6]));
+    if (verb=="source" && words.size()==3) return store_->inspect_knowledge_document(article);
+    if (verb=="withdraw-source" && words.size()==3) {
+        if (store_->withdraw_knowledge_document(article)) {
+            memory_revision_=store_->memory_revision(); search_result_.reset();
+            if (app_.conversation().busy() && owner_memory_turn_) app_.conversation().cancel();
+            app_.subagents().invalidate_memory(0,article);
+        }
+        return {{"state","withdrawn"},{"reference",article}};
+    }
     if (verb=="define-library" && words.size()>=6 && words.size()<=12) {
         store_->define_knowledge_library({{"library",article},{"category",words[3]},{"summary",words[4]},
             {"origin",words[5]},{"tags",std::vector<std::string>(words.begin()+6,words.end())}});

@@ -92,6 +92,13 @@ class MessageStore {
     void define_knowledge_library(const nlohmann::json& definition);
     // 审阅指定库或浏览当前档案中一页已登记的知识库。
     nlohmann::json knowledge_libraries(std::string_view library) const;
+    // 本档案保存外部文件的不可变快照，返回版本化原件号。
+    nlohmann::json import_knowledge_document(std::string_view id,std::string_view version,const std::string& title,
+        const std::string& origin,const std::string& body);
+    // 只给主人按完整编号返回仍有权查阅的原件。
+    nlohmann::json inspect_knowledge_document(const std::string& reference) const;
+    // 停用外部原件并推进授权修订，使引用它的版本一并退出检索。
+    bool withdraw_knowledge_document(const std::string& reference);
     // 在同一事务校验当前版本及全部原件后发布或撤下，变更只由管理入口发起。
     bool publish_knowledge(const std::string& article,const std::string& edition,std::optional<std::int64_t> withdraw);
     // 主人按指定子库授予某一已发布版本的读取或转述权。
